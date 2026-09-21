@@ -563,19 +563,20 @@
     target.forEach(function (m) {
       (byProvider[m._p] = byProvider[m._p] || []).push(m.id);
     });
-    var calls = Object.keys(byProvider).map(function (p) {
-      return fetch('/api/bulk', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: parseInt(p, 10), enabled: enabled, models: byProvider[p] })
-      }).then(function (r) {
+    var providerList = Object.keys(byProvider).map(function (p) {
+      return { provider: parseInt(p, 10), models: byProvider[p] };
+    });
+    fetch('/api/bulk', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled, providers: providerList })
+    })
+      .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
-      });
-    });
-    Promise.all(calls)
-      .then(function (results) {
-        var changedCount = results.reduce(function (sum, d) { return sum + (d.changedCount || 0); }, 0);
+      })
+      .then(function (d) {
+        var changedCount = d.changedCount || 0;
         target.forEach(function (m) { m.enabled = enabled; });
         setUndo(changedCount > 0);
         if (changedCount > 0) setRestartPending(true);

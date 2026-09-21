@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A [MiniMax Code](https://github.com/MiniMax-AI) Mini App for browsing, searching, and enabling/disabling the models in your MiniMax Code `config.yaml` — no more find-and-replace in Notepad.
 
-Author: [ocoomber](https://github.com/ocoomber) · Version: `1.2.3`
+Author: [ocoomber](https://github.com/ocoomber) · Version: `1.2.4`
 
 > The plugin ID `openrouter-model-manager` is kept for stability, but the app is **not** OpenRouter-specific — it works with any provider (see *What it does*).
 
@@ -16,15 +16,15 @@ Author: [ocoomber](https://github.com/ocoomber) · Version: `1.2.3`
 - **Instant save** — every toggle writes to your config immediately; no save button.
 - **Filter chips** — All / Enabled only / Disabled only.
 - **Bulk actions** — *Enable matching* / *Disable matching* apply only to the current search results, and each model family has its own enable/disable buttons.
-- **One-level Undo** — made a mistake with "enable all"? One click restores the previous config. If the file changed outside the app in the meantime, Undo refuses instead of clobbering your edits.
-- **Automatic backups** — before every bulk change, a timestamped copy of your config is written to a `backups/` folder next to `config.yaml`, pruned to the newest 20.
+- **One-level Undo** — made a mistake with "enable all"? One click restores the previous config. If the file changed outside the app in the meantime, Undo refuses instead of clobbering your edits. A multi-provider bulk action is reverted as one operation — not provider-by-provider.
+- **Automatic backups** — before every bulk change, a timestamped copy of your config is written to `backups/` under the Mini App's own data directory (per Mini App runtime guidance), pruned to the newest 20.
 - **Collapsible families** — models are grouped by the prefix before the `/` in their ID.
 - **OpenRouter links** — every model row can link to its OpenRouter page (shown only for OpenRouter providers). Right-click a link to choose the external browser, the built-in browser, or copy the URL.
 - **Context-limit badges** — read straight from your config.
 
 ## Tested environment
 
-- **Windows 11** (build 10.0.26200), **MiniMax Code 3.0.73**, plugin `1.2.3` — tested by the author end to end (toggles, bulk actions, undo, restart flow).
+- **Windows 11** (build 10.0.26200), **MiniMax Code 3.0.73**, plugin `1.2.4` — tested by the author end to end (toggles, bulk actions, undo, restart flow).
 - **macOS / Linux** use the same code paths but have **not been tested** by the author — feedback and reports are very welcome.
 
 ## Install
@@ -50,7 +50,7 @@ Capabilities such as vision support are intentionally **not** fetched from exter
 - The UI never sees your secrets: the server returns only model **id / name / enabled / contextLimit**. API keys in the config are never read into the UI, returned by the API, or displayed.
 - The app makes **no outbound network requests** of its own.
 - **Process spawning (disclosed):** the only OS-level action is opening an OpenRouter model page in *your own* browser, via `rundll32`/`cmd`/`explorer` on Windows, `open` on macOS, or `xdg-open` on Linux. Only `https://openrouter.ai/...` URLs are accepted; anything else is rejected by the server.
-- Config location: the runtime resolves `config.yaml` from its data directory first and falls back to the default `~/.minimax/config.yaml`.
+- Config location: the runtime walks ancestors of its injected data directory looking for `config.yaml` (the Host hands each Mini App a plugin-owned subdirectory several levels below the data root, and the MiniMax Code config lives at the data root or one of its ancestors in the current Host layout). If nothing is found along that walk, it falls back to `~/.minimax/config.yaml`. The parent walk matches an implementation detail of the current Host layout, not a guaranteed API, so the default fallback is what protects non-default installs.
 
 ## Files
 
@@ -62,8 +62,11 @@ miniapp/client/index.html     UI (light/dark aware)
 miniapp/node/server.mjs       Node runtime + REST API
 miniapp/node/miniapp-api.ts   Type declarations for the runtime API
 icon.png                      Plugin icon
-tests/parser.test.mjs         Parser tests (repository only — run with `node --test tests/parser.test.mjs`, not shipped in the install payload)
+tests/parser.test.mjs
+tests/resolveConfigPath.test.mjs
 ```
+
+`tests/` lives outside the Host's runtime payload roots (`miniapp/client`, `miniapp/node`), so the app never loads it — it just rides along if you copy the directory. Run with `node --test tests/` from the plugin root.
 
 ## License
 

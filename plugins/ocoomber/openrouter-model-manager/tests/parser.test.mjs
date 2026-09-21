@@ -85,3 +85,25 @@ test('currentEnabled reads the flag; setEnabledOnLine flips only that flag', () 
   assert.equal(next, '        enabled:   true   # keep comment');
   assert.equal(currentEnabled(next), 'true');
 });
+
+test('multi-provider toggle: ids stay valid across two providers in one write', () => {
+  // Mirrors setModelsEnabledMulti's invariant: indices parsed from the
+  // original text remain valid after only-modifying enabled: lines, so
+  // we can apply changes to provider A and provider B without re-parsing.
+  const { lines } = splitConfigText(SAMPLE);
+  const providers = parseProviders(lines);
+  // `provider:` is not manageable; only the custom_provider block is.
+  assert.equal(providers.length, 1);
+  const [or] = providers;
+  const targets = ['deepseek/deepseek-chat-v3.1:free', 'openai/gpt-4o'];
+  const before = targets.map((id) => currentEnabled(lines[or.models.find((m) => m.id === id).enabledIndex]));
+  assert.deepEqual(before, ['true', 'false']);
+  for (const id of targets) {
+    const idx = or.models.find((m) => m.id === id).enabledIndex;
+    lines[idx] = setEnabledOnLine(lines[idx], true);
+  }
+  const after = targets.map((id) => currentEnabled(lines[or.models.find((m) => m.id === id).enabledIndex]));
+  assert.deepEqual(after, ['true', 'true']);
+  // Other provider models must not have been touched.
+  assert.equal(lines.length, SAMPLE.split('\n').length);
+});

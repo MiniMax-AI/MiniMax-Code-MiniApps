@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "openrouter-model-manager",
   "displayName": "Model Manager",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Browse, search, and enable/disable the models in your MiniMax Code config.yaml — works with any provider (OpenRouter, custom, locally hosted), with bulk actions, one-level undo, and OpenRouter links.",
   "author": "ocoomber",
   "icon": "icon.png",

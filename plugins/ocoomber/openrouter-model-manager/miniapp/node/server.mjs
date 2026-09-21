@@ -16,19 +16,35 @@ import { spawn } from 'node:child_process';
 /** Absolute path of the config file, resolved once at startup. */
 let CONFIG_PATH = join(homedir(), '.minimax', 'config.yaml');
 
+/** Plugin-owned data directory the Host injected at startup, kept so
+ *  durable state (backups) stays under the Host's plugin-data namespace. */
+let DATA_DIR = null;
+
 /**
- * Resolve config.yaml from the runtime-provided data directory first so that
- * non-default data directories / profiles work, falling back to the default
- * ~/.minimax location.
+ * Walk ancestors of `dataDir` looking for a `config.yaml` file. The Host
+ * injects a plugin-owned subdirectory inside its data root (e.g.
+ * `<root>/v2/plugin-data/liveboards/<pluginId>`) and its own config.yaml
+ * lives at `<root>/config.yaml` — several levels up. The parent walk is
+ * the same pattern used by the mcode-token-usage-board plugin for its
+ * `v2/sessions` lookup; the Mini App contract doesn't promise this layout
+ * as a stable API, so we always keep the default `~/.minimax/config.yaml`
+ * fallback below. If neither finds a real file, we still return the
+ * default path (the first read will surface a clear ENOENT).
  */
 function resolveConfigPath(dataDir) {
-  const candidates = [];
-  if (dataDir) candidates.push(join(dataDir, 'config.yaml'));
-  candidates.push(join(homedir(), '.minimax', 'config.yaml'));
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+  if (dataDir) {
+    let dir = dataDir;
+    const seen = new Set();
+    while (dir && !seen.has(dir)) {
+      seen.add(dir);
+      const candidate = join(dir, 'config.yaml');
+      if (existsSync(candidate)) return candidate;
+      const parent = dirname(dir);
+      if (parent === dir) break; // reached the filesystem root
+      dir = parent;
+    }
   }
-  return candidates[0];
+  return join(homedir(), '.minimax', 'config.yaml');
 }
 
 async function readConfigText() {
@@ -176,9 +192,9 @@ const MAX_BACKUPS = 20;
 
 async function takeSnapshot(text, withBackup) {
   lastSnapshot = { prev: text, after: null };
-  if (!withBackup) return;
+  if (!withBackup || !DATA_DIR) return;
   try {
-    const backupDir = join(dirname(CONFIG_PATH), 'backups');
+    const backupDir = join(DATA_DIR, 'backups');
     await mkdir(backupDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     await writeFile(join(backupDir, `config-${stamp}.yaml`), text, 'utf8');
@@ -223,7 +239,7 @@ export function setEnabledOnLine(line, enabled) {
   return line.replace(/(enabled:\s*)(true|false)/, `$1${enabled}`);
 }
 
-async function setModelEnabled(providerIndex, modelId, enabled) {
+async function setModelsEnabled(providerIndex, modelId, enabled) {
   const text = await readConfigText();
   const parsed = splitConfigText(text);
   const provider = findProvider(parseProviders(parsed.lines), providerIndex);
@@ -240,25 +256,37 @@ async function setModelEnabled(providerIndex, modelId, enabled) {
   return { changed: true };
 }
 
-async function setModelsEnabled(providerIndex, ids, enabled) {
+/**
+ * Apply the same enable/disable value to many models across one or more
+ * providers in a single read → modify → write cycle, so the undo snapshot
+ * captures the entire bulk action (not just the last provider's batch).
+ * Toggling only rewrites `enabled:` lines in place, so `enabledIndex`
+ * values parsed from the original text remain valid throughout.
+ */
+async function setModelsEnabledMulti(groups, enabled) {
   const text = await readConfigText();
   const parsed = splitConfigText(text);
-  const provider = findProvider(parseProviders(parsed.lines), providerIndex);
-  if (!provider) throw new Error('Provider not found');
-  const wanted = new Set(ids);
-  const touched = provider.models.filter(
-    (m) => wanted.has(m.id) && currentEnabled(parsed.lines[m.enabledIndex]) !== String(enabled),
-  );
-  if (touched.length > 0) {
-    await takeSnapshot(text, true);
-    for (const m of touched) {
-      parsed.lines[m.enabledIndex] = setEnabledOnLine(parsed.lines[m.enabledIndex], enabled);
+  const providers = parseProviders(parsed.lines);
+  let touched = 0;
+  for (const { providerIndex, ids } of groups) {
+    const provider = findProvider(providers, providerIndex);
+    if (!provider) continue;
+    const wanted = new Set(ids);
+    for (const m of provider.models) {
+      if (!wanted.has(m.id)) continue;
+      const line = parsed.lines[m.enabledIndex];
+      if (currentEnabled(line) === String(enabled)) continue;
+      parsed.lines[m.enabledIndex] = setEnabledOnLine(line, enabled);
+      touched++;
     }
+  }
+  if (touched > 0) {
+    await takeSnapshot(text, true);
     const written = joinConfigText(parsed);
     await writeConfigText(parsed);
     if (lastSnapshot) lastSnapshot.after = written;
   }
-  return touched.length;
+  return touched;
 }
 
 function json(response, status, payload) {
@@ -332,6 +360,7 @@ function openExternal(url, logger) {
 
 export async function start(context) {
   CONFIG_PATH = resolveConfigPath(context.dataDir);
+  DATA_DIR = context.dataDir ?? null;
 
   const clientIndex = await readFile(
     join(context.pluginRoot, 'miniapp/client/index.html'),
@@ -402,23 +431,28 @@ export async function start(context) {
         return;
       }
 
-      // Bulk update scoped to the given model ids of one provider.
+      // Bulk update scoped to model ids across one or more providers.
+      // One request, one snapshot, one write — so Undo reverts the whole
+      // bulk action regardless of how many providers it touched.
       if (request.method === 'POST' && url.pathname === '/api/bulk') {
         const body = await readJsonBody(request, response);
         if (body === null) return;
-        const { provider, enabled, models } = body;
-        if (typeof enabled !== 'boolean' || !Array.isArray(models) ||
-            !models.every((x) => typeof x === 'string' && x.length > 0)) {
+        const { enabled, providers } = body;
+        if (typeof enabled !== 'boolean' || !Array.isArray(providers)) {
           json(response, 400, { error: 'invalid_arguments' });
           return;
         }
-        const changedCount = await withMutationLock(() =>
-          setModelsEnabled(
-            typeof provider === 'number' ? provider : 0,
-            [...new Set(models)],
-            enabled,
-          ),
-        );
+        const groups = [];
+        for (const entry of providers) {
+          if (!entry || typeof entry.provider !== 'number' ||
+              !Array.isArray(entry.models) ||
+              !entry.models.every((x) => typeof x === 'string' && x.length > 0)) {
+            json(response, 400, { error: 'invalid_arguments' });
+            return;
+          }
+          groups.push({ providerIndex: entry.provider, ids: [...new Set(entry.models)] });
+        }
+        const changedCount = await withMutationLock(() => setModelsEnabledMulti(groups, enabled));
         json(response, 200, { changedCount });
         return;
       }
