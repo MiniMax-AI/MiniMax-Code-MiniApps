@@ -4,11 +4,11 @@ English | [简体中文](README.zh-CN.md)
 
 A [MiniMax Code](https://github.com/MiniMax-AI) Mini App for browsing, searching, and enabling/disabling the models in your `~/.minimax/config.yaml` — no more find-and-replace in Notepad.
 
-Author: [ocoomber](https://github.com/ocoomber) · Version: `1.2.1`
+Author: [ocoomber](https://github.com/ocoomber) · Version: `1.2.2`
 
 ## What it does
 
-- **Works with any provider** — OpenRouter, custom providers, and locally hosted endpoints (Ollama, LM Studio). With more than one provider in your config, a dropdown appears to switch between them; with a single provider it stays out of the way.
+- **Works with any provider** — OpenRouter, custom providers, and locally hosted endpoints (Ollama, LM Studio). Every model block in your config is picked up automatically — all models appear in one list grouped by family, with no provider switching.
 - **Restart reminder** — a banner appears as soon as you change anything, reminding you to restart MiniMax Code (mini apps can't restart the host app for you).
 - **Search** across model IDs and display names.
 - **Instant save** — every toggle writes to your config immediately; no save button.

@@ -47,10 +47,6 @@
     background: var(--mcode-bg); color: var(--mcode-text);
   }
   .toolbar input[type='search']:focus { outline: none; border-color: var(--mcode-accent); }
-  .toolbar select {
-    height: 36px; padding: 0 8px; border: 1px solid var(--mcode-border); border-radius: 8px;
-    background: var(--mcode-bg); color: var(--mcode-text); max-width: 260px;
-  }
   .count { color: var(--mcode-text-muted); font-size: 12px; white-space: nowrap; }
   button {
     height: 36px; padding: 0 14px; border-radius: 8px; cursor: pointer;
@@ -167,7 +163,6 @@
 
   <div class="topbar">
     <section class="toolbar" aria-label="Filters and bulk actions">
-      <select id="provider" aria-label="Model provider"></select>
       <input type="search" id="search" placeholder="Search models…" aria-label="Search models" />
       <span class="count" id="count" role="status">Loading…</span>
       <button type="button" id="enableAll">Enable matching</button>
@@ -197,8 +192,6 @@
 (function () {
   'use strict';
   var models = [];
-  var providerIndex = 0;
-  var isOpenRouter = false;
   var canUndo = false;
   var collapsedGroups = {};
   var groupsCollapsed = false;
@@ -208,7 +201,6 @@
   var countEl = document.getElementById('count');
   var statusEl = document.getElementById('status');
   var scopeEl = document.getElementById('scope');
-  var providerEl = document.getElementById('provider');
   var undoBtn = document.getElementById('undo');
   var restartBanner = document.getElementById('restartBanner');
   var themeMq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -295,7 +287,7 @@
     meta.appendChild(badge);
 
     var link = null;
-    if (isOpenRouter) {
+    if (m._or) {
       link = document.createElement('a');
       link.className = 'link';
       link.href = 'https://openrouter.ai/' + m.id.replace(/^~/, '').split('/').map(encodeURIComponent).join('/');
@@ -374,7 +366,7 @@
     sw.appendChild(input);
     sw.appendChild(slider);
     input.addEventListener('change', function () {
-      toggle(m.id, input.checked, input);
+      toggle(m, input.checked, input);
     });
 
     row.appendChild(main);
@@ -485,81 +477,63 @@
     });
   }
 
-  function loadProviders(keepSelection) {
+  function load() {
+    setStatus('Loading…');
     return fetch('/api/providers')
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
       .then(function (data) {
-        providerEl.textContent = '';
         if (!data.providers.length) {
-          var opt = document.createElement('option');
-          opt.textContent = 'No providers found';
-          providerEl.appendChild(opt);
-          providerEl.hidden = true;
+          models = [];
           setStatus('No configurable models found in config.yaml.', true);
-          return [];
+          return null;
         }
-        data.providers.forEach(function (p) {
-          var opt = document.createElement('option');
-          opt.value = String(p.index);
-          opt.textContent = p.label + ' (' + p.modelCount + ')';
-          providerEl.appendChild(opt);
+        return Promise.all(data.providers.map(function (p, i) {
+          return fetch('/api/models?provider=' + i)
+            .then(function (r) {
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              return r.json();
+            })
+            .then(function (d) {
+              d.models.forEach(function (m) { m._p = i; m._or = !!d.isOpenRouter; });
+              return d.models;
+            });
+        })).then(function (lists) {
+          models = [].concat.apply([], lists);
+          setUndo(false); // fresh read; undo applies to previous session edits only
+          setStatus('');
+          render();
+          return models;
         });
-        providerEl.hidden = data.providers.length < 2;
-        if (keepSelection && providerIndex < data.providers.length) {
-          providerEl.value = String(providerIndex);
-        } else {
-          providerIndex = parseInt(providerEl.value, 10) || 0;
-        }
-        return data.providers;
+      })
+      .catch(function (e) {
+        setStatus('Failed to load config: ' + e.message, true);
       });
   }
 
-  function load() {
-    setStatus('Loading…');
-    return loadProviders(true).then(function (providers) {
-      if (!providers.length) return null;
-      return fetch('/api/models?provider=' + providerIndex).then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      });
-    }).then(function (data) {
-      if (data === null) return; // no providers: loadProviders already explained why
-      models = data.models;
-      isOpenRouter = !!data.isOpenRouter;
-      setUndo(false); // fresh read; undo applies to previous session edits only
-      setStatus('');
-      render();
-    }).catch(function (e) {
-      setStatus('Failed to load config: ' + e.message, true);
-    });
-  }
-
-  function toggle(id, enabled, inputEl) {
+  function toggle(m, enabled, inputEl) {
     setStatus('Saving…');
     fetch('/api/set', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider: providerIndex, model: id, enabled: enabled })
+      body: JSON.stringify({ provider: m._p, model: m.id, enabled: enabled })
     })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
       .then(function (d) {
-        var m = models.find(function (x) { return x.id === id; });
-        if (m) m.enabled = enabled;
+        m.enabled = enabled;
         setUndo(true);
         if (d.changed) setRestartPending(true);
-        setStatus('Saved ' + id + ' → ' + (enabled ? 'enabled' : 'disabled') + (d.changed ? '' : ' (no change)'));
+        setStatus('Saved ' + m.id + ' → ' + (enabled ? 'enabled' : 'disabled') + (d.changed ? '' : ' (no change)'));
         render();
       })
       .catch(function (e) {
         if (inputEl) inputEl.checked = !enabled;
-        var m = models.find(function (x) { return x.id === id; });
-        if (m) m.enabled = !enabled;
+        m.enabled = !enabled;
         setStatus('Save failed: ' + e.message, true);
         render();
       });
@@ -572,20 +546,27 @@
       return;
     }
     setStatus((enabled ? 'Enabling ' : 'Disabling ') + target.length + ' models…');
-    fetch('/api/bulk', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider: providerIndex, enabled: enabled, models: target.map(function (m) { return m.id; }) })
-    })
-      .then(function (r) {
+    var byProvider = {};
+    target.forEach(function (m) {
+      (byProvider[m._p] = byProvider[m._p] || []).push(m.id);
+    });
+    var calls = Object.keys(byProvider).map(function (p) {
+      return fetch('/api/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: parseInt(p, 10), enabled: enabled, models: byProvider[p] })
+      }).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
-      })
-      .then(function (data) {
+      });
+    });
+    Promise.all(calls)
+      .then(function (results) {
+        var changedCount = results.reduce(function (sum, d) { return sum + (d.changedCount || 0); }, 0);
         target.forEach(function (m) { m.enabled = enabled; });
-        setUndo(data.changedCount > 0);
-        if (data.changedCount > 0) setRestartPending(true);
-        setStatus('Updated ' + data.changedCount + ' models. Use Undo to revert.');
+        setUndo(changedCount > 0);
+        if (changedCount > 0) setRestartPending(true);
+        setStatus('Updated ' + changedCount + ' models. Use Undo to revert.');
         render();
       })
       .catch(function (e) {
@@ -636,13 +617,6 @@
   document.getElementById('chipAll').addEventListener('click', function () { setChip('all'); });
   document.getElementById('chipEnabled').addEventListener('click', function () { setChip('enabled'); });
   document.getElementById('chipDisabled').addEventListener('click', function () { setChip('disabled'); });
-  providerEl.addEventListener('change', function () {
-    providerIndex = parseInt(providerEl.value, 10) || 0;
-    collapsedGroups = {};
-    groupsCollapsed = false;
-    document.getElementById('toggleGroups').textContent = 'Collapse all';
-    load();
-  });
   searchEl.addEventListener('input', render);
   load();
 })();

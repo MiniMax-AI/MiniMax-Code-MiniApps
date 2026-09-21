@@ -4,11 +4,11 @@
 
 一个 [MiniMax Code](https://github.com/MiniMax-AI) Mini App，用于浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型 —— 不用再在记事本里查找替换了。
 
-作者：[ocoomber](https://github.com/ocoomber) · 版本：`1.2.1`
+作者：[ocoomber](https://github.com/ocoomber) · 版本：`1.2.2`
 
 ## 功能
 
-- **支持任意提供商** —— OpenRouter、自定义提供商，以及本地服务（Ollama、LM Studio）。配置里有多个提供商时会出现下拉框用于切换；只有一个时自动隐藏，不占地方。
+- **支持任意提供商** —— OpenRouter、自定义提供商，以及本地服务（Ollama、LM Studio）。自动读取配置中的所有模型块 —— 全部模型合并为一个列表，按模型家族分组，无需任何切换操作。
 - **重启提醒** —— 一旦有任何改动，页面会出现醒目的横幅，提醒你需要重启 MiniMax Code（Mini App 无法代替你重启宿主程序）。
 - **搜索** —— 同时匹配模型 ID 和显示名称。
 - **即时保存** —— 每次切换立即写入配置，没有保存按钮。
