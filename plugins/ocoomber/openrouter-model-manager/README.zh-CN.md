@@ -2,9 +2,11 @@
 
 [English](README.md) | 简体中文
 
-一个 [MiniMax Code](https://github.com/MiniMax-AI) Mini App，用于浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型 —— 不用再在记事本里查找替换了。
+一个 [MiniMax Code](https://github.com/MiniMax-AI) Mini App，用于浏览、搜索并启用/停用 MiniMax Code `config.yaml` 中的模型 —— 不用再在记事本里查找替换了。
 
-作者：[ocoomber](https://github.com/ocoomber) · 版本：`1.2.2`
+作者：[ocoomber](https://github.com/ocoomber) · 版本：`1.2.3`
+
+> 插件 ID `openrouter-model-manager` 为保持稳定而保留，但本应用**并非** OpenRouter 专用 —— 支持任意提供商（见"功能"）。
 
 ## 功能
 
@@ -14,11 +16,16 @@
 - **即时保存** —— 每次切换立即写入配置，没有保存按钮。
 - **筛选** —— 全部 / 仅启用 / 仅停用。
 - **批量操作** —— "启用匹配项 / 停用匹配项"只作用于当前搜索结果；每个模型家族也有自己的启用/停用按钮。
-- **一步撤销** —— 批量开启后后悔了？点一下即可恢复上一个配置。
-- **自动备份** —— 每次批量改动前，都会在插件数据目录的 `backups/` 里保存一份带时间戳的配置副本。
+- **一步撤销** —— 批量开启后后悔了？点一下即可恢复上一个配置。若期间配置在应用之外被修改过，撤销会拒绝执行，而不会覆盖你的改动。
+- **自动备份** —— 每次批量改动前，都会在 `config.yaml` 旁边的 `backups/` 目录里保存一份带时间戳的副本，最多保留最新 20 份。
 - **可折叠的模型家族** —— 模型按 ID 中 `/` 之前的前缀分组；家族内有已启用的模型时，折叠状态会显示绿点。
 - **OpenRouter 链接** —— 每个模型行可跳转到 OpenRouter 页面（仅 OpenRouter 提供商显示）。右键链接可选择外部浏览器、内置浏览器或复制网址。
 - **上下文长度徽标** —— 直接读取自你的配置。
+
+## 测试环境
+
+- **Windows 11**（build 10.0.26200）、**MiniMax Code 3.0.73**、插件 `1.2.3` —— 作者已完成端到端实测（切换、批量操作、撤销、重启生效流程）。
+- **macOS / Linux** 走相同代码路径，但**未经作者实测** —— 欢迎反馈问题。
 
 ## 安装
 
@@ -34,13 +41,16 @@
 
 ## 工作原理
 
-Node 运行时逐行读取 `~/.minimax/config.yaml`（不依赖 YAML 库），找出所有带 `enabled:` 开关的 `models:` 块。切换某个模型时只改写该模型的 `enabled:` 一行。所有写入都是原子性的（先写临时文件再重命名），并完整保留你文件原有的缩进和换行符。模型 ID 解析兼容 `llama3.1:latest`、`:free` 这类带冒号的写法。
+Node 运行时逐行读取 `config.yaml`（不依赖 YAML 库），找出所有带 `enabled:` 开关的 `models:` 块。切换某个模型时只改写该模型的 `enabled:` 一行。所有写入都是原子性的（先在你的配置文件旁边写临时文件 `.config.yaml.mm-tmp` 再重命名，失败时会删除临时文件），完整保留你文件原有的缩进和换行符，并且并发修改会被串行化，多次快速点击不会互相覆盖。模型 ID 解析兼容 `llama3.1:latest`、`:free` 这类带冒号的写法。
 
 视觉支持等模型能力刻意不从外部 API 获取 —— 配置文件是唯一数据来源。
 
-## 隐私
+## 隐私与数据安全
 
-应用只读写你的 `~/.minimax/config.yaml`（备份保存在插件自己的数据目录）。不发起任何网络请求，也不会显示 API Key —— 密钥在界面中始终隐藏。
+- 界面永远接触不到你的密钥：服务端只返回模型的 **id / name / enabled / contextLimit**。配置中的 API Key 不会被读入界面、不会通过 API 返回、也不会显示。
+- 应用自身**不发起任何网络请求**。
+- **进程启动（主动披露）**：唯一涉及操作系统层面的动作，是用你自己的浏览器打开 OpenRouter 模型页面 —— Windows 上通过 `rundll32`/`cmd`/`explorer`，macOS 上 `open`，Linux 上 `xdg-open`。仅接受 `https://openrouter.ai/...` 格式的网址，其余一律被服务端拒绝。
+- 配置位置：运行时优先从其数据目录解析 `config.yaml`，找不到时回退到默认的 `~/.minimax/config.yaml`。
 
 ## 文件结构
 
@@ -52,6 +62,7 @@ miniapp/client/index.html     界面（自动适配亮/暗色）
 miniapp/node/server.mjs       Node 运行时 + REST API
 miniapp/node/miniapp-api.ts   运行时 API 类型声明
 icon.png                      插件图标
+tests/parser.test.mjs         解析器测试（仅仓库内 —— 用 `node --test tests/parser.test.mjs` 运行，不随安装包发布）
 ```
 
 ## 许可证

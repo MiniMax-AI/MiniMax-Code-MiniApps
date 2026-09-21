@@ -10,7 +10,7 @@
     --mcode-surface-muted: #fafafa; --mcode-text: #171717; --mcode-text-muted: #666666;
     --mcode-text-subtle: #adadad; --mcode-border: #0a0a0a14; --mcode-border-strong: #0a0a0af2;
     --mcode-accent: #0094fc; --mcode-success: #04b54b; --mcode-danger: #f73646;
-    --mcode-warning: #b45309; --mcode-warning-bg: #fef3c7;
+    --mcode-warning: #f56811;
     --mcode-primary-action-bg: #171717; --mcode-primary-action-text: #ffffff;
   }
   [data-theme='dark'] {
@@ -18,7 +18,7 @@
     --mcode-surface-muted: #262626; --mcode-text: #ededed; --mcode-text-muted: #949494;
     --mcode-text-subtle: #666666; --mcode-border: #ffffff14; --mcode-border-strong: #fffffff2;
     --mcode-accent: #0077d9; --mcode-success: #009c3d; --mcode-danger: #e31937;
-    --mcode-warning: #fbbf24; --mcode-warning-bg: #3a2e12;
+    --mcode-warning: #e25507;
     --mcode-primary-action-bg: #ffffff; --mcode-primary-action-text: #171717;
   }
   * { box-sizing: border-box; }
@@ -32,9 +32,11 @@
   .desc {
     display: inline-flex; align-items: center; gap: 6px;
     margin: 8px 0 0; padding: 6px 12px; border-radius: 999px;
-    background: var(--mcode-warning-bg); color: var(--mcode-warning);
-    font-weight: 600; font-size: 13px;
+    background: var(--mcode-surface-muted); color: var(--mcode-text);
+    border: 1px solid var(--mcode-warning);
+    font-size: 13px;
   }
+  .desc svg { color: var(--mcode-warning); flex: none; }
   .topbar { position: sticky; top: 0; z-index: 5; background: var(--mcode-bg); }
   .toolbar {
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -64,12 +66,11 @@
   .banner {
     display: flex; align-items: center; gap: 10px;
     margin: 0 0 12px; padding: 10px 14px; border-radius: 10px;
-    background: var(--mcode-warning-bg); border: 1px solid var(--mcode-warning);
-    color: var(--mcode-warning); font-size: 13px; font-weight: 600;
+    background: var(--mcode-surface-muted); border: 1px solid var(--mcode-warning);
+    color: var(--mcode-text); font-size: 13px; font-weight: 600;
   }
-  .banner .bicon { font-size: 16px; line-height: 1; animation: banner-pulse 1.6s ease-in-out infinite; }
+  .banner .bicon { color: var(--mcode-warning); flex: none; line-height: 0; }
   .banner[hidden] { display: none; }
-  @keyframes banner-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
   .chip {
     height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px;
     border: 1px solid var(--mcode-border); background: var(--mcode-surface);
@@ -90,13 +91,18 @@
   .ghead {
     display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 6px;
     padding: 8px 16px;
-    background: var(--mcode-surface-muted); min-height: 40px; cursor: pointer; user-select: none;
-    border: none; width: 100%; text-align: left; border-radius: 0;
+    background: var(--mcode-surface-muted); min-height: 40px;
   }
   .ghead:hover { background: var(--mcode-bg-secondary); }
-  .ghead:focus-visible { outline: 2px solid var(--mcode-accent); outline-offset: -2px; }
-  .ghead .caret { flex: none; transition: transform 200ms ease-out; color: var(--mcode-text-subtle); }
-  .ghead[aria-expanded='false'] .caret { transform: rotate(-90deg); }
+  .ghead-btn {
+    display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 6px;
+    flex: 1 1 0; min-width: 0; padding: 0; border: none; background: none;
+    color: inherit; font: inherit; text-align: left; cursor: pointer; user-select: none;
+    height: 100%;
+  }
+  .ghead-btn:focus-visible { outline: 2px solid var(--mcode-accent); outline-offset: 2px; }
+  .ghead-btn .caret { flex: none; transition: transform 200ms ease-out; color: var(--mcode-text-subtle); }
+  .ghead-btn[aria-expanded='false'] .caret { transform: rotate(-90deg); }
   .gdot {
     flex: none; width: 8px; height: 8px; border-radius: 50%;
     background: var(--mcode-success); opacity: 0;
@@ -113,7 +119,7 @@
   .gactions { display: flex; gap: 8px; flex: 0 1 240px; }
   .gactions button { flex: 1 1 auto; }
   .rows { border-top: 1px solid var(--mcode-border); }
-  .ghead[aria-expanded='false'] + .rows { display: none; }
+  .group.collapsed .rows { display: none; }
   .row {
     display: flex; align-items: center; gap: 12px; padding: 8px 16px;
     border-bottom: 1px solid var(--mcode-border); min-height: 40px;
@@ -159,7 +165,7 @@
 <body>
 <main class="wrap">
   <h1>Model Manager</h1>
-  <p class="desc">🔄 Changes here don't apply until you restart MiniMax Code</p>
+  <p class="desc"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><polyline points="23 4 23 10 17 10"/></svg>Changes here don't apply until you restart MiniMax Code</p>
 
   <div class="topbar">
     <section class="toolbar" aria-label="Filters and bulk actions">
@@ -178,7 +184,7 @@
       <button type="button" class="chip" id="toggleGroups">Collapse all</button>
     </section>
     <div class="banner" id="restartBanner" role="status" hidden>
-      <span class="bicon" aria-hidden="true">🔄</span>
+      <span class="bicon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><polyline points="23 4 23 10 17 10"/></svg></span>
       <span>Changes saved — restart MiniMax Code to apply them.</span>
     </div>
   </div>
@@ -320,7 +326,7 @@
         e.preventDefault();
         var menu = document.createElement('div');
         menu.setAttribute('role', 'menu');
-        menu.style.cssText = 'position:fixed;z-index:100;background:var(--mcode-surface);border:1px solid var(--mcode-border);border-radius:8px;box-shadow:0 0 20px rgb(10 10 10 / 12%);padding:4px;min-width:180px;';
+        menu.style.cssText = 'position:fixed;z-index:100;background:var(--mcode-surface);border:1px solid var(--mcode-border);border-radius:12px;box-shadow:0 0 20px rgb(10 10 10 / 8%);padding:4px;min-width:180px;';
         function item(label, fn) {
           var b = document.createElement('button');
           b.type = 'button';
@@ -332,9 +338,18 @@
           b.addEventListener('click', function () { cleanup(); fn(); });
           return b;
         }
-        function cleanup() {
+        function cleanup(refocus) {
           document.removeEventListener('click', onDocClick, true);
+          document.removeEventListener('keydown', onKeydown, true);
           menu.remove();
+          if (refocus) link.focus();
+        }
+        function onKeydown(e) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            cleanup(true);
+          }
         }
         function onDocClick() { cleanup(); }
         menu.appendChild(item('Open in external browser', openExternal));
@@ -351,7 +366,12 @@
         document.body.appendChild(menu);
         menu.style.left = Math.min(e.clientX, window.innerWidth - 200) + 'px';
         menu.style.top = Math.min(e.clientY, window.innerHeight - 130) + 'px';
-        setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+        setTimeout(function () {
+          document.addEventListener('click', onDocClick, true);
+          document.addEventListener('keydown', onKeydown, true);
+        }, 0);
+        var firstItem = menu.querySelector('[role="menuitem"]');
+        if (firstItem) firstItem.focus();
       });
     }
 
@@ -396,18 +416,21 @@
 
     groupModels(filtered).forEach(function (g) {
       var sec = document.createElement('div');
-      sec.className = 'group';
+      sec.className = 'group' + (collapsedGroups[g.family] ? ' collapsed' : '');
 
       var head = document.createElement('div');
       head.className = 'ghead';
-      head.setAttribute('role', 'button');
-      head.tabIndex = 0;
-      head.setAttribute('aria-expanded', collapsedGroups[g.family] ? 'false' : 'true');
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ghead-btn';
+      btn.setAttribute('aria-expanded', collapsedGroups[g.family] ? 'false' : 'true');
+      btn.setAttribute('aria-controls', 'rows-' + g.family);
 
       var caret = document.createElement('span');
       caret.className = 'caret';
-      caret.textContent = '▾';
       caret.setAttribute('aria-hidden', 'true');
+      caret.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 
       var nm = document.createElement('span');
       nm.className = 'gname';
@@ -428,20 +451,14 @@
       bEn.className = 'mini';
       bEn.textContent = 'Enable group';
       bEn.setAttribute('aria-label', 'Enable all ' + g.family + ' models');
-      bEn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        bulk(true, g.models);
-      });
+      bEn.addEventListener('click', function () { bulk(true, g.models); });
 
       var bDis = document.createElement('button');
       bDis.type = 'button';
       bDis.className = 'mini danger';
       bDis.textContent = 'Disable group';
       bDis.setAttribute('aria-label', 'Disable all ' + g.family + ' models');
-      bDis.addEventListener('click', function (e) {
-        e.stopPropagation();
-        bulk(false, g.models);
-      });
+      bDis.addEventListener('click', function () { bulk(false, g.models); });
 
       var actions = document.createElement('span');
       actions.className = 'gactions';
@@ -450,25 +467,21 @@
 
       function toggleGroup() {
         collapsedGroups[g.family] = !collapsedGroups[g.family];
-        head.setAttribute('aria-expanded', collapsedGroups[g.family] ? 'false' : 'true');
+        btn.setAttribute('aria-expanded', collapsedGroups[g.family] ? 'false' : 'true');
+        sec.classList.toggle('collapsed', collapsedGroups[g.family]);
         dot.classList.toggle('on', collapsedGroups[g.family] && enCount > 0);
       }
-      head.appendChild(dot);
-      head.appendChild(caret);
-      head.appendChild(nm);
-      head.appendChild(gc);
+      btn.appendChild(dot);
+      btn.appendChild(caret);
+      btn.appendChild(nm);
+      btn.appendChild(gc);
+      btn.addEventListener('click', toggleGroup);
+      head.appendChild(btn);
       head.appendChild(actions);
-      head.addEventListener('click', toggleGroup);
-      head.addEventListener('keydown', function (e) {
-        if (e.target !== head) return;
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggleGroup();
-        }
-      });
 
       var rows = document.createElement('div');
       rows.className = 'rows';
+      rows.id = 'rows-' + g.family;
       g.models.forEach(function (m) { rows.appendChild(makeRow(m)); });
 
       sec.appendChild(head);
@@ -526,7 +539,7 @@
       })
       .then(function (d) {
         m.enabled = enabled;
-        setUndo(true);
+        setUndo(!!d.changed);
         if (d.changed) setRestartPending(true);
         setStatus('Saved ' + m.id + ' → ' + (enabled ? 'enabled' : 'disabled') + (d.changed ? '' : ' (no change)'));
         render();
@@ -588,7 +601,11 @@
           return load().then(function () { setStatus('Last change reverted.'); });
         }
         setUndo(false);
-        setStatus('Nothing to undo.');
+        if (d.stale) {
+          setStatus('The config file changed outside the app since your last change. Reload to refresh.', true);
+        } else {
+          setStatus('Nothing to undo.');
+        }
       })
       .catch(function (e) {
         setStatus('Undo failed: ' + e.message, true);

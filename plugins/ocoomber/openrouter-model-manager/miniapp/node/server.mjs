@@ -3,7 +3,8 @@
 // Discovers any provider block containing discovered models (OpenRouter,
 // custom providers, locally hosted endpoints such as Ollama/LM Studio).
 
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, readdir, unlink, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
@@ -12,24 +13,78 @@ import { spawn } from 'node:child_process';
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
 
-const CONFIG_PATH = join(homedir(), '.minimax', 'config.yaml');
+/** Absolute path of the config file, resolved once at startup. */
+let CONFIG_PATH = join(homedir(), '.minimax', 'config.yaml');
+
+/**
+ * Resolve config.yaml from the runtime-provided data directory first so that
+ * non-default data directories / profiles work, falling back to the default
+ * ~/.minimax location.
+ */
+function resolveConfigPath(dataDir) {
+  const candidates = [];
+  if (dataDir) candidates.push(join(dataDir, 'config.yaml'));
+  candidates.push(join(homedir(), '.minimax', 'config.yaml'));
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
 
 async function readConfigText() {
   return readFile(CONFIG_PATH, 'utf8');
 }
 
-/** Split config text into lines, remembering the dominant EOL so writes preserve it. */
+/**
+ * Split config text into lines, remembering each line's own terminator
+ * (CRLF, LF, or CR) so writes preserve line endings exactly — including
+ * files that mix them. The final entry has an empty terminator.
+ */
 export function splitConfigText(text) {
-  return {
-    lines: text.split(/\r?\n/),
-    eol: text.includes('\r\n') ? '\r\n' : '\n',
-  };
+  const lines = [];
+  const terms = [];
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch !== '\n' && ch !== '\r') { i++; continue; }
+    let term = ch;
+    i++;
+    if (term === '\r' && text[i] === '\n') { term = '\r\n'; i++; }
+    lines.push(text.slice(start, i - term.length));
+    terms.push(term);
+    start = i;
+  }
+  lines.push(text.slice(start));
+  terms.push('');
+  return { lines, terms };
 }
 
-async function writeConfigLines(lines, eol) {
+/** Re-join parsed lines with their original terminators. */
+export function joinConfigText({ lines, terms }) {
+  return lines.map((line, i) => line + (terms[i] ?? '')).join('');
+}
+
+/** Atomic write: preserve the original file mode, remove the temp file on failure. */
+async function writeConfigText(parsed) {
   const tmp = join(dirname(CONFIG_PATH), '.config.yaml.mm-tmp');
-  await writeFile(tmp, lines.join(eol), 'utf8');
-  await rename(tmp, CONFIG_PATH);
+  let mode;
+  try {
+    mode = (await stat(CONFIG_PATH)).mode & 0o777;
+  } catch {
+    // config.yaml may not exist yet; use the default creation mode
+  }
+  try {
+    if (mode === undefined) {
+      await writeFile(tmp, joinConfigText(parsed), 'utf8');
+    } else {
+      await writeFile(tmp, joinConfigText(parsed), { encoding: 'utf8', mode });
+    }
+    await rename(tmp, CONFIG_PATH);
+  } catch (error) {
+    try { await unlink(tmp); } catch { /* already gone */ }
+    throw error;
+  }
 }
 
 /**
@@ -111,71 +166,97 @@ function findProvider(providers, index) {
   return providers[index];
 }
 
-/** One-level undo: raw config text taken before the most recent mutation. */
+/** One-level undo: config texts around the most recent mutation.
+ *  `prev` is the file before the mutation, `after` after it — used to
+ *  detect edits made outside the app since the snapshot. */
 let lastSnapshot = null;
 
-async function takeSnapshot(text, withBackup, dataDir) {
-  lastSnapshot = text;
-  if (withBackup && dataDir) {
-    try {
-      const backupDir = join(dataDir, 'backups');
-      await mkdir(backupDir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      await writeFile(join(backupDir, `config-${stamp}.yaml`), text, 'utf8');
-    } catch {
-      // backup is best-effort; never block the mutation
+/** Keep only the newest MAX_BACKUPS backups. */
+const MAX_BACKUPS = 20;
+
+async function takeSnapshot(text, withBackup) {
+  lastSnapshot = { prev: text, after: null };
+  if (!withBackup) return;
+  try {
+    const backupDir = join(dirname(CONFIG_PATH), 'backups');
+    await mkdir(backupDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    await writeFile(join(backupDir, `config-${stamp}.yaml`), text, 'utf8');
+    const entries = (await readdir(backupDir)).filter((f) => /^config-.*\.yaml$/.test(f)).sort();
+    const stale = entries.slice(0, Math.max(0, entries.length - MAX_BACKUPS));
+    for (const name of stale) {
+      try { await unlink(join(backupDir, name)); } catch { /* best effort */ }
     }
+  } catch {
+    // backup is best-effort; never block the mutation
   }
+}
+
+/** Serialize every config mutation: each one is a full-file read → modify →
+ *  write, so parallel requests must not interleave or they would clobber
+ *  each other's changes (and the undo snapshot). */
+let mutationTail = Promise.resolve();
+function withMutationLock(task) {
+  const run = mutationTail.then(task, task);
+  mutationTail = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 async function undo() {
   if (lastSnapshot === null) return { undone: false };
-  const tmp = join(dirname(CONFIG_PATH), '.config.yaml.mm-tmp');
-  await writeFile(tmp, lastSnapshot, 'utf8');
-  await rename(tmp, CONFIG_PATH);
+  const current = await readConfigText();
+  if (lastSnapshot.after !== null && current !== lastSnapshot.after) {
+    // The file changed outside the app since the snapshot; refuse rather than clobber it.
+    return { undone: false, stale: true };
+  }
+  await writeConfigText({ lines: [lastSnapshot.prev], terms: [''] });
   lastSnapshot = null;
   return { undone: true };
 }
 
-function currentEnabled(line) {
+export function currentEnabled(line) {
   const m = line.match(/enabled:\s*(true|false)/);
   return m ? m[1] : null;
 }
 
-function setEnabledOnLine(line, enabled) {
+export function setEnabledOnLine(line, enabled) {
   return line.replace(/(enabled:\s*)(true|false)/, `$1${enabled}`);
 }
 
 async function setModelEnabled(providerIndex, modelId, enabled) {
   const text = await readConfigText();
-  const { lines, eol } = splitConfigText(text);
-  const provider = findProvider(parseProviders(lines), providerIndex);
+  const parsed = splitConfigText(text);
+  const provider = findProvider(parseProviders(parsed.lines), providerIndex);
   if (!provider) throw new Error('Provider not found');
   const model = provider.models.find((m) => m.id === modelId);
   if (!model) throw new Error(`Unknown model: ${modelId}`);
-  const line = lines[model.enabledIndex];
+  const line = parsed.lines[model.enabledIndex];
   if (currentEnabled(line) === String(enabled)) return { changed: false };
   await takeSnapshot(text, false);
-  lines[model.enabledIndex] = setEnabledOnLine(line, enabled);
-  await writeConfigLines(lines, eol);
+  parsed.lines[model.enabledIndex] = setEnabledOnLine(line, enabled);
+  const written = joinConfigText(parsed);
+  await writeConfigText(parsed);
+  if (lastSnapshot) lastSnapshot.after = written;
   return { changed: true };
 }
 
-async function setModelsEnabled(providerIndex, ids, enabled, dataDir) {
+async function setModelsEnabled(providerIndex, ids, enabled) {
   const text = await readConfigText();
-  const { lines, eol } = splitConfigText(text);
-  const provider = findProvider(parseProviders(lines), providerIndex);
+  const parsed = splitConfigText(text);
+  const provider = findProvider(parseProviders(parsed.lines), providerIndex);
   if (!provider) throw new Error('Provider not found');
   const wanted = new Set(ids);
   const touched = provider.models.filter(
-    (m) => wanted.has(m.id) && currentEnabled(lines[m.enabledIndex]) !== String(enabled),
+    (m) => wanted.has(m.id) && currentEnabled(parsed.lines[m.enabledIndex]) !== String(enabled),
   );
   if (touched.length > 0) {
-    await takeSnapshot(text, true, dataDir);
+    await takeSnapshot(text, true);
     for (const m of touched) {
-      lines[m.enabledIndex] = setEnabledOnLine(lines[m.enabledIndex], enabled);
+      parsed.lines[m.enabledIndex] = setEnabledOnLine(parsed.lines[m.enabledIndex], enabled);
     }
-    await writeConfigLines(lines, eol);
+    const written = joinConfigText(parsed);
+    await writeConfigText(parsed);
+    if (lastSnapshot) lastSnapshot.after = written;
   }
   return touched.length;
 }
@@ -250,6 +331,8 @@ function openExternal(url, logger) {
 }
 
 export async function start(context) {
+  CONFIG_PATH = resolveConfigPath(context.dataDir);
+
   const clientIndex = await readFile(
     join(context.pluginRoot, 'miniapp/client/index.html'),
     'utf8',
@@ -271,7 +354,6 @@ export async function start(context) {
         const { lines } = splitConfigText(await readConfigText());
         const providers = parseProviders(lines);
         json(response, 200, {
-          configPath: CONFIG_PATH,
           providers: providers.map((p, i) => ({
             index: i,
             label: p.label,
@@ -313,7 +395,9 @@ export async function start(context) {
           json(response, 400, { error: 'invalid_arguments' });
           return;
         }
-        const result = await setModelEnabled(typeof provider === 'number' ? provider : 0, model, enabled);
+        const result = await withMutationLock(() =>
+          setModelEnabled(typeof provider === 'number' ? provider : 0, model, enabled),
+        );
         json(response, 200, result);
         return;
       }
@@ -328,11 +412,12 @@ export async function start(context) {
           json(response, 400, { error: 'invalid_arguments' });
           return;
         }
-        const changedCount = await setModelsEnabled(
-          typeof provider === 'number' ? provider : 0,
-          [...new Set(models)],
-          enabled,
-          context.dataDir,
+        const changedCount = await withMutationLock(() =>
+          setModelsEnabled(
+            typeof provider === 'number' ? provider : 0,
+            [...new Set(models)],
+            enabled,
+          ),
         );
         json(response, 200, { changedCount });
         return;
@@ -340,7 +425,7 @@ export async function start(context) {
 
       // One-level undo of the most recent mutation.
       if (request.method === 'POST' && url.pathname === '/api/undo') {
-        const result = await undo();
+        const result = await withMutationLock(() => undo());
         json(response, 200, result);
         return;
       }
@@ -363,7 +448,7 @@ export async function start(context) {
       json(response, 404, { error: 'not_found' });
     } catch (error) {
       context.logger.error('miniapp.request.failed', { route, message: String(error?.message ?? error) });
-      json(response, 500, { error: 'internal_error', message: String(error?.message ?? error) });
+      json(response, 500, { error: 'internal_error' });
     }
   });
 
