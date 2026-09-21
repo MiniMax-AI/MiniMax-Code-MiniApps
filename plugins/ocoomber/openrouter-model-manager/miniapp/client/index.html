@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Model Manager</title>
+<style>
+  :root, [data-theme='light'] {
+    --mcode-bg: #ffffff; --mcode-bg-secondary: #f5f5f5; --mcode-surface: #ffffff;
+    --mcode-surface-muted: #fafafa; --mcode-text: #171717; --mcode-text-muted: #666666;
+    --mcode-text-subtle: #adadad; --mcode-border: #0a0a0a14; --mcode-border-strong: #0a0a0af2;
+    --mcode-accent: #0094fc; --mcode-success: #04b54b; --mcode-danger: #f73646;
+    --mcode-warning: #b45309; --mcode-warning-bg: #fef3c7;
+    --mcode-primary-action-bg: #171717; --mcode-primary-action-text: #ffffff;
+  }
+  [data-theme='dark'] {
+    --mcode-bg: #171717; --mcode-bg-secondary: #1c1c1c; --mcode-surface: #262626;
+    --mcode-surface-muted: #262626; --mcode-text: #ededed; --mcode-text-muted: #949494;
+    --mcode-text-subtle: #666666; --mcode-border: #ffffff14; --mcode-border-strong: #fffffff2;
+    --mcode-accent: #0077d9; --mcode-success: #009c3d; --mcode-danger: #e31937;
+    --mcode-warning: #fbbf24; --mcode-warning-bg: #3a2e12;
+    --mcode-primary-action-bg: #ffffff; --mcode-primary-action-text: #171717;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--mcode-bg); color: var(--mcode-text);
+    font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 24px 48px; }
+  h1 { font-size: 18px; line-height: 28px; font-weight: 600; margin: 0; }
+  .desc {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 8px 0 0; padding: 6px 12px; border-radius: 999px;
+    background: var(--mcode-warning-bg); color: var(--mcode-warning);
+    font-weight: 600; font-size: 13px;
+  }
+  .topbar { position: sticky; top: 0; z-index: 5; background: var(--mcode-bg); }
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin: 16px 0 12px; padding: 12px; background: var(--mcode-surface-muted);
+    border: 1px solid var(--mcode-border); border-radius: 12px;
+  }
+  .toolbar input[type='search'] {
+    flex: 1; min-width: 160px; height: 36px; padding: 0 12px;
+    border: 1px solid var(--mcode-border); border-radius: 8px;
+    background: var(--mcode-bg); color: var(--mcode-text);
+  }
+  .toolbar input[type='search']:focus { outline: none; border-color: var(--mcode-accent); }
+  .toolbar select {
+    height: 36px; padding: 0 8px; border: 1px solid var(--mcode-border); border-radius: 8px;
+    background: var(--mcode-bg); color: var(--mcode-text); max-width: 260px;
+  }
+  .count { color: var(--mcode-text-muted); font-size: 12px; white-space: nowrap; }
+  button {
+    height: 36px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; border: 1px solid var(--mcode-border);
+    background: var(--mcode-surface-muted); color: var(--mcode-text);
+    white-space: nowrap;
+    transition: background 150ms ease-out, border-color 150ms ease-out;
+  }
+  button:hover { background: var(--mcode-bg-secondary); border-color: var(--mcode-border-strong); }
+  button:focus-visible { outline: 2px solid var(--mcode-accent); outline-offset: 2px; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.danger { color: var(--mcode-danger); border-color: var(--mcode-danger); background: transparent; }
+  button.mini { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 6px; }
+  .chips { display: flex; gap: 8px; margin: 0 0 12px; align-items: center; flex-wrap: wrap; }
+  .banner {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 0 12px; padding: 10px 14px; border-radius: 10px;
+    background: var(--mcode-warning-bg); border: 1px solid var(--mcode-warning);
+    color: var(--mcode-warning); font-size: 13px; font-weight: 600;
+  }
+  .banner .bicon { font-size: 16px; line-height: 1; animation: banner-pulse 1.6s ease-in-out infinite; }
+  .banner[hidden] { display: none; }
+  @keyframes banner-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .chip {
+    height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px;
+    border: 1px solid var(--mcode-border); background: var(--mcode-surface);
+    color: var(--mcode-text-muted); cursor: pointer;
+  }
+  .chip[aria-pressed='true'] {
+    background: var(--mcode-primary-action-bg); color: var(--mcode-primary-action-text);
+    border-color: transparent;
+  }
+  .chip:hover { border-color: var(--mcode-border-strong); }
+  .scope { font-size: 12px; color: var(--mcode-text-muted); width: 100%; }
+  .scope b { color: var(--mcode-text); }
+  .status { min-height: 20px; margin: 0 0 8px; font-size: 12px; color: var(--mcode-text-muted); }
+  .status[role='alert'] { color: var(--mcode-danger); }
+  .list { border: 1px solid var(--mcode-border); border-radius: 12px; overflow: hidden; background: var(--mcode-surface); }
+  .group { border-bottom: 1px solid var(--mcode-border); }
+  .group:last-child { border-bottom: none; }
+  .ghead {
+    display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 6px;
+    padding: 8px 16px;
+    background: var(--mcode-surface-muted); min-height: 40px; cursor: pointer; user-select: none;
+    border: none; width: 100%; text-align: left; border-radius: 0;
+  }
+  .ghead:hover { background: var(--mcode-bg-secondary); }
+  .ghead:focus-visible { outline: 2px solid var(--mcode-accent); outline-offset: -2px; }
+  .ghead .caret { flex: none; transition: transform 200ms ease-out; color: var(--mcode-text-subtle); }
+  .ghead[aria-expanded='false'] .caret { transform: rotate(-90deg); }
+  .gdot {
+    flex: none; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--mcode-success); opacity: 0;
+  }
+  .gdot.on { opacity: 1; }
+  .gname {
+    font-weight: 600; flex: 1 1 0; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .gcount {
+    font-size: 12px; color: var(--mcode-text-muted);
+    white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  }
+  .gactions { display: flex; gap: 8px; flex: 0 1 240px; }
+  .gactions button { flex: 1 1 auto; }
+  .rows { border-top: 1px solid var(--mcode-border); }
+  .ghead[aria-expanded='false'] + .rows { display: none; }
+  .row {
+    display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+    border-bottom: 1px solid var(--mcode-border); min-height: 40px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row:hover { background: var(--mcode-surface-muted); }
+  .rowmain { flex: 1; min-width: 0; }
+  .rowname { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rowid {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--mcode-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .meta { display: flex; gap: 6px; flex: none; align-items: center; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .badge.ctx { color: var(--mcode-text-muted); border: 1px solid var(--mcode-border); }
+  .badge.on { color: var(--mcode-success); border: 1px solid var(--mcode-success); }
+  .badge.off { color: var(--mcode-text-subtle); border: 1px solid var(--mcode-border); }
+  .link { flex: none; color: var(--mcode-accent); text-decoration: none; font-size: 13px; }
+  .link:hover { text-decoration: underline; }
+  .switch { position: relative; width: 40px; height: 22px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .slider {
+    position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
+    background: var(--mcode-border); transition: background 150ms ease-out;
+    border: 1px solid var(--mcode-border);
+  }
+  .slider::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--mcode-surface); transition: transform 150ms ease-out;
+  }
+  .switch input:checked + .slider { background: var(--mcode-success); }
+  .switch input:checked + .slider::after { transform: translateX(18px); }
+  .switch input:focus-visible + .slider { outline: 2px solid var(--mcode-accent); outline-offset: 2px; }
+  .empty { padding: 32px 16px; text-align: center; color: var(--mcode-text-subtle); }
+  @media (max-width: 640px) { .link { display: none; } }
+  @media (max-width: 520px) { .gactions { flex: 1 1 100%; } }
+  @media (max-width: 480px) { .badge.ctx { display: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>Model Manager</h1>
+  <p class="desc">🔄 Changes here don't apply until you restart MiniMax Code</p>
+
+  <div class="topbar">
+    <section class="toolbar" aria-label="Filters and bulk actions">
+      <select id="provider" aria-label="Model provider"></select>
+      <input type="search" id="search" placeholder="Search models…" aria-label="Search models" />
+      <span class="count" id="count" role="status">Loading…</span>
+      <button type="button" id="enableAll">Enable matching</button>
+      <button type="button" id="disableAll" class="danger">Disable matching</button>
+      <button type="button" id="undo" disabled title="Undo the last change">Undo</button>
+      <button type="button" id="refresh" aria-label="Reload from config">Reload</button>
+      <span class="scope" id="scope" role="status"></span>
+    </section>
+    <section class="chips" aria-label="Filters">
+      <button type="button" class="chip" id="chipAll" aria-pressed="true">All</button>
+      <button type="button" class="chip" id="chipEnabled" aria-pressed="false">Enabled only</button>
+      <button type="button" class="chip" id="chipDisabled" aria-pressed="false">Disabled only</button>
+      <button type="button" class="chip" id="toggleGroups">Collapse all</button>
+    </section>
+    <div class="banner" id="restartBanner" role="status" hidden>
+      <span class="bicon" aria-hidden="true">🔄</span>
+      <span>Changes saved — restart MiniMax Code to apply them.</span>
+    </div>
+  </div>
+
+  <p class="status" id="status" role="status"></p>
+
+  <section class="list" id="list" aria-label="Models"></section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var models = [];
+  var providerIndex = 0;
+  var isOpenRouter = false;
+  var canUndo = false;
+  var collapsedGroups = {};
+  var groupsCollapsed = false;
+  var stateFilter = 'all'; // all | enabled | disabled
+  var listEl = document.getElementById('list');
+  var searchEl = document.getElementById('search');
+  var countEl = document.getElementById('count');
+  var statusEl = document.getElementById('status');
+  var scopeEl = document.getElementById('scope');
+  var providerEl = document.getElementById('provider');
+  var undoBtn = document.getElementById('undo');
+  var restartBanner = document.getElementById('restartBanner');
+  var themeMq = window.matchMedia('(prefers-color-scheme: dark)');
+  function applyTheme() {
+    document.documentElement.setAttribute('data-theme', themeMq.matches ? 'dark' : 'light');
+  }
+  themeMq.addEventListener('change', applyTheme);
+  applyTheme();
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg || '';
+    if (isError) { statusEl.setAttribute('role', 'alert'); }
+    else { statusEl.setAttribute('role', 'status'); }
+  }
+
+  function setUndo(available) {
+    canUndo = available;
+    undoBtn.disabled = !available;
+    undoBtn.title = available ? 'Undo the last change' : 'Nothing to undo';
+  }
+
+  function setRestartPending(pending) {
+    restartBanner.hidden = !pending;
+  }
+
+  function familyOf(m) {
+    var id = m.id.replace(/^~/, '');
+    var slash = id.indexOf('/');
+    return slash > 0 ? id.slice(0, slash) : 'other';
+  }
+
+  function currentFilter() {
+    var q = searchEl.value.trim().toLowerCase();
+    return models.filter(function (m) {
+      if (stateFilter === 'enabled' && !m.enabled) return false;
+      if (stateFilter === 'disabled' && m.enabled) return false;
+      if (!q) return true;
+      return m.id.toLowerCase().indexOf(q) !== -1 || m.name.toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  function fmtCtx(n) {
+    if (!n) return '';
+    return n >= 1000000 ? (n / 1000000) + 'M' : Math.round(n / 1000) + 'k';
+  }
+
+  function groupModels(filtered) {
+    var groups = {};
+    filtered.forEach(function (m) {
+      var fam = familyOf(m);
+      (groups[fam] = groups[fam] || []).push(m);
+    });
+    return Object.keys(groups).sort().map(function (fam) {
+      return { family: fam, models: groups[fam] };
+    });
+  }
+
+  function makeRow(m) {
+    var row = document.createElement('div');
+    row.className = 'row';
+
+    var main = document.createElement('div');
+    main.className = 'rowmain';
+    var nameEl = document.createElement('div');
+    nameEl.className = 'rowname';
+    nameEl.textContent = m.name || m.id;
+    var idEl = document.createElement('div');
+    idEl.className = 'rowid';
+    idEl.textContent = m.id;
+    main.appendChild(nameEl);
+    main.appendChild(idEl);
+
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    if (m.contextLimit) {
+      var ctx = document.createElement('span');
+      ctx.className = 'badge ctx';
+      ctx.textContent = fmtCtx(m.contextLimit) + ' ctx';
+      meta.appendChild(ctx);
+    }
+    var badge = document.createElement('span');
+    badge.className = 'badge ' + (m.enabled ? 'on' : 'off');
+    badge.textContent = m.enabled ? 'Enabled' : 'Disabled';
+    meta.appendChild(badge);
+
+    var link = null;
+    if (isOpenRouter) {
+      link = document.createElement('a');
+      link.className = 'link';
+      link.href = 'https://openrouter.ai/' + m.id.replace(/^~/, '').split('/').map(encodeURIComponent).join('/');
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'OpenRouter ↗';
+      link.setAttribute('aria-label', 'Open ' + m.id + ' on OpenRouter');
+      function openExternal() {
+        setStatus('Opening ' + link.href + ' in your browser…');
+        fetch('/api/open-external', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url: link.href })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.opened) { setStatus('Asked your browser to open: ' + link.href); }
+            else { setStatus('Could not open externally.', true); }
+          })
+          .catch(function (e) {
+            setStatus('External open failed (' + e.message + '), using in-app browser…');
+            window.open(link.href, '_blank', 'noopener');
+          });
+      }
+      link.addEventListener('click', function (e) { e.preventDefault(); openExternal(); });
+      link.addEventListener('auxclick', function (e) {
+        if (e.button === 1) { e.preventDefault(); openExternal(); }
+      });
+      link.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        var menu = document.createElement('div');
+        menu.setAttribute('role', 'menu');
+        menu.style.cssText = 'position:fixed;z-index:100;background:var(--mcode-surface);border:1px solid var(--mcode-border);border-radius:8px;box-shadow:0 0 20px rgb(10 10 10 / 12%);padding:4px;min-width:180px;';
+        function item(label, fn) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = label;
+          b.setAttribute('role', 'menuitem');
+          b.style.cssText = 'display:block;width:100%;text-align:left;border:none;background:transparent;height:32px;border-radius:6px;cursor:pointer;font-size:13px;';
+          b.addEventListener('mouseenter', function () { b.style.background = 'var(--mcode-surface-muted)'; });
+          b.addEventListener('mouseleave', function () { b.style.background = 'transparent'; });
+          b.addEventListener('click', function () { cleanup(); fn(); });
+          return b;
+        }
+        function cleanup() {
+          document.removeEventListener('click', onDocClick, true);
+          menu.remove();
+        }
+        function onDocClick() { cleanup(); }
+        menu.appendChild(item('Open in external browser', openExternal));
+        menu.appendChild(item('Open in built-in browser', function () {
+          window.open(link.href, '_blank', 'noopener');
+        }));
+        menu.appendChild(item('Copy link', function () {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(link.href).then(function () {
+              setStatus('Link copied: ' + link.href);
+            });
+          }
+        }));
+        document.body.appendChild(menu);
+        menu.style.left = Math.min(e.clientX, window.innerWidth - 200) + 'px';
+        menu.style.top = Math.min(e.clientY, window.innerHeight - 130) + 'px';
+        setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+      });
+    }
+
+    var sw = document.createElement('label');
+    sw.className = 'switch';
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = m.enabled;
+    input.setAttribute('aria-label', 'Toggle ' + m.id);
+    var slider = document.createElement('span');
+    slider.className = 'slider';
+    sw.appendChild(input);
+    sw.appendChild(slider);
+    input.addEventListener('change', function () {
+      toggle(m.id, input.checked, input);
+    });
+
+    row.appendChild(main);
+    row.appendChild(meta);
+    if (link) row.appendChild(link);
+    row.appendChild(sw);
+    return row;
+  }
+
+  function render() {
+    var filtered = currentFilter();
+    countEl.textContent = filtered.length + ' of ' + models.length + ' shown';
+    if (searchEl.value.trim()) {
+      scopeEl.innerHTML = 'Bulk buttons apply to the <b>' + filtered.length + '</b> matching models only.';
+    } else {
+      scopeEl.innerHTML = 'Bulk buttons apply to <b>all ' + filtered.length + '</b> shown models.';
+    }
+
+    listEl.textContent = '';
+    if (filtered.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'No models match the current search/filters.';
+      listEl.appendChild(empty);
+      return;
+    }
+
+    groupModels(filtered).forEach(function (g) {
+      var sec = document.createElement('div');
+      sec.className = 'group';
+
+      var head = document.createElement('div');
+      head.className = 'ghead';
+      head.setAttribute('role', 'button');
+      head.tabIndex = 0;
+      head.setAttribute('aria-expanded', collapsedGroups[g.family] ? 'false' : 'true');
+
+      var caret = document.createElement('span');
+      caret.className = 'caret';
+      caret.textContent = '▾';
+      caret.setAttribute('aria-hidden', 'true');
+
+      var nm = document.createElement('span');
+      nm.className = 'gname';
+      nm.textContent = g.family.charAt(0).toUpperCase() + g.family.slice(1);
+
+      var enCount = g.models.filter(function (m) { return m.enabled; }).length;
+
+      var dot = document.createElement('span');
+      dot.className = 'gdot' + (collapsedGroups[g.family] && enCount > 0 ? ' on' : '');
+      dot.setAttribute('aria-hidden', 'true');
+
+      var gc = document.createElement('span');
+      gc.className = 'gcount';
+      gc.textContent = g.models.length + ' models · ' + enCount + ' enabled';
+
+      var bEn = document.createElement('button');
+      bEn.type = 'button';
+      bEn.className = 'mini';
+      bEn.textContent = 'Enable group';
+      bEn.setAttribute('aria-label', 'Enable all ' + g.family + ' models');
+      bEn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        bulk(true, g.models);
+      });
+
+      var bDis = document.createElement('button');
+      bDis.type = 'button';
+      bDis.className = 'mini danger';
+      bDis.textContent = 'Disable group';
+      bDis.setAttribute('aria-label', 'Disable all ' + g.family + ' models');
+      bDis.addEventListener('click', function (e) {
+        e.stopPropagation();
+        bulk(false, g.models);
+      });
+
+      var actions = document.createElement('span');
+      actions.className = 'gactions';
+      actions.appendChild(bEn);
+      actions.appendChild(bDis);
+
+      function toggleGroup() {
+        collapsedGroups[g.family] = !collapsedGroups[g.family];
+        head.setAttribute('aria-expanded', collapsedGroups[g.family] ? 'false' : 'true');
+        dot.classList.toggle('on', collapsedGroups[g.family] && enCount > 0);
+      }
+      head.appendChild(dot);
+      head.appendChild(caret);
+      head.appendChild(nm);
+      head.appendChild(gc);
+      head.appendChild(actions);
+      head.addEventListener('click', toggleGroup);
+      head.addEventListener('keydown', function (e) {
+        if (e.target !== head) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleGroup();
+        }
+      });
+
+      var rows = document.createElement('div');
+      rows.className = 'rows';
+      g.models.forEach(function (m) { rows.appendChild(makeRow(m)); });
+
+      sec.appendChild(head);
+      sec.appendChild(rows);
+      listEl.appendChild(sec);
+    });
+  }
+
+  function loadProviders(keepSelection) {
+    return fetch('/api/providers')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        providerEl.textContent = '';
+        if (!data.providers.length) {
+          var opt = document.createElement('option');
+          opt.textContent = 'No providers found';
+          providerEl.appendChild(opt);
+          providerEl.hidden = true;
+          setStatus('No configurable models found in config.yaml.', true);
+          return [];
+        }
+        data.providers.forEach(function (p) {
+          var opt = document.createElement('option');
+          opt.value = String(p.index);
+          opt.textContent = p.label + ' (' + p.modelCount + ')';
+          providerEl.appendChild(opt);
+        });
+        providerEl.hidden = data.providers.length < 2;
+        if (keepSelection && providerIndex < data.providers.length) {
+          providerEl.value = String(providerIndex);
+        } else {
+          providerIndex = parseInt(providerEl.value, 10) || 0;
+        }
+        return data.providers;
+      });
+  }
+
+  function load() {
+    setStatus('Loading…');
+    return loadProviders(true).then(function (providers) {
+      if (!providers.length) return null;
+      return fetch('/api/models?provider=' + providerIndex).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    }).then(function (data) {
+      if (data === null) return; // no providers: loadProviders already explained why
+      models = data.models;
+      isOpenRouter = !!data.isOpenRouter;
+      setUndo(false); // fresh read; undo applies to previous session edits only
+      setStatus('');
+      render();
+    }).catch(function (e) {
+      setStatus('Failed to load config: ' + e.message, true);
+    });
+  }
+
+  function toggle(id, enabled, inputEl) {
+    setStatus('Saving…');
+    fetch('/api/set', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: providerIndex, model: id, enabled: enabled })
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        var m = models.find(function (x) { return x.id === id; });
+        if (m) m.enabled = enabled;
+        setUndo(true);
+        if (d.changed) setRestartPending(true);
+        setStatus('Saved ' + id + ' → ' + (enabled ? 'enabled' : 'disabled') + (d.changed ? '' : ' (no change)'));
+        render();
+      })
+      .catch(function (e) {
+        if (inputEl) inputEl.checked = !enabled;
+        var m = models.find(function (x) { return x.id === id; });
+        if (m) m.enabled = !enabled;
+        setStatus('Save failed: ' + e.message, true);
+        render();
+      });
+  }
+
+  function bulk(enabled, target) {
+    target = target || currentFilter();
+    if (target.length === 0) {
+      setStatus('Nothing matches the current filters — nothing to change.');
+      return;
+    }
+    setStatus((enabled ? 'Enabling ' : 'Disabling ') + target.length + ' models…');
+    fetch('/api/bulk', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: providerIndex, enabled: enabled, models: target.map(function (m) { return m.id; }) })
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        target.forEach(function (m) { m.enabled = enabled; });
+        setUndo(data.changedCount > 0);
+        if (data.changedCount > 0) setRestartPending(true);
+        setStatus('Updated ' + data.changedCount + ' models. Use Undo to revert.');
+        render();
+      })
+      .catch(function (e) {
+        setStatus('Bulk update failed: ' + e.message, true);
+        load();
+      });
+  }
+
+  function undo() {
+    setStatus('Undoing…');
+    fetch('/api/undo', { method: 'POST' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.undone) {
+          setUndo(false);
+          return load().then(function () { setStatus('Last change reverted.'); });
+        }
+        setUndo(false);
+        setStatus('Nothing to undo.');
+      })
+      .catch(function (e) {
+        setStatus('Undo failed: ' + e.message, true);
+      });
+  }
+
+  function setChip(which) {
+    stateFilter = which;
+    ['chipAll', 'chipEnabled', 'chipDisabled'].forEach(function (id) {
+      var el = document.getElementById(id);
+      el.setAttribute('aria-pressed', el.id === 'chip' + which.charAt(0).toUpperCase() + which.slice(1) ? 'true' : 'false');
+    });
+    render();
+  }
+
+  document.getElementById('toggleGroups').addEventListener('click', function () {
+    groupsCollapsed = !groupsCollapsed;
+    this.textContent = groupsCollapsed ? 'Expand all' : 'Collapse all';
+    models.forEach(function (m) { collapsedGroups[familyOf(m)] = groupsCollapsed; });
+    render();
+  });
+  document.getElementById('enableAll').addEventListener('click', function () { bulk(true); });
+  document.getElementById('disableAll').addEventListener('click', function () { bulk(false); });
+  undoBtn.addEventListener('click', undo);
+  document.getElementById('refresh').addEventListener('click', load);
+  document.getElementById('chipAll').addEventListener('click', function () { setChip('all'); });
+  document.getElementById('chipEnabled').addEventListener('click', function () { setChip('enabled'); });
+  document.getElementById('chipDisabled').addEventListener('click', function () { setChip('disabled'); });
+  providerEl.addEventListener('change', function () {
+    providerIndex = parseInt(providerEl.value, 10) || 0;
+    collapsedGroups = {};
+    groupsCollapsed = false;
+    document.getElementById('toggleGroups').textContent = 'Collapse all';
+    load();
+  });
+  searchEl.addEventListener('input', render);
+  load();
+})();
+</script>
+</body>
+</html>
