@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "git-tree",
+  "displayName": "Git 提交树",
+  "version": "1.1.0",
+  "description": "查看本机 git 仓库的提交历史：泳道提交图、分支/标签、提交详情与文件改动统计。",
+  "author": "redmingwei",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": [
+    "看一下这个仓库的提交树",
+    "显示最近的 git 提交历史",
+    "查看提交详情和文件改动"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

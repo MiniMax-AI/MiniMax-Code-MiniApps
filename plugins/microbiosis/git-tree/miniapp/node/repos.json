@@ -1,0 +1,5 @@
+{
+  "_comment": "List of Git repositories the page shows by default. Empty by design — every install should declare its own local paths. Set `scanRoots` to one or more directories whose direct children will be auto-discovered (each must contain a `.git` directory).",
+  "repos": [],
+  "scanRoots": []
+}

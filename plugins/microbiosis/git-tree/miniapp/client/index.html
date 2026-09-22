@@ -1,0 +1,1857 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Git 提交树</title>
+    <style>
+      :root,
+      [data-theme='light'] {
+        --mcode-bg: #ffffff;
+        --mcode-bg-secondary: #f5f5f5;
+        --mcode-surface: #ffffff;
+        --mcode-surface-muted: #fafafa;
+        --mcode-surface-hover: #f0f0f0;
+        --mcode-text: #171717;
+        --mcode-text-muted: #666666;
+        --mcode-text-subtle: #adadad;
+        --mcode-border: #0a0a0a14;
+        --mcode-border-strong: #0a0a0af2;
+        --mcode-accent: #0094fc;
+        --mcode-success: #04b54b;
+        --mcode-warning: #f56811;
+        --mcode-danger: #f73646;
+        --mcode-primary-action-bg: #171717;
+        --mcode-primary-action-text: #ffffff;
+        /* Semantic lane colors, mirrored from ZCode's git-{descendant,renamed,added,modified}
+           palette but kept inline because the Mini App has no Tailwind build step. */
+        --git-lane-0: #4a6adf;
+        --git-lane-1: #4f9b3d;
+        --git-lane-2: #b54f4f;
+        --git-lane-3: #9a7c2c;
+      }
+
+      [data-theme='dark'] {
+        --mcode-bg: #171717;
+        --mcode-bg-secondary: #1c1c1c;
+        --mcode-surface: #262626;
+        --mcode-surface-muted: #262626;
+        --mcode-surface-hover: #2d2d2d;
+        --mcode-text: #ededed;
+        --mcode-text-muted: #949494;
+        --mcode-text-subtle: #666666;
+        --mcode-border: #ffffff14;
+        --mcode-border-strong: #fffffff2;
+        --mcode-accent: #0077d9;
+        --mcode-success: #009c3d;
+        --mcode-warning: #e25507;
+        --mcode-danger: #e31937;
+        --mcode-primary-action-bg: #ffffff;
+        --mcode-primary-action-text: #171717;
+        --git-lane-0: #6b8aff;
+        --git-lane-1: #8ad17c;
+        --git-lane-2: #d18a8a;
+        --git-lane-3: #d1b97c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--mcode-bg);
+        color: var(--mcode-text);
+        font-family:
+          ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      .mono {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .app {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* ---------- header ---------- */
+
+      .app-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .title-block h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 28px;
+        font-weight: 600;
+      }
+
+      .title-block p {
+        margin: 2px 0 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      select,
+      input {
+        height: 36px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 13px;
+        padding: 0 10px;
+        min-width: 0;
+      }
+
+      select:focus-visible,
+      input:focus-visible,
+      button:focus-visible,
+      #commit-list:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 36px;
+        padding: 0 12px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 150ms ease-out, opacity 150ms ease-out;
+      }
+
+      .btn:hover:not(:disabled) {
+        background: var(--mcode-bg-secondary);
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+
+      .btn-primary {
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        border-color: transparent;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        opacity: 0.88;
+        background: var(--mcode-primary-action-bg);
+      }
+
+      .btn-icon {
+        width: 36px;
+        padding: 0;
+      }
+
+      .btn svg {
+        flex: none;
+      }
+
+      .btn-spin svg {
+        animation: spin 900ms linear infinite;
+      }
+
+      /* ---------- overview ---------- */
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+      }
+
+      .stat {
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        padding: 12px 16px;
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .stat-value {
+        font-size: 24px;
+        line-height: 32px;
+        font-weight: 600;
+      }
+
+      .worktree {
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        padding: 12px 16px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--mcode-text-muted);
+      }
+
+      .worktree strong {
+        color: var(--mcode-text);
+        font-weight: 500;
+      }
+
+      /* ---------- toolbar ---------- */
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 12px;
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        padding: 12px 16px;
+      }
+
+      .toolbar .field {
+        flex: 1 1 160px;
+      }
+
+      .toolbar .field select,
+      .toolbar .field input {
+        width: 100%;
+      }
+
+      .toolbar-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      /* ---------- split layout ---------- */
+
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--mcode-border);
+        font-size: 13px;
+        color: var(--mcode-text-muted);
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: 16px;
+        line-height: 24px;
+        font-weight: 500;
+        color: var(--mcode-text);
+      }
+
+      /* ---------- commit list (single SVG canvas + positioned rows) ---------- */
+
+      /* --layout vars are set by JS:
+         --graph-col-width: px width reserved for the lane column
+         --row-height: px height of each row
+         --graph-height: total graph canvas height (matches row stack) */
+
+      .graph-container {
+        position: relative;
+        max-height: 560px;
+        overflow: auto;
+        background: var(--mcode-surface);
+      }
+
+      .graph-and-rows {
+        position: relative;
+        min-width: calc(var(--graph-col-width, 60px) + 220px + 130px + 110px + 78px + 16px);
+      }
+
+      .graph-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        overflow: visible;
+        pointer-events: none;
+      }
+
+      .graph-canvas .path {
+        fill: none;
+        stroke-width: 1.5;
+        opacity: 0.55;
+        transition: opacity 120ms ease-out;
+      }
+
+      .graph-canvas.is-dimming .path {
+        opacity: 0.25;
+      }
+
+      .graph-canvas.is-dimming .path.is-related {
+        opacity: 1;
+      }
+
+      .graph-canvas .lane-color-0 { stroke: var(--git-lane-0); }
+      .graph-canvas .lane-color-1 { stroke: var(--git-lane-1); }
+      .graph-canvas .lane-color-2 { stroke: var(--git-lane-2); }
+      .graph-canvas .lane-color-3 { stroke: var(--git-lane-3); }
+
+      .graph-canvas .dot {
+        fill: var(--mcode-surface);
+        stroke-width: 1.5;
+        stroke: var(--mcode-text-muted);
+      }
+
+      .graph-canvas .lane-color-0.dot { stroke: var(--git-lane-0); }
+      .graph-canvas .lane-color-1.dot { stroke: var(--git-lane-1); }
+      .graph-canvas .lane-color-2.dot { stroke: var(--git-lane-2); }
+      .graph-canvas .lane-color-3.dot { stroke: var(--git-lane-3); }
+
+      .graph-canvas .dot.is-selected {
+        fill: var(--mcode-accent);
+        stroke: var(--mcode-accent);
+      }
+
+      .graph-canvas .selection-ring {
+        fill: none;
+        stroke-width: 1;
+        opacity: 0;
+      }
+
+      .graph-canvas .lane-color-0.selection-ring { stroke: var(--git-lane-0); }
+      .graph-canvas .lane-color-1.selection-ring { stroke: var(--git-lane-1); }
+      .graph-canvas .lane-color-2.selection-ring { stroke: var(--git-lane-2); }
+      .graph-canvas .lane-color-3.selection-ring { stroke: var(--git-lane-3); }
+
+      .graph-canvas.is-dimming .dot:not(.is-selected):not(.is-hovered) {
+        opacity: 0.55;
+      }
+
+      .commit-rows {
+        position: relative;
+        z-index: 1;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        background: transparent;
+      }
+
+      .commit-row {
+        display: grid;
+        grid-template-columns: var(--graph-col-width, 60px) minmax(220px, 1fr) 130px 110px 78px;
+        align-items: center;
+        height: var(--row-height, 26px);
+        padding: 0;
+        border-bottom: 1px solid var(--mcode-border);
+        cursor: pointer;
+        background: transparent;
+        transition: background 120ms ease-out;
+      }
+
+      .commit-row:hover {
+        background: var(--mcode-bg-secondary);
+      }
+
+      .commit-row.is-selected {
+        background: var(--mcode-surface-muted);
+        box-shadow: inset 2px 0 0 var(--mcode-accent);
+      }
+
+      .commit-row.is-dimmed {
+        opacity: 0.45;
+      }
+
+      .row-graph-spacer {
+        /* Reserves space over the SVG so clicks on the dot area still hit the
+           row rather than falling through to nothing. */
+        height: 100%;
+      }
+
+      .row-subject-cell {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        padding-right: 8px;
+      }
+
+      .row-refs {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        flex: none;
+      }
+
+      .ref-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        height: 18px;
+        padding: 0 6px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 6px;
+        background: var(--mcode-surface-muted);
+        font-size: 11px;
+        line-height: 1;
+        color: var(--mcode-text-muted);
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ref-chip.is-head {
+        border-color: var(--git-lane-0);
+        background: var(--mcode-surface-hover);
+        color: var(--mcode-text);
+      }
+
+      .ref-chip.is-tag {
+        border-color: var(--git-lane-2);
+        color: var(--git-lane-2);
+      }
+
+      .ref-chip svg {
+        flex: none;
+      }
+
+      .row-subject {
+        font-size: 13px;
+        color: var(--mcode-text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+
+      .merge-icon {
+        flex: none;
+        color: var(--git-lane-1);
+      }
+
+      .row-meta {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding: 0 8px;
+        border-left: 1px solid transparent;
+      }
+
+      .commit-row.is-selected .row-meta {
+        border-left-color: var(--mcode-border);
+      }
+
+      .row-hash {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+
+      .list-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 16px;
+        border-top: 1px solid var(--mcode-border);
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .sentinel {
+        /* Invisible element used to detect the auto-load-more threshold via
+           IntersectionObserver — sits at the bottom of the rendered rows. */
+        height: 1px;
+      }
+
+      /* ---------- inline expanded detail ---------- */
+
+      .inline-detail {
+        border-top: 1px solid var(--mcode-border);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        background: var(--mcode-bg-secondary);
+      }
+
+      .inline-detail[hidden] {
+        display: none;
+      }
+
+      .inline-detail-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .inline-detail-head h3 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--mcode-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .inline-detail-close {
+        height: 24px;
+        padding: 0 8px;
+        font-size: 12px;
+      }
+
+      .inline-detail-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+      }
+
+      @media (max-width: 720px) {
+        .inline-detail-body {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      /* ---------- states ---------- */
+
+      .state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 32px 24px;
+        text-align: center;
+        color: var(--mcode-text-muted);
+        font-size: 13px;
+      }
+
+      .state[hidden] {
+        display: none;
+      }
+
+      .state-icon {
+        color: var(--mcode-text-subtle);
+      }
+
+      .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--mcode-border);
+        border-top-color: var(--mcode-accent);
+        border-radius: 50%;
+        animation: spin 900ms linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .state-error {
+        color: var(--mcode-danger);
+      }
+
+      /* ---------- detail panel (right side) ---------- */
+
+      .detail-body {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-height: 640px;
+        overflow: auto;
+      }
+
+      .detail-subject {
+        margin: 0;
+        font-size: 16px;
+        line-height: 24px;
+        font-weight: 500;
+        overflow-wrap: anywhere;
+      }
+
+      .detail-meta {
+        margin: 0;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 4px 12px;
+        font-size: 12px;
+      }
+
+      .detail-meta dt {
+        color: var(--mcode-text-muted);
+      }
+
+      .detail-meta dd {
+        margin: 0;
+        color: var(--mcode-text);
+        overflow-wrap: anywhere;
+      }
+
+      .detail-refs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .detail-stats {
+        font-size: 13px;
+        color: var(--mcode-text-muted);
+      }
+
+      .detail-stats .add {
+        color: var(--mcode-success);
+      }
+
+      .detail-stats .del {
+        color: var(--mcode-danger);
+      }
+
+      .file-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .file-table th {
+        text-align: left;
+        font-weight: 400;
+        color: var(--mcode-text-muted);
+        padding: 4px 8px;
+      }
+
+      .file-table td {
+        border-top: 1px solid var(--mcode-border);
+        padding: 4px 8px;
+      }
+
+      .file-table .num {
+        text-align: right;
+        width: 72px;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .file-table .add {
+        color: var(--mcode-success);
+      }
+
+      .file-table .del {
+        color: var(--mcode-danger);
+      }
+
+      .file-table .path {
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        direction: rtl;
+        text-align: left;
+      }
+
+      .commit-body {
+        margin: 0;
+        background: var(--mcode-surface-muted);
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        padding: 12px;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 240px;
+        overflow: auto;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 960px) {
+        .split {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .app {
+          padding: 16px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <div class="title-block">
+          <h1>Git 提交树</h1>
+          <p>查看本机 Git 仓库的提交历史、分支与标签结构</p>
+        </div>
+        <div class="header-actions">
+          <label class="field" for="repo-select">仓库</label>
+          <select id="repo-select" aria-label="选择仓库"></select>
+          <button id="theme-toggle" class="btn btn-icon" type="button" aria-label="切换亮色 / 暗色主题"></button>
+          <label class="field" for="refresh-interval">自动刷新</label>
+          <select id="refresh-interval" aria-label="自动刷新间隔">
+            <option value="0">关闭</option>
+            <option value="5">5 秒</option>
+            <option value="10">10 秒</option>
+            <option value="30">30 秒</option>
+            <option value="60">1 分钟</option>
+          </select>
+          <span id="refresh-countdown" class="ref-chip" hidden></span>
+          <button id="refresh" class="btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+              <path d="M13.5 2v3h-3" />
+            </svg>
+            刷新
+          </button>
+        </div>
+      </header>
+
+      <section aria-label="仓库概览">
+        <div class="stat-grid" id="stat-grid"></div>
+        <div class="worktree" id="worktree" role="status" style="margin-top: 12px"></div>
+      </section>
+
+      <form class="toolbar" id="filter-form">
+        <label class="field" for="ref-select">引用</label>
+        <select id="ref-select" aria-label="选择引用"></select>
+        <label class="field" for="q-input">搜索提交</label>
+        <input id="q-input" type="search" placeholder="匹配提交信息，不区分大小写" />
+        <label class="field" for="author-input">作者</label>
+        <input id="author-input" type="search" placeholder="作者姓名或邮箱" />
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" type="submit">应用</button>
+          <button class="btn" type="button" id="clear-filters">清除</button>
+        </div>
+      </form>
+
+      <main class="split">
+        <section class="panel graph-panel" aria-label="提交列表">
+          <div class="panel-head">
+            <h2>提交历史</h2>
+            <span id="list-count" role="status"></span>
+          </div>
+          <div class="state" id="list-state" hidden></div>
+          <div class="graph-container" id="graph-container">
+            <div class="graph-and-rows" id="graph-and-rows">
+              <svg class="graph-canvas" id="graph-canvas" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"></svg>
+              <ul id="commit-list" class="commit-rows" role="listbox" aria-label="提交历史列表" tabindex="0" aria-activedescendant=""></ul>
+              <div class="sentinel" id="load-sentinel" aria-hidden="true"></div>
+            </div>
+          </div>
+          <div class="list-footer">
+            <span id="list-hint"></span>
+            <button class="btn" type="button" id="load-more" hidden>加载更多</button>
+          </div>
+          <div class="inline-detail" id="inline-detail" hidden></div>
+        </section>
+
+        <aside class="panel detail-panel" aria-label="提交详情">
+          <div class="panel-head"><h2>提交详情</h2></div>
+          <div id="detail-pane"></div>
+        </aside>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var API_ROOT = '/api/git-tree';
+        var PAGE_LIMIT = 200;
+        var DEFAULT_TIMEOUT_MS = 35_000;
+        var LONG_TIMEOUT_MS = 60_000;
+        var DETAIL_CACHE_TTL_MS = 60_000;
+        var DETAIL_CACHE_MAX = 64;
+        var LOAD_MORE_SCROLL_THRESHOLD_PX = 96;
+        var PREFS_WRITE_DEBOUNCE_MS = 400;
+        var REFRESH_OPTIONS = [0, 5, 10, 30, 60];
+
+        var state = {
+          repos: [],
+          defaultRepo: null,
+          repo: null,
+          overview: null,
+          ref: 'all',
+          q: '',
+          author: '',
+          commits: [],
+          rows: [],
+          edges: [],
+          paths: [],
+          laneCount: 1,
+          laneSpacing: 14,
+          rowHeight: 26,
+          graphPadding: 12,
+          graphWidth: 0,
+          graphHeight: 0,
+          hasMore: false,
+          loading: false,
+          loadingMore: false,
+          refreshing: false,
+          selectedSha: null,
+          expandedSha: null,
+          hoveredSha: null,
+          activeIndex: -1,
+          // Number of commit <li> nodes currently mounted. Tracked so loadMore
+          // can append instead of rebuilding the whole list.
+          rowCount: 0,
+          detailCache: new Map(),
+          detailCacheAt: new Map(),
+          // Auto-refresh interval in seconds. 0 = off. Persisted server-side.
+          refreshInterval: 0,
+          refreshTimer: null,
+          // Seconds until the next auto-refresh fires; -1 when off. UI uses it
+          // to render the countdown chip next to the manual refresh button.
+          refreshCountdown: -1,
+          countdownTimer: null,
+          // Preferences have been loaded from the server on startup. Until this
+          // is true, we don't write back — otherwise we'd clobber the user's
+          // saved prefs with our defaults before we've read them.
+          prefsLoaded: false,
+          prefsWriteTimer: null,
+        };
+
+        function el(id) {
+          return document.getElementById(id);
+        }
+
+        function esc(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+          });
+        }
+
+        function formatDate(iso) {
+          var value = new Date(iso);
+          if (isNaN(value.getTime())) return iso || '';
+          var pad = function (n) {
+            return String(n).padStart(2, '0');
+          };
+          return (
+            value.getFullYear() + '-' + pad(value.getMonth() + 1) + '-' + pad(value.getDate()) +
+            ' ' + pad(value.getHours()) + ':' + pad(value.getMinutes())
+          );
+        }
+
+        function api(path, params, options) {
+          var url = new URL(API_ROOT + path, window.location.origin);
+          Object.keys(params || {}).forEach(function (key) {
+            var value = params[key];
+            if (value !== undefined && value !== null && value !== '') {
+              url.searchParams.set(key, value);
+            }
+          });
+          var timeoutMs = (options && options.timeoutMs) || DEFAULT_TIMEOUT_MS;
+          var fetchOptions = { headers: { accept: 'application/json' } };
+          var controller = null;
+          if (typeof AbortController === 'function') {
+            controller = new AbortController();
+            fetchOptions.signal = controller.signal;
+          }
+          var timer = controller
+            ? setTimeout(function () { controller.abort(); }, timeoutMs)
+            : null;
+          return fetch(url.toString(), fetchOptions).then(function (response) {
+            return response.json().then(function (data) {
+              if (!response.ok) {
+                throw new Error((data && data.message) || '请求失败（' + response.status + '）');
+              }
+              return data;
+            });
+          }).catch(function (error) {
+            if (controller && error && error.name === 'AbortError') {
+              throw new Error('请求超时（' + Math.round(timeoutMs / 1000) + ' 秒）');
+            }
+            throw error;
+          }).then(function (value) {
+            if (timer != null) clearTimeout(timer);
+            return value;
+          }, function (error) {
+            if (timer != null) clearTimeout(timer);
+            throw error;
+          });
+        }
+
+        function graphParams(offset) {
+          return {
+            repo: state.repo,
+            ref: state.ref,
+            q: state.q,
+            author: state.author,
+            limit: PAGE_LIMIT,
+            offset: offset,
+          };
+        }
+
+        /* ---------- preferences ---------- */
+
+        /**
+         * Read the user's saved prefs from the server. Falls back to {} on any
+         * failure — never throw at startup, the user just sees defaults.
+         */
+        function loadPrefs() {
+          return fetch(API_ROOT + '/prefs', { headers: { accept: 'application/json' } })
+            .then(function (response) {
+              if (!response.ok) throw new Error('prefs fetch failed: ' + response.status);
+              return response.json();
+            })
+            .then(function (data) {
+              return data && typeof data === 'object' ? data : {};
+            })
+            .catch(function () { return {}; });
+        }
+
+        /**
+         * Debounced server-side prefs write. Multiple state changes within the
+         * same tick coalesce into one POST.
+         * @param {Partial<{theme:string, repo:string, ref:string, q:string, author:string, interval:number}>} patch
+         */
+        function savePrefs(patch) {
+          if (!state.prefsLoaded) return;
+          if (state.prefsWriteTimer != null) clearTimeout(state.prefsWriteTimer);
+          state.prefsWriteTimer = setTimeout(function () {
+            state.prefsWriteTimer = null;
+            fetch(API_ROOT + '/prefs', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', accept: 'application/json' },
+              body: JSON.stringify(patch || {}),
+            }).catch(function () { /* surface only — fire-and-forget */ });
+          }, PREFS_WRITE_DEBOUNCE_MS);
+        }
+
+        /* ---------- auto-refresh ---------- */
+
+        /**
+         * (Re)start the periodic refresh based on the current interval. Calling
+         * with interval=0 (or off) cancels any pending timer. The timer re-runs
+         * loadOverview() + loadGraph(false) so selection + scroll position
+         * stay intact.
+         * @param {number} intervalSec
+         */
+        function restartAutoRefresh(intervalSec) {
+          if (state.refreshTimer != null) {
+            clearInterval(state.refreshTimer);
+            state.refreshTimer = null;
+          }
+          if (state.countdownTimer != null) {
+            clearInterval(state.countdownTimer);
+            state.countdownTimer = null;
+          }
+          if (!intervalSec || intervalSec <= 0) {
+            state.refreshCountdown = -1;
+            renderRefreshCountdown();
+            return;
+          }
+          state.refreshCountdown = intervalSec;
+          renderRefreshCountdown();
+          state.countdownTimer = setInterval(function () {
+            state.refreshCountdown -= 1;
+            if (state.refreshCountdown <= 0) state.refreshCountdown = intervalSec;
+            renderRefreshCountdown();
+          }, 1000);
+          state.refreshTimer = setInterval(function () {
+            void refreshInPlace();
+          }, intervalSec * 1000);
+        }
+
+        /**
+         * Re-fetch overview + graph without resetting selection or scroll.
+         * Skipped while the user is actively loading more or filtering.
+         */
+        function refreshInPlace() {
+          if (state.loading || state.loadingMore || state.refreshing) return;
+          state.refreshing = true;
+          el('refresh').classList.add('btn-spin');
+          Promise.resolve()
+            .then(function () { return loadOverview(); })
+            .then(function () { return loadGraph(false); })
+            .then(function () {
+              state.refreshing = false;
+              el('refresh').classList.remove('btn-spin');
+            }, function () {
+              state.refreshing = false;
+              el('refresh').classList.remove('btn-spin');
+            });
+        }
+
+        function renderRefreshCountdown() {
+          var chip = el('refresh-countdown');
+          if (!chip) return;
+          if (state.refreshCountdown < 0 || !state.refreshInterval) {
+            chip.textContent = '';
+            chip.hidden = true;
+          } else {
+            chip.hidden = false;
+            chip.textContent = state.refreshCountdown + 's';
+          }
+        }
+
+        /* ---------- theme ---------- */
+
+        function resolveSystemTheme() {
+          return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+
+        /**
+         * Apply a theme preference. `auto` falls back to the OS preference at
+         * render time; `light` / `dark` lock to that palette.
+         * @param {'auto'|'light'|'dark'} theme
+         */
+        function applyTheme(theme) {
+          var effective = theme === 'auto' ? resolveSystemTheme() : theme;
+          document.documentElement.setAttribute('data-theme', effective);
+          document.documentElement.setAttribute('data-theme-pref', theme);
+          var button = el('theme-toggle');
+          var label = theme === 'auto'
+            ? '跟随系统主题（当前 ' + effective + '）'
+            : theme === 'dark'
+              ? '切换到自动主题'
+              : '切换到暗色主题';
+          button.setAttribute('aria-label', label);
+          button.title = label;
+          button.innerHTML =
+            effective === 'dark'
+              ? '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1"/></svg>'
+              : '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13.2 9.8A5.6 5.6 0 0 1 6.2 2.8a5.6 5.6 0 1 0 7 7Z"/></svg>';
+        }
+
+        function cycleTheme() {
+          var order = ['auto', 'light', 'dark'];
+          var current = state.theme || 'auto';
+          var idx = order.indexOf(current);
+          var next = order[(idx + 1) % order.length] || 'auto';
+          state.theme = next;
+          applyTheme(next);
+          savePrefs({ theme: next });
+        }
+
+        /* ---------- overview ---------- */
+
+        function renderRepoSelect() {
+          var select = el('repo-select');
+          select.innerHTML = state.repos
+            .map(function (repo) {
+              var label = esc(repo.label) + (repo.isDefault ? '（工作区）' : '');
+              return '<option value="' + esc(repo.path) + '">' + label + '</option>';
+            })
+            .join('');
+          if (state.repo) select.value = state.repo;
+        }
+
+        function renderOverview() {
+          var overview = state.overview;
+          if (!overview) return;
+          var counts = overview.counts || {};
+          var stats = [
+            { label: '提交总数', value: counts.commits },
+            { label: '分支', value: counts.branches },
+            { label: '标签', value: counts.tags },
+            { label: '工作区改动', value: counts.changed },
+          ];
+          el('stat-grid').innerHTML = stats
+            .map(function (stat) {
+              return (
+                '<div class="stat"><div class="stat-label">' +
+                esc(stat.label) +
+                '</div><div class="stat-value mono">' +
+                esc(stat.value == null ? '—' : stat.value) +
+                '</div></div>'
+              );
+            })
+            .join('');
+
+          var status = overview.status || {};
+          var parts = [];
+          parts.push('<span>当前分支 <strong class="mono">' + esc(status.branch || overview.head.branch || '—') + '</strong></span>');
+          parts.push(
+            status.clean
+              ? '<span class="ref-chip">工作区干净</span>'
+              : '<span class="ref-chip" style="border-color:var(--mcode-warning);color:var(--mcode-warning)">' + esc((status.entries || []).length) + ' 个未提交改动</span>'
+          );
+          (status.entries || []).slice(0, 6).forEach(function (entry) {
+            parts.push('<span class="ref-chip mono" title="' + esc(entry.code + ' ' + entry.path) + '">' + esc(entry.path) + '</span>');
+          });
+          el('worktree').innerHTML = parts.join('');
+        }
+
+        function renderRefSelect() {
+          var overview = state.overview;
+          if (!overview) return;
+          var groups = ['<optgroup label="视图"><option value="all">全部引用</option></optgroup>'];
+          var branches = overview.branches || [];
+          if (branches.length > 0) {
+            groups.push(
+              '<optgroup label="分支">' +
+                branches
+                  .map(function (branch) {
+                    var suffix = branch.current ? '（当前）' : branch.upstream ? ' → ' + esc(branch.upstream) : '';
+                    return '<option value="' + esc(branch.name) + '">' + esc(branch.name) + suffix + '</option>';
+                  })
+                  .join('') +
+                '</optgroup>'
+            );
+          }
+          var tags = overview.tags || [];
+          if (tags.length > 0) {
+            groups.push(
+              '<optgroup label="标签">' +
+                tags
+                  .map(function (tag) {
+                    return '<option value="' + esc(tag) + '">' + esc(tag) + '</option>';
+                  })
+                  .join('') +
+                '</optgroup>'
+            );
+          }
+          var select = el('ref-select');
+          select.innerHTML = groups.join('');
+          select.value = state.ref;
+        }
+
+        /* ---------- list states ---------- */
+
+        function showState(kind, message, withRetry) {
+          var box = el('list-state');
+          var icon =
+            kind === 'loading'
+              ? '<div class="spinner" role="presentation"></div>'
+              : kind === 'error'
+                ? '<svg class="state-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5M12 16h.01"/></svg>'
+                : '<svg class="state-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M6 8.2v7.6M8.2 6h4.3a3 3 0 0 1 3 3v.8"/></svg>';
+          var action = withRetry ? '<button class="btn" type="button" data-action="retry">重试</button>' : '';
+          box.innerHTML = icon + '<p style="margin:0">' + esc(message) + '</p>' + action;
+          box.hidden = false;
+          el('commit-list').hidden = true;
+          el('list-hint').textContent = '';
+          el('load-more').hidden = true;
+        }
+
+        function hideState() {
+          el('list-state').hidden = true;
+          el('commit-list').hidden = false;
+        }
+
+        /* ---------- canvas + rows rendering ---------- */
+
+        function laneColorClass(laneIndex) {
+          return 'lane-color-' + (((laneIndex % 4) + 4) % 4);
+        }
+
+        function refsHtml(commit) {
+          if (!commit || !commit.refs || commit.refs.length === 0) return '';
+          return commit.refs.slice(0, 4).map(function (ref) {
+            var kindClass = ref.kind === 'head' ? ' is-head' : ref.kind === 'tag' ? ' is-tag' : '';
+            var icon =
+              ref.kind === 'tag'
+                ? '<svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><path d="M2 3.5h10l2 2v6.5H2Zm0 0v8.5"/><circle cx="6" cy="6.5" r="1.4" fill="currentColor" stroke="none"/></svg>'
+                : ref.kind === 'head'
+                  ? '<svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="5" cy="13" r="1.4"/><path d="M5 11.6V3l7 3-7 3"/></svg>'
+                  : '';
+            return '<span class="ref-chip' + kindClass + '" title="' + esc(ref.kind + ': ' + ref.name) + '">' + icon + esc(ref.name) + '</span>';
+          }).join('');
+        }
+
+        function rowHtml(commit, index) {
+          var selected = state.selectedSha === commit.sha;
+          var hoverClass = state.hoveredSha && state.hoveredSha !== commit.sha ? ' is-dimmed' : '';
+          var refs = refsHtml(commit);
+          var mergeIcon = commit.merge
+            ? '<svg class="merge-icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="3" cy="3" r="1.6"/><circle cx="3" cy="13" r="1.6"/><circle cx="11" cy="6" r="1.6"/><path d="M3 4.6v6.8M4.6 13h0M11 7.6v3.5a1.6 1.6 0 0 1-1.6 1.6H7.4"/></svg>'
+            : '';
+          return (
+            '<li id="commit-row-' + index + '" class="commit-row' + (selected ? ' is-selected' : '') + hoverClass +
+            '" role="option" aria-selected="' + (selected ? 'true' : 'false') +
+            '" data-sha="' + esc(commit.sha) + '" data-index="' + index + '">' +
+            '<span class="row-graph-spacer" aria-hidden="true"></span>' +
+            '<span class="row-subject-cell">' +
+            (refs ? '<span class="row-refs">' + refs + '</span>' : '') +
+            '<span class="row-subject" title="' + esc(commit.subject || '') + '">' + esc(commit.subject || '（无提交信息）') + '</span>' +
+            mergeIcon +
+            '</span>' +
+            '<span class="row-meta mono">' + esc(formatDate(commit.date)) + '</span>' +
+            '<span class="row-meta" title="' + esc(commit.authorName) + '">' + esc(commit.authorName) + '</span>' +
+            '<span class="row-meta row-hash mono">' + esc(commit.short) + '</span>' +
+            '</li>'
+          );
+        }
+
+        function applyGraphSize() {
+          var wrap = el('graph-and-rows');
+          wrap.style.setProperty('--graph-col-width', state.graphWidth + 'px');
+          wrap.style.setProperty('--row-height', state.rowHeight + 'px');
+          wrap.style.height = state.graphHeight + 'px';
+        }
+
+        function renderCanvas() {
+          var canvas = el('graph-canvas');
+          canvas.setAttribute('width', String(state.graphWidth));
+          canvas.setAttribute('height', String(state.graphHeight));
+          canvas.setAttribute('viewBox', '0 0 ' + state.graphWidth + ' ' + state.graphHeight);
+
+          var pathsSvg = state.paths.map(function (path) {
+            return (
+              '<path class="path ' + laneColorClass(path.laneIndex) +
+              '" data-hashes="' + esc(path.relatedHashes.join(' ')) +
+              '" d="' + esc(path.path) + '" />'
+            );
+          }).join('');
+
+          var dotsSvg = (state.rows || []).map(function (row) {
+            var commit = state.commits[row.rowIndex];
+            if (!commit) return '';
+            var selected = state.selectedSha === commit.sha;
+            var hovered = state.hoveredSha === commit.sha;
+            var cy = row.y + state.rowHeight / 2;
+            return (
+              '<g data-sha="' + esc(commit.sha) + '">' +
+              '<circle class="selection-ring ' + laneColorClass(row.laneIndex) + (selected ? ' is-visible' : '') +
+              '" cx="' + row.x + '" cy="' + cy + '" r="5.5" />' +
+              '<circle class="dot ' + laneColorClass(row.laneIndex) + (selected ? ' is-selected' : '') + (hovered ? ' is-hovered' : '') +
+              '" cx="' + row.x + '" cy="' + cy + '" r="4.5" />' +
+              '</g>'
+            );
+          }).join('');
+
+          canvas.innerHTML =
+            '<g class="paths" aria-hidden="true">' + pathsSvg + '</g>' +
+            '<g class="dots" aria-hidden="true">' + dotsSvg + '</g>';
+          applyHoverState();
+        }
+
+        function renderList(reset) {
+          var list = el('commit-list');
+          if (state.loading && state.commits.length === 0) {
+            showState('loading', '正在加载提交图…');
+            return;
+          }
+          if (state.commits.length === 0) {
+            showState(
+              'empty',
+              state.q || state.author ? '没有匹配的提交，可尝试清除搜索条件。' : '这个引用下还没有提交记录。'
+            );
+            return;
+          }
+          hideState();
+          applyGraphSize();
+          renderCanvas();
+          list.innerHTML = state.commits.map(rowHtml).join('');
+          state.rowCount = state.commits.length;
+          renderListMeta();
+          updateActiveDescendant();
+        }
+
+        function appendRows(fromIndex, toIndex) {
+          var list = el('commit-list');
+          if (fromIndex >= toIndex) return;
+          var tmp = document.createElement('div');
+          tmp.innerHTML = state.commits.slice(fromIndex, toIndex).map(rowHtml).join('');
+          var fragment = document.createDocumentFragment();
+          while (tmp.firstChild) fragment.appendChild(tmp.firstChild);
+          list.appendChild(fragment);
+          state.rowCount = toIndex;
+
+          // The new rows may include the selected/hovered commit. Update visual
+          // states that depend on row class membership without a full rebuild.
+          applyHoverState();
+        }
+
+        function renderListMeta() {
+          var total = state.overview && state.overview.counts ? state.overview.counts.commits : null;
+          el('list-count').textContent = '已显示 ' + state.commits.length + ' 条' + (total ? ' / 共 ' + total + ' 条' : '');
+          el('list-hint').textContent = state.hasMore ? '继续滚动或加载更多提交' : '已到列表末尾';
+          el('load-more').hidden = !state.hasMore;
+          el('load-more').disabled = false;
+          el('load-more').textContent = '加载更多';
+        }
+
+        /* ---------- hover state ---------- */
+
+        function applyHoverState() {
+          var canvas = el('graph-canvas');
+          var list = el('commit-list');
+          if (!canvas) return;
+          var hover = state.hoveredSha;
+          if (hover) {
+            canvas.classList.add('is-dimming');
+            // Mark related paths so the CSS rule `.path.is-related` brings them
+            // back to full opacity while the rest dims.
+            var paths = canvas.querySelectorAll('.path');
+            paths.forEach(function (p) {
+              var hashes = (p.getAttribute('data-hashes') || '').split(' ');
+              if (hashes.indexOf(hover) >= 0) p.classList.add('is-related');
+              else p.classList.remove('is-related');
+            });
+            // Dim unrelated rows.
+            var rows = list.querySelectorAll('.commit-row');
+            rows.forEach(function (r) {
+              if (r.getAttribute('data-sha') === hover) r.classList.remove('is-dimmed');
+              else r.classList.add('is-dimmed');
+            });
+          } else {
+            canvas.classList.remove('is-dimming');
+            var paths = canvas.querySelectorAll('.path.is-related');
+            paths.forEach(function (p) { p.classList.remove('is-related'); });
+            var rows = list.querySelectorAll('.commit-row.is-dimmed');
+            rows.forEach(function (r) { r.classList.remove('is-dimmed'); });
+          }
+        }
+
+        function setHover(sha) {
+          if (state.hoveredSha === sha) return;
+          state.hoveredSha = sha;
+          applyHoverState();
+        }
+
+        /* ---------- selection / active descendant ---------- */
+
+        function updateActiveDescendant() {
+          var list = el('commit-list');
+          if (state.activeIndex < 0 || state.activeIndex >= state.commits.length) {
+            list.setAttribute('aria-activedescendant', '');
+            return;
+          }
+          var row = el('commit-row-' + state.activeIndex);
+          if (!row) return;
+          list.setAttribute('aria-activedescendant', row.id);
+          row.scrollIntoView({ block: 'nearest' });
+        }
+
+        function applySelection() {
+          var list = el('commit-list');
+          if (!list) return;
+          var rows = list.querySelectorAll('.commit-row');
+          rows.forEach(function (row) {
+            var selected = row.getAttribute('data-sha') === state.selectedSha;
+            row.classList.toggle('is-selected', selected);
+            row.setAttribute('aria-selected', selected ? 'true' : 'false');
+          });
+          // Mirror to the SVG dots + selection rings.
+          var canvas = el('graph-canvas');
+          if (canvas) {
+            canvas.querySelectorAll('g[data-sha]').forEach(function (g) {
+              var sha = g.getAttribute('data-sha');
+              var selected = sha === state.selectedSha;
+              var hovered = sha === state.hoveredSha;
+              var dot = g.querySelector('.dot');
+              var ring = g.querySelector('.selection-ring');
+              if (dot) {
+                dot.classList.toggle('is-selected', selected);
+                dot.classList.toggle('is-hovered', hovered);
+              }
+              if (ring) ring.classList.toggle('is-visible', selected);
+            });
+          }
+        }
+
+        /* ---------- detail panel + inline detail (both modes) ---------- */
+
+        function renderDetailEmpty() {
+          el('detail-pane').innerHTML =
+            '<div class="state"><svg class="state-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M6 8.2v7.6M8.2 6h4.3a3 3 0 0 1 3 3v.8"/></svg><p style="margin:0">在左侧选择一条提交查看详情。</p></div>';
+        }
+
+        function renderDetailLoading() {
+          el('detail-pane').innerHTML =
+            '<div class="state"><div class="spinner" role="presentation"></div><p style="margin:0">正在加载提交详情…</p></div>';
+        }
+
+        function renderDetailError(message) {
+          el('detail-pane').innerHTML =
+            '<div class="state state-error" role="alert"><p style="margin:0">' + esc(message) + '</p></div>';
+        }
+
+        function renderDetail(detail) {
+          var stats = detail.stats || {};
+          var files = detail.files || [];
+          var parents = (detail.parents || [])
+            .map(function (sha) {
+              return (
+                '<button class="ref-chip chip-button" type="button" data-parent-sha="' + esc(sha) + '">' + esc(sha.slice(0, 7)) + '</button>'
+              );
+            })
+            .join('');
+          var refs = []
+            .concat(
+              (detail.branches || []).map(function (name) {
+                return '<span class="ref-chip">' + esc(name) + '</span>';
+              }),
+              (detail.tags || []).map(function (name) {
+                return '<span class="ref-chip is-tag">' + esc(name) + '</span>';
+              })
+            )
+            .join('');
+          var fileRows = files
+            .map(function (file) {
+              var add = file.binary ? '二进制' : '+' + (file.added == null ? 0 : file.added);
+              var del = file.binary ? '' : '-' + (file.deleted == null ? 0 : file.deleted);
+              return (
+                '<tr><td class="mono path" title="' + esc(file.path) + '">' + esc(file.path) + '</td>' +
+                '<td class="num add">' + add + '</td><td class="num del">' + del + '</td></tr>'
+              );
+            })
+            .join('');
+
+          var html =
+            '<div class="detail-body">' +
+            '<h3 class="detail-subject">' + esc(detail.subject || '（无提交信息）') + '</h3>' +
+            '<dl class="detail-meta">' +
+            '<dt>提交</dt><dd class="mono">' + esc(detail.sha) + '</dd>' +
+            '<dt>作者</dt><dd>' + esc(detail.authorName) + ' &lt;' + esc(detail.authorEmail) + '&gt;</dd>' +
+            '<dt>提交时间</dt><dd>' + esc(formatDate(detail.authorDate)) + '</dd>' +
+            '<dt>父提交</dt><dd>' + (parents || '—') + '</dd>' +
+            '</dl>' +
+            (refs ? '<div class="detail-refs">' + refs + '</div>' : '') +
+            '<div class="detail-stats">' + esc(stats.files || 0) + ' 个文件' +
+            ' <span class="add">+' + esc(stats.insertions || 0) + '</span>' +
+            ' <span class="del">-' + esc(stats.deletions || 0) + '</span></div>' +
+            (files.length > 0
+              ? '<table class="file-table"><thead><tr><th>文件</th><th class="num">新增</th><th class="num">删除</th></tr></thead><tbody>' +
+                fileRows +
+                '</tbody></table>'
+              : '<p style="margin:0;color:var(--mcode-text-muted);font-size:13px">这个提交没有文件改动记录。</p>') +
+            (detail.body ? '<pre class="commit-body">' + esc(detail.body) + '</pre>' : '') +
+            '</div>';
+          el('detail-pane').innerHTML = html;
+        }
+
+        function renderInlineDetail(detail) {
+          var box = el('inline-detail');
+          if (!detail) {
+            box.hidden = true;
+            box.innerHTML = '';
+            return;
+          }
+          var stats = detail.stats || {};
+          var files = detail.files || [];
+          var fileRows = files.slice(0, 8).map(function (file) {
+            var add = file.binary ? '二进制' : '+' + (file.added == null ? 0 : file.added);
+            var del = file.binary ? '' : '-' + (file.deleted == null ? 0 : file.deleted);
+            return (
+              '<tr><td class="mono path" title="' + esc(file.path) + '">' + esc(file.path) + '</td>' +
+              '<td class="num add">' + add + '</td><td class="num del">' + del + '</td></tr>'
+            );
+          }).join('');
+          var html =
+            '<div class="inline-detail-head">' +
+            '<h3>详情（内联）</h3>' +
+            '<button class="btn inline-detail-close" type="button" data-action="close-inline">收起</button>' +
+            '</div>' +
+            '<h4 class="detail-subject" style="margin:0">' + esc(detail.subject || '（无提交信息）') + '</h4>' +
+            '<dl class="detail-meta">' +
+            '<dt>提交</dt><dd class="mono">' + esc(detail.sha) + '</dd>' +
+            '<dt>作者</dt><dd>' + esc(detail.authorName) + '</dd>' +
+            '<dt>时间</dt><dd>' + esc(formatDate(detail.authorDate)) + '</dd>' +
+            '</dl>' +
+            '<div class="detail-stats">' + esc(stats.files || 0) + ' 个文件' +
+            ' <span class="add">+' + esc(stats.insertions || 0) + '</span>' +
+            ' <span class="del">-' + esc(stats.deletions || 0) + '</span></div>' +
+            (fileRows
+              ? '<table class="file-table"><thead><tr><th>文件</th><th class="num">新增</th><th class="num">删除</th></tr></thead><tbody>' +
+                fileRows + '</tbody></table>'
+              : '');
+          box.innerHTML = html;
+          box.hidden = false;
+        }
+
+        function selectCommit(sha, index) {
+          // Toggle: clicking the same row that is currently expanded collapses
+          // the inline detail. Selection (right panel) always tracks the row.
+          var alreadyExpanded = state.expandedSha === sha;
+          state.selectedSha = sha;
+          state.activeIndex = index;
+          if (alreadyExpanded) {
+            state.expandedSha = null;
+            renderInlineDetail(null);
+          } else {
+            state.expandedSha = sha;
+          }
+          applySelection();
+          updateActiveDescendant();
+
+          // Server-side + client-side detail cache.
+          var cached = state.detailCache.get(sha);
+          var cachedAt = state.detailCacheAt.get(sha) || 0;
+          if (cached && Date.now() - cachedAt < DETAIL_CACHE_TTL_MS) {
+            renderDetail(cached);
+            if (state.expandedSha) renderInlineDetail(cached);
+            return;
+          }
+          renderDetailLoading();
+          api('/commit', { repo: state.repo, sha: sha })
+            .then(function (detail) {
+              if (state.detailCache.size >= DETAIL_CACHE_MAX) {
+                var oldestKey = state.detailCache.keys().next().value;
+                if (oldestKey !== undefined) {
+                  state.detailCache.delete(oldestKey);
+                  state.detailCacheAt.delete(oldestKey);
+                }
+              }
+              state.detailCache.set(sha, detail);
+              state.detailCacheAt.set(sha, Date.now());
+              renderDetail(detail);
+              if (state.expandedSha === sha) renderInlineDetail(detail);
+            })
+            .catch(function (error) {
+              renderDetailError(error.message);
+              if (state.expandedSha === sha) renderInlineDetail(null);
+            });
+        }
+
+        function collapseInlineDetail() {
+          state.expandedSha = null;
+          renderInlineDetail(null);
+        }
+
+        /* ---------- data loading ---------- */
+
+        function loadOverview() {
+          return api('/overview', { repo: state.repo })
+            .then(function (overview) {
+              state.overview = overview;
+              renderOverview();
+              renderRefSelect();
+            })
+            .catch(function () {
+              state.overview = null;
+              el('stat-grid').innerHTML = '';
+              el('worktree').innerHTML = '<span style="color:var(--mcode-danger)">无法读取仓库概览。</span>';
+            });
+        }
+
+        function loadGraph(reset) {
+          state.loading = true;
+          if (reset) {
+            state.commits = [];
+            state.rows = [];
+            state.edges = [];
+            state.paths = [];
+            state.selectedSha = null;
+            state.expandedSha = null;
+            state.activeIndex = -1;
+            state.rowCount = 0;
+            // Detail cache is keyed by sha only; old entries stay valid until
+            // TTL expires, but we drop everything when switching ref/filter so
+            // that stale entries cannot surface unexpectedly.
+            state.detailCache.clear();
+            state.detailCacheAt.clear();
+            renderInlineDetail(null);
+            renderDetailEmpty();
+          }
+          renderList();
+          return api('/graph', graphParams(0), { timeoutMs: LONG_TIMEOUT_MS })
+            .then(function (data) {
+              state.commits = data.commits || [];
+              state.rows = data.rows || [];
+              state.edges = data.edges || [];
+              state.paths = data.paths || [];
+              state.laneCount = data.laneCount || 1;
+              state.laneSpacing = data.laneSpacing || 14;
+              state.rowHeight = data.rowHeight || 26;
+              state.graphPadding = data.graphPadding || 12;
+              state.graphWidth = data.graphWidth || 0;
+              state.graphHeight = data.graphHeight || 0;
+              state.hasMore = !!data.hasMore;
+              state.loading = false;
+              renderList();
+            })
+            .catch(function (error) {
+              state.loading = false;
+              state.commits = [];
+              showState('error', error.message, true);
+            });
+        }
+
+        function loadMore() {
+          if (state.loadingMore || !state.hasMore) return;
+          state.loadingMore = true;
+          var button = el('load-more');
+          button.disabled = true;
+          button.textContent = '加载中…';
+          var base = state.commits.length;
+          api('/graph', graphParams(base), { timeoutMs: LONG_TIMEOUT_MS })
+            .then(function (data) {
+              var commits = data.commits || [];
+              var rows = data.rows || [];
+              var paths = data.paths || [];
+              state.commits = state.commits.concat(commits);
+              state.rows = state.rows.concat(rows);
+              state.paths = state.paths.concat(paths);
+              state.edges = state.edges.concat(data.edges || []);
+              state.laneCount = Math.max(state.laneCount, data.laneCount || 1);
+              state.graphHeight = data.graphHeight || state.graphHeight;
+              state.hasMore = !!data.hasMore;
+              state.loadingMore = false;
+              // Append-only: avoid rebuilding the N rows already on screen.
+              appendRows(base, state.commits.length);
+              renderListMeta();
+              button.disabled = false;
+              button.textContent = '加载更多';
+              updateActiveDescendant();
+            })
+            .catch(function (error) {
+              state.loadingMore = false;
+              el('list-hint').textContent = error.message;
+              button.disabled = false;
+              button.textContent = '加载更多';
+            });
+        }
+
+        /* ---------- events ---------- */
+
+        function bindEvents() {
+          el('theme-toggle').addEventListener('click', cycleTheme);
+          el('refresh').addEventListener('click', function () {
+            refreshInPlace();
+          });
+          el('refresh-interval').addEventListener('change', function (event) {
+            var value = Number(event.target.value) || 0;
+            state.refreshInterval = value;
+            restartAutoRefresh(value);
+            savePrefs({ interval: value });
+          });
+
+          el('repo-select').addEventListener('change', function (event) {
+            state.repo = event.target.value;
+            state.ref = 'all';
+            state.q = '';
+            state.author = '';
+            el('q-input').value = '';
+            el('author-input').value = '';
+            el('ref-select').value = 'all';
+            savePrefs({ repo: state.repo, ref: 'all', q: '', author: '' });
+            void loadOverview().then(function () {
+              return loadGraph(true);
+            });
+          });
+
+          el('ref-select').addEventListener('change', function (event) {
+            state.ref = event.target.value;
+            savePrefs({ ref: state.ref });
+            void loadGraph(true);
+          });
+
+          el('filter-form').addEventListener('submit', function (event) {
+            event.preventDefault();
+            state.q = el('q-input').value.trim();
+            state.author = el('author-input').value.trim();
+            savePrefs({ q: state.q, author: state.author });
+            void loadGraph(true);
+          });
+
+          el('clear-filters').addEventListener('click', function () {
+            el('q-input').value = '';
+            el('author-input').value = '';
+            state.q = '';
+            state.author = '';
+            savePrefs({ q: '', author: '' });
+            void loadGraph(true);
+          });
+
+          el('load-more').addEventListener('click', loadMore);
+
+          el('list-state').addEventListener('click', function (event) {
+            var target = event.target.closest('[data-action="retry"]');
+            if (target) void loadGraph(true);
+          });
+
+          var list = el('commit-list');
+          list.addEventListener('click', function (event) {
+            var row = event.target.closest('.commit-row');
+            if (!row) return;
+            var index = Number(row.getAttribute('data-index'));
+            selectCommit(row.getAttribute('data-sha'), index);
+          });
+
+          list.addEventListener('mouseover', function (event) {
+            var row = event.target.closest('.commit-row');
+            if (!row) return;
+            setHover(row.getAttribute('data-sha'));
+          });
+          list.addEventListener('mouseout', function (event) {
+            var row = event.target.closest('.commit-row');
+            if (!row) return;
+            // Only clear hover when leaving the list area entirely.
+            if (!list.contains(event.relatedTarget)) setHover(null);
+          });
+
+          list.addEventListener('keydown', function (event) {
+            if (state.commits.length === 0) return;
+            var last = state.commits.length - 1;
+            var next = state.activeIndex;
+            if (event.key === 'ArrowDown') next = Math.min(last, state.activeIndex + 1);
+            else if (event.key === 'ArrowUp') next = Math.max(0, state.activeIndex - 1);
+            else if (event.key === 'Home') next = 0;
+            else if (event.key === 'End') next = last;
+            else if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              if (state.activeIndex >= 0) {
+                selectCommit(state.commits[state.activeIndex].sha, state.activeIndex);
+              }
+              return;
+            } else return;
+            event.preventDefault();
+            state.activeIndex = next;
+            updateActiveDescendant();
+          });
+
+          el('detail-pane').addEventListener('click', function (event) {
+            var target = event.target.closest('[data-parent-sha]');
+            if (!target) return;
+            var sha = target.getAttribute('data-parent-sha');
+            var index = state.commits.findIndex(function (commit) {
+              return commit.sha === sha;
+            });
+            selectCommit(sha, index >= 0 ? index : state.activeIndex);
+          });
+
+          el('inline-detail').addEventListener('click', function (event) {
+            var target = event.target.closest('[data-action="close-inline"]');
+            if (target) collapseInlineDetail();
+          });
+
+          // Auto-load-more: fire when the user scrolls within 96 px of the
+          // bottom of the rendered list. The graph container owns the scroll.
+          var container = el('graph-container');
+          container.addEventListener('scroll', function () {
+            if (!state.hasMore || state.loadingMore) return;
+            var distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+            if (distance <= LOAD_MORE_SCROLL_THRESHOLD_PX) {
+              loadMore();
+            }
+          });
+        }
+
+        /* ---------- init ---------- */
+
+        function init() {
+          bindEvents();
+          renderDetailEmpty();
+          showState('loading', '正在加载提交图…');
+
+          // Load server-side prefs first; everything else waits on it so we
+          // don't fire a write-back before the read finishes.
+          loadPrefs().then(function (prefs) {
+            state.theme = prefs.theme || 'auto';
+            state.refreshInterval = prefs.interval || 0;
+            el('refresh-interval').value = String(state.refreshInterval || 0);
+            applyTheme(state.theme);
+            restartAutoRefresh(state.refreshInterval);
+            state.prefsLoaded = true;
+
+            return api('/repos').then(function (data) {
+              state.repos = data.repos || [];
+              state.defaultRepo = data.defaultRepo || null;
+              renderRepoSelect();
+
+              // If saved repo is still in the discovered list, prefer it;
+              // otherwise fall back to the default / first repo.
+              var savedRepo = typeof prefs.repo === 'string' ? prefs.repo : '';
+              var foundRepo = savedRepo
+                ? state.repos.find(function (r) { return r.path === savedRepo; })
+                : null;
+              state.repo = (foundRepo && foundRepo.path)
+                || state.defaultRepo
+                || (state.repos[0] && state.repos[0].path)
+                || null;
+              renderRepoSelect();
+
+              if (typeof prefs.ref === 'string' && prefs.ref !== 'all') {
+                state.ref = prefs.ref;
+              }
+              if (typeof prefs.q === 'string') {
+                state.q = prefs.q;
+                el('q-input').value = prefs.q;
+              }
+              if (typeof prefs.author === 'string') {
+                state.author = prefs.author;
+                el('author-input').value = prefs.author;
+              }
+
+              if (!state.repo) {
+                showState('empty', '未发现可用的 Git 仓库。');
+                return null;
+              }
+              return loadOverview().then(function () {
+                return loadGraph(true);
+              });
+            });
+          }).catch(function (error) {
+            state.prefsLoaded = true;
+            applyTheme('auto');
+            showState('error', error.message, true);
+          });
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+</html>

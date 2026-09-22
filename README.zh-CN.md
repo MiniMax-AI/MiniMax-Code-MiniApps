@@ -18,6 +18,7 @@
 | --- | --- | --- |
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
 | [Token 用量看板](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md) | 近实时查看本机 Token 用量、输出速度与缓存命中率，可按时间范围、模型和会话筛选 | [yanhy2000](https://github.com/yanhy2000) |
+| [Git 提交树](plugins/microbiosis/git-tree/README.zh-CN.md) | 查看本机 Git 仓库的提交历史：泳道提交图、分支/标签、提交详情与文件改动统计，支持筛选偏好持久化与可选自动刷新 | [redmingwei](https://github.com/redmingwei) |
 
 <details>
 <summary>预览：Token 用量看板</summary>
@@ -34,6 +35,15 @@
 ![Token 用量看板，使用合成数据展示用量趋势](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
 
 预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md)。
+
+</details>
+
+<details>
+<summary>预览：Git 提交树</summary>
+
+![Git 提交树，使用合成数据展示泳道提交图](plugins/microbiosis/git-tree/docs/preview.jpg)
+
+预览使用合成数据，应用界面目前为中文。仓库发现规则、泳道算法来源与兼容性说明见作品 [README](plugins/microbiosis/git-tree/README.zh-CN.md)。
 
 </details>
 
