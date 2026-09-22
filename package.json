@@ -1,0 +1,16 @@
+{
+  "name": "minimax-code-miniapps",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Community Mini App packages for MiniMax Code, with the contract checks contributors run before opening a pull request.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "check": "npm run validate && npm test"
+  },
+  "license": "MIT"
+}
