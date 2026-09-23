@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "route-planner": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/route-planner",
+      "headers": {},
+      "description": "自驾规划：行程、地点搜索、途经点、算路、地图同步与高德 Key 配置工具。",
+      "timeout": 60000
+    }
+  }
+}

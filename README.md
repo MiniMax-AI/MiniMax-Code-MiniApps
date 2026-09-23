@@ -19,6 +19,7 @@ Packages are organized by author under `plugins/<github-username>/<plugin-id>/`.
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
 | [Token Usage Board](plugins/yanhy2000/mcode-usage-monitor/) | Watch local Token usage, output speed, and cache hit rate in near real time; filter by time range, model, and session | [yanhy2000](https://github.com/yanhy2000) |
 | [Model Manager](plugins/ocoomber/openrouter-model-manager/) | Browse, search, and enable/disable models in your `~/.minimax/config.yaml` with instant save, bulk actions, one-click undo, and automatic backups | [ocoomber](https://github.com/ocoomber) |
+| [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | 【Offical Plugin】Plan driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>
@@ -87,9 +88,9 @@ To update an app, close it and exit MiniMax Code, then replace its complete plug
 
 Tools, games, visualizations, and small experiments are all welcome. To share a MiniApp:
 
-1. Fork the repository and add a complete, ready-to-run package under `plugins/<your-github-username>/<plugin-id>/`.
+1. Fork the repository, copy `examples/hello-miniapp/` to `plugins/<your-github-username>/<plugin-id>/`, and build your app there. The package rules are in [`docs/`](docs/package-contract.md); AI coding agents read [`AGENTS.md`](AGENTS.md) automatically.
 2. Include a README, a license, and any required runtime files. Document setup, data access, and what you have tested.
-3. Add the app to the tables in both root READMEs and open a pull request.
+3. Add the app to the tables in both root READMEs, run `npm run check`, and open a pull request.
 
 Use a lowercase GitHub username for the author directory. The plugin directory name must match `.minimax-plugin/plugin.json` → `name`, and **plugin IDs must be unique across the repository**, since the author directory is not part of the installed path.
 
@@ -98,6 +99,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 ## Questions and feedback
 
 Use [GitHub Issues](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues) to report a problem or suggest an app or improvement. For an app issue, include its ID and version, your MiniMax Code version, operating system, steps to reproduce, and the expected and actual behavior. Remove credentials and private session content from logs and screenshots.
+
+To ask for a runtime capability that MiniApps do not have yet, such as a new `context` API or window behaviour, comment on the pinned [capability wishlist](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues/9) instead of opening a new issue.
 
 ## License
 

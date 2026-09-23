@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "hello-miniapp",
+  "displayName": "Hello Mini App",
+  "version": "1.0.0",
+  "description": "The smallest Mini App package: a Node entry that serves one static page. Copy it to start your own.",
+  "author": "MiniMax",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": ["Open Hello Mini App"],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

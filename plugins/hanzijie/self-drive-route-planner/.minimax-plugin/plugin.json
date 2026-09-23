@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "self-drive-route-planner",
+  "displayName": "自驾规划",
+  "version": "0.8.1",
+  "description": "自驾路线规划：真实地点搜索、驾车算路与地图同步，支持按路线、时间线和备注自动生成 3:4 小红书 PNG 行程图。",
+  "author": "HanZijie",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "规划一条自驾路线并在地图中显示。",
+    "优化当前行程的途经点顺序。",
+    "把当前行程导出为小红书 3:4 图片。"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": [
+    "skills/route-planning/SKILL.md",
+    "skills/amap-apikey/SKILL.md",
+    "skills/xhs-route-cards/SKILL.md"
+  ]
+}

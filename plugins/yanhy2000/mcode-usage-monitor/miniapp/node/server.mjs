@@ -12,7 +12,21 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const QUERY_TIMEOUT_MS = 30000;
 const CACHE_TTL_MS = 2000;
 const MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
-const RANGE_KEYS = ['1h', '24h', '7d', '30d', 'all'];
+const RANGE_PRESETS = ['today', '1h', '12h', '24h', '7d', '30d', 'all'];
+const CUSTOM_RANGE_RE = /^(\d+)h$/;
+const MAX_CUSTOM_HOURS = 8760;
+
+/** 预设 key 原样通过; <N>h 整数小时(1..8760)通过; 其余返回 null(回退 all)。 */
+function normalizeRange(raw) {
+  if (typeof raw !== 'string') return null;
+  if (RANGE_PRESETS.includes(raw)) return raw;
+  const m = CUSTOM_RANGE_RE.exec(raw);
+  if (m) {
+    const h = Number(m[1]);
+    if (Number.isInteger(h) && h >= 1 && h <= MAX_CUSTOM_HOURS) return raw;
+  }
+  return null;
+}
 
 /**
  * mcode-usage-monitor Node 入口:
@@ -33,9 +47,9 @@ export async function start(context) {
   const echartsJs = await readFile(join(clientRoot, 'echarts.min.js'));
 
   // ---- 偏好持久化(存到 Host 分配的插件数据目录) ----
-  const PREF_RANGES = RANGE_KEYS;
   const PREF_INTERVALS = [0, 5, 10, 30];
   const PREF_THEMES = ['auto', 'light', 'dark'];
+  const PREF_CARDS = ['main', 'model', 'proj', 'tool', 'speed', 'recent']; // 与 index.html CARD_IDS 一致
 
   function sanitizePrefs(input) {
     const out = {};
@@ -46,9 +60,26 @@ export async function start(context) {
     if (Array.isArray(input.sessions)) {
       out.sessions = input.sessions.filter((x) => typeof x === 'string').slice(0, 50);
     }
-    if (PREF_RANGES.includes(input.range)) out.range = input.range;
+    const range = normalizeRange(input.range);
+    if (range) out.range = range;
     if (PREF_INTERVALS.includes(input.interval)) out.interval = input.interval;
     if (PREF_THEMES.includes(input.theme)) out.theme = input.theme;
+    if (input.collapsed && typeof input.collapsed === 'object' && !Array.isArray(input.collapsed)) {
+      const c = {};
+      for (const id of PREF_CARDS) {
+        if (typeof input.collapsed[id] === 'boolean') c[id] = input.collapsed[id];
+      }
+      out.collapsed = c;
+    }
+    if (Array.isArray(input.order)) {
+      const seen = new Set();
+      const order = [];
+      for (const id of input.order) {
+        if (PREF_CARDS.includes(id) && !seen.has(id)) { seen.add(id); order.push(id); }
+      }
+      for (const id of PREF_CARDS) { if (!seen.has(id)) order.push(id); } // 补齐缺失项
+      out.order = order.slice(0, PREF_CARDS.length);
+    }
     return out;
   }
 
@@ -198,7 +229,7 @@ export async function start(context) {
     }
     if (req.method === 'GET' && url.pathname === '/api/data') {
       const rawRange = url.searchParams.get('range') ?? 'all';
-      const rangeKey = RANGE_KEYS.includes(rawRange) ? rawRange : 'all';
+      const rangeKey = normalizeRange(rawRange) ?? 'all';
       const rawModels = url.searchParams.get('models');
       const models = rawModels
         ? rawModels.split(',').map((s) => s.trim()).filter(Boolean)

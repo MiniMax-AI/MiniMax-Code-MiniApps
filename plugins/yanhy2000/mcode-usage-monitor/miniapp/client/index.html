@@ -42,6 +42,10 @@ h1{font-size:18px;font-weight:600;line-height:28px}
 select,button{background:var(--mcode-bg-secondary);color:var(--mcode-text);
   border:1px solid var(--mcode-border);border-radius:8px;padding:4px 10px;
   font-size:13px;cursor:pointer;font-family:inherit;height:30px}
+input#rangeCustom{background:var(--mcode-bg-secondary);color:var(--mcode-text);
+  border:1px solid var(--mcode-border);border-radius:8px;padding:4px 8px;
+  font-size:13px;font-family:inherit;height:30px;width:80px;font-variant-numeric:tabular-nums}
+input#rangeCustom:focus-visible{outline:2px solid var(--mcode-accent);outline-offset:1px}
 select:hover,button:hover{border-color:var(--mcode-accent)}
 select:focus-visible,button:focus-visible{outline:2px solid var(--mcode-accent);
   outline-offset:1px}
@@ -62,6 +66,7 @@ select:focus-visible,button:focus-visible{outline:2px solid var(--mcode-accent);
   margin-bottom:6px}
 .ddhead a{color:var(--mcode-accent);font-size:12px;cursor:pointer;text-decoration:none}
 .ddhead a:hover{text-decoration:underline}
+.ddhead a.off{opacity:.35;cursor:default;text-decoration:none}
 .ddlist{max-height:280px;overflow:auto}
 .ddrow{display:flex;align-items:center;gap:9px;padding:6px 6px;border-radius:8px;
   cursor:pointer;font-size:13px}
@@ -86,10 +91,35 @@ section.panel{background:var(--mcode-surface);border:1px solid var(--mcode-borde
 .toggle button{border:0;border-radius:0;background:transparent;padding:3px 10px;
   font-size:12px;height:auto}
 .toggle button.on{background:var(--mcode-accent);color:var(--mcode-bg);font-weight:600}
-.chart{width:100%}
+.chart{width:100%;overflow:hidden}
 #mainChart{height:340px}
 #modelChart{height:260px}
 #speedChart{height:220px}
+#projChart{height:300px}
+#toolChart{height:300px}
+/* 卡片容器: 默认整行, .narrow 半宽成对排列; order 由拖拽排序写入
+   轨道用 minmax(0,1fr) 且项目 min-width:0: 画布等内容再宽也不会把布局撑开 */
+#cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+#cards>section.panel{margin-bottom:0;grid-column:1/-1;min-width:0}
+#cards>section.panel.narrow{grid-column:span 1}
+/* 卡片收起按钮与拖拽态 */
+.cbtns{display:flex;align-items:center;gap:2px;margin-left:auto}
+.cbtn{padding:0;width:24px;height:24px;display:inline-flex;align-items:center;
+  justify-content:center;background:transparent;border-color:transparent;
+  border-radius:6px;color:var(--mcode-text-muted)}
+.cbtn:hover{background:var(--mcode-bg-secondary);border-color:var(--mcode-border);
+  color:var(--mcode-text)}
+.cbtn .chev{transition:transform .15s}
+.panel.collapsed .cbtn .chev{transform:rotate(-90deg)}
+.draghint{display:none;color:var(--mcode-text-subtle);font-size:12px;letter-spacing:0;
+  user-select:none;cursor:grab}
+.panel.collapsed .draghint{display:inline}
+.panel.collapsed .phead{margin-bottom:0}
+.panel.collapsed{cursor:grab}
+.panel.dragging{opacity:.55;cursor:grabbing}
+.panel.drop-before{box-shadow:inset 0 3px 0 var(--mcode-accent)}
+.panel.drop-after{box-shadow:inset 0 -3px 0 var(--mcode-accent)}
+body.dragging-card{user-select:none;cursor:grabbing}
 .empty{padding:40px;text-align:center;color:var(--mcode-text-muted);font-size:13px}
 table{width:100%;border-collapse:collapse;font-size:13px;
   font-variant-numeric:tabular-nums}
@@ -122,6 +152,9 @@ footer a:hover{text-decoration:underline}
   #mainChart{height:260px}
   #modelChart{height:220px}
   #speedChart{height:190px}
+  #projChart,#toolChart{height:250px}
+  #cards{grid-template-columns:minmax(0,1fr);gap:8px}
+  #cards>section.panel.narrow{grid-column:1/-1}
   .tablewrap{max-height:360px}
   table{min-width:620px}
   select,button{font-size:12px;padding:4px 8px}
@@ -179,12 +212,18 @@ footer a:hover{text-decoration:underline}
 
     <label class="sub" for="range" style="position:absolute;left:-9999px">时间范围</label>
     <select id="range">
+      <option value="today">今天</option>
       <option value="1h">最近 1 小时</option>
+      <option value="12h">最近 12 小时</option>
       <option value="24h" selected>最近 24 小时</option>
       <option value="7d">最近 7 天</option>
       <option value="30d">最近 30 天</option>
       <option value="all">全部</option>
+      <option value="custom">自定义…</option>
     </select>
+    <input id="rangeCustom" type="number" min="1" max="8760" step="1"
+      inputmode="numeric" placeholder="小时数" style="display:none"
+      aria-label="自定义时间范围, 整数小时">
     <label class="sub" for="interval" style="position:absolute;left:-9999px">刷新间隔</label>
     <select id="interval">
       <option value="0">手动刷新</option>
@@ -194,13 +233,15 @@ footer a:hover{text-decoration:underline}
     </select>
     <button id="refresh" aria-label="立即刷新数据">刷新</button>
     <button id="themeBtn" title="主题: 跟随系统（点击切换）">主题: 自动</button>
+    <button id="layoutReset" title="卡片恢复为全部展开、默认排列（不影响上方筛选）">重置布局</button>
   </div>
 </header>
 
 <div id="toast" role="alert"></div>
 <div class="kpis" id="kpis"></div>
 
-<section class="panel" aria-label="Token 消耗时序">
+<div id="cards">
+<section class="panel" data-card="main" aria-label="Token 消耗时序">
   <div class="phead">
     <h2>Token 消耗时序</h2>
     <span class="sub" id="bucketInfo"></span>
@@ -214,20 +255,32 @@ footer a:hover{text-decoration:underline}
   <div class="empty" id="mainEmpty" style="display:none">当前筛选条件下没有数据</div>
 </section>
 
-<section class="panel" aria-label="模型对比">
+<section class="panel" data-card="model" aria-label="模型对比">
   <div class="phead"><h2>模型对比</h2>
     <span class="sub">点击柱子可只看该模型，再次点击取消</span></div>
   <div id="modelChart" class="chart"></div>
 </section>
 
-<section class="panel" aria-label="Token 速度">
+<section class="panel narrow" data-card="proj" aria-label="项目用量">
+  <div class="phead"><h2>项目用量</h2><span class="sub">按会话工作区汇总 · Top 8</span></div>
+  <div id="projChart" class="chart"></div>
+  <div class="empty" id="projEmpty" style="display:none">当前筛选条件下没有数据</div>
+</section>
+
+<section class="panel narrow" data-card="tool" aria-label="工具调用">
+  <div class="phead"><h2>工具调用</h2><span class="sub">按次数占比</span></div>
+  <div id="toolChart" class="chart"></div>
+  <div class="empty" id="toolEmpty" style="display:none">当前筛选条件下没有数据</div>
+</section>
+
+<section class="panel" data-card="speed" aria-label="Token 速度">
   <div class="phead"><h2>Token 速度</h2>
     <span class="sub">tokens/sec · 每次完成请求</span></div>
   <div id="speedChart" class="chart"></div>
   <div class="empty" id="speedEmpty" style="display:none">当前筛选条件下没有速度数据</div>
 </section>
 
-<section class="panel" aria-label="最近调用">
+<section class="panel" data-card="recent" aria-label="最近调用">
   <div class="phead"><h2>最近调用</h2><span class="sub" id="recentInfo"></span></div>
   <div class="tablewrap">
   <table>
@@ -241,6 +294,7 @@ footer a:hover{text-decoration:underline}
   </div>
   <div class="tfoot" id="recentFoot"></div>
 </section>
+</div>
 
 <footer>只读本地数据库，不影响运行中的 MiniMax Code<br>建议与反馈请到 <a href="https://github.com/yanhy2000/mCode-monitor" target="_blank" rel="noreferrer">GitHub 仓库</a></footer>
 </div>
@@ -259,7 +313,13 @@ const palette=()=>['--mcode-chart-1','--mcode-chart-2','--mcode-chart-3',
   '--mcode-chart-4','--mcode-chart-5','--mcode-chart-6'].map(cssVar);
 const colorOf=i=>palette()[i%6];
 const isNarrow=()=>window.innerWidth<680;
-const RANGE_LABEL={'1h':'1H','24h':'24H','7d':'7D','30d':'30D','all':'全部'};
+/* 卡片收起时容器隐藏: 跳过图表渲染, 展开后由 redrawAll 统一重绘 */
+const chartVisible=id=>{const el=$(id);return !!el&&el.offsetParent!==null;};
+const RANGE_LABEL={today:'今天','1h':'1H','12h':'12H','24h':'24H','7d':'7D','30d':'30D',all:'全部'};
+const CUSTOM_RANGE_RE=/^(\d+)h$/;
+const rangeLabel=v=>RANGE_LABEL[v]||(CUSTOM_RANGE_RE.test(v)?parseInt(v,10)+'H':'全部');
+/* 当前生效范围: 优先读下拉值; 瞬时无匹配项时退回记忆值, 避免发出空 range */
+const currentRange=()=>{const v=$('range').value;return (v&&v!=='custom')?v:rangeApplied;};
 
 /* ---------- 主题: 跟随系统配色; 按钮可临时切换, 不持久化 ---------- */
 const THEME={
@@ -277,7 +337,8 @@ function applyTheme(){
   document.documentElement.dataset.theme=effective;
   $('themeBtn').textContent='主题: '+THEME_NAME[themeMode];
   $('themeBtn').title='主题: '+THEME_NAME[themeMode]+'（点击切换）';
-  if(lastData&&window.echarts){renderMain(lastData);renderModels(lastData.models);renderSpeed(lastData.recent);}
+  if(lastData&&window.echarts){renderMain(lastData);renderModels(lastData.models);
+    renderProjects(lastData.projects);renderTools(lastData.tools);renderSpeed(lastData.recent);}
 }
 $('themeBtn').onclick=()=>{
   themeMode=themeMode==='auto'?'light':(themeMode==='light'?'dark':'auto');
@@ -305,7 +366,8 @@ function savePrefs(){
     try{
       fetch('/api/prefs',{method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({models:sel||[],sessions:selSess||[],
-          range:$('range').value,interval:+$('interval').value,theme:themeMode})});
+          range:$('range').value,interval:+$('interval').value,theme:themeMode,
+          collapsed:collapsed,order:cardOrder})});
     }catch{/* 保存失败不影响使用 */}
   },400);
 }
@@ -363,10 +425,11 @@ function renderDd(avail){
         sel=null;
         list.querySelectorAll('input[data-model]').forEach(x=>x.checked=true);
       }
-      updateDdLabel();savePrefs();load();
+      updateDdLabel();updateDdActions();savePrefs();load();
     };
   });
   updateDdLabel();
+  updateDdActions();
 }
 
 function updateDdLabel(){
@@ -376,13 +439,28 @@ function updateDdLabel(){
   else $('ddLabel').innerHTML=`已选 <span class="cnt">${n}</span> 个模型`;
 }
 
+/* 全选/反选仅在部分选中时有效: 已全选时两个入口一起置灰 */
+function updateDdActions(){
+  const off=!sel, offS=!selSess;
+  $('ddAll').classList.toggle('off',off);
+  $('ddInvert').classList.toggle('off',off);
+  $('ddAll').title=off?'已全选':'选择全部';
+  $('ddInvert').title=off?'已全选，反选不可用':'反转当前选择';
+  $('sdAll').classList.toggle('off',offS);
+  $('sdInvert').classList.toggle('off',offS);
+  $('sdAll').title=offS?'已全选':'选择全部';
+  $('sdInvert').title=offS?'已全选，反选不可用':'反转当前选择';
+}
+
 function ddSet(mode){
   if(!lastData)return;
   const all=lastData.available_models.map(m=>m.model);
-  if(mode==='all')sel=null;
-  else if(mode==='invert'){
-    const cur=sel||all;
-    const inv=all.filter(m=>!cur.includes(m));
+  if(mode==='all'){
+    if(!sel)return; // 已全选: 按钮已置灰, 这里双保险
+    sel=null;
+  }else if(mode==='invert'){
+    if(!sel)return; // 全选状态反选无意义: 按钮已置灰, 这里双保险
+    const inv=all.filter(m=>!sel.includes(m));
     sel=inv.length?inv:null;
   }
   renderDd(lastData.available_models);
@@ -420,11 +498,12 @@ function renderSd(avail){
         selSess=null;
         list.querySelectorAll('input[data-sess]').forEach(x=>x.checked=true);
       }
-      updateSdLabel();savePrefs();load();
+      updateSdLabel();updateDdActions();savePrefs();load();
     };
   });
   list.scrollTop=keepTop; // 自动刷新重建时保留滚动位置
   updateSdLabel();
+  updateDdActions();
 }
 
 function updateSdLabel(){
@@ -440,10 +519,12 @@ function updateSdLabel(){
 function sdSet(mode){
   if(!lastData)return;
   const all=sessList().map(s=>s.session_id);
-  if(mode==='all')selSess=null;
-  else if(mode==='invert'){
-    const cur=selSess||all;
-    const inv=all.filter(id=>!cur.includes(id));
+  if(mode==='all'){
+    if(!selSess)return; // 已全选: 按钮已置灰, 这里双保险
+    selSess=null;
+  }else if(mode==='invert'){
+    if(!selSess)return; // 全选状态反选无意义: 按钮已置灰, 这里双保险
+    const inv=all.filter(id=>!selSess.includes(id));
     selSess=inv.length?inv:null;
   }
   renderSd(sessList());
@@ -487,7 +568,7 @@ $('viewToggle').onclick=e=>{
 
 /* ---------- 数据 ---------- */
 function apiUrl(){
-  let u='/api/data?range='+$('range').value;
+  let u='/api/data?range='+encodeURIComponent(currentRange());
   if(sel&&sel.length)u+='&models='+encodeURIComponent(sel.join(','));
   if(selSess&&selSess.length)u+='&sessions='+encodeURIComponent(selSess.join(','));
   return u;
@@ -540,7 +621,7 @@ function render(d){
     ['缓存读取',fmtTok(o.cache_read_tokens),'服务端命中的缓存'],
     ['缓存命中率',o.hit_rate_pct+'%','cache_read / (cache_read+input)'],
     ['请求次数',fmt(o.calls),scope],
-    [`平均输出速度(${RANGE_LABEL[$('range').value]||'全部'})`,o.avg_tok_s+' tok/s','Σoutput / Σduration 加权'],
+    [`平均输出速度(${rangeLabel(currentRange())})`,o.avg_tok_s+' tok/s','Σoutput / Σduration 加权'],
   ];
   $('kpis').innerHTML=cards.map(c=>
     `<div class="kpi"><div class="label">${c[0]}</div>
@@ -548,11 +629,15 @@ function render(d){
 
   renderMain(d);
   renderModels(d.models);
+  renderProjects(d.projects);
+  renderTools(d.tools);
   renderSpeed(d.recent);
   renderRecent(d.recent);
+  fitCharts(); // 每次刷新顺带校正画布尺寸
 }
 
 function renderMain(d){
+  if(!chartVisible('mainChart'))return;
   const empty=!d.overview.calls;
   $('mainEmpty').style.display=empty?'block':'none';
   $('mainChart').style.display=empty?'none':'block';
@@ -627,7 +712,7 @@ function renderMain(d){
 }
 
 function renderModels(ms){
-  if(!window.echarts)return;
+  if(!window.echarts||!chartVisible('modelChart'))return;
   if(!modelChart){
     modelChart=echarts.init($('modelChart'));
     modelChart.on('click',p=>{
@@ -676,9 +761,69 @@ function renderModels(ms){
   },true);
 }
 
+/* ---------- 项目用量: 按会话工作区汇总的横向条形 ---------- */
+let projChart=null;
+function renderProjects(ps){
+  if(!chartVisible('projChart'))return;
+  const has=ps&&ps.length;
+  $('projEmpty').style.display=has?'none':'block';
+  $('projChart').style.display=has?'block':'none';
+  if(!has||!window.echarts)return;
+  if(!projChart)projChart=echarts.init($('projChart'));
+  const items=ps.slice().reverse(); // category 轴自下而上, 反转后 Top 在上
+  const bar=cssVar('--mcode-accent');
+  projChart.setOption({
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis',backgroundColor:T().tipBg,borderColor:T().tipBorder,
+      textStyle:{color:T().tipText,fontSize:12},confine:true,
+      formatter:p=>{
+        const x=items[p[0].dataIndex];
+        return `${esc(x.dir||x.name)}<br>总 ${fmtTok(x.tokens)} · ${fmt(x.calls)} 次<br>输入 ${fmtTok(x.input)} · 缓存 ${fmtTok(x.cache_read)} · 输出 ${fmtTok(x.output)}`;
+      }},
+    grid:{left:8,right:52,top:6,bottom:6,containLabel:true},
+    xAxis:{type:'value',axisLabel:{color:T().label,fontSize:11,formatter:v=>fmtTok(v)},
+      splitLine:{show:false}},
+    yAxis:{type:'category',data:items.map(x=>truncName(x.name,16)),
+      axisLine:{lineStyle:{color:T().axis}},
+      axisLabel:{color:T().label,fontSize:11}},
+    series:[{type:'bar',data:items.map(x=>x.tokens),barMaxWidth:16,
+      itemStyle:{color:bar,borderRadius:[0,3,3,0]},
+      label:{show:true,position:'right',color:T().label,fontSize:11,
+        formatter:p=>fmtTok(p.value)}}]
+  },true);
+  projChart.resize();
+}
+
+/* ---------- 工具调用: 次数占比环形图 ---------- */
+let toolChart=null;
+function renderTools(tl){
+  if(!chartVisible('toolChart'))return;
+  const has=tl&&tl.length;
+  $('toolEmpty').style.display=has?'none':'block';
+  $('toolChart').style.display=has?'block':'none';
+  if(!has||!window.echarts)return;
+  if(!toolChart)toolChart=echarts.init($('toolChart'));
+  const total=tl.reduce((a,b)=>a+b.calls,0);
+  toolChart.setOption({
+    backgroundColor:'transparent',
+    tooltip:{backgroundColor:T().tipBg,borderColor:T().tipBorder,
+      textStyle:{color:T().tipText,fontSize:12},confine:true,
+      formatter:p=>`${esc(p.name)}<br>${fmt(p.value)} 次 · ${(p.value/total*100).toFixed(1)}%`},
+    legend:{bottom:0,type:'scroll',textStyle:{color:T().label,fontSize:11},
+      formatter:name=>truncName(name,14)},
+    series:[{type:'pie',radius:['46%','70%'],center:['50%','44%'],
+      data:tl.map((x,i)=>({name:x.tool,value:x.calls,
+        itemStyle:{color:colorOf(i)}})),
+      label:{show:false},
+      emphasis:{scaleSize:4}}]
+  },true);
+  toolChart.resize();
+}
+
 /* ---------- Token 速度: 最近调用的逐次 tok/s ---------- */
 let speedChart=null;
 function renderSpeed(rs){
+  if(!chartVisible('speedChart'))return;
   const rows=(rs||[]).slice().reverse(); // 旧 -> 新
   const has=rows.some(r=>r.tok_s>0);
   $('speedEmpty').style.display=has?'none':'block';
@@ -741,29 +886,244 @@ function setTimer(){
   if(v>0)timer=setInterval(load,v*1000);
 }
 
+/* ---------- 卡片: 收起/展开 + 收起后拖拽排序 ---------- */
+const CARD_IDS=['main','model','proj','tool','speed','recent']; // 同时用于 prefs 校验(server.mjs 需同步)
+let collapsed={};               // {cardId:true}
+let cardOrder=CARD_IDS.slice(); // 卡片显示顺序
+const cardOrigDisp=new WeakMap();
+let dragState=null;
+
+const cardEl=id=>document.querySelector(`#cards > [data-card="${id}"]`);
+
+function resizeAll(){
+  [mainChart,modelChart,projChart,toolChart,speedChart].forEach(c=>c&&c.resize());
+}
+/* 兜底: 画布宽度与容器不一致时自动适配(宿主缩放、面板变化但没触发事件的场景) */
+function fitCharts(){
+  [['mainChart',mainChart],['modelChart',modelChart],['projChart',projChart],
+   ['toolChart',toolChart],['speedChart',speedChart]].forEach(([id,c])=>{
+    const el=$(id);
+    if(c&&el&&el.clientWidth&&Math.abs(el.clientWidth-c.getWidth())>1)c.resize();
+  });
+}
+function redrawAll(){
+  resizeAll(); // 先按容器当前尺寸校正画布, 再重绘
+  if(!lastData||!window.echarts)return;
+  renderMain(lastData);renderModels(lastData.models);
+  renderProjects(lastData.projects);renderTools(lastData.tools);renderSpeed(lastData.recent);
+}
+
+function applyCollapse(){
+  CARD_IDS.forEach(id=>{
+    const el=cardEl(id);if(!el)return;
+    const isC=!!collapsed[id];
+    el.classList.toggle('collapsed',isC);
+    [...el.children].forEach(ch=>{
+      if(ch.classList.contains('phead'))return;
+      if(!cardOrigDisp.has(ch))cardOrigDisp.set(ch,ch.style.display||'');
+      ch.style.display=isC?'none':cardOrigDisp.get(ch);
+    });
+    const btn=el.querySelector('.cbtn');
+    if(btn){
+      btn.setAttribute('aria-expanded',isC?'false':'true');
+      btn.setAttribute('aria-label',isC?'展开卡片':'收起卡片');
+      btn.title=isC?'展开':'收起';
+    }
+  });
+}
+function applyOrder(){
+  // 按 order 属性排布(grid 自动布局会跟随), 保证与首次渲染顺序一致
+  cardOrder.forEach((id,i)=>{const el=cardEl(id);if(el)el.style.order=i;});
+}
+function clearDropHints(){
+  document.querySelectorAll('#cards .drop-before,#cards .drop-after')
+    .forEach(x=>x.classList.remove('drop-before','drop-after'));
+}
+function finishDrag(el,id){
+  if(!dragState||dragState.id!==id)return;
+  const st=dragState;dragState=null;
+  el.classList.remove('dragging');
+  document.body.classList.remove('dragging-card');
+  clearDropHints();
+  if(!st.moved||!st.over||st.over===id)return;
+  cardOrder=cardOrder.filter(x=>x!==id);
+  const idx=cardOrder.indexOf(st.over);
+  if(idx<0)return;
+  cardOrder.splice(st.before?idx:idx+1,0,id);
+  applyOrder();savePrefs();
+}
+/* 仅在收起状态可拖拽: 展开时内容需要正常选择/交互 */
+function bindDrag(el,id){
+  el.addEventListener('pointerdown',e=>{
+    if(!collapsed[id]||e.button!==0||e.target.closest('.cbtn'))return;
+    dragState={id,startX:e.clientX,startY:e.clientY,moved:false,over:null,before:true};
+  });
+  el.addEventListener('pointermove',e=>{
+    if(!dragState||dragState.id!==id)return;
+    if(!dragState.moved&&Math.hypot(e.clientX-dragState.startX,e.clientY-dragState.startY)<6)return;
+    if(!dragState.moved){
+      dragState.moved=true;
+      el.classList.add('dragging');
+      document.body.classList.add('dragging-card');
+      try{el.setPointerCapture(e.pointerId);}catch{/* 指针已失效 */}
+    }
+    const hit=document.elementFromPoint(e.clientX,e.clientY);
+    const overEl=hit?hit.closest('#cards > [data-card]'):null;
+    clearDropHints();
+    if(!overEl)return;
+    const oid=overEl.dataset.card;
+    if(oid===id)return;
+    const r=overEl.getBoundingClientRect();
+    const sameRow=e.clientY>=r.top&&e.clientY<=r.bottom;
+    const before=sameRow?(e.clientX<r.left+r.width/2):(e.clientY<r.top+r.height/2);
+    overEl.classList.add(before?'drop-before':'drop-after');
+    dragState.over=oid;dragState.before=before;
+  });
+  el.addEventListener('pointerup',()=>finishDrag(el,id));
+  el.addEventListener('pointercancel',()=>finishDrag(el,id));
+}
+
+function initCards(){
+  CARD_IDS.forEach(id=>{
+    const el=cardEl(id);if(!el)return;
+    const head=el.querySelector('.phead');
+    if(head&&!head.querySelector('.cbtn')){
+      const wrap=document.createElement('div');
+      wrap.className='cbtns';
+      wrap.innerHTML=`<span class="draghint" title="收起后可拖拽排序" aria-hidden="true">⠿</span>
+        <button class="cbtn" type="button" aria-label="收起卡片" title="收起">
+          <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d="M1.5 3.5 L5 7 L8.5 3.5" stroke="currentColor" stroke-width="1.4"
+              stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>`;
+      head.appendChild(wrap);
+      wrap.querySelector('.cbtn').onclick=e=>{
+        e.stopPropagation();
+        collapsed[id]=!collapsed[id];
+        applyCollapse();savePrefs();
+        requestAnimationFrame(redrawAll); // 展开后重绘/重算尺寸
+      };
+    }
+    bindDrag(el,id);
+  });
+  applyOrder();
+  applyCollapse();
+}
+
+/* 重置布局: 只恢复卡片的展开状态与顺序, 上方筛选不动 */
+$('layoutReset').onclick=()=>{
+  collapsed={};
+  cardOrder=CARD_IDS.slice();
+  applyCollapse();applyOrder();savePrefs();
+  requestAnimationFrame(redrawAll); // 展开的卡片需要重绘/重算尺寸
+  toast('卡片布局已恢复默认',true);
+};
+
 $('refresh').onclick=load;
-$('range').onchange=()=>{savePrefs();load();};
+
+/* ---------- 时间范围: 预设 + 自定义整数小时(1..8760) ---------- */
+let rangeApplied='24h'; // 当前生效值(可能是 '<N>h' 自定义)
+const rangeInput=$('rangeCustom');
+
+/* 输入小时数与预设等价时直接归并到预设, 避免出现同值的两条
+   仅负责建好/更新选项并返回最终值, 选中与加载由调用方处理 */
+const HOUR_PRESET={1:'1h',12:'12h',24:'24h',168:'7d',720:'30d'};
+function setCustomRangeOption(n){
+  const selEl=$('range');
+  const v=HOUR_PRESET[n]||(n+'h');
+  let opt=[...selEl.options].find(o=>o.value===v);
+  if(!opt){
+    opt=document.createElement('option');opt.dataset.custom='1';
+    opt.value=v;opt.textContent='最近 '+n+' 小时';
+    selEl.insertBefore(opt,selEl.querySelector('option[value="custom"]'));
+  }else if(opt.dataset.custom==='1'){
+    opt.textContent='最近 '+n+' 小时';
+  }
+  return v;
+}
+/* 清掉遗留的自定义项(keep 指定的那条保留), 保持列表干净 */
+function dropCustomOptions(keep){
+  $('range').querySelectorAll('option[data-custom="1"]')
+    .forEach(o=>{if(o.value!==keep)o.remove();});
+}
+function hideRangeInput(){$('range').value=rangeApplied;rangeInput.style.display='none';}
+function applyRangeInput(){
+  const n=parseInt(rangeInput.value,10);
+  if(Number.isInteger(n)&&n>=1&&n<=8760){
+    rangeInput.value='';   // 先清空: 隐藏输入框时还会触发一次 blur, 避免重复应用
+    rangeInput.style.display='none';
+    const v=setCustomRangeOption(n); // 先建好/定位到目标选项
+    dropCustomOptions(v);                  // 再清掉其它自定义项(保留当前这条)
+    $('range').value=v;rangeApplied=v;
+    savePrefs();load();
+  }else{
+    toast('自定义范围需为 1–8760 之间的整数小时');
+    rangeInput.focus();
+  }
+}
+$('range').onchange=()=>{
+  const v=$('range').value;
+  if(v==='custom'){rangeInput.style.display='';rangeInput.value='';rangeInput.focus();return}
+  rangeInput.style.display='none';
+  dropCustomOptions();
+  rangeApplied=v;savePrefs();load();
+};
+rangeInput.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();applyRangeInput();}
+  else if(e.key==='Escape')hideRangeInput();
+});
+rangeInput.addEventListener('blur',()=>{
+  if(rangeInput.value.trim()==='')hideRangeInput();
+  else applyRangeInput();
+});
 $('interval').onchange=()=>{savePrefs();setTimer();};
 let rzT=null;
-window.addEventListener('resize',()=>{
-  mainChart&&mainChart.resize();
-  modelChart&&modelChart.resize();
-  speedChart&&speedChart.resize();
-  // 跨过窄屏断点时重算布局（轴名称/边距/字号按 isNarrow() 切换）
+/* 尺寸变化后重排: 防抖, 跨窄屏断点时一并重算轴布局/字号 */
+function relayout(){
   clearTimeout(rzT);
-  rzT=setTimeout(()=>{
-    if(lastData){renderMain(lastData);renderModels(lastData.models);renderSpeed(lastData.recent);}
-  },200);
-});
+  rzT=setTimeout(()=>{resizeAll();redrawAll();},150);
+}
+window.addEventListener('resize',()=>{resizeAll();relayout();});
+/* 宿主侧栏宽度变化不一定触发 window.resize: 直接监听卡片容器宽度 */
+let cardsW=0;
+if(window.ResizeObserver){
+  new ResizeObserver(es=>{
+    const w=Math.round(es[0].contentRect.width);
+    if(w===cardsW)return;
+    cardsW=w;relayout();
+  }).observe($('cards'));
+}
 
 (function boot(){
   applyTheme(); // 先用系统主题渲染，避免闪白/闪黑
   loadPrefs().then(p=>{
     if(Array.isArray(p.models))sel=p.models.length?p.models:null;
     if(Array.isArray(p.sessions))selSess=p.sessions.length?p.sessions:null;
-    if(p.range&&[...$('range').options].some(o=>o.value===p.range))$('range').value=p.range;
+    if(p.range){
+      // 先按预设匹配(24h/7d 等同样匹配自定义格式, 必须优先判定为预设)
+      if([...$('range').options].some(o=>o.value===p.range&&o.dataset.custom!=='1')){
+        $('range').value=p.range;rangeApplied=p.range;
+      }else{
+        const m=CUSTOM_RANGE_RE.exec(p.range);
+        if(m&&+m[1]>=1&&+m[1]<=8760){
+          const rv=setCustomRangeOption(+m[1]); // 与预设等价时归并
+          $('range').value=rv;rangeApplied=rv;
+        }
+      }
+    }
     if(p.interval!=null&&[...$('interval').options].some(o=>+o.value===p.interval))$('interval').value=String(p.interval);
     if(p.theme)themeMode=p.theme;
+    if(p.collapsed&&typeof p.collapsed==='object'){
+      CARD_IDS.forEach(id=>{if(p.collapsed[id]===true)collapsed[id]=true;});
+    }
+    if(Array.isArray(p.order)&&p.order.length){
+      const seen=new Set(),arr=[];
+      p.order.forEach(x=>{if(CARD_IDS.includes(x)&&!seen.has(x)){seen.add(x);arr.push(x);}});
+      CARD_IDS.forEach(x=>{if(!seen.has(x))arr.push(x);}); // 补齐新增卡片
+      cardOrder=arr;
+    }
+    initCards();
     applyTheme();
     setTimer(); // 启动即开始按所选间隔自动刷新
     startLoad();

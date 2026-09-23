@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "mcode-usage-monitor",
   "displayName": "Token 用量看板",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "统计本机 MiniMax Code 会话的 token 消耗，可按模型和会话筛选。",
   "author": "yanhy2000",
   "icon": "icon.png",

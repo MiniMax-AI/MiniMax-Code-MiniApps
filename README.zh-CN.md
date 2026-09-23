@@ -19,6 +19,7 @@
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
 | [Token 用量看板](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md) | 近实时查看本机 Token 用量、输出速度与缓存命中率，可按时间范围、模型和会话筛选 | [yanhy2000](https://github.com/yanhy2000) |
 | [模型管理器](plugins/ocoomber/openrouter-model-manager/README.zh-CN.md) | 浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型，支持即时保存、批量操作、一键撤销和自动备份 | [ocoomber](https://github.com/ocoomber) |
+| [自驾规划](plugins/hanzijie/self-drive-route-planner/README.zh-CN.md) | 【官方插件】规划自驾路线、地点搜索、候选算路与小红书 3:4 行程图；支持演示模式 | [HanZijie](https://github.com/HanZijie) |
 
 <details>
 <summary>预览：Token 用量看板</summary>
@@ -87,9 +88,9 @@ git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
 
 欢迎分享工具、游戏、可视化应用和小实验。提交作品只需：
 
-1. Fork 仓库，在 `plugins/<你的-github-username>/<plugin-id>/` 下加入可直接运行的完整插件包。
+1. Fork 仓库，把 `examples/hello-miniapp/` 复制到 `plugins/<你的-github-username>/<plugin-id>/`，在此基础上开发。插件包规则见 [`docs/`](docs/package-contract.md)（英文）；AI 编码助手会自动读取 [`AGENTS.md`](AGENTS.md)。
 2. 附上 README、许可证和运行所需文件，说明配置方式、数据访问范围与验证情况。
-3. 在根目录的中英文 README 作品表格中增加一行，然后提交 Pull Request。
+3. 在根目录的中英文 README 作品表格中增加一行，运行 `npm run check`，然后提交 Pull Request。
 
 作者目录使用小写 GitHub username。插件目录名必须与 `.minimax-plugin/plugin.json` 中的 `name` 一致，且**插件 ID 在整个仓库中唯一**，因为安装路径不包含作者目录。
 
@@ -98,6 +99,8 @@ git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
 ## 问题与建议
 
 欢迎通过 [GitHub Issues](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues) 反馈问题、分享作品想法或提出改进建议。反馈插件问题时，请提供插件 ID 和版本、MiniMax Code 版本、操作系统、复现步骤，以及预期和实际结果。日志和截图请移除凭据及私人会话内容。
+
+如果你希望 MiniApp 获得目前还不具备的运行时能力（例如新的 `context` API 或窗口行为），请直接在置顶的[能力愿望单](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues/9)下评论，不必另开 issue。
 
 ## 许可证
 

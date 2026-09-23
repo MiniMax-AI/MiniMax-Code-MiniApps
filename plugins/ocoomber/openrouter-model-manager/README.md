@@ -45,7 +45,7 @@ The Node runtime reads your `config.yaml` line by line (no YAML library) and fin
 
 Capabilities such as vision support are intentionally **not** fetched from external APIs — your config file is the single source of truth.
 
-## Privacy & data safety
+## Data & access
 
 - The UI never sees your secrets: the server returns only model **id / name / enabled / contextLimit**. API keys in the config are never read into the UI, returned by the API, or displayed.
 - The app makes **no outbound network requests** of its own.
