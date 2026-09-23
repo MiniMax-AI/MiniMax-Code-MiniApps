@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import {
   APP_PATH,
   CATEGORIES,
@@ -13,8 +15,7 @@ import {
   SKILL_PATH,
   VERSION_MAX_LENGTH,
 } from '../contract.mjs';
-import { isRecord, pathExists, readJsonFile } from '../fs.mjs';
-import { portablePathIssue, resolvePackagePath } from '../paths.mjs';
+import { isRecord, pathExists } from '../fs.mjs';
 
 const FILE = '.minimax-plugin/plugin.json';
 
@@ -62,8 +63,7 @@ export async function checkManifest(report, { packageDir, manifest }) {
   if (apps && apps.length > 0) {
     report.warning('MANIFEST_APPS_IGNORED', 'apps entries are ignored for locally installed packages', FILE);
   }
-  const mcpServers = await references(report, packageDir, manifest.mcpServers, 'mcpServers', MCP_PATH, { required: true, mustExist: true });
-  const mcpServerNames = await readMcpServerNames(packageDir, mcpServers);
+  await references(report, packageDir, manifest.mcpServers, 'mcpServers', MCP_PATH, { required: true, mustExist: true });
   await references(report, packageDir, manifest.skills, 'skills', SKILL_PATH, { required: true, mustExist: true });
   await references(report, packageDir, manifest.hooks, 'hooks', HOOK_PATH, { required: false, mustExist: true });
   await references(report, packageDir, manifest.hostBindings, 'hostBindings', HOST_BINDING_PATH, { required: false, mustExist: true });
@@ -72,7 +72,6 @@ export async function checkManifest(report, { packageDir, manifest }) {
   if (name !== undefined) identity.name = name;
   if (icon !== undefined) identity.icon = icon;
   if (darkIcon !== undefined) identity.darkIcon = darkIcon;
-  identity.mcpServerNames = mcpServerNames;
   return identity;
 }
 
@@ -104,7 +103,7 @@ function imagePath(report, value, label, required) {
     return undefined;
   }
   const trimmed = value.trim();
-  if (trimmed.length > REFERENCE_MAX_LENGTH || portablePathIssue(trimmed) || !ICON_PATH.test(trimmed)) {
+  if (trimmed.length > REFERENCE_MAX_LENGTH || !ICON_PATH.test(trimmed)) {
     report.error('MANIFEST_FIELD_INVALID', `${label} must be a plugin-relative .png, .jpg, .jpeg, or .webp path`, FILE);
     return undefined;
   }
@@ -131,32 +130,13 @@ async function references(report, packageDir, value, label, pattern, { required,
     return items;
   }
   for (const item of items) {
-    const issue = portablePathIssue(item);
-    if (item.length > REFERENCE_MAX_LENGTH || issue || !pattern.test(item)) {
+    if (item.length > REFERENCE_MAX_LENGTH || !pattern.test(item)) {
       report.error('MANIFEST_REFERENCE_INVALID', `${label} entry "${item}" must match ${pattern.source}`, FILE);
       continue;
     }
-    const absolute = resolvePackagePath(packageDir, item);
-    if (absolute === undefined) {
-      report.error('MANIFEST_REFERENCE_INVALID', `${label} entry "${item}" must stay inside the package`, FILE);
-      continue;
-    }
-    if (mustExist && !(await pathExists(absolute, 'file'))) {
+    if (mustExist && !(await pathExists(path.join(packageDir, ...item.split('/')), 'file'))) {
       report.error('MANIFEST_REFERENCE_MISSING', `${label} entry "${item}" does not exist`, item);
     }
   }
   return items;
-}
-
-async function readMcpServerNames(packageDir, references) {
-  if (!references) return [];
-  const names = new Set();
-  for (const relativePath of references) {
-    const absolute = resolvePackagePath(packageDir, relativePath);
-    if (absolute === undefined) continue;
-    const result = await readJsonFile(absolute);
-    if (!result.ok || !isRecord(result.value) || !isRecord(result.value.mcpServers)) continue;
-    for (const name of Object.keys(result.value.mcpServers)) names.add(name);
-  }
-  return [...names];
 }

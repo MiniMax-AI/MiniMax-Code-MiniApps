@@ -14,12 +14,6 @@ export function normalizePluginPath(value) {
   return { ok: true, value: normalized };
 }
 
-export function resolvePackagePath(packageDir, relativePath) {
-  const root = path.resolve(packageDir);
-  const absolute = path.resolve(root, ...relativePath.split('/'));
-  return absolute === root || absolute.startsWith(`${root}${path.sep}`) ? absolute : undefined;
-}
-
 export function portablePathIssue(relativePath) {
   if (!relativePath) return 'path is empty';
   if (!/^[\x00-\x7f]*$/u.test(relativePath)) return 'is not ASCII';

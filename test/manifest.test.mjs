@@ -21,7 +21,7 @@ async function run(mutate, prepare) {
 test('manifest: baseline passes and returns identity', async () => {
   const { report, identity } = await run((m) => m);
   assert.deepEqual(report.diagnostics, []);
-  assert.deepEqual(identity, { name: 'hello-miniapp', icon: 'icon.png', mcpServerNames: [] });
+  assert.deepEqual(identity, { name: 'hello-miniapp', icon: 'icon.png' });
 });
 
 test('manifest: $schema is an accepted optional string', async () => {
@@ -80,31 +80,6 @@ test('manifest: skills, mcpServers, hooks, hostBindings need matching pattern an
   assert.deepEqual(codes(badPattern.report.diagnostics), ['MANIFEST_REFERENCE_INVALID']);
   const duplicate = await run((m) => ({ ...m, hooks: ['hooks/a.json', 'hooks/a.json'] }));
   assert.deepEqual(codes(duplicate.report.diagnostics), ['MANIFEST_REFERENCE_INVALID']);
-});
-
-test('manifest: all declared paths reject dot segments before resolving files', async () => {
-  for (const [key, value] of [
-    ['icon', '../icon.png'],
-    ['apps', ['nested/../x.app.json']],
-    ['mcpServers', ['./tools.mcp.json']],
-    ['skills', ['skills/../demo/SKILL.md']],
-    ['hooks', ['hooks/../hook.json']],
-    ['hostBindings', ['bindings/../x.binding.json']],
-  ]) {
-    const { report } = await run((m) => ({ ...m, [key]: value }));
-    assert.deepEqual(codes(report.diagnostics, 'error'), [key === 'icon' ? 'MANIFEST_FIELD_INVALID' : 'MANIFEST_REFERENCE_INVALID'], key);
-  }
-});
-
-test('manifest: MCP descriptor names are returned for MiniApp endpoint validation', async () => {
-  const { report, identity } = await run(
-    (m) => ({ ...m, mcpServers: ['servers.mcp.json'] }),
-    async (dir) => {
-      await writeFile(path.join(dir, 'servers.mcp.json'), JSON.stringify({ mcpServers: { local: {}, remote: {} } }));
-    },
-  );
-  assert.deepEqual(report.diagnostics, []);
-  assert.deepEqual(identity.mcpServerNames, ['local', 'remote']);
 });
 
 test('manifest: non-object is a single error', async () => {

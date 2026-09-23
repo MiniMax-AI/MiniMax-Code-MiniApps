@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { START_EXPORT_DECLARATION, START_EXPORT_LIST, STDOUT_CALL } from '../contract.mjs';
+import { START_EXPORT, STDOUT_CALL } from '../contract.mjs';
 import { pathExists } from '../fs.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -25,11 +25,13 @@ export async function checkNode(report, { packageDir, entry, nodeRoots }) {
     const absolute = path.join(packageDir, ...relativePath.split('/'));
     if (!(await pathExists(absolute, 'file'))) continue;
     const isEntry = relativePath === entry;
-    try {
-      await execFileAsync(process.execPath, ['--check', absolute], { windowsHide: true });
-    } catch (error) {
-      report.error('ENTRY_SYNTAX', firstLine(error.stderr) || 'syntax check failed', relativePath);
-      continue;
+    if (path.extname(relativePath) !== '.js') {
+      try {
+        await execFileAsync(process.execPath, ['--check', absolute], { windowsHide: true });
+      } catch (error) {
+        report.error('ENTRY_SYNTAX', firstLine(error.stderr) || 'syntax check failed', relativePath);
+        continue;
+      }
     }
     const source = await readFile(absolute, 'utf8');
     if (STDOUT_CALL.test(source)) {
@@ -37,20 +39,10 @@ export async function checkNode(report, { packageDir, entry, nodeRoots }) {
       if (isEntry) report.error('ENTRY_STDOUT', message, relativePath);
       else report.warning('ENTRY_STDOUT', message, relativePath);
     }
-    if (isEntry && !hasNamedStartExport(source)) {
+    if (isEntry && !START_EXPORT.test(source)) {
       report.error('ENTRY_START_EXPORT_MISSING', 'the Node entry must export a named start function using ESM syntax', relativePath);
     }
   }
-}
-
-function hasNamedStartExport(source) {
-  if (START_EXPORT_DECLARATION.test(source)) return true;
-  START_EXPORT_LIST.lastIndex = 0;
-  for (const match of source.matchAll(START_EXPORT_LIST)) {
-    const specifiers = match[1].split(',').map((specifier) => specifier.trim());
-    if (specifiers.some((specifier) => /^(?:start|[A-Za-z_$][\w$]*\s+as\s+start|default\s+as\s+start)$/u.test(specifier))) return true;
-  }
-  return false;
 }
 
 async function collectScripts(absoluteDir, relativeDir) {

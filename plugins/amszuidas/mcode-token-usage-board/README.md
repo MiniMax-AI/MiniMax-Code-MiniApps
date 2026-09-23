@@ -22,7 +22,7 @@ Include the hidden `.minimax-plugin` directory. Restart a version of MiniMax Cod
 
 Choose today, the past 7 days, the past 30 days, or all time, and optionally filter by model or session. Click “刷新” (Refresh) to update the data; the page also refreshes every 60 seconds. No API key or additional dependency installation is required.
 
-## Data & access
+## Data access and counting
 
 The service searches upward from the Host-provided `context.dataDir` for `v2/sessions`. If none is found, it falls back to `.minimax/v2/sessions` in your home directory. It reads `manifest.json` and `messages.jsonl` from session directories to extract usage, model names, session IDs, and titles derived from the first meaningful user text.
 
@@ -30,15 +30,11 @@ Usage is grouped by day in your local time zone. The total adds input, output, c
 
 The runtime does not write local files or upload data to external services. It has no telemetry or credential configuration, and its cache stays in process memory. The page displays actual session titles, so take care when sharing screenshots or your screen.
 
-## Tested environment
-
-The contribution was checked with synthetic sessions and a browser preview. Installation in the actual MiniMax Code desktop app, the minimum supported client version, and compatibility across operating systems have not been verified.
-
 ## Source and verification
 
 The page is in `miniapp/client/index.html`, and the Node service is in `miniapp/node/server.mjs`. No build step is required.
 
-Checks performed when adding this app covered usage aggregation, data refresh, error handling, and service shutdown with synthetic sessions, plus a browser preview.
+Checks performed when adding this app covered usage aggregation, data refresh, error handling, and service shutdown with synthetic sessions, plus a browser preview. Installation in the actual MiniMax Code desktop app has not been verified as part of this contribution. The minimum supported client version and compatibility across operating systems remain unconfirmed.
 
 ## License
 

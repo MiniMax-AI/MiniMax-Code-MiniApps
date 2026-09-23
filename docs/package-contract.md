@@ -96,11 +96,10 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
   inside one of `artifacts.node`. `runtime.lifecycle` is `on-demand` or omitted.
 - `surface.path` is the route the Node entry serves the page on. It is relative to the Host and
   must not contain an origin, query, fragment, or backslash. A missing leading `/` is added.
-- `mcpEndpoints` is an array of `{ "server": string, "path": string }`; include `[]` when there
-  are none. `server` matches `^[a-zA-Z0-9_-]{1,128}$` and must name a server declared inside one
-  of the `plugin.json.mcpServers` descriptor files. `npm run check` reads those descriptor files
-  and checks the reference when they are valid JSON; MiniMax Code repeats the check at install time.
-  `server` and `path` are each unique.
+- `mcpEndpoints` is an array of `{ "server": string, "path": string }`. `server` matches
+  `^[a-zA-Z0-9_-]{1,128}$` and must name a server declared through `plugin.json.mcpServers`; MiniMax
+  Code checks that reference at install time. `server` and `path` are each unique. Use `[]` when
+  there are none.
 - `hostConnectorAccess` is optional: `{ "providers": string[] }`, each matching
   `^[a-z0-9_-]{1,64}$` and unique. Declared providers are granted by the Host at install time; this
   repository does not document their use.

@@ -18,7 +18,7 @@ import { isCoveredBy, normalizePluginPath, normalizeRoutePath } from '../paths.m
 
 const FILE = 'miniapp/miniapp.json';
 
-export async function checkMiniApp(report, { packageDir, manifest, mcpServerNames = [] }) {
+export async function checkMiniApp(report, { packageDir, manifest }) {
   const resolved = { nodeRoots: [], clientRoots: [] };
   if (!isRecord(manifest)) {
     report.error('MINIAPP_NOT_OBJECT', 'miniapp.json must be a JSON object', FILE);
@@ -35,7 +35,7 @@ export async function checkMiniApp(report, { packageDir, manifest, mcpServerName
   const entry = await checkRuntime(report, packageDir, manifest.runtime, artifacts.node);
   if (entry) resolved.entry = entry;
   checkSurface(report, manifest.surface);
-  checkMcpEndpoints(report, manifest.mcpEndpoints, mcpServerNames);
+  checkMcpEndpoints(report, manifest.mcpEndpoints);
   checkHostConnectorAccess(report, manifest.hostConnectorAccess);
   return resolved;
 }
@@ -120,16 +120,12 @@ function checkSurface(report, value) {
   if (!route.ok) report.error('MINIAPP_SURFACE_INVALID', `surface.path ${route.reason}`, FILE);
 }
 
-function checkMcpEndpoints(report, value, mcpServerNames) {
-  if (value === undefined) {
-    report.error('MINIAPP_MCP_ENDPOINT_INVALID', 'mcpEndpoints must be an array (use [] when empty)', FILE);
-    return;
-  }
+function checkMcpEndpoints(report, value) {
+  if (value === undefined) return;
   if (!Array.isArray(value)) {
     report.error('MINIAPP_MCP_ENDPOINT_INVALID', 'mcpEndpoints must be an array (use [] when empty)', FILE);
     return;
   }
-  const knownServers = new Set(mcpServerNames);
   const servers = new Set();
   const paths = new Set();
   for (const item of value) {
@@ -139,10 +135,6 @@ function checkMcpEndpoints(report, value, mcpServerNames) {
     }
     if (typeof item.server !== 'string' || !MCP_SERVER_NAME.test(item.server)) {
       report.error('MINIAPP_MCP_ENDPOINT_INVALID', `MCP endpoint server must match ${MCP_SERVER_NAME.source}`, FILE);
-      continue;
-    }
-    if (!knownServers.has(item.server)) {
-      report.error('MINIAPP_MCP_ENDPOINT_INVALID', `MCP server "${item.server}" is not declared by plugin.json.mcpServers`, FILE);
       continue;
     }
     const route = normalizeRoutePath(item.path);

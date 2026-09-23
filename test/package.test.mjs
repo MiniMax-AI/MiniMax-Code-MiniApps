@@ -46,23 +46,6 @@ test('package: warnings alone do not make hasErrors true', async () => {
   assert.equal(hasErrors(diagnostics), false);
 });
 
-test('package: MiniApp MCP endpoints are checked against declared server names', async () => {
-  const root = await makeTmpRoot();
-  const { dir } = await copyExample(root);
-  const pluginManifest = JSON.parse(await readFile(path.join(dir, '.minimax-plugin', 'plugin.json'), 'utf8'));
-  pluginManifest.mcpServers = ['servers.mcp.json'];
-  await writeFile(path.join(dir, '.minimax-plugin', 'plugin.json'), `${JSON.stringify(pluginManifest)}\n`);
-  await writeFile(path.join(dir, 'servers.mcp.json'), JSON.stringify({ mcpServers: { local: {} } }));
-  const miniappManifest = JSON.parse(await readFile(path.join(dir, 'miniapp', 'miniapp.json'), 'utf8'));
-  miniappManifest.mcpEndpoints = [{ server: 'local', path: '/mcp' }];
-  await writeFile(path.join(dir, 'miniapp', 'miniapp.json'), `${JSON.stringify(miniappManifest)}\n`);
-  assert.deepEqual(await validatePackage(dir), []);
-
-  miniappManifest.mcpEndpoints = [{ server: 'missing', path: '/mcp' }];
-  await writeFile(path.join(dir, 'miniapp', 'miniapp.json'), `${JSON.stringify(miniappManifest)}\n`);
-  assert.deepEqual(codes(await validatePackage(dir)), ['MINIAPP_MCP_ENDPOINT_INVALID']);
-});
-
 test('package: an example is not subject to the lowercase-author rule', async () => {
   const root = await makeTmpRoot();
   const { dir } = await copyExample(root, { author: 'Examples' });

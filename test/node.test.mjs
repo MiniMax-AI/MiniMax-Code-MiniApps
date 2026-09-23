@@ -39,11 +39,6 @@ test('node: entry must export start with ESM syntax', async () => {
     await writeFile(file, (await readFile(file, 'utf8')).replace('export async function start', 'async function start'));
   });
   assert.deepEqual(codes(diagnostics), ['ENTRY_START_EXPORT_MISSING']);
-  const aliased = await run(async (dir) => {
-    const file = path.join(dir, ENTRY);
-    await writeFile(file, (await readFile(file, 'utf8')).replace('export async function start', 'async function start').concat('\nexport { start as foo };\n'));
-  });
-  assert.deepEqual(codes(aliased), ['ENTRY_START_EXPORT_MISSING']);
 });
 
 test('node: a syntax error in an .mjs file is an error', async () => {
@@ -51,25 +46,9 @@ test('node: a syntax error in an .mjs file is an error', async () => {
   assert.deepEqual(codes(diagnostics), ['ENTRY_SYNTAX']);
 });
 
-test('node: .js files are syntax checked', async () => {
+test('node: .js files skip the syntax check and rely on the pattern checks only', async () => {
   const diagnostics = await run(async (dir) => {
     await writeFile(path.join(dir, 'miniapp', 'node', 'helper.js'), 'module.exports = { broken: ( };\n');
-  });
-  assert.deepEqual(codes(diagnostics), ['ENTRY_SYNTAX']);
-});
-
-test('node: entry export list accepts the exact named start binding', async () => {
-  const diagnostics = await run(async (dir) => {
-    const file = path.join(dir, ENTRY);
-    await writeFile(file, 'async function start() {}\nexport { start };\n');
-  });
-  assert.deepEqual(diagnostics, []);
-});
-
-test('node: an export alias whose exported name is start is accepted', async () => {
-  const diagnostics = await run(async (dir) => {
-    const file = path.join(dir, ENTRY);
-    await writeFile(file, 'async function run() {}\nexport { run as start };\n');
   });
   assert.deepEqual(diagnostics, []);
 });

@@ -24,7 +24,7 @@ The page opens on the last 24 hours. You can switch between 1 hour, 24 hours, 7 
 
 This app requires **Python 3.8+** on the local machine to read the local database. It uses only the standard library, so no `pip install` is needed. No API key or other configuration is required.
 
-## Data & access
+## Data access and counting
 
 The app reads two local sources:
 
@@ -40,15 +40,11 @@ This is a local, near-real-time view. The in-product usage page (Settings → Us
 
 The runtime sends nothing to external services and has no telemetry. It writes a single preferences file (`prefs.json`) into the Host-provided plugin data directory. The page shows real session titles, so take care when sharing screenshots or your screen.
 
-## Tested environment
-
-Verified environment: MiniMax Code desktop `3.0.73.166` on Windows (10.0.26200, x64). macOS and Linux are unverified.
-
 ## Source and verification
 
 The page is in `miniapp/client/index.html` (ECharts is bundled locally), the Node entry is `miniapp/node/server.mjs`, and the data backend is `miniapp/node/api.py`. No build step is required.
 
-Verified during development: plugin install and open, aggregation and de-duplication, model/session filtering, preference persistence, auto refresh, theme switching, and chart and table rendering.
+Verified environment: MiniMax Code desktop `3.0.73.166` on Windows (10.0.26200, x64). Verified during development: plugin install and open, aggregation and de-duplication, model/session filtering, preference persistence, auto refresh, theme switching, and chart and table rendering. macOS and Linux are unverified.
 
 Third-party components: [ECharts](https://echarts.apache.org/) (Apache License 2.0), bundled locally for offline use.
 

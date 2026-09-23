@@ -13,14 +13,12 @@ import { checkReadme } from './rules/readme.mjs';
 export async function validatePackage(packageDir, { requireLowercaseAuthor = true } = {}) {
   const dir = path.resolve(packageDir);
   const report = createReport();
-  let mcpServerNames = [];
 
   await checkLayout(report, { packageDir: dir, requireLowercaseAuthor });
 
   const manifest = await readJson(report, dir, '.minimax-plugin/plugin.json', 'MANIFEST_UNREADABLE');
   if (manifest.present) {
     const identity = await checkManifest(report, { packageDir: dir, manifest: manifest.value });
-    mcpServerNames = identity.mcpServerNames ?? [];
     await checkNameMatchesDirectory(report, { packageDir: dir, name: identity.name });
     if (identity.icon) await checkImageFile(report, { packageDir: dir, relativePath: identity.icon, label: 'icon' });
     if (identity.darkIcon) await checkImageFile(report, { packageDir: dir, relativePath: identity.darkIcon, label: 'darkIcon' });
@@ -31,7 +29,7 @@ export async function validatePackage(packageDir, { requireLowercaseAuthor = tru
 
   const miniapp = await readJson(report, dir, 'miniapp/miniapp.json', 'MINIAPP_UNREADABLE');
   let resolved = { nodeRoots: [], clientRoots: [] };
-  if (miniapp.present) resolved = await checkMiniApp(report, { packageDir: dir, manifest: miniapp.value, mcpServerNames });
+  if (miniapp.present) resolved = await checkMiniApp(report, { packageDir: dir, manifest: miniapp.value });
 
   await checkFiles(report, { packageDir: dir });
   await checkReadme(report, { packageDir: dir });
