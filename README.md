@@ -86,9 +86,9 @@ To update an app, close it and exit MiniMax Code, then replace its complete plug
 
 Tools, games, visualizations, and small experiments are all welcome. To share a MiniApp:
 
-1. Fork the repository and add a complete, ready-to-run package under `plugins/<your-github-username>/<plugin-id>/`.
+1. Fork the repository, copy `examples/hello-miniapp/` to `plugins/<your-github-username>/<plugin-id>/`, and build your app there. The package rules are in [`docs/`](docs/package-contract.md); AI coding agents read [`AGENTS.md`](AGENTS.md) automatically.
 2. Include a README, a license, and any required runtime files. Document setup, data access, and what you have tested.
-3. Add the app to the tables in both root READMEs and open a pull request.
+3. Add the app to the tables in both root READMEs, run `npm run check`, and open a pull request.
 
 Use a lowercase GitHub username for the author directory. The plugin directory name must match `.minimax-plugin/plugin.json` → `name`, and **plugin IDs must be unique across the repository**, since the author directory is not part of the installed path.
 

@@ -86,9 +86,9 @@ git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
 
 欢迎分享工具、游戏、可视化应用和小实验。提交作品只需：
 
-1. Fork 仓库，在 `plugins/<你的-github-username>/<plugin-id>/` 下加入可直接运行的完整插件包。
+1. Fork 仓库，把 `examples/hello-miniapp/` 复制到 `plugins/<你的-github-username>/<plugin-id>/`，在此基础上开发。插件包规则见 [`docs/`](docs/package-contract.md)（英文）；AI 编码助手会自动读取 [`AGENTS.md`](AGENTS.md)。
 2. 附上 README、许可证和运行所需文件，说明配置方式、数据访问范围与验证情况。
-3. 在根目录的中英文 README 作品表格中增加一行，然后提交 Pull Request。
+3. 在根目录的中英文 README 作品表格中增加一行，运行 `npm run check`，然后提交 Pull Request。
 
 作者目录使用小写 GitHub username。插件目录名必须与 `.minimax-plugin/plugin.json` 中的 `name` 一致，且**插件 ID 在整个仓库中唯一**，因为安装路径不包含作者目录。
 
