@@ -103,5 +103,6 @@ export const REQUIRED_FILES = [
 export const README_HEADINGS = ['## Tested environment', '## Data & access'];
 
 export const STDOUT_CALL = /\b(?:console\.(?:log|info|debug|dir|table)|process\.stdout\.write)\s*\(/u;
-export const START_EXPORT =
-  /^\s*export\s+(?:async\s+function\s+start\b|function\s+start\b|const\s+start\b|let\s+start\b|\{[^}]*\bstart\b[^}]*\})/mu;
+export const START_EXPORT_DECLARATION =
+  /^\s*export\s+(?:(?:async\s+)?function\s+start\b|(?:const|let|var)\s+start\b)/mu;
+export const START_EXPORT_LIST = /^\s*export\s*\{([^}]*)\}/gmu;

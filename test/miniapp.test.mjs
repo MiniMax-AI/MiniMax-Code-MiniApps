@@ -6,7 +6,7 @@ import { checkMiniApp } from '../scripts/lib/rules/miniapp.mjs';
 import { createReport } from '../scripts/lib/report.mjs';
 import { codes, copyExample, makeTmpRoot, readJson } from './helpers.mjs';
 
-async function run(mutate, prepare) {
+async function run(mutate, prepare, { mcpServerNames = [] } = {}) {
   const root = await makeTmpRoot();
   const { dir } = await copyExample(root);
   const manifest = await readJson(path.join(dir, 'miniapp', 'miniapp.json'));
@@ -14,7 +14,7 @@ async function run(mutate, prepare) {
   const next = result === undefined ? manifest : result;
   if (prepare) await prepare(dir);
   const report = createReport();
-  const resolved = await checkMiniApp(report, { packageDir: dir, manifest: next });
+  const resolved = await checkMiniApp(report, { packageDir: dir, manifest: next, mcpServerNames });
   return { report, resolved };
 }
 
@@ -66,12 +66,19 @@ test('miniapp: surface.path accepts a missing leading slash and rejects transpor
 });
 
 test('miniapp: mcpEndpoints shape and uniqueness', async () => {
-  const ok = await run((m) => { m.mcpEndpoints = [{ server: 'a', path: '/mcp' }]; return m; });
+  const ok = await run((m) => { m.mcpEndpoints = [{ server: 'a', path: '/mcp' }]; return m; }, undefined, { mcpServerNames: ['a', 'b'] });
   assert.deepEqual(ok.report.diagnostics, []);
-  const dupPath = await run((m) => { m.mcpEndpoints = [{ server: 'a', path: '/mcp' }, { server: 'b', path: '/mcp' }]; return m; });
+  const dupPath = await run((m) => { m.mcpEndpoints = [{ server: 'a', path: '/mcp' }, { server: 'b', path: '/mcp' }]; return m; }, undefined, { mcpServerNames: ['a', 'b'] });
   assert.deepEqual(codes(dupPath.report.diagnostics), ['MINIAPP_MCP_ENDPOINT_INVALID']);
   const badServer = await run((m) => { m.mcpEndpoints = [{ server: 'has space', path: '/mcp' }]; return m; });
   assert.deepEqual(codes(badServer.report.diagnostics), ['MINIAPP_MCP_ENDPOINT_INVALID']);
+  const undeclared = await run((m) => { m.mcpEndpoints = [{ server: 'missing', path: '/mcp' }]; return m; }, undefined, { mcpServerNames: ['a'] });
+  assert.deepEqual(codes(undeclared.report.diagnostics), ['MINIAPP_MCP_ENDPOINT_INVALID']);
+});
+
+test('miniapp: mcpEndpoints is required even when empty', async () => {
+  const missing = await run((m) => { delete m.mcpEndpoints; return m; });
+  assert.deepEqual(codes(missing.report.diagnostics), ['MINIAPP_MCP_ENDPOINT_INVALID']);
 });
 
 test('miniapp: hostConnectorAccess is validated for shape and reported as unverified', async () => {

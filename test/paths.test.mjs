@@ -5,6 +5,7 @@ import {
   normalizePluginPath,
   normalizeRoutePath,
   portablePathIssue,
+  resolvePackagePath,
 } from '../scripts/lib/paths.mjs';
 
 test('normalizePluginPath strips ./ and rejects non-canonical input', () => {
@@ -25,6 +26,12 @@ test('portablePathIssue mirrors the Host rules', () => {
   assert.match(portablePathIssue('a b.txt'), /not portable/);
   assert.match(portablePathIssue(`${'x'.repeat(129)}.txt`), /segment limit/);
   assert.match(portablePathIssue(Array.from({ length: 17 }, () => 'a').join('/')), /too many segments/);
+});
+
+test('resolvePackagePath never resolves outside the package root', () => {
+  assert.equal(resolvePackagePath('/tmp/package', 'docs/readme.md'), '/tmp/package/docs/readme.md');
+  assert.equal(resolvePackagePath('/tmp/package', '../outside.txt'), undefined);
+  assert.equal(resolvePackagePath('/tmp/package', 'nested/../../outside.txt'), undefined);
 });
 
 test('normalizeRoutePath adds the leading slash and rejects transport syntax', () => {

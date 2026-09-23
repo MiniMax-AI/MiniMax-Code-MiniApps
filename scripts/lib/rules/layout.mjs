@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { REQUIRED_FILES } from '../contract.mjs';
 import { pathExists } from '../fs.mjs';
+import { resolvePackagePath } from '../paths.mjs';
 
 export async function checkLayout(report, { packageDir, requireLowercaseAuthor }) {
   if (requireLowercaseAuthor) {
@@ -36,7 +37,11 @@ const SIGNATURES = [
 ];
 
 export async function checkImageFile(report, { packageDir, relativePath, label }) {
-  const absolute = path.join(packageDir, ...relativePath.split('/'));
+  const absolute = resolvePackagePath(packageDir, relativePath);
+  if (absolute === undefined) {
+    report.error('LAYOUT_IMAGE_INVALID', `${label} path must stay inside the package`, relativePath);
+    return;
+  }
   if (!(await pathExists(absolute, 'file'))) {
     report.error('LAYOUT_IMAGE_INVALID', `${label} file does not exist`, relativePath);
     return;
