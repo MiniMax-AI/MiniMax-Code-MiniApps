@@ -62,11 +62,12 @@ miniapp/client/index.html     界面（自动适配亮/暗色）
 miniapp/node/server.mjs       Node 运行时 + REST API
 miniapp/node/miniapp-api.ts   运行时 API 类型声明
 icon.png                      插件图标
+tests/api-set.test.mjs
 tests/parser.test.mjs
 tests/resolveConfigPath.test.mjs
 ```
 
-`tests/` 目录位于 Host 运行时负载根目录（`miniapp/client`、`miniapp/node`）之外，因此应用本身不会加载它 —— 你如果整体复制插件目录就会带上它。在插件根目录执行 `node --test tests/` 即可运行。
+`tests/` 目录位于 Host 运行时负载根目录（`miniapp/client`、`miniapp/node`）之外，因此应用本身不会加载它 —— 你如果整体复制插件目录就会带上它。在插件根目录执行 `node --test` 即可运行。
 
 ## 许可证
 

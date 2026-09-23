@@ -62,11 +62,12 @@ miniapp/client/index.html     UI (light/dark aware)
 miniapp/node/server.mjs       Node runtime + REST API
 miniapp/node/miniapp-api.ts   Type declarations for the runtime API
 icon.png                      Plugin icon
+tests/api-set.test.mjs
 tests/parser.test.mjs
 tests/resolveConfigPath.test.mjs
 ```
 
-`tests/` lives outside the Host's runtime payload roots (`miniapp/client`, `miniapp/node`), so the app never loads it — it just rides along if you copy the directory. Run with `node --test tests/` from the plugin root.
+`tests/` lives outside the Host's runtime payload roots (`miniapp/client`, `miniapp/node`), so the app never loads it — it just rides along if you copy the directory. Run with `node --test` from the plugin root.
 
 ## License
 

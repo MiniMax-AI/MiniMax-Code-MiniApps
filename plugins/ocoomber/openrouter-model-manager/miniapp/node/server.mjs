@@ -239,7 +239,7 @@ export function setEnabledOnLine(line, enabled) {
   return line.replace(/(enabled:\s*)(true|false)/, `$1${enabled}`);
 }
 
-async function setModelsEnabled(providerIndex, modelId, enabled) {
+async function setModelEnabled(providerIndex, modelId, enabled) {
   const text = await readConfigText();
   const parsed = splitConfigText(text);
   const provider = findProvider(parseProviders(parsed.lines), providerIndex);
