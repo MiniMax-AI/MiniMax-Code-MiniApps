@@ -2,8 +2,11 @@
 
 Verified against MiniMax Code 3.0.73.
 
-A Mini App is a MiniMax Plugin whose `package.json` declares a Mini App payload. Everything below is
-enforced by MiniMax Code when the package is installed; `npm run check` enforces the same rules here.
+A Mini App is a MiniMax Plugin whose `package.json` declares a Mini App payload. MiniMax Code
+enforces the manifest, payload, and path rules below when the package is installed. `npm run check`
+enforces the same rules here, plus this repository's own requirements: `README.md` and `LICENSE`,
+a real image file behind `icon`, `lifecycle` limited to `on-demand`, no hard links, no committed
+`node_modules`, and the Node entry conventions in `docs/runtime.md`.
 
 ## Layout
 
@@ -93,7 +96,8 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
   Each path must exist. These are the runtime payload roots: exactly what MiniMax Code hashes and
   installs. Any `node_modules` directory is excluded from payloads.
 - `runtime.kind` is `process`. `runtime.entry` ends in `.js`, `.mjs`, or `.cjs`, exists, and lies
-  inside one of `artifacts.node`. `runtime.lifecycle` is `on-demand` or omitted.
+  inside one of `artifacts.node`. Use `.mjs`: this repository checks the entry for an ESM `start`
+  export (see `docs/runtime.md`). `runtime.lifecycle` is `on-demand` or omitted.
 - `surface.path` is the route the Node entry serves the page on. It is relative to the Host and
   must not contain an origin, query, fragment, or backslash. A missing leading `/` is added.
 - `mcpEndpoints` is an array of `{ "server": string, "path": string }`. `server` matches

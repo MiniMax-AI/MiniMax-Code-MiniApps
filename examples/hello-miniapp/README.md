@@ -7,8 +7,9 @@ holder.
 
 ## Install
 
-Copy this directory, including the hidden `.minimax-plugin/`, to `<dataDir>/plugins/hello-miniapp/`
-(by default `~/.minimax/plugins/hello-miniapp/`). Restart MiniMax Code and ask the Agent to
+Copy this directory, including the hidden `.minimax-plugin/`, into the MiniMax Code plugins
+directory as `hello-miniapp/` (`~/.minimax/plugins/hello-miniapp/` by default; the root README's
+Install section explains where that directory is). Restart MiniMax Code and ask the Agent to
 "Open Hello Mini App".
 
 ## Tested environment
