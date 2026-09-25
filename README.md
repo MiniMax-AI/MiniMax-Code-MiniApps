@@ -63,6 +63,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [Token Usage Board](plugins/yanhy2000/mcode-usage-monitor/) | Watch local Token usage, output speed, and cache hit rate in near real time; filter by time range, model, and session | [yanhy2000](https://github.com/yanhy2000) |
 | [Model Manager](plugins/ocoomber/openrouter-model-manager/) | Browse, search, and enable/disable models in your `~/.minimax/config.yaml` with instant save, bulk actions, one-click undo, and automatic backups | [ocoomber](https://github.com/ocoomber) |
 | [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | **Official plugin** for planning driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
+| [Git Commit Tree](plugins/microbiosis/git-tree/) | Inspect a local Git repo's commit history with a swim-lane graph, branches/tags, commit detail, and per-file change stats; persisted filter preferences and optional auto-refresh | [Microbiosis](https://github.com/Microbiosis) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>
@@ -79,6 +80,15 @@ The preview uses synthetic data. The app interface is currently in Chinese. See 
 ![Token Usage Board showing usage trends with synthetic data](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
 
 The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/yanhy2000/mcode-usage-monitor/README.md) for data access, counting rules, and compatibility notes.
+
+</details>
+
+<details>
+<summary>Preview: Git Commit Tree</summary>
+
+![Git Commit Tree showing a swim-lane commit graph with synthetic data](plugins/microbiosis/git-tree/docs/preview.jpg)
+
+The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/microbiosis/git-tree/README.md) for repository discovery, layout algorithm attribution, and compatibility notes.
 
 </details>
 

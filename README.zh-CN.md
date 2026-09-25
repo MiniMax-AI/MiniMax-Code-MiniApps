@@ -64,6 +64,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [Token 用量看板](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md) | 近实时查看本机 Token 用量、输出速度与缓存命中率，可按时间范围、模型和会话筛选 | [yanhy2000](https://github.com/yanhy2000) |
 | [模型管理器](plugins/ocoomber/openrouter-model-manager/README.zh-CN.md) | 浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型，支持即时保存、批量操作、一键撤销和自动备份 | [ocoomber](https://github.com/ocoomber) |
 | [自驾规划](plugins/hanzijie/self-drive-route-planner/README.zh-CN.md) | 【官方插件】规划自驾路线、地点搜索、候选算路与小红书 3:4 行程图；支持演示模式 | [HanZijie](https://github.com/HanZijie) |
+| [Git 提交树](plugins/microbiosis/git-tree/README.zh-CN.md) | 查看本机 Git 仓库的提交历史：泳道提交图、分支/标签、提交详情与文件改动统计，支持筛选偏好持久化与可选自动刷新 | [Microbiosis](https://github.com/Microbiosis) |
 
 <details>
 <summary>预览：Token 用量看板</summary>
@@ -80,6 +81,15 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 ![Token 用量看板，使用合成数据展示用量趋势](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
 
 预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md)。
+
+</details>
+
+<details>
+<summary>预览：Git 提交树</summary>
+
+![Git 提交树，使用合成数据展示泳道提交图](plugins/microbiosis/git-tree/docs/preview.jpg)
+
+预览使用合成数据，应用界面目前为中文。仓库发现规则、泳道算法来源与兼容性说明见作品 [README](plugins/microbiosis/git-tree/README.zh-CN.md)。
 
 </details>
 
