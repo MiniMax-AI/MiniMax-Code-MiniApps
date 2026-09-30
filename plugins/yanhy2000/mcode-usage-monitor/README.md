@@ -30,6 +30,8 @@ The page opens on the last 24 hours. You can switch between today (since local m
 
 This app requires **Python 3.8+** on the local machine to read the local database. It uses only the standard library, so no `pip install` is needed. The bundled SQLite must have the JSON1 extension enabled (the default for SQLite 3.38+ and all standard Python builds; the page reports the exact cause if it is missing). No API key or other configuration is required.
 
+The package also ships one Agent skill (`skills/usage-query/`). When a usage question comes up in a conversation — "how many tokens did this chat use?", "which model do I use most?" — the Agent can run the bundled data backend (`miniapp/node/api.py`) directly and answer, without opening the dashboard first. That path is the same read-only snapshot as the page and needs the same local Python. Open the dashboard itself when you want charts, or want to switch filters and rearrange the layout yourself.
+
 ## Data access and counting
 
 The app reads two local sources:
@@ -50,7 +52,7 @@ The runtime sends nothing to external services and has no telemetry. It writes a
 
 The page is in `miniapp/client/index.html` (ECharts is bundled locally), the Node entry is `miniapp/node/server.mjs`, and the data backend is `miniapp/node/api.py`. No build step is required.
 
-Verified environment: MiniMax Code desktop `3.0.73.166` on Windows (10.0.26200, x64). Verified during development: plugin install and open, aggregation and de-duplication, model/session filtering, preference persistence, auto refresh, theme switching, chart and table rendering, time-range presets with custom-range validation, selecting-no-filter, layout editing (drag reordering and removal), the icon-only header controls, the recent-calls table tweaks, cross-filtering between the model and session lists (narrowing in both directions), the model comparison card empty state, Esc closing dropdown panels, and atomic preference writes. macOS and Linux are unverified.
+Verified environment: MiniMax Code desktop `3.1.0` on Windows (10.0.26200, x64). Verified during development: plugin install and open, aggregation and de-duplication, model/session filtering, preference persistence, auto refresh, theme switching, chart and table rendering, time-range presets with custom-range validation, selecting-no-filter, layout editing (drag reordering and removal), the icon-only header controls, the recent-calls table tweaks, cross-filtering between the model and session lists (narrowing in both directions), the model comparison card empty state, Esc closing dropdown panels, atomic preference writes, and the bundled Agent skill answering usage questions from the data backend. The dashboard and the bundled skill were re-tested on the `3.1.0` release. macOS and Linux are unverified.
 
 Third-party components: [ECharts](https://echarts.apache.org/) (Apache License 2.0), bundled locally for offline use.
 
