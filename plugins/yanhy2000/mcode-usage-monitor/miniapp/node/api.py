@@ -39,8 +39,12 @@ def default_db_path() -> Path:
     return data_dir() / "v2" / "sqlite" / "runtime-state.sqlite"
 
 
-def open_snapshot(db_path: Path) -> sqlite3.Connection:
-    """只读快照: 官方 backup API 优先, 极端锁场景回退到复制三件套。"""
+def open_snapshot(db_path: Path):
+    """只读快照: 官方 backup API 优先, 极端锁场景回退到复制三件套。
+
+    返回 (con, cleanup): cleanup 需在 con.close() 之后调用, 用于清理回退路径
+    产生的临时目录; 走 backup 路径时为 None。"""
+    src = None
     try:
         uri = f"file:{db_path.as_posix()}?mode=ro"
         src = sqlite3.connect(uri, uri=True, timeout=3)
@@ -48,22 +52,24 @@ def open_snapshot(db_path: Path) -> sqlite3.Connection:
         with dst:
             src.backup(dst)
         src.close()
-        return dst
+        return dst, None
     except sqlite3.Error:
-        tmpdir = Path(tempfile.mkdtemp(prefix="mcode-usage-monitor-"))
-        try:
-            base = tmpdir / "snap.db"
-            shutil.copy2(db_path, base)
-            for suffix in ("-wal", "-shm"):
-                side = Path(str(db_path) + suffix)
-                if side.exists():
-                    shutil.copy2(side, Path(str(base) + suffix))
-            con = sqlite3.connect(str(base))
-            con.execute("PRAGMA journal_mode=DELETE")
-            return con
-        except Exception:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-            raise
+        if src is not None:
+            src.close()
+    tmpdir = Path(tempfile.mkdtemp(prefix="mcode-usage-monitor-"))
+    try:
+        base = tmpdir / "snap.db"
+        shutil.copy2(db_path, base)
+        for suffix in ("-wal", "-shm"):
+            side = Path(str(db_path) + suffix)
+            if side.exists():
+                shutil.copy2(side, Path(str(base) + suffix))
+        con = sqlite3.connect(str(base))
+        con.execute("PRAGMA journal_mode=DELETE")
+        return con, lambda: shutil.rmtree(tmpdir, ignore_errors=True)
+    except Exception:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise
 
 
 MSG_SQL = """
@@ -86,41 +92,27 @@ WHERE json_extract(m.data_json,'$.usage') IS NOT NULL
 ORDER BY m.created_at_ms, m.id
 """
 
-LEDGER_SQL = """
-SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens),
-       SUM(cache_read_tokens), SUM(cache_write_tokens), MIN(ts), MAX(ts),
-       COUNT(DISTINCT session_id), COUNT(DISTINCT turn_id)
-FROM local_runtime_token_usage
-"""
-
-
 def dedup_by_msg_id(rows):
-    """按 msg_id 跨会话去重(保留最早一条), 返回 (去重后的行, 丢弃行数)。"""
+    """按 msg_id 跨会话去重(保留最早一条)。"""
     seen = set()
     out = []
-    dropped = 0
     for r in rows:
         mid = r[-1]
         if mid is None or mid not in seen:
             if mid is not None:
                 seen.add(mid)
             out.append(r)
-        else:
-            dropped += 1
-    return out, dropped
+    return out
 
 
 def fetch_all(db_path: Path):
-    con = open_snapshot(db_path)
+    con, cleanup = open_snapshot(db_path)
     try:
-        rows, dropped = dedup_by_msg_id(con.execute(MSG_SQL).fetchall())
-        try:
-            ledger = con.execute(LEDGER_SQL).fetchone()
-        except sqlite3.Error:
-            ledger = None
+        return dedup_by_msg_id(con.execute(MSG_SQL).fetchall())
     finally:
         con.close()
-    return rows, ledger, dropped
+        if cleanup:
+            cleanup()
 
 
 RANGE_MS = {"1h": 3600_000, "12h": 12 * 3600_000, "24h": 86400_000,
@@ -236,15 +228,26 @@ def project_label(segs, all_segs):
 
 def build_payload(db_path: Path, range_key: str, models_filter=None,
                   sessions_filter=None) -> dict:
-    rows_all, ledger, dedup_dropped = fetch_all(db_path)
+    rows_all = fetch_all(db_path)
     now_ms = int(time.time() * 1000)
     cutoff = range_cutoff_ms(range_key, now_ms)
     if cutoff is not None:
         rows_all = [r for r in rows_all if r[0] >= cutoff]
     span = (now_ms - cutoff) if cutoff is not None else None
 
+    # 交叉筛选: 模型清单只受会话筛选牵制, 会话清单只受模型筛选牵制;
+    # 牵制方为 None(全部)时, 该侧展示当前范围内的完整清单。
+    rows_for_models = rows_all
+    if sessions_filter is not None:
+        wanted_s = set(sessions_filter)
+        rows_for_models = [r for r in rows_for_models if r[2] in wanted_s]
+    rows_for_sessions = rows_all
+    if models_filter is not None:
+        wanted_m = set(models_filter)
+        rows_for_sessions = [r for r in rows_for_sessions if (r[1] or "unknown") in wanted_m]
+
     avail = {}
-    for r in rows_all:
+    for r in rows_for_models:
         key = r[1] or "unknown"
         m = avail.setdefault(key, {"model": key, "calls": 0, "output": 0})
         m["calls"] += 1
@@ -253,7 +256,7 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
 
     # 会话清单以磁盘上的真实会话文件为准（与产品内展示口径一致）
     stats = {}
-    for r in rows_all:
+    for r in rows_for_sessions:
         d = stats.setdefault(r[2], {"title": r[8] or "", "calls": 0, "tokens": 0, "last_ts": r[0]})
         d["calls"] += 1
         d["tokens"] += (r[4] or 0) + (r[5] or 0) + (r[6] or 0)
@@ -262,7 +265,6 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
     files = discover_session_files(db_path)
     available_sessions = []
     if files:
-        session_source = "files"
         for sid, meta in files.items():
             st = stats.get(sid)
             if not st:  # 当前时间范围内没有用量: 不列出(此时标题也无从取得)
@@ -277,7 +279,6 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
             })
         available_sessions.sort(key=lambda x: -x["file_mtime"])
     else:  # 兜底：一个会话文件都没有时，退回按库内会话列举
-        session_source = "db"
         for sid, st in stats.items():
             available_sessions.append({
                 "session_id": sid,
@@ -287,10 +288,10 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
         available_sessions.sort(key=lambda x: -x["last_ts"])
 
     rows = rows_all
-    if models_filter:
+    if models_filter is not None:  # None=不过滤; 空集=显式全不选(0 数据)
         wanted = set(models_filter)
         rows = [r for r in rows if (r[1] or "unknown") in wanted]
-    if sessions_filter:
+    if sessions_filter is not None:
         wanted_s = set(sessions_filter)
         rows = [r for r in rows if r[2] in wanted_s]
 
@@ -409,24 +410,10 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
     tool_list = [{"tool": k, "calls": v} for k, v in
                  sorted(tool_counter.items(), key=lambda x: -x[1])[:10]]
 
-    ledger_obj = None
-    if ledger:
-        ledger_obj = {
-            "rows": ledger[0], "input": ledger[1], "output": ledger[2],
-            "reasoning": ledger[3], "cache_read": ledger[4],
-            "cache_write": ledger[5],
-            "sessions": ledger[8], "turns": ledger[9],
-        }
-        if ledger[6]:
-            ledger_obj["first_ts"] = ledger[6]
-            ledger_obj["last_ts"] = ledger[7]
-
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "range": range_key,
         "available_models": available_models,
-        "selected_models": sorted(models_filter) if models_filter else [],
-        "dedup_dropped": dedup_dropped,
         "overview": {
             "calls": n,
             "sessions": len(sessions),
@@ -442,13 +429,10 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
         "split": split,
         "models": model_list,
         "available_sessions": available_sessions,
-        "selected_sessions": sorted(sessions_filter) if sessions_filter else [],
         "session_files": len(available_sessions),
-        "session_source": session_source,
         "recent": recent,
         "projects": project_list,
         "tools": tool_list,
-        "ledger": ledger_obj,
     }
 
 
@@ -456,8 +440,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--range", default="all", dest="range_key",
                     help="all | today | 1h | 12h | 24h | 7d | 30d | <N>h(1..8760)")
-    ap.add_argument("--models", default="", help="逗号分隔的模型列表, 留空为全部")
-    ap.add_argument("--sessions", default="", help="逗号分隔的会话 id 列表, 留空为全部")
+    ap.add_argument("--models", default="", help="逗号分隔的模型列表, 留空为全部, __none__ 为空选")
+    ap.add_argument("--sessions", default="", help="逗号分隔的会话 id 列表, 留空为全部, __none__ 为空选")
     ap.add_argument("--db", default=str(default_db_path()))
     args = ap.parse_args()
 
@@ -466,12 +450,33 @@ def main():
         sys.exit(code)
 
     rng = args.range_key if is_valid_range(args.range_key) else "all"
-    models = [p.strip() for p in args.models.split(",") if p.strip()] or None
-    sessions = [p.strip() for p in args.sessions.split(",") if p.strip()] or None
+
+    def parse_ids(raw):
+        """空串 -> None(不过滤); '__none__' -> [](显式空选, 页面 0 数据)。"""
+        if raw == "__none__":
+            return []
+        return [p.strip() for p in raw.split(",") if p.strip()] or None
+
+    models = parse_ids(args.models)
+    sessions = parse_ids(args.sessions)
 
     db = Path(args.db)
     if not db.exists():
         emit({"error": f"database not found: {db}"}, 1)
+
+    # JSON 函数在 SQLite < 3.38 的构建里是编译期可选扩展(-DSQLITE_ENABLE_JSON1),
+    # 未启用的构建上 json_extract/json_each 直接报 no such function; 提前给出可自查的提示
+    try:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.execute("SELECT json('{}')")
+        finally:
+            probe.close()
+    except sqlite3.Error:
+        emit({"error": f"sqlite JSON1 extension not enabled "
+                      f"(sqlite3.sqlite_version={sqlite3.sqlite_version}); "
+                      f"queries need a Python build with JSON1-enabled SQLite"}, 1)
+
     try:
         payload = build_payload(db, rng, models, sessions)
     except Exception as e:  # 结构化错误交给 Node, 不打 traceback

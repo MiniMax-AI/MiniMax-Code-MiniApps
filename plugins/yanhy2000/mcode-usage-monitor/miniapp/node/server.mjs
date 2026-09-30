@@ -1,16 +1,32 @@
 // @ts-check
 
-import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
 
-const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+/** 探测可用的 Python 命令(Windows 商店别名桩会静默失败, 需回退 py -3)。 */
+function pickPython() {
+  const candidates = process.platform === 'win32'
+    ? [['python'], ['py', '-3']]
+    : [['python3'], ['python']];
+  for (const cmd of candidates) {
+    try {
+      const r = spawnSync(cmd[0], [...cmd.slice(1), '--version'],
+        { timeout: 5000, windowsHide: true, encoding: 'utf8' });
+      if (r.status === 0) return cmd;
+    } catch { /* 尝试下一个候选 */ }
+  }
+  return candidates[0]; // 全部失败时保留首选, 保留可见的报错路径
+}
+const PYTHON_CMD = pickPython();
+
 const QUERY_TIMEOUT_MS = 30000;
 const CACHE_TTL_MS = 2000;
+const CACHE_MAX = 24; // 条目上限, 防自定义范围×筛选组合无限增长
 const MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
 const RANGE_PRESETS = ['today', '1h', '12h', '24h', '7d', '30d', 'all'];
 const CUSTOM_RANGE_RE = /^(\d+)h$/;
@@ -43,21 +59,33 @@ export async function start(context) {
   const apiPyPath = join(context.pluginRoot, 'miniapp/node/api.py');
   const prefsPath = join(context.dataDir, 'prefs.json');
 
-  const indexHtml = await readFile(join(clientRoot, 'index.html'));
+  let indexHtml = await readFile(join(clientRoot, 'index.html'), 'utf8');
+  // 页脚版本号占位符由插件清单注入, 升版本只需改 plugin.json
+  try {
+    const pluginJson = JSON.parse(
+      await readFile(join(context.pluginRoot, '.minimax-plugin', 'plugin.json'), 'utf8'));
+    if (pluginJson && typeof pluginJson.version === 'string') {
+      indexHtml = indexHtml.replaceAll('__VERSION__', pluginJson.version);
+    }
+  } catch { /* 清单读取失败时保留占位符, 不影响页面其余功能 */ }
   const echartsJs = await readFile(join(clientRoot, 'echarts.min.js'));
 
   // ---- 偏好持久化(存到 Host 分配的插件数据目录) ----
   const PREF_INTERVALS = [0, 5, 10, 30];
   const PREF_THEMES = ['auto', 'light', 'dark'];
   const PREF_CARDS = ['main', 'model', 'proj', 'tool', 'speed', 'recent']; // 与 index.html CARD_IDS 一致
+  const PREF_KPIS = ['total', 'input', 'output', 'cache', 'hit', 'calls', 'speed']; // 与 index.html KPI_KEYS 一致
 
   function sanitizePrefs(input) {
     const out = {};
     if (!input || typeof input !== 'object') return out;
-    if (Array.isArray(input.models)) {
+    // 筛选选择: null=全部(显式清除旧值), 'none'=空选(页面 0 数据), 数组=具体选择
+    if (input.models === null || input.models === 'none') out.models = input.models;
+    else if (Array.isArray(input.models)) {
       out.models = input.models.filter((x) => typeof x === 'string').slice(0, 50);
     }
-    if (Array.isArray(input.sessions)) {
+    if (input.sessions === null || input.sessions === 'none') out.sessions = input.sessions;
+    else if (Array.isArray(input.sessions)) {
       out.sessions = input.sessions.filter((x) => typeof x === 'string').slice(0, 50);
     }
     const range = normalizeRange(input.range);
@@ -71,15 +99,20 @@ export async function start(context) {
       }
       out.collapsed = c;
     }
-    if (Array.isArray(input.order)) {
+    // 布局顺序: 仅含可见项(空数组=全部移除, 也需显式保存); 缺失项视为已移除
+    const pickList = (arr, allow) => {
+      if (!Array.isArray(arr)) return null;
       const seen = new Set();
       const order = [];
-      for (const id of input.order) {
-        if (PREF_CARDS.includes(id) && !seen.has(id)) { seen.add(id); order.push(id); }
+      for (const id of arr) {
+        if (allow.includes(id) && !seen.has(id)) { seen.add(id); order.push(id); }
       }
-      for (const id of PREF_CARDS) { if (!seen.has(id)) order.push(id); } // 补齐缺失项
-      out.order = order.slice(0, PREF_CARDS.length);
-    }
+      return order;
+    };
+    const order = pickList(input.order, PREF_CARDS);
+    if (order !== null) out.order = order; // 空数组=全部移除, 也要落盘
+    const kpis = pickList(input.kpis, PREF_KPIS);
+    if (kpis !== null) out.kpis = kpis;
     return out;
   }
 
@@ -93,10 +126,17 @@ export async function start(context) {
     }
   }
 
+  let prefsOp = Promise.resolve(); // 串行化读-改-写, 避免并发合并互相覆盖
   async function mergePrefs(patch) {
-    const next = { ...(await readPrefs()), ...sanitizePrefs(patch) };
-    await mkdir(context.dataDir, { recursive: true });
-    await writeFile(prefsPath, JSON.stringify(next), 'utf8');
+    const next = prefsOp.then(async () => {
+      const merged = { ...(await readPrefs()), ...sanitizePrefs(patch) };
+      await mkdir(context.dataDir, { recursive: true });
+      const tmp = `${prefsPath}.tmp`;
+      await writeFile(tmp, JSON.stringify(merged), 'utf8');
+      await rename(tmp, prefsPath); // 原子替换, 避免写一半截断
+      return merged;
+    });
+    prefsOp = next.catch(() => {});
     return next;
   }
 
@@ -125,7 +165,7 @@ export async function start(context) {
     return new Promise((resolve, reject) => {
       let proc;
       try {
-        proc = spawn(PYTHON, [apiPyPath, ...args], {
+        proc = spawn(PYTHON_CMD[0], [...PYTHON_CMD.slice(1), apiPyPath, ...args], {
           cwd: context.pluginRoot,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -172,15 +212,22 @@ export async function start(context) {
     });
   }
 
-  function queryBackend(rangeKey, models, sessions) {
-    const key = `${rangeKey}|${models ? models.join(',') : ''}|${sessions ? sessions.join(',') : ''}`;
+  function queryBackend(rangeKey, models = null, sessions = null) {
+    // models/sessions: null=不过滤(全部), []=显式空选(0 数据, 传哨兵给 python)
+    const ms = models === null ? '' : (models.length ? models.join(',') : '__none__');
+    const ss = sessions === null ? '' : (sessions.length ? sessions.join(',') : '__none__');
+    const key = `${rangeKey}|${ms}|${ss}`;
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
     const promise = queue.then(() =>
-      runPython(['--range', rangeKey,
-                 '--models', models ? models.join(',') : '',
-                 '--sessions', sessions ? sessions.join(',') : '']));
+      runPython(['--range', rangeKey, '--models', ms, '--sessions', ss]));
     cache.set(key, { at: Date.now(), promise });
+    if (cache.size > CACHE_MAX) { // 超上限按插入顺序淘汰最旧条目
+      for (const k of cache.keys()) {
+        cache.delete(k);
+        if (cache.size <= CACHE_MAX) break;
+      }
+    }
     promise.catch(() => cache.delete(key)); // 失败不缓存
     queue = promise.catch(() => {}); // 链条继续
     return promise;
@@ -230,28 +277,38 @@ export async function start(context) {
     if (req.method === 'GET' && url.pathname === '/api/data') {
       const rawRange = url.searchParams.get('range') ?? 'all';
       const rangeKey = normalizeRange(rawRange) ?? 'all';
+      // '__none__' = 显式空选(空数组), 不传 = 全部(null)
       const rawModels = url.searchParams.get('models');
-      const models = rawModels
-        ? rawModels.split(',').map((s) => s.trim()).filter(Boolean)
-        : null;
+      let models = null;
+      if (rawModels === '__none__') models = [];
+      else if (rawModels) models = rawModels.split(',').map((s) => s.trim()).filter(Boolean);
       const rawSessions = url.searchParams.get('sessions');
-      const sessions = rawSessions
-        ? rawSessions.split(',').map((s) => s.trim()).filter(Boolean)
-        : null;
-      queryBackend(rangeKey, models && models.length ? models : null,
-                   sessions && sessions.length ? sessions : null)
+      let sessions = null;
+      if (rawSessions === '__none__') sessions = [];
+      else if (rawSessions) sessions = rawSessions.split(',').map((s) => s.trim()).filter(Boolean);
+      queryBackend(rangeKey, models, sessions)
         .then((payload) => sendJson(res, 200, payload))
-        .catch((err) => sendJson(res, 502, { error: `backend unavailable: ${err.message}` }));
+        .catch((err) => {
+          // python 缺失时给出可自查的提示, 而非裸 ENOENT
+          const hint = /ENOENT/i.test(String(err.message))
+            ? ` (python unavailable, tried: ${PYTHON_CMD.join(' ')}; install Python 3.8+)`
+            : '';
+          sendJson(res, 502, { error: `backend unavailable: ${err.message}${hint}` });
+        });
       return;
     }
     sendJson(res, 404, { error: 'not_found' });
   });
+  // 默认 keepAliveTimeout(5s)与 5s 自动刷新同拍, 空闲连接恰在复用时被关,
+  // 会偶发 "Failed to fetch"; 拉长空闲存活避开该竞态。
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 70_000;
 
   await listen(server, context.listen.host, context.listen.port);
   context.logger.info('miniapp.runtime.listening');
 
   // 预热首次查询(不阻塞就绪)
-  queryBackend('all', null).catch((err) => {
+  queryBackend('all', null, null).catch((err) => {
     context.logger.warn('miniapp.backend.warmup_failed', { message: err.message });
   });
 

@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 Watch Token usage from your local MiniMax Code runtime in near real time: consumption over time, output speed, cache hit rate, per-model comparison, per-project breakdown, tool-call stats, and recent requests. Filter by time range, model, and session.
 
-Author: [yanhy2000](https://github.com/yanhy2000) · Version: `1.2.0`
+Author: [yanhy2000](https://github.com/yanhy2000) · Version: `1.3.0`
 
 ![Token Usage Board with synthetic data](docs/preview.png)
 
@@ -26,9 +26,9 @@ Do not leave out the hidden `.minimax-plugin` directory; the plugin needs it to 
 
 Then restart a version of MiniMax Code that supports MiniApps, confirm that the plugin is enabled, and open "Token 用量看板" or ask the Agent to open it. If MiniMax Code uses a custom data directory (`MINIMAX_DATA_DIR`), put it under `plugins/` there instead.
 
-The page opens on the last 24 hours. You can switch between today (since local midnight), 1 hour, 12 hours, 24 hours, 7 days, 30 days, and all time, or enter a custom whole-hour range (1–8760 hours; only the most recent entry is kept). Model and session filtering is multi-select, and the session list only lists sessions with usage inside the selected range. The per-project breakdown groups usage by session workspace directory, and tool-call stats come from the tool calls recorded per request; both follow the current filters. Every card can be collapsed or expanded, and a collapsed card can be dragged to reorder (expanded cards cannot). The "重置布局" button at the top restores all cards to expanded and the default order without touching the filters. Filters, time range, refresh interval, theme, card collapse state, and card order are remembered between visits. The page refreshes every 10 seconds by default (5 s / 10 s / 30 s / manual).
+The page opens on the last 24 hours. You can switch between today (since local midnight), 1 hour, 12 hours, 24 hours, 7 days, 30 days, and all time, or enter a custom whole-hour range (1–8760 hours; only the most recent entry is kept). Model and session filtering is multi-select, and the two lists constrain each other: the model list only shows models that appear in the selected sessions, and the session list only shows sessions that used the selected models; a side shows its full range list only when the other side is set to all. The select-all action is dimmed only when everything is selected, invert is always available, and selecting nothing is allowed (the page then shows zero data). The per-project breakdown groups usage by session workspace directory, and tool-call stats come from the tool calls recorded per request; both follow the current filters. Every card can be collapsed or expanded. Clicking "编辑布局" enters edit mode: the KPI tiles at the top and the cards below (collapsed or not) can be reordered by dragging their ⠿ handle and removed with ✕. "保存布局" exits and remembers the arrangement, "取消保存" discards the changes, and "重置布局" restores everything shown in the default order — none of these touch the filters. Filters, time range, refresh interval, theme, and the visibility and order of tiles and cards are remembered between visits. The page refreshes every 10 seconds by default (5 s / 10 s / 30 s / manual).
 
-This app requires **Python 3.8+** on the local machine to read the local database. It uses only the standard library, so no `pip install` is needed. No API key or other configuration is required.
+This app requires **Python 3.8+** on the local machine to read the local database. It uses only the standard library, so no `pip install` is needed. The bundled SQLite must have the JSON1 extension enabled (the default for SQLite 3.38+ and all standard Python builds; the page reports the exact cause if it is missing). No API key or other configuration is required.
 
 ## Data access and counting
 
@@ -50,7 +50,7 @@ The runtime sends nothing to external services and has no telemetry. It writes a
 
 The page is in `miniapp/client/index.html` (ECharts is bundled locally), the Node entry is `miniapp/node/server.mjs`, and the data backend is `miniapp/node/api.py`. No build step is required.
 
-Verified environment: MiniMax Code desktop `3.0.73.166` on Windows (10.0.26200, x64). Verified during development: plugin install and open, aggregation and de-duplication, model/session filtering, preference persistence, auto refresh, theme switching, chart and table rendering, time-range presets and custom-range validation, select-all/invert gating, and card collapse and drag reordering. macOS and Linux are unverified.
+Verified environment: MiniMax Code desktop `3.0.73.166` on Windows (10.0.26200, x64). Verified during development: plugin install and open, aggregation and de-duplication, model/session filtering, preference persistence, auto refresh, theme switching, chart and table rendering, time-range presets with custom-range validation, selecting-no-filter, layout editing (drag reordering and removal), the icon-only header controls, the recent-calls table tweaks, cross-filtering between the model and session lists (narrowing in both directions), the model comparison card empty state, Esc closing dropdown panels, and atomic preference writes. macOS and Linux are unverified.
 
 Third-party components: [ECharts](https://echarts.apache.org/) (Apache License 2.0), bundled locally for offline use.
 
