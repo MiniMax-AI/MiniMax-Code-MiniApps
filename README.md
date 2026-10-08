@@ -64,6 +64,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [Model Manager](plugins/ocoomber/openrouter-model-manager/) | Browse, search, and enable/disable models in your `~/.minimax/config.yaml` with instant save, bulk actions, one-click undo, and automatic backups | [ocoomber](https://github.com/ocoomber) |
 | [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | **Official plugin** for planning driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
 | [Git Commit Tree](plugins/microbiosis/git-tree/) | Inspect a local Git repo's commit history with a swim-lane graph, branches/tags, commit detail, and per-file change stats; persisted filter preferences and optional auto-refresh | [Microbiosis](https://github.com/Microbiosis) |
+| [Pomodoro Sit Reminder](plugins/1602winxp/pomodoro-sit-timer/) | A Pomodoro timer that only counts: an in-page sit reminder and sound when a segment ends, with no timer lock and no enforced rest length; reminders from a single file or a folder in sequence or shuffled, with single-track loop and loudness matching | [1602WinXP](https://github.com/1602WinXP) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>

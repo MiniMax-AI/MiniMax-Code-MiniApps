@@ -65,6 +65,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [模型管理器](plugins/ocoomber/openrouter-model-manager/README.zh-CN.md) | 浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型，支持即时保存、批量操作、一键撤销和自动备份 | [ocoomber](https://github.com/ocoomber) |
 | [自驾规划](plugins/hanzijie/self-drive-route-planner/README.zh-CN.md) | 【官方插件】规划自驾路线、地点搜索、候选算路与小红书 3:4 行程图；支持演示模式 | [HanZijie](https://github.com/HanZijie) |
 | [Git 提交树](plugins/microbiosis/git-tree/README.zh-CN.md) | 查看本机 Git 仓库的提交历史：泳道提交图、分支/标签、提交详情与文件改动统计，支持筛选偏好持久化与可选自动刷新 | [Microbiosis](https://github.com/Microbiosis) |
+| [番茄钟 · 久坐提醒](plugins/1602winxp/pomodoro-sit-timer/README.zh-CN.md) | 只计时的番茄钟：工作段结束在页面内弹出久坐提醒并响铃，不锁状态、不限制休息时长；提醒音支持单文件或文件夹、顺序/随机播放、单曲循环与响度匹配 | [1602WinXP](https://github.com/1602WinXP) |
 
 <details>
 <summary>预览：Token 用量看板</summary>

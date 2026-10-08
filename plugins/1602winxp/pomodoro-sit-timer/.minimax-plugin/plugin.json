@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "pomodoro-sit-timer",
+  "displayName": "番茄钟 · 久坐提醒",
+  "version": "1.0.0",
+  "description": "只计时的番茄钟：走完一个工作段就在页面内弹出久坐提醒并播放提示音，不锁状态、不限制休息时长，想继续工作时点一下「继续工作」。",
+  "author": "1602WinXP",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "打开我的久坐提醒番茄钟",
+    "把工作段改成 45 分钟",
+    "今天我已经完成了几段专注"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

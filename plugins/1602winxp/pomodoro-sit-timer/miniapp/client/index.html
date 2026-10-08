@@ -1,0 +1,2752 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>番茄钟 · 久坐提醒</title>
+    <style>
+      :root,
+      [data-theme='light'] {
+        --mcode-bg: #ffffff;
+        --mcode-bg-secondary: #f5f5f5;
+        --mcode-surface: #ffffff;
+        --mcode-surface-muted: #fafafa;
+        --mcode-text: #171717;
+        --mcode-text-muted: #666666;
+        --mcode-text-subtle: #adadad;
+        --mcode-border: #0a0a0a14;
+        --mcode-border-strong: #0a0a0af2;
+        --mcode-accent: #0094fc;
+        --mcode-success: #04b54b;
+        --mcode-warning: #f56811;
+        --mcode-danger: #f73646;
+        --mcode-primary-action-bg: #171717;
+        --mcode-primary-action-text: #ffffff;
+        --mcode-warning-soft: #f5681114;
+      }
+
+      [data-theme='dark'] {
+        --mcode-bg: #171717;
+        --mcode-bg-secondary: #1c1c1c;
+        --mcode-surface: #262626;
+        --mcode-surface-muted: #262626;
+        --mcode-text: #ededed;
+        --mcode-text-muted: #949494;
+        --mcode-text-subtle: #666666;
+        --mcode-border: #ffffff14;
+        --mcode-border-strong: #fffffff2;
+        --mcode-accent: #0077d9;
+        --mcode-success: #009c3d;
+        --mcode-warning: #e25507;
+        --mcode-danger: #e31937;
+        --mcode-primary-action-bg: #ffffff;
+        --mcode-primary-action-text: #171717;
+        --mcode-warning-soft: #e2550714;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--mcode-bg);
+        color: var(--mcode-text);
+        font-family:
+          ui-sans-serif,
+          -apple-system,
+          system-ui,
+          'Segoe UI',
+          Helvetica,
+          Arial,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      /* ---------------------------------------------------------------- header */
+
+      .lang-switch {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        line-height: 20px;
+      }
+
+      .lang-switch button {
+        border: 0;
+        background: transparent;
+        font: inherit;
+        padding: 2px 4px;
+        border-radius: 6px;
+        cursor: pointer;
+        color: var(--mcode-text-muted);
+        transition: color 150ms ease-out, background-color 150ms ease-out;
+      }
+
+      .lang-switch button:hover {
+        background: var(--mcode-surface-muted);
+      }
+
+      /* Primary text token, so the selected language reads as near-white in the
+         dark theme and stays legible in the light one. */
+      .lang-switch button[aria-pressed='true'] {
+        color: var(--mcode-text);
+        font-weight: 600;
+      }
+
+      .lang-switch button:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      .lang-switch .sep {
+        color: var(--mcode-text-subtle);
+        user-select: none;
+      }
+
+      /* Title and language switch share one row; description and the session
+         counter share the next. Saves a whole row over stacking the switch above. */
+      .page-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          'title lang'
+          'sub   stat';
+        column-gap: 16px;
+        row-gap: 4px;
+        align-items: start;
+      }
+
+      .page-head h1 {
+        grid-area: title;
+        margin: 0;
+        font-size: 18px;
+        line-height: 28px;
+        font-weight: 600;
+      }
+
+      .page-head .sub {
+        grid-area: sub;
+        margin: 0;
+        font-size: 13px;
+        color: var(--mcode-text-muted);
+        max-width: 52ch;
+      }
+
+      .page-head .lang-switch {
+        grid-area: lang;
+        justify-self: end;
+        align-self: center;
+      }
+
+      .head-stat {
+        grid-area: stat;
+        text-align: right;
+        line-height: 1.2;
+      }
+
+      .head-stat .num {
+        display: block;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 28px;
+        font-weight: 600;
+      }
+
+      .head-stat .label {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* ----------------------------------------------------------------- alert */
+
+      .alert {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 16px 20px;
+        border: 1px solid var(--mcode-warning);
+        background: var(--mcode-warning-soft);
+        border-radius: 12px;
+      }
+
+      .alert[hidden] {
+        display: none;
+      }
+
+      .alert svg {
+        flex: none;
+        width: 20px;
+        height: 20px;
+        color: var(--mcode-warning);
+        margin-top: 2px;
+      }
+
+      .alert strong {
+        display: block;
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .alert p {
+        margin: 2px 0 0;
+        font-size: 13px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* ----------------------------------------------------------------- timer */
+
+      .timer-card {
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .timer {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 72px;
+        line-height: 1.1;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .timer.is-reminded {
+        color: var(--mcode-warning);
+      }
+
+      .timer.is-paused {
+        color: var(--mcode-text-muted);
+      }
+
+      .timer.is-idle {
+        color: var(--mcode-text-muted);
+      }
+
+      .timer-sub {
+        font-size: 13px;
+        color: var(--mcode-text-muted);
+        min-height: 21px;
+        text-align: center;
+      }
+
+      .progress {
+        width: 100%;
+        max-width: 420px;
+        height: 6px;
+        margin: 16px 0 20px;
+        background: var(--mcode-surface-muted);
+        border: 1px solid var(--mcode-border);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: var(--mcode-accent);
+        border-radius: 999px;
+        transition: width 150ms ease-out, background-color 150ms ease-out;
+      }
+
+      .progress-fill.is-reminded {
+        background: var(--mcode-warning);
+      }
+
+      /* --------------------------------------------------------------- buttons */
+
+      .btn {
+        height: 40px;
+        padding: 0 20px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background-color 150ms ease-out,
+          border-color 150ms ease-out,
+          opacity 150ms ease-out;
+      }
+
+      .btn:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      .btn[disabled] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        min-width: 148px;
+      }
+
+      .btn-secondary {
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        border-color: var(--mcode-border);
+      }
+
+      .btn-secondary:hover {
+        border-color: var(--mcode-border-strong);
+      }
+
+      .btn-danger {
+        background: transparent;
+        color: var(--mcode-danger);
+        border-color: var(--mcode-border);
+      }
+
+      .btn-danger:hover {
+        border-color: var(--mcode-danger);
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      /* ----------------------------------------------------------------- cards */
+
+      .timer-hint {
+        margin: 12px 0 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .timer-hint[hidden] {
+        display: none;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        padding: 20px;
+        /* A grid item's automatic minimum size is its min-content width, and a
+           card holding a long file name has a very wide min-content. That let the
+           track grow past the panel, which pushed the track-name row out with it:
+           the row stopped being the width the cap and the ellipsis were computed
+           against, so the head was elided but the tail was still clipped by the
+           panel edge. Releasing the floor lets the track be the panel width, and
+           the row's own overflow and text-overflow then do their job. */
+        min-width: 0;
+      }
+
+      .card h2 {
+        margin: 0 0 4px;
+        font-size: 16px;
+        line-height: 24px;
+        font-weight: 500;
+      }
+
+      .card .hint {
+        margin: 0 0 16px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .field {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .field-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1 1 220px;
+        min-width: 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .sound-source {
+        font-size: 13px;
+        color: var(--mcode-text);
+        margin: 0 0 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .sound-source .tag {
+        display: inline-block;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        background: var(--mcode-surface-muted);
+        border: 1px solid var(--mcode-border);
+        border-radius: 999px;
+        padding: 1px 10px;
+        margin-left: 6px;
+      }
+
+      /* Path input and mode toggle share one row. The label gives up width so
+         the toggle is never pushed off.
+
+         The row has to grow into the form's width. It is a flex item of .field,
+         and without flex-grow it is only as wide as its own content -- which used
+         to include the current track name. Once the track moved out onto its own
+         line, the row shrank to its minimum and the path box lost 30px for
+         reasons that have nothing to do with the path. */
+      .sound-path-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .sound-path-row .field-stack {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      /* One fixed 36px slot holding the mode toggle and the confirm button.
+         They are stacked rather than sitting side by side, so swapping which one
+         is visible cannot change the slot width -- and that is what stops the
+         path input from resizing when an edit is pending. */
+      .sound-slot {
+        position: relative;
+        flex: 0 0 auto;
+        width: 36px;
+        min-width: 36px;
+        height: 40px;
+      }
+
+      .sound-slot > button {
+        position: absolute;
+        inset: 0;
+        width: 36px;
+        min-width: 36px;
+        height: 40px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .sound-slot > button[hidden] {
+        display: none;
+      }
+
+      /* The confirm reads as "commit this", not as another setting, so it is
+         drawn in the accent colour rather than as a second grey button. */
+      .sound-confirm {
+        color: var(--mcode-accent);
+        border-color: var(--mcode-accent);
+      }
+
+      .sound-confirm svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      /* Icon-only toggle: a fixed square keeps the row from reflowing when the
+         glyph changes, and the active state is drawn, not labelled. */
+      .sound-mode-toggle {
+        flex: 0 0 auto;
+        width: 36px;
+        min-width: 36px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .sound-mode-toggle svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+      }
+
+      /* No accent border or fill: the glyph alone is the state, and a blue ring
+         on top of it made the two signals redundant and noisy. */
+      .sound-mode-toggle .icon-shuffle {
+        display: none;
+      }
+
+      .sound-mode-toggle[aria-pressed='true'] .icon-sequence {
+        display: none;
+      }
+
+      .sound-mode-toggle[aria-pressed='true'] .icon-shuffle {
+        display: block;
+      }
+
+      .sound-mode-toggle svg {
+        opacity: 0.72;
+      }
+
+      .sound-mode-toggle[aria-pressed='true'] svg {
+        opacity: 1;
+      }
+
+      /* 单曲循环 outranks the mode, so a disabled mode button is the honest
+         state: it reads as overridden rather than as a control that is quietly
+         ignoring you. */
+      .sound-mode-toggle:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      .sound-mode-toggle:disabled svg {
+        opacity: 0.5;
+      }
+
+      .sound-actions {
+        justify-content: flex-start;
+        align-items: center;
+        margin-top: 12px;
+      }
+
+      /* 试听 and the two switches share one row: the switches sit right beside
+         the button at the row's natural width, and travel together so a narrow
+         panel wraps them as a unit instead of orphaning one. */
+      .sound-actions > .btn {
+        flex: 0 0 auto;
+      }
+
+      /* What is playing, and what the next 试听 will fetch. They used to share
+         rows with other things: the current track sat beside the path input,
+         the next-track hint sat beside the 试听 button. Each of those left the
+         name about half a control short, and both had to shrink. On their own
+         lines, in the card's full width, they can be read. */
+      .sound-status {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* Both lines are the same shape: a fixed label, then the file name, which
+         takes the rest and is the only thing that gives way. Neither may push the
+         card wider, and both sit against the right edge so the row does not read
+         as left-heavy when the names are short. */
+      .sound-now,
+      .sound-next {
+        display: flex;
+        align-items: baseline;
+        justify-content: flex-end;
+        gap: 5px;
+        min-width: 0;
+        width: 100%;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        overflow: hidden;
+      }
+
+      /* The author `display: flex` / `.btn` rules beat the UA rule for
+         [hidden], so both need it spelled out. */
+      .sound-next[hidden],
+      .sound-confirm[hidden] {
+        display: none;
+      }
+
+      /* Shared by 当前曲目 and 下一首. A bare filename with no label says the same
+         thing on both lines, so the label is what tells them apart. */
+      .sound-line-label {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+
+      /* Real file names are unbounded, and the tail is the part that identifies
+         one: the extension, and the last words of the name. So the name is
+         truncated at the START and the head is what disappears.
+
+         The cap is the row width minus 7em. 7em is the widest label any pack
+         ships — `Current track` is about 6.5em at 12px — plus the 5px gap, so
+         label + name always fits and the name's right edge (the part that has to
+         stay visible) is never the thing that gets clipped. `em` is the row's own
+         font size, so the cap follows the panel instead of being a pixel constant
+         that is only right at 463px.
+
+         `direction: rtl` moves the overflow to the left edge: with the default
+         LTR, text-overflow clips the tail and the name reads `deep-resonance…`
+         with no extension at all. It only sets the paragraph direction for this
+         one span; the Latin run itself still renders left-to-right, and the title
+         attribute keeps the full path. */
+      .sound-line-name {
+        flex: 0 1 auto;
+        min-width: 0;
+        max-width: calc(100% - 7em);
+        color: var(--mcode-text);
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        direction: rtl;
+        text-align: right;
+      }
+
+      /* 试听 and the two switches share one row: the toggles are an inline-flex
+         unit, so on a panel too narrow for all of it they wrap together instead
+         of orphaning one checkbox, and the button stays on the left. */
+
+
+      /* Both checkboxes travel together so a narrow row wraps them as a unit
+         instead of orphaning one. They sit right next to 试听 at whatever width
+         the row gives them — not parked against the far edge, which pulled them
+         away from the button they belong with. */
+      .sound-toggles {
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        flex: 0 0 auto;
+      }
+
+      .pin {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+
+      .pin input {
+        margin: 0;
+        cursor: pointer;
+        accent-color: var(--mcode-accent);
+      }
+
+      .seg {
+        display: inline-flex;
+        background: var(--mcode-surface-muted);
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        padding: 3px;
+        gap: 2px;
+      }
+
+      .seg button {
+        height: 30px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--mcode-text-muted);
+        font-family: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background-color 150ms ease-out, color 150ms ease-out;
+      }
+
+      .seg button[aria-pressed='true'] {
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        box-shadow: 0 0 0 1px var(--mcode-border);
+      }
+
+      .seg button:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      kbd {
+        display: inline-block;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        line-height: 16px;
+        padding: 0 6px;
+        border: 1px solid var(--mcode-border-strong);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+      }
+
+      .field label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      input[type='number'],
+      input[type='text'] {
+        height: 36px;
+        padding: 0 10px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font-size: 14px;
+      }
+
+      input[type='number'] {
+        width: 92px;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      input[type='text'] {
+        width: 100%;
+        height: 36px;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+      }
+
+      input[type='number']:focus-visible,
+      input[type='text']:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+        border-color: var(--mcode-accent);
+      }
+
+      .presets {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+
+      .preset {
+        height: 30px;
+        padding: 0 12px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-family: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .preset[aria-pressed='true'] {
+        color: var(--mcode-text);
+        border-color: var(--mcode-border-strong);
+      }
+
+      .preset:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      .stat-row {
+        display: flex;
+        gap: 24px;
+        margin-bottom: 16px;
+      }
+
+      .stat-row .value {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 24px;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+
+      .stat-row .caption {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .confirm-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid var(--mcode-danger);
+        border-radius: 8px;
+      }
+
+      .confirm-row[hidden] {
+        display: none;
+      }
+
+      .confirm-text {
+        font-size: 13px;
+        color: var(--mcode-text);
+        flex: 1 1 100%;
+      }
+
+      .field-error {
+        margin: 8px 0 0;
+        font-size: 12px;
+        color: var(--mcode-danger);
+      }
+
+      .field-error[hidden] {
+        display: none;
+      }
+
+      .conn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .conn .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--mcode-success);
+      }
+
+      .conn.is-offline .dot {
+        background: var(--mcode-danger);
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 768px) {
+        .page {
+          padding: 16px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .timer {
+          font-size: 56px;
+        }
+
+        .head-stat {
+          text-align: left;
+        }
+
+        /* Narrow: the description needs the full width, so the counter drops
+           to its own row instead of being squeezed beside it. */
+        .page-head {
+          grid-template-areas:
+            'title lang'
+            'sub   sub'
+            'stat  stat';
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-head">
+        <h1 data-i18n="head.title">番茄钟 · 久坐提醒</h1>
+        <div class="lang-switch" role="group" data-i18n-aria="lang.group">
+          <button type="button" data-lang="zh" aria-pressed="true">中</button>
+          <span class="sep" aria-hidden="true">/</span>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+          <span class="sep" aria-hidden="true">/</span>
+          <button type="button" data-lang="ja" aria-pressed="false">日</button>
+          <span class="sep" aria-hidden="true">/</span>
+          <button type="button" data-lang="ko" aria-pressed="false">한</button>
+        </div>
+        <p class="sub" data-i18n="head.sub"></p>
+        <div class="head-stat">
+          <span class="num" id="sessionCount">0</span>
+          <span class="label" data-i18n="head.sessions">已完成段数</span>
+        </div>
+      </header>
+
+      <div class="alert" id="alert" role="alert" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 9v4M12 17h.01" stroke-linecap="round" />
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke-linejoin="round" />
+        </svg>
+        <div>
+          <strong data-i18n="alert.title">该起身了</strong>
+          <p id="alertText"></p>
+        </div>
+      </div>
+
+      <section class="timer-card" aria-labelledby="timerHeading">
+        <h2 id="timerHeading" class="visually-hidden" data-i18n="timer.label">当前工作段倒计时</h2>
+        <div class="timer is-idle" id="timer" role="timer" aria-live="off">25:00</div>
+        <p class="timer-sub" id="timerSub" role="status">准备开始</p>
+        <div class="progress">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="primaryBtn">开始工作</button>
+          <button type="button" class="btn btn-secondary" id="discardBtn" data-i18n="btn.discard" hidden>放弃本段</button>
+        </div>
+        <p class="timer-hint" id="shortcutHint" hidden></p>
+      </section>
+
+      <div class="grid">
+        <section class="card" aria-labelledby="settingsHeading">
+          <h2 id="settingsHeading" data-i18n="card.duration">工作段时长</h2>
+          <p class="hint" data-i18n="card.duration.hint"></p>
+          <form class="field" id="durationForm">
+            <label for="durationInput">
+              <span data-i18n="field.minutes">分钟（1–180）</span>
+              <input
+                type="number"
+                id="durationInput"
+                min="1"
+                max="180"
+                step="1"
+                value="25"
+                inputmode="numeric"
+              />
+            </label>
+            <button type="submit" class="btn btn-secondary" data-i18n="btn.apply">应用</button>
+          </form>
+          <div class="presets" role="group" data-i18n-aria="group.presets">
+            <button type="button" class="preset" data-min="15" data-i18n="preset.p15"></button>
+            <button type="button" class="preset" data-min="25" data-i18n="preset.p25"></button>
+            <button type="button" class="preset" data-min="45" data-i18n="preset.p45"></button>
+            <button type="button" class="preset" data-min="60" data-i18n="preset.p60"></button>
+          </div>
+          <p class="field-error" id="durationError" role="alert" hidden></p>
+        </section>
+
+        <section class="card" aria-labelledby="soundHeading">
+          <h2 id="soundHeading" data-i18n="card.sound">提醒音</h2>
+          <p class="hint" id="soundHint"></p>
+          <form class="field" id="soundForm">
+            <div class="sound-path-row">
+              <label class="field-stack" for="soundPathInput">
+                <span data-i18n="field.soundpath">音频文件或文件夹路径</span>
+                <input
+                  type="text"
+                  id="soundPathInput"
+                  placeholder="sounds/"
+                  lang="en"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </label>
+              <!-- One fixed 36px slot with two occupants, never both visible. The
+                   confirm takes the toggle's place while an edit is pending, so
+                   the slot width -- and therefore the path input's width --
+                   cannot change, and a long path can never push anything off
+                   the panel. -->
+              <span class="sound-slot">
+                <button
+                  type="submit"
+                  class="btn sound-confirm"
+                  id="soundConfirmBtn"
+                  data-i18n-aria="btn.applyPath"
+                  title=""
+                  hidden
+                >
+                  <svg
+                    class="icon-confirm"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="4 12.5 9.5 18 20 6" />
+                  </svg>
+                </button>
+                <!-- One button, two states: it toggles between 顺序 and 随机. A two
+                     button segmented control cost a whole row for no extra
+                     function. Shown as an icon rather than text: the glyph IS the
+                     state, and a 36px button leaves the track name more room. Text
+                     labels are kept for screen readers. -->
+                <button
+                  type="button"
+                  class="btn btn-secondary sound-mode-toggle"
+                  id="soundModeToggle"
+                  aria-pressed="true"
+                  title=""
+                >
+                <svg
+                  class="icon-sequence"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="9" y1="6" x2="21" y2="6" />
+                  <line x1="9" y1="12" x2="21" y2="12" />
+                  <line x1="9" y1="18" x2="21" y2="18" />
+                  <circle cx="4.5" cy="6" r="1.2" />
+                  <circle cx="4.5" cy="12" r="1.2" />
+                  <circle cx="4.5" cy="18" r="1.2" />
+                </svg>
+                <svg
+                  class="icon-shuffle"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="16 3 21 3 21 8" />
+                  <line x1="4" y1="20" x2="21" y2="3" />
+                  <polyline points="21 16 21 21 16 21" />
+                  <line x1="15" y1="15" x2="21" y2="21" />
+                  <line x1="4" y1="4" x2="9" y2="9" />
+                </svg>
+              </button>
+              </span>
+            </div>
+          </form>
+          <div class="sound-status">
+            <span class="sound-now"
+              ><span class="sound-line-label" data-i18n="sound.now">当前曲目</span
+              ><span class="sound-line-name" id="soundNowTrack"></span
+            ></span>
+            <span class="sound-next" id="soundNextTrack" hidden
+              ><span class="sound-line-label" data-i18n="sound.next">下一首</span
+              ><span class="sound-line-name" id="soundNextName"></span
+            ></span>
+          </div>
+          <div class="actions sound-actions">
+            <button type="button" class="btn btn-secondary" id="testSoundBtn" data-i18n="btn.preview">试听</button>
+            <span class="sound-toggles">
+              <label class="pin">
+                <input type="checkbox" id="soundLoop" />
+                <span data-i18n="sound.loop">单曲循环</span>
+              </label>
+              <label class="pin">
+                <input type="checkbox" id="soundNormalize" checked />
+                <span data-i18n="sound.normalize">音量标准化</span>
+              </label>
+            </span>
+          </div>
+          <p class="field-error" id="soundError" role="alert" hidden></p>
+        </section>
+
+        <section class="card" aria-labelledby="appearanceHeading">
+          <h2 id="appearanceHeading" data-i18n="card.appearance">外观</h2>
+          <p class="hint" data-i18n="card.appearance.hint"></p>
+          <div class="seg" role="group" data-i18n-aria="group.theme">
+            <button type="button" data-theme-choice="system" aria-pressed="true" data-i18n="theme.system">跟随系统</button>
+            <button type="button" data-theme-choice="light" aria-pressed="false" data-i18n="theme.light">白天</button>
+            <button type="button" data-theme-choice="dark" aria-pressed="false" data-i18n="theme.dark">夜间</button>
+          </div>
+          <p class="hint" id="appearanceShortcutHint" style="margin: 16px 0 0"></p>
+        </section>
+
+        <section class="card" aria-labelledby="statsHeading">
+          <h2 id="statsHeading" data-i18n="card.stats">统计</h2>
+          <p class="hint" data-i18n="card.stats.hint"></p>
+          <div class="stat-row">
+            <div>
+              <div class="value" id="statSessions">0</div>
+              <div class="caption" data-i18n="stat.sessions">完成段数</div>
+            </div>
+            <div>
+              <div class="value" id="statFocus">0</div>
+              <div class="caption" data-i18n="stat.focus">累计专注</div>
+            </div>
+          </div>
+          <div class="actions" style="justify-content: flex-start">
+            <button type="button" class="btn btn-danger" id="resetStatsBtn" data-i18n="btn.resetStats">清空统计</button>
+          </div>
+          <div class="confirm-row" id="resetConfirm" role="group" data-i18n-aria="group.resetConfirm" hidden>
+            <span class="confirm-text" id="resetConfirmText"></span>
+            <button type="button" class="btn btn-secondary" id="resetCancelBtn" data-i18n="btn.cancel">取消</button>
+            <button type="button" class="btn btn-danger" id="resetConfirmBtn" data-i18n="btn.confirmClear">确定清空</button>
+          </div>
+        </section>
+      </div>
+
+      <p class="conn" id="conn">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="connText" data-i18n="conn.online"></span>
+      </p>
+    </main>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var CHIME_KEY = 'pomodoro-sit-timer:reminder-seq';
+        var THEME_KEY = 'pomodoro-sit-timer:theme';
+        var LANG_KEY = 'pomodoro-sit-timer:lang';
+        var POLL_MS = 20000;
+        var MIN_SEC = 60;
+        var MAX_SEC = 3 * 60 * 60;
+
+        // ---------------------------------------------------------------- i18n
+
+        var HTML_LANG = { zh: 'zh-CN', en: 'en', ja: 'ja', ko: 'ko' };
+        var FALLBACK_LANG = 'zh';
+
+        var STRINGS = {
+          zh: {
+            'doc.title': '番茄钟 · 久坐提醒',
+            'lang.group': '语言',
+            'head.title': '番茄钟 · 久坐提醒',
+            'head.sub':
+              '只计时，不锁状态。「暂停」会记住剩下的时间，继续时接着走；提醒响过之后不用管它，想继续时点「继续工作」或按空格。',
+            'head.sessions': '已完成段数',
+            'alert.title': '该起身了',
+            'timer.label': '当前工作段倒计时',
+            'state.idle.sub': '准备开始 · 一个工作段 {m}',
+            'state.idle.btn': '开始工作',
+            'state.running.sub': '计时中 · 走完 {m} 后会提醒你起身',
+            'state.running.btn': '暂停',
+            'state.paused.sub': '已暂停 · 剩下的 {c} 还在',
+            'state.paused.btn': '继续',
+            'state.reminded.sub': '休息中，不计时 · 想继续时点下面的按钮',
+            'state.reminded.btn': '继续工作',
+            'btn.discard': '放弃本段',
+            'shortcut.hint': '按 <kbd>空格</kbd> 继续工作',
+            'card.duration': '工作段时长',
+            'card.duration.hint':
+              '改完点「应用」立即生效，只影响之后开始的那一段。已经开始或暂停中的那段长度不变。',
+            'field.minutes': '分钟（1–180）',
+            'btn.apply': '应用',
+            'btn.applyPath': '应用这个路径',
+            'group.presets': '常用时长',
+            'preset.p15': '15 分钟',
+            'preset.p25': '25 分钟',
+            'preset.p45': '45 分钟',
+            'preset.p60': '60 分钟',
+            'card.sound': '提醒音',
+            'card.sound.hint':
+              '填音频文件或文件夹路径即可替换默认提示音。相对路径以插件目录为基准（如 sounds/），绝对路径用本机任意位置。按 <kbd>Enter</kbd> 生效；清空后按 <kbd>Enter</kbd> 就退回页面现场合成的提示音，背后没有音频文件。',
+            'sound.current': '当前：',
+            'sound.default': '默认提示音',
+            'field.soundpath': '音频文件或文件夹路径',
+            'sound.mode.sequence': '顺序',
+            'sound.mode.shuffle': '随机',
+            'sound.mode.hint': '点一下切换播放方式（顺序 / 随机）。',
+            'sound.loop': '单曲循环',
+            'sound.normalize': '音量标准化',
+            'sound.now': '当前曲目',
+            'sound.next': '下一首',
+            'sound.previewing': '试听中：',
+            'sound.pinned': '单曲循环锁定：',
+            'sound.mode.locked': '单曲循环已锁定这一首，顺序/随机和试听都只播它。',
+            'err.sound.sound_path_escapes_plugin':
+              '相对路径不能跳出插件目录，请用 sounds/ 这样的写法。',
+            'err.sound.sound_dir_empty': '这个文件夹里没有可用的音频文件。',
+            'err.sound.sound_dir_unreadable': '读不了这个文件夹。',
+            'err.sound.sound_dir_too_many': '音频文件太多了（上限 {n} 个）。',
+            'err.sound.sound_dir_too_large': '这个文件夹里的音频太大了。',
+            'btn.preview': '试听',
+            'card.appearance': '外观',
+            'card.appearance.hint': '默认跟随系统切换；选白天或夜间后固定，不再跟随。',
+            'group.theme': '配色模式',
+            'theme.system': '跟随系统',
+            'theme.light': '白天',
+            'theme.dark': '夜间',
+            'card.shortcut.hint':
+              '提醒响起后按 <kbd>空格</kbd> 即可继续工作——面板需要有键盘焦点。计时中不绑定空格，避免误触。',
+            'card.stats': '统计',
+            'card.stats.hint': '段数只算走完的；专注时间只要在计时就在累计，暂停或放弃的那段也会算进去。',
+            'stat.sessions': '完成段数',
+            'stat.focus': '累计专注',
+            'btn.resetStats': '清空统计',
+            'group.resetConfirm': '确认清空统计',
+            'confirm.clear.full': '「完成段数」和「累计专注」都会被清空。当前计时不受影响。',
+            'btn.cancel': '取消',
+            'btn.confirmClear': '确定清空',
+            'conn.online': '已连接',
+            'conn.offline': '连接断开，正在重试',
+            'unit.minutes': '{n} 分钟',
+            // Compact forms for the 累计专注 readout. formatFocus glues these two
+            // together with no separator (`2小时30分`), so they must not carry the
+            // space that unit.minutes uses inside a sentence.
+            'unit.h': '{n}小时',
+            'unit.m': '{n}分',
+            'err.duration.range':
+              '时长需要在 {min}–{max} 秒之间（收到 {e} 分钟）。',
+            'err.minutes': '请填 1 到 180 之间的分钟数。',
+            'err.generic': '操作没成功，请检查连接后重试。',
+            'err.sound.decode':
+              '这个音频读不出来（文件可能已被移动或删除），提醒时会退回默认提示音。',
+            'err.sound.generic': '设置失败，请检查连接后重试。',
+            'err.sound.sound_path_not_a_string': '路径必须是文本。',
+            'err.sound.sound_path_empty': '路径不能为空。',
+            'err.sound.sound_path_too_long': '路径太长了。',
+            'err.sound.sound_path_not_absolute': '要填绝对路径，比如 D:\\sounds\\ding.mp3。',
+            'err.sound.sound_type_unsupported': '只支持 mp3 / wav / ogg / m4a / aac / flac / webm。',
+            'err.sound.sound_file_not_found': '找不到这个文件，检查一下路径。',
+            'err.sound.sound_not_a_file': '这个路径不是文件。',
+            'err.sound.sound_file_too_large': '文件超过 25MB，换个短一点的。',
+          },
+          en: {
+            'doc.title': 'Pomodoro · Sitting Alert',
+            'lang.group': 'Language',
+            'head.title': 'Pomodoro · Sitting Alert',
+            'head.sub':
+              'Counts time and never locks your state. Pause keeps the remaining time and resumes from there; once the alert sounds you can ignore it and press Resume — or the space bar — when you are back.',
+            'head.sessions': 'Segments done',
+            'alert.title': 'Time to stand up',
+            'timer.label': 'Current segment countdown',
+            'state.idle.sub': 'Ready · one segment is {m}',
+            'state.idle.btn': 'Start',
+            'state.running.sub': 'Counting · alert after {m}',
+            'state.running.btn': 'Pause',
+            'state.paused.sub': 'Paused · {c} left',
+            'state.paused.btn': 'Resume',
+            'state.reminded.sub': 'Resting, not counting · use the button when you are back',
+            'state.reminded.btn': 'Resume work',
+            'btn.discard': 'Discard segment',
+            'shortcut.hint': 'Press <kbd>Space</kbd> to resume work',
+            'card.duration': 'Segment length',
+            'card.duration.hint':
+              'Apply takes effect immediately and only applies to the next segment. A running or paused segment keeps its length.',
+            'field.minutes': 'Minutes (1–180)',
+            'btn.apply': 'Apply',
+            'btn.applyPath': 'Apply this path',
+            'group.presets': 'Common lengths',
+            'preset.p15': '15 min',
+            'preset.p25': '25 min',
+            'preset.p45': '45 min',
+            'preset.p60': '60 min',
+            'card.sound': 'Alert sound',
+            'card.sound.hint':
+              'A file or a folder replaces the default chime. Relative paths resolve against the plugin folder (e.g. sounds/); absolute paths can point anywhere on this machine. Press <kbd>Enter</kbd> to apply. Clearing the box and pressing <kbd>Enter</kbd> goes back to a chime the page synthesises on the spot, with no audio file behind it.',
+            'sound.current': 'Current: ',
+            'sound.default': 'Default chime',
+            'field.soundpath': 'Audio file or folder path',
+            'sound.mode.sequence': 'In order',
+            'sound.mode.shuffle': 'Shuffle',
+            'sound.mode.hint': 'Tap to switch playback order (in order / shuffle).',
+            'sound.loop': 'Loop this track',
+            'sound.normalize': 'Normalise volume',
+            'sound.now': 'Current track',
+            'sound.next': 'Next',
+            'sound.previewing': 'Previewing:',
+            'sound.pinned': 'Pinned:',
+            'sound.mode.locked': 'Pinned to one track, so in order / shuffle and Preview all play it.',
+            'err.sound.sound_path_escapes_plugin':
+              'A relative path cannot leave the plugin folder — use something like sounds/.',
+            'err.sound.sound_dir_empty': 'No usable audio files in that folder.',
+            'err.sound.sound_dir_unreadable': 'That folder could not be read.',
+            'err.sound.sound_dir_too_many': 'Too many audio files (limit {n}).',
+            'err.sound.sound_dir_too_large': 'The audio in that folder is too large.',
+            'btn.preview': 'Preview',
+            'card.appearance': 'Appearance',
+            'card.appearance.hint':
+              'Follows the system by default. Pick Day or Night to pin it.',
+            'group.theme': 'Colour mode',
+            'theme.system': 'System',
+            'theme.light': 'Day',
+            'theme.dark': 'Night',
+            'card.shortcut.hint':
+              'After the alert, press <kbd>Space</kbd> to resume — the panel needs keyboard focus. Space is not bound while a segment is running, to avoid misfires.',
+            'card.stats': 'Stats',
+            'card.stats.hint':
+              'Segments count only when completed. Focus time accrues whenever a segment is running, including the part you pause or discard.',
+            'stat.sessions': 'Segments',
+            'stat.focus': 'Total focus',
+            'btn.resetStats': 'Clear stats',
+            'group.resetConfirm': 'Confirm clearing stats',
+            'confirm.clear.full': 'This clears "Segments" and "Total focus". The current timer is unaffected.',
+            'btn.cancel': 'Cancel',
+            'btn.confirmClear': 'Clear',
+            'conn.online': 'Connected',
+            'conn.offline': 'Disconnected, retrying',
+            'unit.minutes': '{n} min',
+            'unit.h': '{n}h',
+            'unit.m': '{n}m',
+            'err.duration.range':
+              'Duration must be between {min} and {max} seconds (got {e} minutes).',
+            'err.minutes': 'Enter a number between 1 and 180.',
+            'err.generic': 'That did not go through. Check the connection and try again.',
+            'err.sound.decode':
+              'That audio file cannot be read (it may have been moved or deleted). Alerts fall back to the default chime.',
+            'err.sound.generic': 'Could not save that. Check the connection and try again.',
+            'err.sound.sound_path_not_a_string': 'The path must be text.',
+            'err.sound.sound_path_empty': 'The path cannot be empty.',
+            'err.sound.sound_path_too_long': 'That path is too long.',
+            'err.sound.sound_path_not_absolute':
+              'Use an absolute path, for example D:\\sounds\\ding.mp3.',
+            'err.sound.sound_type_unsupported':
+              'Supported formats: mp3 / wav / ogg / m4a / aac / flac / webm.',
+            'err.sound.sound_file_not_found': 'File not found — check the path.',
+            'err.sound.sound_not_a_file': 'That path is not a file.',
+            'err.sound.sound_file_too_large': 'The file is over 25MB. Pick a shorter one.',
+          },
+          ja: {
+            'doc.title': 'ポモドーロ · 座りっぱなし通知',
+            'lang.group': '言語',
+            'head.title': 'ポモドーロ · 座りっぱなし通知',
+            'head.sub':
+              '計測するだけで、状態をロックしません。「一時停止」は残りの時間を保持し、再開時はそこから続きます。通知が鳴っても気にせず、戻ったら「作業を再開」またはスペースキーを押してください。',
+            'head.sessions': '完了した区間',
+            'alert.title': '立ち上がりましょう',
+            'timer.label': '現在の区間のカウントダウン',
+            'state.idle.sub': '準備完了 · 1 区間は {m}',
+            'state.idle.btn': '作業開始',
+            'state.running.sub': '計測中 · {m} で通知します',
+            'state.running.btn': '一時停止',
+            'state.paused.sub': '一時停止中 · 残り {c}',
+            'state.paused.btn': '再開',
+            'state.reminded.sub': '休憩中、計測しません · 戻ったら下のボタンを押してください',
+            'state.reminded.btn': '作業を再開',
+            'btn.discard': 'この区間を破棄',
+            'shortcut.hint': '<kbd>スペース</kbd>で作業を再開',
+            'card.duration': '区間の長さ',
+            'card.duration.hint':
+              '「適用」で即時に反映されます。次に開始する区間だけが対象で、進行中や一時停止中の区間の長さは変わりません。',
+            'field.minutes': '分（1〜180）',
+            'btn.apply': '適用',
+            'btn.applyPath': 'このパスを適用',
+            'group.presets': 'よく使う長さ',
+            'preset.p15': '15分',
+            'preset.p25': '25分',
+            'preset.p45': '45分',
+            'preset.p60': '60分',
+            'card.sound': '通知音',
+            'card.sound.hint':
+              '音声ファイルまたはフォルダのパスを入れると既定の音を置き換えられます。相対パスはプラグインのフォルダを基準に解決され（例: sounds/）、絶対パスならこのパソコン上の任意の場所を指定できます。<kbd>Enter</kbd> キーで反映されます。空欄にして <kbd>Enter</kbd> で、ページ内でその場で合成した音（音声ファイルは使いません）に戻ります。',
+            'sound.current': '現在：',
+            'sound.default': '既定の通知音',
+            'field.soundpath': '音声ファイルまたはフォルダのパス',
+            'sound.mode.sequence': '順番',
+            'sound.mode.shuffle': 'ランダム',
+            'sound.mode.hint': 'タップして再生順を切り替えます（順番 / ランダム）。',
+            'sound.loop': 'この曲を繰り返し',
+            'sound.normalize': '音量を正規化',
+            'sound.now': '現在の曲',
+            'sound.next': '次の曲',
+            'sound.previewing': '試聴中：',
+            'sound.pinned': '固定中：',
+            'sound.mode.locked': '1 曲に固定中なので、順番/ランダム・試聴ともその曲になります。',
+            'err.sound.sound_path_escapes_plugin':
+              '相対パスではプラグインフォルダの外へは指定できません。sounds/ のように入力してください。',
+            'err.sound.sound_dir_empty': 'このフォルダに利用できる音声ファイルがありません。',
+            'err.sound.sound_dir_unreadable': 'このフォルダを読み取れませんでした。',
+            'err.sound.sound_dir_too_many': '音声ファイルが多すぎます（上限 {n} 個）。',
+            'err.sound.sound_dir_too_large': 'このフォルダの音声が大きすぎます。',
+            'btn.preview': '試聴',
+            'card.appearance': '表示',
+            'card.appearance.hint':
+              '初期状態はシステムに追従します。「昼」「夜」を選ぶと固定されます。',
+            'group.theme': '配色モード',
+            'theme.system': 'システム',
+            'theme.light': '昼',
+            'theme.dark': '夜',
+            'card.shortcut.hint':
+              '通知の後は<kbd>スペース</kbd>で作業を再開できます（パネルにキーボードフォーカスが必要）。誤操作を防ぐため、計測中はスペースキーに割り当てません。',
+            'card.stats': '統計',
+            'card.stats.hint':
+              '区間数は最後まで完走した分だけ。集中時間は計測中ずっと加算され、一時停止・破棄した区間の時間も含まれます。',
+            'stat.sessions': '完了区間',
+            'stat.focus': '合計集中時間',
+            'btn.resetStats': '統計を消去',
+            'group.resetConfirm': '統計の消去確認',
+            'confirm.clear.full': '「完了区間」と「合計集中時間」が消去されます。現在のタイマーは影響されません。',
+            'btn.cancel': 'キャンセル',
+            'btn.confirmClear': '消去する',
+            'conn.online': '接続済み',
+            'conn.offline': '切断されました。再試行中',
+            'unit.minutes': '{n}分',
+            'unit.h': '{n}時間',
+            'unit.m': '{n}分',
+            'err.duration.range':
+              '区間は {min}〜{max} 秒である必要があります（受信値: {e} 分）。',
+            'err.minutes': '1〜180 の数値を入力してください。',
+            'err.generic': '失敗しました。接続を確認して再試行してください。',
+            'err.sound.decode':
+              'この音声ファイルを読み込めません（移動または削除された可能性があります）。通知時は既定音にフォールバックします。',
+            'err.sound.generic': '保存できませんでした。接続を確認して再試行してください。',
+            'err.sound.sound_path_not_a_string': 'パスは文字列で指定してください。',
+            'err.sound.sound_path_empty': 'パスを空にはできません。',
+            'err.sound.sound_path_too_long': 'パスが長すぎます。',
+            'err.sound.sound_path_not_absolute':
+              '絶対パスを指定してください（例: D:\\sounds\\ding.mp3）。',
+            'err.sound.sound_type_unsupported':
+              '対応形式: mp3 / wav / ogg / m4a / aac / flac / webm。',
+            'err.sound.sound_file_not_found': 'ファイルが見つかりません。パスを確認してください。',
+            'err.sound.sound_not_a_file': 'そのパスはファイルではありません。',
+            'err.sound.sound_file_too_large': '25MB を超えています。短いものを選んでください。',
+          },
+          ko: {
+            'doc.title': '포모도로 · 오래 앉아 있기 알림',
+            'lang.group': '언어',
+            'head.title': '포모도로 · 오래 앉아 있기 알림',
+            'head.sub':
+              '시간만 측정하며 상태를 잠그지 않습니다. 「일시정지」는 남은 시간을 보관하고 재개하면 거기서 이어집니다. 알림이 울려도 신경 쓰지 마시고, 돌아오면 「작업 재개」 또는 스페이스바를 누르세요.',
+            'head.sessions': '완료한 구간',
+            'alert.title': '일어나서 움직이세요',
+            'timer.label': '현재 구간 카운트다운',
+            'state.idle.sub': '준비됨 · 한 구간은 {m}',
+            'state.idle.btn': '작업 시작',
+            'state.running.sub': '측정 중 · {m} 후 알림',
+            'state.running.btn': '일시정지',
+            'state.paused.sub': '일시정지됨 · {c} 남음',
+            'state.paused.btn': '재개',
+            'state.reminded.sub': '휴식 중, 측정하지 않음 · 돌아오면 아래 버튼을 누르세요',
+            'state.reminded.btn': '작업 재개',
+            'btn.discard': '이 구간 버리기',
+            'shortcut.hint': '<kbd>스페이스</kbd>로 작업 재개',
+            'card.duration': '구간 길이',
+            'card.duration.hint':
+              '「적용」하면 즉시 반영되며 다음에 시작할 구간에만 적용됩니다. 진행 중이거나 일시정지된 구간의 길이는 그대로입니다.',
+            'field.minutes': '분(1~180)',
+            'btn.apply': '적용',
+            'btn.applyPath': '이 경로 적용',
+            'group.presets': '자주 쓰는 길이',
+            'preset.p15': '15분',
+            'preset.p25': '25분',
+            'preset.p45': '45분',
+            'preset.p60': '60분',
+            'card.sound': '알림음',
+            'card.sound.hint':
+              '음성 파일 또는 폴더 경로를 넣으면 기본 알림음을 대체합니다. 상대 경로는 플러그인 폴더를 기준으로 계산되며(예: sounds/), 절대 경로는 이 컴퓨터의 어느 위치든 지정할 수 있습니다. <kbd>Enter</kbd> 키로 적용됩니다. 비운 뒤 <kbd>Enter</kbd>를 누르면 페이지에서 즉석으로 합성한 알림음(음성 파일 없음)으로 돌아갑니다.',
+            'sound.current': '현재: ',
+            'sound.default': '기본 알림음',
+            'field.soundpath': '음성 파일 또는 폴더 경로',
+            'sound.mode.sequence': '순서',
+            'sound.mode.shuffle': '랜덤',
+            'sound.mode.hint': '탭하면 재생 순서를 바꿉니다(순서 / 랜덤).',
+            'sound.loop': '이 곡 반복',
+            'sound.normalize': '음량 정규화',
+            'sound.now': '현재 곡',
+            'sound.next': '다음 곡',
+            'sound.previewing': '미리듣기:',
+            'sound.pinned': '고정됨:',
+            'sound.mode.locked': '한 곡에 고정되어 순서/랜덤과 미리듣기 모두 그 곡만 재생합니다.',
+            'err.sound.sound_path_escapes_plugin':
+              '상대 경로로는 플러그인 폴더 밖을 벗어날 수 없습니다. sounds/처럼 입력하세요.',
+            'err.sound.sound_dir_empty': '이 폴더에 사용할 수 있는 음성 파일이 없습니다.',
+            'err.sound.sound_dir_unreadable': '이 폴더를 읽지 못했습니다.',
+            'err.sound.sound_dir_too_many': '음성 파일이 너무 많습니다(최대 {n}개).',
+            'err.sound.sound_dir_too_large': '이 폴더의 음성 용량이 너무 큽니다.',
+            'btn.preview': '들어보기',
+            'card.appearance': '표시',
+            'card.appearance.hint':
+              '기본적으로 시스템 설정을 따릅니다. 「낮」「밤」을 선택하면 고정됩니다.',
+            'group.theme': '색상 모드',
+            'theme.system': '시스템',
+            'theme.light': '낮',
+            'theme.dark': '밤',
+            'card.shortcut.hint':
+              '알림 후 <kbd>스페이스</kbd>로 작업을 재개할 수 있습니다(패널에 키보드 포커스 필요). 오조작을 막기 위해 측정 중에는 스페이스바를 사용하지 않습니다.',
+            'card.stats': '통계',
+            'card.stats.hint':
+              '구간 수는 끝까지 완료한 것만 셉니다. 집중 시간은 측정 중인 동안 계속 누적되며, 일시정지하거나 버린 구간의 시간도 포함됩니다.',
+            'stat.sessions': '완료 구간',
+            'stat.focus': '총 집중 시간',
+            'btn.resetStats': '통계 지우기',
+            'group.resetConfirm': '통계 지우기 확인',
+            'confirm.clear.full': '‘완료 구간’과 ‘총 집중 시간’이 지워집니다. 현재 타이머에는 영향이 없습니다.',
+            'btn.cancel': '취소',
+            'btn.confirmClear': '지우기',
+            'conn.online': '연결됨',
+            'conn.offline': '연결 끊김, 재시도 중',
+            'unit.minutes': '{n}분',
+            'unit.h': '{n}시간',
+            'unit.m': '{n}분',
+            'err.duration.range':
+              '길이는 {min}~{max}초여야 합니다(받은 값: {e}분).',
+            'err.minutes': '1~180 사이의 숫자를 입력하세요.',
+            'err.generic': '실패했습니다. 연결을 확인한 뒤 다시 시도하세요.',
+            'err.sound.decode':
+              '이 음성 파일을 읽을 수 없습니다(이동되었거나 삭제되었을 수 있음). 알림은 기본음으로 대체됩니다.',
+            'err.sound.generic': '저장하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.',
+            'err.sound.sound_path_not_a_string': '경로는 텍스트여야 합니다.',
+            'err.sound.sound_path_empty': '경로는 비워 둘 수 없습니다.',
+            'err.sound.sound_path_too_long': '경로가 너무 깁니다.',
+            'err.sound.sound_path_not_absolute':
+              '절대 경로를 입력하세요(예: D:\\sounds\\ding.mp3).',
+            'err.sound.sound_type_unsupported':
+              '지원 형식: mp3 / wav / ogg / m4a / aac / flac / webm.',
+            'err.sound.sound_file_not_found': '파일을 찾을 수 없습니다. 경로를 확인하세요.',
+            'err.sound.sound_not_a_file': '해당 경로는 파일이 아닙니다.',
+            'err.sound.sound_file_too_large': '25MB를 초과했습니다. 더 짧은 것을 선택하세요.',
+          },
+        };
+
+        var currentLang = FALLBACK_LANG;
+
+        function t(key, vars) {
+          var table = STRINGS[currentLang] || STRINGS[FALLBACK_LANG];
+          var value = table[key];
+          if (value === undefined) value = STRINGS[FALLBACK_LANG][key];
+          if (value === undefined) return key;
+          if (vars) {
+            value = value.replace(/\{(\w+)\}/g, function (match, name) {
+              return vars[name] === undefined ? match : String(vars[name]);
+            });
+          }
+          return value;
+        }
+
+        function readLang() {
+          var saved = FALLBACK_LANG;
+          try {
+            saved = localStorage.getItem(LANG_KEY) || FALLBACK_LANG;
+          } catch (error) {
+            saved = FALLBACK_LANG;
+          }
+          return STRINGS[saved] ? saved : FALLBACK_LANG;
+        }
+
+        function applyLang(lang) {
+          currentLang = STRINGS[lang] ? lang : FALLBACK_LANG;
+          var i;
+
+          var textNodes = document.querySelectorAll('[data-i18n]');
+          for (i = 0; i < textNodes.length; i += 1) {
+            textNodes[i].textContent = t(textNodes[i].dataset.i18n);
+          }
+
+          var ariaNodes = document.querySelectorAll('[data-i18n-aria]');
+          for (i = 0; i < ariaNodes.length; i += 1) {
+            ariaNodes[i].setAttribute('aria-label', t(ariaNodes[i].dataset.i18nAria));
+          }
+
+          // These three carry a <kbd> element, so they are set as controlled markup
+          // rather than textContent. The strings come from STRINGS, never from input.
+          el.soundHint.innerHTML = t('card.sound.hint');
+          el.shortcutHint.innerHTML = t('shortcut.hint');
+          el.appearanceHint.innerHTML = t('card.shortcut.hint');
+
+          document.documentElement.lang = HTML_LANG[currentLang] || 'zh-CN';
+          document.title = t('doc.title');
+
+          for (i = 0; i < langButtons.length; i += 1) {
+            langButtons[i].setAttribute(
+              'aria-pressed',
+              langButtons[i].dataset.lang === currentLang ? 'true' : 'false',
+            );
+          }
+
+          try {
+            localStorage.setItem(LANG_KEY, currentLang);
+          } catch (error) {
+            /* preference simply will not survive a reload */
+          }
+
+          // setConn() writes the connection label as raw text, so a language switch
+          // has to re-apply the remembered state. Without this, going offline and
+          // then changing language would report "Connected" while it is retrying.
+          if (connOnline === false) el.connText.textContent = t('conn.offline');
+
+          render();
+        }
+
+        var el = {
+          timer: document.getElementById('timer'),
+          timerSub: document.getElementById('timerSub'),
+          shortcutHint: document.getElementById('shortcutHint'),
+    soundHint: document.getElementById('soundHint'),
+          appearanceHint: document.getElementById('appearanceShortcutHint'),
+          progress: document.getElementById('progressFill'),
+          primary: document.getElementById('primaryBtn'),
+          discard: document.getElementById('discardBtn'),
+          alert: document.getElementById('alert'),
+          alertText: document.getElementById('alertText'),
+          sessionCount: document.getElementById('sessionCount'),
+          statSessions: document.getElementById('statSessions'),
+          statFocus: document.getElementById('statFocus'),
+          durationForm: document.getElementById('durationForm'),
+          durationInput: document.getElementById('durationInput'),
+          durationError: document.getElementById('durationError'),
+          soundForm: document.getElementById('soundForm'),
+          soundPathInput: document.getElementById('soundPathInput'),
+          soundError: document.getElementById('soundError'),
+          soundModeToggle: document.getElementById('soundModeToggle'),
+          soundNowTrack: document.getElementById('soundNowTrack'),
+    soundNextTrack: document.getElementById('soundNextTrack'),
+    soundNextName: document.getElementById('soundNextName'),
+    soundConfirmBtn: document.getElementById('soundConfirmBtn'),
+          soundLoop: document.getElementById('soundLoop'),
+          soundNormalize: document.getElementById('soundNormalize'),
+          testSound: document.getElementById('testSoundBtn'),
+          resetStats: document.getElementById('resetStatsBtn'),
+          resetConfirm: document.getElementById('resetConfirm'),
+          resetConfirmText: document.getElementById('resetConfirmText'),
+          resetCancel: document.getElementById('resetCancelBtn'),
+          resetConfirmBtn: document.getElementById('resetConfirmBtn'),
+          conn: document.getElementById('conn'),
+          connText: document.getElementById('connText'),
+        };
+
+        var presets = Array.prototype.slice.call(document.querySelectorAll('.preset'));
+        var themeButtons = Array.prototype.slice.call(
+          document.querySelectorAll('[data-theme-choice]'),
+        );
+        var langButtons = Array.prototype.slice.call(document.querySelectorAll('[data-lang]'));
+
+        var snapshot = {
+          durationSec: 1500,
+          phase: 'idle',
+          remainingSec: 1500,
+          completedSessions: 0,
+          focusSec: 0,
+          liveSec: 0,
+          reminderSeq: 0,
+          soundPath: null,
+          soundMode: 'sequence',
+          soundTrack: null,
+          soundVersion: 0,
+        };
+        var deadlineAt = null;
+        var busy = false;
+        var audioCtx = null;
+        var customSoundBuffer = null;
+        var customSoundKey = null;
+        // Folder playback is chosen locally and sent with the path, so switching
+        // it must not be lost by a snapshot arriving before 应用 is pressed.
+        var soundModeChoice = 'sequence';
+        // The mode we asked the server for and have not yet seen confirmed.
+        // Set on toggle so a stale frame cannot revert the button mid-flight.
+        var soundModePending = null;
+        // 单曲循环 is server state (see soundPinned); the Client only mirrors it.
+        // 音量标准化 is a playback preference and stays local, default ON so a
+        // folder of unevenly recorded tones is audible without extra setup.
+        var NORMALIZE_KEY = 'pomodoro-sit-timer:normalize';
+        var NORMALIZE_REF_KEY = 'pomodoro-sit-timer:normalize-ref';
+        // Band the shared reference is allowed to sit in. Below MIN the playlist
+        // would be a whisper; above MAX there is no headroom left for transients.
+        var REF_MIN = 0.25;
+        var REF_MAX = 0.89;
+        // Loudest gain a track may be lifted by, and the level below which a file
+        // is treated as silence and left untouched.
+        var MAX_GAIN = 40;
+        var SILENCE_FLOOR = 0.005;
+
+        function readNormalize() {
+          try {
+            var saved = localStorage.getItem(NORMALIZE_KEY);
+            return saved === null ? true : saved === '1';
+          } catch (error) {
+            return true;
+          }
+        }
+
+        function readReference() {
+          try {
+            var saved = localStorage.getItem(NORMALIZE_REF_KEY);
+            var n = saved === null ? NaN : Number(saved);
+            return Number.isFinite(n) && n > 0 ? n : null;
+          } catch (error) {
+            return null;
+          }
+        }
+
+        var soundNormalize = readNormalize();
+        // Peak level every track is matched to. null until the first track has
+        // been measured, so the playlist is matched to the user's own first pick.
+        var normalizeReference = readReference();
+
+        // 试听 audition counter. Each press walks one step past the armed track
+        // so repeated presses play different files. Reset whenever the folder or
+        // mode changes, since the armed track moves with it.
+        var previewIndex = 0;
+        // File name the last 试听 actually fetched, shown in place of the armed
+        // track until a real reminder plays or the sound is re-armed. Null when
+        // not auditioning.
+        var auditionName = null;
+        // File name the next 试听 press will fetch, reported by the same response
+        // that served the current one. The server resolves it with the same pure
+        // function it used to pick this track, so the hint cannot drift from the
+        // real order. Null until the first audition, and whenever there is nothing
+        // to walk to.
+        var nextTrackName = null;
+        // The same two names, kept so a second press at the offset already in the
+        // buffer can restore the label and the hint without another round trip.
+        var auditionTrackName = null;
+        var auditionNextName = null;
+        // The path box is a draft: it can hold an edit the server has not been
+        // told about yet. The confirm button beside it is the only visible sign
+        // of that, so blur must NOT quietly overwrite the box — otherwise the
+        // button stays lit while the text it referred to is gone.
+        var pathDirty = false;
+        // Optimistic value for the 单曲循环 checkbox while its request is in
+        // flight, so a background frame cannot revert the tick under the cursor.
+        // Null means "follow the server".
+        var pinPending = null;
+
+
+        // ------------------------------------------------------------- formatting
+
+        function formatClock(totalSeconds) {
+          var s = Math.max(0, Math.floor(totalSeconds));
+          var h = Math.floor(s / 3600);
+          var m = Math.floor((s % 3600) / 60);
+          var sec = s % 60;
+          var mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+          var body = h > 0 ? h + ':' + mm + ':' + String(sec).padStart(2, '0') : mm + ':' + String(sec).padStart(2, '0');
+          return body;
+        }
+
+        function formatFocus(totalSeconds) {
+          var h = Math.floor(totalSeconds / 3600);
+          // Floor, not round: the total is banked in whole minutes, so rounding here
+          // would flip the readout to the next minute half a minute early.
+          var m = Math.floor((totalSeconds % 3600) / 60);
+          if (h <= 0) return t('unit.m', { n: m });
+          if (m === 0) return t('unit.h', { n: h });
+          return t('unit.h', { n: h }) + t('unit.m', { n: m });
+        }
+
+        function formatMinutes(sec) {
+          var m = sec / 60;
+          return t('unit.minutes', { n: m % 1 === 0 ? String(m) : m.toFixed(1) });
+        }
+
+        // ------------------------------------------------------------------- theme
+
+        function readTheme() {
+          var saved = 'system';
+          try {
+            saved = localStorage.getItem(THEME_KEY) || 'system';
+          } catch (error) {
+            saved = 'system';
+          }
+          return ['system', 'light', 'dark'].indexOf(saved) >= 0 ? saved : 'system';
+        }
+
+        function applyTheme(choice) {
+          if (choice === 'system') {
+            document.documentElement.removeAttribute('data-theme');
+          } else {
+            document.documentElement.setAttribute('data-theme', choice);
+          }
+          for (var i = 0; i < themeButtons.length; i += 1) {
+            themeButtons[i].setAttribute(
+              'aria-pressed',
+              themeButtons[i].dataset.themeChoice === choice ? 'true' : 'false',
+            );
+          }
+        }
+
+        applyTheme(readTheme());
+
+        // ------------------------------------------------------------------ audio
+
+        function getAudioContext() {
+          if (audioCtx) {
+            if (audioCtx.state === 'suspended') audioCtx.resume().catch(function () {});
+            return audioCtx;
+          }
+          var Ctor = window.AudioContext || window.webkitAudioContext;
+          if (!Ctor) return null;
+          try {
+            audioCtx = new Ctor();
+          } catch (error) {
+            return null;
+          }
+          return audioCtx;
+        }
+
+        /**
+         * Start a buffer source, but only once the context is actually running.
+         *
+         * A suspended context accepts start() without complaint and then plays
+         * nothing, because resume() is asynchronous. The app keeps one long-lived
+         * context, so a tab that was backgrounded or created before a user
+         * gesture can still be suspended when a reminder lands — and the sound is
+         * silently dropped, which reads as "the folder setting does nothing".
+         */
+        /**
+         * Loudest absolute sample in a buffer, across every channel.
+         * @param {AudioBuffer} buffer
+         * @returns {number}
+         */
+        function peakOf(buffer) {
+          var peak = 0;
+          for (var c = 0; c < buffer.numberOfChannels; c += 1) {
+            var channel = buffer.getChannelData(c);
+            for (var i = 0; i < channel.length; i += 1) {
+              var v = channel[i] < 0 ? -channel[i] : channel[i];
+              if (v > peak) peak = v;
+            }
+          }
+          return peak;
+        }
+
+        /**
+         * Scale a decoded buffer so its loudest sample matches a shared reference.
+         *
+         * The goal is that no track is startlingly louder than the one before it,
+         * so the gain is applied in BOTH directions: a mastered-hot track is pulled
+         * down as well as a quiet one being lifted. An earlier version only ever
+         * amplified and clamped at 8x, which quietly broke the guarantee — a hot
+         * track stayed where it was, and a near-silent one hit the clamp and
+         * landed well short of the target, so the biggest jump was exactly the
+         * case the feature exists to prevent.
+         *
+         * `reference` is measured from the first track normalised and then reused,
+         * so every later track is matched to the one the user already accepted.
+         * It is clamped into a sane band: a reference taken from a near-silent
+         * recording would drag everything down to a whisper.
+         *
+         * @param {AudioBuffer} buffer
+         * @param {number} reference peak level every track is matched to
+         */
+        function normalizeBuffer(buffer, reference) {
+          var peak = peakOf(buffer);
+          // True near-silence has no content worth matching, and amplifying it
+          // would just magnify its noise floor.
+          if (peak <= SILENCE_FLOOR) return buffer;
+          var gain = reference / peak;
+          // The amplification limit is what makes the guarantee hold: a cap the
+          // track cannot reach is a track that stays quiet, and the next louder
+          // track then arrives as a jump. 40x covers real recordings down to
+          // about -32 dBFS. Only true silence falls through to the floor above.
+          if (gain > MAX_GAIN) gain = MAX_GAIN;
+          // Conversely, do not bury a deliberately hot track by more than 4x.
+          if (gain < 0.25) gain = 0.25;
+          for (var c2 = 0; c2 < buffer.numberOfChannels; c2 += 1) {
+            var out = buffer.getChannelData(c2);
+            for (var j = 0; j < out.length; j += 1) out[j] *= gain;
+          }
+          return buffer;
+        }
+
+        /**
+         * Peak level the whole playlist is matched to. Taken from the first track
+         * normalised, then remembered so switching folders does not reset it.
+         * @param {number} peak
+         */
+        function rememberReference(peak) {
+          if (normalizeReference !== null) return normalizeReference;
+          if (peak <= SILENCE_FLOOR) return REF_MAX;
+          normalizeReference = Math.min(REF_MAX, Math.max(REF_MIN, peak));
+          try {
+            localStorage.setItem(NORMALIZE_REF_KEY, String(normalizeReference));
+          } catch (error) {
+            /* preference simply will not survive a reload */
+          }
+          return normalizeReference;
+        }
+
+        function startBufferSource(ctx, buffer, loop) {
+          var go = function () {
+            var source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.loop = loop;
+            source.connect(ctx.destination);
+            source.start();
+          };
+          if (ctx.state === 'running') {
+            go();
+            return;
+          }
+          ctx.resume()
+            .then(go)
+            .catch(function () {
+              go();
+            });
+        }
+
+        // Any real interaction unlocks audio for the rest of the session, so the
+        // first reminder after opening the page is not swallowed by autoplay.
+        function unlockAudio() {
+          var ctx = getAudioContext();
+          if (ctx && ctx.state === 'suspended') ctx.resume().catch(function () {});
+        }
+        ['pointerdown', 'keydown'].forEach(function (type) {
+          document.addEventListener(
+            type,
+            unlockAudio,
+            { once: true, passive: true },
+          );
+        });
+
+        function playChime() {
+          var ctx = getAudioContext();
+          if (!ctx) return;
+          var now = ctx.currentTime + 0.02;
+          var notes = [
+            [783.99, 0],
+            [1046.5, 0.16],
+            [1318.51, 0.32],
+          ];
+          for (var i = 0; i < notes.length; i += 1) {
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            var startAt = now + notes[i][1];
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(notes[i][0], startAt);
+            gain.gain.setValueAtTime(0.0001, startAt);
+            gain.gain.exponentialRampToValueAtTime(0.22, startAt + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.6);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(startAt);
+            osc.stop(startAt + 0.65);
+          }
+        }
+
+        /**
+         * Fetch and decode the configured audio file once, then reuse the buffer.
+         * Any failure falls back to the synthesized chime so a missing or moved
+         * file never silences the reminder.
+         */
+        function loadCustomSound(name, version, track, preview) {
+          if (!name) {
+            customSoundBuffer = null;
+            customSoundKey = null;
+            return Promise.resolve(false);
+          }
+          // `track` distinguishes rounds when `name` is a folder: the path is the
+          // same every time but the file behind it is not. `preview` is the
+          // 试听 audition offset, which must also be part of the key or every
+          // press would hit the previous preview's cache.
+          var key = name + '#' + version + '#' + (track || '') + (preview ? '#p' + preview : '');
+          if (customSoundKey === key && customSoundBuffer) {
+            // A cache hit still has to restore the label and the hint. Returning
+            // straight away made the SECOND press of 试听 at an offset already
+            // fetched play the right file while the label stayed on the armed
+            // track and the next-track hint never moved, which read as "the
+            // button did nothing".
+            if (preview) {
+              auditionName = auditionTrackName;
+              nextTrackName = auditionNextName;
+              renderSoundNext();
+              if (auditionName) renderSoundLabel();
+            }
+            return Promise.resolve(true);
+          }
+          customSoundKey = key;
+          customSoundBuffer = null;
+          return fetch(
+            '/api/sound?v=' +
+              encodeURIComponent(key) +
+              (preview ? '&p=' + encodeURIComponent(preview) : ''),
+            { cache: 'no-store' },
+          )
+            .then(function (response) {
+              if (!response.ok) throw new Error('sound_unavailable');
+              // Only an audition owns the label and the Next hint. Every
+              // reconcile also warms the ARMED track, and that used to run
+              // `auditionName = preview ? served : null` a moment after each
+              // 试听, snapping the label back to the armed file and resetting
+              // the hint to the armed track's successor — which is why locking
+              // the auditioned song kept locking the wrong one. A non-audition
+              // load must leave both alone.
+              //
+              // Reading the header must never be able to break playback, so it is
+              // guarded: if it is missing the audio still plays and the label
+              // simply falls back to the armed track.
+              var served =
+                response.headers && typeof response.headers.get === 'function'
+                  ? response.headers.get('x-sound-track')
+                  : null;
+              // The same response names the track the NEXT 试听 press will fetch.
+              // Read it whenever it is there; a missing header just means the
+              // hint stays empty, never that playback breaks.
+              var servedNext =
+                response.headers && typeof response.headers.get === 'function'
+                  ? response.headers.get('x-sound-next-track')
+                  : null;
+              if (preview) {
+                auditionName = served;
+                nextTrackName = servedNext;
+                // Remembered with the buffer so a later cache hit can replay the
+                // same label and hint without another round trip.
+                auditionTrackName = served;
+                auditionNextName = servedNext;
+                renderSoundNext();
+                if (auditionName) renderSoundLabel();
+              }
+              return response.arrayBuffer();
+            })
+            .then(function (encoded) {
+              var ctx = getAudioContext();
+              if (!ctx) throw new Error('no_audio_context');
+              return ctx.decodeAudioData(encoded);
+            })
+            .then(function (decoded) {
+              if (soundNormalize) {
+                var ref = rememberReference(peakOf(decoded));
+                normalizeBuffer(decoded, ref);
+              }
+              customSoundBuffer = decoded;
+              showSoundError('');
+              return true;
+            })
+            .catch(function () {
+              customSoundBuffer = null;
+              showSoundError(
+                t('err.sound.decode'),
+              );
+              return false;
+            });
+        }
+
+        function playReminderSound() {
+          if (snapshot.soundPath && customSoundBuffer) {
+            var ctx = getAudioContext();
+            if (ctx) {
+              // Never `source.loop`: an alert tone plays once and stops. 单曲循环
+              // does NOT mean repeating the buffer — it means staying on the same
+              // track, which is a server-side selection decision.
+              startBufferSource(ctx, customSoundBuffer, false);
+              return;
+            }
+          }
+          playChime();
+        }
+
+        function chimeIfUnseen(seq) {
+          var seen = 0;
+          try {
+            seen = Number(sessionStorage.getItem(CHIME_KEY)) || 0;
+          } catch (error) {
+            seen = 0;
+          }
+          if (seen === seq) return;
+          try {
+            sessionStorage.setItem(CHIME_KEY, String(seq));
+          } catch (error) {
+            /* private mode: chime every time rather than never */
+          }
+          // A real reminder takes the label back: what the app shows has to
+          // describe what it just played, and the armed track has now moved.
+          clearAudition();
+          playReminderSound();
+        }
+
+        /**
+         * Drop the audition overlay: the label goes back to the armed track and
+         * the Next hint disappears, because neither describes the playlist any
+         * more. Called when a real reminder plays and whenever the sound is
+         * re-armed — a new folder, a cleared path or a mode switch all move the
+         * cursor the hint was predicting.
+         */
+        function clearAudition() {
+          if (!auditionName && !nextTrackName) return;
+          auditionName = null;
+          nextTrackName = null;
+          auditionTrackName = null;
+          auditionNextName = null;
+          // The audition offset is relative to the armed track, and whatever moved
+          // that track just invalidated it, so the next press starts from the new
+          // first candidate rather than counting on from the old one.
+          previewIndex = 0;
+          renderSoundNext();
+          renderSoundLabel();
+        }
+
+                // ------------------------------------------------------------------- data
+        // Last path segment, for showing which file a folder will play.
+        function baseName(p) {
+          var parts = String(p).split(/[\\/]/);
+          return parts[parts.length - 1] || p;
+        }
+
+        /**
+         * Disclosure for the audition button: name the track the next 试听 press
+         * will play, so the button stops being a black box.
+         *
+         * The row is ALWAYS on screen. It used to be hidden whenever there was
+         * nothing distinct to walk to, which is the common case -- a pin, a single
+         * file, or the built-in synthesised chime with no file at all -- and the
+         * card lost a line each time, so the whole panel jumped the moment the
+         * audition button was pressed.
+         *
+         * When the next track IS the current one, the row says a dash rather than
+         * repeating the file name. Two identical lines tell the reader nothing
+         * they cannot see one line above, and cost a second read of a long name.
+         * The dash is deliberately not translated: it is punctuation, not a word.
+         */
+        function renderSoundNext() {
+          var node = el.soundNextTrack;
+          if (!node) return;
+          // An audition knows its own successor, because the response that served
+          // it also named the next offset. Otherwise the snapshot does: that is
+          // what makes the row correct before the first press.
+          var next = nextTrackName || snapshot.soundNext || null;
+          // Compared against the RENDERED current name, not a second copy of it.
+          var shown = el.soundNowTrack ? el.soundNowTrack.textContent.trim() : '';
+          var name = next && baseName(next) !== shown ? baseName(next) : '';
+          if (el.soundNextName) {
+            el.soundNextName.textContent = name || '–';
+            el.soundNextName.title = name;
+          }
+          node.hidden = false;
+        }
+
+        /**
+         * Whether the path box holds an unsaved edit, and therefore whether the
+         * confirm button is showing.
+         *
+         * Recomputed from the DOM rather than tracked through the request, so a
+         * save that the server rejected brings the button straight back: the
+         * snapshot still differs from what is typed.
+         */
+        function updatePathDraft() {
+          var saved = snapshot.soundInput || snapshot.soundPath || '';
+          pathDirty = el.soundPathInput.value.trim() !== saved;
+          if (el.soundConfirmBtn) {
+            el.soundConfirmBtn.title = t('btn.applyPath');
+            el.soundConfirmBtn.hidden = !pathDirty;
+          }
+          // The confirm shares the toggle's fixed slot, so the toggle steps
+          // aside entirely while an edit is pending. Both are hidden or shown
+          // together, which is also why the slot width never changes.
+          if (el.soundModeToggle) el.soundModeToggle.hidden = pathDirty;
+        }
+
+        /**
+         * The track label. While auditioning it shows the file that actually
+         * played — otherwise the label contradicts the audio after every 试听.
+         * Split out of render() so the audio loader can refresh just this text
+         * instead of re-rendering the whole view mid-load.
+         */
+        function renderSoundLabel() {
+          if (auditionName) {
+            el.soundNowTrack.textContent = auditionName;
+            el.soundNowTrack.title = t('sound.previewing') + ' ' + auditionName;
+          } else if (!snapshot.soundPath) {
+            el.soundNowTrack.textContent = t('sound.default');
+            el.soundNowTrack.title = '';
+          } else if (snapshot.soundPinned) {
+            // No lock glyph in front of the name. The disabled mode button and
+            // this element's tooltip already say the track is pinned, and a
+            // second marker only crowded the row -- and broke copy-paste of the
+            // file name. The name here is exactly what 试听 will play.
+            el.soundNowTrack.textContent = baseName(snapshot.soundPinned);
+            el.soundNowTrack.title = t('sound.pinned') + ' ' + snapshot.soundPinned;
+          } else if (snapshot.soundMode !== 'single' && snapshot.soundTrack) {
+            el.soundNowTrack.textContent = baseName(snapshot.soundTrack);
+            el.soundNowTrack.title = snapshot.soundTrack;
+          } else {
+            el.soundNowTrack.textContent = baseName(snapshot.soundPath);
+            el.soundNowTrack.title = snapshot.soundPath;
+          }
+        }
+
+        function currentRemainingSec() {
+          if (snapshot.phase === 'reminded') return 0;
+          if (snapshot.phase === 'running' && deadlineAt !== null) {
+            return Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000));
+          }
+          // Idle and paused both show the server's frozen value, so a pause holds
+          // the leftover instead of snapping back to the full duration.
+          return snapshot.remainingSec;
+        }
+
+        function applySnapshot(next) {
+          var wasRunning = snapshot.phase === 'running';
+          snapshot = {
+            durationSec: next.durationSec,
+            phase: next.phase,
+            remainingSec: next.remainingSec,
+            completedSessions: next.completedSessions,
+            focusSec: next.focusSec,
+            liveSec: next.liveSec || 0,
+            reminderSeq: next.reminderSeq,
+            soundPath: next.soundPath || null,
+            soundInput: next.soundInput || next.soundPath || null,
+            soundMode: next.soundMode || 'single',
+            soundPinned: next.soundPinned || null,
+            soundTrack: next.soundTrack || null,
+            soundNext: next.soundNext || null,
+            soundVersion: next.soundVersion || 0,
+          };
+          deadlineAt =
+            snapshot.phase === 'running' ? Date.now() + snapshot.remainingSec * 1000 : null;
+
+          // Adopt the server's mode only when nothing is in flight. A background
+          // frame carrying the PREVIOUS mode used to overwrite the choice the
+          // user had just made but not yet saved, leaving the button label and
+          // the server permanently offset by one toggle.
+          if (soundModePending !== null && snapshot.soundMode === soundModePending) {
+            soundModePending = null;
+          }
+          if (soundModePending === null && document.activeElement !== el.soundPathInput) {
+            if (snapshot.soundMode !== 'single') soundModeChoice = snapshot.soundMode;
+          }
+
+          // The SSE frame can be missed while the tab is backgrounded. Catch the
+          // transition on any later reconcile so the chime is never silently skipped.
+          var shouldChime =
+            snapshot.phase === 'reminded' && (wasRunning || next.reminderSeq > 0);
+
+          // Warm the custom sound before it is needed, so the reminder never has to
+          // wait on a disk read. The resolved track is part of the key: with a
+          // folder configured, the same soundPath yields a different file each
+          // reminder, and reusing the previous buffer would play the wrong track.
+          //
+          // The chime MUST wait for that load. A folder changes the track on every
+          // reminder, so the key changes, the old buffer is dropped and the new one
+          // is still in flight — playing synchronously here found a null buffer and
+          // fell back to the built-in chime, so a folder would never be heard at
+          // all, which looked exactly like "shuffle does nothing".
+          var ready = snapshot.soundPath
+            ? loadCustomSound(snapshot.soundPath, snapshot.soundVersion, snapshot.soundTrack)
+            : Promise.resolve(false);
+          if (shouldChime) {
+            void ready.then(function () {
+              chimeIfUnseen(snapshot.reminderSeq);
+            });
+          }
+          render();
+        }
+
+        function render() {
+          var remaining = currentRemainingSec();
+          var total = snapshot.durationSec;
+          var elapsedRatio = total > 0 ? 1 - remaining / total : 0;
+
+          el.timer.textContent = formatClock(remaining);
+          el.timer.classList.toggle('is-reminded', snapshot.phase === 'reminded');
+          el.timer.classList.toggle('is-idle', snapshot.phase === 'idle');
+          el.timer.classList.toggle('is-paused', snapshot.phase === 'paused');
+
+          el.progress.style.width = Math.max(0, Math.min(1, elapsedRatio)) * 100 + '%';
+          el.progress.classList.toggle('is-reminded', snapshot.phase === 'reminded');
+
+          if (snapshot.phase === 'idle') {
+            el.timerSub.textContent = t('state.idle.sub', { m: formatMinutes(total) });
+            el.primary.textContent = t('state.idle.btn');
+          } else if (snapshot.phase === 'running') {
+            el.timerSub.textContent = t('state.running.sub', { m: formatMinutes(total) });
+            el.primary.textContent = t('state.running.btn');
+          } else if (snapshot.phase === 'paused') {
+            el.timerSub.textContent = t('state.paused.sub', { c: formatClock(remaining) });
+            el.primary.textContent = t('state.paused.btn');
+          } else {
+            el.timerSub.textContent = t('state.reminded.sub');
+            el.primary.textContent = t('state.reminded.btn');
+          }
+
+          el.discard.hidden = snapshot.phase !== 'paused';
+          el.shortcutHint.hidden = snapshot.phase !== 'reminded';
+
+          el.alert.hidden = snapshot.phase !== 'reminded';
+          if (snapshot.phase === 'reminded') {
+            el.alertText.textContent =
+              t('alert.title') + ' — ' + t('state.reminded.sub');
+          }
+
+          el.sessionCount.textContent = String(snapshot.completedSessions);
+          el.statSessions.textContent = String(snapshot.completedSessions);
+          // Settled total plus the segment still on the clock, so the number
+          // climbs while working instead of only jumping at the end.
+          el.statFocus.textContent = formatFocus(
+            snapshot.focusSec + snapshot.liveSec,
+          );
+
+          // While auditioning, show the file that actually played — otherwise the
+          // label contradicts the audio after every 试听.
+          renderSoundLabel();
+          // The hint hides itself once a lock or a single file removes anything to
+          // walk to, so it has to be re-evaluated whenever render() runs.
+          renderSoundNext();
+          if (document.activeElement !== el.soundPathInput && !pathDirty) {
+            // Show what was configured. A relative path round-trips as `sounds`,
+            // not as the runtime's temp directory, which changes every restart.
+            // Skipped while a draft is pending, so blur cannot throw the edit away.
+            el.soundPathInput.value = snapshot.soundInput || snapshot.soundPath || '';
+          }
+          updatePathDraft();
+          // The glyph shows the CURRENT mode (see CSS: the two SVGs swap on
+          // aria-pressed). Text moves to the accessible name so a screen reader
+          // still announces the mode.
+          //
+          // 单曲循环 is the HIGHER priority: while a track is pinned the mode has
+          // no effect, so the control is disabled rather than left looking live
+          // and silently doing nothing — that dead button is what made the pin
+          // look broken.
+          var pinnedNow = Boolean(snapshot.soundPinned);
+          el.soundModeToggle.setAttribute(
+            'aria-pressed',
+            soundModeChoice === 'shuffle' ? 'true' : 'false',
+          );
+          el.soundModeToggle.setAttribute(
+            'aria-label',
+            soundModeChoice === 'shuffle' ? t('sound.mode.shuffle') : t('sound.mode.sequence'),
+          );
+          el.soundModeToggle.disabled = pinnedNow;
+          el.soundModeToggle.title = pinnedNow
+            ? t('sound.mode.locked')
+            : t('sound.mode.hint');
+          // The checkbox is server state: pinning is a selection decision, and
+          // replaying it from local memory would drift from what is actually
+          // pinned after a restart.
+          // Mirrors server state, EXCEPT while a pin change is in flight: a poll
+          // or SSE frame carrying the pre-change value would otherwise snap the
+          // checkbox back and make the click look like it did nothing.
+          el.soundLoop.checked = pinPending === null ? Boolean(snapshot.soundPinned) : pinPending;
+          el.soundLoop.disabled = snapshot.soundMode === 'single' && !snapshot.soundPinned;
+          el.soundNormalize.checked = soundNormalize;
+
+          for (var i = 0; i < presets.length; i += 1) {
+            var presetMin = Number(presets[i].dataset.min);
+            presets[i].setAttribute(
+              'aria-pressed',
+              presetMin * 60 === snapshot.durationSec ? 'true' : 'false',
+            );
+          }
+        }
+
+        // ---------------------------------------------------------------- requests
+
+        // Last known connection state, so a language switch can re-localise the
+        // label instead of leaving behind whatever setConn() last wrote.
+        var connOnline = null;
+
+        function setConn(online) {
+          connOnline = online;
+          el.conn.classList.toggle('is-offline', !online);
+          el.connText.textContent = online ? t('conn.online') : t('conn.offline');
+        }
+
+        function post(path, body) {
+          return fetch(path, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body || {}),
+          })
+            .then(function (response) {
+              if (!response.ok) {
+                return response.json().catch(function () {
+                  return {};
+                }).then(function (payload) {
+                  var error = new Error(payload.error || 'request_failed');
+                  error.status = response.status;
+                  error.payload = payload;
+                  throw error;
+                });
+              }
+              return response.json();
+            })
+            .then(function (data) {
+              busy = false;
+              applySnapshot(data);
+              return data;
+            })
+            .catch(function (error) {
+              busy = false;
+              // Only the segment/duration/stats routes own the duration banner.
+              // A sound failure is reported next to the sound field by
+              // applySoundSetting, so routing it here as well showed two errors
+              // for one mistake and put a duration message under the sound card.
+              if (!path.startsWith('/api/settings/sound')) showError(error);
+              throw error;
+            });
+        }
+
+        function refresh() {
+          return fetch('/api/state', { cache: 'no-store' })
+            .then(function (response) {
+              if (!response.ok) throw new Error('state_failed');
+              return response.json();
+            })
+            .then(function (data) {
+              applySnapshot(data);
+              setConn(true);
+              return data;
+            })
+            .catch(function () {
+              setConn(false);
+            });
+        }
+
+        function showError(error) {
+          // Route by the error code, not by status: every 400 in this app is a
+          // different failure. /api/settings/duration answers {error:
+          // 'duration_out_of_range', min, max}; /api/settings/sound answers
+          // {ok:false, reason:'…'} and has no `error` field at all. Matching on
+          // status alone used to print a raw {e} placeholder for sound errors,
+          // because the duration template's variable was fed undefined.
+          var payload = (error && error.payload) || {};
+          el.durationError.hidden = false;
+          if (payload.error === 'duration_out_of_range') {
+            var received = Number(el.durationInput.value);
+            el.durationError.textContent = t('err.duration.range', {
+              e: Number.isFinite(received) ? String(received) : '?',
+              min: payload.min,
+              max: payload.max,
+            });
+            return;
+          }
+          el.durationError.textContent = t('err.generic');
+        }
+
+        function clearError() {
+          el.durationError.hidden = true;
+          el.durationError.textContent = '';
+        }
+
+        function showSoundError(message) {
+          el.soundError.hidden = message === '';
+          el.soundError.textContent = message;
+        }
+
+        function applySoundSetting(path) {
+          busy = true;
+          showSoundError('');
+          // Whatever was auditioned described the old playlist, so drop it now
+          // rather than one reconcile later.
+          clearAudition();
+          return post('/api/settings/sound', { path: path, mode: soundModeChoice }).catch(
+            function (error) {
+              var payload = (error && error.payload) || {};
+              var reason = payload.reason || null;
+              showSoundError(
+                (reason && t('err.sound.' + reason, { n: payload.detail })) ||
+                  t('err.sound.generic'),
+              );
+            },
+          );
+        }
+
+        // ------------------------------------------------------------------ events
+
+        el.primary.addEventListener('click', function () {
+          if (busy) return;
+          busy = true;
+          clearError();
+          getAudioContext();
+          var action = snapshot.phase === 'running' ? '/api/segment/pause' : '/api/segment/start';
+          post(action).catch(function () {
+            /* surfaced by showError */
+          });
+        });
+
+        el.durationForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          if (busy) return;
+          var minutes = Number(el.durationInput.value);
+          if (!Number.isFinite(minutes) || minutes * 60 < MIN_SEC || minutes * 60 > MAX_SEC) {
+            el.durationError.hidden = false;
+            el.durationError.textContent = t('err.minutes');
+            return;
+          }
+          busy = true;
+          clearError();
+          post('/api/settings/duration', { durationSec: Math.round(minutes) * 60 }).catch(
+            function () {
+              /* surfaced by showError */
+            },
+          );
+        });
+
+        for (var p = 0; p < presets.length; p += 1) {
+          presets[p].addEventListener('click', function (event) {
+            if (busy) return;
+            var min = Number(event.currentTarget.dataset.min);
+            el.durationInput.value = String(min);
+            busy = true;
+            clearError();
+            post('/api/settings/duration', { durationSec: min * 60 }).catch(function () {
+              /* surfaced by showError */
+            });
+          });
+        }
+
+        el.testSound.addEventListener('click', function () {
+          getAudioContext();
+          showSoundError('');
+          if (snapshot.soundPath) {
+            // 试听 is an audition, so it walks the folder. Replaying the armed
+            // track on every press is what made shuffle look broken: the armed
+            // track only moves when a real reminder fires, which is 25 minutes
+            // away. The offset is request-scoped and never advances the cursor
+            // the next reminder will use.
+            var audition = snapshot.soundMode === 'single' ? 0 : ++previewIndex;
+            void loadCustomSound(
+              snapshot.soundPath,
+              snapshot.soundVersion,
+              audition ? 'preview' : snapshot.soundTrack,
+              audition,
+            ).then(function (ok) {
+              if (ok) playReminderSound();
+              else playChime();
+            });
+            return;
+          }
+          playChime();
+        });
+
+        el.soundForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          if (busy) return;
+          // A new folder or mode re-arms the playlist, so auditioning starts over.
+          previewIndex = 0;
+          // Hide the confirm button now rather than after the round trip.
+          // updatePathDraft() runs on the next render, so a rejected save puts it
+          // straight back and leaves the typed text alone.
+          if (el.soundConfirmBtn) el.soundConfirmBtn.hidden = true;
+          void applySoundSetting(el.soundPathInput.value.trim());
+        });
+
+        // Any keystroke makes the box an unsaved draft, and that is what raises
+        // the confirm button. Nothing else needs to watch the field.
+        el.soundPathInput.addEventListener('input', updatePathDraft);
+
+        // 恢复默认音 was removed as a button: clearing the field and pressing Enter
+        // posts an empty path, and the server treats "" and null the same way --
+        // both clear the configured sound and fall back to the built-in chime. The
+        // field hint says so, because the button was the discoverable part.
+
+        // Named ti, not t: t() is the translation lookup and must not be shadowed.
+        for (var ti = 0; ti < themeButtons.length; ti += 1) {
+          themeButtons[ti].addEventListener('click', function (event) {
+            var choice = event.currentTarget.dataset.themeChoice;
+            applyTheme(choice);
+            try {
+              localStorage.setItem(THEME_KEY, choice);
+            } catch (error) {
+              /* still applied for this page view */
+            }
+          });
+        }
+
+        el.discard.addEventListener('click', function () {
+          if (busy) return;
+          busy = true;
+          clearError();
+          post('/api/segment/discard').catch(function () {
+            /* surfaced by showError */
+          });
+        });
+
+        // An inline two-step confirmation. window.confirm() blocks the whole page
+        // and drops an OS-styled dialog on top of the timer, which is jarring here.
+        function openResetConfirm() {
+          el.resetConfirmText.textContent =
+            t('confirm.clear.full');
+          el.resetConfirm.hidden = false;
+          el.resetStats.hidden = true;
+          el.resetCancel.focus();
+        }
+
+        function closeResetConfirm(restoreFocus) {
+          el.resetConfirm.hidden = true;
+          el.resetStats.hidden = false;
+          if (restoreFocus) el.resetStats.focus();
+        }
+
+        el.resetStats.addEventListener('click', openResetConfirm);
+
+        el.resetCancel.addEventListener('click', function () {
+          closeResetConfirm(true);
+        });
+
+        el.resetConfirmBtn.addEventListener('click', function () {
+          if (busy) return;
+          closeResetConfirm(false);
+          busy = true;
+          post('/api/stats/reset').catch(function () {
+            /* surfaced by showError */
+          });
+        });
+
+        for (var l = 0; l < langButtons.length; l += 1) {
+          langButtons[l].addEventListener('click', function (event) {
+            applyLang(event.currentTarget.dataset.lang);
+          });
+        }
+
+        // Toggling the mode re-applies immediately when a folder is already
+        // configured, so the choice is not something the user has to also
+        // remember to press 应用 for.
+        el.soundModeToggle.addEventListener('click', function () {
+          soundModeChoice = soundModeChoice === 'sequence' ? 'shuffle' : 'sequence';
+          render();
+          if (snapshot.soundPath && snapshot.soundMode !== 'single') {
+            if (busy) return;
+            // Mark it in flight so a frame carrying the old mode cannot undo
+            // the label before the server has actually switched.
+            soundModePending = soundModeChoice;
+            // Re-send the RAW input, never soundPath. soundPath is already
+            // resolved into the runtime's temp directory, so re-posting it would
+            // overwrite the relative form and kill the setting on the next
+            // restart — the exact failure this is meant to survive.
+            previewIndex = 0;
+            applySoundSetting(snapshot.soundInput || snapshot.soundPath);
+          }
+        });
+
+        el.soundLoop.addEventListener('change', function (event) {
+          if (busy) return;
+          busy = true;
+          pinPending = event.currentTarget.checked;
+          showSoundError('');
+          // Pin whatever the LABEL is showing, read straight out of the DOM.
+          // The checkbox used to lock the armed track while the label showed the
+          // track being auditioned, so the app looked like it swapped songs under
+          // the click. Reading the rendered text means there is no second copy of
+          // that state to fall out of sync.
+          //
+          // `path` is deliberately omitted so this is not read as "clear the
+          // sound". The server matches the name only as a basename inside the
+          // scanned folder, and falls back to the armed track if it is unknown.
+          var payload = { pin: pinPending };
+          if (pinPending && snapshot.soundPath && el.soundNowTrack) {
+            var shown = el.soundNowTrack.textContent.trim();
+            if (shown) payload.track = shown;
+          }
+          // Ticking the box is itself a change to how the next track is picked, so
+          // the audition that produced the 下一首 row is no longer describing
+          // anything real. Drop it whole, exactly as a new path or a mode switch
+          // does: keeping the label but discarding the hint left the row claiming
+          // the next press would play a file the lock stops it from playing, and
+          // on the way back out the two rows no longer agreed with the press
+          // either. Done before the request, because a refused pin needs the same
+          // reset.
+          clearAudition();
+          post('/api/settings/sound', payload)
+            .then(function () {
+              pinPending = null;
+            })
+            .catch(function () {
+              // Server refused: drop the optimistic tick and snap back.
+              pinPending = null;
+              render();
+            });
+        });
+
+        el.soundNormalize.addEventListener('change', function (event) {
+          var turningOn = event.currentTarget.checked;
+          soundNormalize = turningOn;
+          try {
+            localStorage.setItem(NORMALIZE_KEY, soundNormalize ? '1' : '0');
+          } catch (error) {
+            /* preference simply will not survive a reload */
+          }
+          // Turning it on re-measures the reference from whatever plays next, so
+          // the playlist is matched to the track the user is hearing now rather
+          // than to a level picked long ago.
+          if (turningOn) {
+            normalizeReference = null;
+            try {
+              localStorage.removeItem(NORMALIZE_REF_KEY);
+            } catch (error) {
+              /* preference simply will not survive a reload */
+            }
+          }
+          // Re-decode so the change is audible immediately instead of only after
+          // the next track change.
+          customSoundKey = null;
+          customSoundBuffer = null;
+          if (snapshot.soundPath) {
+            void loadCustomSound(
+              snapshot.soundPath,
+              snapshot.soundVersion,
+              snapshot.soundTrack,
+            );
+          }
+        });
+
+        // One global handler so Escape and Space cannot both act on the same keypress.
+        //   1. An open confirm row always wins.
+        //   2. Space resumes work only while reminded — never while running, so a
+        //      stray tap mid-session cannot pause or resume anything.
+        //   3. Space on a focused control is left to the browser, otherwise the
+        //      default button activation and this handler would both fire.
+        //   4. While running, Space on the primary button is swallowed. Without this
+        //      the native activation hits 暂停, which is exactly the misfire the
+        //      shortcut is meant to prevent. Focus is left alone on purpose — moving
+        //      it would break keyboard navigation.
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape' && !el.resetConfirm.hidden) {
+            event.preventDefault();
+            closeResetConfirm(true);
+            return;
+          }
+          if (event.key !== ' ' && event.code !== 'Space') return;
+          if (!el.resetConfirm.hidden) return;
+
+          var target = event.target;
+          var closable =
+            target && target !== document.body && typeof target.closest === 'function'
+              ? target.closest('button, input, select, textarea, a[href]')
+              : null;
+          var onPrimary = closable ? closable === el.primary : false;
+
+          if (snapshot.phase === 'reminded') {
+            if (closable) return;
+            event.preventDefault();
+            if (busy) return;
+            busy = true;
+            post('/api/segment/start').catch(function () {
+              /* surfaced by showError */
+            });
+            return;
+          }
+
+          if (snapshot.phase === 'running' || snapshot.phase === 'paused') {
+            if (onPrimary) event.preventDefault();
+          }
+        });
+
+        // ------------------------------------------------------------------ runtime
+
+        function openStream() {
+          var source = new EventSource('/api/events');
+          source.addEventListener('state', function (event) {
+            try {
+              applySnapshot(JSON.parse(event.data));
+              setConn(true);
+            } catch (error) {
+              /* ignore malformed frame; the poll below repairs it */
+            }
+          });
+          source.addEventListener('error', function () {
+            setConn(false);
+          });
+          return source;
+        }
+
+        var stream = openStream();
+        setInterval(refresh, POLL_MS);
+        setInterval(render, 250);
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') refresh();
+        });
+        window.addEventListener('beforeunload', function () {
+          if (stream) stream.close();
+        });
+
+        refresh();
+        // Language last: applyLang() calls render(), and render() now reads
+        // translations for every dynamic string.
+        applyLang(readLang());
+      })();
+    </script>
+  </body>
+</html>
