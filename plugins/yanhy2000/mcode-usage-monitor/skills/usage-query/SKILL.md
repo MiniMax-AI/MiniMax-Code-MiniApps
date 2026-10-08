@@ -26,11 +26,18 @@ description: 查询本机 MiniMax Code 的 token 用量——总量、输入/输
 
 ## 2. 调用
 
-```bash
-python "<api.py 路径>" --range today
-```
+先按与看板服务端一致的顺序确定可用的 Python 命令：
 
-Windows 上按本机情况使用 `python` 或 `py -3`。
+| 系统 | 依次尝试 |
+| --- | --- |
+| Windows | `python` → `py -3` |
+| macOS / Linux | `python3` → `python` |
+
+macOS 默认没有 `python`，照着写 `python` 会直接失败。下面的示例用 `<python>` 代表探到的那个命令。
+
+```bash
+<python> "<api.py 路径>" --range today
+```
 
 | 参数 | 取值 | 说明 |
 | --- | --- | --- |
@@ -43,11 +50,11 @@ Windows 上按本机情况使用 `python` 或 `py -3`。
 
 ```bash
 # 本对话的用量（session id 用当前会话的）
-python "<api.py>" --range all --sessions <当前 session id>
+<python> "<api.py>" --range all --sessions <当前 session id>
 # 最近 7 天，只看某个模型
-python "<api.py>" --range 7d --models glm-5.3
+<python> "<api.py>" --range 7d --models glm-5.3
 # 全部历史概览
-python "<api.py>" --range all
+<python> "<api.py>" --range all
 ```
 
 ## 3. 输出结构
@@ -81,7 +88,7 @@ stdout 是一行 JSON；出错时只有一个 `{"error": "..."}`。
 
 ## 6. 故障
 
-- `python` 找不到：本插件需要本机 Python 3.8+，只用标准库，无需 `pip install`。
+- 上面探到的命令都找不到：本插件需要本机 Python 3.8+，只用标准库，无需 `pip install`。
 - `{"error": "database not found: ..."}`：本机还没有运行时数据，或数据目录被 `MINIMAX_DATA_DIR` 改过。
 - `{"error": "sqlite JSON1 extension not enabled ..."}`：本机 Python 自带的 SQLite 未启用 JSON1 扩展，属环境问题。
 - 每次调用会启动一个新进程（实测几十到几百毫秒），不要循环高频调用。

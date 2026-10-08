@@ -31,6 +31,11 @@ except Exception:
     pass
 
 
+# 查询串里的"显式空选"哨兵: 留空=不过滤(全部), 哨兵=明确选择了空集(0 数据)。
+# index.html / server.mjs 用同名常量, 改语义时三处一起改。
+NONE = "__none__"
+
+
 def data_dir() -> Path:
     return Path(os.environ.get("MINIMAX_DATA_DIR") or (Path.home() / ".minimax"))
 
@@ -455,8 +460,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--range", default="all", dest="range_key",
                     help="all | today | 1h | 12h | 24h | 7d | 30d | <N>h(1..8760)")
-    ap.add_argument("--models", default="", help="逗号分隔的模型列表, 留空为全部, __none__ 为空选")
-    ap.add_argument("--sessions", default="", help="逗号分隔的会话 id 列表, 留空为全部, __none__ 为空选")
+    ap.add_argument("--models", default="", help=f"逗号分隔的模型列表, 留空为全部, {NONE} 为空选")
+    ap.add_argument("--sessions", default="", help=f"逗号分隔的会话 id 列表, 留空为全部, {NONE} 为空选")
     ap.add_argument("--db", default=str(default_db_path()))
     args = ap.parse_args()
 
@@ -467,8 +472,8 @@ def main():
     rng = args.range_key if is_valid_range(args.range_key) else "all"
 
     def parse_ids(raw):
-        """空串 -> None(不过滤); '__none__' -> [](显式空选, 页面 0 数据)。"""
-        if raw == "__none__":
+        """空串 -> None(不过滤); 哨兵 -> [](显式空选, 页面 0 数据)。"""
+        if raw == NONE:
             return []
         return [p.strip() for p in raw.split(",") if p.strip()] or None
 

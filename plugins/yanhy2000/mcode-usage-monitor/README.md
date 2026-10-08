@@ -48,6 +48,17 @@ This is a local, near-real-time view. The in-product usage page (Settings → Us
 
 The runtime sends nothing to external services and has no telemetry. It writes a single preferences file (`prefs.json`) into the Host-provided plugin data directory. The page shows real session titles, workspace directory paths (which can include your user name and project names), and tool names, so take care when sharing screenshots or your screen.
 
+### Processes
+
+No shell is used; every argument is passed as an array. There are only two kinds of command:
+
+| When | Command |
+| --- | --- |
+| First query after startup (the result is cached and reused) | Windows tries `python --version`, then `py -3 --version`; macOS and Linux try `python3 --version`, then `python --version` |
+| Each query | the command found above, followed by `miniapp/node/api.py --range <range> --models <list> --sessions <list>` |
+
+Each query process prints one line of JSON and exits; results are cached in memory for 2 seconds and queries run one at a time. The bundled `skills/usage-query` skill runs that same `api.py` command, so a usage question in a conversation uses the same read-only path.
+
 ## Source and verification
 
 The page is in `miniapp/client/index.html` (ECharts is bundled locally), the Node entry is `miniapp/node/server.mjs`, and the data backend is `miniapp/node/api.py`. No build step is required.

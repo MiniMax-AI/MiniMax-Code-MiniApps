@@ -48,6 +48,17 @@
 
 运行时不向外部服务发送任何数据，无遥测；只向 Host 提供的插件数据目录写入一个偏好文件（`prefs.json`）。页面会显示真实会话标题、工作区目录路径（可能含用户名与项目名）和工具名称，分享截图时请注意。
 
+### 运行的进程
+
+不经过 shell，所有参数都以数组形式传入。实际只有两类命令：
+
+| 时机 | 命令 |
+| --- | --- |
+| 启动后的首次查询（结果缓存复用） | Windows 先试 `python --version`，再试 `py -3 --version`；macOS / Linux 先试 `python3 --version`，再试 `python --version` |
+| 每次查询 | 上面探到的命令，后面跟 `miniapp/node/api.py --range <范围> --models <列表> --sessions <列表>` |
+
+每个查询进程输出一行 JSON 后即退出，结果在内存中缓存 2 秒，查询串行执行。内置技能 `skills/usage-query` 运行的是同一条 `api.py` 命令，因此对话里的用量提问走的是同一条只读路径。
+
 ## 源码与验证
 
 页面位于 `miniapp/client/index.html`（ECharts 已本地化打包），Node 入口位于 `miniapp/node/server.mjs`，数据后端位于 `miniapp/node/api.py`，无需构建。

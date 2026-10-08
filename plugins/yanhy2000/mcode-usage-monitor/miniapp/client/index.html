@@ -510,7 +510,7 @@ function renderDd(avail,{force=false}={}){
       // 交叉筛选下列表可能被会话筛选收窄, 此时勾满≠全部, 保持显式数组
       sel=(picked.length===all.length&&all.length&&selSess===null)
         ?null:[...hidden,...picked];
-      updateDdLabel();updateDdActions();savePrefs();load();
+      updateDdLabel();updateDdActions();savePrefs();reload();
     };
   });
   list.scrollTop=keepTop; // 自动刷新重建时保留滚动位置
@@ -554,7 +554,7 @@ function ddSet(mode){
   if(mode==='all')sel=null;
   else sel=invertSel(all,sel);
   renderDd(lastData.available_models,{force:true});
-  savePrefs();load();
+  savePrefs();reload();
 }
 
 /* ---------- 会话多选下拉 ---------- */
@@ -591,7 +591,7 @@ function renderSd(avail,{force=false}={}){
       // 允许全不选(空数组): 页面数据为 0; 勾满仅在列表未被模型筛选收窄时回到"全部"
       selSess=(picked.length===order.length&&order.length&&sel===null)
         ?null:[...hidden,...picked];
-      updateSdLabel();updateDdActions();savePrefs();load();
+      updateSdLabel();updateDdActions();savePrefs();reload();
     };
   });
   list.scrollTop=keepTop; // 自动刷新重建时保留滚动位置
@@ -616,7 +616,7 @@ function sdSet(mode){
   if(mode==='all')selSess=null;
   else selSess=invertSel(all,selSess);
   renderSd(sessList(),{force:true});
-  savePrefs();load();
+  savePrefs();reload();
 }
 
 const DD_PAIRS=[['ddBtn','ddPanel'],['sdBtn','sdPanel'],['ivBtn','ivPanel']];
@@ -700,22 +700,37 @@ $('viewToggle').onclick=e=>{
 };
 
 /* ---------- 数据 ---------- */
-/* 空选(空数组)发哨兵 __none__: 服务端按"明确选择空集"返回 0 数据, 区别于不传参的"全部" */
+/* 筛选三态只在这里翻译一次: null=全部(不传参), []=空选(发哨兵, 服务端返回 0 数据), 数组=具体选择。
+   哨兵与服务端、api.py 同名, 改语义时三处一起改。 */
+const SEL_NONE='__none__';
+function selParam(name,val){
+  if(val===null)return '';
+  return '&'+name+'='+(val.length?encodeURIComponent(val.join(',')):SEL_NONE);
+}
 function apiUrl(){
-  let u='/api/data?range='+encodeURIComponent(currentRange());
-  if(sel)u+='&models='+(sel.length?encodeURIComponent(sel.join(',')):'__none__');
-  if(selSess)u+='&sessions='+(selSess.length?encodeURIComponent(selSess.join(',')):'__none__');
-  return u;
+  return '/api/data?range='+encodeURIComponent(currentRange())
+    +selParam('models',sel)+selParam('sessions',selSess);
 }
 
-let loadInFlight=false;
-async function load(){
-  if(loadInFlight)return; // 上一轮未完成时跳过, 避免慢查询下请求堆积
-  loadInFlight=true;
+/* load(): 取数。自动刷新与首次进入时在途则跳过, 不打断进行中的查询(同 URL, 结果一样)。
+   用户改了筛选/时间范围走 reload(): 取消在途请求并改发最新 URL ——
+   直接 return 会吞掉变更后的那次加载, 页面停在旧筛选的数据上(手动刷新模式更是要再点一次才纠正)。
+   seq 保证只有最新一次的结果落到页面, 被取消或已过期的旧请求不再提示。*/
+let loadSeq=0, loadCtl=null;
+async function load(opts){
+  const supersede=!!(opts&&opts.supersede);
+  if(!supersede&&loadCtl)return;
+  const seq=++loadSeq;
+  if(supersede&&loadCtl)loadCtl.abort();
+  const ctl=new AbortController();
+  loadCtl=ctl;
+  // 35s 熔断(略大于服务端 30s 查询超时): 挂死的连接也会释放, 下轮可重试
+  let timedOut=false;
+  const timer=setTimeout(()=>{timedOut=true;ctl.abort()},35000);
   try{
-    // 35s 熔断(略大于服务端 30s 查询超时): 挂死的连接也会释放 inFlight, 下轮可重试
-    const r=await fetch(apiUrl(),{signal:AbortSignal.timeout(35000)});
+    const r=await fetch(apiUrl(),{signal:ctl.signal});
     const d=await r.json();
+    if(seq!==loadSeq)return; // 已有更新的请求发出, 丢弃本次结果
     if(d.error){toast('读取失败: '+d.error);return}
     lastData=d;
     // 选择不自动收敛: 可用列表随另一侧筛选与时间范围变化,
@@ -723,9 +738,17 @@ async function load(){
     render(d);
     $('dbinfo').textContent=
       `已更新 ${d.generated_at.slice(11,19)} · ${d.session_files??d.overview.sessions} 个会话`;
-  }catch(e){toast('请求失败: '+e.message)}
-  finally{loadInFlight=false}
+  }catch(e){
+    if(seq!==loadSeq)return; // 已被新一轮取代
+    if(timedOut)toast('查询超时, 下次刷新会重试');
+    else if(!ctl.signal.aborted)toast('请求失败: '+e.message);
+  }finally{
+    clearTimeout(timer);
+    if(loadCtl===ctl)loadCtl=null;
+  }
 }
+/* 筛选条件变了: 旧结果已无意义, 直接换发最新查询 */
+function reload(){return load({supersede:true})}
 
 /* 当前筛选口径描述: 用于时序卡片副标题与 KPI hint */
 function currentScope(){
@@ -848,7 +871,7 @@ function renderModels(ms){
       if(sel&&sel.length===1&&sel[0]===m)sel=null;   // 再点一次取消
       else sel=[m];                                   // 只看这一个
       if(lastData)renderDd(lastData.available_models,{force:true});
-      load();
+      reload();
     });
   }
   const nameIdx={};
@@ -1014,7 +1037,8 @@ function setTimer(){
 }
 
 /* ---------- KPI 数字方块: 顺序/可见性可编辑 ---------- */
-const KPI_KEYS=['total','input','output','cache','hit','calls','speed']; // server.mjs 需同步
+/* 白名单由 server.mjs 注入: 与 /api/prefs 的校验用同一份, 不用两边手工同步 */
+const KPI_KEYS=__KPI_KEYS__;
 let kpiOrder=KPI_KEYS.slice(); // 仅含可见方块, 顺序即排列
 let dragState=null;            // {kind:'kpi'|'card', id, ...}
 
@@ -1057,25 +1081,34 @@ function bindKpiEdit(){
   });
 }
 
-function startKpiDrag(e,el,k){
+/* ---------- 通用拖拽排序(KPI 方块与卡片共用) ---------- */
+/* opts.container  可落位元素的容器选择器
+   opts.idAttr     容器内元素上存放 id 的 data 属性
+   opts.before     (ev, rect) => true 表示落在目标之前
+   opts.commit     (id, over, before) => void, 落位后应用新顺序 */
+function startSortDrag(e,el,id,opts){
   if(e.button!==0)return;
   e.preventDefault();e.stopPropagation();
-  const st={kind:'kpi',id:k,startX:e.clientX,startY:e.clientY,moved:false,over:null,before:true};
+  const st={kind:opts.kind,id,startX:e.clientX,startY:e.clientY,moved:false,over:null,before:true};
   dragState=st;
   const move=ev=>{
+    if(dragState!==st)return;
     if(!st.moved&&Math.hypot(ev.clientX-st.startX,ev.clientY-st.startY)<6)return;
     if(!st.moved){
-      st.moved=true;el.classList.add('dragging');
+      st.moved=true;
+      el.classList.add('dragging');
       document.body.classList.add('dragging-card');
     }
     const hit=document.elementFromPoint(ev.clientX,ev.clientY);
-    const overEl=hit?hit.closest('#kpis .kpi'):null;
+    const overEl=hit?hit.closest(opts.container):null;
     clearHints();
-    if(!overEl||overEl===el){st.over=null;return}
-    const r=overEl.getBoundingClientRect();
-    const before=ev.clientX<r.left+r.width/2;
+    // 落回自己或空白: 清掉候选, 松手时不落位
+    if(!overEl){st.over=null;return}
+    const oid=overEl.dataset[opts.idAttr];
+    if(oid===id){st.over=null;return}
+    const before=opts.before(ev,overEl.getBoundingClientRect());
     overEl.classList.add(before?'drop-before':'drop-after');
-    st.over=overEl.dataset.kpi;st.before=before;
+    st.over=oid;st.before=before;
   };
   const up=()=>{
     document.removeEventListener('pointermove',move);
@@ -1085,19 +1118,41 @@ function startKpiDrag(e,el,k){
     document.body.classList.remove('dragging-card');
     clearHints();
     if(dragState===st)dragState=null;
-    if(!st.moved||!st.over||st.over===k)return;
-    kpiOrder=kpiOrder.filter(x=>x!==k);
-    const idx=kpiOrder.indexOf(st.over);
-    if(idx>=0)kpiOrder.splice(st.before?idx:idx+1,0,k);
-    renderKpis();
+    if(!st.moved||!st.over||st.over===id)return;
+    opts.commit(id,st.over,st.before);
   };
   document.addEventListener('pointermove',move);
   document.addEventListener('pointerup',up);
   document.addEventListener('pointercancel',up);
 }
 
+/* 把 id 移到 over 的前/后; over 不在列表里则返回 null(不动顺序) */
+function moveInOrder(list,id,over,before){
+  const idx=list.indexOf(over);
+  if(idx<0)return null;
+  const out=list.filter(x=>x!==id);
+  out.splice(before?idx:idx+1,0,id);
+  return out;
+}
+
+/* KPI 只有一行, 纯左右比较 */
+function startKpiDrag(e,el,k){
+  startSortDrag(e,el,k,{
+    kind:'kpi',
+    container:'#kpis .kpi',
+    idAttr:'kpi',
+    before:(ev,r)=>ev.clientX<r.left+r.width/2,
+    commit:(id,over,before)=>{
+      const next=moveInOrder(kpiOrder,id,over,before);
+      if(!next)return;
+      kpiOrder=next;
+      renderKpis();
+    }
+  });
+}
+
 /* ---------- 卡片: 收起/展开 + 编辑布局 ---------- */
-const CARD_IDS=['main','model','proj','tool','speed','recent']; // 同时用于 prefs 校验(server.mjs 需同步)
+const CARD_IDS=__CARD_IDS__;  // 同上: 由 server.mjs 注入
 let collapsed={};               // {cardId:true}
 let cardOrder=CARD_IDS.slice(); // 仅含可见卡片, 顺序即排列
 let editMode=false;             // 编辑布局中: 显示拖拽/移除按钮
@@ -1160,48 +1215,23 @@ function clearHints(){
 }
 /* 编辑模式下从 ⠿ 手柄拖动整卡; 展开状态下的图表交互不受影响 */
 function startCardDrag(e,el,id){
-  if(!editMode||e.button!==0)return;
-  e.preventDefault();e.stopPropagation();
-  const st={kind:'card',id,startX:e.clientX,startY:e.clientY,moved:false,over:null,before:true};
-  dragState=st;
-  const move=ev=>{
-    if(!dragState||dragState.id!==id)return;
-    if(!st.moved&&Math.hypot(ev.clientX-st.startX,ev.clientY-st.startY)<6)return;
-    if(!st.moved){
-      st.moved=true;
-      el.classList.add('dragging');
-      document.body.classList.add('dragging-card');
+  if(!editMode)return;
+  startSortDrag(e,el,id,{
+    kind:'card',
+    container:'#cards > [data-card]',
+    idAttr:'card',
+    // 卡片整行占满, 同一行按左右半区判前后, 跨行按上下半区
+    before:(ev,r)=>{
+      const sameRow=ev.clientY>=r.top&&ev.clientY<=r.bottom;
+      return sameRow?(ev.clientX<r.left+r.width/2):(ev.clientY<r.top+r.height/2);
+    },
+    commit:(id,over,before)=>{
+      const next=moveInOrder(cardOrder,id,over,before);
+      if(!next)return;
+      cardOrder=next;
+      applyOrder(); // 编辑中改动不落盘, 保存布局时统一持久化
     }
-    const hit=document.elementFromPoint(ev.clientX,ev.clientY);
-    const overEl=hit?hit.closest('#cards > [data-card]'):null;
-    clearHints();
-    if(!overEl)return;
-    const oid=overEl.dataset.card;
-    if(oid===id)return;
-    const r=overEl.getBoundingClientRect();
-    const sameRow=ev.clientY>=r.top&&ev.clientY<=r.bottom;
-    const before=sameRow?(ev.clientX<r.left+r.width/2):(ev.clientY<r.top+r.height/2);
-    overEl.classList.add(before?'drop-before':'drop-after');
-    st.over=oid;st.before=before;
-  };
-  const up=()=>{
-    document.removeEventListener('pointermove',move);
-    document.removeEventListener('pointerup',up);
-    document.removeEventListener('pointercancel',up);
-    el.classList.remove('dragging');
-    document.body.classList.remove('dragging-card');
-    clearHints();
-    if(dragState===st)dragState=null;
-    if(!st.moved||!st.over||st.over===id)return;
-    cardOrder=cardOrder.filter(x=>x!==id);
-    const idx=cardOrder.indexOf(st.over);
-    if(idx<0)return;
-    cardOrder.splice(st.before?idx:idx+1,0,id);
-    applyOrder(); // 编辑中改动不落盘, 保存布局时统一持久化
-  };
-  document.addEventListener('pointermove',move);
-  document.addEventListener('pointerup',up);
-  document.addEventListener('pointercancel',up);
+  });
 }
 
 function initCards(){
@@ -1283,7 +1313,7 @@ $('layoutReset').onclick=()=>{
   toast('布局已恢复默认','ok');
 };
 
-$('refresh').onclick=load;
+$('refresh').onclick=()=>load();   // 手动刷新与自动刷新同策略: 在途则跳过
 
 /* ---------- 时间范围: 预设 + 自定义整数小时(1..8760) ---------- */
 let rangeApplied='24h'; // 当前生效值(可能是 '<N>h' 自定义)
@@ -1319,7 +1349,7 @@ function applyRangeInput(){
     const v=setCustomRangeOption(n); // 先建好/定位到目标选项
     dropCustomOptions(v);                  // 再清掉其它自定义项(保留当前这条)
     $('range').value=v;rangeApplied=v;
-    savePrefs();load();
+    savePrefs();reload();
   }else{
     toast('自定义范围需为 1–8760 之间的整数小时');
     rangeInput.focus();
@@ -1330,7 +1360,7 @@ $('range').onchange=()=>{
   if(v==='custom'){rangeInput.style.display='';rangeInput.value='';rangeInput.focus();return}
   rangeInput.style.display='none';
   dropCustomOptions();
-  rangeApplied=v;savePrefs();load();
+  rangeApplied=v;savePrefs();reload();
 };
 rangeInput.addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();applyRangeInput();}
