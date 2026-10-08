@@ -115,6 +115,22 @@ def fetch_all(db_path: Path):
             cleanup()
 
 
+def pct_hit_rate(cache_read: int, inp: int) -> float:
+    """缓存命中率(%), 保留两位小数。
+
+    真实数据里只要输入不为零, 命中率必然小于 100%; 但四舍五入会把 99.99x%
+    顶成 100%, 造成"完全命中"的错觉。因此 input > 0 时封顶 99.99,
+    只有 input 为 0 的构造数据才可能返回 100。
+    """
+    tot = cache_read + inp
+    if not tot:
+        return 0.0
+    v = cache_read / tot * 100
+    if inp > 0 and v >= 99.99:
+        v = 99.99
+    return round(v, 2)
+
+
 RANGE_MS = {"1h": 3600_000, "12h": 12 * 3600_000, "24h": 86400_000,
             "7d": 7 * 86400_000, "30d": 30 * 86400_000, "all": None}
 CUSTOM_RANGE_RE = re.compile(r"(\d+)h")
@@ -300,7 +316,7 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
     sum_out = sum((r[5] or 0) for r in rows)
     sum_cr = sum((r[6] or 0) for r in rows)
     sum_dur = sum((r[7] or 0) for r in rows)
-    hit_rate = (sum_cr / (sum_cr + sum_in) * 100) if (sum_cr + sum_in) else 0.0
+    hit_rate = pct_hit_rate(sum_cr, sum_in)
     tok_s = (sum_out / (sum_dur / 1000)) if sum_dur else 0.0
     sessions = {r[2] for r in rows}
 
@@ -351,12 +367,11 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
         m["dur"] += r[7] or 0
     model_list = []
     for m in sorted(models.values(), key=lambda x: -(x["output"] + x["input"] + x["cache_read"])):
-        tot_in = m["cache_read"] + m["input"]
         model_list.append({
             "model": m["model"], "calls": m["calls"],
             "input": m["input"], "output": m["output"],
             "cache_read": m["cache_read"],
-            "hit_rate": round(m["cache_read"] / tot_in * 100, 1) if tot_in else 0,
+            "hit_rate": pct_hit_rate(m["cache_read"], m["input"]),
             "avg_dur_ms": round(m["dur"] / m["calls"]) if m["calls"] else 0,
             "tok_s": round(m["output"] / (m["dur"] / 1000), 1) if m["dur"] else 0,
         })
@@ -421,7 +436,7 @@ def build_payload(db_path: Path, range_key: str, models_filter=None,
             "output_tokens": sum_out,
             "cache_read_tokens": sum_cr,
             "total_tokens": sum_in + sum_cr + sum_out,
-            "hit_rate_pct": round(hit_rate, 2),
+            "hit_rate_pct": hit_rate,
             "avg_tok_s": round(tok_s, 1),
             "sum_dur_s": round(sum_dur / 1000, 1),
         },
