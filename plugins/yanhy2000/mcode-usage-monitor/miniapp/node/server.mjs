@@ -74,6 +74,7 @@ function normalizeRange(raw) {
  *  - /api/data 通过一次性 spawn python api.py 取数(stdout JSON),
  *    不建立 Node->本机端口的 TCP 连接(该路径在 Mini App 运行时内不可用)
  *  - 查询串行化 + 2s 内存缓存, 避免并发快照读放大
+ *  - 客户端断开时放弃对应查询(排队中跳过, 在途则结束子进程)
  *  - dispose() 关闭 HTTP 监听并结束在途子进程
  * @param {MiniAppContext} context
  * @returns {Promise<MiniAppLifecycle>}
@@ -191,9 +192,9 @@ export async function start(context) {
   const activeChildren = new Set();
   let disposed = false;
   let queue = Promise.resolve(); // 串行执行, 避免 sqlite 快照并发
-  const cache = new Map(); // key -> { at, promise }
+  const cache = new Map(); // key -> { at, waiters, dead, done, kill, promise }
 
-  async function runPython(args) {
+  async function runPython(args, onSpawn) {
     const cmd = await pickPython();
     return new Promise((resolve, reject) => {
       let proc;
@@ -208,6 +209,7 @@ export async function start(context) {
         return;
       }
       activeChildren.add(proc);
+      if (onSpawn) onSpawn(() => { try { proc.kill(); } catch { /* 已退出 */ } });
       let out = '';
       let errText = '';
       let settled = false;
@@ -250,23 +252,33 @@ export async function start(context) {
     const ms = models === null ? '' : (models.length ? models.join(',') : NONE);
     const ss = sessions === null ? '' : (sessions.length ? sessions.join(',') : NONE);
     const key = `${rangeKey}|${ms}|${ss}`;
+    // entry.waiters: 还在等结果的请求数; dead: 等待者全部断开已取消; done: 已出结果
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
-    const promise = queue.then(() =>
-      runPython(['--range', rangeKey, '--models', ms, '--sessions', ss]));
-    cache.set(key, { at: Date.now(), promise });
+    if (hit && !hit.dead && Date.now() - hit.at < CACHE_TTL_MS) {
+      hit.waiters++;
+      return hit;
+    }
+    const entry = { at: Date.now(), waiters: 1, dead: false, done: false, kill: null, promise: null };
+    entry.promise = queue.then(() => {
+      if (entry.dead) throw new Error('canceled'); // 排队期间等待者已全部断开: 不再起进程
+      return runPython(['--range', rangeKey, '--models', ms, '--sessions', ss],
+        (kill) => { entry.kill = kill; });
+    });
+    entry.promise.then(() => { entry.done = true; }, () => { entry.done = true; });
+    cache.set(key, entry);
     if (cache.size > CACHE_MAX) { // 超上限按插入顺序淘汰最旧条目
       for (const k of cache.keys()) {
         cache.delete(k);
         if (cache.size <= CACHE_MAX) break;
       }
     }
-    promise.catch(() => cache.delete(key)); // 失败不缓存
-    queue = promise.catch(() => {}); // 链条继续
-    return promise;
+    entry.promise.catch(() => cache.delete(key)); // 失败(含取消)不缓存
+    queue = entry.promise.catch(() => {}); // 链条继续
+    return entry;
   }
 
   function sendJson(res, code, obj) {
+    if (res.destroyed) return; // 客户端已断开, 不再写响应
     const body = JSON.stringify(obj);
     res.writeHead(code, {
       'content-type': 'application/json; charset=utf-8',
@@ -319,7 +331,17 @@ export async function start(context) {
       let sessions = null;
       if (rawSessions === NONE) sessions = [];
       else if (rawSessions) sessions = rawSessions.split(',').map((s) => s.trim()).filter(Boolean);
-      queryBackend(rangeKey, models, sessions)
+      const entry = queryBackend(rangeKey, models, sessions);
+      // 客户端断开(如 reload() 取消旧请求)时放弃这次查询:
+      // 还在排队就跳过, 已在跑就结束子进程, 别让新查询排在死请求后面。
+      res.on('close', () => {
+        if (res.writableEnded) return;
+        entry.waiters--;
+        if (entry.waiters > 0 || entry.done) return;
+        entry.dead = true;
+        if (entry.kill) entry.kill();
+      });
+      entry.promise
         .then((payload) => sendJson(res, 200, payload))
         .catch(async (err) => {
           // python 缺失时给出可自查的提示, 而非裸 ENOENT
@@ -341,7 +363,7 @@ export async function start(context) {
   context.logger.info('miniapp.runtime.listening');
 
   // 预热首次查询(不阻塞就绪)
-  queryBackend('all', null, null).catch((err) => {
+  queryBackend('all', null, null).promise.catch((err) => {
     context.logger.warn('miniapp.backend.warmup_failed', { message: err.message });
   });
 

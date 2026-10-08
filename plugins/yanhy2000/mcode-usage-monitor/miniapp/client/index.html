@@ -89,6 +89,14 @@ select:focus-visible,button:focus-visible{outline:2px solid var(--mcode-accent);
 .ddrow .mname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ddrow .mmeta{color:var(--mcode-text-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .swatch{width:9px;height:9px;border-radius:2px;flex:none}
+/* 工具图例(自绘): 平铺可换行, 内联占比; 不用 echarts 滚动图例,
+   避免翻页按钮在深色主题下配色错乱, 以及定时刷新把翻页/选中状态重置 */
+.tlegend{display:none;flex-wrap:wrap;gap:4px 6px;padding-top:8px;font-size:11px}
+.tlegend .litem{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  padding:2px 6px;border-radius:6px;color:var(--mcode-text)}
+.tlegend .litem:hover{background:var(--mcode-bg-secondary)}
+.tlegend .litem.off{opacity:.4;text-decoration:line-through}
+.tlegend .pct{color:var(--mcode-text-muted);font-variant-numeric:tabular-nums}
 /* 图标按钮通用尺寸(标题行右端使用, 外观由 .hicons 定义) */
 .iconbtn{width:28px;min-width:28px;padding:0;display:inline-flex;
   align-items:center;justify-content:center}
@@ -323,6 +331,7 @@ footer a:hover{text-decoration:underline}
 <section class="panel narrow" data-card="tool" aria-label="工具调用">
   <div class="phead"><h2>工具调用</h2><span class="sub">按次数占比</span></div>
   <div id="toolChart" class="chart"></div>
+  <div id="toolLegend" class="tlegend"></div>
   <div class="empty" id="toolEmpty" style="display:none">当前筛选条件下没有数据</div>
 </section>
 
@@ -946,29 +955,47 @@ function renderProjects(ps){
 
 /* ---------- 工具调用: 次数占比环形图 ---------- */
 let toolChart=null;
+const toolHidden=new Set(); // 会话内隐藏的工具(点图例色块切换), 不随刷新重置
+let toolLegendHtml='';
 function renderTools(tl){
   if(!chartVisible('toolChart'))return;
   const has=tl&&tl.length;
   $('toolEmpty').style.display=has?'none':'block';
   $('toolChart').style.display=has?'block':'none';
+  $('toolLegend').style.display=has?'flex':'none';
   if(!has||!window.echarts)return;
   if(!toolChart)toolChart=echarts.init($('toolChart'));
   const total=tl.reduce((a,b)=>a+b.calls,0);
+  // 自绘图例: 每个色块内联占比, 悬停 title 带次数; 点击切换该工具在环上的显示。
+  // 内容没变就不重建 DOM, 定时刷新不打断悬停状态
+  const html=tl.map((x,i)=>{
+    const pct=total?(x.calls/total*100).toFixed(1):'0.0';
+    return `<span class="litem${toolHidden.has(x.tool)?' off':''}" data-tool="${esc(x.tool)}"
+      title="${esc(x.tool)} · ${fmt(x.calls)} 次 · ${pct}%">
+      <i class="swatch" style="background:${colorOf(i)}"></i>${esc(truncName(x.tool,14))}
+      <span class="pct">${pct}%</span></span>`;
+  }).join('');
+  if(html!==toolLegendHtml){$('toolLegend').innerHTML=html;toolLegendHtml=html;}
   toolChart.setOption({
     backgroundColor:'transparent',
     tooltip:{backgroundColor:T().tipBg,borderColor:T().tipBorder,
       textStyle:{color:T().tipText,fontSize:12},confine:true,
-      formatter:p=>`${esc(p.name)}<br>${fmt(p.value)} 次 · ${(p.value/total*100).toFixed(1)}%`},
-    legend:{bottom:0,type:'scroll',textStyle:{color:T().label,fontSize:11},
-      formatter:name=>truncName(name,14)},
-    series:[{type:'pie',radius:['46%','70%'],center:['50%','44%'],
+      formatter:p=>`${esc(p.name)}<br>${fmt(p.value)} 次 · ${total?(p.value/total*100).toFixed(1):'0.0'}%`},
+    series:[{type:'pie',radius:['46%','70%'],center:['50%','50%'],
       data:tl.map((x,i)=>({name:x.tool,value:x.calls,
-        itemStyle:{color:colorOf(i)}})),
+        itemStyle:{color:colorOf(i)}})).filter(d=>!toolHidden.has(d.name)),
       label:{show:false},
       emphasis:{scaleSize:4}}]
   },true);
   toolChart.resize();
 }
+/* 点击图例色块: 切换该工具在环上的显示 */
+$('toolLegend').addEventListener('click',e=>{
+  const it=e.target.closest('.litem');if(!it)return;
+  const t=it.dataset.tool;
+  if(toolHidden.has(t))toolHidden.delete(t);else toolHidden.add(t);
+  if(lastData)renderTools(lastData.tools);
+});
 
 /* ---------- Token 速度: 最近调用的逐次 tok/s ---------- */
 let speedChart=null;
@@ -1084,7 +1111,7 @@ function bindKpiEdit(){
 /* ---------- 通用拖拽排序(KPI 方块与卡片共用) ---------- */
 /* opts.container  可落位元素的容器选择器
    opts.idAttr     容器内元素上存放 id 的 data 属性
-   opts.before     (ev, rect) => true 表示落在目标之前
+   opts.before     (ev, rect, el) => true 表示落在目标之前
    opts.commit     (id, over, before) => void, 落位后应用新顺序 */
 function startSortDrag(e,el,id,opts){
   if(e.button!==0)return;
@@ -1106,7 +1133,7 @@ function startSortDrag(e,el,id,opts){
     if(!overEl){st.over=null;return}
     const oid=overEl.dataset[opts.idAttr];
     if(oid===id){st.over=null;return}
-    const before=opts.before(ev,overEl.getBoundingClientRect());
+    const before=opts.before(ev,overEl.getBoundingClientRect(),overEl);
     overEl.classList.add(before?'drop-before':'drop-after');
     st.over=oid;st.before=before;
   };
@@ -1128,9 +1155,9 @@ function startSortDrag(e,el,id,opts){
 
 /* 把 id 移到 over 的前/后; over 不在列表里则返回 null(不动顺序) */
 function moveInOrder(list,id,over,before){
-  const idx=list.indexOf(over);
+  const out=list.filter(x=>x!==id); // 先去掉被拖项: 否则它排在目标前时, 目标下标会多算一格
+  const idx=out.indexOf(over);
   if(idx<0)return null;
-  const out=list.filter(x=>x!==id);
   out.splice(before?idx:idx+1,0,id);
   return out;
 }
@@ -1220,10 +1247,12 @@ function startCardDrag(e,el,id){
     kind:'card',
     container:'#cards > [data-card]',
     idAttr:'card',
-    // 卡片整行占满, 同一行按左右半区判前后, 跨行按上下半区
-    before:(ev,r)=>{
-      const sameRow=ev.clientY>=r.top&&ev.clientY<=r.bottom;
-      return sameRow?(ev.clientX<r.left+r.width/2):(ev.clientY<r.top+r.height/2);
+    // 整行卡片(含窄屏单列布局)按上下半区判前后; 半宽并排卡片按左右半区(落位到同行内)。
+    // 不能一律按左右半区: 鼠标必然在目标卡片内, 那样上下半区分支永远走不到,
+    // 而拖拽手柄在卡片右上角, 鼠标停在右半区时整行卡片会一直判"下方"。
+    before:(ev,r,el)=>{
+      const fullRow=r.width>el.parentElement.clientWidth*0.9;
+      return fullRow?(ev.clientY<r.top+r.height/2):(ev.clientX<r.left+r.width/2);
     },
     commit:(id,over,before)=>{
       const next=moveInOrder(cardOrder,id,over,before);
