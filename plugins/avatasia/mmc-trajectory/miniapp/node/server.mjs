@@ -1078,9 +1078,10 @@ export function buildTrajectoryPayload(input) {
     }
 
     // A compaction is a context checkpoint written by the runtime, not something the user
-    // or the model said. It lands in the ledger as its own labelled record because on a long
-    // session "where did the earlier context go" is the question it answers, and it records
-    // how large the context had grown before the checkpoint replaced it.
+    // or the model said. It gets its own kind rather than riding inside `system` because
+    // the client filters on kind alone: filed under `system`, a checkpoint would be
+    // impossible to keep or drop on its own, and unticking 系统 would take every context
+    // checkpoint with it. `title` still says which of the `system` family it is.
     if (role === 'compactionSummary') {
       stats.compactions += 1;
       const checkpoint = typeof source.summary === 'string'
@@ -1096,7 +1097,7 @@ export function buildTrajectoryPayload(input) {
         ? /** @type {Record<string, any>} */ (artifact.parentSnapshot)
         : null;
       push({
-        kind: 'system',
+        kind: 'compaction',
         title: 'compaction',
         summary: singleLine(checkpointField.text ?? '', MAX_SUMMARY_CHARS),
         text: checkpointField.text,
@@ -1170,7 +1171,7 @@ export function buildTrajectoryPayload(input) {
       // Injected blocks were already demoted to system records, so a user record here is a
       // prompt somebody actually typed.
       if (record.kind === 'user') hasPrompt = true;
-      if (record.title === 'compaction') isCompaction = true;
+      if (record.kind === 'compaction') isCompaction = true;
       if (record.kind === 'toolCall' && typeof record.toolName === 'string'
         && USER_INPUT_TOOLS.has(record.toolName)) askedReader = true;
     }

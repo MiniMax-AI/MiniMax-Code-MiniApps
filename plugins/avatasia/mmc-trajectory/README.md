@@ -20,11 +20,15 @@ The page follows the most recent conversation by default and re-reads it every 2
 
 ## What it shows
 
-The ledger groups records by turn, following the `turn_id` recorded in the session file. Each record is classified as user, assistant, thinking, tool call, tool result, or system, and each turn header carries that turn's own Token counts and elapsed time. Selecting a record opens a detail panel with summary, raw JSON, tool arguments, tool result, and reasoning, plus a button that hands the record to the Agent's chat input.
+The ledger groups records by turn, following the `turn_id` recorded in the session file. Each record is classified as user, assistant, thinking, tool call, tool result, system, or compaction, and each turn header carries that turn's own Token counts and elapsed time. Selecting a record opens a detail panel with summary, raw JSON, tool arguments, tool result, and reasoning, plus a button that hands the record to the Agent's chat input.
 
 **The type chips are the only filter.** One thing is being filtered — which record kinds are visible — and it is one array in the client, written from exactly three controls: the six chips, 全部, and 清除筛选. An earlier version also had a row of layer buttons (turn / thinking / call) sitting above the list as presets over those same chips. They were removed, because any preset a reader outgrows becomes a button that contradicts the chips it was supposed to summarise: untick 助手 while leaving 用户 ticked, and the turn button goes dark and claims the conversation is hidden when in fact it was narrowed. One control that cannot drift is worth more than three convenient ones that can.
 
 Naming kinds directly costs one extra click and reaches everything a preset did — tick 用户 *and* 助手 for the conversation, untick both for its absence, and any scattered subset in between, such as only the user's questions or only system records.
+
+A kind is whatever the filter can act on, which is the rule that decided 压缩 being a kind of its own rather than a `system` record with a different title. Filed under `system`, a context checkpoint could not be kept or dropped on its own and unticking 系统 took every checkpoint with it — the same "one question, two answers" problem the layer buttons had, hiding in a second field instead of a second row of controls.
+
+The one control that is **not** a filter is 总览轴, in the window bar under the strip: it switches the strip between equal width and a real time axis. It was labelled 时长 and sat with the filters at the top of the page, which made it read as a filter on duration — it changes neither the rows nor any count on the page. Its label now names the strip and both axes, and it sits directly under the thing it changes.
 
 Unticking a kind drops those rows from the render entirely. No placeholder summary row is left behind, so nothing on screen can miscount what it covers, and a chip is the only way to bring them back. The kinds are independent, so unticking one never takes part of another with it, and each turn header recomputes from the rows that survive, which makes every count you see under a filter a real post-filter count.
 
@@ -60,7 +64,7 @@ Three details of the session format are worth knowing, because they change what 
 
 - Host-injected blocks such as `<system-reminder>` are recorded with role `user` but are not user prompts. The service splits them off using the recorded `canonicalTextRange` and shows them as `系统` (system) records, so the ledger does not present injected context as something you typed.
 - A `user` message whose text is only an injected block has no prompt, so sub-agent and background-task sessions legitimately show no user record.
-- A `compactionSummary` message is the runtime's own context checkpoint — not something you or the model said. It is labelled `压缩` (compaction) rather than `系统`, holds no Token usage of its own, and reports the context size it replaced, so a long session shows where its earlier context went. Its detail panel also names the generation it opened, who produced it, and the revision it replaced.
+- A `compactionSummary` message is the runtime's own context checkpoint — not something you or the model said. It gets its own type, 压缩 (compaction), rather than a `system` record with a different label, so you can keep or drop it on its own; that is also why the filter can see it. It holds no Token usage of its own, and reports the context size it replaced, so a long session shows where its earlier context went. Its detail panel also names the generation it opened, who produced it, and the revision it replaced.
 
 ## Diagnostics
 
@@ -83,7 +87,7 @@ The runtime database is opened in read-only mode. If it is missing, unreadable, 
 - The app depends on undocumented internal formats: the `v2/sessions` directory layout and the runtime database schema. A client update can change either, which may break session identification or parsing.
 - Session identification is an inference, not a binding. With one conversation active it is reliable; with none running it degrades to most-recently-written.
 - A single `messages.jsonl` is read up to 64 MB. Larger sessions are truncated and the page says so.
-- The ledger renders only the newest 200 records by default rather than using true virtual scrolling. A sticky window bar offers three explicit controls: load 200 earlier records, jump back to the latest 200, and show everything. "Show everything" builds every record in the session into the DOM at once and gets noticeably slower on large sessions; incoming records do not knock it back down to 200.
+- The ledger renders only the newest 200 records by default rather than using true virtual scrolling. A sticky window bar under the overview strip offers four explicit controls: switch the strip between equal width and a real time axis, load 200 earlier records, jump back to the latest 200, and show everything. "Show everything" builds every record in the session into the DOM at once and gets noticeably slower on large sessions; incoming records do not knock it back down to 200.
 - `messageCount` and `turnCount` in the session picker are estimates derived from a bounded prefix of the file; exact values come from the selected session.
 - Light theme token coverage is verified — every `--mcode-*` token the page consumes is defined for both themes — but its rendered appearance was not visually checked; the page was exercised under a dark system preference.
 

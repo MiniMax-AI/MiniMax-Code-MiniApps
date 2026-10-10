@@ -723,7 +723,7 @@
         opacity: 1;
       }
 
-      .ov-span[data-compaction='true'] {
+      .ov-span[data-kind='compaction'] {
         background: var(--mcode-success);
         opacity: 1;
       }
@@ -1167,6 +1167,23 @@
         gap: 8px;
       }
 
+      .window-bar-axis {
+        /* Matches the 28px chip height so the bar's controls line up with the filter row
+           above them rather than looking like a different kind of thing. */
+        height: 28px;
+        padding: 0 10px;
+        gap: 5px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 999px;
+        font-size: 12px;
+      }
+
+      .window-bar-axis:hover {
+        color: var(--mcode-text);
+        background: var(--mcode-surface-muted);
+        border-color: var(--mcode-border-strong);
+      }
+
       .window-bar-count {
         font-size: 12px;
         color: var(--mcode-text-muted);
@@ -1591,14 +1608,12 @@
               <span class="chip-mark" aria-hidden="true"></span>
               <span>系统</span>
             </label>
+            <label class="chip" data-kind="compaction">
+              <input type="checkbox" value="compaction" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>压缩</span>
+            </label>
           </fieldset>
-          <button type="button" class="tbtn tbtn-toggle" id="duration-btn" aria-pressed="false" aria-label="改用真实时长" title="改用真实时长">
-            <svg class="tbtn-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="8" cy="8" r="5.25" />
-              <path d="M8 4.75V8l2.25 1.5" />
-            </svg>
-            <span>时长</span>
-          </button>
           <p class="toolbar-status" id="filter-status" role="status">正在准备轨迹数据…</p>
         </nav>
       </form>
@@ -1644,6 +1659,7 @@
             <span class="panel-head-meta" id="ledger-meta"></span>
           </div>
           <p class="generation-note" id="generation-hint" hidden></p>
+          <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>
           <div class="ledger-body" id="ledger"></div>
         </section>
 
@@ -1700,10 +1716,14 @@
         thinking: '思考',
         toolCall: '工具调用',
         toolResult: '工具结果',
-        system: '系统'
+        system: '系统',
+        compaction: '压缩'
       };
 
-      var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
+      // 压缩 is last on purpose. It is written by the runtime like 系统 is, but it is a
+      // context checkpoint rather than a note about the run, and putting it next to 系统
+      // would invite reading the two as one category.
+      var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system', 'compaction'];
 
       // The type chips are the only filter. Which record kinds are visible is one array —
       // state.kinds — and every control that changes it writes to that array and nowhere
@@ -1717,17 +1737,32 @@
       var DASH = '—';
 
       // One label per record, used by every surface that names a kind: the row pill, the
-      // inspector locator, the inspector detail table and the handoff text. A compaction
-      // shares kind 'system' with the injected blocks but is its own thing, so all of them
-      // have to say 压缩 rather than 系统 — hence one function instead of four call sites.
+      // inspector locator, the inspector detail table and the handoff text. A compaction is
+      // its own kind, so it needs no special case here — which is the point: a label that
+      // had to be overridden by a second field is a kind the filter could not see.
       function kindLabel(record) {
-        return record && record.title === 'compaction'
-          ? '压缩'
-          : (KIND_LABELS[record && record.kind] || (record && record.kind) || DASH);
+        return (record && KIND_LABELS[record.kind]) || (record && record.kind) || DASH;
       }
 
       function isNil(value) {
         return value === null || value === undefined || value === '';
+      }
+
+      /**
+       * What the 总览轴 button says in each mode. Pure, so the wording can be asserted
+       * without a DOM — and asserted, because a control whose purpose the reader has to
+       * guess is a defect that no functional test would ever catch.
+       *
+       * Both halves have to name two things: what the strip is doing now, and what clicking
+       * will do instead. 「时长」 named neither and was taken for a duration filter.
+       *
+       * @param {boolean} actualDuration
+       * @returns {{pressed: string, label: string}}
+       */
+      function axisButtonState(actualDuration) {
+        return actualDuration
+          ? { pressed: 'true', label: '总览条当前按真实时间轴显示：宽度等于该记录的真实耗时 · 点击改为等宽，每条记录一样宽' }
+          : { pressed: 'false', label: '总览条当前等宽显示：每条记录一样宽，与耗时无关 · 点击改为真实时间轴' };
       }
 
       function isCount(value) {
@@ -2192,7 +2227,7 @@
         dom.generationSelect = document.getElementById('generation-select');
         dom.generationHint = document.getElementById('generation-hint');
         dom.searchInput = document.getElementById('search-input');
-        dom.durationBtn = document.getElementById('duration-btn');
+        dom.windowBar = document.getElementById('window-bar');
         dom.chipAll = document.getElementById('chip-all');
         dom.filterStatus = document.getElementById('filter-status');
         dom.headerToggle = document.getElementById('header-toggle');
@@ -2559,6 +2594,8 @@
       var OVERVIEW_EDGE_PAN_MAX_PX = 32;
 
       var overviewCache = { model: null, view: null, fullDuration: 1, minDuration: 1 };
+      // The window bar's nodes, built on first use and then reused. Null until then.
+      var windowBarParts = null;
       var overviewDrag = null;
       var overviewHoverTimer = null;
       var overviewEdgeTimer = null;
@@ -2780,7 +2817,6 @@
           var width = (span.end - span.start) / fullDuration;
           var node = el('span', 'ov-span');
           node.setAttribute('data-kind', span.record.kind);
-          if (span.record.title === 'compaction') node.setAttribute('data-compaction', 'true');
           if (span.record.kind === 'toolResult' && span.record.isError === true) node.setAttribute('data-error', 'true');
           if (span.record.id === state.selectedId) node.setAttribute('data-current', 'true');
           if (state.overviewHoverId === span.id) node.setAttribute('data-hovered', 'true');
@@ -2861,25 +2897,50 @@
         state.overviewSelection = null;
         state.overviewViewport = null;
         setWindowMode('latest');
-        renderViewControls();
         renderOverview();
         renderLedger();
       }
 
       /**
-       * 时长 reads as "what the strip is drawing", not "what was clicked": lit when the
-       * overview lays records out on the real clock, dark when every record gets an equal
-       * slice. It is the one view control left, and it changes the projection rather than
-       * the list — the rows below are the same either way.
+       * 总览轴 reads as "what the strip is drawing", not "what was clicked": lit when the
+       * strip lays records out on the real clock, dark when every record gets an equal
+       * slice. It changes the projection rather than the list — the rows below are the same
+       * either way, and no count on the page moves.
+       *
+       * The button says which axis the strip is on and what the click would switch to. The
+       * old label was 「时长」, which named neither the strip nor the axis and read as a
+       * filter on duration — a control whose purpose has to be guessed is one the reader
+       * cannot use, whatever it does under the hood.
        */
-      function renderViewControls() {
-        var durationOn = state.actualDuration;
-        dom.durationBtn.setAttribute('aria-pressed', durationOn ? 'true' : 'false');
-        var durationLabel = durationOn
-          ? '总览当前按真实时长显示 · 点击改为等宽'
-          : '总览当前等宽显示 · 点击改为真实时长';
-        dom.durationBtn.setAttribute('aria-label', durationLabel);
-        dom.durationBtn.setAttribute('title', durationLabel);
+      function applyAxisButton(button) {
+        var view = axisButtonState(state.actualDuration);
+        button.setAttribute('aria-pressed', view.pressed);
+        button.setAttribute('aria-label', view.label);
+        button.setAttribute('title', view.label);
+      }
+
+      /** A clock, because the axis it switches is a clock rather than a record count. */
+      function axisIcon() {
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'tbtn-icon');
+        svg.setAttribute('width', '12');
+        svg.setAttribute('height', '12');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '1.25');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        var face = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        face.setAttribute('cx', '8');
+        face.setAttribute('cy', '8');
+        face.setAttribute('r', '5.25');
+        var hands = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hands.setAttribute('d', 'M8 4.75V8l2.25 1.5');
+        svg.appendChild(face);
+        svg.appendChild(hands);
+        return svg;
       }
 
       /**
@@ -3293,13 +3354,7 @@
 
         row.appendChild(el('span', 'row-index', '#' + (isCount(record.index) ? record.index : DASH)));
 
-        // A compaction is a checkpoint, not something anyone said — label it as its own
-        // thing instead of folding it into 系统, which is also where injected blocks land.
-        var isCompaction = record.title === 'compaction';
-        var label = pill(
-          kindLabel(record),
-          isCompaction ? 'compaction' : kindTone(record.kind)
-        );
+        var label = pill(kindLabel(record), kindTone(record.kind));
         row.appendChild(label);
 
         var summaryText = record.summary || record.text || record.toolName || record.title || '';
@@ -3341,6 +3396,7 @@
         if (kind === 'thinking') return 'thinking';
         if (kind === 'toolCall') return 'toolcall';
         if (kind === 'toolResult') return 'toolresult';
+        if (kind === 'compaction') return 'compaction';
         return 'system';
       }
 
@@ -3565,7 +3621,7 @@
         var windowed = matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched;
         var hiddenAbove = matched.length - windowed.length;
 
-        ledger.appendChild(buildWindowBar(windowed, hiddenAbove, total));
+        updateWindowBar(windowed, hiddenAbove, total);
 
         var groups = visibleTurns(windowed);
         for (var i = 0; i < groups.length; i += 1) {
@@ -3599,52 +3655,71 @@
        *
        * The bar carries the count too, since a count only at the foot of a list is a count
        * nobody reads until they have already scrolled past everything.
+       *
+       * 总览轴 lives here, directly under the strip it changes, rather than with the
+       * filters at the top of the page: a control that edits something a screen away
+       * reads as a filter, which is how it ended up labelled 「时长」 and mistaken for one.
+       *
+       * Built once into its own container and then only updated. These used to be rebuilt
+       * on every render, and a render happens every poll — a click that landed between the
+       * clear and the re-append went to a button that was no longer in the document.
        */
-      function buildWindowBar(shown, hiddenAbove, total) {
-        var wrap = el('div', 'window-bar');
-        var actions = el('div', 'window-bar-actions');
-
-        if (hiddenAbove > 0) {
-          var more = el('button', 'btn', '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, hiddenAbove)) + ' 条');
-          more.type = 'button';
-          more.addEventListener('click', function () {
-            // No scroll correction here on purpose: renderLedger anchors on the topmost
-            // visible row and puts it back, so adding a second adjustment here would
-            // double-count the shift and leave the page visibly off.
-            state.limit += PAGE_STEP;
-            renderLedger();
-          });
-          actions.appendChild(more);
+      function updateWindowBar(shown, hiddenAbove, total) {
+        var wrap = dom.windowBar;
+        var parts = windowBarParts;
+        if (!parts) {
+          parts = windowBarParts = buildWindowBarParts();
+          clear(wrap);
+          wrap.appendChild(parts.actions);
         }
 
-        var count = el('span', 'window-bar-count',
+        applyAxisButton(parts.axis);
+        applyWindowMode(parts, hiddenAbove);
+        parts.count.textContent =
           '已显示 ' + formatInt(shown.length) + ' / 共 ' + formatInt(total) + ' 条记录' +
-          (hiddenAbove > 0 ? '（更早的 ' + formatInt(hiddenAbove) + ' 条尚未加载）' : ''));
+          (hiddenAbove > 0 ? '（更早的 ' + formatInt(hiddenAbove) + ' 条尚未加载）' : '');
+      }
 
-        var latest = el('button', 'btn' + (state.allRecords ? '' : ' btn-quiet'),
-          state.allRecords ? '已显示全部 · 点此只看最新' : '只看最新 ' + formatInt(PAGE_STEP) + ' 条');
+      /** One-time construction. Every handler is attached here and never moves again. */
+      function buildWindowBarParts() {
+        var actions = el('div', 'window-bar-actions');
+
+        // First, because it is the only one that changes what the strip above shows rather
+        // than how many rows are below.
+        var axis = el('button', 'tbtn tbtn-toggle window-bar-axis');
+        axis.type = 'button';
+        axis.appendChild(axisIcon());
+        axis.appendChild(el('span', null, '总览轴'));
+        axis.addEventListener('click', function () {
+          setActualDuration(!state.actualDuration);
+        });
+        actions.appendChild(axis);
+
+        var more = el('button', 'btn');
+        more.type = 'button';
+        more.addEventListener('click', function () {
+          // No scroll correction here on purpose: renderLedger anchors on the topmost
+          // visible row and puts it back, so adding a second adjustment here would
+          // double-count the shift and leave the page visibly off.
+          state.limit += PAGE_STEP;
+          renderLedger();
+        });
+        actions.appendChild(more);
+
+        var latest = el('button', 'btn btn-quiet');
         latest.type = 'button';
-        latest.setAttribute('aria-pressed', state.allRecords ? 'false' : 'true');
         latest.addEventListener('click', function () {
-          if (state.allRecords) {
-            setWindowMode('latest');
-            renderLedger();
-            // Back to the tail means back to the tail: land on the newest record rather
-            // than wherever the 4,000-row view happened to leave the reader.
-            var doc = document.documentElement;
-            window.scrollTo(0, Math.max(doc.scrollHeight, document.body.scrollHeight));
-          } else {
-            setWindowMode('latest');
-            renderLedger();
-          }
+          setWindowMode('latest');
+          renderLedger();
+          // Back to the tail means back to the tail: land on the newest record rather
+          // than wherever the 4,000-row view happened to leave the reader.
+          var doc = document.documentElement;
+          window.scrollTo(0, Math.max(doc.scrollHeight, document.body.scrollHeight));
         });
         actions.appendChild(latest);
 
-        var all = el('button', 'btn' + (state.allRecords ? ' btn-quiet' : ''),
-          state.allRecords ? '已显示全部' : '全部显示');
+        var all = el('button', 'btn');
         all.type = 'button';
-        all.setAttribute('aria-pressed', state.allRecords ? 'true' : 'false');
-        all.disabled = state.allRecords;
         all.addEventListener('click', function () {
           setWindowMode('all');
           renderLedger();
@@ -3653,10 +3728,31 @@
 
         // Count last, pushed to the far edge. Sitting it between the buttons made the row
         // wrap on any session with a five-figure record count.
+        var count = el('span', 'window-bar-count');
         actions.appendChild(count);
 
-        wrap.appendChild(actions);
-        return wrap;
+        return { actions: actions, axis: axis, more: more, latest: latest, all: all, count: count };
+      }
+
+      /**
+       * 「只看最新」 and 「全部显示」 are each other's inverse, so exactly one is offered at
+       * any moment, and the other is stated as the way back. Reading the same button as
+       * both would make its pressed state mean "whichever is currently not true".
+       */
+      function applyWindowMode(parts, hiddenAbove) {
+        parts.more.hidden = hiddenAbove <= 0;
+        if (hiddenAbove > 0) {
+          parts.more.textContent = '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, hiddenAbove)) + ' 条';
+        }
+        parts.latest.textContent = state.allRecords
+          ? '已显示全部 · 点此只看最新'
+          : '只看最新 ' + formatInt(PAGE_STEP) + ' 条';
+        parts.latest.setAttribute('aria-pressed', state.allRecords ? 'false' : 'true');
+        parts.latest.classList.toggle('btn-quiet', !state.allRecords);
+        parts.all.textContent = '已显示全部';
+        parts.all.setAttribute('aria-pressed', state.allRecords ? 'true' : 'false');
+        parts.all.disabled = state.allRecords;
+        parts.all.classList.toggle('btn-quiet', !state.allRecords);
       }
 
       /** The topmost row that intersects the viewport, as {id, top}, or null. */
@@ -3755,7 +3851,6 @@
         setWindowMode('latest');
         if (dom.searchInput) dom.searchInput.value = '';
         syncChipInputs();
-        renderViewControls();
         render();
       }
 
@@ -3932,7 +4027,7 @@
         var table = el('table', 'kv-table');
         var caption = el('caption', 'sr-only', '记录元信息');
         table.appendChild(caption);
-        kvRow(table, '类型', record.title === 'compaction' ? '压缩（上下文检查点）' : kindLabel(record));
+        kvRow(table, '类型', record.kind === 'compaction' ? '压缩（上下文检查点）' : kindLabel(record));
         kvRow(table, '角色', isNil(record.role) ? DASH : String(record.role));
         kvRow(table, '轮次', isCount(turn && turn.index) ? '轮次 ' + turn.index : DASH);
         kvRow(table, '记录序号', isCount(record.index) ? '#' + record.index : DASH);
@@ -4248,7 +4343,6 @@
         renderKpi();
         renderOverview();
         renderLedger();
-        renderViewControls();
         renderInspector();
         renderFooter();
         updateHandoffButton();
@@ -4388,7 +4482,6 @@
         state.kinds = next;
         setWindowMode('latest');
         syncChipInputs();
-        renderViewControls();
         renderLedger();
         updateFilterStatus(visibleEntries().length, state.flat.length);
       }
@@ -4472,7 +4565,6 @@
           }
           setWindowMode('latest');
           syncChipInputs();
-          renderViewControls();
           renderLedger();
           updateFilterStatus(visibleEntries().length, state.flat.length);
         });
@@ -4519,10 +4611,6 @@
           event.preventDefault();
         });
 
-        dom.durationBtn.addEventListener('click', function () {
-          setActualDuration(!state.actualDuration);
-        });
-
         dom.copyBtn.addEventListener('click', copySelected);
         dom.handoffBtn.addEventListener('click', handoffSelected);
 
@@ -4550,7 +4638,6 @@
         cacheDom();
         wire();
         syncChipInputs();
-        renderViewControls();
         renderSectionToggles();
         render();
         fetchSessions();
