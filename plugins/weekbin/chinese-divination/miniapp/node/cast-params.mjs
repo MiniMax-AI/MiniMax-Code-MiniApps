@@ -33,6 +33,9 @@ export const CAST_METHODS = Object.freeze(['time', 'daily', 'numbers', 'coins', 
 
 /** 铜钱摇卦的次数，由古法定的，不给改。 */
 const COIN_TOSSES = 6;
+/** 三枚铜钱一次投掷的点数范围：三个背面 9，三个正面 6。 */
+const COIN_SUM_MIN = 6;
+const COIN_SUM_MAX = 9;
 
 /**
  * 包版本。`.minimax-plugin/plugin.json` 不在运行时载荷里（载荷只有 `artifacts` 下的
@@ -96,6 +99,16 @@ export function clampText(value, max) {
  * @param {unknown} sums
  * @returns {number[]}
  */
+/**
+ * 摇卦的六次结果，逐次校验到 6–9。
+ *
+ * 收 1–9 是照抄了 `toBoundedInteger` 的通用上界，提示却写着 6–9：传进 1–5 时它放行，
+ * 随后被 `castByCoins` 的普通 Error 接住——那条路没有 recovery，Agent 拿到的只是
+ * 「必须是 6 到 9 之间的整数」而没有该怎么做。这里就按真实的点数范围收。
+ *
+ * @param {unknown} sums
+ * @returns {number[]}
+ */
 function coinSumsFrom(sums) {
   if (!Array.isArray(sums) || sums.length !== COIN_TOSSES) {
     throw new CastParamError(
@@ -103,7 +116,16 @@ function coinSumsFrom(sums) {
       `传 ${COIN_TOSSES} 个 6 到 9 之间的整数。`,
     );
   }
-  return sums.map((sum, index) => toBoundedInteger(sum, 9, `第 ${index + 1} 次掷钱结果`));
+  return sums.map((sum, index) => {
+    const parsed = toBoundedInteger(sum, COIN_SUM_MAX, `第 ${index + 1} 次掷钱结果`);
+    if (parsed < COIN_SUM_MIN) {
+      throw new CastParamError(
+        `第 ${index + 1} 次掷钱点数是 ${parsed}。`,
+        `三枚铜钱点数只落在 ${COIN_SUM_MIN} 到 ${COIN_SUM_MAX} 之间：背面三个为 ${COIN_SUM_MAX}，正面三个为 ${COIN_SUM_MIN}。`,
+      );
+    }
+    return parsed;
+  });
 }
 
 /**

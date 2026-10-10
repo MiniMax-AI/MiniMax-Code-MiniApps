@@ -317,16 +317,27 @@ async function handle(request, response, clientEntry, store, cache) {
     }
     const reading = cache.get(id);
     if (!reading) {
-      sendJson(response, 409, { error: 'unknown_cast' });
+      // 带上人话：服务重启后这一卦已经不在缓存里，而页面只把错误写进隐藏的
+      // live region，用户看到的是「点了没反应」。这句话是页面上唯一能显示出来的线索。
+      sendJson(response, 409, {
+        error: 'unknown_cast',
+        message: '服务已重启，这一卦无法再存，请重新起一卦。',
+      });
       return;
     }
-    // 同一 id 存两次会得到两条同 id 的记录，而 remove() 按 id 过滤，删一条连带删另一条。
-    if (await store.get(id)) {
-      sendJson(response, 409, { error: 'already_saved' });
-      return;
-    }
+    // 「这一 id 已经存过」由 store.save 在它自己的排队任务里判断并落盘，两步合一。
+    // 拆成先 store.get 再 store.save 的话，并发的几次请求会各自把 get 排完（都得到
+    // null）再各自 save，同一个 id 就落盘好几条——而 remove() 按 id 过滤，
+    // 删一条连带删一串。save 撞车时返回 null，这里据此回 409。
     const note = clampText(body.note, MAX_NOTE);
     const saved = await store.save(reading, note);
+    if (saved === null) {
+      sendJson(response, 409, {
+        error: 'already_saved',
+        message: '这一卦已经在卦历里了。',
+      });
+      return;
+    }
     sendJson(response, 201, { entry: saved });
     return;
   }

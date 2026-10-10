@@ -3,7 +3,7 @@
 [English](README.md) | 简体中文
 
 中国传统文化占卜 Mini App。以梅花易数起卦，按体用生克断吉凶，内置六十四卦全文与干支历法。
-全部计算在本机完成：不联网，不读取包目录以外的任何文件。
+全部计算在本机完成：不联网；包目录以外只读一个文件——Host 为它建的那个私有 `dataDir` 里的卦历。
 
 界面为中文。想直接上手，看下面的**使用指南**；想看推演口径与能力披露，往下翻。
 
@@ -303,9 +303,14 @@ README 的安装说明）。重启 MiniMax Code 后对 Agent 说「打开灵签�
   非回环名——这一项走裸 HTTP 请求驱动，因为 `fetch` 会把调用方给的 `Host` 静默丢掉；还断言
   `dispose` 真的关掉监听且可重复调用、日志里没有 `dataDir` 路径也没有操作系统用户名、跑完之后
   `dataDir` 里只剩卦历文件。macOS，Node 22.23.2：83 项全过。
-- 同一套测试在四个时区下各跑一遍（`America/New_York`、`UTC`、`Asia/Shanghai`、`Pacific/Kiritimati`，
-  跨 UTC-8 到 UTC+14），另加 `LC_ALL=C LANG=C` 极窄 locale 一遍。每种组合都是 228 通过、0 失败，
-  即此处不依赖本机时区与 locale。
+- 同一套测试在九个时区下各跑一遍（`America/New_York`、`UTC`、`Asia/Shanghai`、`Pacific/Kiritimati`、
+  `Pacific/Apia`、`America/Los_Angeles`、`Pacific/Honolulu`、`Pacific/Chatham`、`Australia/Eucla`，
+  跨 UTC-8 到 UTC+14；后两个分别在 UTC+12:45 与 UTC+8:45），另加 `LC_ALL=C LANG=C` 极窄 locale 一遍。
+  每种组合都是 248 通过、0 失败。
+- 两条守卫让它一直是这样，因为这套测试已经在日期上栽过两次：测试不许用绝对时刻
+  （`new Date('…')`）构造时刻——`castByTime` 与 `castDaily` 取的是本机时区的时辰与日柱；
+  也不许碰真时钟而不写明 `real-clock:` 与理由。每一次 MCP 调用都必须显式给 `now`——
+  起卦结果跟着日辰走，断出伏或日破的断言就是这么一度跟着跑测试的当天翻面的。
 - 一份路径审计扫全包，0 问题：每个路径段都是 ASCII 且符合可移植路径规则，没有段撞 Windows 保留
   设备名，全部文本文件 UTF-8、无 BOM、无 CRLF，没有两个文件只差大小写，每条相对 import 都能在磁盘
   上找到，最坏形态的 `dataDir` 全路径 112 字符，离 `MAX_PATH` 还远。

@@ -5,7 +5,8 @@ English | [简体中文](README.zh-CN.md)
 A Chinese classical divination Mini App. It casts hexagrams with the Plum Blossom method
 (梅花易数), reads the result through the classical 体用生克 rules, and ships a searchable
 library of all sixty-four hexagrams plus a ganzhi almanac. Everything runs locally; the app
-makes no network requests and reads nothing outside its own package.
+makes no network requests. The only file it reads outside its own directory is its own
+reading log, inside the private `dataDir` the Host creates for it.
 
 The interface is in Chinese. To get going, read the **Usage guide** below; the derivation rules
 and capability disclosures follow it.
@@ -320,7 +321,7 @@ Chinese is the AI's job. See "A note on use" below.
 
 **Where do my questions go?**
 Nowhere. Saved castings only touch `context.dataDir` on your own machine. The app does not go
-online and reads nothing outside its package.
+online, and the one file it reads outside its own directory is that same reading log.
 
 ## What it does
 
@@ -347,9 +348,16 @@ to "打开灵签易占".
   really closes the listener and is idempotent, that no log line carries the `dataDir` path or the
   operating-system user name, and that the `dataDir` afterwards holds nothing but the reading log.
   macOS, Node 22.23.2: all 83 checks pass.
-- The suite is run under four timezones spanning UTC-8 to UTC+14 (`America/New_York`, `UTC`,
-  `Asia/Shanghai`, `Pacific/Kiritimati`) and under `LC_ALL=C LANG=C`. 228 pass, 0 fail in every
-  combination, so nothing here depends on the machine's clock zone or locale.
+- The suite is run under nine timezones spanning UTC-8 to UTC+14 (`America/New_York`, `UTC`,
+  `Asia/Shanghai`, `Pacific/Kiritimati`, `Pacific/Apia`, `America/Los_Angeles`,
+  `Pacific/Honolulu`, `Pacific/Chatham`, `Australia/Eucla` — the last two sit on UTC+12:45 and
+  UTC+8:45) and under `LC_ALL=C LANG=C`. 248 pass, 0 fail in every combination.
+- Two guards keep it that way, because the suite has twice broken on a date: no test may build a
+  moment from an absolute instant (`new Date('…')`), since `castByTime` and `castDaily` take the
+  hour and the day pillar from the machine's own zone, and no test may reach for the bare clock
+  without saying `real-clock:` and why. Every MCP call has to pass a `now` explicitly — the two
+  cast results follow the day's ganzhi, which is exactly how an assertion about 出伏 or 日破 once
+  started passing or failing depending on the day it was run.
 - A path audit over the package reports no problems: every path segment is ASCII and matches the
   portable-path rule, no segment collides with a Windows reserved device name, every text file is
   UTF-8 with no BOM and no CRLF, no two files differ only by case, every relative import resolves to

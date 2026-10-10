@@ -6,6 +6,22 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * 测试用的时刻，一处构造。
+ *
+ * 用 `new Date(2026, 8, 30, 1, 20)` 而不是 `AT(1, 20)`：
+ * 后者是绝对时刻，而 `castByTime` / `castDaily` 按**本机时区**取时辰与日柱，同一个
+ * 绝对时刻在 `America/Los_Angeles` 与 `Pacific/Honolulu` 下会落进不同的时辰，于是
+ * 起出来的卦不同、断言跟着挂。本地构造器给出的是同一个「墙上时间」，不随 TZ 变。
+ *
+ * 这个坑已经栽过两次：一次在 MCP 起卦那条（靠注入 now 根治），一次在推演样本那条。
+ * 末尾有一条守卫断言，禁止再出现绝对时刻或裸 `new Date()`——要用真时钟的话，
+ * 必须在那一行写 `real-clock:` 注明理由。
+ */
+const AT = (hour, minute = 0, day = 30) => new Date(2026, 8, day, hour, minute);
+/** 真时钟的统一写法：需要跟随当天时必须用它，并写明为什么。 */
+const REAL_CLOCK_MARK = 'real-clock:';
+
 import {
   HEXAGRAM_LIST,
   hexagramByOrder,
@@ -475,7 +491,7 @@ test('同一秒内两次同样的起法，id 必须分开', async () => {
   // 卦序与动爻分毫不差的一卦——id 若只拿时间戳加卦序动爻去哈希，两次必然相同。
   // 而客户端的起卦按钮在整个推演动画里一直可点（要停 CASTING_HOLD_MS 那么多），
   // 双击就真的会发出两次请求。这条钉的是根因：id 不许撞。
-  const now = new Date('2026-09-30T13:50:00.000Z');
+  const now = AT(13, 50);
   const first = buildReading(castByNumbers(17, 29), { question: '甲', now });
   const second = buildReading(castByNumbers(17, 29), { question: '乙', now });
   assert.equal(first.hexagram.name, second.hexagram.name, '同一秒同两数，起出来的卦本就该是同一卦');
@@ -484,7 +500,10 @@ test('同一秒内两次同样的起法，id 必须分开', async () => {
   // 顺带钉住 id 的形状：路由用 /^\/api\/divination\/history\/([A-Za-z0-9-]{1,80})$/ 取 id，
   // 掺进种子的那个计数不许改到输出格式上。消息要自己写：assert.match 不带消息时
   // 抛的是默认文案，按关键词判「钉没钉住」会一条都对不上。
-  assert.match(first.id, /^[0-9]{14}-[a-z0-9]{1,6}$/u, 'id 的形状变了，路由取不到它');
+  // 7 位：36^6 < 2^32 < 36^7，32 位哈希转 36 进制本来就是 6 位或 7 位。早先用
+  // `slice(0, 6)` 把 7 位的那种砍掉了最低位，而递增计数改的正是最低位，于是
+  // 「同一秒、同一个卦」照旧撞车。路由收的是 [A-Za-z0-9-]{1,80}，7 位在范围内。
+  assert.match(first.id, /^[0-9]{14}-[a-z0-9]{1,7}$/u, 'id 的形状变了，路由取不到它');
 
   // 撞 id 的真实后果：两条都存进卦历，删一条只该带走那一条。
   const dir = await mkdtemp(join(tmpdir(), 'divination-store-'));
@@ -785,8 +804,8 @@ function loadCasting(client) {
 }
 
 const SAMPLES = () => [
-  ['每日一卦', castDaily(new Date('2026-09-30T01:20:00+08:00'))],
-  ['时间起卦', castByTime(new Date('2026-09-30T01:20:00+08:00'))],
+  ['每日一卦', castDaily(AT(1, 20))],
+  ['时间起卦', castByTime(AT(1, 20))],
   ['数字起卦', castByNumbers(37, 24)],
   ['铜钱摇卦', castByCoins([7, 8, 7, 8, 9, 6])],
 ];
@@ -809,8 +828,8 @@ test('换个时辰、换组数重起，日志就跟着换', async () => {
   const client = await readFile(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
   const { castingLines } = loadCasting(client);
 
-  const before = castingLines(buildReading(castByTime(new Date('2026-09-30T01:20:00+08:00'))));
-  const later = castingLines(buildReading(castByTime(new Date('2026-09-30T05:20:00+08:00'))));
+  const before = castingLines(buildReading(castByTime(AT(1, 20))));
+  const later = castingLines(buildReading(castByTime(AT(5, 20))));
   const other = castingLines(buildReading(castByNumbers(11, 7)));
   assert.notDeepEqual(before, later, '时辰不同，日志不该逐字相同');
   assert.notDeepEqual(before, other, '报的两数不同，日志不该逐字相同');
@@ -1448,7 +1467,7 @@ test('结论整块排在两栏之前：吉凶、缘由、宜忌一次读完，�
 
 test('写了所问何事，结论就落到那件事上；换问法只换取象，不换吉凶', () => {
   const cast = castByNumbers(5, 2);
-  const now = new Date('2026-09-30T10:00:00+08:00');
+  const now = AT(10, 0);
   const at = (question) => buildReading(cast, { now, question });
 
   // 问跳槽与问进货拿到同一卦：吉凶必须一模一样（问事只定事类与应期，不改卦体），
@@ -1504,7 +1523,7 @@ test('写了所问何事，结论就落到那件事上；换问法只换取象�
 
 test('Agent 自报的事类压过关键词，关键词那条路留作退路', () => {
   const cast = castByNumbers(5, 2);
-  const now = new Date('2026-09-30T10:00:00+08:00');
+  const now = AT(10, 0);
   const at = (question, topic) => buildReading(cast, { now, question, topic });
 
   // 这句是关键词表接不住的——表上都是「感情」「恋爱」「前任」这类词，
@@ -1554,7 +1573,7 @@ test('Agent 自报的事类压过关键词，关键词那条路留作退路', ()
 
 test('白话块把体用旺衰翻成「你、那件事、你此刻的劲」', () => {
   const cast = castByNumbers(5, 2);
-  const now = new Date('2026-09-30T10:00:00+08:00');
+  const now = AT(10, 0);
   const reading = buildReading(cast, { now, question: '这工作该不该跳', topic: 'career' });
   const plain = reading.plain;
 
@@ -1635,10 +1654,14 @@ test('两处版本号与清单一致，且是能排的版本号', async () => {
 
 test('四种起法经 MCP 都真起得成卦：铜钱那一路曾经每一次都报「必须是 6 到 9 之间的整数」', async () => {
   const { handleMcpRequest } = await import('../miniapp/node/mcp/divination-http.mjs');
-  const cast = async (args) => {
+  // 这条测试里 time 与 daily 要与「今天」对照，所以整个共用助手刻意不注入时刻，
+  // 走真时钟。单独抽出来的那条「时间起卦用的不是今天」更是只能靠真时钟验。
+  // real-clock: 见 REAL_CLOCK_MARK，守卫认这个标记
+  const cast = async (args, now) => {
     let raw = '';
     await handleMcpRequest({
       response: { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } },
+      ...(now ? { now } : {}),
       body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: args } },
     });
     return JSON.parse(raw).result;
@@ -1678,12 +1701,12 @@ test('四种起法经 MCP 都真起得成卦：铜钱那一路曾经每一次都
   // 「月 · 日」，它必须是今天的那一天。月令旺衰那一层不算——那是从 buildReading 的
   // now 算的，把 castByTime 的参数换成 1970 年它照样是今月的金，验不出来。
   // 跨零点时前后各取一次日期，两头都算过，免得撞上换日那一秒。
-  const today = new Date();
+  const today = new Date(); // real-clock: 这条断言验的正是「当下」，钉死时刻就没得验了
   const timed = await cast({ method: 'time' });
   const dayMark = (d) => `月 · 日 ${d.getMonth() + 1} + ${d.getDate()}`;
   const timedBasis = timed.content[0].text.split('\n').find((l) => l.startsWith('【起卦依据】'));
   assert.ok(
-    [dayMark(today), dayMark(new Date())].some((mark) => timedBasis.includes(mark)),
+    [dayMark(today), dayMark(new Date())].some((mark) => timedBasis.includes(mark)), // real-clock: 同上
     `时间起卦用的不是今天：「${timedBasis}」`,
   );
 
@@ -1702,6 +1725,7 @@ test('MCP 让 Agent 自报事类，并在正文末尾补一段大白话', async 
     let raw = '';
     await handleMcpRequest({
       response: { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } },
+        now: AT(10, 0),
       body: { jsonrpc: '2.0', id: 1, method, params },
     });
     return JSON.parse(raw).result;
@@ -2052,9 +2076,17 @@ test('解卦洞察里只露动爻那一条爻辞', () => {
     }
     withMoving += 1;
     assert.ok(insight, '有动爻却没有爻辞');
-    assert.equal(insight.text.split('；').length, reading.movingLines.length);
+    // 不按「；」数条数：动爻爻辞那几段是用「；」拼起来的，可象传正文里本来就可能
+    // 带「；」（家人九三就是），一按分隔符数就数多，改判据反而会把对的写成错的。
+    // 真正要断的是「只引了动的那几爻」——动爻逐条在、不动的爻一条都不在。
     for (const line of reading.movingLines) {
-      assert.ok(insight.text.includes(line.text), '断语没有引动爻的爻辞');
+      assert.ok(insight.text.includes(line.text), `断语没有引动爻的爻辞：${line.label}`);
+    }
+    const movingTexts = new Set(reading.movingLines.map((line) => line.text));
+    for (const line of reading.lines) {
+      // 同一卦里两条爻辞原文相同的情形跳过，否则「不在」这句对那条也会跟着不成立
+      if (movingTexts.has(line.text)) continue;
+      assert.ok(!insight.text.includes(line.text), `断语引了没动的爻：${line.label}`);
     }
     // 位置紧随卦象总断，不排在末尾
     assert.equal(reading.insights[0].title, '卦象总断');
@@ -2587,6 +2619,7 @@ test('查卦默认省去彖传，要原文时显式要', async () => {
     };
     await handleMcpRequest({
       response,
+        now: AT(10, 0),
       body: {
         jsonrpc: '2.0',
         id: 1,
@@ -2903,6 +2936,7 @@ test('查卦给宫位与世应，full 档再给六亲全表', async () => {
     const response = { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } };
     await handleMcpRequest({
       response,
+        now: AT(10, 0),
       body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_hexagram_lookup', arguments: args } },
     });
     return JSON.parse(raw).result;
@@ -3785,6 +3819,7 @@ test('MCP 把化爻落成字段，变卦那一行带上动爻去向', async () =
   const response = { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } };
   await handleMcpRequest({
     response,
+      now: AT(10, 0),
     body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: { question: '这批货该不该进', method: 'numbers', upper: 1, lower: 2 } } },
   });
   const result = JSON.parse(raw).result;
@@ -3935,6 +3970,7 @@ test('MCP 把元忌仇那圈落成字段', async () => {
   const response = { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } };
   await handleMcpRequest({
     response,
+      now: AT(10, 0),
     body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: { question: '这批货该不该进', method: 'numbers', upper: 3, lower: 1 } } },
   });
   const sc = JSON.parse(raw).result.structuredContent;
@@ -4213,9 +4249,10 @@ test('用神段把暗动单列一档，不并进动爻也不并进静爻', () =>
   assert.ok(!/三爻（静，/.test(text), '暗动被并进了静爻');
 });
 
-// MCP 走的是真实时钟（new Date()），换一天就换一组干支，同一组数字出不出暗动、
-// 日破、冲散也跟着变。抬头那一行要是钉死在一组数字上，哪天一换就静悄悄空跑了。
-// 所以扫遍六十四卦，取头一个真出结果的那一卦。
+// 这条原先跟着真时钟走，换一天就换一组干支，同一组数字出不出暗动、日破、冲散也跟着变。
+// 于是它只能扫遍六十四卦取「头一个真出结果的」，靠暴力搜索躲开日历。
+// 现在 MCP 接受注入 `now` 了，于是钉死时刻、扫出确定的答案：
+// 换机器、换时区、换跑测试的当天，扫出来的都是同一卦。
 // 1..8 × 1..8 恰好覆盖六十四卦；实测全年十二个日支里出得最少的那一支也命中 4 组。
 const mcpCast = async (upper, lower) => {
   const { handleMcpRequest } = await import('../miniapp/node/mcp/divination-http.mjs');
@@ -4223,6 +4260,7 @@ const mcpCast = async (upper, lower) => {
   const response = { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } };
   await handleMcpRequest({
     response,
+    now: AT(10, 0),
     body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: { question: '我该不该换工作', method: 'numbers', upper, lower } } },
   });
   return JSON.parse(raw);
@@ -4705,6 +4743,7 @@ test('MCP 把卦体冲合落成字段，抬头另起一行【卦体】', async (
     const response = { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } };
     await handleMcpRequest({
       response,
+        now: AT(10, 0),
       body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: { question: '我该不该换工作', method: 'numbers', upper, lower } } },
     });
     return JSON.parse(raw);
@@ -6011,6 +6050,7 @@ test('摇卦由谁掷是调用方的决定：页面少传就报错，MCP 不传�
   const response = { writeHead() { return this; }, end(chunk) { raw += chunk ?? ''; return this; } };
   await handleMcpRequest({
     response,
+    now: AT(10, 0),
     body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: { method: 'coins' } } },
   });
   const out = JSON.parse(raw).result;
@@ -6026,36 +6066,43 @@ test('页面起卦的入参校验只有一处实现，MCP 与页面共用', asyn
   assert.ok(!/function toBoundedInteger\(/.test(source), '页面那套 toBoundedInteger 该收进 cast-params.mjs');
   assert.ok(!/function toInteger\(/.test(mcp), 'MCP 那套 toInteger 该收进 cast-params.mjs');
   assert.ok(source.includes('castFromParams(body, now)'), '页面应当走共用的 castFromParams');
-  assert.ok(/castFromParams\(params, now\)/.test(mcp), 'MCP 应当走共用的 castFromParams');
+  assert.ok(/castFromParams\(withCoins, now\)/.test(mcp), 'MCP 应当走共用的 castFromParams');
   // 上限值不许再各写一份字面量
   assert.ok(!/maxLength:\s*120/.test(mcp), 'maxLength 应当取 MAX_QUESTION');
   assert.ok(!/maximum:\s*1000000000/.test(mcp), 'maximum 应当取 MAX_NUMBER');
 });
 
-test('免责声明只有一个出处：工具返回、instructions 与 SKILL 逐字相同', async () => {
-  // 之前有三份措辞不同的文字，而 SKILL 要求「不得改写」的那句与工具返回的那句并不相同，
-  // Agent 同时拿到两段矛盾要求，于是每次转述的免责声明都不一样。
-  const { DISCLAIMER } = await import('../miniapp/node/mcp/divination-http.mjs');
+test('免责声明只有一个出处：工具返回、instructions、SKILL 与页脚逐字相同', async () => {
+  // 之前有四份措辞不同的文字，而 SKILL 要求「不得改写」的那句与工具返回的并不相同，
+  // Agent 会同时拿到矛盾要求，于是每次转述的免责声明都不一样。页脚那份是给人看的，
+  // 也照样逐字一致——否则页面上写的与 Agent 转述的会差出字来。
+  const { DISCLAIMER, handleMcpRequest } = await import('../miniapp/node/mcp/divination-http.mjs');
   const skill = await readFile(new URL('../skills/divination/SKILL.md', import.meta.url), 'utf8');
   assert.ok(skill.includes(DISCLAIMER), 'SKILL 里的免责说明必须与常量逐字相同');
+  const client = await readFile(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
+  assert.ok(client.includes(DISCLAIMER), '页面页脚的免责说明必须与常量逐字相同');
 
-  let raw = '';
-  const response = { writeHead() { return this; }, end(chunk) { raw += chunk; return this; } };
-  const { handleMcpRequest } = await import('../miniapp/node/mcp/divination-http.mjs');
-  await handleMcpRequest({ response, body: { jsonrpc: '2.0', id: 1, method: 'initialize' } });
-  const init = JSON.parse(raw).result;
+  const respond = async (body) => {
+    let raw = '';
+    const response = { writeHead() { return this; }, end(chunk) { raw += chunk ?? ''; return this; } };
+    await handleMcpRequest({ response, now: AT(10, 0), body });
+    return JSON.parse(raw).result;
+  };
+
+  const init = await respond({ jsonrpc: '2.0', id: 1, method: 'initialize' });
   assert.ok(init.instructions.includes(DISCLAIMER), 'instructions 里应当逐字带上 DISCLAIMER');
 
-  raw = '';
-  await handleMcpRequest({
-    response,
-    body: {
-      jsonrpc: '2.0', id: 2, method: 'tools/call',
-      params: { name: 'divination_cast', arguments: { method: 'numbers', upper: 5, lower: 2 } },
-    },
+  const cast = await respond({
+    jsonrpc: '2.0', id: 2, method: 'tools/call',
+    params: { name: 'divination_cast', arguments: { method: 'numbers', upper: 5, lower: 2 } },
   });
-  const text = JSON.parse(raw).result.content[0].text;
-  assert.ok(text.includes(DISCLAIMER), `起卦返回里应当带上 DISCLAIMER，实到：${text.slice(-80)}`);
+  assert.ok(cast.content[0].text.includes(DISCLAIMER), '起卦返回里应当带上 DISCLAIMER');
+
+  // 另两个工具也会被人转述出去，同样得带
+  for (const [name, args] of [['divination_hexagram_lookup', { query: '谦' }], ['divination_almanac', {}]]) {
+    const other = await respond({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: args } });
+    assert.ok(other.content[0].text.includes(DISCLAIMER), `${name} 的返回里没有 DISCLAIMER`);
+  }
 });
 
 test('MCP 可以注入时钟，起卦结果不再跟着跑测试的当天走', async () => {
@@ -6098,7 +6145,7 @@ test('MCP 不再接受批量数组——那段分支永远走不到', async () =
     writeHead(code) { status = code; return this; },
     end(chunk) { raw += chunk ?? ''; return this; },
   };
-  await handleMcpRequest({ response, body: [{ jsonrpc: '2.0', id: 1, method: 'ping' }] });
+  await handleMcpRequest({ response, now: AT(10, 0), body: [{ jsonrpc: '2.0', id: 1, method: 'ping' }] });
   assert.equal(status, 202, `数组按无回复处理（202），实到 ${status}`);
   assert.equal(raw, '', '数组不该产生任何 JSON 回复');
 });
@@ -6117,4 +6164,249 @@ test('卦库「以此卦起一卦」走 cast()，不再绕开在途闸', async (
   assert.ok(button.includes("cast({ method: 'hexagram'"), '这个按钮应当走 cast()');
   assert.ok(!button.includes("api('/cast'"), '这个按钮不该自己发请求');
   assert.ok(!button.includes('upper: item.order, lower: item.order'), '同一数上下都用，起不回本卦');
+});
+
+/* ---------- 时间依赖的守卫 ---------- */
+
+test('测试里不再有随日期漂的取值：绝对时刻与裸时钟都要有理由', async () => {
+  // 这已经是第三次为「测试随日期/时区翻面」返工了：第一次是 MCP 起卦那一条（靠注入
+  // now 根治），第二次是推演样本用了绝对时刻（`01:20+08:00` 在 Honolulu 下落进别的
+  // 时辰），两处的根子相同——断言的判据跟着本机时钟与时区走。
+  //
+  // 逐条人肉查总会漏下一条，所以这里把两类写法禁掉：
+  // ① `new Date('…')` —— 绝对时刻。`castByTime` / `castDaily` 按本机时区取时辰与日柱，
+  //    同一个绝对时刻在不同时区落进不同的卦。要钉时刻就用 AT(...) 构造墙上时间。
+  // ② 裸 `new Date()` —— 真时钟。确实要跟当天走的（例如验「时间起卦用的就是今天」那条，
+  //    钉死时刻反而没得验），必须在这一行写 `real-clock:` 并说明理由。
+  const self = new URL(import.meta.url);
+  const source = await readFile(self, 'utf8');
+  const lines = source.split('\n');
+  // AT 的定义本身不算；注释里提到这两种写法也不算——它们是这条断言在讲的东西
+  const atDefLine = lines.findIndex((l) => l.includes('const AT ='));
+  const code = lines.map((l, index) => (index <= atDefLine || /^\s*(\/\/|\*|\/\*)/.test(l) ? '' : l));
+  const bare = [];
+  const absolute = [];
+  code.forEach((line, index) => {
+    if (index === atDefLine) return;
+    if (/new Date\(\s*['"]/.test(line)) absolute.push(`L${index + 1}: ${line.trim()}`);
+    if (/\bnew Date\(\s*\)/.test(line) && !line.includes(REAL_CLOCK_MARK)) {
+      bare.push(`L${index + 1}: ${line.trim()}`);
+    }
+  });
+  assert.deepEqual(absolute, [], `绝对时刻会随本机时区变，改用 AT(...)：\n${absolute.join('\n')}`);
+  assert.deepEqual(bare, [], `裸时钟跟着真时钟走，要用就在这一行注明 ${REAL_CLOCK_MARK}：\n${bare.join('\n')}`);
+});
+
+test('MCP 每一处调用都注入了时刻，没有一条跟着真时钟跑', async () => {
+  // 与上面同源：MCP 起卦结果随日辰变，早先那条「伏神出不出得来」就是这么跟着当天翻面的。
+  // 现在 handleMcpRequest 支持注入 now，于是测试里每一次调用都必须给。
+  const source = await readFile(new URL(import.meta.url), 'utf8');
+  const calls = [...source.matchAll(/handleMcpRequest\(\{/g)];
+  assert.ok(calls.length > 0, '没找到 MCP 调用，这个守卫形同虚设');
+  const missing = [];
+  let cursor = 0;
+  for (const call of calls) {
+    const start = source.indexOf(call[0], cursor);
+    cursor = start + 1;
+    // 看这一次调用接下来 400 字符内有没有给时刻。`now:` 与简写 `now,` 都算。
+    const window = source.slice(start, start + 400);
+    if (/\bnow\s*[:,]/.test(window)) continue;
+    // 确实要跟真时钟走的（例如验「时间起卦用的就是今天」），那一处写明理由。
+    const lead = source.slice(Math.max(0, start - 500), start);
+    if (lead.includes(REAL_CLOCK_MARK)) continue;
+    missing.push(`L${source.slice(0, start).split('\n').length}: 没给 now`);
+  }
+  assert.deepEqual(missing, [], `这些 MCP 调用没注入时刻，结果跟着跑测试的当天走：\n${missing.join('\n')}`);
+});
+
+test('工具的 schema 与实际认的起法是同一份', async () => {
+  // schema 写一组、代码认另一组时，会出现「提示说可以、实际做不到」或反过来。
+  const { TOOLS, MCP_CAST_METHODS } = await import('../miniapp/node/mcp/divination-http.mjs');
+  const cast = TOOLS.find((t) => t.name === 'divination_cast');
+  const schema = cast.inputSchema.properties.method.enum;
+  assert.deepEqual([...schema].sort(), [...MCP_CAST_METHODS].sort(), 'schema 的 method 枚举与实现认的那组对不上');
+  assert.ok(!schema.includes('hexagram'), 'hexagram 是页面卦库那一路，不该从 MCP 走');
+  // 声明了 additionalProperties: false，就该真的不认多出来的键
+  assert.equal(cast.inputSchema.additionalProperties, false);
+});
+
+/* ---------- 同一 id 的两个来源 ---------- */
+
+test('同一 id 存五次只有一个成，其余全挡：检查与写入必须在同一个排队任务里', async () => {
+  // 「先 store.get 再 store.save」是两个分开排队的任务，并发请求会各自把 get 排完
+  // （都得到 null）再各自 save，于是同一个 id 落盘四条——而 remove() 按 id 过滤，
+  // 删一条连带删三条。实测同一 id 并发 POST 五次得到 201,201,201,201,409。
+  await withServer(async ({ request }) => {
+    const cast = (await request('/api/divination/cast', {
+      method: 'POST',
+      body: JSON.stringify({ method: 'numbers', upper: 11, lower: 22 }),
+    })).json().reading;
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => request('/api/divination/history', {
+        method: 'POST',
+        body: JSON.stringify({ id: cast.id, note: '' }),
+      })),
+    );
+    const statuses = responses.map((r) => r.status).sort();
+    assert.deepEqual(statuses, [201, 409, 409, 409, 409], `并发存同一 id 的回包不对：${statuses.join(',')}`);
+
+    const list = (await request('/api/divination/history')).json();
+    assert.equal(list.entries.length, 1, `卦历里该只有一条，实到 ${list.entries.length} 条同 id 记录`);
+  });
+});
+
+test('删一条只带走那一条：盘上不许留下同 id 的两份', async () => {
+  await withServer(async ({ request }) => {
+    const cast = async (upper, lower) => (await request('/api/divination/cast', {
+      method: 'POST', body: JSON.stringify({ method: 'numbers', upper, lower }),
+    })).json().reading;
+    const save = (id) => request('/api/divination/history', {
+      method: 'POST', body: JSON.stringify({ id, note: '' }),
+    });
+
+    // 撞 id 的真实后果：新约定按 id 取卦，撞了之后后一卦会盖掉缓存里的前一卦。
+    const a = await cast(3, 3);
+    const b = await cast(3, 3);
+    assert.notEqual(a.id, b.id, '同一秒同两数，id 不该撞');
+    await save(a.id);
+    await save(b.id);
+    assert.equal((await request('/api/divination/history')).json().entries.length, 2, '两条都该在');
+    assert.equal((await request(`/api/divination/history/${a.id}`, { method: 'DELETE' })).status, 200);
+    const left = (await request('/api/divination/history')).json().entries;
+    assert.equal(left.length, 1, `删一条连带删了两条，实到 ${left.length}`);
+    assert.equal(left[0].id, b.id, '留下的不是被点删除的那条');
+  });
+});
+
+test('id 不再被截断：同一秒内反复起同一卦，id 每次都不同', async () => {
+  // 32 位哈希转 36 进制有 6 位也有 7 位，`slice(0, 6)` 把 7 位那种砍掉了最低位，
+  // 而种子末尾那个递增计数改的正是最低位，于是「同一秒、同一个卦」照旧撞车。
+  // 改 padStart(7, '0') 之后不再截断：3000 组里 0 撞。
+  const ids = new Set();
+  const now = AT(14, 30);
+  for (let i = 0; i < 3000; i += 1) {
+    ids.add(buildReading(castByNumbers(17, 29), { question: `问 ${i}`, now }).id);
+  }
+  assert.equal(ids.size, 3000, `3000 组里撞了 ${3000 - ids.size} 次`);
+  for (const id of ids) {
+    assert.match(id, /^[0-9]{14}-[a-z0-9]{7}$/u, `id 的形状不该再出现 6 位：${id}`);
+  }
+});
+
+test('存不下时回的话说得出口，页面上也看得见', async () => {
+  await withServer(async ({ request }) => {
+    const cast = (await request('/api/divination/cast', {
+      method: 'POST', body: JSON.stringify({ method: 'numbers', upper: 5, lower: 5 }),
+    })).json().reading;
+
+    // 这一卦没起过（换一个没算过的 id）——等价于服务重启后页面还停着上一卦
+    const unknown = await request('/api/divination/history', {
+      method: 'POST', body: JSON.stringify({ id: 'nope-not-cast', note: '' }),
+    });
+    assert.equal(unknown.status, 409);
+    const detail = unknown.json();
+    assert.equal(detail.error, 'unknown_cast');
+    assert.ok(detail.message && detail.message.length > 5, `409 该带一句人话：${JSON.stringify(detail)}`);
+
+    await request('/api/divination/history', { method: 'POST', body: JSON.stringify({ id: cast.id, note: '' }) });
+    const again = await request('/api/divination/history', {
+      method: 'POST', body: JSON.stringify({ id: cast.id, note: '' }),
+    });
+    assert.equal(again.status, 409);
+    assert.ok(again.json().message, 'already_saved 也该带一句人话');
+  });
+
+  // 页面上要有看得见的落点，不能只往 .sr-only 的 live region 里写
+  const client = await readFile(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
+  const save = client.slice(client.indexOf('async function saveReading'), client.indexOf('async function saveReading') + 1400);
+  assert.ok(save.includes('setSaveStatus'), '存卦失败要写到看得见的提示上');
+  assert.ok(/unknown_cast/.test(save), '要认 unknown_cast 这一支——那一卦是终态，按钮不该还给用户');
+  assert.ok(!/catch \(error\) \{\s*button\.disabled = false;\s*button\.textContent = '存入卦历';\s*announce\(error\.message\);/.test(save),
+    '存卦失败还是只写 live region——用户看到的是点了没反应');
+  // 提示元素要真的挂进页面，否则 setSaveStatus 写的是一个不在文档里的节点
+  assert.ok(/saveStatus\s*=\s*document\.createElement/.test(client), '没建提示元素');
+  assert.ok(/save\.append\(noteInput, saveBtn, saveStatus\)/.test(client), '提示元素没挂到存卦那一行上');
+  assert.ok(/\.save-status\s*\{/.test(client), '.save-status 的样式没写');
+  assert.ok(/\.save-status\.err\s*\{/.test(client), '出错那态没样式');
+  // api() 得把状态码与错误码带出来，页面才分得清终态与可重试
+  const api = client.slice(client.indexOf('async function api('), client.indexOf('async function api(') + 700);
+  assert.ok(/error\.code\s*=/.test(api), 'api() 没把错误码带出来');
+  assert.ok(/error\.status\s*=/.test(api), 'api() 没把状态码带出来');
+});
+
+/* ---------- MCP 参数边界 ---------- */
+
+test('MCP 只认 schema 里声明的参数：sums 与 hexagram 都进不来', async () => {
+  // 直接把 args 整个递进 castFromParams 时，Agent 传进来的 schema 之外的键也会被当真：
+  // sums 会让本该自己掷的摇卦改用 Agent 指定的点数，method: 'hexagram' 更是页面卦库
+  // 专用的起法，不该从对话里走。
+  const { handleMcpRequest } = await import('../miniapp/node/mcp/divination-http.mjs');
+  const call = async (args) => {
+    let raw = '';
+    const response = { writeHead() { return this; }, end(chunk) { raw += chunk ?? ''; return this; } };
+    await handleMcpRequest({
+      response,
+      now: AT(10, 0),
+      body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'divination_cast', arguments: args } },
+    });
+    return JSON.parse(raw).result;
+  };
+
+  // Agent 传 sums：该被忽略，仍然自掷六次——起卦依据里那六个数不会是 Agent 给的
+  const withSums = await call({ method: 'coins', sums: [6, 6, 6, 6, 6, 6] });
+  assert.notEqual(withSums.isError, true, '传了 sums 不该报错');
+  const basis = withSums.content[0].text.split('\n').find((l) => l.startsWith('【起卦依据】'));
+  assert.ok(!basis.includes('6、6、6、6、6、6'), `Agent 指定的点数不该被采纳：${basis}`);
+
+  // hexagram 是页面那一路，MCP 不认
+  const hex = await call({ method: 'hexagram', key: '100010' });
+  assert.equal(hex.isError, true, 'hexagram 不该从 MCP 走');
+  assert.ok(/未知的起法/.test(hex.content[0].text), `该报未知起法：${hex.content[0].text}`);
+
+  const unknown = await call({ method: 'nonsense' });
+  assert.equal(unknown.isError, true);
+  // 该怎么改的话在 _meta.recovery 里，得只列 MCP 认的那几种
+  const raw = JSON.stringify(unknown);
+  assert.ok(!/hexagram/.test(raw), `MCP 的报错里不该出现 hexagram：${raw}`);
+  assert.ok(/daily/.test(raw) && /coins/.test(raw), `recovery 该列出 MCP 认的起法：${raw}`);
+});
+
+test('掷钱点数按 6–9 收，越界的带 recovery', async () => {
+  // 原先照抄通用上界收 1–9，1–5 放行后被 castByCoins 的普通 Error 接住，
+  // 而那条路没有 recovery——Agent 只拿到「必须是 6 到 9」，拿不到该怎么做。
+  await withServer(async ({ request }) => {
+    const cast = (sums) => request('/api/divination/cast', {
+      method: 'POST', body: JSON.stringify({ method: 'coins', sums }),
+    });
+    const low = await cast([1, 7, 8, 9, 6, 7]);
+    assert.equal(low.status, 400, `点数 1 该被拒，实到 ${low.status}`);
+    const high = await cast([10, 7, 8, 9, 6, 7]);
+    assert.equal(high.status, 400, `点数 10 该被拒，实到 ${high.status}`);
+  });
+
+  const { handleMcpRequest } = await import('../miniapp/node/mcp/divination-http.mjs');
+  let raw = '';
+  const response = { writeHead() { return this; }, end(chunk) { raw += chunk ?? ''; return this; } };
+  await handleMcpRequest({
+    response,
+    now: AT(10, 0),
+    body: {
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'divination_cast', arguments: { method: 'coins', sums: [1, 7, 8, 9, 6, 7] } },
+    },
+  });
+  const out = JSON.parse(raw).result;
+  // sums 本身进不来，所以这一次是自掷成卦——断的是「越界的点数报得出该怎么改」
+  assert.notEqual(out.isError, true, '自掷该照常成卦');
+
+  const { castFromParams } = await import('../miniapp/node/cast-params.mjs');
+  assert.throws(
+    () => castFromParams({ method: 'coins', sums: [1, 7, 8, 9, 6, 7] }, AT(10, 0)),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.ok(typeof error.recovery === 'string' && error.recovery.includes('6'), `越界该带 recovery：${error.recovery}`);
+      return true;
+    },
+  );
 });

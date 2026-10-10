@@ -860,6 +860,16 @@
         align-items: center;
       }
 
+      /* 存卦那行的可见提示。存不下时这里要说得出来，不能只往 live region 里写。 */
+      .save-status {
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+
+      .save-status.err {
+        color: var(--seal);
+      }
+
       input[type='text'],
       input[type='number'],
       textarea {
@@ -2020,11 +2030,10 @@
       </main>
 
       <footer class="disclaimer">
-        <strong>内容由 AI 生成，仅供娱乐，无实际预测功能。</strong>
         <p>
-          本应用实现的是中国传统占筮方法，依据梅花易数的体用生克、旺衰与取象规则推演，
-          所有文字由 AI 生成。卦象不构成任何建议、预测或决策依据，不应作为医疗、法律、财务
-          等重要决定的参考。娱乐之外，请以自身判断与专业意见为准。
+          本应用实现的是中国传统占筮方法，依据梅花易数的体用生克、旺衰与取象规则推演。
+          <strong>内容由 AI 生成，仅供娱乐，无实际预测功能。卦象不构成任何建议、预测或决策依据，不应作为医疗、法律、财务等重要决定的参考。</strong>
+          娱乐之外，请以自身判断与专业意见为准。
         </p>
       </footer>
     </div>
@@ -2062,7 +2071,12 @@
         });
         if (!response.ok) {
           const detail = await response.json().catch(() => ({}));
-          throw new Error(detail.message || `请求失败（${response.status}）`);
+          const error = new Error(detail.message || `请求失败（${response.status}）`);
+          // 带上状态码与错误码，调用方才分得清「这一卦存不了了」（终态）与
+          // 「这条已经存过了」（还能改批注重试）——两者对按钮的处理完全不同。
+          error.status = response.status;
+          error.code = detail.error || '';
+          throw error;
         }
         return response.json();
       }
@@ -3294,16 +3308,21 @@
         const saveBtn = document.createElement('button');
         saveBtn.className = 'primary';
         saveBtn.textContent = '存入卦历';
-        saveBtn.addEventListener('click', () => saveReading(reading, saveBtn, noteInput));
-        save.append(noteInput, saveBtn);
+        // 可见的存卦状态。原先失败只往 live region 里写，屏幕上什么都不出现。
+        const saveStatus = document.createElement('span');
+        saveStatus.className = 'save-status';
+        saveStatus.setAttribute('aria-live', 'polite');
+        saveBtn.addEventListener('click', () => saveReading(reading, saveBtn, noteInput, saveStatus));
+        save.append(noteInput, saveBtn, saveStatus);
         card.append(save);
 
         slot.append(card);
         mountClashRibbons(card);
       }
 
-      async function saveReading(reading, button, noteInput) {
+      async function saveReading(reading, button, noteInput, status) {
         button.disabled = true;
+        setSaveStatus(status, '存入中…');
         try {
           // 只送 id 与批注，不再把整份 reading 回传给服务端——服务端认的是它自己
           // 刚算出来过的卦。原先整份回传、原样落盘，那是整个包里唯一一处没设防的地方。
@@ -3312,12 +3331,30 @@
             body: JSON.stringify({ id: reading.id, note: noteInput.value }),
           });
           button.textContent = '已存入卦历';
+          setSaveStatus(status, '');
           announce('已存入卦历');
         } catch (error) {
+          // 失败要给看得见的反馈。原先只 announce()，那写进的是 .sr-only 的 live region，
+          // 屏幕上什么也没有，按钮又复原成可点——用户看到的就是「点了没反应」，
+          // 再点还是一样。服务重启后这一卦再也存不了，所以那一支连按钮都不还给用户。
+          if (error.code === 'unknown_cast') {
+            button.textContent = '这一卦存不了了';
+            setSaveStatus(status, error.message, true);
+            announce(error.message);
+            return;
+          }
           button.disabled = false;
           button.textContent = '存入卦历';
+          setSaveStatus(status, error.message, true);
           announce(error.message);
         }
+      }
+
+      /** 存卦那行的可见提示。aria-live 让读屏软件也念得到。 */
+      function setSaveStatus(status, text, isError = false) {
+        status.textContent = text;
+        status.classList.toggle('err', Boolean(isError));
+        status.setAttribute('role', isError ? 'alert' : 'status');
       }
 
       /* ---------- 卦库 ---------- */

@@ -60,12 +60,20 @@ export class ReadingStore {
   }
 
   /**
+   * 存一条卦。id 撞上已有的那条时返回 `null`——检查与写入在同一个排队任务里，
+   * 不能拆成先 `get` 再 `save` 两个任务：那样并发的几次请求会各自把 `get` 排完
+   * （都得到 null），再各自 `save`，于是同一个 id 落盘四条，而 `remove()` 按 id
+   * 过滤，删一条连带删三条。实测同一 id 并发 POST 五次会得到
+   * `201,201,201,201,409` 与四条同 id 记录；合进一个任务后是 `201,409,409,409,409`。
+   *
    * @param {import('./divination.mjs').Reading} reading
    * @param {string} note
+   * @returns {Promise<object|null>} null 表示这条 id 已经存过了
    */
   async save(reading, note) {
     return this.enqueue(async () => {
       const entries = await this.readAll();
+      if (entries.some((entry) => entry.id === reading.id)) return null;
       const entry = {
         ...reading,
         note: clampText(note, MAX_NOTE),

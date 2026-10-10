@@ -26,6 +26,20 @@ import {
   tossCoinSums,
 } from '../cast-params.mjs';
 
+/**
+ * MCP 对外认的起法。`hexagram` 是页面卦库那一路专用的，不进工具 schema。
+ * 取自 CAST_METHODS 而不是另写一份数组，少一处会漂移的地方。
+ */
+export const MCP_CAST_METHODS = Object.freeze(
+  CAST_METHODS.filter((item) => item !== 'hexagram'),
+);
+
+/**
+ * 工具描述里 `method` 的那组枚举，与实际认的起法同一份。schema 与实现各写一份时，
+ * 会出现「提示说可以、实际做不到」或反过来。
+ */
+const MCP_CAST_METHOD_ENUM = Object.freeze([...MCP_CAST_METHODS]);
+
 const SERVER_INFO = Object.freeze({ name: 'chinese-divination', version: PACKAGE_VERSION });
 
 /**
@@ -86,7 +100,7 @@ const TOOLS = Object.freeze([
         ...QUESTION_PROPERTY,
         method: {
           type: 'string',
-          enum: CAST_METHODS.filter((item) => item !== 'hexagram'),
+          enum: MCP_CAST_METHOD_ENUM,
           description:
             '起法。time=以当下时辰成卦（两小时一换）；daily=按今日日期成卦（一天一换）；numbers=由你给两个正整数，默念所问之后自行取数，一上卦一下卦；coins=由本工具掷六次铜钱，每次皆不同。用户说「掷铜钱」或要随机时用 coins，说「今天」用 daily。',
           default: 'time',
@@ -291,6 +305,35 @@ function plainBlock(reading) {
 }
 
 /**
+ * `divination_cast` 在 schema 里声明的键。白名单而不是黑名单：Agent 多传了什么，
+ * 这里就不认什么。
+ */
+const CAST_ARG_KEYS = Object.freeze(['question', 'topic', 'method', 'upper', 'lower']);
+
+/**
+ * 按白名单收一遍起卦参数，并钉住 method 必须落在 MCP 对外认的那组起法里。
+ * @param {Record<string, unknown>} args
+ * @returns {{ method?: string, upper?: unknown, lower?: unknown }}
+ */
+function pickCastArgs(args) {
+  /** @type {Record<string, unknown>} */
+  const picked = {};
+  for (const key of CAST_ARG_KEYS) {
+    if (key !== 'question' && key !== 'topic' && args[key] !== undefined) picked[key] = args[key];
+  }
+  const method = typeof args.method === 'string' && args.method !== '' ? args.method : 'time';
+  if (!MCP_CAST_METHODS.includes(method)) {
+    throw new ToolError(
+      'INVALID_ARGUMENTS',
+      `未知的起法：${method}`,
+      `method 只能是 ${MCP_CAST_METHODS.join('、')}。`,
+    );
+  }
+  picked.method = method;
+  return picked;
+}
+
+/**
  * @param {string} name
  * @param {Record<string, unknown>} args
  * @param {Date} now 这一次的时刻。测试注入固定时钟用——起卦结果随日辰变，
@@ -303,16 +346,15 @@ function callTool(name, args, now) {
     /** @type {ReturnType<typeof buildReading>} */
     let reading;
     try {
-      // 取数与校验只有这一份，页面那条路调的是同一个函数。之前两边各写一份，
-      // 于是上限值与提示语各自漂移，而「MCP 那份忘了收六次掷钱长度」那类漏项
-      // 只要漏一次就是一次线上故障。
-      //
-      // 摇卦由谁掷是调用方各自的决定，不做成共用函数的兜底：MCP 背后没有人替用户
-      // 掷，所以它自己掷六次；页面上用户看得见点数并能自己重来，少一次就该报错。
-      const params = args.method === 'coins' && args.sums === undefined
-        ? { ...args, sums: tossCoinSums() }
-        : args;
-      reading = buildReading(castFromParams(params, now), { question, now, topic });
+      // 先按 schema 收一遍参数，只留下 `divination_cast` 真正声明的那几个。
+      // 直接把 args 整个递进 castFromParams 的话，Agent 传进来的 schema 之外的键
+      // 也会被当真：`sums` 会让本该自己掷的摇卦改用 Agent 指定的点数（页面那条路
+      // 要这个，Agent 背后没有人替用户掷，不要），`method: 'hexagram'` 更是页面
+      // 卦库专用的起法，不该从对话里走。
+      const params = pickCastArgs(args);
+      // 摇卦一律由本工具自己掷：Agent 只说「掷铜钱」，点数是随机的，不该由它指定。
+      const withCoins = params.method === 'coins' ? { ...params, sums: tossCoinSums() } : params;
+      reading = buildReading(castFromParams(withCoins, now), { question, now, topic });
     } catch (error) {
       if (error instanceof CastParamError) {
         throw new ToolError('INVALID_ARGUMENTS', error.message, error.recovery);

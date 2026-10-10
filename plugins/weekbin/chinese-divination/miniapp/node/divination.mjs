@@ -1872,5 +1872,11 @@ function buildId(hexagram, positions, now) {
   for (let index = 0; index < seed.length; index += 1) {
     hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
   }
-  return `${stamp}-${hash.toString(36).slice(0, 6)}`;
+  // padStart 而不是 slice：32 位的 hash 转 36 进制有 6 位也有 7 位（36^6 < 2^32 < 36^7），
+  // `slice(0, 6)` 会把 7 位的那种砍掉最低位——而种子末尾那个递增计数改的正是最低位，
+  // 于是「同一秒、同一个卦」拿回同一个 id，实测 3000 组里撞 1228 组。
+  // 新的存卦约定按 id 取卦，撞了之后后一卦会把前一卦盖掉：在甲那张卡上点存入，
+  // 落盘的却是乙那张的问题。补零而不截断是单射的——36 进制里 7 位数的首位不会是 0，
+  // 所以补出来的 '0xxxxxx' 与真正的 7 位数不可能相同。长度仍落在 [A-Za-z0-9-]{1,80} 内。
+  return `${stamp}-${hash.toString(36).padStart(7, '0')}`;
 }
