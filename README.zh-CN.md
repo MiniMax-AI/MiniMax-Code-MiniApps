@@ -65,6 +65,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [模型管理器](plugins/ocoomber/openrouter-model-manager/README.zh-CN.md) | 浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型，支持即时保存、批量操作、一键撤销和自动备份 | [ocoomber](https://github.com/ocoomber) |
 | [自驾规划](plugins/hanzijie/self-drive-route-planner/README.zh-CN.md) | 【官方插件】规划自驾路线、地点搜索、候选算路与小红书 3:4 行程图；支持演示模式 | [HanZijie](https://github.com/HanZijie) |
 | [Git 提交树](plugins/microbiosis/git-tree/README.zh-CN.md) | 查看本机 Git 仓库的提交历史：泳道提交图、分支/标签、提交详情与文件改动统计，支持筛选偏好持久化与可选自动刷新 | [Microbiosis](https://github.com/Microbiosis) |
+| [灵签易占](plugins/weekbin/chinese-divination/README.zh-CN.md) | 梅花易数起卦与解卦：时间、数字、铜钱摇卦、每日一卦四法起卦，按体用生克断吉凶，另备六十四卦全文与干支历法 | [weekbin](https://github.com/weekbin) |
 
 <details>
 <summary>预览：Token 用量看板</summary>
