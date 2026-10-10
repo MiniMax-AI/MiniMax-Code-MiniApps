@@ -20,23 +20,46 @@ The page follows the most recent conversation by default and re-reads it every 2
 
 ## What it shows
 
-The ledger groups records by turn, following the `turn_id` recorded in the session file. Each record is classified as user, assistant, thinking, tool call, tool result, system, or compaction, and each turn header carries that turn's own Token counts and elapsed time. Selecting a record opens a detail panel with summary, raw JSON, tool arguments, tool result, and reasoning, plus a button that hands the record to the Agent's chat input.
+The ledger groups records by turn, following the `turn_id` recorded in the session file. Each record is classified as user, answer, narration, thinking, tool call, tool result, system, or compaction, and each turn header carries that turn's own Token counts and elapsed time. Selecting a record opens a detail panel with summary, raw JSON, tool arguments, tool result, and reasoning, plus a button that hands the record to the Agent's chat input.
 
-**The type chips are the only filter.** One thing is being filtered — which record kinds are visible — and it is one array in the client, written from exactly three controls: the six chips, 全部, and 清除筛选. An earlier version also had a row of layer buttons (turn / thinking / call) sitting above the list as presets over those same chips. They were removed, because any preset a reader outgrows becomes a button that contradicts the chips it was supposed to summarise: untick 助手 while leaving 用户 ticked, and the turn button goes dark and claims the conversation is hidden when in fact it was narrowed. One control that cannot drift is worth more than three convenient ones that can.
+**The type chips are the only filter.** One thing is being filtered — which record kinds are visible — and it is one array in the client, written from exactly three controls: the eight kind buttons, 全部, and 清除筛选. An earlier version also had a row of layer buttons (turn / thinking / call) sitting above the list as presets over those same chips. They were removed, because any preset a reader outgrows becomes a button that contradicts the chips it was supposed to summarise: untick 问答 while leaving 用户 ticked, and the turn button goes dark and claims the conversation is hidden when in fact it was narrowed. One control that cannot drift is worth more than three convenient ones that can.
 
-Naming kinds directly costs one extra click and reaches everything a preset did — tick 用户 *and* 助手 for the conversation, untick both for its absence, and any scattered subset in between, such as only the user's questions or only system records.
+Naming kinds directly costs one extra click and reaches everything a preset did — tick 用户 *and* 答复 for the conversation, untick both for its absence, and any scattered subset in between, such as only the user's questions or only system records.
 
 A kind is whatever the filter can act on, which is the rule that decided 压缩 being a kind of its own rather than a `system` record with a different title. Filed under `system`, a context checkpoint could not be kept or dropped on its own and unticking 系统 took every checkpoint with it — the same "one question, two answers" problem the layer buttons had, hiding in a second field instead of a second row of controls.
 
 The one control that is **not** a filter is 总览轴, in the window bar under the strip: it switches the strip between equal width and a real time axis. It was labelled 时长 and sat with the filters at the top of the page, which made it read as a filter on duration — it changes neither the rows nor any count on the page. Its label now names the strip and both axes, and it sits directly under the thing it changes.
 
-Unticking a kind drops those rows from the render entirely. No placeholder summary row is left behind, so nothing on screen can miscount what it covers, and a chip is the only way to bring them back. The kinds are independent, so unticking one never takes part of another with it, and each turn header recomputes from the rows that survive, which makes every count you see under a filter a real post-filter count.
+Unticking a kind drops those rows from the render entirely. No placeholder summary row is left behind, so nothing on screen can miscount what it covers, and a chip is the only way to bring them back. The kinds are independent, so unticking one never takes part of another with it, and each turn header recomputes from the rows that survive, which makes every count you see under a filter a real post-filter count. Nothing marks a turn as filtered: the figures moving is the signal, and a label repeating that on every turn is noise.
 
 Values that the session file does not record are rendered as `—`. Nothing is inferred or filled in: a tool call with no matching result has no duration, an assistant message carries no model attribution if the file omitted it, and a message with no Token usage shows no Token usage.
 
-An assistant message is always displayed in one fixed order — **reasoning, then the answer, then the tool calls it asked for** — regardless of the order the blocks appear in the session file. Token usage stays with the answer; a message that produced reasoning but no answer shows its usage on the reasoning block, because that is all the message contains.
+Assistant text arrives in two roles and they are filed separately. **答复** is the answer a turn ended on, and it is not a judgement call: `stopReason` records why the model stopped, and `stop` means it finished, so that text is the delivered answer. **过程** is the text it wrote on the way to a tool call, where `stopReason` is `toolUse`. In an agentic session the two are nowhere near equal — 51 answers against 901 preambles in a typical working session — so filing them together buries the answers under several times their own volume. An assistant message is always displayed in one fixed order — **reasoning, then the answer, then the tool calls it asked for** — regardless of the order the blocks appear in the session file. Token usage stays with the answer; a message that produced reasoning but no answer shows its usage on the reasoning block, because that is all the message contains.
 
-One model call produces one row per block, so a rail down the left edge joins the rows that arrived together — a response split into reasoning, answer and tool calls reads as one unit. A response that produced a single row shows a dot instead. The grouping is also stated in each row's tooltip, so it is never conveyed by position alone. Tool results are not model responses, carry no rail, and are not joined to the call that caused them.
+**Two numbers that look like they should match, and what makes them match.** A turn either ends with
+exactly one reply (`stopReason: stop`) or with none — measured over every prompted turn in a
+working session, 54 closed, 5 stopped to ask the reader something, 4 were cut off. So the turn
+count and the reply count are the same number seen twice, and the KPI card says which each one
+means: the headline is the turns somebody typed into, and the line under it splits them into
+closed, waiting on the reader, and cut off. Those parts sum to the headline.
+
+**问答 is a prompted turn that has not closed, not a turn of its own.** It is the turn whose last record
+is the "waiting for the local user" result of `ask_user` or `request_feature_enable`. The reader's
+answer never reaches the trajectory file as a record — the tool result in the asking turn only ever
+says the questionnaire is waiting — so the turn that answers has no prompt of its own and is filed
+as a continuation: still conversation, still one reply. An earlier version filed *that* turn as 问答,
+which meant a turn could be labelled 问答 while the reader still had not answered, and turns holding
+hundreds of tool calls were labelled a Q&A. There is no record and no filter called 问答 for the same
+reason: nothing in the file describes one.
+
+**A message the reader sent while a turn was still running is filed as 追加, apart from 用户.** One turn can
+hold several of them — the prompt that opened it, plus whatever arrived while the agent was still
+working — and only the first counts as dialogue, so the message count and the turn count stop
+disagreeing. Nothing in the file marks it: compared field by field, a 追加 is byte-identical to a typed
+prompt in role, `stopReason`, api, model, provider, tokens and `producedBy`. The signal available is
+position — measured across every turn that has a prompt, it sits at record 1 or 2 and never further
+in — so this is an inference from ordering, not a fact the file asserts, and the detail panel says
+so where it shows.One model call produces one row per block, so a rail down the left edge joins the rows that arrived together — a response split into reasoning, answer and tool calls reads as one unit. A response that produced a single row shows a dot instead. The grouping is also stated in each row's tooltip, so it is never conveyed by position alone. Tool results are not model responses, carry no rail, and are not joined to the call that caused them.
 
 When a session has been compacted, the runtime does not trim it in place: it rotates the previous `messages.jsonl` into `snapshots/`, opens a new generation, and starts a fresh active file. **The ledger still shows the whole conversation.** The app walks the generation chain the same way the runtime does — it opens the active file, reads the generation that file declares, and steps back one generation at a time through the parent each file names — and then concatenates every reachable generation oldest-first. A snapshot whose parent generation is not exactly one lower ends the chain rather than being stitched on, and a snapshot the chain never reaches (a fork leaves those behind) is reported as an orphan instead of being shown.
 
@@ -87,7 +110,7 @@ The runtime database is opened in read-only mode. If it is missing, unreadable, 
 - The app depends on undocumented internal formats: the `v2/sessions` directory layout and the runtime database schema. A client update can change either, which may break session identification or parsing.
 - Session identification is an inference, not a binding. With one conversation active it is reliable; with none running it degrades to most-recently-written.
 - A single `messages.jsonl` is read up to 64 MB. Larger sessions are truncated and the page says so.
-- The ledger renders only the newest 200 records by default rather than using true virtual scrolling. A sticky window bar under the overview strip offers four explicit controls: switch the strip between equal width and a real time axis, load 200 earlier records, jump back to the latest 200, and show everything. "Show everything" builds every record in the session into the DOM at once and gets noticeably slower on large sessions; incoming records do not knock it back down to 200.
+- The ledger does not use virtual scrolling; every rendered row is a real element. The page therefore opens on the newest 200 records, and the window bar button switches to the whole session. The button names what pressing it will do, not the current state: 「显示全部」 at the default and 「显示最新 200 条」 once everything is showing, while the count beside it reports what is on screen. That full view is opt-in for a reason: on a 9,900-record session it is roughly 57,000 elements rebuilt every 2.5s poll, which was measured to freeze the page rather than be read. 「向上加载更早的 N 条」 widens the window in steps and a poll does not undo it. A sticky window bar under the overview strip offers that choice backers four explicit controls: switch the strip between equal width and a real time axis, load 200 earlier records, jump back to the latest 200, and show everything. "Show everything" builds every record in the session into the DOM at once and gets noticeably slower on large sessions; incoming records do not knock it back down to 200.
 - `messageCount` and `turnCount` in the session picker are estimates derived from a bounded prefix of the file; exact values come from the selected session.
 - Light theme token coverage is verified — every `--mcode-*` token the page consumes is defined for both themes — but its rendered appearance was not visually checked; the page was exercised under a dark system preference.
 

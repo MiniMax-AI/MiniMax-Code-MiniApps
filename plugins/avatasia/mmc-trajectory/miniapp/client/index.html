@@ -225,6 +225,17 @@
         transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
       }
 
+      /* `display:inline-flex` above outranks the user-agent [hidden] rule, so every `.btn` that
+         is toggled off with .hidden stayed on screen. The one that showed it is 「向上加载更早的
+         N 条」 in the window bar: its label is only written when there is something earlier to
+         load, so hiding it with no label to erase left a bordered empty button sitting between
+         the axis toggle and the window button. Same defect as .overview-clear below, and the
+         same fix — patched here on the class rather than on one instance, because every `.btn`
+         in this file can be toggled the same way. */
+      .btn[hidden] {
+        display: none;
+      }
+
       .btn:hover:not(:disabled) {
         background: var(--mcode-surface-muted);
         border-color: var(--mcode-border-strong);
@@ -478,12 +489,6 @@
         outline-offset: 2px;
       }
 
-      .toolbar-status {
-        margin: 0;
-        font-size: 12px;
-        color: var(--mcode-text-muted);
-      }
-
       /* ---------------- KPI strip ---------------- */
 
       .kpi-section {
@@ -561,13 +566,136 @@
         overflow-wrap: anywhere;
       }
 
+      /* The 对话轮次 card is the only one whose sub-line cannot be read off it — 收尾 +
+         提问轮 + 中断 has to be understood before it means anything. So it explains itself.
+         Driven by CSS, not JS: there is no show/hide call to leave stuck open if a render
+         lands mid-hover, and `:focus-visible` gives a keyboard the same thing a mouse gets.
+         `aria-describedby` names the very same node, so the explanation reaches a screen
+         reader whether or not anyone hovers anything. */
+      .kpi-card.has-tip {
+        position: relative;
+        cursor: help;
+      }
+
+      .kpi-tip {
+        position: absolute;
+        z-index: 6;
+        top: calc(100% + 4px);
+        left: 0;
+        width: max-content;
+        max-width: 300px;
+        padding: 8px 10px;
+        border: 1px solid var(--mcode-border-strong);
+        border-radius: 6px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font-size: 11px;
+        line-height: 1.6;
+        text-align: left;
+        /* opacity, not visibility: a hidden-from-display node drops out of the accessibility
+           tree, and this node is the aria-describedby target. */
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 120ms ease;
+      }
+
+      .kpi-card.has-tip:hover .kpi-tip,
+      .kpi-card.has-tip:focus-visible .kpi-tip,
+      .kpi-card.has-tip:focus-within .kpi-tip {
+        opacity: 1;
+      }
+
+      .kpi-tip-line + .kpi-tip-line {
+        margin-top: 5px;
+      }
+
+      .kpi-tip-line.is-head {
+        color: var(--mcode-text-muted);
+      }
+
+      /* 追加 and 压缩 on this line count RECORDS, and they are the same numbers the kind
+         chips filter — so they are spelled as the chips, inline. They go through the one
+         writer (onKindToggle) and say the same thing in the same words, so the number here
+         and the chip cannot drift apart: that would be two filters with two opinions again.
+         The four turn-outcome terms are a different axis and stay plain text. */
+      .kpi-link {
+        font: inherit;
+        color: inherit;
+        padding: 0 2px;
+        margin: 0;
+        border: 0;
+        border-radius: 3px;
+        background: none;
+        cursor: pointer;
+        text-decoration: underline dotted;
+        text-underline-offset: 3px;
+      }
+
+      .kpi-link[aria-pressed='false'] {
+        color: var(--mcode-text-subtle);
+        text-decoration: line-through;
+      }
+
+      .kpi-link:hover {
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+      }
+
+      .kpi-link:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
       .kpi-card.is-skeleton .kpi-value {
         color: var(--mcode-text-subtle);
       }
 
-      /* ---------------- view control (dsh TrajectoryToolbar) ----------------
-         Dimensions and states copied from the reference toolbar: a 20px control,
-         12px label, no fill until hovered or pressed. */
+      /* ---------------- kind filters (dsh TrajectoryToolbar) ----------------
+         Copied from the reference toolbar: a 20px control, 12px label, no fill until
+         hovered, and a code-font ⊟/⊞ glyph that says at a glance whether the kind is
+         on. The reference styles the glyph rather than the button, so the button stays
+         flat when pressed and only the mark changes. */
+
+      .traj-controls {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        display: flex;
+        flex: none;
+        align-items: center;
+        padding: 6px 16px;
+        background: var(--mcode-bg);
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .traj-controls-actions {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .tbtn-action {
+        padding: 0 5px;
+      }
+
+      .tbtn-glyph {
+        flex: none;
+        color: var(--mcode-text-muted);
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 14px;
+        line-height: 14px;
+      }
+
+      /* 「全部」 is the one control that is not about a single kind, so it leads the row
+         and carries a divider rather than a ⊟/⊞ — its state is "are they all on", which
+         the per-kind buttons already show one by one. */
+      .tbtn-all {
+        margin-right: 6px;
+        padding-left: 8px;
+        border-right: 1px solid var(--mcode-border);
+        border-radius: 0;
+      }
 
       .tbtn {
         display: inline-flex;
@@ -599,12 +727,30 @@
         outline-offset: 2px;
       }
 
+      /* Filled when pressed, because this one button *is* the setting it reports. The
+         kind buttons opt out of that fill below — see .tbtn-action. */
       .tbtn[aria-pressed='true'] {
         color: var(--mcode-accent);
         background: var(--mcode-selection);
         box-shadow: inset 0 0 0 1px var(--mcode-accent);
         font-weight: 600;
       }
+
+      /* COLOR override moved below on purpose: .tbtn-action[aria-pressed='true'] and
+         .tbtn[aria-pressed='true'] have the same specificity (0,2,0), so source order
+         decides. Declared above the generic rule, the kind buttons lost to it and
+         rendered as blue filled chips. Keep this block after that one. */
+      .tbtn-action[aria-pressed='true'] {
+        color: var(--mcode-text);
+        background: transparent;
+        box-shadow: none;
+        font-weight: 600;
+      }
+
+      .tbtn-action[aria-pressed='true'] .tbtn-glyph {
+        color: var(--mcode-text);
+      }
+
 
       .tbtn-icon {
         flex: none;
@@ -620,7 +766,7 @@
 
       .overview {
         position: sticky;
-        top: 0;
+        top: 32px;
         z-index: 4;
         border-bottom: 1px solid var(--mcode-border);
         user-select: none;
@@ -711,7 +857,8 @@
 
       .ov-span[data-kind='user'] { background: var(--mcode-accent); opacity: 1; }
 
-      .ov-span[data-kind='assistant'],
+      .ov-span[data-kind='reply'],
+      .ov-span[data-kind='narration'],
       .ov-span[data-kind='thinking'] {
         background: var(--mcode-text);
         opacity: 1;
@@ -1080,15 +1227,30 @@
         flex: none;
       }
 
+      .pill-steer {
+        color: var(--mcode-text-muted);
+        border-color: currentColor;
+        border-style: dashed;
+        background: var(--mcode-surface-muted);
+      }
       .pill-user {
         color: var(--mcode-accent);
         border-color: currentColor;
         background: var(--mcode-surface-muted);
       }
 
-      .pill-assistant {
+      /* 问答 keeps the prominent treatment its 助手 ancestor had: it is the record a
+         reader opened the page for. */
+      .pill-reply {
         color: var(--mcode-success);
         border-color: currentColor;
+      }
+
+      /* 过程 is the other 17x volume — preamble written on the way to a tool call — so it
+         reads as supporting detail, in the same family as 工具结果 and 系统. */
+      .pill-narration {
+        color: var(--mcode-text-muted);
+        border-style: dashed;
       }
 
       .pill-thinking {
@@ -1150,10 +1312,11 @@
 
       .window-bar {
         position: sticky;
-        /* Sticky offsets stack here: the overview strip owns 0–51 (the 50px plot plus its 1px
-           border), so a bar pinned at 0 would simply hide behind it. z-index 3 keeps the bar
-           under the overview (4) and over the turn head (2). */
-        top: 51px;
+        /* Sticky offsets stack here: the type row owns 0–32 and the overview strip owns
+           32–83 (32 + the 50px plot + its 1px border), so a bar pinned at 0 would simply
+           hide behind both of them. z-index 3 keeps it under the overview (4) and over the
+           turn head (2). */
+        top: 83px;
         z-index: 3;
         padding: 8px 16px;
         background: var(--mcode-bg);
@@ -1562,7 +1725,7 @@
         <div class="toolbar-row">
           <div class="field">
             <label class="field-label" for="session-select">会话</label>
-            <select id="session-select" aria-describedby="filter-status"></select>
+            <select id="session-select" aria-describedby="window-count"></select>
           </div>
           <div class="field" id="generation-field" hidden>
             <label class="field-label" for="generation-select">上下文代</label>
@@ -1574,48 +1737,6 @@
           </div>
         </div>
 
-        <nav class="chipbar" aria-label="轨迹筛选与显示">
-          <fieldset class="chips">
-            <legend class="legend">类型</legend>
-            <button type="button" class="chip" id="chip-all" aria-pressed="true">全部</button>
-            <label class="chip" data-kind="user">
-              <input type="checkbox" value="user" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>用户</span>
-            </label>
-            <label class="chip" data-kind="assistant">
-              <input type="checkbox" value="assistant" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>助手</span>
-            </label>
-            <label class="chip" data-kind="thinking">
-              <input type="checkbox" value="thinking" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>思考</span>
-            </label>
-            <label class="chip" data-kind="toolCall">
-              <input type="checkbox" value="toolCall" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>工具调用</span>
-            </label>
-            <label class="chip" data-kind="toolResult">
-              <input type="checkbox" value="toolResult" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>工具结果</span>
-            </label>
-            <label class="chip" data-kind="system">
-              <input type="checkbox" value="system" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>系统</span>
-            </label>
-            <label class="chip" data-kind="compaction">
-              <input type="checkbox" value="compaction" checked />
-              <span class="chip-mark" aria-hidden="true"></span>
-              <span>压缩</span>
-            </label>
-          </fieldset>
-          <p class="toolbar-status" id="filter-status" role="status">正在准备轨迹数据…</p>
-        </nav>
       </form>
 
       <section class="kpi-section" aria-labelledby="kpi-heading">
@@ -1630,6 +1751,60 @@
         </div>
         <div class="kpi-grid" id="kpi-grid"></div>
       </section>
+
+      <div class="traj-controls" id="kind-controls" role="toolbar" aria-label="按类型筛选轨迹" aria-controls="overview">
+        <nav class="traj-controls-actions" aria-label="按类型筛选轨迹">
+          <button type="button" class="tbtn tbtn-action tbtn-all" id="kind-all" aria-pressed="true"
+            aria-label="当前显示全部类型 · 点击只看空白" title="当前显示全部类型 · 点击只看空白">
+            <span>全部</span>
+          </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="user" aria-pressed="true"
+              aria-label="用户记录当前显示 · 点击隐藏" title="用户记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">用户</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="steer" aria-pressed="true"
+              aria-label="追加记录当前显示 · 点击隐藏" title="追加记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">追加</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="reply" aria-pressed="true"
+              aria-label="问答记录当前显示 · 点击隐藏" title="问答记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">答复</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="narration" aria-pressed="true"
+              aria-label="过程记录当前显示 · 点击隐藏" title="过程记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">过程</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="thinking" aria-pressed="true"
+              aria-label="思考记录当前显示 · 点击隐藏" title="思考记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">思考</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="toolCall" aria-pressed="true"
+              aria-label="工具调用记录当前显示 · 点击隐藏" title="工具调用记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">工具调用</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="toolResult" aria-pressed="true"
+              aria-label="工具结果记录当前显示 · 点击隐藏" title="工具结果记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">工具结果</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="system" aria-pressed="true"
+              aria-label="系统记录当前显示 · 点击隐藏" title="系统记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">系统</span>
+            </button>
+            <button type="button" class="tbtn tbtn-action" data-kind="compaction" aria-pressed="true"
+              aria-label="压缩记录当前显示 · 点击隐藏" title="压缩记录当前显示 · 点击隐藏">
+              <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+              <span class="tbtn-label">压缩</span>
+            </button>
+        </nav>
+        </div>
 
       <section class="overview" id="overview" aria-labelledby="overview-heading">
         <h2 class="sr-only" id="overview-heading">轨迹总览</h2>
@@ -1697,7 +1872,7 @@
       <footer class="page-footer">
         <p id="footer-source">数据来源：本机 MiniMax Code 会话记录，只读展示，不做任何写入。</p>
         <p id="footer-binding"></p>
-        <p id="footer-truncated" hidden>文件过大，仅显示前 8 MB。</p>
+        <p id="footer-truncated" hidden>文件过大，仅显示前一部分。</p>
       </footer>
     </div>
 
@@ -1712,7 +1887,9 @@
 
       var KIND_LABELS = {
         user: '用户',
-        assistant: '助手',
+        steer: '追加',
+        reply: '答复',
+        narration: '过程',
         thinking: '思考',
         toolCall: '工具调用',
         toolResult: '工具结果',
@@ -1723,7 +1900,7 @@
       // 压缩 is last on purpose. It is written by the runtime like 系统 is, but it is a
       // context checkpoint rather than a note about the run, and putting it next to 系统
       // would invite reading the two as one category.
-      var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system', 'compaction'];
+      var KIND_ORDER = ['user', 'steer', 'reply', 'narration', 'thinking', 'toolCall', 'toolResult', 'system', 'compaction'];
 
       // The type chips are the only filter. Which record kinds are visible is one array —
       // state.kinds — and every control that changes it writes to that array and nowhere
@@ -2025,7 +2202,7 @@
           lines.push('- 会话：' + (session.label ? session.label + '（' + session.id + '）' : session.id));
         }
         var turnIndex = turn && isCount(turn.index) ? turn.index : null;
-        lines.push('- 轮次：' + (turnIndex === null ? DASH : '轮次 ' + turnIndex));
+        lines.push('- 轮次：' + (turnIndex === null ? DASH : '第 ' + turnIndex + ' 轮'));
         lines.push('- 记录：#' + (isCount(record.index) ? record.index : DASH) + ' · ' + kindLabel(record));
         if (record.role) lines.push('- 角色：' + record.role);
         if (record.toolName) lines.push('- 工具：' + record.toolName + (record.toolCallId ? '（' + record.toolCallId + '）' : ''));
@@ -2148,6 +2325,10 @@
       var POLL_INTERVAL = 2500;
       var PAGE_STEP = 200;
       var SEARCH_DEBOUNCE = 200;
+      // Which window the page opens on, and which every reset returns to. A constant rather
+      // than a literal at the eight call sites, so that changing the default cannot leave half
+      // the resets quoting the old one — the failure that had to be fixed once already.
+      var DEFAULT_WINDOW_MODE = 'latest';
       // Declared here, with the other constants, because `state` below reads it on the
       // very first line of initialisation. A `var` further down the same scope is
       // hoisted but still `undefined` at that moment, so the read would silently
@@ -2192,6 +2373,12 @@
         // re-pin the window to the newest page, which would have thrown 「全部」 back to 200
         // the instant a record landed. This flag is what says "the reader asked for all of
         // it", so a growing session extends the view instead of cancelling it.
+        //
+        // It opens OFF, and that is not a shortcut: 全部 renders every record of the session as
+        // real DOM — around 9,900 rows and 57,000 elements on this one — with no virtual
+        // scrolling, rebuilt on every 2.5s poll. On load that froze the page outright (a single
+        // inspect took 13.7s, a click 5.4s), which was measured, not estimated. So 全部 is
+        // something a reader asks for and can live with, not something the page does to them.
         allRecords: false,
         activeTab: 'summary',
         hostSessionId: detectHostSessionId(),
@@ -2222,14 +2409,13 @@
         dom.errorText = document.getElementById('error-text');
         dom.staleBar = document.getElementById('stale-bar');
         dom.toolbar = document.getElementById('toolbar');
+        dom.kindControls = document.getElementById('kind-controls');
         dom.sessionSelect = document.getElementById('session-select');
         dom.generationField = document.getElementById('generation-field');
         dom.generationSelect = document.getElementById('generation-select');
         dom.generationHint = document.getElementById('generation-hint');
         dom.searchInput = document.getElementById('search-input');
         dom.windowBar = document.getElementById('window-bar');
-        dom.chipAll = document.getElementById('chip-all');
-        dom.filterStatus = document.getElementById('filter-status');
         dom.headerToggle = document.getElementById('header-toggle');
         dom.kpiToggle = document.getElementById('kpi-toggle');
         dom.kpiGrid = document.getElementById('kpi-grid');
@@ -2477,21 +2663,169 @@
 
       /* ---------------- rendering: KPI ---------------- */
 
-      function kpiCard(label, value, sub, skeleton) {
+      /**
+ * One KPI card. `sub` may be a string or a node, because 对话轮次 needs its line to carry
+ * two live controls. `tip` is an array of lines rendered into the card and named by
+ * aria-describedby; pass tipId to keep that id stable across renders.
+ */
+      function kpiCard(label, value, sub, skeleton, tipId, tip) {
         var card = el('div', 'kpi-card' + (skeleton ? ' is-skeleton' : ''));
+        var explained = Boolean(tipId && tip && tip.length);
+        if (explained) {
+          card.classList.add('has-tip');
+          card.setAttribute('tabindex', '0');
+          card.setAttribute('aria-describedby', tipId);
+        }
         card.appendChild(el('span', 'kpi-label', label));
         card.appendChild(el('span', 'kpi-value', value));
-        card.appendChild(el('span', 'kpi-sub', sub));
+        card.appendChild(typeof sub === 'string' ? el('span', 'kpi-sub', sub) : sub);
+        if (explained) {
+          var tipNode = el('div', 'kpi-tip');
+          tipNode.id = tipId;
+          tipNode.setAttribute('role', 'tooltip');
+          for (var i = 0; i < tip.length; i += 1) {
+            tipNode.appendChild(el('p', 'kpi-tip-line' + (i === 0 ? ' is-head' : ''), tip[i]));
+          }
+          card.appendChild(tipNode);
+        }
         return card;
       }
 
-      // One label per part of a turn total, in the order a reader would count them.
+      /**
+       * How each conversation turn ended. These three sum to the headline by construction.
+       *
+       * The reason 收尾 and 提问轮 are separate numbers, rather than one 已收尾: a turn that
+       * stops to ask the reader does not lose its answer. Measured over every turn that asked,
+       * all of them were answered — but ask_user ends the turn, so the answer arrives in the
+       * *next* turn, which carries no prompt of its own. 收尾 is 收尾 because the reply is inside
+       * it; 提问轮 is a turn whose reply sits in its successor. Those two add up to the 答复
+       * count exactly, which is why the reply count can be read off this line.
+       *
+       * 中断 is the only part with no reply anywhere: cut off at a compaction, or still running.
+       */
       function turnBreakdown(stats) {
-        var parts = ['对话 ' + formatInt(stats.turnsWithPrompt)];
-        if (isCount(stats.qaTurns) && stats.qaTurns > 0) parts.push('问答 ' + formatInt(stats.qaTurns));
-        if (isCount(stats.compactionTurns) && stats.compactionTurns > 0) parts.push('压缩 ' + formatInt(stats.compactionTurns));
-        if (isCount(stats.turnsWithoutPrompt) && stats.turnsWithoutPrompt > 0) parts.push('其他 ' + formatInt(stats.turnsWithoutPrompt));
+        var total = isCount(stats.turnsWithPrompt) ? stats.turnsWithPrompt : 0;
+        var asked = isCount(stats.qaTurns) ? stats.qaTurns : 0;
+        var open = isCount(stats.openTurns) ? stats.openTurns : 0;
+        var parts = [
+          '收尾 ' + formatInt(Math.max(0, total - open)),
+          '提问轮 ' + formatInt(asked)
+        ];
+        if (open > asked) parts.push('中断 ' + formatInt(open - asked));
         return parts.join(' · ');
+      }
+
+      /**
+       * What the turn count leaves out — a DIFFERENT population, not more of the same one.
+       * A checkpoint is not a conversation and a continuation is not a new one.
+       *
+       * This line used to sit in the same `·`-separated run as the breakdown, which put two
+       * numbers worth 5 side by side: 续作答答 (the turns that stopped to ask) and 续作 (the
+       * prompt-less turns that carried the answers). They are disjoint — overlap measured 0 —
+       * but read as one list they look like the same five counted twice. 另有 marks the
+       * boundary so the second group cannot be added to the first by eye.
+       */
+      function turnContext(stats) {
+        return turnContextParts(stats).map(function (p) {
+          return p.label + ' ' + p.value;
+        }).join(' · ');
+      }
+
+      /**
+       * The out-of-headline terms, each tagged with the kind it stands for — or null when it
+       * counts turns rather than records. 追加 is the steer records and 压缩 is the compaction
+       * records, so those two are literally what the chips filter. The rest count turns, which
+       * no kind filter can express: a 收尾 turn holds eight different kinds at once.
+       */
+      function turnContextParts(stats) {
+        var parts = [];
+        if (isCount(stats.steers) && stats.steers > 0) {
+          parts.push({ label: '追加', value: formatInt(stats.steers), kind: 'steer' });
+        }
+        if (isCount(stats.compactionTurns) && stats.compactionTurns > 0) {
+          parts.push({ label: '压缩', value: formatInt(stats.compactionTurns), kind: 'compaction' });
+        }
+        if (isCount(stats.continuationTurns) && stats.continuationTurns > 0) {
+          parts.push({ label: '续作轮', value: formatInt(stats.continuationTurns), kind: null });
+        }
+        return parts;
+      }
+
+      function turnContextSuffix(stats) {
+        var context = turnContext(stats);
+        return context ? '   ·   另有 ' + context : '';
+      }
+
+      /**
+       * The same line, with the two record-counting terms as live controls. Pressed state is
+       * read from state.kinds, so it is the same state the chips show and cannot disagree;
+       * the accessible name is the chip's, word for word.
+       */
+      function turnSubNode(stats) {
+        var wrap = el('span', 'kpi-sub');
+        wrap.appendChild(document.createTextNode(turnBreakdown(stats)));
+        var parts = turnContextParts(stats);
+        if (!parts.length) return wrap;
+        wrap.appendChild(document.createTextNode('   ·   另有 '));
+        for (var i = 0; i < parts.length; i += 1) {
+          if (i > 0) wrap.appendChild(document.createTextNode(' · '));
+          var part = parts[i];
+          if (!part.kind) {
+            wrap.appendChild(document.createTextNode(part.label + ' ' + part.value));
+            continue;
+          }
+          var on = state.kinds.indexOf(part.kind) >= 0;
+          var noun = KIND_LABELS[part.kind] || part.label;
+          var button = el('button', 'kpi-link', part.label + ' ' + part.value);
+          button.type = 'button';
+          button.setAttribute('data-kind', part.kind);
+          button.setAttribute('aria-pressed', on ? 'true' : 'false');
+          var name = noun + (on ? '记录当前显示 · 点击隐藏' : '记录当前已隐藏 · 点击显示');
+          button.setAttribute('aria-label', name);
+          button.setAttribute('title', name);
+          button.addEventListener('click', function (event) {
+            var kind = event.currentTarget.getAttribute('data-kind');
+            // Read state.kinds at click time rather than closing over `on`: this card is
+            // re-rendered on a poll, and a captured flag would go stale between the render
+            // and the click — the symptom being a link that looks off but filters on, or the
+            // reverse. state.kinds is the one place the answer lives.
+            onKindToggle(kind, state.kinds.indexOf(kind) < 0);
+          });
+          wrap.appendChild(button);
+        }
+        return wrap;
+      }
+
+      /** What the 对话轮次 line cannot say by looking at it. Kept to six lines: it opens under the
+       * card and covers the kind chips, so every extra line hides the thing it points at. */
+      function turnTipLines(stats) {
+        var total = isCount(stats.turnsWithPrompt) ? stats.turnsWithPrompt : 0;
+        var asked = isCount(stats.qaTurns) ? stats.qaTurns : 0;
+        var open = isCount(stats.openTurns) ? stats.openTurns : 0;
+        return [
+          '对话轮次 = 首条是你打字消息的轮次数',
+          '收尾 ' + formatInt(Math.max(0, total - open)) + ' · 答复在本轮内交付',
+          '提问轮 ' + formatInt(asked) + ' · 停下来问你了，答复落在下一轮',
+          '中断 ' + formatInt(Math.max(0, open - asked)) + ' · 既没答复也没提问，唯一真缺答复的',
+          '三个相加 = 大数字；答复数 = 大数字 − 中断',
+          '另有 · 追加与压缩是记录数，点它等于点同名标签；续作轮是提问轮的答复所在'
+        ];
+      }
+
+      /**
+       * The panel title describes the table and nothing else: 「第 82–84 轮」 is the range of
+       * turns actually rendered below it, so it can never contradict the first header.
+       *
+       * The session total deliberately does NOT live here. Putting 「共 84 轮」 next to a table
+       * that starts at 第 82 轮 invited exactly the reading "these should be equal" — and they
+       * are not, because the default window holds only the newest 200 records and one of those
+       * turns alone holds 183 of them. The total is still on screen, on the window bar beside
+       * how many records are not loaded, which is the question it actually answers.
+       */
+      function turnRangeLabel(firstTurn, lastTurn) {
+        if (!isCount(firstTurn) || !isCount(lastTurn)) return DASH;
+        if (firstTurn === lastTurn) return '第 ' + formatInt(firstTurn) + ' 轮';
+        return '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';
       }
 
       function renderKpi() {
@@ -2532,7 +2866,8 @@
           kpiCard(
             '消息',
             formatInt(stats.messages),
-            '用户 ' + formatInt(stats.userMessages) + ' · 助手 ' + formatInt(stats.assistantMessages) +
+            '用户 ' + formatInt(stats.userMessages) +
+            (isCount(stats.steers) && stats.steers > 0 ? ' · 追加 ' + formatInt(stats.steers) : '') +
             ' · 思考块 ' + formatInt(stats.thinkingBlocks) + compactionNote + rotationNote
           )
         );
@@ -2547,12 +2882,17 @@
         grid.appendChild(
           kpiCard(
             '对话轮次',
-            formatInt(stats.turns),
-            // Spell out what the total is made of. A raw turn count is the number most likely
-            // to be misread as "how many things I typed": a checkpoint is not conversation,
-            // and a reply that arrived through a question card never became a typed message.
-            // Only the parts that are actually present are listed.
-            turnBreakdown(stats)
+            formatInt(isCount(stats.turnsWithPrompt) ? stats.turnsWithPrompt : 0),
+            // The headline is the number of turns the reader typed into — not every turn_id
+            // group in the file, which also holds checkpoints and the continuation that
+            // follows each question. The first group says how each one ended and sums to the
+            // number above; 另有 then starts a different population, the turns the headline
+            // leaves out, which must never be added to the first group. The two terms that
+            // count records are the kind chips, inline and live.
+            turnSubNode(stats),
+            false,
+            'kpi-tip-turns',
+            turnTipLines(stats)
           )
         );
         grid.appendChild(
@@ -2628,7 +2968,7 @@
       function overviewLane(record) {
         var kind = record && record.kind;
         if (kind === 'toolCall' || kind === 'toolResult') return 2;
-        if (kind === 'assistant' || kind === 'thinking') return 1;
+        if (kind === 'reply' || kind === 'narration' || kind === 'thinking') return 1;
         return 0;
       }
 
@@ -2656,7 +2996,7 @@
           var duration = isCount(record.durationMs) ? Math.max(0, record.durationMs) : 0;
           return { start: timestamp, end: timestamp + duration, measured: duration > 0 };
         }
-        if (record.kind === 'assistant' || record.kind === 'thinking') {
+        if (record.kind === 'reply' || record.kind === 'narration' || record.kind === 'thinking') {
           var from = prevTimestamp === null || prevTimestamp >= timestamp ? timestamp : prevTimestamp;
           return { start: from, end: timestamp, measured: from !== timestamp };
         }
@@ -2883,7 +3223,7 @@
         abortOverviewDrag();
         state.overviewSelection = null;
         state.overviewViewport = null;
-        setWindowMode('latest');
+        resetWindowMode();
         renderOverview();
         renderLedger();
       }
@@ -2896,7 +3236,7 @@
         // in the other. Reset rather than reinterpret.
         state.overviewSelection = null;
         state.overviewViewport = null;
-        setWindowMode('latest');
+        resetWindowMode();
         renderOverview();
         renderLedger();
       }
@@ -2955,6 +3295,7 @@
         dom.headerToggle.setAttribute('aria-label', filterLabel);
         dom.headerToggle.setAttribute('title', filterLabel);
         dom.toolbar.hidden = !filtersOpen;
+        dom.kindControls.hidden = !filtersOpen;
 
         var kpiOpen = !state.kpiCollapsed;
         dom.kpiToggle.setAttribute('aria-expanded', kpiOpen ? 'true' : 'false');
@@ -3197,7 +3538,7 @@
           end = center + minimum / 2;
         }
         state.overviewSelection = { start: start, end: end };
-        setWindowMode('latest');
+        resetWindowMode();
         renderOverviewSelection();
         renderLedger();
       }
@@ -3392,7 +3733,9 @@
 
       function kindTone(kind) {
         if (kind === 'user') return 'user';
-        if (kind === 'assistant') return 'assistant';
+        if (kind === 'steer') return 'steer';
+        if (kind === 'reply') return 'reply';
+        if (kind === 'narration') return 'narration';
         if (kind === 'thinking') return 'thinking';
         if (kind === 'toolCall') return 'toolcall';
         if (kind === 'toolResult') return 'toolresult';
@@ -3458,7 +3801,7 @@
         // control that does nothing is worse than no control.
         var head = el('div', 'turn-head turn-head-static');
 
-        var title = '轮次 ' + (isCount(turn.index) ? turn.index : DASH);
+        var title = '第 ' + (isCount(turn.index) ? turn.index : DASH) + ' 轮';
         head.appendChild(el('span', 'turn-title', title));
 
         // Under a filter, describe the visible rows; otherwise trust the server's
@@ -3471,7 +3814,9 @@
         var durationMs = filtered ? totals.durationMs : turn.durationMs;
 
         var meta = el('span', 'turn-meta');
-        if (filtered) meta.appendChild(el('span', 'note', '筛选后'));
+        // No "filtered" badge here. Under a filter the numbers themselves already change —
+        // a tool-call count that drops out of a row is the signal, and a label repeating it
+        // on every single turn is the noise.
         // A filtered turn with no tool work left has no tool-call figure to print;
         // showing a column of zeroes beside every row would read as data, not absence.
         if (!filtered || toolCalls > 0) {
@@ -3527,11 +3872,16 @@
       /**
        * How much of the session the ledger shows.
        *
-       * 'latest' keeps the newest PAGE_STEP records and follows the tail; 'all' drops the
-       * cap so the growing session simply extends the view. Anything that changes what the
-       * numbers mean — a filter, a new session, a fresh search, a brush — resets to
-       * 'latest', because a stale "show everything" from before the filter would otherwise
-       * reappear holding records the reader had just excluded.
+       * 'all' drops the cap so the whole session renders and a growing one simply extends the
+       * view; 'latest' keeps the newest PAGE_STEP records. It opens on 'all' — see the `state`
+       * field — so the default lives in one place and every reset below quotes it rather than
+       * naming a mode, which is how a flipped default silently leaves half the resets behind.
+       *
+       * Anything that changes what the numbers mean — a filter, a new session, a fresh search,
+       * a brush, a generation pin — resets to the default. Resetting is not about shrinking the
+       * window: it is about discarding a window that was chosen for a set of records which no
+       * longer exists. A reader who was looking at only the newest 200 and then brushes an
+       * older range must not be left with a 200-row cap over a range holding thousands.
        *
        * @param {'latest'|'all'} mode
        */
@@ -3541,17 +3891,37 @@
       }
 
       /**
+       * Back to whatever the page opens on.
+       *
+       * It must not read `state.allRecords`. A reset is by definition called *because* the
+       * current window is about to become meaningless, so asking the current window what to
+       * reset to would preserve exactly the value that has to be discarded. The default is a
+       * constant, and every reset quotes it — which is also why flipping the default is one
+       * edit here rather than seven scattered across the file.
+       */
+      function resetWindowMode() {
+        setWindowMode(DEFAULT_WINDOW_MODE);
+      }
+
+      /**
        * What happens to the window when a poll brings new records.
        *
-       * Only the tail-following window re-pins to the newest page — that is what makes it
-       * follow. 「全部」 must not re-pin, or the first record to arrive after the click
-       * would cancel it, and the reader would be thrown back to 200 records without ever
-       * being told why.
+       * 全部 must not re-pin, or the first record to arrive after the click would cancel it
+       * and the reader would be thrown back to 200 records without ever being told why.
+       *
+       * 「向上加载更早的 N 条」 must not re-pin either, and that is the older of the two.
+       * `limit` is the reader's own choice, not a cache: at exactly PAGE_STEP the window is
+       * following the tail and re-pinning is what makes it follow, but above PAGE_STEP the
+       * reader pressed a button asking for more, and a poll that resets the limit takes that
+       * back without saying so. The button re-rendered and appeared to do nothing — the only
+       * reason it was not noticed is that this session grows by a few records per second, so
+       * the count stayed near 200 either way. Growing the session hid a dead control.
        *
        * @returns {number} the limit now in force
        */
       function rePinWindow() {
         if (state.allRecords) return state.limit;
+        if (state.limit > PAGE_STEP) return state.limit;
         state.limit = Math.min(PAGE_STEP, state.flat.length) || PAGE_STEP;
         return state.limit;
       }
@@ -3597,14 +3967,13 @@
             )
           );
           dom.ledgerMeta.textContent = '共 0 条';
-          updateFilterStatus(0, 0);
+          applyFilterScope();
           return;
         }
 
         var matched = visibleEntries();
         var total = state.flat.length;
-        updateFilterStatus(matched.length, total);
-        dom.ledgerMeta.textContent = '轮次 ' + (state.payload.stats ? formatInt(state.payload.stats.turns) : DASH);
+        applyFilterScope();
 
         if (matched.length === 0) {
           var reset = el('button', 'btn', '清除筛选');
@@ -3624,10 +3993,20 @@
         updateWindowBar(windowed, hiddenAbove, total);
 
         var groups = visibleTurns(windowed);
+
+        // The title states the total, and — when the window does not start at the first turn —
+        // the range that is actually on screen. Without the range, a title of 「共 83 轮」 above
+        // a table whose first header reads 「第 81 轮」 looks like the total is wrong or that
+        // turns 1–80 vanished. Both numbers were right; the window simply starts mid-session,
+        // and this is the only place that can say so.
+        var firstTurn = groups.length ? groups[0].turn.index : null;
+        var lastTurn = groups.length ? groups[groups.length - 1].turn.index : null;
+        dom.ledgerMeta.textContent = turnRangeLabel(firstTurn, lastTurn);
+
         for (var i = 0; i < groups.length; i += 1) {
           var group = groups[i];
           var section = el('section', 'turn-group');
-          section.setAttribute('aria-label', '轮次 ' + (isCount(group.turn.index) ? group.turn.index : DASH));
+          section.setAttribute('aria-label', '第 ' + (isCount(group.turn.index) ? group.turn.index : DASH) + ' 轮');
           section.appendChild(buildTurnHead(group.turn, group.entries));
           var list = el('ul', 'row-list');
           // Every entry that survived the filters becomes a row. There is no second pass
@@ -3675,9 +4054,13 @@
 
         applyAxisButton(parts.axis);
         applyWindowMode(parts, hiddenAbove);
+        // The session's total turn count lives here, beside the record counts it explains —
+        // not in the panel title, which describes only the rows on screen.
+        var sessionTurns = state.payload && state.payload.stats ? state.payload.stats.turns : null;
         parts.count.textContent =
-          '已显示 ' + formatInt(shown.length) + ' / 共 ' + formatInt(total) + ' 条记录' +
-          (hiddenAbove > 0 ? '（更早的 ' + formatInt(hiddenAbove) + ' 条尚未加载）' : '');
+          (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +
+          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +
+          (hiddenAbove > 0 ? ' · 更早的 ' + formatInt(hiddenAbove) + ' 条未加载' : '');
       }
 
       /** One-time construction. Every handler is attached here and never moves again. */
@@ -3701,58 +4084,105 @@
           // No scroll correction here on purpose: renderLedger anchors on the topmost
           // visible row and puts it back, so adding a second adjustment here would
           // double-count the shift and leave the page visibly off.
+          //
+          // Guarded, because this button is meaningless in 全部: state.limit is Infinity there,
+          // and Infinity + 200 is still Infinity, so the click would re-render and change
+          // nothing — a control that looks live and is not. It is hidden in that mode, so the
+          // branch is unreachable through the UI; the guard is there so that hiding it can
+          // never be the only thing standing between a reader and a button that does nothing.
+          if (state.allRecords) return;
           state.limit += PAGE_STEP;
           renderLedger();
         });
         actions.appendChild(more);
 
-        var latest = el('button', 'btn btn-quiet');
-        latest.type = 'button';
-        latest.addEventListener('click', function () {
-          setWindowMode('latest');
+        // One button for the one choice. It was two — 「只看最新 200 条」 and 「已显示全部」 —
+        // and the first one relabelled itself to the second one's wording once you were
+        // already showing everything, which made the row read as three controls for two
+        // states. The label names the state you are in; the accessible name names the action.
+        //
+        // Clicking it must not move the page. It used to scroll to the tail whenever it
+        // narrowed the window, on the theory that "back to the tail" should land on the newest
+        // record. But the reader clicked a control in a bar they were already looking at, so
+        // the one thing they did not ask for is the viewport jumping thousands of pixels: the
+        // row under the cursor changed and everything they had been reading left the screen.
+        // renderLedger already anchors on the topmost visible row and puts it back, which is
+        // the correct behaviour here — the anchor is the row the reader was on, not the newest
+        // record in the session.
+        var mode = el('button', 'btn');
+        mode.type = 'button';
+        mode.addEventListener('click', function () {
+          setWindowMode(state.allRecords ? 'latest' : 'all');
           renderLedger();
-          // Back to the tail means back to the tail: land on the newest record rather
-          // than wherever the 4,000-row view happened to leave the reader.
-          var doc = document.documentElement;
-          window.scrollTo(0, Math.max(doc.scrollHeight, document.body.scrollHeight));
         });
-        actions.appendChild(latest);
-
-        var all = el('button', 'btn');
-        all.type = 'button';
-        all.addEventListener('click', function () {
-          setWindowMode('all');
-          renderLedger();
-        });
-        actions.appendChild(all);
+        actions.appendChild(mode);
 
         // Count last, pushed to the far edge. Sitting it between the buttons made the row
         // wrap on any session with a five-figure record count.
         var count = el('span', 'window-bar-count');
+        count.id = 'window-count';
+        count.setAttribute('role', 'status');
         actions.appendChild(count);
 
-        return { actions: actions, axis: axis, more: more, latest: latest, all: all, count: count };
+        return { actions: actions, axis: axis, more: more, mode: mode, count: count };
       }
 
       /**
-       * 「只看最新」 and 「全部显示」 are each other's inverse, so exactly one is offered at
-       * any moment, and the other is stated as the way back. Reading the same button as
-       * both would make its pressed state mean "whichever is currently not true".
+       * The mode button names the action; the count beside it names the state.
+       *
+       * They are not saying the same thing twice, and they must not be made to. The count is
+       * the report — 已显示 200 条, 更早的 9,783 条未加载 — and it is the only thing on the row
+       * that tells you what you are looking at. The button is the offer, and what it offers is
+       * by definition not what you already have: from the newest 200, the whole session; from
+       * everything, back to one page. A button that restates the current state is a button
+       * whose text changes to tell you nothing new.
+       *
+       * It was briefly written the other way and read as a contradiction, because at the time
+       * the label and the count were describing the same quantity with different wording —
+       * 「只看最新 200 条」 above 「已显示 200 条」. Naming the action dissolves that rather than
+       * causing it: the two now answer different questions, and neither can contradict the
+       * other because neither claims to be the other.
+       *
+       * 「显示全部」 and 「显示最新 N 条」 are each other's inverse, so exactly one is offered at
+       * any moment and the other is the way back.
        */
       function applyWindowMode(parts, hiddenAbove) {
         parts.more.hidden = hiddenAbove <= 0;
-        if (hiddenAbove > 0) {
-          parts.more.textContent = '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, hiddenAbove)) + ' 条';
-        }
-        parts.latest.textContent = state.allRecords
-          ? '已显示全部 · 点此只看最新'
-          : '只看最新 ' + formatInt(PAGE_STEP) + ' 条';
-        parts.latest.setAttribute('aria-pressed', state.allRecords ? 'false' : 'true');
-        parts.latest.classList.toggle('btn-quiet', !state.allRecords);
-        parts.all.textContent = '已显示全部';
-        parts.all.setAttribute('aria-pressed', state.allRecords ? 'true' : 'false');
-        parts.all.disabled = state.allRecords;
-        parts.all.classList.toggle('btn-quiet', !state.allRecords);
+        // The label is written unconditionally, not only when the button is showing. Its text
+        // is the only record of what the button would do, and a `.btn` carrying `hidden` but no
+        // label is an empty bordered box — which is exactly what this button was on load, for
+        // one extra reason: [hidden] was losing to `display:inline-flex` (see .btn[hidden]).
+        // Writing it always means the button cannot render blank even if it is ever shown by
+        // something other than this function.
+        parts.more.textContent = '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, Math.max(hiddenAbove, 0))) + ' 条';
+        // The button names the ACTION: it says what pressing it will do, which is the only
+        // information the reader does not already have. The state is already on screen — the
+        // count beside this button reports 已显示 200 条 or 已显示 9,977 条, and the page title
+        // says which turns that covers — so a label restating it spends its width saying
+        // nothing. At the default the window already holds only the newest 200, so the one
+        // thing worth offering is the whole session; once everything is shown, the one thing
+        // worth offering is going back to a page.
+        //
+        // It went the other way twice. Describing the state put 「只看最新 200 条」 next to
+        // 「已显示 200 条」 — the button echoing the count beside it. Describing the state after
+        // a second change put 「已显示全部」 on a page showing everything, which is true and
+        // therefore tells you nothing about the button. Naming the action is what both cases
+        // need.
+        parts.mode.textContent = state.allRecords ? '显示最新 ' + formatInt(PAGE_STEP) + ' 条' : '显示全部';
+        // aria-pressed describes the STATE, not the action: pressed means "the whole session is
+        // showing". The visible label says what pressing it will do, which is the opposite
+        // tense, and that is normal — it is why the accessible name above repeats the state.
+        parts.mode.setAttribute('aria-pressed', state.allRecords ? 'true' : 'false');
+        // Quiet while showing everything: there is nothing to reveal, and the one offer left
+        // is a step back.
+        parts.mode.classList.toggle('btn-quiet', state.allRecords);
+        // The accessible name carries the state, since the action is already the visible text
+        // and a screen reader reads the label first. It is what the button is *pressed* as, so
+        // naming it is also what makes aria-pressed mean something.
+        var modeLabel = state.allRecords ? '正在显示全部记录 · 点击改为只显示最新 ' + formatInt(PAGE_STEP) + ' 条'
+                                        : '正在只显示最新 ' + formatInt(PAGE_STEP) + ' 条 · 点击显示全部';
+        parts.mode.setAttribute('aria-label', modeLabel);
+        parts.mode.setAttribute('title', modeLabel);
       }
 
       /** The topmost row that intersects the viewport, as {id, top}, or null. */
@@ -3824,13 +4254,13 @@
         renderInspector();
       }
 
-      function updateFilterStatus(matched, total) {
-        dom.filterStatus.textContent = '命中 ' + formatInt(matched) + ' / 共 ' + formatInt(total) + ' 条';
-        // The KPI cards are deliberately whole-session — the point of that panel is the
-        // session's shape, not the current query's. But a reader who just turned every
-        // tool result off and still reads "结果 1,409" directly underneath will conclude
-        // the filter failed, so the panel has to say which number it is showing. This is
-        // the one place every filter change passes through, kind chips and search alike.
+      /**
+       * The record counts live on the window bar, one line, where the buttons that change
+       * them are. This only carries the fact no count can: that the KPI cards underneath
+       * are whole-session numbers, not the current query's. Every filter change passes
+       * through here, kind buttons and search alike.
+       */
+      function applyFilterScope() {
         if (dom.kpiScope) dom.kpiScope.hidden = !isFiltering();
       }
 
@@ -3848,9 +4278,9 @@
       function clearFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
-        setWindowMode('latest');
+        resetWindowMode();
         if (dom.searchInput) dom.searchInput.value = '';
-        syncChipInputs();
+        syncKindButtons();
         render();
       }
 
@@ -3912,7 +4342,7 @@
         var turn = entry.turn;
         var turnIndex = isCount(turn && turn.index) ? turn.index : null;
         dom.inspectorLocator.textContent =
-          '轮次 ' + (turnIndex === null ? DASH : turnIndex) + ' · #' + (isCount(record.index) ? record.index : DASH) +
+          '第 ' + (turnIndex === null ? DASH : turnIndex) + ' 轮 · #' + (isCount(record.index) ? record.index : DASH) +
           ' · ' + kindLabel(record);
         dom.inspectorMeta.textContent = record.id ? '记录 ' + record.id : '';
         dom.tablist.hidden = false;
@@ -4029,7 +4459,11 @@
         table.appendChild(caption);
         kvRow(table, '类型', record.kind === 'compaction' ? '压缩（上下文检查点）' : kindLabel(record));
         kvRow(table, '角色', isNil(record.role) ? DASH : String(record.role));
-        kvRow(table, '轮次', isCount(turn && turn.index) ? '轮次 ' + turn.index : DASH);
+        // A steer is a message the reader sent while this turn was still running. The file
+        // records nothing that says so — it is filed apart from the prompt that opened the
+        // turn by position — so the detail panel is where that inference gets stated.
+        if (record.steered) kvRow(table, '来源', '运行中追加（这一轮还没结束就发了过来）');
+        kvRow(table, '轮次', isCount(turn && turn.index) ? '第 ' + turn.index + ' 轮' : DASH);
         kvRow(table, '记录序号', isCount(record.index) ? '#' + record.index : DASH);
         if (record.tokensBefore !== null && record.tokensBefore !== undefined) {
           kvRow(table, '压缩前上下文', formatInt(record.tokensBefore) + ' tokens');
@@ -4417,6 +4851,11 @@
       function renderFooter() {
         var session = state.payload ? state.payload.session : null;
         dom.footerTruncated.hidden = !(session && session.truncated);
+        // The server sends the cap it actually applied. Printing a number of its own meant the
+        // markup could drift from MAX_MESSAGE_BYTES and quietly under-report how much was cut.
+        if (session && isCount(session.maxMessageBytes)) {
+          dom.footerTruncated.textContent = '文件过大，仅显示前 ' + formatBytes(session.maxMessageBytes) + '。';
+        }
         // Say plainly which conversation is on screen and how we know it.
         var binding = session ? session.binding : null;
         if (!session) {
@@ -4462,13 +4901,37 @@
         announce(enabled ? '已开启跟随最新，正在跟踪最近的会话。' : '已关闭跟随最新，固定在所选会话。');
       }
 
-      function syncChipInputs() {
-        var boxes = dom.toolbar.querySelectorAll('.chips input[type="checkbox"]');
-        for (var i = 0; i < boxes.length; i += 1) {
-          boxes[i].checked = state.kinds.indexOf(boxes[i].value) >= 0;
-          boxes[i].parentNode.classList.toggle('is-on', boxes[i].checked);
+      function syncKindButtons() {
+        var buttons = dom.kindControls.querySelectorAll('.tbtn-action');
+        for (var i = 0; i < buttons.length; i += 1) {
+          if (buttons[i].id !== 'kind-all') applyKindButton(buttons[i]);
         }
-        dom.chipAll.setAttribute('aria-pressed', state.kinds.length === KIND_ORDER.length ? 'true' : 'false');
+        var all = state.kinds.length === KIND_ORDER.length;
+        var allBtn = document.getElementById('kind-all');
+        allBtn.setAttribute('aria-pressed', all ? 'true' : 'false');
+        allBtn.setAttribute('aria-label', all ? '当前显示全部类型 · 点击只看空白' : '当前显示部分类型 · 点击显示全部');
+        allBtn.setAttribute('title', all ? '当前显示全部类型 · 点击只看空白' : '当前显示部分类型 · 点击显示全部');
+      }
+
+      /**
+       * One kind button. The pressed state IS whether that kind is in state.kinds, so
+       * there is no derived status that can drift away from what is on screen. Lit means
+       * the records are visible; dark means they are not, and the label says so.
+       */
+      function applyKindButton(button) {
+        var on = state.kinds.indexOf(button.getAttribute('data-kind')) >= 0;
+        var noun = KIND_LABELS[button.getAttribute('data-kind')] || button.getAttribute('data-kind');
+        var label = noun + (on ? '记录当前显示 · 点击隐藏' : '记录当前已隐藏 · 点击显示');
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        button.setAttribute('aria-label', label);
+        button.setAttribute('title', label);
+        button.querySelector('.tbtn-glyph').textContent = on ? '⊟' : '⊞';
+        // The visible word comes from the same table as the accessible name. It used to be
+        // written only in the markup, so a rename left the button showing one word and
+        // announcing another — and nothing in the guards could see it, because the two lived
+        // in different places and both were individually correct.
+        var labelSpan = button.querySelector('.tbtn-label');
+        if (labelSpan) labelSpan.textContent = noun;
       }
 
       function onKindToggle(value, checked) {
@@ -4480,10 +4943,10 @@
           return KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b);
         });
         state.kinds = next;
-        setWindowMode('latest');
-        syncChipInputs();
+        resetWindowMode();
+        syncKindButtons();
         renderLedger();
-        updateFilterStatus(visibleEntries().length, state.flat.length);
+        applyFilterScope();
       }
 
       function startPolling() {
@@ -4535,7 +4998,7 @@
           // The pin changes what every count on the page refers to, so the selected record,
           // the page window and the validator all have to start over.
           state.selectedId = null;
-          setWindowMode('latest');
+          resetWindowMode();
           state.etag = '';
           state.etagFor = '';
           state.loading = true;
@@ -4548,7 +5011,7 @@
           searchTimer = window.setTimeout(function () {
             searchTimer = null;
             state.query = dom.searchInput.value.trim();
-            setWindowMode('latest');
+            resetWindowMode();
             renderLedger();
           }, SEARCH_DEBOUNCE);
         });
@@ -4557,24 +5020,21 @@
           event.preventDefault();
         });
 
-        dom.chipAll.addEventListener('click', function () {
-          if (state.kinds.length === KIND_ORDER.length) {
-            state.kinds = [];
-          } else {
-            state.kinds = KIND_ORDER.slice();
-          }
-          setWindowMode('latest');
-          syncChipInputs();
-          renderLedger();
-          updateFilterStatus(visibleEntries().length, state.flat.length);
-        });
-
-        var boxes = dom.toolbar.querySelectorAll('.chips input[type="checkbox"]');
-        for (var i = 0; i < boxes.length; i += 1) {
-          boxes[i].addEventListener('change', function (event) {
-            onKindToggle(event.target.value, event.target.checked);
+        var kindButtons = dom.kindControls.querySelectorAll('.tbtn-action');
+        for (var j = 0; j < kindButtons.length; j += 1) {
+          if (kindButtons[j].id === 'kind-all') continue;
+          kindButtons[j].addEventListener('click', function () {
+            onKindToggle(this.getAttribute('data-kind'), this.getAttribute('aria-pressed') !== 'true');
           });
         }
+
+        document.getElementById('kind-all').addEventListener('click', function () {
+          state.kinds = state.kinds.length === KIND_ORDER.length ? [] : KIND_ORDER.slice();
+          resetWindowMode();
+          syncKindButtons();
+          renderLedger();
+          applyFilterScope();
+        });
 
         dom.overviewClear.addEventListener('click', clearOverviewSelection);
 
@@ -4637,7 +5097,7 @@
         applyTheme();
         cacheDom();
         wire();
-        syncChipInputs();
+        syncKindButtons();
         renderSectionToggles();
         render();
         fetchSessions();

@@ -204,6 +204,23 @@ export function activeCatalogBytes(catalog) {
 }
 
 /**
+ * Whether our own read cap, and nothing else, cut a file short.
+ *
+ * The catalog-recorded sizes are a snapshot, and the active `messages.jsonl` keeps being appended
+ * to after the catalog was written — so "we read fewer bytes than the file now has" is not evidence
+ * that the file is too large. Reporting it as truncation is how a merely-active session ended up
+ * claiming the first 64 MB when it was nowhere near it.
+ *
+ * @param {number} size the file's size at read time
+ * @param {number} limit the bytes we were willing to read
+ * @returns {boolean}
+ */
+export function truncatedByCap(size, limit) {
+  if (!Number.isFinite(size) || !Number.isFinite(limit)) return false;
+  return size > limit;
+}
+
+/**
  * @param {string} filePath
  * @param {number} limit
  * @returns {Promise<{ text: string, size: number, read: number }>}
@@ -597,6 +614,10 @@ export async function resolveCurrentConversation(home) {
     };
   } catch {
     return null;
+  } finally {
+    // Every call opened its own handle and none of them closed it. Polling every 2.5s meant
+    // 20–30 live handles waiting on the GC, and dispose() left them open too.
+    closeQuietly(db);
   }
 }
 
@@ -610,8 +631,9 @@ export async function resolveCurrentConversation(home) {
 export async function readSessionTitles(home, sessionIds) {
   const result = new Map();
   const db = await openRuntimeStateDb(home);
-  if (!db || sessionIds.length === 0) return result;
+  if (!db) return result;
   try {
+    if (sessionIds.length === 0) return result;
     const stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
     for (const id of sessionIds) {
       const row = stmt.get(id);
@@ -623,8 +645,25 @@ export async function readSessionTitles(home, sessionIds) {
     }
   } catch {
     // A title is a nicety; never let it fail the list.
+  } finally {
+    closeQuietly(db);
   }
   return result;
+}
+
+/**
+ * Closing a read-only handle cannot fail in a way the caller can act on — the work it was
+ * opened for is already done or already abandoned. Swallowing keeps every call site from
+ * having to wrap its own error handling around cleanup.
+ * @param {{ close?: () => void } | null} db
+ */
+function closeQuietly(db) {
+  if (!db || typeof db.close !== 'function') return;
+  try {
+    db.close();
+  } catch {
+    // Nothing to do: the handle is being released either way.
+  }
 }
 
 function emptyTokens() {
@@ -801,7 +840,10 @@ export function buildTrajectoryPayload(input) {
     compactions: 0,
     turns: 0,
     turnsWithPrompt: 0,
+    continuationTurns: 0,
     qaTurns: 0,
+    openTurns: 0,
+    steers: 0,
     compactionTurns: 0,
     turnsWithoutPrompt: 0,
     errors: 0,
@@ -975,7 +1017,14 @@ export function buildTrajectoryPayload(input) {
         if (kind === 'text') {
           if (textField.text === null) continue;
           push({
-            kind: 'assistant',
+            // The model says why it stopped, and that sentence is the whole test. `stop`
+            // means it finished, so this text is the answer the turn delivers. `toolUse`
+            // means it is about to call a tool, so this text is the commentary it wrote on
+            // the way there. A third value, `aborted`, marks a turn cut off part-way; its
+            // text never became an answer, so it stays with the commentary rather than
+            // being passed off as one. Filing all of them under one label buried the
+            // answers under several times their own volume.
+            kind: source.stopReason === 'stop' ? 'reply' : 'narration',
             title: 'assistant',
             summary: singleLine(textField.text, MAX_SUMMARY_CHARS),
             text: textField.text,
@@ -1016,8 +1065,13 @@ export function buildTrajectoryPayload(input) {
           if (toolCallId) toolCallsById.set(toolCallId, { record, toolCallId });
         }
       }
-      if (turn.records.length === 0) {
-        push({ kind: 'assistant', title: 'assistant', summary: '', text: null, tokens: carrierUsage() });
+      // The test is this message's own segments, not the turn's record count. `turn.records`
+      // already holds everything earlier in the turn, so an assistant message carrying only
+      // `content: []` — a stopReason 'error', or a turn cut off before it said anything — added
+      // no row once any earlier message had produced one, while its usage still landed on the
+      // turn's Token total. The page then showed a number it could not attribute to any line.
+      if (segmentOrder.length === 0) {
+        push({ kind: source.stopReason === 'stop' ? 'reply' : 'narration', title: 'assistant', summary: '', text: null, tokens: carrierUsage() });
       }
       continue;
     }
@@ -1059,15 +1113,27 @@ export function buildTrajectoryPayload(input) {
       }
 
       if (split.prompt !== null) {
-        stats.userMessages += 1;
+        // The first prompt of a turn is what opened it. Anything later arrived while the
+        // turn was still running — a steer, redirecting work already under way.
+        //
+        // Nothing in the session file marks this. Compared field by field, a steer is
+        // byte-identical to a typed prompt in role, stopReason, api, model, provider, tokens,
+        // producedBy, turnId and everything else; only id, timestamp and index differ. The
+        // signal available is position: measured across every turn that has one, its prompt
+        // sits at record 1 or 2 and never further in, so a user record past that point can
+        // only have been written mid-turn. That is an inference from ordering, not a fact
+        // the file asserts, and it is recorded as `steered` so the detail panel can say so.
+        const steered = turn.records.some((r) => r.kind === 'user');
+        if (steered) stats.steers += 1; else stats.userMessages += 1;
         if (label === null) label = singleLine(redact(split.prompt), MAX_LABEL_CHARS);
         const promptField = clipField(redact(split.prompt), MAX_FIELD_CHARS);
         push({
-          kind: 'user',
+          kind: steered ? 'steer' : 'user',
           title: 'user',
           summary: singleLine(promptField.text ?? '', MAX_SUMMARY_CHARS),
           text: promptField.text,
           textTruncated: promptField.truncated,
+          steered,
         });
       }
 
@@ -1145,49 +1211,78 @@ export function buildTrajectoryPayload(input) {
   }
 
   stats.turns = turns.length;
-  // A raw turn total is the number most likely to be misread. Every turn is exactly one of
-  // four things, and saying which is the difference between "why is this not what I counted"
-  // and having to go dig through the file.
+  // A raw turn total is the number most likely to be misread, so every turn is filed and the
+  // count is broken down.
   //
-  //   对话   a turn somebody typed into
-  //   问答   the answering half of a question the previous turn asked — the reply arrives
-  //          through the question itself, so no user message is ever written for it
-  //   压缩   a turn that opened a context generation; a checkpoint, not conversation
-  //   其他   a turn with no prompt and nothing pointing at what caused it
+  //   对话       a turn somebody typed into — has a first-of-turn prompt
+  //   续作     no prompt, but it closed with a reply: the agent working after the reader
+  //                answered a question, which arrives through the tool channel rather than
+  //                as a message
+  //   压缩       a turn that opened a context generation; a checkpoint, not conversation
+  //   其他       neither a prompt nor a reply
   //
-  // The 问答 case is a structural inference, not a guess at the content: walking forward from
-  // the start of the ledger, a turn that calls a tool which waits on the reader arms the flag,
-  // and the first prompt-less turn after that is the answer. Any turn carrying a real prompt
-  // disarms it again, so an ordinary typed reply is never mistaken for one.
+  // 问答 is not a turn class, which is what it was mistaken for. It is a prompted turn that
+  // did not close: it ends on the “is waiting for the local user” result of a tool that waits on
+  // the reader. Labelling the *next* turn instead — as an earlier version did — put the tag on
+  // a turn while the reader still had not answered, and on turns holding hundreds of records
+  // that were plainly work rather than a Q&A.
+  //
+  // The other thing worth saying: a turn either ends with exactly one reply (stopReason: stop)
+  // or with none. Measured over 63 prompted turns, 54 closed, 5 stopped on ask_user, 4 were cut
+  // off. So whether a turn finished is a fact about the data, and it is the fact the counts
+  // are built from.
   let turnsWithPrompt = 0;
+  let continuationTurns = 0;
   let qaTurns = 0;
+  let openTurns = 0;
   let compactionTurns = 0;
-  let awaitingReply = false;
   for (const turn of turns) {
     let hasPrompt = false;
     let isCompaction = false;
     let askedReader = false;
+    let closed = false;
     for (const record of turn.records) {
-      // Injected blocks were already demoted to system records, so a user record here is a
-      // prompt somebody actually typed.
+      // Injected blocks were demoted to system records, and a later prompt is filed as a
+      // steer, so a `user` record here is the prompt that opened the turn.
       if (record.kind === 'user') hasPrompt = true;
       if (record.kind === 'compaction') isCompaction = true;
+      if (record.kind === 'reply') closed = true;
       if (record.kind === 'toolCall' && typeof record.toolName === 'string'
         && USER_INPUT_TOOLS.has(record.toolName)) askedReader = true;
     }
-    if (isCompaction) compactionTurns += 1;
-    else if (hasPrompt) { turnsWithPrompt += 1; awaitingReply = false; }
-    else if (awaitingReply) { qaTurns += 1; awaitingReply = false; }
-    else stats.turnsWithoutPrompt += 1;
-    if (askedReader) awaitingReply = true;
+    turn.askedReader = askedReader;
+    turn.closed = closed;
+    if (isCompaction) { turn.turnClass = 'compaction'; compactionTurns += 1; continue; }
+    if (hasPrompt) {
+      turn.turnClass = 'prompt';
+      turnsWithPrompt += 1;
+      if (!closed) openTurns += 1;
+      if (askedReader && !closed) qaTurns += 1;
+    } else if (closed) {
+      turn.turnClass = 'continuation';
+      continuationTurns += 1;
+    } else {
+      turn.turnClass = 'none';
+      stats.turnsWithoutPrompt += 1;
+    }
   }
   stats.turnsWithPrompt = turnsWithPrompt;
+  stats.continuationTurns = continuationTurns;
   stats.qaTurns = qaTurns;
+  stats.openTurns = openTurns;
   stats.compactionTurns = compactionTurns;
   if (startedAt !== null && lastTimestamp !== null) stats.durationMs = lastTimestamp - startedAt;
   const resolvedLabel = label ?? `会话 ${String(session.id).slice(4, 12)}`;
 
-  const generations = Array.isArray(input.generations) ? input.generations : [];
+  const orphans = Array.isArray(input.orphans) ? input.orphans : [];
+  // The catalog can list a generation the lineage walk rejected: a snapshot left behind by a fork
+  // is on disk but is not part of this conversation. Summing those into `messagesAll` inflated the
+  // session-wide count, and listing them in `generations` offered the reader a pick that resolved
+  // to nothing. Both are fixed by reporting the chain rather than the catalog — the rejected ones
+  // are still disclosed through `orphans`.
+  const orphanFiles = new Set(orphans.map((orphan) => orphan.fileName));
+  const generations = (Array.isArray(input.generations) ? input.generations : [])
+    .filter((entry) => !orphanFiles.has(entry.fileName));
   // `messages` counts what is on screen. When the whole lineage is stitched that already
   // spans every generation; when the reader filtered to one, `messagesAll` keeps the
   // session-wide number from silently shrinking to a single slice.
@@ -1205,9 +1300,12 @@ export function buildTrajectoryPayload(input) {
       lastActiveAt: session.createdAtMs ?? startedAt,
       sizeBytes,
       truncated,
+      // The page prints this number when it reports truncation, so it is sent rather than
+      // restated in the markup where the two could drift apart again.
+      maxMessageBytes: MAX_MESSAGE_BYTES,
       generation: input.generation ?? null,
       generations,
-      orphans: Array.isArray(input.orphans) ? input.orphans : [],
+      orphans,
     },
     stats: { ...stats, messagesAll },
     turns: turns.map((turn) => ({
@@ -1219,6 +1317,13 @@ export function buildTrajectoryPayload(input) {
       toolCalls: turn.toolCalls,
       errors: turn.errors,
       tokens: turn.tokens,
+      // prompt | continuation | compaction | none.
+      turnClass: turn.turnClass ?? 'none',
+      // Whether this turn asked the reader something and therefore has not closed yet, and
+      // whether it ended with the answer it owes. Together they explain every gap between the
+      // turn count and the reply count.
+      askedReader: turn.askedReader === true,
+      closed: turn.closed === true,
       records: turn.records,
     })),
   };
@@ -1530,17 +1635,15 @@ export async function start(context) {
     }
     sendJson(response, 200, {
       nodeVersion: process.version,
-      pid: process.pid,
-      ppid: process.ppid,
-      execArgv: process.execArgv,
-      argv,
-      envNames,
-      envSessionLike,
-      argvSessionLike: argv.filter((entry) => SESSION_ID.test(entry)),
+      // Everything below is a basename, a count, or a flag. `argv[0]` is the absolute path of
+      // the node executable — on Windows it carries the user profile directory — and
+      // execArgv/pid/ppid are process internals this route has no reason to publish. The page
+      // reads none of them; the route exists to answer "is the runtime binding alive", and the
+      // fields that answer that are `sqlite` and `sessionRootExists`.
+      sqlite,
       cwdBasename: basename(process.cwd()) || null,
       dataDirBasename: basename(context.dataDir) || null,
       sessionRootExists: existsSync(location.sessionsRoot),
-      sqlite,
     });
    } catch (error) {
     diagError = String(/** @type {any} */ (error)?.stack ?? error).slice(0, 600);
@@ -1700,10 +1803,7 @@ export async function start(context) {
       const filePath = resolveArtifactPath(entry.dir, artifact);
       if (filePath === null) return null;
       if (probed.has(artifact.fileName)) return probed.get(artifact.fileName);
-      const limit = artifact.active
-        ? Math.min(entry.sizeBytes, identity.catalogBytes ?? MAX_MESSAGE_BYTES, MAX_MESSAGE_BYTES)
-        : Math.min(artifact.byteLength ?? MAX_MESSAGE_BYTES, MAX_MESSAGE_BYTES);
-      const head = await readHead(filePath, Math.min(limit, GENERATION_PROBE_BYTES));
+      const head = await readHead(filePath, GENERATION_PROBE_BYTES);
       const result = { fileName: artifact.fileName, marker: readGenerationMarker(head.text) };
       probed.set(artifact.fileName, result);
       return result;
@@ -1739,10 +1839,13 @@ export async function start(context) {
         sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
         return;
       }
-      const isActive = link.fileName === activeFileName;
-      const limit = isActive
-        ? Math.min(entry.sizeBytes, identity.catalogBytes ?? MAX_MESSAGE_BYTES, MAX_MESSAGE_BYTES)
-        : Math.min(artifact === null ? MAX_MESSAGE_BYTES : (artifact.byteLength ?? MAX_MESSAGE_BYTES), MAX_MESSAGE_BYTES);
+      // Bound the read by our own cap only. The catalog's recorded sizes are a snapshot and the
+      // active messages.jsonl keeps being appended to after the catalog was written, so using
+      // them as a read limit both dropped records that were really on disk and — because the read
+      // then stopped short of the file — made `head.read < head.size` report "file too large" for
+      // a file that was merely newer than its catalog entry. `readHead` already clamps to the real
+      // stat size, so MAX_MESSAGE_BYTES bounds memory on its own.
+      const limit = MAX_MESSAGE_BYTES;
       let head;
       try {
         head = await readHead(filePath, limit);
@@ -1754,7 +1857,8 @@ export async function start(context) {
       if (head.text === '') {
         context.logger.warn('miniapp.trajectory.read_error', { reason: 'empty_messages' });
       }
-      if (head.read < head.size) truncated = true;
+      // Truncated means our cap cut the read, nothing else.
+      if (truncatedByCap(head.size, limit)) truncated = true;
       readBytes += head.read;
       const parsed = parseMessagesJsonl(head.text);
       skippedTotal += parsed.skipped;
