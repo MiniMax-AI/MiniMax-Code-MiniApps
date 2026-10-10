@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "divination": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/divination",
+      "headers": {},
+      "description": "梅花易数起卦与解卦：起卦解读、六十四卦检索、今日干支历法。",
+      "timeout": 30000
+    }
+  }
+}

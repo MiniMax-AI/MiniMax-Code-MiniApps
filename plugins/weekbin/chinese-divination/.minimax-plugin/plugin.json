@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "chinese-divination",
+  "displayName": "灵签易占",
+  "version": "1.1.0",
+  "description": "梅花易数起卦与解卦：时间、数字、铜钱摇卦、每日一卦四种起法，问事定事类与应期，含体用生克断卦、六十四卦全文与干支时辰历法。既能打开页面起卦，也能在对话里由 Agent 主动调用。",
+  "author": "weekbin",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": ["打开灵签易占", "帮我起一卦", "帮我看看这份offer该不该接", "掷铜钱起一卦", "查一下今天黄历"],
+  "apps": [],
+  "mcpServers": ["servers.mcp.json"],
+  "skills": ["skills/divination/SKILL.md"]
+}

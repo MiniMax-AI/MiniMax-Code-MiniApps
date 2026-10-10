@@ -1,0 +1,3655 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>灵签易占</title>
+    <style>
+      :root,
+      [data-theme='light'] {
+        --bg: #f7f4ed;
+        --surface: #fffdf8;
+        --surface-muted: #f1ece0;
+        --surface-hover: #eae3d3;
+        --text: #23201a;
+        --text-muted: #6d675c;
+        --text-subtle: #9a9384;
+        --border: #0000001a;
+        --border-strong: #00000033;
+        --seal: #9a2b26;
+        --seal-soft: #9a2b2614;
+        --gold: #8a6a24;
+        --jade: #3f6b57;
+        --shadow: 0 1px 2px #0000000d, 0 8px 24px #0000000a;
+        /* 顶栏实测高：18px 上内边距 + 标题行 + 12px + 分区条 + 12px 下内边距 + 1px 边。
+         * 解读页左栏要按它错开，两者不能各写各的。 */
+        --topbar-h: 132px;
+        /* 页面左右内边距。.app 用它，.topbar 用它的相反数——两处各写一个数，
+         * 内边距一收放，顶栏底色就不贴视口边了。 */
+        --app-pad: clamp(14px, 2.1vw, 32px);
+        color-scheme: light;
+      }
+
+      [data-theme='dark'] {
+        --bg: #16150f;
+        --surface: #1e1d16;
+        --surface-muted: #242219;
+        --surface-hover: #2e2b20;
+        --text: #ece7d9;
+        --text-muted: #9d9683;
+        --text-subtle: #6d6758;
+        --border: #ffffff17;
+        --border-strong: #ffffff2e;
+        --seal: #d4675c;
+        --seal-soft: #d4675c1f;
+        --gold: #c9a961;
+        --jade: #7fb69b;
+        --shadow: 0 1px 2px #00000040, 0 8px 24px #00000033;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      /* .row / .card 自带 display，会盖掉 hidden 属性的默认 display: none */
+      [hidden] {
+        display: none !important;
+      }
+
+      /* ---------- 动画 ---------- */
+
+      @keyframes riseIn {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes sealIn {
+        0% {
+          opacity: 0;
+          transform: scale(2.1) rotate(-14deg);
+        }
+        62% {
+          opacity: 1;
+          transform: scale(0.93) rotate(2deg);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1) rotate(0);
+        }
+      }
+
+      @keyframes lineGrow {
+        from {
+          opacity: 0;
+          transform: scaleX(0);
+        }
+        to {
+          opacity: 1;
+          transform: scaleX(1);
+        }
+      }
+
+      @keyframes coinThrow {
+        0% {
+          transform: translateY(0) rotateY(0deg) scale(1, 1);
+        }
+        14% {
+          transform: translateY(-48px) rotateY(100deg) scale(0.94, 1.06);
+        }
+        60% {
+          transform: translateY(-6px) rotateY(540deg) scale(1.08, 0.92);
+        }
+        74% {
+          transform: translateY(0) rotateY(620deg) scale(1.16, 0.84);
+        }
+        86% {
+          transform: translateY(-8px) rotateY(680deg) scale(0.96, 1.04);
+        }
+        100% {
+          transform: translateY(0) rotateY(720deg) scale(1, 1);
+        }
+      }
+
+      @keyframes coinShadow {
+        0%,
+        100% {
+          transform: translateX(-50%) scale(1);
+          opacity: 0.26;
+        }
+        14% {
+          transform: translateX(-50%) scale(0.5);
+          opacity: 0.1;
+        }
+        60% {
+          transform: translateX(-50%) scale(0.88);
+          opacity: 0.2;
+        }
+        74% {
+          transform: translateX(-50%) scale(1.16);
+          opacity: 0.34;
+        }
+        86% {
+          transform: translateX(-50%) scale(0.94);
+          opacity: 0.28;
+        }
+      }
+
+      @keyframes tossGlow {
+        0%,
+        100% {
+          opacity: 0.55;
+          transform: translateX(-50%) scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: translateX(-50%) scale(1.06);
+        }
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 0.35;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      @keyframes sweep {
+        from {
+          transform: translateX(-100%);
+        }
+        to {
+          transform: translateX(100%);
+        }
+      }
+
+      @keyframes baguaSpin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes baguaSpinBack {
+        to {
+          transform: rotate(-360deg);
+        }
+      }
+
+      @keyframes baguaCore {
+        0%,
+        100% {
+          transform: scale(0.88);
+          opacity: 0.72;
+        }
+        50% {
+          transform: scale(1.06);
+          opacity: 1;
+        }
+      }
+
+      @keyframes baguaHalo {
+        0%,
+        100% {
+          transform: scale(0.7);
+          opacity: 0.28;
+        }
+        50% {
+          transform: scale(1.15);
+          opacity: 0.06;
+        }
+      }
+
+      .anim-rise {
+        animation: riseIn 520ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
+      }
+
+      .anim-fade {
+        animation: fadeIn 420ms ease both;
+      }
+
+      .panel-enter {
+        animation: riseIn 320ms ease both;
+      }
+
+      /* ---------- 卦气消长环 ----------
+         十二辟卦的爻象是固定的：阳（或阴）自初爻逐次长上来，一格一格，
+         走到对宫就是极盛。所以环上每一格的条数直接就是那一月的进度，
+         看得见「走到哪一步」，不必先懂这套学说。 */
+
+      .qiring {
+        display: block;
+        width: 100%;
+        /* 画布是 232 见方（比 200 大，是为了给环外的标签留位置），
+           乘 2.4 才是原先 200 见方时的观感大小。 */
+        max-width: 560px;
+        margin: 0 auto;
+        overflow: visible;
+      }
+
+      .qiring .cell-bar {
+        transition: opacity 300ms ease;
+      }
+
+      .qi-block {
+        margin-top: 16px;
+        padding: 14px 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-sunken, rgba(0, 0, 0, 0.015));
+        color: var(--text);
+      }
+
+      /* ---------- 小卦与图注（八宫名单与四卦推导共用）----------
+         .unit / .mini-gua 这组是 miniGua() 画出来的小卦：六线一根一根摆着，
+         下面挂卦名与图注。八宫那一列同宫名单与四卦推导用的是同一套，提到这里共用。 */
+
+      /* ---------- 四卦推导 ----------
+         互、变、错、综四种取法，纯文字说一遍是「互卦为XX」四个字，
+         看不出怎么互出来的。这里把本卦摆在左边，四种取法的结果摆在右边，
+         中间用一条线连过去，并标出每一步动了哪几爻。 */
+
+      .derive {
+        margin-top: 16px;
+        padding: 14px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-sunken, rgba(0, 0, 0, 0.015));
+        /* 按这块自己有多宽来排，不按视口。这块在右栏里，视口再宽它也未必宽；
+         * 拿视口宽度定列数，窄右栏配宽视口就会挤成参差的一行。 */
+        container-type: inline-size;
+        container-name: derive;
+      }
+
+      .derive-head {
+        font-size: 16px;
+        color: var(--text-muted);
+        text-align: center;
+        margin-bottom: 12px;
+      }
+
+      .derive .derive-body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+
+      /* 本卦一行，四种取法一行。挤在一行里最后一卦会折行、断得莫名其妙，
+         分成两行反而把「本卦 vs 推出来的四卦」这层关系讲清了。 */
+      .derive .derive-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-items: center;
+        justify-items: center;
+        gap: 10px 4px;
+        width: 100%;
+      }
+
+      /* 箭头加卦，一格。格内自己居中，四格之间由网格定距，间距一律相等。 */
+      .derive .derive-step {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      /* 本卦那行只有一格，让它横跨整行再由 justify-items 居中。
+       * 不跨列的话它会落在第 1 列，看着像「本卦」是四种取法里的头一个。 */
+      .derive .derive-row > .unit:only-child {
+        grid-column: 1 / -1;
+      }
+
+      @container derive (max-width: 720px) {
+        .derive .derive-row {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px 8px;
+        }
+      }
+
+      .unit {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        min-width: 46px;
+      }
+
+      /* ---------- 八宫名单 ----------
+         一宫八卦按世次先后摆成一列，标出每一卦相对本宫纯卦变过哪几爻。
+         这八格是京房那一层的全貌：世次怎么爬、游魂归魂怎么退，一张图看完了。 */
+      .palace {
+        margin-top: 16px;
+        padding: 14px 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-sunken, rgba(0, 0, 0, 0.015));
+        container-type: inline-size;
+        container-name: palace;
+      }
+
+      /* 八格按网格均分，间距一律相等。原先是 flex 换行：容器一窄就折成
+       * 「七格 + 一格」，末行那格孤零零居中，看着像掉了出去。 */
+      .palace .palace-row {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        align-items: start;
+        justify-items: center;
+        gap: 12px 6px;
+      }
+
+      @container palace (max-width: 860px) {
+        .palace .palace-row {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+      }
+
+      /* 本卦那一格：朱砂只给「就是你这一卦」，不给另外七个——宫是一处，不是吉凶。
+         框用 outline 而不是 border。border 会占布局空间：这一格顶到 1px 边 + 4px 上内边距，
+         同行另外七格没有边框，两边内容就对不齐，看着像本卦这一格「掉下去」了。
+         outline 不参与布局，八格的内容始终齐平，框照旧画在外面。 */
+      .palace .unit.self {
+        outline: 1px solid var(--seal);
+        outline-offset: 3px;
+        border-radius: 7px;
+      }
+
+      /* 世次名。游魂归魂这两格是梯子上的两个例外，标出来才不会看成六个一串。 */
+      .palace .unit.odd .unit-tag {
+        color: var(--text-muted);
+        font-weight: 600;
+      }
+
+      /* 这条必须压在上一条下面，且选择器同样要三个类。
+         本卦自己就有落在游魂、归魂上的（十六卦，占四分之一），那一格同时挂 self 与 odd，
+         两条特异性相同时按书写顺序决胜——朱砂是「就是你这一卦」，比「这是例外级」更要紧，
+         少了它，那一卦就只剩个框、字反倒是灰的。 */
+      .palace .unit.self .unit-tag {
+        color: var(--seal);
+      }
+
+      .palace .palace-note {
+        margin: 12px 0 0;
+        font-size: 15px;
+        line-height: 1.7;
+        color: var(--text-muted);
+        text-align: center;
+      }
+
+      .unit-name {
+        font-size: 16px;
+        color: var(--text);
+      }
+
+      .unit-tag {
+        font-size: 14px;
+        color: var(--text-muted);
+      }
+
+      .derive .arrow {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        padding: 0 1px;
+        color: var(--border-strong);
+      }
+
+      .derive .arrow .how {
+        /* 互卦那条注记两行、其余各一行。不定死排法的话，一行字会贴在 2.7em
+         * 的盒子顶上、两行字占满盒子，四支箭头就不在一条线上。改成 flex 上下
+         * 居中，一行两行都落在同一个中心，箭头一律贴在同一条基线上。 */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        line-height: 1.35;
+        color: var(--text-muted);
+        text-align: center;
+        max-width: 96px;
+        width: 100%;
+        min-height: 2.7em;
+        /* DERIVE_HOW 里的 \n 要真的断行。不写这条，\n 会被折叠成空格，
+         * 换行变成靠 max-width 碰巧折出来——改个字号就可能折成一行或三行。 */
+        white-space: pre-line;
+      }
+
+      .derive .arrow svg {
+        display: block;
+      }
+
+      .mini-gua {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        width: 72px;
+      }
+
+      .mini-line {
+        display: flex;
+        gap: 8px;
+        height: 9px;
+      }
+
+      .mini-line i {
+        display: block;
+        height: 9px;
+        border-radius: 4px;
+        background: var(--text);
+      }
+
+      /* 阴阳靠形状分，不靠明暗分：一整条是阳，断成两截是阴。
+         早先把阴爻画成 --border-strong（浅色模式下只 20% 黑），叠在 4px 的细线上，
+         整张卦图远看就是一团灰。卦画首先要读得出来，其次才是好看。 */
+      .mini-line.yin i {
+        width: 44%;
+        background: var(--text-muted);
+      }
+
+      .mini-line.yang i {
+        flex: 1;
+      }
+
+      /* 参与这一步取法的爻，染朱砂，一眼看出「动的是这几爻」 */
+      .mini-line.touched i {
+        background: var(--seal);
+      }
+
+      .self-unit .unit-name {
+        font-weight: 600;
+      }
+
+      .qiring .month-label {
+        font-size: 11px;
+        fill: var(--text-muted);
+      }
+
+      .qiring .now-label {
+        font-size: 11px;
+        fill: var(--seal);
+        font-weight: 600;
+      }
+
+      .qiring .mark {
+        fill: var(--seal);
+      }
+
+      /* 当月那一格轻轻起伏，像轮转到这一格时它应声而动。
+         起伏幅度收到 0.8：早先压到 0.55，动画每 2.6 秒就把当月格闪到半明半暗一次，
+         爻杠在那一瞬几乎看不出阴阳。它是提示，不该盖过读图本身。 */
+      @keyframes qiBreathe {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.8;
+        }
+      }
+
+      .qiring .now-sector {
+        animation: qiBreathe 2.6s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .qiring .now-sector {
+          animation: none;
+        }
+      }
+
+      /* ---------- 起卦推演中 ---------- */
+
+      .casting {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        padding: 46px 18px;
+      }
+
+      /* 八卦环：外环八纯顺时针走，内环刻度反向走，两层错开才有流动感。
+       * 整段起卦就三秒出头，一分钟转一圈等于看着没动，环只活在起卦这几秒里——
+       * 所以外环 22 秒、内环 15 秒，三秒里能分别转过 49° 和 72°，一眼看得出在走。*/
+      .bagua {
+        width: 158px;
+        height: 158px;
+        color: var(--text-muted);
+        overflow: visible;
+      }
+
+      .bagua .ring-outer {
+        transform-origin: 100px 100px;
+        animation: baguaSpin 22s linear infinite;
+      }
+
+      .bagua .ring-inner {
+        transform-origin: 100px 100px;
+        animation: baguaSpinBack 15s linear infinite;
+      }
+
+      .bagua .core {
+        transform-origin: 100px 100px;
+        animation: baguaCore 2.6s ease-in-out infinite;
+      }
+
+      .bagua .halo {
+        transform-origin: 100px 100px;
+        animation: baguaHalo 2.6s ease-in-out infinite;
+      }
+
+      .casting-bar {
+        position: relative;
+        width: min(320px, 70vw);
+        height: 2px;
+        background: var(--border);
+        overflow: hidden;
+        border-radius: 2px;
+      }
+
+      .casting-bar::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, var(--seal), transparent);
+        animation: sweep 1.1s linear infinite;
+      }
+
+      .casting-text {
+        font-size: 17px;
+        color: var(--text-muted);
+        letter-spacing: 0.12em;
+      }
+
+      /* 推演日志：定高，免得最后一行还在打字、下面就换成结果，页面跳一下。
+       * 播报最多 CASTING_MAX_LINES + 1 行——收尾那句不受行数上限管，它要压轴。
+       * 每行 nowrap 固定行高，容器得留够 11 行，最后一句才不会挤到卦盘上。 */
+      .casting-log {
+        width: min(400px, 100%);
+        min-height: 320px;
+        font-size: 17px;
+        line-height: 1.7;
+        color: var(--text-muted);
+        text-align: left;
+      }
+
+      /* ---------- 成卦盘 ----------
+         起卦这一拍原先只有八卦环空转加一段打字，六爻是怎么成出来的看不见。
+         这里让卦体随推演逐爻长出来：自初爻向上长到上爻，长的过程中套用该爻的
+         动静（少阳、老阳…），最后动爻单独标红。取数、成卦、定动爻这条线，
+         从此是看得见的。 */
+
+      .casting-hex {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        width: 120px;
+        margin: 4px 0 12px;
+      }
+
+      .casting-hex .grow {
+        display: flex;
+        gap: 8px;
+        height: 7px;
+        opacity: 0;
+        transform: scaleX(0.2);
+        transform-origin: left center;
+      }
+
+      .casting-hex .grow.in {
+        opacity: 1;
+        transform: scaleX(1);
+        transition: opacity 260ms ease, transform 260ms cubic-bezier(0.22, 0.9, 0.3, 1);
+      }
+
+      .casting-hex .grow i {
+        display: block;
+        height: 7px;
+        border-radius: 3.5px;
+        background: var(--text);
+      }
+
+      /* 同 .mini-line.yin：阴阳靠形状，不靠把阴爻画淡。 */
+      .casting-hex .grow.yin i {
+        width: 42%;
+        background: var(--text-muted);
+      }
+
+      .casting-hex .grow.yang i {
+        flex: 1;
+      }
+
+      .casting-hex .grow.moving i {
+        background: var(--seal);
+      }
+
+      .casting-hex .grow.moving::after {
+        content: '○';
+        font-size: 14px;
+        line-height: 1;
+        color: var(--seal);
+        margin-left: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .casting-hex .grow {
+          transform: none;
+          transition: none;
+        }
+      }
+
+      .casting-line {
+        white-space: nowrap;
+        overflow: hidden;
+        animation: fadeIn 220ms ease both;
+      }
+
+      .casting-line.done {
+        color: var(--text-subtle);
+      }
+
+      /* 光标只在还没打完的那一行上 */
+      .casting-line::after {
+        content: '';
+        display: inline-block;
+        width: 6px;
+        height: 13px;
+        margin-left: 3px;
+        vertical-align: -2px;
+        background: var(--seal);
+        animation: caretBlink 1s steps(1) infinite;
+      }
+
+      .casting-line.done::after {
+        content: none;
+      }
+
+      @keyframes caretBlink {
+        0%,
+        49% {
+          opacity: 1;
+        }
+        50%,
+        100% {
+          opacity: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .casting-line::after {
+          animation: none;
+        }
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+        font-size: 18px;
+        line-height: 1.7;
+      }
+
+      .serif {
+        font-family: 'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', 'SimSun', serif;
+      }
+
+      .app {
+        max-width: 1340px;
+        margin: 0 auto;
+        /* 内边距随视口收放。原先是死 32px：窄屏上白白吃掉 64px 宽度，
+         * 推导图与八宫名单正是被这一条挤到换行的。
+         * 顶栏要抵消它才能贴到视口边，所以这个值只能有一个来源。 */
+        padding: var(--app-pad) var(--app-pad) clamp(40px, 5vw, 72px);
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      /* ---------- 顶栏 ----------
+         解读页右栏很长，标题与分区又只在最上头，滑下去就找不着自己在哪一栏了。
+         所以两者合成一条顶栏钉住：底色半透明加一点模糊，内容从底下透过去但不糊。 */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        /* 抵消 .app 的上内边距，让顶栏贴到视口顶边；左右也拉满，底色才是整条。
+         * 取 --app-pad 的相反数，不另写一个 32——内边距收放时两处要一起动。 */
+        margin: calc(var(--app-pad) * -1) calc(var(--app-pad) * -1) 0;
+        padding: 18px var(--app-pad) 12px;
+        background: color-mix(in srgb, var(--bg) 88%, transparent);
+        backdrop-filter: blur(14px) saturate(1.2);
+        -webkit-backdrop-filter: blur(14px) saturate(1.2);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .app-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px 20px;
+        flex-wrap: wrap;
+      }
+
+      .app-header h1 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      .app-header p {
+        margin: 0;
+        font-size: 16px;
+        color: var(--text-muted);
+        /* 副题贴在标题右边，两者算一行，顶栏因此矮一截 */
+        flex: 1 1 auto;
+      }
+
+      .ganzhi-strip {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 5px 11px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        font-size: 16px;
+        white-space: nowrap;
+      }
+
+      .pill b {
+        font-weight: 600;
+        color: var(--seal);
+        letter-spacing: 0.06em;
+      }
+
+      nav[role='tablist'] {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: var(--surface-muted);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow-x: auto;
+      }
+
+      nav[role='tablist'] button {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--text-muted);
+        font: inherit;
+        font-size: 17px;
+        padding: 8px 18px;
+        border-radius: 9px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      nav[role='tablist'] button[aria-selected='true'] {
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: var(--shadow);
+        font-weight: 600;
+      }
+
+      main > section[role='tabpanel'] {
+        display: none;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      main > section[role='tabpanel']:not([hidden]) {
+        display: flex;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: var(--shadow);
+      }
+
+      .card > h2 {
+        margin: 0 0 4px;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+
+      .card > p.hint {
+        margin: 0 0 14px;
+        font-size: 16px;
+        color: var(--text-muted);
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      /* 存卦那行的可见提示。存不下时这里要说得出来，不能只往 live region 里写。 */
+      .save-status {
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+
+      .save-status.err {
+        color: var(--seal);
+      }
+
+      input[type='text'],
+      input[type='number'],
+      textarea {
+        font: inherit;
+        color: var(--text);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 8px 11px;
+        width: 100%;
+      }
+
+      input:focus-visible,
+      textarea:focus-visible,
+      button:focus-visible {
+        outline: 2px solid var(--seal);
+        outline-offset: 1px;
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 68px;
+      }
+
+      button {
+        appearance: none;
+        font: inherit;
+        cursor: pointer;
+        border-radius: 9px;
+        border: 1px solid var(--border-strong);
+        background: var(--surface);
+        color: var(--text);
+        padding: 8px 16px;
+        transition: background 120ms ease;
+      }
+
+      button:hover:not(:disabled) {
+        background: var(--surface-hover);
+      }
+
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      button.primary {
+        background: var(--seal);
+        border-color: var(--seal);
+        color: #fff;
+      }
+
+      button.primary:hover:not(:disabled) {
+        filter: brightness(1.08);
+        background: var(--seal);
+      }
+
+      button.ghost {
+        border-color: var(--border);
+        color: var(--text-muted);
+      }
+
+      .methods {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+
+      .method {
+        text-align: left;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+      }
+
+      .method strong {
+        display: block;
+        font-size: 18px;
+        margin-bottom: 2px;
+        letter-spacing: 0.04em;
+      }
+
+      .method span {
+        font-size: 16px;
+        color: var(--text-muted);
+      }
+
+      /* ---------- 卦象 ---------- */
+
+      .reading {
+        display: grid;
+        /* 左栏跟着视口在 300-366px 之间走，不往 300 以下压。
+         * 爻行那一格是 34+42+1fr+32+auto 再加四道 12px 的缝，固定部分就吃掉 156px，
+         * 留给纳甲（干支+六亲+世应+旬空月破，全是 nowrap）的那一格还得有 140px 出头。
+         * 左栏一旦窄过 300，纳甲就撑破格子往右栏探，两个板块会撞在一起。
+         * 真正能收放的是右边：--app-pad 收边距、推导图与八宫各自按容器宽度换列。 */
+        grid-template-columns: clamp(300px, 26vw, 366px) 1fr;
+        gap: clamp(16px, 1.8vw, 26px);
+        align-items: start;
+      }
+
+      @media (max-width: 760px) {
+        .reading {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* 右栏（事实、断语、八宫、四卦推导、消长环）比左栏长出一大截，
+         滑下去左栏就空一大片。钉住左栏，卦体始终在眼前。
+         只在宽且够高的视口上钉：窄屏本来就是单列，矮屏钉了会够不到自己的底。 */
+      @media (min-width: 761px) and (min-height: 900px) {
+        .reading > :first-child {
+          position: sticky;
+          top: calc(var(--topbar-h) + 20px);
+        }
+      }
+
+      .gua-block {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .gua-line {
+        display: grid;
+        grid-template-columns: 34px 42px 1fr 32px auto;
+        align-items: center;
+        gap: 12px;
+      }
+
+      /* 六神排在爻画左边，依《卜筮全书》「俱从下起至上」自初爻向上转。
+         它只说气氛，不参与生克也不改吉凶，所以用淡字，不跟世应用同一种朱砂。 */
+      .gua-line .sg {
+        font-size: 15px;
+        color: var(--text-subtle);
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      /* 纳甲一列：干支定五行，六亲定身份，世应定主客。装上了就多出这一列 */
+      .gua-line .rel {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .gua-line .rel .ganzhi {
+        font-size: 15px;
+        color: var(--text-subtle);
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+
+      .gua-line .rel .qin {
+        font-size: 16px;
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      /* 世爻是我、应爻是对方，用朱砂点区分，不靠文字以免一行挤不下 */
+      .gua-line .rel .role {
+        font-size: 14px;
+        line-height: 1;
+        padding: 2px 4px;
+        border: 1px solid var(--seal);
+        color: var(--seal);
+        border-radius: 2px;
+        white-space: nowrap;
+      }
+
+      /* 旬空、月破、入墓是这一爻此刻的处境，不是它的身份，所以小字无框 */
+      .gua-line .rel .st {
+        font-size: 14px;
+        line-height: 1;
+        color: var(--text-subtle);
+        white-space: nowrap;
+      }
+
+      .gua-line .rel .st.po,
+      .gua-line .rel .st.tomb {
+        color: var(--seal);
+      }
+
+      /* 伏神伏在飞神之下，同格并列：小字加虚框，位置是它的，不是飞神的 */
+      .gua-line .rel .fu {
+        font-size: 14px;
+        line-height: 1;
+        padding: 2px 4px;
+        border: 1px dashed var(--text-subtle);
+        color: var(--text-subtle);
+        border-radius: 2px;
+        white-space: nowrap;
+      }
+
+      /* 化出之爻标在变卦那一爻上：这一格是本卦动爻变过来的地方，关系名跟着标出来 */
+      .gua-line .rel .hu {
+        font-size: 14px;
+        line-height: 1;
+        padding: 2px 4px;
+        border: 1px solid var(--text-subtle);
+        color: var(--text-subtle);
+        border-radius: 2px;
+        white-space: nowrap;
+      }
+
+      /* 只有回头生与回头克用朱砂——《增删卜易》明写了这一个吉、一个凶；
+         化泄化耗化比和书上没定吉凶，就跟伏神一样用淡字，别拿颜色替它表态。 */
+      .gua-line .rel .hu.hot {
+        border-color: var(--seal);
+        color: var(--seal);
+        font-weight: 600;
+      }
+
+      /* 元神忌神仇神是「用神周围那一圈」，与世应、与用神都不是一回事，各用小字描边 */
+      .gua-line .rel .role-yuan,
+      .gua-line .rel .role-ji,
+      .gua-line .rel .role-chou {
+        font-size: 14px;
+        line-height: 1;
+        padding: 1px 3px;
+        border: 1px solid var(--text-subtle);
+        color: var(--text-subtle);
+        border-radius: 2px;
+      }
+
+      /* 忌神直克用神，描边加重一点，让它在那一圈里最显眼——它才是真在使坏的那一支 */
+      .gua-line .rel .role-ji {
+        border-color: var(--seal);
+        color: var(--seal);
+        font-weight: 600;
+      }
+
+      /* 用神是「你所问的这一件事」落在哪一爻，与世应的主客不是一回事，另用实底 */
+      .gua-line .rel .role.god {
+        background: var(--seal);
+        color: var(--surface, #fff);
+        font-weight: 600;
+      }
+
+      .gua-line .pos {
+        font-size: 15px;
+        color: var(--text-subtle);
+        text-align: right;
+      }
+
+      .gua-line .bars {
+        display: flex;
+        gap: 14px;
+        height: 14px;
+      }
+
+      .gua-line .bars i {
+        display: block;
+        flex: 1;
+        background: var(--text);
+        border-radius: 3px;
+        transform-origin: left center;
+      }
+
+      /* 逐爻生长：自初爻向上。生长到位后再补一记朱砂辉光，标明「这一爻刚出来」 */
+      .reveal .gua-line .bars i {
+        animation:
+          lineGrow 460ms cubic-bezier(0.25, 0.9, 0.3, 1) both,
+          lineGlow 700ms ease-out both;
+      }
+
+      @keyframes lineGlow {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 transparent;
+        }
+        45% {
+          box-shadow: 0 0 12px 1px var(--seal-soft);
+        }
+      }
+
+      .reveal .gua-line[data-pos='1'] .bars i {
+        animation-delay: 60ms;
+      }
+      .reveal .gua-line[data-pos='2'] .bars i {
+        animation-delay: 150ms;
+      }
+      .reveal .gua-line[data-pos='3'] .bars i {
+        animation-delay: 240ms;
+      }
+      .reveal .gua-line[data-pos='4'] .bars i {
+        animation-delay: 330ms;
+      }
+      .reveal .gua-line[data-pos='5'] .bars i {
+        animation-delay: 420ms;
+      }
+      .reveal .gua-line[data-pos='6'] .bars i {
+        animation-delay: 510ms;
+      }
+
+      /* 动爻是唯一会变的那一爻，光要比静爻重一档 */
+      .reveal .gua-line.moving .bars i {
+        animation:
+          lineGrow 460ms cubic-bezier(0.25, 0.9, 0.3, 1) both,
+          lineGlowMove 860ms ease-out both;
+      }
+
+      @keyframes lineGlowMove {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 transparent;
+        }
+        40% {
+          box-shadow: 0 0 18px 3px var(--seal);
+        }
+      }
+
+      .verdict.reveal-seal {
+        position: relative;
+        isolation: isolate;
+        animation: sealIn 560ms cubic-bezier(0.2, 1.3, 0.4, 1) both;
+        animation-delay: 420ms;
+      }
+
+      /* 印落下去的同时洇开一圈墨，像真的盖在纸上 */
+      .verdict.reveal-seal::after {
+        content: '';
+        position: absolute;
+        inset: -8px;
+        border-radius: inherit;
+        background: radial-gradient(circle, var(--seal) 0%, transparent 64%);
+        opacity: 0;
+        z-index: -1;
+        pointer-events: none;
+        animation: inkBleed 820ms ease-out 400ms both;
+      }
+
+      @keyframes inkBleed {
+        0% {
+          opacity: 0.42;
+          transform: scale(0.5);
+        }
+        100% {
+          opacity: 0;
+          transform: scale(1.9);
+        }
+      }
+
+      .insights .anim-rise:nth-child(1) {
+        animation-delay: 380ms;
+      }
+      .insights .anim-rise:nth-child(2) {
+        animation-delay: 470ms;
+      }
+      .insights .anim-rise:nth-child(3) {
+        animation-delay: 560ms;
+      }
+      .insights .anim-rise:nth-child(4) {
+        animation-delay: 650ms;
+      }
+      .insights .anim-rise:nth-child(5) {
+        animation-delay: 740ms;
+      }
+      .insights .anim-rise:nth-child(6) {
+        animation-delay: 830ms;
+      }
+      .insights .anim-rise:nth-child(7) {
+        animation-delay: 920ms;
+      }
+      .insights .anim-rise:nth-child(8) {
+        animation-delay: 1010ms;
+      }
+      .insights .anim-rise:nth-child(9) {
+        animation-delay: 1100ms;
+      }
+      .insights .anim-rise:nth-child(10) {
+        animation-delay: 1190ms;
+      }
+      .insights .anim-rise:nth-child(n + 11) {
+        animation-delay: 1270ms;
+      }
+
+      .gua-line.yin .bars {
+        gap: 14px;
+      }
+
+      .gua-line.moving .bars i {
+        background: var(--seal);
+      }
+
+      .gua-line .mark {
+        font-size: 17px;
+        color: var(--seal);
+        text-align: center;
+      }
+
+      .gua-title {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+
+      .gua-title h3 {
+        margin: 0;
+        font-size: 27px;
+        letter-spacing: 0.1em;
+      }
+
+      .gua-title .meta {
+        font-size: 16px;
+        color: var(--text-muted);
+      }
+
+      /* 六冲 / 六合：整卦的结构事实，不是吉凶。描边淡字，与「暗」「冲散」一个路子——
+         颜色不替没定下来的事表态，所以这两枚都不进朱砂。 */
+      .gua-title .gua-tag {
+        font-size: 15px;
+        letter-spacing: 0.08em;
+        color: var(--text-subtle);
+        border: 1px solid currentColor;
+        border-radius: 3px;
+        padding: 1px 5px;
+        cursor: help;
+        opacity: 0.85;
+      }
+
+      /* 冲合连线：把初四、二五、三六三对画成跨过卦面的弧。这一层画的是「隔三位相配」
+         那条规矩本身——同高去配，六十四卦里一个六冲卦也出不来。 */
+      .gua-lines {
+        position: relative;
+      }
+
+      /* 弧不占卦面的宽度，从右边探出去画在两列之间那道空隙里（.reading 的 gap 是 22px）。
+         匀宽度出来是不行的：爻画那格是 1fr，扣掉就短一截，而变卦里「回头生 + 应 + 六亲 +
+         干支」那一行本来就占得最满，扣一次就被压到看不见，阴阳都读不出来。
+         放进空隙里既不挤卦面，位置也像传统刻本上的旁批，就在那儿批一句「此二支相配」。 */
+      .clash-ribbon {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: -22px;
+        pointer-events: none;
+        overflow: visible;
+      }
+
+      /* 冲与合同一支淡线，不分色：这层只说「哪两支配在一起」，不替它们表态吉凶。 */
+      .clash-ribbon .clash-arc {
+        fill: none;
+        stroke: var(--text-subtle);
+        stroke-width: 1;
+        stroke-linecap: round;
+        opacity: 0.6;
+      }
+
+      .text-line {
+        margin: 6px 0 0;
+        font-size: 18px;
+        line-height: 1.9;
+        color: var(--text);
+      }
+
+      /* 彖传是解卦之辞，不是卦本身的原话，压一档以示区别 */
+      .text-line .tuan {
+        margin: 6px 0;
+        padding-left: 10px;
+        border-left: 1px solid var(--border-strong);
+        color: var(--text-muted);
+      }
+
+      .yao-line {
+        margin: 10px 0 0;
+        padding: 8px 10px;
+        border-left: 2px solid var(--seal);
+        background: rgba(164, 44, 30, 0.05);
+        font-size: 19px;
+        line-height: 1.9;
+      }
+
+      .yao-line .tag {
+        display: block;
+        margin-bottom: 2px;
+        font-size: 15px;
+        letter-spacing: 0.18em;
+        color: var(--seal);
+      }
+
+      .yao-line em {
+        display: block;
+        margin-top: 2px;
+        font-style: normal;
+        font-size: 17px;
+        color: var(--text-muted);
+      }
+
+      .verdict {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        background: var(--seal-soft);
+        color: var(--seal);
+        border: 1px solid var(--seal-soft);
+      }
+
+      /* 结论区。原先那句大白话排在右栏第四件，前头压着九行技术事实表，
+         后头跟着八宫名单、四卦推导与卦气环，要一路滚到底才撞见——
+         恰好是最该第一眼看到的一句，排在信息洪流中段。整块提到两栏之上，
+         占满版心：吉凶、缘由、宜忌、提醒一次读完，下面的推导是「凭什么」，
+         读不读都在那儿。 */
+      .verdict-block {
+        margin-top: 16px;
+        padding: 18px 20px 16px;
+        border-radius: 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-top: 3px solid var(--seal);
+      }
+
+      .verdict-lead {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      .verdict-mark {
+        font-family: 'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', 'SimSun', serif;
+        font-size: 46px;
+        line-height: 1.15;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--seal);
+      }
+
+      .verdict-say-short {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .verdict-say {
+        margin: 10px 0 0;
+        font-size: 19px;
+        line-height: 1.85;
+        color: var(--text);
+      }
+
+      .verdict-on-topic {
+        padding-left: 13px;
+        border-left: 3px solid var(--jade);
+      }
+
+      /* 怎么算出来的：把生克那一层与旺衰那一层都摆出来，免得看的人拿着
+         事实表里的「生克小吉」去对不上这个「大吉」，以为算错了。 */
+      .verdict-calc {
+        margin: 10px 0 0;
+        font-size: 16px;
+        line-height: 1.75;
+        color: var(--text-muted);
+      }
+
+      .verdict-picks {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--border);
+      }
+
+      .verdict-picks h3 {
+        margin: 0 0 6px;
+        font-size: 16px;
+        letter-spacing: 0.1em;
+      }
+
+      .verdict-picks ul {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 17px;
+        line-height: 1.85;
+      }
+
+      .verdict-picks .good h3 { color: var(--jade); }
+      .verdict-picks .bad h3 { color: var(--seal); }
+
+      .verdict-warn {
+        margin: 14px 0 0;
+        padding: 10px 13px;
+        border-radius: 10px;
+        background: var(--seal-soft);
+        border-left: 3px solid var(--seal);
+        font-size: 17px;
+        line-height: 1.75;
+      }
+
+      .toss-progress {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 12px 0 14px;
+      }
+
+      .toss-track {
+        flex: 1 1 auto;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--surface-muted);
+        overflow: hidden;
+      }
+
+      .toss-fill {
+        height: 100%;
+        width: 0;
+        border-radius: 999px;
+        background: var(--seal);
+        transition: width 240ms ease;
+      }
+
+      .toss-count {
+        margin: 0;
+        flex: 0 0 auto;
+        font-size: 16px;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .toss-fill { transition: none; }
+      }
+
+      dl.facts {
+        margin: 14px 0 0;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 14px;
+        font-size: 17px;
+      }
+
+      dl.facts dt {
+        color: var(--text-muted);
+        white-space: nowrap;
+      }
+
+      dl.facts dd {
+        margin: 0;
+      }
+
+      .insights {
+        display: grid;
+        gap: 14px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .insights li {
+        border-left: 2px solid var(--border-strong);
+        padding: 3px 0 3px 16px;
+      }
+
+      .insights strong {
+        display: block;
+        font-size: 17px;
+        margin-bottom: 2px;
+      }
+
+      .insights span {
+        font-size: 17px;
+        color: var(--text-muted);
+      }
+
+      .cols {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+        gap: 12px;
+      }
+
+      .cols ul {
+        margin: 6px 0 0;
+        padding-left: 18px;
+        font-size: 17px;
+        color: var(--text-muted);
+      }
+
+      .cols h3 {
+        margin: 0;
+        font-size: 17px;
+        letter-spacing: 0.06em;
+      }
+
+      .cols .good h3 {
+        color: var(--jade);
+      }
+
+      .cols .bad h3 {
+        color: var(--seal);
+      }
+
+      /* ---------- 摇卦 ---------- */
+
+      .toss-stage {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        align-items: center;
+        position: relative;
+      }
+
+      /* 台面朱砂光晕：给摇卦一个现场感，压得很淡，只在余光里 */
+      .toss-stage::before {
+        content: '';
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        width: min(300px, 92%);
+        height: 120px;
+        transform: translateX(-50%);
+        background: radial-gradient(ellipse at center, var(--seal-soft), transparent 68%);
+        pointer-events: none;
+        animation: tossGlow 3.4s ease-in-out infinite;
+      }
+
+      .coins {
+        display: flex;
+        gap: 14px;
+      }
+
+      /* 投影留在桌面不跟着飞，铜钱本身才抛得起来 */
+      .coin-slot {
+        position: relative;
+        width: 52px;
+        height: 52px;
+      }
+
+      .coin-shadow {
+        position: absolute;
+        left: 50%;
+        bottom: -9px;
+        width: 40px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--text);
+        opacity: 0.26;
+        filter: blur(2px);
+        transform: translateX(-50%);
+      }
+
+      .coin {
+        position: relative;
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        border: 2px solid var(--gold);
+        background: var(--surface-muted);
+        display: grid;
+        place-items: center;
+        font-size: 19px;
+        font-weight: 600;
+        color: var(--gold);
+        box-shadow: inset 0 0 0 4px var(--surface-muted), inset 0 0 0 5px var(--gold);
+      }
+
+      /* 抛物线上升 + 翻面 + 落地压扁再回弹 */
+      .coin.spin {
+        animation: coinThrow 720ms cubic-bezier(0.32, 0.02, 0.3, 1) both;
+      }
+
+      .coin-slot.spin .coin-shadow {
+        animation: coinShadow 720ms ease-out both;
+      }
+
+      /* 三枚错开落地，一起落就假了 */
+      .coin-slot:nth-child(2) .coin,
+      .coin-slot:nth-child(2) .coin-shadow {
+        animation-delay: 80ms;
+      }
+
+      .coin-slot:nth-child(3) .coin,
+      .coin-slot:nth-child(3) .coin-shadow {
+        animation-delay: 160ms;
+      }
+
+      .toss-log {
+        display: flex;
+        flex-direction: column-reverse;
+        gap: 4px;
+        font-size: 16px;
+        color: var(--text-muted);
+        min-height: 84px;
+      }
+
+      .toss-log div {
+        display: flex;
+        gap: 8px;
+      }
+
+      .toss-log b {
+        min-width: 34px;
+        color: var(--seal);
+        font-weight: 600;
+      }
+
+      /* ---------- 卦库 ---------- */
+
+      .library-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+        gap: 8px;
+      }
+
+      .gua-cell {
+        text-align: center;
+        padding: 9px 6px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        cursor: pointer;
+      }
+
+      .gua-cell:hover {
+        background: var(--surface-hover);
+      }
+
+      .gua-cell[aria-pressed='true'] {
+        border-color: var(--seal);
+        background: var(--seal-soft);
+      }
+
+      .gua-cell .order {
+        font-size: 14px;
+        color: var(--text-subtle);
+      }
+
+      /* 卦库这一格里的卦画是 Unicode 卦符（⚊⚋ 一类）当文字渲染的，
+         笔画本身就只有 hairline 粗细，字号一小就糊成一道灰影。
+         所以这里比正文字号再放一档，并把字距收窄，六爻仍读作一个卦。 */
+      .gua-cell .mini {
+        font-size: 19px;
+        line-height: 1.1;
+        margin: 5px 0 4px;
+        letter-spacing: -0.5px;
+      }
+
+      .gua-cell .nm {
+        font-size: 16px;
+        letter-spacing: 0.02em;
+      }
+
+      /* ---------- 历法 ---------- */
+
+      /* 十二格固定列数，且只用能整除 12 的档（6 / 4 / 2），
+         这样每行都填满，不会出现参差的末行。 */
+      .hour-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      @media (max-width: 1180px) {
+        .hour-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 760px) {
+        .hour-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      .hour {
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        padding: 9px 10px;
+        background: var(--bg);
+      }
+
+      .hour.auspicious {
+        border-color: color-mix(in srgb, var(--jade) 45%, transparent);
+      }
+
+      .hour.inauspicious {
+        border-color: color-mix(in srgb, var(--seal) 32%, transparent);
+      }
+
+      .hour.current {
+        box-shadow: 0 0 0 2px var(--seal-soft);
+        border-color: var(--seal);
+      }
+
+      .hour .nm {
+        font-weight: 600;
+        letter-spacing: 0.06em;
+      }
+
+      .hour .tm {
+        font-size: 15px;
+        color: var(--text-subtle);
+        white-space: nowrap;
+      }
+
+      .hour .god {
+        font-size: 16px;
+        color: var(--text-muted);
+        white-space: nowrap;
+      }
+
+      .term-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 6px;
+        font-size: 16px;
+      }
+
+      .term-list .now {
+        color: var(--seal);
+        font-weight: 600;
+      }
+
+      /* ---------- 卦历 ---------- */
+
+      .history-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 13px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+      }
+
+      .history-item .main {
+        min-width: 0;
+      }
+
+      .history-item .q {
+        font-size: 17px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .history-item .meta {
+        font-size: 15px;
+        color: var(--text-subtle);
+      }
+
+      .empty {
+        color: var(--text-subtle);
+        font-size: 17px;
+        text-align: center;
+        padding: 26px 0;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      /* ---------- 免责声明 ---------- */
+
+      .disclaimer {
+        margin-top: 8px;
+        padding: 16px 18px;
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--seal);
+        border-radius: 12px;
+        background: var(--surface-muted);
+      }
+
+      .disclaimer strong {
+        display: block;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        color: var(--seal);
+        margin-bottom: 6px;
+      }
+
+      .disclaimer p {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.8;
+        color: var(--text-muted);
+      }
+
+      .cadence-hint {
+        margin: 12px 0 0;
+        font-size: 16px;
+        line-height: 1.85;
+        color: var(--text-muted);
+        padding: 10px 13px;
+        border-radius: 10px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+      }
+
+      .cadence-hint b {
+        color: var(--text);
+      }
+
+      .cadence {
+        margin-top: 14px;
+        padding: 11px 14px;
+        border-radius: 10px;
+        background: var(--surface-muted);
+        border-left: 3px solid var(--gold);
+        font-size: 17px;
+        line-height: 1.8;
+      }
+
+      .cadence .next {
+        display: block;
+        margin-top: 6px;
+        font-size: 16px;
+        color: var(--text-muted);
+      }
+
+      .caution {
+        margin-top: 14px;
+        padding: 10px 13px;
+        border-radius: 10px;
+        background: var(--seal-soft);
+        border-left: 3px solid var(--seal);
+        font-size: 17px;
+        line-height: 1.75;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 1ms !important;
+          animation-delay: 0ms !important;
+          transition-duration: 1ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <header class="app-header">
+          <h1 class="serif">灵签易占</h1>
+          <p>梅花易数起卦 · 六十四卦参详 · 干支历法速查</p>
+          <div class="ganzhi-strip" id="ganzhi-strip" aria-label="今日干支"></div>
+        </header>
+
+        <nav role="tablist" aria-label="功能分区">
+          <button role="tab" id="tab-cast" aria-controls="panel-cast" aria-selected="true">起卦</button>
+          <button role="tab" id="tab-library" aria-controls="panel-library" aria-selected="false">卦库</button>
+          <button role="tab" id="tab-almanac" aria-controls="panel-almanac" aria-selected="false">历法</button>
+          <button role="tab" id="tab-history" aria-controls="panel-history" aria-selected="false">卦历</button>
+        </nav>
+      </div>
+
+      <main>
+        <section role="tabpanel" id="panel-cast" aria-labelledby="tab-cast">
+          <div class="card">
+            <h2>所问何事</h2>
+            <p class="hint">
+              问事只定<b>事类与应期</b>，不改卦体本身的吉凶：认出财运取金、事业取火、婚恋取木、疾病取土……
+              认不出就按用卦算。写下问题，铜钱起卦与时间起卦才解得不一样。
+            </p>
+            <input type="text" id="question" maxlength="120" placeholder="请在此输入你想卜卦的内容" />
+          </div>
+
+          <div class="card">
+            <h2>择一法起卦</h2>
+            <p class="hint">四法皆本梅花易数，只是取数来源不同。</p>
+            <div class="methods" id="methods">
+              <button class="method" data-method="daily">
+                <strong>每日一卦</strong>
+                <span>按今日日期推算，一天一换</span>
+              </button>
+              <button class="method" data-method="time">
+                <strong>时间起卦</strong>
+                <span>以当下时辰成卦，两小时一换</span>
+              </button>
+              <button class="method" data-method="numbers">
+                <strong>数字起卦</strong>
+                <span>心里默念两数，一上卦一下卦</span>
+              </button>
+              <button class="method" data-method="coins">
+                <strong>铜钱摇卦</strong>
+                <span>三枚铜钱掷六次，每卦皆不同</span>
+              </button>
+            </div>
+            <p class="cadence-hint">
+              四法的取数来源不同，变卦的快慢也不同：<b>铜钱摇卦</b>每掷一次即一卦，<b>数字起卦</b>换一组数即变；
+              <b>时间起卦</b>两小时换一次，<b>每日一卦</b>一天一换。同一时辰、同一天内反复起卦，自然是同一个卦。
+            </p>
+
+            <div class="row" id="number-form" hidden style="margin-top: 14px">
+              <input type="number" id="num-upper" min="1" max="1000000000" placeholder="第一数（上卦）" style="flex: 1 1 150px" />
+              <input type="number" id="num-lower" min="1" max="1000000000" placeholder="第二数（下卦）" style="flex: 1 1 150px" />
+              <button id="num-random" class="ghost">随手取数</button>
+              <button class="primary" id="num-submit">起卦</button>
+            </div>
+          </div>
+
+          <div class="card" id="toss-card" hidden>
+            <h2>摇卦</h2>
+            <p class="hint">静心默念所问之事，每次投三枚铜钱，自初爻向上，共掷六次得六爻。</p>
+            <div class="toss-progress" role="group" aria-label="摇卦进度">
+              <div class="toss-track"><div class="toss-fill" id="toss-fill"></div></div>
+              <p class="toss-count" id="toss-count" role="status" aria-live="polite">已摇 0 / 6 爻</p>
+            </div>
+            <div class="toss-stage">
+              <div class="coins" id="coins" aria-hidden="true">
+                <div class="coin-slot"><div class="coin">?</div><span class="coin-shadow"></span></div>
+                <div class="coin-slot"><div class="coin">?</div><span class="coin-shadow"></span></div>
+                <div class="coin-slot"><div class="coin">?</div><span class="coin-shadow"></span></div>
+              </div>
+              <div class="toss-log" id="toss-log" role="status" aria-live="polite"></div>
+              <div class="row">
+                <button class="primary" id="toss-btn">掷钱</button>
+                <button id="toss-reset" class="ghost">重来</button>
+                <button id="toss-finish" class="primary" disabled>成卦解卦</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="result-slot"></div>
+        </section>
+
+        <section role="tabpanel" id="panel-library" aria-labelledby="tab-library" hidden>
+          <div class="card">
+            <h2>六十四卦</h2>
+            <p class="hint">点开任一卦，可看卦辞、彖传、象辞与互错综三卦。</p>
+            <input type="text" id="library-search" maxlength="40" placeholder="搜索卦名或上下卦，如「乾」「雷」" />
+            <div class="library-grid" id="library-grid" style="margin-top: 14px"></div>
+          </div>
+          <div id="library-detail"></div>
+        </section>
+
+        <section role="tabpanel" id="panel-almanac" aria-labelledby="tab-almanac" hidden>
+          <div id="almanac-slot"></div>
+        </section>
+
+        <section role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden>
+          <div class="card">
+            <h2>卦历</h2>
+            <p class="hint">保存的卦象存在本机，随时回看当时所问何事、所起何卦、所得何断。</p>
+            <div id="history-slot"><div class="empty">加载中…</div></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="disclaimer">
+        <p>
+          本应用实现的是中国传统占筮方法，依据梅花易数的体用生克、旺衰与取象规则推演。
+          <strong>内容由 AI 生成，仅供娱乐，无实际预测功能。卦象不构成任何建议、预测或决策依据，不应作为医疗、法律、财务等重要决定的参考。</strong>
+          娱乐之外，请以自身判断与专业意见为准。
+        </p>
+      </footer>
+    </div>
+
+    <div class="sr-only" role="status" aria-live="polite" id="live-region"></div>
+
+    <script type="module">
+      const API = '/api/divination';
+      const state = {
+        bootstrap: null,
+        library: [],
+        reading: null,
+        tosses: [],
+        librarySelection: null,
+      };
+
+      const el = (id) => document.getElementById(id);
+      const announce = (text) => {
+        el('live-region').textContent = text;
+      };
+
+      // 写了所问就用所问当卦题；没写（比如从卦库直接起的卦）就按起法命名。
+      const CASTING_TITLES = {
+        每日一卦: '今日之卦',
+        时间起卦: '此刻之卦',
+        数字起卦: '心中之卦',
+        铜钱摇卦: '手掷之卦',
+      };
+      const castingTitle = (method) => CASTING_TITLES[method] || '一卦';
+
+      async function api(path, options) {
+        const response = await fetch(`${API}${path}`, {
+          headers: { 'content-type': 'application/json' },
+          ...options,
+        });
+        if (!response.ok) {
+          const detail = await response.json().catch(() => ({}));
+          const error = new Error(detail.message || `请求失败（${response.status}）`);
+          // 带上状态码与错误码，调用方才分得清「这一卦存不了了」（终态）与
+          // 「这条已经存过了」（还能改批注重试）——两者对按钮的处理完全不同。
+          error.status = response.status;
+          error.code = detail.error || '';
+          throw error;
+        }
+        return response.json();
+      }
+
+      /* ---------- 标签页 ---------- */
+
+      const TABS = ['cast', 'library', 'almanac', 'history'];
+      for (const name of TABS) {
+        el(`tab-${name}`).addEventListener('click', () => selectTab(name));
+      }
+
+      function selectTab(name) {
+        for (const tab of TABS) {
+          const active = tab === name;
+          el(`tab-${tab}`).setAttribute('aria-selected', String(active));
+          const panel = el(`panel-${tab}`);
+          const wasHidden = panel.hidden;
+          panel.hidden = !active;
+          if (active && wasHidden) restart(panel, 'panel-enter');
+        }
+        if (name === 'library' && state.library.length === 0) loadLibrary();
+        if (name === 'history') loadHistory();
+      }
+
+      /** 重放 CSS 动画：先摘掉类，强制回流后再加回去。 */
+      function restart(node, className) {
+        if (!node) return;
+        node.classList.remove(className);
+        void node.offsetWidth;
+        node.classList.add(className);
+      }
+
+      /* ---------- 起卦 ---------- */
+
+      for (const button of el('methods').querySelectorAll('[data-method]')) {
+        button.addEventListener('click', () => onMethod(button.dataset.method));
+      }
+
+      async function onMethod(method) {
+        const question = el('question').value.trim();
+        if (method === 'coins') {
+          el('number-form').hidden = true;
+          el('toss-card').hidden = false;
+          announce('请掷铜钱起卦');
+          return;
+        }
+        el('toss-card').hidden = true;
+        if (method === 'numbers') {
+          el('number-form').hidden = false;
+          return;
+        }
+        el('number-form').hidden = true;
+        await cast({ method, question });
+      }
+
+      el('num-submit').addEventListener('click', async () => {
+        const upper = Number(el('num-upper').value);
+        const lower = Number(el('num-lower').value);
+        if (!Number.isInteger(upper) || !Number.isInteger(lower) || upper < 1 || lower < 1) {
+          announce('请填写两个正整数');
+          return;
+        }
+        const ran = await cast({ method: 'numbers', question: el('question').value.trim(), upper, lower });
+        // 起完即清，免得连点「起卦」看着像结果被写死。
+        // 但只在真起成卦时才清：这一卦被锁跳过、或起卦失败时把用户刚填的两个数抹掉，
+        // 等于替用户把没起成的卦也扔了，还得重填一遍。
+        if (!ran) return;
+        el('num-upper').value = '';
+        el('num-lower').value = '';
+      });
+
+      el('num-random').addEventListener('click', () => {
+        el('num-upper').value = String(1 + Math.floor(Math.random() * 99));
+        el('num-lower').value = String(1 + Math.floor(Math.random() * 99));
+        announce('已取两数，可直接起卦');
+      });
+
+      /* 起卦推演日志。写死一套文案，用户连起三卦看到的是同一段话，那不叫在算。
+       * 所以逐行取自引擎 reading.details——本次的年月日、时辰、所报两数、六次掷钱
+       * 都在里面，每次都不一样。首尾两句措辞轮换，同卦重起也不至于一模一样。*/
+      const CASTING_OPENERS = ['依数取卦', '观象推演', '静心起卦', '循数而行'];
+      const CASTING_CLOSERS = [
+        (name) => `成${name}卦，静候其断`,
+        (name) => `${name}卦既定，休咎在人为`,
+        (name) => `得${name}，看体用生克`,
+        (name) => `${name}卦已成，参互错综`,
+      ];
+
+      const castingTimers = new Set();
+      const CASTING_LINE_MS = 110;
+      const CASTING_BUDGET_MS = 4000; // 四秒出头。原先三秒只够播取数那几句，一卦推完就没话了
+      const CASTING_BASE_CHAR_MS = 18; // 选行按最快速度估，保证选出来的都放得下
+      const CASTING_CHAR_MIN = 18; // 再快也不至于像在刷屏
+      const CASTING_CHAR_MAX = 55; // 再慢也不至于像在蹦字
+      const CASTING_MAX_LINES = 10; // 定高用：日志容器按这个行数留位，多了就截
+      const CASTING_HOLD_MS = 4400; // 整段停留。推演预算 4s 之外再留 400ms 给末行落定与切页
+
+      const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+      /**
+       * 取数之后的话。
+       *
+       * 原来只播引擎给的取数步骤：摇卦两步、数字起卦三步，推来推去就是那几个数，
+       * 一卦没成，观众已经看完了——这就是「内容太少」的意思。真正让人等的是
+       * 后面那一段：六爻怎么装、动爻往哪变、世应在哪、体用生克如何。
+       *
+       * 顺序按要紧程度排，后面截断时先丢不要紧的。每句都能核：用的都是
+       * reading 上已经算好的字段，没有一句是临时编的。
+       */
+      function castingAftermath(reading) {
+        const out = [];
+        const hex = reading?.hexagram;
+        const labelAt = (position) => reading?.lines?.[position - 1]?.label;
+
+        if (hex?.upper?.name && hex?.lower?.name) {
+          out.push(`上卦${hex.upper.name}、下卦${hex.lower.name}，得${hex.name}`);
+        }
+
+        const moving = (reading?.movingLines ?? []).map((line) => line.label).filter(Boolean);
+        if (moving.length && reading?.changed?.name) {
+          out.push(`${moving.join('、')}动，阴阳反转，变${reading.changed.name}`);
+        }
+
+        const jf = reading?.jingfang;
+        const shi = labelAt(jf?.shi);
+        const ying = labelAt(jf?.ying);
+        if (jf?.stage && shi && ying) {
+          out.push(`${jf.palaceName ?? ''}${jf.stage}卦，世在${shi}，应在${ying}`);
+        }
+
+        const st = reading?.structure;
+        if (st?.body?.name && st?.use?.name) {
+          out.push(`体卦${st.body.name}${st.body.element}，用卦${st.use.name}${st.use.element}`);
+        }
+        return out;
+      }
+
+      /** 拼这次的推演行：一句引子 + 引擎算好的取数步骤 + 成卦之后的几句 + 一句收尾。
+       *  字太多就从中段截断，保证打得完。 */
+      function castingLines(reading) {
+        const opener = pick(CASTING_OPENERS);
+        const closer = pick(CASTING_CLOSERS)(reading?.hexagram?.name ?? '');
+        const lines = [opener];
+        /* 收尾那句不进 push：它要压轴，不能因为行数满了就被截掉。可它的字数
+         * 得先占住预算——不算的话，字一多就把它挤出预算，实际时长顶掉推演末行，
+         * 而末行正是要压轴的那句。*/
+        let used = (opener.length + closer.length) * CASTING_BASE_CHAR_MS + CASTING_LINE_MS;
+        const push = (text) => {
+          const cost = text.length * CASTING_BASE_CHAR_MS + CASTING_LINE_MS;
+          if (lines.length >= CASTING_MAX_LINES || used + cost > CASTING_BUDGET_MS) return false;
+          lines.push(text);
+          used += cost;
+          return true;
+        };
+        for (const step of reading?.details ?? []) {
+          if (!push(step.value)) break;
+        }
+        for (const text of castingAftermath(reading)) {
+          if (!push(text)) break;
+        }
+        lines.push(closer);
+        return lines;
+      }
+
+      /** 字少就打得慢些，把这段停留填满；字多才提速。一头倒都不好。 */
+      function castingSpeed(lines) {
+        const chars = lines.reduce((sum, text) => sum + text.length, 0);
+        const room = CASTING_BUDGET_MS - (lines.length - 1) * CASTING_LINE_MS;
+        return Math.min(CASTING_CHAR_MAX, Math.max(CASTING_CHAR_MIN, Math.floor(room / chars)));
+      }
+
+      function stopCastingTyping() {
+        for (const id of castingTimers) clearTimeout(id);
+        castingTimers.clear();
+      }
+
+      /** 逐字打这几句。打完一行换下一行，光标只留在还没打完的那行上。 */
+      function typeCasting(log, lines) {
+        const add = (text, done) => {
+          const row = document.createElement('div');
+          row.className = done ? 'casting-line done' : 'casting-line';
+          row.textContent = text;
+          log.append(row);
+          return row;
+        };
+        if (reducedMotion()) {
+          lines.forEach((text) => add(text, true));
+          return;
+        }
+        const charMs = castingSpeed(lines);
+        let index = 0;
+        let row = add(lines[0].slice(0, 1), false);
+        let count = 1;
+        const step = () => {
+          const text = lines[index];
+          count += 1;
+          row.textContent = text.slice(0, count);
+          if (count < text.length) {
+            castingTimers.add(setTimeout(step, charMs));
+            return;
+          }
+          row.classList.add('done');
+          index += 1;
+          if (index >= lines.length) return;
+          // 换行必须另起一个元素：接着写上一行会把几句叠成一行
+          row = add(lines[index].slice(0, 1), false);
+          count = 1;
+          castingTimers.add(setTimeout(step, CASTING_LINE_MS));
+        };
+        step();
+      }
+
+      /**
+       * 随推演逐爻长出卦体。
+       *
+       * 每次推演报出一爻，就长一爻。什么时候标红动爻：等六爻都长齐了再点，
+       * 免得动爻在一开始就被指出来——起卦的意义正在于先成卦、后定哪一爻动。
+       */
+      function growCastingHex(box, reading) {
+        if (!box) return;
+        box.replaceChildren();
+        const lines = reading?.lines ?? [];
+        if (lines.length === 0) return;
+        const rows = [];
+        // 自上爻排到初爻，视觉上与卦盘一致；长出来时再倒着补，跟推演顺序对上。
+        for (let position = 6; position >= 1; position -= 1) {
+          const line = lines[position - 1];
+          const row = document.createElement('div');
+          const isYang = line ? line.value === 1 : false;
+          row.className = `grow ${isYang ? 'yang' : 'yin'}`;
+          row.innerHTML = `<i></i>${isYang ? '' : '<i></i>'}`;
+          box.append(row);
+          rows.push({ row, line, position });
+        }
+        if (reducedMotion()) {
+          for (const item of rows) {
+            item.row.classList.add('in');
+            if (item.line?.moving) item.row.classList.add('moving');
+          }
+          return;
+        }
+        // 推演报一行，长一爻。打字那一拍已经占掉 CASTING_BUDGET_MS，成卦盘只取
+        // 其中一小段，六爻铺完仍在等待之内，不至于推演画到一半就被切走。
+        const order = [...rows].sort((a, b) => a.position - b.position);
+        const stepMs = Math.max(70, Math.floor((CASTING_BUDGET_MS * 0.35) / order.length));
+        order.forEach((item, index) => {
+          castingTimers.add(setTimeout(() => {
+            item.row.classList.add('in');
+            if (index === order.length - 1) {
+              // 全部长齐，再点动爻
+              for (const other of rows) {
+                if (other.line?.moving) other.row.classList.add('moving');
+              }
+            }
+          }, stepMs * (index + 1)));
+        });
+      }
+
+      /* 起卦在飞：所有能发起起卦的控件一并锁住。
+         从前只有 toss-finish 有个 disabled，那是「摇够六次」的规矩，跟「正在起卦」
+         是两回事；四个起法按钮与「起卦」按钮从来不禁用，而 cast() 也没有闸。
+         连点「时间起卦」会连发两次请求，两卦的推演日志互相顶替，
+         最后落到哪一卦看谁先回来——实测两次会得到同一个 id，卦历里删一条连带删另一条。
+         这里锁的是状态而不是某一个按钮：三条起卦路（每日/时间、数字、铜钱）都走 cast()，
+         在那一处设闸，三条路一次锁齐。 */
+      let casting = false;
+
+      /** 能发起或改动一次起卦的控件。toss-btn/toss-reset 也在内：推演那几秒里
+          再摇一次，state.tosses 会和正在成卦的那份对不上。 */
+      function castTriggers() {
+        return [
+          ...el('methods').querySelectorAll('[data-method]'),
+          el('num-random'),
+          el('num-submit'),
+          el('toss-btn'),
+          el('toss-reset'),
+          el('toss-finish'),
+        ];
+      }
+
+      /** 锁住并返回解锁函数。解锁按各自原值还原，不是一律解禁：
+          toss-finish 平时就该是禁着的（还没摇够六次），跟着一起解禁，
+          等于凭空开出一个没摇够也能「成卦解卦」的入口。 */
+      function lockCasting() {
+        const nodes = castTriggers();
+        const saved = nodes.map((node) => [node, node.disabled]);
+        for (const node of nodes) node.disabled = true;
+        return () => {
+          for (const [node, was] of saved) node.disabled = was;
+        };
+      }
+
+      /**
+       * 起一卦。
+       * @param {object} payload
+       * @returns {Promise<boolean>} 真的起了返回 true；已在起卦中、本次被跳过，
+       * 或起卦失败，也返回 false——调用方据此决定要不要清掉用户刚填的东西。
+       */
+      async function cast(payload) {
+        // 已经在起卦就直接返回。三条起卦路都走这里，在这一处设闸就够了，
+        // 不用每个按钮各自记一份「我正在忙」。
+        if (casting) return false;
+        casting = true;
+        const unlock = lockCasting();
+        const slot = el('result-slot');
+        try {
+          // 先起卦、再显结果：跳过这一拍，结果就只是一次文本替换。
+          const stage = showCasting();
+          const data = await api('/cast', {
+            method: 'POST',
+            body: JSON.stringify({ ...payload, question: payload.question ?? el('question').value.trim() }),
+          });
+          // 取数结果到了才知道这卦算出什么，推演日志照着它现编，不是预先摆好的一段话。
+          if (stage?.log?.isConnected) typeCasting(stage.log, castingLines(data.reading));
+          if (stage?.hex?.isConnected) growCastingHex(stage.hex, data.reading);
+          // 留够一整段，让八卦环转满一圈、推演日志打完；直接跳结果就只是换了段文字。
+          // 时长取 CASTING_HOLD_MS，不在此处另写一个数——推演变长而停留没跟上，末行就被切掉。
+          await wait(reducedMotion() ? 0 : CASTING_HOLD_MS);
+          stopCastingTyping();
+          state.reading = data.reading;
+          renderReading(data.reading);
+          announce(`得卦 ${data.reading.hexagram.name}，${data.reading.verdict.label}`);
+          return true;
+        } catch (error) {
+          slot.replaceChildren();
+          announce(error.message);
+          window.alert(error.message);
+          return false;
+        } finally {
+          // 解锁放 finally：出错也必须解开，否则一次网络失败就把整个起卦页永久锁死。
+          unlock();
+          casting = false;
+        }
+      }
+
+      const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      /* 八卦环。八纯按后天方位（文王八卦）排位：离南、坎北、震东、兑西，
+       * 乾西北、坤西南、巽东南、艮东北。爻象自下而上，1 为阳、0 为阴。
+       * 这一组是传世定法，不是本包自订。*/
+      const BAGUA = [
+        { name: '坎', at: 0, lines: [0, 1, 0] },
+        { name: '艮', at: 45, lines: [0, 0, 1] },
+        { name: '震', at: 90, lines: [1, 0, 0] },
+        { name: '巽', at: 135, lines: [0, 1, 1] },
+        { name: '离', at: 180, lines: [1, 0, 1] },
+        { name: '坤', at: 225, lines: [0, 0, 0] },
+        { name: '兑', at: 270, lines: [1, 1, 0] },
+        { name: '乾', at: 315, lines: [1, 1, 1] },
+      ];
+
+      /** 画一个三爻卦。1 画整条，0 断成两截。
+       *  数组与引擎同约定：自下而上，lines[0] 是初爻，所以画的时候要倒着落 y。 */
+      function trigramBars(lines) {
+        return lines
+          .map((yang, i) => {
+            const y = 9 - i * 9;
+            return (
+              `<rect x="-13" y="${y}" width="${yang ? 26 : 10}" height="3.6" rx="1.2"/>` +
+              (yang ? '' : `<rect x="3" y="${y}" width="10" height="3.6" rx="1.2"/>`)
+            );
+          })
+          .join('');
+      }
+
+      function baguaSvg() {
+        // 外环：八纯落在正位，每两卦的中间空档点一颗朱砂当游标
+        const outer =
+          BAGUA.map(
+            (t) =>
+              `<g transform="rotate(${t.at} 100 100) translate(100 28)">${trigramBars(t.lines)}</g>`,
+          ).join('') +
+          BAGUA.map(
+            (t) =>
+              `<circle cx="100" cy="14" r="1.9" fill="var(--seal)" ` +
+              `transform="rotate(${t.at + 22.5} 100 100)"/>`,
+          ).join('');
+        // 内环：八根刻度，落在两卦正中间，跟外环反向转
+        const inner = BAGUA.map(
+          (t) =>
+            `<rect x="99.1" y="50" width="1.8" height="8" rx="0.9" ` +
+            `transform="rotate(${t.at + 22.5} 100 100)"/>`,
+        ).join('');
+
+        return (
+          `<svg class="bagua" viewBox="0 0 200 200" aria-hidden="true" focusable="false">` +
+          `<defs><radialGradient id="bagua-halo">` +
+          `<stop offset="0%" stop-color="var(--seal)" stop-opacity="0.3"/>` +
+          `<stop offset="55%" stop-color="var(--seal)" stop-opacity="0.12"/>` +
+          `<stop offset="100%" stop-color="var(--seal)" stop-opacity="0"/>` +
+          `</radialGradient></defs>` +
+          `<circle class="halo" cx="100" cy="100" r="36" fill="url(#bagua-halo)"/>` +
+          `<circle cx="100" cy="100" r="90" fill="none" stroke="var(--border)" stroke-width="1"/>` +
+          `<g class="ring-outer" fill="currentColor">` +
+          `<circle cx="100" cy="100" r="72" fill="none" stroke="currentColor" stroke-opacity="0.22"/>` +
+          outer +
+          `</g>` +
+          `<g class="ring-inner" fill="currentColor" opacity="0.38">${inner}</g>` +
+          `<g class="core"><text x="100" y="112" text-anchor="middle" font-size="34" fill="var(--seal)">☯</text></g>` +
+          `</svg>`
+        );
+      }
+
+      const QI_RING = [
+        { b: '子', s: '复', n: 1, p: '息' }, { b: '丑', s: '临', n: 2, p: '息' },
+        { b: '寅', s: '泰', n: 3, p: '息' }, { b: '卯', s: '大壮', n: 4, p: '息' },
+        { b: '辰', s: '夬', n: 5, p: '息' }, { b: '巳', s: '乾', n: 6, p: '息' },
+        { b: '午', s: '姤', n: 1, p: '消' }, { b: '未', s: '遁', n: 2, p: '消' },
+        { b: '申', s: '否', n: 3, p: '消' }, { b: '酉', s: '观', n: 4, p: '消' },
+        { b: '戌', s: '剥', n: 5, p: '消' }, { b: '亥', s: '坤', n: 6, p: '消' },
+      ];
+
+      /**
+       * 十二辟卦消长环。
+       *
+       * 环分十二格，每格一卦。每格画 N 条短杠，N 就是那一月长了几爻——这是十二辟卦
+       * 最要紧的形状，也是整套学说唯一需要记住的东西。走满六格到对宫是极盛，此后
+       * 折回，从另一头再长一遍。一年就是一个来回。
+       *
+       * 当月那一格高亮；若本卦正在十二辟卦之中，用朱砂点标出它在环上的位置。
+       */
+      function qiRingSvg(qi) {
+        if (!qi) return '';
+        const C = 100;
+        const R = 58;          // 主环半径：环带要装得下最长六条杠，内圈才留得住中心的字
+        const now = qi.branch;
+        const selfIndex = qi.self
+          ? QI_RING.findIndex((m) => m.s === qi.self)
+          : -1;
+
+        const cells = QI_RING.map((m, i) => {
+          const deg = i * 30 - 90;
+          const at = deg * (Math.PI / 180);
+          const isNow = i === now;
+          const isSelf = i === selfIndex;
+
+          // 爻杠只在环带里向外长，六条最长时也不越过内圈，中心那几行字始终干净。
+          const bars = Array.from({ length: m.n }, (_, k) => {
+            const off = 5 + k * 4.2;
+            const bx = C + Math.cos(at) * (R + off);
+            const by = C + Math.sin(at) * (R + off);
+            const w = 13 - k * 0.9;
+            return (
+              `<rect class="cell-bar" x="${(bx - w / 2).toFixed(2)}" y="${(by - 2.2).toFixed(2)}" ` +
+              `width="${w.toFixed(2)}" height="4.4" rx="2.2" ` +
+              `transform="rotate(${i * 30} ${bx.toFixed(2)} ${by.toFixed(2)})" ` +
+              `fill="currentColor" opacity="${(0.52 + k * 0.075).toFixed(2)}"/>`
+            );
+          }).join('');
+
+          // 标签放在环带之外，卦名与地支上下两行。
+          // 半径要留得下：爻杠最远伸到 R + 5 + 5×4.2 + 2.2 ≈ 86，两行字又从基线
+          // 往下占了 7 个单位——挂在 R+32 的话，斜角上那两个满六爻的格子（乾巳、坤亥）
+          // 爻杠正好压在「乾」「坤」的字上。所以挂到 R+40，画布同时向外扩到 232 见方，
+          // 让最外那两个字有地方待着。圆心仍在 (100,100)，环的大小不受影响。
+          const lx = C + Math.cos(at) * (R + 40);
+          const ly = C + Math.sin(at) * (R + 40);
+          return (
+            `<g class="${isNow ? 'now-sector' : ''}" opacity="${isNow ? 1 : 0.68}">` +
+            `<g color="var(--seal)">${bars}</g>` +
+            `<text class="${isNow ? 'now-label' : 'month-label'}" x="${lx.toFixed(2)}" ` +
+            `y="${(ly - 1).toFixed(2)}" text-anchor="middle">${escapeHtml(m.s)}` +
+            `<tspan font-size="5.6" dy="6.4">${escapeHtml(m.b)}</tspan></text>` +
+            (isSelf
+              ? `<circle class="mark" cx="${(C + Math.cos(at) * (R - 9)).toFixed(2)}" ` +
+                `cy="${(C + Math.sin(at) * (R - 9)).toFixed(2)}" r="2.6"/>`
+              : '') +
+            `</g>`
+          );
+        }).join('');
+
+        // 子午、卯酉是正对的两极，虚线拉到中心，一眼看出「走到对宫是极盛」。
+        const axes = [0, 3, 6, 9]
+          .map((a) => {
+            const at = (a * 30 - 90) * (Math.PI / 180);
+            const x1 = C + Math.cos(at) * (R - 3);
+            const y1 = C + Math.sin(at) * (R - 3);
+            const x2 = C + Math.cos(at) * 36;
+            const y2 = C + Math.sin(at) * 36;
+            return (
+              `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" ` +
+              `stroke="var(--border-strong)" stroke-width="0.8" stroke-dasharray="2 3"/>`
+            );
+          })
+          .join('');
+
+        return (
+          `<svg class="qiring" viewBox="-16 -16 232 232" role="img" ` +
+          `aria-label="十二辟卦消长环，当月主卦${escapeHtml(qi.lord)}">` +
+          `<circle cx="100" cy="100" r="${R}" fill="none" stroke="var(--border)" stroke-width="1"/>` +
+          `<circle cx="100" cy="100" r="36" fill="none" stroke="var(--border)" stroke-width="0.8" opacity="0.5"/>` +
+          axes +
+          cells +
+          `<text x="100" y="92" text-anchor="middle" font-size="7" fill="var(--text-muted)">当月主卦</text>` +
+          `<text x="100" y="105" text-anchor="middle" font-size="12" fill="var(--seal)">${escapeHtml(qi.lord)}</text>` +
+          `<text x="100" y="117" text-anchor="middle" font-size="6.8" fill="var(--text-muted)">` +
+          `${qi.phase === '息' ? '阳气渐长' : '阴气渐盛'}</text>` +
+          `</svg>`
+        );
+      }
+
+      /**
+       * 一卦的迷你爻画。touched 是参与这一步取法的爻位（1 起，自下而上），
+       * 染朱砂——四个取法各不相同，只有把「动了哪几爻」标出来才看得出差别。
+       */
+      function miniGua(key, touched) {
+        const rows = [];
+        for (let position = 6; position >= 1; position -= 1) {
+          const isYang = key[position - 1] === '1';
+          const on = touched && touched.includes(position);
+          rows.push(
+            `<div class="mini-line ${isYang ? 'yang' : 'yin'}${on ? ' touched' : ''}">` +
+            `<i></i>${isYang ? '' : '<i></i>'}</div>`,
+          );
+        }
+        return `<div class="mini-gua">${rows.join('')}</div>`;
+      }
+
+      /** 取法说明。字越少越好，这是图注不是段落。 */
+      const DERIVE_HOW = {
+        mutual: ['互卦', '取二三四为下卦\n三四五为上卦'],
+        changed: ['变卦', '动爻阴阳反转'],
+        opposite: ['错卦', '六爻阴阳全反'],
+        inverted: ['综卦', '六爻上下倒置'],
+      };
+
+      /**
+       * 互、变、错、综四种取法摊成一张图。
+       *
+       * 这四种是梅花易数里最容易被当成结论记住、却最没被看见的推法：断语只说
+       * 「互卦为XX」，看不到是怎么互出来的。摆成图之后，取哪几爻、怎么反、怎么
+       * 倒，各是一眼的事。
+       */
+      function deriveBlock(reading) {
+        const base = reading.hexagram;
+        const moving = (reading.movingLines || []).map((line) => line.position);
+        const steps = [
+          ['mutual', reading.mutual, [2, 3, 4, 5]],
+          ['changed', reading.changed, moving],
+          ['opposite', reading.opposite, [1, 2, 3, 4, 5, 6]],
+          ['inverted', reading.inverted, [1, 2, 3, 4, 5, 6]],
+        ].filter(([, target]) => Boolean(target));
+
+        if (steps.length === 0) return null;
+
+        const arrow = (label, how) => (
+          `<div class="arrow">` +
+          `<div class="how">${how.split('\n').map(escapeHtml).join('<br>')}</div>` +
+          `<svg width="30" height="8" viewBox="0 0 30 8" aria-hidden="true">` +
+          `<line x1="0" y1="4" x2="24" y2="4" stroke="currentColor" stroke-width="1"/>` +
+          `<path d="M24 1.5 L29 4 L24 6.5 Z" fill="currentColor"/>` +
+          `</svg>` +
+          `</div>`
+        );
+
+        const units = steps
+          .map(([kind, target, touched]) => {
+            const [label, how] = DERIVE_HOW[kind];
+            const isChanged = kind === 'changed';
+            return (
+              // 箭头与卦裹在一格里：格子才是排布的单位。原先箭头与卦是
+              // 平级的 flex item，注记长短一差就把后面的卦挤偏，四列间距不等。
+              `<div class="derive-step">` +
+              arrow(label, how) +
+              `<div class="unit">` +
+              miniGua(target.key, isChanged ? touched : null) +
+              `<span class="unit-name">${escapeHtml(target.name)}</span>` +
+              `<span class="unit-tag">${escapeHtml(label)}</span>` +
+              `</div>` +
+              `</div>`
+            );
+          })
+          .join('');
+
+        return (
+          `<div class="derive">` +
+          `<div class="derive-head">本卦之外，四种取法各有所据</div>` +
+          `<div class="derive-body">` +
+          `<div class="derive-row">` +
+          `<div class="unit self-unit">` +
+          miniGua(base.key, null) +
+          `<span class="unit-name">${escapeHtml(base.name)}</span>` +
+          `<span class="unit-tag">本卦</span>` +
+          `</div>` +
+          `</div>` +
+          `<div class="derive-row">${units}</div>` +
+          `</div>` +
+          `</div>`
+        );
+      }
+
+      /**
+       * 一宫八卦，按世次先后摆成一列。
+       *
+       * 京房这一层最难记的不是「我在哪个宫」，是那一宫里八卦的次序：一世到五世
+       * 世爻逐爻上移，看着像一架梯子；游魂、归魂两个却往回退（世在四爻、三爻），
+       * 偏偏又都叫「世」。只写「离宫一世卦」四个字，谁也想不到梯子中间还有两级是倒着走的。
+       * 所以把同宫八卦全摆出来，每一格标出它相对本宫纯卦变过哪几爻——递进到第五级之后
+       * 忽然要退回去一步，图上一眼就看得出「游」「归」两个字不是随口起的。
+       *
+       * 小卦上不标世爻：世爻在左边卦盘上已经朱砂框出来了，这里再标一遍是两份要人核对的账。
+       * 这一列只管次序。
+       */
+      function palaceBlock(jingfang) {
+        const roster = jingfang && jingfang.roster;
+        if (!roster || roster.length === 0) return null;
+        const units = roster
+          .map((slot) => {
+            const isHere = slot.stage === jingfang.stage;
+            // 游魂、归魂是那架梯子上的两个例外，标出来才不会看成六个一串
+            const isOdd = slot.stage === '游魂' || slot.stage === '归魂';
+            const classes = ['unit', isHere ? 'self self-unit' : '', isOdd ? 'odd' : '']
+              .filter(Boolean)
+              .join(' ');
+            return (
+              `<div class="${classes}">` +
+              miniGua(slot.key, slot.flips) +
+              `<span class="unit-name">${escapeHtml(slot.name)}</span>` +
+              `<span class="unit-tag">${escapeHtml(slot.stage)}</span>` +
+              `</div>`
+            );
+          })
+          .join('');
+
+        return (
+          `<div class="palace">` +
+          `<div class="derive-head">${escapeHtml(jingfang.palaceName)}八卦 · 五行${escapeHtml(jingfang.element)} · ${escapeHtml(jingfang.polarity)}</div>` +
+          `<div class="palace-row">${units}</div>` +
+          `<p class="palace-note">` +
+          `朱砂框住的是你这一卦；朱砂爻是相对本宫纯卦变过的爻。` +
+          `一世到五世世爻逐爻上移（初、二、三、四、五），游魂退到四爻、归魂退到三爻——` +
+          `这两级是折回去的，所以叫「游」「归」。` +
+          `</p>` +
+          `</div>`
+        );
+      }
+
+      function showCasting() {
+        const slot = el('result-slot');
+        stopCastingTyping();
+        slot.replaceChildren();
+        const card = document.createElement('div');
+        card.className = 'card casting';
+        card.setAttribute('role', 'status');
+        card.innerHTML =
+          baguaSvg() +
+          '<div class="casting-bar"></div>' +
+          '<div class="casting-text">起 卦 中</div>' +
+          // 逐爻生长的卦体：取数、上下卦、动爻都靠它把推演画出来
+          '<div class="casting-hex" aria-hidden="true"></div>' +
+          // 逐字刷新的行不给读屏念，卡片只播「起 卦 中」
+          '<div class="casting-log" aria-hidden="true"></div>';
+        slot.append(card);
+        return {
+          log: card.querySelector('.casting-log'),
+          hex: card.querySelector('.casting-hex'),
+        };
+      }
+
+      /* ---------- 摇卦 ---------- */
+
+      el('toss-btn').addEventListener('click', tossOnce);
+      el('toss-reset').addEventListener('click', () => {
+        state.tosses = [];
+        renderToss();
+      });
+      el('toss-finish').addEventListener('click', () => {
+        if (state.tosses.length !== 6) return;
+        cast({ method: 'coins', question: el('question').value.trim(), sums: state.tosses });
+      });
+
+      /** 摇到第几次了。进度条与「已摇 n / 6 爻」写在同一处：进度条的宽度是
+          这行字算出来的，不是另写一份百分比，两边不会各说各话。 */
+      function syncTossProgress() {
+        const done = state.tosses.length;
+        const total = 6;
+        el('toss-fill').style.width = `${(done / total) * 100}%`;
+        el('toss-count').textContent = `已摇 ${done} / ${total} 爻`;
+      }
+
+      /** 掷钱与成卦解卦互为反面，只由「摇到第几次」一处说了算：没摇够就
+          掷钱可点、成卦解卦禁着；摇满六次就反过来。原先这两行散在
+          renderToss() 里，摇钱途中的收尾又硬写了一次解禁，把刚算出来的
+          「摇够了，该禁」又盖回可点——两个按钮同时可点，等于两头都不作数。 */
+      function syncTossButtons() {
+        el('toss-btn').disabled = state.tosses.length >= 6;
+        el('toss-finish').disabled = state.tosses.length !== 6;
+      }
+
+      /** 只在一次摇钱在飞的时候按住这两个：连点会连摇两次；飞到一半点「重来」
+          会把已经在飞的那一爻落进一个刚被清空的列表。收尾交给 syncTossButtons
+          按摇到第几次重新出状态，不是一律解禁。 */
+      function lockToss() {
+        el('toss-btn').disabled = true;
+        el('toss-reset').disabled = true;
+        return function unlockToss() {
+          el('toss-reset').disabled = false;
+          syncTossButtons();
+        };
+      }
+
+      async function tossOnce() {
+        if (state.tosses.length >= 6) return;
+        const unlock = lockToss();
+        try {
+          const data = await api('/toss', { method: 'POST' });
+          const slots = el('coins').children;
+          data.coins.forEach((isBack, index) => {
+            const slot = slots[index];
+            const coin = slot.querySelector('.coin');
+            slot.classList.remove('spin');
+            coin.classList.remove('spin');
+            void coin.offsetWidth;
+            slot.classList.add('spin');
+            coin.classList.add('spin');
+            coin.textContent = isBack ? '背' : '字';
+            // 720ms 动画 + 160ms 错峰，留够尾巴再收
+            setTimeout(() => {
+              slot.classList.remove('spin');
+              coin.classList.remove('spin');
+            }, 940);
+          });
+          state.tosses.push(data.sum);
+          renderToss(data);
+        } catch (error) {
+          announce(error.message);
+        } finally {
+          unlock();
+        }
+      }
+
+      function renderToss(latest) {
+        const log = el('toss-log');
+        log.replaceChildren();
+        state.tosses.forEach((sum, index) => {
+          const row = document.createElement('div');
+          const isLatest = latest && index === state.tosses.length - 1;
+          const kind = sum === 9 ? '老阳 ○' : sum === 8 ? '少阴' : sum === 7 ? '少阳' : '老阴 ×';
+          const name = ['初爻', '二爻', '三爻', '四爻', '五爻', '上爻'][index];
+          row.innerHTML = `<b>${name}</b><span>${sum} · ${kind}</span>`;
+          if (isLatest) row.style.color = 'var(--seal)';
+          log.prepend(row);
+        });
+        syncTossButtons();
+        syncTossProgress();
+      }
+      /* ---------- 解卦渲染 ---------- */
+
+      /** 去掉「爻题：」前缀，只留正文。 */
+      function body(entry) {
+        if (!entry) return '';
+        const at = entry.indexOf('：');
+        return at < 0 ? entry : entry.slice(at + 1);
+      }
+
+      function guaLines(hexagram, lines, jingfang, useGodPosition, hidden, states, gods, transforms, circle, clash) {
+        const wrap = document.createElement('div');
+        wrap.className = 'gua-lines';
+        const names = ['上爻', '五爻', '四爻', '三爻', '二爻', '初爻'];
+        for (let position = 6; position >= 1; position -= 1) {
+          const line = lines ? lines[position - 1] : null;
+          const row = document.createElement('div');
+          const isYang = line ? line.value === 1 : hexagram.key[position - 1] === '1';
+          row.className = `gua-line ${isYang ? 'yang' : 'yin'}${line && line.moving ? ' moving' : ''}`;
+          row.dataset.pos = String(position);
+          const mark = line && line.moving ? (line.kind === '老阳' ? '○' : '×') : line && !isYang ? '' : '';
+          // 纳甲一列：干支、五行、六亲、身份。装不上（互错综四卦）就不出这一列，
+          // 宁可少一列也不要六爻全空着占地方。
+          const na = jingfang && jingfang.lines ? jingfang.lines[position - 1] : null;
+          const isGod = useGodPosition === position;
+          // 伏神伏在某一爻之下，不另起一行，就压在那格的飞神旁边标出来
+          const fu = (hidden || []).find((item) => item.position === position);
+          const st = states ? states[position - 1] : null;
+          // 逢什么就说几个字，不合成一个词——「空」「破」在书上就是分开讲的。
+          // 「破」是月建冲的月破，「日破」是日辰冲的静爻，两个不是一回事，所以分标不合并。
+          // 「冲散」是日辰冲的动爻，写作两字是照「日破」那一路：它是个术语，不是一个已经落定的判断——
+          // 动散章整章的结论恰恰是「冲之不散」，所以不上朱砂，跟暗动一样用淡字。
+          const stateMark = !st ? '' : [
+            st.void ? `空${st.voidKind && st.voidKind !== '旬空未判' ? st.voidKind[0] : ''}` : '',
+            st.broken ? '破' : '',
+            st.tomb ? '墓' : '',
+            st.dark ? '暗' : '',
+            st.dayBroken ? '日破' : '',
+            st.pressed ? '冲散' : '',
+            st.combined ? '合' : '',
+            st.punished ? '刑' : '',
+          ].filter(Boolean)
+            .map((word) => `<span class="st${word === '破' || word === '墓' || word === '日破' ? ' po' : ''}${word === '墓' ? ' tomb' : ''}"${word === '冲散' ? ' title="动爻逢日冲，谓之冲散；原书屡试的结论是冲之不散"' : ''}${word === '合' ? ' title="此爻逢合：合起、合绊、合好或化扶，四名见右栏那一格。合不是判词，原书说「宜合吉，不宜合凶」，吉凶仍看用神旺衰"' : ''}${word === '刑' ? ' title="此爻犯刑。三刑章说「或因用神休囚又兼他爻犯之，刑者则见凶；而独犯三刑得验者少，占过数十年只验得一卦」——犯刑本身不是判词"' : ''}>${word}</span>`)
+            .join('');
+          // 化出之爻：变卦里这一格是本卦动爻变过来的，标出它与本爻是什么关系。
+          // 只在变卦上标，本卦那边动爻本来就有 ○／× 两记，再加一记反而挤。
+          // 关系名直接写「回头生」「化比和」这些术语本身，不另加「化」字前缀——
+          // 三个名目本就以「化」开头，再加一遍就成了「化 化比和」。
+          // 用神周围那一圈：《增删卜易·用神元神忌神仇神章》说元神生用神、忌神克用神、
+          // 仇神压着元神又反生忌神。三个位置各是卦里的一爻，就跟用神一样标在它本来的格子上。
+          // 用神定不下来时无此圈（伏神在卦外、两亲各看各的），那时 circle 为空，一个标也不出。
+          const role = !circle ? null
+            : (circle.yuan || []).includes(position) ? '元'
+              : (circle.ji || []).includes(position) ? '忌'
+                : (circle.chou || []).includes(position) ? '仇' : null;
+          const roleMark = role
+            ? `<span class="role role-${role}" title="${role === '元' ? '元神：生用神的那一爻' : role === '忌' ? '忌神：克用神的那一爻' : '仇神：压着元神、反去生忌神'}">${role}</span>`
+            : '';
+          const tf = (transforms || []).find((item) => item.position === position);
+          const huMark = tf
+            ? `<span class="hu${tf.relation === '回头克' || tf.relation === '回头生' ? ' hot' : ''}" title="化出之爻">${escapeHtml(tf.relation)}</span>`
+            : '';
+          row.innerHTML =
+            `<span class="pos">${names[6 - position]}</span>` +
+            `<span class="sg">${gods ? escapeHtml(gods[position - 1]) : ''}</span>` +
+            `<span class="bars">${isYang ? '<i></i>' : '<i></i><i></i>'}</span>` +
+            `<span class="mark">${mark}</span>` +
+            (na
+              ? `<span class="rel">` +
+                `<span class="ganzhi">${escapeHtml(na.stem + na.branch + na.element)}</span>` +
+                `<span class="qin">${escapeHtml(na.relative)}</span>` +
+                (na.role ? `<span class="role">${na.role}</span>` : '') +
+                (isGod ? '<span class="role god">用</span>' : '') +
+                roleMark +
+                stateMark +
+                (fu
+                  ? `<span class="fu" title="伏神">伏 ${escapeHtml(fu.hushen)}${escapeHtml(fu.relative)}</span>`
+                  : '') +
+                huMark +
+                `</span>`
+              : '');
+          wrap.append(row);
+        }
+        // 卦盘是整块拼好才挂进页面的，挂着的时候行高、爻画宽度一律量成 0，弧线就画不出来。
+        // 所以这里只把要画的那几对记在元素上，等挂上页面再回来取尺寸落笔。
+        const ribbon = clashPairs(clash);
+        if (ribbon.length > 0) wrap.ribbon = { pairs: ribbon, jingfang };
+        return wrap;
+      }
+
+      // 卦里有几对地支真的撞上了。不撞的那对（既不合也不冲）不画，撞上了的才画。
+      function clashPairs(clash) {
+        if (!clash) return [];
+        return (clash.pairs || []).filter((pair) => pair.kind);
+      }
+
+      // 挂进页面之后才量得准。扫一遍，量到多少画多少。
+      function mountClashRibbons(root) {
+        for (const wrap of root.querySelectorAll('.gua-lines')) {
+          if (wrap.ribbon) clashRibbon(wrap);
+        }
+      }
+
+      // 冲合连线：把初四、二五、三六三对画成跨过卦面的三条弧。
+      //
+      // 这一层专画「隔三位相配」那条规矩。纳甲把内外两卦的起支错开一位，所以一爻的
+      // 对位在它下面第三位，不在同高——同高去配，六十四卦里一个六冲卦也出不来。
+      // 光看文字记不住，看图一眼就明白：撞在一起的那两支永远差三格，不是对称的。
+      // 六十四卦里三对要么全撞、要么全不撞：全撞的十八卦是六冲十个加六合八个，画三条弧；
+      // 全不撞的四十六卦一个标也不画。没见过只撞一对的，所以不存在「只画一条」这一路。
+      // 弧一律朝右鼓，鼓进两列之间那道空隙里，卦面一格宽度都不占。
+      // 弧上不挂字：三对叫什么右栏「卦体冲合」那一格已经列全，弧只管把两爻接上，
+      // 再挂三串字就成了另一份要人核对的账。
+      // 冲与合同用一支淡线，不分色：颜色不该替没定吉凶的东西表态。
+      // is-chong / is-he 两个 class 留着不为上色，是给 DOM 和查源码的人一眼分出哪支是冲。
+      function clashRibbon(wrap) {
+        const { pairs, jingfang } = wrap.ribbon;
+        delete wrap.ribbon;
+        if (!jingfang || !jingfang.lines) return;
+        const rowOf = (position) => wrap.querySelector(`.gua-line[data-pos="${position}"]`);
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const width = wrap.clientWidth;
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('class', 'clash-ribbon');
+        svg.setAttribute('aria-hidden', 'true');
+        // 不给 viewBox：没有 viewBox 时一个用户单位就是一个 CSS 像素，坐标直接照着量出来的
+        // 行高写，盒子大小全交给 CSS 的 left/right/top/bottom，宽度不必在这边再抄一遍。
+        for (const pair of pairs) {
+          const lower = rowOf(pair.lower);
+          const upper = rowOf(pair.upper);
+          if (!lower || !upper) continue;
+          // 起点摆在卦面右缘外一点，弧朝右鼓进空隙，不会盖住纳甲那一列的字
+          const x = width + 3;
+          const y1 = lower.offsetTop + lower.offsetHeight / 2;
+          const y2 = upper.offsetTop + upper.offsetHeight / 2;
+          const mid = (y1 + y2) / 2;
+          // 弯多少随两爻相隔几格：三对里每一对都差三位，弧高一样，画出来三条弧是平行的，
+          // 中点各差一格，不会交叠。
+          const bulge = 7 + Math.abs(y2 - y1) / 12;
+          const path = document.createElementNS(svgNS, 'path');
+          path.setAttribute('d', `M ${x} ${y1} Q ${x + bulge} ${mid} ${x} ${y2}`);
+          path.setAttribute('class', `clash-arc ${pair.kind === '冲' ? 'is-chong' : 'is-he'}`);
+          // 弧本身 pointer-events 关着，标题是留给读屏与查源码的人看的，不假装能悬停。
+          const title = document.createElementNS(svgNS, 'title');
+          title.textContent =
+            `${jingfang.lines[pair.lower - 1].branch}${pair.kind}${jingfang.lines[pair.upper - 1].branch}`;
+          path.append(title);
+          svg.append(path);
+        }
+        wrap.append(svg);
+      }
+
+      // 右栏那格「卦体冲合」。只在断语真要出「六冲」那一段时才露——卦内零散两爻相冲
+      // 六十四卦里有三十卦都有，单为它开一格，右栏就成了一本流水账。
+      function clashFact(reading) {
+        const c = reading.clash;
+        const jf = reading.jingfang;
+        if (!c || !jf) return null;
+        if (!(c.chong || c.he || c.changedChong || c.transformClash.length)) return null;
+        const br = (position) => jf.lines[position - 1].branch;
+        const out = [c.chong ? '本卦六冲卦' : c.he ? '本卦六合卦' : '本卦非六冲非六合'];
+        const spoken = c.pairs.filter((pair) => pair.kind)
+          .map((pair) => `${br(pair.lower)}${pair.kind}${br(pair.upper)}`);
+        if (spoken.length > 0) out.push(spoken.join(' · '));
+        const tail = [];
+        if (c.chongToChong) tail.push('变卦亦六冲');
+        else if (c.heToChong) tail.push('变卦六冲（六合变六冲）');
+        else if (c.changedChong) tail.push('变卦六冲');
+        if (c.transformClash.length > 0) tail.push(`${c.transformClash.length} 爻动爻变冲`);
+        return out.join('，') + (tail.length > 0 ? `；${tail.join('；')}` : '');
+      }
+
+      // 卦体冲合那枚小标。六冲六合是整卦的结构，不是吉凶，所以不上朱砂——跟暗动、
+      // 冲散一个道理：颜色不替没定下来的事表态。
+      function clashTag(reading, which) {
+        const c = reading.clash;
+        if (!c) return null;
+        if (which === '本卦') {
+          if (c.chong) return '六冲';
+          if (c.he) return '六合';
+          return null;
+        }
+        if (c.changedChong) return '六冲';
+        if (c.changedHe) return '六合';
+        return null;
+      }
+
+      function guaBlock(hexagram, lines, label, jingfang, useGodPosition, hidden, states, gods, transforms, circle, tag, clash) {
+        const block = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'gua-title';
+        const gong = jingfang ? ` · ${escapeHtml(jingfang.palaceName + jingfang.stage + '卦')}` : '';
+        title.innerHTML =
+          `<h3 class="serif">${hexagram.name}</h3>` +
+          `<span class="meta">${label} · 第 ${hexagram.order} 卦 · 上下 ${hexagram.upper.name}${hexagram.lower.name} · 五行 ${hexagram.element}${gong}</span>` +
+          (tag ? `<span class="gua-tag" title="${tag === '六冲' ? '初四、二五、三六三对地支两两相冲' : '初四、二五、三六三对地支两两相合'}">${tag}</span>` : '');
+        block.append(title);
+        block.append(guaLines(hexagram, lines, jingfang, useGodPosition, hidden, states, gods, transforms, circle, clash));
+        const text = document.createElement('div');
+        text.className = 'text-line serif';
+        text.innerHTML =
+          `<p style="margin:0">${escapeHtml(hexagram.judgment)}</p>` +
+          `<p class="tuan">${escapeHtml(hexagram.tuan)}</p>` +
+          `<p style="margin:0">${escapeHtml(hexagram.image)}</p>`;
+        block.append(text);
+        // 爻辞只在动爻上露一条：六爻全列会把卦盘压成一堵字墙，动爻才是断的那一处。
+        const moving = lines ? lines.filter((line) => line.moving && line.text) : [];
+        if (moving.length > 0) {
+          const yao = document.createElement('div');
+          yao.className = 'yao-line serif anim-rise';
+          yao.innerHTML =
+            '<span class="tag">动爻爻辞</span>' +
+            moving
+              .map((line) => {
+                const say = body(line.text);
+                const why = line.xiang ? `<em>象曰：${escapeHtml(body(line.xiang))}</em>` : '';
+                return `<p style="margin:0"><b>${escapeHtml(line.label)}</b>　${escapeHtml(say)}${why}</p>`;
+              })
+              .join('');
+          block.append(yao);
+        }
+        return block;
+      }
+
+      // 右栏「用神」一格：上了卦说上卦在哪，不上卦说伏在哪，别只丢一句「不上卦」。
+      function useGodFact(useGod) {
+        if (useGod.picked) {
+          return `取${useGod.present.join('、')} · ${useGod.picked.label}（${useGod.why}）`;
+        }
+        const named = useGod.absent.join('、');
+        if (!useGod.hidden || useGod.hidden.length === 0) {
+          return `取${named} · 不上卦，本宫首卦亦无`;
+        }
+        const where = useGod.hidden
+          .map((h) => `伏${h.position}爻 ${h.hushen}`)
+          .join('、');
+        return `取${named} · 不上卦，${where}`;
+      }
+
+      function renderReading(reading) {
+        const slot = el('result-slot');
+        slot.replaceChildren();
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const head = document.createElement('div');
+        head.className = 'row';
+        head.style.justifyContent = 'space-between';
+        const headline = document.createElement('div');
+        headline.innerHTML =
+          `<h2 class="serif" style="margin:0">${escapeHtml(reading.question || castingTitle(reading.method))}</h2>` +
+          `<p class="hint" style="margin:4px 0 0">${reading.method} · ${new Date(reading.createdAt).toLocaleString('zh-CN')}</p>`;
+        const badge = document.createElement('span');
+        badge.className = 'verdict reveal-seal';
+        badge.textContent = `${reading.verdict.label} · ${escapeHtml(reading.verdict.key)}`;
+        head.append(headline, badge);
+        card.append(head);
+
+        // 结论整块提到两栏之上。先给吉凶，再讲缘由，再给宜忌与提醒；下面那两栏
+        // 是「凭什么这么算」，是依据不是结论。原先这句排在右栏第四件、前头九行
+        // 事实表、后头八宫名单与四卦推导，混在一堆里认不出来。
+        const lead = document.createElement('section');
+        lead.className = 'verdict-block anim-rise';
+        lead.setAttribute('aria-label', '结论');
+
+        const leadRow = document.createElement('div');
+        leadRow.className = 'verdict-lead';
+        const mark = document.createElement('span');
+        mark.className = 'verdict-mark';
+        mark.textContent = reading.verdict.label;
+        const markShort = document.createElement('span');
+        markShort.className = 'verdict-say-short';
+        // summary 是「大吉：可进」，冒号前那半已经由大字摆着了，再摆一遍就成了
+        // 「大吉 大吉：可进」。这里只取可执行的那半。
+        markShort.textContent = reading.verdict.summary.split('：').slice(1).join('：') || reading.verdict.summary;
+        leadRow.append(mark, markShort);
+        lead.append(leadRow);
+
+        const say = document.createElement('p');
+        say.className = 'verdict-say';
+        say.textContent = reading.verdict.text;
+        lead.append(say);
+
+        // 认出了事类就把结论落到所问之事上。少了这一句，问跳槽跟问进货拿到的是
+        // 同一句「体卦水克用卦火」，等于没答所问。认不出事类时引擎不给这句，
+        // 页面也不拿别的话来凑。
+        if (reading.topicLine) {
+          const onTopic = document.createElement('p');
+          onTopic.className = 'verdict-say verdict-on-topic';
+          onTopic.textContent = reading.topicLine;
+          lead.append(onTopic);
+        }
+
+        // 把生克与旺衰两层都摆出来：事实表里那行「生克」只论体用生克这一层，
+        // 跟这里的总分差着一档。不说清楚，看的人只会以为算错了。
+        const calc = document.createElement('p');
+        calc.className = 'verdict-calc';
+        calc.textContent =
+          `怎么算的：${reading.verdict.key}，光看生克本为${reading.verdict.relationVerdict}；`
+          + `体卦逢当月令为「${reading.verdict.vitality}」，两下一合 ${reading.verdict.score} 分，落到${reading.verdict.label}。`;
+        lead.append(calc);
+
+        if (reading.advice.suitable.length > 0 || reading.advice.avoid.length > 0) {
+          const picks = document.createElement('div');
+          picks.className = 'verdict-picks';
+          if (reading.advice.suitable.length > 0) {
+            const good = document.createElement('div');
+            good.className = 'good';
+            good.innerHTML = `<h3>宜</h3><ul>${reading.advice.suitable.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+            picks.append(good);
+          }
+          if (reading.advice.avoid.length > 0) {
+            const bad = document.createElement('div');
+            bad.className = 'bad';
+            bad.innerHTML = `<h3>忌</h3><ul>${reading.advice.avoid.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+            picks.append(bad);
+          }
+          lead.append(picks);
+        }
+
+        if (reading.advice.caution) {
+          const warn = document.createElement('p');
+          warn.className = 'verdict-warn';
+          warn.textContent = reading.advice.caution;
+          lead.append(warn);
+        }
+        card.append(lead);
+
+        const body = document.createElement('div');
+        body.className = 'reading';
+        body.style.marginTop = '16px';
+
+        const left = document.createElement('div');
+        left.className = 'gua-block reveal';
+        left.append(guaBlock(
+          reading.hexagram,
+          reading.lines,
+          '本卦',
+          reading.jingfang,
+          reading.useGod && reading.useGod.picked ? reading.useGod.picked.position : null,
+          (reading.useGod && reading.useGod.hidden) || [],
+          reading.states || [],
+          reading.sixGods || null,
+          null,
+          (reading.useGod && reading.useGod.circle) || null,
+          clashTag(reading, '本卦'),
+          reading.clash,
+        ));
+        if (reading.changed) {
+          const changed = document.createElement('div');
+          changed.append(guaBlock(reading.changed, null, '变卦', reading.changedJingfang,
+            null, [], [], null, reading.transforms || [], null, clashTag(reading, '变卦'),
+            reading.clash ? { pairs: reading.clash.changedPairs || [] } : null));
+          left.append(changed);
+        }
+        body.append(left);
+
+        const right = document.createElement('div');
+        const facts = document.createElement('dl');
+        facts.className = 'facts';
+        const s = reading.structure;
+        const jf = reading.jingfang;
+        const rows = [
+          ['体卦（我）', `${s.body.name} · ${s.body.element} · ${s.body.nature} · ${s.body.direction} · ${s.body.position}`],
+          ['用卦（事）', `${s.use.name} · ${s.use.element} · ${s.use.nature} · ${s.use.direction} · ${s.use.position}`],
+          // 写成「生克本为 X」而不是「A → B」：这一行是依据不是结论，箭头读起来
+          // 像「所以是 B」，而 B 已经不是这一行的结论了——总分还要过旺衰那一关。
+          ['生克', `${reading.verdict.key} · 生克本为${reading.verdict.relationVerdict}`],
+          ['主客', `体在${s.shi.label}，用在${s.ying.label}`],
+          jf ? ['六亲世应', `${jf.palaceName}${jf.stage}卦 · 世${jf.shi}爻持${jf.lines[jf.shi - 1].relative} · 应${jf.ying}爻为${jf.lines[jf.ying - 1].relative}`] : null,
+          clashFact(reading) ? ['卦体冲合', clashFact(reading)] : null,
+          reading.useGod ? ['用神', useGodFact(reading.useGod)] : null,
+          ['月令旺衰', `当令 ${s.monthElement} · 体 ${s.bodyVitality} · 用 ${s.useVitality}`],
+          reading.void ? ['旬空月破', `${reading.void.headName}旬空 ${reading.void.names.join('')} · 本月破 ${reading.void.brokenName}`] : null,
+        ].filter(Boolean);
+        for (const [term, value] of rows) {
+          const dt = document.createElement('dt');
+          dt.textContent = term;
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          facts.append(dt, dd);
+        }
+        right.append(facts);
+
+        // 原先这里还挂着一句 verdict.summary + verdict.text，已随结论块提到页首，
+        // 留着就是同一句话在屏幕上出现两遍。cadence 往下接。
+        if (reading.cadence) {
+          const cadence = document.createElement('div');
+          cadence.className = 'cadence anim-rise';
+          cadence.setAttribute('role', 'note');
+          cadence.innerHTML =
+            `<b>何时会变：</b>${escapeHtml(reading.cadence.text)}` +
+            `<span class="next">当前取数依据：${escapeHtml(reading.cadence.current)} ｜ 下一次：${escapeHtml(reading.cadence.next)}</span>`;
+          right.append(cadence);
+        }
+
+        // 提醒（advice.caution）已随结论块提到页首：它跟吉凶、宜忌是一件事，
+        // 留一份在这儿就是同一句话在屏幕上说两遍。
+
+        // 八宫名单排在四卦推导前头：先认清自己在哪一宫的哪一级，再看梅花那四种推法。
+        // 这一列是京房层的全貌，四卦推导是梅花层的推法，两层各管各的。
+        const palace = palaceBlock(reading.jingfang);
+        if (palace) {
+          const box = document.createElement('div');
+          box.className = 'anim-fade';
+          box.innerHTML = palace;
+          right.append(box);
+        }
+
+        // 四卦推导接在八宫后头：宫认完了，才轮到梅花那四种取法。
+        // 讲清了这四卦是怎么推出来的，才轮到「当月主卦」那句话。
+        const derive = deriveBlock(reading);
+        if (derive) {
+          const box = document.createElement('div');
+          box.className = 'anim-fade';
+          box.innerHTML = derive;
+          right.append(box);
+        }
+
+        // 卦气消长环放在断语之前：断语是结论，这个环是结论背后的时令坐标，
+        // 先看得到形状，再读「当月主卦是哪一卦」才不至于只是一句话。
+        if (reading.qi) {
+          const ring = document.createElement('div');
+          ring.className = 'qi-block anim-fade';
+          ring.innerHTML = qiRingSvg(reading.qi);
+          const note = document.createElement('p');
+          note.className = 'hint';
+          note.style.textAlign = 'center';
+          note.style.marginTop = '6px';
+          note.textContent = reading.qi.self
+            ? `环上朱砂点是你这一卦「${reading.qi.selfName}」在十二辟卦中的位置；当月主卦为${reading.qi.lord}`
+            : `本卦不在十二辟卦之列；环上高亮的是当月主卦${reading.qi.lord}`;
+          ring.append(note);
+          right.append(ring);
+        }
+
+        const ins = document.createElement('ul');
+        ins.className = 'insights';
+        ins.style.marginTop = '14px';
+        for (const item of reading.insights) {
+          const li = document.createElement('li');
+          li.className = 'anim-rise';
+          const strong = document.createElement('strong');
+          strong.textContent = item.title;
+          const span = document.createElement('span');
+          span.textContent = item.text;
+          li.append(strong, span);
+          ins.append(li);
+        }
+        right.append(ins);
+        body.append(right);
+        card.append(body);
+
+        // 宜忌已随结论块提到页首：它跟吉凶是一件事的两半，拆到页面最末尾，
+        // 等于让最该照着做的那几条落在最容易被跳过的地方。
+
+        const detail = document.createElement('div');
+        detail.className = 'cols anim-rise';
+        detail.style.marginTop = '14px';
+        const base = document.createElement('div');
+        base.innerHTML = `<h3>起卦依据</h3><ul>${reading.details.map((item) => `<li>${escapeHtml(item.label)}：${escapeHtml(item.value)}</li>`).join('')}</ul>`;
+        const relations = document.createElement('div');
+        relations.innerHTML =
+          `<h3>参详之卦</h3><ul>` +
+          `<li>互卦（过程）：${escapeHtml(reading.mutual.name)}</li>` +
+          `<li>错卦（旁支）：${escapeHtml(reading.opposite.name)}</li>` +
+          `<li>综卦（反求）：${escapeHtml(reading.inverted.name)}</li>` +
+          (reading.timing ? `<li>应期：${escapeHtml(reading.timing)}</li>` : '') +
+          `</ul>`;
+        detail.append(base, relations);
+        card.append(detail);
+
+        const save = document.createElement('div');
+        save.className = 'row anim-rise';
+        save.style.marginTop = '18px';
+        const noteInput = document.createElement('input');
+        noteInput.type = 'text';
+        noteInput.maxLength = '2000';
+        noteInput.placeholder = '补一句批注（可留空）';
+        noteInput.id = 'note-input';
+        noteInput.style.flex = '1 1 220px';
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'primary';
+        saveBtn.textContent = '存入卦历';
+        // 可见的存卦状态。原先失败只往 live region 里写，屏幕上什么都不出现。
+        const saveStatus = document.createElement('span');
+        saveStatus.className = 'save-status';
+        saveStatus.setAttribute('aria-live', 'polite');
+        saveBtn.addEventListener('click', () => saveReading(reading, saveBtn, noteInput, saveStatus));
+        save.append(noteInput, saveBtn, saveStatus);
+        card.append(save);
+
+        slot.append(card);
+        mountClashRibbons(card);
+      }
+
+      async function saveReading(reading, button, noteInput, status) {
+        button.disabled = true;
+        setSaveStatus(status, '存入中…');
+        try {
+          // 只送 id 与批注，不再把整份 reading 回传给服务端——服务端认的是它自己
+          // 刚算出来过的卦。原先整份回传、原样落盘，那是整个包里唯一一处没设防的地方。
+          await api('/history', {
+            method: 'POST',
+            body: JSON.stringify({ id: reading.id, note: noteInput.value }),
+          });
+          button.textContent = '已存入卦历';
+          setSaveStatus(status, '');
+          announce('已存入卦历');
+        } catch (error) {
+          // 失败要给看得见的反馈。原先只 announce()，那写进的是 .sr-only 的 live region，
+          // 屏幕上什么也没有，按钮又复原成可点——用户看到的就是「点了没反应」，
+          // 再点还是一样。服务重启后这一卦再也存不了，所以那一支连按钮都不还给用户。
+          if (error.code === 'unknown_cast') {
+            button.textContent = '这一卦存不了了';
+            setSaveStatus(status, error.message, true);
+            announce(error.message);
+            return;
+          }
+          button.disabled = false;
+          button.textContent = '存入卦历';
+          setSaveStatus(status, error.message, true);
+          announce(error.message);
+        }
+      }
+
+      /** 存卦那行的可见提示。aria-live 让读屏软件也念得到。 */
+      function setSaveStatus(status, text, isError = false) {
+        status.textContent = text;
+        status.classList.toggle('err', Boolean(isError));
+        status.setAttribute('role', isError ? 'alert' : 'status');
+      }
+
+      /* ---------- 卦库 ---------- */
+
+      async function loadLibrary() {
+        try {
+          const data = await api('/library');
+          state.library = data.hexagrams;
+          renderLibrary();
+        } catch (error) {
+          announce(error.message);
+        }
+      }
+
+      el('library-search').addEventListener('input', renderLibrary);
+
+      function renderLibrary() {
+        const keyword = el('library-search').value.trim();
+        const grid = el('library-grid');
+        grid.replaceChildren();
+        const matched = state.library.filter(
+          (item) => !keyword || item.name.includes(keyword) || item.upper.includes(keyword) || item.lower.includes(keyword),
+        );
+        if (matched.length === 0) {
+          grid.innerHTML = '<div class="empty">没有匹配的卦</div>';
+          return;
+        }
+        for (const item of matched) {
+          const cell = document.createElement('button');
+          cell.className = 'gua-cell';
+          cell.setAttribute('aria-pressed', String(state.librarySelection === item.order));
+          cell.innerHTML =
+            `<div class="order">${item.order}</div>` +
+            `<div class="mini serif">${item.symbol}</div>` +
+            `<div class="nm serif">${item.name}</div>`;
+          cell.addEventListener('click', () => {
+            state.librarySelection = item.order;
+            renderLibrary();
+            renderLibraryDetail(item);
+          });
+          grid.append(cell);
+        }
+      }
+
+      function renderLibraryDetail(item) {
+        const slot = el('library-detail');
+        slot.replaceChildren();
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const head = document.createElement('div');
+        const gong = item.palace ? ` · ${escapeHtml(item.palace.palaceName + item.palace.stage + '卦')}` : '';
+        head.innerHTML =
+          `<h2 class="serif" style="margin:0">${escapeHtml(item.name)}</h2>` +
+          `<p class="hint" style="margin:4px 0 0">第 ${item.order} 卦 · 上${escapeHtml(item.upper)}下${escapeHtml(item.lower)} · 五行 ${escapeHtml(item.element)}${gong}</p>`;
+        card.append(head);
+
+        const body = document.createElement('div');
+        body.className = 'reading';
+        body.style.marginTop = '12px';
+
+        const left = document.createElement('div');
+        left.append(guaLines(item, null, item.palace || null));
+        const rel = document.createElement('div');
+        rel.className = 'row';
+        rel.style.marginTop = '14px';
+        rel.style.gap = '16px';
+        const shiYing = item.palace
+          ? `<span>世${item.palace.shi}爻持${escapeHtml(item.palace.lines[item.palace.shi - 1].relative)}</span>` +
+            `<span>应${item.palace.ying}爻为${escapeHtml(item.palace.lines[item.palace.ying - 1].relative)}</span>`
+          : '';
+        rel.innerHTML =
+          shiYing +
+          `<span>互卦 ${escapeHtml(item.mutual)}</span>` +
+          `<span>错卦 ${escapeHtml(item.opposite)}</span>` +
+          `<span>综卦 ${escapeHtml(item.inverted)}</span>`;
+        left.append(rel);
+        body.append(left);
+
+        const right = document.createElement('div');
+        const quote = document.createElement('p');
+        quote.className = 'text-line serif';
+        quote.innerHTML =
+          `<p style="margin:0 0 8px">${escapeHtml(item.judgment)}</p>` +
+          `<p class="tuan">${escapeHtml(item.tuan)}</p>` +
+          `<p style="margin:0">${escapeHtml(item.image)}</p>`;
+        const seek = document.createElement('div');
+        seek.className = 'row';
+        seek.style.marginTop = '16px';
+        const seekBtn = document.createElement('button');
+        seekBtn.textContent = '以此卦起一卦';
+        seekBtn.addEventListener('click', async () => {
+          selectTab('cast');
+          // 走 cast() 而不自己发请求：这样它才吃得到在途闸，也才有推演动画与落定的那一拍。
+          // 起法是 hexagram——服务端拿这一卦的 key 还原上下卦，取两卦的先天数起卦，
+          // 落出来正是这一卦。原先这里传的是 order 与 order（同一个数上下都用），
+          // 取模 8 后上下卦必然相同，64 卦里只有 2 卦起得回自己。
+          await cast({ method: 'hexagram', key: item.key, question: el('question').value.trim() });
+        });
+        seek.append(seekBtn);
+        right.append(quote, seek);
+        body.append(right);
+        card.append(body);
+        slot.append(card);
+      }
+
+      /* ---------- 历法 ---------- */
+
+      function renderAlmanac(data) {
+        const slot = el('almanac-slot');
+        slot.replaceChildren();
+        const a = data.almanac;
+
+        const head = document.createElement('div');
+        head.className = 'card';
+        head.innerHTML =
+          `<h2 class="serif">${a.date} · ${a.year.name}年 ${a.year.zodiac}年</h2>` +
+          `<p class="hint">当前 ${escapeHtml(a.currentTerm)} 节，月建 ${a.month.name}（${a.month.element}）</p>`;
+        const facts = document.createElement('dl');
+        facts.className = 'facts';
+        const pairs = [
+          ['年柱', `${a.year.name} · ${a.year.element ?? ''}`],
+          ['月柱', `${a.month.name} · ${a.month.element}`],
+          ['日柱', a.day.name],
+          ['时辰', `${a.hour.name}（${a.hour.range}）`],
+          ['建除', `${a.jianchu.name}日 · 宜 ${a.jianchu.suitable} · 忌 ${a.jianchu.avoid}`],
+          ['数九', a.shujiu ? `${a.shujiu.label} · ${a.shujiu.stage}（第 ${a.shujiu.elapsed} 天）` : '不在数九'],
+        ];
+        for (const [term, value] of pairs) {
+          const dt = document.createElement('dt');
+          dt.textContent = term;
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          facts.append(dt, dd);
+        }
+        head.append(facts);
+        slot.append(head);
+
+        const hours = document.createElement('div');
+        hours.className = 'card';
+        const hourTitle = document.createElement('h2');
+        hourTitle.textContent = '十二时辰吉凶';
+        const hourHint = document.createElement('p');
+        hourHint.className = 'hint';
+        hourHint.textContent = `依日柱 ${a.day.name} 论黄黑道：吉时 ${a.luckyHours.join('、')}`;
+        hours.append(hourTitle, hourHint);
+        const hourGrid = document.createElement('div');
+        hourGrid.className = 'hour-grid';
+        for (const item of a.hours) {
+          const cell = document.createElement('div');
+          cell.className = `hour ${item.auspicious ? 'auspicious' : 'inauspicious'}${item.current ? ' current' : ''}`;
+          cell.innerHTML =
+            `<div class="nm">${escapeHtml(item.name)}</div>` +
+            `<div class="tm">${escapeHtml(item.range)}</div>` +
+            `<div class="god">${escapeHtml(item.pillar)} · ${escapeHtml(item.office)}</div>`;
+          hourGrid.append(cell);
+        }
+        hours.append(hourGrid);
+        slot.append(hours);
+
+        const terms = document.createElement('div');
+        terms.className = 'card';
+        const termTitle = document.createElement('h2');
+        termTitle.textContent = '二十四节气';
+        const termHint = document.createElement('p');
+        termHint.className = 'hint';
+        termHint.textContent = '日期为常年近似值，交节时刻逐年摆动，可能有一日之差。';
+        terms.append(termTitle, termHint);
+        const termList = document.createElement('div');
+        termList.className = 'term-list';
+        for (const term of data.solarTerms) {
+          const cell = document.createElement('div');
+          const active = term.name === a.currentTerm;
+          cell.className = active ? 'now' : '';
+          cell.innerHTML = `<b>${escapeHtml(term.name)}</b> <span>${term.month}/${term.day}</span> ${escapeHtml(term.kind)}`;
+          termList.append(cell);
+        }
+        terms.append(termList);
+        slot.append(terms);
+
+        const zodiac = document.createElement('div');
+        zodiac.className = 'card';
+        const zTitle = document.createElement('h2');
+        zTitle.textContent = '十二生肖';
+        const zHint = document.createElement('p');
+        zHint.className = 'hint';
+        zHint.textContent = '相合、三合与相冲。';
+        zodiac.append(zTitle, zHint);
+        const zList = document.createElement('div');
+        zList.className = 'term-list';
+        for (const item of data.zodiac) {
+          const cell = document.createElement('div');
+          cell.innerHTML =
+            `<b>${escapeHtml(item.branch)}${escapeHtml(item.zodiac)}</b> ` +
+            `<span>${escapeHtml(item.element)}</span> ` +
+            `<span>合 ${escapeHtml(item.harmony ?? '—')} · 冲 ${escapeHtml(item.conflict)}</span>`;
+          zList.append(cell);
+        }
+        zodiac.append(zList);
+        slot.append(zodiac);
+      }
+
+      /* ---------- 卦历 ---------- */
+
+      async function loadHistory() {
+        const slot = el('history-slot');
+        try {
+          const data = await api('/history');
+          slot.replaceChildren();
+          if (data.entries.length === 0) {
+            slot.innerHTML = '<div class="empty">还没有存过卦。起一卦，存入卦历。</div>';
+            return;
+          }
+          for (const entry of data.entries) {
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            const main = document.createElement('div');
+            main.className = 'main';
+            const q = document.createElement('div');
+            q.className = 'q';
+            q.textContent = entry.question || castingTitle(entry.method);
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+            meta.textContent = `${entry.hexagram.name} · ${entry.verdict ? entry.verdict.label : ''} · ${new Date(entry.createdAt).toLocaleString('zh-CN')}`;
+            main.append(q, meta);
+            if (entry.note) {
+              const note = document.createElement('div');
+              note.className = 'meta';
+              note.textContent = `批注：${entry.note}`;
+              main.append(note);
+            }
+            const remove = document.createElement('button');
+            remove.className = 'ghost';
+            remove.textContent = '删除';
+            remove.addEventListener('click', async () => {
+              try {
+                await api(`/history/${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
+                announce('已删除');
+                loadHistory();
+              } catch (error) {
+                announce(error.message);
+              }
+            });
+            item.append(main, remove);
+            slot.append(item);
+          }
+        } catch (error) {
+          slot.innerHTML = `<div class="empty">读取失败：${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      /* ---------- 工具 ---------- */
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        })[char]);
+      }
+
+      async function boot() {
+        try {
+          const data = await api('/bootstrap');
+          state.bootstrap = data;
+          el('ganzhi-strip').innerHTML =
+            `<span class="pill">${escapeHtml(data.almanac.year.name)}年 <b>${escapeHtml(data.almanac.year.zodiac)}</b></span>` +
+            `<span class="pill">月 <b>${escapeHtml(data.almanac.month.name)}</b></span>` +
+            `<span class="pill">日 <b>${escapeHtml(data.almanac.day.name)}</b></span>` +
+            `<span class="pill">${escapeHtml(data.almanac.jianchu.name)}日</span>` +
+            (data.almanac.shujiu ? `<span class="pill">${escapeHtml(data.almanac.shujiu.label)}</span>` : '');
+          renderAlmanac(data);
+        } catch (error) {
+          el('ganzhi-strip').innerHTML = `<span class="pill">历法加载失败：${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      /* 顶栏实测高度写回 --topbar-h。
+       * 左栏钉住时要按它错开，而顶栏会在窄宽度下换行变高（标题、副题、干支条
+       * 排不下就分两行）。写死一个数，换个宽度、换个字号就压住卦名——实测写回，
+       * 两个数就永远对得上。:root 里那个值只作首屏与无 ResizeObserver 时的兜底。*/
+      const topbarEl = document.querySelector('.topbar');
+      if (topbarEl && typeof ResizeObserver === 'function') {
+        const syncTopbarHeight = () => {
+          document.documentElement.style.setProperty('--topbar-h', `${Math.round(topbarEl.offsetHeight)}px`);
+        };
+        const topbarObserver = new ResizeObserver(syncTopbarHeight);
+        topbarObserver.observe(topbarEl);
+        syncTopbarHeight();
+        window.addEventListener('pagehide', () => topbarObserver.disconnect(), { once: true });
+      }
+
+      boot();
+    </script>
+  </body>
+</html>

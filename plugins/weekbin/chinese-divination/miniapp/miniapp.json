@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": ["./miniapp/client"],
+    "node": ["./miniapp/node"]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/divination"
+  },
+  "mcpEndpoints": [
+    {
+      "server": "divination",
+      "path": "/mcp/divination"
+    }
+  ]
+}
