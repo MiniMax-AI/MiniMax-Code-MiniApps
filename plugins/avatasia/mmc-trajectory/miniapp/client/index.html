@@ -1743,10 +1743,16 @@
 
       var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
 
-      // Which records the two layer buttons cover. 轮次 is the conversation — what was
-      // said. 调用 is the tool work — what was run. They are disjoint, so cancelling one
-      // never quietly takes part of the other with it.
-      var CONVERSATION_KINDS = { user: true, assistant: true };
+      // Which records the two layer buttons cover. 轮次 is the conversation — what was said
+      // and what the model worked out on the way to saying it. 调用 is the tool work — what
+      // was run. They are disjoint, so cancelling one never quietly takes part of the other
+      // with it.
+      //
+      // 思考 belongs to 轮次 rather than standing on its own: it arrives in the same response
+      // as the assistant text it produced and shares its responseId, so leaving it behind
+      // when the conversation is hidden puts several hundred rows in a list that is supposed
+      // to be showing what nobody said.
+      var CONVERSATION_KINDS = { user: true, assistant: true, thinking: true };
       var CALL_KINDS = { toolCall: true, toolResult: true };
 
       var DASH = '—';
@@ -2927,7 +2933,7 @@
         dom.durationBtn.setAttribute('aria-label', durationLabel);
         dom.durationBtn.setAttribute('title', durationLabel);
 
-        setLayerButton(dom.turnsBtn, state.showConversation, '对话', '对话记录（用户与助手消息）');
+        setLayerButton(dom.turnsBtn, state.showConversation, '对话', '对话记录（用户、助手与思考）');
         setLayerButton(dom.callsBtn, state.showCalls, '工具调用', '工具调用与工具结果');
       }
 
