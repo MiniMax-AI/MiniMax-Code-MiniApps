@@ -1747,16 +1747,23 @@
 
       var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
 
-      // Which records the three layer buttons cover, one set each. 轮次 is what was said, 思考
-      // is what the model worked out on the way to saying it, 调用 is what was run. All three
-      // are disjoint, so cancelling one never quietly takes part of another with it.
+      // The three toolbar buttons are presets over the type chips, not a second filter.
       //
-      // 思考 gets its own button rather than riding along with 轮次 because the two answer
-      // different questions. Somebody reading a session to find the conversation wants it in
-      // the way; somebody looking at how the model got somewhere usually wants the opposite.
-      var CONVERSATION_KINDS = { user: true, assistant: true };
-      var THINKING_KINDS = { thinking: true };
-      var CALL_KINDS = { toolCall: true, toolResult: true };
+      // Only one thing is being filtered — which record kinds are shown — and the chips and
+      // the buttons are two ways of editing that same set. Running them as two independent
+      // filters is how one control ends up describing something the other has already
+      // overridden, which is the confusion the duplicate row was there to cause.
+      //
+      // The chips stay because they can express what the buttons cannot: only user, only
+      // system, assistant without user. A button reads as lit only when every kind it covers
+      // is selected, so unchecking one of its own chips puts it out instead of claiming a
+      // half-on state the control has no vocabulary for.
+      var LAYER_KINDS = {
+        turns: ['user', 'assistant'],
+        thinking: ['thinking'],
+        calls: ['toolCall', 'toolResult']
+      };
+      var LAYER_ORDER = ['turns', 'thinking', 'calls'];
 
       var DASH = '—';
 
@@ -2182,9 +2189,6 @@
         // because a line that claims to be a summary is one more thing that has to be
         // truthful about what it covers, and a filter has nothing to explain.
         // 轮次 covers the conversation (what was said), 调用 covers the tool work.
-        showConversation: true,
-        showThinking: true,
-        showCalls: true,
         // Disclosure state for the two blocks that are read once and then only take
         // up room. Folding them hands the height back to the ledger.
         filtersCollapsed: false,
@@ -2938,9 +2942,9 @@
         dom.durationBtn.setAttribute('aria-label', durationLabel);
         dom.durationBtn.setAttribute('title', durationLabel);
 
-        setLayerButton(dom.turnsBtn, state.showConversation, '对话', '对话记录（用户与助手消息）');
-        setLayerButton(dom.thinkingBtn, state.showThinking, '思考', '模型的思考过程');
-        setLayerButton(dom.callsBtn, state.showCalls, '工具调用', '工具调用与工具结果');
+        setLayerButton(dom.turnsBtn, layerSelected('turns'), '对话', '对话记录（用户与助手消息）');
+        setLayerButton(dom.thinkingBtn, layerSelected('thinking'), '思考', '模型的思考过程');
+        setLayerButton(dom.callsBtn, layerSelected('calls'), '工具调用', '工具调用与工具结果');
       }
 
       /**
@@ -3292,11 +3296,6 @@
           var entry = state.flat[i];
           if (!hasKind(entry.record, state.kinds)) continue;
           if (state.query && !matchesQuery(entry.record, state.query)) continue;
-          // The two layer buttons come last, so cancelling one can never be mistaken for
-          // a narrowing of the search: it removes whole kinds, and only whole kinds.
-          if (!state.showConversation && CONVERSATION_KINDS[entry.record.kind] === true) continue;
-          if (!state.showThinking && THINKING_KINDS[entry.record.kind] === true) continue;
-          if (!state.showCalls && CALL_KINDS[entry.record.kind] === true) continue;
           // The overview brush is a further filter, applied after kind and text so that
           // clearing it never silently changes what the other two meant.
           if (selection && !recordInSelection(entry.record, selection, overviewSpansById)) continue;
@@ -3461,7 +3460,7 @@
         // of a hidden layer — the exact mismatch this function exists to prevent.
         return state.query !== '' || state.kinds.length !== KIND_ORDER.length
           || state.overviewSelection !== null
-          || !state.showConversation || !state.showThinking || !state.showCalls;
+          ;
       }
 
       /**
@@ -3473,9 +3472,6 @@
        */
       function spanPassesFilter(record, hasQuery) {
         if (!hasKind(record, state.kinds)) return false;
-        if (!state.showConversation && CONVERSATION_KINDS[record.kind] === true) return false;
-        if (!state.showThinking && THINKING_KINDS[record.kind] === true) return false;
-        if (!state.showCalls && CALL_KINDS[record.kind] === true) return false;
         if (hasQuery && !matchesQuery(record, state.query)) return false;
         return true;
       }
@@ -3838,6 +3834,7 @@
         setWindowMode('latest');
         if (dom.searchInput) dom.searchInput.value = '';
         syncChipInputs();
+        renderViewControls();
         render();
       }
 
@@ -4470,6 +4467,58 @@
         state.kinds = next;
         setWindowMode('latest');
         syncChipInputs();
+        renderViewControls();
+        renderLedger();
+        updateFilterStatus(visibleEntries().length, state.flat.length);
+      }
+
+      /** Whether every kind a layer covers is currently selected. */
+      function layerSelected(layer) {
+        var kinds = LAYER_KINDS[layer];
+        for (var i = 0; i < kinds.length; i += 1) {
+          if (state.kinds.indexOf(kinds[i]) < 0) return false;
+        }
+        return true;
+      }
+
+      /**
+       * The chip set with one layer switched on or off. Pure, so the rule can be asserted
+       * without a DOM and so a button's effect on the chips is the same code the chips
+       * themselves go through.
+       *
+       * @param {string[]} kinds
+       * @param {string} layer
+       * @param {boolean} on
+       * @returns {string[]}
+       */
+      function applyLayerToKinds(kinds, layer, on) {
+        var next = kinds.slice();
+        var layerKinds = LAYER_KINDS[layer];
+        for (var i = 0; i < layerKinds.length; i += 1) {
+          var at = next.indexOf(layerKinds[i]);
+          if (on && at < 0) next.push(layerKinds[i]);
+          if (!on && at >= 0) next.splice(at, 1);
+        }
+        next.sort(function (a, b) { return KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b); });
+        return next;
+      }
+
+      /**
+       * Turns a whole layer on or off by editing the same chip set the chips edit.
+       *
+       * Going through state.kinds rather than a flag of its own is the point: after this,
+       * there is no second copy of "which kinds are showing" that could disagree with the
+       * chips, and the button's lit state cannot drift from what is on screen because it is
+       * read from the same array that decides it.
+       *
+       * @param {string} layer
+       * @param {boolean} on
+       */
+      function setLayer(layer, on) {
+        state.kinds = applyLayerToKinds(state.kinds, layer, on);
+        setWindowMode('latest');
+        syncChipInputs();
+        renderViewControls();
         renderLedger();
         updateFilterStatus(visibleEntries().length, state.flat.length);
       }
@@ -4553,6 +4602,7 @@
           }
           setWindowMode('latest');
           syncChipInputs();
+          renderViewControls();
           renderLedger();
           updateFilterStatus(visibleEntries().length, state.flat.length);
         });
@@ -4604,24 +4654,15 @@
         });
 
         dom.turnsBtn.addEventListener('click', function () {
-          // A layer filter. One flag, and the records it covers are simply not rendered —
-          // no fold set to keep in step with arriving records, and no summary row that
-          // has to keep a running count of what it stands for.
-          state.showConversation = !state.showConversation;
-          renderViewControls();
-          renderLedger();
+          setLayer('turns', !layerSelected('turns'));
         });
 
         dom.thinkingBtn.addEventListener('click', function () {
-          state.showThinking = !state.showThinking;
-          renderViewControls();
-          renderLedger();
+          setLayer('thinking', !layerSelected('thinking'));
         });
 
         dom.callsBtn.addEventListener('click', function () {
-          state.showCalls = !state.showCalls;
-          renderViewControls();
-          renderLedger();
+          setLayer('calls', !layerSelected('calls'));
         });
 
 
