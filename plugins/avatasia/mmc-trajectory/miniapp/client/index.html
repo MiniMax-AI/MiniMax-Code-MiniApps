@@ -1644,11 +1644,15 @@
           </svg>
           <span>时长</span>
         </button>
-        <button type="button" class="tbtn" id="turns-btn" aria-pressed="true" aria-label="轮次当前展开显示 · 点击折叠全部" title="轮次当前展开显示 · 点击折叠全部">
+        <button type="button" class="tbtn" id="turns-btn" aria-pressed="true" aria-label="对话当前显示 · 点击隐藏（对话记录（用户与助手消息））" title="对话当前显示 · 点击隐藏（对话记录（用户与助手消息））">
           <span class="tbtn-glyph" aria-hidden="true">⊟</span>
           <span>轮次</span>
         </button>
-        <button type="button" class="tbtn" id="calls-btn" aria-pressed="true" aria-label="工具调用当前展开显示 · 点击折叠全部" title="工具调用当前展开显示 · 点击折叠全部">
+        <button type="button" class="tbtn" id="thinking-btn" aria-pressed="true" aria-label="思考当前显示 · 点击隐藏（模型的思考过程）" title="思考当前显示 · 点击隐藏（模型的思考过程）">
+          <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+          <span>思考</span>
+        </button>
+        <button type="button" class="tbtn" id="calls-btn" aria-pressed="true" aria-label="工具调用当前显示 · 点击隐藏（工具调用与工具结果）" title="工具调用当前显示 · 点击隐藏（工具调用与工具结果）">
           <span class="tbtn-glyph" aria-hidden="true">⊟</span>
           <span>调用</span>
         </button>
@@ -1743,16 +1747,15 @@
 
       var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
 
-      // Which records the two layer buttons cover. 轮次 is the conversation — what was said
-      // and what the model worked out on the way to saying it. 调用 is the tool work — what
-      // was run. They are disjoint, so cancelling one never quietly takes part of the other
-      // with it.
+      // Which records the three layer buttons cover, one set each. 轮次 is what was said, 思考
+      // is what the model worked out on the way to saying it, 调用 is what was run. All three
+      // are disjoint, so cancelling one never quietly takes part of another with it.
       //
-      // 思考 belongs to 轮次 rather than standing on its own: it arrives in the same response
-      // as the assistant text it produced and shares its responseId, so leaving it behind
-      // when the conversation is hidden puts several hundred rows in a list that is supposed
-      // to be showing what nobody said.
-      var CONVERSATION_KINDS = { user: true, assistant: true, thinking: true };
+      // 思考 gets its own button rather than riding along with 轮次 because the two answer
+      // different questions. Somebody reading a session to find the conversation wants it in
+      // the way; somebody looking at how the model got somewhere usually wants the opposite.
+      var CONVERSATION_KINDS = { user: true, assistant: true };
+      var THINKING_KINDS = { thinking: true };
       var CALL_KINDS = { toolCall: true, toolResult: true };
 
       var DASH = '—';
@@ -2180,6 +2183,7 @@
         // truthful about what it covers, and a filter has nothing to explain.
         // 轮次 covers the conversation (what was said), 调用 covers the tool work.
         showConversation: true,
+        showThinking: true,
         showCalls: true,
         // Disclosure state for the two blocks that are read once and then only take
         // up room. Folding them hands the height back to the ledger.
@@ -2237,6 +2241,7 @@
         dom.searchInput = document.getElementById('search-input');
         dom.durationBtn = document.getElementById('duration-btn');
         dom.turnsBtn = document.getElementById('turns-btn');
+        dom.thinkingBtn = document.getElementById('thinking-btn');
         dom.callsBtn = document.getElementById('calls-btn');
         dom.chipAll = document.getElementById('chip-all');
         dom.filterStatus = document.getElementById('filter-status');
@@ -2933,7 +2938,8 @@
         dom.durationBtn.setAttribute('aria-label', durationLabel);
         dom.durationBtn.setAttribute('title', durationLabel);
 
-        setLayerButton(dom.turnsBtn, state.showConversation, '对话', '对话记录（用户、助手与思考）');
+        setLayerButton(dom.turnsBtn, state.showConversation, '对话', '对话记录（用户与助手消息）');
+        setLayerButton(dom.thinkingBtn, state.showThinking, '思考', '模型的思考过程');
         setLayerButton(dom.callsBtn, state.showCalls, '工具调用', '工具调用与工具结果');
       }
 
@@ -3289,6 +3295,7 @@
           // The two layer buttons come last, so cancelling one can never be mistaken for
           // a narrowing of the search: it removes whole kinds, and only whole kinds.
           if (!state.showConversation && CONVERSATION_KINDS[entry.record.kind] === true) continue;
+          if (!state.showThinking && THINKING_KINDS[entry.record.kind] === true) continue;
           if (!state.showCalls && CALL_KINDS[entry.record.kind] === true) continue;
           // The overview brush is a further filter, applied after kind and text so that
           // clearing it never silently changes what the other two meant.
@@ -3454,7 +3461,7 @@
         // of a hidden layer — the exact mismatch this function exists to prevent.
         return state.query !== '' || state.kinds.length !== KIND_ORDER.length
           || state.overviewSelection !== null
-          || !state.showConversation || !state.showCalls;
+          || !state.showConversation || !state.showThinking || !state.showCalls;
       }
 
       /**
@@ -3467,6 +3474,7 @@
       function spanPassesFilter(record, hasQuery) {
         if (!hasKind(record, state.kinds)) return false;
         if (!state.showConversation && CONVERSATION_KINDS[record.kind] === true) return false;
+        if (!state.showThinking && THINKING_KINDS[record.kind] === true) return false;
         if (!state.showCalls && CALL_KINDS[record.kind] === true) return false;
         if (hasQuery && !matchesQuery(record, state.query)) return false;
         return true;
@@ -4600,6 +4608,12 @@
           // no fold set to keep in step with arriving records, and no summary row that
           // has to keep a running count of what it stands for.
           state.showConversation = !state.showConversation;
+          renderViewControls();
+          renderLedger();
+        });
+
+        dom.thinkingBtn.addEventListener('click', function () {
+          state.showThinking = !state.showThinking;
           renderViewControls();
           renderLedger();
         });
