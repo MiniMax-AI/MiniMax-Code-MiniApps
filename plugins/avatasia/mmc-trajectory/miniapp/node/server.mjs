@@ -744,6 +744,40 @@ export function toolCallSummary(name, args) {
 }
 
 /**
+ * Moves `raw` off every record into an index-keyed map.
+ *
+ * On a real session the untouched message is about two thirds of the payload, and the page
+ * reads it for exactly one record at a time: the inspector's raw tab, one clipboard copy,
+ * one handoff. Carrying it on every row pays that weight on every poll and buys nothing
+ * until a row is actually opened, so it leaves the bulk response and is fetched per record
+ * instead.
+ *
+ * `rawOmitted` deliberately stays on the row. Whether a message was too large to carry at
+ * all is a fact the list itself has to be able to state — it is one boolean per row, and
+ * it is what lets the inspector say "omitted" instead of silently showing something else.
+ *
+ * Records are carried per turn, not as one flat list, so this walks the turns.
+ *
+ * @param {Array<Record<string, any>>} turns
+ * @returns {Map<number, unknown>}
+ */
+export function splitRawRecords(turns) {
+  /** @type {Map<number, unknown>} */
+  const raws = new Map();
+  if (!Array.isArray(turns)) return raws;
+  for (const turn of turns) {
+    if (!turn || typeof turn !== 'object' || !Array.isArray(turn.records)) continue;
+    for (const record of turn.records) {
+      if (!record || typeof record !== 'object' || !('raw' in record)) continue;
+      const index = Number(record.index);
+      if (Number.isInteger(index) && index > 0) raws.set(index, record.raw);
+      delete record.raw;
+    }
+  }
+  return raws;
+}
+
+/**
  * Builds the frozen `/api/trajectory` payload from already-parsed rows.
  * @param {{ session: { id: string, createdAtMs?: number | null }, rows: Array<Record<string, any>>, sizeBytes?: number, truncated?: boolean, redact?: (value: string) => string, generations?: Array<Record<string, any>>, generation?: number | null, orphans?: Array<{ generation: number, fileName: string }> }} input
  */
@@ -1386,7 +1420,12 @@ export async function start(context) {
   /**
    * Serialized `/api/trajectory` payloads keyed by facts that are cheap to read, so an
    * unchanged session is neither re-read from disk nor re-transferred on the next poll.
-   * @type {Map<string, { at: number, etag: string, body: string }>}
+   *
+   * `raw` lives here rather than in `body`: the untouched message is most of the session
+   * but is only ever read for one record at a time, so keeping it beside the body means
+   * the poll transfers the small payload and the record that gets opened still costs
+   * nothing extra.
+   * @type {Map<string, { at: number, etag: string, body: string, raws: Map<number, unknown> }>}
    */
   const trajectoryCache = new Map();
 
@@ -1545,18 +1584,23 @@ export async function start(context) {
     sendJson(response, 200, { sessions: described.map(stripInternalFields) });
   };
 
-  const handleTrajectory = async (response, url) => {
+  /**
+   * Which session a trajectory request is about, plus everything that decides whether it
+   * has changed. The bulk payload and the per-record raw fetch both go through here, so
+   * the same query string can never be read as two different sessions.
+   *
+   * @param {URL} url
+   */
+  const resolveTrajectoryRequest = async (url) => {
     let entries;
     try {
       entries = await listEntries();
     } catch (error) {
       context.logger.error('miniapp.trajectory.read_error', { reason: 'root_unreadable', code: errorCode(error) });
-      sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
-      return;
+      return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     if (entries.length === 0) {
-      sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
-      return;
+      return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     const requested = url.searchParams.get('session');
     let entry = null;
@@ -1591,8 +1635,7 @@ export async function start(context) {
         }
       }
       if (matched.length === 0) {
-        sendError(response, 404, 'session_not_found', '找不到该会话');
-        return;
+        return { ok: false, status: 404, code: 'session_not_found', message: '找不到该会话' };
       }
       entry = matched[0].entry;
     }
@@ -1611,14 +1654,22 @@ export async function start(context) {
       const wanted = Number(requestedGeneration);
       filter = Number.isInteger(wanted) && wanted >= 0 ? wanted : NaN;
       if (!generations.some((candidate) => candidate.generation === filter)) {
-        sendError(response, 404, 'generation_not_found', '找不到该上下文代');
-        return;
+        return { ok: false, status: 404, code: 'generation_not_found', message: '找不到该上下文代' };
       }
     }
 
     // Everything needed to decide "did this change?" is already in hand. Building the key
     // before the read is what lets an unchanged session skip the read entirely.
-    const cacheKey = trajectoryCacheKey(entry, identity, binding, filter);
+    return { ok: true, entry, binding, identity, generations, filter, cacheKey: trajectoryCacheKey(entry, identity, binding, filter) };
+  };
+
+  const handleTrajectory = async (response, url) => {
+    const ctx = await resolveTrajectoryRequest(url);
+    if (!ctx.ok) {
+      sendError(response, ctx.status, ctx.code, ctx.message);
+      return;
+    }
+    const { entry, binding, identity, generations, filter, cacheKey } = ctx;
     const etag = weakETag(cacheKey);
     const requestEtag = response.req && response.req.headers ? response.req.headers['if-none-match'] : null;
     const cached = trajectoryCache.get(cacheKey);
@@ -1748,6 +1799,10 @@ export async function start(context) {
       payload.session.leased = false;
     }
 
+    // Last thing before serializing, and the only place `raw` is ever touched: from here on
+    // the body carries no message bodies at all.
+    const raws = splitRawRecords(payload.turns);
+
     let body;
     try {
       body = JSON.stringify(payload);
@@ -1755,13 +1810,44 @@ export async function start(context) {
       sendJson(response, 500, { error: 'trajectory_unserializable', message: '会话数据暂时无法读取' });
       return;
     }
-    trajectoryCache.set(cacheKey, { at: Date.now(), etag, body });
+    trajectoryCache.set(cacheKey, { at: Date.now(), etag, body, raws });
     while (trajectoryCache.size > TRAJECTORY_CACHE_ENTRIES) {
       const oldest = trajectoryCache.keys().next();
       if (oldest.done) break;
       trajectoryCache.delete(oldest.value);
     }
     sendJsonBody(response, 200, body, { etag, revalidate: true });
+  };
+
+  /**
+   * One record's untouched message, fetched only when something actually reads it.
+   *
+   * Served out of the same cache entry as the bulk body, so opening the inspector's raw
+   * tab costs one record rather than a session. A miss means this process restarted
+   * between the two calls; saying so is more honest than silently showing the normalized
+   * record in a panel labelled 原文.
+   */
+  const handleRaw = async (response, url) => {
+    const ctx = await resolveTrajectoryRequest(url);
+    if (!ctx.ok) {
+      sendError(response, ctx.status, ctx.code, ctx.message);
+      return;
+    }
+    const wanted = Number.parseInt(url.searchParams.get('index') ?? '', 10);
+    if (!Number.isInteger(wanted) || wanted < 1) {
+      sendError(response, 400, 'record_index_required', '缺少记录序号');
+      return;
+    }
+    const cached = trajectoryCache.get(ctx.cacheKey);
+    if (!cached) {
+      sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
+      return;
+    }
+    if (!cached.raws.has(wanted)) {
+      sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    sendJson(response, 200, { index: wanted, raw: cached.raws.get(wanted) });
   };
 
   const handleDashboard = async (response) => {
@@ -1821,6 +1907,13 @@ export async function start(context) {
       void handleTrajectory(response, url).catch((error) => {
         context.logger.error('miniapp.trajectory.read_error', { reason: 'trajectory_failed', code: errorCode(error) });
         sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
+      });
+      return;
+    }
+    if (url.pathname === '/api/trajectory/raw') {
+      void handleRaw(response, url).catch((error) => {
+        context.logger.error('miniapp.trajectory.read_error', { reason: 'raw_failed', code: errorCode(error) });
+        sendError(response, 500, 'trajectory_unreadable', '原文暂时无法读取');
       });
       return;
     }

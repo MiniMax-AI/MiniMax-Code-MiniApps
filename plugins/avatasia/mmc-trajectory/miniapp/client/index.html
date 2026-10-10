@@ -4050,6 +4050,89 @@
         return wrap;
       }
 
+      /* ---------------- record bodies on demand ---------------- */
+
+      // The untouched message for a record, kept once it has been read. Message bodies are
+      // most of a session's bytes and the page reads them one record at a time, so they are
+      // fetched per record instead of riding along on every row of every poll.
+      var rawCache = {};
+      var rawPending = {};
+
+      function rawCacheKey(index) {
+        var payload = state.payload;
+        var session = payload && payload.session ? payload.session : null;
+        var sid = session && typeof session.id === 'string' ? session.id : '';
+        var gen = state.generation === null ? 'all' : String(state.generation);
+        return sid + '#' + gen + '#' + index;
+      }
+
+      function requestRaw(index) {
+        var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))
+          + '&session=' + sessionParam();
+        if (state.generation !== null) {
+          url += '&generation=' + encodeURIComponent(String(state.generation));
+        }
+        return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
+          return response.json().then(
+            function (body) { return { ok: response.ok, body: body }; },
+            function () { return { ok: false, body: null }; }
+          );
+        });
+      }
+
+      /**
+       * Resolves to one record's untouched message, or rejects.
+       *
+       * A 503 means the server no longer holds this session — the runtime restarted or the
+       * cache rolled past it. Reloading the session repopulates it, so that is tried once
+       * before giving up; without the retry the tab would be permanently broken after any
+       * restart, and without the retry cap it would loop.
+       *
+       * @param {Record<string, any>} record
+       * @param {boolean} [retried]
+       */
+      function fetchRaw(record, retried) {
+        var index = record && record.index;
+        if (!isCount(index) || index < 1) return Promise.reject(new Error('record_index_missing'));
+        var key = rawCacheKey(index);
+        if (Object.prototype.hasOwnProperty.call(rawCache, key)) return Promise.resolve(rawCache[key]);
+        if (rawPending[key]) return rawPending[key];
+        var attempt = requestRaw(index).then(function (result) {
+          delete rawPending[key];
+          if (result.ok && result.body && Object.prototype.hasOwnProperty.call(result.body, 'raw')) {
+            rawCache[key] = result.body.raw;
+            return result.body.raw;
+          }
+          var code = result.body && typeof result.body.error === 'string' ? result.body.error : '';
+          var err = new Error(code || 'raw_unavailable');
+          err.code = code;
+          throw err;
+        }).catch(function (err) {
+          if (!retried && err && err.code === 'trajectory_not_cached') {
+            return new Promise(function (resolve) { resolve(fetchTrajectory(false)); })
+              .then(function () { return fetchRaw(record, true); });
+          }
+          throw err;
+        });
+        rawPending[key] = attempt;
+        return attempt;
+      }
+
+      /**
+       * What a reader should show for a record's message.
+       *
+       * A record whose message was too large to carry resolves to null, which callers read
+       * as "there is no message body" and say so. Everything else resolves to the message or
+       * rejects: silently substituting the normalized row would put different content under
+       * a label that promises 原文, with nothing on the page to say it had happened.
+       *
+       * @param {Record<string, any>} record
+       */
+      function rawSourceFor(record) {
+        if (record && record.rawOmitted) return Promise.resolve(null);
+        return fetchRaw(record);
+      }
+
       function buildRaw(record) {
         var wrap = el('div');
         wrap.style.display = 'flex';
@@ -4063,13 +4146,18 @@
         }
         var pre = el('pre', 'pre');
         pre.setAttribute('tabindex', '0');
-        var source = record.raw !== null && record.raw !== undefined ? record.raw : stripVolatile(record);
-        if (source === null || source === undefined) {
+        wrap.appendChild(pre);
+        if (record.rawOmitted) {
           pre.textContent = DASH;
         } else {
-          pre.innerHTML = jsonColorize(source);
+          pre.textContent = '正在读取原文…';
+          rawSourceFor(record).then(function (source) {
+            if (source === null || source === undefined) pre.textContent = DASH;
+            else pre.innerHTML = jsonColorize(source);
+          }, function () {
+            pre.textContent = '原文读取失败，请重试。';
+          });
         }
-        wrap.appendChild(pre);
         return wrap;
       }
 
@@ -4103,30 +4191,30 @@
 
       /* ---------------- copy & handoff ---------------- */
 
-      function recordForClipboard(record) {
-        if (record.raw !== null && record.raw !== undefined) return stringify(record.raw);
-        return stringify(record);
-      }
-
       function copySelected() {
         var entry = selectedRecord();
         if (!entry) return;
-        var text = recordForClipboard(entry.record);
+        var record = entry.record;
         var done = function (ok) {
           inspectorSay(ok ? '已复制该记录的 JSON。' : '复制失败，请手动选择文本后复制。');
         };
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-          navigator.clipboard.writeText(text).then(
-            function () {
-              done(true);
-            },
-            function () {
-              done(legacyCopy(text));
-            }
-          );
-          return;
-        }
-        done(legacyCopy(text));
+        rawSourceFor(record).then(function (source) {
+          var text = source === null || source === undefined ? stringify(record) : stringify(source);
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(text).then(
+              function () {
+                done(true);
+              },
+              function () {
+                done(legacyCopy(text));
+              }
+            );
+            return;
+          }
+          done(legacyCopy(text));
+        }, function () {
+          inspectorSay('原文读取失败，未复制。请重试。');
+        });
       }
 
       function legacyCopy(text) {
@@ -4182,35 +4270,42 @@
           return;
         }
         var record = entry.record;
-        var rawSource = record.raw !== null && record.raw !== undefined ? record.raw : stripVolatile(record);
-        var raw = truncateJson(rawSource, HANDOFF_RAW_LIMIT);
-        var text = buildHandoffMarkdown(
-          state.payload ? state.payload.session : null,
-          entry.turn,
-          record,
-          raw.text,
-          raw.truncated
-        );
-
         dom.handoffBtn.disabled = true;
-        inspectorSay('已发出请求，等待你在弹出的确认框中确认…');
-        var result = message.append(text);
-        if (result && typeof result.then === 'function') {
-          result.then(
-            function () {
-              inspectorSay('已添加到输入框，请确认后发送。Agent 尚未开始处理。');
-              dom.handoffBtn.disabled = false;
-            },
-            function (error) {
-              var code = error && typeof error === 'object' && typeof error.message === 'string' ? error.message : '';
-              inspectorSay(HANDOFF_ERRORS[code] || '写入失败，请检查对话后重试。');
-              dom.handoffBtn.disabled = false;
-            }
+        inspectorSay('正在读取原文…');
+        rawSourceFor(record).then(function (fetched) {
+          // A message too large to carry has no raw; the normalized record is then the most
+          // there is, which is what this sent before raw became a separate fetch.
+          var rawSource = fetched === null || fetched === undefined ? stripVolatile(record) : fetched;
+          var raw = truncateJson(rawSource, HANDOFF_RAW_LIMIT);
+          var text = buildHandoffMarkdown(
+            state.payload ? state.payload.session : null,
+            entry.turn,
+            record,
+            raw.text,
+            raw.truncated
           );
-          return;
-        }
-        inspectorSay('已添加到输入框，请确认后发送。');
-        dom.handoffBtn.disabled = false;
+          inspectorSay('已发出请求，等待你在弹出的确认框中确认…');
+          var result = message.append(text);
+          if (result && typeof result.then === 'function') {
+            result.then(
+              function () {
+                inspectorSay('已添加到输入框，请确认后发送。Agent 尚未开始处理。');
+                dom.handoffBtn.disabled = false;
+              },
+              function (error) {
+                var code = error && typeof error === 'object' && typeof error.message === 'string' ? error.message : '';
+                inspectorSay(HANDOFF_ERRORS[code] || '写入失败，请检查对话后重试。');
+                dom.handoffBtn.disabled = false;
+              }
+            );
+            return;
+          }
+          inspectorSay('已添加到输入框，请确认后发送。');
+          dom.handoffBtn.disabled = false;
+        }, function () {
+          dom.handoffBtn.disabled = false;
+          inspectorSay('原文读取失败，未发出交接。请重试。');
+        });
       }
 
       /* ---------------- top-level render ---------------- */
