@@ -1,0 +1,3095 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>会话轨迹</title>
+    <style>
+      /* ============================================================
+         Theme tokens — page-owned, light + dark, mapped by
+         data-theme (set from prefers-color-scheme by the script).
+         ============================================================ */
+      :root,
+      :root[data-theme='light'] {
+        --mcode-bg: #ffffff;
+        --mcode-bg-secondary: #f5f5f5;
+        --mcode-surface: #ffffff;
+        --mcode-surface-muted: #fafafa;
+        --mcode-text: #171717;
+        --mcode-text-muted: #666666;
+        --mcode-text-subtle: #adadad;
+        --mcode-border: #0a0a0a14;
+        --mcode-border-strong: #0a0a0af2;
+        --mcode-accent: #0094fc;
+        --mcode-success: #04b54b;
+        --mcode-warning: #f56811;
+        --mcode-danger: #f73646;
+        --mcode-primary-action-bg: #171717;
+        --mcode-primary-action-text: #ffffff;
+      }
+
+      :root[data-theme='dark'] {
+        --mcode-bg: #171717;
+        --mcode-bg-secondary: #1c1c1c;
+        --mcode-surface: #262626;
+        --mcode-surface-muted: #262626;
+        --mcode-text: #ededed;
+        --mcode-text-muted: #949494;
+        --mcode-text-subtle: #666666;
+        --mcode-border: #ffffff14;
+        --mcode-border-strong: #fffffff2;
+        --mcode-accent: #0077d9;
+        --mcode-success: #009c3d;
+        --mcode-warning: #e25507;
+        --mcode-danger: #e31937;
+        --mcode-primary-action-bg: #ffffff;
+        --mcode-primary-action-text: #171717;
+      }
+
+      /* Fallback when the script has not set data-theme yet. */
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+          --mcode-bg: #171717;
+          --mcode-bg-secondary: #1c1c1c;
+          --mcode-surface: #262626;
+          --mcode-surface-muted: #262626;
+          --mcode-text: #ededed;
+          --mcode-text-muted: #949494;
+          --mcode-text-subtle: #666666;
+          --mcode-border: #ffffff14;
+          --mcode-border-strong: #fffffff2;
+          --mcode-accent: #0077d9;
+          --mcode-success: #009c3d;
+          --mcode-warning: #e25507;
+          --mcode-danger: #e31937;
+          --mcode-primary-action-bg: #ffffff;
+          --mcode-primary-action-text: #171717;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        color-scheme: light;
+      }
+
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+      }
+
+      body {
+        margin: 0;
+        background: var(--mcode-bg);
+        color: var(--mcode-text);
+        font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .icon {
+        display: block;
+        flex: none;
+      }
+
+      .page {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* ---------------- header ---------------- */
+
+      .page-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .page-header h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 28px;
+        font-weight: 600;
+      }
+
+      .page-subtitle {
+        margin: 4px 0 0;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--mcode-text-muted);
+      }
+
+      .header-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      /* ---------------- buttons & controls ---------------- */
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 34px;
+        padding: 0 12px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+      }
+
+      .btn:hover:not(:disabled) {
+        background: var(--mcode-surface-muted);
+        border-color: var(--mcode-border-strong);
+      }
+
+      .btn:active:not(:disabled) {
+        opacity: 0.75;
+      }
+
+      .btn:disabled {
+        cursor: not-allowed;
+        color: var(--mcode-text-subtle);
+        background: var(--mcode-surface-muted);
+      }
+
+      .btn-primary {
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        border-color: transparent;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        background: var(--mcode-primary-action-bg);
+        border-color: transparent;
+        opacity: 0.86;
+      }
+
+      .btn-text {
+        background: transparent;
+        border-color: transparent;
+        color: var(--mcode-accent);
+        padding: 0 8px;
+      }
+
+      .btn-text:hover:not(:disabled) {
+        background: var(--mcode-surface-muted);
+        border-color: transparent;
+      }
+
+      .btn[aria-pressed='true'] {
+        background: var(--mcode-surface-muted);
+        border-color: var(--mcode-accent);
+        color: var(--mcode-accent);
+      }
+
+      .btn .btn-state {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .btn[aria-pressed='true'] .btn-state {
+        color: var(--mcode-accent);
+      }
+
+      input[type='search'],
+      input[type='text'],
+      select {
+        min-height: 36px;
+        max-width: 100%;
+        padding: 0 8px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 14px;
+      }
+
+      select {
+        max-width: 320px;
+        text-overflow: ellipsis;
+      }
+
+      input::placeholder {
+        color: var(--mcode-text-subtle);
+      }
+
+      input:focus,
+      select:focus {
+        border-color: var(--mcode-accent);
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      /* ---------------- bars (alert / status) ---------------- */
+
+      .bar {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid var(--mcode-border);
+        border-left: 3px solid var(--mcode-border-strong);
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        font-size: 14px;
+      }
+
+      .bar[hidden] {
+        display: none;
+      }
+
+      .bar-danger {
+        border-left-color: var(--mcode-danger);
+        color: var(--mcode-text);
+      }
+
+      .bar-warning {
+        border-left-color: var(--mcode-warning);
+      }
+
+      .bar-success {
+        border-left-color: var(--mcode-success);
+      }
+
+      .bar-title {
+        font-weight: 500;
+      }
+
+      .bar-hint {
+        color: var(--mcode-text-muted);
+        font-size: 12px;
+      }
+
+      /* ---------------- toolbar ---------------- */
+
+      .toolbar {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface);
+      }
+
+      .toolbar-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+      }
+
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .field-label {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        white-space: nowrap;
+      }
+
+      .field-grow {
+        flex: 1 1 220px;
+      }
+
+      .field-grow input {
+        width: 100%;
+      }
+
+      .chipbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        min-width: 0;
+      }
+
+      .legend {
+        float: none;
+        padding: 0 4px 0 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 999px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text-muted);
+        font: inherit;
+        font-size: 12px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+      }
+
+      .chip:hover {
+        background: var(--mcode-surface-muted);
+        border-color: var(--mcode-border-strong);
+      }
+
+      .chip input {
+        position: absolute;
+        opacity: 0;
+        width: 1px;
+        height: 1px;
+        margin: 0;
+        pointer-events: none;
+      }
+
+      .chip-mark {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        flex: none;
+      }
+
+      .chip[aria-pressed='true'],
+      .chip.is-on {
+        background: var(--mcode-surface-muted);
+        border-color: var(--mcode-border-strong);
+        color: var(--mcode-text);
+        font-weight: 500;
+      }
+
+      .chip:focus-within {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      .toolbar-status {
+        margin: 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* ---------------- KPI strip ---------------- */
+
+      .kpi-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .section-title {
+        margin: 0;
+        font-size: 16px;
+        line-height: 24px;
+        font-weight: 500;
+      }
+
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: 1.3fr 1fr 1fr 1.1fr 1.1fr;
+        gap: 12px;
+      }
+
+      .kpi-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 16px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface);
+        min-width: 0;
+      }
+
+      .kpi-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .kpi-value {
+        font-size: 26px;
+        line-height: 32px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+
+      .kpi-sub {
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--mcode-text-muted);
+        overflow-wrap: anywhere;
+      }
+
+      .kpi-card.is-skeleton .kpi-value {
+        color: var(--mcode-text-subtle);
+      }
+
+      /* ---------------- two columns ---------------- */
+
+      .columns {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface);
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .panel-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .panel-head-meta {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* ---------------- ledger ---------------- */
+
+      .ledger-body {
+        padding: 8px 0 12px;
+      }
+
+      .turn-group {
+        display: block;
+      }
+
+      .turn-head {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 8px 16px;
+        border: 0;
+        border-bottom: 1px solid var(--mcode-border);
+        background: var(--mcode-bg-secondary);
+        color: var(--mcode-text);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 150ms ease-out;
+      }
+
+      .turn-head:hover {
+        background: var(--mcode-surface-muted);
+      }
+
+      .turn-head .icon {
+        transition: transform 200ms ease-out;
+      }
+
+      .turn-head[aria-expanded='false'] .icon {
+        transform: rotate(-90deg);
+      }
+
+      .turn-title {
+        font-size: 14px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .turn-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 8px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        min-width: 0;
+      }
+
+      .turn-meta .num {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .row-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      .row-list[hidden] {
+        display: none;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 42px 76px minmax(0, 1fr) 68px 76px;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 36px;
+        padding: 4px 16px;
+        border: 0;
+        border-left: 2px solid transparent;
+        background: transparent;
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 14px;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 150ms ease-out;
+      }
+
+      .row:hover {
+        background: var(--mcode-surface-muted);
+      }
+
+      .row[aria-current='true'] {
+        background: var(--mcode-surface-muted);
+        border-left-color: var(--mcode-accent);
+      }
+
+      .row.is-error {
+        border-left-color: var(--mcode-danger);
+      }
+
+      .row[aria-current='true'].is-error {
+        box-shadow: inset 2px 0 0 var(--mcode-danger);
+      }
+
+      /* Response rail: rows that came back from one model response share a responseId and
+         are drawn joined by a tree line, so it is visible which rows arrived together.
+         It sits inside the row padding, leaving the 2px left border free for the selected
+         and failed states, and it spends no colour channel of its own. */
+      .row[data-rail] {
+        position: relative;
+      }
+
+      .row[data-rail]::before {
+        content: '';
+        position: absolute;
+        left: 7px;
+        width: 1px;
+        background: var(--mcode-border-strong);
+        pointer-events: none;
+      }
+
+      .row[data-rail='start']::before {
+        top: 50%;
+        bottom: 0;
+      }
+
+      .row[data-rail='mid']::before {
+        top: 0;
+        bottom: 0;
+      }
+
+      .row[data-rail='end']::before {
+        top: 0;
+        bottom: 50%;
+      }
+
+      .row[data-rail='solo']::before {
+        top: calc(50% - 2px);
+        bottom: calc(50% - 2px);
+        left: 5px;
+        width: 5px;
+        border-radius: 50%;
+      }
+
+      .row[aria-current='true'] .row-index {
+        font-weight: 600;
+      }
+
+      .row-index {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .row-summary {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .row-meta {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 999px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-size: 12px;
+        line-height: 18px;
+        white-space: nowrap;
+      }
+
+      .pill-mark {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        flex: none;
+      }
+
+      .pill-user {
+        color: var(--mcode-accent);
+        border-color: currentColor;
+        background: var(--mcode-surface-muted);
+      }
+
+      .pill-assistant {
+        color: var(--mcode-success);
+        border-color: currentColor;
+      }
+
+      .pill-thinking {
+        color: var(--mcode-text-muted);
+      }
+
+      .pill-toolcall {
+        color: var(--mcode-warning);
+        border-color: currentColor;
+      }
+
+      .pill-toolresult {
+        color: var(--mcode-text-muted);
+        border-style: dashed;
+      }
+
+      .pill-system {
+        color: var(--mcode-text-subtle);
+        border-style: dashed;
+      }
+
+      .pill-compaction {
+        color: var(--mcode-danger);
+        border-color: currentColor;
+      }
+
+      .pill-error {
+        color: var(--mcode-danger);
+        border-color: currentColor;
+        font-weight: 500;
+      }
+
+      /* ---------------- generic state blocks ---------------- */
+
+      .state-block {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 32px 24px;
+        text-align: center;
+        color: var(--mcode-text-muted);
+      }
+
+      .state-block .icon {
+        color: var(--mcode-text-subtle);
+      }
+
+      .state-title {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--mcode-text);
+      }
+
+      .state-hint {
+        font-size: 12px;
+        max-width: 46ch;
+      }
+
+      .load-more-wrap {
+        padding: 8px 16px 0;
+      }
+
+      .ledger-foot {
+        padding: 8px 16px 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .skeleton-row {
+        display: grid;
+        grid-template-columns: 42px 76px minmax(0, 1fr) 68px 76px;
+        gap: 8px;
+        align-items: center;
+        padding: 4px 16px;
+        min-height: 36px;
+      }
+
+      .skeleton-bar {
+        height: 10px;
+        border-radius: 4px;
+        background: var(--mcode-surface-muted);
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      /* ---------------- inspector ---------------- */
+
+      .inspector-locator {
+        margin: 0;
+        padding: 8px 16px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      /* Shown only when the ledger is pinned to a generation that is no longer active, so the
+         numbers on screen are never silently about a slice the reader did not choose. */
+      .generation-note {
+        margin: 0;
+        padding: 8px 16px;
+        font-size: 12px;
+        color: var(--mcode-text-subtle);
+        background: var(--mcode-bg-secondary);
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .generation-note[hidden] {
+        display: none;
+      }
+
+      .tablist {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 8px 16px 0;
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .tab {
+        min-height: 30px;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-bottom: 2px solid transparent;
+        border-radius: 8px 8px 0 0;
+        background: transparent;
+        color: var(--mcode-text-muted);
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        transition: color 150ms ease-out, background-color 150ms ease-out;
+      }
+
+      .tab:hover:not(:disabled) {
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+      }
+
+      .tab[aria-selected='true'] {
+        color: var(--mcode-text);
+        font-weight: 500;
+        border-bottom-color: var(--mcode-accent);
+      }
+
+      .tab:disabled {
+        color: var(--mcode-text-subtle);
+        cursor: not-allowed;
+      }
+
+      .tabpanel {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .tabpanel[hidden] {
+        display: none;
+      }
+
+      .kv-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      .kv-table th,
+      .kv-table td {
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--mcode-border);
+        text-align: left;
+        vertical-align: top;
+        font-weight: 400;
+      }
+
+      .kv-table th {
+        width: 40%;
+        color: var(--mcode-text-muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .kv-table td {
+        overflow-wrap: anywhere;
+      }
+
+      .table-scroll {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+
+      .block-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--mcode-text-muted);
+      }
+
+      .pre {
+        margin: 0;
+        padding: 12px;
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        tab-size: 2;
+      }
+
+      .tok-key {
+        color: var(--mcode-accent);
+      }
+
+      .tok-str {
+        color: var(--mcode-success);
+      }
+
+      .tok-num {
+        color: var(--mcode-warning);
+      }
+
+      .tok-bool,
+      .tok-null {
+        color: var(--mcode-text-muted);
+      }
+
+      .note {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .note-danger {
+        color: var(--mcode-danger);
+      }
+
+      .inspector-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+      }
+
+      .inspector-status {
+        margin: 0;
+        padding: 0 16px 12px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        background: var(--mcode-surface-muted);
+      }
+
+      /* ---------------- footer ---------------- */
+
+      .page-footer {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding-top: 8px;
+        border-top: 1px solid var(--mcode-border);
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--mcode-text-muted);
+      }
+
+      .page-footer p {
+        margin: 0;
+      }
+
+      /* ---------------- narrow screens ---------------- */
+
+      @media (max-width: 1080px) {
+        .kpi-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .columns {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      @media (max-width: 767px) {
+        .page {
+          padding: 16px;
+          gap: 12px;
+        }
+
+        .kpi-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .kpi-card {
+          padding: 12px;
+        }
+
+        .toolbar-row {
+          align-items: stretch;
+        }
+
+        .field {
+          flex: 1 1 100%;
+        }
+
+        select,
+        .field-grow input {
+          width: 100%;
+          max-width: none;
+        }
+
+        /* All five columns stay so the 失败 text never disappears on narrow screens. */
+        .row,
+        .skeleton-row {
+          grid-template-columns: 28px 64px minmax(0, 1fr) 54px 66px;
+          gap: 6px;
+          padding: 4px 12px;
+        }
+
+        .turn-head,
+        .kv-table td {
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001ms !important;
+          scroll-behavior: auto !important;
+        }
+
+        .turn-head .icon {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="page" id="page">
+      <header class="page-header">
+        <div>
+          <h1>会话轨迹</h1>
+          <p class="page-subtitle">本机 MiniMax Code 会话的消息流、思考、工具调用与用量，只读检视。</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn" id="follow-btn" aria-pressed="true">
+            <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M8.4 2.2v5.4l3.2 2.1" />
+              <circle cx="8" cy="8" r="5.6" />
+            </svg>
+            <span>跟随最新</span>
+            <span class="btn-state" id="follow-state">开</span>
+          </button>
+          <button type="button" class="btn" id="refresh-btn" aria-label="立即刷新会话轨迹">
+            <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7" />
+              <path d="M13.4 2.2v3.3h-3.3" />
+            </svg>
+            <span>刷新</span>
+          </button>
+        </div>
+      </header>
+
+      <p class="sr-only" id="live-status" role="status"></p>
+
+      <div class="bar bar-danger" id="error-bar" role="alert" hidden>
+        <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M8 2.3 14.6 13.4H1.4z" />
+          <path d="M8 6.4v3.1" />
+          <path d="M8 11.3v.2" />
+        </svg>
+        <div>
+          <p class="bar-title" id="error-title">无法读取会话轨迹</p>
+          <p class="bar-hint" id="error-text"></p>
+        </div>
+      </div>
+
+      <div class="bar bar-warning" id="stale-bar" role="status" hidden>
+        <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M8.4 2.2v5.4l3.2 2.1" />
+          <circle cx="8" cy="8" r="5.6" />
+        </svg>
+        <div>
+          <p class="bar-title">更新失败，正在重试</p>
+          <p class="bar-hint">下方保留的是上一次成功读取的数据。</p>
+        </div>
+      </div>
+
+      <form class="toolbar" id="toolbar" role="search" aria-label="会话轨迹筛选">
+        <div class="toolbar-row">
+          <div class="field">
+            <label class="field-label" for="session-select">会话</label>
+            <select id="session-select" aria-describedby="filter-status"></select>
+          </div>
+          <div class="field" id="generation-field" hidden>
+            <label class="field-label" for="generation-select">上下文代</label>
+            <select id="generation-select" aria-describedby="generation-hint"></select>
+          </div>
+          <div class="field field-grow">
+            <label class="field-label" for="search-input">搜索</label>
+            <input type="search" id="search-input" placeholder="搜索摘要、正文、结果与思考" autocomplete="off" />
+          </div>
+          <button type="button" class="btn" id="collapse-all" aria-pressed="false">折叠全部</button>
+        </div>
+
+        <nav class="chipbar" aria-label="按类型筛选轨迹">
+          <fieldset class="chips">
+            <legend class="legend">类型</legend>
+            <button type="button" class="chip" id="chip-all" aria-pressed="true">全部</button>
+            <label class="chip" data-kind="user">
+              <input type="checkbox" value="user" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>用户</span>
+            </label>
+            <label class="chip" data-kind="assistant">
+              <input type="checkbox" value="assistant" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>助手</span>
+            </label>
+            <label class="chip" data-kind="thinking">
+              <input type="checkbox" value="thinking" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>思考</span>
+            </label>
+            <label class="chip" data-kind="toolCall">
+              <input type="checkbox" value="toolCall" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>工具调用</span>
+            </label>
+            <label class="chip" data-kind="toolResult">
+              <input type="checkbox" value="toolResult" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>工具结果</span>
+            </label>
+            <label class="chip" data-kind="system">
+              <input type="checkbox" value="system" checked />
+              <span class="chip-mark" aria-hidden="true"></span>
+              <span>系统</span>
+            </label>
+          </fieldset>
+          <p class="toolbar-status" id="filter-status" role="status">正在准备轨迹数据…</p>
+        </nav>
+      </form>
+
+      <section class="kpi-section" aria-labelledby="kpi-heading">
+        <h2 class="section-title" id="kpi-heading">关键指标</h2>
+        <div class="kpi-grid" id="kpi-grid"></div>
+      </section>
+
+      <main class="columns">
+        <section class="panel" aria-labelledby="ledger-heading">
+          <div class="panel-head">
+            <h2 class="section-title" id="ledger-heading">轨迹</h2>
+            <span class="panel-head-meta" id="ledger-meta"></span>
+          </div>
+          <p class="generation-note" id="generation-hint" hidden></p>
+          <div class="ledger-body" id="ledger"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="inspector-heading">
+          <div class="panel-head">
+            <h2 class="section-title" id="inspector-heading">检视</h2>
+            <span class="panel-head-meta" id="inspector-meta"></span>
+          </div>
+          <p class="inspector-locator" id="inspector-locator">尚未选择记录</p>
+          <div class="tablist" id="tablist" role="tablist" aria-label="记录详情视图"></div>
+          <div id="panels">
+            <div class="tabpanel" role="tabpanel" id="panel-summary" tabindex="0" aria-labelledby="tab-summary"></div>
+          </div>
+          <div class="inspector-actions">
+            <button type="button" class="btn" id="copy-btn" disabled>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <rect x="5.6" y="5.6" width="7.8" height="7.8" rx="2" />
+                <rect x="2.6" y="2.6" width="7.8" height="7.8" rx="2" />
+              </svg>
+              <span>复制 JSON</span>
+            </button>
+            <button type="button" class="btn" id="handoff-btn" disabled>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M2.6 8h9.2" />
+                <path d="M8.6 4.6 12 8l-3.4 3.4" />
+                <path d="M13.4 2.6v10.8" />
+              </svg>
+              <span>交给 AI 分析这条（写入对话输入框）</span>
+            </button>
+          </div>
+          <p class="inspector-status" id="inspector-status" role="status"></p>
+        </section>
+      </main>
+
+      <footer class="page-footer">
+        <p id="footer-source">数据来源：本机 MiniMax Code 会话记录，只读展示，不做任何写入。</p>
+        <p id="footer-binding"></p>
+        <p id="footer-truncated" hidden>文件过大，仅显示前 8 MB。</p>
+      </footer>
+    </div>
+
+    <script>
+      'use strict';
+
+      /* ============================================================
+         PURE:START
+         DOM-free helpers. Extracted verbatim by the offline probe for
+         unit checks (null rendering, escaping, formatting, search).
+         ============================================================ */
+
+      var KIND_LABELS = {
+        user: '用户',
+        assistant: '助手',
+        thinking: '思考',
+        toolCall: '工具调用',
+        toolResult: '工具结果',
+        system: '系统'
+      };
+
+      var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
+
+      var DASH = '—';
+
+      // One label per record, used by every surface that names a kind: the row pill, the
+      // inspector locator, the inspector detail table and the handoff text. A compaction
+      // shares kind 'system' with the injected blocks but is its own thing, so all of them
+      // have to say 压缩 rather than 系统 — hence one function instead of four call sites.
+      function kindLabel(record) {
+        return record && record.title === 'compaction'
+          ? '压缩'
+          : (KIND_LABELS[record && record.kind] || (record && record.kind) || DASH);
+      }
+
+      function isNil(value) {
+        return value === null || value === undefined || value === '';
+      }
+
+      function isCount(value) {
+        return typeof value === 'number' && isFinite(value);
+      }
+
+      // The runtime rotates a compacted session into generations: the previous messages.jsonl
+      // becomes a snapshot and a fresh active file takes its place. A session can therefore
+      // hold more than one generation, and the ledger can be narrowed to any one of them.
+      // `null` is not an option — the whole lineage is the default view.
+      function generationOptions(generations, activeGeneration) {
+        if (!Array.isArray(generations) || generations.length <= 1) return [];
+        var options = generations
+          .filter(function (entry) { return entry && isCount(entry.generation); })
+          .slice()
+          .sort(function (a, b) { return b.generation - a.generation; })
+          .map(function (entry) {
+            var active = entry.generation === activeGeneration || entry.active === true;
+            var label = '第 ' + formatInt(entry.generation) + ' 代';
+            if (active) label += '（当前）';
+            else if (isCount(entry.messageCount)) label += '（' + formatInt(entry.messageCount) + ' 条）';
+            return {
+              generation: entry.generation,
+              active: active,
+              messageCount: isCount(entry.messageCount) ? entry.messageCount : null,
+              label: label
+            };
+          });
+        return [{ generation: 'all', active: false, messageCount: null, label: '全部（默认）' }].concat(options);
+      }
+
+      /** Thousands separators without relying on ICU/locale data. */
+      function formatInt(value) {
+        if (!isCount(value)) return DASH;
+        var negative = value < 0;
+        var digits = String(Math.abs(Math.trunc(value)));
+        var grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return (negative ? '-' : '') + grouped;
+      }
+
+      /** Compact form for dense metadata rows. Null never becomes 0. */
+      function formatCompact(value) {
+        if (!isCount(value)) return DASH;
+        var abs = Math.abs(value);
+        if (abs >= 1000000) return trimZeros((value / 1000000).toFixed(1)) + 'M';
+        if (abs >= 10000) return trimZeros((value / 1000).toFixed(1)) + 'k';
+        return formatInt(value);
+      }
+
+      function trimZeros(text) {
+        return text.indexOf('.') >= 0 ? text.replace(/\.0$/, '') : text;
+      }
+
+      /** Milliseconds → readable string. null/undefined → em dash. */
+      function formatDuration(ms) {
+        if (!isCount(ms)) return DASH;
+        var abs = Math.abs(ms);
+        if (abs < 1000) return formatInt(ms) + ' ms';
+        if (abs < 60000) return trimZeros((ms / 1000).toFixed(2)) + ' s';
+        var totalSeconds = Math.round(ms / 1000);
+        var minutes = Math.floor(totalSeconds / 60);
+        var seconds = totalSeconds % 60;
+        if (minutes < 60) return minutes + ' 分 ' + seconds + ' 秒';
+        var hours = Math.floor(minutes / 60);
+        return hours + ' 小时 ' + (minutes % 60) + ' 分';
+      }
+
+      /** Offset from session start, e.g. "+1.2 s". null → em dash. */
+      function formatOffset(ms) {
+        if (!isCount(ms)) return DASH;
+        if (Math.abs(ms) < 1000) return '+' + formatInt(ms) + ' ms';
+        if (Math.abs(ms) < 60000) return '+' + trimZeros((ms / 1000).toFixed(1)) + ' s';
+        var totalSeconds = Math.round(ms / 1000);
+        var minutes = Math.floor(totalSeconds / 60);
+        var seconds = totalSeconds % 60;
+        return '+' + minutes + ' 分 ' + seconds + ' 秒';
+      }
+
+      function pad2(value) {
+        return value < 10 ? '0' + value : String(value);
+      }
+
+      /** Absolute local wall-clock time. */
+      function formatClock(ts) {
+        if (!isCount(ts) || ts <= 0) return DASH;
+        var date = new Date(ts);
+        if (isNaN(date.getTime())) return DASH;
+        return (
+          date.getFullYear() +
+          '-' + pad2(date.getMonth() + 1) +
+          '-' + pad2(date.getDate()) +
+          ' ' + pad2(date.getHours()) +
+          ':' + pad2(date.getMinutes()) +
+          ':' + pad2(date.getSeconds())
+        );
+      }
+
+      /** Human distance from now, used in the session picker. */
+      function formatAgo(ts, now) {
+        if (!isCount(ts) || ts <= 0) return DASH;
+        var reference = isCount(now) ? now : Date.now();
+        var delta = reference - ts;
+        if (delta < 0) return '刚刚';
+        if (delta < 60000) return '刚刚';
+        if (delta < 3600000) return Math.floor(delta / 60000) + ' 分钟前';
+        if (delta < 86400000) return Math.floor(delta / 3600000) + ' 小时前';
+        if (delta < 172800000) return '昨天';
+        if (delta < 604800000) return Math.floor(delta / 86400000) + ' 天前';
+        return formatClock(ts).slice(0, 10);
+      }
+
+      function formatBytes(bytes) {
+        if (!isCount(bytes)) return DASH;
+        if (bytes < 1024) return formatInt(bytes) + ' B';
+        if (bytes < 1048576) return trimZeros((bytes / 1024).toFixed(1)) + ' KB';
+        return trimZeros((bytes / 1048576).toFixed(1)) + ' MB';
+      }
+
+      function truncateText(text, limit) {
+        if (typeof text !== 'string') return '';
+        var flat = text.replace(/\s+/g, ' ').trim();
+        if (flat.length <= limit) return flat;
+        return flat.slice(0, Math.max(0, limit - 1)) + '…';
+      }
+
+      function safeText(value) {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'string') return value;
+        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+        try {
+          var json = JSON.stringify(value);
+          return typeof json === 'string' ? json : '';
+        } catch (error) {
+          return '';
+        }
+      }
+
+      function stringify(value) {
+        if (value === undefined) return '';
+        try {
+          var json = JSON.stringify(value, null, 2);
+          return typeof json === 'string' ? json : String(value);
+        } catch (error) {
+          return safeText(value);
+        }
+      }
+
+      /** Escapes for text nodes and quoted attribute values. */
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      /**
+       * Pretty-prints JSON with light syntax colouring. Input is escaped
+       * first, so no data-derived markup can reach the DOM. The replacement
+       * is a function, so `$&` sequences inside strings stay literal.
+       */
+      function jsonColorize(value) {
+        var text = stringify(value);
+        if (!text) return '';
+        return escapeHtml(text).replace(
+          /("(?:\\.|[^"\\])*")(\s*:)?|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,
+          function (match, str, colon) {
+            if (str !== undefined) {
+              if (colon) return '<span class="tok-key">' + str + '</span>' + escapeHtml(colon);
+              return '<span class="tok-str">' + str + '</span>';
+            }
+            if (match === 'true' || match === 'false') return '<span class="tok-bool">' + match + '</span>';
+            if (match === 'null') return '<span class="tok-null">' + match + '</span>';
+            return '<span class="tok-num">' + match + '</span>';
+          }
+        );
+      }
+
+      /** Record fields the search box scans, flattened to one lowercase string. */
+      function recordSearchText(record) {
+        if (!record || typeof record !== 'object') return '';
+        var thinking = record.thinking;
+        var thinkingText =
+          thinking && typeof thinking === 'object' ? safeText(thinking.text !== undefined ? thinking.text : thinking) : safeText(thinking);
+        return [record.summary, record.text, safeText(record.result), thinkingText, record.toolName]
+          .map(function (part) {
+            return safeText(part);
+          })
+          .join('\n')
+          .toLowerCase();
+      }
+
+      function matchesQuery(record, needle) {
+        if (!needle) return true;
+        return recordSearchText(record).indexOf(String(needle).toLowerCase()) >= 0;
+      }
+
+      function hasKind(record, kinds) {
+        return !!record && kinds.indexOf(record.kind) >= 0;
+      }
+
+      /** Flattens turns into one ordered list without mutating the payload. */
+      function flattenTurns(turns) {
+        var out = [];
+        if (!Array.isArray(turns)) return out;
+        for (var i = 0; i < turns.length; i += 1) {
+          var turn = turns[i];
+          if (!turn || !Array.isArray(turn.records)) continue;
+          for (var j = 0; j < turn.records.length; j += 1) {
+            var record = turn.records[j];
+            if (!record || typeof record !== 'object') continue;
+            out.push({ turn: turn, record: record });
+          }
+        }
+        return out;
+      }
+
+      /**
+       * Cheap change detector: rebuilding 200+ rows every 2.5s is wasteful
+       * when nothing changed. Only structural counters participate.
+       */
+      function signatureOf(payload) {
+        if (!payload || !payload.session || !Array.isArray(payload.turns)) return 'empty';
+        var stats = payload.stats || {};
+        var records = 0;
+        for (var i = 0; i < payload.turns.length; i += 1) {
+          var turn = payload.turns[i];
+          if (turn && Array.isArray(turn.records)) records += turn.records.length;
+        }
+        return [
+          payload.session.id || '',
+          stats.messages === undefined ? '' : stats.messages,
+          stats.toolCalls === undefined ? '' : stats.toolCalls,
+          stats.errors === undefined ? '' : stats.errors,
+          stats.durationMs === undefined ? '' : stats.durationMs,
+          (stats.tokens && stats.tokens.totalTokens !== undefined ? stats.tokens.totalTokens : ''),
+          payload.turns.length,
+          records
+        ].join('|');
+      }
+
+      /** markdown handed to the Host chat input; raw JSON capped at 8000 chars. */
+      var HANDOFF_RAW_LIMIT = 8000;
+
+      function truncateJson(value, limit) {
+        var text = stringify(value);
+        var cap = isCount(limit) ? limit : HANDOFF_RAW_LIMIT;
+        if (text.length <= cap) return { text: text, truncated: false };
+        return { text: text.slice(0, cap), truncated: true };
+      }
+
+      function buildHandoffMarkdown(session, turn, record, rawText, rawTruncated) {
+        var lines = [];
+        lines.push('请分析这条会话轨迹记录，说明它在做什么、有没有问题，以及是否需要改进。');
+        lines.push('');
+        lines.push('## 定位');
+        lines.push('');
+        if (session && session.id) {
+          lines.push('- 会话：' + (session.label ? session.label + '（' + session.id + '）' : session.id));
+        }
+        var turnIndex = turn && isCount(turn.index) ? turn.index : null;
+        lines.push('- 轮次：' + (turnIndex === null ? DASH : '轮次 ' + turnIndex));
+        lines.push('- 记录：#' + (isCount(record.index) ? record.index : DASH) + ' · ' + kindLabel(record));
+        if (record.role) lines.push('- 角色：' + record.role);
+        if (record.toolName) lines.push('- 工具：' + record.toolName + (record.toolCallId ? '（' + record.toolCallId + '）' : ''));
+        lines.push('');
+        lines.push('## 元信息');
+        lines.push('');
+        lines.push('- 时间：' + formatClock(record.timestamp) + '（相对起点 ' + formatOffset(record.relativeMs) + '）');
+        lines.push('- 耗时：' + formatDuration(isNil(record.durationMs) ? null : record.durationMs));
+        var tokens = record.tokens;
+        if (tokens) {
+          lines.push(
+            '- token：输入 ' + formatInt(tokens.input) + ' / 输出 ' + formatInt(tokens.output) +
+            ' / 缓存读 ' + formatInt(tokens.cacheRead) + ' / 缓存写 ' + formatInt(tokens.cacheWrite) +
+            ' / 合计 ' + formatInt(tokens.totalTokens)
+          );
+        } else {
+          lines.push('- token：' + DASH + '（该记录没有 token 统计）');
+        }
+        if (record.model) lines.push('- 模型：' + record.model + (record.provider ? '（' + record.provider + '）' : ''));
+        if (record.api) lines.push('- 接口：' + record.api);
+        if (record.stopReason) lines.push('- 结束原因：' + record.stopReason);
+        if (record.textTruncated) lines.push('- 提示：正文已被上游截断。');
+        if (record.rawOmitted) lines.push('- 提示：原文过大已被省略。');
+        if (record.isError || record.error) {
+          lines.push('- 状态：失败');
+          lines.push('- 错误：' + safeText(record.error));
+        } else {
+          lines.push('- 状态：已完成');
+        }
+        if (record.summary) {
+          lines.push('');
+          lines.push('## 摘要');
+          lines.push('');
+          lines.push(safeText(record.summary));
+        }
+        if (rawText) {
+          lines.push('');
+          lines.push('## 原文 JSON' + (rawTruncated ? '（已截断到 ' + HANDOFF_RAW_LIMIT + ' 字符）' : ''));
+          lines.push('');
+          lines.push('```json');
+          lines.push(rawText);
+          lines.push('```');
+        }
+        return lines.join('\n');
+      }
+
+      /* ============================================================
+         PURE:END
+         ============================================================ */
+
+      /* ---------------- DOM helpers ---------------- */
+
+      var SVG_NS = 'http://www.w3.org/2000/svg';
+
+      var ICON_PATHS = {
+        chevronDown: ['M4 6.2 8 10.2 12 6.2'],
+        copy: ['M5.6 5.6h7.8v7.8H5.6z', 'M2.6 2.6h7.8v7.8'],
+        arrowRight: ['M2.6 8h9.2', 'M8.6 4.6 12 8l-3.4 3.4', 'M13.4 2.6v10.8']
+      };
+
+      function icon(name) {
+        var svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('class', 'icon');
+        svg.setAttribute('width', '16');
+        svg.setAttribute('height', '16');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '1.5');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        var paths = ICON_PATHS[name] || [];
+        for (var i = 0; i < paths.length; i += 1) {
+          var node = document.createElementNS(SVG_NS, 'path');
+          node.setAttribute('d', paths[i]);
+          svg.appendChild(node);
+        }
+        return svg;
+      }
+
+      /** All data-bearing text goes through textContent. */
+      function el(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined && text !== null) node.textContent = String(text);
+        return node;
+      }
+
+      function clear(node) {
+        while (node.firstChild) node.removeChild(node.firstChild);
+      }
+
+      function pill(label, tone) {
+        var node = el('span', 'pill' + (tone ? ' pill-' + tone : ''));
+        node.appendChild(el('span', 'pill-mark'));
+        node.appendChild(el('span', null, label));
+        return node;
+      }
+
+      function stateBlock(iconSvg, title, hint, action) {
+        var wrap = el('div', 'state-block');
+        if (iconSvg) wrap.appendChild(iconSvg);
+        wrap.appendChild(el('p', 'state-title', title));
+        if (hint) wrap.appendChild(el('p', 'state-hint', hint));
+        if (action) wrap.appendChild(action);
+        return wrap;
+      }
+
+      /* ---------------- theme ---------------- */
+
+      function applyTheme() {
+        var media = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+        var theme = media && media.matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+      }
+
+      /* ---------------- state ---------------- */
+
+      var POLL_INTERVAL = 2500;
+      var PAGE_STEP = 200;
+      var SEARCH_DEBOUNCE = 200;
+
+      var state = {
+        sessions: [],
+        sessionsLoaded: false,
+        sessionsError: false,
+        followLatest: true,
+        sessionId: null,
+        payload: null,
+        signature: '',
+        loading: true,
+        hardError: null,
+        stale: false,
+        selectedId: null,
+        collapsed: {},
+        allCollapsed: false,
+        kinds: KIND_ORDER.slice(),
+        query: '',
+        limit: PAGE_STEP,
+        activeTab: 'summary',
+        hostSessionId: detectHostSessionId(),
+        flat: [],
+        // Validator for the displayed trajectory. Sent back as If-None-Match so an
+        // unchanged session costs a 304 with no body instead of a multi-megabyte reply.
+        etag: '',
+        etagFor: '',
+        // null = follow whatever generation the runtime considers active. A number pins the
+        // ledger to one slice of a rotated history so pre-compaction turns stay reachable.
+        generation: null
+      };
+
+      var dom = {};
+      var inflight = null;
+      var sessionsInflight = null;
+      var pollTimer = null;
+      var searchTimer = null;
+      var refreshSeq = 0;
+
+      function cacheDom() {
+        dom.followBtn = document.getElementById('follow-btn');
+        dom.followState = document.getElementById('follow-state');
+        dom.refreshBtn = document.getElementById('refresh-btn');
+        dom.liveStatus = document.getElementById('live-status');
+        dom.errorBar = document.getElementById('error-bar');
+        dom.errorTitle = document.getElementById('error-title');
+        dom.errorText = document.getElementById('error-text');
+        dom.staleBar = document.getElementById('stale-bar');
+        dom.toolbar = document.getElementById('toolbar');
+        dom.sessionSelect = document.getElementById('session-select');
+        dom.generationField = document.getElementById('generation-field');
+        dom.generationSelect = document.getElementById('generation-select');
+        dom.generationHint = document.getElementById('generation-hint');
+        dom.searchInput = document.getElementById('search-input');
+        dom.collapseAll = document.getElementById('collapse-all');
+        dom.chipAll = document.getElementById('chip-all');
+        dom.filterStatus = document.getElementById('filter-status');
+        dom.kpiGrid = document.getElementById('kpi-grid');
+        dom.ledger = document.getElementById('ledger');
+        dom.ledgerMeta = document.getElementById('ledger-meta');
+        dom.inspectorMeta = document.getElementById('inspector-meta');
+        dom.inspectorLocator = document.getElementById('inspector-locator');
+        dom.tablist = document.getElementById('tablist');
+        dom.panels = document.getElementById('panels');
+        dom.copyBtn = document.getElementById('copy-btn');
+        dom.handoffBtn = document.getElementById('handoff-btn');
+        dom.inspectorStatus = document.getElementById('inspector-status');
+        dom.footerTruncated = document.getElementById('footer-truncated');
+        dom.footerBinding = document.getElementById('footer-binding');
+      }
+
+      function announce(text) {
+        dom.liveStatus.textContent = text;
+      }
+
+      function inspectorSay(text) {
+        dom.inspectorStatus.textContent = text;
+      }
+
+      /**
+       * The Mini App runtime hands `start(context)` no session id and the Node service is
+       * shared by plugin identity, so the server cannot tell whose conversation it is
+       * rendering. The Host bridge is the one place that might know. Probe it, and only
+       * accept a value that is exactly a session id, so an unrelated field can never be
+       * mistaken for one.
+       * @returns {string | null}
+       */
+      function detectHostSessionId() {
+        var api = typeof window !== 'undefined' ? window.mcode : undefined;
+        if (!api || typeof api !== 'object') return null;
+        var candidates = [
+          api.sessionId,
+          api.session && api.session.id,
+          api.context && api.context.sessionId,
+          api.miniapp && api.miniapp.sessionId,
+          api.miniapp && api.miniapp.context && api.miniapp.context.sessionId
+        ];
+        for (var i = 0; i < candidates.length; i += 1) {
+          var value = candidates[i];
+          if (typeof value === 'string' && /^mvs_[0-9a-f]{32}$/.test(value.trim())) return value.trim();
+        }
+        return null;
+      }
+
+      function sessionParam() {
+        // A Host-bound id always wins: it is the only value that is genuinely "this conversation".
+        if (state.hostSessionId) return encodeURIComponent(state.hostSessionId);
+        return state.followLatest || !state.sessionId ? 'latest' : encodeURIComponent(state.sessionId);
+      }
+
+      function fetchSessions() {
+        if (sessionsInflight) sessionsInflight.abort();
+        var controller = new AbortController();
+        sessionsInflight = controller;
+        var query = '?limit=20';
+        return fetch('/api/sessions' + query, { signal: controller.signal, headers: { Accept: 'application/json' } })
+          .then(function (response) {
+            if (!response.ok) throw new Error('http');
+            return response.json();
+          })
+          .then(function (data) {
+            sessionsInflight = null;
+            state.sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+            state.sessionsLoaded = true;
+            state.sessionsError = false;
+            renderSessionSelect();
+          })
+          .catch(function (error) {
+            sessionsInflight = null;
+            if (error && error.name === 'AbortError') return;
+            state.sessionsError = true;
+          });
+      }
+
+      function fetchTrajectory(manual) {
+        if (inflight) inflight.abort();
+        var controller = new AbortController();
+        inflight = controller;
+        var seq = (refreshSeq += 1);
+        var session = sessionParam();
+        // The generation belongs in the request key, not just the URL: the same session at
+        // two generations is two different bodies, and reusing a validator across them would
+        // let one silently satisfy the other with a 304.
+        var genKey = state.generation === null ? 'auto' : String(state.generation);
+        var url = '/api/trajectory?session=' + session
+          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));
+        var cacheKey = session + '#' + genKey;
+        var headers = { Accept: 'application/json' };
+        // A manual refresh must always reach the server: drop the validator so the
+        // response cannot be revalidated into a 304 the user did not ask for.
+        if (manual) {
+          state.etag = '';
+          state.etagFor = '';
+        } else if (state.etag && state.etagFor === cacheKey) {
+          headers['If-None-Match'] = state.etag;
+        }
+        if (state.loading) renderLoading();
+
+        return fetch(url, { signal: controller.signal, headers: headers })
+          .then(function (response) {
+            // Nothing changed since the copy already on screen. Keep every piece of state
+            // — no re-flatten, no re-render — and let the next poll do the same cheaply.
+            if (response.status === 304) {
+              var fresh = response.headers.get('etag');
+              if (fresh) state.etag = fresh;
+              state.etagFor = cacheKey;
+              return null;
+            }
+            return response
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (body) {
+                if (!response.ok) {
+                  var error = new Error('api');
+                  error.status = response.status;
+                  error.code = body && body.error ? body.error : 'unknown';
+                  error.serverMessage = body && body.message ? String(body.message) : '';
+                  throw error;
+                }
+                if (!body || typeof body !== 'object') throw new Error('api');
+                var tag = response.headers.get('etag');
+                state.etag = tag || '';
+                state.etagFor = cacheKey;
+                return body;
+              });
+          })
+          .then(function (payload) {
+            if (seq !== refreshSeq) return;
+            inflight = null;
+            if (payload === null) {
+              // 304: the previous render is still accurate. Only clear a pending loading
+              // state, because nothing on screen should have been replaced.
+              if (state.loading) {
+                state.loading = false;
+                render();
+              }
+              return;
+            }
+            applyPayload(payload, manual);
+          })
+          .catch(function (error) {
+            if (seq !== refreshSeq) return;
+            inflight = null;
+            if (error && error.name === 'AbortError') return;
+            handleTrajectoryError(error);
+          });
+      }
+
+      function applyPayload(payload, manual) {
+        var next = signatureOf(payload);
+        var changed = next !== state.signature;
+        state.payload = payload;
+        state.signature = next;
+        state.loading = false;
+        state.hardError = null;
+        state.stale = false;
+        state.flat = flattenTurns(payload.turns);
+
+        if (changed) {
+          state.limit = Math.min(PAGE_STEP, state.flat.length) || PAGE_STEP;
+          revealSelection();
+        }
+        render();
+        if (manual) announce('已刷新，正在显示最新数据。');
+      }
+
+      function handleTrajectoryError(error) {
+        state.loading = false;
+        // Never surface status codes, URLs, or local paths.
+        var serverMessage = error && error.serverMessage ? String(error.serverMessage) : '';
+        if (state.payload) {
+          state.stale = true;
+          var code = error && error.code ? error.code : '';
+          var title = dom.staleBar.querySelector('.bar-title');
+          if (title) {
+            if (code === 'session_not_found' || code === 'not_found') title.textContent = '该会话已不可用，正在重试';
+            else if (code === 'trajectory_unavailable') title.textContent = '本地会话数据目录暂时不可用，正在重试';
+            else if (code === 'trajectory_unreadable') title.textContent = '会话数据暂时无法读取，正在重试';
+            else title.textContent = '更新失败，正在重试';
+          }
+        } else {
+          state.stale = false;
+          state.hardError = serverMessage || '暂时无法读取会话轨迹数据。';
+        }
+        render();
+      }
+
+      /* ---------------- rendering: session select ---------------- */
+
+      function sessionOptionLabel(session, now) {
+        var label = truncateText(session && session.label ? session.label : '', 42);
+        var when = formatAgo(session ? session.lastActiveAt : null, now);
+        var tail = '（' + when + ' · ' + formatInt(session ? session.messageCount : null) + ' 条）';
+        if (!label) return '未命名会话 ' + tail;
+        return label + ' ' + tail;
+      }
+
+      function renderSessionSelect() {
+        var select = dom.sessionSelect;
+        var previous = state.followLatest ? 'latest' : state.sessionId || '';
+        clear(select);
+
+        var followOption = el('option', null, '跟随最新（自动切换）');
+        followOption.value = 'latest';
+        select.appendChild(followOption);
+
+        var now = Date.now();
+        for (var i = 0; i < state.sessions.length; i += 1) {
+          var session = state.sessions[i];
+          if (!session || !session.id) continue;
+          var option = el('option', null, sessionOptionLabel(session, now));
+          option.value = session.id;
+          select.appendChild(option);
+        }
+        if (previous && previous !== 'latest') {
+          select.value = previous;
+          if (select.selectedIndex < 0) {
+            // The pinned session aged out of the 20 most recent; keep the picker coherent.
+            var pinned = el('option', null, '当前会话（不在最近列表）');
+            pinned.value = previous;
+            select.insertBefore(pinned, select.options[1] || null);
+            select.value = previous;
+          }
+        } else {
+          select.value = 'latest';
+        }
+        if (select.selectedIndex < 0) select.value = 'latest';
+      }
+
+      /* ---------------- rendering: KPI ---------------- */
+
+      function kpiCard(label, value, sub, skeleton) {
+        var card = el('div', 'kpi-card' + (skeleton ? ' is-skeleton' : ''));
+        card.appendChild(el('span', 'kpi-label', label));
+        card.appendChild(el('span', 'kpi-value', value));
+        card.appendChild(el('span', 'kpi-sub', sub));
+        return card;
+      }
+
+      // One label per part of a turn total, in the order a reader would count them.
+      function turnBreakdown(stats) {
+        var parts = ['对话 ' + formatInt(stats.turnsWithPrompt)];
+        if (isCount(stats.qaTurns) && stats.qaTurns > 0) parts.push('问答 ' + formatInt(stats.qaTurns));
+        if (isCount(stats.compactionTurns) && stats.compactionTurns > 0) parts.push('压缩 ' + formatInt(stats.compactionTurns));
+        if (isCount(stats.turnsWithoutPrompt) && stats.turnsWithoutPrompt > 0) parts.push('其他 ' + formatInt(stats.turnsWithoutPrompt));
+        return parts.join(' · ');
+      }
+
+      function renderKpi() {
+        var grid = dom.kpiGrid;
+        clear(grid);
+        var stats = state.payload && state.payload.stats ? state.payload.stats : null;
+
+        if (!stats) {
+          grid.appendChild(kpiCard('消息', DASH, '正在读取…', true));
+          grid.appendChild(kpiCard('工具调用', DASH, '正在读取…', true));
+          grid.appendChild(kpiCard('对话轮次', DASH, '正在读取…', true));
+          grid.appendChild(kpiCard('Token 总量', DASH, '正在读取…', true));
+          grid.appendChild(kpiCard('总耗时', DASH, '正在读取…', true));
+          return;
+        }
+
+        var tokens = stats.tokens || {};
+        // A separate "responses" tile would repeat 助手: one assistant row is one model
+        // response, verified identical across sessions. Compactions are the one count the
+        // strip cannot derive from what it already shows, so it is called out when present.
+        var compactionNote = isCount(stats.compactions) && stats.compactions > 0
+          ? ' · 压缩 ' + formatInt(stats.compactions)
+          : '';
+        // `messages` counts what is on screen. The default view is the whole lineage, so it
+        // normally already spans every generation; when the reader narrows to one slice the
+        // session-wide total is shown next to it, and either way the span is stated.
+        var session = state.payload && state.payload.session ? state.payload.session : null;
+        var span = session && Array.isArray(session.generations) ? session.generations.length : 0;
+        var rotationNote = '';
+        if (isCount(stats.messagesAll) && stats.messagesAll > stats.messages) {
+          rotationNote = ' · 全程 ' + formatInt(stats.messagesAll);
+        }
+        if (span > 1) {
+          rotationNote += rotationNote ? ' · ' : ' · ';
+          rotationNote += (session && session.stitched ? '跨 ' : '共 ') + formatInt(span) + ' 代';
+        }
+        grid.appendChild(
+          kpiCard(
+            '消息',
+            formatInt(stats.messages),
+            '用户 ' + formatInt(stats.userMessages) + ' · 助手 ' + formatInt(stats.assistantMessages) +
+            ' · 思考块 ' + formatInt(stats.thinkingBlocks) + compactionNote + rotationNote
+          )
+        );
+        grid.appendChild(
+          kpiCard(
+            '工具调用',
+            formatInt(stats.toolCalls),
+            '结果 ' + formatInt(stats.toolResults) + ' · 失败 ' + formatInt(stats.errors) +
+            (isCount(stats.errors) && stats.errors > 0 ? '（见失败标记）' : '')
+          )
+        );
+        grid.appendChild(
+          kpiCard(
+            '对话轮次',
+            formatInt(stats.turns),
+            // Spell out what the total is made of. A raw turn count is the number most likely
+            // to be misread as "how many things I typed": a checkpoint is not conversation,
+            // and a reply that arrived through a question card never became a typed message.
+            // Only the parts that are actually present are listed.
+            turnBreakdown(stats)
+          )
+        );
+        grid.appendChild(
+          kpiCard(
+            'Token 总量',
+            formatInt(tokens.totalTokens),
+            '输入 ' + formatInt(tokens.input) + ' · 输出 ' + formatInt(tokens.output) +
+            ' · 缓存读 ' + formatInt(tokens.cacheRead) + ' · 缓存写 ' + formatInt(tokens.cacheWrite)
+          )
+        );
+        grid.appendChild(
+          kpiCard(
+            '总耗时',
+            formatDuration(isNil(stats.durationMs) ? null : stats.durationMs),
+            '会话体积 ' + formatBytes(state.payload.session ? state.payload.session.sizeBytes : null)
+          )
+        );
+      }
+
+      /* ---------------- rendering: ledger ---------------- */
+
+      function visibleEntries() {
+        var out = [];
+        for (var i = 0; i < state.flat.length; i += 1) {
+          var entry = state.flat[i];
+          if (!hasKind(entry.record, state.kinds)) continue;
+          if (!matchesQuery(entry.record, state.query)) continue;
+          out.push(entry);
+        }
+        return out;
+      }
+
+      function revealSelection() {
+        if (!state.selectedId) return;
+        for (var i = 0; i < state.flat.length; i += 1) {
+          if (state.flat[i].record.id === state.selectedId) {
+            var needed = state.flat.length - i;
+            if (needed > state.limit) state.limit = Math.min(needed, state.flat.length);
+            return;
+          }
+        }
+        state.selectedId = null;
+      }
+
+      function selectedRecord() {
+        if (!state.selectedId) return null;
+        for (var i = 0; i < state.flat.length; i += 1) {
+          if (state.flat[i].record.id === state.selectedId) return state.flat[i];
+        }
+        return null;
+      }
+
+      /**
+       * Tree-line state for each row on screen: one model response yields several rows that
+       * share a `responseId`, and the rail joins them. Computed over the rows actually
+       * visible, so filtering and paging cannot leave a rail pointing at a hidden row.
+       * @param {Array<{record: any}>} entries
+       * @returns {Array<{ state: string, index: number, size: number } | null>}
+       */
+      function railStates(entries) {
+        var positions = new Map();
+        for (var i = 0; i < entries.length; i += 1) {
+          var rid = entries[i].record.responseId;
+          if (!rid) continue;
+          var list = positions.get(rid);
+          if (!list) {
+            list = [];
+            positions.set(rid, list);
+          }
+          list.push(i);
+        }
+        var out = new Array(entries.length);
+        for (var k = 0; k < entries.length; k += 1) out[k] = null;
+        positions.forEach(function (idxs) {
+          var first = idxs[0];
+          var last = idxs[idxs.length - 1];
+          for (var n = 0; n < idxs.length; n += 1) {
+            var at = idxs[n];
+            var state = 'mid';
+            if (idxs.length === 1) state = 'solo';
+            else if (at === first) state = 'start';
+            else if (at === last) state = 'end';
+            out[at] = { state: state, index: n + 1, size: idxs.length };
+          }
+        });
+        return out;
+      }
+
+      function buildRow(entry, rail) {
+        var record = entry.record;
+        var row = el('button', 'row');
+        row.type = 'button';
+        row.setAttribute('data-row-id', record.id || String(record.index));
+        if (record.id === state.selectedId) row.setAttribute('aria-current', 'true');
+        else row.removeAttribute('aria-current');
+        var failed = !!(record.isError || record.error);
+        if (failed) row.classList.add('is-error');
+
+        row.appendChild(el('span', 'row-index', '#' + (isCount(record.index) ? record.index : DASH)));
+
+        // A compaction is a checkpoint, not something anyone said — label it as its own
+        // thing instead of folding it into 系统, which is also where injected blocks land.
+        var isCompaction = record.title === 'compaction';
+        var label = pill(
+          kindLabel(record),
+          isCompaction ? 'compaction' : kindTone(record.kind)
+        );
+        row.appendChild(label);
+
+        var summaryText = record.summary || record.text || record.toolName || record.title || '';
+        var summary = el('span', 'row-summary', truncateText(safeText(summaryText), 160) || DASH);
+        summary.title = truncateText(safeText(summaryText), 600);
+        row.appendChild(summary);
+
+        row.appendChild(el('span', 'row-meta', formatOffset(record.relativeMs)));
+
+        // Fixed five-column grid: an error marker takes over the duration cell so
+        // the row never wraps; the exact duration stays available in the inspector.
+        var durationText = isNil(record.durationMs) ? DASH : formatDuration(record.durationMs);
+        if (failed) {
+          row.appendChild(pill('失败', 'error'));
+          row.title = '失败 · 耗时 ' + durationText + '（详情见右侧检视）';
+        } else {
+          row.appendChild(el('span', 'row-meta row-col-duration', durationText));
+        }
+
+        row.addEventListener('click', function () {
+          selectRecord(record.id);
+        });
+
+        // The rail is decorative; the same fact is stated in the tooltip so it is not
+        // available only by looking at the page.
+        if (rail) {
+          row.setAttribute('data-rail', rail.state);
+          var label = rail.size > 1
+            ? '同一次模型返回的第 ' + rail.index + '/' + rail.size + ' 条'
+            : '这一次返回只有这一条';
+          row.title = row.title ? row.title + ' · ' + label : label;
+        }
+        return row;
+      }
+
+      function kindTone(kind) {
+        if (kind === 'user') return 'user';
+        if (kind === 'assistant') return 'assistant';
+        if (kind === 'thinking') return 'thinking';
+        if (kind === 'toolCall') return 'toolcall';
+        if (kind === 'toolResult') return 'toolresult';
+        return 'system';
+      }
+
+      function buildTurnHead(turn, expanded) {
+        var head = el('button', 'turn-head');
+        head.type = 'button';
+        head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        head.appendChild(icon('chevronDown'));
+
+        var title = '轮次 ' + (isCount(turn.index) ? turn.index : DASH);
+        head.appendChild(el('span', 'turn-title', title));
+
+        var meta = el('span', 'turn-meta');
+        meta.appendChild(el('span', null, '工具调用 ' + formatInt(turn.toolCalls)));
+        var tokens = turn.tokens || {};
+        meta.appendChild(el('span', null, '输入 ' + formatInt(tokens.input)));
+        meta.appendChild(el('span', null, '输出 ' + formatInt(tokens.output)));
+        meta.appendChild(el('span', null, '缓存读 ' + formatInt(tokens.cacheRead)));
+        meta.appendChild(el('span', null, '耗时 ' + (isNil(turn.durationMs) ? DASH : formatDuration(turn.durationMs))));
+        if (isCount(turn.errors) && turn.errors > 0) {
+          meta.appendChild(el('span', 'note note-danger', '失败 ' + formatInt(turn.errors)));
+        }
+        head.appendChild(meta);
+
+        head.addEventListener('click', function () {
+          state.collapsed[turn.id] = !state.collapsed[turn.id];
+          if (!state.collapsed[turn.id]) delete state.collapsed[turn.id];
+          state.allCollapsed = areAllCollapsed(visibleTurns());
+          renderLedger();
+          renderCollapseButton();
+        });
+        return head;
+      }
+
+      function turnKey(turn) {
+        return turn && turn.id ? turn.id : 'turn-' + (isCount(turn && turn.index) ? turn.index : Math.random());
+      }
+
+      function isCollapsed(turn) {
+        var key = turnKey(turn);
+        return state.collapsed[key] === true;
+      }
+
+      function visibleTurns(entries) {
+        var order = [];
+        var map = {};
+        for (var i = 0; i < entries.length; i += 1) {
+          var turn = entries[i].turn;
+          var key = turnKey(turn);
+          if (!map[key]) {
+            map[key] = { turn: turn, entries: [] };
+            order.push(map[key]);
+          }
+          map[key].entries.push(entries[i]);
+        }
+        return order;
+      }
+
+      function areAllCollapsed(groups) {
+        if (!groups.length) return false;
+        for (var i = 0; i < groups.length; i += 1) {
+          if (!isCollapsed(groups[i].turn)) return false;
+        }
+        return true;
+      }
+
+      function renderLedger() {
+        var ledger = dom.ledger;
+        var scrollY = window.scrollY || window.pageYOffset || 0;
+        clear(ledger);
+
+        if (state.loading) {
+          ledger.appendChild(buildSkeleton());
+          dom.ledgerMeta.textContent = '加载中';
+          return;
+        }
+
+        if (state.hardError) {
+          ledger.appendChild(
+            stateBlock(null, '轨迹暂时不可用', '服务恢复后会自动重试，页面结构保持不变。')
+          );
+          dom.ledgerMeta.textContent = '不可用';
+          return;
+        }
+
+        if (!state.payload) {
+          ledger.appendChild(buildSkeleton());
+          dom.ledgerMeta.textContent = '加载中';
+          return;
+        }
+
+        if (state.sessionsLoaded && state.sessions.length === 0) {
+          ledger.appendChild(
+            stateBlock(
+              icon('arrowRight'),
+              '还没有可读取的本地会话',
+              '在 MiniMax Code 里开始一次对话后回到本页，轨迹会自动出现。'
+            )
+          );
+          dom.ledgerMeta.textContent = '共 0 条';
+          updateFilterStatus(0, 0);
+          return;
+        }
+
+        var matched = visibleEntries();
+        var total = state.flat.length;
+        updateFilterStatus(matched.length, total);
+        dom.ledgerMeta.textContent = '轮次 ' + (state.payload.stats ? formatInt(state.payload.stats.turns) : DASH);
+
+        if (matched.length === 0) {
+          var reset = el('button', 'btn', '清除筛选');
+          reset.type = 'button';
+          reset.addEventListener('click', function () {
+            clearFilters();
+          });
+          ledger.appendChild(
+            stateBlock(null, '当前筛选条件下没有命中记录', '共 ' + total + ' 条记录中没有匹配项，可以放宽类型或搜索词。', reset)
+          );
+          return;
+        }
+
+        var windowed = matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched;
+        var hiddenAbove = matched.length - windowed.length;
+
+        if (hiddenAbove > 0) {
+          var wrap = el('div', 'load-more-wrap');
+          var more = el('button', 'btn', '向上加载更早的 ' + Math.min(PAGE_STEP, hiddenAbove) + ' 条');
+          more.type = 'button';
+          more.addEventListener('click', function () {
+            var anchorId = windowed[0] ? windowed[0].record.id : null;
+            var anchorBefore = anchorId ? anchorOffset(anchorId) : null;
+            state.limit += PAGE_STEP;
+            renderLedger();
+            if (anchorId && anchorBefore !== null) {
+              var after = anchorOffset(anchorId);
+              if (after !== null) window.scrollBy(0, after - anchorBefore);
+            }
+          });
+          wrap.appendChild(more);
+          ledger.appendChild(wrap);
+        }
+
+        var groups = visibleTurns(windowed);
+        for (var i = 0; i < groups.length; i += 1) {
+          var group = groups[i];
+          var collapsed = isCollapsed(group.turn);
+          var section = el('section', 'turn-group');
+          section.setAttribute('aria-label', '轮次 ' + (isCount(group.turn.index) ? group.turn.index : DASH));
+          section.appendChild(buildTurnHead(group.turn, !collapsed));
+          var list = el('ul', 'row-list');
+          if (collapsed) list.hidden = true;
+          var rails = railStates(group.entries);
+          for (var j = 0; j < group.entries.length; j += 1) {
+            var item = el('li');
+            item.appendChild(buildRow(group.entries[j], rails[j]));
+            list.appendChild(item);
+          }
+          section.appendChild(list);
+          ledger.appendChild(section);
+        }
+
+        var foot = el('p', 'ledger-foot');
+        foot.textContent =
+          '已显示 ' + formatInt(windowed.length) + ' / 共 ' + formatInt(total) + ' 条记录' +
+          (hiddenAbove > 0 ? '（更早的 ' + formatInt(hiddenAbove) + ' 条尚未加载）' : '');
+        ledger.appendChild(foot);
+
+        window.scrollTo(0, scrollY);
+      }
+
+      function anchorOffset(id) {
+        var node = dom.ledger.querySelector('[data-row-id="' + cssEscape(id) + '"]');
+        return node ? node.getBoundingClientRect().top : null;
+      }
+
+      function cssEscape(value) {
+        var text = String(value);
+        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(text);
+        return text.replace(/["\\]/g, '\\$&');
+      }
+
+      function buildSkeleton() {
+        var wrap = el('div');
+        var group = el('section', 'turn-group');
+        var head = el('div', 'turn-head');
+        head.appendChild(el('span', 'skeleton-bar'));
+        group.appendChild(head);
+        for (var i = 0; i < 8; i += 1) {
+          var row = el('div', 'skeleton-row');
+          var widths = ['60%', '70%', '90%', '80%', '60%'];
+          for (var j = 0; j < 5; j += 1) {
+            var bar = el('div', 'skeleton-bar');
+            bar.style.width = widths[j];
+            row.appendChild(bar);
+          }
+          group.appendChild(row);
+        }
+        wrap.appendChild(group);
+        var note = el('p', 'ledger-foot', '正在读取轨迹…');
+        wrap.appendChild(note);
+        return wrap;
+      }
+
+      function renderLoading() {
+        renderKpi();
+        renderLedger();
+        renderInspector();
+      }
+
+      function updateFilterStatus(matched, total) {
+        dom.filterStatus.textContent = '命中 ' + formatInt(matched) + ' / 共 ' + formatInt(total) + ' 条';
+      }
+
+      function renderCollapseButton() {
+        var all = state.allCollapsed;
+        dom.collapseAll.setAttribute('aria-pressed', all ? 'true' : 'false');
+        dom.collapseAll.textContent = all ? '展开全部' : '折叠全部';
+      }
+
+      /* ---------------- selection ---------------- */
+
+      function selectRecord(id) {
+        state.selectedId = id;
+        state.activeTab = 'summary';
+        renderLedger();
+        renderInspector();
+        inspectorSay('');
+      }
+
+      function clearFilters() {
+        state.kinds = KIND_ORDER.slice();
+        state.query = '';
+        state.limit = PAGE_STEP;
+        if (dom.searchInput) dom.searchInput.value = '';
+        syncChipInputs();
+        render();
+      }
+
+      /* ---------------- inspector ---------------- */
+
+      var TABS = [
+        { id: 'summary', label: '摘要', available: function () { return true; } },
+        { id: 'raw', label: '原文', available: function () { return true; } },
+        {
+          id: 'args',
+          label: '参数',
+          available: function (record) {
+            return record.kind === 'toolCall' && record.arguments !== null && record.arguments !== undefined;
+          }
+        },
+        {
+          id: 'result',
+          label: '结果',
+          available: function (record) {
+            return record.kind === 'toolResult' && record.result !== null && record.result !== undefined;
+          }
+        },
+        {
+          id: 'thinking',
+          label: '思考',
+          available: function (record) {
+            if (record.kind !== 'thinking') return false;
+            var value = record.thinking;
+            return value !== null && value !== undefined && safeText(value).trim() !== '';
+          }
+        }
+      ];
+
+      function renderInspector() {
+        var entry = selectedRecord();
+        clear(dom.tablist);
+        clear(dom.panels);
+
+        if (!entry) {
+          dom.inspectorLocator.textContent = '尚未选择记录';
+          dom.inspectorMeta.textContent = '';
+          dom.tablist.hidden = true;
+          dom.copyBtn.disabled = true;
+          dom.handoffBtn.disabled = true;
+          updateHandoffButton();
+          var panel = el('div', 'tabpanel');
+          panel.appendChild(
+            stateBlock(
+              null,
+              state.loading ? '正在读取轨迹' : '在左侧选择一条记录',
+              state.loading ? '数据加载后即可查看详情。' : '选中后这里会显示摘要、原文、参数、结果与思考。'
+            )
+          );
+          dom.panels.appendChild(panel);
+          return;
+        }
+
+        var record = entry.record;
+        var turn = entry.turn;
+        var turnIndex = isCount(turn && turn.index) ? turn.index : null;
+        dom.inspectorLocator.textContent =
+          '轮次 ' + (turnIndex === null ? DASH : turnIndex) + ' · #' + (isCount(record.index) ? record.index : DASH) +
+          ' · ' + kindLabel(record);
+        dom.inspectorMeta.textContent = record.id ? '记录 ' + record.id : '';
+        dom.tablist.hidden = false;
+
+        var available = TABS.filter(function (tab) {
+          return tab.available(record);
+        });
+        if (!available.some(function (tab) { return tab.id === state.activeTab; })) {
+          state.activeTab = 'summary';
+        }
+
+        var buttons = {};
+        for (var i = 0; i < TABS.length; i += 1) {
+          var tab = TABS[i];
+          var enabled = available.indexOf(tab) >= 0;
+          var button = el('button', 'tab', tab.label);
+          button.type = 'button';
+          button.id = 'tab-' + tab.id;
+          button.setAttribute('role', 'tab');
+          button.setAttribute('aria-selected', tab.id === state.activeTab && enabled ? 'true' : 'false');
+          button.setAttribute('aria-controls', 'panel-' + tab.id);
+          button.tabIndex = tab.id === state.activeTab && enabled ? 0 : -1;
+          button.disabled = !enabled;
+          if (!enabled) button.setAttribute('title', '该记录没有这一部分内容');
+          button.addEventListener('click', function (event) {
+            activateTab(event.currentTarget.id.slice(4));
+          });
+          button.addEventListener('keydown', function (event) {
+            onTabKeydown(event, buttons);
+          });
+          buttons[tab.id] = button;
+          dom.tablist.appendChild(button);
+        }
+
+        for (var j = 0; j < available.length; j += 1) {
+          var active = available[j];
+          var panel = el('div', 'tabpanel');
+          panel.id = 'panel-' + active.id;
+          panel.setAttribute('role', 'tabpanel');
+          panel.setAttribute('aria-labelledby', 'tab-' + active.id);
+          panel.tabIndex = 0;
+          if (active.id !== state.activeTab) panel.hidden = true;
+          panel.appendChild(buildPanel(active.id, record, turn));
+          dom.panels.appendChild(panel);
+        }
+
+        dom.copyBtn.disabled = false;
+        updateHandoffButton();
+      }
+
+      function activateTab(id) {
+        state.activeTab = id;
+        renderInspector();
+      }
+
+      function onTabKeydown(event, buttons) {
+        var ids = TABS.map(function (tab) {
+          return tab.id;
+        });
+        var order = ids.filter(function (id) {
+          return buttons[id] && !buttons[id].disabled;
+        });
+        if (!order.length) return;
+        var current = event.currentTarget.id.slice(4);
+        var position = order.indexOf(current);
+        var next = null;
+        if (event.key === 'ArrowRight') next = order[(position + 1) % order.length];
+        else if (event.key === 'ArrowLeft') next = order[(position - 1 + order.length) % order.length];
+        else if (event.key === 'Home') next = order[0];
+        else if (event.key === 'End') next = order[order.length - 1];
+        if (!next) return;
+        event.preventDefault();
+        buttons[next].focus();
+        activateTab(next);
+      }
+
+      function kvRow(table, key, value) {
+        var tr = document.createElement('tr');
+        var th = el('th', null, key);
+        th.setAttribute('scope', 'row');
+        var td = el('td', null, value);
+        tr.appendChild(th);
+        tr.appendChild(td);
+        table.appendChild(tr);
+      }
+
+      function buildPanel(tabId, record, turn) {
+        if (tabId === 'summary') return buildSummary(record, turn);
+        if (tabId === 'raw') return buildRaw(record);
+        if (tabId === 'args') return buildBlock('工具参数', record.arguments, true);
+        if (tabId === 'result') return buildBlock('工具结果', record.result, false);
+        return buildBlock('思考过程', record.thinking, false);
+      }
+
+      function buildSummary(record, turn) {
+        var wrap = el('div');
+        wrap.className = 'stack';
+        wrap.style.display = 'flex';
+        wrap.style.flexDirection = 'column';
+        wrap.style.gap = '12px';
+
+        if (record.isError || record.error) {
+          var alert = el('div', 'bar bar-danger');
+          var texts = el('div');
+          texts.appendChild(el('p', 'bar-title', '失败'));
+          texts.appendChild(el('p', 'bar-hint', safeText(record.error) || '该记录以错误结束，但没有给出错误信息。'));
+          alert.appendChild(texts);
+          wrap.appendChild(alert);
+        }
+
+        var scroll = el('div', 'table-scroll');
+        var table = el('table', 'kv-table');
+        var caption = el('caption', 'sr-only', '记录元信息');
+        table.appendChild(caption);
+        kvRow(table, '类型', record.title === 'compaction' ? '压缩（上下文检查点）' : kindLabel(record));
+        kvRow(table, '角色', isNil(record.role) ? DASH : String(record.role));
+        kvRow(table, '轮次', isCount(turn && turn.index) ? '轮次 ' + turn.index : DASH);
+        kvRow(table, '记录序号', isCount(record.index) ? '#' + record.index : DASH);
+        if (record.tokensBefore !== null && record.tokensBefore !== undefined) {
+          kvRow(table, '压缩前上下文', formatInt(record.tokensBefore) + ' tokens');
+        }
+        // What the checkpoint actually did: which generation it opened, who wrote it, and
+        // which earlier revision it replaced. Without these the numbers above have no story.
+        if (isCount(record.generation)) kvRow(table, '开启的上下文代', '第 ' + formatInt(record.generation) + ' 代');
+        if (record.producedBy) kvRow(table, '检查点来源', String(record.producedBy));
+        if (isCount(record.parentGeneration)) {
+          kvRow(table, '替换的上一代', '第 ' + formatInt(record.parentGeneration) + ' 代');
+        }
+        if (record.parentCompactionId) kvRow(table, '上一代检查点 id', String(record.parentCompactionId));
+        if (record.toolName) kvRow(table, '工具', record.toolName + (record.toolCallId ? '（' + record.toolCallId + '）' : ''));
+        kvRow(table, '时间', formatClock(record.timestamp));
+        kvRow(table, '相对起点', formatOffset(record.relativeMs));
+        kvRow(table, '耗时', isNil(record.durationMs) ? DASH : formatDuration(record.durationMs));
+        kvRow(table, '模型', isNil(record.model) ? DASH : String(record.model));
+        kvRow(table, '提供方', isNil(record.provider) ? DASH : String(record.provider));
+        kvRow(table, '接口', isNil(record.api) ? DASH : String(record.api));
+        kvRow(table, '结束原因', isNil(record.stopReason) ? DASH : String(record.stopReason));
+        kvRow(table, '状态', record.isError || record.error ? '失败' : '已完成');
+        scroll.appendChild(table);
+        wrap.appendChild(scroll);
+
+        var tokens = record.tokens;
+        wrap.appendChild(el('p', 'block-title', 'Token 用量'));
+        if (!tokens) {
+          wrap.appendChild(el('p', 'note', '该记录没有 token 统计，显示为 ' + DASH + '。'));
+        } else {
+          var tokenScroll = el('div', 'table-scroll');
+          var tokenTable = el('table', 'kv-table');
+          kvRow(tokenTable, '输入', formatInt(tokens.input));
+          kvRow(tokenTable, '输出', formatInt(tokens.output));
+          kvRow(tokenTable, '缓存读', formatInt(tokens.cacheRead));
+          kvRow(tokenTable, '缓存写', formatInt(tokens.cacheWrite));
+          kvRow(tokenTable, '合计', formatInt(tokens.totalTokens));
+          tokenScroll.appendChild(tokenTable);
+          wrap.appendChild(tokenScroll);
+        }
+
+        if (record.summary) {
+          wrap.appendChild(el('p', 'block-title', '摘要'));
+          wrap.appendChild(el('p', 'note', safeText(record.summary)));
+        }
+        return wrap;
+      }
+
+      function buildRaw(record) {
+        var wrap = el('div');
+        wrap.style.display = 'flex';
+        wrap.style.flexDirection = 'column';
+        wrap.style.gap = '8px';
+        if (record.rawOmitted) {
+          wrap.appendChild(el('p', 'note note-danger', '原文过大，已省略。可以从参数与结果页查看已保留的部分。'));
+        }
+        if (record.textTruncated) {
+          wrap.appendChild(el('p', 'note', '正文已截断：仅保留前段内容。'));
+        }
+        var pre = el('pre', 'pre');
+        pre.setAttribute('tabindex', '0');
+        var source = record.raw !== null && record.raw !== undefined ? record.raw : stripVolatile(record);
+        if (source === null || source === undefined) {
+          pre.textContent = DASH;
+        } else {
+          pre.innerHTML = jsonColorize(source);
+        }
+        wrap.appendChild(pre);
+        return wrap;
+      }
+
+      function stripVolatile(record) {
+        var copy = {};
+        for (var key in record) {
+          if (Object.prototype.hasOwnProperty.call(record, key)) copy[key] = record[key];
+        }
+        return copy;
+      }
+
+      function buildBlock(title, value, colored) {
+        var wrap = el('div');
+        wrap.style.display = 'flex';
+        wrap.style.flexDirection = 'column';
+        wrap.style.gap = '8px';
+        wrap.appendChild(el('p', 'block-title', title));
+        var pre = el('pre', 'pre');
+        pre.setAttribute('tabindex', '0');
+        var text = safeText(value);
+        if (!text) {
+          pre.textContent = DASH;
+        } else if (colored && typeof value === 'object') {
+          pre.innerHTML = jsonColorize(value);
+        } else {
+          pre.textContent = text;
+        }
+        wrap.appendChild(pre);
+        return wrap;
+      }
+
+      /* ---------------- copy & handoff ---------------- */
+
+      function recordForClipboard(record) {
+        if (record.raw !== null && record.raw !== undefined) return stringify(record.raw);
+        return stringify(record);
+      }
+
+      function copySelected() {
+        var entry = selectedRecord();
+        if (!entry) return;
+        var text = recordForClipboard(entry.record);
+        var done = function (ok) {
+          inspectorSay(ok ? '已复制该记录的 JSON。' : '复制失败，请手动选择文本后复制。');
+        };
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          navigator.clipboard.writeText(text).then(
+            function () {
+              done(true);
+            },
+            function () {
+              done(legacyCopy(text));
+            }
+          );
+          return;
+        }
+        done(legacyCopy(text));
+      }
+
+      function legacyCopy(text) {
+        try {
+          var area = document.createElement('textarea');
+          area.value = text;
+          area.setAttribute('readonly', '');
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.select();
+          var ok = document.execCommand('copy');
+          document.body.removeChild(area);
+          return ok;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function hostBridge() {
+        var api = typeof window !== 'undefined' ? window.mcode : undefined;
+        var message = api && api.miniapp ? api.miniapp.message : undefined;
+        return message && typeof message.append === 'function' ? message : null;
+      }
+
+      function updateHandoffButton() {
+        var available = !!hostBridge();
+        dom.handoffBtn.disabled = !selectedRecord() || !available;
+        if (!available) {
+          dom.handoffBtn.title = '当前环境没有 MiniMax Code 桥接，只有在侧边栏打开本应用时可用';
+          if (!dom.handoffBtn.getAttribute('data-bridge-note')) {
+            dom.handoffBtn.setAttribute('data-bridge-note', '1');
+            inspectorSay('当前环境没有 Host 桥接，无法写入对话输入框（普通浏览器打开时没有这个能力）。');
+          }
+        }
+      }
+
+      var HANDOFF_ERRORS = {
+        user_cancelled: '已取消，没有写入任何内容。',
+        invalid_request: '请求无效，未能写入。请重试或缩短内容。',
+        text_too_large: '内容超过长度上限，未能写入。请缩小范围后再试。',
+        not_allowed: '当前对话不允许写入这条内容。',
+        target_unavailable: '没有可用的目标对话，未能写入。请先打开一个对话。',
+        result_unknown: '结果未知，请先检查输入框，内容可能已经写入；不要重复发送。'
+      };
+
+      function handoffSelected() {
+        var entry = selectedRecord();
+        if (!entry) return;
+        var message = hostBridge();
+        if (!message) {
+          updateHandoffButton();
+          return;
+        }
+        var record = entry.record;
+        var rawSource = record.raw !== null && record.raw !== undefined ? record.raw : stripVolatile(record);
+        var raw = truncateJson(rawSource, HANDOFF_RAW_LIMIT);
+        var text = buildHandoffMarkdown(
+          state.payload ? state.payload.session : null,
+          entry.turn,
+          record,
+          raw.text,
+          raw.truncated
+        );
+
+        dom.handoffBtn.disabled = true;
+        inspectorSay('已发出请求，等待你在弹出的确认框中确认…');
+        var result = message.append(text);
+        if (result && typeof result.then === 'function') {
+          result.then(
+            function () {
+              inspectorSay('已添加到输入框，请确认后发送。Agent 尚未开始处理。');
+              dom.handoffBtn.disabled = false;
+            },
+            function (error) {
+              var code = error && typeof error === 'object' && typeof error.message === 'string' ? error.message : '';
+              inspectorSay(HANDOFF_ERRORS[code] || '写入失败，请检查对话后重试。');
+              dom.handoffBtn.disabled = false;
+            }
+          );
+          return;
+        }
+        inspectorSay('已添加到输入框，请确认后发送。');
+        dom.handoffBtn.disabled = false;
+      }
+
+      /* ---------------- top-level render ---------------- */
+
+      function render() {
+        renderBars();
+        renderGeneration();
+        renderKpi();
+        renderLedger();
+        renderCollapseButton();
+        renderInspector();
+        renderFooter();
+        updateHandoffButton();
+      }
+
+      function renderGeneration() {
+        var session = state.payload ? state.payload.session : null;
+        var generations = session && Array.isArray(session.generations) ? session.generations : [];
+        var activeGeneration = null;
+        for (var i = 0; i < generations.length; i += 1) {
+          if (generations[i] && generations[i].active) activeGeneration = generations[i].generation;
+        }
+        if (activeGeneration === null && session && isCount(session.activeGeneration)) {
+          activeGeneration = session.activeGeneration;
+        }
+
+        var options = generationOptions(generations, activeGeneration);
+        // The control only earns its place when history has actually been rotated. With one
+        // generation there is nothing to narrow to, so offering "all" versus "all" is noise.
+        var multi = options.length > 1;
+        dom.generationField.hidden = !multi;
+        if (multi) {
+          // Rebuilding the <select> on every render would throw away whatever the reader had
+          // just picked — including the pick that triggered this very render. Only touch the
+          // DOM when the option set itself actually changed.
+          var signature = options
+            .map(function (entry) { return entry.generation + ':' + entry.label; })
+            .join('|');
+          if (dom.generationSelect.getAttribute('data-signature') !== signature) {
+            clear(dom.generationSelect);
+            for (var j = 0; j < options.length; j += 1) {
+              var option = document.createElement('option');
+              option.value = String(options[j].generation);
+              option.textContent = options[j].label;
+              dom.generationSelect.appendChild(option);
+            }
+            dom.generationSelect.setAttribute('data-signature', signature);
+          }
+          var following = state.generation === null ? 'all' : String(state.generation);
+          if (dom.generationSelect.value !== following) dom.generationSelect.value = following;
+        }
+
+        // The banner only appears when the ledger is narrowed. With nothing selected the page
+        // is already showing the whole conversation and saying so would be noise.
+        var pinned = multi && state.generation !== null;
+        var shown = session && isCount(session.generation) ? session.generation : state.generation;
+        dom.generationHint.hidden = !pinned;
+        if (pinned) {
+          dom.generationHint.textContent = '正在查看第 ' + formatInt(shown) +
+            ' 代上下文 —— 这是压缩前的历史快照，不会随后续对话更新。全部上下文共 ' +
+            formatInt(statsAll()) + ' 条消息。';
+        }
+      }
+
+      function statsAll() {
+        var stats = state.payload && state.payload.stats ? state.payload.stats : null;
+        return stats && isCount(stats.messagesAll) ? stats.messagesAll : 0;
+      }
+
+      function renderBars() {
+        if (state.hardError) {
+          dom.errorBar.hidden = false;
+          dom.errorTitle.textContent = '无法读取会话轨迹';
+          dom.errorText.textContent = state.hardError;
+        } else {
+          dom.errorBar.hidden = true;
+          dom.errorText.textContent = '';
+        }
+        dom.staleBar.hidden = !state.stale;
+      }
+
+      function renderFooter() {
+        var session = state.payload ? state.payload.session : null;
+        dom.footerTruncated.hidden = !(session && session.truncated);
+        // Say plainly which conversation is on screen and how we know it.
+        var binding = session ? session.binding : null;
+        if (!session) {
+          // Before the first response lands there is nothing to report; claiming a fallback
+          // here would look like a failure that is not happening.
+          dom.footerBinding.textContent = '正在判定当前会话…';
+        } else if (state.hostSessionId) {
+          dom.footerBinding.textContent =
+            '已锁定打开本页面所属的会话 ' + state.hostSessionId + '（由宿主桥接提供）。';
+        } else if (binding === 'ambiguous') {
+          var list = (session.ambiguousCandidates || []).map(function (item) {
+            return '「' + (item.label || item.id) + '」';
+          }).join('、');
+          dom.footerBinding.textContent =
+            '检测到 ' + (session.ambiguousCandidates || []).length
+            + ' 个对话同时在执行任务（' + list
+            + '），无法判断本页属于哪一个。当前暂按最近更新显示「'
+            + (session.label || session.id) + '」，请在上方确认，或手动切换。';
+        } else if (binding === 'runtime-db') {
+          dom.footerBinding.textContent = session.leased
+            ? '当前显示的是正在运行的对话「' + (session.label || session.id) + '」，由本机运行时数据库判定：该会话正持有活跃的 turn 租约。'
+            : '当前显示的是最近更新的对话「' + (session.label || session.id) + '」，由本机运行时数据库判定（当前没有正在执行的 turn）。';
+        } else if (state.followLatest) {
+          dom.footerBinding.textContent =
+            '当前显示最近写入的会话。运行时数据库不可用，退回按文件时间判断；多会话同时活跃时可能不是打开本页面的那个会话，可在下方手动切换。';
+        } else {
+          dom.footerBinding.textContent =
+            '当前显示手动选择的会话 ' + (state.sessionId || '') + '。';
+        }
+      }
+
+      /* ---------------- wiring ---------------- */
+
+      function setFollow(enabled) {
+        state.followLatest = enabled;
+        dom.followBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        dom.followState.textContent = enabled ? '开' : '关';
+        dom.sessionSelect.value = enabled ? 'latest' : state.sessionId || 'latest';
+        state.signature = '';
+        state.loading = true;
+        fetchSessions();
+        fetchTrajectory(false);
+        announce(enabled ? '已开启跟随最新，正在跟踪最近的会话。' : '已关闭跟随最新，固定在所选会话。');
+      }
+
+      function syncChipInputs() {
+        var boxes = dom.toolbar.querySelectorAll('.chips input[type="checkbox"]');
+        for (var i = 0; i < boxes.length; i += 1) {
+          boxes[i].checked = state.kinds.indexOf(boxes[i].value) >= 0;
+          boxes[i].parentNode.classList.toggle('is-on', boxes[i].checked);
+        }
+        dom.chipAll.setAttribute('aria-pressed', state.kinds.length === KIND_ORDER.length ? 'true' : 'false');
+      }
+
+      function onKindToggle(value, checked) {
+        var next = state.kinds.filter(function (kind) {
+          return kind !== value;
+        });
+        if (checked) next = next.concat([value]);
+        next.sort(function (a, b) {
+          return KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b);
+        });
+        state.kinds = next;
+        state.limit = PAGE_STEP;
+        syncChipInputs();
+        renderLedger();
+        updateFilterStatus(visibleEntries().length, state.flat.length);
+      }
+
+      function startPolling() {
+        stopPolling();
+        pollTimer = window.setInterval(function () {
+          if (document.hidden) return;
+          fetchSessions();
+          fetchTrajectory(false);
+        }, POLL_INTERVAL);
+      }
+
+      function stopPolling() {
+        if (pollTimer !== null) {
+          window.clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      }
+
+      function wire() {
+        dom.followBtn.addEventListener('click', function () {
+          setFollow(!state.followLatest);
+        });
+
+        dom.refreshBtn.addEventListener('click', function () {
+          announce('正在刷新…');
+          fetchSessions();
+          fetchTrajectory(true);
+        });
+
+        dom.sessionSelect.addEventListener('change', function () {
+          var value = dom.sessionSelect.value;
+          // A different session has a different generation chain; keeping the old pin would
+          // ask that session for a generation number it may never have had.
+          state.generation = null;
+          if (value === 'latest') {
+            setFollow(true);
+            return;
+          }
+          state.sessionId = value;
+          setFollow(false);
+        });
+
+        dom.generationSelect.addEventListener('change', function () {
+          var raw = dom.generationSelect.value;
+          // `Number('')` and `Number('abc')` are not a generation: the first silently becomes
+          // 0, which would claim the reader chose the oldest snapshot when they chose nothing.
+          var parsed = /^\d+$/.test(raw) ? Number(raw) : null;
+          state.generation = parsed !== null && isCount(parsed) ? parsed : null;
+          // The pin changes what every count on the page refers to, so the selected record,
+          // the page window and the validator all have to start over.
+          state.selectedId = null;
+          state.limit = PAGE_STEP;
+          state.etag = '';
+          state.etagFor = '';
+          state.loading = true;
+          render();
+          fetchTrajectory(true);
+        });
+
+        dom.searchInput.addEventListener('input', function () {
+          if (searchTimer !== null) window.clearTimeout(searchTimer);
+          searchTimer = window.setTimeout(function () {
+            searchTimer = null;
+            state.query = dom.searchInput.value.trim();
+            state.limit = PAGE_STEP;
+            renderLedger();
+          }, SEARCH_DEBOUNCE);
+        });
+
+        dom.toolbar.addEventListener('submit', function (event) {
+          event.preventDefault();
+        });
+
+        dom.chipAll.addEventListener('click', function () {
+          if (state.kinds.length === KIND_ORDER.length) {
+            state.kinds = [];
+          } else {
+            state.kinds = KIND_ORDER.slice();
+          }
+          state.limit = PAGE_STEP;
+          syncChipInputs();
+          renderLedger();
+          updateFilterStatus(visibleEntries().length, state.flat.length);
+        });
+
+        var boxes = dom.toolbar.querySelectorAll('.chips input[type="checkbox"]');
+        for (var i = 0; i < boxes.length; i += 1) {
+          boxes[i].addEventListener('change', function (event) {
+            onKindToggle(event.target.value, event.target.checked);
+          });
+        }
+
+        dom.collapseAll.addEventListener('click', function () {
+          var groups = visibleTurns(visibleEntries());
+          var collapse = !areAllCollapsed(groups);
+          state.allCollapsed = collapse;
+          for (var g = 0; g < groups.length; g += 1) {
+            var key = turnKey(groups[g].turn);
+            if (collapse) state.collapsed[key] = true;
+            else delete state.collapsed[key];
+          }
+          renderLedger();
+          renderCollapseButton();
+        });
+
+        dom.copyBtn.addEventListener('click', copySelected);
+        dom.handoffBtn.addEventListener('click', handoffSelected);
+
+        document.addEventListener('visibilitychange', function () {
+          if (document.hidden) {
+            if (inflight) inflight.abort();
+            return;
+          }
+          fetchSessions();
+          fetchTrajectory(false);
+        });
+
+        if (window.matchMedia) {
+          var media = window.matchMedia('(prefers-color-scheme: dark)');
+          if (typeof media.addEventListener === 'function') {
+            media.addEventListener('change', applyTheme);
+          } else if (typeof media.addListener === 'function') {
+            media.addListener(applyTheme);
+          }
+        }
+      }
+
+      function init() {
+        applyTheme();
+        cacheDom();
+        wire();
+        syncChipInputs();
+        renderCollapseButton();
+        render();
+        fetchSessions();
+        fetchTrajectory(false);
+        startPolling();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    </script>
+  </body>
+</html>

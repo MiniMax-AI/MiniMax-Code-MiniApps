@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "mmc-trajectory",
+  "displayName": "会话轨迹",
+  "version": "1.0.0",
+  "description": "按轮次浏览当前会话的模型轨迹：消息流、思考过程、工具调用与结果、token 与耗时统计。",
+  "author": "avatasia",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": ["打开会话轨迹"],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
