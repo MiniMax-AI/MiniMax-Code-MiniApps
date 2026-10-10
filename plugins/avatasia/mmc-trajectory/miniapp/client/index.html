@@ -21,6 +21,7 @@
         --mcode-border: #0a0a0a14;
         --mcode-border-strong: #0a0a0af2;
         --mcode-accent: #0094fc;
+        --mcode-selection: rgba(0, 148, 252, 0.16);
         --mcode-success: #04b54b;
         --mcode-warning: #f56811;
         --mcode-danger: #f73646;
@@ -39,6 +40,7 @@
         --mcode-border: #ffffff14;
         --mcode-border-strong: #fffffff2;
         --mcode-accent: #0077d9;
+        --mcode-selection: rgba(0, 119, 217, 0.28);
         --mcode-success: #009c3d;
         --mcode-warning: #e25507;
         --mcode-danger: #e31937;
@@ -59,6 +61,7 @@
           --mcode-border: #ffffff14;
           --mcode-border-strong: #fffffff2;
           --mcode-accent: #0077d9;
+          --mcode-selection: rgba(0, 119, 217, 0.28);
           --mcode-success: #009c3d;
           --mcode-warning: #e25507;
           --mcode-danger: #e31937;
@@ -139,11 +142,60 @@
         font-weight: 600;
       }
 
+      /* A title row plus a disclosure toggle, so the reader can hand the vertical
+         space back to the ledger once they know what this page is. */
+      .title-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .section-toggle {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        color: var(--mcode-text-muted);
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .section-toggle:hover {
+        color: var(--mcode-text);
+        background: var(--mcode-surface-muted);
+      }
+
+      .section-toggle:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      .section-toggle .icon {
+        transition: transform 150ms ease-out;
+      }
+
+      .section-toggle[aria-expanded='false'] .icon {
+        transform: rotate(-90deg);
+      }
+
+      .section-toggle[hidden] {
+        display: none;
+      }
+
       .page-subtitle {
         margin: 4px 0 0;
         font-size: 14px;
         line-height: 1.6;
         color: var(--mcode-text-muted);
+      }
+
+      .page-subtitle[hidden] {
+        display: none;
       }
 
       .header-actions {
@@ -309,6 +361,12 @@
         background: var(--mcode-surface);
       }
 
+      /* display:flex here would outrank the user-agent [hidden] rule, leaving the
+         query conditions on screen after the reader folded them away. */
+      .toolbar[hidden] {
+        display: none;
+      }
+
       .toolbar-row {
         display: flex;
         flex-wrap: wrap;
@@ -321,6 +379,12 @@
         align-items: center;
         gap: 8px;
         min-width: 0;
+      }
+
+      /* Same reason as .bar[hidden] below: an author `display` outranks the user-agent
+         rule, so a field toggled off with `hidden` would stay on screen. */
+      .field[hidden] {
+        display: none;
       }
 
       .field-label {
@@ -435,10 +499,32 @@
         font-weight: 500;
       }
 
+      /* Sits beside the section title to say which number the panel is showing. */
+      .section-scope {
+        font-size: 11px;
+        line-height: 16px;
+        color: var(--mcode-text-muted);
+        padding: 1px 6px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 4px;
+        white-space: nowrap;
+      }
+
+      /* `inline-flex` here would otherwise outrank the user-agent rule for [hidden]. */
+      .section-scope[hidden] {
+        display: none;
+      }
+
       .kpi-grid {
         display: grid;
         grid-template-columns: 1.3fr 1fr 1fr 1.1fr 1.1fr;
         gap: 12px;
+      }
+
+      /* The grid is display:grid, which would outrank the user-agent rule for
+         [hidden] and leave the cards on screen after folding them away. */
+      .kpi-grid[hidden] {
+        display: none;
       }
 
       .kpi-card {
@@ -479,6 +565,303 @@
         color: var(--mcode-text-subtle);
       }
 
+      /* ---------------- view controls (dsh TrajectoryToolbar) ----------------
+         Dimensions and states copied from the reference toolbar: a 20px control,
+         12px label, no fill until hovered or pressed, and a code-font ⊟/⊞ glyph
+         that says at a glance whether the fold is on. */
+
+      .traj-controls {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 2px;
+        margin: 0;
+        padding: 6px 16px;
+        background: var(--mcode-bg);
+      }
+
+      .tbtn {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        height: 20px;
+        padding: 0 5px;
+        gap: 4px;
+        border: 0;
+        border-radius: 4px;
+        color: var(--mcode-text-muted);
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 20px;
+      }
+
+      .tbtn-toggle {
+        padding: 0 7px;
+      }
+
+      .tbtn:hover {
+        color: var(--mcode-text);
+        background: var(--mcode-surface-muted);
+      }
+
+      .tbtn:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      .tbtn[aria-pressed='true'] {
+        color: var(--mcode-accent);
+        background: var(--mcode-selection);
+        box-shadow: inset 0 0 0 1px var(--mcode-accent);
+        font-weight: 600;
+      }
+
+      .tbtn-icon {
+        flex: none;
+        width: 12px;
+        height: 12px;
+      }
+
+      .tbtn-glyph {
+        flex: none;
+        color: var(--mcode-text-muted);
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 14px;
+        line-height: 14px;
+      }
+
+      .tbtn[aria-pressed='true'] .tbtn-glyph {
+        color: var(--mcode-text);
+      }
+
+      /* ---------------- overview timeline (dsh) ----------------
+         A fixed 50px projection of the same records the ledger lists, on three
+         lanes. Spans are absolutely positioned from a computed domain, exactly
+         like the reference: the strip is a picture of the ledger, never a
+         second source of numbers. */
+
+      .overview {
+        position: sticky;
+        top: 32px;
+        z-index: 4;
+        border-bottom: 1px solid var(--mcode-border);
+        user-select: none;
+      }
+
+      .overview-plot {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr);
+        height: 50px;
+        overflow: hidden;
+        background: var(--mcode-surface-muted);
+      }
+
+      .overview-labels {
+        position: relative;
+        border-right: 1px solid var(--mcode-border);
+        color: var(--mcode-text-subtle);
+        font-size: 10px;
+        line-height: 1;
+      }
+
+      .overview-labels span {
+        position: absolute;
+        right: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        height: 8px;
+      }
+
+      .overview-labels span:nth-child(1) { top: 7px; }
+      .overview-labels span:nth-child(2) { top: 21px; }
+      .overview-labels span:nth-child(3) { top: 35px; }
+
+      .overview-track {
+        position: relative;
+        overflow: hidden;
+        cursor: crosshair;
+        touch-action: none;
+      }
+
+      .overview-track[data-panning='true'] { cursor: grabbing; }
+
+      .overview-track:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: -2px;
+      }
+
+      .overview-turns {
+        position: absolute;
+        z-index: 3;
+        top: 0;
+        bottom: 0;
+        left: var(--ov-domain-left, 0%);
+        width: var(--ov-domain-width, 100%);
+        pointer-events: none;
+      }
+
+      .ov-turn {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: var(--ov-turn-left);
+        width: 1px;
+        background: var(--mcode-border);
+      }
+
+      .overview-lanes {
+        position: absolute;
+        z-index: 2;
+        top: 7px;
+        bottom: 7px;
+        left: var(--ov-domain-left, 0%);
+        width: var(--ov-domain-width, 100%);
+      }
+
+      .ov-span {
+        position: absolute;
+        top: calc(var(--ov-lane) * 14px);
+        left: calc(var(--ov-left) + var(--ov-gap));
+        width: max(2px, calc(var(--ov-width) - var(--ov-gap) - var(--ov-gap)));
+        height: 8px;
+        min-width: 2px;
+        border-radius: 1px;
+        background: var(--mcode-text-subtle);
+        opacity: 0.78;
+      }
+
+      .ov-span[data-kind='user'] { background: var(--mcode-accent); opacity: 1; }
+
+      .ov-span[data-kind='assistant'],
+      .ov-span[data-kind='thinking'] {
+        background: var(--mcode-text);
+        opacity: 1;
+      }
+
+      .ov-span[data-kind='toolCall'],
+      .ov-span[data-kind='toolResult'] {
+        background: var(--mcode-warning);
+        opacity: 1;
+      }
+
+      .ov-span[data-compaction='true'] {
+        background: var(--mcode-success);
+        opacity: 1;
+      }
+
+      .ov-span[data-error='true'] {
+        background: var(--mcode-danger);
+        opacity: 1;
+      }
+
+      .ov-span[data-current='true'] {
+        z-index: 1;
+        opacity: 1;
+        box-shadow: 0 0 0 1px var(--mcode-surface-muted), 0 0 0 2px var(--mcode-accent);
+      }
+
+      .ov-span[data-hovered='true']:not([data-current='true']) {
+        z-index: 1;
+        opacity: 1;
+        box-shadow: 0 0 0 1px var(--mcode-surface-muted), 0 0 0 2px var(--mcode-accent);
+      }
+
+      .overview-selection {
+        position: absolute;
+        z-index: 1;
+        top: 0;
+        bottom: 0;
+        left: var(--ov-sel-left);
+        width: var(--ov-sel-width);
+        min-width: 1px;
+        background: var(--mcode-selection);
+        pointer-events: none;
+      }
+
+      .overview-selection::before,
+      .overview-selection::after {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--mcode-accent);
+        content: '';
+      }
+
+      .overview-selection::before { left: 0; }
+      .overview-selection::after { right: 0; }
+
+      .overview-hover {
+        position: absolute;
+        z-index: 4;
+        top: 0;
+        bottom: 0;
+        left: clamp(0px, calc(var(--ov-hover-left) - 1px), calc(100% - 2px));
+        width: 2px;
+        background: var(--mcode-accent);
+        pointer-events: none;
+      }
+
+      .overview-empty {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        margin: 0;
+        transform: translate(-50%, -50%);
+        color: var(--mcode-text-subtle);
+        font-size: 12px;
+      }
+
+      .overview-tip {
+        position: absolute;
+        z-index: 6;
+        top: calc(100% + 4px);
+        left: var(--ov-tip-left, 0%);
+        max-width: 280px;
+        padding: 6px 8px;
+        border: 1px solid var(--mcode-border-strong);
+        border-radius: 6px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font-size: 11px;
+        line-height: 1.5;
+        white-space: pre-line;
+        pointer-events: none;
+      }
+
+      .overview-clear {
+        position: absolute;
+        z-index: 5;
+        top: 4px;
+        right: 4px;
+        display: inline-flex;
+        align-items: center;
+        height: 20px;
+        padding: 0 7px;
+        border: 1px solid var(--mcode-border-strong);
+        border-radius: 6px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        cursor: pointer;
+        font-size: 11px;
+      }
+
+      .overview-clear:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      /* `display` here would otherwise outrank the user-agent rule for [hidden],
+         leaving the button on screen with nothing to clear. */
+      .overview-clear[hidden] {
+        display: none;
+      }
+
       /* ---------------- two columns ---------------- */
 
       .columns {
@@ -493,7 +876,12 @@
         border-radius: 12px;
         background: var(--mcode-surface);
         min-width: 0;
-        overflow: hidden;
+        /* `clip`, not `hidden`. Both cut content off at the rounded corner, but `hidden`
+           also makes the element a scroll container — and a sticky descendant of a scroll
+           container can only stick inside that container. With `hidden` here, the sticky
+           turn head and the window controls were silently pinned to a box that never
+           scrolls, so neither ever moved. `clip` clips without creating a scroll container. */
+        overflow: clip;
       }
 
       .panel-head {
@@ -550,6 +938,15 @@
 
       .turn-head[aria-expanded='false'] .icon {
         transform: rotate(-90deg);
+      }
+
+      /* A turn with nothing to fold keeps the ruler look but drops the button affordance. */
+      .turn-head-static {
+        cursor: default;
+      }
+
+      .turn-head-static:hover {
+        background: var(--mcode-bg-secondary);
       }
 
       .turn-title {
@@ -777,8 +1174,42 @@
         max-width: 46ch;
       }
 
-      .load-more-wrap {
-        padding: 8px 16px 0;
+      .window-bar {
+        position: sticky;
+        /* Sticky offsets stack here: the controls own 0–32 and the overview strip owns
+           32–83 (32 + the 50px plot + its 1px border), so a bar pinned at 0 would simply
+           hide behind both of them. z-index 3 keeps it under the overview (4) and over the
+           turn head (2). */
+        top: 83px;
+        z-index: 3;
+        padding: 8px 16px;
+        background: var(--mcode-bg);
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .window-bar-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .window-bar-count {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        margin-left: auto;
+      }
+
+      /* The state a button reports is already spelled out in its own label, so the quiet
+         variant only has to stop competing for attention — it must never be the thing that
+         carries the meaning. */
+      .btn-quiet {
+        color: var(--mcode-text-muted);
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: default;
       }
 
       .ledger-foot {
@@ -1083,8 +1514,15 @@
     <div class="page" id="page">
       <header class="page-header">
         <div>
-          <h1>会话轨迹</h1>
-          <p class="page-subtitle">本机 MiniMax Code 会话的消息流、思考、工具调用与用量，只读检视。</p>
+          <div class="title-row">
+            <h1>会话轨迹</h1>
+            <button type="button" class="section-toggle" id="header-toggle" aria-expanded="true" aria-controls="toolbar" aria-label="折叠查询条件" title="折叠查询条件">
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6.5 8 10.5 12 6.5" />
+              </svg>
+            </button>
+          </div>
+          <p class="page-subtitle" id="page-subtitle">本机 MiniMax Code 会话的消息流、思考、工具调用与用量，只读检视。</p>
         </div>
         <div class="header-actions">
           <button type="button" class="btn" id="follow-btn" aria-pressed="true">
@@ -1144,7 +1582,6 @@
             <label class="field-label" for="search-input">搜索</label>
             <input type="search" id="search-input" placeholder="搜索摘要、正文、结果与思考" autocomplete="off" />
           </div>
-          <button type="button" class="btn" id="collapse-all" aria-pressed="false">折叠全部</button>
         </div>
 
         <nav class="chipbar" aria-label="按类型筛选轨迹">
@@ -1187,8 +1624,55 @@
       </form>
 
       <section class="kpi-section" aria-labelledby="kpi-heading">
-        <h2 class="section-title" id="kpi-heading">关键指标</h2>
+        <div class="title-row">
+          <h2 class="section-title" id="kpi-heading">关键指标</h2>
+          <span class="section-scope" id="kpi-scope" hidden>整场会话 · 不随筛选变化</span>
+          <button type="button" class="section-toggle" id="kpi-toggle" aria-expanded="true" aria-controls="kpi-grid" aria-label="折叠关键指标" title="折叠关键指标">
+            <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 6.5 8 10.5 12 6.5" />
+            </svg>
+          </button>
+        </div>
         <div class="kpi-grid" id="kpi-grid"></div>
+      </section>
+
+      <div class="traj-controls" role="toolbar" aria-label="轨迹视图控制" aria-controls="overview">
+        <button type="button" class="tbtn tbtn-toggle" id="duration-btn" aria-pressed="false" aria-label="改用真实时长" title="改用真实时长">
+          <svg class="tbtn-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8" cy="8" r="5.25" />
+            <path d="M8 4.75V8l2.25 1.5" />
+          </svg>
+          <span>时长</span>
+        </button>
+        <button type="button" class="tbtn" id="turns-btn" aria-pressed="true" aria-label="轮次当前展开显示 · 点击折叠全部" title="轮次当前展开显示 · 点击折叠全部">
+          <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+          <span>轮次</span>
+        </button>
+        <button type="button" class="tbtn" id="calls-btn" aria-pressed="true" aria-label="工具调用当前展开显示 · 点击折叠全部" title="工具调用当前展开显示 · 点击折叠全部">
+          <span class="tbtn-glyph" aria-hidden="true">⊟</span>
+          <span>调用</span>
+        </button>
+      </div>
+
+      <section class="overview" id="overview" aria-labelledby="overview-heading">
+        <h2 class="sr-only" id="overview-heading">轨迹总览</h2>
+        <div class="overview-plot">
+          <div class="overview-labels" aria-hidden="true">
+            <span>输入</span>
+            <span>模型</span>
+            <span>工具</span>
+          </div>
+          <div class="overview-track" id="overview-track" role="group" tabindex="0" aria-describedby="overview-hint">
+            <div class="overview-turns" id="overview-turns" aria-hidden="true"></div>
+            <div class="overview-lanes" id="overview-lanes" aria-hidden="true"></div>
+            <div class="overview-selection" id="overview-selection" aria-hidden="true" hidden></div>
+            <div class="overview-hover" id="overview-hover" aria-hidden="true" hidden></div>
+            <p class="overview-empty" id="overview-empty" hidden>无计时数据</p>
+            <div class="overview-tip" id="overview-tip" aria-hidden="true" hidden></div>
+            <button type="button" class="overview-clear" id="overview-clear" hidden>清除区间</button>
+          </div>
+        </div>
+        <p class="sr-only" id="overview-hint">总览条是下方列表同一批记录的图形投影，不含列表之外的任何数字。关闭“时长”时每条记录占同样宽度，完全忽略时间；打开时按真实时间排布，并压缩中间的空闲间隙，其中工具调用是实测耗时，模型行是距上一条事件的等待。在总览上按住拖拽可把列表聚焦到某个时间区间，滚轮可缩放，右键拖拽可平移；双击、按 Esc 或点“清除区间”恢复完整列表。</p>
       </section>
 
       <main class="columns">
@@ -1258,6 +1742,12 @@
       };
 
       var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
+
+      // Which records the two layer buttons cover. 轮次 is the conversation — what was
+      // said. 调用 is the tool work — what was run. They are disjoint, so cancelling one
+      // never quietly takes part of the other with it.
+      var CONVERSATION_KINDS = { user: true, assistant: true };
+      var CALL_KINDS = { toolCall: true, toolResult: true };
 
       var DASH = '—';
 
@@ -1658,6 +2148,11 @@
       var POLL_INTERVAL = 2500;
       var PAGE_STEP = 200;
       var SEARCH_DEBOUNCE = 200;
+      // Declared here, with the other constants, because `state` below reads it on the
+      // very first line of initialisation. A `var` further down the same scope is
+      // hoisted but still `undefined` at that moment, so the read would silently
+      // look up the key "undefined" and the preference would never be restored.
+      var DURATION_PREF_KEY = 'mmc-trajectory.duration';
 
       var state = {
         sessions: [],
@@ -1671,11 +2166,35 @@
         hardError: null,
         stale: false,
         selectedId: null,
-        collapsed: {},
-        allCollapsed: false,
+        // The 轮次 / 调用 buttons are layer filters, not folds. Cancelling one means the
+        // records it covers are simply not part of the render plan — no placeholder row,
+        // no "已折叠 N 行 · 点击展开", nothing standing in for what is gone. The reference
+        // implementation folds with a summary line instead; this deliberately does not,
+        // because a line that claims to be a summary is one more thing that has to be
+        // truthful about what it covers, and a filter has nothing to explain.
+        // 轮次 covers the conversation (what was said), 调用 covers the tool work.
+        showConversation: true,
+        showCalls: true,
+        // Disclosure state for the two blocks that are read once and then only take
+        // up room. Folding them hands the height back to the ledger.
+        filtersCollapsed: false,
+        kpiCollapsed: false,
+        // Duration button. Off = every record gets an equal slice on the overview and
+        // recorded timing is ignored; on = recorded start/duration with idle gaps
+        // compressed away. Persisted, because it is a reading preference, not data.
+        actualDuration: readDurationPreference(),
+        // Overview interaction state, all in domain units of the active mode.
+        overviewSelection: null,
+        overviewViewport: null,
+        overviewHoverId: null,
         kinds: KIND_ORDER.slice(),
         query: '',
         limit: PAGE_STEP,
+        // 「全部」 is a mode, not just a big `limit`. A poll that arrives mid-session used to
+        // re-pin the window to the newest page, which would have thrown 「全部」 back to 200
+        // the instant a record landed. This flag is what says "the reader asked for all of
+        // it", so a growing session extends the view instead of cancelling it.
+        allRecords: false,
         activeTab: 'summary',
         hostSessionId: detectHostSessionId(),
         flat: [],
@@ -1710,10 +2229,23 @@
         dom.generationSelect = document.getElementById('generation-select');
         dom.generationHint = document.getElementById('generation-hint');
         dom.searchInput = document.getElementById('search-input');
-        dom.collapseAll = document.getElementById('collapse-all');
+        dom.durationBtn = document.getElementById('duration-btn');
+        dom.turnsBtn = document.getElementById('turns-btn');
+        dom.callsBtn = document.getElementById('calls-btn');
         dom.chipAll = document.getElementById('chip-all');
         dom.filterStatus = document.getElementById('filter-status');
+        dom.headerToggle = document.getElementById('header-toggle');
+        dom.kpiToggle = document.getElementById('kpi-toggle');
         dom.kpiGrid = document.getElementById('kpi-grid');
+        dom.kpiScope = document.getElementById('kpi-scope');
+        dom.overviewTrack = document.getElementById('overview-track');
+        dom.overviewTurns = document.getElementById('overview-turns');
+        dom.overviewLanes = document.getElementById('overview-lanes');
+        dom.overviewSelection = document.getElementById('overview-selection');
+        dom.overviewHover = document.getElementById('overview-hover');
+        dom.overviewEmpty = document.getElementById('overview-empty');
+        dom.overviewTip = document.getElementById('overview-tip');
+        dom.overviewClear = document.getElementById('overview-clear');
         dom.ledger = document.getElementById('ledger');
         dom.ledgerMeta = document.getElementById('ledger-meta');
         dom.inspectorMeta = document.getElementById('inspector-meta');
@@ -1877,7 +2409,7 @@
         state.flat = flattenTurns(payload.turns);
 
         if (changed) {
-          state.limit = Math.min(PAGE_STEP, state.flat.length) || PAGE_STEP;
+          rePinWindow();
           revealSelection();
         }
         render();
@@ -2044,14 +2576,717 @@
         );
       }
 
+      /* ---------------- overview (dsh TrajectoryTimeline, 1:1) ----------------
+         The three toolbar buttons and this strip are one mechanism, not three
+         decorations, and the logic is copied from the reference implementation
+         rather than reinvented:
+
+           Duration off -> mode 'sequence': every record takes one equal slice and
+                            recorded timing is ignored completely.
+           Duration on  -> mode 'duration': real start and duration, with the idle
+                            gaps between operations compressed out of the axis.
+
+           Turns / Calls are whole-list folds. Neither hides rows outright: each
+           replaces the hidden rows with one synthetic summary line, so the turn or
+           the call still reads as present. */
+
+      var OVERVIEW_TOOLTIP_DELAY_MS = 500;
+      var OVERVIEW_MIN_DRAG_PX = 3;
+      var OVERVIEW_MIN_ZOOM_SPANS = 4;
+      var OVERVIEW_ZOOM_RATE = 0.0015;
+      var OVERVIEW_EDGE_PAN_ZONE = 0.08;
+      var OVERVIEW_EDGE_PAN_MAX_PX = 32;
+
+      var overviewCache = { model: null, view: null, fullDuration: 1, minDuration: 1 };
+      var overviewDrag = null;
+      var overviewHoverTimer = null;
+      var overviewEdgeTimer = null;
+
+      function readDurationPreference() {
+        try {
+          return window.localStorage.getItem(DURATION_PREF_KEY) === 'true';
+        } catch (error) {
+          // Storage can be blocked outright. The toggle still works for this page
+          // view; it just will not be remembered next time.
+          return false;
+        }
+      }
+
+      function writeDurationPreference(value) {
+        try {
+          window.localStorage.setItem(DURATION_PREF_KEY, value ? 'true' : 'false');
+        } catch (error) {
+          // Same as above: refusing to persist must not refuse to toggle.
+        }
+      }
+
+      /**
+       * Which lane a record belongs on. Copied from dsh `laneFor`: tool work sits on
+       * its own lane, model output on another, and everything arriving from outside
+       * the model — a typed prompt, an injected block, a checkpoint — on the first.
+       * @param {any} record
+       * @returns {0 | 1 | 2}
+       */
+      function overviewLane(record) {
+        var kind = record && record.kind;
+        if (kind === 'toolCall' || kind === 'toolResult') return 2;
+        if (kind === 'assistant' || kind === 'thinking') return 1;
+        return 0;
+      }
+
+      /**
+       * The interval a record occupies on a real-time axis.
+       *
+       * dsh measures a cell from a recorded start stamp to its end, and falls back to
+       * "since the previous event" when no start was recorded — layout.ts:
+       * `durationSeconds(node.time, recordedStart ?? prevAbsTime)`. Our records carry
+       * the arrival stamp but no recorded step start, so the same fallback is the
+       * honest reading: an assistant row spans the wait that ended when it landed.
+       * That is a measured interval, not a guess, but it is the gap *before* the row,
+       * so the tooltip says which one it is.
+       *
+       * A prompt carries no work of its own, and a tool call with no measured result
+       * has no length: both stay zero-width start markers rather than inventing one.
+       *
+       * @param {any} record
+       * @param {number | null} prevTimestamp arrival stamp of the record before this one
+       * @param {number} timestamp arrival stamp of this record
+       * @returns {{start: number, end: number, measured: boolean}}
+       */
+      function timedRange(record, prevTimestamp, timestamp) {
+        if (record.kind === 'toolCall' || record.kind === 'toolResult') {
+          var duration = isCount(record.durationMs) ? Math.max(0, record.durationMs) : 0;
+          return { start: timestamp, end: timestamp + duration, measured: duration > 0 };
+        }
+        if (record.kind === 'assistant' || record.kind === 'thinking') {
+          var from = prevTimestamp === null || prevTimestamp >= timestamp ? timestamp : prevTimestamp;
+          return { start: from, end: timestamp, measured: from !== timestamp };
+        }
+        return { start: timestamp, end: timestamp, measured: false };
+      }
+
+      /**
+       * The overview domain for the whole session, in the active mode.
+       *
+       * Records without a timestamp are left off the strip entirely rather than
+       * being given a fabricated position: an undated record has no honest place on
+       * a time axis.
+       *
+       * @param {Array<{turn: any, record: any}>} entries
+       * @returns {{spans: Array<any>, turnBoundaries: Array<any>, start: number, end: number} | null}
+       */
+      function overviewModel(entries) {
+        var timed = [];
+        var boundaries = [];
+        var seenTurns = {};
+        var prevTimestamp = null;
+        var i;
+        for (i = 0; i < entries.length; i += 1) {
+          var record = entries[i].record;
+          var timestamp = record.timestamp;
+          if (!isCount(timestamp)) continue;
+          var range = timedRange(record, prevTimestamp, timestamp);
+          timed.push({
+            id: record.id,
+            record: record,
+            start: range.start,
+            end: range.end,
+            measured: range.measured,
+            lane: overviewLane(record),
+            offset: 0
+          });
+          // Advance per record, not per emitted span, matching dsh's prevAbsTime: a
+          // record with no timestamp keeps the previous stamp rather than clearing it.
+          prevTimestamp = timestamp;
+          var key = turnKey(entries[i].turn);
+          if (!seenTurns[key]) {
+            seenTurns[key] = true;
+            boundaries.push({ turn: entries[i].turn, spanIndex: timed.length - 1 });
+          }
+        }
+        if (timed.length === 0) return null;
+
+        var spans;
+        if (state.actualDuration) {
+          // dsh deriveTimedTimeline(turns, actualDuration = true, compressIdle = true):
+          // walk the spans in time order and subtract every gap that no record covers.
+          var ordered = timed.slice().sort(function (left, right) {
+            return left.start - right.start || left.end - right.end;
+          });
+          var removed = 0;
+          var coveredUntil = null;
+          for (i = 0; i < ordered.length; i += 1) {
+            var span = ordered[i];
+            if (coveredUntil !== null && span.start > coveredUntil) removed += span.start - coveredUntil;
+            span.offset = removed;
+            coveredUntil = coveredUntil === null ? span.end : Math.max(coveredUntil, span.end);
+          }
+          spans = timed.map(function (item) {
+            return {
+              id: item.id,
+              record: item.record,
+              lane: item.lane,
+              measured: item.measured,
+              start: item.start - item.offset,
+              end: item.end - item.offset
+            };
+          });
+        } else {
+          spans = timed.map(function (item, index) {
+            return {
+              id: item.id,
+              record: item.record,
+              lane: item.lane,
+              measured: true,
+              start: index,
+              end: index + 1
+            };
+          });
+        }
+
+        var projectedBoundaries = boundaries.map(function (boundary) {
+          return { turn: boundary.turn, time: spans[boundary.spanIndex].start };
+        });
+
+        var min = spans[0].start;
+        var max = spans[0].end;
+        for (i = 1; i < spans.length; i += 1) {
+          if (spans[i].start < min) min = spans[i].start;
+          if (spans[i].end > max) max = spans[i].end;
+        }
+        return { spans: spans, turnBoundaries: projectedBoundaries, start: min, end: max };
+      }
+
+      // Every record's position in the active mode, rebuilt on each render and reused by
+      // the brush filter and the hover lookup. A record with no timestamp never lands
+      // here, and a range cannot claim to contain something it never saw.
+      var overviewSpansById = new Map();
+
+      function recordInSelection(record, selection, spansById) {
+        if (!selection) return true;
+        var span = spansById.get(record.id);
+        // A record with no span has no position on the strip, so a range cannot claim
+        // to contain it. Leaving it out is the honest answer; putting it in would let
+        // a time brush silently match records it never saw.
+        if (!span) return false;
+        return span.start <= selection.end && span.end >= selection.start;
+      }
+
+      function currentOverviewView(model) {
+        var viewport = state.overviewViewport;
+        if (viewport && viewport.duration < model.end - model.start) return viewport;
+        return { start: model.start, duration: Math.max(1e-6, model.end - model.start) };
+      }
+
+      function renderOverview() {
+        var track = dom.overviewTrack;
+        if (!track) return;
+        var model = overviewModel(state.flat);
+        overviewCache.model = model;
+        if (!model) {
+          clear(dom.overviewTurns);
+          clear(dom.overviewLanes);
+          overviewSpansById = new Map();
+          dom.overviewSelection.hidden = true;
+          dom.overviewHover.hidden = true;
+          dom.overviewTip.hidden = true;
+          dom.overviewClear.hidden = true;
+          dom.overviewEmpty.hidden = false;
+          return;
+        }
+        dom.overviewEmpty.hidden = true;
+
+        overviewSpansById = new Map();
+        var view = currentOverviewView(model);
+        var fullDuration = Math.max(1e-6, model.end - model.start);
+        overviewCache.view = view;
+        overviewCache.fullDuration = fullDuration;
+        overviewCache.minDuration = fullDuration / Math.max(1, model.spans.length);
+        track.style.setProperty('--ov-domain-left', ((view.start - model.start) / fullDuration * 100).toFixed(4) + '%');
+        track.style.setProperty('--ov-domain-width', (view.duration / fullDuration * 100).toFixed(4) + '%');
+
+        var hasQuery = state.query !== '';
+        var filtering = hasQuery || state.kinds.length !== KIND_ORDER.length;
+        var lanes = dom.overviewLanes;
+        clear(lanes);
+        for (var i = 0; i < model.spans.length; i += 1) {
+          var span = model.spans[i];
+          overviewSpansById.set(span.id, span);
+          if (span.end < view.start || span.start > view.start + view.duration) {
+            if (span.record.id !== state.selectedId) continue;
+          }
+          var left = (span.start - model.start) / fullDuration;
+          var width = (span.end - span.start) / fullDuration;
+          var node = el('span', 'ov-span');
+          node.setAttribute('data-kind', span.record.kind);
+          if (span.record.title === 'compaction') node.setAttribute('data-compaction', 'true');
+          if (span.record.kind === 'toolResult' && span.record.isError === true) node.setAttribute('data-error', 'true');
+          if (span.record.id === state.selectedId) node.setAttribute('data-current', 'true');
+          if (state.overviewHoverId === span.id) node.setAttribute('data-hovered', 'true');
+          // The strip claims to be a picture of the list below it, so it has to be one.
+          // A record the filter excluded is not drawn faint — it is not drawn. Dimming
+          // it kept the excluded work visible enough that turning off 工具结果 left the
+          // tool lane reading as a solid band, which is indistinguishable from no filter
+          // at all. Positions still come from the full model, so the axis does not move.
+          if (filtering && !spanPassesFilter(span.record, hasQuery)) continue;
+          node.style.setProperty('--ov-lane', String(span.lane));
+          node.style.setProperty('--ov-left', (left * 100).toFixed(4) + '%');
+          node.style.setProperty('--ov-width', (width * 100).toFixed(4) + '%');
+          node.style.setProperty('--ov-gap', Math.min(width * 100 * 0.08, 1).toFixed(4) + 'px');
+          node.setAttribute('data-record-id', span.id);
+          lanes.appendChild(node);
+        }
+
+        var turns = dom.overviewTurns;
+        clear(turns);
+        for (var b = 0; b < model.turnBoundaries.length; b += 1) {
+          var boundary = model.turnBoundaries[b];
+          if (boundary.time <= model.start) continue;
+          var marker = el('span', 'ov-turn');
+          marker.style.setProperty('--ov-turn-left', ((boundary.time - model.start) / fullDuration * 100).toFixed(4) + '%');
+          turns.appendChild(marker);
+        }
+
+        renderOverviewSelection();
+      }
+
+      function renderOverviewSelection() {
+        var selection = state.overviewSelection;
+        var model = overviewCache.model;
+        if (!selection || !model) {
+          dom.overviewSelection.hidden = true;
+          dom.overviewClear.hidden = true;
+          return;
+        }
+        var fullDuration = overviewCache.fullDuration;
+        var left = (selection.start - model.start) / fullDuration;
+        var width = (selection.end - selection.start) / fullDuration;
+        dom.overviewSelection.hidden = false;
+        dom.overviewSelection.style.setProperty('--ov-sel-left', (left * 100).toFixed(4) + '%');
+        dom.overviewSelection.style.setProperty('--ov-sel-width', (width * 100).toFixed(4) + '%');
+        dom.overviewClear.hidden = false;
+      }
+
+      /**
+       * Drop a brush that is still in flight.
+       *
+       * A pointerup that never arrives — capture taken away, the element re-rendered,
+       * a right-click menu — would otherwise leave `overviewDrag` armed, and every
+       * later pointer move would keep repainting a range out of a gesture that had
+       * already been abandoned. Anything that clears the range has to clear this too.
+       */
+      function abortOverviewDrag() {
+        overviewDrag = null;
+        stopOverviewEdgePan();
+        dom.overviewTrack.removeAttribute('data-panning');
+      }
+
+      function clearOverviewSelection() {
+        if (!state.overviewSelection && !state.overviewViewport) return;
+        abortOverviewDrag();
+        state.overviewSelection = null;
+        state.overviewViewport = null;
+        setWindowMode('latest');
+        renderOverview();
+        renderLedger();
+      }
+
+      function setActualDuration(value) {
+        if (state.actualDuration === value) return;
+        state.actualDuration = value;
+        writeDurationPreference(value);
+        // The two modes share no axis, so a range or a zoom made in one is meaningless
+        // in the other. Reset rather than reinterpret.
+        state.overviewSelection = null;
+        state.overviewViewport = null;
+        setWindowMode('latest');
+        renderViewControls();
+        renderOverview();
+        renderLedger();
+      }
+
+      /**
+       * The three toolbar buttons read as "what is on screen", not "what was clicked".
+       *
+       * 时长 is on when the strip is drawing real time. 轮次 and 调用 are on when their
+       * rows are expanded, so a page that has just loaded — everything visible — shows
+       * all three lit. Pressing one folds that layer away and the button goes dark; that
+       * is the only reading under which a lit button always means "this content is
+       * being shown", and it is the reading that survives the session still running:
+       * when new records arrive and have not been folded yet, the honest state is lit.
+       *
+       * The fold sets below stay authoritative. Nothing here stores a flag, so folding
+       * one turn by hand, or expanding one from its summary line, is reflected at once.
+       */
+      function renderViewControls() {
+        var durationOn = state.actualDuration;
+        dom.durationBtn.setAttribute('aria-pressed', durationOn ? 'true' : 'false');
+        var durationLabel = durationOn
+          ? '总览当前按真实时长显示 · 点击改为等宽'
+          : '总览当前等宽显示 · 点击改为真实时长';
+        dom.durationBtn.setAttribute('aria-label', durationLabel);
+        dom.durationBtn.setAttribute('title', durationLabel);
+
+        setLayerButton(dom.turnsBtn, state.showConversation, '对话', '对话记录（用户与助手消息）');
+        setLayerButton(dom.callsBtn, state.showCalls, '工具调用', '工具调用与工具结果');
+      }
+
+      /**
+       * One layer button. The pressed state IS the visibility of the records it covers, so
+       * there is no separate derived status that could drift away from what is on screen.
+       */
+      function setLayerButton(button, on, noun, covers) {
+        var label = on
+          ? noun + '当前显示 · 点击隐藏'
+          : noun + '当前已隐藏 · 点击显示';
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        button.setAttribute('aria-label', label + '（' + covers + '）');
+        button.setAttribute('title', label + '（' + covers + '）');
+        button.querySelector('.tbtn-glyph').textContent = on ? '⊟' : '⊞';
+      }
+
+      /**
+       * Disclosure for the two blocks a reader only needs while they are setting the
+       * page up: the query conditions and the session-wide totals. Folding either
+       * hands the height back to the ledger and hides no control that stays in use.
+       */
+      function renderSectionToggles() {
+        var filtersOpen = !state.filtersCollapsed;
+        dom.headerToggle.setAttribute('aria-expanded', filtersOpen ? 'true' : 'false');
+        var filterLabel = filtersOpen ? '折叠查询条件' : '展开查询条件';
+        dom.headerToggle.setAttribute('aria-label', filterLabel);
+        dom.headerToggle.setAttribute('title', filterLabel);
+        dom.toolbar.hidden = !filtersOpen;
+
+        var kpiOpen = !state.kpiCollapsed;
+        dom.kpiToggle.setAttribute('aria-expanded', kpiOpen ? 'true' : 'false');
+        var kpiLabel = kpiOpen ? '折叠关键指标' : '展开关键指标';
+        dom.kpiToggle.setAttribute('aria-label', kpiLabel);
+        dom.kpiToggle.setAttribute('title', kpiLabel);
+        dom.kpiGrid.hidden = !kpiOpen;
+      }
+
+      /* ---- overview pointer interaction ---- */
+
+      function overviewFractionAt(clientX) {
+        var rect = dom.overviewTrack.getBoundingClientRect();
+        if (rect.width <= 0) return 0;
+        return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      }
+
+      function overviewTimeAt(fraction) {
+        var view = overviewCache.view;
+        if (!view) return 0;
+        return view.start + fraction * view.duration;
+      }
+
+      function spanAt(clientX, clientY) {
+        var node = document.elementFromPoint(clientX, clientY);
+        while (node && node !== dom.overviewTrack) {
+          if (node.classList && node.classList.contains('ov-span')) return node.getAttribute('data-record-id');
+          node = node.parentNode;
+        }
+        return null;
+      }
+
+      function cancelOverviewHover() {
+        if (overviewHoverTimer !== null) {
+          window.clearTimeout(overviewHoverTimer);
+          overviewHoverTimer = null;
+        }
+        dom.overviewTip.hidden = true;
+      }
+
+      /**
+       * Tooltip copy for one span, as an array of lines.
+       *
+       * Kept pure and separate from the DOM work so the wording can be exercised
+       * directly: "which reading is this width" is the part that can quietly lie,
+       * and a wrong label there is invisible in a screenshot.
+       *
+       * @param {any} record the record the span was drawn from
+       * @param {{start: number, end: number}} span span bounds in the active domain
+       * @param {boolean} actualDuration whether the duration mode is on
+       * @returns {string[]}
+       */
+      function overviewTipLines(record, span, actualDuration) {
+        var lines = [kindLabel(record)];
+        if (actualDuration) {
+          // Duration mode puts real wall-clock on the axis, so print the span's own
+          // bounds. Records carry `timestamp`, not `start`; and in equal-width mode
+          // `span.start` is a record index rather than a time, which is why the clock
+          // line only exists inside this branch.
+          if (isCount(record.timestamp)) {
+            var arrow = span.end > span.start ? ' → ' + formatClock(span.end) : '';
+            lines.push(formatClock(span.start) + arrow);
+          }
+          // A tool row's width is the measured run of the call. An assistant row's is
+          // the wait that ended when it landed. Both are real intervals, but they do
+          // not mean the same thing, so they must not share one label.
+          var isTool = record.kind === 'toolCall' || record.kind === 'toolResult';
+          if (span.end > span.start) {
+            lines.push((isTool ? '实测耗时 ' : '距上一条事件 ') + formatDuration(span.end - span.start));
+          } else {
+            lines.push('仅记录了到达时刻');
+          }
+        } else {
+          if (isCount(record.timestamp)) lines.push(formatClock(record.timestamp));
+          lines.push('等宽模式 · 每条记录占一格');
+        }
+        return lines;
+      }
+
+      function showOverviewTip(recordId) {
+        var span = overviewSpansById.get(recordId);
+        if (!span) return;
+        var lines = overviewTipLines(span.record, span, state.actualDuration);
+        dom.overviewTip.textContent = lines.join('\n');
+        var fullDuration = overviewCache.fullDuration;
+        var left = ((span.start - overviewCache.model.start) / fullDuration * 100).toFixed(3);
+        dom.overviewTip.style.setProperty('--ov-tip-left', Math.min(78, Math.max(0, Number(left) - 10)) + '%');
+        dom.overviewTip.hidden = false;
+      }
+
+      function onOverviewPointerDown(event) {
+        if (event.button !== 0 && event.button !== 2) return;
+        var model = overviewCache.model;
+        if (!model) return;
+        dom.overviewTrack.setPointerCapture(event.pointerId);
+        var anchorFraction = overviewFractionAt(event.clientX);
+        overviewDrag = {
+          pointerId: event.pointerId,
+          button: event.button,
+          anchorClientX: event.clientX,
+          anchorFraction: anchorFraction,
+          anchorTime: overviewTimeAt(anchorFraction),
+          start: overviewTimeAt(anchorFraction),
+          end: overviewTimeAt(anchorFraction),
+          moved: false,
+          // Right button pans an already zoomed axis; it never paints a new range.
+          panning: event.button === 2,
+          viewport: state.overviewViewport ? { start: state.overviewViewport.start, duration: state.overviewViewport.duration } : null
+        };
+        dom.overviewTrack.setAttribute('data-panning', overviewDrag.panning ? 'true' : 'false');
+        event.preventDefault();
+      }
+
+      function onOverviewPointerMove(event) {
+        var fraction = overviewFractionAt(event.clientX);
+        if (overviewDrag) {
+          // Only the pointer that started the brush may drive it. Without this a
+          // stray move from another pointer re-paints a range nobody asked for.
+          if (overviewDrag.pointerId !== event.pointerId) return;
+          if (Math.abs(event.clientX - overviewDrag.anchorClientX) > OVERVIEW_MIN_DRAG_PX) overviewDrag.moved = true;
+          overviewDrag.lastClientX = event.clientX;
+          var time = overviewTimeAt(fraction);
+          if (overviewDrag.panning) {
+            if (!overviewDrag.viewport || !overviewDrag.moved) return;
+            var fullDuration = overviewCache.fullDuration;
+            var shift = ((overviewDrag.anchorFraction - fraction) * overviewDrag.viewport.duration);
+            var start = Math.max(
+              overviewCache.model.start,
+              Math.min(overviewCache.model.end - overviewDrag.viewport.duration, overviewDrag.anchorTime - shift)
+            );
+            state.overviewViewport = { start: start, duration: overviewDrag.viewport.duration };
+            renderOverview();
+            return;
+          }
+          overviewDrag.start = Math.min(overviewDrag.anchorTime, time);
+          overviewDrag.end = Math.max(overviewDrag.anchorTime, time);
+          state.overviewSelection = { start: overviewDrag.start, end: overviewDrag.end };
+          startOverviewEdgePan();
+          renderOverviewSelection();
+          return;
+        }
+
+        // Idle: a hairline marks the pointer, and a span shows its detail only after
+        // the reader has held still long enough to mean it.
+        var id = spanAt(event.clientX, event.clientY);
+        dom.overviewHover.hidden = false;
+        dom.overviewHover.style.setProperty('--ov-hover-left', (fraction * 100).toFixed(3) + '%');
+        if (overviewHoverTimer !== null) window.clearTimeout(overviewHoverTimer);
+        if (id) {
+          state.overviewHoverId = id;
+          overviewHoverTimer = window.setTimeout(function () {
+            overviewHoverTimer = null;
+            showOverviewTip(id);
+          }, OVERVIEW_TOOLTIP_DELAY_MS);
+        } else {
+          state.overviewHoverId = null;
+          cancelOverviewHover();
+        }
+        markOverviewHover(id);
+      }
+
+      function markOverviewHover(id) {
+        var nodes = dom.overviewLanes.querySelectorAll('[data-record-id]');
+        for (var i = 0; i < nodes.length; i += 1) {
+          if (nodes[i].getAttribute('data-record-id') === id) nodes[i].setAttribute('data-hovered', 'true');
+          else nodes[i].removeAttribute('data-hovered');
+        }
+      }
+
+      /** Keep brushing usable once the axis is zoomed in: slide the window near the edges. */
+      function startOverviewEdgePan() {
+        if (overviewEdgeTimer !== null) return;
+        overviewEdgeTimer = window.setInterval(function () {
+          if (!overviewDrag || overviewDrag.panning) return;
+          var view = overviewCache.view;
+          if (!view) return;
+          var rect = dom.overviewTrack.getBoundingClientRect();
+          var edge = rect.width * OVERVIEW_EDGE_PAN_ZONE;
+          var clientX = overviewDrag.lastClientX;
+          if (clientX === undefined) return;
+          var max = Math.min(OVERVIEW_EDGE_PAN_MAX_PX, rect.width * 0.05);
+          var step = 0;
+          if (clientX - rect.left < edge) step = -max;
+          else if (rect.right - clientX < edge) step = max;
+          if (step === 0) return;
+          var model = overviewCache.model;
+          var fullDuration = model.end - model.start;
+          var duration = Math.min(view.duration, fullDuration);
+          var start = Math.max(model.start, Math.min(model.end - duration, view.start + step));
+          state.overviewViewport = { start: start, duration: duration };
+          renderOverview();
+        }, 60);
+      }
+
+      function stopOverviewEdgePan() {
+        if (overviewEdgeTimer !== null) {
+          window.clearInterval(overviewEdgeTimer);
+          overviewEdgeTimer = null;
+        }
+      }
+
+      function onOverviewPointerUp(event) {
+        stopOverviewEdgePan();
+        var drag = overviewDrag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        overviewDrag = null;
+        dom.overviewTrack.removeAttribute('data-panning');
+
+        // A cancelled gesture leaves the range exactly as it was: the pointer was
+        // taken away mid-brush (a context menu, a scroll, a lost capture), so what
+        // the user had painted so far was never finished and must not be committed.
+        if (event.type === 'pointercancel') return;
+
+        if (drag.panning) {
+          // A right click that never moved is the "clear" gesture; a right drag only
+          // moved the window and left any range alone.
+          if (!drag.moved) clearOverviewSelection();
+          return;
+        }
+
+        if (!drag.moved) {
+          var id = spanAt(event.clientX, event.clientY);
+          if (id) {
+            clearOverviewSelection();
+            selectRecord(id);
+          } else {
+            var nearest = nearestSpanAt(overviewTimeAt(overviewFractionAt(event.clientX)));
+            if (nearest) selectRecord(nearest);
+          }
+          return;
+        }
+
+        // A brush narrower than one record would select nothing, so it grows to that.
+        var minimum = overviewCache.minDuration;
+        var start = drag.start;
+        var end = drag.end;
+        if (end - start < minimum) {
+          var center = (start + end) / 2;
+          start = center - minimum / 2;
+          end = center + minimum / 2;
+        }
+        state.overviewSelection = { start: start, end: end };
+        setWindowMode('latest');
+        renderOverviewSelection();
+        renderLedger();
+      }
+
+      function nearestSpanAt(time) {
+        var model = overviewCache.model;
+        if (!model) return null;
+        var best = null;
+        var bestDistance = Infinity;
+        for (var i = 0; i < model.spans.length; i += 1) {
+          var span = model.spans[i];
+          if (span.end < time) {
+            var after = span.end - time;
+            if (after < bestDistance) { bestDistance = after; best = span.id; }
+          } else if (span.start > time) {
+            var before = time - span.start;
+            if (before < bestDistance) { bestDistance = before; best = span.id; }
+          } else {
+            return span.id;
+          }
+        }
+        return best;
+      }
+
+      /**
+       * The window a wheel gesture should leave behind.
+       *
+       * Pure, so the arithmetic can be checked without a pointer: the wheel zooms about
+       * the cursor rather than about the middle of the strip, stops at a floor of
+       * OVERVIEW_MIN_ZOOM_SPANS records (below that a span can no longer be told apart
+       * from its neighbour), and collapses back to `null` — the whole session — once the
+       * zoom is effectively out, so the viewport never lingers as a 99.9% sliver.
+       *
+       * @param {{start: number, end: number}} model full domain of the active mode
+       * @param {{start: number, duration: number}} view the window being zoomed
+       * @param {number} fraction cursor position across the strip, 0..1
+       * @param {number} deltaY wheel delta; negative zooms in
+       * @returns {{start: number, duration: number} | null}
+       */
+      function zoomViewport(model, view, fraction, deltaY) {
+        var fullDuration = model.end - model.start;
+        var anchor = view.start + fraction * view.duration;
+        var minimum = fullDuration / Math.max(1, OVERVIEW_MIN_ZOOM_SPANS);
+        var next = Math.max(minimum, Math.min(fullDuration, view.duration * Math.exp(deltaY * OVERVIEW_ZOOM_RATE)));
+        if (next >= fullDuration * 0.999) return null;
+        return {
+          start: Math.max(model.start, Math.min(model.end - next, anchor - fraction * next)),
+          duration: next
+        };
+      }
+
+      function onOverviewWheel(event) {
+        var model = overviewCache.model;
+        if (!model) return;
+        state.overviewViewport = zoomViewport(
+          model,
+          currentOverviewView(model),
+          overviewFractionAt(event.clientX),
+          event.deltaY
+        );
+        renderOverview();
+        event.preventDefault();
+      }
+
+      function onOverviewKeyDown(event) {
+        if (event.key === 'Escape') {
+          clearOverviewSelection();
+          event.preventDefault();
+        }
+      }
+
       /* ---------------- rendering: ledger ---------------- */
 
       function visibleEntries() {
         var out = [];
+        var selection = state.overviewSelection;
         for (var i = 0; i < state.flat.length; i += 1) {
           var entry = state.flat[i];
           if (!hasKind(entry.record, state.kinds)) continue;
-          if (!matchesQuery(entry.record, state.query)) continue;
+          if (state.query && !matchesQuery(entry.record, state.query)) continue;
+          // The two layer buttons come last, so cancelling one can never be mistaken for
+          // a narrowing of the search: it removes whole kinds, and only whole kinds.
+          if (!state.showConversation && CONVERSATION_KINDS[entry.record.kind] === true) continue;
+          if (!state.showCalls && CALL_KINDS[entry.record.kind] === true) continue;
+          // The overview brush is a further filter, applied after kind and text so that
+          // clearing it never silently changes what the other two meant.
+          if (selection && !recordInSelection(entry.record, selection, overviewSpansById)) continue;
           out.push(entry);
         }
         return out;
@@ -2176,44 +3411,114 @@
         return 'system';
       }
 
-      function buildTurnHead(turn, expanded) {
-        var head = el('button', 'turn-head');
-        head.type = 'button';
-        head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        head.appendChild(icon('chevronDown'));
+      /**
+       * Turn totals computed from the rows actually on screen.
+       *
+       * The server's per-turn aggregates describe the whole turn. Once a filter is on,
+       * printing them under a heading whose only visible rows are, say, the user's
+       * questions leaves every number describing content that was just filtered out —
+       * which reads as "the filter did nothing". So the same six figures are recomputed
+       * from what is left, and a marker says which of the two the reader is looking at.
+       */
+      function turnTotalsFromEntries(entries) {
+        var totals = { toolCalls: 0, errors: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, first: null, last: null };
+        for (var i = 0; i < entries.length; i += 1) {
+          var record = entries[i].record;
+          if (record.kind === 'toolCall') totals.toolCalls += 1;
+          if (record.kind === 'toolResult' && record.isError === true) totals.errors += 1;
+          var tokens = record.tokens;
+          if (tokens && typeof tokens === 'object') {
+            totals.input += isCount(tokens.input) ? tokens.input : 0;
+            totals.output += isCount(tokens.output) ? tokens.output : 0;
+            totals.cacheRead += isCount(tokens.cacheRead) ? tokens.cacheRead : 0;
+            totals.cacheWrite += isCount(tokens.cacheWrite) ? tokens.cacheWrite : 0;
+          }
+          if (isCount(record.timestamp)) {
+            if (totals.first === null || record.timestamp < totals.first) totals.first = record.timestamp;
+            if (totals.last === null || record.timestamp > totals.last) totals.last = record.timestamp;
+          }
+        }
+        totals.durationMs = totals.first === null ? null : totals.last - totals.first;
+        return totals;
+      }
+
+      function isFiltering() {
+        // The layer buttons count as filters here too. Leaving them out made the turn
+        // headers print whole-turn numbers while the rows below them were the survivors
+        // of a hidden layer — the exact mismatch this function exists to prevent.
+        return state.query !== '' || state.kinds.length !== KIND_ORDER.length
+          || state.overviewSelection !== null
+          || !state.showConversation || !state.showCalls;
+      }
+
+      /**
+       * Whether one record belongs in the current filter.
+       *
+       * This must agree with visibleEntries() step for step. When it did not, the overview
+       * strip drew spans for records the list refused to render, which is how "filtered
+       * but nothing changed" happened.
+       */
+      function spanPassesFilter(record, hasQuery) {
+        if (!hasKind(record, state.kinds)) return false;
+        if (!state.showConversation && CONVERSATION_KINDS[record.kind] === true) return false;
+        if (!state.showCalls && CALL_KINDS[record.kind] === true) return false;
+        if (hasQuery && !matchesQuery(record, state.query)) return false;
+        return true;
+      }
+
+      function buildTurnHead(turn, entries) {
+        // Plain text, not a button. There is no per-turn fold left to toggle, and a
+        // control that does nothing is worse than no control.
+        var head = el('div', 'turn-head turn-head-static');
 
         var title = '轮次 ' + (isCount(turn.index) ? turn.index : DASH);
         head.appendChild(el('span', 'turn-title', title));
 
+        // Under a filter, describe the visible rows; otherwise trust the server's
+        // whole-turn numbers, which are exact and cost nothing to read.
+        var filtered = isFiltering();
+        var totals = filtered ? turnTotalsFromEntries(entries) : null;
+        var tokens = filtered ? totals : (turn.tokens || {});
+        var toolCalls = filtered ? totals.toolCalls : turn.toolCalls;
+        var errors = filtered ? totals.errors : turn.errors;
+        var durationMs = filtered ? totals.durationMs : turn.durationMs;
+
         var meta = el('span', 'turn-meta');
-        meta.appendChild(el('span', null, '工具调用 ' + formatInt(turn.toolCalls)));
-        var tokens = turn.tokens || {};
-        meta.appendChild(el('span', null, '输入 ' + formatInt(tokens.input)));
-        meta.appendChild(el('span', null, '输出 ' + formatInt(tokens.output)));
-        meta.appendChild(el('span', null, '缓存读 ' + formatInt(tokens.cacheRead)));
-        meta.appendChild(el('span', null, '耗时 ' + (isNil(turn.durationMs) ? DASH : formatDuration(turn.durationMs))));
-        if (isCount(turn.errors) && turn.errors > 0) {
-          meta.appendChild(el('span', 'note note-danger', '失败 ' + formatInt(turn.errors)));
+        if (filtered) meta.appendChild(el('span', 'note', '筛选后'));
+        // A filtered turn with no tool work left has no tool-call figure to print;
+        // showing a column of zeroes beside every row would read as data, not absence.
+        if (!filtered || toolCalls > 0) {
+          meta.appendChild(el('span', null, '工具调用 ' + formatInt(toolCalls)));
+        }
+        if (!filtered || isCount(tokens.input) && tokens.input > 0) {
+          meta.appendChild(el('span', null, '输入 ' + formatInt(tokens.input)));
+        }
+        if (!filtered || isCount(tokens.output) && tokens.output > 0) {
+          meta.appendChild(el('span', null, '输出 ' + formatInt(tokens.output)));
+        }
+        if (!filtered || isCount(tokens.cacheRead) && tokens.cacheRead > 0) {
+          meta.appendChild(el('span', null, '缓存读 ' + formatInt(tokens.cacheRead)));
+        }
+        if (!filtered || isCount(durationMs) && durationMs > 0) {
+          meta.appendChild(el('span', null, '耗时 ' + (isNil(durationMs) ? DASH : formatDuration(durationMs))));
+        }
+        if (isCount(errors) && errors > 0) {
+          meta.appendChild(el('span', 'note note-danger', '失败 ' + formatInt(errors)));
         }
         head.appendChild(meta);
 
-        head.addEventListener('click', function () {
-          state.collapsed[turn.id] = !state.collapsed[turn.id];
-          if (!state.collapsed[turn.id]) delete state.collapsed[turn.id];
-          state.allCollapsed = areAllCollapsed(visibleTurns());
-          renderLedger();
-          renderCollapseButton();
-        });
         return head;
       }
 
+      /* ---------------- layers ----------------
+         The reference implementation folds: it keeps one row per turn and swaps the rest
+         for a summary line the reader can click. This does not. 轮次 and 调用 are layer
+         filters, so cancelling one leaves no placeholder behind — the records it covers
+         are simply not part of the render plan, and the button is the only way back.
+         Nothing here summarises, so nothing here can miscount what it covers. */
+
       function turnKey(turn) {
         return turn && turn.id ? turn.id : 'turn-' + (isCount(turn && turn.index) ? turn.index : Math.random());
-      }
-
-      function isCollapsed(turn) {
-        var key = turnKey(turn);
-        return state.collapsed[key] === true;
       }
 
       function visibleTurns(entries) {
@@ -2231,16 +3536,48 @@
         return order;
       }
 
-      function areAllCollapsed(groups) {
-        if (!groups.length) return false;
-        for (var i = 0; i < groups.length; i += 1) {
-          if (!isCollapsed(groups[i].turn)) return false;
-        }
-        return true;
+
+      /**
+       * How much of the session the ledger shows.
+       *
+       * 'latest' keeps the newest PAGE_STEP records and follows the tail; 'all' drops the
+       * cap so the growing session simply extends the view. Anything that changes what the
+       * numbers mean — a filter, a new session, a fresh search, a brush — resets to
+       * 'latest', because a stale "show everything" from before the filter would otherwise
+       * reappear holding records the reader had just excluded.
+       *
+       * @param {'latest'|'all'} mode
+       */
+      function setWindowMode(mode) {
+        state.allRecords = mode === 'all';
+        state.limit = state.allRecords ? Infinity : PAGE_STEP;
+      }
+
+      /**
+       * What happens to the window when a poll brings new records.
+       *
+       * Only the tail-following window re-pins to the newest page — that is what makes it
+       * follow. 「全部」 must not re-pin, or the first record to arrive after the click
+       * would cancel it, and the reader would be thrown back to 200 records without ever
+       * being told why.
+       *
+       * @returns {number} the limit now in force
+       */
+      function rePinWindow() {
+        if (state.allRecords) return state.limit;
+        state.limit = Math.min(PAGE_STEP, state.flat.length) || PAGE_STEP;
+        return state.limit;
       }
 
       function renderLedger() {
         var ledger = dom.ledger;
+        /* Restoring the raw pixel offset is what made the list creep out from under the
+           reader. The window is `matched.slice(-limit)`, so every new record slides the
+           whole slice forward: the oldest row falls off the top and everything below it
+           rises by one row. Restoring scrollY keeps the pixel but not the content, so
+           each poll quietly moved the page. Anchor on the topmost row that is actually
+           on screen and restore *its* position instead. */
+        var anchor = firstVisibleRow();
         var scrollY = window.scrollY || window.pageYOffset || 0;
         clear(ledger);
 
@@ -2297,33 +3634,17 @@
         var windowed = matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched;
         var hiddenAbove = matched.length - windowed.length;
 
-        if (hiddenAbove > 0) {
-          var wrap = el('div', 'load-more-wrap');
-          var more = el('button', 'btn', '向上加载更早的 ' + Math.min(PAGE_STEP, hiddenAbove) + ' 条');
-          more.type = 'button';
-          more.addEventListener('click', function () {
-            var anchorId = windowed[0] ? windowed[0].record.id : null;
-            var anchorBefore = anchorId ? anchorOffset(anchorId) : null;
-            state.limit += PAGE_STEP;
-            renderLedger();
-            if (anchorId && anchorBefore !== null) {
-              var after = anchorOffset(anchorId);
-              if (after !== null) window.scrollBy(0, after - anchorBefore);
-            }
-          });
-          wrap.appendChild(more);
-          ledger.appendChild(wrap);
-        }
+        ledger.appendChild(buildWindowBar(windowed, hiddenAbove, total));
 
         var groups = visibleTurns(windowed);
         for (var i = 0; i < groups.length; i += 1) {
           var group = groups[i];
-          var collapsed = isCollapsed(group.turn);
           var section = el('section', 'turn-group');
           section.setAttribute('aria-label', '轮次 ' + (isCount(group.turn.index) ? group.turn.index : DASH));
-          section.appendChild(buildTurnHead(group.turn, !collapsed));
+          section.appendChild(buildTurnHead(group.turn, group.entries));
           var list = el('ul', 'row-list');
-          if (collapsed) list.hidden = true;
+          // Every entry that survived the filters becomes a row. There is no second pass
+          // that hides anything, so what is on screen is exactly what was selected.
           var rails = railStates(group.entries);
           for (var j = 0; j < group.entries.length; j += 1) {
             var item = el('li');
@@ -2334,13 +3655,106 @@
           ledger.appendChild(section);
         }
 
-        var foot = el('p', 'ledger-foot');
-        foot.textContent =
-          '已显示 ' + formatInt(windowed.length) + ' / 共 ' + formatInt(total) + ' 条记录' +
-          (hiddenAbove > 0 ? '（更早的 ' + formatInt(hiddenAbove) + ' 条尚未加载）' : '');
-        ledger.appendChild(foot);
+        restoreRowAnchor(anchor, scrollY);
+      }
 
-        window.scrollTo(0, scrollY);
+      /**
+       * The window controls.
+       *
+       * Sticky, because the reader needs them *while* scrolling: the old single button sat
+       * at the very top, so widening the view meant scrolling all the way back up to find
+       * the one control that decides how much is shown. 「全部」 and 「只看最新」 are each
+       * other's inverse, so exactly one of them is offered at any moment.
+       *
+       * The bar carries the count too, since a count only at the foot of a list is a count
+       * nobody reads until they have already scrolled past everything.
+       */
+      function buildWindowBar(shown, hiddenAbove, total) {
+        var wrap = el('div', 'window-bar');
+        var actions = el('div', 'window-bar-actions');
+
+        if (hiddenAbove > 0) {
+          var more = el('button', 'btn', '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, hiddenAbove)) + ' 条');
+          more.type = 'button';
+          more.addEventListener('click', function () {
+            // No scroll correction here on purpose: renderLedger anchors on the topmost
+            // visible row and puts it back, so adding a second adjustment here would
+            // double-count the shift and leave the page visibly off.
+            state.limit += PAGE_STEP;
+            renderLedger();
+          });
+          actions.appendChild(more);
+        }
+
+        var count = el('span', 'window-bar-count',
+          '已显示 ' + formatInt(shown.length) + ' / 共 ' + formatInt(total) + ' 条记录' +
+          (hiddenAbove > 0 ? '（更早的 ' + formatInt(hiddenAbove) + ' 条尚未加载）' : ''));
+
+        var latest = el('button', 'btn' + (state.allRecords ? '' : ' btn-quiet'),
+          state.allRecords ? '已显示全部 · 点此只看最新' : '只看最新 ' + formatInt(PAGE_STEP) + ' 条');
+        latest.type = 'button';
+        latest.setAttribute('aria-pressed', state.allRecords ? 'false' : 'true');
+        latest.addEventListener('click', function () {
+          if (state.allRecords) {
+            setWindowMode('latest');
+            renderLedger();
+            // Back to the tail means back to the tail: land on the newest record rather
+            // than wherever the 4,000-row view happened to leave the reader.
+            var doc = document.documentElement;
+            window.scrollTo(0, Math.max(doc.scrollHeight, document.body.scrollHeight));
+          } else {
+            setWindowMode('latest');
+            renderLedger();
+          }
+        });
+        actions.appendChild(latest);
+
+        var all = el('button', 'btn' + (state.allRecords ? ' btn-quiet' : ''),
+          state.allRecords ? '已显示全部' : '全部显示');
+        all.type = 'button';
+        all.setAttribute('aria-pressed', state.allRecords ? 'true' : 'false');
+        all.disabled = state.allRecords;
+        all.addEventListener('click', function () {
+          setWindowMode('all');
+          renderLedger();
+        });
+        actions.appendChild(all);
+
+        // Count last, pushed to the far edge. Sitting it between the buttons made the row
+        // wrap on any session with a five-figure record count.
+        actions.appendChild(count);
+
+        wrap.appendChild(actions);
+        return wrap;
+      }
+
+      /** The topmost row that intersects the viewport, as {id, top}, or null. */
+      function firstVisibleRow() {
+        var nodes = dom.ledger.querySelectorAll('[data-row-id]');
+        for (var i = 0; i < nodes.length; i += 1) {
+          var rect = nodes[i].getBoundingClientRect();
+          if (rect.bottom > 0) return { id: nodes[i].getAttribute('data-row-id'), top: rect.top };
+        }
+        return null;
+      }
+
+      /**
+       * Put the anchored row back where it was.
+       *
+       * It can legitimately be gone: parked at the very top of the list, enough records
+       * can arrive to push it out of the window entirely. Then there is nothing to hold on
+       * to and the old pixel offset is the best answer available, so fall back to it
+       * rather than jumping to the top.
+       */
+      function restoreRowAnchor(anchor, fallbackY) {
+        if (anchor) {
+          var after = anchorOffset(anchor.id);
+          if (after !== null) {
+            window.scrollBy(0, after - anchor.top);
+            return;
+          }
+        }
+        window.scrollTo(0, fallbackY);
       }
 
       function anchorOffset(id) {
@@ -2378,18 +3792,19 @@
 
       function renderLoading() {
         renderKpi();
+        renderOverview();
         renderLedger();
         renderInspector();
       }
 
       function updateFilterStatus(matched, total) {
         dom.filterStatus.textContent = '命中 ' + formatInt(matched) + ' / 共 ' + formatInt(total) + ' 条';
-      }
-
-      function renderCollapseButton() {
-        var all = state.allCollapsed;
-        dom.collapseAll.setAttribute('aria-pressed', all ? 'true' : 'false');
-        dom.collapseAll.textContent = all ? '展开全部' : '折叠全部';
+        // The KPI cards are deliberately whole-session — the point of that panel is the
+        // session's shape, not the current query's. But a reader who just turned every
+        // tool result off and still reads "结果 1,409" directly underneath will conclude
+        // the filter failed, so the panel has to say which number it is showing. This is
+        // the one place every filter change passes through, kind chips and search alike.
+        if (dom.kpiScope) dom.kpiScope.hidden = !isFiltering();
       }
 
       /* ---------------- selection ---------------- */
@@ -2397,6 +3812,7 @@
       function selectRecord(id) {
         state.selectedId = id;
         state.activeTab = 'summary';
+        renderOverview();
         renderLedger();
         renderInspector();
         inspectorSay('');
@@ -2405,7 +3821,7 @@
       function clearFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
-        state.limit = PAGE_STEP;
+        setWindowMode('latest');
         if (dom.searchInput) dom.searchInput.value = '';
         syncChipInputs();
         render();
@@ -2803,8 +4219,9 @@
         renderBars();
         renderGeneration();
         renderKpi();
+        renderOverview();
         renderLedger();
-        renderCollapseButton();
+        renderViewControls();
         renderInspector();
         renderFooter();
         updateHandoffButton();
@@ -2942,7 +4359,7 @@
           return KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b);
         });
         state.kinds = next;
-        state.limit = PAGE_STEP;
+        setWindowMode('latest');
         syncChipInputs();
         renderLedger();
         updateFilterStatus(visibleEntries().length, state.flat.length);
@@ -2997,7 +4414,7 @@
           // The pin changes what every count on the page refers to, so the selected record,
           // the page window and the validator all have to start over.
           state.selectedId = null;
-          state.limit = PAGE_STEP;
+          setWindowMode('latest');
           state.etag = '';
           state.etagFor = '';
           state.loading = true;
@@ -3010,7 +4427,7 @@
           searchTimer = window.setTimeout(function () {
             searchTimer = null;
             state.query = dom.searchInput.value.trim();
-            state.limit = PAGE_STEP;
+            setWindowMode('latest');
             renderLedger();
           }, SEARCH_DEBOUNCE);
         });
@@ -3025,7 +4442,7 @@
           } else {
             state.kinds = KIND_ORDER.slice();
           }
-          state.limit = PAGE_STEP;
+          setWindowMode('latest');
           syncChipInputs();
           renderLedger();
           updateFilterStatus(visibleEntries().length, state.flat.length);
@@ -3038,18 +4455,60 @@
           });
         }
 
-        dom.collapseAll.addEventListener('click', function () {
-          var groups = visibleTurns(visibleEntries());
-          var collapse = !areAllCollapsed(groups);
-          state.allCollapsed = collapse;
-          for (var g = 0; g < groups.length; g += 1) {
-            var key = turnKey(groups[g].turn);
-            if (collapse) state.collapsed[key] = true;
-            else delete state.collapsed[key];
-          }
-          renderLedger();
-          renderCollapseButton();
+        dom.overviewClear.addEventListener('click', clearOverviewSelection);
+
+        dom.headerToggle.addEventListener('click', function () {
+          state.filtersCollapsed = !state.filtersCollapsed;
+          renderSectionToggles();
         });
+
+        dom.kpiToggle.addEventListener('click', function () {
+          state.kpiCollapsed = !state.kpiCollapsed;
+          renderSectionToggles();
+        });
+
+        var track = dom.overviewTrack;
+        track.addEventListener('pointerdown', onOverviewPointerDown);
+        track.addEventListener('pointermove', onOverviewPointerMove);
+        track.addEventListener('pointerup', onOverviewPointerUp);
+        track.addEventListener('pointercancel', onOverviewPointerUp);
+        // Losing capture means the pointer is no longer ours to track; the brush is
+        // abandoned rather than frozen at whatever width it had reached.
+        track.addEventListener('lostpointercapture', abortOverviewDrag);
+        track.addEventListener('pointerleave', function () {
+          stopOverviewEdgePan();
+          cancelOverviewHover();
+          dom.overviewHover.hidden = true;
+          state.overviewHoverId = null;
+          markOverviewHover(null);
+        });
+        track.addEventListener('wheel', onOverviewWheel, { passive: false });
+        track.addEventListener('keydown', onOverviewKeyDown);
+        track.addEventListener('dblclick', clearOverviewSelection);
+        track.addEventListener('contextmenu', function (event) {
+          // The right button is a gesture on this strip, not a browser menu.
+          event.preventDefault();
+        });
+
+        dom.durationBtn.addEventListener('click', function () {
+          setActualDuration(!state.actualDuration);
+        });
+
+        dom.turnsBtn.addEventListener('click', function () {
+          // A layer filter. One flag, and the records it covers are simply not rendered —
+          // no fold set to keep in step with arriving records, and no summary row that
+          // has to keep a running count of what it stands for.
+          state.showConversation = !state.showConversation;
+          renderViewControls();
+          renderLedger();
+        });
+
+        dom.callsBtn.addEventListener('click', function () {
+          state.showCalls = !state.showCalls;
+          renderViewControls();
+          renderLedger();
+        });
+
 
         dom.copyBtn.addEventListener('click', copySelected);
         dom.handoffBtn.addEventListener('click', handoffSelected);
@@ -3078,7 +4537,8 @@
         cacheDom();
         wire();
         syncChipInputs();
-        renderCollapseButton();
+        renderViewControls();
+        renderSectionToggles();
         render();
         fetchSessions();
         fetchTrajectory(false);

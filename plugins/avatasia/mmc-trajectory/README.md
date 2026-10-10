@@ -22,6 +22,8 @@ The page follows the most recent conversation by default and re-reads it every 2
 
 The ledger groups records by turn, following the `turn_id` recorded in the session file. Each record is classified as user, assistant, thinking, tool call, tool result, or system, and each turn header carries that turn's own Token counts and elapsed time. Selecting a record opens a detail panel with summary, raw JSON, tool arguments, tool result, and reasoning, plus a button that hands the record to the Agent's chat input.
 
+The toolbar's turn and call toggles are layer switches rather than collapse controls: turn governs the conversation layer (user and assistant), call governs the tool layer (tool calls and tool results). Turning one off drops those rows from the render entirely — no placeholder summary row is left behind, and the button is the only way to bring them back. The two layers do not overlap, so switching off one never takes part of the other with it, and each turn header recomputes from the rows that survive, which makes every count you see under a filter a real post-filter count.
+
 Values that the session file does not record are rendered as `—`. Nothing is inferred or filled in: a tool call with no matching result has no duration, an assistant message carries no model attribution if the file omitted it, and a message with no Token usage shows no Token usage.
 
 An assistant message is always displayed in one fixed order — **reasoning, then the answer, then the tool calls it asked for** — regardless of the order the blocks appear in the session file. Token usage stays with the answer; a message that produced reasoning but no answer shows its usage on the reasoning block, because that is all the message contains.
@@ -77,7 +79,7 @@ The runtime database is opened in read-only mode. If it is missing, unreadable, 
 - The app depends on undocumented internal formats: the `v2/sessions` directory layout and the runtime database schema. A client update can change either, which may break session identification or parsing.
 - Session identification is an inference, not a binding. With one conversation active it is reliable; with none running it degrades to most-recently-written.
 - A single `messages.jsonl` is read up to 64 MB. Larger sessions are truncated and the page says so.
-- The ledger renders 200 records at a time with an explicit "load earlier" control rather than true virtual scrolling.
+- The ledger renders only the newest 200 records by default rather than using true virtual scrolling. A sticky window bar offers three explicit controls: load 200 earlier records, jump back to the latest 200, and show everything. "Show everything" builds every record in the session into the DOM at once and gets noticeably slower on large sessions; incoming records do not knock it back down to 200.
 - `messageCount` and `turnCount` in the session picker are estimates derived from a bounded prefix of the file; exact values come from the selected session.
 - Light theme token coverage is verified — every `--mcode-*` token the page consumes is defined for both themes — but its rendered appearance was not visually checked; the page was exercised under a dark system preference.
 
