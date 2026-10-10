@@ -1277,6 +1277,69 @@
         border-color: currentColor;
       }
 
+      /* ---------------- compaction band ----------------
+         A context checkpoint is not another piece of work, so it is not drawn as another row.
+         It gets a full-width band: the reader sees where the context switched without having to
+         read past it. The rules above it and below it are the point, so the band separates them
+         rather than joining the list.
+         The text carries the meaning on its own; the danger tone is only reinforcement. */
+      .row-list > li.compaction-cell {
+        list-style: none;
+      }
+
+      .compaction-band {
+        display: grid;
+        grid-template-columns: 42px auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        margin: 6px 0;
+        padding: 7px 16px;
+        border: 0;
+        border-top: 1px solid var(--mcode-border);
+        border-bottom: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-subtle);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .compaction-band:hover {
+        background: var(--mcode-bg-secondary);
+        color: var(--mcode-text-muted);
+      }
+
+      .compaction-band:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: -2px;
+      }
+
+      .compaction-band[aria-current='true'] {
+        background: var(--mcode-selection);
+        color: var(--mcode-text);
+      }
+
+      .compaction-band .row-index {
+        color: var(--mcode-text-subtle);
+      }
+
+      .compaction-band .compaction-name {
+        color: var(--mcode-danger);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .compaction-band .compaction-what {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .compaction-band .compaction-when {
+        white-space: nowrap;
+      }
+
       .pill-error {
         color: var(--mcode-danger);
         border-color: currentColor;
@@ -2742,8 +2805,11 @@
         if (isCount(stats.steers) && stats.steers > 0) {
           parts.push({ label: '追加', value: formatInt(stats.steers), kind: 'steer' });
         }
-        if (isCount(stats.compactionTurns) && stats.compactionTurns > 0) {
-          parts.push({ label: '压缩', value: formatInt(stats.compactionTurns), kind: 'compaction' });
+        if (isCount(stats.compactions) && stats.compactions > 0) {
+          // Records, not turns. A checkpoint is filed inside the turn it interrupted, so counting
+          // turns would report 0 for every session that was ever compacted — which is the one
+          // thing the reader most wants to know happened.
+          parts.push({ label: '压缩', value: formatInt(stats.compactions), kind: 'compaction' });
         }
         if (isCount(stats.continuationTurns) && stats.continuationTurns > 0) {
           parts.push({ label: '续作轮', value: formatInt(stats.continuationTurns), kind: null });
@@ -3731,6 +3797,49 @@
         return row;
       }
 
+      /**
+       * A context checkpoint, drawn as a band between the rows on either side of it.
+       *
+       * It stays one filterable record — the 压缩 chip counts and hides it like any other — but
+       * it is not laid out like one, because it is not one: the runtime summarised everything
+       * before it, so the rows above and the rows below are no longer the same conversation as
+       * far as the model is concerned. Saying so on one line beats making the reader infer it
+       * from a gap.
+       *
+       * @param {{ record: Record<string, any> }} entry
+       * @returns {HTMLButtonElement}
+       */
+      function buildCompactionBand(entry) {
+        var record = entry.record;
+        var band = el('button', 'compaction-band');
+        band.type = 'button';
+        band.setAttribute('data-row-id', record.id || String(record.index));
+        if (record.id === state.selectedId) band.setAttribute('aria-current', 'true');
+        else band.removeAttribute('aria-current');
+
+        band.appendChild(el('span', 'row-index', '#' + (isCount(record.index) ? record.index : DASH)));
+        band.appendChild(el('span', 'compaction-name', '上下文压缩'));
+
+        // Say which generation the checkpoint opened, and what came before it. Both are on the
+        // row; a band that only said 「压缩」 would leave the reader guessing what changed.
+        var opened = isCount(record.generation)
+          ? '开启第 ' + formatInt(record.generation) + ' 代'
+          : '开启新的一代';
+        var summary = truncateText(safeText(record.summary || record.text || ''), 200);
+        band.appendChild(el('span', 'compaction-what', summary ? summary : '之前的上下文已被摘要'));
+
+        var when = isNil(record.relativeMs)
+          ? (isCount(record.timestamp) ? formatClock(record.timestamp) : DASH)
+          : formatOffset(record.relativeMs);
+        band.appendChild(el('span', 'compaction-when', when));
+        band.title = '上下文压缩 · ' + opened + (summary ? ' · ' + truncateText(safeText(summary), 400) : '');
+
+        band.addEventListener('click', function () {
+          selectRecord(record.id);
+        });
+        return band;
+      }
+
       function kindTone(kind) {
         if (kind === 'user') return 'user';
         if (kind === 'steer') return 'steer';
@@ -4014,7 +4123,12 @@
           var rails = railStates(group.entries);
           for (var j = 0; j < group.entries.length; j += 1) {
             var item = el('li');
-            item.appendChild(buildRow(group.entries[j], rails[j]));
+            if (group.entries[j].record.kind === 'compaction') {
+              item.className = 'compaction-cell';
+              item.appendChild(buildCompactionBand(group.entries[j]));
+            } else {
+              item.appendChild(buildRow(group.entries[j], rails[j]));
+            }
             list.appendChild(item);
           }
           section.appendChild(list);

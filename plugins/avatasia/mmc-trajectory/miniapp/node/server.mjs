@@ -20,6 +20,11 @@ const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
  * no user message because the reader's answer never became one.
  */
 const USER_INPUT_TOOLS = new Set(['ask_user', 'request_feature_enable']);
+/**
+ * Suffix the runtime appends to a turn id when it writes that turn's compaction checkpoint. The
+ * checkpoint names the turn it interrupts, so stripping this is what puts the two back together.
+ */
+const COMPACTION_TURN_SUFFIX = ':compaction';
 // Enough of a file to read its opening line. A generation marker lives on the first row, so
 // deciding whether a snapshot belongs to the lineage never needs more than this.
 const GENERATION_PROBE_BYTES = 64 * 1024;
@@ -884,7 +889,20 @@ export function buildTrajectoryPayload(input) {
     const role = typeof source.role === 'string' ? source.role : 'unknown';
     const timestamp = finiteOrNull(source.timestamp);
     const turnId = typeof row.turn_id === 'string' ? row.turn_id : null;
-    const turn = ensureTurn(turnId);
+    // A compactionSummary is written under "<turnId>:compaction" — the id of the turn it
+    // interrupted, plus a suffix — while every row after it carries the bare id. Keying on the
+    // whole string therefore opened a turn for the checkpoint alone, and because a turn joins the
+    // list the moment it is first seen, that turn was emitted after the entire turn it belongs to:
+    // the checkpoint rendered past records that came later, and the numbering ran backwards
+    // (#1037 then #970). Keying the checkpoint on the bare id puts it back where it happened —
+    // inside the turn it interrupted, which is also the only place a context checkpoint is.
+    const turnKey = role === 'compactionSummary'
+      && turnId !== null
+      && turnId.length > COMPACTION_TURN_SUFFIX.length
+      && turnId.endsWith(COMPACTION_TURN_SUFFIX)
+      ? turnId.slice(0, -COMPACTION_TURN_SUFFIX.length)
+      : turnId;
+    const turn = ensureTurn(turnKey);
     if (timestamp !== null) {
       if (startedAt === null || timestamp < startedAt) startedAt = timestamp;
       if (lastTimestamp === null || timestamp > lastTimestamp) lastTimestamp = timestamp;
@@ -914,7 +932,10 @@ export function buildTrajectoryPayload(input) {
     const messageId = typeof row.message_id === 'string' ? row.message_id : null;
     const base = {
       id: messageId,
-      turnId,
+      // The turn this record belongs to, which for a checkpoint is the turn it interrupted — not
+      // the suffixed id the file wrote. A record whose `turnId` names no turn is a contradiction
+      // the page cannot resolve.
+      turnId: turnKey,
       role,
       // Stamped when a lineage is stitched, so the page can group or filter by generation
       // without having to re-derive it from timestamps.
@@ -1252,7 +1273,11 @@ export function buildTrajectoryPayload(input) {
     }
     turn.askedReader = askedReader;
     turn.closed = closed;
-    if (isCompaction) { turn.turnClass = 'compaction'; compactionTurns += 1; continue; }
+    // A turn that *contains* a checkpoint is still judged on what it did. A checkpoint used to be
+    // a turn of its own, so "contains one" was the same as "is one"; now that the checkpoint
+    // rejoins the turn it interrupted, that would relabel every turn the runtime ever compacted
+    // as a checkpoint and drop all of them out of the prompted count. Only a turn that holds
+    // nothing but its checkpoint is one.
     if (hasPrompt) {
       turn.turnClass = 'prompt';
       turnsWithPrompt += 1;
@@ -1261,6 +1286,11 @@ export function buildTrajectoryPayload(input) {
     } else if (closed) {
       turn.turnClass = 'continuation';
       continuationTurns += 1;
+    } else if (isCompaction && turn.records.length === 1) {
+      // Only reachable when a checkpoint opens a turn the file never names — no work either side
+      // of it to attach to.
+      turn.turnClass = 'compaction';
+      compactionTurns += 1;
     } else {
       turn.turnClass = 'none';
       stats.turnsWithoutPrompt += 1;
