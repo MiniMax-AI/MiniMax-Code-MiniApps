@@ -1594,17 +1594,6 @@ export async function start(context) {
       const handleRuntime = async (response) => {
    let diagError = null;
    try {
-    const SESSION_ID = /mvs_[0-9a-f]{32}/;
-    /** @type {Record<string, string>} */
-    const envSessionLike = {};
-    const envNames = Object.keys(process.env).sort();
-    for (const key of envNames) {
-      const value = process.env[key];
-      if (typeof value !== 'string') continue;
-      const found = SESSION_ID.exec(value);
-      if (found) envSessionLike[key] = found[0];
-    }
-    const argv = process.argv.map((entry) => (typeof entry === 'string' ? entry.slice(0, 160) : String(entry)));
     let sqlite = { available: false, error: null, dbFile: null, exists: false, opened: false, queryError: null, resolvedSessionId: null, conversationCount: null };
     /** @type {any} */
     let mod = null;
@@ -1635,11 +1624,11 @@ export async function start(context) {
     }
     sendJson(response, 200, {
       nodeVersion: process.version,
-      // Everything below is a basename, a count, or a flag. `argv[0]` is the absolute path of
-      // the node executable — on Windows it carries the user profile directory — and
-      // execArgv/pid/ppid are process internals this route has no reason to publish. The page
-      // reads none of them; the route exists to answer "is the runtime binding alive", and the
-      // fields that answer that are `sqlite` and `sessionRootExists`.
+      // Everything below is a basename, a count, or a flag. This route deliberately publishes no
+      // path and no process internals: `process.argv[0]` is the absolute path of the node
+      // executable, which on Windows carries the user profile directory, and pid/ppid/execArgv
+      // are internals the page has no use for. The page reads none of this; the route exists to
+      // answer "is the runtime binding alive", and `sqlite` plus `sessionRootExists` answer that.
       sqlite,
       cwdBasename: basename(process.cwd()) || null,
       dataDirBasename: basename(context.dataDir) || null,
