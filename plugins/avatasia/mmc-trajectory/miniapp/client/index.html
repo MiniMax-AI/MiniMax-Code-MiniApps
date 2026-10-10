@@ -2942,19 +2942,26 @@
         dom.durationBtn.setAttribute('aria-label', durationLabel);
         dom.durationBtn.setAttribute('title', durationLabel);
 
-        setLayerButton(dom.turnsBtn, layerSelected('turns'), '对话', '对话记录（用户与助手消息）');
-        setLayerButton(dom.thinkingBtn, layerSelected('thinking'), '思考', '模型的思考过程');
-        setLayerButton(dom.callsBtn, layerSelected('calls'), '工具调用', '工具调用与工具结果');
+        setLayerButton(dom.turnsBtn, layerSelected('turns'), layerPartial('turns'), '对话', '对话记录（用户与助手消息）');
+        setLayerButton(dom.thinkingBtn, layerSelected('thinking'), layerPartial('thinking'), '思考', '模型的思考过程');
+        setLayerButton(dom.callsBtn, layerSelected('calls'), layerPartial('calls'), '工具调用', '工具调用与工具结果');
       }
 
       /**
        * One layer button. The pressed state IS the visibility of the records it covers, so
        * there is no separate derived status that could drift away from what is on screen.
+       *
+       * Partial gets its own wording. Hiding 助手 in the chips while leaving 用户 checked
+       * makes this button go out, because "lit" can only honestly mean "all of it is on" —
+       * but the reader did not hide the conversation, they narrowed it, and a plain
+       * "已隐藏" would claim otherwise. It also says what the click will do: fill the layer
+       * in, which is the one thing that would otherwise silently undo their own choice.
        */
-      function setLayerButton(button, on, noun, covers) {
-        var label = on
-          ? noun + '当前显示 · 点击隐藏'
-          : noun + '当前已隐藏 · 点击显示';
+      function setLayerButton(button, on, partial, noun, covers) {
+        var label;
+        if (on) label = noun + '当前显示 · 点击隐藏';
+        else if (partial) label = noun + '当前部分显示 · 点击全部显示';
+        else label = noun + '当前已隐藏 · 点击显示';
         button.setAttribute('aria-pressed', on ? 'true' : 'false');
         button.setAttribute('aria-label', label + '（' + covers + '）');
         button.setAttribute('title', label + '（' + covers + '）');
@@ -4479,6 +4486,22 @@
           if (state.kinds.indexOf(kinds[i]) < 0) return false;
         }
         return true;
+      }
+
+      /**
+       * Whether some of a layer is selected and some is not.
+       *
+       * This is the only state the layer buttons cannot be lit for, and the only case where
+       * a click on them changes something the reader did not directly ask for — it fills the
+       * layer in. A one-kind layer can never be partial, so 思考 has no such case at all.
+       */
+      function layerPartial(layer) {
+        var kinds = LAYER_KINDS[layer];
+        var shown = 0;
+        for (var i = 0; i < kinds.length; i += 1) {
+          if (state.kinds.indexOf(kinds[i]) >= 0) shown += 1;
+        }
+        return shown > 0 && shown < kinds.length;
       }
 
       /**
