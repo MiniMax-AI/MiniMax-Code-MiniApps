@@ -565,23 +565,9 @@
         color: var(--mcode-text-subtle);
       }
 
-      /* ---------------- view controls (dsh TrajectoryToolbar) ----------------
+      /* ---------------- view control (dsh TrajectoryToolbar) ----------------
          Dimensions and states copied from the reference toolbar: a 20px control,
-         12px label, no fill until hovered or pressed, and a code-font ⊟/⊞ glyph
-         that says at a glance whether the fold is on. */
-
-      .traj-controls {
-        position: sticky;
-        top: 0;
-        z-index: 5;
-        display: flex;
-        flex: none;
-        align-items: center;
-        gap: 2px;
-        margin: 0;
-        padding: 6px 16px;
-        background: var(--mcode-bg);
-      }
+         12px label, no fill until hovered or pressed. */
 
       .tbtn {
         display: inline-flex;
@@ -626,18 +612,6 @@
         height: 12px;
       }
 
-      .tbtn-glyph {
-        flex: none;
-        color: var(--mcode-text-muted);
-        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-        font-size: 14px;
-        line-height: 14px;
-      }
-
-      .tbtn[aria-pressed='true'] .tbtn-glyph {
-        color: var(--mcode-text);
-      }
-
       /* ---------------- overview timeline (dsh) ----------------
          A fixed 50px projection of the same records the ledger lists, on three
          lanes. Spans are absolutely positioned from a computed domain, exactly
@@ -646,7 +620,7 @@
 
       .overview {
         position: sticky;
-        top: 32px;
+        top: 0;
         z-index: 4;
         border-bottom: 1px solid var(--mcode-border);
         user-select: none;
@@ -1176,11 +1150,10 @@
 
       .window-bar {
         position: sticky;
-        /* Sticky offsets stack here: the controls own 0–32 and the overview strip owns
-           32–83 (32 + the 50px plot + its 1px border), so a bar pinned at 0 would simply
-           hide behind both of them. z-index 3 keeps it under the overview (4) and over the
-           turn head (2). */
-        top: 83px;
+        /* Sticky offsets stack here: the overview strip owns 0–51 (the 50px plot plus its 1px
+           border), so a bar pinned at 0 would simply hide behind it. z-index 3 keeps the bar
+           under the overview (4) and over the turn head (2). */
+        top: 51px;
         z-index: 3;
         padding: 8px 16px;
         background: var(--mcode-bg);
@@ -1584,7 +1557,7 @@
           </div>
         </div>
 
-        <nav class="chipbar" aria-label="按类型筛选轨迹">
+        <nav class="chipbar" aria-label="轨迹筛选与显示">
           <fieldset class="chips">
             <legend class="legend">类型</legend>
             <button type="button" class="chip" id="chip-all" aria-pressed="true">全部</button>
@@ -1619,6 +1592,13 @@
               <span>系统</span>
             </label>
           </fieldset>
+          <button type="button" class="tbtn tbtn-toggle" id="duration-btn" aria-pressed="false" aria-label="改用真实时长" title="改用真实时长">
+            <svg class="tbtn-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.25" />
+              <path d="M8 4.75V8l2.25 1.5" />
+            </svg>
+            <span>时长</span>
+          </button>
           <p class="toolbar-status" id="filter-status" role="status">正在准备轨迹数据…</p>
         </nav>
       </form>
@@ -1635,28 +1615,6 @@
         </div>
         <div class="kpi-grid" id="kpi-grid"></div>
       </section>
-
-      <div class="traj-controls" role="toolbar" aria-label="轨迹视图控制" aria-controls="overview">
-        <button type="button" class="tbtn tbtn-toggle" id="duration-btn" aria-pressed="false" aria-label="改用真实时长" title="改用真实时长">
-          <svg class="tbtn-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="8" cy="8" r="5.25" />
-            <path d="M8 4.75V8l2.25 1.5" />
-          </svg>
-          <span>时长</span>
-        </button>
-        <button type="button" class="tbtn" id="turns-btn" aria-pressed="true" aria-label="对话当前显示 · 点击隐藏（对话记录（用户与助手消息））" title="对话当前显示 · 点击隐藏（对话记录（用户与助手消息））">
-          <span class="tbtn-glyph" aria-hidden="true">⊟</span>
-          <span>轮次</span>
-        </button>
-        <button type="button" class="tbtn" id="thinking-btn" aria-pressed="true" aria-label="思考当前显示 · 点击隐藏（模型的思考过程）" title="思考当前显示 · 点击隐藏（模型的思考过程）">
-          <span class="tbtn-glyph" aria-hidden="true">⊟</span>
-          <span>思考</span>
-        </button>
-        <button type="button" class="tbtn" id="calls-btn" aria-pressed="true" aria-label="工具调用当前显示 · 点击隐藏（工具调用与工具结果）" title="工具调用当前显示 · 点击隐藏（工具调用与工具结果）">
-          <span class="tbtn-glyph" aria-hidden="true">⊟</span>
-          <span>调用</span>
-        </button>
-      </div>
 
       <section class="overview" id="overview" aria-labelledby="overview-heading">
         <h2 class="sr-only" id="overview-heading">轨迹总览</h2>
@@ -1747,23 +1705,14 @@
 
       var KIND_ORDER = ['user', 'assistant', 'thinking', 'toolCall', 'toolResult', 'system'];
 
-      // The three toolbar buttons are presets over the type chips, not a second filter.
+      // The type chips are the only filter. Which record kinds are visible is one array —
+      // state.kinds — and every control that changes it writes to that array and nowhere
+      // else, so a question about "what am I looking at" has exactly one answer.
       //
-      // Only one thing is being filtered — which record kinds are shown — and the chips and
-      // the buttons are two ways of editing that same set. Running them as two independent
-      // filters is how one control ends up describing something the other has already
-      // overridden, which is the confusion the duplicate row was there to cause.
-      //
-      // The chips stay because they can express what the buttons cannot: only user, only
-      // system, assistant without user. A button reads as lit only when every kind it covers
-      // is selected, so unchecking one of its own chips puts it out instead of claiming a
-      // half-on state the control has no vocabulary for.
-      var LAYER_KINDS = {
-        turns: ['user', 'assistant'],
-        thinking: ['thinking'],
-        calls: ['toolCall', 'toolResult']
-      };
-      var LAYER_ORDER = ['turns', 'thinking', 'calls'];
+      // There is deliberately no second row of layer buttons. Three fixed presets looked
+      // like a coarser version of the chips, but any preset the reader outgrows became a
+      // button that could contradict the chips it was meant to summarise. Naming kinds
+      // directly costs one click and cannot drift.
 
       var DASH = '—';
 
@@ -2182,13 +2131,6 @@
         hardError: null,
         stale: false,
         selectedId: null,
-        // The 轮次 / 调用 buttons are layer filters, not folds. Cancelling one means the
-        // records it covers are simply not part of the render plan — no placeholder row,
-        // no "已折叠 N 行 · 点击展开", nothing standing in for what is gone. The reference
-        // implementation folds with a summary line instead; this deliberately does not,
-        // because a line that claims to be a summary is one more thing that has to be
-        // truthful about what it covers, and a filter has nothing to explain.
-        // 轮次 covers the conversation (what was said), 调用 covers the tool work.
         // Disclosure state for the two blocks that are read once and then only take
         // up room. Folding them hands the height back to the ledger.
         filtersCollapsed: false,
@@ -2201,6 +2143,13 @@
         overviewSelection: null,
         overviewViewport: null,
         overviewHoverId: null,
+        // The type chips are the only filter, so this array is the only definition of what is on
+        // screen. Unchecking a kind means its records are simply not part of the render
+        // plan — no placeholder row, no "已折叠 N 行 · 点击展开", nothing standing in for
+        // what is gone. The reference implementation folds with a summary line instead;
+        // this deliberately does not, because a line that claims to be a summary is one
+        // more thing that has to be truthful about what it covers, and a filter has nothing
+        // to explain.
         kinds: KIND_ORDER.slice(),
         query: '',
         limit: PAGE_STEP,
@@ -2244,9 +2193,6 @@
         dom.generationHint = document.getElementById('generation-hint');
         dom.searchInput = document.getElementById('search-input');
         dom.durationBtn = document.getElementById('duration-btn');
-        dom.turnsBtn = document.getElementById('turns-btn');
-        dom.thinkingBtn = document.getElementById('thinking-btn');
-        dom.callsBtn = document.getElementById('calls-btn');
         dom.chipAll = document.getElementById('chip-all');
         dom.filterStatus = document.getElementById('filter-status');
         dom.headerToggle = document.getElementById('header-toggle');
@@ -2921,17 +2867,10 @@
       }
 
       /**
-       * The three toolbar buttons read as "what is on screen", not "what was clicked".
-       *
-       * 时长 is on when the strip is drawing real time. 轮次 and 调用 are on when their
-       * rows are expanded, so a page that has just loaded — everything visible — shows
-       * all three lit. Pressing one folds that layer away and the button goes dark; that
-       * is the only reading under which a lit button always means "this content is
-       * being shown", and it is the reading that survives the session still running:
-       * when new records arrive and have not been folded yet, the honest state is lit.
-       *
-       * The fold sets below stay authoritative. Nothing here stores a flag, so folding
-       * one turn by hand, or expanding one from its summary line, is reflected at once.
+       * 时长 reads as "what the strip is drawing", not "what was clicked": lit when the
+       * overview lays records out on the real clock, dark when every record gets an equal
+       * slice. It is the one view control left, and it changes the projection rather than
+       * the list — the rows below are the same either way.
        */
       function renderViewControls() {
         var durationOn = state.actualDuration;
@@ -2941,31 +2880,6 @@
           : '总览当前等宽显示 · 点击改为真实时长';
         dom.durationBtn.setAttribute('aria-label', durationLabel);
         dom.durationBtn.setAttribute('title', durationLabel);
-
-        setLayerButton(dom.turnsBtn, layerSelected('turns'), layerPartial('turns'), '对话', '对话记录（用户与助手消息）');
-        setLayerButton(dom.thinkingBtn, layerSelected('thinking'), layerPartial('thinking'), '思考', '模型的思考过程');
-        setLayerButton(dom.callsBtn, layerSelected('calls'), layerPartial('calls'), '工具调用', '工具调用与工具结果');
-      }
-
-      /**
-       * One layer button. The pressed state IS the visibility of the records it covers, so
-       * there is no separate derived status that could drift away from what is on screen.
-       *
-       * Partial gets its own wording. Hiding 助手 in the chips while leaving 用户 checked
-       * makes this button go out, because "lit" can only honestly mean "all of it is on" —
-       * but the reader did not hide the conversation, they narrowed it, and a plain
-       * "已隐藏" would claim otherwise. It also says what the click will do: fill the layer
-       * in, which is the one thing that would otherwise silently undo their own choice.
-       */
-      function setLayerButton(button, on, partial, noun, covers) {
-        var label;
-        if (on) label = noun + '当前显示 · 点击隐藏';
-        else if (partial) label = noun + '当前部分显示 · 点击全部显示';
-        else label = noun + '当前已隐藏 · 点击显示';
-        button.setAttribute('aria-pressed', on ? 'true' : 'false');
-        button.setAttribute('aria-label', label + '（' + covers + '）');
-        button.setAttribute('title', label + '（' + covers + '）');
-        button.querySelector('.tbtn-glyph').textContent = on ? '⊟' : '⊞';
       }
 
       /**
@@ -3527,12 +3441,12 @@
         return head;
       }
 
-      /* ---------------- layers ----------------
+      /* ---------------- turn grouping ----------------
          The reference implementation folds: it keeps one row per turn and swaps the rest
-         for a summary line the reader can click. This does not. 轮次 and 调用 are layer
-         filters, so cancelling one leaves no placeholder behind — the records it covers
-         are simply not part of the render plan, and the button is the only way back.
-         Nothing here summarises, so nothing here can miscount what it covers. */
+         for a summary line the reader can click. This does not. Unchecking a type is a
+         filter, so the records it covers are simply not part of the render plan, and a
+         chip is the only way back. Nothing here summarises, so nothing here can miscount
+         what it covers. */
 
       function turnKey(turn) {
         return turn && turn.id ? turn.id : 'turn-' + (isCount(turn && turn.index) ? turn.index : Math.random());
@@ -4479,73 +4393,6 @@
         updateFilterStatus(visibleEntries().length, state.flat.length);
       }
 
-      /** Whether every kind a layer covers is currently selected. */
-      function layerSelected(layer) {
-        var kinds = LAYER_KINDS[layer];
-        for (var i = 0; i < kinds.length; i += 1) {
-          if (state.kinds.indexOf(kinds[i]) < 0) return false;
-        }
-        return true;
-      }
-
-      /**
-       * Whether some of a layer is selected and some is not.
-       *
-       * This is the only state the layer buttons cannot be lit for, and the only case where
-       * a click on them changes something the reader did not directly ask for — it fills the
-       * layer in. A one-kind layer can never be partial, so 思考 has no such case at all.
-       */
-      function layerPartial(layer) {
-        var kinds = LAYER_KINDS[layer];
-        var shown = 0;
-        for (var i = 0; i < kinds.length; i += 1) {
-          if (state.kinds.indexOf(kinds[i]) >= 0) shown += 1;
-        }
-        return shown > 0 && shown < kinds.length;
-      }
-
-      /**
-       * The chip set with one layer switched on or off. Pure, so the rule can be asserted
-       * without a DOM and so a button's effect on the chips is the same code the chips
-       * themselves go through.
-       *
-       * @param {string[]} kinds
-       * @param {string} layer
-       * @param {boolean} on
-       * @returns {string[]}
-       */
-      function applyLayerToKinds(kinds, layer, on) {
-        var next = kinds.slice();
-        var layerKinds = LAYER_KINDS[layer];
-        for (var i = 0; i < layerKinds.length; i += 1) {
-          var at = next.indexOf(layerKinds[i]);
-          if (on && at < 0) next.push(layerKinds[i]);
-          if (!on && at >= 0) next.splice(at, 1);
-        }
-        next.sort(function (a, b) { return KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b); });
-        return next;
-      }
-
-      /**
-       * Turns a whole layer on or off by editing the same chip set the chips edit.
-       *
-       * Going through state.kinds rather than a flag of its own is the point: after this,
-       * there is no second copy of "which kinds are showing" that could disagree with the
-       * chips, and the button's lit state cannot drift from what is on screen because it is
-       * read from the same array that decides it.
-       *
-       * @param {string} layer
-       * @param {boolean} on
-       */
-      function setLayer(layer, on) {
-        state.kinds = applyLayerToKinds(state.kinds, layer, on);
-        setWindowMode('latest');
-        syncChipInputs();
-        renderViewControls();
-        renderLedger();
-        updateFilterStatus(visibleEntries().length, state.flat.length);
-      }
-
       function startPolling() {
         stopPolling();
         pollTimer = window.setInterval(function () {
@@ -4675,19 +4522,6 @@
         dom.durationBtn.addEventListener('click', function () {
           setActualDuration(!state.actualDuration);
         });
-
-        dom.turnsBtn.addEventListener('click', function () {
-          setLayer('turns', !layerSelected('turns'));
-        });
-
-        dom.thinkingBtn.addEventListener('click', function () {
-          setLayer('thinking', !layerSelected('thinking'));
-        });
-
-        dom.callsBtn.addEventListener('click', function () {
-          setLayer('calls', !layerSelected('calls'));
-        });
-
 
         dom.copyBtn.addEventListener('click', copySelected);
         dom.handoffBtn.addEventListener('click', handoffSelected);
