@@ -1093,6 +1093,28 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
 
+      /* Width of the 记录序号 column, shared by `.row`, `.compaction-band` and
+         `.skeleton-row` so the three ledgers cannot drift apart.
+
+         This is the one column whose width is set by the *data*, not by the text it
+         happens to hold today. 42px fits `#` plus four digits, which was the whole of
+         every session until one passed 10,000 records. Past that the fifth digit left
+         the track, and a grid item has `overflow: visible` by default: the digit did not
+         disappear, it spilled into the 76px kind column and was painted over by the
+         opaque pill. `#10950` through `#10959` all read as `#1095`. Nothing errored and
+         no index was ever duplicated — ten consecutive rows simply showed the reader one
+         number, which is worse than a wrong number, because a wrong number is checkable.
+
+         72px holds `#` plus seven digits even at the widest advance the old track allowed
+         — 42px fit five characters, so one is at most 8.4px, and 8 × 8.4 = 67.2 — so a
+         session would have to reach 10,000,000 records before this bites again. The width
+         belongs here rather than in the media query for the same reason: the narrow rule
+         used to narrow this column too, which is what made 28px — too small even for four
+         digits — the phone behaviour. */
+      :root {
+        --traj-index-col: 72px;
+      }
+
       .row-list {
         list-style: none;
         margin: 0;
@@ -1105,7 +1127,7 @@
 
       .row {
         display: grid;
-        grid-template-columns: 42px 76px minmax(0, 1fr) 68px 76px;
+        grid-template-columns: var(--traj-index-col) 76px minmax(0, 1fr) 68px 76px;
         align-items: center;
         gap: 8px;
         width: 100%;
@@ -1187,6 +1209,12 @@
         font-size: 12px;
         color: var(--mcode-text-muted);
         font-variant-numeric: tabular-nums;
+        /* Containment, so that a column ever too narrow again fails visibly instead of
+           spilling onto the kind pill. A spill reads as a different, valid index; an
+           ellipsis reads as a number this row could not show in full. */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .row-summary {
@@ -1289,7 +1317,7 @@
 
       .compaction-band {
         display: grid;
-        grid-template-columns: 42px auto minmax(0, 1fr) auto;
+        grid-template-columns: var(--traj-index-col) auto minmax(0, 1fr) auto;
         align-items: center;
         gap: 8px;
         width: 100%;
@@ -1436,7 +1464,7 @@
 
       .skeleton-row {
         display: grid;
-        grid-template-columns: 42px 76px minmax(0, 1fr) 68px 76px;
+        grid-template-columns: var(--traj-index-col) 76px minmax(0, 1fr) 68px 76px;
         gap: 8px;
         align-items: center;
         padding: 4px 16px;
@@ -1694,10 +1722,13 @@
           max-width: none;
         }
 
-        /* All five columns stay so the 失败 text never disappears on narrow screens. */
+        /* All five columns stay so the 失败 text never disappears on narrow screens.
+           The index column is deliberately left at its own width: it is the one track
+           sized by data rather than by the text it holds, and the 28px this rule used
+           to give it could not even fit four digits. */
         .row,
         .skeleton-row {
-          grid-template-columns: 28px 64px minmax(0, 1fr) 54px 66px;
+          grid-template-columns: var(--traj-index-col) 64px minmax(0, 1fr) 54px 66px;
           gap: 6px;
           padding: 4px 12px;
         }
