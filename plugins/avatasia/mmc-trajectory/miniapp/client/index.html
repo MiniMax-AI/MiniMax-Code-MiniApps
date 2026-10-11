@@ -412,6 +412,51 @@
         width: 100%;
       }
 
+      /* The time range is measured from the start of the session, because that is the only
+         clock the ledger already prints. The `+893 分 21 秒` column, the overview axis and the
+         hint under these inputs are all offsets from the same zero, so a reader can copy the
+         number they are looking at straight into 起点. A wall-clock picker would have been
+         the more obvious control and would have matched nothing else on the page. */
+      .range-part {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .range-part-label {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        white-space: nowrap;
+      }
+
+      .range-input {
+        width: 88px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .range-sep {
+        font-size: 12px;
+        color: var(--mcode-text-subtle);
+      }
+
+      .range-hint {
+        margin: 0;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .range-hint[hidden] {
+        display: none;
+      }
+
+      /* The reader has to be able to tell three apart: no range set, a range in force, and a
+         half-typed value the page could not read. Colour alone cannot carry that, so the
+         invalid state is also a word. */
+      .range-hint.is-invalid {
+        color: var(--mcode-danger);
+      }
+
       .chipbar {
         display: flex;
         flex-wrap: wrap;
@@ -1831,6 +1876,24 @@
           </div>
         </div>
 
+        <div class="toolbar-row">
+          <div class="field field-range" role="group" aria-labelledby="range-label" aria-describedby="range-hint">
+            <span class="field-label" id="range-label">时间区间</span>
+            <label class="range-part" for="range-from">
+              <span class="range-part-label">起点</span>
+              <input type="text" id="range-from" class="range-input" placeholder="0:00" autocomplete="off" spellcheck="false" />
+            </label>
+            <span class="range-sep" aria-hidden="true">–</span>
+            <label class="range-part" for="range-to">
+              <span class="range-part-label">终点</span>
+              <input type="text" id="range-to" class="range-input" placeholder="1:00:00" autocomplete="off" spellcheck="false" />
+            </label>
+            <button type="button" class="btn btn-quiet" id="range-refresh" aria-label="把区间更新到最新记录" hidden>更新到最新</button>
+            <button type="button" class="btn btn-quiet" id="range-clear" aria-label="清空时间区间" hidden>清空区间</button>
+          </div>
+        </div>
+        <p class="range-hint" id="range-hint">留空 = 不限。填写会话开始后的时间，格式 <code>1:30</code> 或 <code>1:30:00</code>。</p>
+
       </form>
 
       <section class="kpi-section" aria-labelledby="kpi-heading">
@@ -2116,6 +2179,99 @@
         return value < 10 ? '0' + value : String(value);
       }
 
+      /* ---------------- time range ----------------
+         Offsets in milliseconds since the session started. This is the one clock the ledger
+         already prints on every row, so the number a reader is looking at can be typed
+         straight in; a wall-clock field would have matched nothing else on the page.
+
+         Three outcomes, kept apart on purpose:
+           null  → empty, that end is open (or the whole filter is off)
+           NaN   → the text is not a time; the filter keeps its last readable value
+           >= 0  → the offset in ms
+
+         `1:30` and `1:30:00` are both read as minutes and minutes:seconds, matching the
+         `893 分 21 秒` the row shows. Bare digits are minutes, because "the first ten
+         minutes" is what a reader types, and the hint always prints the resolved value back
+         so a misreading is visible rather than silent. */
+
+      /**
+       * @param {string} text
+       * @returns {number|null} ms, `null` when empty, `NaN` when unreadable
+       */
+      function parseRangeOffset(text) {
+        var raw = String(text === null || text === undefined ? '' : text).trim();
+        if (raw === '') return null;
+        // A bare number is minutes. Anything else must be colon-separated, so `12:34` is
+        // never read as twelve hundred thirty-four seconds by accident.
+        var parts = raw.indexOf(':') >= 0 ? raw.split(':') : [raw];
+        if (parts.length > 3) return NaN;
+        var numbers = [];
+        for (var i = 0; i < parts.length; i += 1) {
+          var piece = parts[i].trim();
+          // `isCount` would accept `1e3` and `12.5`; neither is a time.
+          if (!/^\d{1,4}$/.test(piece)) return NaN;
+          var value = Number(piece);
+          // Every part but the first is a smaller unit, so 90:00 is not a valid 90 minutes.
+          if (i > 0 && value > 59) return NaN;
+          numbers.push(value);
+        }
+        // The unit of each part is fixed by its position, so the total is built from the
+        // seconds rather than by folding the parts and scaling once: folding
+        // `1:30:00` gives 5400 — hours, not minutes — and scaling that as minutes is how a
+        // three-part offset came out sixty times too large.
+        var seconds = numbers.length === 1
+          ? numbers[0] * 60
+          : numbers.length === 2
+            ? numbers[0] * 60 + numbers[1]
+            : numbers[0] * 3600 + numbers[1] * 60 + numbers[2];
+        return seconds * 1000;
+      }
+
+      /**
+       * @param {number} ms
+       * @returns {string} `1:30:00`, or `1:30` while it fits in minutes
+       */
+      function formatRangeOffset(ms) {
+        if (!isCount(ms)) return DASH;
+        var total = Math.floor(Math.abs(ms) / 1000);
+        var hours = Math.floor(total / 3600);
+        var minutes = Math.floor((total % 3600) / 60);
+        var seconds = total % 60;
+        if (hours > 0) return hours + ':' + pad2(minutes) + ':' + pad2(seconds);
+        return minutes + ':' + pad2(seconds);
+      }
+
+      /**
+       * Whether one record falls inside `[from, to]`, in milliseconds since session start.
+       * Both bounds are inclusive; `null` on a side leaves it open, and both null keeps
+       * everything.
+       *
+       * A record with no timestamp has no place on this clock, so a range leaves it out. That
+       * matches the overview brush, which drops a record it cannot position rather than
+       * guessing — and a range that quietly kept undated records would report a count it
+       * could not account for.
+       *
+       * @param {any} record
+       * @param {number|null} from
+       * @param {number|null} to
+       */
+      function recordInRange(record, from, to) {
+        if (!isCount(from) && !isCount(to)) return true;
+        var at = record && record.relativeMs;
+        if (!isCount(at)) return false;
+        if (isCount(from) && at < from) return false;
+        if (isCount(to) && at > to) return false;
+        return true;
+      }
+
+      /** `0:30 – 1:00`, `开始 – 1:00`, `0:30 – 现在`. Empty when neither end is set. */
+      function rangeLabel(from, to) {
+        if (!isCount(from) && !isCount(to)) return '';
+        return (isCount(from) ? formatRangeOffset(from) : '开始')
+          + ' – '
+          + (isCount(to) ? formatRangeOffset(to) : '现在');
+      }
+
       /** Absolute local wall-clock time. */
       function formatClock(ts) {
         if (!isCount(ts) || ts <= 0) return DASH;
@@ -2347,6 +2503,45 @@
          PURE:END
          ============================================================ */
 
+      /* ---------------- time range, bound to state ----------------
+         The parsing and the comparison above are pure so the offline probe can test them
+         without a DOM; these three are the same rules reading the live filter. */
+
+      function hasTimeRange() {
+        return isCount(state.rangeFrom) || isCount(state.rangeTo);
+      }
+
+      function inTimeRange(record) {
+        if (!recordInRange(record, state.rangeFrom, state.rangeTo)) return false;
+        // The snapshot half of the range. Without it an open-ended range grows on its own and
+        // the table appends itself every 2.5s.
+        if (isCount(state.rangeCutoff) && isCount(record.index) && record.index > state.rangeCutoff) {
+          return false;
+        }
+        return true;
+      }
+
+      /** The highest record index the session currently holds. */
+      function latestRecordIndex() {
+        var top = 0;
+        for (var i = 0; i < state.flat.length; i += 1) {
+          var index = state.flat[i] && state.flat[i].record ? state.flat[i].record.index : null;
+          if (isCount(index) && index > top) top = index;
+        }
+        return top;
+      }
+
+      /** Records written since the range was set — the ones 更新到最新 would bring in. */
+      function recordsPastCutoff() {
+        if (!isCount(state.rangeCutoff)) return 0;
+        var top = latestRecordIndex();
+        return top > state.rangeCutoff ? top - state.rangeCutoff : 0;
+      }
+
+      function timeRangeLabel() {
+        return rangeLabel(state.rangeFrom, state.rangeTo);
+      }
+
       /* ---------------- DOM helpers ---------------- */
 
       var SVG_NS = 'http://www.w3.org/2000/svg';
@@ -2462,6 +2657,29 @@
         // to explain.
         kinds: KIND_ORDER.slice(),
         query: '',
+        // Time range, in milliseconds since the session started — the same zero the ledger's
+        // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
+        // and both null is the default: no range, whole session.
+        //
+        // This is the one filter the KPI follows. The type chips and the search box narrow
+        // what is *drawn*; a range answers a different question — "what happened in this
+        // stretch" — and a headline count for the whole session beside a table of the range
+        // is the mismatch this state exists to remove.
+        rangeFrom: null,
+        rangeTo: null,
+        // The highest record index in force when the range was set. An open-ended range is
+        // `开始 – 现在`, and 「现在」 moves on its own: every record the session writes from
+        // then on lands inside the range and appended itself to the table and the KPI. That is
+        // the auto-append this filter was asked not to do, and it was measured — 11 new
+        // records moved 「已显示 588」 to 「已显示 599」 with nobody touching anything.
+        //
+        // So a range is a snapshot, not a subscription. The cutoff is what makes it one, and
+        // it moves only when the reader asks: editing either box, or 更新到最新.
+        rangeCutoff: null,
+        // The last value the page could read. A half-typed `1:2` must not silently blank the
+        // range and hand the reader the whole session back; the hint says which one is live.
+        rangeFromText: '',
+        rangeToText: '',
         limit: PAGE_STEP,
         // 「全部」 is a mode, not just a big `limit`. A poll that arrives mid-session used to
         // re-pin the window to the newest page, which would have thrown 「全部」 back to 200
@@ -2491,6 +2709,7 @@
       var sessionsInflight = null;
       var pollTimer = null;
       var searchTimer = null;
+      var rangeTimer = null;
       var refreshSeq = 0;
 
       function cacheDom() {
@@ -2509,6 +2728,11 @@
         dom.generationSelect = document.getElementById('generation-select');
         dom.generationHint = document.getElementById('generation-hint');
         dom.searchInput = document.getElementById('search-input');
+        dom.rangeFrom = document.getElementById('range-from');
+        dom.rangeTo = document.getElementById('range-to');
+        dom.rangeClear = document.getElementById('range-clear');
+        dom.rangeRefresh = document.getElementById('range-refresh');
+        dom.rangeHint = document.getElementById('range-hint');
         dom.windowBar = document.getElementById('window-bar');
         dom.headerToggle = document.getElementById('header-toggle');
         dom.kpiToggle = document.getElementById('kpi-toggle');
@@ -2925,10 +3149,134 @@
         return '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';
       }
 
+      /**
+       * The same `stats` shape the server sends, recomputed over the records inside the time
+       * range.
+       *
+       * The server builds its numbers as a by-product of splitting the file into records, so
+       * they cannot be asked for a subset. Re-deriving them here rather than adding a query
+       * parameter is what keeps the headline and the table from being able to disagree: both
+       * read `state.flat`, so a row on screen is a row that was counted.
+       *
+       * Two populations, deliberately. Record-level figures (消息, 工具调用, Token) count only
+       * the records inside the range — that is what "what happened in this stretch" means. Turn
+       * -level figures count a turn when *any* of its records is in range and then classify the
+       * whole turn, because how a turn ended does not change because the range cuts through it.
+       * The scope label says 涉及 N 轮 for exactly this reason.
+       *
+       * `messages` counts distinct record ids, not records: one file line splits into several
+       * rows (thinking, then one per tool call), and the server's count is of lines. Counting
+       * rows here would have put 11,334 on a card that reads 8,088 today.
+       *
+       * @returns {any|null} null when there is no payload to scope
+       */
+      function scopedStats() {
+        var payload = state.payload;
+        var base = payload && payload.stats ? payload.stats : null;
+        if (!base) return null;
+        var stats = {
+          messages: 0,
+          userMessages: 0,
+          toolCalls: 0,
+          toolResults: 0,
+          thinkingBlocks: 0,
+          errors: 0,
+          compactions: 0,
+          turnsWithoutPrompt: 0,
+          turnsWithPrompt: 0,
+          continuationTurns: 0,
+          qaTurns: 0,
+          openTurns: 0,
+          compactionTurns: 0,
+          // Whole-session figures, kept whole: 「全程 N」 beside the range is the comparison the
+          // reader actually wants, and re-scoping it would leave the note with nothing to say.
+          messagesAll: base.messagesAll,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+          durationMs: null
+        };
+        // `Object.create(null)` rather than `{}`: these are keyed by a string that came out of
+        // the file, and an id of `constructor` or `toString` would otherwise read as already
+        // seen and silently drop its message from the count.
+        var messages = Object.create(null);
+        var errors = Object.create(null);
+        var touched = Object.create(null);
+        var first = null;
+        var last = null;
+
+        for (var i = 0; i < state.flat.length; i += 1) {
+          var entry = state.flat[i];
+          var record = entry.record;
+          if (!inTimeRange(record)) continue;
+          var id = record.id;
+          // A string, not a number: `isCount` here would have reported 0 messages for every
+          // session, which is what a whole-range check against the server caught.
+          if (typeof id === 'string' && id !== '' && !messages[id]) {
+            messages[id] = true;
+            stats.messages += 1;
+          }
+          // The server counts an error once per file line, so this de-duplicates the same way
+          // rather than counting every record a line was split into.
+          if (record.isError === true && typeof id === 'string' && id !== '' && !errors[id]) {
+            errors[id] = true;
+            stats.errors += 1;
+          }
+          var kind = record.kind;
+          if (kind === 'user') stats.userMessages += 1;
+          else if (kind === 'steer') stats.steers += 1;
+          else if (kind === 'thinking') stats.thinkingBlocks += 1;
+          else if (kind === 'compaction') stats.compactions += 1;
+          else if (kind === 'toolCall') stats.toolCalls += 1;
+          else if (kind === 'toolResult') stats.toolResults += 1;
+          var tokens = record.tokens;
+          if (tokens && typeof tokens === 'object') {
+            if (isCount(tokens.input)) stats.tokens.input += tokens.input;
+            if (isCount(tokens.output)) stats.tokens.output += tokens.output;
+            if (isCount(tokens.cacheRead)) stats.tokens.cacheRead += tokens.cacheRead;
+            if (isCount(tokens.cacheWrite)) stats.tokens.cacheWrite += tokens.cacheWrite;
+            if (isCount(tokens.totalTokens)) stats.tokens.totalTokens += tokens.totalTokens;
+          }
+          if (isCount(record.relativeMs)) {
+            if (first === null || record.relativeMs < first) first = record.relativeMs;
+            if (last === null || record.relativeMs > last) last = record.relativeMs;
+          }
+          if (entry.turn && isCount(entry.turn.index)) touched[entry.turn.index] = true;
+        }
+
+        var turns = Array.isArray(payload.turns) ? payload.turns : [];
+        for (var t = 0; t < turns.length; t += 1) {
+          var turn = turns[t];
+          if (!turn || !touched[turn.index]) continue;
+          // Mirrors the server's classifier: prompt, then continuation, then a turn that is
+          // nothing but a checkpoint, then the rest.
+          if (turn.turnClass === 'prompt') {
+            stats.turnsWithPrompt += 1;
+            if (turn.closed !== true) stats.openTurns += 1;
+            if (turn.askedReader === true && turn.closed !== true) stats.qaTurns += 1;
+          } else if (turn.turnClass === 'continuation') {
+            stats.continuationTurns += 1;
+          } else if (turn.turnClass === 'compaction') {
+            stats.compactionTurns += 1;
+          } else {
+            stats.turnsWithoutPrompt += 1;
+          }
+        }
+
+        stats.durationMs = first === null ? null : last - first;
+        return stats;
+      }
+
+      /** The numbers the cards read: the range's, when one is set, otherwise the server's. */
+      function kpiStats() {
+        if (!hasTimeRange()) {
+          return state.payload && state.payload.stats ? state.payload.stats : null;
+        }
+        return scopedStats();
+      }
+
       function renderKpi() {
         var grid = dom.kpiGrid;
         clear(grid);
-        var stats = state.payload && state.payload.stats ? state.payload.stats : null;
+        var stats = kpiStats();
 
         if (!stats) {
           grid.appendChild(kpiCard('消息', DASH, '正在读取…', true));
@@ -3719,6 +4067,7 @@
           // The overview brush is a further filter, applied after kind and text so that
           // clearing it never silently changes what the other two meant.
           if (selection && !recordInSelection(entry.record, selection, overviewSpansById)) continue;
+          if (!inTimeRange(entry.record)) continue;
           out.push(entry);
         }
         return out;
@@ -3920,6 +4269,7 @@
         // of a hidden layer — the exact mismatch this function exists to prevent.
         return state.query !== '' || state.kinds.length !== KIND_ORDER.length
           || state.overviewSelection !== null
+          || hasTimeRange()
           ;
       }
 
@@ -3933,6 +4283,10 @@
       function spanPassesFilter(record, hasQuery) {
         if (!hasKind(record, state.kinds)) return false;
         if (hasQuery && !matchesQuery(record, state.query)) return false;
+        // The range is a filter here too. Leaving it out made the overview draw spans for
+        // records the list refused to render — the same "filtered but nothing changed" this
+        // function exists to prevent.
+        if (!inTimeRange(record)) return false;
         return true;
       }
 
@@ -4061,6 +4415,10 @@
        */
       function rePinWindow() {
         if (state.allRecords) return state.limit;
+        // A time range is a fixed stretch of the session, so the window follows it rather
+        // than the tail. Re-pinning would slide the whole range forward every 2.5s, and the
+        // records that scrolled off the top would be records the reader had scoped to.
+        if (hasTimeRange()) return state.limit;
         if (state.limit > PAGE_STEP) return state.limit;
         state.limit = Math.min(PAGE_STEP, state.flat.length) || PAGE_STEP;
         return state.limit;
@@ -4406,7 +4764,73 @@
        * through here, kind buttons and search alike.
        */
       function applyFilterScope() {
-        if (dom.kpiScope) dom.kpiScope.hidden = !isFiltering();
+        if (!dom.kpiScope) return;
+        if (hasTimeRange()) {
+          var stats = kpiStats();
+          var scope = '已按区间 ' + timeRangeLabel() + ' 统计';
+          if (stats && isCount(stats.messages)) {
+            scope += ' · ' + formatInt(stats.messages) + ' 条消息 · 涉及 '
+              + formatInt(stats.turnsWithPrompt) + ' 轮';
+          }
+          dom.kpiScope.textContent = scope;
+          dom.kpiScope.hidden = false;
+          return;
+        }
+        // The old wording was 「不随筛选变化」, which stopped being true the day a filter that
+        // the KPI *does* follow existed. It now names the filters that only narrow the list.
+        dom.kpiScope.textContent = '整场会话 · 类型与搜索只筛列表';
+        dom.kpiScope.hidden = !isFiltering();
+      }
+
+      /**
+       * What the two boxes currently mean.
+       *
+       * Three states, and the reader has to be able to tell them apart without guessing: no
+       * range, a range in force, and a half-typed value the page could not read. The last one
+       * keeps the previous range rather than blanking it — silently handing back the whole
+       * session mid-edit is the worst of the three — and says so here.
+       */
+      function updateRangeHint() {
+        if (!dom.rangeHint) return;
+        // Read the *boxes*, not the filter. An unreadable value is deliberately never written
+        // into state — that is what stops it switching the range off mid-keystroke — so
+        // testing `state.rangeTo` for NaN here could only ever be false, and the message the
+        // reader most needs became unreachable. Typing `abc` reported 「起点晚于终点」,
+        // which is true of the *previous* range and says nothing about what they just typed.
+        var fromUnreadable = state.rangeFromText.trim() !== ''
+          && isNaN(parseRangeOffset(state.rangeFromText));
+        var toUnreadable = state.rangeToText.trim() !== ''
+          && isNaN(parseRangeOffset(state.rangeToText));
+        var reversed = isCount(state.rangeFrom) && isCount(state.rangeTo) && state.rangeFrom > state.rangeTo;
+        dom.rangeHint.classList.remove('is-invalid');
+
+        if (fromUnreadable || toUnreadable) {
+          dom.rangeHint.classList.add('is-invalid');
+          dom.rangeHint.textContent = '格式无法识别，仍按上一次的有效区间统计'
+            + (hasTimeRange() ? '（' + timeRangeLabel() + '）' : '')
+            + '。格式 1:30 或 1:30:00。';
+          return;
+        }
+        if (reversed) {
+          dom.rangeHint.classList.add('is-invalid');
+          dom.rangeHint.textContent = '起点晚于终点，没有记录落在这段时间里。';
+          return;
+        }
+        if (!hasTimeRange()) {
+          dom.rangeHint.classList.remove('is-invalid');
+          dom.rangeHint.textContent = '留空 = 不限。填写会话开始后的时间，格式 1:30 或 1:30:00。';
+          return;
+        }
+        var stats = kpiStats();
+        var behind = recordsPastCutoff();
+        dom.rangeHint.classList.remove('is-invalid');
+        dom.rangeHint.textContent = '区间 ' + timeRangeLabel() + ' · 关键指标已按此区间统计'
+          + (stats && isCount(stats.messages) ? ' · ' + formatInt(stats.messages) + ' 条消息' : '')
+          // Said out loud because the range is a snapshot: without it a frozen view looks
+          // broken rather than deliberate, and the reader assumes the page stopped updating.
+          + (behind > 0
+            ? ' · 已固定在设定时的样子，之后新增的 ' + formatInt(behind) + ' 条未计入'
+            : ' · 已固定在设定时的样子，新增记录不会自动追加');
       }
 
       /* ---------------- selection ---------------- */
@@ -4423,9 +4847,92 @@
       function clearFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
+        clearTimeRange();
         resetWindowMode();
         if (dom.searchInput) dom.searchInput.value = '';
         syncKindButtons();
+        render();
+      }
+
+      /**
+       * Drops the range. Does not render, so `clearFilters` and the button can share it.
+       */
+      function clearTimeRange() {
+        state.rangeFrom = null;
+        state.rangeTo = null;
+        state.rangeFromText = '';
+        state.rangeToText = '';
+        state.rangeCutoff = null;
+        if (dom.rangeFrom) dom.rangeFrom.value = '';
+        if (dom.rangeTo) dom.rangeTo.value = '';
+        syncRangeButtons();
+        updateRangeHint();
+      }
+
+      /**
+       * Reads both boxes into the filter.
+       *
+       * A box the page could not read is left alone rather than assigned: `NaN` fails the
+       * `isCount` test behind `hasTimeRange`, so writing it into state would switch the whole
+       * range off — handing back the entire session in the middle of typing `1:2`. The hint
+       * says which value is live.
+       */
+      function applyTimeRange() {
+        var from = parseRangeOffset(state.rangeFromText);
+        var to = parseRangeOffset(state.rangeToText);
+        if (!isNaN(from)) state.rangeFrom = from;
+        if (!isNaN(to)) state.rangeTo = to;
+
+        if (hasTimeRange()) {
+          // Re-cut the snapshot on every apply, not only on the transition. Editing either box
+          // is the reader saying what they want to see now, so it must also pick up what has
+          // arrived since; a range they did not touch stays where it was.
+          state.rangeCutoff = latestRecordIndex();
+        }
+        syncRangeButtons();
+        updateRangeHint();
+
+        // Like every other filter, and for the same reason: the window the reader was looking
+        // at was chosen for a set of records that no longer exists. Setting a range used to
+        // force 「全部」 instead, on the theory that a 200-cap inside a range silently drops
+        // the start of what the reader asked for. Measured, that theory is not worth its
+        // price — a range starting at 20:00 covers the whole session, 全部 then rendered
+        // ~11,000 rows and took the document to 414,000px, where one query took 19s. The
+        // window bar still says how many are not loaded and 「显示全部」 is still one click.
+        //
+        // 不自动追加 does not depend on this: the snapshot cutoff holds the range still on
+        // its own, which is what it was measured doing.
+        resetWindowMode();
+        render();
+      }
+
+      /** The clear and refresh buttons, which exist only while a range does. */
+      function syncRangeButtons() {
+        var isSet = hasTimeRange();
+        if (dom.rangeClear) dom.rangeClear.hidden = !isSet;
+        if (dom.rangeRefresh) {
+          dom.rangeRefresh.hidden = !isSet;
+          // Disabled, not hidden, when there is nothing to bring in. How many records are
+          // waiting changes on every poll, and a control that appears and disappears takes
+          // its neighbour with it: 清空区间 shifted sideways whenever this one showed up, and
+          // clicks aimed at it landed on empty space. The range was open-ended, so it showed
+          // up every time. A disabled button keeps its box, so nothing moves.
+          dom.rangeRefresh.disabled = !isSet || recordsPastCutoff() === 0;
+        }
+      }
+
+      /**
+       * Brings the snapshot up to what the session has written since.
+       *
+       * It exists because the range is deliberately a snapshot. Without a way to move it, a
+       * reader would have to retype a box to see the last two minutes, which is a worse trap
+       * than the auto-append it replaced.
+       */
+      function refreshTimeRange() {
+        if (!hasTimeRange()) return;
+        state.rangeCutoff = latestRecordIndex();
+        syncRangeButtons();
+        updateRangeHint();
         render();
       }
 
@@ -4920,6 +5427,15 @@
         renderBars();
         renderGeneration();
         renderKpi();
+        // Both read the range, so they cannot wait for the ledger to call them: the ledger
+        // returns early while loading, which is exactly when a stale scope line would sit
+        // above cards that had already changed.
+        applyFilterScope();
+        updateRangeHint();
+        // The refresh button depends on how far the session has run past the snapshot, which
+        // changes on every poll — it has to be re-decided here or it would offer to refresh
+        // for records that are already in, or stay hidden while 200 records pile up behind it.
+        syncRangeButtons();
         renderOverview();
         renderLedger();
         renderInspector();
@@ -5163,6 +5679,33 @@
 
         dom.toolbar.addEventListener('submit', function (event) {
           event.preventDefault();
+        });
+
+        // Both boxes feed one filter, so one debounce covers editing either of them: `1:2`
+        // resolves to nothing and `1:20` resolves to a range, and a reader who pauses mid
+        // keystroke should not see the table jump through the whole session in between.
+        var onRangeInput = function () {
+          state.rangeFromText = dom.rangeFrom.value;
+          state.rangeToText = dom.rangeTo.value;
+          if (rangeTimer !== null) window.clearTimeout(rangeTimer);
+          rangeTimer = window.setTimeout(function () {
+            rangeTimer = null;
+            applyTimeRange();
+          }, SEARCH_DEBOUNCE);
+        };
+        dom.rangeFrom.addEventListener('input', onRangeInput);
+        dom.rangeTo.addEventListener('input', onRangeInput);
+        dom.rangeRefresh.addEventListener('click', function () {
+          if (rangeTimer !== null) window.clearTimeout(rangeTimer);
+          rangeTimer = null;
+          refreshTimeRange();
+        });
+        dom.rangeClear.addEventListener('click', function () {
+          if (rangeTimer !== null) window.clearTimeout(rangeTimer);
+          rangeTimer = null;
+          clearTimeRange();
+          resetWindowMode();
+          render();
         });
 
         var kindButtons = dom.kindControls.querySelectorAll('.tbtn-action');
