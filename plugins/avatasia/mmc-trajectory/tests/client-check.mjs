@@ -380,12 +380,15 @@ const checks = [
   ['window bar container is static markup', /<div class="window-bar" id="window-bar"/.test(html)],
   ['the axis button is built with the window bar, not hardcoded in the page', !/id="duration-btn"/.test(html) && /var axis = el\('button', 'tbtn tbtn-toggle window-bar-axis'\)/.test(html)],
   ['the axis button is applied by a helper, not by two callers', /function applyAxisButton\(button\)/.test(html) && !/function renderViewControls/.test(html)],
-  // One filter means one writer per control and no parallel copy. Three controls assign
-  // state.kinds — the per-kind buttons, 全部 and 清除筛选 — so there must be exactly three
-  // assignment sites. A fourth would be another path deciding what is on screen, which is
-  // what this check exists to catch; if one is ever genuinely wanted, delete the check in
-  // the same commit that adds the control rather than loosening it silently.
-['state.kinds is written from exactly three controls', (html.match(/state\.kinds\s*=[^=]/g) || []).length === 3],
+  // One filter means one writer per control and no parallel copy. Four controls assign
+  // state.kinds — the per-kind buttons, 全部, 清除筛选, and 异常's own reset, which has to put
+  // the axis back because in that mode the axis filters nothing and must not go on displaying a
+  // condition that is not in force. A fifth would be another path deciding what is on screen,
+  // which is what this check exists to catch; if one is ever genuinely wanted, change the check
+  // in the same commit that adds the control rather than loosening it silently.
+  ['state.kinds is written from exactly four controls', (html.match(/state\.kinds\s*=[^=]/g) || []).length === 4],
+  // That the fourth writer also updates the buttons is checked by verify-anomaly.mjs, not here:
+  // it is a property of 异常, and it needs a mutation control that mutate-anomaly.py can run.
   // The breakdown is the only place the turn count explains itself, and its whole job is that
   // the parts add up to the headline and that the first two add up to the reply count. Those
   // were comments until a probe showed them wrong: the line used to read 已收尾 54 · 提问待答 5

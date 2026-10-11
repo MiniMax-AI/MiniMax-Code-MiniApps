@@ -379,6 +379,16 @@ page.render = () => {};
 const toggleSource = fnSource('function onAnomalyToggle(');
 if (!toggleSource) throw new Error('could not extract onAnomalyToggle');
 vm.runInContext(toggleSource, page);
+// resetBaseFilters is real here, not stubbed: it is the thing that decides whether the row above
+// ends up displaying a condition that is not in force. Only its two DOM-touching steps are
+// stubbed, because what they do to the widgets is checked by their own guards.
+const resetBaseSource = fnSource('function resetBaseFilters(');
+if (!resetBaseSource) throw new Error('could not extract resetBaseFilters');
+vm.runInContext(resetBaseSource, page);
+let rangeCleared = 0;
+page.clearTimeRange = () => { rangeCleared += 1; };
+page.syncKindButtons = () => {};
+page.dom = { searchInput: null };
 
 page.state.anomalyRules = [];
 page.onAnomalyToggle('toolError');
@@ -400,16 +410,34 @@ page.onAnomalyToggle('toolError');
 page.onAnomalyToggle(null);
 check('全部异常 from a partial selection ticks everything, not just the rest', page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
 
-// 全部数据 is the way out, and it is run here for the same reason the toggle is: the shape of a
+// Ticking a rule puts the row above back to its default. In anomaly mode that row filters
+// nothing, so leaving it holding 「用户」 would be the page showing a condition that is not in
+// force — the same class of defect as a button whose number does not match its list, one
+// control over. Set up a non-default row above, tick, and read the row above again.
+page.state.kinds = pure.KIND_ORDER.filter((k) => k !== 'user');
+page.state.query = 'verify-time-range';
+page.state.overviewSelection = { from: 1, to: 2 };
+rangeCleared = 0;
+page.state.anomalyRules = [];
+page.onAnomalyToggle('toolError');
+check('ticking a rule puts every type back', page.state.kinds, pure.KIND_ORDER);
+check('and drops the search', page.state.query, '');
+assert('and drops the overview brush', page.state.overviewSelection === null);
+check('and clears the time range', rangeCleared, 1);
+
+// 重置 is the way out, and it is run here for the same reason the toggle is: the shape of a
 // handler is the same whether it clears, toggles, or does nothing at all.
-const showAllSource = fnSource('function onAnomalyShowAll(');
-if (!showAllSource) throw new Error('could not extract onAnomalyShowAll');
-vm.runInContext(showAllSource, page);
+const resetSource = fnSource('function onAnomalyReset(');
+if (!resetSource) throw new Error('could not extract onAnomalyReset');
+vm.runInContext(resetSource, page);
 page.state.anomalyRules = ['toolError', 'silent'];
-page.onAnomalyShowAll();
-check('全部数据 goes back to every record', page.state.anomalyRules, []);
-page.onAnomalyShowAll();
+page.onAnomalyReset();
+check('重置 returns the row to its default', page.state.anomalyRules, []);
+check('and the row above is the default, so the table follows it',
+  page.state.kinds, pure.KIND_ORDER);
+page.onAnomalyReset();
 check('and pressing it again is not a toggle into a filtered view', page.state.anomalyRules, []);
+assert('the second press is not even a re-render', page.state.anomalyRules.length === 0);
 page.state.anomalyRules = [];
 
 /* ---------- 6) what the reader is shown ---------- */
@@ -445,21 +473,33 @@ assert('one button per rule', /ANOMALY_RULES\[i\]/.test(buildSrc) && /rule\.id/.
 assert('plus one for the whole set', /'anomaly-all'/.test(buildSrc));
 // The page has to be able to get out of the mode it can get into. A way back that only exists
 // in the markup, or that a rename of the button would orphan, is not a way back.
-assert('and one to get back to every record',
+assert('and one to put the row back to its default',
   /'anomaly-none'/.test(buildSrc) && /data-anomaly-none/.test(buildSrc));
-assert('the way back is built first, so the row reads everything-then-kinds',
+assert('the way back is built first, so the row reads default-then-kinds',
   buildSrc.indexOf("'anomaly-none'") < buildSrc.indexOf('ANOMALY_RULES.length'));
+// 重置 carries no number. 「怎么多会留下多少」 is a question about a rule; a control that keeps
+// whatever the row above says has no count of its own, and printing one invites adding it up
+// against the numbers beside it.
+const noneBlock = buildSrc.slice(buildSrc.indexOf("var none = el("), buildSrc.indexOf('for (var i = 0;'));
+assert('重置 advertises no count of its own',
+  /ANOMALY_NONE_LABEL/.test(noneBlock) && !/anomaly-count/.test(noneBlock));
+assert('every rule button does carry one', /anomaly-count/.test(buildSrc));
 
 const syncSrc = fnSource('function syncAnomalyButtons()');
 assert('a button states how many rows it would keep', /anomaly-count/.test(syncSrc));
+const labelSrc = fnSource('function ruleLabelFor(');
 assert('and the number it publishes carries the unit it was counted in',
-  /formatInt\(n\) \+ ' ' \+ unit/.test(syncSrc));
+  /formatInt\(n\) \+ ' ' \+ unit/.test(labelSrc));
+assert('one builder for every rule button, so the wording cannot drift between them',
+  /ruleLabelFor\(noun, n, unit, on\)/.test(syncSrc));
 assert('the unit comes from the counting pass, not a literal beside each button',
   /counts\.unit\[id\]/.test(syncSrc));
 assert('pressed state comes from state, not a captured flag',
   /state\.anomalyRules\.indexOf\(id\) >= 0/.test(syncSrc));
-assert('the way back is pressed exactly when no rule is',
-  /isNone[\s\S]{0,240}?state\.anomalyRules\.length === 0/.test(syncSrc));
+assert('重置 is pressed exactly when no rule is',
+  /if \(isNone\) \{[\s\S]*?state\.anomalyRules\.length === 0/.test(syncSrc));
+assert('and a rule button with nothing to find is dimmed, never hidden',
+  /n !== null && n === 0/.test(syncSrc));
 assert('the count comes from the shared pass, not a second walk',
   /var counts = anomalyCounts\(\);/.test(syncSrc));
 
@@ -510,6 +550,21 @@ assert('the mode is settled before anything reads a count',
 assert('every poll re-syncs the buttons', /syncAnomalyButtons\(\);/.test(renderSrc));
 
 const modeSrc = fnSource('function syncAnomalyMode()');
+// Setting state.kinds without syncKindButtons() leaves the axis drawing whatever was there
+// before — which is how 异常 would end up showing 「用户」 while the table was showing something
+// else entirely. The count of writers is client-check's business; whether the new one syncs is
+// a property of this axis, and this is the file whose mutation control can exercise it.
+const baseSrc = fnSource('function resetBaseFilters(');
+assert('the reset updates the buttons, or the axis would show a condition that is not in force',
+  !!baseSrc && /state\.kinds = KIND_ORDER\.slice\(\);/.test(baseSrc) && /syncKindButtons\(\);/.test(baseSrc));
+assert('and it clears every part of the row above, not just the types',
+  !!baseSrc && /state\.query = '';/.test(baseSrc) && /state\.overviewSelection = null;/.test(baseSrc)
+  && /clearTimeRange\(\);/.test(baseSrc));
+const toggleFull = fnSource('function onAnomalyToggle(');
+assert('and it runs on every tick into the mode, not only the first',
+  !!toggleFull && /if \(next\.length > 0\) resetBaseFilters\(\);/.test(toggleFull));
+assert('ticking a rule does not reset the row above on the way back out',
+  !!toggleFull && !/if \(next\.length === 0\) resetBaseFilters/.test(toggleFull));
 // Dimming alone would leave a control that takes a click and changes nothing — the same class
 // of defect this change is about, reintroduced one line away.
 assert('the inactive axis is made inert, not merely dimmed', /\.inert = on/.test(modeSrc));

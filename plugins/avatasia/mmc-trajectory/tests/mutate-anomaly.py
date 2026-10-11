@@ -111,8 +111,8 @@ CASES = [
 
     # --- ticking, run rather than read ---
     ("ticking no longer resets the window", "and it resets the window like every other filter",
-     "        state.anomalyRules = next;\n        resetWindowMode();",
-     "        state.anomalyRules = next;"),
+     "        if (next.length > 0) resetBaseFilters();\n        resetWindowMode();",
+     "        if (next.length > 0) resetBaseFilters();"),
     ("unticking re-adds the rule it just removed", "unticking removes only that one",
      "          if (next.length === state.anomalyRules.length) next = next.concat([ruleId]);",
      "          if (next.length <= state.anomalyRules.length) next = next.concat([ruleId]);"),
@@ -167,12 +167,37 @@ CASES = [
      "          unit[ANOMALY_RULES[i].id] = '条';"),
 
     # --- there has to be a way out of the mode there is a way into.
-    ("the way back to every record is not built", "and one to get back to every record",
+    ("重置 is not built", "and one to put the row back to its default",
      "        none.id = 'anomaly-none';", "        none.id = 'anomaly-all-data';"),
-    ("全部数据 ticks the whole set instead of clearing it",
-     "全部数据 goes back to every record",
+    ("重置 ticks the whole set instead of clearing it",
+     "重置 returns the row to its default",
      "        if (state.anomalyRules.length === 0) return;\n        state.anomalyRules = [];",
      "        if (state.anomalyRules.length === 0) return;\n        state.anomalyRules = ANOMALY_RULE_IDS.slice();"),
+    # 重置 has no count of its own: 「怎么多会留下多少」 is a question about a rule, and a control
+    # that keeps whatever the row above says has no answer to it. Printing one anyway invites
+    # adding it up against the numbers beside it.
+    ("重置 given a count it cannot keep", "重置 advertises no count of its own",
+     "        none.appendChild(el('span', 'anomaly-label', ANOMALY_NONE_LABEL));\n        dom.anomalyControls.appendChild(none);",
+     "        none.appendChild(el('span', 'anomaly-label', ANOMALY_NONE_LABEL));\n        none.appendChild(el('span', 'anomaly-count', '0'));\n        dom.anomalyControls.appendChild(none);"),
+    # In 异常 mode the row above filters nothing. Leaving it holding 「用户」 would be the page
+    # showing a condition that is not in force — the same defect as a button whose number does
+    # not match its list, one control over.
+    ("ticking a rule no longer puts the row above back to default",
+     "ticking a rule puts every type back",
+     "        if (next.length > 0) resetBaseFilters();",
+     "        if (next.length > 0 && false) resetBaseFilters();"),
+    ("the reset forgets the search box", "and drops the search",
+     "        state.query = '';\n        state.overviewSelection = null;",
+     "        state.overviewSelection = null;"),
+    ("the reset forgets the overview brush", "and drops the overview brush",
+     "        state.overviewSelection = null;\n        clearTimeRange();",
+     "        clearTimeRange();"),
+    # Setting state.kinds without syncKindButtons() is how the axis ends up drawing a condition
+    # the table is not filtered by, which is the whole reason the reset exists.
+    ("the reset sets the state but never the buttons",
+     "the reset updates the buttons, or the axis would show a condition that is not in force",
+     "        syncKindButtons();\n      }\n\n      /**\n       * Keeps the page honest",
+     "      }\n\n      /**\n       * Keeps the page honest"),
     ("the inactive axis is dimmed but still takes clicks",
      "the inactive axis is made inert, not merely dimmed",
      "        for (var i = 0; i < scopes.length; i += 1) scopes[i].inert = on;",

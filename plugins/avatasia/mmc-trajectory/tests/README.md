@@ -101,32 +101,41 @@ none of them, and the guards then fail for want of something to find.
 | `mutate-turn-breakdown.py` | the turn breakdown parts sum to the headline |
 | `mutate-compaction-turn.py` | the compaction-turn attribution is not a free-text label |
 | `mutate-pr15-fixes.py` | each of the six PR #15 fixes has a guard that can fail |
-| `mutate-anomaly.py` | each of the 45 异常 mutations, in the page, has a guard that can fail |
+| `mutate-anomaly.py` | each of the 50 异常 mutations, in the page, has a guard that can fail |
 | `mutate-steer.py` | the steer split and the turn classification hold |
 | `mutate-window-default.py` | the window defaults, labels, resets and load-more hold |
 
 ## The 异常 axis, and what it promises
 
 `异常` is a second filter system, not a fourth field of the first one. Entering it switches the
-type axis, the search box, the time range and the overview brush off; leaving it switches them
-back on with their values intact. Four properties are asserted, each with a mutation control,
-because each was observed to be false in this file's own history:
+type axis, the search box, the time range and the overview brush off **and puts them back to their
+default**; `重置` returns the row to its default, where the table is filtered by the row above
+again. Five properties are asserted, each with a mutation control, because each was observed to
+be false in this file's own history:
 
-1. **The number on a button is what you get when you tick that button.** `anomalyCounts()` walks
+1. **Ticking a rule puts the row above back to its default.** In this mode that row filters
+   nothing, so leaving it holding 「用户」 would be the page displaying a condition that is not in
+   force — the same defect as a button whose number does not match its list, one control over.
+   `resetBaseFilters()` sets the state *and* calls `syncKindButtons()`; a write without the sync
+   leaves the axis drawing what was there before, and that is what the last mutation control here
+   breaks. `重置` is not a toggle either: the second press filters nothing, it does nothing at all.
+   And `重置` carries no count, because 「怎么多会留下多少」 is a question about a rule, and a control
+   that keeps whatever the row above says has no answer to it.
+2. **The number on a button is what you get when you tick that button.** `anomalyCounts()` walks
    the same records `visibleEntries()` does and neither of them walks the other axis. Counting
    through `passesBaseFilter` — which is what this guard used to *require* — produced a button
    promising 283 rows above a list of 1,494, and no functional assertion could tell, because the
    ledger was filtering the same way the count was.
-2. **The unit is part of the claim.** A rule scoped to a record is published in 条; a rule scoped
+3. **The unit is part of the claim.** A rule scoped to a record is published in 条; a rule scoped
    to a turn is published in 轮, and counted once per *turn*. `无答复` counted in records is how
    a session broken 13 times came to advertise 1,244 "unanswered" rows, none of which carried a
    sign of being unanswered. `verify-anomaly.mjs` checks the unit against the rule table, not
    against a literal, so renaming or rescoping a rule cannot leave the two disagreeing.
-3. **The two axes are alternatives, not a stack.** `visibleEntries()` and `spanPassesFilter()`
+4. **The two axes are alternatives, not a stack.** `visibleEntries()` and `spanPassesFilter()`
    branch on the mode before the other axis. The strip has to agree with the list: when it
    drew spans for records the list was not rendering, the "filtered but nothing changed" failure
    the overview had already paid for once came straight back.
-4. **A control that cannot change what is on screen must not look like it can.** The inactive
+5. **A control that cannot change what is on screen must not look like it can.** The inactive
    axis is `inert`, not merely dimmed, so neither the pointer nor keyboard focus can reach a
    button that does nothing. The session and generation pickers are deliberately unmarked — they
    choose which session is on screen, not which records of it — and the guard asserts exactly

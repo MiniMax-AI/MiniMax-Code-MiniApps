@@ -2292,10 +2292,12 @@
         return rule.id;
       });
 
-      // The way out. Not a rule, so it has no id and no entry in the table: it is the state
-      // where no rule applies. Named here rather than in the markup so the bar cannot end up
-      // offering a way back that the handler and the note disagree with.
-      var ANOMALY_NONE_LABEL = '全部数据';
+      // Not a rule, so it has no id and no entry in the table: it is the state where no rule
+      // applies and the row above is in charge again. 重置, not 反选 — nothing is being inverted
+      // here, the row is being put back the way it was on arrival. Named here rather than in the
+      // markup so the bar cannot end up offering a way back that the handler and the note
+      // disagree with.
+      var ANOMALY_NONE_LABEL = '重置';
 
       function anomalyRuleById(id) {
         for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
@@ -6198,7 +6200,6 @@
         none.setAttribute('data-anomaly-none', '');
         none.setAttribute('aria-pressed', 'true');
         none.appendChild(el('span', 'anomaly-label', ANOMALY_NONE_LABEL));
-        none.appendChild(el('span', 'anomaly-count', '0'));
         dom.anomalyControls.appendChild(none);
 
         for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
@@ -6242,38 +6243,49 @@
           var n;
           var noun;
           var unit;
+          var label;
           if (isNone) {
+            // 重置 carries no number. The other buttons answer "how much would this keep", and
+            // that question is meaningless for a control that keeps whatever the row above says
+            // — the row above's own count is already on the window bar.
             on = state.anomalyRules.length === 0;
-            n = counts.total;
             noun = ANOMALY_NONE_LABEL;
-            unit = '条';
+            label = noun + ' · ' + (on ? '已是默认状态 · 表格按上一行的条件筛选'
+              : '点击回到默认状态 · 表格按上一行的条件筛选');
+            n = null;
           } else if (isAll) {
             on = state.anomalyRules.length === ANOMALY_RULES.length;
             n = counts.any;
             noun = '全部异常';
             unit = '条';
+            label = ruleLabelFor(noun, n, unit, on);
           } else {
             on = state.anomalyRules.indexOf(id) >= 0;
             n = counts.byRule[id] || 0;
             noun = anomalyRuleLabel(id);
             unit = counts.unit[id] || '条';
+            label = ruleLabelFor(noun, n, unit, on);
           }
-          // The unit is printed next to the number rather than assumed: 条 for a rule about a
-          // record, 轮 for a rule about a turn. A bare number cannot carry that difference, and
-          // a reader who cannot tell them apart is exactly who reads 1,244 条 as 1,244
-          // unanswered replies when the session was broken thirteen times.
-          var amount = formatInt(n) + ' ' + unit;
-          // The way back is not a rule that happens to be on, so it is not described as one.
-          var wording = isNone
-            ? (on ? '当前正在看全部数据' : '点击回到全部数据')
-            : (on ? '当前只看这些 · 点击取消' : '当前未启用 · 点击只看这些');
-          var label = noun + ' ' + amount + ' · ' + wording;
-          button.querySelector('.anomaly-count').textContent = amount;
+          var cell = button.querySelector('.anomaly-count');
+          if (cell) cell.textContent = formatInt(n) + ' ' + unit;
           button.setAttribute('aria-pressed', on ? 'true' : 'false');
           button.setAttribute('aria-label', label);
           button.setAttribute('title', label);
-          button.classList.toggle('is-empty', n === 0);
+          button.classList.toggle('is-empty', n !== null && n === 0);
         }
+      }
+
+      /**
+       * One rule's button name, built from the same two facts the number is.
+       *
+       * The unit is printed next to the number rather than assumed: 条 for a rule about a
+       * record, 轮 for a rule about a turn. A bare number cannot carry that difference, and a
+       * reader who cannot tell them apart is exactly who reads 1,244 条 as 1,244 unanswered
+       * replies when the session was broken thirteen times.
+       */
+      function ruleLabelFor(noun, n, unit, on) {
+        return noun + ' ' + formatInt(n) + ' ' + unit + ' · '
+          + (on ? '当前只看这些 · 点击取消' : '当前未启用 · 点击只看这些');
       }
 
       function onAnomalyToggle(ruleId) {
@@ -6290,24 +6302,45 @@
           });
         }
         state.anomalyRules = next;
+        // Ticking a rule puts the row above back to its default. Not a convenience: in this mode
+        // the row above filters nothing, so leaving it holding 「用户」 would be the page showing
+        // a condition that is not in force — the same defect as a button whose number does not
+        // match its list, one control over.
+        if (next.length > 0) resetBaseFilters();
         resetWindowMode();
         render();
       }
 
       /**
-       * Back to every record.
+       * Back to the default: no anomaly rule, and the table filtered by the row above.
        *
-       * Deliberately not a toggle. 全部数据 is the state the page opens in, so a toggle would
-       * mean the second click on an already-active button silently filtered the list — the
-       * reader pressed "show me everything" and got less of it. Nothing is selected, the other
-       * axis takes over again, and nothing else changes: the type axis and the search box come
-       * back holding exactly what they were holding before.
+       * Deliberately not a toggle. 重置 is the state the page opens in, so a toggle would mean
+       * the second click on an already-active button silently filtered the list — the reader
+       * pressed "put it back" and got less of it. And deliberately it does not restore what the
+       * row above used to hold either: it is a reset, so the row above is already at its default
+       * and the table follows from there.
        */
-      function onAnomalyShowAll() {
+      function onAnomalyReset() {
         if (state.anomalyRules.length === 0) return;
         state.anomalyRules = [];
         resetWindowMode();
         render();
+      }
+
+      /**
+       * The row above, put back to its default: every kind, no query, no range, no brush.
+       *
+       * Written once and called from both directions into anomaly mode, because the controls and
+       * the state have to move together — setting `state.kinds` without `syncKindButtons()` is
+       * how the axis ends up showing 「用户」 while the table is not filtered by it.
+       */
+      function resetBaseFilters() {
+        state.kinds = KIND_ORDER.slice();
+        state.query = '';
+        state.overviewSelection = null;
+        clearTimeRange();
+        if (dom.searchInput) dom.searchInput.value = '';
+        syncKindButtons();
       }
 
       /**
@@ -6327,8 +6360,8 @@
         if (!dom.anomalyNote) return;
         dom.anomalyNote.hidden = !on;
         if (on) {
-          dom.anomalyNote.textContent = '异常筛选已开启 · 类型、搜索、时间区间与总览不参与 · 点「'
-            + ANOMALY_NONE_LABEL + '」回到全部数据';
+          dom.anomalyNote.textContent = '异常筛选已开启 · 类型、搜索、时间区间与总览已回到默认且不参与 · 点「'
+            + ANOMALY_NONE_LABEL + '」回到默认筛选';
         }
       }
 
@@ -6496,7 +6529,7 @@
             // are re-synced on every poll, and a captured flag goes stale between the render
             // and the click.
             if (this.hasAttribute('data-anomaly-none')) {
-              onAnomalyShowAll();
+              onAnomalyReset();
               return;
             }
             var id = this.getAttribute('data-anomaly-rule');
