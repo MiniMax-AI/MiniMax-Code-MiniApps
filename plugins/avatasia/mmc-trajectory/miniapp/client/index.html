@@ -431,7 +431,21 @@
       }
 
       .range-input {
-        width: 88px;
+        /* Wide enough for the longest thing the hint tells the reader to type here —
+           `2026-10-10 23:30`, 16 characters — plus the caret. It was a bare 88px, which held
+           `2026-10-10` and scrolled the rest out of sight: the value stayed correct and the
+           hint echoed it back, but the box itself showed a substring, so the field could not
+           be checked by looking at it. Same failure as the record-index column — a width fixed
+           by today's content rather than by the content the control accepts.
+
+           Measured, not guessed. `ch` is the advance of a digit, and `tabular-nums` makes
+           every digit in a date exactly one `ch`, so the width scales with the font instead of
+           being a number measured once on one machine. At 15ch this box rendered 113px and
+           held 15 character slots — 14 glyphs and the caret — with `2026-10-10 23:50` still
+           losing its leading `20`. Sixteen glyphs and a caret is 17 slots, so 17ch is the
+           floor and 18ch leaves a margin. */
+        width: 18ch;
+        min-width: 18ch;
         font-variant-numeric: tabular-nums;
       }
 
@@ -2180,14 +2194,18 @@
       }
 
       /* ---------------- time range ----------------
-         Offsets in milliseconds since the session started. This is the one clock the ledger
-         already prints on every row, so the number a reader is looking at can be typed
-         straight in; a wall-clock field would have matched nothing else on the page.
+         Milliseconds since the session started. Offsets are the default because they are the
+         one clock the ledger already prints on every row, so a number a reader is looking at can
+         be typed straight in — but a session that runs past midnight outlives that. This one
+         crosses 2026-10-11 at offset 12:14:29, and there `12:00:00` is last night while
+         `13:00:00` is a quarter of an hour later: an hour of offset, fifteen minutes of wall
+         clock, and midnight inside it with nothing on the page saying so. So a box may also
+         hold a wall clock, and `hasRangeDate` decides which from the text alone.
 
          Three outcomes, kept apart on purpose:
            null  → empty, that end is open (or the whole filter is off)
            NaN   → the text is not a time; the filter keeps its last readable value
-           >= 0  → the offset in ms
+           integer → the offset in ms, negative when the bound precedes session start
 
          `1:30` and `1:30:00` are both read as minutes and minutes:seconds, matching the
          `893 分 21 秒` the row shows. Bare digits are minutes, because "the first ten
@@ -2228,17 +2246,108 @@
       }
 
       /**
+       * Whether a box is a wall-clock date rather than an offset.
+       *
+       * The two grammars cannot be confused because they share no separator: an offset is
+       * digits and colons (`1:30`, `1:30:00`), a date is digits and `-` or `/`. So this is a
+       * property of what the reader typed, decided before any value is computed — the filter,
+       * the label and the hint all go through it and cannot come out disagreeing.
+       *
+       * @param {string} text
+       * @returns {boolean}
+       */
+      function hasRangeDate(text) {
+        var raw = String(text === null || text === undefined ? '' : text).trim();
+        if (raw === '') return false;
+        // The day/time part is optional, so `2026-10-10` is a date and reads as that midnight.
+        return /^\d{4}[-/]\d{1,2}[-/]\d{1,2}([T ]+\d{1,2}(:\d{1,2}(:\d{1,2})?)?)?$/.test(raw);
+      }
+
+      /**
+       * A wall-clock bound, returned as an offset from session start.
+       *
+       * Subtracting is the whole conversion: every record already carries both `timestamp` and
+       * `relativeMs`, and `session.startedAt` is the same origin the offsets were measured
+       * from, so no new clock is introduced anywhere.
+       *
+       * The result may be negative, and deliberately so. A session that began at 23:45 today
+       * has no records at 20:00, and a bound there means exactly that — every record is past
+       * it. Clamping to zero would also work and would be wrong to notice, but printing
+       * `-2:45:00` next to the range is what makes it visible instead.
+       *
+       * The year is required rather than inferred. Guessing turns `01-01` into a coin flip in
+       * a session that starts in December, and a range that silently lands on the wrong year
+       * is worse than one the reader has to finish typing.
+       *
+       * @param {string} text
+       * @param {number|null} sessionStartMs
+       * @returns {number|null} offset ms, `null` when empty, `NaN` when the text is not a date
+       *   or the session has no start to measure from
+       */
+      function parseRangeAbsolute(text, sessionStartMs) {
+        var raw = String(text === null || text === undefined ? '' : text).trim();
+        if (raw === '') return null;
+        if (!hasRangeDate(raw)) return NaN;
+        if (!isCount(sessionStartMs)) return NaN;
+        var parts = raw.split(/[T ]+/);
+        var dateParts = parts[0].split(/[-\/]/);
+        var year = Number(dateParts[0]);
+        var month = Number(dateParts[1]);
+        var day = Number(dateParts[2]);
+        var hour = 0;
+        var minute = 0;
+        var second = 0;
+        if (parts.length > 1) {
+          var clock = parts[1].split(':');
+          if (clock.length === 2) {
+            hour = Number(clock[0]);
+            minute = Number(clock[1]);
+          } else if (clock.length === 3) {
+            hour = Number(clock[0]);
+            minute = Number(clock[1]);
+            second = Number(clock[2]);
+          } else return NaN;
+        }
+        // Built from parts, never parsed from the string: `new Date('2026-10-10')` is UTC and
+        // would silently shift the bound by the offset between here and Greenwich. The
+        // round-trip below is what rejects 2026-02-30, which Date otherwise rolls forward
+        // into March and hands back a range the reader never asked for.
+        var wall = new Date(year, month - 1, day, hour, minute, second, 0);
+        if (isNaN(wall.getTime())) return NaN;
+        if (wall.getFullYear() !== year || wall.getMonth() !== month - 1 || wall.getDate() !== day
+          || wall.getHours() !== hour || wall.getMinutes() !== minute || wall.getSeconds() !== second) return NaN;
+        return wall.getTime() - sessionStartMs;
+      }
+
+      /**
+       * One box, either grammar. The single place that decides which, so nothing downstream can
+       * treat a wall clock as an offset or the reverse.
+       *
+       * @param {string} text
+       * @param {number|null} sessionStartMs
+       * @returns {number|null} offset ms, `null` when empty, `NaN` when unreadable
+       */
+      function parseRangeValue(text, sessionStartMs) {
+        return hasRangeDate(text) ? parseRangeAbsolute(text, sessionStartMs) : parseRangeOffset(text);
+      }
+
+      /**
        * @param {number} ms
-       * @returns {string} `1:30:00`, or `1:30` while it fits in minutes
+       * @returns {string} `1:30:00`, or `1:30` while it fits in minutes; `-` before a bound that
+       *   lands before the session began
        */
       function formatRangeOffset(ms) {
         if (!isCount(ms)) return DASH;
+        // An absolute bound can land before session start, and `Math.abs` alone would print
+        // `-2:45:00` as `2:45:00` — the same string a reader would get for a bound two hours
+        // and forty-five minutes *in*, in the one place the sign is the whole message.
+        var sign = ms < 0 ? '-' : '';
         var total = Math.floor(Math.abs(ms) / 1000);
         var hours = Math.floor(total / 3600);
         var minutes = Math.floor((total % 3600) / 60);
         var seconds = total % 60;
-        if (hours > 0) return hours + ':' + pad2(minutes) + ':' + pad2(seconds);
-        return minutes + ':' + pad2(seconds);
+        if (hours > 0) return sign + hours + ':' + pad2(minutes) + ':' + pad2(seconds);
+        return sign + minutes + ':' + pad2(seconds);
       }
 
       /**
@@ -2264,12 +2373,31 @@
         return true;
       }
 
-      /** `0:30 – 1:00`, `开始 – 1:00`, `0:30 – 现在`. Empty when neither end is set. */
-      function rangeLabel(from, to) {
+      /**
+       * `0:30 – 1:00`, `开始 – 1:00`, `0:30 – 现在`. Empty when neither end is set.
+       *
+       * Each end is printed back in the form the reader typed it in: a box holding a date comes
+       * back as a wall clock, a box holding an offset stays an offset. Printing an offset for a
+       * date box would be the worst of both — `12:00` beside `2026-10-11 00:45` is a mismatch
+       * the reader has to decode before they can trust it — and printing a wall clock for an
+       * offset box would hide the fact that the box is measured from session start, not from
+       * midnight.
+       *
+       * @param {string} fromText @param {string} toText what each box holds, verbatim
+       * @param {number|null} from @param {number|null} to offsets in force
+       * @param {number|null} sessionStartMs
+       */
+      function rangeLabel(fromText, toText, from, to, sessionStartMs) {
         if (!isCount(from) && !isCount(to)) return '';
-        return (isCount(from) ? formatRangeOffset(from) : '开始')
+        return (isCount(from) ? rangeEndLabel(fromText, from, sessionStartMs) : '开始')
           + ' – '
-          + (isCount(to) ? formatRangeOffset(to) : '现在');
+          + (isCount(to) ? rangeEndLabel(toText, to, sessionStartMs) : '现在');
+      }
+
+      /** One end of the range label, in whichever clock its own box was written in. */
+      function rangeEndLabel(text, ms, sessionStartMs) {
+        if (hasRangeDate(text) && isCount(sessionStartMs)) return formatClock(ms + sessionStartMs);
+        return formatRangeOffset(ms);
       }
 
       /** Absolute local wall-clock time. */
@@ -2538,8 +2666,20 @@
         return top > state.rangeCutoff ? top - state.rangeCutoff : 0;
       }
 
+      /**
+       * The session's own start — the origin every offset is measured from, and the only thing a
+       * wall-clock bound can be converted against. Null when the payload has none, which is the
+       * one case where a date box cannot be honoured at all.
+       */
+      function sessionStartedAt() {
+        var session = state.payload && state.payload.session ? state.payload.session : null;
+        var started = session ? session.startedAt : null;
+        return isCount(started) ? started : null;
+      }
+
       function timeRangeLabel() {
-        return rangeLabel(state.rangeFrom, state.rangeTo);
+        return rangeLabel(state.rangeFromText, state.rangeToText, state.rangeFrom, state.rangeTo,
+          sessionStartedAt());
       }
 
       /* ---------------- DOM helpers ---------------- */
@@ -4797,18 +4937,30 @@
         // testing `state.rangeTo` for NaN here could only ever be false, and the message the
         // reader most needs became unreachable. Typing `abc` reported 「起点晚于终点」,
         // which is true of the *previous* range and says nothing about what they just typed.
+        var base = sessionStartedAt();
         var fromUnreadable = state.rangeFromText.trim() !== ''
-          && isNaN(parseRangeOffset(state.rangeFromText));
+          && isNaN(parseRangeValue(state.rangeFromText, base));
         var toUnreadable = state.rangeToText.trim() !== ''
-          && isNaN(parseRangeOffset(state.rangeToText));
+          && isNaN(parseRangeValue(state.rangeToText, base));
+        // A perfectly good date that this session cannot measure from. Folding it into the
+        // "unrecognised format" branch would send the reader hunting for a typo that is not
+        // there, and worse, it is the only way a date silently fails — silently is the part that
+        // matters, since everything else about the page would look like it had been filtered.
+        var dateWithoutBase = base === null
+          && (hasRangeDate(state.rangeFromText) || hasRangeDate(state.rangeToText));
         var reversed = isCount(state.rangeFrom) && isCount(state.rangeTo) && state.rangeFrom > state.rangeTo;
         dom.rangeHint.classList.remove('is-invalid');
 
+        if (dateWithoutBase) {
+          dom.rangeHint.classList.add('is-invalid');
+          dom.rangeHint.textContent = '这个会话没有记录带时间戳，无法按日期筛选；偏移 1:30 仍然可用。';
+          return;
+        }
         if (fromUnreadable || toUnreadable) {
           dom.rangeHint.classList.add('is-invalid');
           dom.rangeHint.textContent = '格式无法识别，仍按上一次的有效区间统计'
             + (hasTimeRange() ? '（' + timeRangeLabel() + '）' : '')
-            + '。格式 1:30 或 1:30:00。';
+            + '。偏移写 1:30 或 1:30:00，日期写 2026-10-10 23:30。';
           return;
         }
         if (reversed) {
@@ -4818,7 +4970,8 @@
         }
         if (!hasTimeRange()) {
           dom.rangeHint.classList.remove('is-invalid');
-          dom.rangeHint.textContent = '留空 = 不限。填写会话开始后的时间，格式 1:30 或 1:30:00。';
+          dom.rangeHint.textContent = '留空 = 不限。填会话开始后的时间 1:30 / 1:30:00，'
+            + '或日期时间 2026-10-10 23:30（跨零点时用这个）。';
           return;
         }
         var stats = kpiStats();
@@ -4878,8 +5031,11 @@
        * says which value is live.
        */
       function applyTimeRange() {
-        var from = parseRangeOffset(state.rangeFromText);
-        var to = parseRangeOffset(state.rangeToText);
+        // One origin for both boxes, read once: two boxes resolved against two different starts
+        // would be a range whose width depends on which side was parsed last.
+        var base = sessionStartedAt();
+        var from = parseRangeValue(state.rangeFromText, base);
+        var to = parseRangeValue(state.rangeToText, base);
         if (!isNaN(from)) state.rangeFrom = from;
         if (!isNaN(to)) state.rangeTo = to;
 
