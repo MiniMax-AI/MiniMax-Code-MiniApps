@@ -12,12 +12,11 @@
 // numeric ranges, and the injection markers splitUserMessage keys off. What is replaced is
 // every string payload. No conversation text, path, or identifier from the real machine
 // reaches the fixture.
-import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { homedir } from 'node:os';
 import * as server from '../miniapp/node/server.mjs';
 
-const { resolveSessionsRoot, collectSessionEntries, readHead, MAX_MESSAGE_BYTES } = server;
+const { resolveSessionsRoot, collectSessionEntries, readHead, resolveArtifactPath } = server;
 
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const OUT_ROOT = join(HERE, 'fixtures', 'minimax-home');
@@ -46,6 +45,14 @@ const NEEDED = {
   narration: (r) => r.role === 'assistant' && r.stopReason === 'toolUse' && r.text,
   toolResult: (r) => r.role === 'toolResult' || r.role === 'tool',
   compaction: (r) => r.role === 'compactionSummary' || r.role === 'compaction',
+  // verify-anomaly.mjs asserts the anomaly rules against this payload, which is only meaningful
+  // if there is something to find: a reply that delivered nothing, and a tool result that
+  // failed. A sample without them makes the guard vacuous.
+  // `silent` has to be an assistant message that produced no segment at all -- server.mjs:1094
+  // only pushes a text:null reply when segmentOrder is empty. An assistant message that called
+  // a tool but said nothing still emits its toolCall record, so it is not a silent reply.
+  silent: (r) => r.role === 'assistant' && r.stopReason === 'stop' && !r.text && r.parts.length === 0,
+  toolError: (r) => (r.role === 'toolResult' || r.role === 'tool') && r.isError === true,
 };
 
 let seq = 0;
@@ -129,6 +136,7 @@ function classify(message) {
     role: message.role,
     parts: parts.map((p) => p.type),
     stopReason: message.stopReason,
+    isError: message.isError === true,
     text,
   };
 }
@@ -141,47 +149,105 @@ if (!entries.length) {
   process.exit(2);
 }
 
+// A compacted session does not keep its old messages in messages.jsonl: the runtime rotates
+// them into g<gen>--ctx_*.jsonl and records the lineage in history-catalog.json. The shapes the
+// guards need -- an empty reply above all -- live in those older generations, so scanning the
+// active file alone finds none of them.
+async function lineageFiles(dir) {
+  let artifacts = [];
+  try {
+    const cat = JSON.parse(await readFile(join(dir, 'history-catalog.json'), 'utf8'));
+    if (Array.isArray(cat.artifacts)) artifacts = [...cat.artifacts].sort((a, b) => a.generation - b.generation);
+  } catch { /* never compacted: the active file is the whole session */ }
+  // Snapshots live in a `snapshots/` subdirectory and the active file at the root; that split is
+  // the service's own rule, so reuse resolveArtifactPath rather than restating it.
+  const files = artifacts.map((a) => resolveArtifactPath(dir, { ...a, active: a.kind === 'active' })).filter(Boolean);
+  if (!files.length) files.push(join(dir, 'messages.jsonl'));
+  return files;
+}
+
 const picked = entries;
 const fixtureSessions = [];
 const seen = new Set();
+
+const parseLine = (line) => {
+  if (!line.trim()) return null;
+  let parsed;
+  try { parsed = JSON.parse(line); } catch { return null; }
+  const message = parsed && typeof parsed === 'object' ? (parsed.message ?? parsed) : null;
+  if (!message || typeof message !== 'object' || typeof message.role !== 'string') return null;
+  return { turn_id: parsed.turn_id, message, shape: classify(message) };
+};
 
 for (const entry of picked) {
   // Keep walking until the quota is met: the newest entries include sessions too short to
   // distil, and verify-parsers asserts `entries.length > 5`, so a short run would sit exactly
   // on the boundary.
   if (fixtureSessions.length >= SESSIONS_WANTED) break;
-  const head = await readHead(join(entry.dir, 'messages.jsonl'), Math.min(entry.sizeBytes, SCAN_BYTES));
-  const scanned = [];
-  for (const line of head.text.split('\n')) {
-    if (!line.trim()) continue;
-    let parsed;
-    try { parsed = JSON.parse(line); } catch { continue; }
-    const message = parsed && typeof parsed === 'object' ? (parsed.message ?? parsed) : null;
-    if (!message || typeof message !== 'object' || typeof message.role !== 'string') continue;
-    scanned.push({ turn_id: parsed.turn_id, message, shape: classify(message) });
-    if (scanned.length >= SCAN_ROWS) break;
-  }
-  if (scanned.length < 12) continue;
+  const files = await lineageFiles(entry.dir);
 
-  // Taking the head of a session does not reach tool calls -- they start well into the
-  // transcript. So force-include one row per shape, then stride the rest.
-  const chosen = new Set();
-  for (const test of Object.values(NEEDED)) {
-    const at = scanned.findIndex((r) => test(r.shape));
-    if (at >= 0) chosen.add(at);
+  // Two passes over the lineage. The first only locates the first row of each required shape
+  // and counts rows per file; the second keeps the selected rows. Holding every parsed row of a
+  // compacted 80 MB session would cost far more than that.
+  const counts = [];
+  const firstAt = new Map();
+  let total = 0;
+  outer:
+  for (const file of files) {
+    const head = await readHead(file, Number.MAX_SAFE_INTEGER);
+    let n = 0;
+    for (const line of head.text.split('\n')) {
+      const row = parseLine(line);
+      if (!row) continue;
+      for (const [name, test] of Object.entries(NEEDED)) if (!firstAt.has(name) && test(row.shape)) firstAt.set(name, total);
+      n += 1; total += 1;
+    }
+    counts.push(n);
+    if (firstAt.size === Object.keys(NEEDED).length) break outer;
   }
-  const stride = Math.max(1, Math.floor(scanned.length / ROWS_PER_SESSION));
-  for (let i = 0; i < scanned.length && chosen.size < ROWS_PER_SESSION; i += stride) chosen.add(i);
+  if (total < 12) continue;
+
+  const chosen = new Set(firstAt.values());
+  const stride = Math.max(1, Math.floor(total / ROWS_PER_SESSION));
+  for (let i = 0; i < total && chosen.size < ROWS_PER_SESSION; i += stride) chosen.add(i);
+
+  const pickedRows = [];
+  let base = 0;
+  for (let f = 0; f < files.length && pickedRows.length < ROWS_PER_SESSION; f += 1) {
+    const head = await readHead(files[f], Number.MAX_SAFE_INTEGER);
+    let at = base;
+    for (const line of head.text.split('\n')) {
+      const row = parseLine(line);
+      if (!row) continue;
+      if (chosen.has(at)) pickedRows.push(row);
+      at += 1;
+      if (pickedRows.length >= ROWS_PER_SESSION) break;
+    }
+    base += counts[f];
+  }
 
   const turnSeq = new Map();
-  const rows = [...chosen].sort((a, b) => a - b).slice(0, ROWS_PER_SESSION).map((i) => {
-    const src = scanned[i];
-    const key = typeof src.turn_id === 'string' && src.turn_id ? src.turn_id : `turn-${i}`;
+  let rows = pickedRows.map((r) => {
+    const key = typeof r.turn_id === 'string' && r.turn_id ? r.turn_id : `turn-${r.shape.role}`;
     if (!turnSeq.has(key)) turnSeq.set(key, `turn-${String(turnSeq.size + 1).padStart(3, '0')}`);
-    return { message_id: sid('msg-'), turn_id: turnSeq.get(key), message: synth(src.message), __shape: src.shape };
+    for (const [name, test] of Object.entries(NEEDED)) if (!seen.has(name) && test(r.shape)) seen.add(name);
+    return { message_id: sid('msg-'), turn_id: turnSeq.get(key), message: synth(r.message), __shape: r.shape };
   });
 
-  for (const r of rows) for (const [name, test] of Object.entries(NEEDED)) if (!seen.has(name) && test(r.__shape)) seen.add(name);
+  // A live session's last turn is the one still running, so it has no answer yet. The anomaly
+  // guard's live-turn exclusion only means anything if the fixture has such a turn: if the last
+  // turn were closed, mutating liveTurn to return null would change no count and the mutation
+  // would survive. The distilled session therefore ends on an open turn, like the real one.
+  const answers = (r) => r.__shape.role === 'assistant' && r.__shape.stopReason === 'stop' && r.__shape.text;
+  for (;;) {
+    const lastTurn = rows.length ? rows[rows.length - 1].turn_id : null;
+    if (!lastTurn || !rows.some((r) => r.turn_id === lastTurn && answers(r))) break;
+    const trimmed = rows.filter((r) => r.turn_id !== lastTurn);
+    if (trimmed.length < 12) break;          // a session this short is not worth reshaping
+    rows = trimmed;
+  }
+
+  console.log(`  ${entry.dir.split(/[\\/]/).pop().slice(0, 28)}  files=${files.length}  rows=${total}  kept=${rows.length}`);
   fixtureSessions.push({ dir: entry.dir, rows });
 }
 

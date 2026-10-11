@@ -54,6 +54,28 @@ that gate a sparse sample would pass CI by accident and fail the moment anyone r
 Run both ways when you touch the parsers: the fixture proves the verdicts are reproducible,
 `--real` proves they still hold against transcripts nobody curated.
 
+## The payload
+
+Seven guards used to want one `/api/trajectory` body and got it by booting the service and
+fetching from a port. The route at `server.mjs` is `buildTrajectoryPayload(...)` plus a handful of
+`session.*` fields, so the same body falls out of the fixture store offline. `make-payload.mjs`
+writes it once:
+
+```
+node tests/make-payload.mjs            report, write nothing
+node tests/make-payload.mjs --record   rewrite fixtures/trajectory.json
+node tests/make-payload.mjs --check    fail if the committed payload is stale
+node tests/make-payload.mjs --real     the same report against this machine's ~/.minimax
+```
+
+`--check` is what keeps the two fixtures honest with each other: change `make-fixtures.mjs` and
+forget `--record`, and the payload stops matching the store it claims to come from.
+
+The fixture distiller walks a session's whole lineage, not just `messages.jsonl`. A compacted
+session keeps its old messages in `snapshots/g<gen>--ctx_*.jsonl`, and the shapes the guards need
+— an empty reply above all — live in those older generations. Reading only the active file finds
+none of them, and the guards then fail for want of something to find.
+
 ## Files
 
 | file | what it pins |
@@ -67,30 +89,57 @@ Run both ways when you touch the parsers: the fixture proves the verdicts are re
 | `verify-pr15-fixes.mjs` | the six fixes made for the PR #15 review comments |
 | `verify-prompt-fix.mjs` | injected-block splitting via `canonicalTextRange` |
 | `verify-window-widen.mjs` | `向上加载更早的 N 条` survives the next poll (self-contained: the shipped rule is transcribed) |
+| `verify-anomaly.mjs` | the four 异常 rules agree with counts derived independently of the page |
+| `verify-block-order.mjs` | assistant blocks are ordered per message: thinking → text → toolCall |
+| `verify-response-rail.mjs` | every row carries the rail of the response it came from |
+| `verify-call-fold-coverage.mjs` | folding every tool call really removes them from the rendered build |
 | `make-fixtures.mjs` | distils the local session store into the committed fixture; refuses to write on a leak |
+| `make-payload.mjs` | builds `/api/trajectory` offline from that fixture; `--check` catches drift |
 | `mutate-index-col.py` | the record-index column has room for the numbers it shows |
 | `mutate-label-source.py` | kind button labels come from `KIND_LABELS`, not from markup |
 | `mutate-name-collision.py` | no record kind is labelled with a name that means something else |
 | `mutate-turn-breakdown.py` | the turn breakdown parts sum to the headline |
 | `mutate-compaction-turn.py` | the compaction-turn attribution is not a free-text label |
 | `mutate-pr15-fixes.py` | each of the six PR #15 fixes has a guard that can fail |
+| `mutate-anomaly.py` | each of the 36 异常 rules, in the page, has a guard that can fail |
+| `mutate-steer.py` | the steer split and the turn classification hold |
+| `mutate-window-default.py` | the window defaults, labels, resets and load-more hold |
 
-## Deliberately not here
+## Deliberately not in the default run
 
-Four mutation controls from development guard rules that no longer exist, or whose anchor has
-moved. Shipping a suite that is red teaches reviewers to ignore it, so they were left out rather
-than carried:
+Shipping a suite that is red teaches reviewers to ignore it, so these are present but skipped,
+with the reason stated rather than quietly dropped.
 
-- **`mutate-filter-guards.mjs`** — guards the layer buttons (`turns-btn`, `setLayer`,
+- **`mutate-filter-guards.mjs`** — not carried. Guards the layer buttons (`turns-btn`, `setLayer`,
   `LAYER_KINDS`, `applyLayerToKinds`). Those were removed when the layer presets were dropped in
   favour of the type chips; all five symbols now occur zero times in `index.html`. The rule it
   guards is gone.
-- **`mutate-qa-lens.py`** — guards the 问答 turn-lens. Same removal; no lens symbol remains.
-- **`mutate-steer.py`** — the rule is still live but its anchor string (`const steered =
-  turn.records.some(...)`) no longer matches `server.mjs`. Needs re-anchoring.
-- **`mutate-window-default.py`** — same: the rule (a poll resetting a widened window) is live and
-  `verify-window-widen.mjs` still covers it, but the mutation's anchor into `index.html` no longer
-  matches. Needs re-anchoring, and `verify-window-widen.mjs` has no mutation control yet.
+- **`mutate-qa-lens.py`** — not carried. Guards the 问答 turn-lens. Same removal; no lens symbol
+  remains.
+- **`verify-time-range.mjs`** and its control **`mutate-time-range.py`** — present, skipped by
+  `run.mjs`. Its assertions are calibrated against a full multi-generation session:
+  `stats.messages > 1000`, and a checkpoint nested inside a turn rather than being one. The
+  committed fixture is a single-file session of a few dozen rows. Reproducing those numbers
+  faithfully would mean committing a multi-megabyte payload; relaxing them would stop exercising
+  the timezone arithmetic the file exists for. Run it by hand against a booted service:
+  `node tests/verify-time-range.mjs <port>`.
+
+### Two anchors that were wrong, and one mutation that could not be caught
+
+Kept here because each cost real time to find, and each would look like "the guard is stale":
+
+- **`mutate-steer.py`** was not stale. `server.mjs` is CRLF and the anchor joined its lines with
+  `\n`, so a multi-line anchor matched zero times and read as drift. Single-line anchors in the
+  same file matched fine. Anchors are now built in the file's own line ending.
+- **`mutate-window-default.py`** was genuinely stale, but not where it looked: the rule still
+  exists, and `rePinWindow` had gained a time-range early-return *between* the two lines the
+  anchor spanned. It is anchored on the one line that is the rule.
+- **`mutate-anomaly.py`** does not carry a case that nulls the page's `liveTurn`, even though that
+  looked like the obvious thing to break. `verify-anomaly.mjs` re-derives the live turn itself
+  instead of calling the page's function, so the mutation is invisible to every assertion in the
+  file — it was tried and the probe passed. Shipping it would mean shipping a mutation known to
+  be unobservable. Until the harness stops re-deriving it, the page's `liveTurn` has no guard of
+  its own.
 
 ## One-shot patches are not here either
 
