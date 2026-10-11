@@ -219,7 +219,57 @@ Two guards hold this: the exact call sequence, and that `render()` contains exac
 
 ---
 
-## 8. Say what you did not manage to check
+## 8. Measure the layout; never write it down
+
+A sticky offset is a measurement, not a constant. This file carried `top: 32px` and `top: 83px`
+with a comment explaining them, and both were correct only while the layout had exactly one filter
+row above the strip. Adding a second filter row — one that wraps at narrow widths and grows a line
+when its note appears — invalidated them silently: nothing overlaps at the width the comment was
+written at, and at 735px the window bar sits on top of the strip.
+
+```css
+/* wrong: correct for one layout, and there is no way to tell from reading it */
+.overview  { top: 32px; }
+.window-bar { top: 83px; }
+```
+
+```js
+function syncStickyOffsets() {
+  if (!dom.filterSticky || !dom.overview || !dom.windowBar) return;
+  var root = document.documentElement.style;
+  var band = dom.filterSticky.offsetHeight;
+  var overview = dom.overview.offsetHeight;
+  root.setProperty('--sticky-band-h', band + 'px');
+  root.setProperty('--sticky-overview-h', overview + 'px');
+  root.setProperty('--sticky-window-h', dom.windowBar.offsetHeight + 'px');
+}
+```
+
+`offsetHeight`, not `getBoundingClientRect().height`: this runs on every 2.5s poll, and a
+fractional device-pixel ratio would otherwise accumulate a third of a pixel per poll into an
+overlap nobody can see and everybody inherits.
+
+Three rules make that hold, and each of them needed a mutation before it was believed:
+
+- **Pin what answers one question as one block.** The two filter rows were pinned separately, which
+  allowed the state where the type row is still on screen and the 异常 row is not. Half a filter
+  visible is worse than none: the reader is told nothing is filtered.
+- **The set of variables the stylesheet reads must equal the set the measurement writes.** One
+  direction lets a fallback govern a band that nothing measures; the other lets the measurement
+  keep writing a variable nobody reads, which is what "the offsets went back to being constants"
+  looks like from the outside.
+- **Everything pinned over the ledger paints a background.** The rows underneath are
+  `background: transparent`, so a pinned band that stops covering them shows them through.
+
+And the general form of the third one: **an element named in markup and an element named in a
+selector are two names, and nothing checks that they agree.** A band looked up by an id the markup
+does not ship measures nothing, all three offsets fall back to their constants, and no error is
+raised anywhere. A guard that hands the function a stub cannot catch this — the stub supplies
+exactly what the function asked for — so the binding is checked against the markup instead.
+
+---
+
+## 9. Say what you did not manage to check
 
 Some things cannot be driven through the browser harness. The honest form is the useful one:
 
@@ -245,6 +295,9 @@ A harness limitation reported as a limitation is useful. The same limitation sil
 [ ] prose assertions are produced by running the function, numbers parsed back out of the string
 [ ] no assertion name contains a colon
 [ ] everything one reader can compare came from one snapshot
+[ ] no layout offset is written down; anything pinned is measured, and measured at the end of render
+[ ] every variable the stylesheet reads is written by the measurement, and one written is one read
+[ ] every element the measurement reads is bound to an id the markup actually ships
 [ ] anything not verified is written down as not verified
 ```
 

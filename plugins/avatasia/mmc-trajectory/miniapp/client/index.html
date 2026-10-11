@@ -831,16 +831,32 @@
          on. The reference styles the glyph rather than the button, so the button stays
          flat when pressed and only the mark changes. */
 
-      .traj-controls {
+      /* One sticky band for both filter axes.
+
+         The type row and the 异常 row decide the same question — which records the ledger shows —
+         so they are pinned as a single block rather than one of them following the other out of
+         view. Only the type row claimed `position: sticky` before, and it did not survive: with
+         the ledger below it and both rows scrolled away, a session filtered down to a few hundred
+         rows gave no sign that anything was filtered at all. The band carries its own background
+         because it now sits over the ledger, which is opaque underneath it.
+
+         Everything pinned below this measures its offset from it rather than assuming it — see
+         syncStickyOffsets(). The anomaly row wraps at narrow widths and the note under it comes
+         and goes, so its height is not a number anyone can write down once. */
+      .filter-sticky {
         position: sticky;
         top: 0;
-        z-index: 5;
+        z-index: 6;
+        background: var(--mcode-bg);
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .traj-controls {
         display: flex;
         flex: none;
         align-items: center;
         padding: 6px 16px;
         background: var(--mcode-bg);
-        border-bottom: 1px solid var(--mcode-border);
       }
 
       .traj-controls-actions {
@@ -941,7 +957,7 @@
 
       .overview {
         position: sticky;
-        top: 32px;
+        top: var(--sticky-band-h, 32px);
         z-index: 4;
         border-bottom: 1px solid var(--mcode-border);
         user-select: none;
@@ -1207,7 +1223,11 @@
 
       .turn-head {
         position: sticky;
-        top: 0;
+        /* Below every band above it, measured. It used to pin at 0 with z-index 2 and simply got
+           drawn over — its turn title and its kind summary landed on the type row's buttons and on
+           the overview's tick labels, and neither could be read. */
+        top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px)
+          + var(--sticky-window-h, 45px));
         z-index: 2;
         display: flex;
         align-items: center;
@@ -1586,11 +1606,12 @@
 
       .window-bar {
         position: sticky;
-        /* Sticky offsets stack here: the type row owns 0–32 and the overview strip owns
-           32–83 (32 + the 50px plot + its 1px border), so a bar pinned at 0 would simply
-           hide behind both of them. z-index 3 keeps it under the overview (4) and over the
-           turn head (2). */
-        top: 83px;
+        /* Sticky offsets stack here, and every one of them below the filter band is measured
+           rather than written down: the band is the two filter rows (whose height changes when
+           异常 wraps or when its note appears) plus the overview strip. The old numbers — 0–32 and
+           32–83 — were correct for a layout where the 异常 row was not in the band, and they are
+           exactly the kind of constant that goes stale silently. syncStickyOffsets() owns them. */
+        top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));
         z-index: 3;
         padding: 8px 16px;
         background: var(--mcode-bg);
@@ -2058,7 +2079,8 @@
         <div class="kpi-grid" id="kpi-grid"></div>
       </section>
 
-      <div class="traj-controls" id="kind-controls" role="toolbar" aria-label="按类型筛选轨迹" aria-controls="overview" data-filter-scope>
+      <div class="filter-sticky" id="filter-sticky">
+        <div class="traj-controls" id="kind-controls" role="toolbar" aria-label="按类型筛选轨迹" aria-controls="overview" data-filter-scope>
         <nav class="traj-controls-actions" aria-label="按类型筛选轨迹">
           <button type="button" class="tbtn tbtn-action tbtn-all" id="kind-all" aria-pressed="true"
             aria-label="当前显示全部类型 · 点击只看空白" title="当前显示全部类型 · 点击只看空白">
@@ -2136,6 +2158,7 @@
           <div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"></div>
           <span class="anomaly-bar-note" id="anomaly-mode-note" hidden></span>
         </div>
+      </div>
 
       <section class="overview" id="overview" aria-labelledby="overview-heading">
         <h2 class="sr-only" id="overview-heading">轨迹总览</h2>
@@ -3124,6 +3147,7 @@
         dom.staleBar = document.getElementById('stale-bar');
         dom.toolbar = document.getElementById('toolbar');
         dom.kindControls = document.getElementById('kind-controls');
+        dom.filterSticky = document.getElementById('filter-sticky');
         dom.sessionSelect = document.getElementById('session-select');
         dom.generationField = document.getElementById('generation-field');
         dom.generationSelect = document.getElementById('generation-select');
@@ -3139,6 +3163,7 @@
         dom.anomalyNote = document.getElementById('anomaly-mode-note');
         dom.anomalyMulti = document.getElementById('anomaly-multi');
         dom.windowBar = document.getElementById('window-bar');
+        dom.overview = document.getElementById('overview');
         dom.headerToggle = document.getElementById('header-toggle');
         dom.kpiToggle = document.getElementById('kpi-toggle');
         dom.kpiGrid = document.getElementById('kpi-grid');
@@ -6091,6 +6116,28 @@
 
       /* ---------------- top-level render ---------------- */
 
+      /**
+       * Publishes the heights of the pinned bands so everything below them can be positioned from
+       * a measurement instead of a number written down once.
+       *
+       * The alternative was three constants — 32 for the type row, 51 for the overview strip, 45
+       * for the window bar — and they were already wrong the moment the 异常 row joined the band:
+       * that row wraps at narrow widths and grows a line when its note appears, so no constant can
+       * stay right. This runs at the end of `render()`, after the note has been written and the
+       * buttons re-counted, which is the only moment the band's height is final. `offsetHeight`
+       * rather than `getBoundingClientRect().height`, so a fractional device-pixel ratio cannot
+       * make the bands overlap by a third of a pixel per poll.
+       */
+      function syncStickyOffsets() {
+        if (!dom.filterSticky || !dom.overview || !dom.windowBar) return;
+        var root = document.documentElement.style;
+        var band = dom.filterSticky.offsetHeight;
+        var overview = dom.overview.offsetHeight;
+        root.setProperty('--sticky-band-h', band + 'px');
+        root.setProperty('--sticky-overview-h', overview + 'px');
+        root.setProperty('--sticky-window-h', dom.windowBar.offsetHeight + 'px');
+      }
+
       function render() {
         renderBars();
         renderGeneration();
@@ -6123,6 +6170,10 @@
         renderInspector();
         renderFooter();
         updateHandoffButton();
+        // Last: it reads the bands the lines above just changed. The 异常 note appears and
+        // disappears here, so measuring before this point would pin the bands to yesterday's
+        // height and leave the window bar overlapping the strip above it.
+        syncStickyOffsets();
       }
 
       function renderGeneration() {

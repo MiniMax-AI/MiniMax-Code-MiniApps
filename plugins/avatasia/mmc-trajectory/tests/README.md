@@ -94,6 +94,7 @@ none of them, and the guards then fail for want of something to find.
 | `verify-prompt-fix.mjs` | injected-block splitting via `canonicalTextRange` |
 | `verify-window-widen.mjs` | `向上加载更早的 N 条` survives the next poll (self-contained: the shipped rule is transcribed) |
 | `verify-anomaly.mjs` | the four 异常 rules, their units, their position on the page, and their exclusivity with the other axis |
+| `verify-sticky.mjs` | both filter rows pin as one band, and every band below it is measured rather than written down |
 | `verify-block-order.mjs` | assistant blocks are ordered per message: thinking → text → toolCall |
 | `verify-response-rail.mjs` | every row carries the rail of the response it came from |
 | `verify-call-fold-coverage.mjs` | folding every tool call really removes them from the rendered build |
@@ -105,9 +106,10 @@ none of them, and the guards then fail for want of something to find.
 | `mutate-turn-breakdown.py` | the turn breakdown parts sum to the headline |
 | `mutate-compaction-turn.py` | the compaction-turn attribution is not a free-text label |
 | `mutate-pr15-fixes.py` | each of the six PR #15 fixes has a guard that can fail |
-| `mutate-anomaly.py` | each of the 50 异常 mutations, in the page, has a guard that can fail |
+| `mutate-anomaly.py` | each of the 70 异常 mutations, in the page, has a guard that can fail |
 | `mutate-steer.py` | the steer split and the turn classification hold |
 | `mutate-window-default.py` | the window defaults, labels, resets and load-more hold |
+| `mutate-sticky.py` | each of the 18 pinned-band rules has a guard that can fail |
 
 ## The 异常 axis, and what it promises
 
@@ -149,6 +151,41 @@ Position is asserted too, on its own terms: the axis has to come after the type 
 be a field of the search form any more, and the KPI cards must not come between them. It used
 to be the last field of the form, four cards above the axis it reads as part of — a layout defect
 that no functional assertion in the suite could see.
+
+## The pinned bands, and why none of them carries a number
+
+Four things pin themselves while the ledger scrolls under them: the filter band (both axes), the
+overview strip, the window bar, and the turn head. Three properties are asserted, and each one was
+false in this file's own history.
+
+1. **The two filter rows pin as one block.** They answer the same question — which records the
+   ledger shows — so a state where the type row is still pinned and the 异常 row has scrolled away
+   is the worst of both: the reader is told nothing is filtered while half the filter is off
+   screen. Only the type row ever claimed `position: sticky` and it did not survive; the guard
+   now asserts that neither row pins itself and that both are inside the band, because a band that
+   does not contain both is the same defect wearing a different hat.
+2. **No pinned offset is written down.** The band is two rows whose height changes when the 异常 row
+   wraps at narrow widths and when its note appears or disappears, so `0–32` and `32–83` were
+   correct only for a layout without the 异常 row. `syncStickyOffsets()` measures the three bands at
+   the end of `render()` and writes them into `--sticky-band-h`, `--sticky-overview-h` and
+   `--sticky-window-h`; the stylesheet only ever reads those. The guard runs that function against
+   stub heights of 137 / 65 / 57 — no constant in the file is any of them — so a version that
+   writes a number instead of a measurement fails, and so does one that measures the band for the
+   strip.
+3. **Anything pinned over the ledger has to paint a background.** The rows underneath are
+   `background: transparent`, so a pinned band that stops covering them shows them through. The
+   strip paints through `.overview-plot` rather than through the sticky section, which is why the
+   guard names that rule and not `.overview`.
+
+Two more assertions exist because the mutation control found them missing: the set of variables the
+stylesheet reads has to be **exactly** the set the measurement writes (one side alone lets a stale
+fallback or a dead measurement through), and every band the function reads has to be bound to an
+element the markup actually ships. A band that is never bound measures nothing, all three offsets
+fall back to their constants, and no error is reported anywhere — the stub the guard measures with
+cannot catch it, so the binding is checked against the markup instead.
+
+The order of `render()` is asserted too: the measurement has to be the last statement, because the
+异常 note is written by `syncAnomalyMode()` and that note is what changes the band's height.
 
 ## Deliberately not in the default run
 
