@@ -25,6 +25,10 @@ reported as surviving, the guard it exercised was not testing anything.
 That is also why they exist as separate files rather than as extra assertions: the mutation has to
 be able to make the real guard go red, which an assertion inside the guard cannot do to itself.
 
+`METHODOLOGY.md` is the other half: not what these guards are, but how to arrive at new ones — why
+an expected number may never come from the code under test, what to do when a mutation survives, and
+why an assertion that has to be deleted usually means a requirement was never written down.
+
 ## The session store under test
 
 `verify-parsers.mjs` and `verify-prompt-fix.mjs` need a session store on disk. Reading the

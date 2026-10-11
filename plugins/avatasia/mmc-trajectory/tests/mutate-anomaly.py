@@ -79,9 +79,13 @@ CASES = [
     ("any counts rule hits instead of records, so a row trips two rules is counted twice",
      "the union count matches the payload",
      "          any += 1;", "          any += hits.length;"),
-    ("the buttons read counts from somewhere else entirely",
-     "the count comes from the shared pass, not a second walk",
-     "        var counts = anomalyCounts();", "        var counts = { byRule: {}, any: 0 };"),
+    # This one attacks the call site rather than the function, so it belongs to the guard that owns
+# the call site: repointed rather than dropped, because dropping it would leave the render wiring
+# with no mutation at all.
+("the buttons read counts from somewhere else entirely",
+     "the mode is settled before anything reads a count",
+     "        var anomaly = anomalyCounts();\n        syncAnomalyMode(anomaly);\n        syncAnomalyButtons(anomaly);",
+     "        var anomaly = anomalyCounts();\n        syncAnomalyMode(anomaly);\n        syncAnomalyButtons({ byRule: {}, unit: {}, any: 0, selected: 0 });"),
 
     # --- the strip is handed a bare record ---
     # 无答复 is a property of the turn, and the overview path only has the record, so the turn
@@ -103,10 +107,10 @@ CASES = [
      "        state.anomalyRules = [];\n        state.anomalyLast = null;\n        state.multiAnomaly = false;\n        clearTimeRange();",
      "        state.anomalyLast = null;\n        state.multiAnomaly = false;\n        clearTimeRange();"),
     ("清除筛选 leaves the buttons showing the old state", "and re-syncs the buttons with it",
-     "        syncKindButtons();\n        syncAnomalyButtons();\n        render();",
+     "        syncKindButtons();\n        syncAnomalyButtons(anomalyCounts());\n        render();",
      "        syncKindButtons();\n        render();"),
     ("a poll stops refreshing the counts", "every poll re-syncs the buttons",
-     "        syncAnomalyButtons();\n        renderOverview();",
+     "        syncAnomalyButtons(anomaly);\n        renderOverview();",
      "        renderOverview();"),
 
     # --- ticking, run rather than read ---
@@ -264,6 +268,55 @@ CASES = [
      "the checkbox is bound to the mode handler",
      "        dom.anomalyMulti.addEventListener('change', function () {",
      "        dom.anomalyMulti.addEventListener('click', function () {"),
+
+    # --- 合计: the number the note publishes has to be the number under the buttons.
+    # The defect this replaces printed 合计见「全部异常」, which is the union of all four rules and
+    # therefore described a different selection than the one on screen.
+    ("the partial union is counted as the whole table",
+     "a partial union is the length of the list behind it",
+     "            if (sel.indexOf(hits[s]) >= 0) {\n              selected += 1;\n              break;\n            }",
+     "            if (sel.length === 0 || sel.indexOf(hits[s]) >= 0) {\n              selected += 1;\n            }"),
+    # Dropping the `break` turns the union into a count of rule-hits: correct until two rules
+    # overlap on one record, which is exactly the case the note exists to account for. A mutation
+    # that only differs when there is overlap is worth more than one that is always different.
+    ("a record tripping two rules is counted twice in the union",
+     "a partial union is the length of the list behind it",
+     "            if (sel.indexOf(hits[s]) >= 0) {\n              selected += 1;\n              break;\n            }",
+     "            if (sel.indexOf(hits[s]) >= 0) {\n              selected += 1;\n            }"),
+    ("the note publishes 全部异常's number for a partial selection",
+     "the note publishes the total for the rules that are ticked",
+     "              ? ' · 已叠加 ' + formatInt(n) + ' 条规则 · 合计 ' + formatInt(counts.selected) + ' 条'",
+     "              ? ' · 已叠加 ' + formatInt(n) + ' 条规则 · 合计 ' + formatInt(counts.any) + ' 条'"),
+    # The defect, stated as the shape that would reintroduce it. A partial selection is not
+    # 全部异常, so a total that is not the partial selection's own is the failure however it is
+    # worded — which is why the assertion parses the number back out instead of matching a phrase.
+    ("the note goes back to pointing at 全部异常",
+     "and it is a number, not a pointer somewhere else",
+     "              ? ' · 已叠加 ' + formatInt(n) + ' 条规则 · 合计 ' + formatInt(counts.selected) + ' 条'",
+     "              ? ' · 已叠加 ' + formatInt(n) + ' 条规则，合计见「全部异常」'"),
+    # 叠加 is 多选's word. In 单选 the only way to get here is 全部异常, which the reader did not
+    # stack — and the note was telling a reader who had not turned 多选 on that they had.
+    ("the note calls 全部异常 a stack even when 多选 is off",
+     "单选 does not claim a stack the reader never built",
+     "            : ' · 全部 ' + formatInt(n) + ' 条规则同时生效 · 合计 ' + formatInt(counts.selected) + ' 条')",
+     "            : ' · 已叠加 ' + formatInt(n) + ' 条规则 · 合计 ' + formatInt(counts.selected) + ' 条')"),
+    # 重置 describes the whole row, and 多选 is part of that row. Leaving it out made the button
+    # claim the reader was already at the default while the mode was not, and it is the only
+    # control that puts the mode back.
+    ("重置 claims default while 多选 is on",
+     "重置 is pressed only when both the rules and the mode are at their default",
+     "            on = state.anomalyRules.length === 0 && !state.multiAnomaly;",
+     "            on = state.anomalyRules.length === 0;"),
+    # Two walks of a session that is still growing can hand the note and the buttons different
+    # numbers. This is the guard that keeps them on one read.
+    ("the note walks the session a second time",
+     "and the note and the buttons are handed the same walk, not two of them",
+     "        var anomaly = anomalyCounts();\n        syncAnomalyMode(anomaly);",
+     "        var anomaly = anomalyCounts();\n        syncAnomalyMode(anomalyCounts());"),
+    ("the buttons walk the session again instead of taking the snapshot",
+     "the count comes from the pass render() took, not a second walk",
+     "      function syncAnomalyButtons(counts) {\n        if (!dom.anomalyControls) return;",
+     "      function syncAnomalyButtons(counts) {\n        if (!dom.anomalyControls) return;\n        counts = anomalyCounts();"),
 
     # --- 空答复: a reply the runtime finished and then delivered nothing into.
     # Every other rule tests a field that was there. This one tests an absence, so most of the

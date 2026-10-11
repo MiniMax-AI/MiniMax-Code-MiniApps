@@ -4528,7 +4528,15 @@
        * `any` counts records, not rule hits: one row can trip two rules, so it never equals the
        * sum of the parts. That is why it is labelled as the union and not as a total.
        *
-       * @returns {{byRule: Object, unit: Object, any: number, total: number}}
+       * `selected` is the union of the rules that are actually ticked, which is a different
+       * number from `any` whenever the selection is not the whole table. It is counted here rather
+       * than recomputed where it is used because this loop already holds `hits` for every record:
+       * asking again would be a second full walk of a session that can hold twenty thousand rows
+       * and re-renders on every poll. And `visibleEntries()` filters on exactly this predicate, so
+       * `selected` is the length of the list under the buttons — the same promise every other
+       * number on this row makes.
+       *
+       * @returns {{byRule: Object, unit: Object, any: number, selected: number, total: number}}
        */
       function anomalyCounts() {
         var byRule = {};
@@ -4538,6 +4546,8 @@
           unit[ANOMALY_RULES[i].id] = ANOMALY_RULES[i].turn ? '轮' : '条';
         }
         var any = 0;
+        var selected = 0;
+        var sel = state.anomalyRules;
         var live = liveTurn();
         var counted = {};
         for (var j = 0; j < state.flat.length; j += 1) {
@@ -4545,6 +4555,12 @@
           var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });
           if (!hits.length) continue;
           any += 1;
+          for (var s = 0; s < hits.length; s += 1) {
+            if (sel.indexOf(hits[s]) >= 0) {
+              selected += 1;
+              break;
+            }
+          }
           for (var k = 0; k < hits.length; k += 1) {
             var id = hits[k];
             var rule = anomalyRuleById(id);
@@ -4560,7 +4576,7 @@
             byRule[id] += 1;
           }
         }
-        return { byRule: byRule, unit: unit, any: any, total: state.flat.length };
+        return { byRule: byRule, unit: unit, any: any, selected: selected, total: state.flat.length };
       }
 
       /**
@@ -5448,7 +5464,7 @@
         if (dom.searchInput) dom.searchInput.value = '';
         if (dom.anomalyMulti) dom.anomalyMulti.checked = false;
         syncKindButtons();
-        syncAnomalyButtons();
+        syncAnomalyButtons(anomalyCounts());
         render();
       }
 
@@ -6096,9 +6112,12 @@
         // exactly like the refresh button's decision to appear.
         // Which of the two filter systems is in force is decided here, before anything reads a
         // count or draws a span, so the strip, the buttons and the ledger cannot each answer a
-        // different question.
-        syncAnomalyMode();
-        syncAnomalyButtons();
+        // different question. One walk feeds both: `render()` hands the same object to the note
+        // and to the buttons, so the number in the prose and the number on a button are two
+        // readings of one snapshot rather than two walks of a session that is still growing.
+        var anomaly = anomalyCounts();
+        syncAnomalyMode(anomaly);
+        syncAnomalyButtons(anomaly);
         renderOverview();
         renderLedger();
         renderInspector();
@@ -6271,10 +6290,15 @@
        * Counts and pressed state for the 异常 buttons. Both are read from the same pass the
        * ledger filters through, so a number on a button and the rows below it are the same
        * statement about the same records.
+       *
+       * The counts are passed in rather than walked again here: `render()` takes one snapshot and
+       * hands the same object to this and to `syncAnomalyMode()`. That is not only cheaper — two
+       * walks over a live session can disagree, because the session grows between them, and a
+       * button count that did not come from the same read as the note beside it is the exact
+       * mismatch this row was built to end.
        */
-      function syncAnomalyButtons() {
+      function syncAnomalyButtons(counts) {
         if (!dom.anomalyControls) return;
-        var counts = anomalyCounts();
         var buttons = dom.anomalyControls.querySelectorAll('.anomaly-btn');
         for (var i = 0; i < buttons.length; i += 1) {
           var button = buttons[i];
@@ -6290,7 +6314,13 @@
             // 重置 carries no number. The other buttons answer "how much would this keep", and
             // that question is meaningless for a control that keeps whatever the row above says
             // — the row above's own count is already on the window bar.
-            on = state.anomalyRules.length === 0;
+            //
+            // 多选 counts towards "is this row at its default" because it is: the axis opens in
+            // 单选, and 多选 changes what every other button on this row does when pressed. A row
+            // with 多选 on is not the state 重置 describes, so it must not claim to be it — and
+            // 重置 is the only control that turns 多选 off, so a reader told the row is already at
+            // its default would never press the one button that would put it back.
+            on = state.anomalyRules.length === 0 && !state.multiAnomaly;
             noun = ANOMALY_NONE_LABEL;
             label = noun + ' · ' + (on ? '已是默认状态 · 表格按上一行的条件筛选'
               : '点击回到默认状态 · 表格按上一行的条件筛选');
@@ -6430,7 +6460,7 @@
        * 会话 / 上下文代 / 刷新 carry no marker: they choose which session is on screen, not which
        * records of it, so they have to keep working while an anomaly rule is ticked.
        */
-      function syncAnomalyMode() {
+      function syncAnomalyMode(counts) {
         var on = state.anomalyRules.length > 0;
         document.body.setAttribute('data-anomaly-mode', on ? 'on' : 'off');
         var scopes = document.querySelectorAll('[data-filter-scope]');
@@ -6441,10 +6471,20 @@
         if (!dom.anomalyNote) return;
         dom.anomalyNote.hidden = !on;
         if (on) {
-          // In union mode the per-rule numbers do not add up to the list — one record can trip
-          // two rules. Saying so here is cheaper than a reader discovering it by subtraction.
-          var stacked = state.anomalyRules.length > 1
-            ? ' · 已叠加 ' + formatInt(state.anomalyRules.length) + ' 条规则，合计见「全部异常」'
+          // Two rules on means the per-rule numbers do not add up to the list — one record can
+          // trip both — so the reader needs the total for *their* selection. It used to be
+          // answered with 合计见「全部异常」, which is the union of all four rules: for a stack of
+          // two it pointed at a number 1,300 rows larger than what was on screen. The total is
+          // counted instead, and it is the length of the ledger under these buttons.
+          //
+          // 叠加 is 多选's word. In 单选 the only way more than one rule is ever on is 全部异常,
+          // which is not the reader stacking anything, so it is described as all of them being in
+          // force rather than as a stack they did not build.
+          var n = state.anomalyRules.length;
+          var stacked = n > 1
+            ? (state.multiAnomaly
+              ? ' · 已叠加 ' + formatInt(n) + ' 条规则 · 合计 ' + formatInt(counts.selected) + ' 条'
+              : ' · 全部 ' + formatInt(n) + ' 条规则同时生效 · 合计 ' + formatInt(counts.selected) + ' 条')
             : '';
           dom.anomalyNote.textContent = '异常筛选已开启 · 类型、搜索、时间区间与总览已回到默认且不参与 · 点「'
             + ANOMALY_NONE_LABEL + '」回到默认筛选' + stacked;

@@ -327,6 +327,62 @@ for (const id of pure.ANOMALY_RULE_IDS) {
   assert('that filter is not the whole ledger — ' + id, only.length < page.state.flat.length);
 }
 
+/* A partial union is the one case the button counts above cannot reach. `all.any` is the union of
+   every rule, and each single-rule check only ever selects one — so before this block nothing
+   tested the selection 多选 exists to produce. The expected number is counted here by code that
+   shares nothing with the page: a record is in the union when it trips any *selected* rule.
+   Without it, `selected` could be the count of the whole table and every assertion above would
+   still pass. */
+const expectUnion = (ids) => page.state.flat.filter((e) => {
+  const hits = pure.recordAnomalyRules(e.record, { turn: e.turn, liveTurn });
+  return ids.some((id) => hits.indexOf(id) >= 0);
+}).length;
+// Record-level, not `byRule`: for a turn rule `byRule` counts turns, so adding it to a record
+// count would subtract apples from oranges and report an overlap that is not there.
+const recordCount = {};
+for (const id of pure.ANOMALY_RULE_IDS) recordCount[id] = expectUnion([id]);
+
+// Each pair, including the pairs with nothing in common. Every one of them has to give a number
+// the ledger reproduces, which is the whole claim: a button, a note and a list that agree.
+const pairResults = [];
+for (const a of pure.ANOMALY_RULE_IDS) {
+  for (const b of pure.ANOMALY_RULE_IDS) {
+    if (b <= a) continue;
+    page.state.anomalyRules = [a, b];
+    pairResults.push({
+      a,
+      b,
+      selected: page.anomalyCounts().selected,
+      listed: page.visibleEntries().length,
+      expected: expectUnion([a, b]),
+      overlap: recordCount[a] + recordCount[b] - expectUnion([a, b])
+    });
+  }
+}
+assert('a partial union is not the whole table, so it has to be counted separately',
+  pairResults.some((p) => p.selected < all.any));
+// One family assertion per pair on top of the per-pair ones below. The per-pair names carry the
+// pair, which is what makes a failure readable — and which also makes them unusable as the owner
+// of a mutation, because which pair fires depends on the fixture. The family assertion has a
+// stable name and is the one the mutation runner is pointed at.
+check('a partial union is the length of the list behind it',
+  pairResults.every((p) => p.selected === p.listed), true);
+check('and it is the union of those rules and not some other set',
+  pairResults.every((p) => p.selected === p.expected), true);
+for (const p of pairResults) {
+  check('a partial union is the length of the list behind it — ' + p.a + ' + ' + p.b,
+    p.selected, p.listed);
+  check('and it is the union of those two rules and not some other set — ' + p.a + ' + ' + p.b,
+    p.selected, p.expected);
+}
+// The overlap is why the per-rule numbers cannot be added by hand, and why the note has to state
+// the total instead of pointing at 全部异常 — which is the union of all four rules and therefore a
+// different number again for any selection that is not all of them.
+assert('some pair of rules genuinely overlaps, or the total would just be the sum',
+  pairResults.some((p) => p.overlap > 0));
+assert('and every partial union is smaller than 全部异常, so the two can never be confused',
+  pairResults.every((p) => p.selected < all.any));
+
 page.state.anomalyRules = pure.ANOMALY_RULE_IDS.slice();
 const everything = page.visibleEntries();
 assert('every rule on is still only the anomalies', everything.length === expectAny);
@@ -410,6 +466,67 @@ page.syncKindButtons = () => {};
 // A stub with a real `checked` field is what lets that be asserted as behaviour rather than
 // inferred from the assignment appearing in the source.
 page.dom = { searchInput: null, anomalyMulti: { checked: false } };
+
+/* The note, run rather than read. Its whole job is to publish a number that describes the rows
+   under it, and the defect it replaces — 合计见「全部异常」, which pointed at the union of all four
+   rules for a selection of two — is a sentence that is perfectly well-formed and wrong. Source
+   shape cannot tell a correct sentence from a plausible one; running it can. */
+page.document = { body: { setAttribute() {} }, querySelectorAll() { return []; } };
+page.dom.anomalyNote = { hidden: true, textContent: '' };
+for (const name of ['formatInt', 'syncAnomalyMode']) {
+  const src = fnSource('function ' + name + '(');
+  if (!src) throw new Error('could not extract ' + name);
+  vm.runInContext(src, page);
+}
+const noteText = (rules, multi) => {
+  page.state.anomalyRules = rules;
+  page.state.multiAnomaly = multi;
+  page.dom.anomalyNote.textContent = '';
+  page.syncAnomalyMode(page.anomalyCounts());
+  return page.dom.anomalyNote.textContent;
+};
+const hasNumber = (text, n) => text.includes(page.formatInt(n) + ' 条');
+const countOf = (text) => {
+  const m = text.match(/合计 ([\d,]+) 条/);
+  return m ? Number(m[1].replace(/,/g, '')) : null;
+};
+const pairs = [];
+for (const a of pure.ANOMALY_RULE_IDS) {
+  for (const b of pure.ANOMALY_RULE_IDS) if (b > a) pairs.push([a, b]);
+}
+
+// The defect, stated as the shape that would reintroduce it. A partial selection is not 全部异常,
+// so a total that is not the partial selection's own is the failure, however it is worded.
+const notePairs = pairs.map(([a, b]) => {
+  const text = noteText([a, b], true);
+  page.state.anomalyRules = [a, b];
+  const expected = page.anomalyCounts().selected;
+  return { a, b, text, expected, printed: countOf(text) };
+});
+check('the note publishes the total for the rules that are ticked',
+  notePairs.every((p) => p.printed === p.expected), true);
+check('and it is a number, not a pointer somewhere else',
+  notePairs.every((p) => hasNumber(p.text, p.expected)), true);
+for (const p of notePairs) {
+  check('the note publishes the total for the rules that are ticked — ' + p.a + ' + ' + p.b,
+    p.printed, p.expected);
+  assert('and it is a number, not a pointer somewhere else — ' + p.a + ' + ' + p.b,
+    hasNumber(p.text, p.expected));
+}
+page.state.anomalyRules = [pure.ANOMALY_RULE_IDS[0], pure.ANOMALY_RULE_IDS[1]];
+check('the whole set says the same thing',
+  countOf(noteText(pure.ANOMALY_RULE_IDS.slice(), true)), all.any);
+
+// 叠加 is 多选's word. In 单选 the only way more than one rule is ever on is 全部异常 — which the
+// reader pressed one button to get, rather than stacked four times.
+const textMulti = noteText(['toolError', 'compaction'], true);
+const textSingle = noteText(['toolError', 'compaction'], false);
+assert('多选 calls a stack a stack', textMulti.includes('已叠加'));
+assert('单选 does not claim a stack the reader never built', !textSingle.includes('已叠加'));
+assert('and 单选 says what is actually happening instead', textSingle.includes('同时生效'));
+
+page.state.anomalyRules = [];
+page.state.multiAnomaly = false;
 
 /* 单选 is what the page opens in, so it is what the toggle is read in first. Two assertions here
    used to say the opposite — that ticking a second rule *adds* to the first, and that unticking
@@ -614,7 +731,7 @@ assert('重置 advertises no count of its own',
   /ANOMALY_NONE_LABEL/.test(noneBlock) && !/anomaly-count/.test(noneBlock));
 assert('every rule button does carry one', /anomaly-count/.test(buildSrc));
 
-const syncSrc = fnSource('function syncAnomalyButtons()');
+const syncSrc = fnSource('function syncAnomalyButtons(counts)');
 assert('a button states how many rows it would keep', /anomaly-count/.test(syncSrc));
 const labelSrc = fnSource('function ruleLabelFor(');
 assert('and the number it publishes carries the unit it was counted in',
@@ -625,12 +742,20 @@ assert('the unit comes from the counting pass, not a literal beside each button'
   /counts\.unit\[id\]/.test(syncSrc));
 assert('pressed state comes from state, not a captured flag',
   /state\.anomalyRules\.indexOf\(id\) >= 0/.test(syncSrc));
-assert('重置 is pressed exactly when no rule is',
-  /if \(isNone\) \{[\s\S]*?state\.anomalyRules\.length === 0/.test(syncSrc));
+// Inverted, and the reason matters. It required 重置 to be pressed whenever no rule was ticked,
+// which is true of the filter and false of the row: the axis opens in 单选, and 多选 changes what
+// every other button here does when pressed, so a row with 多选 on is not the state 重置 names —
+// and 重置 is the only control that turns 多选 off. A reader told the row is already at its
+// default has no reason to press the one button that would put it back.
+assert('重置 is pressed only when both the rules and the mode are at their default',
+  /if \(isNone\) \{[\s\S]*?state\.anomalyRules\.length === 0 && !state\.multiAnomaly/.test(syncSrc));
 assert('and a rule button with nothing to find is dimmed, never hidden',
   /n !== null && n === 0/.test(syncSrc));
-assert('the count comes from the shared pass, not a second walk',
-  /var counts = anomalyCounts\(\);/.test(syncSrc));
+// The counts arrive from `render()`. Two walks of a live session can disagree — the session grows
+// between them — and a button count taken from a different read than the note beside it is the
+// same mismatch this row exists to end, just one step further along.
+assert('the count comes from the pass render() took, not a second walk',
+  /function syncAnomalyButtons\(counts\)/.test(syncSrc) && !/anomalyCounts\(\)/.test(syncSrc));
 
 const countsSrc = fnSource('function anomalyCounts()');
 // Inverted from what this asserted before. It required the counts to be drawn through
@@ -655,7 +780,7 @@ assert('and it resets the window like every other filter', /resetWindowMode\(\);
 assert('and re-renders', /render\(\);/.test(toggleSrc));
 const clearSrc = fnSource('function clearFilters()');
 assert('清除筛选 drops it too', /state\.anomalyRules = \[\];/.test(clearSrc));
-assert('and re-syncs the buttons with it', /syncAnomalyButtons\(\);/.test(clearSrc));
+assert('and re-syncs the buttons with it', /syncAnomalyButtons\(anomalyCounts\(\)\);/.test(clearSrc));
 
 assert('the filter counts as a filter',
   /state\.anomalyRules\.length !== 0/.test(fnSource('function isFiltering()')));
@@ -674,11 +799,16 @@ assert('and branches on the mode before the other axis, so strip and list agree'
   /if \(state\.anomalyRules\.length > 0\) \{\s*return passesAnomaly/.test(stripSrc));
 
 const renderSrc = fnSource('function render()');
+// Still ordered mode-then-buttons: the strip, the note and the ledger must not each answer a
+// different question mid-render. What changed is that both now read one snapshot — a second walk
+// of a session that is still growing could hand the note and the buttons different numbers.
 assert('the mode is settled before anything reads a count',
-  /syncAnomalyMode\(\);\s*syncAnomalyButtons\(\);/.test(renderSrc));
-assert('every poll re-syncs the buttons', /syncAnomalyButtons\(\);/.test(renderSrc));
+  /var anomaly = anomalyCounts\(\);\s*syncAnomalyMode\(anomaly\);\s*syncAnomalyButtons\(anomaly\);/.test(renderSrc));
+assert('every poll re-syncs the buttons', /syncAnomalyButtons\(anomaly\);/.test(renderSrc));
+assert('and the note and the buttons are handed the same walk, not two of them',
+  (renderSrc.match(/anomalyCounts\(\)/g) || []).length === 1);
 
-const modeSrc = fnSource('function syncAnomalyMode()');
+const modeSrc = fnSource('function syncAnomalyMode(counts)');
 // Setting state.kinds without syncKindButtons() leaves the axis drawing whatever was there
 // before — which is how 异常 would end up showing 「用户」 while the table was showing something
 // else entirely. The count of writers is client-check's business; whether the new one syncs is
