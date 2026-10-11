@@ -17,7 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
-const filter = process.argv[2] ?? '';
+const args = process.argv.slice(2);
+const REAL = args.includes('--real');
+const filter = args.find((a) => !a.startsWith('--')) ?? '';
 
 const files = readdirSync(HERE)
   .filter((n) => n !== 'run.mjs' && n !== 'README.md' && (n.startsWith('verify-')
@@ -28,7 +30,9 @@ const files = readdirSync(HERE)
 const results = [];
 for (const name of files) {
   const isPy = name.endsWith('.py');
-  const cmd = isPy ? ['python', join(HERE, name)] : [process.execPath, join(HERE, name)];
+  const cmd = isPy
+    ? ['python', join(HERE, name)]
+    : [process.execPath, join(HERE, name), ...(REAL ? ['--real'] : [])];
   const started = Date.now();
   const r = spawnSync(cmd[0], cmd.slice(1), {
     cwd: HERE,

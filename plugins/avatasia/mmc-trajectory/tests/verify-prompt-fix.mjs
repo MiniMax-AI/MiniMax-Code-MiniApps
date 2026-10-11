@@ -1,6 +1,6 @@
 // Verify the canonicalTextRange fix: real prompts are recovered, injected blocks are demoted to `system`.
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   resolveSessionsRoot,
   collectSessionEntries,
@@ -15,6 +15,12 @@ import {
 
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
 
+// Committed fixture by default so a clean runner gets the same verdicts; `--real` reads this
+// machine's ~/.minimax. See make-fixtures.mjs for how the fixture is distilled.
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const FIXTURE_HOME = join(HERE, 'fixtures', 'minimax-home');
+const USE_REAL = process.argv.includes('--real');
+
 let failures = 0;
 const check = (name, cond, extra = '') => {
   if (cond) console.log('PASS ', name, extra);
@@ -24,8 +30,10 @@ const check = (name, cond, extra = '') => {
   }
 };
 
-const root = resolveSessionsRoot().sessionsRoot;
-const redactor = createRedactor([root, resolveSessionsRoot().home]);
+const location = USE_REAL ? resolveSessionsRoot() : resolveSessionsRoot({ MAVIS_HOME: FIXTURE_HOME });
+console.log(`session store: ${USE_REAL ? 'real ~/.minimax' : 'committed fixture'}`);
+const root = location.sessionsRoot;
+const redactor = createRedactor([root, location.root]);
 
 // --- unit: split semantics -------------------------------------------------
 check('canonicalRange detected', canonicalPromptRange({ canonicalTextRange: { startOffset: 10, endOffset: 20 } })?.start === 10);

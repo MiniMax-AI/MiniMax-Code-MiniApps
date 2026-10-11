@@ -1,7 +1,7 @@
 // Authoring-time verification probe. Lives OUTSIDE the Mini App payload on purpose.
 // Run: node tests/run.mjs
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import * as server from '../miniapp/node/server.mjs';
 
 const {
@@ -21,6 +21,13 @@ const {
 
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
 const LIST_PEEK_BYTES = 256 * 1024;
+
+// The store under test is the committed synthetic fixture, so this guard means the same thing
+// on a clean CI runner as it does here. `--real` points it at this machine's ~/.minimax instead,
+// which is how you check a change against actual transcripts.
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const FIXTURE_HOME = join(HERE, 'fixtures', 'minimax-home');
+const USE_REAL = process.argv.includes('--real');
 const failures = [];
 const check = (name, ok, detail = '') => {
   if (!ok) failures.push(`${name} :: ${detail}`);
@@ -58,9 +65,9 @@ const noContent = buildTrajectoryPayload({
 check('a compaction with no content still yields one record',
   noContent.turns[0].records.length === 1 && noContent.turns[0].records[0].kind === 'compaction');
 
-// --- real data --------------------------------------------------------------
-const location = resolveSessionsRoot({ MAVIS_HOME: join(homedir(), '.minimax') });
-console.log(`\nsessionsRoot resolved from MAVIS_HOME: ${location.sessionsRoot.includes('.minimax') ? 'ok (.minimax home)' : 'UNEXPECTED'}`);
+// --- the session store ------------------------------------------------------
+const location = USE_REAL ? resolveSessionsRoot() : resolveSessionsRoot({ MAVIS_HOME: FIXTURE_HOME });
+console.log(`\nsession store: ${USE_REAL ? 'real ~/.minimax' : 'committed fixture'} (${location.sessionsRoot})`);
 const redact = createRedactor([location.sessionsRoot, location.root]);
 
 const entries = await collectSessionEntries(location.sessionsRoot);

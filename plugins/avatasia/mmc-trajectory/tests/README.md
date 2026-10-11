@@ -8,6 +8,7 @@ directory is neither, so nothing here is shipped.
 node tests/run.mjs              run everything
 node tests/run.mjs verify-      only the verifiers
 node tests/run.mjs mutate-      only the mutation controls
+node tests/run.mjs --real       read this machine's ~/.minimax instead of the fixture
 ```
 
 Requires Node (the client guards run the inline script through `node --check`) and Python 3 (the
@@ -24,6 +25,35 @@ reported as surviving, the guard it exercised was not testing anything.
 That is also why they exist as separate files rather than as extra assertions: the mutation has to
 be able to make the real guard go red, which an assertion inside the guard cannot do to itself.
 
+## The session store under test
+
+`verify-parsers.mjs` and `verify-prompt-fix.mjs` need a session store on disk. Reading the
+developer's own `~/.minimax` made them machine-dependent: on a clean CI runner the suite dropped
+to 13/15 — `verify-parsers` crashed and `verify-prompt-fix` failed two checks. They now read the
+committed synthetic store under `fixtures/minimax-home/`.
+
+The fixture is **distilled from real transcripts, not hand-written**. `make-fixtures.mjs` reads
+this machine's `~/.minimax` and keeps exactly the structure the assertions depend on — roles,
+content-part types, `stopReason` (the reply/narration split turns on it), `toolCallId` pairing,
+usage numbers, and the injection markers `splitUserMessage()` branches on — while replacing every
+string payload. No conversation text, path, or identifier from the real machine reaches the
+fixture: a leak assertion on the rendered bytes refuses to write if one would.
+
+Regenerate it when the store's format changes:
+
+```
+node tests/make-fixtures.mjs            report what would change, write nothing
+node tests/make-fixtures.mjs --record   rewrite fixtures/minimax-home/
+node tests/make-fixtures.mjs --selftest prove the leak assertion can actually fail
+```
+
+The generator also refuses to write unless every shape the guards rely on is present — user
+prompt, injected block, tool call, thinking, reply, narration, tool result, compaction. Without
+that gate a sparse sample would pass CI by accident and fail the moment anyone read it.
+
+Run both ways when you touch the parsers: the fixture proves the verdicts are reproducible,
+`--real` proves they still hold against transcripts nobody curated.
+
 ## Files
 
 | file | what it pins |
@@ -37,6 +67,7 @@ be able to make the real guard go red, which an assertion inside the guard canno
 | `verify-pr15-fixes.mjs` | the six fixes made for the PR #15 review comments |
 | `verify-prompt-fix.mjs` | injected-block splitting via `canonicalTextRange` |
 | `verify-window-widen.mjs` | `向上加载更早的 N 条` survives the next poll (self-contained: the shipped rule is transcribed) |
+| `make-fixtures.mjs` | distils the local session store into the committed fixture; refuses to write on a leak |
 | `mutate-index-col.py` | the record-index column has room for the numbers it shows |
 | `mutate-label-source.py` | kind button labels come from `KIND_LABELS`, not from markup |
 | `mutate-name-collision.py` | no record kind is labelled with a name that means something else |
@@ -64,9 +95,10 @@ than carried:
 ## One-shot patches are not here either
 
 Development also produced scripts that **write the package** to apply one specific edit. They are
-deliberately excluded and marked `ONE-SHOT PATCH, ALREADY APPLIED` in the file header: they have
-no dry-run and no backup, they write straight back to `index.html` / `server.mjs` / the READMEs, and
-re-running one now edits text that has since moved on.
+deliberately excluded: they have no dry-run and no backup, they write straight back to
+`index.html` / `server.mjs` / the READMEs, and re-running one now edits text that has since moved
+on. They have since been removed rather than kept with a warning header — what each one did is
+recorded in the development directory's index instead.
 
-**Do not run a `ONE-SHOT PATCH` script.** If you need to change the client or the service, edit the
-file and let the guards below tell you whether you broke something.
+**Do not go looking for a one-shot patch runner.** If you need to change the client or the service,
+edit the file and let the guards below tell you whether you broke something.
