@@ -63,16 +63,16 @@ CASES = [
      "          if (enabled.indexOf(hits[i]) >= 0) return true;",
      "          if (enabled.indexOf(hits[i]) < 0) return true;"),
 
-    # --- the shared predicate: two walks, one rule ---
-    # anomalyCounts and visibleEntries each iterate the flat list. When they stopped sharing a
-    # predicate, a button could promise 246 while the list showed 12.
-    ("the counting walk no longer applies the query", "a search narrows the count too",
+    # --- the base filter: one predicate, walked by the ledger and nothing else ---
+    # anomalyCounts used to walk this too, so a button could promise 246 while the list showed
+    # 12. That walk is gone — 异常 mode ignores this axis — and what replaces the old assertion
+    # is that the ledger still filters when no rule is ticked. This mutation keeps that true
+    # case honest: if passesBaseFilter stopped applying the query, the list would stop being
+    # filtered at all and the exclusivity check above it would pass for the wrong reason.
+    ("the base filter stops applying the query",
+     "but with no rule ticked the search is still a filter for the list",
      "        if (state.query && !matchesQuery(record, state.query)) return false;",
      "        if (false && state.query) return false;"),
-    ("the counting walk stops sharing the ledger's predicate",
-     "the counts walk the same predicate the ledger does",
-     "          if (!passesBaseFilter(entry.record, selection)) continue;\n          var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });",
-     "          var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });"),
     # Dropping the range from passesBaseFilter is deliberately NOT here: that guard lives in
     # verify-time-range.mjs, and a case listed against a probe that does not own it would be
     # reported as "not caught" while the real owner sat unmutated. It is in mutate-time-range.py.
@@ -91,10 +91,10 @@ CASES = [
      "        var owner = record ? turnById.get(record.turnId) : null;",
      "        var owner = null;"),
     ("the strip stopped applying 异常 at all", "the strip applies it",
-     "        if (!passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomalyRules)) return false;",
-     "        if (false) return false;"),
+     "          return passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomalyRules);",
+     "          return true;"),
     ("the ledger stopped applying 异常", "the ledger applies it",
-     "          if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomalyRules)) continue;\n", ""),
+     "            if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomalyRules)) continue;\n", ""),
 
     # --- the state has to remember the ticks, or a poll re-renders the buttons from nothing ---
     ("the filter is not counted as a filter", "the filter counts as a filter",
@@ -105,7 +105,7 @@ CASES = [
     ("清除筛选 leaves the buttons showing the old state", "and re-syncs the buttons with it",
      "        syncKindButtons();\n        syncAnomalyButtons();\n        render();",
      "        syncKindButtons();\n        render();"),
-    ("a poll stops refreshing the counts", "and every poll re-syncs the buttons",
+    ("a poll stops refreshing the counts", "every poll re-syncs the buttons",
      "        syncAnomalyButtons();\n        renderOverview();",
      "        renderOverview();"),
 
@@ -134,8 +134,53 @@ CASES = [
     # A rule name written into the markup is a second list of names. The kind chips already had
     # this bug once: a rename left the button showing one word and announcing another.
     ("a rule name hardcoded into the markup", "no rule is hardcoded in the markup",
-     '<div class="anomaly-quick" id="anomaly-controls" role="group" aria-label="只看异常记录"></div>',
-     '<div class="anomaly-quick" id="anomaly-controls" role="group" aria-label="只看异常记录">工具失败</div>'),
+     '<div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"></div>',
+     '<div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label">工具失败</div>'),
+
+    # --- the two axes are alternatives. Every one of these turns a mutually exclusive pair back
+    # --- into a stack, which is the shape that produced "283 on the button, 1,494 in the list".
+    ("the mode is read backwards, so the search stops filtering at all",
+     "but with no rule ticked the search is still a filter for the list",
+     "        var anomalyMode = state.anomalyRules.length > 0;",
+     "        var anomalyMode = state.anomalyRules.length >= 0;"),
+    ("the two axes stacked instead of alternated",
+     "and treats the two axes as alternatives, not a stack",
+     "          } else if (!passesBaseFilter(entry.record, selection)) {",
+     "          }\n          if (!passesBaseFilter(entry.record, selection)) {"),
+    ("the button count follows the search box again",
+     "a search does not move the union count",
+     "          var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });",
+     "          var hits = state.query ? [] : recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });"),
+    ("the strip branches after the other axis instead of before it",
+     "and branches on the mode before the other axis, so strip and list agree",
+     "        if (state.anomalyRules.length > 0) {\n          return passesAnomaly(",
+     "        if (false) {\n          return passesAnomaly("),
+
+    # --- a turn rule is counted in turns. Counting its records is the original lie.
+    ("a turn rule counted per record instead of per turn",
+     "unanswered count matches the payload, counted in turns",
+     "            var key = id + '#' + entry.turn.index;",
+     "            var key = id + '#' + entry.record.id;"),
+    ("every rule published in 条, whatever it is scoped to",
+     "the turn rule publishes itself in 轮",
+     "          unit[ANOMALY_RULES[i].id] = ANOMALY_RULES[i].turn ? '轮' : '条';",
+     "          unit[ANOMALY_RULES[i].id] = '条';"),
+
+    # --- there has to be a way out of the mode there is a way into.
+    ("the way back to every record is not built", "and one to get back to every record",
+     "        none.id = 'anomaly-none';", "        none.id = 'anomaly-all-data';"),
+    ("全部数据 ticks the whole set instead of clearing it",
+     "全部数据 goes back to every record",
+     "        if (state.anomalyRules.length === 0) return;\n        state.anomalyRules = [];",
+     "        if (state.anomalyRules.length === 0) return;\n        state.anomalyRules = ANOMALY_RULE_IDS.slice();"),
+    ("the inactive axis is dimmed but still takes clicks",
+     "the inactive axis is made inert, not merely dimmed",
+     "        for (var i = 0; i < scopes.length; i += 1) scopes[i].inert = on;",
+     "        for (var i = 0; i < scopes.length; i += 1) scopes[i].inert = false;"),
+    ("the 异常 axis moved back out from under the type axis",
+     "the 异常 axis comes after it",
+     '        <div class="anomaly-bar" id="anomaly-bar">',
+     '        <div class="anomaly-bar" id="anomaly-strip">'),
 
     # --- 空答复: a reply the runtime finished and then delivered nothing into.
     # Every other rule tests a field that was there. This one tests an absence, so most of the

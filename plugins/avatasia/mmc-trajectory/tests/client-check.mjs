@@ -591,11 +591,13 @@ const checks = [
   //
   // The reset count is an inventory, not a rule: eight when every filter reset the window,
   // ten since the time range gained resets on both sides of its own lifecycle, eleven once
-  // 异常 became a filter of its own and had to reset the window like the others do. It used to
-  // force 「全部」 instead of resetting, which would have shown up here as a second direct
-  // call — and measured, that cost a 414,000px document on a range covering the session.
+  // 异常 became a filter of its own and had to reset the window like the others do, and twelve
+  // once 异常 grew a way back — 全部数据 — which is a filter change like any other and would
+  // otherwise leave the reader on a stale window after leaving anomaly mode. It used to force
+  // 「全部」 instead of resetting, which would have shown up here as a second direct call — and
+  // measured, that cost a 414,000px document on a range covering the session.
   const direct = (html.match(/\bsetWindowMode\((?!mode\)|DEFAULT_WINDOW_MODE)/g) || []).length;
-  return direct === 1 && (html.match(/resetWindowMode\(\);/g) || []).length === 11;
+  return direct === 1 && (html.match(/resetWindowMode\(\);/g) || []).length === 12;
 })()],
   // Clicking the window button must not move the page. It scrolled to the document tail
   // whenever it narrowed the window, on the theory that "back to the tail" should land on the

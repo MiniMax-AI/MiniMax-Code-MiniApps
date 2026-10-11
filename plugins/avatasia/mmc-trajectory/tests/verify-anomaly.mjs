@@ -223,7 +223,13 @@ for (const name of ['recordInRange', 'hasTimeRange', 'inTimeRange', 'recordInSel
    page. This is the whole point of the file. */
 const liveTurn = payload.turns[payload.turns.length - 1];
 const brokenTurns = new Set(payload.turns.filter((t) => t.closed === false && t !== liveTurn));
-const expect = { toolError: 0, compaction: 0, noReply: 0, silent: 0 };
+// `noReply` is counted in turns, because that is the unit the page publishes it in: it is a
+// rule about a turn, and counting the records inside it is what produced the original lie —
+// over a thousand "unanswered" rows in a session that was actually broken a dozen times. The
+// record count is still needed for the overlap check, so it is kept under its own name rather
+// than being quietly dropped.
+const expect = { toolError: 0, compaction: 0, noReply: brokenTurns.size, silent: 0 };
+let noReplyRecords = 0;
 let expectAny = 0;
 const emptyReplies = [];
 for (const turn of payload.turns) {
@@ -231,7 +237,7 @@ for (const turn of payload.turns) {
     const hits = [];
     if (record.isError === true) { expect.toolError += 1; hits.push(1); }
     if (record.kind === 'compaction') { expect.compaction += 1; hits.push(1); }
-    if (brokenTurns.has(turn)) { expect.noReply += 1; hits.push(1); }
+    if (brokenTurns.has(turn)) { noReplyRecords += 1; hits.push(1); }
     // Written out rather than calling isNil, so this stays an independent reading of the
     // payload rather than a second call into the rule the check is meant to test.
     if (record.kind === 'reply'
@@ -252,7 +258,8 @@ assert('the fixture has failures to find', expect.toolError > 0);
 assert('the fixture has checkpoints to find', expect.compaction > 0);
 assert('the fixture has unanswered turns to find', expect.noReply > 0);
 assert('and it holds replies that delivered nothing', expect.silent > 0);
-assert('they overlap, so `any` is not the sum', expectAny < expect.toolError + expect.compaction + expect.noReply + expect.silent);
+assert('they overlap, so `any` is not the sum',
+  expectAny < expect.toolError + expect.compaction + expect.silent + noReplyRecords);
 
 // Every empty reply in this session sits in a turn that closed, which is precisely why 无答复
 // never reported it. If one of them ever landed in an unclosed turn, the two rules would start
@@ -267,9 +274,17 @@ assert('and they keep their kind', emptyReplies.every((e) => e.record.kind === '
 const all = page.anomalyCounts();
 check('tool failure count matches the payload', all.byRule.toolError, expect.toolError);
 check('compaction count matches the payload', all.byRule.compaction, expect.compaction);
-check('unanswered count matches the payload', all.byRule.noReply, expect.noReply);
+check('unanswered count matches the payload, counted in turns', all.byRule.noReply, expect.noReply);
 check('empty answer count matches the payload', all.byRule.silent, expect.silent);
 check('the union count matches the payload', all.any, expectAny);
+
+// The unit is part of the claim, not decoration on it. A number without one is read as 条 by
+// default, which is exactly how a turn rule came to advertise a thousand records.
+check('the turn rule publishes itself in 轮', all.unit.noReply, '轮');
+assert('and every record rule publishes itself in 条',
+  pure.ANOMALY_RULE_IDS.every((id) => all.unit[id] === '条' || all.unit[id] === '轮'));
+assert('the unit follows the rule table, not the button',
+  pure.ANOMALY_RULES.every((r) => all.unit[r.id] === (r.turn ? '轮' : '条')));
 
 // The button and the ledger are the same statement about the same records. If these ever drift,
 // a button is advertising rows the list refuses to render. The filter has to be on first —
@@ -279,7 +294,16 @@ check('the button count is the length of the list behind it', all.any, page.visi
 for (const id of pure.ANOMALY_RULE_IDS) {
   page.state.anomalyRules = [id];
   const only = page.visibleEntries();
-  check('one rule on shows exactly what it counts — ' + id, only.length, all.byRule[id]);
+  if (all.unit[id] === '条') {
+    check('one rule on shows exactly what it counts — ' + id, only.length, all.byRule[id]);
+  } else {
+    // A turn rule publishes turns and puts on screen every record of those turns. Both halves
+    // are checked, because a button promising N turns above a list of M records only adds up
+    // if the list is exactly the records of N turns — and if those turns are the ones it named.
+    check('a turn rule shows every record of the turns it counts — ' + id, only.length, noReplyRecords);
+    check('and exactly the turns it published — ' + id,
+      new Set(only.map((e) => e.turn.index)).size, all.byRule[id]);
+  }
   assert('nothing else leaked into that filter — ' + id,
     only.every((e) => pure.recordAnomalyRules(e.record, { turn: e.turn, liveTurn })
       .indexOf(id) >= 0));
@@ -304,30 +328,34 @@ assert('the strip is not keeping everything', byStrip.size < page.state.flat.len
 
 page.state.anomalyRules = [];
 
-/* A rule on the other axis must narrow the count, not merely the list. Otherwise the button
-   still advertises the whole session while the table shows a slice of it. */
+/* ---------- the two axes are exclusive, so the count must not follow the other one ----------
+   This inverts what this file used to assert. It required a search to narrow the button count,
+   which held exactly while the ledger narrowed it too — and that was the defect: the number was
+   describing a filtered view that anomaly mode does not produce, so ticking the rule it was
+   advertising gave the reader something else. The number on a button is what you get when you
+   tick that button, so it cannot depend on a filter that is switched off at that moment. */
 page.state.query = 'verify-time-range';
 const searched = page.anomalyCounts();
-// Counted inline rather than through recordAnomalyRules, so this is a third opinion rather than
-// the page agreeing with itself: the rule table and the counting loop are both what could be
-// wrong, and only a count that shares neither can catch it.
-let expectedSearched = 0;
-for (const entry of page.state.flat) {
-  if (!page.matchesQuery(entry.record, 'verify-time-range')) continue;
-  if (entry.record.isError === true || entry.record.kind === 'compaction' || brokenTurns.has(entry.turn)) {
-    expectedSearched += 1;
-  }
-}
-check('a search narrows the count too', searched.any, expectedSearched);
-assert('and the narrowed count is smaller than the whole session', searched.any < expectAny);
-assert('and smaller than the matches it is drawn from', searched.any <= page.visibleEntries().length);
+check('a search does not move the union count', searched.any, expectAny);
+check('nor a single record rule', searched.byRule.toolError, expect.toolError);
+check('nor the turn rule', searched.byRule.noReply, expect.noReply);
+// The list has to agree with that, or the count would be honest and the table would not be.
+page.state.anomalyRules = ['toolError'];
+check('and while a rule is ticked the search does not narrow the list either',
+  page.visibleEntries().length, expect.toolError);
+page.state.anomalyRules = [];
+assert('but with no rule ticked the search is still a filter for the list',
+  page.visibleEntries().length < page.state.flat.length);
 page.state.query = '';
 
 page.state.kinds = pure.KIND_ORDER.filter((k) => k !== 'toolResult');
 const withoutToolResults = page.anomalyCounts();
-check('unchecking 工具结果 drops those failures from the count', withoutToolResults.byRule.toolError, 0);
-assert('but leaves the checkpoints alone', withoutToolResults.byRule.compaction === expect.compaction);
-assert('unchecking a kind is still a filter', page.visibleEntries().length < page.state.flat.length);
+check('unchecking 工具结果 does not move the count either',
+  withoutToolResults.byRule.toolError, expect.toolError);
+assert('and it still leaves the checkpoints alone',
+  withoutToolResults.byRule.compaction === expect.compaction);
+assert('but with no rule ticked it is still a filter for the list',
+  page.visibleEntries().length < page.state.flat.length);
 page.state.kinds = pure.KIND_ORDER.slice();
 
 /* Turn-level, read on its own: the tag on the turn head. */
@@ -371,12 +399,23 @@ page.onAnomalyToggle('compaction');
 page.onAnomalyToggle('toolError');
 page.onAnomalyToggle(null);
 check('全部异常 from a partial selection ticks everything, not just the rest', page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
+
+// 全部数据 is the way out, and it is run here for the same reason the toggle is: the shape of a
+// handler is the same whether it clears, toggles, or does nothing at all.
+const showAllSource = fnSource('function onAnomalyShowAll(');
+if (!showAllSource) throw new Error('could not extract onAnomalyShowAll');
+vm.runInContext(showAllSource, page);
+page.state.anomalyRules = ['toolError', 'silent'];
+page.onAnomalyShowAll();
+check('全部数据 goes back to every record', page.state.anomalyRules, []);
+page.onAnomalyShowAll();
+check('and pressing it again is not a toggle into a filtered view', page.state.anomalyRules, []);
 page.state.anomalyRules = [];
 
 /* ---------- 6) what the reader is shown ---------- */
 
-assert('the group is a labelled part of the search form',
-  /id="anomaly-controls" role="group" aria-label="只看异常记录"/.test(html));
+assert('the group is named by the label beside it',
+  /id="anomaly-controls" role="group" aria-labelledby="anomaly-label"/.test(html));
 assert('and it is named, not just glyphed',
   /id="anomaly-label">异常</.test(html));
 // The buttons are built from ANOMALY_RULES. Written into the markup they would be a second
@@ -384,26 +423,58 @@ assert('and it is named, not just glyphed',
 // leaving a button showing one word and announcing another.
 assert('no rule is hardcoded in the markup', !/>工具失败</.test(html) && !/>上下文压缩</.test(html));
 assert('the container is empty in the markup',
-  /<div class="anomaly-quick" id="anomaly-controls" role="group" aria-label="只看异常记录"><\/div>/.test(html));
+  /<div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"><\/div>/.test(html));
+
+/* Position. It is a second filter axis, so it belongs beside the first one. It used to be the
+   last field of the search form, which put it above the KPI cards and the type axis — four cards
+   away from the control it reads as part of. A layout defect of that kind is invisible to every
+   functional assertion in this file, so it is asserted on its own terms. */
+const formEnd = html.indexOf('</form>');
+const kindAt = html.indexOf('id="kind-controls"');
+const anomalyAt = html.indexOf('id="anomaly-bar"');
+const kpiAt = html.indexOf('id="kpi-grid"');
+assert('the type axis is still there to sit beside', kindAt > 0);
+assert('the 异常 axis comes after it', anomalyAt > kindAt);
+assert('and the KPI cards are no longer between the two axes',
+  !(kindAt < kpiAt && kpiAt < anomalyAt));
+assert('it is no longer a field of the search form', formEnd > 0 && anomalyAt > formEnd);
 
 const buildSrc = fnSource('function buildAnomalyButtons(');
 assert('the buttons are built from the table', /ANOMALY_RULES\.length/.test(buildSrc));
 assert('one button per rule', /ANOMALY_RULES\[i\]/.test(buildSrc) && /rule\.id/.test(buildSrc));
 assert('plus one for the whole set', /'anomaly-all'/.test(buildSrc));
+// The page has to be able to get out of the mode it can get into. A way back that only exists
+// in the markup, or that a rename of the button would orphan, is not a way back.
+assert('and one to get back to every record',
+  /'anomaly-none'/.test(buildSrc) && /data-anomaly-none/.test(buildSrc));
+assert('the way back is built first, so the row reads everything-then-kinds',
+  buildSrc.indexOf("'anomaly-none'") < buildSrc.indexOf('ANOMALY_RULES.length'));
 
 const syncSrc = fnSource('function syncAnomalyButtons()');
 assert('a button states how many rows it would keep', /anomaly-count/.test(syncSrc));
-assert('and the name it announces is built from the same two facts',
-  /noun \+ ' ' \+ formatInt\(n\)/.test(syncSrc));
+assert('and the number it publishes carries the unit it was counted in',
+  /formatInt\(n\) \+ ' ' \+ unit/.test(syncSrc));
+assert('the unit comes from the counting pass, not a literal beside each button',
+  /counts\.unit\[id\]/.test(syncSrc));
 assert('pressed state comes from state, not a captured flag',
   /state\.anomalyRules\.indexOf\(id\) >= 0/.test(syncSrc));
+assert('the way back is pressed exactly when no rule is',
+  /isNone[\s\S]{0,240}?state\.anomalyRules\.length === 0/.test(syncSrc));
 assert('the count comes from the shared pass, not a second walk',
   /var counts = anomalyCounts\(\);/.test(syncSrc));
 
 const countsSrc = fnSource('function anomalyCounts()');
-assert('the counts walk the same predicate the ledger does',
-  /passesBaseFilter\(entry\.record, selection\)/.test(countsSrc));
-assert('and take the selection the ledger is showing', /state\.overviewSelection/.test(countsSrc));
+// Inverted from what this asserted before. It required the counts to be drawn through
+// passesBaseFilter, which made the number describe a view that anomaly mode does not produce —
+// the whole "283 on the button, 1,494 in the list" defect. What has to hold instead is that the
+// counts ignore the axis that is switched off while they are on screen.
+assert('the counts do NOT walk the other axis, because anomaly mode does not',
+  !/passesBaseFilter/.test(countsSrc));
+assert('nor read the overview selection', !/state\.overviewSelection/.test(countsSrc));
+assert('a turn rule is counted once per turn, not once per record',
+  /rule\.turn/.test(countsSrc) && /counted\[key\]/.test(countsSrc));
+assert('and its unit is taken from the rule table', /ANOMALY_RULES\[i\]\.turn \? '轮' : '条'/.test(countsSrc));
+assert('the total it publishes is the whole ledger', /total: state\.flat\.length/.test(countsSrc));
 
 // The state has to remember the ticks, or a poll re-renders the buttons from nothing.
 const stateSrc = fnSource('var state = {');
@@ -419,9 +490,44 @@ assert('and re-syncs the buttons with it', /syncAnomalyButtons\(\);/.test(clearS
 
 assert('the filter counts as a filter',
   /state\.anomalyRules\.length !== 0/.test(fnSource('function isFiltering()')));
-assert('the ledger applies it', /passesAnomaly\(entry\.record, anomalyContext\(entry\), state\.anomalyRules\)/.test(fnSource('function visibleEntries()')));
-assert('the strip applies it', /passesAnomaly/.test(fnSource('function spanPassesFilter(')));
-assert('and every poll re-syncs the buttons', /syncAnomalyButtons\(\);/.test(fnSource('function render()')));
+
+const visibleSrc = fnSource('function visibleEntries()');
+assert('the ledger applies it', /passesAnomaly\(entry\.record, anomalyContext\(entry\), state\.anomalyRules\)/.test(visibleSrc));
+// The two axes are alternatives, not a stack. Getting this wrong is not a matter of taste: a
+// list built from both predicates at once is the 1,494 rows a 283-row button could never
+// deliver, and the reason the two modes could not be told apart from the result alone.
+assert('and treats the two axes as alternatives, not a stack',
+  /if \(anomalyMode\) \{[\s\S]*?\} else if \(!passesBaseFilter/.test(visibleSrc));
+
+const stripSrc = fnSource('function spanPassesFilter(');
+assert('the strip applies it', /passesAnomaly/.test(stripSrc));
+assert('and branches on the mode before the other axis, so strip and list agree',
+  /if \(state\.anomalyRules\.length > 0\) \{\s*return passesAnomaly/.test(stripSrc));
+
+const renderSrc = fnSource('function render()');
+assert('the mode is settled before anything reads a count',
+  /syncAnomalyMode\(\);\s*syncAnomalyButtons\(\);/.test(renderSrc));
+assert('every poll re-syncs the buttons', /syncAnomalyButtons\(\);/.test(renderSrc));
+
+const modeSrc = fnSource('function syncAnomalyMode()');
+// Dimming alone would leave a control that takes a click and changes nothing — the same class
+// of defect this change is about, reintroduced one line away.
+assert('the inactive axis is made inert, not merely dimmed', /\.inert = on/.test(modeSrc));
+assert('and the body is marked so the dimming has something to key off',
+  /data-anomaly-mode/.test(modeSrc));
+assert('the note says what stopped applying and how to undo it',
+  /异常筛选已开启/.test(modeSrc) && /ANOMALY_NONE_LABEL/.test(modeSrc));
+
+const muted = html.match(/<[a-z]+[^>]*\sdata-filter-scope[^>]*>/g) || [];
+check('exactly the four controls that stop applying are marked', muted.length, 4);
+assert('the kind axis is one of them', muted.some((tag) => /id="kind-controls"/.test(tag)));
+assert('the search box is one of them', muted.some((tag) => /field-grow/.test(tag)));
+assert('the time range is one of them', muted.some((tag) => /field-range/.test(tag)));
+assert('but neither picker is — they choose the session, not the records in it',
+  muted.every((tag) => !/<select/.test(tag) && !/session-select/.test(tag) && !/generation-select/.test(tag)));
+assert('and the dimming is keyed to the mode being on',
+  /body\[data-anomaly-mode='on'\] \[data-filter-scope\]/.test(html));
+
 assert('the head tags a broken turn', /turnAnomalyRules\(turn\)/.test(fnSource('function buildTurnHead(')));
 assert('with the rule name, not a bare colour', /anomalyRuleLabel\(turnFlags\[flag\]\)/.test(fnSource('function buildTurnHead(')));
 

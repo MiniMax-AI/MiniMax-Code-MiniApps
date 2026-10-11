@@ -504,6 +504,47 @@
         color: inherit;
       }
 
+      /* A rule with nothing to find stays listed — "none of these happened" is a different fact
+         from "this is not available" — but it is not dressed as a button that will return rows.
+         The count still carries it, so this is a dim, never a hide. */
+      .anomaly-btn.is-empty .anomaly-count {
+        opacity: 0.55;
+      }
+
+      /* 异常 sits directly under the type axis because both answer the same question — which
+         records the ledger shows — so the two read as one strip of choices. Same 16px gutter as
+         .traj-controls, so its left edge lines up with the 全部 button above it. */
+      .anomaly-bar {
+        display: flex;
+        flex: none;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .anomaly-bar-label {
+        font-size: 12px;
+        color: var(--mcode-text-subtle);
+      }
+
+      .anomaly-bar-note {
+        font-size: 12px;
+        color: var(--mcode-text-subtle);
+      }
+
+      /* In 异常 mode the type axis, the search box and the time range do not apply. They are
+         dimmed rather than left looking live: a control that cannot change what is on screen
+         and still takes clicks is the exact defect this axis was moved to fix. The JS also sets
+         `inert` on them, so keyboard focus cannot land on a control that does nothing.
+         会话 / 上下文代 / 刷新 are deliberately unmarked — they choose which session is on
+         screen, not which records, and have to keep working. */
+      body[data-anomaly-mode='on'] [data-filter-scope] {
+        opacity: 0.4;
+        filter: grayscale(1);
+      }
+
       .range-sep {
         font-size: 12px;
         color: var(--mcode-text-subtle);
@@ -1947,14 +1988,14 @@
             <label class="field-label" for="generation-select">上下文代</label>
             <select id="generation-select" aria-describedby="generation-hint"></select>
           </div>
-          <div class="field field-grow">
+          <div class="field field-grow" data-filter-scope>
             <label class="field-label" for="search-input">搜索</label>
             <input type="search" id="search-input" placeholder="搜索摘要、正文、结果与思考" autocomplete="off" />
           </div>
         </div>
 
         <div class="toolbar-row">
-          <div class="field field-range" role="group" aria-labelledby="range-label" aria-describedby="range-hint">
+          <div class="field field-range" role="group" aria-labelledby="range-label" aria-describedby="range-hint" data-filter-scope>
             <span class="field-label" id="range-label">时间区间</span>
             <label class="range-part" for="range-from">
               <span class="range-part-label">起点</span>
@@ -1980,18 +2021,7 @@
             <button type="button" class="btn btn-quiet" id="range-clear" aria-label="清空时间区间" hidden>清空区间</button>
           </div>
         </div>
-        <p class="range-hint" id="range-hint">留空 = 不限。选一个时间区间，或用快捷按钮。</p>
-
-        <div class="toolbar-row">
-          <div class="field field-anomaly" role="group" aria-labelledby="anomaly-label">
-            <span class="field-label" id="anomaly-label">异常</span>
-            <!-- The buttons are built from ANOMALY_RULES rather than written here. The rule
-                 table is the one place a rule is named, so a rename cannot leave a button
-                 showing one word and announcing another, and a new rule is an entry in that
-                 table instead of a second list to keep in step. -->
-            <div class="anomaly-quick" id="anomaly-controls" role="group" aria-label="只看异常记录"></div>
-          </div>
-        </div>
+        <p class="range-hint" id="range-hint" data-filter-scope>留空 = 不限。选一个时间区间，或用快捷按钮。</p>
 
       </form>
 
@@ -2008,7 +2038,7 @@
         <div class="kpi-grid" id="kpi-grid"></div>
       </section>
 
-      <div class="traj-controls" id="kind-controls" role="toolbar" aria-label="按类型筛选轨迹" aria-controls="overview">
+      <div class="traj-controls" id="kind-controls" role="toolbar" aria-label="按类型筛选轨迹" aria-controls="overview" data-filter-scope>
         <nav class="traj-controls-actions" aria-label="按类型筛选轨迹">
           <button type="button" class="tbtn tbtn-action tbtn-all" id="kind-all" aria-pressed="true"
             aria-label="当前显示全部类型 · 点击只看空白" title="当前显示全部类型 · 点击只看空白">
@@ -2060,6 +2090,22 @@
               <span class="tbtn-label">压缩</span>
             </button>
         </nav>
+        </div>
+
+        <!-- 异常 is a second filter system, not a fourth field of the first one, and it is said
+             so here rather than implied: while a rule is on, the kind axis, the search box and
+             the time range stop applying, and the controls that drive them are dimmed so that
+             a control that cannot change what is on screen does not still look like it can.
+             It sits directly under the kind axis because the two decide the same thing — which
+             records the ledger shows — and separated by the KPI cards it read as unrelated.
+             The buttons are built from ANOMALY_RULES rather than written here: the rule table
+             is the one place a rule is named, so a rename cannot leave a button showing one
+             word and announcing another, and a new rule is an entry in that table instead of a
+             second list to keep in step. -->
+        <div class="anomaly-bar" id="anomaly-bar">
+          <span class="anomaly-bar-label" id="anomaly-label">异常</span>
+          <div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"></div>
+          <span class="anomaly-bar-note" id="anomaly-mode-note" hidden></span>
         </div>
 
       <section class="overview" id="overview" aria-labelledby="overview-heading">
@@ -2246,11 +2292,21 @@
         return rule.id;
       });
 
-      function anomalyRuleLabel(id) {
+      // The way out. Not a rule, so it has no id and no entry in the table: it is the state
+      // where no rule applies. Named here rather than in the markup so the bar cannot end up
+      // offering a way back that the handler and the note disagree with.
+      var ANOMALY_NONE_LABEL = '全部数据';
+
+      function anomalyRuleById(id) {
         for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
-          if (ANOMALY_RULES[i].id === id) return ANOMALY_RULES[i].label;
+          if (ANOMALY_RULES[i].id === id) return ANOMALY_RULES[i];
         }
-        return id || DASH;
+        return null;
+      }
+
+      function anomalyRuleLabel(id) {
+        var rule = anomalyRuleById(id);
+        return rule ? rule.label : (id || DASH);
       }
 
       /**
@@ -3040,6 +3096,7 @@
         dom.rangeQuick = document.querySelector('.range-quick');
         dom.rangeHint = document.getElementById('range-hint');
         dom.anomalyControls = document.getElementById('anomaly-controls');
+        dom.anomalyNote = document.getElementById('anomaly-mode-note');
         dom.windowBar = document.getElementById('window-bar');
         dom.headerToggle = document.getElementById('header-toggle');
         dom.kpiToggle = document.getElementById('kpi-toggle');
@@ -4409,26 +4466,60 @@
       }
 
       /**
-       * How many records each rule would keep, given every other filter exactly as it stands.
-       * Counted through passesBaseFilter so a button can never advertise a number the ledger
-       * will not deliver. `any` counts records, not rule hits: one row can trip two rules,
-       * and 「全部异常」 promising more rows than exist is the same lie as promising fewer.
+       * What each 异常 button would show if it were the only one ticked.
+       *
+       * Counted over every record with no other filter applied, because that is exactly what
+       * 异常 mode does: the type axis, the search box and the time range all stop applying the
+       * moment a rule is on. Counting through passesBaseFilter — which is what this used to do,
+       * while the ledger was also applying those filters — produced a number no click could
+       * ever deliver, and that is the whole of the original defect: a button promising 283
+       * rows above a list showing 1,494. The only fix is to count the way the ledger filters,
+       * so the invariant is stated as a property of this function: the number on a button is
+       * what you get when you tick that button and nothing else.
+       *
+       * Two units, because the rules are two kinds of thing. A record rule counts 条. A turn
+       * rule counts 轮, and counts the *turns*, not the records inside them: 无答复 fires on
+       * every record of a turn that never answered, so counted in records it advertised 1,244
+       * "unanswered" rows that carry no sign of being unanswered — while the session was in
+       * fact broken a dozen times. A unit is a claim about what the number counts, and the two
+       * cannot share one.
+       *
+       * `any` counts records, not rule hits: one row can trip two rules, so it never equals the
+       * sum of the parts. That is why it is labelled as the union and not as a total.
+       *
+       * @returns {{byRule: Object, unit: Object, any: number, total: number}}
        */
       function anomalyCounts() {
         var byRule = {};
-        for (var i = 0; i < ANOMALY_RULES.length; i += 1) byRule[ANOMALY_RULES[i].id] = 0;
+        var unit = {};
+        for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
+          byRule[ANOMALY_RULES[i].id] = 0;
+          unit[ANOMALY_RULES[i].id] = ANOMALY_RULES[i].turn ? '轮' : '条';
+        }
         var any = 0;
-        var selection = state.overviewSelection;
         var live = liveTurn();
+        var counted = {};
         for (var j = 0; j < state.flat.length; j += 1) {
           var entry = state.flat[j];
-          if (!passesBaseFilter(entry.record, selection)) continue;
           var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });
           if (!hits.length) continue;
           any += 1;
-          for (var k = 0; k < hits.length; k += 1) byRule[hits[k]] += 1;
+          for (var k = 0; k < hits.length; k += 1) {
+            var id = hits[k];
+            var rule = anomalyRuleById(id);
+            if (!rule || !rule.turn) {
+              byRule[id] += 1;
+              continue;
+            }
+            // A turn rule reaches every record of its turn, so the turn is what gets counted,
+            // and only the first record of that turn to arrive counts it.
+            var key = id + '#' + entry.turn.index;
+            if (counted[key]) continue;
+            counted[key] = true;
+            byRule[id] += 1;
+          }
         }
-        return { byRule: byRule, any: any };
+        return { byRule: byRule, unit: unit, any: any, total: state.flat.length };
       }
 
       /**
@@ -4445,13 +4536,28 @@
         return out;
       }
 
+      /**
+       * Two filter systems, one of them at a time.
+       *
+       * 异常 mode is entered by ticking a rule and left with 全部数据. While it is on, the type
+       * axis, the search box, the time range and the overview brush are all switched off —
+       * deliberately. 异常 is a short list, and narrowing a short list by a second axis is how
+       * a reader ends up staring at an empty ledger with four filters set and no way to tell
+       * which one emptied it. So this is an either/or and not two independent tests: with no
+       * rule ticked the anomaly branch cannot run at all, because passesAnomaly() treats an
+       * empty list as "off" and lets everything through.
+       */
       function visibleEntries() {
         var out = [];
         var selection = state.overviewSelection;
+        var anomalyMode = state.anomalyRules.length > 0;
         for (var i = 0; i < state.flat.length; i += 1) {
           var entry = state.flat[i];
-          if (!passesBaseFilter(entry.record, selection)) continue;
-          if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomalyRules)) continue;
+          if (anomalyMode) {
+            if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomalyRules)) continue;
+          } else if (!passesBaseFilter(entry.record, selection)) {
+            continue;
+          }
           out.push(entry);
         }
         return out;
@@ -4677,17 +4783,25 @@
        * but nothing changed" happened.
        */
       function spanPassesFilter(record, hasQuery) {
+        // The strip is handed a bare record, so the owning turn comes back out of turnById
+        // instead of off the flat entry the ledger gets — the same question, the same table,
+        // one lookup apart.
+        var owner = record ? turnById.get(record.turnId) : null;
+        // 异常 mode replaces the filter outright, strip included. Branching first is what makes
+        // this agree with visibleEntries() step for step: the strip must not draw a span for a
+        // record the ledger is not going to render, which is the "filtered but nothing changed"
+        // this function exists to prevent. Running the kind, query and range tests first and
+        // the anomaly test last — the order this used to be in — drew spans for records the
+        // list had stopped filtering on the moment a rule was ticked.
+        if (state.anomalyRules.length > 0) {
+          return passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomalyRules);
+        }
         if (!hasKind(record, state.kinds)) return false;
         if (hasQuery && !matchesQuery(record, state.query)) return false;
         // The range is a filter here too. Leaving it out made the overview draw spans for
         // records the list refused to render — the same "filtered but nothing changed" this
         // function exists to prevent.
         if (!inTimeRange(record)) return false;
-        // 异常 belongs here for the same reason. The strip is handed a bare record, so the
-        // owning turn comes back out of turnById instead of off the flat entry the ledger
-        // gets — the same question, the same table, one lookup apart.
-        var owner = record ? turnById.get(record.turnId) : null;
-        if (!passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomalyRules)) return false;
         return true;
       }
 
@@ -5175,6 +5289,14 @@
        */
       function applyFilterScope() {
         if (!dom.kpiScope) return;
+        if (state.anomalyRules.length > 0) {
+          // This line exists to name the filters the KPI does not follow. In 异常 mode there are
+          // none of them in force, so the usual wording would be pointing at two controls that
+          // are switched off and filtering nothing.
+          dom.kpiScope.textContent = '整场会话 · 当前只看异常记录';
+          dom.kpiScope.hidden = false;
+          return;
+        }
         if (hasTimeRange()) {
           var stats = kpiStats();
           var scope = '已按区间 ' + timeRangeLabel() + ' 统计';
@@ -5928,6 +6050,10 @@
         syncRangeBounds();
         // The 异常 buttons carry a count that has to follow the session and every other filter,
         // exactly like the refresh button's decision to appear.
+        // Which of the two filter systems is in force is decided here, before anything reads a
+        // count or draws a span, so the strip, the buttons and the ledger cannot each answer a
+        // different question.
+        syncAnomalyMode();
         syncAnomalyButtons();
         renderOverview();
         renderLedger();
@@ -6062,6 +6188,19 @@
       function buildAnomalyButtons() {
         if (!dom.anomalyControls) return;
         dom.anomalyControls.textContent = '';
+
+        // First, and not as one choice among the others: this is the state the page opens in
+        // and the only way back out of them. Built here rather than written into the markup so
+        // it cannot drift out of step with the buttons it has to reverse.
+        var none = el('button', 'btn btn-quiet anomaly-btn anomaly-btn-none');
+        none.type = 'button';
+        none.id = 'anomaly-none';
+        none.setAttribute('data-anomaly-none', '');
+        none.setAttribute('aria-pressed', 'true');
+        none.appendChild(el('span', 'anomaly-label', ANOMALY_NONE_LABEL));
+        none.appendChild(el('span', 'anomaly-count', '0'));
+        dom.anomalyControls.appendChild(none);
+
         for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
           var rule = ANOMALY_RULES[i];
           var button = el('button', 'btn btn-quiet anomaly-btn');
@@ -6073,6 +6212,8 @@
           button.appendChild(el('span', 'anomaly-count', '0'));
           dom.anomalyControls.appendChild(button);
         }
+
+        // Last, so the row reads left to right as: everything, then each kind, then any kind.
         var all = el('button', 'btn btn-quiet anomaly-btn');
         all.type = 'button';
         all.id = 'anomaly-all';
@@ -6080,7 +6221,7 @@
         all.setAttribute('aria-pressed', 'false');
         all.appendChild(el('span', 'anomaly-label', '全部异常'));
         all.appendChild(el('span', 'anomaly-count', '0'));
-        dom.anomalyControls.insertBefore(all, dom.anomalyControls.firstChild);
+        dom.anomalyControls.appendChild(all);
       }
 
       /**
@@ -6094,15 +6235,40 @@
         var buttons = dom.anomalyControls.querySelectorAll('.anomaly-btn');
         for (var i = 0; i < buttons.length; i += 1) {
           var button = buttons[i];
+          var isNone = button.hasAttribute('data-anomaly-none');
           var isAll = button.hasAttribute('data-anomaly-all');
           var id = button.getAttribute('data-anomaly-rule');
-          var n = isAll ? counts.any : (counts.byRule[id] || 0);
-          var on = isAll
-            ? state.anomalyRules.length === ANOMALY_RULES.length
-            : state.anomalyRules.indexOf(id) >= 0;
-          var noun = isAll ? '全部异常' : anomalyRuleLabel(id);
-          var label = noun + ' ' + formatInt(n) + ' 条 · ' + (on ? '当前只看这些 · 点击取消' : '当前未启用 · 点击只看这些');
-          button.querySelector('.anomaly-count').textContent = formatInt(n);
+          var on;
+          var n;
+          var noun;
+          var unit;
+          if (isNone) {
+            on = state.anomalyRules.length === 0;
+            n = counts.total;
+            noun = ANOMALY_NONE_LABEL;
+            unit = '条';
+          } else if (isAll) {
+            on = state.anomalyRules.length === ANOMALY_RULES.length;
+            n = counts.any;
+            noun = '全部异常';
+            unit = '条';
+          } else {
+            on = state.anomalyRules.indexOf(id) >= 0;
+            n = counts.byRule[id] || 0;
+            noun = anomalyRuleLabel(id);
+            unit = counts.unit[id] || '条';
+          }
+          // The unit is printed next to the number rather than assumed: 条 for a rule about a
+          // record, 轮 for a rule about a turn. A bare number cannot carry that difference, and
+          // a reader who cannot tell them apart is exactly who reads 1,244 条 as 1,244
+          // unanswered replies when the session was broken thirteen times.
+          var amount = formatInt(n) + ' ' + unit;
+          // The way back is not a rule that happens to be on, so it is not described as one.
+          var wording = isNone
+            ? (on ? '当前正在看全部数据' : '点击回到全部数据')
+            : (on ? '当前只看这些 · 点击取消' : '当前未启用 · 点击只看这些');
+          var label = noun + ' ' + amount + ' · ' + wording;
+          button.querySelector('.anomaly-count').textContent = amount;
           button.setAttribute('aria-pressed', on ? 'true' : 'false');
           button.setAttribute('aria-label', label);
           button.setAttribute('title', label);
@@ -6126,6 +6292,44 @@
         state.anomalyRules = next;
         resetWindowMode();
         render();
+      }
+
+      /**
+       * Back to every record.
+       *
+       * Deliberately not a toggle. 全部数据 is the state the page opens in, so a toggle would
+       * mean the second click on an already-active button silently filtered the list — the
+       * reader pressed "show me everything" and got less of it. Nothing is selected, the other
+       * axis takes over again, and nothing else changes: the type axis and the search box come
+       * back holding exactly what they were holding before.
+       */
+      function onAnomalyShowAll() {
+        if (state.anomalyRules.length === 0) return;
+        state.anomalyRules = [];
+        resetWindowMode();
+        render();
+      }
+
+      /**
+       * Keeps the page honest about which filter system is in force.
+       *
+       * The controls for the inactive one are made inert as well as dimmed, because a control
+       * that accepts a click and then changes nothing on screen is the defect that put this
+       * axis where it was — reintroducing it one line away would be worse than the original.
+       * 会话 / 上下文代 / 刷新 carry no marker: they choose which session is on screen, not which
+       * records of it, so they have to keep working while an anomaly rule is ticked.
+       */
+      function syncAnomalyMode() {
+        var on = state.anomalyRules.length > 0;
+        document.body.setAttribute('data-anomaly-mode', on ? 'on' : 'off');
+        var scopes = document.querySelectorAll('[data-filter-scope]');
+        for (var i = 0; i < scopes.length; i += 1) scopes[i].inert = on;
+        if (!dom.anomalyNote) return;
+        dom.anomalyNote.hidden = !on;
+        if (on) {
+          dom.anomalyNote.textContent = '异常筛选已开启 · 类型、搜索、时间区间与总览不参与 · 点「'
+            + ANOMALY_NONE_LABEL + '」回到全部数据';
+        }
       }
 
       function syncKindButtons() {
@@ -6288,9 +6492,13 @@
         var anomalyButtons = dom.anomalyControls.querySelectorAll('.anomaly-btn');
         for (var a = 0; a < anomalyButtons.length; a += 1) {
           anomalyButtons[a].addEventListener('click', function () {
-            // Read the pressed state at click time rather than closing over it: the buttons
+            // Read which button this is at click time rather than closing over it: the buttons
             // are re-synced on every poll, and a captured flag goes stale between the render
             // and the click.
+            if (this.hasAttribute('data-anomaly-none')) {
+              onAnomalyShowAll();
+              return;
+            }
             var id = this.getAttribute('data-anomaly-rule');
             onAnomalyToggle(id || null);
           });

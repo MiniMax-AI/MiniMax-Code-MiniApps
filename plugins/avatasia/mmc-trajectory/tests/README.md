@@ -89,7 +89,7 @@ none of them, and the guards then fail for want of something to find.
 | `verify-pr15-fixes.mjs` | the six fixes made for the PR #15 review comments |
 | `verify-prompt-fix.mjs` | injected-block splitting via `canonicalTextRange` |
 | `verify-window-widen.mjs` | `向上加载更早的 N 条` survives the next poll (self-contained: the shipped rule is transcribed) |
-| `verify-anomaly.mjs` | the four 异常 rules agree with counts derived independently of the page |
+| `verify-anomaly.mjs` | the four 异常 rules, their units, their position on the page, and their exclusivity with the other axis |
 | `verify-block-order.mjs` | assistant blocks are ordered per message: thinking → text → toolCall |
 | `verify-response-rail.mjs` | every row carries the rail of the response it came from |
 | `verify-call-fold-coverage.mjs` | folding every tool call really removes them from the rendered build |
@@ -101,9 +101,41 @@ none of them, and the guards then fail for want of something to find.
 | `mutate-turn-breakdown.py` | the turn breakdown parts sum to the headline |
 | `mutate-compaction-turn.py` | the compaction-turn attribution is not a free-text label |
 | `mutate-pr15-fixes.py` | each of the six PR #15 fixes has a guard that can fail |
-| `mutate-anomaly.py` | each of the 36 异常 rules, in the page, has a guard that can fail |
+| `mutate-anomaly.py` | each of the 45 异常 mutations, in the page, has a guard that can fail |
 | `mutate-steer.py` | the steer split and the turn classification hold |
 | `mutate-window-default.py` | the window defaults, labels, resets and load-more hold |
+
+## The 异常 axis, and what it promises
+
+`异常` is a second filter system, not a fourth field of the first one. Entering it switches the
+type axis, the search box, the time range and the overview brush off; leaving it switches them
+back on with their values intact. Four properties are asserted, each with a mutation control,
+because each was observed to be false in this file's own history:
+
+1. **The number on a button is what you get when you tick that button.** `anomalyCounts()` walks
+   the same records `visibleEntries()` does and neither of them walks the other axis. Counting
+   through `passesBaseFilter` — which is what this guard used to *require* — produced a button
+   promising 283 rows above a list of 1,494, and no functional assertion could tell, because the
+   ledger was filtering the same way the count was.
+2. **The unit is part of the claim.** A rule scoped to a record is published in 条; a rule scoped
+   to a turn is published in 轮, and counted once per *turn*. `无答复` counted in records is how
+   a session broken 13 times came to advertise 1,244 "unanswered" rows, none of which carried a
+   sign of being unanswered. `verify-anomaly.mjs` checks the unit against the rule table, not
+   against a literal, so renaming or rescoping a rule cannot leave the two disagreeing.
+3. **The two axes are alternatives, not a stack.** `visibleEntries()` and `spanPassesFilter()`
+   branch on the mode before the other axis. The strip has to agree with the list: when it
+   drew spans for records the list was not rendering, the "filtered but nothing changed" failure
+   the overview had already paid for once came straight back.
+4. **A control that cannot change what is on screen must not look like it can.** The inactive
+   axis is `inert`, not merely dimmed, so neither the pointer nor keyboard focus can reach a
+   button that does nothing. The session and generation pickers are deliberately unmarked — they
+   choose which session is on screen, not which records of it — and the guard asserts exactly
+   which four elements carry the marker.
+
+Position is asserted too, on its own terms: the axis has to come after the type axis, must not
+be a field of the search form any more, and the KPI cards must not come between them. It used
+to be the last field of the form, four cards above the axis it reads as part of — a layout defect
+that no functional assertion in the suite could see.
 
 ## Deliberately not in the default run
 
