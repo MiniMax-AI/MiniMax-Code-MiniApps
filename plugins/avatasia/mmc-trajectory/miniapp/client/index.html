@@ -2831,7 +2831,7 @@
         return { text: text.slice(0, cap), truncated: true };
       }
 
-      function buildHandoffMarkdown(session, turn, record, rawText, rawTruncated) {
+      function buildHandoffMarkdown(session, turn, record, rawText, rawTruncated, rawOmitted) {
         var lines = [];
         lines.push('请分析这条会话轨迹记录，说明它在做什么、有没有问题，以及是否需要改进。');
         lines.push('');
@@ -2864,7 +2864,7 @@
         if (record.api) lines.push('- 接口：' + record.api);
         if (record.stopReason) lines.push('- 结束原因：' + record.stopReason);
         if (record.textTruncated) lines.push('- 提示：正文已被上游截断。');
-        if (record.rawOmitted) lines.push('- 提示：原文过大已被省略。');
+        if (rawOmitted) lines.push('- 提示：原文过大已被省略。');
         if (record.isError || record.error) {
           lines.push('- 状态：失败');
           lines.push('- 错误：' + safeText(record.error));
@@ -5957,8 +5957,9 @@
         var attempt = requestRaw(index).then(function (result) {
           delete rawPending[key];
           if (result.ok && result.body && Object.prototype.hasOwnProperty.call(result.body, 'raw')) {
-            rawCache[key] = result.body.raw;
-            return result.body.raw;
+            var entry = { raw: result.body.raw, omitted: result.body.omitted === true };
+            rawCache[key] = entry;
+            return entry;
           }
           var code = result.body && typeof result.body.error === 'string' ? result.body.error : '';
           var err = new Error(code || 'raw_unavailable');
@@ -5978,15 +5979,19 @@
       /**
        * What a reader should show for a record's message.
        *
-       * A record whose message was too large to carry resolves to null, which callers read
-       * as "there is no message body" and say so. Everything else resolves to the message or
-       * rejects: silently substituting the normalized row would put different content under
-       * a label that promises 原文, with nothing on the page to say it had happened.
+       * Resolves to `{ raw, omitted }`. Whether the message was too large to carry used to be
+       * a field on the record, checked here to short-circuit the fetch; it now travels with
+       * the answer instead, because deciding it meant serializing every message in the session
+       * on every poll to measure them against a cap — see docs/LAYERS.md D11.
+       *
+       * `omitted` and `raw === null` are the same state stated two ways, and a caller may test
+       * either. Everything else resolves to the message or rejects: silently substituting the
+       * normalized row would put different content under a label that promises 原文, with
+       * nothing on the page to say it had happened.
        *
        * @param {Record<string, any>} record
        */
       function rawSourceFor(record) {
-        if (record && record.rawOmitted) return Promise.resolve(null);
         return fetchRaw(record);
       }
 
@@ -5995,26 +6000,30 @@
         wrap.style.display = 'flex';
         wrap.style.flexDirection = 'column';
         wrap.style.gap = '8px';
-        if (record.rawOmitted) {
-          wrap.appendChild(el('p', 'note note-danger', '原文过大，已省略。可以从参数与结果页查看已保留的部分。'));
-        }
         if (record.textTruncated) {
           wrap.appendChild(el('p', 'note', '正文已截断：仅保留前段内容。'));
         }
         var pre = el('pre', 'pre');
         pre.setAttribute('tabindex', '0');
         wrap.appendChild(pre);
-        if (record.rawOmitted) {
-          pre.textContent = DASH;
-        } else {
-          pre.textContent = '正在读取原文…';
-          rawSourceFor(record).then(function (source) {
-            if (source === null || source === undefined) pre.textContent = DASH;
-            else pre.innerHTML = jsonColorize(source);
-          }, function () {
-            pre.textContent = '原文读取失败，请重试。';
-          });
-        }
+        // The two states the reader sees are unchanged; they now arrive with the answer rather
+        // than ahead of it, because deciding which one applied was what made the bulk response
+        // serialize every message in the session — see docs/LAYERS.md D11.
+        pre.textContent = '正在读取原文…';
+        rawSourceFor(record).then(function (fetched) {
+          if (fetched.omitted === true) {
+            wrap.insertBefore(
+              el('p', 'note note-danger', '原文过大，已省略。可以从参数与结果页查看已保留的部分。'),
+              pre
+            );
+            pre.textContent = DASH;
+            return;
+          }
+          if (fetched.raw === null || fetched.raw === undefined) pre.textContent = DASH;
+          else pre.innerHTML = jsonColorize(fetched.raw);
+        }, function () {
+          pre.textContent = '原文读取失败，请重试。';
+        });
         return wrap;
       }
 
@@ -6055,8 +6064,9 @@
         var done = function (ok) {
           inspectorSay(ok ? '已复制该记录的 JSON。' : '复制失败，请手动选择文本后复制。');
         };
-        rawSourceFor(record).then(function (source) {
-          var text = source === null || source === undefined ? stringify(record) : stringify(source);
+        rawSourceFor(record).then(function (fetched) {
+          var noRaw = fetched.omitted === true || fetched.raw === null || fetched.raw === undefined;
+          var text = noRaw ? stringify(record) : stringify(fetched.raw);
           if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
             navigator.clipboard.writeText(text).then(
               function () {
@@ -6132,14 +6142,18 @@
         rawSourceFor(record).then(function (fetched) {
           // A message too large to carry has no raw; the normalized record is then the most
           // there is, which is what this sent before raw became a separate fetch.
-          var rawSource = fetched === null || fetched === undefined ? stripVolatile(record) : fetched;
+          var omitted = fetched.omitted === true;
+          var rawSource = omitted || fetched.raw === null || fetched.raw === undefined
+            ? stripVolatile(record)
+            : fetched.raw;
           var raw = truncateJson(rawSource, HANDOFF_RAW_LIMIT);
           var text = buildHandoffMarkdown(
             state.payload ? state.payload.session : null,
             entry.turn,
             record,
             raw.text,
-            raw.truncated
+            raw.truncated,
+            omitted
           );
           inspectorSay('已发出请求，等待你在弹出的确认框中确认…');
           var result = message.append(text);

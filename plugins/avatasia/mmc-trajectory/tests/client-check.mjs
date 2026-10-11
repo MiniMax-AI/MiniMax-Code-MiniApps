@@ -188,7 +188,7 @@ const failing = {
   kind: 'toolCall', index: 42, toolName: 'read', toolCallId: 'call_bb89',
   timestamp: 1791603931971, relativeMs: 887, durationMs: null, isError: true,
   error: 'boom <b>x</b>', model: 'MiniMax-M3.1-Flash-Preview', provider: 'minimax',
-  api: 'anthropic-messages', stopReason: 'toolUse', rawOmitted: true, textTruncated: true,
+  api: 'anthropic-messages', stopReason: 'toolUse', textTruncated: true,
   tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15 },
   arguments: { path: 'a.txt' }
 };
@@ -196,7 +196,13 @@ const raw = sandbox.truncateJson({ blob: 'x'.repeat(20000) }, sandbox.HANDOFF_RA
 check('truncateJson caps at 8000', raw.text.length, 8000);
 check('truncateJson flags', raw.truncated, true);
 check('truncateJson small', sandbox.truncateJson({ a: 1 }, 8000).truncated, false);
-const md = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated);
+// 「原文过大」 is not a field on the record any more: it arrives with the /raw answer, because
+// deciding it meant serializing every message in the session on every poll (LAYERS.md D11).
+// The markdown therefore takes the verdict as its own argument, and this asserts that a
+// caller who passes it still gets the line — and that one who does not, gets silence.
+const md = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated, true);
+const mdWithoutVerdict = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated);
+assert('md omits the flag when no verdict was passed', !mdWithoutVerdict.includes('原文过大已被省略'));
 assert('md locates turn', md.includes('第 3 轮'));
 assert('md locates record', md.includes('#42'));
 assert('md names kind', md.includes('工具调用'));

@@ -17,6 +17,8 @@ const {
   normalizeLimit,
   toolCallSummary,
   normalizeUsage,
+  buildRawPayload,
+  splitRawRecords,
 } = server;
 
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
@@ -154,10 +156,28 @@ check('non-assistant records have null tokens',
 const overCap = allRecords.filter((r) => (r.text?.length ?? 0) > 20000 || (r.thinking?.length ?? 0) > 20000 || (r.result?.length ?? 0) > 20000);
 check('text/thinking/result capped at 20000', overCap.length === 0, `${overCap.length} over cap`);
 check('truncated flag set only when capped', allRecords.every((r) => r.textTruncated === true || (r.text?.length ?? 0) <= 20000));
-check('raw dropped over 65536 bytes', allRecords.every((r) => {
-  if (r.raw === null) return r.rawOmitted === true;
-  return Buffer.byteLength(JSON.stringify(r.raw), 'utf8') <= 65536;
-}));
+// The raw-message cap. It used to be asserted here by reading `record.raw` off the payload,
+// which is exactly the thing that is no longer there: the message now travels with the /raw
+// response, built on request. The cap is still a promise the page makes — 「原文过大，已省略」
+// — so the assertion follows the locator instead of asserting the field is absent and moving on.
+const rawLocators = splitRawRecords(payload.turns);
+check('the payload carries no raw message body',
+  allRecords.every((r) => !('raw' in r) && !('rawOmitted' in r)));
+check('every record has a locator back to its row',
+  allRecords.every((r) => Number.isInteger(rawLocators.get(r.index))));
+check('every locator lands on a real row',
+  [...rawLocators.values()].every((i) => i >= 0 && i < parsed.rows.length));
+check('raw dropped over 65536 bytes, or reported as omitted', (() => {
+  for (const record of allRecords) {
+    const row = parsed.rows[rawLocators.get(record.index)];
+    if (!row || typeof row !== 'object') return false;
+    const built = buildRawPayload(row.message, redact);
+    if (built.omitted === true) continue;
+    if (built.value === null) continue;
+    if (Buffer.byteLength(JSON.stringify(built.value), 'utf8') > 65536) return false;
+  }
+  return true;
+})());
 
 const serialized = JSON.stringify(payload);
 // leak check across the whole serialized payload

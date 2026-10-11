@@ -41,10 +41,13 @@ MUTATIONS = [
         "  return size !== limit;",
     ),
     (
+        # The verdict now lives where the parse result is built rather than at the point of
+        # use, because a cache hit has to carry it too — otherwise a hit would silently report
+        # an untruncated file that the read that populated it had cut short.
         "server: the route stops using the tested helper",
         SERVER,
-        "if (truncatedByCap(head.size, limit)) truncated = true;",
-        "if (head.read < head.size) truncated = true;",
+        "truncated: truncatedByCap(head.size, limit),",
+        "truncated: head.read < head.size,",
     ),
     (
         "server: catalog-recorded size as the read limit again",
