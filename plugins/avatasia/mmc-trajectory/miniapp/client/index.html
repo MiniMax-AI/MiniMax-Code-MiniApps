@@ -292,6 +292,11 @@
 
       input[type='search'],
       input[type='text'],
+      /* The range pickers sit in the same row as the search box and the selects, and a native
+         control left out of this list arrives at its own intrinsic 22px height with the user
+         agent's own border — visibly not part of the toolbar, and out of step with
+         `color-scheme` on both themes. */
+      input[type='datetime-local'],
       select {
         min-height: 36px;
         max-width: 100%;
@@ -412,11 +417,23 @@
         width: 100%;
       }
 
-      /* The time range is measured from the start of the session, because that is the only
-         clock the ledger already prints. The `+893 分 21 秒` column, the overview axis and the
-         hint under these inputs are all offsets from the same zero, so a reader can copy the
-         number they are looking at straight into 起点. A wall-clock picker would have been
-         the more obvious control and would have matched nothing else on the page. */
+      /* The range is wall-clock, on two native pickers.
+
+         It used to be two text boxes taking a session-relative offset, on the argument that
+         `+893 分 21 秒` is what every ledger row prints. That argument does not survive a
+         session that runs past midnight: this one crosses 2026-10-11 at offset 12:14:29, where
+         `12:00:00` is 23:45 the night before and `13:00:00` is 00:45 — an hour of offset for
+         three quarters of an hour of clock, with the midnight in between and nothing on the
+         page saying so. It also does not survive switching sessions, where the same number
+         means a different moment. A picker is the honest control for a moment in time, and it
+         removes the reader's job of working out which of two grammars they are typing. */
+      .field-range {
+        /* The quick picks are wide enough that they need somewhere to go when the row runs
+           out of width. Wrapping puts them on their own line instead of pushing 更新到最新
+           and 清空区间 off the edge of the toolbar. */
+        flex-wrap: wrap;
+      }
+
       .range-part {
         display: inline-flex;
         align-items: center;
@@ -431,22 +448,31 @@
       }
 
       .range-input {
-        /* Wide enough for the longest thing the hint tells the reader to type here —
-           `2026-10-10 23:30`, 16 characters — plus the caret. It was a bare 88px, which held
-           `2026-10-10` and scrolled the rest out of sight: the value stayed correct and the
-           hint echoed it back, but the box itself showed a substring, so the field could not
-           be checked by looking at it. Same failure as the record-index column — a width fixed
-           by today's content rather than by the content the control accepts.
+        /* No width at all, on purpose.
 
-           Measured, not guessed. `ch` is the advance of a digit, and `tabular-nums` makes
-           every digit in a date exactly one `ch`, so the width scales with the font instead of
-           being a number measured once on one machine. At 15ch this box rendered 113px and
-           held 15 character slots — 14 glyphs and the caret — with `2026-10-10 23:50` still
-           losing its leading `20`. Sixteen glyphs and a caret is 17 slots, so 17ch is the
-           floor and 18ch leaves a margin. */
-        width: 18ch;
-        min-width: 18ch;
+           A `datetime-local` is laid out by the browser from the localized date it has to draw
+           — `10/11/2026 12:00` beside a calendar glyph — so any number written here is a guess
+           about something the user agent already knows, and it was guessed wrong twice: 18ch
+           clipped the year off a text box, and 20ch clipped the minutes behind the icon on the
+           picker. Sizing the control to its own content is right in every locale and at every
+           font size, and it cannot go stale the way a measured constant does.
+
+           `flex: none` because the surrounding `.range-part` sets `min-width: 0` so its label
+           can shrink, and without this the toolbar could squeeze the control instead — which is
+           the same clipping by another route. */
+        flex: none;
         font-variant-numeric: tabular-nums;
+      }
+
+      .range-quick {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .range-quick-btn {
+        font-size: 12px;
+        padding: 4px 8px;
       }
 
       .range-sep {
@@ -1895,18 +1921,29 @@
             <span class="field-label" id="range-label">时间区间</span>
             <label class="range-part" for="range-from">
               <span class="range-part-label">起点</span>
-              <input type="text" id="range-from" class="range-input" placeholder="0:00" autocomplete="off" spellcheck="false" />
+              <input type="datetime-local" id="range-from" class="range-input" step="60" />
             </label>
             <span class="range-sep" aria-hidden="true">–</span>
             <label class="range-part" for="range-to">
               <span class="range-part-label">终点</span>
-              <input type="text" id="range-to" class="range-input" placeholder="1:00:00" autocomplete="off" spellcheck="false" />
+              <input type="datetime-local" id="range-to" class="range-input" step="60" />
             </label>
+            <!-- The window a reader actually wants is usually one they can name without
+                 arithmetic. These are the four this page can answer for any session: two
+                 lengths of trailing history, and the two wall-clock days a session that runs
+                 overnight is split across. 清空区间 already means the whole session, so there
+                 is deliberately no 全程 button beside them. -->
+            <div class="range-quick" role="group" aria-label="快捷时间区间">
+              <button type="button" class="btn btn-quiet range-quick-btn" data-range-quick="15m">最近 15 分钟</button>
+              <button type="button" class="btn btn-quiet range-quick-btn" data-range-quick="1h">最近 1 小时</button>
+              <button type="button" class="btn btn-quiet range-quick-btn" data-range-quick="today">今天</button>
+              <button type="button" class="btn btn-quiet range-quick-btn" data-range-quick="yesterday">昨天</button>
+            </div>
             <button type="button" class="btn btn-quiet" id="range-refresh" aria-label="把区间更新到最新记录" hidden>更新到最新</button>
             <button type="button" class="btn btn-quiet" id="range-clear" aria-label="清空时间区间" hidden>清空区间</button>
           </div>
         </div>
-        <p class="range-hint" id="range-hint">留空 = 不限。填写会话开始后的时间，格式 <code>1:30</code> 或 <code>1:30:00</code>。</p>
+        <p class="range-hint" id="range-hint">留空 = 不限。选一个时间区间，或用快捷按钮。</p>
 
       </form>
 
@@ -2194,124 +2231,46 @@
       }
 
       /* ---------------- time range ----------------
-         Milliseconds since the session started. Offsets are the default because they are the
-         one clock the ledger already prints on every row, so a number a reader is looking at can
-         be typed straight in — but a session that runs past midnight outlives that. This one
-         crosses 2026-10-11 at offset 12:14:29, and there `12:00:00` is last night while
-         `13:00:00` is a quarter of an hour later: an hour of offset, fifteen minutes of wall
-         clock, and midnight inside it with nothing on the page saying so. So a box may also
-         hold a wall clock, and `hasRangeDate` decides which from the text alone.
+         Wall-clock bounds, returned as milliseconds since the session started — which is the
+         only clock the ledger can filter on, because `record.relativeMs` and the overview axis
+         are already measured from it.
 
-         Three outcomes, kept apart on purpose:
-           null  → empty, that end is open (or the whole filter is off)
-           NaN   → the text is not a time; the filter keeps its last readable value
-           integer → the offset in ms, negative when the bound precedes session start
+         The controls are `datetime-local`, so what arrives here is already `YYYY-MM-DDTHH:MM`
+         and the browser has validated it before any of this runs. Three outcomes, kept apart
+         on purpose:
+           null    → empty, that end is open (or the whole filter is off)
+           NaN     → the text is not a time; the filter keeps its last readable value
+           integer → the offset in ms, negative when the bound precedes the session
 
-         `1:30` and `1:30:00` are both read as minutes and minutes:seconds, matching the
-         `893 分 21 秒` the row shows. Bare digits are minutes, because "the first ten
-         minutes" is what a reader types, and the hint always prints the resolved value back
-         so a misreading is visible rather than silent. */
+         A negative bound is kept rather than clamped. A reader who picks yesterday on a
+         session that began this morning should be told the session did not exist then, not
+         handed a range that quietly starts at zero and looks like an answer. */
 
       /**
-       * @param {string} text
-       * @returns {number|null} ms, `null` when empty, `NaN` when unreadable
-       */
-      function parseRangeOffset(text) {
-        var raw = String(text === null || text === undefined ? '' : text).trim();
-        if (raw === '') return null;
-        // A bare number is minutes. Anything else must be colon-separated, so `12:34` is
-        // never read as twelve hundred thirty-four seconds by accident.
-        var parts = raw.indexOf(':') >= 0 ? raw.split(':') : [raw];
-        if (parts.length > 3) return NaN;
-        var numbers = [];
-        for (var i = 0; i < parts.length; i += 1) {
-          var piece = parts[i].trim();
-          // `isCount` would accept `1e3` and `12.5`; neither is a time.
-          if (!/^\d{1,4}$/.test(piece)) return NaN;
-          var value = Number(piece);
-          // Every part but the first is a smaller unit, so 90:00 is not a valid 90 minutes.
-          if (i > 0 && value > 59) return NaN;
-          numbers.push(value);
-        }
-        // The unit of each part is fixed by its position, so the total is built from the
-        // seconds rather than by folding the parts and scaling once: folding
-        // `1:30:00` gives 5400 — hours, not minutes — and scaling that as minutes is how a
-        // three-part offset came out sixty times too large.
-        var seconds = numbers.length === 1
-          ? numbers[0] * 60
-          : numbers.length === 2
-            ? numbers[0] * 60 + numbers[1]
-            : numbers[0] * 3600 + numbers[1] * 60 + numbers[2];
-        return seconds * 1000;
-      }
-
-      /**
-       * Whether a box is a wall-clock date rather than an offset.
-       *
-       * The two grammars cannot be confused because they share no separator: an offset is
-       * digits and colons (`1:30`, `1:30:00`), a date is digits and `-` or `/`. So this is a
-       * property of what the reader typed, decided before any value is computed — the filter,
-       * the label and the hint all go through it and cannot come out disagreeing.
-       *
-       * @param {string} text
-       * @returns {boolean}
-       */
-      function hasRangeDate(text) {
-        var raw = String(text === null || text === undefined ? '' : text).trim();
-        if (raw === '') return false;
-        // The day/time part is optional, so `2026-10-10` is a date and reads as that midnight.
-        return /^\d{4}[-/]\d{1,2}[-/]\d{1,2}([T ]+\d{1,2}(:\d{1,2}(:\d{1,2})?)?)?$/.test(raw);
-      }
-
-      /**
-       * A wall-clock bound, returned as an offset from session start.
-       *
-       * Subtracting is the whole conversion: every record already carries both `timestamp` and
-       * `relativeMs`, and `session.startedAt` is the same origin the offsets were measured
-       * from, so no new clock is introduced anywhere.
-       *
-       * The result may be negative, and deliberately so. A session that began at 23:45 today
-       * has no records at 20:00, and a bound there means exactly that — every record is past
-       * it. Clamping to zero would also work and would be wrong to notice, but printing
-       * `-2:45:00` next to the range is what makes it visible instead.
-       *
-       * The year is required rather than inferred. Guessing turns `01-01` into a coin flip in
-       * a session that starts in December, and a range that silently lands on the wrong year
-       * is worse than one the reader has to finish typing.
-       *
-       * @param {string} text
+       * @param {string} text a `datetime-local` value, `YYYY-MM-DDTHH:MM` or `…:SS`
        * @param {number|null} sessionStartMs
-       * @returns {number|null} offset ms, `null` when empty, `NaN` when the text is not a date
-       *   or the session has no start to measure from
+       * @returns {number|null} offset ms, `null` when empty, `NaN` when it is not a time
        */
-      function parseRangeAbsolute(text, sessionStartMs) {
+      function parseRangeBound(text, sessionStartMs) {
         var raw = String(text === null || text === undefined ? '' : text).trim();
         if (raw === '') return null;
-        if (!hasRangeDate(raw)) return NaN;
         if (!isCount(sessionStartMs)) return NaN;
-        var parts = raw.split(/[T ]+/);
-        var dateParts = parts[0].split(/[-\/]/);
+        var parts = raw.split('T');
+        if (parts.length !== 2) return NaN;
+        var dateParts = parts[0].split('-');
+        var clock = parts[1].split(':');
+        if (dateParts.length !== 3) return NaN;
+        if (clock.length !== 2 && clock.length !== 3) return NaN;
         var year = Number(dateParts[0]);
         var month = Number(dateParts[1]);
         var day = Number(dateParts[2]);
-        var hour = 0;
-        var minute = 0;
-        var second = 0;
-        if (parts.length > 1) {
-          var clock = parts[1].split(':');
-          if (clock.length === 2) {
-            hour = Number(clock[0]);
-            minute = Number(clock[1]);
-          } else if (clock.length === 3) {
-            hour = Number(clock[0]);
-            minute = Number(clock[1]);
-            second = Number(clock[2]);
-          } else return NaN;
-        }
-        // Built from parts, never parsed from the string: `new Date('2026-10-10')` is UTC and
-        // would silently shift the bound by the offset between here and Greenwich. The
-        // round-trip below is what rejects 2026-02-30, which Date otherwise rolls forward
-        // into March and hands back a range the reader never asked for.
+        var hour = Number(clock[0]);
+        var minute = Number(clock[1]);
+        var second = clock.length === 3 ? Number(clock[2]) : 0;
+        // Built from parts, never handed to `Date` as a string: `new Date('2026-10-10')` is UTC
+        // and would shift the bound by this machine's distance from Greenwich. The round trip is
+        // what rejects 2026-02-30, which Date otherwise rolls forward into March and hands back
+        // a range nobody asked for.
         var wall = new Date(year, month - 1, day, hour, minute, second, 0);
         if (isNaN(wall.getTime())) return NaN;
         if (wall.getFullYear() !== year || wall.getMonth() !== month - 1 || wall.getDate() !== day
@@ -2320,34 +2279,65 @@
       }
 
       /**
-       * One box, either grammar. The single place that decides which, so nothing downstream can
-       * treat a wall clock as an offset or the reverse.
-       *
-       * @param {string} text
-       * @param {number|null} sessionStartMs
-       * @returns {number|null} offset ms, `null` when empty, `NaN` when unreadable
+       * A bound as the `datetime-local` control wants it: `YYYY-MM-DDTHH:MM`, local time.
+       * @param {number} ms
+       * @returns {string}
        */
-      function parseRangeValue(text, sessionStartMs) {
-        return hasRangeDate(text) ? parseRangeAbsolute(text, sessionStartMs) : parseRangeOffset(text);
+      function formatRangeInput(ms) {
+        var wall = new Date(ms);
+        if (!isCount(ms) || isNaN(wall.getTime())) return '';
+        return wall.getFullYear() + '-' + pad2(wall.getMonth() + 1) + '-' + pad2(wall.getDate())
+          + 'T' + pad2(wall.getHours()) + ':' + pad2(wall.getMinutes());
+      }
+
+      /** Local midnight at or before `ms`. null when `ms` is not a time. */
+      function startOfLocalDay(ms) {
+        var wall = new Date(ms);
+        if (isNaN(wall.getTime())) return null;
+        return new Date(wall.getFullYear(), wall.getMonth(), wall.getDate(), 0, 0, 0, 0).getTime();
+      }
+
+      /** Local midnight of the day before `ms`. */
+      function previousLocalMidnight(ms) {
+        var wall = new Date(ms);
+        if (isNaN(wall.getTime())) return null;
+        return new Date(wall.getFullYear(), wall.getMonth(), wall.getDate() - 1, 0, 0, 0, 0).getTime();
       }
 
       /**
-       * @param {number} ms
-       * @returns {string} `1:30:00`, or `1:30` while it fits in minutes; `-` before a bound that
-       *   lands before the session began
+       * Where a quick pick lands, as offsets from session start. `now` is a parameter so the
+       * result is checkable; the page passes `Date.now()`.
+       *
+       * Days are stepped through the `Date` constructor rather than by subtracting 86,400,000,
+       * which lands on the wrong day across a daylight-saving boundary.
+       *
+       * @param {string} kind one of the `data-range-quick` values
+       * @param {number|null} sessionStartMs
+       * @param {number} now
+       * @returns {{from: number, to: number}|null} null when the session has no start to measure
        */
-      function formatRangeOffset(ms) {
-        if (!isCount(ms)) return DASH;
-        // An absolute bound can land before session start, and `Math.abs` alone would print
-        // `-2:45:00` as `2:45:00` — the same string a reader would get for a bound two hours
-        // and forty-five minutes *in*, in the one place the sign is the whole message.
-        var sign = ms < 0 ? '-' : '';
-        var total = Math.floor(Math.abs(ms) / 1000);
-        var hours = Math.floor(total / 3600);
-        var minutes = Math.floor((total % 3600) / 60);
-        var seconds = total % 60;
-        if (hours > 0) return sign + hours + ':' + pad2(minutes) + ':' + pad2(seconds);
-        return sign + minutes + ':' + pad2(seconds);
+      function quickRange(kind, sessionStartMs, now) {
+        if (!isCount(sessionStartMs) || !isCount(now)) return null;
+        var todayStart = startOfLocalDay(now);
+        if (todayStart === null) return null;
+        var from;
+        var to = now - sessionStartMs;
+        if (kind === 'today') {
+          from = todayStart - sessionStartMs;
+        } else if (kind === 'yesterday') {
+          var yesterdayStart = previousLocalMidnight(now);
+          if (yesterdayStart === null) return null;
+          from = yesterdayStart - sessionStartMs;
+          to = todayStart - sessionStartMs;
+        } else {
+          var minutes = kind === '15m' ? 15 : kind === '1h' ? 60 : NaN;
+          if (isNaN(minutes)) return null;
+          from = now - minutes * 60000 - sessionStartMs;
+        }
+        // "The last fifteen minutes" of a session five minutes old is its whole life, not a
+        // negative offset: the window begins where the session does, and the reader still gets
+        // everything that exists inside it.
+        return { from: Math.max(from, 0), to: to };
       }
 
       /**
@@ -2374,30 +2364,21 @@
       }
 
       /**
-       * `0:30 – 1:00`, `开始 – 1:00`, `0:30 – 现在`. Empty when neither end is set.
+       * `2026-10-10 23:50:00 – 2026-10-11 00:20:00`, with either side open or closed. Empty when
+       * neither end is set.
        *
-       * Each end is printed back in the form the reader typed it in: a box holding a date comes
-       * back as a wall clock, a box holding an offset stays an offset. Printing an offset for a
-       * date box would be the worst of both — `12:00` beside `2026-10-11 00:45` is a mismatch
-       * the reader has to decode before they can trust it — and printing a wall clock for an
-       * offset box would hide the fact that the box is measured from session start, not from
-       * midnight.
+       * Wall clocks on both sides, because naming a moment is the whole point of the control.
+       * Printing an offset here would hand back the one number the reader cannot place.
        *
-       * @param {string} fromText @param {string} toText what each box holds, verbatim
        * @param {number|null} from @param {number|null} to offsets in force
        * @param {number|null} sessionStartMs
        */
-      function rangeLabel(fromText, toText, from, to, sessionStartMs) {
+      function rangeLabel(from, to, sessionStartMs) {
         if (!isCount(from) && !isCount(to)) return '';
-        return (isCount(from) ? rangeEndLabel(fromText, from, sessionStartMs) : '开始')
+        if (!isCount(sessionStartMs)) return '';
+        return (isCount(from) ? formatClock(from + sessionStartMs) : '开始')
           + ' – '
-          + (isCount(to) ? rangeEndLabel(toText, to, sessionStartMs) : '现在');
-      }
-
-      /** One end of the range label, in whichever clock its own box was written in. */
-      function rangeEndLabel(text, ms, sessionStartMs) {
-        if (hasRangeDate(text) && isCount(sessionStartMs)) return formatClock(ms + sessionStartMs);
-        return formatRangeOffset(ms);
+          + (isCount(to) ? formatClock(to + sessionStartMs) : '现在');
       }
 
       /** Absolute local wall-clock time. */
@@ -2659,6 +2640,16 @@
         return top;
       }
 
+      /** The latest wall clock any record carries — the upper bound for the pickers. */
+      function latestRecordTimestamp() {
+        var top = null;
+        for (var i = 0; i < state.flat.length; i += 1) {
+          var at = state.flat[i] && state.flat[i].record ? state.flat[i].record.timestamp : null;
+          if (isCount(at) && (top === null || at > top)) top = at;
+        }
+        return top;
+      }
+
       /** Records written since the range was set — the ones 更新到最新 would bring in. */
       function recordsPastCutoff() {
         if (!isCount(state.rangeCutoff)) return 0;
@@ -2678,8 +2669,7 @@
       }
 
       function timeRangeLabel() {
-        return rangeLabel(state.rangeFromText, state.rangeToText, state.rangeFrom, state.rangeTo,
-          sessionStartedAt());
+        return rangeLabel(state.rangeFrom, state.rangeTo, sessionStartedAt());
       }
 
       /* ---------------- DOM helpers ---------------- */
@@ -2872,6 +2862,7 @@
         dom.rangeTo = document.getElementById('range-to');
         dom.rangeClear = document.getElementById('range-clear');
         dom.rangeRefresh = document.getElementById('range-refresh');
+        dom.rangeQuick = document.querySelector('.range-quick');
         dom.rangeHint = document.getElementById('range-hint');
         dom.windowBar = document.getElementById('window-bar');
         dom.headerToggle = document.getElementById('header-toggle');
@@ -4923,44 +4914,43 @@
       }
 
       /**
-       * What the two boxes currently mean.
+       * What the two pickers currently mean.
        *
-       * Three states, and the reader has to be able to tell them apart without guessing: no
-       * range, a range in force, and a half-typed value the page could not read. The last one
-       * keeps the previous range rather than blanking it — silently handing back the whole
-       * session mid-edit is the worst of the three — and says so here.
+       * The reader has to be able to tell these apart without guessing: no range, a range in
+       * force, a range that catches nothing, a value the picker could not read, and a session
+       * with no clock to filter on. An unreadable value keeps the previous range rather than
+       * blanking it — silently handing back the whole session mid-edit is the worst of them.
        */
       function updateRangeHint() {
         if (!dom.rangeHint) return;
         // Read the *boxes*, not the filter. An unreadable value is deliberately never written
-        // into state — that is what stops it switching the range off mid-keystroke — so
+        // into state — that is what stops it switching the range off mid-edit — so
         // testing `state.rangeTo` for NaN here could only ever be false, and the message the
         // reader most needs became unreachable. Typing `abc` reported 「起点晚于终点」,
         // which is true of the *previous* range and says nothing about what they just typed.
         var base = sessionStartedAt();
         var fromUnreadable = state.rangeFromText.trim() !== ''
-          && isNaN(parseRangeValue(state.rangeFromText, base));
+          && isNaN(parseRangeBound(state.rangeFromText, base));
         var toUnreadable = state.rangeToText.trim() !== ''
-          && isNaN(parseRangeValue(state.rangeToText, base));
-        // A perfectly good date that this session cannot measure from. Folding it into the
-        // "unrecognised format" branch would send the reader hunting for a typo that is not
-        // there, and worse, it is the only way a date silently fails — silently is the part that
-        // matters, since everything else about the page would look like it had been filtered.
-        var dateWithoutBase = base === null
-          && (hasRangeDate(state.rangeFromText) || hasRangeDate(state.rangeToText));
+          && isNaN(parseRangeBound(state.rangeToText, base));
+        // A bound the session cannot be measured against. Folding this into the "unreadable"
+        // branch would send the reader hunting for a typo that is not there, and worse, it is
+        // the one way a range fails silently — everything else would look as though it filtered.
+        var noBase = base === null
+          && (state.rangeFromText.trim() !== '' || state.rangeToText.trim() !== '');
         var reversed = isCount(state.rangeFrom) && isCount(state.rangeTo) && state.rangeFrom > state.rangeTo;
         dom.rangeHint.classList.remove('is-invalid');
 
-        if (dateWithoutBase) {
+        if (noBase) {
           dom.rangeHint.classList.add('is-invalid');
-          dom.rangeHint.textContent = '这个会话没有记录带时间戳，无法按日期筛选；偏移 1:30 仍然可用。';
+          dom.rangeHint.textContent = '这个会话的记录没有时间戳，无法按时间筛选。';
           return;
         }
         if (fromUnreadable || toUnreadable) {
           dom.rangeHint.classList.add('is-invalid');
-          dom.rangeHint.textContent = '格式无法识别，仍按上一次的有效区间统计'
+          dom.rangeHint.textContent = '这一刻无法识别，仍按上一次的有效区间统计'
             + (hasTimeRange() ? '（' + timeRangeLabel() + '）' : '')
-            + '。偏移写 1:30 或 1:30:00，日期写 2026-10-10 23:30。';
+            + '。';
           return;
         }
         if (reversed) {
@@ -4970,8 +4960,16 @@
         }
         if (!hasTimeRange()) {
           dom.rangeHint.classList.remove('is-invalid');
-          dom.rangeHint.textContent = '留空 = 不限。填会话开始后的时间 1:30 / 1:30:00，'
-            + '或日期时间 2026-10-10 23:30（跨零点时用这个）。';
+          dom.rangeHint.textContent = '留空 = 不限。选一个时间区间，或用快捷按钮。';
+          return;
+        }
+        // A well-formed window that lies outside the session. This is the answer a reader who
+        // pressed 昨天 on a session that began this morning is owed, and it has to name where
+        // the session actually starts — otherwise an empty table reads as 「这个会话没有内容」.
+        if (!rangeHasRecords()) {
+          dom.rangeHint.classList.add('is-invalid');
+          dom.rangeHint.textContent = '这段时间里没有记录。这个会话从 '
+            + formatClock(base) + ' 开始。';
           return;
         }
         var stats = kpiStats();
@@ -5023,24 +5021,23 @@
       }
 
       /**
-       * Reads both boxes into the filter.
+       * Reads both pickers into the filter.
        *
        * A box the page could not read is left alone rather than assigned: `NaN` fails the
        * `isCount` test behind `hasTimeRange`, so writing it into state would switch the whole
-       * range off — handing back the entire session in the middle of typing `1:2`. The hint
-       * says which value is live.
+       * range off and hand back the entire session. The hint says which value is live.
        */
       function applyTimeRange() {
-        // One origin for both boxes, read once: two boxes resolved against two different starts
+        // One origin for both pickers, read once: two ends resolved against two different starts
         // would be a range whose width depends on which side was parsed last.
         var base = sessionStartedAt();
-        var from = parseRangeValue(state.rangeFromText, base);
-        var to = parseRangeValue(state.rangeToText, base);
+        var from = parseRangeBound(state.rangeFromText, base);
+        var to = parseRangeBound(state.rangeToText, base);
         if (!isNaN(from)) state.rangeFrom = from;
         if (!isNaN(to)) state.rangeTo = to;
 
         if (hasTimeRange()) {
-          // Re-cut the snapshot on every apply, not only on the transition. Editing either box
+          // Re-cut the snapshot on every apply, not only on the transition. Changing either end
           // is the reader saying what they want to see now, so it must also pick up what has
           // arrived since; a range they did not touch stays where it was.
           state.rangeCutoff = latestRecordIndex();
@@ -5052,14 +5049,66 @@
         // at was chosen for a set of records that no longer exists. Setting a range used to
         // force 「全部」 instead, on the theory that a 200-cap inside a range silently drops
         // the start of what the reader asked for. Measured, that theory is not worth its
-        // price — a range starting at 20:00 covers the whole session, 全部 then rendered
-        // ~11,000 rows and took the document to 414,000px, where one query took 19s. The
-        // window bar still says how many are not loaded and 「显示全部」 is still one click.
+        // price — a range covering the whole session rendered ~11,000 rows and took the
+        // document to 414,000px, where one query took 19s. The window bar still says how many
+        // are not loaded and 「显示全部」 is still one click.
         //
         // 不自动追加 does not depend on this: the snapshot cutoff holds the range still on
         // its own, which is what it was measured doing.
         resetWindowMode();
         render();
+      }
+
+      /** Whether any record at all falls inside the range. */
+      function rangeHasRecords() {
+        if (!hasTimeRange()) return true;
+        for (var i = 0; i < state.flat.length; i += 1) {
+          var record = state.flat[i] ? state.flat[i].record : null;
+          // Early exit on the first hit, so the common case costs one comparison rather than a
+          // walk of twelve thousand entries on every render.
+          if (record && inTimeRange(record)) return true;
+        }
+        return false;
+      }
+
+      /**
+       * Puts a quick pick into both pickers and applies it.
+       *
+       * The pickers are written as well as the filter: a reader who presses 今天 should be able
+       * to see the dates it chose and adjust one of them, rather than being told a range they
+       * cannot inspect.
+       */
+      function applyQuickRange(kind) {
+        var base = sessionStartedAt();
+        var span = quickRange(kind, base, Date.now());
+        if (!span) return;
+        state.rangeFromText = formatRangeInput(base + span.from);
+        state.rangeToText = formatRangeInput(base + span.to);
+        if (dom.rangeFrom) dom.rangeFrom.value = state.rangeFromText;
+        if (dom.rangeTo) dom.rangeTo.value = state.rangeToText;
+        applyTimeRange();
+      }
+
+      /**
+       * Bounds the pickers to the span the session actually covers.
+       *
+       * Not validation — the page still reads a value outside these and says so — but the
+       * calendar opens on the days that have records on them, and the spinner will not walk a
+       * reader into 1970 looking for something this session never had.
+       */
+      function syncRangeBounds() {
+        var base = sessionStartedAt();
+        var top = latestRecordTimestamp();
+        var low = base === null ? '' : formatRangeInput(base);
+        var high = isCount(top) ? formatRangeInput(top) : '';
+        if (dom.rangeFrom) {
+          dom.rangeFrom.min = low;
+          dom.rangeFrom.max = high;
+        }
+        if (dom.rangeTo) {
+          dom.rangeTo.min = low;
+          dom.rangeTo.max = high;
+        }
       }
 
       /** The clear and refresh buttons, which exist only while a range does. */
@@ -5592,6 +5641,10 @@
         // changes on every poll — it has to be re-decided here or it would offer to refresh
         // for records that are already in, or stay hidden while 200 records pile up behind it.
         syncRangeButtons();
+        // The picker bounds move with the session, which grows during the very first poll.
+        // Setting them once at startup would leave the calendar capped at whatever the
+        // session held when the page opened.
+        syncRangeBounds();
         renderOverview();
         renderLedger();
         renderInspector();
@@ -5837,20 +5890,28 @@
           event.preventDefault();
         });
 
-        // Both boxes feed one filter, so one debounce covers editing either of them: `1:2`
-        // resolves to nothing and `1:20` resolves to a range, and a reader who pauses mid
-        // keystroke should not see the table jump through the whole session in between.
+        // Both pickers feed one filter, so one handler covers either of them. There is no
+        // debounce: a `datetime-local` fires `change` only once the reader has committed a whole
+        // value, and committing it twice would make the table jump for nothing.
         var onRangeInput = function () {
+          if (rangeTimer !== null) window.clearTimeout(rangeTimer);
+          rangeTimer = null;
           state.rangeFromText = dom.rangeFrom.value;
           state.rangeToText = dom.rangeTo.value;
-          if (rangeTimer !== null) window.clearTimeout(rangeTimer);
-          rangeTimer = window.setTimeout(function () {
-            rangeTimer = null;
-            applyTimeRange();
-          }, SEARCH_DEBOUNCE);
+          applyTimeRange();
         };
-        dom.rangeFrom.addEventListener('input', onRangeInput);
-        dom.rangeTo.addEventListener('input', onRangeInput);
+        dom.rangeFrom.addEventListener('change', onRangeInput);
+        dom.rangeTo.addEventListener('change', onRangeInput);
+        // A quick pick is a committed value like any other, so it goes through the same path:
+        // one filter, one window reset, one render.
+        var quickButtons = dom.rangeQuick ? dom.rangeQuick.querySelectorAll('.range-quick-btn') : [];
+        for (var q = 0; q < quickButtons.length; q += 1) {
+          quickButtons[q].addEventListener('click', function () {
+            if (rangeTimer !== null) window.clearTimeout(rangeTimer);
+            rangeTimer = null;
+            applyQuickRange(this.getAttribute('data-range-quick'));
+          });
+        }
         dom.rangeRefresh.addEventListener('click', function () {
           if (rangeTimer !== null) window.clearTimeout(rangeTimer);
           rangeTimer = null;
