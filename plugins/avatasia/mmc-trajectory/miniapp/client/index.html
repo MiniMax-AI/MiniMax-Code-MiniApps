@@ -3346,10 +3346,11 @@
           if (payloadTurns[t] && payloadTurns[t].id) turnById.set(payloadTurns[t].id, payloadTurns[t]);
         }
 
-        if (changed) {
-          rePinWindow();
-          revealSelection();
-        }
+        // Only the window is re-decided here. Whether the selected record is still in the table is
+        // settled inside renderLedger(), which is the one exit every path that changes what the
+        // table shows goes through; answering the question here as well would give the field two
+        // writers, and the poll path is the one that used to leave it stale.
+        if (changed) rePinWindow();
         render();
         if (manual) announce('已刷新，正在显示最新数据。');
       }
@@ -4645,18 +4646,49 @@
         return out;
       }
 
-      function revealSelection() {
-        if (!state.selectedId) return;
-        for (var i = 0; i < state.flat.length; i += 1) {
-          if (state.flat[i].record.id === state.selectedId) {
-            var needed = state.flat.length - i;
-            if (needed > state.limit) state.limit = Math.min(needed, state.flat.length);
-            return;
+      /**
+       * Whether the record the inspector is showing still belongs to the table.
+       *
+       * It used to ask `state.flat` — the whole session, unfiltered — so a record stayed selected
+       * after every filter had already removed it: the ledger read 已显示 2 条, the inspector still
+       * showed the row the reader had picked, and no row anywhere carried the selection mark. The
+       * list handed in here is the same one the rows are built from, so the two agree by
+       * construction instead of by convention.
+       *
+       * It runs from renderLedger(), which is the one exit every path that changes what the table
+       * shows goes through: the filters that call render() and the ones that call renderLedger()
+       * directly. Before the window is sliced, so that raising `state.limit` here moves
+       * `hiddenAbove` and the window bar with it rather than revealing a row that is never built.
+       *
+       * @param {Array<{record: any}>} entries the rows about to be built from
+       * @returns {boolean} true when it dropped the selection — the caller has to redraw the panel,
+       *   because nine of the paths that reach here never redraw it themselves
+       */
+      function revealSelection(entries) {
+        if (!state.selectedId) return false;
+        for (var i = 0; i < entries.length; i += 1) {
+          if (entries[i].record.id === state.selectedId) {
+            var needed = entries.length - i;
+            if (needed > state.limit) state.limit = Math.min(needed, entries.length);
+            return false;
           }
         }
         state.selectedId = null;
+        return true;
       }
 
+      /**
+       * The selected record, or null.
+       *
+       * This looks the id up in `state.flat` on purpose, and it is not where the selection is
+       * judged: `flat` is the unfiltered session, and treating it as "what the reader can see" is
+       * the bug this file's revealSelection() exists to prevent. By the time anything calls this,
+       * `state.selectedId` has already survived the filter that produced the rows on screen, so a
+       * plain lookup is correct — and staying a lookup keeps the five readers of it (the inspector,
+       * copy, hand-off, the hand-off button) from each re-deciding the question for themselves.
+       *
+       * @returns {{record: any}|null}
+       */
       function selectedRecord() {
         if (!state.selectedId) return null;
         for (var i = 0; i < state.flat.length; i += 1) {
@@ -5077,6 +5109,16 @@
 
         var matched = visibleEntries();
         var total = state.flat.length;
+        // Both answers belong to this exit rather than to each of its callers: whether the record the
+        // inspector is showing is still in the table, and how tall the pinned strips above it are
+        // now. Nine writers reach the table without going through render(), and judging the
+        // selection here is what stops the inspector describing a row that is no longer on screen.
+        //
+        // The redraw is part of that, not a follow-up: clearing the id on its own is not enough.
+        // The search box, the type axis and the overview brush call renderLedger() and nothing
+        // else, so the panel kept showing the record that had just been dropped — no row carried
+        // the selection mark and the inspector still named one.
+        if (revealSelection(matched)) renderInspector();
         applyFilterScope();
 
         if (matched.length === 0) {
@@ -5131,6 +5173,15 @@
         }
 
         restoreRowAnchor(anchor, scrollY);
+        // Measured here rather than at the end of render(): this is the one exit every path that
+        // changes what the table shows goes through — the filters that call render() and the nine
+        // that call renderLedger() directly. A filter that grows the band therefore cannot leave
+        // the offsets above describing the page as it was before the reader touched anything.
+        // syncAnomalyMode(), which writes the 异常 note that gives the band its third line, runs
+        // before this point inside render(), so the height is already final here.
+        // The early returns above deliberately do not measure: none of them can change the band,
+        // and emptying the ledger mid-flight is not a reason to move a pinned strip.
+        syncStickyOffsets();
       }
 
       /**
@@ -6138,6 +6189,22 @@
         root.setProperty('--sticky-window-h', dom.windowBar.offsetHeight + 'px');
       }
 
+      var stickyFrame = null;
+
+      /**
+       * One measurement per frame, however many resize events arrive.
+       *
+       * Every call reads three offsetHeights, which forces layout; a window drag fires `resize`
+       * continuously, and measuring on each one turns a drag into a layout thrash.
+       */
+      function scheduleStickyOffsets() {
+        if (stickyFrame !== null) return;
+        stickyFrame = window.requestAnimationFrame(function () {
+          stickyFrame = null;
+          syncStickyOffsets();
+        });
+      }
+
       function render() {
         renderBars();
         renderGeneration();
@@ -6170,10 +6237,6 @@
         renderInspector();
         renderFooter();
         updateHandoffButton();
-        // Last: it reads the bands the lines above just changed. The 异常 note appears and
-        // disappears here, so measuring before this point would pin the bands to yesterday's
-        // height and leave the window bar overlapping the strip above it.
-        syncStickyOffsets();
       }
 
       function renderGeneration() {
@@ -6607,6 +6670,12 @@
       }
 
       function wire() {
+        // Nothing re-measured the band when the window changed shape. On a session whose payload has
+        // stopped growing every poll is a 304 and render() never runs, so a resize that wrapped the
+        // type row or the 异常 row left the pinned strips sitting at the old width — until new
+        // records happened to arrive, which on a finished session is never.
+        window.addEventListener('resize', scheduleStickyOffsets);
+
         dom.followBtn.addEventListener('click', function () {
           setFollow(!state.followLatest);
         });

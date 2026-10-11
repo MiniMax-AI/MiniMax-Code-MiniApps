@@ -236,16 +236,50 @@ const bands = ['filterSticky', 'overview', 'windowBar'].map(boundId);
 assert('every band the measurement reads is bound to an element the markup ships',
   bands.every((id) => !!id && html.includes('id="' + id + '"')));
 
-// The measurement runs last. The 异常 note is written inside syncAnomalyMode, and it is the note
-// that adds a line to the band: measuring before it is written pins every band below to the height
-// the band had before the reader changed anything.
+// The measurement has to run at an exit every filter passes through. Nine places change what the
+// table shows by calling renderLedger() directly — the type axis among them — and only some of
+// those go on to call render(). Measuring at the end of render() covered the filters that do and
+// silently missed the ones that don't, so the invariant lived in a convention rather than in the
+// structure. renderLedger() is the one exit all of them share.
+const renderLedgerSrc = functionSource('renderLedger');
+const ledgerBody = renderLedgerSrc
+  ? renderLedgerSrc.slice(renderLedgerSrc.indexOf('{') + 1, renderLedgerSrc.lastIndexOf('}'))
+  : '';
+const ledgerCalls = ledgerBody.match(/syncStickyOffsets\(\);/g) ?? [];
+const ledgerLast = ledgerBody.lastIndexOf('syncStickyOffsets();');
+assert('the heights are measured at the one exit every filter passes through',
+  ledgerCalls.length === 1 && ledgerLast >= 0
+  && ledgerBody.slice(ledgerLast + 'syncStickyOffsets();'.length).trim() === '');
+
+// One writer, one call site. A second call in render() would not be wrong on its own, but it is
+// the shape that let the eight writers nobody was thinking about go unmeasured.
 const renderSrc = functionSource('render');
 const renderBody = renderSrc ? renderSrc.slice(renderSrc.indexOf('{') + 1, renderSrc.lastIndexOf('}')) : '';
-const renderCalls = renderBody.match(/syncStickyOffsets\(\);/g) ?? [];
-const lastCall = renderBody.lastIndexOf('syncStickyOffsets();');
-assert('the heights are measured once the rows are drawn, not before',
-  renderCalls.length === 1 && lastCall >= 0
-  && renderBody.slice(lastCall + 'syncStickyOffsets();'.length).trim() === '');
+assert('the measurement has exactly one call site on the render path',
+  !/syncStickyOffsets\(\);/.test(renderBody));
+
+// The 异常 note is written by syncAnomalyMode, and it is the note that adds a line to the band.
+// Measuring at the renderLedger exit is only correct because that note is already written by then:
+// if the call moved above syncAnomalyMode the band would be pinned at its height before the reader
+// changed anything, which is the bug the measured offsets replaced.
+assert('the band note is written before the heights are measured',
+  renderBody.indexOf('syncAnomalyMode(') >= 0
+  && renderBody.indexOf('syncAnomalyMode(') < renderBody.indexOf('renderLedger();'));
+
+// Nothing re-measured when the window changed shape. On a session whose payload has stopped growing
+// every poll is a 304 and render() is never called, so a resize that wrapped the type row left the
+// strips pinned at the old width indefinitely.
+const resizeHook = /window\.addEventListener\(\s*'resize'\s*,\s*(\w+)\s*\)/.exec(html);
+assert('a window resize re-measures the band', !!resizeHook);
+const scheduleSrc = resizeHook ? functionSource(resizeHook[1]) : null;
+assert('a resize reaches the measurement it was registered for',
+  !!scheduleSrc && /syncStickyOffsets\(\);/.test(scheduleSrc));
+
+// Each measurement reads three offsetHeights, which forces layout. A window drag fires `resize`
+// continuously, so the handler coalesces into one frame — otherwise a drag becomes a layout thrash.
+assert('a resize measures once per frame, not once per event',
+  !!scheduleSrc && /requestAnimationFrame/.test(scheduleSrc)
+  && /stickyFrame\s*!==\s*null/.test(scheduleSrc));
 
 console.log('[sticky] ' + pass + ' passed, ' + failures.length + ' failed');
 if (orphan.length) console.log('  read but never written: ' + orphan.join(', '));

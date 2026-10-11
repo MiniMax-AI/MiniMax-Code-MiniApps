@@ -122,15 +122,63 @@ MUTATIONS = [
      "",
      "the measurement stands down when the band is not on the page"),
 
-    # The 异常 note is written by syncAnomalyMode, and it is the note that adds a line to the band.
-    ("the bands are measured before the 异常 note is written",
-     "        updateHandoffButton();\n"
-     "        // Last: it reads the bands the lines above just changed. The 异常 note appears and\n"
-     "        // disappears here, so measuring before this point would pin the bands to yesterday's\n"
-     "        // height and leave the window bar overlapping the strip above it.\n"
+    # Where the measurement happens, and who is allowed to trigger it. The 异常 note is written by
+    # syncAnomalyMode and it is the note that adds a line to the band, so the order of the two
+    # decides whether the strips below are pinned at the height the band had before the reader
+    # changed anything.
+    ("the ledger stops measuring the band",
+     "        // and emptying the ledger mid-flight is not a reason to move a pinned strip.\n"
      "        syncStickyOffsets();\n",
-     "        syncStickyOffsets();\n        updateHandoffButton();\n",
-     "the heights are measured once the rows are drawn, not before"),
+     "        // and emptying the ledger mid-flight is not a reason to move a pinned strip.\n",
+     "the heights are measured at the one exit every filter passes through"),
+
+    ("the measurement moves off the ledger's last line",
+     "        restoreRowAnchor(anchor, scrollY);\n        // Measured here rather than",
+     "        syncStickyOffsets();\n        restoreRowAnchor(anchor, scrollY);\n        // Measured here rather than",
+     "the heights are measured at the one exit every filter passes through"),
+
+    # A second call site is the shape that let the eight filter writers nobody was thinking about go
+    # unmeasured in the first place.
+    ("the measurement is taken twice on the render path",
+     "        updateHandoffButton();\n      }\n\n      function renderGeneration() {",
+     "        updateHandoffButton();\n        syncStickyOffsets();\n      }\n\n      function renderGeneration() {",
+     "the measurement has exactly one call site on the render path"),
+
+    ("the band note is written after the heights are measured",
+     "        syncAnomalyMode(anomaly);\n"
+     "        syncAnomalyButtons(anomaly);\n"
+     "        renderOverview();\n"
+     "        renderLedger();\n",
+     "        syncAnomalyButtons(anomaly);\n"
+     "        renderOverview();\n"
+     "        renderLedger();\n"
+     "        syncAnomalyMode(anomaly);\n",
+     "the band note is written before the heights are measured"),
+
+    # Nothing re-measured when the window changed shape. On a session whose payload has stopped
+    # growing every poll is a 304 and render() is never called, so a resize that wrapped the type
+    # row left the strips pinned at the old width until new records arrived.
+    ("a window resize measures nothing",
+     "        window.addEventListener('resize', scheduleStickyOffsets);\n\n",
+     "",
+     "a window resize re-measures the band"),
+
+    ("the resize is registered against a handler that measures nothing",
+     "        stickyFrame = window.requestAnimationFrame(function () {\n"
+     "          stickyFrame = null;\n"
+     "          syncStickyOffsets();\n"
+     "        });\n",
+     "        stickyFrame = window.requestAnimationFrame(function () {\n"
+     "          stickyFrame = null;\n"
+     "        });\n",
+     "a resize reaches the measurement it was registered for"),
+
+    # Correct but a layout thrash: each measurement reads three offsetHeights, and a window drag
+    # fires `resize` continuously.
+    ("a resize is measured on every event instead of once per frame",
+     "        window.addEventListener('resize', scheduleStickyOffsets);\n",
+     "        window.addEventListener('resize', syncStickyOffsets);\n",
+     "a resize measures once per frame, not once per event"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
