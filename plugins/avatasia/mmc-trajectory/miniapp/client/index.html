@@ -475,6 +475,35 @@
         padding: 4px 8px;
       }
 
+      /* 异常 sits beside 快捷区间 in the same toolbar, so the two groups are sized alike and
+         read as one filter bar. What sets them apart is the count: it is the reason the group
+         exists, because a filter that cannot say how much it would keep is one the reader has
+         to run blind. */
+      .anomaly-quick {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        flex-wrap: wrap;
+      }
+
+      .anomaly-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        padding: 4px 8px;
+      }
+
+      .anomaly-count {
+        font-variant-numeric: tabular-nums;
+        color: var(--mcode-text-subtle);
+      }
+
+      /* Pressed is carried by aria-pressed and the label, never by this colour alone. */
+      .anomaly-btn[aria-pressed='true'] .anomaly-count {
+        color: inherit;
+      }
+
       .range-sep {
         font-size: 12px;
         color: var(--mcode-text-subtle);
@@ -1158,6 +1187,14 @@
       .turn-title {
         font-size: 14px;
         font-weight: 500;
+        white-space: nowrap;
+      }
+
+      /* A turn-level anomaly tag. Sized with the head it sits in, and carrying its own word
+         rather than a colour, so 「异常」 is readable as text in the ledger and in a copied
+         summary of it. */
+      .turn-flag {
+        font-size: 12px;
         white-space: nowrap;
       }
 
@@ -1945,6 +1982,17 @@
         </div>
         <p class="range-hint" id="range-hint">留空 = 不限。选一个时间区间，或用快捷按钮。</p>
 
+        <div class="toolbar-row">
+          <div class="field field-anomaly" role="group" aria-labelledby="anomaly-label">
+            <span class="field-label" id="anomaly-label">异常</span>
+            <!-- The buttons are built from ANOMALY_RULES rather than written here. The rule
+                 table is the one place a rule is named, so a rename cannot leave a button
+                 showing one word and announcing another, and a new rule is an entry in that
+                 table instead of a second list to keep in step. -->
+            <div class="anomaly-quick" id="anomaly-controls" role="group" aria-label="只看异常记录"></div>
+          </div>
+        </div>
+
       </form>
 
       <section class="kpi-section" aria-labelledby="kpi-heading">
@@ -2127,6 +2175,111 @@
       // had to be overridden by a second field is a kind the filter could not see.
       function kindLabel(record) {
         return (record && KIND_LABELS[record.kind]) || (record && record.kind) || DASH;
+      }
+
+      /* ---------------- 异常 ----------------
+
+         异常 is not a record kind, and it is deliberately not one. A kind is a label the
+         runtime stamps on a row; 异常 is a question asked across the whole ledger — 「这次运行
+         在哪儿出的问题」 — and its answer lands on three unrelated kinds at once. Filing it as
+         a tenth kind would have put it in the type chips, where it reads as one more category
+         instead of the second axis it actually is.
+
+         So it is a rule set. A rule is one predicate plus the label the reader sees when it
+         fires; the filter is 「one of the ticked rules fired on this record」. Adding a rule is
+         adding an entry to this table and nothing else — the buttons, their counts and the
+         turn-head tag all read it.
+
+         Two of the three rules are already visible in the rows themselves (失败 is a pill, a
+         checkpoint is a band). They are here anyway, because the filter has to be able to
+         name what it kept: a filter that hides rows without saying why is the one thing this
+         page refuses to ship. */
+      var ANOMALY_RULES = [
+        {
+          id: 'toolError',
+          label: '工具失败',
+          // The runtime's own verdict on a tool result, carrying the message it failed with.
+          record: function (record) {
+            return !!record && record.isError === true;
+          }
+        },
+        {
+          id: 'compaction',
+          label: '上下文压缩',
+          // The checkpoint written when the runtime rewrites the conversation underneath the
+          // turn. A turn that got cut off and picked up again leaves one of these behind.
+          record: function (record) {
+            return !!record && record.kind === 'compaction';
+          }
+        },
+        {
+          id: 'noReply',
+          label: '无答复',
+          // A turn that took a prompt and never produced a reply — the shape an interruption
+          // leaves behind. The turn still running is excluded: it is open because it is
+          // going, which is not the same thing as broken, and a filter that re-flags the live
+          // turn on every 2.5s poll is a filter nobody can leave on.
+          turn: function (turn, ctx) {
+            return !!turn && turn.closed === false && turn !== ctx.liveTurn;
+          }
+        }
+      ];
+
+      var ANOMALY_RULE_IDS = ANOMALY_RULES.map(function (rule) {
+        return rule.id;
+      });
+
+      function anomalyRuleLabel(id) {
+        for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
+          if (ANOMALY_RULES[i].id === id) return ANOMALY_RULES[i].label;
+        }
+        return id || DASH;
+      }
+
+      /**
+       * One rule, one answer. A rule is scoped to a record or to the turn that record sits in,
+       * and only ever one of the two — so the two kinds of rule cannot both be asked at once
+       * and cannot be half-applied.
+       */
+      function anomalyRuleFires(rule, record, ctx) {
+        if (rule.record) return !!rule.record(record, ctx);
+        return !!(rule.turn && ctx && ctx.turn && rule.turn(ctx.turn, ctx));
+      }
+
+      /**
+       * Every rule that fires on this record, whether or not the reader has ticked it.
+       *
+       * The button counts need all of them, not just the ticked ones: a button that could
+       * only count what is already on would read 0 the moment you looked at it.
+       *
+       * @param {any} record
+       * @param {{ turn: any, liveTurn: any }} ctx
+       * @returns {string[]}
+       */
+      function recordAnomalyRules(record, ctx) {
+        var out = [];
+        for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
+          if (anomalyRuleFires(ANOMALY_RULES[i], record, ctx)) out.push(ANOMALY_RULES[i].id);
+        }
+        return out;
+      }
+
+      /**
+       * The 异常 half of the filter. An empty `enabled` is the filter being OFF, not a rule
+       * that matches nothing — the difference matters, because off has to let every record
+       * through instead of quietly emptying the ledger.
+       *
+       * @param {any} record
+       * @param {{ turn: any, liveTurn: any }} ctx
+       * @param {string[]} enabled
+       */
+      function passesAnomaly(record, ctx, enabled) {
+        if (!enabled || !enabled.length) return true;
+        var hits = recordAnomalyRules(record, ctx);
+        for (var i = 0; i < hits.length; i += 1) {
+          if (enabled.indexOf(hits[i]) >= 0) return true;
+        }
+        return false;
       }
 
       function isNil(value) {
@@ -2786,6 +2939,11 @@
         // more thing that has to be truthful about what it covers, and a filter has nothing
         // to explain.
         kinds: KIND_ORDER.slice(),
+        // Which 异常 rules are ticked. Empty means the filter is off — not 「nothing matches」,
+        // which is the distinction that keeps a turned-off filter from blanking the ledger.
+        // Kept as a list of rule ids rather than a boolean so a later rule is one more entry
+        // here and one more button, not a second piece of state that has to agree with this.
+        anomalyRules: [],
         query: '',
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
@@ -2864,6 +3022,7 @@
         dom.rangeRefresh = document.getElementById('range-refresh');
         dom.rangeQuick = document.querySelector('.range-quick');
         dom.rangeHint = document.getElementById('range-hint');
+        dom.anomalyControls = document.getElementById('anomaly-controls');
         dom.windowBar = document.getElementById('window-bar');
         dom.headerToggle = document.getElementById('header-toggle');
         dom.kpiToggle = document.getElementById('kpi-toggle');
@@ -3038,6 +3197,14 @@
         state.hardError = null;
         state.stale = false;
         state.flat = flattenTurns(payload.turns);
+        // The overview reaches the filter holding a bare record, but 无答复 is a property of
+        // the turn the record sits in, so the owning turn has to be reachable from the
+        // record alone. Built here rather than searched per call: this runs on every poll.
+        turnById = new Map();
+        var payloadTurns = Array.isArray(payload.turns) ? payload.turns : [];
+        for (var t = 0; t < payloadTurns.length; t += 1) {
+          if (payloadTurns[t] && payloadTurns[t].id) turnById.set(payloadTurns[t].id, payloadTurns[t]);
+        }
 
         if (changed) {
           rePinWindow();
@@ -3676,6 +3843,10 @@
       // here, and a range cannot claim to contain something it never saw.
       var overviewSpansById = new Map();
 
+      // record id -> the turn that owns it, rebuilt on every payload. Exists so a filter that
+      // is handed a bare record can still ask the question only the turn can answer.
+      var turnById = new Map();
+
       function recordInSelection(record, selection, spansById) {
         if (!selection) return true;
         var span = spansById.get(record.id);
@@ -4188,17 +4359,82 @@
 
       /* ---------------- rendering: ledger ---------------- */
 
+      /**
+       * The turn the session is still writing into — the last one the payload carries. It is
+       * only ever consulted while that turn is unclosed, which is exactly when 无答复 would
+       * otherwise fire on the turn the reader is watching happen.
+       */
+      function liveTurn() {
+        var turns = state.payload && state.payload.turns;
+        return Array.isArray(turns) && turns.length ? turns[turns.length - 1] : null;
+      }
+
+      /**
+       * Everything except 异常, in one place.
+       *
+       * The ledger and the 异常 rule counts both go through here. They each had their own
+       * copy for a while, and the result was a button promising 246 rows next to a list
+       * showing 12 — the same 「筛选了但什么都没变」 this file keeps guarding against, moved
+       * up one level.
+       */
+      function passesBaseFilter(record, selection) {
+        if (!hasKind(record, state.kinds)) return false;
+        if (state.query && !matchesQuery(record, state.query)) return false;
+        // The overview brush is a further filter, applied after kind and text so that
+        // clearing it never silently changes what the other two meant.
+        if (selection && !recordInSelection(record, selection, overviewSpansById)) return false;
+        if (!inTimeRange(record)) return false;
+        return true;
+      }
+
+      function anomalyContext(entry) {
+        return { turn: entry.turn, liveTurn: liveTurn() };
+      }
+
+      /**
+       * How many records each rule would keep, given every other filter exactly as it stands.
+       * Counted through passesBaseFilter so a button can never advertise a number the ledger
+       * will not deliver. `any` counts records, not rule hits: one row can trip two rules,
+       * and 「全部异常」 promising more rows than exist is the same lie as promising fewer.
+       */
+      function anomalyCounts() {
+        var byRule = {};
+        for (var i = 0; i < ANOMALY_RULES.length; i += 1) byRule[ANOMALY_RULES[i].id] = 0;
+        var any = 0;
+        var selection = state.overviewSelection;
+        var live = liveTurn();
+        for (var j = 0; j < state.flat.length; j += 1) {
+          var entry = state.flat[j];
+          if (!passesBaseFilter(entry.record, selection)) continue;
+          var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });
+          if (!hits.length) continue;
+          any += 1;
+          for (var k = 0; k < hits.length; k += 1) byRule[hits[k]] += 1;
+        }
+        return { byRule: byRule, any: any };
+      }
+
+      /**
+       * The rules that fired on a whole turn. Read straight off the table rather than through
+       * a record, because a broken turn is usually made of rows that each look fine.
+       */
+      function turnAnomalyRules(turn) {
+        var ctx = { turn: turn, liveTurn: liveTurn() };
+        var out = [];
+        for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
+          var rule = ANOMALY_RULES[i];
+          if (rule.turn && rule.turn(turn, ctx)) out.push(rule.id);
+        }
+        return out;
+      }
+
       function visibleEntries() {
         var out = [];
         var selection = state.overviewSelection;
         for (var i = 0; i < state.flat.length; i += 1) {
           var entry = state.flat[i];
-          if (!hasKind(entry.record, state.kinds)) continue;
-          if (state.query && !matchesQuery(entry.record, state.query)) continue;
-          // The overview brush is a further filter, applied after kind and text so that
-          // clearing it never silently changes what the other two meant.
-          if (selection && !recordInSelection(entry.record, selection, overviewSpansById)) continue;
-          if (!inTimeRange(entry.record)) continue;
+          if (!passesBaseFilter(entry.record, selection)) continue;
+          if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomalyRules)) continue;
           out.push(entry);
         }
         return out;
@@ -4401,6 +4637,7 @@
         return state.query !== '' || state.kinds.length !== KIND_ORDER.length
           || state.overviewSelection !== null
           || hasTimeRange()
+          || state.anomalyRules.length !== 0
           ;
       }
 
@@ -4418,6 +4655,11 @@
         // records the list refused to render — the same "filtered but nothing changed" this
         // function exists to prevent.
         if (!inTimeRange(record)) return false;
+        // 异常 belongs here for the same reason. The strip is handed a bare record, so the
+        // owning turn comes back out of turnById instead of off the flat entry the ledger
+        // gets — the same question, the same table, one lookup apart.
+        var owner = record ? turnById.get(record.turnId) : null;
+        if (!passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomalyRules)) return false;
         return true;
       }
 
@@ -4428,6 +4670,15 @@
 
         var title = '第 ' + (isCount(turn.index) ? turn.index : DASH) + ' 轮';
         head.appendChild(el('span', 'turn-title', title));
+
+        // A turn that never answered is a fact about the session, not about the filter in
+        // force, so it is marked whether or not 异常 is ticked. It goes on the head and not on
+        // each row because it is one thing that happened to the whole turn — stamped across
+        // 352 rows it would stop being a signal and become wallpaper.
+        var turnFlags = turnAnomalyRules(turn);
+        for (var flag = 0; flag < turnFlags.length; flag += 1) {
+          head.appendChild(el('span', 'turn-flag note note-danger', anomalyRuleLabel(turnFlags[flag])));
+        }
 
         // Under a filter, describe the visible rows; otherwise trust the server's
         // whole-turn numbers, which are exact and cost nothing to read.
@@ -4998,10 +5249,12 @@
       function clearFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
+        state.anomalyRules = [];
         clearTimeRange();
         resetWindowMode();
         if (dom.searchInput) dom.searchInput.value = '';
         syncKindButtons();
+        syncAnomalyButtons();
         render();
       }
 
@@ -5645,6 +5898,9 @@
         // Setting them once at startup would leave the calendar capped at whatever the
         // session held when the page opened.
         syncRangeBounds();
+        // The 异常 buttons carry a count that has to follow the session and every other filter,
+        // exactly like the refresh button's decision to appear.
+        syncAnomalyButtons();
         renderOverview();
         renderLedger();
         renderInspector();
@@ -5769,6 +6025,79 @@
         fetchSessions();
         fetchTrajectory(false);
         announce(enabled ? '已开启跟随最新，正在跟踪最近的会话。' : '已关闭跟随最新，固定在所选会话。');
+      }
+
+      /**
+       * Builds one button per rule, plus 全部异常 for the set as a whole. Built from the table
+       * rather than written into the markup so that a rule has exactly one name, in one place.
+       */
+      function buildAnomalyButtons() {
+        if (!dom.anomalyControls) return;
+        dom.anomalyControls.textContent = '';
+        for (var i = 0; i < ANOMALY_RULES.length; i += 1) {
+          var rule = ANOMALY_RULES[i];
+          var button = el('button', 'btn btn-quiet anomaly-btn');
+          button.type = 'button';
+          button.id = 'anomaly-' + rule.id;
+          button.setAttribute('data-anomaly-rule', rule.id);
+          button.setAttribute('aria-pressed', 'false');
+          button.appendChild(el('span', 'anomaly-label', rule.label));
+          button.appendChild(el('span', 'anomaly-count', '0'));
+          dom.anomalyControls.appendChild(button);
+        }
+        var all = el('button', 'btn btn-quiet anomaly-btn');
+        all.type = 'button';
+        all.id = 'anomaly-all';
+        all.setAttribute('data-anomaly-all', '');
+        all.setAttribute('aria-pressed', 'false');
+        all.appendChild(el('span', 'anomaly-label', '全部异常'));
+        all.appendChild(el('span', 'anomaly-count', '0'));
+        dom.anomalyControls.insertBefore(all, dom.anomalyControls.firstChild);
+      }
+
+      /**
+       * Counts and pressed state for the 异常 buttons. Both are read from the same pass the
+       * ledger filters through, so a number on a button and the rows below it are the same
+       * statement about the same records.
+       */
+      function syncAnomalyButtons() {
+        if (!dom.anomalyControls) return;
+        var counts = anomalyCounts();
+        var buttons = dom.anomalyControls.querySelectorAll('.anomaly-btn');
+        for (var i = 0; i < buttons.length; i += 1) {
+          var button = buttons[i];
+          var isAll = button.hasAttribute('data-anomaly-all');
+          var id = button.getAttribute('data-anomaly-rule');
+          var n = isAll ? counts.any : (counts.byRule[id] || 0);
+          var on = isAll
+            ? state.anomalyRules.length === ANOMALY_RULES.length
+            : state.anomalyRules.indexOf(id) >= 0;
+          var noun = isAll ? '全部异常' : anomalyRuleLabel(id);
+          var label = noun + ' ' + formatInt(n) + ' 条 · ' + (on ? '当前只看这些 · 点击取消' : '当前未启用 · 点击只看这些');
+          button.querySelector('.anomaly-count').textContent = formatInt(n);
+          button.setAttribute('aria-pressed', on ? 'true' : 'false');
+          button.setAttribute('aria-label', label);
+          button.setAttribute('title', label);
+          button.classList.toggle('is-empty', n === 0);
+        }
+      }
+
+      function onAnomalyToggle(ruleId) {
+        var next;
+        if (ruleId === null) {
+          next = state.anomalyRules.length === ANOMALY_RULES.length ? [] : ANOMALY_RULE_IDS.slice();
+        } else {
+          next = state.anomalyRules.filter(function (id) {
+            return id !== ruleId;
+          });
+          if (next.length === state.anomalyRules.length) next = next.concat([ruleId]);
+          next.sort(function (a, b) {
+            return ANOMALY_RULE_IDS.indexOf(a) - ANOMALY_RULE_IDS.indexOf(b);
+          });
+        }
+        state.anomalyRules = next;
+        resetWindowMode();
+        render();
       }
 
       function syncKindButtons() {
@@ -5924,6 +6253,20 @@
           resetWindowMode();
           render();
         });
+
+        // Built before it is bound, so the buttons and their handlers come from the same
+        // table and cannot be two lists that drift.
+        buildAnomalyButtons();
+        var anomalyButtons = dom.anomalyControls.querySelectorAll('.anomaly-btn');
+        for (var a = 0; a < anomalyButtons.length; a += 1) {
+          anomalyButtons[a].addEventListener('click', function () {
+            // Read the pressed state at click time rather than closing over it: the buttons
+            // are re-synced on every poll, and a captured flag goes stale between the render
+            // and the click.
+            var id = this.getAttribute('data-anomaly-rule');
+            onAnomalyToggle(id || null);
+          });
+        }
 
         var kindButtons = dom.kindControls.querySelectorAll('.tbtn-action');
         for (var j = 0; j < kindButtons.length; j += 1) {
