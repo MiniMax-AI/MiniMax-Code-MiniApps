@@ -1638,15 +1638,19 @@ export async function start(context) {
       sqlite.dbFile = basename(join(location.root, 'v2', 'sqlite', 'runtime-state.sqlite'));
       const sqlitePath = join(location.root, 'v2', 'sqlite', 'runtime-state.sqlite');
       sqlite.exists = existsSync(sqlitePath);
+      let probe = null;
       try {
-        const probe = new mod.DatabaseSync(sqlitePath, { readOnly: true });
+        probe = new mod.DatabaseSync(sqlitePath, { readOnly: true });
         const count = probe.prepare(
           "select count(*) as n from local_runtime_sessions where session_kind = 'conversation' and purpose is null",
         ).get();
         sqlite.conversationCount = count ? toNumber(count.n) : null;
-        probe.close();
       } catch (error) {
         sqlite.queryError = String(/** @type {any} */ (error)?.message ?? error).slice(0, 240);
+      } finally {
+        // A schema mismatch is the case this route exists to report, and it is exactly the case
+        // where `prepare` throws — so closing inside the try left the handle waiting for GC.
+        closeQuietly(probe);
       }
       const current = await resolveCurrentConversation(location.root);
       sqlite.opened = Boolean(current);
@@ -1736,13 +1740,21 @@ export async function start(context) {
         entry = entries.find((candidate) => basename(candidate.dir).includes('session_')
           && decodeSessionIdFromDirName(basename(candidate.dir)) === current.sessionId) ?? null;
         if (!entry && current.relativeDir) {
-          // Not in the recent window — build the entry straight from the recorded path.
-          const dir = join(location.sessionsRoot, current.relativeDir.replace(/\\/g, '/'));
-          try {
-            const fileStat = await stat(join(dir, 'messages.jsonl'));
-            entry = { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) };
-          } catch {
+          // Not in the recent window — build the entry straight from the recorded path. That value
+          // is a database column rather than a name this app chose, so it earns the same
+          // containment check `resolveArtifactPath` gives catalog file names.
+          const root = resolve(location.sessionsRoot);
+          const dir = resolve(root, current.relativeDir.replace(/\\/g, '/'));
+          if (dir !== root && !dir.startsWith(root + sep)) {
+            context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
             entry = null;
+          } else {
+            try {
+              const fileStat = await stat(join(dir, 'messages.jsonl'));
+              entry = { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) };
+            } catch {
+              entry = null;
+            }
           }
         }
         if (entry) binding = current;
@@ -1811,6 +1823,22 @@ export async function start(context) {
     // to learn which generation it claims to be, so only the files that actually belong to the
     // chain get parsed in full.
     const artifactByFile = new Map(generations.map((candidate) => [candidate.fileName, candidate]));
+    // history-catalog.json is written by the runtime when it rotates generations, so a session
+    // that has never compacted does not have one and its `generations` list is empty. The active
+    // file is real regardless, and `probe` below already synthesises an artifact for it; reuse
+    // that same shape here instead of rejecting the whole session with artifact_path_rejected.
+    const activeArtifactFor = (fileName) => artifactByFile.get(fileName)
+      ?? (fileName === 'messages.jsonl'
+        ? {
+          fileName: 'messages.jsonl',
+          active: true,
+          generation: null,
+          kind: 'messages',
+          byteLength: null,
+          messageCount: null,
+          revision: null,
+        }
+        : null);
     /** @type {Map<number, { marker: any, head: string }>} */
     const probed = new Map();
     const probe = async (generation) => {
@@ -1842,7 +1870,7 @@ export async function start(context) {
       return;
     }
     const activeFileName = lineage.chain[lineage.chain.length - 1].fileName;
-    const activeArtifact = artifactByFile.get(activeFileName) ?? null;
+    const activeArtifact = activeArtifactFor(activeFileName);
 
     // Concatenate oldest → newest, which is the order the conversation actually happened in.
     /** @type {Array<Record<string, any>>} */
@@ -1851,7 +1879,7 @@ export async function start(context) {
     let truncated = false;
     let readBytes = 0;
     for (const link of lineage.chain) {
-      const artifact = artifactByFile.get(link.fileName) ?? null;
+      const artifact = activeArtifactFor(link.fileName);
       const filePath = artifact === null ? null : resolveArtifactPath(entry.dir, artifact);
       if (filePath === null) {
         context.logger.error('miniapp.trajectory.read_error', { reason: 'artifact_path_rejected', code: errorCode(null) });
