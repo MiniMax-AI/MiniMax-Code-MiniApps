@@ -544,8 +544,20 @@ const checks = [
   ['the session total lives on the window bar instead', (() => {
   const src = fnSource('function updateWindowBar(shown, hiddenAbove, total)');
   if (!src) return false;
-  return /'全场 ' \+ formatInt\(sessionTurns\) \+ ' 轮 · '/.test(src)
-    && /var sessionTurns = state\.payload && state\.payload\.stats \? state\.payload\.stats\.turns : null;/.test(src);
+  if (!/var sessionTurns = state\.payload && state\.payload\.stats \? state\.payload\.stats\.turns : null;/.test(src)) return false;
+  // Both readings of the count have to name it, not one of them. The bar shows 已显示 … once a
+  // window is settled and 正在显示 N / M … while a batched build is still running, and the two are
+  // separate statements rather than one text with a suffix. A mid-build line that quietly dropped
+  // the session total would leave the reader, mid-scroll through 18,924 rows, without the one
+  // number saying how much of the session is left — so each branch is pinned on its own, with its
+  // own indentation, rather than "the string appears somewhere in this function".
+  const branches = [
+    "          (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
+      + "          '共 ' + formatInt(total) + ' 条 · 已显示 '",
+    "            (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
+      + "            '共 ' + formatInt(total) + ' 条 · 正在显示 '"
+  ];
+  return branches.every((branch) => src.indexOf(branch) >= 0);
 })()],
   ['the title is written after the groups are built', (() => {
   // If it is set before `visibleTurns`, the range is not knowable and the label silently

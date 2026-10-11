@@ -4,14 +4,19 @@ A guard that cannot fail is not a guard. Each mutation below breaks one of the r
 verify-selection.mjs the way it would actually break in the file, and requires that guard to fail
 with the right reason before the file is restored byte for byte.
 
-Each mutation is a list of edits rather than one substitution, because some of these rules span two
-lines that have to move together — moving the call on its own is not a defect at all: it sat
-immediately above the slice already, and raised `state.limit` before the window was cut exactly as
-it should. A mutation that changes the text without changing what the page does proves nothing.
+Each mutation is a list of edits rather than one substitution, so that a rule which spans two lines
+that have to move together can be broken in one go — a substitution that changes the text without
+changing what the page does proves nothing.
 
 The first one is the bug this file exists for: reading `state.flat` instead of the list handed in.
 The stub in the guard carries both, so the reverted version runs to a wrong answer rather than
 throwing — it keeps a selection the reader can no longer see, which is exactly what shipped.
+
+Two of these used to guard the opposite rule and were rewritten rather than dropped when the
+window stopped being the judgement's to widen (docs/LAYERS.md D13). The mutation
+"the window is never pulled down to the selection" was guarding a behaviour that was itself the
+defect: it pinned the `state.limit` write in place. It now breaks the rule that replaced it, and
+"the selection is judged after the window is sliced" guards the ordering the other way round.
 """
 import io
 import os
@@ -29,11 +34,11 @@ MUTATIONS = [
     # was no longer on screen.
     ("the selection is judged against the whole session again",
      [("        for (var i = 0; i < entries.length; i += 1) {\n"
-       "          if (entries[i].record.id === state.selectedId) {\n"
-       "            var needed = entries.length - i;\n",
+       "          if (entries[i].record.id === state.selectedId) return false;\n"
+       "        }\n",
        "        for (var i = 0; i < state.flat.length; i += 1) {\n"
-       "          if (state.flat[i].record.id === state.selectedId) {\n"
-       "            var needed = state.flat.length - i;\n")],
+       "          if (state.flat[i].record.id === state.selectedId) return false;\n"
+       "        }\n")],
      "a record the filter removed loses its selection"),
 
     # A filtered-out record that is never cleared: the panel keeps showing it and no row carries the
@@ -43,25 +48,34 @@ MUTATIONS = [
        "      }\n\n      /**\n       * The selected record, or null.\n")],
      "a record the filter removed loses its selection"),
 
-    # The window has to reach the selection, or the record is 'revealed' by a row that is never
-    # drawn. Counted over the session it also over-reaches: 12 rows where 8 are enough.
-    ("the window is never pulled down to the selection",
-     [("            var needed = entries.length - i;\n"
-       "            if (needed > state.limit) state.limit = Math.min(needed, entries.length);\n",
-       "            var needed = entries.length - i;\n")],
-     "the window is pulled down to a selection below it, counted over the table"),
+    # The window is the window controls' to move. A judgement that grows it to reach a selection is
+    # a second writer of `state.limit`, and it is what made pressing 「显示最新 200 条」 leave the
+    # bar reading 15,224 条 a second after promising 200. Reinstating the write must be caught by
+    # name — the old version of this mutation guarded the very line it now breaks.
+    ("the judgement grows the window again",
+     [("        for (var i = 0; i < entries.length; i += 1) {\n"
+       "          if (entries[i].record.id === state.selectedId) return false;\n"
+       "        }\n",
+       "        for (var i = 0; i < entries.length; i += 1) {\n"
+       "          if (entries[i].record.id === state.selectedId) {\n"
+       "            var needed = entries.length - i;\n"
+       "            if (needed > state.limit) state.limit = Math.min(needed, entries.length);\n"
+       "            return false;\n"
+       "          }\n"
+       "        }\n")],
+     "the judgement never touches the window"),
 
     # The poll path was the only caller, which is why a local filter change never reached it.
     ("the selection is never re-judged when the table changes",
-     [("        if (revealSelection(matched)) renderInspector();\n", "")],
+     [("        if (revealSelection(windowed)) renderInspector();\n", "")],
      "the selection is re-judged at the one exit every filter passes through"),
 
     # The half that is easy to miss, because the state is correct afterwards and only the DOM is
     # stale: nine writers reach renderLedger() without redrawing the panel, so the search box left
     # the inspector naming a record that had just been dropped.
     ("the judgement is made but the panel is never redrawn",
-     [("        if (revealSelection(matched)) renderInspector();\n",
-       "        revealSelection(matched);\n")],
+     [("        if (revealSelection(windowed)) renderInspector();\n",
+       "        revealSelection(windowed);\n")],
      "the panel is redrawn when the selection is dropped"),
 
     # And the other half: a verdict nobody is told about cannot be acted on.
@@ -70,15 +84,14 @@ MUTATIONS = [
        "        state.selectedId = null;\n        return false;\n")],
      "dropping the selection is reported so the panel can be redrawn"),
 
-    # Judged after the window is cut: `state.limit` is raised too late for it, so `windowed` and
-    # `hiddenAbove` describe a window that is not the one on screen, and the row that was supposed
-    # to reveal the selection may not be in it. Two edits — the call has to leave its place and
-    # arrive after the slice, or it is still raised in time.
-    ("the selection is judged after the window is sliced",
-     [("        if (revealSelection(matched)) renderInspector();\n", ""),
-      ("        var hiddenAbove = matched.length - windowed.length;\n",
-       "        var hiddenAbove = matched.length - windowed.length;\n        revealSelection(matched);\n")],
-     "the re-judgement runs against the rows, before the window is sliced"),
+    # Judged against `matched` — the filter result — rather than `windowed`. A record that survived
+    # every filter and was still cut off by the window keeps its selection, and the inspector goes
+    # on describing a row that is not on screen. That was this mutation's premise before the
+    # ordering changed; the defect it names has simply moved to the other side of the slice.
+    ("the selection is judged against the filtered rows rather than the window",
+     [("        if (revealSelection(windowed)) renderInspector();\n",
+       "        if (revealSelection(matched)) renderInspector();\n")],
+     "the selection is judged against the window, not the filter result"),
 
     # Two writers. The poll path judged the selection again, and a reader could be told two
     # different things depending on which one ran last.

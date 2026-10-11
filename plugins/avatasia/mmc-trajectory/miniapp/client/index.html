@@ -4657,8 +4657,14 @@
        *
        * It runs from renderLedger(), which is the one exit every path that changes what the table
        * shows goes through: the filters that call render() and the ones that call renderLedger()
-       * directly. Before the window is sliced, so that raising `state.limit` here moves
-       * `hiddenAbove` and the window bar with it rather than revealing a row that is never built.
+       * directly.
+       *
+       * The list is the *windowed* rows, not the filtered ones, and this is where the order
+       * finally settled. It used to be judged before the slice and used to raise `state.limit` to
+       * reach a selection sitting below the window — see docs/LAYERS.md D13 for the two things
+       * that were wrong with that. It writes one field, `state.selectedId`, and nothing else: the
+       * window belongs to the window controls, and a judgement that also moves it is a second
+       * writer of `state.limit`.
        *
        * @param {Array<{record: any}>} entries the rows about to be built from
        * @returns {boolean} true when it dropped the selection — the caller has to redraw the panel,
@@ -4667,11 +4673,7 @@
       function revealSelection(entries) {
         if (!state.selectedId) return false;
         for (var i = 0; i < entries.length; i += 1) {
-          if (entries[i].record.id === state.selectedId) {
-            var needed = entries.length - i;
-            if (needed > state.limit) state.limit = Math.min(needed, entries.length);
-            return false;
-          }
+          if (entries[i].record.id === state.selectedId) return false;
         }
         state.selectedId = null;
         return true;
@@ -5062,6 +5064,78 @@
         return state.limit;
       }
 
+      /* ---------------- batched row build ---------------- */
+
+      /**
+       * Turn groups built per frame once a window is too large for one.
+       *
+       * Measured, not chosen. On this session at 18,924 rows across 150 turns, 25 groups is
+       * ~3,150 rows and ~145 ms of row construction — the largest slice of a frame this loop can
+       * take before the page stops answering the pointer. The full picture, including the
+       * content-visibility alternative that was measured and rejected, is in docs/LAYERS.md D12.
+       */
+      var LEDGER_BATCH_GROUPS = 25;
+
+      /**
+       * Bumped by every renderLedger() before it touches the ledger.
+       *
+       * A batch in flight carries the token it started with and stops the moment that no longer
+       * matches, so a new exit never has to hunt down and abort a callback: there is exactly one
+       * thing to check and it is this number. Without it, the ten writers of "what the table
+       * shows" would have to interleave into one ledger and the reader would see two tables
+       * interleaved in the order their row loops happened to finish.
+       */
+      var ledgerBuildToken = 0;
+
+      /** {rows, total} while a batched build runs, null the rest of the time. */
+      var ledgerProgress = null;
+
+      /**
+       * The last (shown, hiddenAbove, total) updateWindowBar() was given.
+       *
+       * Kept so that progress can be re-reported by re-running that function rather than by
+       * writing the count node directly — the window bar has one writer and a second one is the
+       * two-writers defect this exit exists to prevent (D8).
+       */
+      var ledgerWindow = null;
+
+      /** A poll tick that arrived while the ledger was still being built. */
+      var pollDeferred = false;
+
+      /** Whether a batched build is running. One tick every 2.5 s asks this before it redraws. */
+      function ledgerBuilding() {
+        return ledgerProgress !== null;
+      }
+
+      /**
+       * Report how far a batched build has got, or that it is over.
+       *
+       * @param {number|null} rows rows built so far, or null when the build has finished
+       * @param {number} [total] the rows the window will hold when it finishes
+       */
+      function setLedgerProgress(rows, total) {
+        ledgerProgress = rows === null ? null : { rows: rows, total: total };
+        if (ledgerWindow) {
+          updateWindowBar(ledgerWindow.shown, ledgerWindow.hiddenAbove, ledgerWindow.total);
+        }
+      }
+
+      /**
+       * The one poll tick that was held back while the ledger was being built.
+       *
+       * An 全部 window over 18,924 rows takes about 4 s to lay out — longer than the poll interval
+       * — so admitting every tick would restart the build before it ever reached the end and the
+       * reader would watch the count reset forever. Instead the tick is remembered and this runs
+       * once the build finishes, which brings the session up to date without making the reader
+       * pay for a second build they did not ask for.
+       */
+      function flushDeferredPoll() {
+        if (!pollDeferred) return;
+        pollDeferred = false;
+        fetchSessions();
+        fetchTrajectory(false);
+      }
+
       function renderLedger() {
         var ledger = dom.ledger;
         /* Restoring the raw pixel offset is what made the list creep out from under the
@@ -5109,17 +5183,31 @@
 
         var matched = visibleEntries();
         var total = state.flat.length;
-        // Both answers belong to this exit rather than to each of its callers: whether the record the
-        // inspector is showing is still in the table, and how tall the pinned strips above it are
-        // now. Nine writers reach the table without going through render(), and judging the
+        // Any build still in flight belongs to the table this call is about to replace. Bumping
+        // the token here, before the ledger is cleared, is what retires it — there is no abort
+        // call to get wrong and no window in which two loops append to the same list.
+        ledgerBuildToken += 1;
+        applyFilterScope();
+
+        var windowed = matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched;
+        var hiddenAbove = matched.length - windowed.length;
+
+        // Both answers belong to this exit rather than to each of its callers: whether the record
+        // the inspector is showing is still in the table, and how tall the pinned strips above it
+        // are now. Nine writers reach the table without going through render(), and judging the
         // selection here is what stops the inspector describing a row that is no longer on screen.
+        //
+        // `windowed`, not `matched`: what the reader can see is the window, not the filter result.
+        // Judged before the slice this used to raise `state.limit` to reach a selection below the
+        // window, which made the window a thing the inspector could widen — and left the promise
+        // 「已显示 200 条」 true at the moment the reader pressed 显示最新 200 条 and false a
+        // second later. See docs/LAYERS.md D13.
         //
         // The redraw is part of that, not a follow-up: clearing the id on its own is not enough.
         // The search box, the type axis and the overview brush call renderLedger() and nothing
         // else, so the panel kept showing the record that had just been dropped — no row carried
         // the selection mark and the inspector still named one.
-        if (revealSelection(matched)) renderInspector();
-        applyFilterScope();
+        if (revealSelection(windowed)) renderInspector();
 
         if (matched.length === 0) {
           var reset = el('button', 'btn', '清除筛选');
@@ -5132,9 +5220,6 @@
           );
           return;
         }
-
-        var windowed = matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched;
-        var hiddenAbove = matched.length - windowed.length;
 
         updateWindowBar(windowed, hiddenAbove, total);
 
@@ -5149,39 +5234,84 @@
         var lastTurn = groups.length ? groups[groups.length - 1].turn.index : null;
         dom.ledgerMeta.textContent = turnRangeLabel(firstTurn, lastTurn);
 
-        for (var i = 0; i < groups.length; i += 1) {
-          var group = groups[i];
-          var section = el('section', 'turn-group');
-          section.setAttribute('aria-label', '第 ' + (isCount(group.turn.index) ? group.turn.index : DASH) + ' 轮');
-          section.appendChild(buildTurnHead(group.turn, group.entries));
-          var list = el('ul', 'row-list');
-          // Every entry that survived the filters becomes a row. There is no second pass
-          // that hides anything, so what is on screen is exactly what was selected.
-          var rails = railStates(group.entries);
-          for (var j = 0; j < group.entries.length; j += 1) {
-            var item = el('li');
-            if (group.entries[j].record.kind === 'compaction') {
-              item.className = 'compaction-cell';
-              item.appendChild(buildCompactionBand(group.entries[j]));
-            } else {
-              item.appendChild(buildRow(group.entries[j], rails[j]));
+        /**
+         * One batch: build up to LEDGER_BATCH_GROUPS turns, then hand the frame back.
+         *
+         * Declared here rather than beside the other helpers so that the row loop — including the
+         * compaction routing, which client-check.mjs reads out of renderLedger() for exactly this
+         * reason — stays the text it has always been. What the rows *are* has not changed; only
+         * how many are built before the browser gets the thread back.
+         *
+         * Nothing here changes what the window promises to show. 「显示全部」 still means every
+         * record; it just stops meaning it inside a single unbroken second and a half.
+         */
+        var build = { token: ledgerBuildToken, at: 0, rows: 0 };
+        var buildTotal = 0;
+        for (var b = 0; b < groups.length; b += 1) buildTotal += groups[b].entries.length;
+
+        function buildStep() {
+          // A newer renderLedger() owns the ledger now. Stop without touching it: the rows half
+          // built here belong to a table that no longer exists, and the exit that replaced it has
+          // already cleared the list.
+          if (build.token !== ledgerBuildToken) return;
+          var built = 0;
+          while (build.at < groups.length && built < LEDGER_BATCH_GROUPS) {
+            var group = groups[build.at];
+            build.at += 1;
+            var section = el('section', 'turn-group');
+            section.setAttribute('aria-label', '第 ' + (isCount(group.turn.index) ? group.turn.index : DASH) + ' 轮');
+            section.appendChild(buildTurnHead(group.turn, group.entries));
+            var list = el('ul', 'row-list');
+            // Every entry that survived the filters becomes a row. There is no second pass
+            // that hides anything, so what is on screen is exactly what was selected.
+            var rails = railStates(group.entries);
+            for (var j = 0; j < group.entries.length; j += 1) {
+              var item = el('li');
+              if (group.entries[j].record.kind === 'compaction') {
+                item.className = 'compaction-cell';
+                item.appendChild(buildCompactionBand(group.entries[j]));
+              } else {
+                item.appendChild(buildRow(group.entries[j], rails[j]));
+              }
+              list.appendChild(item);
             }
-            list.appendChild(item);
+            section.appendChild(list);
+            ledger.appendChild(section);
+            build.rows += group.entries.length;
+            built += 1;
           }
-          section.appendChild(list);
-          ledger.appendChild(section);
+
+          if (build.at < groups.length) {
+            setLedgerProgress(build.rows, buildTotal);
+            window.requestAnimationFrame(buildStep);
+            return;
+          }
+
+          setLedgerProgress(null);
+          restoreRowAnchor(anchor, scrollY);
+          // Before the measurement, not after it. flushDeferredPoll() only starts fetches, so
+          // nothing can re-enter the ledger from inside it today — but the exit that does this
+          // measuring has to stay the last word, and a trailing statement is the one place where
+          // a future synchronous call would quietly measure an empty page.
+          flushDeferredPoll();
+          // Measured here rather than at the end of render(): this is the one exit every path that
+          // changes what the table shows goes through — the filters that call render() and the nine
+          // that call renderLedger() directly. A filter that grows the band therefore cannot leave
+          // the offsets above describing the page as it was before the reader touched anything.
+          // syncAnomalyMode(), which writes the 异常 note that gives the band its third line, runs
+          // before this point inside render(), so the height is already final here.
+          // The early returns above deliberately do not measure: none of them can change the band,
+          // and emptying the ledger mid-flight is not a reason to move a pinned strip.
+          syncStickyOffsets();
         }
 
-        restoreRowAnchor(anchor, scrollY);
-        // Measured here rather than at the end of render(): this is the one exit every path that
-        // changes what the table shows goes through — the filters that call render() and the nine
-        // that call renderLedger() directly. A filter that grows the band therefore cannot leave
-        // the offsets above describing the page as it was before the reader touched anything.
-        // syncAnomalyMode(), which writes the 异常 note that gives the band its third line, runs
-        // before this point inside render(), so the height is already final here.
-        // The early returns above deliberately do not measure: none of them can change the band,
-        // and emptying the ledger mid-flight is not a reason to move a pinned strip.
-        syncStickyOffsets();
+        // Windows of a few groups never reach the yield: the while loop inside buildStep consumes
+        // all of them and falls straight through, so the default 200-row table is built exactly as
+        // it always was, in one pass, with no progress written and no frame spent. Seeding the
+        // progress only when there is more than one batch is what keeps that true — otherwise the
+        // common path paid for a 「正在显示 0 / 200 条」 that no reader ever saw.
+        if (groups.length > LEDGER_BATCH_GROUPS) setLedgerProgress(0, buildTotal);
+        buildStep();
       }
 
       /**
@@ -5211,12 +5341,26 @@
           clear(wrap);
           wrap.appendChild(parts.actions);
         }
+        // Kept so a mid-build progress tick can be re-reported by re-running this function rather
+        // than by writing the count node from somewhere else. See ledgerWindow's comment.
+        ledgerWindow = { shown: shown, hiddenAbove: hiddenAbove, total: total };
 
         applyAxisButton(parts.axis);
         applyWindowMode(parts, hiddenAbove);
         // The session's total turn count lives here, beside the record counts it explains —
         // not in the panel title, which describes only the rows on screen.
         var sessionTurns = state.payload && state.payload.stats ? state.payload.stats.turns : null;
+        if (ledgerProgress) {
+          // Mid-build the count reports what is actually on screen, not what the window will hold.
+          // 「已显示 18,924 条」 above three thousand rows that exist is the page promising a number
+          // it has not reached yet, which is the same defect as the one this whole exit exists to
+          // prevent — one surface describing a table that is not there.
+          parts.count.textContent =
+            (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +
+            '共 ' + formatInt(total) + ' 条 · 正在显示 ' + formatInt(ledgerProgress.rows) +
+            ' / ' + formatInt(ledgerProgress.total) + ' 条';
+          return;
+        }
         parts.count.textContent =
           (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +
           '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +
@@ -6671,6 +6815,15 @@
         stopPolling();
         pollTimer = window.setInterval(function () {
           if (document.hidden) return;
+          // A table that is still being built is not a table this tick may replace. An 全部 window
+          // over 18,924 rows takes about 4 s to lay out — longer than this interval — so letting
+          // every tick through would restart the build before it reached the end, and the reader
+          // would watch the count reset from 3,000 back to 0 forever. The tick is remembered
+          // instead, and flushDeferredPoll() runs it once the build finishes.
+          if (ledgerBuilding()) {
+            pollDeferred = true;
+            return;
+          }
           fetchSessions();
           fetchTrajectory(false);
         }, POLL_INTERVAL);

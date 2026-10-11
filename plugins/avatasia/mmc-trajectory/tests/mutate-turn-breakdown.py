@@ -98,9 +98,21 @@ MUTATIONS = [
      "return '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';",
      "return '轨迹';",
      "panel title states only the rendered turn range"),
+    # Anchored on two lines with their indentation: updateWindowBar() now writes the 全场 total in
+    # both its mid-build and its settled branch, and a one-line anchor matches both.
     ("session total dropped from the window bar",
-     "(isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +",
-     "",
+     "          (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
+     "          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
+     "          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
+     "the session total lives on the window bar instead"),
+
+    # The same rule for the other branch. The mid-build line is the one a reader is actually
+    # looking at while an 18,924-row 全部 window is being built, so losing the session total there
+    # is at least as bad as losing it once the table has settled.
+    ("session total dropped from the mid-build count",
+     "            (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
+     "            '共 ' + formatInt(total) + ' 条 · 正在显示 ' + formatInt(ledgerProgress.rows) +\n",
+     "            '共 ' + formatInt(total) + ' 条 · 正在显示 ' + formatInt(ledgerProgress.rows) +\n",
      "the session total lives on the window bar instead"),
     # Write the title before the groups exist. The label still renders, it just silently
     # degrades — the failure the guard above is about.

@@ -127,14 +127,14 @@ MUTATIONS = [
     # decides whether the strips below are pinned at the height the band had before the reader
     # changed anything.
     ("the ledger stops measuring the band",
-     "        // and emptying the ledger mid-flight is not a reason to move a pinned strip.\n"
-     "        syncStickyOffsets();\n",
-     "        // and emptying the ledger mid-flight is not a reason to move a pinned strip.\n",
+     "          // and emptying the ledger mid-flight is not a reason to move a pinned strip.\n"
+     "          syncStickyOffsets();\n",
+     "          // and emptying the ledger mid-flight is not a reason to move a pinned strip.\n",
      "the heights are measured at the one exit every filter passes through"),
 
     ("the measurement moves off the ledger's last line",
-     "        restoreRowAnchor(anchor, scrollY);\n        // Measured here rather than",
-     "        syncStickyOffsets();\n        restoreRowAnchor(anchor, scrollY);\n        // Measured here rather than",
+     "          restoreRowAnchor(anchor, scrollY);\n          // Before the measurement",
+     "          syncStickyOffsets();\n          restoreRowAnchor(anchor, scrollY);\n          // Before the measurement",
      "the heights are measured at the one exit every filter passes through"),
 
     # A second call site is the shape that let the eight filter writers nobody was thinking about go

@@ -12,9 +12,23 @@
  * path that changes what the table shows goes through — nine of them call it directly instead of
  * calling render().
  *
+ * What changed since, and why (docs/LAYERS.md D13): it used to be judged *before* the window was
+ * sliced, and it used to raise `state.limit` to reach a selection sitting below the window. Two
+ * things were wrong with that. The window became something the inspector could widen, so pressing
+ * 「显示最新 200 条」 left the bar promising 200 条 and then, a second later, 15,224 条 — the
+ * reader's own click contradicted the number on screen. And `state.limit` had two writers: the
+ * window controls, and a judgement. Every other two-writer defect in this client has had that
+ * shape.
+ *
+ * So the judgement is now a predicate over the rows that will actually be drawn, and it writes
+ * `state.selectedId` and nothing else. A selection below the window is *dropped*, not revealed:
+ * the reader's explicit window choice outranks an earlier click, and it matches what the filter
+ * axes already do.
+ *
  * It is checked by *running* revealSelection() against a `state` that carries both the unfiltered
  * session and the filtered list, so a version that reads the unfiltered one again produces the
- * wrong answer here rather than looking plausible.
+ * wrong answer here rather than looking plausible — and the same run asserts that `state.limit`
+ * comes out untouched, which is the half that used to be silently wrong.
  *
  * mutate-selection.py breaks each of these in the shipped file and requires this guard to catch it
  * with the right reason, so a rule nothing tests cannot be added here.
@@ -55,7 +69,8 @@ const rec = (id) => ({ record: { id } });
 /**
  * Run revealSelection(entries) against a state that also carries `flat` — the unfiltered session —
  * so a version that reads `flat` instead of its argument runs to a wrong answer rather than
- * throwing, and the failure below is a decision rather than a crash.
+ * throwing, and the failure below is a decision rather than a crash. `limit` comes back out too:
+ * the judgement is allowed to end with the window exactly where it found it.
  */
 function reveal({ selectedId, limit, entries, flat }) {
   const state = { selectedId, limit, flat: flat ?? entries };
@@ -89,12 +104,16 @@ const kept = reveal({ selectedId: 'r3', limit: 10, entries: rows, flat: session 
 assert('a record still in the table keeps its selection',
   kept.error === null && kept.selectedId === 'r3' && kept.limit === 10 && kept.dropped === false);
 
-// Below the window. `needed` has to be counted over the table, not the session: counting over the
-// session would reach for 12 rows when 8 are enough, and the window bar would claim 4 of them are
-// hidden when they were filtered out rather than scrolled off.
-const widened = reveal({ selectedId: 'r2', limit: 3, entries: rows, flat: session });
-assert('the window is pulled down to a selection below it, counted over the table',
-  widened.error === null && widened.selectedId === 'r2' && widened.limit === 8);
+// Below the window. This is the reported defect: the reader had an old record selected in 全部,
+// pressed 「显示最新 200 条」, the record left the table and the inspector went on naming it.
+//
+// It used to be answered by widening the window to reach the selection — which is why pressing
+// 显示最新 200 条 could leave the bar reading 「已显示 15,224 条」 a second after promising 200.
+// The selection is dropped instead, and the window is left exactly where the reader put it.
+const belowWindow = reveal({ selectedId: 'r2', limit: 3, entries: rows.slice(7), flat: session });
+assert('a selection below the window is dropped, and the window is left alone',
+  belowWindow.error === null && belowWindow.selectedId === null
+  && belowWindow.limit === 3 && belowWindow.dropped === true);
 
 const none = reveal({ selectedId: null, limit: 10, entries: rows, flat: session });
 assert('no selection means nothing to reveal',
@@ -109,6 +128,15 @@ assert('dropping the selection is reported so the panel can be redrawn',
   /function revealSelection\(entries\)[\s\S]*?state\.selectedId = null;\s*\n\s*return true;/.test(
     functionSource('revealSelection') ?? ''));
 
+// One writer per field. `state.limit` belongs to the window controls — setWindowMode,
+// resetWindowMode, the 「向上加载更早的 N 条」 button and rePinWindow — and a judgement that also
+// moves it makes it a second writer, which is the shape every two-writer defect in this file has
+// taken. Asserted on the source rather than on the run above, because a version that reaches for
+// the window through some route other than `state.limit` would still pass the behaviour check.
+const revealSrc = functionSource('revealSelection') ?? '';
+assert('the judgement never touches the window',
+  revealSrc.length > 0 && !/\blimit\b/.test(revealSrc));
+
 // An empty table is the same verdict as a filtered-out record, reached by a different route.
 const empty = reveal({ selectedId: 'r0', limit: 10, entries: [], flat: session });
 assert('a table with nothing in it clears the selection',
@@ -121,16 +149,17 @@ const ledgerBody = ledgerSrc ? ledgerSrc.slice(ledgerSrc.indexOf('{') + 1, ledge
 const ledgerCalls = ledgerBody.match(/revealSelection\(/g) ?? [];
 assert('the selection is re-judged at the one exit every filter passes through', ledgerCalls.length === 1);
 
-// Judged against the array the rows are built from, and before it is windowed: raising `limit` after
-// the slice would reveal a row that was never drawn and leave the window bar counting a window
-// that is not the one on screen.
+// Judged against the rows the table will actually draw, and after they are sliced. Judging the
+// filtered list would leave a selection standing on a record that survived the filters and was
+// still cut off by the window — the same page-contradicts-itself defect, one layer further in.
 const atMatched = ledgerBody.indexOf('var matched = visibleEntries();');
-const atReveal = ledgerBody.indexOf('revealSelection(matched)');
-// The slice is `var windowed`: it reads `state.limit` to decide what is on screen, so a selection
-// judged after that line raised the limit too late to be counted.
 const atSlice = ledgerBody.indexOf('var windowed');
-assert('the re-judgement runs against the rows, before the window is sliced',
-  atMatched >= 0 && atReveal > atMatched && atSlice > atReveal);
+const atReveal = ledgerBody.indexOf('revealSelection(windowed)');
+assert('the re-judgement runs against the rows the table will actually draw',
+  atMatched >= 0 && atSlice > atMatched && atReveal > atSlice);
+
+assert('the selection is judged against the window, not the filter result',
+  /revealSelection\(windowed\)/.test(ledgerBody) && !/revealSelection\(matched\)/.test(ledgerBody));
 
 // The poll path used to be the only caller, which is precisely why a local filter change — none of
 // which go through applyPayload — never touched it.
@@ -141,7 +170,7 @@ assert('the poll path does not judge the selection a second time',
 // The argument is a parameter, not a re-read of the page. A version that recomputes the list inside
 // the function can be handed one list and judge another.
 assert('the list to judge against is an argument rather than a second read',
-  !!functionSource('revealSelection') && /function revealSelection\(entries\)/.test(functionSource('revealSelection')));
+  !!revealSrc && /function revealSelection\(entries\)/.test(revealSrc));
 
 // And the ledger really does build its rows from visibleEntries(), which is what makes "the same
 // list" a fact about the page rather than an intention in a comment.
@@ -155,10 +184,10 @@ assert('the rows on screen are built from the same list',
 // itself again, one layer further along. This is the half that is easy to miss, because the state
 // is correct after the judgement and only the DOM is stale.
 assert('the panel is redrawn when the selection is dropped',
-  /if\s*\(\s*revealSelection\(matched\)\s*\)\s*renderInspector\(\);/.test(ledgerBody));
+  /if\s*\(\s*revealSelection\(windowed\)\s*\)\s*renderInspector\(\);/.test(ledgerBody));
 
 console.log('[selection] ' + pass + ' passed, ' + failures.length + ' failed');
-for (const [label, run] of Object.entries({ gone, kept, widened, none, empty })) {
+for (const [label, run] of Object.entries({ gone, kept, belowWindow, none, empty })) {
   if (run.error) console.log('  ' + label + ' threw: ' + run.error);
 }
 if (failures.length) {

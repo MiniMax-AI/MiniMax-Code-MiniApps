@@ -246,10 +246,22 @@ const ledgerBody = renderLedgerSrc
   ? renderLedgerSrc.slice(renderLedgerSrc.indexOf('{') + 1, renderLedgerSrc.lastIndexOf('}'))
   : '';
 const ledgerCalls = ledgerBody.match(/syncStickyOffsets\(\);/g) ?? [];
-const ledgerLast = ledgerBody.lastIndexOf('syncStickyOffsets();');
+// The exit ends in a batch loop, so "the measurement is the last statement" is a claim about the
+// path that finishes the table, not about where the text sits. buildStep() is that path: the last
+// batch runs it synchronously and the earlier ones run it from a frame callback, and either way it
+// falls out at the same place. What must hold is that nothing which moves the page — the anchor
+// restore above it — runs after the measurement, because the strips would then be pinned against
+// a scroll position the reader is no longer at. mutate-sticky.py moves the call up past
+// restoreRowAnchor() to break exactly that.
+const buildStepSrc = functionSource('buildStep');
+const stepBody = buildStepSrc
+  ? buildStepSrc.slice(buildStepSrc.indexOf('{') + 1, buildStepSrc.lastIndexOf('}'))
+  : '';
+const stepLast = stepBody.lastIndexOf('syncStickyOffsets();');
 assert('the heights are measured at the one exit every filter passes through',
-  ledgerCalls.length === 1 && ledgerLast >= 0
-  && ledgerBody.slice(ledgerLast + 'syncStickyOffsets();'.length).trim() === '');
+  ledgerCalls.length === 1 && stepLast >= 0
+  && stepBody.slice(stepLast + 'syncStickyOffsets();'.length).trim() === ''
+  && /buildStep\(\);/.test(ledgerBody));
 
 // One writer, one call site. A second call in render() would not be wrong on its own, but it is
 // the shape that let the eight writers nobody was thinking about go unmeasured.
