@@ -30,14 +30,25 @@ const html = readFileSync(HTML, 'utf8');
 /* ---------- helpers ---------- */
 let pass = 0;
 const failures = [];
+// Names are kept separately from the human-readable detail. They used to be recovered from the
+// detail line with `split(':')[0]`, which quietly truncates any assertion whose name contains a
+// colon — and the mutation runner matches on these names, so a truncated name reads as a
+// mutation that went uncaught by a guard that in fact caught it.
+const failedNames = [];
 function check(name, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (ok) pass += 1;
-  else failures.push(name + ': got ' + JSON.stringify(actual) + ', want ' + JSON.stringify(expected));
+  else {
+    failedNames.push(name);
+    failures.push(name + ': got ' + JSON.stringify(actual) + ', want ' + JSON.stringify(expected));
+  }
 }
 function assert(name, cond) {
   if (cond) pass += 1;
-  else failures.push(name);
+  else {
+    failedNames.push(name);
+    failures.push(name);
+  }
 }
 function fnSource(sig) {
   const start = html.indexOf(sig);
@@ -204,6 +215,12 @@ page.state = {
   kinds: pure.KIND_ORDER.slice(),
   query: '',
   anomalyRules: [],
+  // 多选 defaults to off, so a reader who has never touched the checkbox is in single mode —
+  // which is the behaviour the toggle is asserted on below, and not an accident of the harness
+  // having left `multiAnomaly` undefined. Stated here rather than omitted so that forgetting it
+  // fails loudly instead of quietly testing the union branch.
+  multiAnomaly: false,
+  anomalyLast: null,
   rangeFrom: null,
   rangeTo: null,
   rangeCutoff: null,
@@ -375,7 +392,8 @@ assert('no rule is tagged on a record',
 // The static guards below can only see the shape of onAnomalyToggle. These run it, because the
 // shape of a toggle is the same whether it adds, removes or does nothing.
 page.resetWindowMode = () => {};
-page.render = () => {};
+let renders = 0;
+page.render = () => { renders += 1; };
 const toggleSource = fnSource('function onAnomalyToggle(');
 if (!toggleSource) throw new Error('could not extract onAnomalyToggle');
 vm.runInContext(toggleSource, page);
@@ -388,15 +406,31 @@ vm.runInContext(resetBaseSource, page);
 let rangeCleared = 0;
 page.clearTimeRange = () => { rangeCleared += 1; };
 page.syncKindButtons = () => {};
-page.dom = { searchInput: null };
+// The checkbox is the only part of 多选 that exists outside `state`, and 重置 has to write it.
+// A stub with a real `checked` field is what lets that be asserted as behaviour rather than
+// inferred from the assignment appearing in the source.
+page.dom = { searchInput: null, anomalyMulti: { checked: false } };
 
+/* 单选 is what the page opens in, so it is what the toggle is read in first. Two assertions here
+   used to say the opposite — that ticking a second rule *adds* to the first, and that unticking
+   takes off only the one clicked — because the toggle had no mode and stacked unconditionally.
+   Those were true of the old code and are false of the new one by request, so they are rewritten
+   onto 单选 rather than deleted, and the union they were written for is re-asserted below with
+   多选 actually turned on. Nothing here is checked from the source text: a toggle's shape is the
+   same whether it adds, removes, replaces or does nothing, so it has to be run. */
 page.state.anomalyRules = [];
+page.state.multiAnomaly = false;
+page.state.anomalyLast = null;
 page.onAnomalyToggle('toolError');
-check('ticking one rule', page.state.anomalyRules, ['toolError']);
+check('单选: ticking one rule', page.state.anomalyRules, ['toolError']);
 page.onAnomalyToggle('compaction');
-check('ticking a second keeps table order, not click order', page.state.anomalyRules, ['toolError', 'compaction']);
-page.onAnomalyToggle('toolError');
-check('unticking removes only that one', page.state.anomalyRules, ['compaction']);
+check('单选: ticking a second replaces the first instead of stacking',
+  page.state.anomalyRules, ['compaction']);
+page.onAnomalyToggle('compaction');
+check('单选: pressing the rule already on turns it off again',
+  page.state.anomalyRules, []);
+check('and that did not turn 多选 on as a side effect', page.state.multiAnomaly, false);
+
 page.onAnomalyToggle(null);
 check('全部异常 ticks the whole set', page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
 vm.runInContext('this.__aliased = state.anomalyRules === ANOMALY_RULE_IDS;', page);
@@ -404,11 +438,67 @@ check('全部异常 ticks a copy, not the table itself', page.__aliased, false);
 page.onAnomalyToggle(null);
 check('and 全部异常 again unticks it', page.state.anomalyRules, []);
 
-page.state.anomalyRules = [];
-page.onAnomalyToggle('compaction');
-page.onAnomalyToggle('toolError');
+page.state.anomalyRules = ['compaction'];
 page.onAnomalyToggle(null);
-check('全部异常 from a partial selection ticks everything, not just the rest', page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
+check('全部异常 from a partial selection ticks everything, not just the rest',
+  page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
+
+/* 多选 on: the union the two rewritten assertions above used to describe, now reachable. */
+page.state.anomalyRules = [];
+page.state.multiAnomaly = true;
+page.onAnomalyToggle('compaction');
+check('多选: the first rule is ticked the same way it is in 单选',
+  page.state.anomalyRules, ['compaction']);
+page.onAnomalyToggle('toolError');
+check('多选: ticking a second stacks instead of replacing',
+  page.state.anomalyRules, ['toolError', 'compaction']);
+page.onAnomalyToggle('noReply');
+check('多选: three rules stack, and in table order rather than click order',
+  page.state.anomalyRules, ['toolError', 'compaction', 'noReply']);
+page.onAnomalyToggle('toolError');
+check('多选: unticking removes only that one', page.state.anomalyRules,
+  ['compaction', 'noReply']);
+page.onAnomalyToggle('compaction');
+check('and the stack can be taken all the way down to nothing',
+  page.state.anomalyRules, ['noReply']);
+
+/* Turning 多选 off. The buttons stop being able to hold more than one rule, so a stack of three
+   has to lose two of them here rather than at the next click — otherwise the controls are showing
+   a selection they can no longer express, which is the same class of mismatch as a button whose
+   number does not match its list. Which two lose is asserted, not left open. */
+const multiSrc = fnSource('function onAnomalyMultiChange(');
+if (!multiSrc) throw new Error('could not extract onAnomalyMultiChange');
+vm.runInContext(multiSrc, page);
+page.state.anomalyRules = ['toolError', 'compaction'];
+page.state.anomalyLast = 'compaction';
+page.state.multiAnomaly = true;
+page.onAnomalyMultiChange(false);
+check('turning 多选 off keeps the rule ticked last, not the first in table order',
+  page.state.anomalyRules, ['compaction']);
+check('and the mode itself is recorded as off', page.state.multiAnomaly, false);
+
+page.state.anomalyRules = ['toolError', 'silent'];
+page.state.anomalyLast = 'noReply';
+page.state.multiAnomaly = true;
+page.onAnomalyMultiChange(false);
+check('when the last-ticked rule has since been unticked, a rule still remains',
+  page.state.anomalyRules, ['toolError']);
+
+page.state.anomalyRules = ['silent'];
+page.state.anomalyLast = 'silent';
+page.state.multiAnomaly = true;
+page.onAnomalyMultiChange(false);
+check('turning 多选 off with only one rule selected keeps it', page.state.anomalyRules, ['silent']);
+// The other direction is not a no-op by construction: 全部异常 can leave four rules ticked while
+// the mode is 单选, and turning 多选 on then must not quietly thin them down.
+page.state.anomalyRules = pure.ANOMALY_RULE_IDS.slice();
+page.state.anomalyLast = null;
+page.state.multiAnomaly = false;
+page.onAnomalyMultiChange(true);
+check('turning 多选 on changes the mode and nothing else',
+  page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
+check('and the mode is recorded as on', page.state.multiAnomaly, true);
+page.state.multiAnomaly = false;
 
 // Ticking a rule puts the row above back to its default. In anomaly mode that row filters
 // nothing, so leaving it holding 「用户」 would be the page showing a condition that is not in
@@ -431,13 +521,22 @@ const resetSource = fnSource('function onAnomalyReset(');
 if (!resetSource) throw new Error('could not extract onAnomalyReset');
 vm.runInContext(resetSource, page);
 page.state.anomalyRules = ['toolError', 'silent'];
+page.state.anomalyLast = 'silent';
+page.state.multiAnomaly = true;
+page.dom.anomalyMulti.checked = true;
 page.onAnomalyReset();
 check('重置 returns the row to its default', page.state.anomalyRules, []);
 check('and the row above is the default, so the table follows it',
   page.state.kinds, pure.KIND_ORDER);
+// 重置 puts the row back to the state it opens in, and the row opens in 单选. Leaving the mode
+// switch on would mean the one button that is supposed to mean "default" lands on a non-default
+// mode — and the reader has no other way back to it, because that switch is not a filter.
+check('and 多选 goes off with it', page.state.multiAnomaly, false);
+check('and the checkbox stops reading as on', page.dom.anomalyMulti.checked, false);
+const beforeSecondPress = renders;
 page.onAnomalyReset();
 check('and pressing it again is not a toggle into a filtered view', page.state.anomalyRules, []);
-assert('the second press is not even a re-render', page.state.anomalyRules.length === 0);
+assert('the second press does not even re-render', renders === beforeSecondPress);
 page.state.anomalyRules = [];
 
 /* ---------- 6) what the reader is shown ---------- */
@@ -452,6 +551,36 @@ assert('and it is named, not just glyphed',
 assert('no rule is hardcoded in the markup', !/>工具失败</.test(html) && !/>上下文压缩</.test(html));
 assert('the container is empty in the markup',
   /<div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"><\/div>/.test(html));
+
+/* 多选 is a mode switch, not a fifth rule, and the difference is load-bearing: as a rule it would
+   be inert the moment another rule is ticked, taking away the only way back from a union. */
+const multiBox = /<input type="checkbox" id="anomaly-multi" \/>/.test(html);
+assert('多选 is a real checkbox', multiBox);
+assert('and it is labelled, so clicking the word is clicking the control',
+  /<label class="anomaly-multi" for="anomaly-multi">/.test(html));
+// Position is asserted rather than left to the surrounding markup: the checkbox has to sit before
+// the rule buttons to read as "these buttons are now single", and after the 异常 heading to read
+// as part of that row rather than as a control of its own.
+const multiAt = html.indexOf('id="anomaly-multi"');
+const labelAt = html.indexOf('id="anomaly-label"');
+const groupAt = html.indexOf('id="anomaly-controls"');
+assert('多选 sits inside the 异常 row', multiAt > labelAt && labelAt > 0);
+assert('and before the rule buttons it changes the meaning of', multiAt < groupAt);
+assert('it is not one of the rule buttons', multiAt > 0 && groupAt > 0
+  && !html.slice(multiAt, groupAt).includes('anomaly-btn'));
+// The one that matters most: `data-filter-scope` is what `syncAnomalyMode` makes inert while an
+// anomaly rule is on. A checkbox inside it would be dead exactly when it is needed, and nothing
+// else in this file would notice.
+assert('and it is never marked as a filter control, so it cannot be made inert',
+  !html.slice(html.lastIndexOf('<div class="anomaly-bar', multiAt), groupAt)
+    .includes('data-filter-scope'));
+assert('the 异常 row itself is not inert-able either',
+  !/<div class="anomaly-bar"[^>]*data-filter-scope/.test(html));
+// Native checkbox state is the accessible source of truth for the mode. The stylesheet also
+// recolours the label, which is a nicety; if the input were replaced by something drawn in CSS,
+// that recolouring would be the only signal left and it would fail silently in both themes.
+assert('and the mode is carried by the input itself, not by a drawn-in-CSS stand-in',
+  multiBox && /\.anomaly-multi input\s*\{/.test(html));
 
 /* Position. It is a second filter axis, so it belongs beside the first one. It used to be the
    last field of the search form, which put it above the KPI cards and the type axis — four cards
@@ -572,6 +701,27 @@ assert('and the body is marked so the dimming has something to key off',
   /data-anomaly-mode/.test(modeSrc));
 assert('the note says what stopped applying and how to undo it',
   /异常筛选已开启/.test(modeSrc) && /ANOMALY_NONE_LABEL/.test(modeSrc));
+// A poll re-renders from state, so a checkbox left to remember its own position is a checkbox
+// that can end up drawn ticked while the buttons are single again — the two disagreeing on screen
+// with nothing to reconcile them.
+assert('every poll re-draws the checkbox from state, not from where the reader left it',
+  /dom\.anomalyMulti\.checked = state\.multiAnomaly/.test(modeSrc));
+assert('and the checkbox is looked up once, with the rest of the anomaly controls',
+  /dom\.anomalyMulti = document\.getElementById\('anomaly-multi'\)/.test(html));
+assert('多选 opens off, because 单选 is the documented default',
+  /multiAnomaly: false/.test(stateSrc));
+
+const wireSrc = fnSource('function wire(');
+// Scoped to the checkbox's own binding rather than the whole of `wire`, which has other change
+// listeners in it — a whole-function test would stay green with this one rewritten to `click`,
+// which is exactly the mistake this assertion exists to catch.
+const multiBindAt = wireSrc.indexOf('dom.anomalyMulti.addEventListener');
+const multiBind = wireSrc.slice(multiBindAt, wireSrc.indexOf('});', multiBindAt) + 3);
+// `change` rather than `click`: a checkbox toggled from the keyboard fires change and nothing
+// else, so binding click leaves the mode unreachable without a mouse.
+assert('the checkbox is bound to the mode handler',
+  multiBindAt > 0 && /addEventListener\('change'/.test(multiBind)
+    && /onAnomalyMultiChange\(this\.checked\)/.test(multiBind));
 
 const muted = html.match(/<[a-z]+[^>]*\sdata-filter-scope[^>]*>/g) || [];
 check('exactly the four controls that stop applying are marked', muted.length, 4);
@@ -609,7 +759,7 @@ for (const rule of pure.ANOMALY_RULES) {
 }
 
 /* ---------- report ---------- */
-console.log('FAILED_NAMES\t' + JSON.stringify(failures.map((f) => f.split(':')[0])));
+console.log('FAILED_NAMES\t' + JSON.stringify(failedNames));
 if (failures.length) {
   console.log('FAILURES:');
   for (const f of failures) console.log(' - ' + f);

@@ -100,8 +100,8 @@ CASES = [
     ("the filter is not counted as a filter", "the filter counts as a filter",
      "          || state.anomalyRules.length !== 0", "          || false"),
     ("清除筛选 leaves the filter on", "清除筛选 drops it too",
-     "        state.anomalyRules = [];\n        clearTimeRange();",
-     "        clearTimeRange();"),
+     "        state.anomalyRules = [];\n        state.anomalyLast = null;\n        state.multiAnomaly = false;\n        clearTimeRange();",
+     "        state.anomalyLast = null;\n        state.multiAnomaly = false;\n        clearTimeRange();"),
     ("清除筛选 leaves the buttons showing the old state", "and re-syncs the buttons with it",
      "        syncKindButtons();\n        syncAnomalyButtons();\n        render();",
      "        syncKindButtons();\n        render();"),
@@ -113,7 +113,9 @@ CASES = [
     ("ticking no longer resets the window", "and it resets the window like every other filter",
      "        if (next.length > 0) resetBaseFilters();\n        resetWindowMode();",
      "        if (next.length > 0) resetBaseFilters();"),
-    ("unticking re-adds the rule it just removed", "unticking removes only that one",
+    # The guard it names moved into the 多选 block when 单选 became the default, which is where the
+    # untick actually happens now: single mode replaces, so removal only exists with the checkbox on.
+    ("unticking re-adds the rule it just removed", "多选: unticking removes only that one",
      "          if (next.length === state.anomalyRules.length) next = next.concat([ruleId]);",
      "          if (next.length <= state.anomalyRules.length) next = next.concat([ruleId]);"),
     ("全部异常 ticks the rule table itself instead of a copy",
@@ -171,8 +173,8 @@ CASES = [
      "        none.id = 'anomaly-none';", "        none.id = 'anomaly-all-data';"),
     ("重置 ticks the whole set instead of clearing it",
      "重置 returns the row to its default",
-     "        if (state.anomalyRules.length === 0) return;\n        state.anomalyRules = [];",
-     "        if (state.anomalyRules.length === 0) return;\n        state.anomalyRules = ANOMALY_RULE_IDS.slice();"),
+     "        if (state.anomalyRules.length === 0 && !state.multiAnomaly) return;\n        state.anomalyRules = [];",
+     "        if (state.anomalyRules.length === 0 && !state.multiAnomaly) return;\n        state.anomalyRules = ANOMALY_RULE_IDS.slice();"),
     # 重置 has no count of its own: 「怎么多会留下多少」 is a question about a rule, and a control
     # that keeps whatever the row above says has no answer to it. Printing one anyway invites
     # adding it up against the numbers beside it.
@@ -206,6 +208,62 @@ CASES = [
      "the 异常 axis comes after it",
      '        <div class="anomaly-bar" id="anomaly-bar">',
      '        <div class="anomaly-bar" id="anomaly-strip">'),
+
+    # --- 多选: one checkbox, two ways to read the same buttons.
+    # Before this the toggle stacked unconditionally, so every one of these is a way to end up
+    # back there — silently, and with a selection the controls can no longer express.
+    ("单选 stacks instead of replacing",
+     "单选: ticking a second replaces the first instead of stacking",
+     "          next = [ruleId];\n          state.anomalyLast = ruleId;",
+     "          next = state.anomalyRules.concat([ruleId]);\n          state.anomalyLast = ruleId;"),
+    ("单选 cannot be turned off by pressing the rule that is on",
+     "单选: pressing the rule already on turns it off again",
+     "        } else if (state.anomalyRules.length === 1 && state.anomalyRules[0] === ruleId) {\n          next = [];",
+     "        } else if (false) {\n          next = [];"),
+    ("多选 stacks without removing anything",
+     "多选: unticking removes only that one",
+     "          next = state.anomalyRules.filter(function (id) {\n            return id !== ruleId;\n          });\n          if (next.length === state.anomalyRules.length) next = next.concat([ruleId]);",
+     "          next = state.anomalyRules.concat([ruleId]);"),
+    ("the union branch is never taken, so 多选 is only a label",
+     "多选: ticking a second stacks instead of replacing",
+     "        } else if (state.multiAnomaly) {",
+     "        } else if (false) {"),
+    # Which rule survives is a decision, so it is asserted. Table order is the wrong answer to
+    # "which one was I looking at": it silently moves the reader to a filter they did not pick.
+    ("turning 多选 off keeps the first rule in table order instead of the last one ticked",
+     "turning 多选 off keeps the rule ticked last, not the first in table order",
+     "          state.anomalyRules = [last && state.anomalyRules.indexOf(last) >= 0\n            ? last\n            : state.anomalyRules[0]];",
+     "          state.anomalyRules = [state.anomalyRules[0]];"),
+    # The collapse is gated on turning 多选 *off*. Ungated, 全部异常 — which is legal in 单选 —
+    # would lose three of its four rules the moment the reader asked for the union.
+    ("turning 多选 on also collapses the selection",
+     "turning 多选 on changes the mode and nothing else",
+     "        if (!checked && state.anomalyRules.length > 1) {",
+     "        if (state.anomalyRules.length > 1) {"),
+    ("重置 leaves 多选 on", "and 多选 goes off with it",
+     "        state.multiAnomaly = false;\n        if (dom.anomalyMulti) dom.anomalyMulti.checked = false;",
+     "        if (dom.anomalyMulti) dom.anomalyMulti.checked = false;"),
+    ("重置 clears the state but leaves the box drawn as ticked",
+     "and the checkbox stops reading as on",
+     "        state.multiAnomaly = false;\n        if (dom.anomalyMulti) dom.anomalyMulti.checked = false;\n        resetWindowMode();",
+     "        state.multiAnomaly = false;\n        resetWindowMode();"),
+    # The checkbox sits outside `#anomaly-controls` precisely so it cannot be swept up by the
+    # inert-marking that switches the other axis off.
+    ("the 多选 checkbox marked as a filter control, so it goes inert with the rest",
+     "and it is never marked as a filter control, so it cannot be made inert",
+     '<label class="anomaly-multi" for="anomaly-multi">',
+     '<label class="anomaly-multi" data-filter-scope for="anomaly-multi">'),
+    ("the checkbox is never re-drawn from state, so a poll can strand it ticked",
+     "every poll re-draws the checkbox from state, not from where the reader left it",
+     "        if (dom.anomalyMulti) dom.anomalyMulti.checked = state.multiAnomaly;",
+     ""),
+    ("多选 opens on, so the documented default is a union",
+     "多选 opens off, because 单选 is the documented default",
+     "        multiAnomaly: false,", "        multiAnomaly: true,"),
+    ("the checkbox bound to click, which a keyboard toggle never fires",
+     "the checkbox is bound to the mode handler",
+     "        dom.anomalyMulti.addEventListener('change', function () {",
+     "        dom.anomalyMulti.addEventListener('click', function () {"),
 
     # --- 空答复: a reply the runtime finished and then delivered nothing into.
     # Every other rule tests a field that was there. This one tests an absence, so most of the

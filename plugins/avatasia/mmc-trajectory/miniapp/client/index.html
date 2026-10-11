@@ -529,6 +529,26 @@
         color: var(--mcode-text-subtle);
       }
 
+      /* The 多选 switch. It is a real checkbox so it is announced and operable by keyboard with
+         no extra work, and it is small so it reads as a switch rather than a third kind of
+         filter. Its own text, not colour, is what says which mode is in force. */
+      .anomaly-multi {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        cursor: pointer;
+      }
+
+      .anomaly-multi input {
+        margin: 0;
+      }
+
+      .anomaly-multi:has(input:checked) {
+        color: var(--mcode-text);
+      }
+
       .anomaly-bar-note {
         font-size: 12px;
         color: var(--mcode-text-subtle);
@@ -2104,6 +2124,15 @@
              second list to keep in step. -->
         <div class="anomaly-bar" id="anomaly-bar">
           <span class="anomaly-bar-label" id="anomaly-label">异常</span>
+          <!-- Single by default, because 「点什么就显示什么」 is the promise and a button that
+               adds to the selection breaks it: you ask for tool failures and get them plus
+               whatever was already on. The checkbox is how you ask for the union instead — it
+               is a mode switch, not a filter, which is why it sits outside the button group
+               rather than being one more rule. -->
+          <label class="anomaly-multi" for="anomaly-multi">
+            <input type="checkbox" id="anomaly-multi" />
+            <span>多选</span>
+          </label>
           <div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"></div>
           <span class="anomaly-bar-note" id="anomaly-mode-note" hidden></span>
         </div>
@@ -3019,6 +3048,15 @@
         // Kept as a list of rule ids rather than a boolean so a later rule is one more entry
         // here and one more button, not a second piece of state that has to agree with this.
         anomalyRules: [],
+        // Whether a second rule adds to the selection or replaces it. Off by default: a plain
+        // click answers 「点什么就显示什么」, and adding to what is already ticked breaks that.
+        // Turned on, the buttons union. It is a mode and not a rule, so it lives beside
+        // `anomalyRules` rather than in it.
+        multiAnomaly: false,
+        // The rule the reader ticked last. Only used when 多选 is switched off while several
+        // rules are standing: one of them has to survive, and the one they were last looking at
+        // is the one they meant.
+        anomalyLast: null,
         query: '',
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
@@ -3099,6 +3137,7 @@
         dom.rangeHint = document.getElementById('range-hint');
         dom.anomalyControls = document.getElementById('anomaly-controls');
         dom.anomalyNote = document.getElementById('anomaly-mode-note');
+        dom.anomalyMulti = document.getElementById('anomaly-multi');
         dom.windowBar = document.getElementById('window-bar');
         dom.headerToggle = document.getElementById('header-toggle');
         dom.kpiToggle = document.getElementById('kpi-toggle');
@@ -5402,9 +5441,12 @@
         state.kinds = KIND_ORDER.slice();
         state.query = '';
         state.anomalyRules = [];
+        state.anomalyLast = null;
+        state.multiAnomaly = false;
         clearTimeRange();
         resetWindowMode();
         if (dom.searchInput) dom.searchInput.value = '';
+        if (dom.anomalyMulti) dom.anomalyMulti.checked = false;
         syncKindButtons();
         syncAnomalyButtons();
         render();
@@ -6291,23 +6333,53 @@
       function onAnomalyToggle(ruleId) {
         var next;
         if (ruleId === null) {
+          // 全部异常: every rule, or none of them.
           next = state.anomalyRules.length === ANOMALY_RULES.length ? [] : ANOMALY_RULE_IDS.slice();
-        } else {
+          state.anomalyLast = next.length ? null : state.anomalyLast;
+        } else if (state.multiAnomaly) {
+          // Union mode. A click adds the rule, or takes it back off — unless it was the last
+          // one standing, because a filter that refuses to turn off is a filter nobody can leave.
           next = state.anomalyRules.filter(function (id) {
             return id !== ruleId;
           });
           if (next.length === state.anomalyRules.length) next = next.concat([ruleId]);
-          next.sort(function (a, b) {
-            return ANOMALY_RULE_IDS.indexOf(a) - ANOMALY_RULE_IDS.indexOf(b);
-          });
+          state.anomalyLast = ruleId;
+        } else if (state.anomalyRules.length === 1 && state.anomalyRules[0] === ruleId) {
+          next = [];
+          state.anomalyLast = null;
+        } else {
+          // Single mode is a replacement, not an addition: you asked for this rule, and this is
+          // what you get. Anything already ticked was a previous question, not a standing one.
+          next = [ruleId];
+          state.anomalyLast = ruleId;
         }
+        next.sort(function (a, b) {
+          return ANOMALY_RULE_IDS.indexOf(a) - ANOMALY_RULE_IDS.indexOf(b);
+        });
         state.anomalyRules = next;
-        // Ticking a rule puts the row above back to its default. Not a convenience: in this mode
-        // the row above filters nothing, so leaving it holding 「用户」 would be the page showing
-        // a condition that is not in force — the same defect as a button whose number does not
-        // match its list, one control over.
         if (next.length > 0) resetBaseFilters();
         resetWindowMode();
+        render();
+      }
+
+      /**
+       * 多选 on or off.
+       *
+       * Turning it off has to leave exactly one rule standing, because the buttons are about to
+       * stop being able to say more than one at a time and a selection of three that the buttons
+       * now claim to be one is the mismatch this whole axis was moved to fix. The survivor is
+       * the rule the reader ticked last — the one they were looking at a moment ago — and not
+       * the first in table order, which would be an answer to a question they did not ask.
+       */
+      function onAnomalyMultiChange(checked) {
+        state.multiAnomaly = checked;
+        if (!checked && state.anomalyRules.length > 1) {
+          var last = state.anomalyLast;
+          state.anomalyRules = [last && state.anomalyRules.indexOf(last) >= 0
+            ? last
+            : state.anomalyRules[0]];
+        }
+        if (state.anomalyRules.length === 0) state.anomalyLast = null;
         render();
       }
 
@@ -6321,8 +6393,14 @@
        * and the table follows from there.
        */
       function onAnomalyReset() {
-        if (state.anomalyRules.length === 0) return;
+        if (state.anomalyRules.length === 0 && !state.multiAnomaly) return;
         state.anomalyRules = [];
+        state.anomalyLast = null;
+        // 多选 is back to its default too. 重置 means the default state, and 单选 is what this
+        // axis opens in — leaving a mode switch on is not a filter the reader would think to
+        // clear by pressing the button they just pressed.
+        state.multiAnomaly = false;
+        if (dom.anomalyMulti) dom.anomalyMulti.checked = false;
         resetWindowMode();
         render();
       }
@@ -6357,11 +6435,19 @@
         document.body.setAttribute('data-anomaly-mode', on ? 'on' : 'off');
         var scopes = document.querySelectorAll('[data-filter-scope]');
         for (var i = 0; i < scopes.length; i += 1) scopes[i].inert = on;
+        // The checkbox is state too, and a poll re-renders from state. Writing it here means
+        // turning 多选 off by hand cannot leave it drawn on while the buttons are single again.
+        if (dom.anomalyMulti) dom.anomalyMulti.checked = state.multiAnomaly;
         if (!dom.anomalyNote) return;
         dom.anomalyNote.hidden = !on;
         if (on) {
+          // In union mode the per-rule numbers do not add up to the list — one record can trip
+          // two rules. Saying so here is cheaper than a reader discovering it by subtraction.
+          var stacked = state.anomalyRules.length > 1
+            ? ' · 已叠加 ' + formatInt(state.anomalyRules.length) + ' 条规则，合计见「全部异常」'
+            : '';
           dom.anomalyNote.textContent = '异常筛选已开启 · 类型、搜索、时间区间与总览已回到默认且不参与 · 点「'
-            + ANOMALY_NONE_LABEL + '」回到默认筛选';
+            + ANOMALY_NONE_LABEL + '」回到默认筛选' + stacked;
         }
       }
 
@@ -6534,6 +6620,14 @@
             }
             var id = this.getAttribute('data-anomaly-rule');
             onAnomalyToggle(id || null);
+          });
+        }
+
+        // `change`, not `click`: a checkbox operated by keyboard fires change and nothing else,
+        // and this control has to work the same way for both.
+        if (dom.anomalyMulti) {
+          dom.anomalyMulti.addEventListener('change', function () {
+            onAnomalyMultiChange(this.checked);
           });
         }
 
