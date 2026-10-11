@@ -6,6 +6,8 @@ Browse the model trajectory of a MiniMax Code conversation: messages, reasoning,
 
 Author: [avatasia](https://github.com/avatasia) · Version: `1.0.0`
 
+Before changing the page, read [docs/LAYERS.md](docs/LAYERS.md): which functional layer a control belongs to, what it may read, and the four questions to answer before implementing a new one. It exists because this page's filter logic grew one feature at a time, and the defects that produced are all traceable to that.
+
 ## Install and use
 
 Copy this entire directory into your active MiniMax Code data directory, including the hidden `.minimax-plugin` directory. By default, `<dataDir>` is the `.minimax` directory in your home folder (`~/.minimax`), so plugins go in `~/.minimax/plugins/`. If you have configured a different data directory, use that directory instead:

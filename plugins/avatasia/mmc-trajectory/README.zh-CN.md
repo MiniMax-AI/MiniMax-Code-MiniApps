@@ -6,6 +6,8 @@
 
 作者：[avatasia](https://github.com/avatasia) · 版本：`1.0.0`
 
+改动这个页面前，先读 [docs/LAYERS.md](docs/LAYERS.md)：一个控件属于哪一层、能读什么、以及实现新功能之前必须先答的四个问题。它存在的原因是这个页面的筛选逻辑是一次加一个功能长出来的，产出的缺陷都能追溯到这一点。
+
 ## 安装与使用
 
 把整个目录（含隐藏的 `.minimax-plugin`）复制到你的 MiniMax Code 活跃数据目录下。默认情况下 `<dataDir>` 是家目录下的 `.minimax`（即 `~/.minimax`），所以插件放在 `~/.minimax/plugins/`。如果你配置过其它数据目录，请用那个目录：
