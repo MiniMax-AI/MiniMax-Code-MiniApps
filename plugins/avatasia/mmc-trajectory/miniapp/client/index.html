@@ -2222,6 +2222,23 @@
           turn: function (turn, ctx) {
             return !!turn && turn.closed === false && turn !== ctx.liveTurn;
           }
+        },
+        {
+          id: 'silent',
+          label: '空答复',
+          // A reply the runtime recorded and finished normally — `stop`, not an abort — that
+          // came back with nothing in it. The call really happened: there is a responseId and
+          // an output token count on it, so this is not a timeout and not a crash. It is the
+          // shape that leaves a turn looking finished and the reader looking at nothing.
+          //
+          // It keeps its kind on purpose. The record genuinely is a reply, the 答复 chip counts
+          // it and the reply filter keeps it — it is an anomaly *as well as* a reply, not
+          // instead of one. 无答复 cannot see it either way: an empty reply closes its turn, so
+          // `closed` is true and that rule has nothing to fire on. Measured on this session:
+          // two, one of them the turn that ended in front of the reader with nothing shown.
+          record: function (record) {
+            return !!record && record.kind === 'reply' && isNil(record.text);
+          }
         }
       ];
 
@@ -4521,9 +4538,20 @@
         // Fixed five-column grid: an error marker takes over the duration cell so
         // the row never wraps; the exact duration stays available in the inspector.
         var durationText = isNil(record.durationMs) ? DASH : formatDuration(record.durationMs);
+        // The same treatment for a reply that arrived empty. It is not an error — the turn
+        // finished normally — but on the row the only thing separating it from an answer is
+        // the absence of one, and a row that silently shows nothing is indistinguishable from
+        // one the page failed to load.
+        var silent = record.kind === 'reply' && isNil(record.text);
         if (failed) {
           row.appendChild(pill('失败', 'error'));
           row.title = '失败 · 耗时 ' + durationText + '（详情见右侧检视）';
+        } else if (silent) {
+          // The name comes from the rule table, not from a second copy written here. A label
+          // that exists in two places is the drift this page already paid for once on the kind
+          // chips: rename the rule and the row keeps announcing the old word.
+          row.appendChild(pill(anomalyRuleLabel('silent'), 'error'));
+          row.title = anomalyRuleLabel('silent') + ' · 模型正常结束，但没有返回任何内容';
         } else {
           row.appendChild(el('span', 'row-meta row-col-duration', durationText));
         }
