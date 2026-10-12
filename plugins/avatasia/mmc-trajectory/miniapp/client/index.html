@@ -3149,6 +3149,13 @@
         // unchanged session costs a 304 with no body instead of a multi-megabyte reply.
         etag: '',
         etagFor: '',
+        // Cursor for `?since=`: the highest record index already on screen, so a poll that
+        // finds new records transfers the tail instead of the session. Bound to a cache key
+        // for the same reason the validator is — a cursor means nothing against a different
+        // session or a different slice of a rotated one, so a mismatch has to drop it rather
+        // than ask for a tail from a payload this copy was never part of.
+        since: 0,
+        sinceFor: '',
         // null = follow whatever generation the runtime considers active. A number pins the
         // ledger to one slice of a rotated history so pre-compaction turns stay reachable.
         generation: null
@@ -3288,15 +3295,24 @@
         // two generations is two different bodies, and reusing a validator across them would
         // let one silently satisfy the other with a 304.
         var genKey = state.generation === null ? 'auto' : String(state.generation);
-        var url = '/api/trajectory?session=' + session
-          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));
         var cacheKey = session + '#' + genKey;
+        var url = '/api/trajectory?session=' + session
+          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)))
+          // Only ever asked alongside the validator below. A page that has a cursor for this
+          // key sends it and its If-None-Match together, so the unchanged case is still a 304
+          // and the delta only ever arrives when the session really did grow. A manual refresh
+          // drops the cursor as well as the validator: it is asking for the truth from the
+          // server, and a tail is not that.
+          + (!manual && state.sinceFor === cacheKey && state.since > 0
+            ? '&since=' + encodeURIComponent(String(state.since)) : '');
         var headers = { Accept: 'application/json' };
         // A manual refresh must always reach the server: drop the validator so the
         // response cannot be revalidated into a 304 the user did not ask for.
         if (manual) {
           state.etag = '';
           state.etagFor = '';
+          state.since = 0;
+          state.sinceFor = '';
         } else if (state.etag && state.etagFor === cacheKey) {
           headers['If-None-Match'] = state.etag;
         }
@@ -3354,7 +3370,87 @@
           });
       }
 
-      function applyPayload(payload, manual) {
+      /**
+       * The highest record index in a payload, which is the cursor the next poll sends.
+       *
+       * `record.index` rather than anything else: it is dense from 1, it only ever grows (a
+       * generation switch starts a new payload rather than renumbering this one), and it is
+       * already the public key `/raw?index=` answers on.
+       */
+      function payloadCursor(payload) {
+        var turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+        var max = 0;
+        for (var i = 0; i < turns.length; i += 1) {
+          var records = Array.isArray(turns[i].records) ? turns[i].records : [];
+          for (var j = 0; j < records.length; j += 1) {
+            if (typeof records[j].index === 'number' && records[j].index > max) max = records[j].index;
+          }
+        }
+        return max;
+      }
+
+      /**
+       * One turn's records plus whatever the incoming copy says about the turn itself.
+       *
+       * The turn-level fields are taken from the incoming copy rather than kept, because
+       * `closed` flips as the conversation moves on and the old copy still says `false`. The
+       * records are unioned by index rather than appended, so a delta replayed against a
+       * copy that already has it changes nothing instead of doubling a turn.
+       */
+      function mergeTurnRecords(existing, incoming) {
+        var records = Array.isArray(existing.records) ? existing.records.slice() : [];
+        var seen = {};
+        var i;
+        for (i = 0; i < records.length; i += 1) seen[records[i].index] = true;
+        var added = Array.isArray(incoming.records) ? incoming.records : [];
+        for (i = 0; i < added.length; i += 1) {
+          if (seen[added[i].index]) continue;
+          seen[added[i].index] = true;
+          records.push(added[i]);
+        }
+        records.sort(function (a, b) { return a.index - b.index; });
+        var merged = {};
+        for (var key in incoming) {
+          if (Object.prototype.hasOwnProperty.call(incoming, key)) merged[key] = incoming[key];
+        }
+        merged.records = records;
+        return merged;
+      }
+
+      /**
+       * A delta laid onto the payload already in hand, producing a whole payload again.
+       *
+       * The tail can start in the middle of a turn, so its turns are merged into the turns
+       * already here rather than appended after them — appending would show one turn twice
+       * and split 无答复, which counts turns, across two of them.
+       */
+      function mergeDelta(previous, delta) {
+        var turns = previous && Array.isArray(previous.turns) ? previous.turns.slice() : [];
+        var at = {};
+        var i;
+        for (i = 0; i < turns.length; i += 1) {
+          if (turns[i] && turns[i].id !== undefined) at[turns[i].id] = i;
+        }
+        var tail = Array.isArray(delta.turns) ? delta.turns : [];
+        for (i = 0; i < tail.length; i += 1) {
+          var incoming = tail[i];
+          if (!incoming || incoming.id === undefined) continue;
+          if (at[incoming.id] === undefined) {
+            at[incoming.id] = turns.length;
+            turns.push(incoming);
+          } else {
+            turns[at[incoming.id]] = mergeTurnRecords(turns[at[incoming.id]], incoming);
+          }
+        }
+        // `session` and `stats` arrive whole in every delta, so they replace rather than merge.
+        return { session: delta.session, stats: delta.stats, turns: turns };
+      }
+
+      function applyPayload(body, manual) {
+        // A delta is only ever laid onto a payload this page actually has. Without one —
+        // first load, a session switch, a manual refresh — the whole payload is the answer.
+        var mergeable = body && body.delta && state.payload && Array.isArray(state.payload.turns);
+        var payload = mergeable ? mergeDelta(state.payload, body) : body;
         var next = signatureOf(payload);
         var changed = next !== state.signature;
         state.payload = payload;
@@ -3363,6 +3459,10 @@
         state.hardError = null;
         state.stale = false;
         state.flat = flattenTurns(payload.turns);
+        // The cursor is the server's own word for how far it got, so a delta is O(1) here and
+        // only a whole payload has to walk the records to find the end of them.
+        state.since = mergeable ? body.delta.upTo : payloadCursor(payload);
+        state.sinceFor = state.etagFor;
         // The overview reaches the filter holding a bare record, but 无答复 is a property of
         // the turn the record sits in, so the owning turn has to be reachable from the
         // record alone. Built here rather than searched per call: this runs on every poll.

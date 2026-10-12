@@ -1533,6 +1533,76 @@ export function trajectoryCacheKey(entry, identity, binding, filter) {
   const gen = filter === null || filter === undefined ? 'all' : String(filter);
   return `${entry.dir}|gen=${gen}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
 }
+/**
+ * The `?since=` cursor, or null when there is not a usable one.
+ *
+ * An absent, blank, non-integer or negative value is not an error: it is a page that has
+ * nothing yet, and a page with nothing yet needs the whole payload. Turning that into a
+ * 400 would put the first poll of every session on an error path for a question with a
+ * perfectly good default answer.
+ * @param {string | null | undefined} raw
+ * @returns {number | null}
+ */
+export function parseSince(raw) {
+  if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) return null;
+  return value;
+}
+
+/**
+ * The part of a payload the page does not have: every record after the cursor.
+ *
+ * `stats` and `session` travel whole in every delta. `stats` because it is an accumulator,
+ * every counter in it the result of walking all the rows, so a tail could not be added to
+ * it without the page re-deriving the server's own arithmetic. `session` because it is a few
+ * hundred bytes and answering it from the previous copy would make each payload depend on
+ * a history the server does not keep.
+ *
+ * A turn travels whole too, with only its `records` cut down. That repeats fields the page
+ * already has, deliberately: a turn's `closed` flips as the conversation moves on, and
+ * 无答复 is decided by it. A partial turn would leave the page holding a stale `closed` for
+ * the one turn that is still being written into — the turn where it decides whether rows
+ * are anomalies at all.
+ *
+ * Returns null when a delta would not be a faithful answer; that is the caller's signal to
+ * send the whole payload instead. It happens when the payload carries no records, and when
+ * the cursor is past the end. The second is the page being *ahead* of the server, which is
+ * what a generation switch looks like from here — and a tail from there is empty, so
+ * serving it would leave the page believing the server has nothing to add.
+ *
+ * @param {any} payload
+ * @param {number} since
+ * @returns {any | null}
+ */
+export function buildDeltaPayload(payload, since) {
+  if (!Number.isInteger(since) || since < 0) return null;
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  if (turns.length === 0) return null;
+  let upTo = 0;
+  for (const turn of turns) {
+    const records = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (typeof record.index === 'number' && record.index > upTo) upTo = record.index;
+    }
+  }
+  if (since > upTo) return null;
+  const tail = [];
+  let records = 0;
+  for (const turn of turns) {
+    const kept = (turn && Array.isArray(turn.records) ? turn.records : [])
+      .filter((record) => typeof record.index === 'number' && record.index > since);
+    if (kept.length === 0) continue;
+    records += kept.length;
+    tail.push({ ...turn, records: kept });
+  }
+  return {
+    session: payload.session,
+    stats: payload.stats,
+    turns: tail,
+    delta: { since, upTo, records },
+  };
+}
 
 /**
  * @typedef {{ rows: Array<Record<string, any>>, skipped: number, size: number, read: number, empty: boolean, truncated: boolean }} ParsedRows
@@ -1985,6 +2055,12 @@ export async function start(context) {
       }
       // No validator from the page (first load, or a fresh tab): reuse the body we already
       // built instead of re-reading and re-parsing the files to rebuild the same bytes.
+      // No `?since=` handling here, and that is not an oversight. A page that carries a
+      // cursor carries the validator it was taken against, so a request that reaches this
+      // line with a cursor means the session changed — which is the branch below. Cutting
+      // a tail out of a cached payload would also mean holding that payload in memory, and
+      // this cache deliberately does not: it holds the serialized bytes and the rows /raw
+      // needs, not the object graph the bytes came from.
       sendJsonBody(response, 200, cached.body, { etag, revalidate: true });
       return;
     }
@@ -2146,7 +2222,13 @@ export async function start(context) {
       if (oldest.done) break;
       trajectoryCache.delete(oldest.value);
     }
-    sendJsonBody(response, 200, body, { etag, revalidate: true });
+    // `?since=` asks for the tail. The whole body is serialized either way — the cache
+    // entry and /raw both need it — so this saves the transfer and the page's JSON.parse,
+    // and not the server's work. Any reading of "41 MB → a few KB, so polling got faster"
+    // has to carry that with it. See docs/LAYERS.md Stage 4.
+    const since = parseSince(url.searchParams.get('since'));
+    const delta = since === null ? null : buildDeltaPayload(payload, since);
+    sendJsonBody(response, 200, delta === null ? body : JSON.stringify(delta), { etag, revalidate: true });
   };
 
   /**
