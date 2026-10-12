@@ -490,6 +490,31 @@ for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
 assert('a cancelled drag is released like a finished one',
   /dom\.inspectorResize\.addEventListener\(\s*'pointercancel'\s*,\s*onInspectorResizeUp\s*\)/.test(jsHtml));
 
+// chli's question: 「窗口的1/4 和 检视的完整高度, 取最大还是最小?」 Answer: the smaller one — and
+// it already is, because both pinned states cap with `max-height` rather than setting `height`, so
+// what the reader sees is min(content, cap).
+//
+// It is worth stating rather than relying on: the branch where the content is the smaller number
+// cannot fire today (the shortest record measured 752px of content against a 250px quarter, because
+// the summary tab always renders its metadata table). So there is no measurement to protect — what
+// can break is the *mechanism*, by someone writing `height` instead of `max-height`, and a `height`
+// looks right in review and puts a blank band inside a short panel with every other rule still
+// green. Hence the negative half of this rule, which is the half that does the work.
+// The base rule is deliberately NOT in the first list: with no state class the panel is in the
+// document and has no cap at all, which is the one place where 「完全显示」 means uncapped. Adding
+// a cap there would put the quarter back on the state chli asked to be the only uncapped one.
+const cappedSels = ['#inspector-panel.is-inspector-docked', '#inspector-panel.is-inspector-full'];
+const allPanelSels = ['#inspector-panel', ...cappedSels];
+assert('both pinned states cap the panel rather than fixing its height',
+  cappedSels.every((s) => narrow && valueIn(narrow, s, 'max-height') !== null)
+  && valueIn(narrow || '', '#inspector-panel', 'max-height') === null);
+assert('nothing forces the panel taller than its own content',
+  !allPanelSels.some((s) => narrow && ['height', 'min-height'].some((p) => valueIn(narrow, s, p) !== null))
+  && !/#[^{]*inspector-panel[^{]*\{[^{}]*\bmin-height\s*:/s.test(narrow || ''));
+assert('the quarter is a ceiling, not a target',
+  !!applyFn && /dockH\s*=\s*Math\.round\(window\.innerHeight\s*\/\s*4\)/.test(applyFn)
+  && /setProperty\(\s*'--inspector-dock-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
+
 console.log('[inspector-dock] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));

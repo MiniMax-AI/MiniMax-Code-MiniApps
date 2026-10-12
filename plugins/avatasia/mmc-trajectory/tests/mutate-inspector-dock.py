@@ -152,6 +152,20 @@ MUTATIONS = [
      "        state.inspectorDock = 'docked';\n",
      "both exits repaint the panel before returning"),
 
+    # `height` instead of `max-height` is the change that looks right in review and pads a short
+    # panel out to a quarter of the window with a blank band inside it. It cannot be caught by a
+    # measurement today — the shortest record is 752px of content against a 250px quarter — so this
+    # is the case where the guard has to protect the mechanism rather than an outcome.
+    ("the docked panel is given a fixed height instead of a cap",
+     "          max-height: var(--inspector-dock-h);\n",
+     "          height: var(--inspector-dock-h);\n",
+     "both pinned states cap the panel rather than fixing its height"),
+
+    ("a floor is added under the cap, padding short panels out",
+     "          max-height: var(--inspector-dock-h);\n",
+     "          max-height: var(--inspector-dock-h);\n          min-height: var(--inspector-dock-h);\n",
+     "nothing forces the panel taller than its own content"),
+
     # A sixth writer is how a three-state field quietly grows a fourth state. Inserted into wire(),
     # where nothing else writes the field, so it is a genuinely new writer.
     ("a sixth place writes the dock state",

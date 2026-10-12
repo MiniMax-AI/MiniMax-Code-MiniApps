@@ -2115,7 +2115,15 @@
            panel instead of the panel growing: a growing panel pushes its own handle out of the
            viewport, which is the one thing a docked panel cannot do. The number itself is written
            by applyInspectorDock() — a quarter of the measured window, or whatever the reader
-           dragged to — so this rule only says what the cap is *called*. */
+           dragged to — so this rule only says what the cap is *called*.
+
+           `max-height`, never `height`, and that is the answer to 「窗口的1/4 和检视的高度取
+           最大还是最小」: a cap renders min(content, quarter), so a record whose body is shorter
+           than the quarter is shown at its own height instead of being padded out to a quarter of
+           the window. `height` would make the quarter mandatory and put a blank band inside the
+           panel. It cannot show today — the shortest record measured 752px of content against a
+           250px quarter, because the summary tab always renders its metadata table — which is
+           exactly why it is a rule worth writing down rather than a coincidence worth relying on. */
         #inspector-panel.is-inspector-docked {
           max-height: var(--inspector-dock-h);
           overflow-y: auto;
