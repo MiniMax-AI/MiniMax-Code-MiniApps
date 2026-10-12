@@ -686,6 +686,44 @@ assert('the overview strip is opaque', isOpaqueBackground(value('.overview-plot'
 
 > **一条我查了半天才敢下的结论**：我最初的推理是「`.overview-plot` 的不透明底色已经把那 51px 画满了，所以给 `.overview` 加背景色不该有任何区别」。**实测它有区别，幽灵消失了，而我原先的解释解释不了这一点。** 记录这一点是因为它正好说明「推理听起来自洽」和「机制真的成立」是两件事——和 D19 那条错误的带高 A/B 是同一个教训的两种形态。**我不声称自己完全弄清了浏览器在这一步上的确切绘制路径**；我能确证的是：幽灵可复现（chli 截图 + 我本地两次）、加底色后消失、而几何（三个偏移）一个数没动。
 
+#### D21 — 窄视口整页横向滚动，而修法里有一半是会骗人的（2026-10-12 修）
+
+**症状**：视口窄于 640px 时文档比视口宽，横向滚动最多 262px。**没有任何人报过这条**——它来自未做清单第 6 项（「窄屏 sticky 只有代码证据，没有浏览器实测」）本身：那条一直挂在「环境」一栏，理由是 in-app 浏览器视口固定 735×900 且不可 resize。
+
+**那条环境判断是错的。** headless Edge + CDP 的 `Emulation.setDeviceMetricsOverride` 可以设任意视口，Node 24 自带 `WebSocket` 不需要装依赖。视口宽度从此不再是「本机碰巧是多少」，而是一个可以扫的参数。
+
+**根因是两半的降级只写了一半。** 带宽 622px 是 `.traj-controls-actions` 那十个中文标签钉出来的，且它**不随视口变**（360→640 全程恒为 574px）。而 `.traj-controls` 是 `flex: none`——整条链的宽度由内容决定，所以 `.filter-row` 的 `flex-wrap` 只能让 **picker** 掉行，对一个**本身比页面还宽、且拒绝收缩的子项**无能为力。
+
+样式表里那句注释写过「Wrapping keeps the band honest at every width — no clipping, no sideways overflow」，`verify-generation-pin.mjs` 也真的断言了 `.filter-row` 有 `flex-wrap: wrap`。**那句话对行成立，对页面是假的。**
+
+**这次的关键不是缺陷，是修法里有一半会骗人。** 我第一版只给 `.traj-controls-actions` 加了 `flex-wrap: wrap`，同时加了一条断言断言这个属性。守卫绿了，变异也能抓到。**但实测 `documentElement.scrollWidth` 一个像素没变。**
+
+原因是规格行为，不是声明写错：**shrink-to-fit 的 flex 容器永远恰好等于它最宽的一行，所以它永远不可能换行**，无论被告知什么。于是「声明了 wrap」和「wrap 生效了」是两件事，而我那条守卫断言的恰好是前者。
+
+**同刻 A/B**（`.probe\wrap-ab.mjs`，运行时注入样式，一个页面一份数据，只变样式）：
+
+| 变体 | 360 时 docW | chips 高 | band 高 | ≥640 时 |
+| --- | --- | --- | --- | --- |
+| A 现状 | 622 (+262) | 20（1 行） | 219 | — |
+| B **只加 wrap** | **622 (+262)，与 A 逐值相同** | 20 | 219 | — |
+| C + `.traj-controls{max-width:100%}` | 606 (+246) | 20（仍未换行） | 219 | — |
+| **D C + chips `flex:0 1 auto` / `min-width:0`** | **360（溢出归零）** | 64（2–3 行） | 263 | **与 A 逐值相同** |
+
+B 等于 A 是决定性的那条。真正要打破的是**「宽度由内容决定」这个循环**：`.traj-controls` 需要一个来自视口的宽度上限，chips 需要允许收缩并且 `min-width: 0`（flex item 的 `min-width` 默认 `auto`，即内容最小尺寸）。三条属性**任何一条单独存在都不起作用**。
+
+**四问**
+
+1. **归层** — L2 筛选层的呈现规则，纯 CSS，不写任何 `state`。
+2. **关联** — 与 `.filter-row` 的 `flex-wrap` 是**同一套两级降级的下半级**（上：picker 掉行；下：chips 换行），与 `.window-bar-actions` 的 `flex-wrap: wrap` 并列。与 `.traj-controls` 的 `flex: none` 从属——那一条**原样保留**，因为它守的是「类型行不压缩，按钮不被压扁」，本条加的是 `max-width`，不是把它改成可收缩。
+3. **布局** — 不新增任何节点、容器、sticky 区域，只加两条声明。带高变化由 `syncStickyOffsets()` 实测接住：实测 360 时 `--sticky-band-h` 219→263px、390 时 241px，下游两个偏移跟着走。
+4. **口径** — 零个数字改动。
+
+**守卫拆成三条，因为三条互不替代**：wrap（chips 换不换）、`max-width: 100%`（有没有地方换）、`flex-shrink` + `min-width: 0`（换的时候会不会收缩）。**只断言 wrap 就是一条恒真守卫**——它满足、变异能过、页面一个像素不变。第三条里对简写做了解析（`none` → `0`，`0 0 auto` → `0`），否则 `flex: 0 0 auto` 这种写法能绕过它。变异 15 → **20** 条，新增五条覆盖：删 wrap / 写成 nowrap / 删 `max-width` / chips 改回 `flex: none` / 删 `min-width`。
+
+**修后实测（同一扫描）**：360 / 390 / 420 / 480 / 560 / 600 / 640 / 735 / 900 **全部 `ovf = 0`**；chips 宽度随视口走（296 / 326 / 356 / 416 / 496 / 536 / 574）不再钉死；**≥640 时 chips=574、`--sticky-band-h`=181/143/84，与修前逐值相同**——窄屏以外零回归。
+
+> **一条方法论，与 D20 那条同族但方向相反**：D20 是「守卫全绿，断言的是错的东西」；这一条是「守卫全绿、变异能抓、断言的是真属性，而属性没有产生任何效果」。**断言一个属性存在，不等于断言它起作用。** 只有把「声明了 wrap」和「页面变窄了」放进同一个 A/B，才知道哪个是真的——所以本条的全部证据是一次同刻对比，而不是一组绿勾。
+
 #### D15 自身的一个缺陷：class 跨重建留存，账本塌成 0（2026-10-12 修）
 
 **症状**：滚到最后一条消息 → 点它出检视 → 往上滚一点 → 直接落到页面最上面。
@@ -1106,7 +1144,7 @@ tail     (游标 3)            t2 CLOSED [r4]
 | 3 | ~~给「显示全部」封顶~~ **已否决，不做** | 口径 | — | **chli 2026-10-12 定：不封顶。** 理由是「无限大无非是极端情况下假死，碰到的几率很小」。补充一条事实（已告知，不影响决定）：18,924 行不是极端情况，就是本会话现在的规模，3,956 ms 就是在它上面测出来的。封顶还会把「读完整个会话」从点一次变成点约 69 次「向上加载更早的 200 条」，而那个控件今天只在 `hiddenAbove > 0` 时出现，等于新增一条路。此路不再讨论。 |
 | 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **2-a、2-b 已做；2-c 注释半已做，赋值半不做** | 四问已答，读点已数清。2-a 把 `anomalyRules` / `multiAnomaly` / `anomalyLast` 收成 `state.anomaly {mode, rules, last}`（`694cd8a`，新增 `verify-anomaly-model.mjs`，本轮补上它缺失的 `mutate-anomaly-model.py` 16 条变异）。2-b 把 `passesBaseFilter()` + `anomalyContext()` 合成 `recordVisible(record, turn, selection)`，账本与总览条都不再持有判断（R2 闭合，3 条断言 + 3 条变异），**并已配一次独立浏览器实测**（探针独立算并集 → 页面三个面各自读数 → 三者对到 513，详见 2-b 的实测小节）。2-c 删掉 D2 那三句互相矛盾的设计声明并给它加了限定词；**`resetBaseFilters()` 变一次赋值那一半显式不做**——它要收 `state.base`，而 `overviewSelection` 是 L3→L2 的回写（R5 未闭合），收字段就改了 L3 的形状，且约 40 个站点横跨 L3/L4/L5，超出 Stage 2 自己「不改 L3/L4/L5」的归层边界。详见 Stage 2。 |
 | 5 | ~~Stage 3 — 声明跨层关系（R6）~~ **已做** | 代码 | — | `verify-cross-layer.mjs`（12 条）+ `mutate-cross-layer.py`（6 条变异全捕），为「window-bar 在 L5 内写 L3」与「overview 持有写 L2 的控件」各加一组断言。调研中撞见 **R5 未闭合**：`state.overviewSelection` 有 5 个写点，没有单一 setter——这条守卫刻意不覆盖它（断言「已收敛」过不了，断言「当前 5 个」恒真），收它属于 D4。详见 Stage 3。 |
-| 6 | **窄屏 sticky 只有代码证据，没有浏览器实测** | 验证 | 环境 | in-app 浏览器视口固定 735×900 且不可 resize。目前窄屏那条路只有源码和网络请求证据。 |
+| 6 | ~~窄屏 sticky 只有代码证据，没有浏览器实测~~ **已做，且查出 D21** | 验证 + 布局 | — | **原来那条「in-app 浏览器视口固定 735×900 且不可 resize」是错的** —— headless Edge + CDP 的 `Emulation.setDeviceMetricsOverride` 可设任意视口，Node 24 自带 `WebSocket` 无需装依赖，视口宽度从此是**可扫的参数**而不是本机碰巧的值。**sticky 三段堆叠在 390px 下本来就是对的**（钉住态 `band|overview = -0.2`、`overview|window = 0.0`，三段实测高度与 `syncStickyOffsets()` 写的 var 全一致），**但整页横向溢出**：文档恒为 622px，视口窄于 640 时左右滚动 22–262px，元凶是十个类型 chips 恒为 574px 且拒绝收缩。查出 **D21** 并已修：`.traj-controls` 加 `max-width: 100%`、chips 改 `flex: 0 1 auto` + `min-width: 0` + `flex-wrap: wrap`，修后 360–900 全部 `ovf = 0`，≥640 逐值不变。**这一项最贵的地方不是缺陷，是修法** —— 我第一版只加 `flex-wrap` 就配了一条断言，守卫绿、变异也抓，而实测 `scrollWidth` 一个像素没变：shrink-to-fit 的 flex 容器永远等于最宽一行，**永远不可能换行**。详见 D21。 |
 | 7 | **跨家族验证只有 codex 一条腿** | 验证 | 环境 | claude OAuth 过期、codebuddy 要 `/login`，需 chli 交互式处理。 |
 | 8 | **PR #16 reviews=0** | 流程 | 等 maintainer | `.probe\perf-payload.json`（34 MB 临时产物）已于 2026-10-12 移入回收站，不再列。 |
 | 9 | **`resetBaseFilters()` 变一次赋值（Stage 2-c 的另一半）** | 代码 | 需重答四问 | 要「一次赋值」就得把基础轴收成 `state.base = {kinds, query, selection}` + 工厂。**已走 codex 交叉核对（2026-10-12），结论：先做 setter / 变更 API，`state.base` 放最后，且它本身不强制轴互斥、不收敛写者、不同步控件。** 收字段确实买到的只有「默认值只有一份」——若初始化与 reset 共用 `defaultBase()`，新增一个字段只改一处定义。代价约 35 个读写点跨三层（**初稿写「~15/~15、约 40」是错的，实测 `query` 3 写 4 读，`query` 不是 15 是 7**）。详见 Stage 2 的 2-c。 |

@@ -854,6 +854,21 @@
       .traj-controls {
         display: flex;
         flex: none;
+        /* The type row's intrinsic width is 574px — ten Chinese labels, measured,
+           and it does not move with the viewport. A `flex: none` row is sized by its
+           content, so the content is also free to widen the page: below 640px the
+           document measured 622px wide at every viewport and the window scrolled
+           sideways by up to 262px.
+
+           Capping the row at the viewport is what lets the chips below step down.
+           `flex-wrap` alone does nothing here, and the reason is worth recording
+           because it reads like a working fix: a shrink-to-fit flex container is
+           always exactly as wide as its widest line, so it can never wrap. Declared
+           wrap, measured with wrap removed — identical, every width. The cap is what
+           gives the row a width other than its own content, and only then does the
+           wrap below have something to do. At 640px and up this cap never binds:
+           measured band heights are unchanged at every width in that range. */
+        max-width: 100%;
         align-items: center;
         padding: 6px 16px;
         background: var(--mcode-bg);
@@ -903,9 +918,29 @@
         border-radius: 4px;
       }
 
+      /* The ten type chips must wrap, for the same reason .filter-row does.
+         The band is a two-level degradation: the outer row wraps so the picker
+         steps down instead of pushing the row wide, and the inner chip row wraps
+         so ten chips step down instead of doing exactly that to the page.
+         Only the outer half was written, and the inner half is what actually
+         decides the width — measured at 574px flat from a 360px viewport up,
+         so below 640px the document was 22–262px wider than the window with
+         .traj-controls still `flex: none` and no way to save it.
+
+         The chip row is the one place that gives way, which is why it is not
+         `flex: none` the way its neighbours are. A shrink-to-fit row is exactly
+         as wide as its widest line and can never wrap; `min-width: 0` is what
+         lets the content's minimum size stop deciding for it. Neither property
+         does anything on its own — measured, each alone changed nothing.
+
+         This is the defect the .filter-row comment claimed was already
+         prevented: 「no clipping, no sideways overflow」 was true of the row and
+         false of the page. */
       .traj-controls-actions {
         display: flex;
-        flex: none;
+        flex: 0 1 auto;
+        min-width: 0;
+        flex-wrap: wrap;
         align-items: center;
         gap: 2px;
       }

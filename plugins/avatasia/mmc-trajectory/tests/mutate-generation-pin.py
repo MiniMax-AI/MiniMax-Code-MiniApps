@@ -168,6 +168,76 @@ MUTATIONS = [
      [('        margin-left: auto;\n        padding: 6px 16px 6px 0;\n',
        '        margin-left: auto;\n        padding: 6px 16px 6px 0;\n        visibility: hidden;\n')],
      "the band shows the picker by default — no rule of its own dims or hides it"),
+
+    # ---- the band's other half: the type chips never wrapped (2026-10-12) ----
+    #
+    # .filter-row wrapped, and the stylesheet said so in prose: 「no clipping, no
+    # sideways overflow」. That was true of the row and false of the page. The row
+    # could step the picker down, but .traj-controls is `flex: none`, so it had no
+    # way to step down anything that was itself wider than the viewport — and the
+    # inner button row was 574px flat from a 360px viewport up. Measured: the
+    # document was 622px wide at every viewport below 640, so the window scrolled
+    # sideways by 22–262px. Both mutations are required: deleting the declaration
+    # is how the defect arrived, and writing the opposite one is how it comes back
+    # looking deliberate.
+
+    ("the type chips stop wrapping",
+     [('      .traj-controls-actions {\n'
+       '        display: flex;\n'
+       '        flex: 0 1 auto;\n'
+       '        min-width: 0;\n'
+       '        flex-wrap: wrap;\n',
+       '      .traj-controls-actions {\n'
+       '        display: flex;\n'
+       '        flex: 0 1 auto;\n'
+       '        min-width: 0;\n')],
+     "the type chips wrap too, so ten buttons cannot widen the page at a narrow width"),
+
+    ("the type chips are told not to wrap",
+     [('      .traj-controls-actions {\n'
+       '        display: flex;\n'
+       '        flex: 0 1 auto;\n'
+       '        min-width: 0;\n'
+       '        flex-wrap: wrap;\n'
+       '        align-items: center;\n',
+       '      .traj-controls-actions {\n'
+       '        display: flex;\n'
+       '        flex: 0 1 auto;\n'
+       '        min-width: 0;\n'
+       '        flex-wrap: nowrap;\n'
+       '        align-items: center;\n')],
+     "the type chips wrap too, so ten buttons cannot widen the page at a narrow width"),
+
+    # Wrap with nothing to wrap into. This is the mutation that matters most of
+    # the three: it ships a declaration that reads like a working fix, satisfies
+    # a wrap assertion, and measures identical to no change at all — because a
+    # shrink-to-fit row is as wide as its widest line and never wraps.
+    ("the type row loses the cap that gives the wrap something to wrap into",
+     [('        max-width: 100%;\n'
+       '        align-items: center;\n'
+       '        padding: 6px 16px;\n'
+       '        background: var(--mcode-bg);\n'
+       '      }\n',
+       '        align-items: center;\n'
+       '        padding: 6px 16px;\n'
+       '        background: var(--mcode-bg);\n'
+       '      }\n')],
+     "the type row is capped at the viewport, which is the only thing that wrap has to wrap into"),
+
+    # And wrap with a row that refuses to shrink, which is the same trap wearing
+    # the other hat: the wrap is present and the cap is present, and the content's
+    # minimum size still wins.
+    ("the chip row goes back to refusing to shrink",
+     [('        flex: 0 1 auto;\n        min-width: 0;\n        flex-wrap: wrap;\n',
+       '        flex: none;\n        min-width: 0;\n        flex-wrap: wrap;\n')],
+     "the chip row is the part allowed to give way, because a row that cannot shrink cannot wrap"),
+
+    # min-width defaults to `auto` on a flex item, which is the content's minimum
+    # size — so dropping it restores the same overflow with the shrink still set.
+    ("the chip row lets its content set the minimum width again",
+     [('        min-width: 0;\n        flex-wrap: wrap;\n',
+       '        flex-wrap: wrap;\n')],
+     "the chip row is the part allowed to give way, because a row that cannot shrink cannot wrap"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

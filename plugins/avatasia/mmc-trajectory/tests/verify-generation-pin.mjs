@@ -257,6 +257,34 @@ assert('the band row wraps, so a picker that does not fit steps down instead of 
   value('.filter-row', 'flex-wrap') === 'wrap');
 assert('the type row still refuses to shrink, which is why the wrap above is what saves it',
   value('.traj-controls', 'flex') === 'none');
+/* The row above is the outer half of the same degradation, and on its own it was
+   not enough: .traj-controls is `flex: none`, so the row could only step the
+   picker down. It could not step down anything that was itself wider than the
+   page — and the inner chip row was, at 574px flat from a 360px viewport up,
+   leaving the document 622px wide at every viewport below 640.
+
+   The three properties below are asserted separately because each one alone is
+   worth nothing, which is the part that is easy to get wrong: shipped with the
+   wrap and nothing else, the chips measured *identical* at every width. The
+   reason is spec behaviour rather than a broken declaration — a shrink-to-fit
+   flex container is always exactly as wide as its widest line, so it can never
+   wrap no matter what it is told. Asserting the wrap on its own would have been
+   a guard that could not fail, which is why the cap and the shrink are named. */
+assert('the type chips wrap too, so ten buttons cannot widen the page at a narrow width',
+  value('.traj-controls-actions', 'flex-wrap') === 'wrap');
+assert('the type row is capped at the viewport, which is the only thing that wrap has to wrap into',
+  value('.traj-controls', 'max-width') === '100%');
+/* `flex: <grow> <shrink> <basis>` — a bare `none` is 0 0, and any other single
+   keyword stands for 1 1 0b. Anything else is read as written. */
+const chipShrink = (() => {
+  const f = value('.traj-controls-actions', 'flex');
+  if (!f) return null;
+  const parts = f.split(/\s+/);
+  if (parts.length === 1) return parts[0] === 'none' ? '0' : '1';
+  return parts[1];
+})();
+assert('the chip row is the part allowed to give way, because a row that cannot shrink cannot wrap',
+  chipShrink === '1' && value('.traj-controls-actions', 'min-width') === '0');
 assert('the tail is the part that gives way, not the kind toolbar',
   value('.filter-row-tail', 'flex') === 'none');
 assert('the tail is pushed right by margin-left, so it carries no left padding to find width with',
