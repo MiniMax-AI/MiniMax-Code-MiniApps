@@ -214,13 +214,15 @@ page.state = {
   flat: payload.turns.flatMap((turn) => turn.records.map((record) => ({ turn, record }))),
   kinds: pure.KIND_ORDER.slice(),
   query: '',
-  anomalyRules: [],
+  // The anomaly axis is one field, not three: mode, rules and last describe one control
+  // group and have to move together. 多选 defaults to off, so a reader who has never
+  // touched the checkbox is in single mode — which is the behaviour the toggle is
+  // asserted on below, and not an accident of the harness. Stated here rather than
+  // omitted so that forgetting it fails loudly instead of quietly testing the union
+  // branch.
+  anomaly: { mode: 'single', rules: [], last: null },
   // 多选 defaults to off, so a reader who has never touched the checkbox is in single mode —
   // which is the behaviour the toggle is asserted on below, and not an accident of the harness
-  // having left `multiAnomaly` undefined. Stated here rather than omitted so that forgetting it
-  // fails loudly instead of quietly testing the union branch.
-  multiAnomaly: false,
-  anomalyLast: null,
   rangeFrom: null,
   rangeTo: null,
   rangeCutoff: null,
@@ -306,10 +308,10 @@ assert('the unit follows the rule table, not the button',
 // The button and the ledger are the same statement about the same records. If these ever drift,
 // a button is advertising rows the list refuses to render. The filter has to be on first —
 // compared with it off, the ledger returns everything and the check would pass for free.
-page.state.anomalyRules = pure.ANOMALY_RULE_IDS.slice();
+page.state.anomaly.rules = pure.ANOMALY_RULE_IDS.slice();
 check('the button count is the length of the list behind it', all.any, page.visibleEntries().length);
 for (const id of pure.ANOMALY_RULE_IDS) {
-  page.state.anomalyRules = [id];
+  page.state.anomaly.rules = [id];
   const only = page.visibleEntries();
   if (all.unit[id] === '条') {
     check('one rule on shows exactly what it counts — ' + id, only.length, all.byRule[id]);
@@ -348,7 +350,7 @@ const pairResults = [];
 for (const a of pure.ANOMALY_RULE_IDS) {
   for (const b of pure.ANOMALY_RULE_IDS) {
     if (b <= a) continue;
-    page.state.anomalyRules = [a, b];
+    page.state.anomaly.rules = [a, b];
     pairResults.push({
       a,
       b,
@@ -383,13 +385,13 @@ assert('some pair of rules genuinely overlaps, or the total would just be the su
 assert('and every partial union is smaller than 全部异常, so the two can never be confused',
   pairResults.every((p) => p.selected < all.any));
 
-page.state.anomalyRules = pure.ANOMALY_RULE_IDS.slice();
+page.state.anomaly.rules = pure.ANOMALY_RULE_IDS.slice();
 const everything = page.visibleEntries();
 assert('every rule on is still only the anomalies', everything.length === expectAny);
 
 // The strip is handed a bare record, so the turn comes back out of the index. If that lookup
 // were missing, 无答复 would silently match nothing on the strip and everything in the ledger.
-page.state.anomalyRules = ['noReply'];
+page.state.anomaly.rules = ['noReply'];
 const byLedger = new Set(page.visibleEntries().map((e) => e.record.id));
 const byStrip = new Set();
 for (const entry of page.state.flat) {
@@ -399,7 +401,7 @@ check('the strip and the ledger keep the same records', byStrip.size, byLedger.s
 assert('and it is the same records', [...byLedger].every((id) => byStrip.has(id)));
 assert('the strip is not keeping everything', byStrip.size < page.state.flat.length);
 
-page.state.anomalyRules = [];
+page.state.anomaly.rules = [];
 
 /* ---------- the two axes are exclusive, so the count must not follow the other one ----------
    This inverts what this file used to assert. It required a search to narrow the button count,
@@ -413,10 +415,10 @@ check('a search does not move the union count', searched.any, expectAny);
 check('nor a single record rule', searched.byRule.toolError, expect.toolError);
 check('nor the turn rule', searched.byRule.noReply, expect.noReply);
 // The list has to agree with that, or the count would be honest and the table would not be.
-page.state.anomalyRules = ['toolError'];
+page.state.anomaly.rules = ['toolError'];
 check('and while a rule is ticked the search does not narrow the list either',
   page.visibleEntries().length, expect.toolError);
-page.state.anomalyRules = [];
+page.state.anomaly.rules = [];
 assert('but with no rule ticked the search is still a filter for the list',
   page.visibleEntries().length < page.state.flat.length);
 page.state.query = '';
@@ -479,8 +481,8 @@ for (const name of ['formatInt', 'syncAnomalyMode']) {
   vm.runInContext(src, page);
 }
 const noteText = (rules, multi) => {
-  page.state.anomalyRules = rules;
-  page.state.multiAnomaly = multi;
+  page.state.anomaly.rules = rules;
+  page.state.anomaly.mode = multi ? 'multi' : 'single';
   page.dom.anomalyNote.textContent = '';
   page.syncAnomalyMode(page.anomalyCounts());
   return page.dom.anomalyNote.textContent;
@@ -499,7 +501,7 @@ for (const a of pure.ANOMALY_RULE_IDS) {
 // so a total that is not the partial selection's own is the failure, however it is worded.
 const notePairs = pairs.map(([a, b]) => {
   const text = noteText([a, b], true);
-  page.state.anomalyRules = [a, b];
+  page.state.anomaly.rules = [a, b];
   const expected = page.anomalyCounts().selected;
   return { a, b, text, expected, printed: countOf(text) };
 });
@@ -513,7 +515,7 @@ for (const p of notePairs) {
   assert('and it is a number, not a pointer somewhere else — ' + p.a + ' + ' + p.b,
     hasNumber(p.text, p.expected));
 }
-page.state.anomalyRules = [pure.ANOMALY_RULE_IDS[0], pure.ANOMALY_RULE_IDS[1]];
+page.state.anomaly.rules = [pure.ANOMALY_RULE_IDS[0], pure.ANOMALY_RULE_IDS[1]];
 check('the whole set says the same thing',
   countOf(noteText(pure.ANOMALY_RULE_IDS.slice(), true)), all.any);
 
@@ -525,8 +527,8 @@ assert('多选 calls a stack a stack', textMulti.includes('已叠加'));
 assert('单选 does not claim a stack the reader never built', !textSingle.includes('已叠加'));
 assert('and 单选 says what is actually happening instead', textSingle.includes('同时生效'));
 
-page.state.anomalyRules = [];
-page.state.multiAnomaly = false;
+page.state.anomaly.rules = [];
+page.state.anomaly.mode = 'single';
 
 /* 单选 is what the page opens in, so it is what the toggle is read in first. Two assertions here
    used to say the opposite — that ticking a second rule *adds* to the first, and that unticking
@@ -535,49 +537,49 @@ page.state.multiAnomaly = false;
    onto 单选 rather than deleted, and the union they were written for is re-asserted below with
    多选 actually turned on. Nothing here is checked from the source text: a toggle's shape is the
    same whether it adds, removes, replaces or does nothing, so it has to be run. */
-page.state.anomalyRules = [];
-page.state.multiAnomaly = false;
-page.state.anomalyLast = null;
+page.state.anomaly.rules = [];
+page.state.anomaly.mode = 'single';
+page.state.anomaly.last = null;
 page.onAnomalyToggle('toolError');
-check('单选: ticking one rule', page.state.anomalyRules, ['toolError']);
+check('单选: ticking one rule', page.state.anomaly.rules, ['toolError']);
 page.onAnomalyToggle('compaction');
 check('单选: ticking a second replaces the first instead of stacking',
-  page.state.anomalyRules, ['compaction']);
+  page.state.anomaly.rules, ['compaction']);
 page.onAnomalyToggle('compaction');
 check('单选: pressing the rule already on turns it off again',
-  page.state.anomalyRules, []);
-check('and that did not turn 多选 on as a side effect', page.state.multiAnomaly, false);
+  page.state.anomaly.rules, []);
+check('and that did not turn 多选 on as a side effect', page.state.anomaly.mode, 'single');
 
 page.onAnomalyToggle(null);
-check('全部异常 ticks the whole set', page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
-vm.runInContext('this.__aliased = state.anomalyRules === ANOMALY_RULE_IDS;', page);
+check('全部异常 ticks the whole set', page.state.anomaly.rules, pure.ANOMALY_RULE_IDS);
+vm.runInContext('this.__aliased = state.anomaly.rules === ANOMALY_RULE_IDS;', page);
 check('全部异常 ticks a copy, not the table itself', page.__aliased, false);
 page.onAnomalyToggle(null);
-check('and 全部异常 again unticks it', page.state.anomalyRules, []);
+check('and 全部异常 again unticks it', page.state.anomaly.rules, []);
 
-page.state.anomalyRules = ['compaction'];
+page.state.anomaly.rules = ['compaction'];
 page.onAnomalyToggle(null);
 check('全部异常 from a partial selection ticks everything, not just the rest',
-  page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
+  page.state.anomaly.rules, pure.ANOMALY_RULE_IDS);
 
 /* 多选 on: the union the two rewritten assertions above used to describe, now reachable. */
-page.state.anomalyRules = [];
-page.state.multiAnomaly = true;
+page.state.anomaly.rules = [];
+page.state.anomaly.mode = 'multi';
 page.onAnomalyToggle('compaction');
 check('多选: the first rule is ticked the same way it is in 单选',
-  page.state.anomalyRules, ['compaction']);
+  page.state.anomaly.rules, ['compaction']);
 page.onAnomalyToggle('toolError');
 check('多选: ticking a second stacks instead of replacing',
-  page.state.anomalyRules, ['toolError', 'compaction']);
+  page.state.anomaly.rules, ['toolError', 'compaction']);
 page.onAnomalyToggle('noReply');
 check('多选: three rules stack, and in table order rather than click order',
-  page.state.anomalyRules, ['toolError', 'compaction', 'noReply']);
+  page.state.anomaly.rules, ['toolError', 'compaction', 'noReply']);
 page.onAnomalyToggle('toolError');
-check('多选: unticking removes only that one', page.state.anomalyRules,
+check('多选: unticking removes only that one', page.state.anomaly.rules,
   ['compaction', 'noReply']);
 page.onAnomalyToggle('compaction');
 check('and the stack can be taken all the way down to nothing',
-  page.state.anomalyRules, ['noReply']);
+  page.state.anomaly.rules, ['noReply']);
 
 /* Turning 多选 off. The buttons stop being able to hold more than one rule, so a stack of three
    has to lose two of them here rather than at the next click — otherwise the controls are showing
@@ -586,36 +588,36 @@ check('and the stack can be taken all the way down to nothing',
 const multiSrc = fnSource('function onAnomalyMultiChange(');
 if (!multiSrc) throw new Error('could not extract onAnomalyMultiChange');
 vm.runInContext(multiSrc, page);
-page.state.anomalyRules = ['toolError', 'compaction'];
-page.state.anomalyLast = 'compaction';
-page.state.multiAnomaly = true;
+page.state.anomaly.rules = ['toolError', 'compaction'];
+page.state.anomaly.last = 'compaction';
+page.state.anomaly.mode = 'multi';
 page.onAnomalyMultiChange(false);
 check('turning 多选 off keeps the rule ticked last, not the first in table order',
-  page.state.anomalyRules, ['compaction']);
-check('and the mode itself is recorded as off', page.state.multiAnomaly, false);
+  page.state.anomaly.rules, ['compaction']);
+check('and the mode itself is recorded as off', page.state.anomaly.mode, 'single');
 
-page.state.anomalyRules = ['toolError', 'silent'];
-page.state.anomalyLast = 'noReply';
-page.state.multiAnomaly = true;
+page.state.anomaly.rules = ['toolError', 'silent'];
+page.state.anomaly.last = 'noReply';
+page.state.anomaly.mode = 'multi';
 page.onAnomalyMultiChange(false);
 check('when the last-ticked rule has since been unticked, a rule still remains',
-  page.state.anomalyRules, ['toolError']);
+  page.state.anomaly.rules, ['toolError']);
 
-page.state.anomalyRules = ['silent'];
-page.state.anomalyLast = 'silent';
-page.state.multiAnomaly = true;
+page.state.anomaly.rules = ['silent'];
+page.state.anomaly.last = 'silent';
+page.state.anomaly.mode = 'multi';
 page.onAnomalyMultiChange(false);
-check('turning 多选 off with only one rule selected keeps it', page.state.anomalyRules, ['silent']);
+check('turning 多选 off with only one rule selected keeps it', page.state.anomaly.rules, ['silent']);
 // The other direction is not a no-op by construction: 全部异常 can leave four rules ticked while
 // the mode is 单选, and turning 多选 on then must not quietly thin them down.
-page.state.anomalyRules = pure.ANOMALY_RULE_IDS.slice();
-page.state.anomalyLast = null;
-page.state.multiAnomaly = false;
+page.state.anomaly.rules = pure.ANOMALY_RULE_IDS.slice();
+page.state.anomaly.last = null;
+page.state.anomaly.mode = 'single';
 page.onAnomalyMultiChange(true);
 check('turning 多选 on changes the mode and nothing else',
-  page.state.anomalyRules, pure.ANOMALY_RULE_IDS);
-check('and the mode is recorded as on', page.state.multiAnomaly, true);
-page.state.multiAnomaly = false;
+  page.state.anomaly.rules, pure.ANOMALY_RULE_IDS);
+check('and the mode is recorded as on', page.state.anomaly.mode, 'multi');
+page.state.anomaly.mode = 'single';
 
 // Ticking a rule puts the row above back to its default. In anomaly mode that row filters
 // nothing, so leaving it holding 「用户」 would be the page showing a condition that is not in
@@ -625,7 +627,7 @@ page.state.kinds = pure.KIND_ORDER.filter((k) => k !== 'user');
 page.state.query = 'verify-time-range';
 page.state.overviewSelection = { from: 1, to: 2 };
 rangeCleared = 0;
-page.state.anomalyRules = [];
+page.state.anomaly.rules = [];
 page.onAnomalyToggle('toolError');
 check('ticking a rule puts every type back', page.state.kinds, pure.KIND_ORDER);
 check('and drops the search', page.state.query, '');
@@ -636,25 +638,31 @@ check('and clears the time range', rangeCleared, 1);
 // handler is the same whether it clears, toggles, or does nothing at all.
 const resetSource = fnSource('function onAnomalyReset(');
 if (!resetSource) throw new Error('could not extract onAnomalyReset');
+// 重置 clears the axis by handing the whole field a fresh object, so the factory that builds
+// that default is part of what is under test — a reset that rebuilds the three fields itself
+// would pass a rule-count assertion and fail the one-writer rule. Loaded verbatim, not stubbed.
+const factorySource = fnSource('function defaultAnomaly(');
+if (!factorySource) throw new Error('could not extract defaultAnomaly');
+vm.runInContext(factorySource, page);
 vm.runInContext(resetSource, page);
-page.state.anomalyRules = ['toolError', 'silent'];
-page.state.anomalyLast = 'silent';
-page.state.multiAnomaly = true;
+page.state.anomaly.rules = ['toolError', 'silent'];
+page.state.anomaly.last = 'silent';
+page.state.anomaly.mode = 'multi';
 page.dom.anomalyMulti.checked = true;
 page.onAnomalyReset();
-check('重置 returns the row to its default', page.state.anomalyRules, []);
+check('重置 returns the row to its default', page.state.anomaly.rules, []);
 check('and the row above is the default, so the table follows it',
   page.state.kinds, pure.KIND_ORDER);
 // 重置 puts the row back to the state it opens in, and the row opens in 单选. Leaving the mode
 // switch on would mean the one button that is supposed to mean "default" lands on a non-default
 // mode — and the reader has no other way back to it, because that switch is not a filter.
-check('and 多选 goes off with it', page.state.multiAnomaly, false);
+check('and 多选 goes off with it', page.state.anomaly.mode, 'single');
 check('and the checkbox stops reading as on', page.dom.anomalyMulti.checked, false);
 const beforeSecondPress = renders;
 page.onAnomalyReset();
-check('and pressing it again is not a toggle into a filtered view', page.state.anomalyRules, []);
+check('and pressing it again is not a toggle into a filtered view', page.state.anomaly.rules, []);
 assert('the second press does not even re-render', renders === beforeSecondPress);
-page.state.anomalyRules = [];
+page.state.anomaly.rules = [];
 
 /* ---------- 6) what the reader is shown ---------- */
 
@@ -741,14 +749,14 @@ assert('one builder for every rule button, so the wording cannot drift between t
 assert('the unit comes from the counting pass, not a literal beside each button',
   /counts\.unit\[id\]/.test(syncSrc));
 assert('pressed state comes from state, not a captured flag',
-  /state\.anomalyRules\.indexOf\(id\) >= 0/.test(syncSrc));
+  /state\.anomaly\.rules\.indexOf\(id\) >= 0/.test(syncSrc));
 // Inverted, and the reason matters. It required 重置 to be pressed whenever no rule was ticked,
 // which is true of the filter and false of the row: the axis opens in 单选, and 多选 changes what
 // every other button here does when pressed, so a row with 多选 on is not the state 重置 names —
 // and 重置 is the only control that turns 多选 off. A reader told the row is already at its
 // default has no reason to press the one button that would put it back.
 assert('重置 is pressed only when both the rules and the mode are at their default',
-  /if \(isNone\) \{[\s\S]*?state\.anomalyRules\.length === 0 && !state\.multiAnomaly/.test(syncSrc));
+  /if \(isNone\) \{[\s\S]*?state\.anomaly\.rules\.length === 0 && state\.anomaly\.mode !== 'multi'/.test(syncSrc));
 assert('and a rule button with nothing to find is dimmed, never hidden',
   /n !== null && n === 0/.test(syncSrc));
 // The counts arrive from `render()`. Two walks of a live session can disagree — the session grows
@@ -772,21 +780,21 @@ assert('the total it publishes is the whole ledger', /total: state\.flat\.length
 
 // The state has to remember the ticks, or a poll re-renders the buttons from nothing.
 const stateSrc = fnSource('var state = {');
-assert('the filter opens off', /anomalyRules: \[\],/.test(stateSrc));
+assert('the filter opens off', /rules: \[\],/.test(stateSrc));
 const toggleSrc = fnSource('function onAnomalyToggle(');
-assert('ticking adds, unticking removes', /next\.length === state\.anomalyRules\.length/.test(toggleSrc));
+assert('ticking adds, unticking removes', /next\.length === state\.anomaly\.rules\.length/.test(toggleSrc));
 assert('全部异常 toggles the whole set', /ANOMALY_RULE_IDS\.slice\(\)/.test(toggleSrc));
 assert('and it resets the window like every other filter', /resetWindowMode\(\);/.test(toggleSrc));
 assert('and re-renders', /render\(\);/.test(toggleSrc));
 const clearSrc = fnSource('function clearFilters()');
-assert('清除筛选 drops it too', /state\.anomalyRules = \[\];/.test(clearSrc));
+assert('清除筛选 drops it too', /state\.anomaly = defaultAnomaly\(\);/.test(clearSrc));
 assert('and re-syncs the buttons with it', /syncAnomalyButtons\(anomalyCounts\(\)\);/.test(clearSrc));
 
 assert('the filter counts as a filter',
-  /state\.anomalyRules\.length !== 0/.test(fnSource('function isFiltering()')));
+  /state\.anomaly\.rules\.length !== 0/.test(fnSource('function isFiltering()')));
 
 const visibleSrc = fnSource('function visibleEntries()');
-assert('the ledger applies it', /passesAnomaly\(entry\.record, anomalyContext\(entry\), state\.anomalyRules\)/.test(visibleSrc));
+assert('the ledger applies it', /passesAnomaly\(entry\.record, anomalyContext\(entry\), state\.anomaly\.rules\)/.test(visibleSrc));
 // The two axes are alternatives, not a stack. Getting this wrong is not a matter of taste: a
 // list built from both predicates at once is the 1,494 rows a 283-row button could never
 // deliver, and the reason the two modes could not be told apart from the result alone.
@@ -796,7 +804,7 @@ assert('and treats the two axes as alternatives, not a stack',
 const stripSrc = fnSource('function spanPassesFilter(');
 assert('the strip applies it', /passesAnomaly/.test(stripSrc));
 assert('and branches on the mode before the other axis, so strip and list agree',
-  /if \(state\.anomalyRules\.length > 0\) \{\s*return passesAnomaly/.test(stripSrc));
+  /if \(state\.anomaly\.rules\.length > 0\) \{\s*return passesAnomaly/.test(stripSrc));
 
 const renderSrc = fnSource('function render()');
 // Still ordered mode-then-buttons: the strip, the note and the ledger must not each answer a
@@ -835,11 +843,11 @@ assert('the note says what stopped applying and how to undo it',
 // that can end up drawn ticked while the buttons are single again — the two disagreeing on screen
 // with nothing to reconcile them.
 assert('every poll re-draws the checkbox from state, not from where the reader left it',
-  /dom\.anomalyMulti\.checked = state\.multiAnomaly/.test(modeSrc));
+  /dom\.anomalyMulti\.checked = state\.anomaly\.mode === 'multi'/.test(modeSrc));
 assert('and the checkbox is looked up once, with the rest of the anomaly controls',
   /dom\.anomalyMulti = document\.getElementById\('anomaly-multi'\)/.test(html));
 assert('多选 opens off, because 单选 is the documented default',
-  /multiAnomaly: false/.test(stateSrc));
+  /mode: 'single',/.test(stateSrc));
 
 const wireSrc = fnSource('function wire(');
 // Scoped to the checkbox's own binding rather than the whole of `wire`, which has other change

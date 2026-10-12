@@ -3082,18 +3082,24 @@
         kinds: KIND_ORDER.slice(),
         // Which 异常 rules are ticked. Empty means the filter is off — not 「nothing matches」,
         // which is the distinction that keeps a turned-off filter from blanking the ledger.
-        // Kept as a list of rule ids rather than a boolean so a later rule is one more entry
-        // here and one more button, not a second piece of state that has to agree with this.
-        anomalyRules: [],
-        // Whether a second rule adds to the selection or replaces it. Off by default: a plain
-        // click answers 「点什么就显示什么」, and adding to what is already ticked breaks that.
-        // Turned on, the buttons union. It is a mode and not a rule, so it lives beside
-        // `anomalyRules` rather than in it.
-        multiAnomaly: false,
-        // The rule the reader ticked last. Only used when 多选 is switched off while several
-        // rules are standing: one of them has to survive, and the one they were last looking at
-        // is the one they meant.
-        anomalyLast: null,
+        // The anomaly axis is one thing, so it is one field. Three top-level fields meant that
+        // 「no rule is on」 had to be re-derived from three places, and that turning one of them
+        // off without the other two read as a different state rather than as a bug: the
+        // coordination could only live in call order, because there was no shared model for it to
+        // live in. See docs/LAYERS.md D5.
+        anomaly: {
+          // 'single' or 'multi'. Single by default: a plain click answers 「点什么就显示什么」,
+          // and adding to what is already ticked breaks that. In 'multi' the buttons union. It
+          // is a mode and not a rule, so it lives beside `rules` rather than inside it.
+          mode: 'single',
+          // A list of rule ids rather than a boolean, so a later rule is one more entry here and
+          // one more button, not a second piece of state that has to agree with this.
+          rules: [],
+          // The rule the reader ticked last. Only used when 多选 is switched off while several
+          // rules are standing: one of them has to survive, and the one they were last looking
+          // at is the one they meant.
+          last: null
+        },
         query: '',
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
@@ -4587,7 +4593,7 @@
         }
         var any = 0;
         var selected = 0;
-        var sel = state.anomalyRules;
+        var sel = state.anomaly.rules;
         var live = liveTurn();
         var counted = {};
         for (var j = 0; j < state.flat.length; j += 1) {
@@ -4647,11 +4653,11 @@
       function visibleEntries() {
         var out = [];
         var selection = state.overviewSelection;
-        var anomalyMode = state.anomalyRules.length > 0;
+        var anomalyMode = state.anomaly.rules.length > 0;
         for (var i = 0; i < state.flat.length; i += 1) {
           var entry = state.flat[i];
           if (anomalyMode) {
-            if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomalyRules)) continue;
+            if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomaly.rules)) continue;
           } else if (!passesBaseFilter(entry.record, selection)) {
             continue;
           }
@@ -4901,7 +4907,7 @@
         return state.query !== '' || state.kinds.length !== KIND_ORDER.length
           || state.overviewSelection !== null
           || hasTimeRange()
-          || state.anomalyRules.length !== 0
+          || state.anomaly.rules.length !== 0
           ;
       }
 
@@ -4923,8 +4929,8 @@
         // this function exists to prevent. Running the kind, query and range tests first and
         // the anomaly test last — the order this used to be in — drew spans for records the
         // list had stopped filtering on the moment a rule was ticked.
-        if (state.anomalyRules.length > 0) {
-          return passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomalyRules);
+        if (state.anomaly.rules.length > 0) {
+          return passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomaly.rules);
         }
         if (!hasKind(record, state.kinds)) return false;
         if (hasQuery && !matchesQuery(record, state.query)) return false;
@@ -5717,7 +5723,7 @@
        */
       function applyFilterScope() {
         if (!dom.kpiScope) return;
-        if (state.anomalyRules.length > 0) {
+        if (state.anomaly.rules.length > 0) {
           // This line exists to name the filters the KPI does not follow. In 异常 mode there are
           // none of them in force, so the usual wording would be pointing at two controls that
           // are switched off and filtering nothing.
@@ -5824,12 +5830,21 @@
         inspectorSay('');
       }
 
+      /**
+       * The anomaly axis at rest.
+       *
+       * A factory rather than a constant, because two callers assign this to `state.anomaly`.
+       * A shared object would let ticking a rule write through to whichever of them was still
+       * holding it — which is the two-writers defect this field was collapsed to avoid.
+       */
+      function defaultAnomaly() {
+        return { mode: 'single', rules: [], last: null };
+      }
+
       function clearFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
-        state.anomalyRules = [];
-        state.anomalyLast = null;
-        state.multiAnomaly = false;
+        state.anomaly = defaultAnomaly();
         clearTimeRange();
         resetWindowMode();
         if (dom.searchInput) dom.searchInput.value = '';
@@ -6743,19 +6758,19 @@
             // with 多选 on is not the state 重置 describes, so it must not claim to be it — and
             // 重置 is the only control that turns 多选 off, so a reader told the row is already at
             // its default would never press the one button that would put it back.
-            on = state.anomalyRules.length === 0 && !state.multiAnomaly;
+            on = state.anomaly.rules.length === 0 && state.anomaly.mode !== 'multi';
             noun = ANOMALY_NONE_LABEL;
             label = noun + ' · ' + (on ? '已是默认状态 · 表格按上一行的条件筛选'
               : '点击回到默认状态 · 表格按上一行的条件筛选');
             n = null;
           } else if (isAll) {
-            on = state.anomalyRules.length === ANOMALY_RULES.length;
+            on = state.anomaly.rules.length === ANOMALY_RULES.length;
             n = counts.any;
             noun = '全部异常';
             unit = '条';
             label = ruleLabelFor(noun, n, unit, on);
           } else {
-            on = state.anomalyRules.indexOf(id) >= 0;
+            on = state.anomaly.rules.indexOf(id) >= 0;
             n = counts.byRule[id] || 0;
             noun = anomalyRuleLabel(id);
             unit = counts.unit[id] || '条';
@@ -6787,29 +6802,29 @@
         var next;
         if (ruleId === null) {
           // 全部异常: every rule, or none of them.
-          next = state.anomalyRules.length === ANOMALY_RULES.length ? [] : ANOMALY_RULE_IDS.slice();
-          state.anomalyLast = next.length ? null : state.anomalyLast;
-        } else if (state.multiAnomaly) {
+          next = state.anomaly.rules.length === ANOMALY_RULES.length ? [] : ANOMALY_RULE_IDS.slice();
+          state.anomaly.last = next.length ? null : state.anomaly.last;
+        } else if (state.anomaly.mode === 'multi') {
           // Union mode. A click adds the rule, or takes it back off — unless it was the last
           // one standing, because a filter that refuses to turn off is a filter nobody can leave.
-          next = state.anomalyRules.filter(function (id) {
+          next = state.anomaly.rules.filter(function (id) {
             return id !== ruleId;
           });
-          if (next.length === state.anomalyRules.length) next = next.concat([ruleId]);
-          state.anomalyLast = ruleId;
-        } else if (state.anomalyRules.length === 1 && state.anomalyRules[0] === ruleId) {
+          if (next.length === state.anomaly.rules.length) next = next.concat([ruleId]);
+          state.anomaly.last = ruleId;
+        } else if (state.anomaly.rules.length === 1 && state.anomaly.rules[0] === ruleId) {
           next = [];
-          state.anomalyLast = null;
+          state.anomaly.last = null;
         } else {
           // Single mode is a replacement, not an addition: you asked for this rule, and this is
           // what you get. Anything already ticked was a previous question, not a standing one.
           next = [ruleId];
-          state.anomalyLast = ruleId;
+          state.anomaly.last = ruleId;
         }
         next.sort(function (a, b) {
           return ANOMALY_RULE_IDS.indexOf(a) - ANOMALY_RULE_IDS.indexOf(b);
         });
-        state.anomalyRules = next;
+        state.anomaly.rules = next;
         if (next.length > 0) resetBaseFilters();
         resetWindowMode();
         render();
@@ -6825,14 +6840,14 @@
        * the first in table order, which would be an answer to a question they did not ask.
        */
       function onAnomalyMultiChange(checked) {
-        state.multiAnomaly = checked;
-        if (!checked && state.anomalyRules.length > 1) {
-          var last = state.anomalyLast;
-          state.anomalyRules = [last && state.anomalyRules.indexOf(last) >= 0
+        state.anomaly.mode = checked ? 'multi' : 'single';
+        if (!checked && state.anomaly.rules.length > 1) {
+          var last = state.anomaly.last;
+          state.anomaly.rules = [last && state.anomaly.rules.indexOf(last) >= 0
             ? last
-            : state.anomalyRules[0]];
+            : state.anomaly.rules[0]];
         }
-        if (state.anomalyRules.length === 0) state.anomalyLast = null;
+        if (state.anomaly.rules.length === 0) state.anomaly.last = null;
         render();
       }
 
@@ -6846,13 +6861,11 @@
        * and the table follows from there.
        */
       function onAnomalyReset() {
-        if (state.anomalyRules.length === 0 && !state.multiAnomaly) return;
-        state.anomalyRules = [];
-        state.anomalyLast = null;
-        // 多选 is back to its default too. 重置 means the default state, and 单选 is what this
-        // axis opens in — leaving a mode switch on is not a filter the reader would think to
-        // clear by pressing the button they just pressed.
-        state.multiAnomaly = false;
+        if (state.anomaly.rules.length === 0 && state.anomaly.mode !== 'multi') return;
+        // One assignment, not three. 多选 goes back to its default with it — 重置 means the
+        // default state, and 单选 is what this axis opens in; leaving a mode switch on is not a
+        // filter the reader would think to clear by pressing the button they just pressed.
+        state.anomaly = defaultAnomaly();
         if (dom.anomalyMulti) dom.anomalyMulti.checked = false;
         resetWindowMode();
         render();
@@ -6884,13 +6897,13 @@
        * records of it, so they have to keep working while an anomaly rule is ticked.
        */
       function syncAnomalyMode(counts) {
-        var on = state.anomalyRules.length > 0;
+        var on = state.anomaly.rules.length > 0;
         document.body.setAttribute('data-anomaly-mode', on ? 'on' : 'off');
         var scopes = document.querySelectorAll('[data-filter-scope]');
         for (var i = 0; i < scopes.length; i += 1) scopes[i].inert = on;
         // The checkbox is state too, and a poll re-renders from state. Writing it here means
         // turning 多选 off by hand cannot leave it drawn on while the buttons are single again.
-        if (dom.anomalyMulti) dom.anomalyMulti.checked = state.multiAnomaly;
+        if (dom.anomalyMulti) dom.anomalyMulti.checked = state.anomaly.mode === 'multi';
         if (!dom.anomalyNote) return;
         dom.anomalyNote.hidden = !on;
         if (on) {
@@ -6903,9 +6916,9 @@
           // 叠加 is 多选's word. In 单选 the only way more than one rule is ever on is 全部异常,
           // which is not the reader stacking anything, so it is described as all of them being in
           // force rather than as a stack they did not build.
-          var n = state.anomalyRules.length;
+          var n = state.anomaly.rules.length;
           var stacked = n > 1
-            ? (state.multiAnomaly
+            ? (state.anomaly.mode === 'multi'
               ? ' · 已叠加 ' + formatInt(n) + ' 条规则 · 合计 ' + formatInt(counts.selected) + ' 条'
               : ' · 全部 ' + formatInt(n) + ' 条规则同时生效 · 合计 ' + formatInt(counts.selected) + ' 条')
             : '';
