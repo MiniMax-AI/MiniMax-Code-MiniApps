@@ -9,7 +9,9 @@ No other guard asserted where it lived, which is why a change of that kind costs
 Each mutation below is one way that move can come back wearing a different hat: the control goes
 back to the toolbar, or into the kind toolbar whose label promises type filtering, or gains the
 attribute that lets a rule dim it, or takes back the toolbar's 36px height, or the row it shares
-stops being allowed to wrap. See docs/LAYERS.md.
+stops being allowed to wrap. The last three are the other direction — D19 hid the picker from a
+`body.is-reading-down` class driven by scroll direction, was withdrawn on 2026-10-12, and these
+require the guard to catch each shape of its return. See docs/LAYERS.md.
 
 Anchors are multi-line and index.html is LF, so they are written with bare \\n and the file is read
 and written with newline='' — matching on normalised text while preserving the file's own endings.
@@ -136,6 +138,36 @@ MUTATIONS = [
      [('      .filter-row-tail select {\n        min-height: 20px;\n',
        '      .filter-row-tail select {\n        min-height: 20px;\n        width: 158px;\n')],
      "no rule gives the picker a fixed width — the browser knows how wide its widest option is"),
+
+    # ---- the withdrawal, in the three shapes it can come back in (D19, 2026-10-12) ----
+    #
+    # chli reported 「只要滚动就不见」. The picker was being hidden by `body.is-reading-down`, a
+    # class on <body> toggled by a scroll listener from the direction of travel. Putting the control
+    # in the band was right and this undid the benefit of it, so all three mutations below put it
+    # back rather than only the one that was there before.
+
+    # The rule itself. Note this is the same shape the withdrawal note in the stylesheet *describes*
+    # in prose — which is exactly why the guard strips comments before scanning.
+    ("the band is driven from <body> again",
+     [('      .filter-row-tail select {\n        min-height: 20px;\n',
+       '      body.is-reading-down .filter-row-tail {\n        opacity: 0;\n'
+       '        visibility: hidden;\n      }\n\n'
+       '      .filter-row-tail select {\n        min-height: 20px;\n')],
+     "nothing inside the band is shown or hidden by a state class on <body>"),
+
+    # The other half of the mechanism: with no reader of scroll direction there is nothing left to
+    # drive such a class, and the page is back to having no scroll listener at all (D12, D15).
+    ("a scroll listener comes back to decide what the band shows",
+     [("        window.addEventListener('resize', scheduleStickyOffsets);\n",
+       "        window.addEventListener('resize', scheduleStickyOffsets);\n"
+       "        window.addEventListener('scroll', scheduleReadingDown, { passive: true });\n")],
+     "the page registers no scroll listener at all, so nothing can react to scroll direction"),
+
+    # The same defect without the ceremony: a rule on the tail itself.
+    ("the picker is made invisible by a rule of its own",
+     [('        margin-left: auto;\n        padding: 6px 16px 6px 0;\n',
+       '        margin-left: auto;\n        padding: 6px 16px 6px 0;\n        visibility: hidden;\n')],
+     "the band shows the picker by default — no rule of its own dims or hides it"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

@@ -889,34 +889,6 @@
         align-items: center;
         margin-left: auto;
         padding: 6px 16px 6px 0;
-        /* Revealing: `visibility` flips at once so the fade-in is actually seen. */
-        transition: opacity 140ms ease, visibility 0s linear 0s;
-      }
-
-      /* The picker steps aside while the reader moves down through the ledger, and comes straight
-         back the moment they move up.
-
-         Its position never changes. This is a visibility state on the control's own home, not a
-         move between containers — reparenting a focusable control while the page scrolls destroys
-         focus on a keyboard the reader never touched, which is a much worse defect than a control
-         sitting one row too prominently.
-
-         `visibility` rather than `display: none`, for two reasons that point the same way. It costs
-         no layout, so the band's height — which syncStickyOffsets() reads and which three pinned
-         strips are positioned from — cannot become a function of scroll direction; with `display`
-         every scroll would force a re-measure and a re-layout of everything pinned below. And it
-         still takes the control out of the tab order and the accessibility tree, which is what
-         "stepped aside" has to mean to be honest about: a keyboard user must not be able to tab
-         onto a control they cannot see.
-
-         The hidden state delays its own `visibility` by the length of the fade, so the control
-         stays visible for exactly as long as it is fading. The other order would blank it first
-         and leave a keyboard user focused on nothing. The global prefers-reduced-motion rule
-         already collapses transition-duration to 0.001ms, so this needs no branch of its own. */
-      body.is-reading-down .filter-row-tail {
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity 140ms ease, visibility 0s linear 140ms;
       }
 
       /* 14px/36px is the toolbar's control size. Every other control in this band is a 20px
@@ -947,6 +919,16 @@
         color: var(--mcode-text-muted);
         font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
         font-size: 14px;
+      /* The picker used to step aside while the reader scrolled down and came straight back on
+         any upward movement, driven by a `body.is-reading-down` class on <body>. Withdrawn on
+         2026-10-12, and the reason is the one this file's own comment used to argue against:
+         a control that hides itself the moment the reader starts reading is gone at exactly the
+         moment it is wanted, and scroll direction is not a statement about which filters the
+         reader wants. It also meant visibility inside this band was decided from outside it, by
+         a signal that has nothing to do with filtering. What decides visibility here now is the
+         band's own state — a pinned 上下文代 and the 异常 axis — and nothing else.
+         See docs/LAYERS.md D19. */
+
         line-height: 14px;
       }
 
@@ -3320,7 +3302,6 @@
         dom.toolbar = document.getElementById('toolbar');
         dom.kindControls = document.getElementById('kind-controls');
         dom.filterSticky = document.getElementById('filter-sticky');
-dom.filterRowTail = document.getElementById('filter-row-tail');
         dom.sessionSelect = document.getElementById('session-select');
         dom.generationField = document.getElementById('generation-field');
         dom.generationSelect = document.getElementById('generation-select');
@@ -6797,91 +6778,6 @@ dom.filterRowTail = document.getElementById('filter-row-tail');
         });
       }
 
-      /* ---------- 让位：picker 在下滚时让开，上滚立刻回来 ------------------------------ */
-
-      /**
-       * Three numbers, and two of them exist because this page scrolls itself.
-       *
-       *   READ_AWAY_PX   how far one continuous run has to go down before the picker is put away.
-       *     A reader who wants to switch context mid-read has to scroll up a little to get it
-       *     back, and that is a real cost, so the run has to be long enough that a reader merely
-       *     settling into the ledger never pays it. 240px is about six rows.
-       *
-       *   SCROLL_JUMP_PX a single delta larger than this is not a scroll. restoreRowAnchor() moves
-       *     the window on every ledger rebuild, and a 700px jump there reads as "heading down" and
-       *     would put the picker away while the reader was doing nothing at all. A jump resets the
-       *     run and leaves the state alone.
-       *
-       *   SHOW_EPS_PX    at the top of the document the picker is always shown, whatever the last
-       *     delta claimed.
-       */
-      var READ_AWAY_PX = 240;
-      var SCROLL_JUMP_PX = 120;
-      var SHOW_EPS_PX = 8;
-
-      var readingDown = false;
-      var lastScrollY = 0;
-      var downRun = 0;
-      var scrollFrame = null;
-
-      function tailHasFocus() {
-        return !!dom.filterRowTail && dom.filterRowTail.contains(document.activeElement);
-      }
-
-      /**
-       * Whether the picker may be put away at all.
-       *
-       * Each veto is a reader who would lose something. A pinned generation vetoes it because the
-       * banner naming that generation sits directly under this control: a picker that steps out
-       * from under its own banner leaves the banner pointing at a change the reader can no longer
-       * see or undo.
-       */
-      function mayStepAside() {
-        if (state.generation !== null) return false;
-        if (tailHasFocus()) return false;
-        return (window.scrollY || window.pageYOffset || 0) > SHOW_EPS_PX;
-      }
-
-      function setReadingDown(next) {
-        if (next === readingDown) return;
-        readingDown = next;
-        document.body.classList.toggle('is-reading-down', next);
-      }
-
-      function onScrollFrame() {
-        scrollFrame = null;
-        var y = window.scrollY || window.pageYOffset || 0;
-        var delta = y - lastScrollY;
-        lastScrollY = y;
-        // The top of the document is decided before anything else, jump guard included. A reader
-        // who comes back to the top does it in one large delta, and dismissing that as "not a
-        // scroll" would leave the picker hidden at exactly the place it is supposed to be visible.
-        if (y <= SHOW_EPS_PX) { downRun = 0; setReadingDown(false); return; }
-        if (Math.abs(delta) > SCROLL_JUMP_PX) { downRun = 0; return; }
-        if (delta <= 0) {
-          // Any movement upward brings it back. A control that stays away from someone who has
-          // just reversed direction is not being discreet, it is being difficult.
-          downRun = 0;
-          setReadingDown(false);
-          return;
-        }
-        if (!mayStepAside()) { downRun = 0; return; }
-        downRun += delta;
-        if (downRun >= READ_AWAY_PX) setReadingDown(true);
-      }
-
-      /**
-       * One decision per frame, however many scroll events arrive.
-       *
-       * `passive: true` on the listener because this page's scroll path is already the thing D12
-       * and D15 are about: a handler that can delay the scroll to wait for a listener is the wrong
-       * tool next to a document that rebuilds itself while the reader is moving through it.
-       */
-      function scheduleReadingDown() {
-        if (scrollFrame !== null) return;
-        scrollFrame = window.requestAnimationFrame(onScrollFrame);
-      }
-
       function render() {
         renderBars();
         renderGeneration();
@@ -7359,14 +7255,6 @@ dom.filterRowTail = document.getElementById('filter-row-tail');
         // type row or the 异常 row left the pinned strips sitting at the old width — until new
         // records happened to arrive, which on a finished session is never.
         window.addEventListener('resize', scheduleStickyOffsets);
-
-        // The picker's stepping-aside is a scroll-driven visibility state, not a sticky offset,
-        // so it gets its own listener and no re-measure: `visibility` costs no layout, which is
-        // the whole reason it was chosen over `display`. Registered once here rather than next to
-        // the render path, because nothing about it depends on the payload — a poll that re-renders
-        // the band must not be able to bring the picker back or put it away.
-        lastScrollY = window.scrollY || window.pageYOffset || 0;
-        window.addEventListener('scroll', scheduleReadingDown, { passive: true });
 
         dom.followBtn.addEventListener('click', function () {
           setFollow(!state.followLatest);

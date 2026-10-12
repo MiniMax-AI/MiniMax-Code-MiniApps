@@ -34,6 +34,12 @@
  *      the band sideways. Written even though no browser here is narrow enough to exercise it.
  *   8. the picker is sized like the chips around it (20px, not the toolbar's 36px). The band is
  *      pinned over the ledger: its height is reading area the reader does not get.
+ *   9. the band is not driven from outside itself. It used to be: a `body.is-reading-down` class,
+ *      toggled from a scroll listener by the direction the reader was scrolling, decided whether the
+ *      picker was on screen. chli reported on 2026-10-12 that it 「只要滚动就不见」. A filter that
+ *      hides itself the moment the reader starts reading is gone exactly when it is wanted, scroll
+ *      direction is not a statement about which filters the reader wants, and visibility inside a
+ *      band is the band's own business. D19 is withdrawn; these three are what stops it coming back.
  *
  * `mutate-generation-pin.py` breaks each of these in the shipped file and requires this guard to
  * catch it by name, so nothing here can be an assertion nothing could fail.
@@ -295,6 +301,47 @@ const fixedWidth = rulesFor('.filter-row-tail select').some((entry) =>
   /(?:^|;)\s*width\s*:\s*(?:\d|\.|\()/i.test(entry.body) && !/\bauto\b/i.test(entry.body));
 assert('no rule gives the picker a fixed width — the browser knows how wide its widest option is',
   !fixedWidth);
+
+/* ---------- 9: the band is not driven from outside itself ---------- */
+
+/**
+ * Every selector in the stylesheet, split on commas.
+ *
+ * The comment strip above already ran, so a rule that only exists inside a comment cannot be seen
+ * here — which is the point: the withdrawal note in the stylesheet *names* `body.is-reading-down`
+ * in prose, and a scan that read comments would read that sentence as the rule still shipping.
+ */
+function allSelectors() {
+  const out = [];
+  const re = /^[ \t]*([^{}@][^{}]*?)\{[^{}]*\}/gm;
+  let m;
+  while ((m = re.exec(css))) {
+    for (const s of m[1].split(',')) out.push(s.trim());
+  }
+  return out;
+}
+
+const BAND_SELECTORS = ['.filter-row-tail', '.filter-sticky', '.traj-controls', '#kind-controls'];
+
+// `body.<class>` only. `body[attr=…]` is excluded on purpose: the 异常 axis drives band controls
+// that way, through data-filter-scope, and names itself in its own rule. What is ruled out is a
+// class whose meaning is not filtering.
+const bodyClassSelectors = allSelectors().filter((s) => /^body\.[A-Za-z_-]/.test(s));
+
+assert('nothing inside the band is shown or hidden by a state class on <body>',
+  !bodyClassSelectors.some((s) => BAND_SELECTORS.some((b) => s.includes(b))));
+
+// The scroll listener is the other half: without a reader of scroll direction there is nothing left
+// to drive such a class. The page is back to having none, which is also what D12 and D15 want — both
+// of those are about a document that rebuilds itself while the reader moves through it.
+assert('the page registers no scroll listener at all, so nothing can react to scroll direction',
+  (html.match(/addEventListener\(\s*'scroll'/g) || []).length === 0);
+
+// Belt and braces on the shown state itself: a rule on the tail that dims or hides it is the same
+// defect wearing a plainer hat.
+assert('the band shows the picker by default — no rule of its own dims or hides it',
+  value('.filter-row-tail', 'visibility') === null
+  && value('.filter-row-tail', 'opacity') === null);
 
 console.log('[generation-pin] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
