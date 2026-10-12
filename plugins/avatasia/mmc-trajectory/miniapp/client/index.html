@@ -5143,14 +5143,36 @@
            whole slice forward: the oldest row falls off the top and everything below it
            rises by one row. Restoring scrollY keeps the pixel but not the content, so
            each poll quietly moved the page. Anchor on the topmost row that is actually
-           on screen and restore *its* position instead. */
-        var anchor = firstVisibleRow();
-        var scrollY = window.scrollY || window.pageYOffset || 0;
+           on screen and restore *its* position instead.
+
+           The intent is captured once per chain, not once per pass. clear(ledger) below
+           collapses a 716,000px document to about 1,500px and the browser clamps scrollY
+           to match (measured 715,080 → 616), so there is no scroll position at all between
+           here and the build that puts it back. A pass that is superseded before it gets
+           there has to hand the intent on rather than re-read it from the wreckage — that
+           is what dropped the reader on the first turn. See docs/LAYERS.md D14. */
+        if (!pendingAnchor) {
+          pendingAnchor = { row: firstVisibleRow(), y: window.scrollY || window.pageYOffset || 0 };
+        }
+        var anchor = pendingAnchor.row;
+        var scrollY = pendingAnchor.y;
+
+        /* Any build still in flight belongs to the table this call is about to replace.
+           Bumping the token here retires it — there is no abort call to get wrong and no
+           window in which two loops append to the same list.
+
+           It sits *above* clear(ledger) rather than further down, because the four early
+           returns between them clear the ledger as well. With the bump below them a pass
+           that returned early retired nothing, leaving the previous build alive to append
+           turn groups into a skeleton — and, since it would then reach restoreRowAnchor()
+           with an anchor from a table that no longer exists, to move the page for it. */
+        ledgerBuildToken += 1;
         clear(ledger);
 
         if (state.loading) {
           ledger.appendChild(buildSkeleton());
           dom.ledgerMeta.textContent = '加载中';
+          forgetScrollAnchor();
           return;
         }
 
@@ -5159,12 +5181,14 @@
             stateBlock(null, '轨迹暂时不可用', '服务恢复后会自动重试，页面结构保持不变。')
           );
           dom.ledgerMeta.textContent = '不可用';
+          forgetScrollAnchor();
           return;
         }
 
         if (!state.payload) {
           ledger.appendChild(buildSkeleton());
           dom.ledgerMeta.textContent = '加载中';
+          forgetScrollAnchor();
           return;
         }
 
@@ -5178,15 +5202,12 @@
           );
           dom.ledgerMeta.textContent = '共 0 条';
           applyFilterScope();
+          forgetScrollAnchor();
           return;
         }
 
         var matched = visibleEntries();
         var total = state.flat.length;
-        // Any build still in flight belongs to the table this call is about to replace. Bumping
-        // the token here, before the ledger is cleared, is what retires it — there is no abort
-        // call to get wrong and no window in which two loops append to the same list.
-        ledgerBuildToken += 1;
         applyFilterScope();
 
         var windowed = matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched;
@@ -5218,6 +5239,7 @@
           ledger.appendChild(
             stateBlock(null, '当前筛选条件下没有命中记录', '共 ' + total + ' 条记录中没有匹配项，可以放宽类型或搜索词。', reset)
           );
+          forgetScrollAnchor();
           return;
         }
 
@@ -5500,14 +5522,46 @@
       }
 
       /**
+       * The reader's scroll intent, carried across builds.
+       *
+       * It has to be carried, because there is no moment where the position survives on its
+       * own. renderLedger() clears the ledger — which takes the document from 716,000px to
+       * about 1,500px, and the browser clamps scrollY to match — and the position only comes
+       * back at the end of the build, from restoreRowAnchor(). So the first pass of a chain
+       * writes down where the reader was, every pass after it re-uses that, and the pass that
+       * finishes consumes it. Anything else and each pass reads an anchor out of the wreckage:
+       * measured, a click on any row that landed while a poll build was in flight left the page
+       * anchored on the first turn for good, because the superseded build stopped at the token
+       * check and never reached the restore. See docs/LAYERS.md D14.
+       *
+       * It is dropped, not restored, by the paths that end a chain with no table to anchor to —
+       * loading, error, no payload, no sessions, no matches. Carrying an intent across one of
+       * those would apply it to a different session or a different filter than the one it was
+       * measured against.
+       *
+       * @type {{row: {id: string, top: number} | null, y: number} | null}
+       */
+      var pendingAnchor = null;
+
+      /** End a scroll-intent chain without restoring it. One writer, so one place. */
+      function forgetScrollAnchor() {
+        pendingAnchor = null;
+      }
+
+      /**
        * Put the anchored row back where it was.
        *
        * It can legitimately be gone: parked at the very top of the list, enough records
        * can arrive to push it out of the window entirely. Then there is nothing to hold on
        * to and the old pixel offset is the best answer available, so fall back to it
        * rather than jumping to the top.
+       *
+       * Consuming the intent belongs here and not at the call site: this is the one place a
+       * chain ends, and a chain that ended without being consumed would hand its anchor to
+       * whatever came next.
        */
       function restoreRowAnchor(anchor, fallbackY) {
+        forgetScrollAnchor();
         if (anchor) {
           var after = anchorOffset(anchor.id);
           if (after !== null) {

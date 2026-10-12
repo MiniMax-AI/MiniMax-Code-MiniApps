@@ -65,19 +65,36 @@ MUTATIONS = [
      "the batch is at least one group"),
 
     # ---- 2. a new exit retires the build in flight ------------------------------
+    #
+    # Re-anchored 2026-10-12 for D14. These two used to hang off `ledgerBuildToken += 1;`
+    # followed by `applyFilterScope();`, which is where the bump sat before the four early
+    # returns below it were found to retire nothing. The bump now sits directly above
+    # `clear(ledger);`, so the line that follows it changed. The rules they encode did not.
 
     ("the exit retires the build twice",
-     [("        ledgerBuildToken += 1;\n        applyFilterScope();\n",
-       "        ledgerBuildToken += 1;\n        ledgerBuildToken += 1;\n        applyFilterScope();\n")],
+     [("        ledgerBuildToken += 1;\n        clear(ledger);\n",
+       "        ledgerBuildToken += 1;\n        ledgerBuildToken += 1;\n        clear(ledger);\n")],
      "every pass through the exit retires the build in flight"),
 
     # The new build is handed the token the previous build was still using, so the two compare
     # equal and the interleaving the token exists to prevent becomes possible.
     ("the new build claims a token that is not yet retired",
-     [("        ledgerBuildToken += 1;\n        applyFilterScope();\n", "        applyFilterScope();\n"),
+     [("        ledgerBuildToken += 1;\n        clear(ledger);\n", "        clear(ledger);\n"),
       ("        var build = { token: ledgerBuildToken, at: 0, rows: 0 };\n",
        "        var build = { token: ledgerBuildToken, at: 0, rows: 0 };\n        ledgerBuildToken += 1;\n")],
      "the exit retires the old build before the new one claims a token"),
+
+    # D14: the bump has to be above clear(ledger), not merely somewhere earlier. Put it back
+    # where it was — below the four early returns — and a pass that returns early (loading,
+    # error, no payload, no sessions) retires nothing, so the previous build goes on appending
+    # turn groups into whatever that pass left in the ledger. The bump line itself is still
+    # there and still unique, which is why verify-ledger-batch.mjs counts the returns between it
+    # and clear() rather than asserting a position.
+    ("a pass that returns early retires nothing",
+     [("        ledgerBuildToken += 1;\n        clear(ledger);\n", "        clear(ledger);\n"),
+      ("        var matched = visibleEntries();\n",
+       "        ledgerBuildToken += 1;\n        var matched = visibleEntries();\n")],
+     "no early return sits between the token bump and the clear"),
 
     ("a replaced build keeps appending",
      [("          if (build.token !== ledgerBuildToken) return;\n", "")],

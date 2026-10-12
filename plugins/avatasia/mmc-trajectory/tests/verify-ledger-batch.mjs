@@ -122,13 +122,22 @@ assert('every pass through the exit retires the build in flight',
 
 // The bump has to precede the line that *records* the new build's token. If it came after, the
 // build would be handed the token the previous build was still using, and two concurrent builds
-// would compare equal — the exact interleaving the token exists to prevent. (Its position relative
-// to `clear(ledger)` is not the thing that matters: JavaScript runs this pass straight through, so
-// no frame callback can observe the ledger between the two.)
+// would compare equal — the exact interleaving the token exists to prevent.
 const bumpAt = ledger && ledger.indexOf('ledgerBuildToken += 1;');
 const claimAt = ledger && ledger.indexOf('var build = { token: ledgerBuildToken');
 assert('the exit retires the old build before the new one claims a token',
   bumpAt >= 0 && claimAt >= 0 && bumpAt < claimAt);
+
+// And it has to sit above `clear(ledger)`, not merely somewhere earlier in the function. Four
+// early returns sit between them — loading, hard error, no payload, no sessions — and each of
+// them clears the ledger too. A bump below them means a pass that returned early retired
+// nothing, so the previous build stayed alive and went on appending turn groups into whatever
+// that pass had put there. Counting one bump in the source cannot see that; counting the
+// returns between the two lines can. See docs/LAYERS.md D14.
+const clearAt = ledger && ledger.indexOf('clear(ledger);');
+const between = bumpAt >= 0 && clearAt > bumpAt ? ledger.slice(bumpAt, clearAt) : '';
+assert('no early return sits between the token bump and the clear it precedes',
+  !!between && !/\breturn;/.test(between));
 
 assert('a build whose exit has been replaced stops without appending',
   !!step && /if \(build\.token !== ledgerBuildToken\) return;/.test(step));
