@@ -462,10 +462,37 @@ def main():
             continue
         print(f"  caught by {expected}: {name}")
 
+    # Two different questions, and this used to answer only one of them.
+    #
+    # `read_bytes() != original` asks "did this run leave the file where it found it". That is a
+    # real question and the `finally` above already guarantees the answer, which is exactly why the
+    # question is worthless on its own: measured on 2026-10-13, a file that was *already* modified
+    # before the run came back with `index.html restored byte-for-byte`, 75/75 caught, and exit 0,
+    # while the file was still modified. Once a mutation has leaked, `original` is the leaked text,
+    # so the comparison is dirty == dirty and can never fail again. That is how a dirty file
+    # survived every later run while every later run said it was clean.
+    #
+    # So the check that does the work is the one that is not relative to our own starting point:
+    # after the last mutation is restored, ask the guard suite whether the shipped file still
+    # satisfies the rules. A leaked mutation breaks one of them by construction — that is the whole
+    # premise of this file — so this is the check that notices.
     if WATCHED.read_bytes() != original:
-        failures.append("index.html was not restored byte-for-byte")
+        failures.append("index.html differs from where this run started")
     else:
-        print("index.html restored byte-for-byte")
+        print("index.html unchanged from where this run started")
+
+    final_ok, final_fired, final_output = run_probe()
+    if not final_ok:
+        failures.append(
+            "the guard suite is RED after every mutation was restored — index.html was left "
+            "modified:\n" + final_output.strip()
+        )
+    elif final_fired:
+        failures.append(
+            "the guard suite still fails after every mutation was restored: %r" % (final_fired,)
+        )
+    else:
+        print("guard suite green again on the restored file (this is the one that can fail)")
 
     if failures:
         print("\nFAILURES:")

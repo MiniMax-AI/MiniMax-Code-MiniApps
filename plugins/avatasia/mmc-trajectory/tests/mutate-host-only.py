@@ -9,6 +9,13 @@ Both halves exist because of one finding: the payload carried neither `customTyp
 docs/LAYERS.md D17. The flag is derived from `hostMetadata.providerVisibility === 'omit'`
 rather than from a list of customType strings, and each mutation below breaks one link in that
 chain rather than a link at random.
+
+No anchor below contains a line ending. They used to be assembled with a hardcoded CRLF, which
+matched only because core.autocrlf happened to rewrite the checkout, and it stopped matching the
+moment .gitattributes pinned the working tree to LF -- the harness reported "anchor matched 0
+times" and exited, which is the correct failure but for a reason nobody had chosen. Where a
+mutation has to *insert* a line it still needs an ending, so that one is read out of the file it
+is about to edit: it cannot be wrong about a file it just measured.
 """
 import io
 import os
@@ -20,7 +27,14 @@ ROOT = os.path.dirname(HERE)
 SERVER = os.path.join(ROOT, "miniapp", "node", "server.mjs")
 CLIENT = os.path.join(ROOT, "miniapp", "client", "index.html")
 
-L = "\r\n"
+
+def read(rel):
+    with io.open(rel, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+# The ending to insert with, measured from the file itself. Never hardcoded.
+L = "\r\n" if "\r\n" in read(SERVER) else "\n"
 
 # (title, file, old, new, owning guard, assertion names that must fire by name)
 MUTATIONS = [
@@ -28,7 +42,7 @@ MUTATIONS = [
     # that check would flag every assistant turn that ever carried the key.
     ("the role check is dropped, so any omit marker counts",
      SERVER,
-     "  if (record.role !== 'custom') return false;" + L,
+     "  if (record.role !== 'custom') return false;",
      "",
      "verify-raw-lazy.mjs",
      ["the omit marker on an assistant record is not honoured"]),
@@ -36,8 +50,8 @@ MUTATIONS = [
     # 'pass' is a real value. Matching on presence rather than on the value flags it too.
     ("any providerVisibility value counts as omit",
      SERVER,
-     "    && metadata.providerVisibility === 'omit';" + L,
-     "    && metadata.providerVisibility !== undefined;" + L,
+     "    && metadata.providerVisibility === 'omit';",
+     "    && metadata.providerVisibility !== undefined;",
      "verify-raw-lazy.mjs",
      ["a different providerVisibility value is not flagged"]),
 
@@ -46,7 +60,7 @@ MUTATIONS = [
     # makes the field optional, which is how those two drift apart.
     ("the flag comes back undefined instead of false",
      SERVER,
-     "export function isHostOnlyMessage(message) {" + L,
+     "export function isHostOnlyMessage(message) {",
      "export function isHostOnlyMessage(message) {" + L + "  if (message) return undefined;" + L,
      "verify-raw-lazy.mjs",
      ["every record carries the field, so it is never undefined"]),
@@ -56,7 +70,7 @@ MUTATIONS = [
     # reason the fix is a flag and not a filter. docs/LAYERS.md D17.
     ("host-only records stop being emitted at all",
      SERVER,
-     "    const push = (patch) => {" + L,
+     "    const push = (patch) => {",
      "    const push = (patch) => {" + L + "      if (isHostOnlyMessage(source)) return;" + L,
      "verify-raw-lazy.mjs",
      ["exactly the settlement record is flagged internal",

@@ -304,5 +304,24 @@ A harness limitation reported as a limitation is useful. The same limitation sil
 ```
 node tests/run.mjs            # everything
 node tests/run.mjs --real     # same guards, this machine's ~/.minimax
-node tests/make-fixtures.mjs --check    # fixture must not drift under a change
+node tests/make-fixtures.mjs --check   # the committed fixture: parses, covers all ten shapes, no machine paths
+node tests/make-fixtures.mjs --checkselftest    # prove that --check can reject a bad fixture
 ```
+
+**Never run two suites at once in the same working tree.** The mutation harnesses write in
+place: `mutate-anomaly.py` mutates `index.html` and puts it back, `mutate-fixture.py` does the same
+to `make-fixtures.mjs`. Two suites running together read each other's mid-mutation state as their
+own baseline. Measured: `run.mjs` and `run.mjs --real` side by side produced "the kind test
+inverted" and "got 1, want 2" — both artifacts of the two runs clobbering each other, not defects.
+After stopping them, `index.html` was in fact left mid-mutation (SHA256 differed from the workspace
+copy); restoring from the workspace brought `git hash-object` back in line with HEAD.
+
+Same root cause as the rest of this document: **a harness that wrote something must not be the only
+thing that judges what it wrote.** Concurrency is just another way to become the thing you are
+checking against.
+
+`--check` judges the committed tree in place and never reads `~/.minimax`, so it works on a clean
+runner. It compares shape, not bytes: the live store moves under every run, so a byte comparison
+would be permanently red and chasing it is how a fixture gets half-regenerated for no reason anyone
+can name. `mutate-fixture.py` is the record of how that decision was forced — see the note on
+mutation A below.

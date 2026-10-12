@@ -220,9 +220,14 @@ with the reason stated rather than quietly dropped.
 
 Kept here because each cost real time to find, and each would look like "the guard is stale":
 
-- **`mutate-steer.py`** was not stale. `server.mjs` is CRLF and the anchor joined its lines with
+- **`mutate-steer.py`** was not stale. `server.mjs` was CRLF and the anchor joined its lines with
   `\n`, so a multi-line anchor matched zero times and read as drift. Single-line anchors in the
-  same file matched fine. Anchors are now built in the file's own line ending.
+  same file matched fine. Every harness now measures the ending out of the file it is about to
+  edit, and no anchor contains one at all.
+- **`mutate-host-only.py`** was the last harness still hardcoding `L = "\r\n"`. `.gitattributes`
+  pinned the working tree to LF and it stopped matching — a correct failure, for a reason nobody
+  had chosen. It is the same class as the one above, and the reason the rule is now "no anchor
+  contains a line ending" rather than "build it in the right ending".
 - **`mutate-window-default.py`** was genuinely stale, but not where it looked: the rule still
   exists, and `rePinWindow` had gained a time-range early-return *between* the two lines the
   anchor spanned. It is anchored on the one line that is the rule.

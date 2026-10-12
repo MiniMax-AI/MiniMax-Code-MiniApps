@@ -1,0 +1,25 @@
+# The working tree of this plugin must be byte-identical to what is committed.
+#
+# Without this file, core.autocrlf=true rewrites every LF blob to CRLF on checkout — and git then
+# reports the result as *clean*, because it normalises line endings when it compares. The rewrite is
+# invisible to `git status` while it is happening, and it cost this plugin specifically:
+#
+#   1. Two working copies of the same file compared unequal, so a byte-for-byte check between the
+#      ship source and the local package reported a difference that was not one.
+#   2. `git checkout` of any path silently rewrote it. That is how `tests/fixtures/` landed CRLF on
+#      disk while its blobs are LF, and why verifying the fixture meant knowing which copy was which.
+#   3. Every mutation harness that anchors on a line ending has to guess which ending the checkout
+#      produced. `mutate-review16.py` did guess, and that was a bug waiting to fire the moment the
+#      ending moved. The anchors there no longer contain newlines for the same reason.
+#
+# `text=auto` leaves git free to keep deciding for itself which files are binary; `eol=lf` is the
+# part that pins the result. Every blob here is already LF, so adding this changes no committed
+# content — it only stops the working tree from disagreeing with it.
+#
+# This file lives in the plugin directory, not the repository root. At the root it would rewrite
+# line endings for every other plugin in the repo, and this is a single-plugin change.
+* text=auto eol=lf
+
+# The one file in this plugin that is not text. `text=auto` would sniff it correctly on its own, but
+# naming it keeps the intent visible next to the rule that would otherwise be the only one.
+*.png binary

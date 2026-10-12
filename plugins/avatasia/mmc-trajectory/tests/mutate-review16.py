@@ -122,16 +122,20 @@ MUTATIONS = [
      True),
 
     # ---- 5. the cache stops being released ----
-    # CRLF: server.mjs is pure CRLF and this harness reads with newline="", so a \n anchor never
-    # matches it. That is the same line-ending trap that has bitten the shipped client before.
+    # Anchored without any line ending on purpose. The first version of these two used \r\n because
+    # server.mjs is CRLF in the working tree — and that is exactly the trap: it only matched because
+    # of core.autocrlf rewriting the checkout, so the anchor would have silently stopped matching
+    # the moment .gitattributes pins the file to LF. Both literals below are unique in the file
+    # (`parsedRows.clear();` appears once, `    clear() {` once), so neither needs the newline to
+    # be unambiguous.
     ("dispose stops releasing the parsed rows",
-     "    parsedRows.clear();\r\n",
+     "    parsedRows.clear();",
      "",
      "dispose() clears the parsed-row cache too"),
 
     ("the parsed-row cache loses its clear()",
-     "    clear() {\r\n      entries.clear();\r\n      bytes = 0;\r\n    },",
-     "    reset() {\r\n      entries.clear();\r\n      bytes = 0;\r\n    },",
+     "    clear() {",
+     "    reset() {",
      "the parsed-row cache really does expose clear()"),
 
     # ---- 6. the empty state points at inert controls again ----

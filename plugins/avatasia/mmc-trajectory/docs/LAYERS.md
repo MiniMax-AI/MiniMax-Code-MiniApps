@@ -587,6 +587,8 @@ console 零 warn/error。顺带回归 D15：滚到底（7,554 px）后上滚 300
 > **一条我查了才敢写的结论**：深滚时总览条和窗口条之间会漏出约 1–2 px 的一行轮组标题。我一度以为是自己引入的，用 `git stash` 回到改动前的版本量了同一个数——`#overview-track` 两版都是 `y 111 / h 50`，**带高和接缝几何完全一致**，所以那是既有缺陷，不是这次改的。记进未做清单第 12 项。
 >
 > 顺带记一条踩坑：`git stash pop` 把 fork 那份 `index.html` 检出成了 **CRLF（332,754 字节）**，workspace 那份仍是纯 LF（325,311）。**在这个仓里不要对 `index.html` 用 `git stash` / `git checkout`**，一律从 workspace 拷贝覆盖。
+>
+> **（D30 补注）这条禁令已经解除。** 根因是 `core.autocrlf` 在 checkout 时把 LF blob 重写成 CRLF，而 git 比较时又做归一化，于是**重写对 `git status` 完全不可见**。插件目录里现在有 `.gitattributes`（`* text=auto eol=lf`）把结果钉死，checkout 不再重写，`server.mjs` 也一并从 CRLF 归一回 LF（blob 未变，两棵树同步转换）。见 D30。
 
 #### D19 — 让 picker 在下滚时让位，**2026-10-12 当日撤回**
 
@@ -1057,6 +1059,85 @@ console 零 warn / 零 error。
 
 **D15 的结论要改一处**：上面那句「本条给后续工作的一条约束：几何查询不是免费的」仍然成立，但本条自己也踩了同一类问题的另一面——**离屏元素的 `getBoundingClientRect()` 会返回 `content-visibility` 算出来的高度，而不是它自己的**。当时只记了「对离屏行做几何查询很贵」，没有记「对离屏组做几何查询会读到 0」。后者不是开销问题，是**读数错误**，会一路写进内联样式。
 
+
+#### D30 — 三处「能失败的检查」其实不能失败（2026-10-13）
+
+这一条不属于前端分层，但它和 D16 / D21 / D27 / D29 是同一个形态，所以记在同一处：**一个检查读的是自己刚刚写下的状态，于是它永远和自己一致。** 共同的病根不是疏忽，是「检查的对象选错了」——比对了自己，而不是外部事实。
+
+**一、`mutate-anomaly.py` 的「还原成功」以自己为基准**
+
+关键三行：读 `original = WATCHED.read_bytes()` → 变异写盘 → `finally` 写回 `original` → 比对 `read_bytes() != original`。**基准就是它自己读进来的那份字节。** 起点脏不脏，这句永远为真。
+
+实测（在文件尾部注入一条注释后运行）：
+
+```
+baseline=0EE44615D8D6  tampered=F532928A27EF  differs=True
+index.html restored byte-for-byte
+OK  (75 mutations, each caught by the guard that owns the defect)
+file still contains the tamper after the run: True
+```
+
+即：**起点脏时，harness 打印「已还原」、退出 0、报 75/75 全捕，而文件根本没被还原。**
+
+范围要界定准确，不要夸大。从 `CASES` 里真实取一条泄漏注入进去，**shipped harness 当场抓住了**：
+
+```
+baseline verify-anomaly.mjs did not pass; refusing to run mutations
+FAILED_NAMES  ["the string \"true\" is not a failure either"]
+```
+
+「会打破守卫的泄漏」本来就抓得住。我证明的缺口更窄：**最终那句 `restored byte-for-byte` 在「起点脏但不打破任何守卫」时为真**。所以历史经过里能确定的是——某次泄漏让文件变脏，之后每一轮都报「还原正常」，脏文件一直躺着直到被手工发现（`12f26e9` 那次还原提交）。**最初那一次如何触发，仍然未知；不编解释。**
+
+修法不是换基准（基准只能是它自己），是**加一次独立复验**：扫完再跑一遍基线探针，要求仍全绿。跑完后的状态由一个没参与过变异的过程判定，而不是由写盘的那一方宣布。
+
+**二、`--check` 这个命令从来不存在**
+
+`make-fixtures.mjs` 对任何输入都打印 `(dry run -- pass --record to write)` 然后 `exit 0`，而 `--check` 压根不是它认识的选项。`AGENTS.md` 却把 `node tests/make-fixtures.mjs --check` 列成一条「输出必须保持绿」的验证命令。
+
+期间真实发生的事：已提交的 fixture 与 workspace 副本在 **8 个文件里有 6 个内容不同**（`message_id` 前缀分别 `00ba` / `00bu` / `00cc`）。**没有任何信号。**
+
+**定案：不比字节，比形状。** 承诺从来不是「与本机今天蒸馏出的结果逐字节相同」——活存储一直在动，逐字节比在本机会**永久红**（连续两次取样，同一条会话的行数几分钟内从 63 变成 81；`--record` 会改写 8 个文件里的 7 个）。真正承诺过的是那个更弱、也更持久的三条：fixture 仍按服务读它的方式解析、仍覆盖 `verify-anomaly.mjs` 断言的**全部十种 shape**、仍不含本机信息。加第四条：**再蒸馏一次必须读出同一个结果**（`classify(synth(row))` 与 `classify(row)` 的 flags 必须一致）——空字符串负载经 `synth` 会变成占位文本，于是不再「空」，`silent` 那条规则就悄悄失效了。
+
+`--check` 插在 `resolveSessionsRoot()` **之前**，因此它**不读活存储**，在没有任何 `~/.minimax` 的 CI 上也能跑。实测：**8 sessions / 385 rows / 十种 shape 全覆盖 / OK**。并在真 fixture 上注入一个机器路径验证它会红：`FIXTURE CHECK FAILED (2)`，并点名 `fixture leak /[A-Za-z]:[\\/]/ in ...messages.jsonl`。
+
+**三、函数判对了，分支看不见 —— 第一版守卫的变异存活了**
+
+这一条最值得记。写完 `--check` 之后我给它配了自检：`--checkselftest` 造一好三坏，要求每种坏都被按原因拒绝。**然后做变异，把打印结论的那个分支废掉：**
+
+```js
+if (r.problems.length) {  →  if (false && r.problems.length) {
+```
+
+**守卫全绿。** 因为 `--checkselftest` 是在进程内直接调 `checkFixture()`，而函数判得完全正确；被废掉的只是「把判定变成退出码」这一步。于是 `node tests/make-fixtures.mjs --check` 照样打印 `fixture check OK`、照样退出 0。
+
+> **一个性质可以被算得完全正确，同时对别人真正会走的每一条路径都不可见。**
+
+修法是给 `--check` 加 `--root=<dir>` 和 `--emit-demo-tree=<case>`，让守卫**驱动真正的 CLI 分支、读真正的退出码**，而不是在进程内调函数。补完之后同一条变异立刻被按名捕获（3 条断言红）。
+
+补守卫的过程里又撞出两个同源的洞：
+
+- `--check` 打印的 `fixture root` 改成常量，守卫照样全绿——**没有任何断言说它报告的是自己判过的那棵树**。补：断言输出里出现传入的 root，且不含已提交 fixture 的路径。
+- `if (!passed) ok = false` 废掉，守卫照样全绿——因为健康树上四个 case 本来就全过，`ok` 永远不会被置 false，**「漏了一个 case → 进程退出非零」这条接线在正常运行下根本无法被观测**。补：`--checkselftest-broken` 塞一个必然失败的 case，强制走失败路径。
+
+**结论（写进 `tests/METHODOLOGY.md` 的判据）**
+
+1. 能失败的检查必须**相对于外部事实**，不能相对于自己读进来的状态。
+2. 它还必须走**别人真正会走的那条路径**。函数正确不等于分支正确。
+3. 常量也要能被打破。`SESSIONS_FLOOR` / `ROWS_FLOOR` 原本只是数字，各补了一个 demo tree 才变成不变量。
+
+守卫：`tests/verify-fixture.mjs`（18 断言）+ `tests/mutate-fixture.py`（10 条变异，**10/10 全捕 0 存活**）。全套 **53/53**（原 51）。
+
+**四、顺带：`.gitattributes` 与一个被行尾暴露的老 bug**
+
+插件目录新增 `.gitattributes`（`* text=auto eol=lf` + `*.png binary`）。放插件目录而不是仓库根——放根会改所有插件的行尾，而这是单插件 PR。所有 blob 本来就是 LF，**零 blob 变动**，只是工作区不再与提交不一致；`server.mjs` 顺势从 CRLF 归一回 LF（108,982 → 106,493 字节，两棵树同步转换，blob 哈希不变）。D18 那条「不要对 `index.html` 用 `git stash` / `git checkout`」的禁令据此解除。
+
+它当场暴露了 `mutate-host-only.py`：`L = "\r\n"` 硬编码，四个锚点全部停止命中。其余 harness（`mutate-steer` / `compaction-turn` / `parsed-rows` / `pr15-fixes` / `raw-lazy`）早就在**从文件自身读行尾**，它唯一的例外。修法对齐既有约定：**任何锚点都不含换行**，必须插入时的那一个换行从待编辑文件里量出来。
+
+**五、codex 第二轮评审：环境阻塞，不是结论**
+
+第二轮 codex 评审（2026-10-13 00:25）返回的是一份「无法完成评审」。stderr 显示只读沙箱内 `CreateProcess` 一律被拒（`Failed to create unified exec process: helper_unknown_error: setup refresh had errors`），PowerShell 与 cmd 都在执行前失败——**它连一个文件都没读到**，token 用量 26,933。
+
+同一个 Windows 沙箱错误在本次之前已经出现过一次（记在已删除的 stage 1 规格文档 L216，那份文档已随上一轮评审一起删除），第二次复现。**不得把这次失败读成「评审通过」或「评审有意见」。**
 
 ---
 

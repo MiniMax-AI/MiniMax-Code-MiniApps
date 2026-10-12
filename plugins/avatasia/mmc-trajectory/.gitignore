@@ -1,0 +1,8 @@
+# Python bytecode caches from running the mutation harnesses.
+#
+# tests/ has 25+ .py files and they run on every `node tests/run.mjs`, so CPython drops a
+# __pycache__/ into the package directory every time. It is not tracked and must never be: it is
+# machine-specific, it changes shape between Python versions, and the plugin directory is the
+# package that ships. The repository root .gitignore does not cover it.
+__pycache__/
+*.pyc
