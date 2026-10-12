@@ -16,6 +16,11 @@ because --checkselftest exercises the function in-process. It survived. The guar
 once it drove the `--check` branch itself, over a real tree, and read its exit code. A property
 can be computed correctly and still be invisible from every path anybody actually runs.
 
+A third of this list exists because an outside reviewer found three ways checkFixture() disagreed
+with the service it is meant to stand in for -- it counted sessions by walking for any file named
+messages.jsonl, never validated a manifest, and never checked that a toolResult still matched its
+toolCall. All three passed on broken trees. All three are here now, with a demo tree each.
+
 Nothing here needs a network, a service, or a specific machine's paths, and nothing here writes
 to tests/fixtures/: the broken trees are synthesised into temp directories and deleted.
 """
@@ -54,11 +59,36 @@ MUTATIONS = [
      "      if (false && a.join() !== b.join()) {",
      '--check exits 1 on a "drift" tree'),
 
-    # The structure check next to the flags check cannot be isolated, and the file says so rather
-    # than inventing a mutation for it: every field shapeOf() compares is one the ten NEEDED
-    # predicates read too, so any re-synthesis that changes one necessarily flips a flag as well.
-    # It stays because its message names the cause -- a synth rule that stopped preserving
-    # structure -- instead of the symptom.
+    # The structure check. The first version of this file explained its absence by claiming the
+    # check could not be isolated -- that every field shapeOf() reads is also read by one of the
+    # ten predicates, so any change must flip a flag too. Codex disproved that with a case I had
+    # not tried: reversing an assistant's parts order changes shapeOf().parts while every
+    # predicate, all of which test parts with .includes(), stays true. Verified: this mutation
+    # produces 134 "is not shape-stable" problems and zero coverage flips.
+    ("synth stops preserving the order of content parts",
+     "  if (Array.isArray(value)) return value.map((v) => synth(v, key));",
+     "  if (Array.isArray(value)) return value.slice().reverse().map((v) => synth(v, key));",
+     "--check exits 0 on a tree that is genuinely fine"),
+
+    # The three holes codex reproduced green against the first version of checkFixture.
+    ("nothing pairs with a call, and that stops being fatal",
+     "  if (!paired) {",
+     "  if (false && !paired) {",
+     '--check exits 1 on a "unpaired" tree'),
+
+    ("a session id that is not mvs_<32 hex> stops being fatal",
+     "    if (!/^mvs_[0-9a-f]{32}$/.test(identity.id)) {",
+     "    if (false && !/^mvs_[0-9a-f]{32}$/.test(identity.id)) {",
+     '--check exits 1 on a "badid" tree'),
+
+    # Session discovery falls back to a naive walk. This one only became observable after the
+    # `misplaced` demo tree was moved from four levels of indirection to one: the deeper layout
+    # was stopped by the service's own MAX_WALK_DEPTH as well, so the mutation failed for a second
+    # unrelated reason and survived. A demo that looks more convincing was worse than a shallow one.
+    ("session discovery falls back to a naive walk from the tree root",
+     "  const sessionsRoot = join(root, 'v2', 'sessions');",
+     "  const sessionsRoot = root;",
+     '--check exits 1 on a "misplaced" tree'),
 
     ("the leak scan swallows what it finds",
      "    catch (e) { problems.push(e.message); }",

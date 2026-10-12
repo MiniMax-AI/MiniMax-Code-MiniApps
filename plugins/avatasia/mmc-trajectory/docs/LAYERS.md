@@ -1133,9 +1133,61 @@ if (r.problems.length) {  →  if (false && r.problems.length) {
 
 它当场暴露了 `mutate-host-only.py`：`L = "\r\n"` 硬编码，四个锚点全部停止命中。其余 harness（`mutate-steer` / `compaction-turn` / `parsed-rows` / `pr15-fixes` / `raw-lazy`）早就在**从文件自身读行尾**，它唯一的例外。修法对齐既有约定：**任何锚点都不含换行**，必须插入时的那一个换行从待编辑文件里量出来。
 
+**六、外部评审抓到的三个洞，以及它抓到的我的一个错误结论（2026-10-13，同日）**
+
+这一节记两件事，第二件比第一件重要。
+
+先说背景：第二轮 codex 评审在只读沙箱里 `CreateProcess` 一律被拒，**它连一个文件都没读到**，所以它既不是「通过」也不是「有问题」，是没有结果。第三轮我先探沙箱（让它回一个词，它回了 `ALIVE`），确认通道活着才真跑了一遍。
+
+**它报的三个洞，全部属实，我逐条自己复现过：**
+
+| 洞 | 原来的检查 | 复现 | 后果 |
+| --- | --- | --- | --- |
+| 会话发现 | 递归找任何叫 `messages.jsonl` 的文件并按它计数 | 把 demo 树的 `v2` 改名成 `unused`，`--check` 仍报 6 个会话、退出 0 | **服务按自己的规则能找到 0 个。检查数的东西根本不是消费者数的东西** |
+| manifest | 只扫泄露，不看结构 | 把每个 manifest 换成 `{"sessionId":"broken"}`，仍退出 0 | `verify-parsers.mjs:89` 断言 id 必须 `mvs_<32 hex>` |
+| 工具配对 | 完全不看 call/result 配对 | 把结果侧的 `toolu_01` 改成 `unmatched`，仍退出 0 | 语料里没有任何配对结果，而 `verify-parsers.mjs` 的配对断言会因此**因为错误的原因而通过** |
+
+第三条和我自己写的 D30 里那条空字符串 `silent` 是**同一种病**：断言的成立是因为它根本没被触发，而不是因为它成立。
+
+修法三条：会话发现改用 `collectSessionEntries()`（数的东西必须和消费者数的东西同一个）；加 `readSessionIdentity()` 校验 id；配对按整语料两遍统计。
+
+**配对我第一次也写错了，值得单独记。** 我第一版是单遍扫：见到 toolCall 就记 id，见到 toolResult 就查。结果**已提交的 fixture 报了 21 条未配对**—— 原因是蒸馏器按 shape 首见 + 步长取行，配对的 toolCall 可能排在结果之后。两遍扫描后归零。
+
+我还顺手加了一条 `durationMs` 断言，结果 21 条又红了：查数据才发现 `durationMs` **根本不是原始消息的字段**，是服务产出时才有的。**把服务输出的不变量搬到原始载荷上断言，是越界。** 删掉了。
+
+**六之二、它抓到了我一个错误结论 —— 而错的方式正是本文件反复警告的那种**
+
+我在 `mutate-fixture.py` 里写了一段注释，论证 `shapeOf()` 那条结构检查**无法被独立观测**，所以刻意不给它配变异：
+
+> every field shapeOf() compares is one the ten NEEDED predicates read too, so any re-synthesis that changes one necessarily flips a flag as well
+
+codex 给了一个我没试过的反例：**把一个 assistant 的 `thinking` / `text` 两个 part 调换顺序**，`shapeOf().parts` 变了，而那十个谓词全部用 `parts.includes(...)`，一个都不翻。
+
+实测确认它是对的 —— `synth()` 里让数组 `reverse()`，`--check` 报 **134 条 `is not shape-stable`，零条 coverage 翻转**。这条检查是完全可隔离的，我的理由是错的。
+
+> **写下「这不可能被观测」的那一刻，就该去构造那个观测，而不是去推理它。** 我推理了，没试，于是把一条能失败的检查记成了注释。
+
+改法：补上这条变异，并把注释换成真实经过（怎么试的、试出什么），包括下面这条同源的坑。
+
+**六之三、demo 树做得「更有说服力」反而更糟**
+
+给会话发现做 demo 时，我第一版把会话目录放到四层中间层之下，想的是「更深就更有说服力」。结果是那条「退回朴素递归」的变异**存活了**：服务自己有 `MAX_WALK_DEPTH = 4`，四层之下朴素递归也被挡住，于是变异是因为**第二个无关的原因**失败的，而它报的正是同一条消息 —— 断言照样通过。
+
+降到**一层**中间目录（`unused/sessions/fixture-agent/...`）之后，递归找得到、服务找不到，变异立刻被干净捕获。
+
+> 一个更深的反例，会同时骗过变异和断言。**先证明反例能穿过守卫，再把它当成反例。**
+
+**六之四、两条变异「存活」其实是我把名字写错了**
+
+补完变异跑第一遍，14 条里报 2 条存活。逐条跑了一遍才发现**两条都让守卫红了**，红得很具体：synth 那条红 6 条断言，配对那条红 1 条并直接点名 `on a "unpaired" tree`。是我把期望字符串写成了 `an`（`unpaired` 以元音开头，但守卫那句是 `a`）。改名字之前先确认了红的是哪几条 —— 否则「把期望名改对」和「为了让变异通过而改断言」在输出上长得一模一样。
+
+**最终**：`tests/verify-fixture.mjs` 18 → **21 条断言**，`tests/mutate-fixture.py` 10 → **14 条变异，14/14 全捕 0 存活**。守卫总数仍是 53。
+
+评审同时确认了两件否定结论：**没有 CRLF 回归**（改动过的 harness 在 LF checkout 上 5/5 与 25/25），**10 条变异本身没有空变异**。
+
 **五、codex 第二轮评审：环境阻塞，不是结论**
 
-第二轮 codex 评审（2026-10-13 00:25）返回的是一份「无法完成评审」。stderr 显示只读沙箱内 `CreateProcess` 一律被拒（`Failed to create unified exec process: helper_unknown_error: setup refresh had errors`），PowerShell 与 cmd 都在执行前失败——**它连一个文件都没读到**，token 用量 26,933。
+**（已被下一节取代：那一轮没有结果，下一节那一轮真跑了并拿到了结果）** 第二轮 codex 评审（2026-10-13 00:25）返回的是一份「无法完成评审」。stderr 显示只读沙箱内 `CreateProcess` 一律被拒（`Failed to create unified exec process: helper_unknown_error: setup refresh had errors`），PowerShell 与 cmd 都在执行前失败——**它连一个文件都没读到**，token 用量 26,933。
 
 同一个 Windows 沙箱错误在本次之前已经出现过一次（记在已删除的 stage 1 规格文档 L216，那份文档已随上一轮评审一起删除），第二次复现。**不得把这次失败读成「评审通过」或「评审有意见」。**
 

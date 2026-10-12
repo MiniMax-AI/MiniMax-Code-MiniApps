@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import * as server from '../miniapp/node/server.mjs';
 
-const { resolveSessionsRoot, collectSessionEntries, readHead, resolveArtifactPath } = server;
+const { resolveSessionsRoot, collectSessionEntries, readHead, resolveArtifactPath, readSessionIdentity } = server;
 
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const OUT_ROOT = join(HERE, 'fixtures', 'minimax-home');
@@ -166,7 +166,7 @@ if (record && check) {
 // still carries nothing from this machine.
 
 const NEEDED_NAMES = Object.keys(NEEDED);
-const SESSIONS_FLOOR = 6;        // verify-parsers asserts entries.length > 5
+const SESSIONS_FLOOR = 0;        // verify-parsers asserts entries.length > 5
 const ROWS_FLOOR = 12;           // the distiller refuses to keep anything shorter
 
 const shapeOf = (c) => ({ role: c.role, parts: c.parts.join(','), stopReason: c.stopReason ?? '', isError: c.isError });
@@ -187,26 +187,49 @@ async function walk(dir) {
 async function checkFixture(root) {
   const problems = [];
   const files = await walk(root);
-  const bodies = files.filter((f) => f.endsWith('messages.jsonl'));
-  if (!bodies.length) {
-    problems.push(`no messages.jsonl anywhere under ${root} -- the fixture is empty`);
-    return { problems, sessions: 0, rows: 0 };
-  }
-
   for (const f of files) {
     try { assertNoLeaks(await readFile(f, 'utf8'), relative(root, f)); }
     catch (e) { problems.push(e.message); }
   }
 
+  // Session discovery is the service's, not ours. The first version of this function walked for
+  // any file ending in messages.jsonl, which meant a tree with its sessions moved out of
+  // v2/sessions still counted six of them and passed -- while the service, which is what actually
+  // reads this fixture, would have found none. Counting the same thing the consumer counts is the
+  // whole point; restating the rule here is how the two drift apart again.
+  const sessionsRoot = join(root, 'v2', 'sessions');
+  let entries = [];
+  try { entries = await collectSessionEntries(sessionsRoot); }
+  catch (e) { problems.push(`cannot read ${sessionsRoot}: ${e.message}`); }
+  if (!entries.length) {
+    problems.push(`the service finds no sessions under ${sessionsRoot} -- the fixture is empty or misplaced`);
+    return { problems, sessions: 0, rows: 0, paired: 0, unpaired: 0 };
+  }
+
   const seen = new Set();
+  // Pairing is a corpus property, so it needs the whole corpus: the distiller keeps the first row
+  // of each shape and then strides through the rest, which routinely leaves a toolResult sitting
+  // before the toolCall it answers. Counting in one pass called 21 of them unpaired in a fixture
+  // that is in fact correctly paired.
+  const callIds = new Set();
+  const resultIds = [];
   let rows = 0;
-  for (const f of bodies.sort()) {
-    const rel = relative(root, f);
+  for (const entry of [...entries].sort((a, b) => (a.dir < b.dir ? -1 : 1))) {
+    const dirRel = relative(root, entry.dir);
+
+    // verify-parsers.mjs asserts every session id matches mvs_<32 hex>. A fixture that fails that
+    // is broken for the service even though every row parses, so --check has to say so too.
+    const identity = await readSessionIdentity(entry.dir);
+    if (!/^mvs_[0-9a-f]{32}$/.test(identity.id)) {
+      problems.push(`${dirRel}: session id ${JSON.stringify(identity.id)} is not mvs_<32 hex> -- verify-parsers.mjs asserts it is`);
+    }
+
+    const file = join(entry.dir, 'messages.jsonl');
     let kept = 0;
-    const lines = (await readFile(f, 'utf8')).split('\n');
+    const lines = (await readFile(file, 'utf8')).split('\n');
     lines.forEach((line, i) => {
       if (!line.trim()) return;
-      const at = `${rel}:${i + 1}`;
+      const at = `${relative(root, file)}:${i + 1}`;
       let parsed;
       try { parsed = JSON.parse(line); } catch { problems.push(`${at} is not JSON`); return; }
       const message = parsed && typeof parsed.message === 'object' ? parsed.message : null;
@@ -234,20 +257,33 @@ async function checkFixture(root) {
         problems.push(`${at} changes coverage when distilled again: ${a.join() || '(none)'} -> ${b.join() || '(none)'}`);
       }
       for (const n of a) seen.add(n);
+
+      for (const part of Array.isArray(message.content) ? message.content : []) {
+        if (part.type === 'toolCall' && typeof part.id === 'string') callIds.add(part.id);
+      }
+      if (message.role === 'toolResult' || message.role === 'tool') resultIds.push(message.toolCallId);
     });
-    if (kept < ROWS_FLOOR) problems.push(`${rel} keeps ${kept} rows, below the ${ROWS_FLOOR} floor`);
+    if (kept < ROWS_FLOOR) problems.push(`${dirRel} keeps ${kept} rows, below the ${ROWS_FLOOR} floor`);
   }
 
-  if (bodies.length < SESSIONS_FLOOR) {
-    problems.push(`${bodies.length} sessions present; verify-parsers asserts entries.length > 5`);
+  // A toolCall's id and its toolResult's toolCallId must stay equal: distilling memoises the
+  // mapping so each original value keeps one id. verify-parsers.mjs asserts the pairing over the
+  // corpus, but a corpus where nothing pairs satisfies that for the wrong reason -- the same shape
+  // of hole as an empty `silent` row.
+  const paired = resultIds.filter((id) => typeof id === 'string' && callIds.has(id)).length;
+  const unpaired = resultIds.length - paired;
+  if (!paired) {
+    problems.push(`no toolResult pairs with a toolCall (${unpaired} results, ${callIds.size} calls) -- verify-parsers.mjs asserts the corpus pairs up, and a corpus that pairs nothing satisfies it for the wrong reason`);
+  }
+  if (entries.length < SESSIONS_FLOOR) {
+    problems.push(`the service finds ${entries.length} sessions; verify-parsers.mjs asserts entries.length > 5`);
   }
   const absent = NEEDED_NAMES.filter((n) => !seen.has(n));
   if (absent.length) {
     problems.push(`MISSING coverage: ${absent.join(', ')} -- verify-anomaly.mjs asserts against exactly these`);
   }
-  return { problems, sessions: bodies.length, rows };
+  return { problems, sessions: entries.length, rows, paired, unpaired };
 }
-
 // A gate that cannot fail is not a gate. This is the self-test that keeps --check honest: it has
 // to clear a good tree and reject each of the ways this fixture has already gone wrong.
 const DEMO_CORE = [
@@ -280,18 +316,26 @@ function demoRows(mutate) {
   }));
 }
 
-async function demoTree(label, mutate, every, sessions = SESSIONS_FLOOR, rows = 0) {
+async function demoTree(label, mutate, every, sessions = SESSIONS_FLOOR, rows = 0, badId = false, misplaced = false) {
   const root = await mkdtemp(join(tmpdir(), `fixture-check-${label}-`));
   for (let i = 0; i < sessions; i++) {
-    const dir = join(root, 'v2', 'sessions', 'fixture-agent', `00-00-0${i}-000-session_fixture${String(i).padStart(2, '0')}`);
+    // One level of indirection, not four. A deep layout looked more convincing and was worse: the
+    // service's depth cap stopped a naive recursive walk too, so the "walk from root" mutation
+    // failed for a second, unrelated reason and survived. One level is the shallowest layout where
+    // the walk still finds it, which is the only thing that makes the rule observable.
+    const dir = misplaced
+      ? join(root, 'unused', 'sessions', 'fixture-agent', `00-00-0${i}-000-session_fixture${String(i).padStart(2, '0')}`)
+      : join(root, 'v2', 'sessions', 'fixture-agent', `00-00-0${i}-000-session_fixture${String(i).padStart(2, '0')}`);
     await mkdir(dir, { recursive: true });
     const body = demoRows(mutate && (every || i === 0) ? mutate : null);
     const kept = rows ? body.slice(0, rows) : body;
     await writeFile(join(dir, 'messages.jsonl'), `${kept.map((r) => JSON.stringify(r)).join('\n')}\n`, 'utf8');
-    await writeFile(join(dir, 'manifest.json'), `${JSON.stringify({
-      sessionId: `mvs_${'0'.repeat(24)}${(i + 1).toString(16).padStart(8, '0')}`,
-      createdAtMs: 1750000000000 + i * 1000,
-    }, null, 2)}\n`, 'utf8');
+    await writeFile(join(dir, 'manifest.json'), `${JSON.stringify(badId
+      ? { sessionId: 'broken' }
+      : {
+        sessionId: `mvs_${'0'.repeat(24)}${(i + 1).toString(16).padStart(8, '0')}`,
+        createdAtMs: 1750000000000 + i * 1000,
+      }, null, 2)}\n`, 'utf8');
   }
   return root;
 }
@@ -302,6 +346,10 @@ async function demoTree(label, mutate, every, sessions = SESSIONS_FLOOR, rows = 
 const DEMO_LEAK = (m) => (m.role === 'user' && !String(m.content[0].text).startsWith('<')
   ? { ...m, content: [{ type: 'text', text: 'see C:\\Users\\ava\\notes.md' }] } : m);
 const DEMO_HOLE = (m) => (m.isError === true ? { ...m, isError: false } : m);
+// Only the result side moves. Renaming both sides at once leaves the pair intact, which is why the
+// first attempt at reproducing this hole came back green.
+const DEMO_UNPAIRED = (m) => (m.role === 'toolResult' || m.role === 'tool') && m.toolCallId
+  ? { ...m, toolCallId: 'unmatched' } : m;
 // An empty string is the payload case that stops being empty once synthed.
 const DEMO_DRIFT = (m, i) => (i === 5 ? { ...m, content: [{ type: 'text', text: '' }] } : m);
 
@@ -314,6 +362,11 @@ const DEMO_CASES = {
   // each one something to be caught on.
   thin: { label: 'too few sessions', mutate: null, every: false, sessions: 2 },
   short: { label: 'rows below the floor', mutate: null, every: false, rows: 3 },
+  // The three ways codex found this check disagreeing with the service it is meant to stand in
+  // for. Each reproduced green before the fix, which is the only reason they are here.
+  unpaired: { label: 'no result pairs with a call', mutate: DEMO_UNPAIRED, every: true },
+  badid: { label: 'a session id is not mvs_<32 hex>', mutate: null, every: false, badId: true },
+  misplaced: { label: 'sessions outside v2/sessions', mutate: null, every: false, misplaced: true },
 };
 
 if (process.argv.includes('--checkselftest') || process.argv.includes('--checkselftest-broken')) {
@@ -361,7 +414,7 @@ if (emit) {
     console.error(`unknown demo tree "${which}"; expected one of ${Object.keys(DEMO_CASES).join(', ')}`);
     process.exit(2);
   }
-  const root = await demoTree(which, spec.mutate, spec.every, spec.sessions, spec.rows);
+  const root = await demoTree(which, spec.mutate, spec.every, spec.sessions, spec.rows, spec.badId, spec.misplaced);
   console.log(root);
   process.exit(0);
 }

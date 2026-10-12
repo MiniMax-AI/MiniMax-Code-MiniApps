@@ -38,7 +38,8 @@
  * is deliberately not in it, with the reason written there.
  */
 import { spawnSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -95,12 +96,26 @@ assert('the committed fixture passes --check', checked.code === 0,
 // the branch that judges the committed tree.
 assert('--check announces itself rather than falling through to the distiller',
   /\nfixture check OK/.test(checked.out) && !/dry run/.test(checked.out));
-assert('--check reports coverage for all ten shapes the guards assert on',
-  /userPrompt, injected, toolCall, thinking, reply, narration, toolResult, compaction, silent, toolError/.test(checked.out));
-// Never the literal 8: SESSIONS_WANTED is a knob. The floor is the number verify-parsers depends on.
-const sessionCount = Number(/sessions\s+:\s+(\d+)/.exec(checked.out)?.[1] ?? '0');
-assert('--check counted the sessions without reaching for the live store', sessionCount >= 6,
-  `parsed ${sessionCount} from: ${checked.out.split('\n').slice(0, 2).join(' | ')}`);
+// This used to read "--check reports coverage for all ten shapes" and match the fixed NEEDED_NAMES
+// list the script prints. It is boilerplate: the list is a constant, so the assertion would still
+// pass with coverage enforcement deleted. It is gone rather than reworded. The real coverage claim
+// is the `hole` case below, which drives the branch and reads the exit code.
+assert('--check finds no coverage problem in the committed fixture',
+  !/MISSING coverage/.test(checked.out), checked.out.split('\n').filter((l) => /MISSING/.test(l)).join(' | '));
+
+// "It never reads the live store" used to be asserted by counting a number in the output, which
+// proves nothing -- any run prints a count. Asserted properly instead: run it with the home
+// directory pointed at an empty temp dir, so ~/.minimax cannot be there. If the branch ever grows
+// a read of the real store, this is the assertion that notices.
+const noHome = mkdtempSync(join(tmpdir(), 'fixture-nohome-'));
+const orphaned = spawnSync(process.execPath, [script, '--check'], {
+  encoding: 'utf8', cwd: HERE, maxBuffer: 16 * 1024 * 1024,
+  env: { ...process.env, HOME: noHome, USERPROFILE: noHome, HOMEDRIVE: '', HOMEPATH: '' },
+});
+rmSync(noHome, { recursive: true, force: true });
+assert('--check passes with no ~/.minimax anywhere, so it really is independent of the live store',
+  orphaned.status === 0 && /\nfixture check OK/.test(orphaned.stdout ?? ''),
+  `exit ${orphaned.status}: ${`${orphaned.stdout ?? ''}${orphaned.stderr ?? ''}`.split('\n').slice(-1)[0] ?? ''}`);
 
 /* ---------- 3. the --check branch itself must report the verdict ---------- */
 
@@ -137,8 +152,13 @@ for (const [which, named] of [
   ['leak', /fixture leak/],
   ['hole', /MISSING coverage/],
   ['drift', /changes coverage when distilled again/],
-  ['thin', /verify-parsers asserts entries\.length > 5/],
+  ['thin', /verify-parsers\.mjs asserts entries\.length > 5/],
   ['short', /below the 12 floor/],
+  // The three codex found this check disagreeing with the service it stands in for. Each was
+  // green before the fix, which is the only reason any of them are here.
+  ['unpaired', /no toolResult pairs with a toolCall/],
+  ['badid', /is not mvs_<32 hex>/],
+  ['misplaced', /the service finds no sessions under/],
 ]) {
   const t = checkTree(which);
   assert(`--check exits 1 on a "${which}" tree and names the problem`, t.code === 1 && named.test(t.out),
