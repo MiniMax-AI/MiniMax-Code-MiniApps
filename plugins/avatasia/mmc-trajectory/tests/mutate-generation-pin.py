@@ -27,7 +27,7 @@ PROBE = os.path.join(HERE, "verify-generation-pin.mjs")
 # cannot drift apart: two hand-copied copies of the same markup is how a mutation ends up testing a
 # shape the file no longer has.
 TAIL = (
-    '        <div class="filter-row-tail">\n'
+    '        <div class="filter-row-tail" id="filter-row-tail">\n'
     '          <div class="field" id="generation-field" hidden>\n'
     '            <label class="field-label sr-only" for="generation-select">上下文代</label>\n'
     '            <select id="generation-select" aria-describedby="generation-hint"></select>\n'
