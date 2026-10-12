@@ -196,7 +196,7 @@ MUTATIONS = [
     # A drag that can go past what the pinned strips leave buries them; one that goes below the
     # panel head hides the handle that collapses the panel again.
     ("the docked height is clamped at neither end",
-     "          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), available);\n",
+     "          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), panelMax);\n",
      "          dockH = Math.round(dockH);\n",
      "the docked height is clamped at both ends"),
 
@@ -269,15 +269,37 @@ MUTATIONS = [
      "the two pinned states are named by one rule, so the labels cannot disagree"),
 
     ("the expanded height stops being measured",
-     "          var available = Math.max(240, Math.round(window.innerHeight - band - overview));\n",
-     "          var available = 480;\n",
+     "          var panelMax = Math.max(\n            INSPECTOR_MIN_DOCK_H,\n"
+     "            Math.round(window.innerHeight - band - overview - ledgerReserve)\n          );\n",
+     "          var panelMax = 480;\n",
      "the expanded height is measured from the window and the pinned offsets"),
+
+    # ---- the ledger keeps its share of the window ----
+
+    # The defect as shipped: the expanded panel ran the full height below the pinned strips and
+    # not one ledger row was left on screen.
+    ("the expanded panel covers the ledger again",
+     "            Math.round(window.innerHeight - band - overview - ledgerReserve)\n",
+     "            Math.round(window.innerHeight - band - overview)\n",
+     "the ledger share is subtracted from the height the panel may take"),
+
+    ("the ledger keeps a tenth of the window instead of a quarter",
+     "var INSPECTOR_LEDGER_SHARE = 0.25;",
+     "var INSPECTOR_LEDGER_SHARE = 0.1;",
+     "the ledger keeps a quarter of the window"),
+
+    # A drag that can exceed the expanded cap reaches the same defect by another door: the reader
+    # pulls the top edge up and the rows disappear, with no state having changed.
+    ("a drag can grow past the expanded ceiling",
+     "          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), panelMax);\n",
+     "          dockH = Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H);\n",
+     "expanding and dragging are bounded by the same ceiling"),
 
     # 100vh is not the reader's height in a host iframe; client-check bans it everywhere else and
     # this is where it would have been most tempting.
     ("the expanded height is written in viewport units",
-     "dom.inspectorPanel.style.setProperty('--inspector-full-h', available + 'px');",
-     "dom.inspectorPanel.style.setProperty('--inspector-full-h', available + 'vh');",
+     "dom.inspectorPanel.style.setProperty('--inspector-full-h', panelMax + 'px');",
+     "dom.inspectorPanel.style.setProperty('--inspector-full-h', panelMax + 'vh');",
      "the expanded height is written in pixels"),
 
     # ---- the scroll decision ----

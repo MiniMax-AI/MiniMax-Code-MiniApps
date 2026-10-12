@@ -318,13 +318,39 @@ assert('the two pinned states are named by one rule, so the labels cannot disagr
 // 100vh is not the reader's height, which is the reason client-check bans it.
 //
 // Asserted as the expression, not as the presence of the four names. Reading --sticky-band-h and
-// window.innerHeight somewhere in the function is satisfied by a version that computes `available`
+// window.innerHeight somewhere in the function is satisfied by a version that computes the ceiling
 // from neither of them — the mutation replaces the arithmetic with a constant and leaves all four
 // tokens in place, and a token-presence check calls that a pass.
 assert('the expanded height is measured from the window and the pinned offsets',
   !!applyFn
-  && /var\s+available\s*=\s*Math\.max\(\s*\d+\s*,\s*Math\.round\(\s*window\.innerHeight\s*-\s*band\s*-\s*overview\s*\)\s*\)/.test(applyFn)
+  && /var\s+panelMax\s*=\s*Math\.max\(\s*\w+\s*,\s*Math\.round\(\s*window\.innerHeight\s*-\s*band\s*-\s*overview\s*-\s*ledgerReserve\s*\)\s*\)/.test(applyFn)
   && /--sticky-band-h/.test(applyFn) && /--sticky-overview-h/.test(applyFn));
+
+/* ---------- the ledger keeps its share of the window ----------
+ *
+ * chli's words: 「全高把轮次的表格给覆盖了，建议表格至少留整个页面高度的1/4」. Measured before
+ * the fix at 900 CSS px wide: the expanded panel ran from y=135 to the bottom of a 900px window,
+ * and not one ledger row was visible.
+ *
+ * One rule, two ceilings. The expanded cap and the drag clamp are the two ways the panel can grow,
+ * so bounding only one of them leaves the other able to do exactly what the rule forbids — and two
+ * copies of the number is how they would drift apart. The guard therefore checks that both read the
+ * same variable rather than that both are bounded.
+ */
+assert('the ledger keeps a quarter of the window',
+  !!applyFn && /window\.innerHeight\s*\*\s*INSPECTOR_LEDGER_SHARE/.test(applyFn)
+  && /var\s+INSPECTOR_LEDGER_SHARE\s*=\s*0\.25/.test(jsHtml));
+assert('the ledger share is subtracted from the height the panel may take',
+  !!applyFn && /-\s*ledgerReserve\s*\)\s*\)/.test(applyFn));
+// Both ceilings, one number. A drag that could exceed the expanded cap is a panel that covers the
+// rows — the defect — reached by a different door.
+assert('expanding and dragging are bounded by the same ceiling',
+  !!applyFn && /Math\.min\(\s*Math\.max\(\s*Math\.round\(dockH\)\s*,\s*INSPECTOR_MIN_DOCK_H\s*\)\s*,\s*panelMax\s*\)/.test(applyFn)
+  && /setProperty\(\s*'--inspector-full-h'\s*,\s*panelMax\s*\+\s*'px'\s*\)/.test(applyFn));
+// flow has no cap at all, so 「完全显示」 is the end of the document and only the end of it.
+const flowRule = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-full', 'max-height') : null;
+assert('no cap applies while the panel is in the document',
+  flowRule !== null && !/^#inspector-panel\s*\{[^}]*max-height/s.test(narrow || ''));
 assert('the expanded height is written in pixels',
   !!applyFn && /setProperty\(\s*'--inspector-full-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
 
@@ -421,7 +447,7 @@ assert('the docked height is written in pixels, like every other offset here',
 // A drag that could exceed the pinned strips, or shrink past the panel head, hands the reader a
 // panel they cannot use and a handle they cannot see.
 assert('the docked height is clamped at both ends',
-  !!applyFn && /INSPECTOR_MIN_DOCK_H/.test(applyFn) && /\bavailable\b/.test(applyFn)
+  !!applyFn && /INSPECTOR_MIN_DOCK_H/.test(applyFn) && /\bpanelMax\b/.test(applyFn)
   && /Math\.min\(\s*Math\.max\(/.test(applyFn));
 // The reader's dragged height has to outlive the drag. Reading the anchor height instead of
 // accumulating a running total also keeps a long drag from rounding its way off.

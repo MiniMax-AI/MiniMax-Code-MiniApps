@@ -6440,6 +6440,14 @@
       // refused rather than honoured. 160px is the smallest height that still shows the head, the
       // locator and a couple of lines of the summary.
       var INSPECTOR_MIN_DOCK_H = 160;
+      // The ledger keeps at least this share of the window, whatever the inspector is doing. It is
+      // one rule with two uses — the expanded cap and the drag clamp — because chli's complaint
+      // was that expanding the panel covered the rows outright, and a rule that only bounds one of
+      // the two ways the panel can grow is not that rule. Two copies of it would be two rules.
+      var INSPECTOR_LEDGER_SHARE = 0.25;
+      // …but never so little that the rows become a sliver. Below this the reader cannot read a
+      // row, which defeats the point of keeping any.
+      var INSPECTOR_MIN_LEDGER_H = 140;
 
       /**
        * The narrow-screen docking, and the one place that decides where the inspector is.
@@ -6489,24 +6497,36 @@
         }
 
         // Measured, not derived from vh. This page lives in a host iframe where 100vh is not the
-        // reader's viewport, which is the reason client-check bans it — so the two heights the
-        // panel uses are read off the window and the offsets syncStickyOffsets() just measured,
-        // and written here. They are read back by resetInspectorDock() through the computed
-        // padding, so there is still one number rather than three that could disagree.
+        // reader's viewport, which is the reason client-check bans it — so the height the panel may
+        // take is read off the window and the offsets syncStickyOffsets() just measured, and
+        // written here.
+        //
+        // panelMax is what is left after the pinned strips *and* the ledger's guaranteed quarter.
+        // It is the ceiling for both pinned states, so the expanded panel stops short of covering
+        // the rows and a drag cannot grow past it either. Nothing caps the panel in flow: at the
+        // end of the document it is an ordinary block in the page, and that is the one place where
+        // 「完全显示」 means uncapped.
         if (dom.inspectorPanel) {
           var root = getComputedStyle(document.documentElement);
           var band = parseFloat(root.getPropertyValue('--sticky-band-h')) || 0;
           var overview = parseFloat(root.getPropertyValue('--sticky-overview-h')) || 0;
-          var available = Math.max(240, Math.round(window.innerHeight - band - overview));
-          dom.inspectorPanel.style.setProperty('--inspector-full-h', available + 'px');
-          // A quarter of the measured window, or the height the reader dragged to — clamped to what
-          // the pinned strips leave, so dragging up can never bury them or push the panel's own
-          // handle off screen.
+          var ledgerReserve = Math.max(
+            INSPECTOR_MIN_LEDGER_H,
+            Math.round(window.innerHeight * INSPECTOR_LEDGER_SHARE)
+          );
+          var panelMax = Math.max(
+            INSPECTOR_MIN_DOCK_H,
+            Math.round(window.innerHeight - band - overview - ledgerReserve)
+          );
+          dom.inspectorPanel.style.setProperty('--inspector-full-h', panelMax + 'px');
+          // A quarter of the measured window, or the height the reader dragged to — clamped to the
+          // same ceiling the expanded state gets, so the two ways of making the panel taller cannot
+          // disagree about where the top one is.
           var dockH = state.inspectorDockH;
           if (dockH === null || dockH === undefined || !isFinite(dockH)) {
             dockH = Math.round(window.innerHeight / 4);
           }
-          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), available);
+          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), panelMax);
           dom.inspectorPanel.style.setProperty('--inspector-dock-h', dockH + 'px');
         }
 
