@@ -626,11 +626,18 @@ page.state.anomaly.mode = 'single';
 page.state.kinds = pure.KIND_ORDER.filter((k) => k !== 'user');
 page.state.query = 'verify-time-range';
 page.state.overviewSelection = { from: 1, to: 2 };
+// The visible control is state too, and it is cleared by a different line than `state.query` is.
+// The sandbox leaves `dom.searchInput` null everywhere else, which means `if (dom.searchInput)`
+// never fires there — so without this, the box's own clearing had no assertion at all, and the
+// mutation below it is named after the box while actually testing the state field.
+page.dom.searchInput = { value: 'verify-time-range' };
 rangeCleared = 0;
 page.state.anomaly.rules = [];
 page.onAnomalyToggle('toolError');
 check('ticking a rule puts every type back', page.state.kinds, pure.KIND_ORDER);
 check('and drops the search', page.state.query, '');
+check('and empties the search box itself, not just the state behind it',
+  page.dom.searchInput.value, '');
 assert('and drops the overview brush', page.state.overviewSelection === null);
 check('and clears the time range', rangeCleared, 1);
 

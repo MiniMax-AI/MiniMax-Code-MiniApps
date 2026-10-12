@@ -570,9 +570,19 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 
 - Stage 2 自己的「归层」答案是「**不改 L1/L3/L4/L5/L6 任何一层**」。`overviewSelection` 是 **L3→L2 的回写**（R5 声明的那一条），把它嵌进 L2 的 `state.base` 就改了 L3 声明的形状。
 - `state.overviewSelection` 今天有 **5 个写点**且 R5 未闭合（本文件 Stage 3 已记）。收字段不收 setter，只是把 D4 的问题换个位置——而 D4 本轮明确不做。
-- 代价是 `state.kinds`（~15 处）+ `state.query`（~15 处）+ `state.overviewSelection`（8 读 5 写），约 40 个站点，横跨 L3 / L4 / L5，并且要改写 `verify-cross-layer.mjs` 里「`visibleEntries()` 读 `state.overviewSelection`」那条断言。这不是 2-c 的体量，是第四个独立提交。
+- 代价是 `state.kinds` + `state.query` + `state.overviewSelection` 三个字段的**全部读写点**。跨三层，且要改写 `verify-cross-layer.mjs` 的断言。
+
+**这三个数字在初稿里写错了，codex 交叉核对时查出来的**：初稿写「`query` ~15 处、共约 40 个站点」。按当前文件实测 `state.query` 是 **3 写 4 读 = 7 处**，不是 15；三个字段合计约 **35 处**，不是 40。把机械引用说成「三层改动」也是夸大——那 35 处里绝大多数是同一个模式的替换。** blast radius 只说明改动量，不说明严重性。**
+
+真正的顺序问题由 codex 指出并且我同意：**先做 setter / 变更 API（含笔刷写入与 reset），再谈收字段。** 理由是收字段之后 `state.base.kinds` 仍然是 4 个写者，而一个整体替换的 reset 还会**绕过**你后来加的任何子 setter 契约。所以 `state.base` 要放在最后，而且它本身不强制轴互斥、不收敛写者、不同步控件——它只是给相关状态一个命名空间 + 一份默认值定义。
 
 所以这一半**作为显式不做记录在下面的未做清单第 9 行**，而不是悄悄丢掉。要做的话，它的四问要重答一遍，不能沿用 Stage 2 的。
+
+**codex 交叉核对（2026-10-12，`gpt-6.1-sol`，`.probe/stage2c-codex-question.txt` → `stage2c-codex-answer.txt`）查出的真缺陷**：给「reset 忘了搜索框」的那条变异**名字在说搜索框，diff 删的却是 `state.query`**——而守卫的沙箱把 `dom.searchInput` 设成 `null`，于是 `if (dom.searchInput) dom.searchInput.value = ''` 这一行**在任何断言下从未执行过**。即：那两行 DOM 清空是无覆盖的，而一条不覆盖它的断言顶着它的名字。已补 `and empties the search box itself, not just the state behind it` 一条断言 + 一条变异（`mutate-anomaly.py` 73 → 74 条）。**这条是「标签声称覆盖某物而实际不覆盖」，正是本文件反复记的那类缺陷，这次出在我自己写的守卫上。**
+
+**codex 指出我原始论证里三处错**（不改结论，但都该记）：① 我说基础轴三个字段「恰好互斥」——错，`recordVisible()` 是把它们**求交**（任一不满足即不可见），互斥只存在于轴与轴之间；这是「轴间互斥」与「轴内组合」的混淆。② 我说的失败模式后果也错了：漏清一个基础筛选，症状不是「它继续限制异常结果」（异常开着时 `recordVisible()` 根本不看它），而是**取消异常规则后它悄悄复活**。③ `state.query` 的站点数我说成 ~15，实测 7。
+
+**但 codex 也同意结论**，并补了一条我没想到的正面理由：如果**初始化和 reset 都用 `defaultBase()`**，新增一个被正确建模的字段只需要改一处定义，而不必分别改初始状态和 reset 逻辑（今天的 `state.kinds: KIND_ORDER.slice()` 在状态字面量、`resetBaseFilters()`、`clearFilters()`、`onKindToggle()` 里各写了一遍）。这是收字段**确实**买到的东西——但它是「默认值只有一份」，不是「一次赋值」。
 
 **顺带修掉一处 2-a 的漏**：`verify-anomaly-model.mjs` 的文件头写着「`mutate-anomaly-model.py` breaks each rule below」，而那个文件**当时并不存在**。这正是守卫本身要抓的那类缺陷——树里一句没有任何东西在检查的声明。现已补上，16 条变异全捕（其中 5 条初版写错：三条只加了不带 `state.` 前缀的键，那不是「第二个答案」只是一个死键；一条改条件而没删赋值；一条把写者改成自赋值，写者数没变）。
 
@@ -743,5 +753,5 @@ tail     (游标 3)            t2 CLOSED [r4]
 | 6 | **窄屏 sticky 只有代码证据，没有浏览器实测** | 验证 | 环境 | in-app 浏览器视口固定 735×900 且不可 resize。目前窄屏那条路只有源码和网络请求证据。 |
 | 7 | **跨家族验证只有 codex 一条腿** | 验证 | 环境 | claude OAuth 过期、codebuddy 要 `/login`，需 chli 交互式处理。 |
 | 8 | **PR #16 reviews=0** | 流程 | 等 maintainer | `.probe\perf-payload.json`（34 MB 临时产物）已于 2026-10-12 移入回收站，不再列。 |
-| 9 | **`resetBaseFilters()` 变一次赋值（Stage 2-c 的另一半）** | 代码 | 需重答四问 | 要「一次赋值」就得把基础轴收成 `state.base = {kinds, query, selection}` + 工厂，与 2-a 对异常轴的做法对称。本轮显式不做：`overviewSelection` 是 L3→L2 的回写且 R5 有 5 个写点未闭合，收它会改 L3 声明的形状；约 40 个站点横跨 L3/L4/L5，且要改写 `verify-cross-layer.mjs` 的断言。这超出 Stage 2 自己「不改 L3/L4/L5」的归层边界。**要做的话四问要重答，不能沿用 Stage 2 的。** |
+| 9 | **`resetBaseFilters()` 变一次赋值（Stage 2-c 的另一半）** | 代码 | 需重答四问 | 要「一次赋值」就得把基础轴收成 `state.base = {kinds, query, selection}` + 工厂。**已走 codex 交叉核对（2026-10-12），结论：先做 setter / 变更 API，`state.base` 放最后，且它本身不强制轴互斥、不收敛写者、不同步控件。** 收字段确实买到的只有「默认值只有一份」——若初始化与 reset 共用 `defaultBase()`，新增一个字段只改一处定义。代价约 35 个读写点跨三层（**初稿写「~15/~15、约 40」是错的，实测 `query` 3 写 4 读，`query` 不是 15 是 7**）。详见 Stage 2 的 2-c。 |
 

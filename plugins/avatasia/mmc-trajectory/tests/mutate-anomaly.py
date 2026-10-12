@@ -219,6 +219,14 @@ CASES = [
     ("the reset forgets the search box", "and drops the search",
      "        state.query = '';\n        state.overviewSelection = null;",
      "        state.overviewSelection = null;"),
+    # Distinct from the one above, and it was missing until a cross-check read the names rather
+    # than the diffs: that mutation deletes `state.query`, not `dom.searchInput.value`. The box
+    # is cleared by its own line, and with `dom.searchInput` nulled in the sandbox that line had
+    # never executed under any assertion.
+    ("the reset empties the state but leaves the search box showing the old text",
+     "and empties the search box itself, not just the state behind it",
+     "        clearTimeRange();\n        if (dom.searchInput) dom.searchInput.value = '';\n        syncKindButtons();",
+     "        clearTimeRange();\n        syncKindButtons();"),
     ("the reset forgets the overview brush", "and drops the overview brush",
      "        state.overviewSelection = null;\n        clearTimeRange();",
      "        clearTimeRange();"),
