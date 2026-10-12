@@ -411,6 +411,40 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 
 **守卫** `tests/verify-intrinsic-size.mjs`（14 条）+ `tests/mutate-intrinsic-size.py`（9 条变异全捕），连同 `verify-anchor-carry.mjs` / `mutate-anchor-carry.py` 一起构成 D14 + D15 的不变量。
 
+### D16 — 在途打断被当成失败上报 **已归因，未修（与 Stage 4 的 B 绑定，等指示）**
+
+**现象** 浏览器里 `net::ERR_ABORTED` 与「更新失败，正在重试」横幅同时出现。今天做 D15 实测时反复撞上：页面每 2.5 s 轮询一次，会话一有新增就整包重下 41 MB，下一轮轮询把上一轮取消掉。
+
+**代码路径** `index.html:3304-3316`：
+
+```js
+return response.json().catch(function () { return null; })   // 3304-3307
+  .then(function (body) {
+    if (!body || typeof body !== 'object') throw new Error('api');   // 3316
+```
+
+fetch 层的打断是被正确区分的——`index.html:3340` 有 `if (error && error.name === 'AbortError') return;`。但**响应头已到、正文在传输途中被取消**时，`response.json()` 的拒绝落进上面那个 `.catch()`，被折成 `null`，再被 3316 行重新抛成一个**不带 `.code` 的普通 `Error('api')`**。`handleTrajectoryError()`（3372）分不清它和真失败：已有 payload 就 `state.stale = true`（3377）→ `staleBar`；没有 payload 就 `state.hardError`（3388）→ `errorBar`。
+
+**已观察与未分离的部分**：横幅与 `ERR_ABORTED` 我是在浏览器里**看到的**（今天 D15 实测，10-13 时段反复出现）。但「究竟走的是 3340 的早退还是 3305→3316」我没有分离出来——3340 那条会**不**显示横幅，所以看到横幅本身就是「不是 3340」的证据。仍是推断的部分：41 MB 的传输时长是否真是取消发生的时间点。
+
+**代价** D12 设计的在途打断是**特性**，不是故障。它今天每次都产出一条「更新失败」的读者可见信号，而下一轮成功就会把它抹掉——读者看到的是一条假警报，以及一个会被误当成服务不稳定的页面。
+
+**四问**
+
+1. **归层** 不属于 L0–L6 任何一层——它是「一次轮询失败之后该显示什么」的判定，位置在 `applyPayload` 与 `renderBars` 之间。
+2. **关联** 与 D12（分批 + 在途可打断）**从属**。D12 制造打断，本条规定打断不是失败。不改 D12 的任何一个字。
+3. **布局** 不新增 DOM。只改 `#stale-bar` / `#error-bar` 的**触发条件**，横幅本身不动。
+4. **口径** 改变一个读者可见的信号（「更新失败，正在重试」的出现条件），所以先列读点：
+
+| 字段 | 写点 | 读点 |
+| --- | --- | --- |
+| `state.stale` | 3：`applyPayload` 3352（清）、`handleTrajectoryError` 3377（置）、3387（清） | **1**：`renderBars` 6614 `dom.staleBar.hidden = !state.stale` |
+| `state.hardError` | 2：3351（清）、3388（置） | 3：5193（账本内空状态）、6606–6609（错误横幅） |
+
+读点少，所以这一问是**可穷举**的：把「正文读取失败」与「传输被取消」分成两条路，第二条不置 `stale`，`staleBar` 的其余触发条件一个不动。
+
+**为什么没顺手做**：它与 Stage 4 的 A 是同一处代码的两端（都在 `fetchTrajectory` 的续体里），但风险等级差很远。本条 5 行、独立可回退；A 动协议与 `applyPayload` 的替换语义。捆在一起会让这 5 行也被 A 的回退拖累。Stage 4 推荐先 B 后 A 就是为这个。
+
 ---
 
 ## 3. 分层模型
@@ -480,22 +514,96 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 
 三条共用同一个出口，是因为它们回答的是同一个问题：**这次重画，哪些状态要重新判定。**
 
-### Stage 2 — 把异常轴变成 L2 的字段（模型）
+### Stage 2 — 把异常轴变成 L2 的字段（模型）**设计已完成，等指示**
 
-- `anomalyRules + multiAnomaly + anomalyLast` 收成一个 `anomaly: {mode, rules, last}`。
-- `visibleEntries()` 与 `spanPassesFilter()` 合成 R2 的单一入口。
-- `resetBaseFilters()` 变成对 L2 模型的一次赋值，取代逐控件清理（D5）。
-- 删掉 `state.kinds` 上那句「the only filter」的注释（D2），因为它不再成立。
+四项任务不变：收字段、合成 R2 单一入口、`resetBaseFilters()` 变成一次赋值、删掉 D2 那句注释。读点已经数清，四问如下。
 
-### Stage 3 — 声明跨层关系（R6）
+**归层** L2。三个字段今天就已经住在 `state` 里（L2 那一组），本条不改变它们属于哪一层，只改变**它们是不是一个东西**。不改 L1/L3/L4/L5/L6 任何一层，也不动任何 DOM 位置。
 
-- 为「window-bar 在 L5 面板内、写 L3」和「overview 持有写 L2 的控件」各加一条断言：改位置或改归属时，断言先红。
+**关联** 与 L2 其余筛选（`kinds` / `query` / 时间区间 / `overviewSelection`）是**互斥且从属**：异常轴一旦非空，其余四个立刻停止生效（`passesBaseFilter` 整个被跳过）。这个互斥今天靠 `resetBaseFilters()` 一个协调函数维持，而 D5 说得很清楚——协调函数本身就是「没有共享模型」的产物。本条要的是互斥由**模型本身**表达，不由调用顺序表达。
+
+**布局** 不动。异常轴那一行（`重置` / 五个规则按钮 / `全部异常` / `多选`）的位置、层级、控件语言一个字不改。本条是纯模型重构。
+
+**口径** 对外承诺的数字全部不变：规则按钮上的计数、KPI、总览条跨度、窗口条读数，选中语义与粘性偏移也不变。**变的只有 `state` 的形状**——而 `state` 是内部的。所以这一问的答案是「口径不变」，代价是 53 KB 的 `verify-anomaly.mjs` 与 29 KB 的 `mutate-anomaly.py` 会因为**形状断言**（而不是行为断言）大面积变红，那些必须逐条判断是守行为还是守形状：守行为的原样保留，守形状的改写到新形状上。**一条都不删。**
+
+三项改动的读点与写点（`file:line` 为 `miniapp/client/index.html`）：
+
+| 字段 | 写点 | 读点 |
+| --- | --- | --- |
+| `anomalyRules` | 4：`clearFilters()` 5830、`onAnomalyMultiChange()` 6831、`onAnomalyRuleClick()` 6812、`onAnomalyReset()` 6850 | 13 处，含 `anomalyCounts()` 4590、`visibleEntries()` 4650、`hasNonDefaultFilter()` 4904、`spanPassesFilter()` 4926、`applyFilterScope()` 5720、`syncAnomalyMode()` 6887 与异常提示文案 6906 |
+| `multiAnomaly` | 3：5832、6828、6855 | 6746（重置按钮按下态）、6893（复选框回写） |
+| `anomalyLast` | 7：5831、6791、6799、6802、6807、6835、6851 | 6830–6833（多选关掉时的幸存规则） |
+
+**R2 单一入口成立，证据在数据形状上**：`flattenTurns()`（2804–2811）产出的元素就是 `{ turn, record }`，所以 `visibleEntries()` 走 `anomalyContext(entry)`（4545，取 `entry.turn`）与 `spanPassesFilter()` 走 `turnById.get(record.turnId)`（4919）拿到的是**同一个 turn 对象**。两个入口现在重复的是同一段分支（先判 `anomalyRules.length > 0`，是则 `passesAnomaly`，否则 `passesBaseFilter`），可以合成 `recordVisible(record, turn)` 一个入口，两边各传自己的 turn 来源。
+
+**D2 那句注释有两处，不是一处**：2273（「The type chips are the only filter. Which record kinds are visible is one array — state.kinds…」）与 3075（「The type chips are the only filter, so this array is the only definition of what is on screen…」）。两处都删，理由相同：异常轴存在时它们不成立。
+
+**风险**：这是本轮唯一一处会同时改动 13 个读点、4 个写点和两个重守卫覆盖范围的改动。分三次独立提交（收字段 → R2 入口 → reset 赋值 + 删注释），每配自己的变异，任意一步可单独回退。不与 Stage 3 或 Stage 4 合并。
+
+### ~~Stage 3 — 声明跨层关系（R6）~~ **已完成**
+
+为「window-bar 在 L5 面板内、写 L3」和「overview 持有写 L2 的控件」各加一条断言。守的是**配对**，不是整洁：DOM 父节点说这个控件被呈现成哪一层，赋值说它写哪一层，改任何一半而不声明，配对就不成立。
+
+`tests/verify-cross-layer.mjs`（12 条）+ `tests/mutate-cross-layer.py`（6 条变异全捕）：
+
+| 断言 | 守的是 |
+| --- | --- |
+| `#window-bar` 是 `section.panel[aria-labelledby="ledger-heading"]` 的后代 | 声明 1 的**位置**半：它被呈现成 L5 |
+| `updateWindowBar()` 不写任何 `state.*` | 声明 1 的**写**半：它只写模块级 `ledgerWindow` |
+| `setLedgerProgress()` 同样不写任何 `state.*` | 第二个写者（D8 允许两个写者，但必须同层） |
+| 两个写者都不碰 `state.overviewSelection` | 反向：一个呈现在 L5 的控件不许回写 L2 |
+| `#overview` 是自己的 section 而不是 panel | 布局本身已经说明它不属于账本 |
+| `onOverviewPointerUp` 写 `state.overviewSelection` | 声明 2 的**写**半：总览条真的持有那个控件 |
+| `visibleEntries()` 读 `state.overviewSelection` | 声明 2 的**读**半：那个字段确实是 L2 字段，不是装饰 |
+
+六条变异分别对应六条断言，守卫必须**按名字**报出来：把 window-bar 挪出面板、给它加一个 `state.` 赋值、给进度写者加一个、把 `state.overviewSelection` 塞进窗口条、让刷选落点不再写该字段、让 L2 入口不再读它。第 6 条的锚点重锚过一次——`var selection = state.overviewSelection;` 在 `renderOverviewSelection()` 里也有一处，锚在 `visibleEntries()` 的函数头上，否则命中的是 L3 的那个读者。
+
+**这条守卫刻意不覆盖 R5，而 R5 没有闭合。** `state.overviewSelection` 今天有 **5 个写点**：`clearOverviewSelection()`（4126）、`setActualDuration()`（4139）、`onOverviewPointerMove()`（4337，拖拽中）、`onOverviewPointerUp()`（4442，落点）、`resetBaseFilters()`（6871）。R5 要求 L3→L2 的区间回写只经一个 setter，而它一个都没有。断言「已经收敛」是一条过不了的守卫，断言「当前是 5 个」是一条恒真的守卫——两条都是错的写法，所以这条缺口留在这里而不是被断言盖住。收它属于 D4，见 Stage 4。
+
+### Stage 4 — 增量协议 `?since=`（L0 / 协议）**设计已完成，等指示**
+
+未做清单第 2 项。先把调研结论摆出来，因为它们改变了这项的收益估计。
+
+**payload 里 41 MB 的构成**（`buildTrajectoryPayload`，`server.mjs:1359-1395`，只有三个顶层键）：
+
+| 键 | 量级 | 能不能只发尾部 |
+| --- | --- | --- |
+| `session` | 固定，几百字节 | 不需要增量 |
+| `stats` | 小，但**必须全量重算** | **不能**——每个计数器都是遍历全部行累加出来的（`server.mjs:921-1340`） |
+| `turns` | **41 MB 全部在这里**，逐记录 | 能——`record.index` 稠密、1 起、只增不改 |
+
+**所以 `?since=` 省的是传输与客户端 `JSON.parse`，不是服务端 CPU。** 服务端仍然要全量扫（读+解析实测 306 ms）、全量构造 payload，缓存里仍然躺着那 41 MB 的 `body`（命中时直接从缓存发出，`server.mjs:1980-1990`）。任何「41 MB → 几 MB，所以轮询快了几倍」的说法都要按这个前提读。
+
+**游标选 `record.index`**：1 起稠密、只增不改（追加只延长 `records`），而且它已经是 `/raw` 的公开键（`?index=`，`server.mjs:2166-2169`）。`record.relativeMs` 不行（按全局最小时间戳重算），`record.id` 不行（不透明且会重复），`generation` 不行（是轮转标签不是位置）。payload 里**没有** `seq` 字段；`index.html:3273` 的 `seq` 是客户端本地的 `refreshSeq`，从不上行。
+
+**四问**
+
+1. **归层** L0（数据）+ L1（会话 / 上下文代绑定）。改的是协议与 `state.payload` 这个容器的填充方式，不碰 L2 以上的任何层。
+2. **关联** 与 D10（按代缓存 / ETag / 304）是**分工不是叠加**：无新增时仍走 304（这是最常见的稳态，且最省）；一旦有新增，必然 200，此时 D10 的整包缓存不再省到网络，只省到磁盘读。D10 不被取代。
+3. **布局** 不新增任何 DOM、任何控件、任何层。
+4. **口径** **这是本轮唯一一处真口径变更**：客户端对 payload 的处理从**整体替换**变成**追加合并**（`applyPayload`，`index.html:3345-3370`：`state.payload = payload` + `state.flat = flattenTurns(payload.turns)` + `turnById` 全量重建）。按第 4 问，读点先列全：
+
+| 读的是什么 | 读点 | 增量下要不要改 |
+| --- | --- | --- |
+| `payload.turns` | **写侧只有 `applyPayload` 一处**（3353 `flattenTurns`、3358 `turnById`）；读侧 4 处：`signatureOf` 2822–2833、`scopedStats` 3698、`liveTurn` 4523、`applyPayload` 3358 | 写侧改合并；`signatureOf` 与 `liveTurn` 读的是 `state.payload.turns`，合并后语义不变 |
+| `payload.stats` | 6 处：`signatureOf` 2820/2828/2832、`scopedStats` 3628、`kpiStats` 3724、`renderKpi` 3807、`updateWindowBar` 5410、`statsAll` 6601 | **全部不变**——`stats` 每次都全量来 |
+| `payload.session` | 8 处：`signatureOf` 2827、`sessionStartedAt` 2960、`renderOverview` 3753、`renderKpi` 3808、`rawCacheKey` 6215、`buildHandoffMarkdown` 6446、`renderGeneration` 6552、`renderFooter` 6618 | 不变 |
+
+好消息：**写侧只有一处**。坏消息：那一处是所有派生状态的源头，改成合并之后 `signatureOf` 必须仍能识别「有新增」（它比较 `turns.length` 与 records 计数，合并后这两个数照样在涨），`turnById` 要增量建而不是全量重建。
+
+**取舍（需要指示，我不替这条决定）**
+
+- **A 做完整 `?since=`**：server 加参数与尾部分支、client `applyPayload` 改合并、协议文档、专属守卫与变异。收益：传输 41 MB → 几百 KB。风险：触及替换语义，且 41 MB 的 `stats` 之外没有可省的 CPU。
+- **B 只修 D16**：约 5 行，让页面不再把在途打断误报成「更新失败」。41 MB 照旧。
+- **C 先 B 后 A**，各自独立提交。
+
+**推荐 C。** 理由：D16 是今天浏览器实测里反复撞到的那一个，代价只有 5 行，收益确定；A 动的是协议与 `applyPayload` 的替换语义，风险等级完全不同，捆在一起会让 B 也被 A 的回退拖累。A 的真实收益还要实测（41 MB → 几百 KB 到底救回多少秒），而 B 的收益不需要量。
 
 ---
 
 ## 6. 本轮明确不做
 
-- **不再做 Stage 1 的结构搬动。** D1 已撤回为「设计如此」，`STAGE1-SPEC.md` 已标不采纳。剩下的 Stage 2（异常轴建模）与 Stage 3（声明跨层关系）等明确指示。
+- **不再做 Stage 1 的结构搬动。** D1 已撤回为「设计如此」，`STAGE1-SPEC.md` 已标不采纳。Stage 2（异常轴建模）与 Stage 4（增量协议）已出设计，等明确指示。
 - 没有把 L4 改成跟随全部筛选。那是一次口径变更，按第 4 节的第 4 问处理：先列全部读点，再逐个加断言，最后才改。
 - 没有为了「层要连续」去动任何控件的位置。D9 修的是**重算责任**，不是布局。
 
@@ -510,10 +618,11 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 | 1 | ~~A 的墙钟时间没缩短。~~ **已做** | 代码 | — | D15 逐组推导 `contain-intrinsic-size` 已实现并实测：同一会话 A/B **3,437 ms → 817 ms（4.2×）**，文档高误差 **+0.07%**，`sized=159/159`，深度重建与顶部同档。D12 当初挡下它的那个疑问（跳过子树里的行有没有布局盒）已有实测答案：`anchorOffset()` 在 cv 之下成立，D14 的锚点没有被破坏。详见 D15。 |
 | 1b | ~~D14 — 点行时滚动位置永久丢失~~ **已修** | 代码 | — | 「显示全部」下点任意一行，若此刻有轮询建行在途，`buildStep()` 的 `if (build.token !== ledgerBuildToken) return;` 会连 `restoreRowAnchor()` 一起跳过，位置被 `clear(ledger)` 造成的塌缩永久丢弃。已用「滚动意图跨建行转交」修掉，并顺带把 token 自增移到 `clear(ledger)` 之上（否则四条提前返回什么都不退休）。浏览器实测通过；D15 之下复测仍成立。详见 D14。 |
 | 1c | **一次未解释的位置跳变**（待复现） | 验证 | 无 | 见 D15 实测：某一趟近底部的重建 `postY` 比 `preY` 高了 77,226 px，屏上的行没有变，随后被后续重建带下去；同一深度之后未能复现。**机制未验证，不写成缺陷，也不写成没问题。** |
-| 2 | **增量协议 `?since=`**（只发新增尾部） | 代码 + 协议 | 需先在本文定口径 | 性能上严格支配 D10 的按代缓存：1,400 ms → ~10 ms 量级，且不需要 116 MB 常驻。**但它主要省网络与 JSON 解析，对 DOM + layout 成本帮助有限**，不要指望它顺带解决 A。**2026-10-12 实测补一条**：`GET /api/trajectory` 对本会话返回 **40,955,447 字节**（`/api/sessions` 4,477 字节）；无变化时走 304，**会话每多一条记录就整包重下**。这正是本轮实测中页面反复掉进「更新失败，正在重试」的直接原因——41 MB 的传输已经不是一个可以先放着不管的量级。 |
+| 2 | **增量协议 `?since=`**（只发新增尾部） | 代码 + 协议 | **设计已完成，等指示** | 调研结论改变了收益估计：payload 只有 `session` / `stats` / `turns` 三个键，41 MB 全在 `turns`；而 **`stats` 是累加器，必须全量重算**——所以 `?since=` 省的是**传输与客户端 `JSON.parse`，不是服务端 CPU**，缓存里仍然躺着 41 MB。游标选 `record.index`（稠密、只增不改、已是 `/raw` 的公开键）。这是本轮唯一一处真口径变更（`applyPayload` 从整体替换变追加合并），读点已列全——**写侧只有 1 处**，读侧 `stats` 6 / `turns` 5 / `session` 8。详见 Stage 4。 |
 | 3 | ~~给「显示全部」封顶~~ **已否决，不做** | 口径 | — | **chli 2026-10-12 定：不封顶。** 理由是「无限大无非是极端情况下假死，碰到的几率很小」。补充一条事实（已告知，不影响决定）：18,924 行不是极端情况，就是本会话现在的规模，3,956 ms 就是在它上面测出来的。封顶还会把「读完整个会话」从点一次变成点约 69 次「向上加载更早的 200 条」，而那个控件今天只在 `hiddenAbove > 0` 时出现，等于新增一条路。此路不再讨论。 |
-| 4 | **Stage 2 — 异常轴建模**（见 5.3） | 代码 | 等明确指示 | `anomalyRules/multiAnomaly/anomalyLast` 收成 `anomaly: {mode, rules, last}`；`visibleEntries()` 与 `spanPassesFilter()` 合成 R2 的单一入口；`resetBaseFilters()` 变成对 L2 模型的一次赋值（解 D5）；删掉 `state.kinds` 上那句已经不成立的「the only filter」注释（解 D2）。 |
-| 5 | **Stage 3 — 声明跨层关系（R6）** | 代码 | 无 | 小活：为「window-bar 在 L5 面板内、写 L3」和「overview 持有写 L2 的控件」各加一条断言，改位置或改归属时断言先红。 |
+| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **设计已完成，等指示** | 四问已答，读点已数清：`anomalyRules` 4 写 13 读、`multiAnomaly` 3 写 2 读、`anomalyLast` 7 写 1 读。R2 单一入口**成立**——`flattenTurns()` 产出 `{turn, record}`，所以两个入口拿到的本来就是同一个 turn 对象。对外口径全部不变，但 `state` 形状变，`verify-anomaly.mjs`（53 KB）与 `mutate-anomaly.py`（29 KB）里**守形状**的断言要逐条改写、守行为的原样保留，**一条都不删**。建议分三次独立提交。详见 Stage 2。 |
+| 2b | **D16 — 在途打断被当成失败上报** | 代码 | 与 #2 的 B 绑定，等指示 | `index.html:3304-3316` 把「正文传输被取消」折成 `Error('api')`，与真失败无法区分，于是每次 D12 设计的在途打断都产出一条「更新失败，正在重试」。约 5 行，读点只有 4 处且可穷举。详见 D16。 |
+| 5 | ~~Stage 3 — 声明跨层关系（R6）~~ **已做** | 代码 | — | `verify-cross-layer.mjs`（12 条）+ `mutate-cross-layer.py`（6 条变异全捕），为「window-bar 在 L5 内写 L3」与「overview 持有写 L2 的控件」各加一组断言。调研中撞见 **R5 未闭合**：`state.overviewSelection` 有 5 个写点，没有单一 setter——这条守卫刻意不覆盖它（断言「已收敛」过不了，断言「当前 5 个」恒真），收它属于 D4。详见 Stage 3。 |
 | 6 | **窄屏 sticky 只有代码证据，没有浏览器实测** | 验证 | 环境 | in-app 浏览器视口固定 735×900 且不可 resize。目前窄屏那条路只有源码和网络请求证据。 |
 | 7 | **跨家族验证只有 codex 一条腿** | 验证 | 环境 | claude OAuth 过期、codebuddy 要 `/login`，需 chli 交互式处理。 |
 | 8 | **PR #16 reviews=0** | 流程 | 等 maintainer | `.probe\perf-payload.json`（34 MB 临时产物）已于 2026-10-12 移入回收站，不再列。 |
