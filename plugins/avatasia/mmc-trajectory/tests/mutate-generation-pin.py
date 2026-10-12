@@ -161,7 +161,11 @@ MUTATIONS = [
      [("        window.addEventListener('resize', scheduleStickyOffsets);\n",
        "        window.addEventListener('resize', scheduleStickyOffsets);\n"
        "        window.addEventListener('scroll', scheduleReadingDown, { passive: true });\n")],
-     "the page registers no scroll listener at all, so nothing can react to scroll direction"),
+     # The rule this mutation was written against said "no scroll listener at all". That wording
+     # is gone: the inspector docks on a narrow screen and needs one. What the mutation actually
+     # does is register a *dangling* handler — the withdrawal deleted the function and left the
+     # call site behind — so the rule that catches it is the one that names it.
+     "every scroll listener names a handler that exists, so a withdrawal cannot leave one dangling"),
 
     # The same defect without the ceremony: a rule on the tail itself.
     ("the picker is made invisible by a rule of its own",

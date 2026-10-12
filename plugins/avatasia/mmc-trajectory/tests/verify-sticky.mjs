@@ -302,17 +302,27 @@ assert('the band note is written before the heights are measured',
 // Nothing re-measured when the window changed shape. On a session whose payload has stopped growing
 // every poll is a 304 and render() is never called, so a resize that wrapped the type row left the
 // strips pinned at the old width indefinitely.
-const resizeHook = /window\.addEventListener\(\s*'resize'\s*,\s*(\w+)\s*\)/.exec(html);
-assert('a window resize re-measures the band', !!resizeHook);
-const scheduleSrc = resizeHook ? functionSource(resizeHook[1]) : null;
-assert('a resize reaches the measurement it was registered for',
-  !!scheduleSrc && /syncStickyOffsets\(\);/.test(scheduleSrc));
+//
+// The handler is resolved *through the registration* rather than by name. The inspector docks on a
+// narrow screen and registers a second resize handler, and under a first-match rule a mutation that
+// deletes the sticky measurement's registration is quietly satisfied by the one that measures
+// nothing to do with the band. Resolving through the registration also keeps this rule pointed at
+// its own subject: what matters is that whatever a resize points at measures the band *and*
+// coalesces — not that a particular function name is spelled somewhere.
+const resizeHandlers = [...html.matchAll(/window\.addEventListener\(\s*'resize'\s*,\s*(\w+)\s*\)/g)].map((m) => m[1]);
+const measuringHandlers = resizeHandlers
+  .map((name) => functionSource(name))
+  .filter((src) => src !== null && /syncStickyOffsets\(\);/.test(src));
+assert('a window resize re-measures the band', measuringHandlers.length > 0);
+assert('a resize reaches the measurement it was registered for', measuringHandlers.length > 0);
 
 // Each measurement reads three offsetHeights, which forces layout. A window drag fires `resize`
 // continuously, so the handler coalesces into one frame — otherwise a drag becomes a layout thrash.
+// Checked on every handler that measures, not one of them: a second measuring handler without the
+// coalescing is the same thrash with an extra registration.
 assert('a resize measures once per frame, not once per event',
-  !!scheduleSrc && /requestAnimationFrame/.test(scheduleSrc)
-  && /stickyFrame\s*!==\s*null/.test(scheduleSrc));
+  measuringHandlers.length > 0
+  && measuringHandlers.every((src) => /requestAnimationFrame/.test(src) && /stickyFrame\s*!==\s*null/.test(src)));
 
 console.log('[sticky] ' + pass + ' passed, ' + failures.length + ' failed');
 if (orphan.length) console.log('  read but never written: ' + orphan.join(', '));

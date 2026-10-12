@@ -359,11 +359,39 @@ const bodyClassSelectors = allSelectors().filter((s) => /^body\.[A-Za-z_-]/.test
 assert('nothing inside the band is shown or hidden by a state class on <body>',
   !bodyClassSelectors.some((s) => BAND_SELECTORS.some((b) => s.includes(b))));
 
-// The scroll listener is the other half: without a reader of scroll direction there is nothing left
-// to drive such a class. The page is back to having none, which is also what D12 and D15 want — both
-// of those are about a document that rebuilds itself while the reader moves through it.
-assert('the page registers no scroll listener at all, so nothing can react to scroll direction',
-  (html.match(/addEventListener\(\s*'scroll'/g) || []).length === 0);
+// The scroll listener was the other half: without a reader of scroll direction there was nothing
+// left to drive such a class.
+//
+// This rule was "the page registers no scroll listener at all". The inspector docks on a narrow
+// screen and needs to know when its panel leaves the viewport, so that ban is now narrower — and
+// the narrowing is the part that matters, because the old wording would have been satisfiable by
+// deleting the feature and re-broken by re-introducing D19.
+//
+// What is actually forbidden is the *shape* of D19: a scroll listener whose handler writes a class
+// on <body>, which is what let a signal from outside the band decide what a control inside it did.
+// Two assertions replace the one:
+//
+//   1. no scroll handler writes to <body> — the defect itself;
+//   2. every scroll handler names a function that exists — because the D19 mutation re-adds the
+//      *call* `addEventListener('scroll', scheduleReadingDown, …)` without the function, since the
+//      withdrawal deleted the body. A rule that only checked (1) would let that mutation survive,
+//      and a surviving mutation means the guard is what is wrong.
+//
+// The inspector's own handler passes both: it measures its panel and writes classes on its panel
+// and on main.columns. D12 and D15's actual concern — a document that rebuilds itself while the
+// reader moves through it — is untouched by any of this, since nothing here re-renders on scroll.
+const scrollHandlers = [...html.matchAll(/addEventListener\(\s*'scroll'\s*,\s*([A-Za-z0-9_$]+)/g)].map((m) => m[1]);
+const declaredFunctions = new Set([...html.matchAll(/function\s+([A-Za-z0-9_$]+)\s*\(/g)].map((m) => m[1]));
+const bodyClassWrites = /document\.body\.classList|document\.body\.className|body\.classList|body\.className\s*=/;
+
+assert('no scroll listener writes a class on <body>, so scroll cannot decide what the band shows',
+  scrollHandlers.length === 0 || !scrollHandlers.some((name) => {
+    const body = html.slice(html.indexOf('function ' + name + '('));
+    const end = body.indexOf('\n      }');
+    return bodyClassWrites.test(end > 0 ? body.slice(0, end) : body);
+  }));
+assert('every scroll listener names a handler that exists, so a withdrawal cannot leave one dangling',
+  scrollHandlers.every((name) => declaredFunctions.has(name)));
 
 // Belt and braces on the shown state itself: a rule on the tail that dims or hides it is the same
 // defect wearing a plainer hat.

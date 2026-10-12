@@ -1427,6 +1427,12 @@
          digits — the phone behaviour. */
       :root {
         --traj-index-col: 72px;
+        /* Half the viewport, and a fraction rather than a pixel count: 半高 has to mean half on
+           a short window and half on a tall one. Declared here and never written from script, so
+           the stylesheet is the only place the number is chosen. The fully expanded height is the
+           opposite case and is written by applyInspectorDock(), because it depends on the pinned
+           offsets above it and 100vh is not the height the reader has in a host iframe. */
+        --inspector-dock-h: 50vh;
       }
 
       .row-list {
@@ -2069,6 +2075,48 @@
           padding-left: 12px;
           padding-right: 12px;
         }
+
+        /* ---------------- the inspector, three states on a narrow screen ---------------- */
+
+        /* Two columns become one at this width, so the inspector stops being beside the ledger
+           and becomes below it — which means it is not on screen and stays that way until the
+           reader scrolls to the very end of an 89,000px document. It docks instead.
+
+           Sticky needs travel, and this page turns out to have it without help: measured 7,300px
+           of room inside main.columns with no padding from here, because the virtualised ledger
+           makes the height above the panel an estimate and leaves the real box taller than the
+           scroll position believes. An earlier version of this rule added 50vh of padding to
+           create travel that was never needed — and that padding was the one thing standing
+           between the reader and the footer at the end of the document, which is the state
+           「滚到最底部恢复正常」 is about. So there is no travel class and no scroll
+           compensation. */
+
+        #inspector-panel {
+          position: sticky;
+          bottom: 0;
+          z-index: 5;
+        }
+
+        /* Half height. The content scrolls inside the panel instead of the panel growing: a
+           growing panel pushes its own handle out of the viewport, which is the one thing a
+           docked panel cannot do. */
+        #inspector-panel.is-inspector-docked {
+          max-height: var(--inspector-dock-h);
+          overflow-y: auto;
+          border-top: 1px solid var(--mcode-border);
+          background: var(--mcode-surface);
+        }
+
+        /* Fully expanded: the cap comes off and the panel takes the viewport the pinned strips
+           above it are not using. Both numbers are measured by syncStickyOffsets() and written by
+           applyInspectorDock() rather than computed from 100vh: this page runs inside a host
+           iframe, where 100vh is not the height the reader can see, which is why client-check
+           bans it and why every other offset here is measured. The vh fallbacks are what shows
+           before the first measurement, not what ships. */
+        #inspector-panel.is-inspector-full {
+          max-height: var(--inspector-full-h, 70vh);
+          overflow-y: auto;
+        }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -2345,10 +2393,15 @@
           <div class="ledger-body" id="ledger"></div>
         </section>
 
-        <section class="panel" aria-labelledby="inspector-heading">
+        <section class="panel" id="inspector-panel" aria-labelledby="inspector-heading">
           <div class="panel-head">
             <h2 class="section-title" id="inspector-heading">检视</h2>
             <span class="panel-head-meta" id="inspector-meta"></span>
+            <button type="button" class="section-toggle" id="inspector-toggle" aria-expanded="true" aria-controls="panels" aria-label="完全展开检视" title="完全展开检视" hidden>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6.5 8 10.5 12 6.5" />
+              </svg>
+            </button>
           </div>
           <p class="inspector-locator" id="inspector-locator">尚未选择记录</p>
           <div class="tablist" id="tablist" role="tablist" aria-label="记录详情视图"></div>
@@ -3226,6 +3279,11 @@
         // up room. Folding them hands the height back to the ledger.
         filtersCollapsed: false,
         kpiCollapsed: false,
+        // Where the inspector is, on a narrow screen only. 'flow' is its ordinary place in the
+        // document, below the ledger; 'docked' is pinned to the bottom at half height; 'full' is
+        // pinned and uncapped. Wide screens never leave 'flow' — in two columns the panel is
+        // beside the ledger, so there is nothing to dock away from.
+        inspectorDock: 'flow',
         // Duration button. Off = every record gets an equal slice on the overview and
         // recorded timing is ignored; on = recorded start/duration with idle gaps
         // compressed away. Persisted, because it is a reading preference, not data.
@@ -3374,6 +3432,8 @@
         dom.copyBtn = document.getElementById('copy-btn');
         dom.handoffBtn = document.getElementById('handoff-btn');
         dom.inspectorStatus = document.getElementById('inspector-status');
+        dom.inspectorPanel = document.getElementById('inspector-panel');
+        dom.inspectorToggle = document.getElementById('inspector-toggle');
         dom.footerTruncated = document.getElementById('footer-truncated');
         dom.footerBinding = document.getElementById('footer-binding');
       }
@@ -6314,6 +6374,131 @@
 
       /* ---------------- inspector ---------------- */
 
+      var INSPECTOR_DOCK_QUERY = '(max-width: 767px)';
+
+      /**
+       * The narrow-screen docking, and the one place that decides where the inspector is.
+       *
+       * Three states, and the boundary between them is measured rather than inferred:
+       *
+       *   flow   — the panel is in the document below the ledger. Where it starts, and where
+       *            「滚到最底部」 brings it back.
+       *   docked — pinned to the bottom of the viewport at half height.
+       *   full   — pinned, uncapped, because the reader asked with the handle.
+       *
+       * The measurement differs by state, because one number cannot serve both directions:
+       *
+       *   - To LEAVE flow, the panel's layout position is read with offsetTop, not
+       *     getBoundingClientRect(). The rect is where sticky has placed the panel, and at that
+       *     moment sticky is not engaged, so the rect answers 「读者滚到哪了」 rather than 「面板在
+       *     哪」. Measured here: the panel is 6,000px up the document and the rect tracks scrollY
+       *     exactly, so a rect-based rule here fires on scroll position, not on the panel leaving.
+       *   - To LEAVE docked, the rect is right and the layout position is wrong. Docked, the
+       *     panel's offsetHeight is the cap, so offsetTop + offsetHeight understates where the
+       *     panel ends and the panel would drop out of docking before it came back into view.
+       *     The rect cannot understate: a pinned panel's bottom IS the viewport bottom, and the
+       *     instant it is anything else sticky has released it and the panel is on screen again.
+       *
+       * Nothing here reads a scroll *direction* and nothing writes a class on <body>. That is the
+       * shape D19 was withdrawn for — a scroll signal from outside the layer deciding what
+       * something inside it does. This decides the presentation of one panel, from that panel's
+       * own geometry, and touches nothing else on the page.
+       */
+      function applyInspectorDock() {
+        var docked = state.inspectorDock !== 'flow';
+        var narrow = window.matchMedia(INSPECTOR_DOCK_QUERY).matches;
+
+        // Measured, not derived from vh. This page lives in a host iframe where 100vh is not the
+        // reader's viewport, which is the reason client-check bans it — so the two heights the
+        // panel uses are read off the window and the offsets syncStickyOffsets() just measured,
+        // and written here. They are read back by resetInspectorDock() through the computed
+        // padding, so there is still one number rather than three that could disagree.
+        if (dom.inspectorPanel) {
+          var root = getComputedStyle(document.documentElement);
+          var band = parseFloat(root.getPropertyValue('--sticky-band-h')) || 0;
+          var overview = parseFloat(root.getPropertyValue('--sticky-overview-h')) || 0;
+          var available = Math.max(240, Math.round(window.innerHeight - band - overview));
+          dom.inspectorPanel.style.setProperty('--inspector-full-h', available + 'px');
+        }
+
+        if (dom.inspectorPanel) {
+          dom.inspectorPanel.classList.toggle('is-inspector-docked', state.inspectorDock === 'docked');
+          dom.inspectorPanel.classList.toggle('is-inspector-full', state.inspectorDock === 'full');
+        }
+
+        var toggle = dom.inspectorToggle;
+        if (!toggle) return;
+        // The handle only appears once there is a pinned height to change. In flow the panel is
+        // already on screen and there is nothing for it to decide.
+        toggle.hidden = !narrow || !docked;
+        var expanded = state.inspectorDock === 'full';
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        var label = expanded ? '收起到半高' : '完全展开检视';
+        toggle.setAttribute('aria-label', label);
+        toggle.setAttribute('title', label);
+      }
+
+      function dockInspector() {
+        if (state.inspectorDock !== 'flow') return;
+        state.inspectorDock = 'docked';
+        applyInspectorDock();
+      }
+
+      function resetInspectorDock() {
+        state.inspectorDock = 'flow';
+        applyInspectorDock();
+      }
+
+      function updateInspectorDock() {
+        var panel = dom.inspectorPanel;
+        if (!panel) return;
+        if (!window.matchMedia(INSPECTOR_DOCK_QUERY).matches) {
+          if (state.inspectorDock !== 'flow') resetInspectorDock();
+          return;
+        }
+        // Whether the panel has left the viewport is read off *sticky's own behaviour*, not off a
+        // position computed here. Three positions have to be told apart and only one of them is
+        // pinned:
+        //
+        //   above   — the panel is gone upward; sticky pins its bottom to the viewport bottom
+        //   inside  — the panel is on screen; nothing is pinned and the panel bottom is wherever
+        //             the layout puts it
+        //   below   — the panel has not been reached yet; its bottom is below the viewport
+        //
+        // One reading separates all three, and the tolerance is what does the work: a pinned
+        // panel's bottom *equals* the viewport bottom, while "inside" and "below" are both
+        // strictly away from it. So `rect.bottom >= innerHeight` — the loose form — reads true
+        // for both "above" and "below" and docks a panel the reader has not scrolled to yet,
+        // caught by the probe as 「它缩在眼前」. Tightening to a 1px band around the edge is the
+        // whole fix; no second measurement is needed.
+        //
+        // Two ways of adding one were tried first and are recorded so they are not re-added:
+        //
+        //   - main.columns as the second reference, on the theory that a never-sticky container's
+        //     bottom sits above the viewport while the panel is pinned. False: the panel is a
+        //     child of main.columns, so pinning the panel pins the container's bottom edge too.
+        //     The conjunction was then false for every state and the panel never docked at all.
+        //   - `panel.offsetTop + panel.offsetHeight < scrollY`. The ledger is virtualised, so the
+        //     height above the panel is an estimate: measured offsetTop was 926,767 where the real
+        //     layout position is about 934,100, a 7,300px gap, and the rule fired on scroll
+        //     position instead of on the panel leaving.
+        var pr = panel.getBoundingClientRect();
+        var pinned = Math.abs(pr.bottom - window.innerHeight) <= 1;
+        if (pinned) dockInspector();
+        else if (state.inspectorDock !== 'flow') resetInspectorDock();
+      }
+
+      // rAF-throttled: the ledger re-batches as it scrolls, so this can fire many times a frame
+      // and none of the intermediate answers change what the last one says.
+      var inspectorDockFrame = 0;
+      function scheduleInspectorDock() {
+        if (inspectorDockFrame) return;
+        inspectorDockFrame = window.requestAnimationFrame(function () {
+          inspectorDockFrame = 0;
+          updateInspectorDock();
+        });
+      }
+
       var TABS = [
         { id: 'summary', label: '摘要', available: function () { return true; } },
         { id: 'raw', label: '原文', available: function () { return true; } },
@@ -7335,6 +7520,24 @@
         // type row or the 异常 row left the pinned strips sitting at the old width — until new
         // records happened to arrive, which on a finished session is never.
         window.addEventListener('resize', scheduleStickyOffsets);
+
+        // The inspector's own scroll and resize listeners, separate from the sticky offsets above
+        // because they answer a different question: not how tall the pinned strips are, but
+        // whether this panel has left the viewport. Passive because nothing here scrolls the page
+        // from inside the handler — the one scrollBy lives in resetInspectorDock(), which runs
+        // from this same callback and is the only place a read of scroll becomes a write of it.
+        window.addEventListener('scroll', scheduleInspectorDock, { passive: true });
+        window.addEventListener('resize', scheduleInspectorDock);
+
+        dom.inspectorToggle.addEventListener('click', function () {
+          // Two states to toggle between while docked; flow has no handle, so this never runs
+          // there. Decided here rather than by negating the state so that 「半高 ↔ 完全展开」 is
+          // stated once — the alternative, a boolean somewhere, is a fourth state nobody can name.
+          state.inspectorDock = state.inspectorDock === 'full' ? 'docked' : 'full';
+          applyInspectorDock();
+        });
+
+        applyInspectorDock();
 
         dom.followBtn.addEventListener('click', function () {
           setFollow(!state.followLatest);

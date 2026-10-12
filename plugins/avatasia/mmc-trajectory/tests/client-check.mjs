@@ -305,13 +305,30 @@ function liftTurnFns() {
   return true;
 }
 
+// The viewport checks read the code, not the prose around it. Stripping comments first is not
+// leniency — it is the difference between a rule about CSS and a rule about text: a comment that
+// explains *why* 100vh is banned used to fail this check, so documenting the reason was the one
+// way guaranteed to break it, and the incentive was to leave the reason unwritten.
+//
+// Line comments are removed by whole line rather than by scanning for `//`, because `//` inside
+// a string literal is a URL in this page and a naive scan would delete the rest of the line with
+// it — turning a pass into a fail for an unrelated rule.
+const codeOnly = html
+  .replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
 const checks = [
   ['no remote http(s) resource', !/<(script|link|img|iframe)[^>]+(src|href)=["']https?:/i.test(html)],
   ['no @import', !/@import/.test(html)],
   ['no emoji', !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(html)],
-  ['no gradient', !/gradient\(/i.test(html)],
-  ['no backdrop-filter glass', !/backdrop-filter/.test(html)],
-  ['no fixed h-screen', !/h-screen|100vh/.test(html)],
+  ['no gradient', !/gradient\(/i.test(codeOnly)],
+  ['no backdrop-filter glass', !/backdrop-filter/.test(codeOnly)],
+  // 100vh is not the reader's viewport inside a host iframe, which is why every offset on this
+  // page is measured instead. Checked against the CSS, and the fallback side of that: the dock
+  // heights are allowed to be vh only as fallbacks, because the shipped values are written from
+  // window.innerHeight by applyInspectorDock().
+  ['no fixed h-screen', !/h-screen|100vh/.test(codeOnly)],
   ['has --mcode-* tokens', (html.match(/--mcode-/g) || []).length > 40],
   ['no --dsw-* leakage', !/--dsw-/.test(html)],
   ['no remote font family names', !/JetBrains|Inter['"]?\s*,|@font-face/.test(html)],
