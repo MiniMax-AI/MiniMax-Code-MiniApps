@@ -94,43 +94,75 @@ function varsRead(text) {
  * The body of the media query whose condition matches exactly. Returned as css with the at-rule and
  * its braces stripped, so the same rule readers work on it. Returns null when there is no such
  * query — which is itself a failure the caller has to report, not a reason to skip.
+ *
+ * All of them, not the first: two media queries can carry the same condition in one stylesheet
+ * (1080px already appears twice — the `.columns` collapse and the dock rules), and a lookup that
+ * stops at the first one silently measures the wrong block.
  */
-function mediaBody(condition) {
-  const at = css.indexOf('@media ' + condition);
-  if (at < 0) return null;
-  let i = css.indexOf('{', at);
-  let depth = 0;
-  for (let j = i; j < css.length; j += 1) {
-    if (css[j] === '{') depth += 1;
-    else if (css[j] === '}') {
-      depth -= 1;
-      if (depth === 0) return css.slice(i + 1, j);
+function mediaBodies(condition) {
+  const out = [];
+  const needle = '@media ' + condition;
+  let at = css.indexOf(needle);
+  while (at >= 0) {
+    const i = css.indexOf('{', at);
+    let depth = 0;
+    let end = -1;
+    for (let j = i; j < css.length; j += 1) {
+      if (css[j] === '{') depth += 1;
+      else if (css[j] === '}') {
+        depth -= 1;
+        if (depth === 0) { end = j; break; }
+      }
     }
+    if (end < 0) break;
+    out.push(css.slice(i + 1, end));
+    at = css.indexOf(needle, end);
   }
-  return null;
+  return out;
 }
 
-// The feature is scoped to the narrow media query, and that scope has to sit at or *below* the
-// width at which .columns collapses to one column — not at the same width. Collapsing happens at
-// 1080px; docking at 767px is narrower on purpose, because between those two widths the inspector
-// is a second column and a pinned panel would fight the band it is meant to sit under. The two
-// numbers are read out of the stylesheet rather than repeated here: a docking query *wider* than the
-// collapse is the defect, and asserting equality would have hidden it.
+// The width at which .columns collapses to one column, read out of the stylesheet rather than
+// repeated here: it is the other half of the invariant below, and two places naming it is how the
+// two drift apart in the first place.
 const columnsSingle = /@media\s*\(max-width:\s*(\d+)px\)\s*\{[\s\S]{0,600}?\.columns\s*\{\s*grid-template-columns:\s*(?:minmax\(0,\s*1fr\)|1fr)/.exec(css);
 assert('the narrow layout collapses .columns to one column', !!columnsSingle);
 
 // Which media query actually carries the inspector rules, read rather than assumed: if the rules
 // migrate to a different query the guard below still measures the one that is really in force.
 let dockCondition = null;
+let narrow = null;
 for (const m of css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)/g)) {
-  const body = mediaBody(`(max-width: ${m[1]}px)`);
-  if (body && /#inspector-panel\s*\{/.test(body)) { dockCondition = Number(m[1]); break; }
+  for (const body of mediaBodies(`(max-width: ${m[1]}px)`)) {
+    if (/#inspector-panel\s*\{/.test(body)) { dockCondition = Number(m[1]); narrow = body; break; }
+  }
+  if (dockCondition !== null) break;
 }
 assert('the inspector rules live in a narrow-screen media query', dockCondition !== null);
-assert('docking only starts once .columns is a single column',
-  dockCondition !== null && columnsSingle && dockCondition <= Number(columnsSingle[1]));
+// The feature is scoped to a media query, and the scope has to *be* the single-column breakpoint
+// rather than sit somewhere inside it. Two failure directions, and the narrow one is the one that
+// shipped:
+//
+//   narrower than the collapse (the defect that shipped: 767 against a collapse at 1080) leaves a
+//     band where the panel is below the ledger and nothing pins it — both the cause and the
+//     remedy are missing at once, which reads as "the feature is not here" rather than "it is
+//     broken". It went unnoticed because the whole feature was only ever measured at 420px.
+//   wider than the collapse docks a panel that is still its own column beside the ledger, where a
+//     pinned bottom edge fights the sticky band it is supposed to sit under.
+//
+// Both bounds are asserted separately so the failure names which side drifted. An earlier version
+// of this file asserted only the upper bound, which is exactly why the defect passed review here.
+assert('docking covers every width at which the inspector sits below the ledger',
+  dockCondition !== null && !!columnsSingle && dockCondition >= Number(columnsSingle[1]));
+assert('docking never engages while the inspector is still beside the ledger',
+  dockCondition !== null && !!columnsSingle && dockCondition <= Number(columnsSingle[1]));
 
-const narrow = dockCondition !== null ? mediaBody(`(max-width: ${dockCondition}px)`) : null;
+// The same width is written twice — once in the stylesheet, once in the query the script matches
+// against — and the two drive different halves of the same decision. If they drift, the script
+// keeps deciding the panel should dock at widths where nothing pins it (and vice versa), and every
+// other rule here still passes because each of them only looks at one of the two.
+const queryConst = /var INSPECTOR_DOCK_QUERY = '\(max-width:\s*(\d+)px\)'/.exec(jsHtml);
+assert('the script and the stylesheet dock at the same width',
+  !!queryConst && dockCondition !== null && Number(queryConst[1]) === dockCondition);
 
 const dockRule = narrow ? valueIn(narrow, '#inspector-panel', 'position') : null;
 const panelBottom = narrow ? valueIn(narrow, '#inspector-panel', 'bottom') : null;

@@ -2076,13 +2076,24 @@
           padding-right: 12px;
         }
 
-        /* ---------------- the inspector, three states on a narrow screen ---------------- */
+}
 
-        /* Two columns become one at this width, so the inspector stops being beside the ledger
-           and becomes below it — which means it is not on screen and stays that way until the
-           reader scrolls to the very end of an 89,000px document. It docks instead.
+      /* ---------------- the inspector, three states wherever it sits below the ledger -----------
+       *
+       * This is its own media query and the width is the whole point. `.columns` becomes one
+       * column at 1080px, and from there down the inspector is *below* the ledger instead of
+       * beside it — off screen until the reader scrolls to the very end of a ~90,000px
+       * document. Docking therefore has to cover that entire range.
+       *
+       * It used to start at 767px, which is *narrower* than the single-column breakpoint. That
+       * left a 767–1080px band in which the panel was both buried below the ledger and not
+       * docked to compensate — worse than either state on its own — and it happened to be
+       * the width the in-app browser actually sits at, so the feature read as absent rather
+       * than broken. Above 1080px the inspector is its own column and must not dock at all. */
 
-           Sticky needs travel, and this page turns out to have it without help: measured 7,300px
+      @media (max-width: 1080px) {
+
+        /* Sticky needs travel, and this page turns out to have it without help: measured 7,300px
            of room inside main.columns with no padding from here, because the virtualised ledger
            makes the height above the panel an estimate and leaves the real box taller than the
            scroll position believes. An earlier version of this rule added 50vh of padding to
@@ -6374,7 +6385,7 @@
 
       /* ---------------- inspector ---------------- */
 
-      var INSPECTOR_DOCK_QUERY = '(max-width: 767px)';
+      var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
 
       /**
        * The narrow-screen docking, and the one place that decides where the inspector is.

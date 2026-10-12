@@ -79,13 +79,30 @@ MUTATIONS = [
      "          border-top: 1px solid var(--mcode-border);\n",
      "the docked panel paints a background over the rows under it"),
 
-    # The docking query is allowed to be narrower than the single-column breakpoint (767 vs 1080),
-    # but not wider: in a two-column layout the inspector is its own column and a pinned panel there
-    # fights the sticky band.
+    # The docking query has to *be* the single-column breakpoint, and both directions are defects.
+    # The narrower one is the version that shipped: 767 against a collapse at 1080, leaving a band
+    # where the panel is below the ledger and nothing pins it, which reads as "not here" rather than
+    # "broken" — and it survived review because the feature was only ever measured at 420px.
+    ("docking starts below the width where the columns collapse",
+     "       * than broken. Above 1080px the inspector is its own column and must not dock at all. */\n\n"
+     "      @media (max-width: 1080px) {\n",
+     "       * than broken. Above 1080px the inspector is its own column and must not dock at all. */\n\n"
+     "      @media (max-width: 767px) {\n",
+     "docking covers every width at which the inspector sits below the ledger"),
+
     ("docking starts above the width where the columns collapse",
-     "      @media (max-width: 767px) {\n        .page {\n",
-     "      @media (max-width: 1200px) {\n        .page {\n",
-     "docking only starts once .columns is a single column"),
+     "       * than broken. Above 1080px the inspector is its own column and must not dock at all. */\n\n"
+     "      @media (max-width: 1080px) {\n",
+     "       * than broken. Above 1080px the inspector is its own column and must not dock at all. */\n\n"
+     "      @media (max-width: 1400px) {\n",
+     "docking never engages while the inspector is still beside the ledger"),
+
+    # The two halves have to name the same width. The guard derives the breakpoint from the
+    # stylesheet, so changing only the script's copy is invisible to every rule above.
+    ("the script docks at widths the stylesheet does not",
+     "var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';",
+     "var INSPECTOR_DOCK_QUERY = '(max-width: 767px)';",
+     "the script and the stylesheet dock at the same width"),
 
     # ---- markup: two names in two places ----
 
