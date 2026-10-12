@@ -1221,6 +1221,20 @@
         display: block;
       }
 
+      /* Off-screen turn groups stop being laid out. Gated on a class the ledger owns rather than
+         being unconditional, because the first batch is what the height calibration is measured
+         from: those groups have to be laid out for real before anything can be told apart from a
+         guess. See docs/LAYERS.md D15.
+
+         contain-intrinsic-size is NOT set here. One number for every group is the thing D12
+         measured and rejected — real heights span 11× across a session — so each group carries its
+         own on its inline style, computed from its own (rows, bands) once the three heights have
+         been calibrated off the real DOM. A written-down constant would be a guess at someone
+         else's font and zoom, which is the trade this file keeps refusing. */
+      .ledger-body.is-skipping-offscreen .turn-group {
+        content-visibility: auto;
+      }
+
       .turn-head {
         position: sticky;
         /* Below every band above it, measured. It used to pin at 0 with z-index 2 and simply got
@@ -5267,7 +5281,7 @@
          * Nothing here changes what the window promises to show. 「显示全部」 still means every
          * record; it just stops meaning it inside a single unbroken second and a half.
          */
-        var build = { token: ledgerBuildToken, at: 0, rows: 0 };
+        var build = { token: ledgerBuildToken, at: 0, rows: 0, bands: 0, heights: null };
         var buildTotal = 0;
         for (var b = 0; b < groups.length; b += 1) buildTotal += groups[b].entries.length;
 
@@ -5287,20 +5301,42 @@
             // Every entry that survived the filters becomes a row. There is no second pass
             // that hides anything, so what is on screen is exactly what was selected.
             var rails = railStates(group.entries);
+            var bands = 0;
             for (var j = 0; j < group.entries.length; j += 1) {
               var item = el('li');
               if (group.entries[j].record.kind === 'compaction') {
                 item.className = 'compaction-cell';
                 item.appendChild(buildCompactionBand(group.entries[j]));
+                bands += 1;
               } else {
                 item.appendChild(buildRow(group.entries[j], rails[j]));
               }
               list.appendChild(item);
             }
             section.appendChild(list);
-            ledger.appendChild(section);
             build.rows += group.entries.length;
+            build.bands += bands;
+            // Every group is sized, including the ones built before the calibration existed —
+            // a group left unsized collapses to nothing the moment the class goes on, which is
+            // how a scrollbar ends up shorter than the table it is supposed to describe. On the
+            // first batch build.heights is still null, so this is a no-op and sizeBuiltGroup()
+            // below is what covers those groups.
+            applyIntrinsicSize(section, group.entries.length, bands, build.heights);
+            ledger.appendChild(section);
             built += 1;
+          }
+
+          // Calibrate after the first batch, never before: these groups are the only ones that
+          // have been laid out for real, and reading a height off a skipped subtree would be
+          // reading the prediction back. Read once — after this the class is on, and the same
+          // measurement would be quoting itself.
+          if (!build.heights) {
+            build.heights = calibrateRowHeights(ledger);
+            ledger.classList.add('is-skipping-offscreen');
+            var firstBatch = ledger.querySelectorAll('.turn-group');
+            for (var f = 0; f < firstBatch.length && f < LEDGER_BATCH_GROUPS; f += 1) {
+              sizeBuiltGroup(firstBatch[f]);
+            }
           }
 
           if (build.at < groups.length) {
@@ -5546,6 +5582,67 @@
       /** End a scroll-intent chain without restoring it. One writer, so one place. */
       function forgetScrollAnchor() {
         pendingAnchor = null;
+      }
+
+      /**
+       * The three row heights, read off groups that are really laid out.
+       *
+       * Never a constant. These are CSS pixels in whatever font, zoom and viewport the reader has,
+       * and the numbers move when the window is resized — so they are measured here, from the DOM
+       * the first batch actually built, and thrown away with the build.
+       *
+       * A median rather than a mean: one group with a stray long row must not shift every
+       * prediction on the page.
+       *
+       * @returns {{head: number, row: number, band: number}|null} null if the batch is not there
+       */
+      function calibrateRowHeights(ledgerEl) {
+        var heads = ledgerEl.querySelectorAll('.turn-head');
+        var rows = ledgerEl.querySelectorAll('.row-list > li:not(.compaction-cell)');
+        var bands = ledgerEl.querySelectorAll('li.compaction-cell');
+        if (!heads.length || !rows.length) return null;
+        return {
+          head: medianHeight(heads),
+          row: medianHeight(rows),
+          band: bands.length ? medianHeight(bands) : medianHeight(rows)
+        };
+      }
+
+      /** The middle of a set of element heights, in CSS pixels. 0 for an empty set. */
+      function medianHeight(nodes) {
+        var out = [];
+        for (var i = 0; i < nodes.length; i += 1) {
+          var h = nodes[i].getBoundingClientRect().height;
+          if (h > 0) out.push(h);
+        }
+        if (!out.length) return 0;
+        out.sort(function (a, b) { return a - b; });
+        return out[Math.floor((out.length - 1) / 2)];
+      }
+
+      /**
+       * Put one built group's predicted height on it, from the heights it was actually built with.
+       *
+       * Used for the first batch, which exists before there is anything to predict from. It reads
+       * the group's own DOM rather than its (rows, bands), because that is the same number and
+       * measuring it is the honest way to get it.
+       */
+      function sizeBuiltGroup(section) {
+        if (!section) return;
+        section.style.containIntrinsicSize =
+          Math.round(section.getBoundingClientRect().height) + 'px';
+      }
+
+      /**
+       * A group's predicted height from its own shape: one head, then rows and bands.
+       *
+       * `auto` on the left is what lets the browser prefer the size it has already rendered once
+       * the reader has scrolled past — so scrolling down and back does not accumulate drift.
+       */
+      function applyIntrinsicSize(section, rows, bands, heights) {
+        if (!heights) return;
+        var h = heights.head + rows * heights.row + bands * heights.band;
+        section.style.containIntrinsicSize = 'auto ' + Math.round(h) + 'px';
       }
 
       /**

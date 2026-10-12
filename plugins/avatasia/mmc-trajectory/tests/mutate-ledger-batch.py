@@ -78,10 +78,15 @@ MUTATIONS = [
 
     # The new build is handed the token the previous build was still using, so the two compare
     # equal and the interleaving the token exists to prevent becomes possible.
+    #
+    # Re-anchored 2026-10-12 for D15: the `build` literal gained `bands` and `heights`, so the
+    # anchor that used to end the literal at `rows: 0 }` stopped matching. The rule is the token
+    # being claimed, not the shape of the object carrying it, so the anchor is the first half of
+    # the literal alone — which is stable against fields being added after it.
     ("the new build claims a token that is not yet retired",
      [("        ledgerBuildToken += 1;\n        clear(ledger);\n", "        clear(ledger);\n"),
-      ("        var build = { token: ledgerBuildToken, at: 0, rows: 0 };\n",
-       "        var build = { token: ledgerBuildToken, at: 0, rows: 0 };\n        ledgerBuildToken += 1;\n")],
+      ("at: 0, rows: 0, bands: 0, heights: null };\n",
+       "at: 0, rows: 0, bands: 0, heights: null };\n        ledgerBuildToken += 1;\n")],
      "the exit retires the old build before the new one claims a token"),
 
     # D14: the bump has to be above clear(ledger), not merely somewhere earlier. Put it back
