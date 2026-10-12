@@ -5689,9 +5689,16 @@
           reset.addEventListener('click', function () {
             clearFilters();
           });
-          ledger.appendChild(
-            stateBlock(null, '当前筛选条件下没有命中记录', '共 ' + total + ' 条记录中没有匹配项，可以放宽类型或搜索词。', reset)
-          );
+          // The hint has to name a control the reader can actually use. Under an anomaly rule the
+          // type chips and the search box are inert — syncAnomalyMode() marks them so, precisely
+          // because ticking a rule already reset them — so 「放宽类型或搜索词」 points at two things
+          // that do nothing when pressed, and the reader is left hunting for which of five controls
+          // to undo. 清除筛选 is the one control that always works, and it is already on the button.
+          var anomalyOn = state.anomaly.rules.length > 0;
+          var hint = anomalyOn
+            ? '共 ' + total + ' 条记录里没有符合所选异常规则的记录。类型与搜索在异常模式下不参与筛选，要回到全部记录请点「清除筛选」。'
+            : '共 ' + total + ' 条记录中没有匹配项，可以放宽类型或搜索词。';
+          ledger.appendChild(stateBlock(null, '当前筛选条件下没有命中记录', hint, reset));
           forgetScrollAnchor();
           return;
         }

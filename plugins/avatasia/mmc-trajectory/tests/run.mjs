@@ -36,11 +36,36 @@ const files = readdirSync(HERE)
   .sort();
 
 const results = [];
+
+// Which Python runs the mutate-* controls. Not a constant: `python` does not exist on a stock
+// Linux or macOS image, where the interpreter is `python3`, and the 15 mutation files then all
+// fail at once — 34 guards, 19 pass — for a reason that was invisible, because a spawn that never
+// started has no stdout and no stderr, so the summary line printed an empty tail and named no
+// cause. `PYTHON` is honoured first so a machine with both can say which one it meant.
+const PYTHON_CANDIDATES = [process.env.PYTHON, 'python3', 'python'].filter(Boolean);
+
 for (const name of files) {
   const isPy = name.endsWith('.py');
-  const cmd = isPy
-    ? ['python', join(HERE, name)]
-    : [process.execPath, join(HERE, name), ...(REAL ? ['--real'] : [])];
+  // Probed once, not per file: whichever interpreter answers is the one every .py control uses,
+  // so a partial run can never come from two different interpreters.
+  let cmd;
+  if (isPy) {
+    cmd = null;
+    let lastError = null;
+    for (const candidate of PYTHON_CANDIDATES) {
+      const probe = spawnSync(candidate, ['-c', 'import sys; sys.exit(0)'], { encoding: 'utf8' });
+      if (!probe.error && probe.status === 0) { cmd = [candidate, join(HERE, name)]; break; }
+      lastError = probe.error || new Error(`${candidate} exited ${probe.status}`);
+    }
+    if (!cmd) {
+      const detail = lastError ? ` (${lastError.message})` : '';
+      results.push({ name, ok: false, ms: 0, tail: `no Python interpreter found; tried ${PYTHON_CANDIDATES.join(', ')}${detail}` });
+      console.log(`FAIL  ${name.padEnd(30)}       0ms  ${results.at(-1).tail.slice(0, 70)}`);
+      continue;
+    }
+  } else {
+    cmd = [process.execPath, join(HERE, name), ...(REAL ? ['--real'] : [])];
+  }
   const started = Date.now();
   const r = spawnSync(cmd[0], cmd.slice(1), {
     cwd: HERE,
@@ -49,8 +74,11 @@ for (const name of files) {
     maxBuffer: 64 * 1024 * 1024,
   });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
-  const ok = r.status === 0;
-  results.push({ name, ok, ms: Date.now() - started, tail: out.split('\n').filter(Boolean).slice(-1)[0] ?? '' });
+  // r.error is the one thing stdout/stderr cannot carry: a process that never started produces
+  // neither. Naming it is the difference between "19/34, no idea why" and a readable line.
+  const tail = out.split('\n').filter(Boolean).slice(-1)[0] ?? '';
+  const ok = r.status === 0 && !r.error;
+  results.push({ name, ok, ms: Date.now() - started, tail: r.error ? r.error.message : tail });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(30)} ${String(Date.now() - started).padStart(6)}ms  ${results.at(-1).tail.slice(0, 70)}`);
 }
 

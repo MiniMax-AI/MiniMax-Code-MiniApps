@@ -2386,6 +2386,11 @@ export async function start(context) {
     listCache = { at: 0, entries: null };
     descriptorCache.clear();
     trajectoryCache.clear();
+    // The parsed-row cache is the largest of the three and was the only one not released here, so a
+    // disposed runtime kept a whole session's parsed rows alive — measured at roughly 43MB of heap
+    // still held for a 39MB session after dispose. It has the same clear() as the others and was
+    // simply missed; the line is here so the next cache added cannot repeat the omission quietly.
+    parsedRows.clear();
     clientEntry = null;
     disposal = close(server).then(() => undefined);
     return disposal;
