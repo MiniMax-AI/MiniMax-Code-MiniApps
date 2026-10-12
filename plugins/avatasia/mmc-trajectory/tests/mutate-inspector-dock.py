@@ -62,12 +62,12 @@ MUTATIONS = [
      "fully expanded is capped by a different number than half height"),
 
     ("the half-height number stops being declared",
-     "        --inspector-dock-h: 50vh;\n",
+     "        --inspector-dock-h: 25vh;\n",
      "",
      "the half-height number is declared, not left to fall back"),
 
-    ("half height becomes a fixed pixel count",
-     "        --inspector-dock-h: 50vh;\n",
+    ("the docked height becomes a fixed pixel count",
+     "        --inspector-dock-h: 25vh;\n",
      "        --inspector-dock-h: 420px;\n",
      "half height is a share of the viewport, and the share is written down"),
 
@@ -146,15 +146,109 @@ MUTATIONS = [
      "one exit puts the panel back in the document"),
 
     ("an exit changes the field without repainting",
+     "      function dockInspector() {\n        if (state.inspectorDock !== 'flow') return;\n"
      "        state.inspectorDock = 'docked';\n        applyInspectorDock();\n",
+     "      function dockInspector() {\n        if (state.inspectorDock !== 'flow') return;\n"
      "        state.inspectorDock = 'docked';\n",
      "both exits repaint the panel before returning"),
 
-    # A fourth writer is how a three-state field quietly grows a fourth state.
-    ("a fourth place writes the dock state",
+    # A sixth writer is how a three-state field quietly grows a fourth state. Inserted into wire(),
+    # where nothing else writes the field, so it is a genuinely new writer.
+    ("a sixth place writes the dock state",
      "      function wire() {\n",
      "      function wire() {\n        state.inspectorDock = 'docked';\n",
-     "nothing writes the dock state from outside the three declared exits"),
+     "nothing writes the dock state from outside the five declared exits"),
+
+    # ---- visibility: the panel is the selection ----
+
+    # The empty shell is the bug this removes: a panel with nothing in it, in the way of the
+    # footer, on every page load before the reader has clicked anything.
+    ("the panel stays on the page with nothing selected",
+     "        if (dom.inspectorPanel) dom.inspectorPanel.hidden = !hasSelection;\n",
+     "        if (dom.inspectorPanel) dom.inspectorPanel.hidden = false;\n",
+     "the panel is on the page only while a record is selected"),
+
+    ("a second flag decides whether the panel is visible",
+     "        var hasSelection = state.selectedId !== null && state.selectedId !== undefined;\n",
+     "        var hasSelection = state.selectedId !== null && !state.inspectorVisible;\n"
+     "        state.inspectorVisible = false;\n",
+     "visibility is derived from the selection field, not from a second flag"),
+
+    # Decided in the click handler instead: every other way the selection changes (a poll that
+    # drops the record, the generation picker) then leaves the panel showing what is not selected.
+    ("losing the selection is decided away from the one exit",
+     "        applyInspectorDock();\n\n        if (!entry) {",
+     "        if (!entry) {",
+     "one exit re-decides the panel's visibility"),
+
+    # ---- the docked height ----
+
+    ("the docked height is half the window again",
+     "            dockH = Math.round(window.innerHeight / 4);\n",
+     "            dockH = Math.round(window.innerHeight / 2);\n",
+     "the docked height is a quarter of the measured window by default"),
+
+    ("the docked height is left to the stylesheet",
+     "          dom.inspectorPanel.style.setProperty('--inspector-dock-h', dockH + 'px');\n",
+     "",
+     "the docked height is written in pixels, like every other offset here"),
+
+    # A drag that can go past what the pinned strips leave buries them; one that goes below the
+    # panel head hides the handle that collapses the panel again.
+    ("the docked height is clamped at neither end",
+     "          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), available);\n",
+     "          dockH = Math.round(dockH);\n",
+     "the docked height is clamped at both ends"),
+
+    # A running total rounds its way off over a long drag, and cannot be resumed if a move is lost.
+    ("a drag accumulates instead of measuring from where it started",
+     "        var next = inspectorResizeDrag.anchorH + (inspectorResizeDrag.anchorClientY - event.clientY);\n",
+     "        var next = (state.inspectorDockH || 0) + (inspectorResizeDrag.anchorClientY - event.clientY);\n",
+     "a drag is measured from the height the panel had, not accumulated"),
+
+    # Without the id check a second finger on the panel resizes it while the reader is only
+    # scrolling with the first.
+    ("any pointer can drive the resize",
+     "        if (inspectorResizeDrag.pointerId !== event.pointerId) return;\n        // The panel is pinned to the bottom",
+     "        // The panel is pinned to the bottom",
+     "a drag is driven only by the pointer that started it"),
+
+    # 'full' means no cap, so a drag that leaves the panel there is a grip that does nothing in the
+    # state where it is most visible.
+    ("a drag leaves the panel fully expanded",
+     "        state.inspectorDockH = next;\n        state.inspectorDock = 'docked';\n"
+     "        applyInspectorDock();\n",
+     "        state.inspectorDockH = next;\n        applyInspectorDock();\n",
+     "a drag settles the panel into the docked state rather than leaving it expanded"),
+
+    # ---- the grip ----
+
+    # `touch-action` is what makes this usable at all on the devices a narrow layout is a phone.
+    ("the grip scrolls the page instead of resizing",
+     "          touch-action: none;\n",
+     "          touch-action: pan-y;\n",
+     "a vertical drag on the grip resizes instead of scrolling the page"),
+
+    # Below the panel's top edge rather than on it: the edge is the bottom of this strip, so a grip
+    # centred on it sits half inside the content the reader is trying to scroll.
+    ("the grip sits on the edge that does not move",
+     "          top: -7px;\n",
+     "          top: 7px;\n",
+     "the grip is on the edge that moves when the panel is pinned to the bottom"),
+
+    # A grip that does nothing in flow is worse than no grip: it promises a control that has no
+    # effect.
+    ("the grip is offered even when the panel is not pinned",
+     "        if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked);\n",
+     "        if (dom.inspectorResize) dom.inspectorResize.hidden = false;\n",
+     "the grip is only offered while the panel is pinned"),
+
+    # A drag that ends because the browser took the capture leaves the drag object alive, and every
+    # later pointermove then resizes a panel nobody is touching.
+    ("a cancelled drag is never released",
+     "        dom.inspectorResize.addEventListener('pointercancel', onInspectorResizeUp);\n",
+     "",
+     "the grip listens for pointercancel"),
 
     # ---- the handle contract ----
 

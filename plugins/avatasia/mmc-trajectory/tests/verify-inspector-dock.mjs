@@ -273,8 +273,13 @@ assert('both exits repaint the panel before returning', !!dockFn && !!resetFn
   && dockFn.includes('applyInspectorDock()') && resetFn.includes('applyInspectorDock()'));
 
 // Every write to the field, listed. R5 is "one writer per state field"; the honest form of that for a
-// three-state field is a closed set of the places allowed to write it, so a fourth writer added
+// three-state field is a closed set of the places allowed to write it, so a sixth writer added
 // somewhere unrelated fails here instead of quietly becoming a fourth state.
+//
+// The set grew from three to five, and the count alone would not say whether that was justified —
+// so each writer is named, with the state it is allowed to write. Two of them are new: losing the
+// selection has to take the panel out of the dock, and a drag settles it into the docked state
+// rather than leaving it expanded.
 //
 // `(?!=)` on the assignment is not decoration: without it the `!==` comparisons read as writes too,
 // and the count becomes a statement about how often the field is compared rather than how often it
@@ -282,9 +287,16 @@ assert('both exits repaint the panel before returning', !!dockFn && !!resetFn
 const writes = [...jsHtml.matchAll(/state\.inspectorDock\s*=(?!=)\s*([^;\n]+)/g)].map((m) => m[1].trim());
 assert('the field names all three states, not a boolean',
   ['flow', 'docked', 'full'].every((s) => jsHtml.includes(`'${s}'`)));
-assert('nothing writes the dock state from outside the three declared exits',
-  writes.length === 3
-  && writes.every((w) => w === "'docked'" || w === "'flow'" || w.includes("=== 'full'")));
+assert('nothing writes the dock state from outside the five declared exits',
+  writes.length === 5
+  && writes.filter((w) => w === "'docked'").length === 2
+  && writes.filter((w) => w === "'flow'").length === 2
+  && writes.filter((w) => w.includes("=== 'full'")).length === 1);
+assert('the declared writers are the ones that exist, and each writes what it is allowed to',
+  /state\.inspectorDock\s*=\s*'docked'/.test(dockFn)
+  && /state\.inspectorDock\s*=\s*'flow'/.test(resetFn)
+  && /state\.inspectorDock\s*=\s*'flow'/.test(applyFn)
+  && /state\.inspectorDock\s*=\s*'docked'/.test(functionSource('onInspectorResizeMove')));
 
 /* ---------- the handle contract ---------- */
 
@@ -302,8 +314,16 @@ assert('the two pinned states are named by one rule, so the labels cannot disagr
 
 // The fully expanded height is measured, not derived from vh: this page runs in a host iframe where
 // 100vh is not the reader's height, which is the reason client-check bans it.
+// The expanded height is measured, not derived from vh: this page runs in a host iframe where
+// 100vh is not the reader's height, which is the reason client-check bans it.
+//
+// Asserted as the expression, not as the presence of the four names. Reading --sticky-band-h and
+// window.innerHeight somewhere in the function is satisfied by a version that computes `available`
+// from neither of them — the mutation replaces the arithmetic with a constant and leaves all four
+// tokens in place, and a token-presence check calls that a pass.
 assert('the expanded height is measured from the window and the pinned offsets',
-  !!applyFn && /--inspector-full-h/.test(applyFn) && /window\.innerHeight/.test(applyFn)
+  !!applyFn
+  && /var\s+available\s*=\s*Math\.max\(\s*\d+\s*,\s*Math\.round\(\s*window\.innerHeight\s*-\s*band\s*-\s*overview\s*\)\s*\)/.test(applyFn)
   && /--sticky-band-h/.test(applyFn) && /--sticky-overview-h/.test(applyFn));
 assert('the expanded height is written in pixels',
   !!applyFn && /setProperty\(\s*'--inspector-full-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
@@ -366,6 +386,83 @@ const clickReg = /dom\.inspectorToggle\.addEventListener\(\s*'click'\s*,\s*funct
 assert('pressing the handle moves between the two pinned states and repaints',
   !!clickReg && /'full'\s*\?\s*'docked'\s*:\s*'full'/.test(clickReg[1])
   && clickReg[1].includes('applyInspectorDock()'));
+
+/* ---------- visibility: the panel is the selection ----------
+ *
+ * A panel that renders an empty shell when nothing is selected costs the reader a screen's worth of
+ * scrolling to reach the footer, and there is nothing in it to read. So visibility is the selection
+ * — read off the field that already holds it.
+ *
+ * The thing worth guarding is that there is *no second source*: a `panelVisible` flag beside the
+ * selection is the obvious way to write this, and it can disagree with the selection with nothing
+ * noticing, because every other rule here looks at classes and numbers, not at flags.
+ */
+const renderFn = functionSource('renderInspector');
+assert('the panel is on the page only while a record is selected',
+  !!applyFn && /hasSelection\s*=\s*state\.selectedId\s*!==\s*null/.test(applyFn)
+  && /dom\.inspectorPanel\.hidden\s*=\s*!hasSelection/.test(applyFn));
+assert('visibility is derived from the selection field, not from a second flag',
+  !jsHtml.includes('inspectorVisible') && !jsHtml.includes('panelVisible'));
+// One exit. renderInspector() is where every selection change lands — selectRecord(),
+// revealSelection(), the generation picker and each poll — so deciding anywhere else is a second
+// place to keep in sync. Checked at the top of the function, before the empty branch returns.
+assert('one exit re-decides the panel\'s visibility',
+  !!renderFn && /applyInspectorDock\(\);/.test(renderFn)
+  && renderFn.indexOf('applyInspectorDock();') < renderFn.indexOf('if (!entry)'));
+assert('losing the selection takes the panel back out of the dock',
+  !!applyFn && /!hasSelection[\s\S]*?state\.inspectorDock\s*=\s*'flow'/.test(applyFn));
+
+/* ---------- the docked height: a quarter of the window, and the reader can move it ---------- */
+
+assert('the docked height is a quarter of the measured window by default',
+  !!applyFn && /window\.innerHeight\s*\/\s*4/.test(applyFn));
+assert('the docked height is written in pixels, like every other offset here',
+  !!applyFn && /setProperty\(\s*'--inspector-dock-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
+// A drag that could exceed the pinned strips, or shrink past the panel head, hands the reader a
+// panel they cannot use and a handle they cannot see.
+assert('the docked height is clamped at both ends',
+  !!applyFn && /INSPECTOR_MIN_DOCK_H/.test(applyFn) && /\bavailable\b/.test(applyFn)
+  && /Math\.min\(\s*Math\.max\(/.test(applyFn));
+// The reader's dragged height has to outlive the drag. Reading the anchor height instead of
+// accumulating a running total also keeps a long drag from rounding its way off.
+assert('a drag is measured from the height the panel had, not accumulated',
+  !!functionSource('onInspectorResizeMove')
+  && /anchorH\s*\+\s*\(\s*inspectorResizeDrag\.anchorClientY\s*-\s*event\.clientY\s*\)/.test(jsHtml));
+// Only the pointer that started the drag may drive it. Scoped to the move handler, not the file:
+// the same line also appears in the up handler, so a whole-file search is satisfied by a move
+// handler that dropped the check entirely — which is what the mutation does.
+assert('a drag is driven only by the pointer that started it',
+  !!functionSource('onInspectorResizeMove')
+  && /inspectorResizeDrag\.pointerId\s*!==\s*event\.pointerId/.test(functionSource('onInspectorResizeMove')));
+assert('a drag settles the panel into the docked state rather than leaving it expanded',
+  !!functionSource('onInspectorResizeMove')
+  && /state\.inspectorDock\s*=\s*'docked'/.test(functionSource('onInspectorResizeMove')));
+assert('the dragged height is kept in its own field, so it survives leaving the dock',
+  /inspectorDockH\s*:\s*null/.test(jsHtml) && /state\.inspectorDockH\s*=\s*next/.test(jsHtml));
+
+/* ---------- the grip ---------- */
+
+const gripTag = /<div([^>]*\bid="inspector-resize"[^>]*)>/.exec(html);
+assert('the grip ships with the panel', !!gripTag);
+assert('the grip is a separator, so it is announced as one and not as a button',
+  !!gripTag && /role="separator"/.test(gripTag[1]) && /aria-orientation="horizontal"/.test(gripTag[1]));
+const gripRule = narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 'touch-action') : null;
+// Without this the drag is a page scroll on touch, and the feature is unavailable on the devices
+// where a narrow layout actually is a phone rather than a small window.
+assert('a vertical drag on the grip resizes instead of scrolling the page', gripRule === 'none');
+assert('the grip is on the edge that moves when the panel is pinned to the bottom',
+  narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 'top') === '-7px' : false);
+assert('the grip is only offered while the panel is pinned',
+  !!applyFn && /dom\.inspectorResize\.hidden\s*=\s*!\(\s*narrow\s*&&\s*docked\s*\)/.test(applyFn));
+
+for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
+  assert('the grip listens for ' + ev,
+    new RegExp(`dom\\.inspectorResize\\.addEventListener\\(\\s*'${ev}'\\s*,\\s*onInspectorResize\\w+\\s*\\)`).test(jsHtml));
+}
+// A drag that ends any other way would leave the drag object alive, and every later pointermove
+// would then resize a panel nobody is touching.
+assert('a cancelled drag is released like a finished one',
+  /dom\.inspectorResize\.addEventListener\(\s*'pointercancel'\s*,\s*onInspectorResizeUp\s*\)/.test(jsHtml));
 
 console.log('[inspector-dock] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

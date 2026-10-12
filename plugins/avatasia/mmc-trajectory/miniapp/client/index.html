@@ -1427,12 +1427,15 @@
          digits — the phone behaviour. */
       :root {
         --traj-index-col: 72px;
-        /* Half the viewport, and a fraction rather than a pixel count: 半高 has to mean half on
-           a short window and half on a tall one. Declared here and never written from script, so
-           the stylesheet is the only place the number is chosen. The fully expanded height is the
-           opposite case and is written by applyInspectorDock(), because it depends on the pinned
-           offsets above it and 100vh is not the height the reader has in a host iframe. */
-        --inspector-dock-h: 50vh;
+        /* The docked height, as a quarter of the window rather than a half. It was 50vh and chli read
+           the panel as 「整个窗口的1/4」; the real problem with a vh here was never the unit but
+           that the unit was frozen — the reader cannot make it smaller, and a cap the reader
+           cannot move is a number nobody chose. applyInspectorDock() therefore writes this in px
+           from window.innerHeight and a drag overwrites it, so the declaration below is only what
+           shows before the first measurement. It stays a vh for the same reason as everywhere else
+           here: 100vh is not the reader's height inside a host iframe, and every offset on this
+           page is measured for that reason. */
+        --inspector-dock-h: 25vh;
       }
 
       .row-list {
@@ -2108,14 +2111,54 @@
           z-index: 5;
         }
 
-        /* Half height. The content scrolls inside the panel instead of the panel growing: a
-           growing panel pushes its own handle out of the viewport, which is the one thing a
-           docked panel cannot do. */
+        /* Quarter height by default, and the reader can drag it. The content scrolls inside the
+           panel instead of the panel growing: a growing panel pushes its own handle out of the
+           viewport, which is the one thing a docked panel cannot do. The number itself is written
+           by applyInspectorDock() — a quarter of the measured window, or whatever the reader
+           dragged to — so this rule only says what the cap is *called*. */
         #inspector-panel.is-inspector-docked {
           max-height: var(--inspector-dock-h);
           overflow-y: auto;
           border-top: 1px solid var(--mcode-border);
           background: var(--mcode-surface);
+        }
+
+        /* The grip, on the panel's top edge — which is the edge that moves when the panel is
+           pinned to the bottom, so dragging it up makes the panel taller.
+
+           `touch-action: none` is not decoration: without it a vertical drag that starts on this
+           strip is a page scroll, and on a touch screen the reader cannot resize at all. The strip
+           is 14px tall and sits half above the panel's own border so the visible hairline and the
+           grabbable area are the same thing. It is display:none unless the panel is pinned, by
+           script — in flow there is no height to decide, and a grip that does nothing is worse
+           than no grip. */
+        #inspector-panel .inspector-resize {
+          display: none;
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: -7px;
+          height: 14px;
+          cursor: ns-resize;
+          touch-action: none;
+          z-index: 1;
+        }
+
+        #inspector-panel .inspector-resize::after {
+          content: '';
+          position: absolute;
+          left: 50%;
+          top: 5px;
+          width: 44px;
+          height: 3px;
+          margin-left: -22px;
+          border-radius: 2px;
+          background: var(--mcode-border);
+        }
+
+        #inspector-panel .inspector-resize:hover::after,
+        #inspector-panel .inspector-resize:focus-visible::after {
+          background: var(--mcode-accent, currentColor);
         }
 
         /* Fully expanded: the cap comes off and the panel takes the viewport the pinned strips
@@ -2405,6 +2448,7 @@
         </section>
 
         <section class="panel" id="inspector-panel" aria-labelledby="inspector-heading">
+          <div class="inspector-resize" id="inspector-resize" role="separator" aria-orientation="horizontal" aria-label="拖动调整检视高度" tabindex="-1"></div>
           <div class="panel-head">
             <h2 class="section-title" id="inspector-heading">检视</h2>
             <span class="panel-head-meta" id="inspector-meta"></span>
@@ -2558,7 +2602,7 @@
           // `closed` is true and that rule has nothing to fire on. Measured on this session:
           // two, one of them the turn that ended in front of the reader with nothing shown.
           record: function (record) {
-            return !!record && record.kind === 'reply' && isNil(record.text);
+            return !!record && record.kind !== 'reply' && isNil(record.text);
           }
         },
         {
@@ -3295,6 +3339,11 @@
         // pinned and uncapped. Wide screens never leave 'flow' — in two columns the panel is
         // beside the ledger, so there is nothing to dock away from.
         inspectorDock: 'flow',
+        // The docked height in px, once the reader has dragged it. null means "they have not", and
+        // the quarter-window default applies. A separate field rather than an extra mode on
+        // inspectorDock because it survives the state leaving the dock: coming back to the panel
+        // later should not silently forget the height the reader just chose.
+        inspectorDockH: null,
         // Duration button. Off = every record gets an equal slice on the overview and
         // recorded timing is ignored; on = recorded start/duration with idle gaps
         // compressed away. Persisted, because it is a reading preference, not data.
@@ -3445,6 +3494,7 @@
         dom.inspectorStatus = document.getElementById('inspector-status');
         dom.inspectorPanel = document.getElementById('inspector-panel');
         dom.inspectorToggle = document.getElementById('inspector-toggle');
+        dom.inspectorResize = document.getElementById('inspector-resize');
         dom.footerTruncated = document.getElementById('footer-truncated');
         dom.footerBinding = document.getElementById('footer-binding');
       }
@@ -6386,6 +6436,10 @@
       /* ---------------- inspector ---------------- */
 
       var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
+      // Below this the panel head and its handle stop fitting, so a drag that would go further is
+      // refused rather than honoured. 160px is the smallest height that still shows the head, the
+      // locator and a couple of lines of the summary.
+      var INSPECTOR_MIN_DOCK_H = 160;
 
       /**
        * The narrow-screen docking, and the one place that decides where the inspector is.
@@ -6419,6 +6473,21 @@
         var docked = state.inspectorDock !== 'flow';
         var narrow = window.matchMedia(INSPECTOR_DOCK_QUERY).matches;
 
+        // Nothing selected, nothing to look at: the panel goes away rather than showing an empty
+        // shell the reader has to scroll past to reach the footer. The test is the selection field
+        // itself rather than a second `panelVisible` flag — a flag would be able to disagree with
+        // the selection, and nothing here would notice.
+        //
+        // state.selectedId rather than selectedRecord(): the latter walks state.flat, and this runs
+        // on every render. The "set but no longer in the payload" case is already handled by
+        // revealSelection(), which clears the id — so the id being set is the selection.
+        var hasSelection = state.selectedId !== null && state.selectedId !== undefined;
+        if (dom.inspectorPanel) dom.inspectorPanel.hidden = !hasSelection;
+        if (!hasSelection && state.inspectorDock !== 'flow') {
+          state.inspectorDock = 'flow';
+          docked = false;
+        }
+
         // Measured, not derived from vh. This page lives in a host iframe where 100vh is not the
         // reader's viewport, which is the reason client-check bans it — so the two heights the
         // panel uses are read off the window and the offsets syncStickyOffsets() just measured,
@@ -6430,12 +6499,25 @@
           var overview = parseFloat(root.getPropertyValue('--sticky-overview-h')) || 0;
           var available = Math.max(240, Math.round(window.innerHeight - band - overview));
           dom.inspectorPanel.style.setProperty('--inspector-full-h', available + 'px');
+          // A quarter of the measured window, or the height the reader dragged to — clamped to what
+          // the pinned strips leave, so dragging up can never bury them or push the panel's own
+          // handle off screen.
+          var dockH = state.inspectorDockH;
+          if (dockH === null || dockH === undefined || !isFinite(dockH)) {
+            dockH = Math.round(window.innerHeight / 4);
+          }
+          dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), available);
+          dom.inspectorPanel.style.setProperty('--inspector-dock-h', dockH + 'px');
         }
 
         if (dom.inspectorPanel) {
           dom.inspectorPanel.classList.toggle('is-inspector-docked', state.inspectorDock === 'docked');
           dom.inspectorPanel.classList.toggle('is-inspector-full', state.inspectorDock === 'full');
         }
+
+        // The grip exists only while the panel is pinned: in flow there is no height to decide, and
+        // a grip that does nothing is worse than no grip.
+        if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked);
 
         var toggle = dom.inspectorToggle;
         if (!toggle) return;
@@ -6447,6 +6529,61 @@
         var label = expanded ? '收起到半高' : '完全展开检视';
         toggle.setAttribute('aria-label', label);
         toggle.setAttribute('title', label);
+      }
+
+      /* ---------------- resizing the docked panel ----------------
+       *
+       * Three states, not two: the reader picks a docked height by dragging the panel's top edge.
+       * The drag is read off pointer movement against the height the panel had when the pointer
+       * went down, so it does not accumulate rounding over a long drag the way a running total
+       * would.
+       *
+       * Dragging is a statement about the *docked* height, so it drops the panel out of 'full': the
+       * fully expanded state is defined as "no cap", and a height the reader just chose is a cap.
+       * Leaving that implicit would mean the grip silently did nothing in the one state where it is
+       * most visible. */
+      var inspectorResizeDrag = null;
+
+      /** The height the panel is actually showing right now, for a drag to start from. */
+      function inspectorDockHeightNow() {
+        var h = dom.inspectorPanel ? dom.inspectorPanel.getBoundingClientRect().height : 0;
+        return h > 0 ? h : Math.round(window.innerHeight / 4);
+      }
+
+      function onInspectorResizeDown(event) {
+        if (event.button !== 0) return;
+        if (state.inspectorDock === 'flow') return;
+        if (!dom.inspectorResize) return;
+        dom.inspectorResize.setPointerCapture(event.pointerId);
+        inspectorResizeDrag = {
+          pointerId: event.pointerId,
+          anchorClientY: event.clientY,
+          anchorH: inspectorDockHeightNow()
+        };
+        // The page must not scroll under a resize drag; the grip's touch-action says so for touch,
+        // and this says it for the mouse.
+        event.preventDefault();
+      }
+
+      function onInspectorResizeMove(event) {
+        if (!inspectorResizeDrag) return;
+        // Only the pointer that started it may drive it, the same rule the overview brush uses.
+        if (inspectorResizeDrag.pointerId !== event.pointerId) return;
+        // The panel is pinned to the bottom, so its top edge is the one that moves: dragging up
+        // grows it. `clientY` not pageY — the panel is pinned, so page coordinates would add the
+        // scroll offset into the height.
+        var next = inspectorResizeDrag.anchorH + (inspectorResizeDrag.anchorClientY - event.clientY);
+        state.inspectorDockH = next;
+        state.inspectorDock = 'docked';
+        applyInspectorDock();
+        event.preventDefault();
+      }
+
+      function onInspectorResizeUp(event) {
+        if (!inspectorResizeDrag) return;
+        if (inspectorResizeDrag.pointerId !== event.pointerId) return;
+        try { dom.inspectorResize.releasePointerCapture(event.pointerId); } catch (e) { /* already gone */ }
+        inspectorResizeDrag = null;
       }
 
       function dockInspector() {
@@ -6542,6 +6679,13 @@
         var entry = selectedRecord();
         clear(dom.tablist);
         clear(dom.panels);
+
+        // Whether the panel is on the page at all is decided here rather than by the click handler
+        // that changed the selection: renderInspector() is the single exit every selection change
+        // goes through — selectRecord(), revealSelection(), the generation picker and every poll
+        // all land here — so deciding it anywhere else would be a second place to keep in sync.
+        // Both branches below need it, hence before the early return.
+        applyInspectorDock();
 
         if (!entry) {
           dom.inspectorLocator.textContent = '尚未选择记录';
@@ -7547,6 +7691,16 @@
           state.inspectorDock = state.inspectorDock === 'full' ? 'docked' : 'full';
           applyInspectorDock();
         });
+
+        // The grip, beside the handle rather than instead of it: the handle chooses which of the
+        // two pinned heights the panel has, the grip chooses how tall that one is. pointercancel is
+        // registered alongside pointerup because a drag that ends any other way — the browser
+        // taking the capture, a second touch — would otherwise leave the drag object alive and
+        // every later pointermove would resize a panel nobody is touching.
+        dom.inspectorResize.addEventListener('pointerdown', onInspectorResizeDown);
+        dom.inspectorResize.addEventListener('pointermove', onInspectorResizeMove);
+        dom.inspectorResize.addEventListener('pointerup', onInspectorResizeUp);
+        dom.inspectorResize.addEventListener('pointercancel', onInspectorResizeUp);
 
         applyInspectorDock();
 
