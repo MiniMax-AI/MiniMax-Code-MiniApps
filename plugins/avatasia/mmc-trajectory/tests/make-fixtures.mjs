@@ -166,7 +166,7 @@ if (record && check) {
 // still carries nothing from this machine.
 
 const NEEDED_NAMES = Object.keys(NEEDED);
-const SESSIONS_FLOOR = 0;        // verify-parsers asserts entries.length > 5
+const SESSIONS_FLOOR = 6;        // verify-parsers asserts entries.length > 5
 const ROWS_FLOOR = 12;           // the distiller refuses to keep anything shorter
 
 const shapeOf = (c) => ({ role: c.role, parts: c.parts.join(','), stopReason: c.stopReason ?? '', isError: c.isError });
