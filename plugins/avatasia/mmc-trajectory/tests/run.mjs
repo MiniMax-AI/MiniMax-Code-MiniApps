@@ -12,14 +12,51 @@
 // Nothing here needs a running Mini App, a network, or a specific machine's paths: every path
 // resolves from this file's own location.
 import { spawnSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const args = process.argv.slice(2);
 const REAL = args.includes('--real');
 const filter = args.find((a) => !a.startsWith('--')) ?? '';
+
+// The mutate-* controls rewrite shipped files in place. Each one restores what it found, and all
+// of them now restore through `finally` plus atexit and a signal handler — but a hard kill (a
+// killed terminal, taskkill /F, a power loss) runs no cleanup at all, and the file stays mutated.
+// That failure is silent: the next run reads a mutated index.html and reports unrelated red, or a
+// guard that suddenly "passes" for the wrong reason. So the shipped files this suite is about to
+// rewrite are hashed before the first control runs and checked after the last one. A mismatch is
+// reported as a failed guard of its own, with the restore command, instead of being inferred from
+// whatever the next person sees.
+const SHIPPED = [
+  'miniapp/client/index.html',
+  'miniapp/node/server.mjs',
+  'tests/make-fixtures.mjs',
+  'tests/client-check.mjs',
+  'README.md',
+  'README.zh-CN.md',
+  'docs/LAYERS.md',
+  '.minimax-plugin/plugin.json',
+];
+const ROOT = join(HERE, '..');
+const SNAPSHOT = join(HERE, '.shipped-snapshot.json');
+
+const digest = (rel) => {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) return 'absent';
+  return createHash('sha256').update(readFileSync(p)).digest('hex');
+};
+
+const snapshotBefore = Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]));
+
+function checkShipped() {
+  const drift = SHIPPED.filter((rel) => digest(rel) !== snapshotBefore[rel]);
+  try { existsSync(SNAPSHOT) && writeFileSync(SNAPSHOT, JSON.stringify(snapshotBefore)); }
+  catch { /* the snapshot is a convenience, never a reason to fail the suite */ }
+  return drift;
+}
 
 // verify-time-range.mjs is here but not run. Its assertions are calibrated against a full
 // multi-generation session — stats.messages > 1000, a checkpoint nested inside a turn — and the
@@ -84,6 +121,17 @@ for (const name of files) {
 
 const failed = results.filter((r) => !r.ok);
 console.log();
+// A shipped file left mutated by a hard-killed run is itself a guard failure, reported by name
+// rather than left to surface later as somebody else's unrelated red.
+const drift = checkShipped();
+if (drift.length) {
+  console.log('');
+  console.log(`FAIL  ${'shipped files restored'.padEnd(30)}  ${drift.join(', ')}`);
+  console.log('       a mutate-* control was killed mid-run and left the source mutated.');
+  console.log('       restore with:  git checkout -- <file>');
+  failed.push({ name: 'shipped files restored byte for byte', ok: false });
+}
+
 console.log(`${results.length - failed.length}/${results.length} guards passed`);
 if (failed.length) {
   console.log('failed: ' + failed.map((f) => f.name).join(', '));

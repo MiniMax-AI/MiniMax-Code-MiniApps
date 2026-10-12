@@ -6,9 +6,11 @@ means the guard it exercised is not testing anything, and the fix is the guard, 
 
 Nothing here needs a network, a service, or a specific machine's paths.
 """
+import atexit
 import io
 import os
 import re
+import signal
 import subprocess
 import sys
 
@@ -178,6 +180,51 @@ def run_guard():
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
+# This is the widest-reaching mutation control in the repo: seven shipped files, including
+# index.html, server.mjs and both READMEs. An interrupted run used to leave any of them mutated on
+# disk, and the next run could not tell that from a real regression. Nothing here is allowed to
+# exit without putting back exactly the bytes it found.
+_pending = {}
+
+
+def _restore_all():
+    for rel, text in list(_pending.items()):
+        try:
+            write(rel, text)
+        except OSError:
+            pass
+        _pending.pop(rel, None)
+    for rel, prior in list(_pending_files.items()):
+        try:
+            os.remove(os.path.join(ROOT, rel))
+        except OSError:
+            pass
+        if prior is not None:
+            try:
+                write(rel, prior)
+            except OSError:
+                pass
+    _pending_files.clear()
+
+
+_pending_files = {}
+atexit.register(_restore_all)
+
+
+def _die(signum, _frame):
+    _restore_all()
+    sys.exit(128 + signum)
+
+
+for _sig in ("SIGINT", "SIGTERM", "SIGHUP"):
+    _s = getattr(signal, _sig, None)
+    if _s is not None:
+        try:
+            signal.signal(_s, _die)
+        except (ValueError, OSError):
+            pass
+
+
 def _node():
     import shutil
     for name in ("node", "node.exe"):
@@ -198,15 +245,24 @@ for entry in MUTATIONS:
         expect = entry[3]
         path = os.path.join(ROOT, rel)
         existed = os.path.exists(path)
-        with io.open(path, "w", encoding="utf-8", newline="") as f:
-            f.write("# reintroduced by mutate-review16.py\n")
-        code, out = run_guard()
+        # Keep the real bytes, not a flag. This branch currently only ever targets a file that was
+        # already deleted, so `existed` is false and nothing is read -- but recording bytes rather
+        # than assuming "it was absent" is what makes the branch correct if a second file-level
+        # mutation ever targets a file that ships.
+        _prior = read(rel) if existed else None
+        _pending_files[rel] = _prior
         try:
-            os.remove(path)
-        except OSError:
-            pass
-        if not existed:
-            pass
+            with io.open(path, "w", encoding="utf-8", newline="") as f:
+                f.write("# reintroduced by mutate-review16.py\n")
+            code, out = run_guard()
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            if _prior is not None:
+                write(rel, _prior)
+            _pending_files.pop(rel, None)
     else:
         _, old, new, expect = entry[:4]
         replace_all = len(entry) > 4 and entry[4]
@@ -234,9 +290,15 @@ for entry in MUTATIONS:
             continue
         original = read(target)
         mutated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
-        write(target, mutated)
-        code, out = run_guard()
-        write(target, original)
+        _pending[target] = original
+        try:
+            write(target, mutated)
+            code, out = run_guard()
+        finally:
+            # Restore first, then judge. Reading the verdict while the shipped file is still
+            # mutated is how a restore failure gets reported as a guard failure.
+            write(target, original)
+            _pending.pop(target, None)
         if original != read(target):
             survived.append(name + "  [restore was not byte for byte]")
             continue

@@ -24,9 +24,11 @@ toolCall. All three passed on broken trees. All three are here now, with a demo 
 Nothing here needs a network, a service, or a specific machine's paths, and nothing here writes
 to tests/fixtures/: the broken trees are synthesised into temp directories and deleted.
 """
+import atexit
 import io
 import os
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -149,6 +151,40 @@ def run_guard():
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
+# This file rewrites a shipped file in place, so every way of dying matters. It was the only
+# mutation control here with no `finally`, and the first time it was interrupted it left
+# make-fixtures.mjs mutated on disk -- the next run then reported 11 unrelated failures and
+# "baseline did not pass". `finally` alone does not cover that: a closed pipe or Ctrl-C kills the
+# process without unwinding. atexit covers normal exit, and the signal handlers cover the rest.
+# Restore is idempotent and always writes the bytes read at startup, never a recomputed original.
+original = read()
+_original_written = [False]
+
+
+def _restore():
+    if _original_written[0]:
+        return
+    _original_written[0] = True
+    write(original)
+
+
+atexit.register(_restore)
+
+
+def _die(signum, _frame):
+    _restore()
+    sys.exit(128 + signum)
+
+
+for _sig in ("SIGINT", "SIGTERM", "SIGHUP"):
+    _s = getattr(signal, _sig, None)
+    if _s is not None:
+        try:
+            signal.signal(_s, _die)
+        except (ValueError, OSError):
+            pass
+
+
 original = read()
 if not original.endswith("\n"):
     print("the shipped file does not end in a newline -- refusing to run mutations")
@@ -174,9 +210,14 @@ for name, old, new, expect in MUTATIONS:
         print("ANCHOR DID NOT RESOLVE  %s  (matched %d times)" % (name, n))
         survived.append(name + "  [anchor matched %d times, needs exactly 1]" % n)
         continue
-    write(original.replace(old, new))
-    code, out = run_guard()
-    write(original)
+    _original_written[0] = False
+    try:
+        write(original.replace(old, new))
+        code, out = run_guard()
+    finally:
+        # Put it back before looking at anything. Reading the verdict while the file is still
+        # mutated is how a restore failure turns into an unexplained guard failure.
+        _restore()
 
     if read() != original:
         drifted.append(name + "  [restore was not byte for byte]")

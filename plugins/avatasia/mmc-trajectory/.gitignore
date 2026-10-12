@@ -6,3 +6,9 @@
 # package that ships. The repository root .gitignore does not cover it.
 __pycache__/
 *.pyc
+
+# tests/run.mjs hashes the shipped files before the mutation controls rewrite them, so a run killed
+# mid-mutation is caught on the next one instead of being inferred from whatever the source looks
+# like afterwards. The snapshot is machine-specific bookkeeping and this directory is the package
+# that ships to readers, so it must never be tracked.
+tests/.shipped-snapshot.json
