@@ -551,9 +551,13 @@ const checks = [
   // the session total would leave the reader, mid-scroll through 18,924 rows, without the one
   // number saying how much of the session is left — so each branch is pinned on its own, with its
   // own indentation, rather than "the string appears somewhere in this function".
+  // The anchor carries `matchedLabel` because the settled line inserts the filter result between
+  // 共 N 条 and 已显示 — the two pairs a reader can add. Both branches still have to name the
+  // session total on their own; pinning each with its own indentation is what keeps "the string
+  // appears somewhere in this function" from passing when only one of them has it.
   const branches = [
     "          (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
-      + "          '共 ' + formatInt(total) + ' 条 · 已显示 '",
+      + "          '共 ' + formatInt(total) + ' 条' + matchedLabel + ' · 已显示 '",
     "            (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
       + "            '共 ' + formatInt(total) + ' 条 · 正在显示 '"
   ];

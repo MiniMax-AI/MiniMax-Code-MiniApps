@@ -162,6 +162,35 @@ assert('the window bar count has exactly one writer',
   !!updateBar && (updateBar.match(/parts\.count\.textContent =/g) ?? []).length === 2
   && (html.match(/parts\.count\.textContent =/g) ?? []).length === 2);
 
+// ---------- 3b. the count line closes on itself ----------
+//
+// 「共 N 条」 is the whole session, unfiltered. 已显示 is the window and 更早的 is what sits above
+// it, and those two add up to what the *filter* matched. Printed side by side with nothing saying
+// so, one line offers the reader two different pairs to add and no way to tell which one the
+// arithmetic was meant to use. 命中 is what makes the line close on itself.
+
+assert('the matched count is derived from the window and what is above it, not passed in as a fourth number',
+  !!updateBar && /var\s+matchedCount\s*=\s*shown\.length\s*\+\s*hiddenAbove\s*;/.test(updateBar)
+  // A caller-supplied figure would be a fourth copy of one fact, and four copies of a count is how
+  // two of them start disagreeing. The signature is what makes that checkable rather than a style note.
+  && /function\s+updateWindowBar\(\s*shown\s*,\s*hiddenAbove\s*,\s*total\s*\)/.test(html));
+
+assert('the count line prints the filter result next to the session total',
+  !!updateBar && /\+ matchedLabel \+ ' · 已显示 /.test(updateBar));
+
+assert('it prints it only when it is a different number, so an unfiltered session is not told twice',
+  !!updateBar && /matchedCount === total \? ''/.test(updateBar));
+
+// And it must stay off the mid-build line. `ledgerProgress.total` is already the window being
+// built, so 「正在显示 R / W」 is not addable to 共 N — there is no ambiguity there to fix. Worse,
+// `shown` / `hiddenAbove` are the *previous* render's there (held in ledgerWindow), so a 命中
+// printed on that line would be a stale filter result sitting beside a live progress count.
+const progressLine = !!updateBar
+  ? updateBar.slice(updateBar.indexOf('if (ledgerProgress)'), updateBar.indexOf('return;'))
+  : '';
+assert('the mid-build line does not print a filter result derived from the previous render',
+  !!progressLine && !progressLine.includes('matchedLabel'));
+
 // Two because updateWindowBar reports two states, and both have to be honest. Mid-build the bar
 // must not claim 已显示 for rows that do not exist yet — the count promising a table that is not
 // there is the same defect D8 was written for.

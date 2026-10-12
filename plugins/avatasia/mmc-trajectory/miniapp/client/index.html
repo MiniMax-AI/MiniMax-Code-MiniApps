@@ -5668,15 +5668,35 @@
           // 「已显示 18,924 条」 above three thousand rows that exist is the page promising a number
           // it has not reached yet, which is the same defect as the one this whole exit exists to
           // prevent — one surface describing a table that is not there.
+          //
+          // No 命中 here, deliberately. `ledgerProgress.total` is already the window being built, so
+          // 「正在显示 R / W」 is not something a reader can add to 共 N — the line has no ambiguity
+          // to fix. And `shown` / `hiddenAbove` below are the *previous* render's, held in
+          // ledgerWindow, so a 命中 derived from them here would print a stale filter result beside a
+          // live progress count.
           parts.count.textContent =
             (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +
             '共 ' + formatInt(total) + ' 条 · 正在显示 ' + formatInt(ledgerProgress.rows) +
             ' / ' + formatInt(ledgerProgress.total) + ' 条';
           return;
         }
+        // 「共 N 条」 is the whole session, unfiltered. The numbers beside it are not: 已显示 is the
+        // window and 更早的 is what sits above it, and those two add up to what the *filter* matched,
+        // not to the session. A reader who adds them lands on a third answer with nothing on the line
+        // saying which pair the arithmetic was supposed to use. Print the filter result and the line
+        // closes on itself.
+        //
+        // Derived rather than passed: `windowed` plus what is above it *is* the matched count, so this
+        // costs no third argument and cannot drift from the two numbers printed beside it. A
+        // caller-supplied figure would be a fourth copy of one fact, which is how two copies of a
+        // count start disagreeing.
+        var matchedCount = shown.length + hiddenAbove;
+        // Only when it is a different number: an unfiltered session would otherwise be told 共 24,516
+        // and 命中 24,516 on one line, which is the same fact twice and reads as two.
+        var matchedLabel = matchedCount === total ? '' : ' · 命中 ' + formatInt(matchedCount) + ' 条';
         parts.count.textContent =
           (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +
-          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +
+          '共 ' + formatInt(total) + ' 条' + matchedLabel + ' · 已显示 ' + formatInt(shown.length) + ' 条' +
           (hiddenAbove > 0 ? ' · 更早的 ' + formatInt(hiddenAbove) + ' 条未加载' : '');
       }
 

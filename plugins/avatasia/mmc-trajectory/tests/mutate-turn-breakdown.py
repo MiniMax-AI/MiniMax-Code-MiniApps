@@ -102,8 +102,8 @@ MUTATIONS = [
     # both its mid-build and its settled branch, and a one-line anchor matches both.
     ("session total dropped from the window bar",
      "          (isCount(sessionTurns) ? '全场 ' + formatInt(sessionTurns) + ' 轮 · ' : '') +\n"
-     "          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
-     "          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
+     "          '共 ' + formatInt(total) + ' 条' + matchedLabel + ' · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
+     "          '共 ' + formatInt(total) + ' 条' + matchedLabel + ' · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
      "the session total lives on the window bar instead"),
 
     # The same rule for the other branch. The mid-build line is the one a reader is actually

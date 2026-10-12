@@ -133,6 +133,40 @@ MUTATIONS = [
        "        var parts = windowBarParts;\n        if (parts) parts.count.textContent = 'building';\n        if (ledgerWindow) {\n")],
      "the window bar count has exactly one writer"),
 
+    # ---- 3b. the count line closes on itself -------------------------------------
+    #
+    # 「共 N 条」 is the session total and 已显示 + 更早的未加载 is the filter result. One line,
+    # two addable pairs, no label. Each mutation below removes one half of the fix.
+
+    # Forgetting the records above the window: 命中 then repeats 已显示, and the arithmetic still
+    # does not close — the line just grows a number that agrees with the one already on it.
+    ("the filter result forgets the records above the window",
+     [("        var matchedCount = shown.length + hiddenAbove;\n",
+       "        var matchedCount = shown.length;\n")],
+     "the matched count is derived from the window and what is above it, not passed in as a fourth number"),
+
+    # Dropping the print is the original defect: the two pairs sit side by side and add to two
+    # different answers, which is exactly how it shipped.
+    ("the filter result is computed and then not printed",
+     [("          '共 ' + formatInt(total) + ' 条' + matchedLabel + ' · 已显示 ' + formatInt(shown.length) + ' 条' +\n",
+       "          '共 ' + formatInt(total) + ' 条 · 已显示 ' + formatInt(shown.length) + ' 条' +\n")],
+     "the count line prints the filter result next to the session total"),
+
+    # Always printing it. On an unfiltered session this is the same fact twice on one line — 共
+    # 24,516 and 命中 24,516 — which reads as two different counts.
+    ("the filter result is printed even when it is the same number",
+     [("        var matchedLabel = matchedCount === total ? '' : ' · 命中 ' + formatInt(matchedCount) + ' 条';\n",
+       "        var matchedLabel = ' · 命中 ' + formatInt(matchedCount) + ' 条';\n")],
+     "it prints it only when it is a different number, so an unfiltered session is not told twice"),
+
+    # The one that looks like tidiness. The mid-build line has no ambiguity to fix — W is already
+    # the window being built — and shown/hiddenAbove are the previous render's there, so this prints
+    # a stale filter result beside a live progress count.
+    ("the mid-build line prints a filter result carried over from the previous render",
+     [("            '共 ' + formatInt(total) + ' 条 · 正在显示 ' + formatInt(ledgerProgress.rows) +\n",
+       "            '共 ' + formatInt(total) + ' 条' + matchedLabel + ' · 正在显示 ' + formatInt(ledgerProgress.rows) +\n")],
+     "the mid-build line does not print a filter result derived from the previous render"),
+
     # 「已显示 18,924 条」 above three thousand rows that exist — the page promising a number it
     # has not reached, which is the defect this exit exists to prevent.
     ("the mid-build count claims the rows are already shown",
