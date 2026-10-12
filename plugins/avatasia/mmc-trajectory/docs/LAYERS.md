@@ -481,9 +481,9 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 
 三条共用同一个出口，是因为它们回答的是同一个问题：**这次重画，哪些状态要重新判定。**
 
-### Stage 2 — 把异常轴变成 L2 的字段（模型）**设计已完成，等指示**
+### Stage 2 — 把异常轴变成 L2 的字段（模型）**2-a、2-b 已完成，2-c 待做**
 
-四项任务不变：收字段、合成 R2 单一入口、`resetBaseFilters()` 变成一次赋值、删掉 D2 那句注释。读点已经数清，四问如下。
+四项任务：收字段、合成 R2 单一入口、`resetBaseFilters()` 变成一次赋值、删掉 D2 那句注释。读点已经数清，四问如下。
 
 **归层** L2。三个字段今天就已经住在 `state` 里（L2 那一组），本条不改变它们属于哪一层，只改变**它们是不是一个东西**。不改 L1/L3/L4/L5/L6 任何一层，也不动任何 DOM 位置。
 
@@ -506,6 +506,43 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 **D2 那句注释有两处，不是一处**：2273（「The type chips are the only filter. Which record kinds are visible is one array — state.kinds…」）与 3075（「The type chips are the only filter, so this array is the only definition of what is on screen…」）。两处都删，理由相同：异常轴存在时它们不成立。
 
 **风险**：这是本轮唯一一处会同时改动 13 个读点、4 个写点和两个重守卫覆盖范围的改动。分三次独立提交（收字段 → R2 入口 → reset 赋值 + 删注释），每配自己的变异，任意一步可单独回退。不与 Stage 3 或 Stage 4 合并。
+
+#### 2-a 已完成（`694cd8a`）
+
+三个字段收成 `state.anomaly = { mode, rules, last }`。`mode` 用 `'single' | 'multi'` 而不是布尔，理由是每个读点都变成一次显式比较。两条清零路径（`clearFilters()` / `onAnomalyReset()`）收敛成一次整体赋值 `state.anomaly = defaultAnomaly()`，工厂每次给新对象——共享常量就是把双写者缺陷换个位置。
+
+新增 `tests/verify-anomaly-model.mjs`（15 条）。**它刻意不守「已收敛」**：那个断言现在过不了，写成「当前 N 个」又恒真。守的是可以被证伪的四条——一个字段、两条重建路径、一个工厂、`mode` 不是布尔。
+
+重锚而非删除：`verify-anomaly.mjs` 19 处 `multiAnomaly` 读写 + 10 处形状断言；`mutate-anomaly.py` 20 条变异。**两条变异（strip 分支前置于另一个轴、单击关掉已开的规则）在重锚过程中 mutant 侧一度被写成与 old 侧等价——那是空变异，跑出来是「NOT CAUGHT」而不是失败。已改回。** 空变异不报失败这件事本身值得记住：mutation control 只看 `probe still passed` 与否，不会告诉你它什么也没测。
+
+#### 2-b 已完成
+
+`passesBaseFilter()` 与 `anomalyContext()` 合并为 **`recordVisible(record, turn, selection)`**，`visibleEntries()` 与 `spanPassesFilter()` 都只调它。
+
+三处判断，逐条对着代码：
+
+1. **笔刷为什么是参数而不是 state 读。** 原来两个入口对笔刷的处理就不一样：账本经 `passesBaseFilter(record, selection)` 用笔刷，总览条不用。总览条**必须**不用——笔刷是画在它上面的，一个把自己正在被拖选的记录藏起来的条，没法用来拖选。把它写进签名而不是留给读者猜，是为了让下一个人不会「顺手修正」总览条。断言守的就是这个：`recordVisible` 的函数体里不得出现 `state.overviewSelection`。
+2. **`turn` 为什么是参数。** `flattenTurns()` 产出 `{turn, record}`，账本拿得到；条只拿到裸 record，所以要从 `turnById` 查回来。两者拿到的本来就是同一个对象。断言守的是账本**不自己查**（`visibleEntries` 不得出现 `turnById`）——它手上已经有那个对象了，再查一次是同一个对象换个来源，将来两边会长歪。
+3. **互斥由 `return` 表达，不由 `else` 表达。** 「两个轴是二选一不是叠加」这条断言原来只读 `if (anomalyMode) … } else if (!passesBaseFilter`，它守的是 `else` 的存在。新的断言要求异常分支 `return`，且基础判断写在它之后——一个只判不回落的分支就是叠加，只是拼法相反。
+
+新守的三条，各配一条变异（变异数 70 → 73）：
+
+| 断言 | 守的是 | 变异 |
+| --- | --- | --- |
+| `the ledger applies it` | 账本走这个入口 | 让账本完全不过滤 |
+| `and hands it the turn off the entry, not a lookup of its own` | 账本不自查 turn | 让账本改用 `turnById.get` |
+| `and branches on the mode before the other axis, so strip and list agree` | 异常分支存在且在第一位 | 让入口忽略异常 |
+| `and treats the two axes as alternatives, not a stack` | 异常分支 `return` 之后才是基础判断 | 去掉 `return`，让异常分支回落 |
+| `the brush is an argument, because the strip is what the brush is drawn on` | 笔刷是参数 | 改回读 state，总览条随之开始隐藏记录 |
+| `and the strip keeps no predicate of its own to drift out of step` | `spanPassesFilter()` 里一个谓词都没有 | 给总览条重新加一条谓词 |
+
+最后一条是 R2 的强形式：断言「两个调用方都不可持有判断」，而不是「两个调用方都应用了异常」。适配调用方的参数形状不是第二意见，再回答一次才是。
+
+**一处过程事故已记录**：移除 `anomalyContext()` 时，探针从函数签名向前回溯找 `/**`，跨过了空行，把刚插入的 `recordVisible()` 一起删掉，脚本自己报了「ok」并写盘。发现方式是 `fnSource('function recordVisible(')` 抽不出来。已从 fork 复位，探针的回溯改为「注释必须紧贴签名才吸收」。教训：**结构化定位比转写注释可靠，但结构化定位自己也会有走过头的时候**——写探针时值得让「删掉了多少行」打印出来，而不是只打印成功。
+
+#### 2-c 待做
+
+`resetBaseFilters()` 变一次赋值 + 删 D2 那两处注释（2273 / 3075）。
 
 ### ~~Stage 3 — 声明跨层关系（R6）~~ **已完成**
 
@@ -589,7 +626,7 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 | 1c | **一次未解释的位置跳变**（待复现） | 验证 | 无 | 见 D15 实测：某一趟近底部的重建 `postY` 比 `preY` 高了 77,226 px，屏上的行没有变，随后被后续重建带下去；同一深度之后未能复现。**机制未验证，不写成缺陷，也不写成没问题。** |
 | 2 | **增量协议 `?since=`**（只发新增尾部） | 代码 + 协议 | **设计已完成，等指示** | 调研结论改变了收益估计：payload 只有 `session` / `stats` / `turns` 三个键，41 MB 全在 `turns`；而 **`stats` 是累加器，必须全量重算**——所以 `?since=` 省的是**传输与客户端 `JSON.parse`，不是服务端 CPU**，缓存里仍然躺着 41 MB。游标选 `record.index`（稠密、只增不改、已是 `/raw` 的公开键）。这是本轮唯一一处真口径变更（`applyPayload` 从整体替换变追加合并），读点已列全——**写侧只有 1 处**，读侧 `stats` 6 / `turns` 5 / `session` 8。详见 Stage 4。 |
 | 3 | ~~给「显示全部」封顶~~ **已否决，不做** | 口径 | — | **chli 2026-10-12 定：不封顶。** 理由是「无限大无非是极端情况下假死，碰到的几率很小」。补充一条事实（已告知，不影响决定）：18,924 行不是极端情况，就是本会话现在的规模，3,956 ms 就是在它上面测出来的。封顶还会把「读完整个会话」从点一次变成点约 69 次「向上加载更早的 200 条」，而那个控件今天只在 `hiddenAbove > 0` 时出现，等于新增一条路。此路不再讨论。 |
-| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **设计已完成，等指示** | 四问已答，读点已数清：`anomalyRules` 4 写 13 读、`multiAnomaly` 3 写 2 读、`anomalyLast` 7 写 1 读。R2 单一入口**成立**——`flattenTurns()` 产出 `{turn, record}`，所以两个入口拿到的本来就是同一个 turn 对象。对外口径全部不变，但 `state` 形状变，`verify-anomaly.mjs`（53 KB）与 `mutate-anomaly.py`（29 KB）里**守形状**的断言要逐条改写、守行为的原样保留，**一条都不删**。建议分三次独立提交。详见 Stage 2。 |
+| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **2-a、2-b 已做，2-c 待做** | 四问已答，读点已数清。2-a 把 `anomalyRules` / `multiAnomaly` / `anomalyLast` 收成 `state.anomaly {mode, rules, last}`（`694cd8a`，新增 `verify-anomaly-model.mjs` 15 条，变异 70 → 全捕）。2-b 把 `passesBaseFilter()` + `anomalyContext()` 合成 `recordVisible(record, turn, selection)`，账本与总览条都不再持有判断（R2 闭合，新增 3 条断言 + 3 条变异）。对外口径全程不变，变的只有 `state` 形状与内部函数划分。**2-c**：`resetBaseFilters()` 变一次赋值 + 删 D2 两处注释。详见 Stage 2。 |
 | 5 | ~~Stage 3 — 声明跨层关系（R6）~~ **已做** | 代码 | — | `verify-cross-layer.mjs`（12 条）+ `mutate-cross-layer.py`（6 条变异全捕），为「window-bar 在 L5 内写 L3」与「overview 持有写 L2 的控件」各加一组断言。调研中撞见 **R5 未闭合**：`state.overviewSelection` 有 5 个写点，没有单一 setter——这条守卫刻意不覆盖它（断言「已收敛」过不了，断言「当前 5 个」恒真），收它属于 D4。详见 Stage 3。 |
 | 6 | **窄屏 sticky 只有代码证据，没有浏览器实测** | 验证 | 环境 | in-app 浏览器视口固定 735×900 且不可 resize。目前窄屏那条路只有源码和网络请求证据。 |
 | 7 | **跨家族验证只有 codex 一条腿** | 验证 | 环境 | claude OAuth 过期、codebuddy 要 `/login`，需 chli 交互式处理。 |

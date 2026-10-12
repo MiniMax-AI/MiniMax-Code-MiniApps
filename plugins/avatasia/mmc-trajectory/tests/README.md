@@ -129,19 +129,28 @@ be false in this file's own history:
    that keeps whatever the row above says has no answer to it.
 2. **The number on a button is what you get when you tick that button.** `anomalyCounts()` walks
    the same records `visibleEntries()` does and neither of them walks the other axis. Counting
-   through `passesBaseFilter` — which is what this guard used to *require* — produced a button
-   promising 283 rows above a list of 1,494, and no functional assertion could tell, because the
-   ledger was filtering the same way the count was.
+   through the shared visibility entry — which is what this guard used to *require* — produced a
+   button promising 283 rows above a list of 1,494, and no functional assertion could tell,
+   because the ledger was filtering the same way the count was.
 3. **The unit is part of the claim.** A rule scoped to a record is published in 条; a rule scoped
    to a turn is published in 轮, and counted once per *turn*. `无答复` counted in records is how
    a session broken 13 times came to advertise 1,244 "unanswered" rows, none of which carried a
    sign of being unanswered. `verify-anomaly.mjs` checks the unit against the rule table, not
    against a literal, so renaming or rescoping a rule cannot leave the two disagreeing.
-4. **The two axes are alternatives, not a stack.** `visibleEntries()` and `spanPassesFilter()`
-   branch on the mode before the other axis. The strip has to agree with the list: when it
-   drew spans for records the list was not rendering, the "filtered but nothing changed" failure
-   the overview had already paid for once came straight back.
-5. **A control that cannot change what is on screen must not look like it can.** The inactive
+4. **There is one entry, and the mode branches first.** `recordVisible(record, turn, selection)`
+   is the only thing that answers "is this record on screen". `visibleEntries()` walks it once
+   per row and `spanPassesFilter()` reaches it after looking the turn back up; neither holds a
+   predicate. The strip has to agree with the list: when it drew spans for records the list was
+   not rendering, the "filtered but nothing changed" failure the overview had already paid for
+   once came straight back. Two assertions pin the shape that stops it coming back — the strip
+   keeps no predicate, and 异常 branches and returns before any other axis is consulted.
+5. **The one caller that answers less has to say so.** The overview brush is an argument to
+   `recordVisible()` and not a read of state, because the strip passes `null` on purpose: the
+   brush is drawn on that strip, and a strip that hid the records you were dragging a window
+   over could not be used to drag one. Every other condition applies to both surfaces, so the
+   brush is the only thing that legitimately differs — and naming it in the signature is what
+   stops the next reader from tidying the difference away.
+6. **A control that cannot change what is on screen must not look like it can.** The inactive
    axis is `inert`, not merely dimmed, so neither the pointer nor keyboard focus can reach a
    button that does nothing. The session and generation pickers are deliberately unmarked — they
    choose which session is on screen, not which records of it — and the guard asserts exactly

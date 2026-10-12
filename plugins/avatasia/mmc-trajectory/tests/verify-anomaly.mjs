@@ -231,7 +231,7 @@ page.state = {
 for (const turn of payload.turns) if (turn && turn.id) page.turnById.set(turn.id, turn);
 
 for (const name of ['recordInRange', 'hasTimeRange', 'inTimeRange', 'recordInSelection',
-  'passesBaseFilter', 'liveTurn', 'anomalyContext', 'anomalyCounts', 'visibleEntries',
+  'recordVisible', 'liveTurn', 'anomalyCounts', 'visibleEntries',
   'turnAnomalyRules', 'spanPassesFilter']) {
   const src = fnSource('function ' + name + '(');
   if (!src) throw new Error('could not extract ' + name);
@@ -767,11 +767,11 @@ assert('the count comes from the pass render() took, not a second walk',
 
 const countsSrc = fnSource('function anomalyCounts()');
 // Inverted from what this asserted before. It required the counts to be drawn through
-// passesBaseFilter, which made the number describe a view that anomaly mode does not produce —
-// the whole "283 on the button, 1,494 in the list" defect. What has to hold instead is that the
-// counts ignore the axis that is switched off while they are on screen.
+// the shared visibility entry, which made the number describe a view that anomaly mode does
+// not produce — the whole "283 on the button, 1,494 in the list" defect. What has to hold
+// instead is that the counts ignore the axis that is switched off while they are on screen.
 assert('the counts do NOT walk the other axis, because anomaly mode does not',
-  !/passesBaseFilter/.test(countsSrc));
+  !/recordVisible/.test(countsSrc));
 assert('nor read the overview selection', !/state\.overviewSelection/.test(countsSrc));
 assert('a turn rule is counted once per turn, not once per record',
   /rule\.turn/.test(countsSrc) && /counted\[key\]/.test(countsSrc));
@@ -793,18 +793,39 @@ assert('and re-syncs the buttons with it', /syncAnomalyButtons\(anomalyCounts\(\
 assert('the filter counts as a filter',
   /state\.anomaly\.rules\.length !== 0/.test(fnSource('function isFiltering()')));
 
+// One entry, two callers. The point of R2 is that the two surfaces cannot answer this
+// question separately and drift, so what is asserted is not "both apply 异常" any more — it
+// is that neither of them holds a predicate, and that the one entry they share branches on
+// the anomaly axis before the others.
 const visibleSrc = fnSource('function visibleEntries()');
-assert('the ledger applies it', /passesAnomaly\(entry\.record, anomalyContext\(entry\), state\.anomaly\.rules\)/.test(visibleSrc));
+assert('the ledger applies it', /recordVisible\(entry\.record, entry\.turn, selection\)/.test(visibleSrc));
+assert('and hands it the turn off the entry, not a lookup of its own',
+  !/turnById/.test(visibleSrc));
+const gateSrc = fnSource('function recordVisible(');
+assert('and branches on the mode before the other axis, so strip and list agree',
+  !!gateSrc && /if \(state\.anomaly\.rules\.length > 0\) \{\s*return passesAnomaly/.test(gateSrc));
 // The two axes are alternatives, not a stack. Getting this wrong is not a matter of taste: a
 // list built from both predicates at once is the 1,494 rows a 283-row button could never
-// deliver, and the reason the two modes could not be told apart from the result alone.
+// deliver, and the reason the two modes could not be told apart from the result alone. The
+// anomaly branch has to *return*, and the base tests have to start after it — a branch that
+// merely tested and fell through is the stack, spelled the other way.
 assert('and treats the two axes as alternatives, not a stack',
-  /if \(anomalyMode\) \{[\s\S]*?\} else if \(!passesBaseFilter/.test(visibleSrc));
+  !!gateSrc && /if \(state\.anomaly\.rules\.length > 0\) \{\s*return passesAnomaly[\s\S]*?\n        \}\n        if \(!hasKind/.test(gateSrc));
+// The brush is the one condition that legitimately differs between the two callers, so it is
+// an argument rather than something the entry reads for itself. If it became a state read
+// inside recordVisible(), the strip would start hiding the records the reader drags across.
+assert('the brush is an argument, because the strip is what the brush is drawn on',
+  !!gateSrc && /function recordVisible\(record, turn, selection\)/.test(gateSrc)
+  && !/state\.overviewSelection/.test(gateSrc));
 
 const stripSrc = fnSource('function spanPassesFilter(');
-assert('the strip applies it', /passesAnomaly/.test(stripSrc));
-assert('and branches on the mode before the other axis, so strip and list agree',
-  /if \(state\.anomaly\.rules\.length > 0\) \{\s*return passesAnomaly/.test(stripSrc));
+assert('the strip applies it', !!stripSrc && /return recordVisible\(record, owner \|\| null, null\);/.test(stripSrc));
+// The strongest form of the claim: the strip's adapter holds no predicate at all. Adapting
+// the caller's argument shape is not a second opinion; anything that can answer "is this
+// record on screen" in here is.
+assert('and the strip keeps no predicate of its own to drift out of step',
+  !!stripSrc
+  && !/passesAnomaly|hasKind|matchesQuery|recordInSelection|inTimeRange/.test(stripSrc));
 
 const renderSrc = fnSource('function render()');
 // Still ordered mode-then-buttons: the strip, the note and the ledger must not each answer a

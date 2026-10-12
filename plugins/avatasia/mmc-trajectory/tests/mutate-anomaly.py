@@ -94,11 +94,33 @@ CASES = [
     ("the strip cannot find the owning turn", "the strip and the ledger keep the same records",
      "        var owner = record ? turnById.get(record.turnId) : null;",
      "        var owner = null;"),
-    ("the strip stopped applying 异常 at all", "the strip applies it",
-     "          return passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomaly.rules);",
+    # R2 is only worth anything if the second caller stays a way in rather than a second
+    # opinion. Each of the three below puts one piece of the decision back where it does not
+    # belong, and each is a shape that has actually happened on this page.
+    ("the strip grows a predicate again", "and the strip keeps no predicate of its own to drift out of step",
+     "        return recordVisible(record, owner || null, null);",
+     "        return recordVisible(record, owner || null, null) && hasKind(record, state.kinds);"),
+    # The brush is passed in so the strip can decline it. Reading it from state instead is a
+    # one-word change that looks like tidying and hides the records the reader drags across.
+    ("the brush read from state, so the strip hides what the reader drags over",
+     "the brush is an argument, because the strip is what the brush is drawn on",
+     "        if (selection && !recordInSelection(record, selection, overviewSpansById)) return false;",
+     "        if (state.overviewSelection && !recordInSelection(record, state.overviewSelection, overviewSpansById)) return false;"),
+    ("the ledger looks the turn up instead of taking the one it was handed",
+     "and hands it the turn off the entry, not a lookup of its own",
+     "          if (!recordVisible(entry.record, entry.turn, selection)) continue;",
+     "          if (!recordVisible(entry.record, turnById.get(entry.record.turnId), selection)) continue;"),
+    # These two used to attack a predicate inside each caller. There is only one caller of the
+    # predicate now, so both moved onto it — the names kept, because each still breaks exactly
+    # the thing it broke before: one makes the axis stop applying, the other makes the ledger
+    # stop filtering at all.
+    ("the one entry stopped applying 异常 at all",
+     "and branches on the mode before the other axis, so strip and list agree",
+     "          return passesAnomaly(record, { turn: turn || null, liveTurn: liveTurn() }, state.anomaly.rules);",
      "          return true;"),
-    ("the ledger stopped applying 异常", "the ledger applies it",
-     "            if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomaly.rules)) continue;\n", ""),
+    ("the ledger stopped filtering at all", "the ledger applies it",
+     "          if (!recordVisible(entry.record, entry.turn, selection)) continue;",
+     "          if (false) continue;"),
 
     # --- the state has to remember the ticks, or a poll re-renders the buttons from nothing ---
     ("the filter is not counted as a filter", "the filter counts as a filter",
@@ -145,14 +167,16 @@ CASES = [
 
     # --- the two axes are alternatives. Every one of these turns a mutually exclusive pair back
     # --- into a stack, which is the shape that produced "283 on the button, 1,494 in the list".
+    # Anchored with the signature above it: `if (state.anomaly.rules.length > 0)` appears twice
+    # — once in recordVisible(), once in applyFilterScope() — and the two mean nothing alike.
     ("the mode is read backwards, so the search stops filtering at all",
      "but with no rule ticked the search is still a filter for the list",
-     "        var anomalyMode = state.anomaly.rules.length > 0;",
-     "        var anomalyMode = state.anomaly.rules.length >= 0;"),
+     "      function recordVisible(record, turn, selection) {\n        if (state.anomaly.rules.length > 0) {",
+     "      function recordVisible(record, turn, selection) {\n        if (state.anomaly.rules.length >= 0) {"),
     ("the two axes stacked instead of alternated",
      "and treats the two axes as alternatives, not a stack",
-     "          } else if (!passesBaseFilter(entry.record, selection)) {",
-     "          }\n          if (!passesBaseFilter(entry.record, selection)) {"),
+     "          return passesAnomaly(record, { turn: turn || null, liveTurn: liveTurn() }, state.anomaly.rules);\n        }\n        if (!hasKind",
+     "          passesAnomaly(record, { turn: turn || null, liveTurn: liveTurn() }, state.anomaly.rules);\n        }\n        if (!hasKind"),
     ("the button count follows the search box again",
      "a search does not move the union count",
      "          var hits = recordAnomalyRules(entry.record, { turn: entry.turn, liveTurn: live });",

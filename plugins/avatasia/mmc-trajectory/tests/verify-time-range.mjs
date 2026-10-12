@@ -468,15 +468,17 @@ assert('a range never forces 全部 on screen', !/\bsetWindowMode\(/.test(applyR
 assert('a range resets the window like every other filter', /\bresetWindowMode\(\);/.test(applyRange2));
 
 // The range has to reach every predicate that decides what is drawn. The ledger and the
-// turn-grouping strip used to keep a test each and drifted apart once already; they now share
-// one predicate, and these pin both the predicate and the two callers reaching for it.
-const baseSrc = fnSource('function passesBaseFilter(');
-assert('the shared ledger predicate applies the range',
-  /if \(!inTimeRange\(record\)\) return false;/.test(baseSrc));
-assert('visibleEntries filters through the shared predicate',
-  /if \(!passesBaseFilter\(entry\.record, selection\)\) continue;/.test(fnSource('function visibleEntries()')));
-assert('spanPassesFilter applies the range',
-  /if \(!inTimeRange\(record\)\) return false;/.test(fnSource('function spanPassesFilter(')));
+// turn-grouping strip used to keep a test each and drifted apart once already; there is now
+// one entry they both go through, and these pin the entry and both of its callers reaching
+// for it — including the strip, which must reach for it rather than carry its own range test.
+const gateSrc = fnSource('function recordVisible(');
+assert('the shared entry applies the range',
+  /if \(!inTimeRange\(record\)\) return false;/.test(gateSrc));
+assert('visibleEntries filters through the shared entry',
+  /recordVisible\(entry\.record, entry\.turn, selection\)/.test(fnSource('function visibleEntries()')));
+assert('and the strip reaches it rather than carrying its own range test',
+  /return recordVisible\(record, owner \|\| null, null\);/.test(fnSource('function spanPassesFilter('))
+  && !/inTimeRange/.test(fnSource('function spanPassesFilter(')));
 
 // A range is a snapshot, so the window must stop following the tail on its own. Without this
 // the newest-200 window would drag the view forward every poll under a fixed filter.

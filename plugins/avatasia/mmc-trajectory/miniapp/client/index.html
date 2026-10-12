@@ -4073,7 +4073,7 @@
           // it kept the excluded work visible enough that turning off 工具结果 left the
           // tool lane reading as a solid band, which is indistinguishable from no filter
           // at all. Positions still come from the full model, so the axis does not move.
-          if (filtering && !spanPassesFilter(span.record, hasQuery)) continue;
+          if (filtering && !spanPassesFilter(span.record)) continue;
           node.style.setProperty('--ov-lane', String(span.lane));
           node.style.setProperty('--ov-left', (left * 100).toFixed(4) + '%');
           node.style.setProperty('--ov-width', (width * 100).toFixed(4) + '%');
@@ -4531,14 +4531,34 @@
       }
 
       /**
-       * Everything except 异常, in one place.
+      /**
+       * Whether one record is in the current view — the one function that answers it (R2).
        *
-       * The ledger and the 异常 rule counts both go through here. They each had their own
-       * copy for a while, and the result was a button promising 246 rows next to a list
-       * showing 12 — the same 「筛选了但什么都没变」 this file keeps guarding against, moved
-       * up one level.
+       * The ledger walks `state.flat` and is handed `{turn, record}`; the overview strip is
+       * handed a bare record and looks the turn back up. Both ask here now. They each had
+       * their own copy for a while, and the result was a strip drawing spans for records the
+       * list refused to render — which reads as 「筛选了但什么都没变」 rather than as a bug, and
+       * is the shape this file has already paid for once on the kind axis.
+       *
+       * 异常 mode replaces the filter outright, strip included, so it is branched on first.
+       * That is what makes the exclusivity hold by construction instead of by two copies
+       * happening to agree: with no rule ticked the anomaly branch cannot run at all, because
+       * passesAnomaly() reads an empty rule list as "off" and lets everything through. Running
+       * the kind, query and range tests first and the anomaly test last — the order this was
+       * in before — drew spans for records the list had already stopped filtering on the
+       * moment a rule was ticked.
+       *
+       * `selection` is the overview brush, and it is an argument rather than a read of state
+       * because one caller passes null on purpose: the brush is drawn on this strip, and a
+       * strip that hid the records you were dragging a window over could not be used to drag
+       * one. Every other condition is read from state and has to apply to both callers, so the
+       * brush is the only thing that legitimately differs between them — and saying so in the
+       * signature is what stops the next reader from "fixing" the strip to apply it too.
        */
-      function passesBaseFilter(record, selection) {
+      function recordVisible(record, turn, selection) {
+        if (state.anomaly.rules.length > 0) {
+          return passesAnomaly(record, { turn: turn || null, liveTurn: liveTurn() }, state.anomaly.rules);
+        }
         if (!hasKind(record, state.kinds)) return false;
         if (state.query && !matchesQuery(record, state.query)) return false;
         // The overview brush is a further filter, applied after kind and text so that
@@ -4547,17 +4567,12 @@
         if (!inTimeRange(record)) return false;
         return true;
       }
-
-      function anomalyContext(entry) {
-        return { turn: entry.turn, liveTurn: liveTurn() };
-      }
-
       /**
        * What each 异常 button would show if it were the only one ticked.
        *
        * Counted over every record with no other filter applied, because that is exactly what
        * 异常 mode does: the type axis, the search box and the time range all stop applying the
-       * moment a rule is on. Counting through passesBaseFilter — which is what this used to do,
+       * moment a rule is on. Counting through recordVisible() — which is what this used to do,
        * while the ledger was also applying those filters — produced a number no click could
        * ever deliver, and that is the whole of the original defect: a button promising 283
        * rows above a list showing 1,494. The only fix is to count the way the ledger filters,
@@ -4640,32 +4655,26 @@
       }
 
       /**
-       * Two filter systems, one of them at a time.
+      /**
+       * The rows of the table, in order.
        *
-       * 异常 mode is entered by ticking a rule and left with 全部数据. While it is on, the type
-       * axis, the search box, the time range and the overview brush are all switched off —
-       * deliberately. 异常 is a short list, and narrowing a short list by a second axis is how
-       * a reader ends up staring at an empty ledger with four filters set and no way to tell
-       * which one emptied it. So this is an either/or and not two independent tests: with no
-       * rule ticked the anomaly branch cannot run at all, because passesAnomaly() treats an
-       * empty list as "off" and lets everything through.
+       * Which of the two filter systems is in force is decided inside recordVisible(), not
+       * here: 异常 mode replaces the type axis, the search box, the time range and the
+       * overview brush rather than stacking with them, and that either/or belongs to one
+       * place. This loop supplies only what it alone has — the turn off each flat entry, and
+       * the brush, which the ledger does apply (the strip deliberately does not; the reason
+       * is in recordVisible()).
        */
       function visibleEntries() {
         var out = [];
         var selection = state.overviewSelection;
-        var anomalyMode = state.anomaly.rules.length > 0;
         for (var i = 0; i < state.flat.length; i += 1) {
           var entry = state.flat[i];
-          if (anomalyMode) {
-            if (!passesAnomaly(entry.record, anomalyContext(entry), state.anomaly.rules)) continue;
-          } else if (!passesBaseFilter(entry.record, selection)) {
-            continue;
-          }
+          if (!recordVisible(entry.record, entry.turn, selection)) continue;
           out.push(entry);
         }
         return out;
       }
-
       /**
        * Whether the record the inspector is showing still belongs to the table.
        *
@@ -4912,35 +4921,23 @@
       }
 
       /**
-       * Whether one record belongs in the current filter.
+      /**
+       * The strip's way into recordVisible(), and nothing else.
        *
-       * This must agree with visibleEntries() step for step. When it did not, the overview
-       * strip drew spans for records the list refused to render, which is how "filtered
-       * but nothing changed" happened.
+       * It looks the owning turn back up because the strip is handed a bare record while the
+       * ledger gets `{turn, record}` off the flat entry — the same question, the same table,
+       * one lookup apart. It passes no brush, for the reason recordVisible() gives.
+       *
+       * What it must not do is hold a predicate of its own. It used to hold a copy of the
+       * whole decision, and the two copies drifted: the strip drew spans for records the
+       * list refused to render, which reads to the reader as "filtered but nothing changed"
+       * rather than as a bug. Adapting the caller's argument shape is not a second opinion;
+       * answering the question again would be.
        */
-      function spanPassesFilter(record, hasQuery) {
-        // The strip is handed a bare record, so the owning turn comes back out of turnById
-        // instead of off the flat entry the ledger gets — the same question, the same table,
-        // one lookup apart.
+      function spanPassesFilter(record) {
         var owner = record ? turnById.get(record.turnId) : null;
-        // 异常 mode replaces the filter outright, strip included. Branching first is what makes
-        // this agree with visibleEntries() step for step: the strip must not draw a span for a
-        // record the ledger is not going to render, which is the "filtered but nothing changed"
-        // this function exists to prevent. Running the kind, query and range tests first and
-        // the anomaly test last — the order this used to be in — drew spans for records the
-        // list had stopped filtering on the moment a rule was ticked.
-        if (state.anomaly.rules.length > 0) {
-          return passesAnomaly(record, { turn: owner || null, liveTurn: liveTurn() }, state.anomaly.rules);
-        }
-        if (!hasKind(record, state.kinds)) return false;
-        if (hasQuery && !matchesQuery(record, state.query)) return false;
-        // The range is a filter here too. Leaving it out made the overview draw spans for
-        // records the list refused to render — the same "filtered but nothing changed" this
-        // function exists to prevent.
-        if (!inTimeRange(record)) return false;
-        return true;
+        return recordVisible(record, owner || null, null);
       }
-
       function buildTurnHead(turn, entries) {
         // Plain text, not a button. There is no per-turn fold left to toggle, and a
         // control that does nothing is worse than no control.
