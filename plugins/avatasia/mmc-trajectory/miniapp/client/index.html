@@ -2270,9 +2270,15 @@
       // would invite reading the two as one category.
       var KIND_ORDER = ['user', 'steer', 'reply', 'narration', 'thinking', 'toolCall', 'toolResult', 'system', 'compaction'];
 
-      // The type chips are the only filter. Which record kinds are visible is one array —
-      // state.kinds — and every control that changes it writes to that array and nowhere
-      // else, so a question about "what am I looking at" has exactly one answer.
+      // Which record kinds are visible is one array — `state.kinds` — and every control that
+      // changes it writes to that array and nowhere else, so a question about "what am I
+      // looking at" has exactly one answer.
+      //
+      // That is a claim about kinds, and only about kinds. Three other conditions narrow the
+      // table too: 异常 replaces this axis outright while a rule is ticked, a range bounds the
+      // session to a stretch of wall-clock time, and a brush bounds it to a stretch of the
+      // overview. Two comments in this file used to claim exclusivity for this axis with no
+      // qualifier; each of them was describing an earlier page. See docs/LAYERS.md D2.
       //
       // There is deliberately no second row of layer buttons. Three fixed presets looked
       // like a coarser version of the chips, but any preset the reader outgrows became a
@@ -3072,8 +3078,7 @@
         overviewSelection: null,
         overviewViewport: null,
         overviewHoverId: null,
-        // The type chips are the only filter, so this array is the only definition of what is on
-        // screen. Unchecking a kind means its records are simply not part of the render
+        // Unchecking a kind means its records are simply not part of the render
         // plan — no placeholder row, no "已折叠 N 行 · 点击展开", nothing standing in for
         // what is gone. The reference implementation folds with a summary line instead;
         // this deliberately does not, because a line that claims to be a summary is one
@@ -3105,10 +3110,11 @@
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
         // and both null is the default: no range, whole session.
         //
-        // This is the one filter the KPI follows. The type chips and the search box narrow
-        // what is *drawn*; a range answers a different question — "what happened in this
-        // stretch" — and a headline count for the whole session beside a table of the range
-        // is the mismatch this state exists to remove.
+        // Of everything on this layer, the KPI follows the range and nothing else. The type
+        // axis, the search box and the 异常 axis narrow what is *drawn* — and while 异常 is on,
+        // recordVisible() consults none of them — while a range answers a different question,
+        // "what happened in this stretch", and a headline count for the whole session beside
+        // a table of the range is the mismatch this state exists to remove.
         rangeFrom: null,
         rangeTo: null,
         // The highest record index in force when the range was set. An open-ended range is

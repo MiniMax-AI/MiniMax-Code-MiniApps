@@ -35,6 +35,10 @@
  * What this guard does NOT check is that the anomaly axis and the base filters stay mutually
  * exclusive — that is D5's other half and it is still open; see docs/LAYERS.md Stage 2.
  *
+ * The last section is not about the anomaly model at all, and is here anyway: D2 is the same
+ * defect one level up. Two comments in this file each described what filtering *is*, in terms
+ * that cannot both hold, and nothing about either was a runtime error.
+ *
  * mutate-anomaly-model.py breaks each rule below in the shipped file and requires this guard to
  * report it by name.
  */
@@ -146,6 +150,23 @@ assert('defaultAnomaly() returns a fresh literal rather than a shared constant',
 // the state does not have. It is read back from the model on every render, so this cannot drift.
 assert('the 多选 checkbox is drawn from state.anomaly.mode',
   /dom\.anomalyMulti\.checked\s*=\s*state\.anomaly\.mode === 'multi'/.test(html));
+
+// ------------------------------------------------------------- D2: no unqualified exclusivity claim
+
+// D2: this state object carried two comments that each claimed to be describing what
+// filtering *is* — "the type chips are the only filter" and "this is the one filter the KPI
+// follows" — and the two models were incompatible. Each was true of an earlier page. The
+// layering did not overturn either idea; it gave each a qualifier, and the qualified version
+// belongs here and in the README, not in the file as a bare claim about the page.
+//
+// This is a claim about prose, and it is guarded anyway: the sentence is the one thing about
+// this model that a refactor can silently reintroduce, because nothing about it is a runtime
+// error. A comment that contradicts the architecture is not less true for being a comment.
+const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
+assert('the client makes no unqualified claim that one axis is the only filter',
+  countOf('the only filter') === 0 && countOf('the one filter') === 0);
+assert('and the qualified version of it lives where it is still true',
+  /The type chips are the only filter over kinds\./.test(readme));
 
 // ---------------------------------------------------------------- reporting
 

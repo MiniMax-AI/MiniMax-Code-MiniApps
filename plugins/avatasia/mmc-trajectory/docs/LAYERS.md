@@ -50,6 +50,8 @@
 
 ### D2 — 同一份 state 里，有两句互相矛盾的设计声明
 
+**已修（Stage 2-c）**，原文保留如下以说明修的是什么。
+
 ```js
 // kinds
 // The type chips are the only filter, so this array is the only definition of what is on
@@ -481,7 +483,7 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 
 三条共用同一个出口，是因为它们回答的是同一个问题：**这次重画，哪些状态要重新判定。**
 
-### Stage 2 — 把异常轴变成 L2 的字段（模型）**2-a、2-b 已完成，2-c 待做**
+### Stage 2 — 把异常轴变成 L2 的字段（模型）**2-a、2-b 已完成；2-c 的注释半完成，赋值半显式不做**
 
 四项任务：收字段、合成 R2 单一入口、`resetBaseFilters()` 变成一次赋值、删掉 D2 那句注释。读点已经数清，四问如下。
 
@@ -540,9 +542,27 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 
 **一处过程事故已记录**：移除 `anomalyContext()` 时，探针从函数签名向前回溯找 `/**`，跨过了空行，把刚插入的 `recordVisible()` 一起删掉，脚本自己报了「ok」并写盘。发现方式是 `fnSource('function recordVisible(')` 抽不出来。已从 fork 复位，探针的回溯改为「注释必须紧贴签名才吸收」。教训：**结构化定位比转写注释可靠，但结构化定位自己也会有走过头的时候**——写探针时值得让「删掉了多少行」打印出来，而不是只打印成功。
 
-#### 2-c 待做
+#### 2-c 部分完成 —— 有一半**刻意没做**，理由在下面
 
-`resetBaseFilters()` 变一次赋值 + 删 D2 那两处注释（2273 / 3075）。
+**做了的：D2 那三处声明。** `state` 里曾有两句互相矛盾的设计声明，两句都在描述一个**更早的**页面，代码里没有任何一层裁决哪句作废：
+
+| 位置 | 原话 | 处置 |
+| --- | --- | --- |
+| `KIND_ORDER` 上方 | "The type chips are the only filter. Which record kinds are visible is one array — state.kinds…" | 删掉前半句，保留「一个数组、一个写者」那半，并**列出另外三个也在收窄表格的条件** |
+| `kinds:` 字段上方 | "The type chips are the only filter, so this array is the only definition of what is on screen." | 整句删掉，保留后面关于折叠的段落（那段仍然成立） |
+| `rangeFrom` 字段上方 | "This is the one filter the KPI follows." | 加限定词 → "Of everything on this layer, the KPI follows the range and nothing else."，并说明异常轴开着时 `recordVisible()` 一个都不查 |
+
+**这条不变式本身被守了**（`verify-anomaly-model.mjs` 新增 2 条，共 17 条）：`index.html` 里 "the only filter" 与 "the one filter" 各必须出现 **0** 次，而带限定词的那句仍然在 `README.md` 里。守一段散文听起来奇怪，但这句话是本模型唯一一处**改错了也不会有任何运行时报错**的地方——而一句与架构相矛盾的注释并不因为它是注释就不算假话。两条变异分别把它插回 `KIND_ORDER` 上方与 `kinds:` 字段上方。
+
+**没做的：`resetBaseFilters()` 变一次赋值。** 现状是它手写清 5 样（kinds / query / overviewSelection / clearTimeRange + 搜索框 + `syncKindButtons()`）。要变成「一次赋值」，必须先把基础轴也收成一个字段（`state.base = defaultBase()`），像 2-a 对异常轴做的那样。**本轮不做，理由是它越界：**
+
+- Stage 2 自己的「归层」答案是「**不改 L1/L3/L4/L5/L6 任何一层**」。`overviewSelection` 是 **L3→L2 的回写**（R5 声明的那一条），把它嵌进 L2 的 `state.base` 就改了 L3 声明的形状。
+- `state.overviewSelection` 今天有 **5 个写点**且 R5 未闭合（本文件 Stage 3 已记）。收字段不收 setter，只是把 D4 的问题换个位置——而 D4 本轮明确不做。
+- 代价是 `state.kinds`（~15 处）+ `state.query`（~15 处）+ `state.overviewSelection`（8 读 5 写），约 40 个站点，横跨 L3 / L4 / L5，并且要改写 `verify-cross-layer.mjs` 里「`visibleEntries()` 读 `state.overviewSelection`」那条断言。这不是 2-c 的体量，是第四个独立提交。
+
+所以这一半**作为显式不做记录在下面的未做清单第 9 行**，而不是悄悄丢掉。要做的话，它的四问要重答一遍，不能沿用 Stage 2 的。
+
+**顺带修掉一处 2-a 的漏**：`verify-anomaly-model.mjs` 的文件头写着「`mutate-anomaly-model.py` breaks each rule below」，而那个文件**当时并不存在**。这正是守卫本身要抓的那类缺陷——树里一句没有任何东西在检查的声明。现已补上，16 条变异全捕（其中 5 条初版写错：三条只加了不带 `state.` 前缀的键，那不是「第二个答案」只是一个死键；一条改条件而没删赋值；一条把写者改成自赋值，写者数没变）。
 
 ### ~~Stage 3 — 声明跨层关系（R6）~~ **已完成**
 
@@ -626,9 +646,10 @@ D12 把等待的**形状**改了（进度可见、分批交还主线程、在途
 | 1c | **一次未解释的位置跳变**（待复现） | 验证 | 无 | 见 D15 实测：某一趟近底部的重建 `postY` 比 `preY` 高了 77,226 px，屏上的行没有变，随后被后续重建带下去；同一深度之后未能复现。**机制未验证，不写成缺陷，也不写成没问题。** |
 | 2 | **增量协议 `?since=`**（只发新增尾部） | 代码 + 协议 | **设计已完成，等指示** | 调研结论改变了收益估计：payload 只有 `session` / `stats` / `turns` 三个键，41 MB 全在 `turns`；而 **`stats` 是累加器，必须全量重算**——所以 `?since=` 省的是**传输与客户端 `JSON.parse`，不是服务端 CPU**，缓存里仍然躺着 41 MB。游标选 `record.index`（稠密、只增不改、已是 `/raw` 的公开键）。这是本轮唯一一处真口径变更（`applyPayload` 从整体替换变追加合并），读点已列全——**写侧只有 1 处**，读侧 `stats` 6 / `turns` 5 / `session` 8。详见 Stage 4。 |
 | 3 | ~~给「显示全部」封顶~~ **已否决，不做** | 口径 | — | **chli 2026-10-12 定：不封顶。** 理由是「无限大无非是极端情况下假死，碰到的几率很小」。补充一条事实（已告知，不影响决定）：18,924 行不是极端情况，就是本会话现在的规模，3,956 ms 就是在它上面测出来的。封顶还会把「读完整个会话」从点一次变成点约 69 次「向上加载更早的 200 条」，而那个控件今天只在 `hiddenAbove > 0` 时出现，等于新增一条路。此路不再讨论。 |
-| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **2-a、2-b 已做，2-c 待做** | 四问已答，读点已数清。2-a 把 `anomalyRules` / `multiAnomaly` / `anomalyLast` 收成 `state.anomaly {mode, rules, last}`（`694cd8a`，新增 `verify-anomaly-model.mjs` 15 条，变异 70 → 全捕）。2-b 把 `passesBaseFilter()` + `anomalyContext()` 合成 `recordVisible(record, turn, selection)`，账本与总览条都不再持有判断（R2 闭合，新增 3 条断言 + 3 条变异）。对外口径全程不变，变的只有 `state` 形状与内部函数划分。**2-c**：`resetBaseFilters()` 变一次赋值 + 删 D2 两处注释。详见 Stage 2。 |
+| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **2-a、2-b 已做；2-c 注释半已做，赋值半不做** | 四问已答，读点已数清。2-a 把 `anomalyRules` / `multiAnomaly` / `anomalyLast` 收成 `state.anomaly {mode, rules, last}`（`694cd8a`，新增 `verify-anomaly-model.mjs`，本轮补上它缺失的 `mutate-anomaly-model.py` 16 条变异）。2-b 把 `passesBaseFilter()` + `anomalyContext()` 合成 `recordVisible(record, turn, selection)`，账本与总览条都不再持有判断（R2 闭合，3 条断言 + 3 条变异）。2-c 删掉 D2 那三句互相矛盾的设计声明并给它加了限定词；**`resetBaseFilters()` 变一次赋值那一半显式不做**——它要收 `state.base`，而 `overviewSelection` 是 L3→L2 的回写（R5 未闭合），收字段就改了 L3 的形状，且约 40 个站点横跨 L3/L4/L5，超出 Stage 2 自己「不改 L3/L4/L5」的归层边界。详见 Stage 2。 |
 | 5 | ~~Stage 3 — 声明跨层关系（R6）~~ **已做** | 代码 | — | `verify-cross-layer.mjs`（12 条）+ `mutate-cross-layer.py`（6 条变异全捕），为「window-bar 在 L5 内写 L3」与「overview 持有写 L2 的控件」各加一组断言。调研中撞见 **R5 未闭合**：`state.overviewSelection` 有 5 个写点，没有单一 setter——这条守卫刻意不覆盖它（断言「已收敛」过不了，断言「当前 5 个」恒真），收它属于 D4。详见 Stage 3。 |
 | 6 | **窄屏 sticky 只有代码证据，没有浏览器实测** | 验证 | 环境 | in-app 浏览器视口固定 735×900 且不可 resize。目前窄屏那条路只有源码和网络请求证据。 |
 | 7 | **跨家族验证只有 codex 一条腿** | 验证 | 环境 | claude OAuth 过期、codebuddy 要 `/login`，需 chli 交互式处理。 |
 | 8 | **PR #16 reviews=0** | 流程 | 等 maintainer | `.probe\perf-payload.json`（34 MB 临时产物）已于 2026-10-12 移入回收站，不再列。 |
+| 9 | **`resetBaseFilters()` 变一次赋值（Stage 2-c 的另一半）** | 代码 | 需重答四问 | 要「一次赋值」就得把基础轴收成 `state.base = {kinds, query, selection}` + 工厂，与 2-a 对异常轴的做法对称。本轮显式不做：`overviewSelection` 是 L3→L2 的回写且 R5 有 5 个写点未闭合，收它会改 L3 声明的形状；约 40 个站点横跨 L3/L4/L5，且要改写 `verify-cross-layer.mjs` 的断言。这超出 Stage 2 自己「不改 L3/L4/L5」的归层边界。**要做的话四问要重答，不能沿用 Stage 2 的。** |
 
