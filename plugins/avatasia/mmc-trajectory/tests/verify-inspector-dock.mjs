@@ -183,8 +183,8 @@ assert('fully expanded is capped by a different number than half height',
 // half height by accident.
 const dockVar = /:root\s*\{([^{}]*)\}/.exec(css);
 const dockH = dockVar ? /--inspector-dock-h\s*:\s*([^;]+)/.exec(dockVar[1]) : null;
-assert('the half-height number is declared, not left to fall back', !!dockH);
-assert('half height is a share of the viewport, and the share is written down',
+assert('the two-fifths fallback is declared, not left to fall back', !!dockH);
+assert('the docked height is a share of the viewport, and the share is written down',
   !!dockH && /^(\d+(?:\.\d+)?)vh$/.test(dockH[1].trim()));
 
 // A sticky strip has to paint over what scrolls under it: ledger rows are background: transparent,
@@ -438,10 +438,29 @@ assert('one exit re-decides the panel\'s visibility',
 assert('losing the selection takes the panel back out of the dock',
   !!applyFn && /!hasSelection[\s\S]*?state\.inspectorDock\s*=\s*'flow'/.test(applyFn));
 
-/* ---------- the docked height: a quarter of the window, and the reader can move it ---------- */
+/* ---------- the docked height: two fifths of the window, and the reader can move it ---------- */
 
-assert('the docked height is a quarter of the measured window by default',
-  !!applyFn && /window\.innerHeight\s*\/\s*4/.test(applyFn));
+// chli: 「检视的中间高度改为2/5」. The share is a named constant rather than a bare `/ 4` so that the
+// two places that need it — the height the panel is given, and the height a drag starts from — read
+// the same number instead of each carrying its own copy of the arithmetic.
+assert('the default docked height is two fifths of the measured window',
+  /var\s+INSPECTOR_DOCK_SHARE\s*=\s*0\.4\s*;/.test(jsHtml)
+  && /function\s+inspectorDefaultDockHeight\s*\(\s*\)\s*\{\s*return\s+Math\.round\(\s*window\.innerHeight\s*\*\s*INSPECTOR_DOCK_SHARE\s*\)/.test(jsHtml));
+// The failure this exists to prevent: `/ 4` was written twice, so changing the share meant finding
+// both copies, and changing one of them would have given the panel a height the drag then refused
+// to start from. Asserting that neither caller computes the share itself is what keeps them one
+// writer rather than two that happen to agree.
+assert('the default docked height is computed once and both readers call it',
+  !!functionSource('inspectorDefaultDockHeight')
+  && !!applyFn && /dockH\s*=\s*inspectorDefaultDockHeight\(\s*\)/.test(applyFn)
+  && !!functionSource('inspectorDockHeightNow')
+  && /:\s*inspectorDefaultDockHeight\(\s*\)/.test(functionSource('inspectorDockHeightNow'))
+  && !/window\.innerHeight\s*\/\s*4/.test(jsHtml));
+// The stylesheet fallback and the measured default are the same promise written twice, so a guard
+// holds them together rather than trusting a reader to keep 40 and 0.4 in step.
+assert('the stylesheet fallback agrees with the measured share',
+  /--inspector-dock-h:\s*40vh\s*;/.test(html)
+  && /INSPECTOR_DOCK_SHARE\s*=\s*0\.4/.test(jsHtml));
 assert('the docked height is written in pixels, like every other offset here',
   !!applyFn && /setProperty\(\s*'--inspector-dock-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
 // A drag that could exceed the pinned strips, or shrink past the panel head, hands the reader a
@@ -480,6 +499,59 @@ assert('the grip is on the edge that moves when the panel is pinned to the botto
   narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 'top') === '-7px' : false);
 assert('the grip is only offered while the panel is pinned',
   !!applyFn && /dom\.inspectorResize\.hidden\s*=\s*!\(\s*narrow\s*&&\s*docked\s*\)/.test(applyFn));
+// …and 「pinned」 has to mean both pinned states, not just the default one, or the grip disappears
+// in exactly the state the reader most wants to make taller.
+assert('pinned means both docked and expanded, so the grip survives expanding',
+  !!applyFn && /var\s+docked\s*=\s*state\.inspectorDock\s*!==\s*'flow'/.test(applyFn));
+
+/* ---------- D27: the grip had every property right and was still invisible ---------- */
+//
+// On 2026-10-13 chli reported 「刚才说的支持resize，没做」 and he was right. The grip had shipped
+// with D24 carrying a correct top, a correct cursor, a correct touch-action, four attached pointer
+// listeners and a `hidden` attribute the script was setting correctly — and it had never rendered
+// once. `display: none` on the base rule outranks the `hidden` attribute, and nothing in the file
+// put it back, so the strip held a 0x0 box and sat outside the hit tree entirely.
+//
+// What every existing assertion had in common is that each asked "is this property present in this
+// rule". None asked "is there a rule that undoes the one keeping it invisible". So the guards below
+// do not check the grip's geometry again — they check that the switch is wired end to end.
+
+// The base rule keeps the default off. This half is not decoration: it is what makes the grip
+// safe before the script has run, and it is why the second half has to exist.
+assert('the grip is off by default in CSS, not by waiting for the script',
+  narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 'display') === 'none' : false);
+// This is the assertion that would have caught it. The base rule's `display: none` is final unless
+// something contradicts it, and this is the only thing that does.
+assert('a rule exists that can turn the grip back on',
+  narrow ? valueIn(narrow, '#inspector-panel .inspector-resize:not([hidden])', 'display') === 'block' : false);
+// …and the contradiction has to be reachable by the one switch that governs visibility, so
+// enumerate every `display` that can land on the grip and require there to be exactly the pair
+// above. A third rule is the shape this bug came in through, and it would hide the grip again.
+const gripDisplayRules = [];
+{
+  const re = /^[ \t]*([^{}@][^{}]*?)\{[^{}]*\}/gm;
+  let m;
+  while ((m = re.exec(narrow || ''))) {
+    const sels = m[1].split(',').map((s) => s.trim());
+    if (!sels.some((s) => s.includes('.inspector-resize'))) continue;
+    const dm = /^[ \t]*display\s*:\s*([^;]+)/m
+      .exec(m[0].slice(m[0].indexOf('{') + 1, m[0].lastIndexOf('}')));
+    if (dm) gripDisplayRules.push({ sels: sels.join(' , '), display: dm[1].replace(/\s+/g, ' ').trim() });
+  }
+}
+assert('the grip has exactly one switch: off by default, on when not hidden',
+  gripDisplayRules.length === 2
+  && gripDisplayRules.some((r) => !r.sels.includes(':not([hidden])') && r.display === 'none')
+  && gripDisplayRules.some((r) => r.sels.includes(':not([hidden])') && r.display === 'block'),
+  'grip display rules: ' + JSON.stringify(gripDisplayRules));
+// The two halves have to be the same switch, and both halves have to be here for this to mean
+// anything: the script writes `hidden` exactly once, and the stylesheet's way back on is keyed on
+// that same attribute. Checked against the mutation that swaps the CSS selector for a class nothing
+// writes — the rule still exists, still reads `display: block`, and the grip is still invisible.
+assert('the grip is shown by removing the very attribute that hides it',
+  !!applyFn && /dom\.inspectorResize\.hidden\s*=/.test(applyFn)
+  && (jsHtml.match(/dom\.inspectorResize\.hidden\s*=/g) || []).length === 1
+  && narrow ? valueIn(narrow, '#inspector-panel .inspector-resize:not([hidden])', 'display') === 'block' : false);
 
 for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
   assert('the grip listens for ' + ev,
@@ -490,19 +562,20 @@ for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
 assert('a cancelled drag is released like a finished one',
   /dom\.inspectorResize\.addEventListener\(\s*'pointercancel'\s*,\s*onInspectorResizeUp\s*\)/.test(jsHtml));
 
-// chli's question: 「窗口的1/4 和 检视的完整高度, 取最大还是最小?」 Answer: the smaller one — and
+// chli's question: 「窗口的高度和 检视的完整高度, 取最大还是最小?」 Answer: the smaller one — and
 // it already is, because both pinned states cap with `max-height` rather than setting `height`, so
 // what the reader sees is min(content, cap).
 //
 // It is worth stating rather than relying on: the branch where the content is the smaller number
-// cannot fire today (the shortest record measured 752px of content against a 250px quarter, because
+// cannot fire today (the shortest record measured 752px of content against a 400px cap — it was 250px
+// while the default was a quarter, and the share moved in D28 without closing the gap — because
 // the summary tab always renders its metadata table). So there is no measurement to protect — what
 // can break is the *mechanism*, by someone writing `height` instead of `max-height`, and a `height`
 // looks right in review and puts a blank band inside a short panel with every other rule still
 // green. Hence the negative half of this rule, which is the half that does the work.
 // The base rule is deliberately NOT in the first list: with no state class the panel is in the
 // document and has no cap at all, which is the one place where 「完全显示」 means uncapped. Adding
-// a cap there would put the quarter back on the state chli asked to be the only uncapped one.
+// a cap there would put the cap back on the state chli asked to be the only uncapped one.
 const cappedSels = ['#inspector-panel.is-inspector-docked', '#inspector-panel.is-inspector-full'];
 const allPanelSels = ['#inspector-panel', ...cappedSels];
 assert('both pinned states cap the panel rather than fixing its height',
@@ -511,8 +584,13 @@ assert('both pinned states cap the panel rather than fixing its height',
 assert('nothing forces the panel taller than its own content',
   !allPanelSels.some((s) => narrow && ['height', 'min-height'].some((p) => valueIn(narrow, s, p) !== null))
   && !/#[^{]*inspector-panel[^{]*\{[^{}]*\bmin-height\s*:/s.test(narrow || ''));
-assert('the quarter is a ceiling, not a target',
-  !!applyFn && /dockH\s*=\s*Math\.round\(window\.innerHeight\s*\/\s*4\)/.test(applyFn)
+// D26's original anchor was the bare `/ 4` in applyInspectorDock(). D28 moved that arithmetic into
+// inspectorDefaultDockHeight(), so the anchor moved with it — the assertion is repointed, not
+// weakened: it still fails if the cap stops being derived from the measured window, and the px
+// half is unchanged. Overlapping the 「two fifths」 guard is the cheap direction to err in.
+assert('the cap is a ceiling, not a target',
+  !!functionSource('inspectorDefaultDockHeight')
+  && /Math\.round\(\s*window\.innerHeight\s*\*\s*INSPECTOR_DOCK_SHARE\s*\)/.test(functionSource('inspectorDefaultDockHeight'))
   && /setProperty\(\s*'--inspector-dock-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
 
 console.log('[inspector-dock] ' + pass + ' passed, ' + failures.length + ' failed');

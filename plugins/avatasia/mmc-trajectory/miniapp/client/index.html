@@ -1427,15 +1427,16 @@
          digits — the phone behaviour. */
       :root {
         --traj-index-col: 72px;
-        /* The docked height, as a quarter of the window rather than a half. It was 50vh and chli read
-           the panel as 「整个窗口的1/4」; the real problem with a vh here was never the unit but
-           that the unit was frozen — the reader cannot make it smaller, and a cap the reader
-           cannot move is a number nobody chose. applyInspectorDock() therefore writes this in px
-           from window.innerHeight and a drag overwrites it, so the declaration below is only what
-           shows before the first measurement. It stays a vh for the same reason as everywhere else
-           here: 100vh is not the reader's height inside a host iframe, and every offset on this
-           page is measured for that reason. */
-        --inspector-dock-h: 25vh;
+        /* The docked height, as two fifths of the window. It was 50vh, then a quarter, and the
+           unit was never the problem — the unit being frozen was. The reader cannot make it
+           smaller, and a cap the reader cannot move is a number nobody chose. applyInspectorDock()
+           therefore writes this in px from window.innerHeight and a drag overwrites it, so the
+           declaration below is only what shows before the first measurement. It stays a vh for the
+           same reason as everywhere else here: 100vh is not the reader's height inside a host
+           iframe, and every offset on this page is measured for that reason. The 40 must track
+           INSPECTOR_DOCK_SHARE — the fallback and the measurement are the same promise written
+           twice, so a guard holds them together. */
+        --inspector-dock-h: 40vh;
       }
 
       .row-list {
@@ -2111,18 +2112,18 @@
           z-index: 5;
         }
 
-        /* Quarter height by default, and the reader can drag it. The content scrolls inside the
+        /* Two fifths by default, and the reader can drag it. The content scrolls inside the
            panel instead of the panel growing: a growing panel pushes its own handle out of the
            viewport, which is the one thing a docked panel cannot do. The number itself is written
-           by applyInspectorDock() — a quarter of the measured window, or whatever the reader
+           by applyInspectorDock() — a fifth of the measured window twice over, or whatever the reader
            dragged to — so this rule only says what the cap is *called*.
 
-           `max-height`, never `height`, and that is the answer to 「窗口的1/4 和检视的高度取
-           最大还是最小」: a cap renders min(content, quarter), so a record whose body is shorter
-           than the quarter is shown at its own height instead of being padded out to a quarter of
-           the window. `height` would make the quarter mandatory and put a blank band inside the
+           `max-height`, never `height`, and that is the answer to 「窗口的高度和检视的高度取
+           最大还是最小」: a cap renders min(content, cap), so a record whose body is shorter
+           than the cap is shown at its own height instead of being padded out to a fifth of
+           the window. `height` would make the cap mandatory and put a blank band inside the
            panel. It cannot show today — the shortest record measured 752px of content against a
-           250px quarter, because the summary tab always renders its metadata table — which is
+           400px cap, because the summary tab always renders its metadata table — which is
            exactly why it is a rule worth writing down rather than a coincidence worth relying on. */
         #inspector-panel.is-inspector-docked {
           max-height: var(--inspector-dock-h);
@@ -2137,9 +2138,13 @@
            `touch-action: none` is not decoration: without it a vertical drag that starts on this
            strip is a page scroll, and on a touch screen the reader cannot resize at all. The strip
            is 14px tall and sits half above the panel's own border so the visible hairline and the
-           grabbable area are the same thing. It is display:none unless the panel is pinned, by
-           script — in flow there is no height to decide, and a grip that does nothing is worse
-           than no grip. */
+           grabbable area are the same thing. It is off unless the panel is pinned — in flow there
+           is no height to decide, and a grip that does nothing is worse than no grip.
+
+           The off state is CSS's, not script's: `display: none` here does not depend on whether the
+           attribute has been written yet. Which makes the rule below load-bearing rather than
+           decorative — without it this `display: none` is final, `hidden` loses to it whatever the
+           script says, and the grip keeps a 0x0 box no matter how correctly the state is decided. */
         #inspector-panel .inspector-resize {
           display: none;
           position: absolute;
@@ -2150,6 +2155,19 @@
           cursor: ns-resize;
           touch-action: none;
           z-index: 1;
+        }
+
+        /* The one thing that turns the grip on, and the only one. `hidden` is written by
+           applyInspectorDock() and by nothing else, so this selector is the whole switch: the
+           default is off, and the single way to reach on is for that one writer to stop hiding it.
+
+           D27: this rule did not exist, and the reader could not resize on any screen at any width.
+           The state was right and the geometry was right and four pointer listeners were attached;
+           the strip simply never entered the hit tree. Every guard passed, because each of them
+           asserted that some property appeared in some rule — and no assertion asked whether any
+           rule could undo the one that kept it invisible. */
+        #inspector-panel .inspector-resize:not([hidden]) {
+          display: block;
         }
 
         #inspector-panel .inspector-resize::after {
@@ -6444,6 +6462,19 @@
       /* ---------------- inspector ---------------- */
 
       var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
+      // The height the panel gets when the reader has not asked for another one. 2/5 of the
+      // window, on chli's instruction (it was 1/4 through D22–D26).
+      //
+      // One constant, because this number used to be written twice — applyInspectorDock() and
+      // inspectorDockHeightNow() each had their own `innerHeight / 4`. Two writers of one number is
+      // how the two halves start disagreeing, and the failure is invisible: the default height the
+      // panel is given and the height a drag starts from are the same promise, so if only one of
+      // them is changed the drag starts from a height the reader never saw.
+      var INSPECTOR_DOCK_SHARE = 0.4;
+      /** The default docked height. The single place this number is computed. */
+      function inspectorDefaultDockHeight() {
+        return Math.round(window.innerHeight * INSPECTOR_DOCK_SHARE);
+      }
       // Below this the panel head and its handle stop fitting, so a drag that would go further is
       // refused rather than honoured. 160px is the smallest height that still shows the head, the
       // locator and a couple of lines of the summary.
@@ -6532,7 +6563,7 @@
           // disagree about where the top one is.
           var dockH = state.inspectorDockH;
           if (dockH === null || dockH === undefined || !isFinite(dockH)) {
-            dockH = Math.round(window.innerHeight / 4);
+            dockH = inspectorDefaultDockHeight();
           }
           dockH = Math.min(Math.max(Math.round(dockH), INSPECTOR_MIN_DOCK_H), panelMax);
           dom.inspectorPanel.style.setProperty('--inspector-dock-h', dockH + 'px');
@@ -6575,7 +6606,7 @@
       /** The height the panel is actually showing right now, for a drag to start from. */
       function inspectorDockHeightNow() {
         var h = dom.inspectorPanel ? dom.inspectorPanel.getBoundingClientRect().height : 0;
-        return h > 0 ? h : Math.round(window.innerHeight / 4);
+        return h > 0 ? h : inspectorDefaultDockHeight();
       }
 
       function onInspectorResizeDown(event) {

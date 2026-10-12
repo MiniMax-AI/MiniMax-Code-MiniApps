@@ -928,6 +928,90 @@ B 等于 A 是决定性的那条。真正要打破的是**「宽度由内容决�
 
 > **一条方法论，与 D21/D24/D25 同族**：D21 是「断言属性存在 ≠ 它起作用」，D24 是「名字出现 ≠ 名字被用」，D25 是「探针的读数是它自己造成的」，D26 是**「行为正确 ≠ 机制正确」**——今天测不出差别的那一支，恰恰是最容易被下一次改动毁掉的那一支，因为它没有任何测量在看着。**测不到的不变量要守机制，别守着那个测不到的数字。**
 
+#### D27 — 抓手从来没渲染过：resize 写了，但读者够不着（2026-10-13，chli 直接报）
+
+**chli 的原话**：「刚才说的支持resize，没做。」
+
+**他对。** D24 写了完整的 resize —— grip 节点、四条 pointer 监听、拖拽算式、夹取上下限、`touch-action` —— 但**抓手一次都没有出现在页面上**。
+
+##### 实测（900×1000，`mode=docked`，`--inspector-dock-h: 250px`）
+
+```
+grip: hidden=false  display=none  rect={x:0,y:0,w:0,h:0}  cursor=ns-resize  touch-action=none
+elementFromPoint(grip centre) = null
+DRAG: not attempted (grip had no box)
+```
+
+`hidden` 属性**是**对的（`false`），`applyInspectorDock()` 判「已吸底」也**是**对的。但 `.inspector-resize` 的基础规则无条件写着 `display: none`，而全文件**没有任何一条规则把它设回可见** —— `display` 压过 `hidden`，盒子 0×0，不在命中树里，`elementFromPoint` 返回 `null`。四条 pointer 监听挂在一个永远收不到事件的元素上。
+
+##### 为什么 68 条断言和 54 条变异全绿
+
+**因为没有一条断言它有没有盒子。** 现有的断言全部读源码：`top: -7px` 在不在、`cursor` 在不在、`touch-action` 在不在、`hidden` 的逻辑对不对、`pointercancel` 有没有解绑。这些**全都正确**，而元素**完全不可见**。
+
+> **D27 是 D21 的升级版**：D21 是「断言属性存在 ≠ 它起作用」；D27 是**「一条规则的每个属性都对，而整条规则从没生效过」**。`display:none` 不是 bug 的一行，它是**一个没有被任何东西推翻的默认值**。只断言"某属性在某规则里"永远抓不到它 —— 必须断言**「让这条规则失效的东西存在」**，也就是 `:not([hidden])` 那条配套规则。
+
+##### 修法（零 DOM）
+
+基础规则保持 `display: none`（关是 CSS 的默认状态，不依赖 JS 跑过），**新增一条**以 `:not([hidden])` 为条件的配套规则把它打开。可见性的唯一开关因此仍是 JS 写的那一个 `hidden`，而 CSS 第一次把这个开关接上了。
+
+配变异：删掉 `:not([hidden])` 那条配套规则 —— 守卫必须以它自己的名字报出来。
+
+#### D28 — 中间高度 1/4 → 2/5（2026-10-13，chli 直接指定）
+
+**四问**
+
+1. **归层** — 与既有 dock 表现同一个层，不新增层、不新增 state 字段。写者仍是 `applyInspectorDock()`，唯一出口仍是 `renderInspector()`。
+2. **关联** — 2/5 **并列**于拖拽夹取（同喂一个 `--inspector-dock-h`），**从属于** `panelMax`。它**不碰** `INSPECTOR_LEDGER_SHARE`。
+3. **布局** — 零 DOM、零 CSS 规则改动，只有一个常量。
+4. **口径** — `--inspector-dock-h` 的**默认值**变了。读点逐个点名：
+
+| 读点 | 处理 |
+| --- | --- |
+| `index.html:1438` `:root` 首次测量前的 fallback `25vh` | 改 `40vh`，并加断言 |
+| `index.html:6535` `applyInspectorDock()` 的 `innerHeight / 4` | 改走常量 |
+| `index.html:6578` `inspectorDockHeightNow()` 的 `innerHeight / 4` | 改走同一常量 |
+| `verify-inspector-dock.mjs` 「a quarter of the measured window」 | 改断言 + 改名 |
+| `mutate-inspector-dock.py` 三条锚点（`25vh`×2、`/ 4`×1） | 改锚点 |
+| `.probe/inspector-dock.mjs` `innerFourth`、`.probe/inspector-short.mjs` 250px | 探针量真值，改期望 |
+| `LAYERS.md` D22/D24/D25/D26 小节 | **历史记录，不回改** |
+| `INSPECTOR_LEDGER_SHARE = 0.25` 及其守卫 | **不是读点** —— 那是 D25「表格至少留 1/4」，另一个量 |
+
+##### 顺带收掉一个重复写者
+
+改之前，`innerHeight / 4` 有**两处**各自算了一遍默认值（`applyInspectorDock()` 和 `inspectorDockHeightNow()`）。两个写者算同一个数，就是它们漂移的开始 —— 这次改份额，两处都得动，漏一处就只对一半。
+
+收法：新增 `INSPECTOR_DOCK_SHARE = 0.4` 与 `inspectorDefaultDockHeight()`，**两个调用点都走它**。一个常量、一处算式、两个读者。
+
+##### 数值校验（900×1000）
+
+`ledgerReserve = 250`（D25 的量，**不变**）、`band + overview = 135`、`panelMax = 615`、`INSPECTOR_MIN_DOCK_H = 160`。
+新默认 `2/5 = 400`，落在 `[160, 615]` 内。完全展开仍是 615，可见行 `1000 - 135 - 615 = 250 ≥ 250`，**「表格至少留 1/4」没有被这次改动动到**。
+
+#### D29 — 探针报的「footer 离屏」是它自己没滚到底（2026-10-13，D27/D28 验证中）
+
+D27/D28 改完第一次跑 `inspector-dock.mjs`，报 `pass: false`：
+
+> `the footer is 1869, off screen: 1000px of blank below the panel`
+
+差点当成 D28 把面板改高的回归，去改产品代码。**先查证，再判断。**
+
+那个采样里 `scrollY = 980895`，而 `maxScroll = 981840` —— **页面差 945px 没滚到底**，footer 自然在屏外。为确认这不是「面板把 footer 顶出去了」，另写了一个只测这一件事的探针，连续按到底：
+
+```
+pass 1: short=945  footerTop=1870  gap=870  footerVisible=false
+pass 2: short=0    footerTop=925   gap=16   footerVisible=true
+```
+
+**footer 够得着，产品没问题。**
+
+##### 成因在探针的沉降循环
+
+它停在「`scrollY` 不再上涨 **且** `docH` 不再变化」。虚拟化账本在沉降途中会让 `docH` 塌陷（实测 982,864 → 218,034），塌陷那一帧同时满足「不再上涨」和「不再变化」，于是循环退出 —— 而页面还差 945px。之后采到的每一个数都是**读者从未处在过的状态**。
+
+改成停在「真的到了」（`short <= 1`），且不再单凭「没动过」就退出。
+
+> **与 D26 同一条，但方向相反**：D26 是探针**继承**了上一档的状态，D29 是探针**提前**停止了沉降。两次都不是产品的问题，两次都差点被当成产品的问题。**判据本身是对的，错的是它采样那一刻页面的状态** —— 所以每次探针报缺陷，先问一句「这个状态是我放进去的吗」。
+
 #### D15 自身的一个缺陷：class 跨重建留存，账本塌成 0（2026-10-12 修）
 
 **症状**：滚到最后一条消息 → 点它出检视 → 往上滚一点 → 直接落到页面最上面。

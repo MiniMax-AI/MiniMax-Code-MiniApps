@@ -56,20 +56,20 @@ MUTATIONS = [
 
     # The third state has to be a different number, or 「完全展开」 and 「半高」 are the same panel
     # with two names.
-    ("fully expanded is capped by the half-height number",
+    ("fully expanded is capped by the default docked number",
      "          max-height: var(--inspector-full-h, 70vh);\n",
      "          max-height: var(--inspector-dock-h);\n",
      "fully expanded is capped by a different number than half height"),
 
-    ("the half-height number stops being declared",
-     "        --inspector-dock-h: 25vh;\n",
+    ("the two-fifths fallback stops being declared",
+     "        --inspector-dock-h: 40vh;\n",
      "",
-     "the half-height number is declared, not left to fall back"),
+     "the two-fifths fallback is declared, not left to fall back"),
 
     ("the docked height becomes a fixed pixel count",
-     "        --inspector-dock-h: 25vh;\n",
+     "        --inspector-dock-h: 40vh;\n",
      "        --inspector-dock-h: 420px;\n",
-     "half height is a share of the viewport, and the share is written down"),
+     "the docked height is a share of the viewport, and the share is written down"),
 
     # Ledger rows are background: transparent, so a pinned panel that stops covering them shows
     # them through — the same reason the sticky band needs an opaque background.
@@ -166,6 +166,47 @@ MUTATIONS = [
      "          max-height: var(--inspector-dock-h);\n          min-height: var(--inspector-dock-h);\n",
      "nothing forces the panel taller than its own content"),
 
+    # D27. This one deletes the rule that makes the grip reachable, which is the whole defect: the
+    # base rule's `display: none` becomes final, `hidden` loses to it, and the strip keeps a 0x0 box
+    # on every screen at every width. It is the mutation that reproduces chli's 「支持resize,没做」
+    # exactly, and the guard that has to catch it is the one that asks whether anything undoes the
+    # rule keeping it invisible rather than whether its properties are present.
+    ("the grip can no longer be turned on at all",
+     "        #inspector-panel .inspector-resize:not([hidden]) {\n          display: block;\n        }\n",
+     "",
+     "a rule exists that can turn the grip back on"),
+
+    # The same defect wearing a different hat: the counterpart rule still exists but is keyed on a
+    # class nothing writes, so it still never matches. A guard that only looks for the selector's
+    # presence passes this; one that looks for the `hidden` pairing does not.
+    ("the grip is shown by a class nothing ever sets",
+     "        #inspector-panel .inspector-resize:not([hidden]) {\n",
+     "        #inspector-panel .inspector-resize.is-open {\n",
+     "the grip is shown by removing the very attribute that hides it"),
+
+    # D28. The share drifts back to a quarter: the two numeric assertions stop agreeing with each
+    # other only if both are read, and the stylesheet fallback is what catches it, because 40vh no
+    # longer describes the same promise as INSPECTOR_DOCK_SHARE.
+    ("the docked height goes back to a quarter of the window",
+     "var INSPECTOR_DOCK_SHARE = 0.4;",
+     "var INSPECTOR_DOCK_SHARE = 0.25;",
+     "the default docked height is two fifths of the measured window"),
+
+    # The stylesheet fallback is left behind instead — the other direction of the same drift, and
+    # the one that makes the panel jump on first paint before the first measurement lands.
+    ("the stylesheet fallback is left at a quarter",
+     "        --inspector-dock-h: 40vh;\n",
+     "        --inspector-dock-h: 25vh;\n",
+     "the stylesheet fallback agrees with the measured share"),
+
+    # The single writer is undone: one caller computes the share again and the other keeps calling
+    # the helper. Both paths still produce a number, so nothing looks wrong until the two numbers
+    # are different — which is the entire reason the helper exists.
+    ("a second place computes the default height by hand",
+     "            dockH = inspectorDefaultDockHeight();\n",
+     "            dockH = Math.round(window.innerHeight / 4);\n",
+     "the default docked height is computed once and both readers call it"),
+
     # A sixth writer is how a three-state field quietly grows a fourth state. Inserted into wire(),
     # where nothing else writes the field, so it is a genuinely new writer.
     ("a sixth place writes the dock state",
@@ -198,9 +239,9 @@ MUTATIONS = [
     # ---- the docked height ----
 
     ("the docked height is half the window again",
-     "            dockH = Math.round(window.innerHeight / 4);\n",
+     "            dockH = inspectorDefaultDockHeight();\n",
      "            dockH = Math.round(window.innerHeight / 2);\n",
-     "the docked height is a quarter of the measured window by default"),
+     "the default docked height is computed once and both readers call it"),
 
     ("the docked height is left to the stylesheet",
      "          dom.inspectorPanel.style.setProperty('--inspector-dock-h', dockH + 'px');\n",
