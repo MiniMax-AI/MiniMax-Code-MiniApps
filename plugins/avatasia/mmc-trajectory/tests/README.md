@@ -106,7 +106,8 @@ none of them, and the guards then fail for want of something to find.
 | `mutate-turn-breakdown.py` | the turn breakdown parts sum to the headline |
 | `mutate-compaction-turn.py` | the compaction-turn attribution is not a free-text label |
 | `mutate-pr15-fixes.py` | each of the six PR #15 fixes has a guard that can fail |
-| `mutate-anomaly.py` | each of the 70 异常 mutations, in the page, has a guard that can fail |
+| `mutate-anomaly.py` | each of the 74 异常 mutations, in the page, has a guard that can fail |
+| `mutate-comment-shape.py` | the comment blocks an editing probe leaves behind are the shape it was asked to remove, not a doubled opener |
 | `mutate-steer.py` | the steer split and the turn classification hold |
 | `mutate-window-default.py` | the window defaults, labels, resets and load-more hold |
 | `mutate-sticky.py` | each of the 18 pinned-band rules has a guard that can fail |
