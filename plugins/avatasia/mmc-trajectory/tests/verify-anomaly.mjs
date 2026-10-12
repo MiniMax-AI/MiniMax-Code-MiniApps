@@ -75,8 +75,34 @@ const pure = { console };
 vm.createContext(pure);
 vm.runInContext(block, pure);
 
-check('the rule set', pure.ANOMALY_RULE_IDS, ['toolError', 'compaction', 'noReply', 'silent']);
-check('rule labels', pure.ANOMALY_RULES.map((r) => r.label), ['工具失败', '上下文压缩', '无答复', '空答复']);
+// Re-anchored 2026-10-12 for the hostOnly rule: the expected lists named the four rules the table
+// had on the day they were written, so adding a fifth turned both red. They are re-anchored, not
+// dropped — a list that no longer has to be updated when a rule is added is a list that no longer
+// says what is in the table.
+check('the rule set', pure.ANOMALY_RULE_IDS, ['toolError', 'compaction', 'noReply', 'silent', 'hostOnly']);
+check('rule labels', pure.ANOMALY_RULES.map((r) => r.label), ['工具失败', '上下文压缩', '无答复', '空答复', '内部记账']);
+
+// The fifth rule is the only one whose predicate reads a field the server computed rather than a
+// field the message carried, so its behaviour is asserted rather than its presence: a rule that
+// matched everything would keep the count honest and still be wrong.
+{
+  const hostOnly = pure.ANOMALY_RULES.find((r) => r.id === 'hostOnly');
+  assert('the hostOnly rule exists', !!hostOnly);
+  assert('hostOnly fires on a record the server flagged internal',
+    !!hostOnly && hostOnly.record({ internalOnly: true }) === true);
+  assert('hostOnly does not fire on an ordinary record',
+    !!hostOnly && hostOnly.record({ kind: 'system', text: null }) === false);
+  assert('hostOnly does not fire on internalOnly being absent, null or false',
+    !!hostOnly
+    && hostOnly.record({}) === false
+    && hostOnly.record({ internalOnly: null }) === false
+    && hostOnly.record({ internalOnly: false }) === false);
+  // A record-scoped rule counted in 条, and only a record-scoped rule may be added to a unit map
+  // that already mixes 条 and 轮 — a turn-scoped copy of this would advertise one "internal
+  // bookkeeping" row per record inside an unanswered turn.
+  assert('hostOnly is a record rule, so its unit is 条',
+    !!hostOnly && !hostOnly.turn && pure.ANOMALY_RULES.filter((r) => !r.turn).length >= 4);
+}
 
 // A rule is scoped to a record or to a turn, never both and never neither. A rule with neither
 // would silently match nothing and still get a button with a count on it.

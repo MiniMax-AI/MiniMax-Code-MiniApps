@@ -193,6 +193,91 @@ check('no reader still looks for rawOmitted on a record', stale.length, 0);
 assert('and the payload no longer carries it either',
   !SERVER.includes('rawOmitted: raw.omitted') && !SERVER.includes('raw: raw.value'));
 
+/* =====================================================================
+ * 6 — internalOnly: a record the runtime keeps for itself
+ * ===================================================================== */
+
+// Its own payload rather than a fourth row above, so the counts the sections above assert on
+// stay the counts they were calibrated against. docs/LAYERS.md D17.
+
+const hostOnlyRows = [
+  {
+    message_id: 'h1',
+    turn_id: 't1',
+    message: {
+      role: 'custom',
+      customType: 'background_task_read_settlement',
+      content: '',
+      display: false,
+      hostMetadata: { providerVisibility: 'omit' },
+      timestamp: 1791617900000,
+    },
+  },
+  {
+    // A custom record that is NOT host-only. The role alone must not be enough — that is the
+    // difference between "the runtime wrote this" and "the runtime wrote this for itself".
+    message_id: 'h2',
+    turn_id: 't1',
+    message: {
+      role: 'custom',
+      customType: 'todo_cadence_reminder',
+      content: '<system-reminder>keep going</system-reminder>',
+      timestamp: 1791617901000,
+    },
+  },
+  {
+    // providerVisibility present but not 'omit'.
+    message_id: 'h3',
+    turn_id: 't1',
+    message: {
+      role: 'custom',
+      customType: 'something_else',
+      content: 'visible',
+      hostMetadata: { providerVisibility: 'pass' },
+      timestamp: 1791617902000,
+    },
+  },
+  {
+    // The omit marker on a non-custom role must not be honoured either: the runtime's own
+    // isHostOnlyMessage() requires role === 'custom' before it looks at hostMetadata.
+    message_id: 'h4',
+    turn_id: 't1',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'answer' }],
+      stopReason: 'stop',
+      hostMetadata: { providerVisibility: 'omit' },
+      timestamp: 1791617903000,
+    },
+  },
+];
+
+const hostOnlyRecords = buildTrajectoryPayload({
+  session: { id: 'sess', createdAtMs: 1791617886000 },
+  rows: hostOnlyRows,
+  sizeBytes: 0,
+  redact,
+}).turns.flatMap((t) => t.records);
+
+const flagged = hostOnlyRecords.filter((r) => r.internalOnly === true);
+check('exactly the settlement record is flagged internal', flagged.length, 1);
+assert('and it is the one carrying providerVisibility: omit',
+  flagged.length === 1 && flagged[0].id === 'h1');
+assert('a custom record without the omit marker is not flagged',
+  hostOnlyRecords.filter((r) => r.id === 'h2').every((r) => r.internalOnly === false));
+assert('a different providerVisibility value is not flagged',
+  hostOnlyRecords.filter((r) => r.id === 'h3').every((r) => r.internalOnly === false));
+assert('the omit marker on an assistant record is not honoured',
+  hostOnlyRecords.filter((r) => r.id === 'h4').every((r) => r.internalOnly === false));
+// False, not undefined: a page that checks truthiness and a page that checks `=== true` must
+// agree, and a field that only exists sometimes is how the two drift apart.
+assert('every record carries the field, so it is never undefined',
+  hostOnlyRecords.every((r) => typeof r.internalOnly === 'boolean'));
+// The record is still emitted. Dropping these rows would renumber every record after them,
+// because `index` counts emitted rows — see docs/LAYERS.md D17.
+assert('a host-only record is still in the payload, still numbered',
+  flagged.length === 1 && typeof flagged[0].index === 'number');
+
 /* ===================================================================== */
 
 if (failures.length) {

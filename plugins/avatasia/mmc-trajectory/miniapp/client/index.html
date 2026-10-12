@@ -2357,6 +2357,23 @@
           record: function (record) {
             return !!record && record.kind === 'reply' && isNil(record.text);
           }
+        },
+        {
+          id: 'hostOnly',
+          label: '内部记账',
+          // A record the runtime writes for itself: it goes into the session, and the runtime
+          // filters it out of the request it sends to the model, but it carries no content — so
+          // on this page it is a blank row sitting after the reply it belongs to.
+          //
+          // Judged on the flag the server derived from the same `hostMetadata.providerVisibility`
+          // the runtime itself filters on, not on a customType name. A name list goes stale the
+          // first time the runtime adds another host-only record type; the flag arrives flagged.
+          //
+          // It is here rather than hidden because being able to select exactly these rows is how
+          // you answer 「这行空白是什么」 without leaving the page. docs/LAYERS.md D17.
+          record: function (record) {
+            return !!record && record.internalOnly === true;
+          }
         }
       ];
 

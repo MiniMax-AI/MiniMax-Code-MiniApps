@@ -857,6 +857,26 @@ export function splitRawRecords(turns) {
 }
 
 /**
+ * A record the runtime keeps for itself: written to the session, never shown, never sent.
+ *
+ * Mirrors the runtime's own `isHostOnlyMessage()` — a `custom`-role record whose
+ * `hostMetadata.providerVisibility` is `'omit'`. That predicate is what
+ * `projectAgentMessagesForModel()` filters on before the outbound request is built, so it is
+ * the field to read: matching a list of `customType` strings instead would go stale the first
+ * time the runtime adds another host-only record type.
+ *
+ * @param {unknown} message
+ * @returns {boolean}
+ */
+export function isHostOnlyMessage(message) {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+  const record = /** @type {Record<string, any>} */ (message);
+  if (record.role !== 'custom') return false;
+  const metadata = record.hostMetadata;
+  return !!metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    && metadata.providerVisibility === 'omit';
+}
+/**
  * Builds the frozen `/api/trajectory` payload from already-parsed rows.
  * @param {{ session: { id: string, createdAtMs?: number | null }, rows: Array<Record<string, any>>, sizeBytes?: number, truncated?: boolean, redact?: (value: string) => string, generations?: Array<Record<string, any>>, generation?: number | null, orphans?: Array<{ generation: number, fileName: string }> }} input
  */
@@ -990,6 +1010,11 @@ export function buildTrajectoryPayload(input) {
       api: typeof source.api === 'string' ? source.api : null,
       stopReason: typeof source.stopReason === 'string' ? source.stopReason : null,
       isError: source.isError === true ? true : source.isError === false ? false : null,
+      // Whether the runtime keeps this record for itself. Carried as one boolean so the page
+      // can select on it (the 异常 axis has a rule for it) without the page having to know the
+      // runtime's customType names, and without the record leaving the payload — dropping these
+      // rows would renumber every record after them, because `index` counts emitted rows.
+      internalOnly: isHostOnlyMessage(source),
       // Where the untouched message lives, not the message itself. /raw follows this back
       // when a reader actually opens the record; nothing else reads it.
       rawRow: rowIndex,
