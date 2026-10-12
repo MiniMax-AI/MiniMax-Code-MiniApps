@@ -2602,7 +2602,7 @@
           // `closed` is true and that rule has nothing to fire on. Measured on this session:
           // two, one of them the turn that ended in front of the reader with nothing shown.
           record: function (record) {
-            return !!record && record.kind !== 'reply' && isNil(record.text);
+            return !!record && record.kind === 'reply' && isNil(record.text);
           }
         },
         {
