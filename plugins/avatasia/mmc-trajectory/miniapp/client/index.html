@@ -1031,6 +1031,14 @@
         position: sticky;
         top: var(--sticky-band-h, 32px);
         z-index: 4;
+        background: var(--mcode-bg);
+        /* The background above is load-bearing, not decoration. This is the one strip in the pinned
+           stack that sits directly on top of another, so it has to cover what scrolls into its
+           seam by itself. It used to borrow that paint from .overview-plot, the 50px that draws
+           the three lanes, and the ledger's window bar (z-index 3) came up through the gap as a
+           clipped line of its own text. verify-sticky.mjs asserted the plot was opaque and called
+           that the strip being opaque, so nothing caught it. Every other strip here
+           (.filter-sticky, .window-bar, .turn-head) carries its own. */
         border-bottom: 1px solid var(--mcode-border);
         user-select: none;
       }

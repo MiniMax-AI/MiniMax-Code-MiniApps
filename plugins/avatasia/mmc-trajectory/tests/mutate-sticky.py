@@ -69,11 +69,28 @@ MUTATIONS = [
      "        top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));\n",
      "a turn head pins below the band, the strip and the window bar"),
 
-    # Everything pinned over the ledger has to cover it. The rows underneath are transparent.
-    ("the strip goes transparent",
+    # Everything pinned over the ledger has to cover it, and it has to cover it itself. These two
+    # mutations are the pair the guard used to confuse: it checked the plot and called that the strip
+    # being opaque, so the box above it could go transparent and the window bar scrolled up through
+    # the seam between them as a clipped line of its own text. Each is now caught by the rule that
+    # names its own element, because neither one stands in for the other.
+    ("the pinned strip box goes transparent",
+     "      .overview {\n        position: sticky;\n        top: var(--sticky-band-h, 32px);\n        z-index: 4;\n        background: var(--mcode-bg);\n",
+     "      .overview {\n        position: sticky;\n        top: var(--sticky-band-h, 32px);\n        z-index: 4;\n",
+     "the pinned strip owns its background"),
+
+    ("the strip's lanes area goes transparent",
      "        height: 50px;\n        overflow: hidden;\n        background: var(--mcode-surface-muted);\n",
      "        height: 50px;\n        overflow: hidden;\n",
-     "the overview strip is opaque"),
+     "the strip's lanes area is painted"),
+
+    # The strip is the one pinned box that sits directly on another. If it dropped below the window
+    # bar, an opaque sibling could no longer cover for it — which is the assumption the two rules
+    # above are resting on.
+    ("the pinned strip drops behind the window bar it covers",
+     "        z-index: 4;\n        background: var(--mcode-bg);\n",
+     "        z-index: 2;\n        background: var(--mcode-bg);\n",
+     "every pinned strip has something scrolling into its seam"),
 
     ("the window bar goes transparent",
      "        z-index: 3;\n        padding: 8px 16px;\n        background: var(--mcode-bg);\n        border-bottom: 1px solid var(--mcode-border);\n      }\n",

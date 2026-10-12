@@ -130,12 +130,33 @@ assert('the filter band pins to the top of the page',
 assert('the band is the only pinned element for the two filter rows',
   value('.traj-controls', 'position') !== 'sticky' && value('.anomaly-bar', 'position') !== 'sticky');
 
+// Everything pinned over the ledger has to cover it, and it has to cover it *itself*.
+//
+// Those are two requirements and this file used to assert only one of them, on the wrong element.
+// It checked `.overview-plot` — the 50px that draws the three lanes — and the comment above it
+// said the section could borrow that paint. So the sticky box was allowed to be transparent, and
+// the window bar below it (z-index 3) scrolled up into the seam between the two and showed through
+// as a clipped line of its own text. The assertion stayed green throughout, because it was
+// asserting something true about a child instead of the thing that had to be true about the box.
+//
+// A pinned strip whose opacity comes from a child's layout is one refactor away from a hole: the
+// day the plot stops covering the section edge to edge, the hole opens and nothing here fails.
 assert('the filter band is opaque', isOpaqueBackground(value('.filter-sticky', 'background')));
-// The strip paints through its plot, not through the section: the section is the sticky box and
-// the plot is the 50px that fills it. A reader scrolling a 200-row ledger sees the rows pass under.
-assert('the overview strip is opaque', isOpaqueBackground(value('.overview-plot', 'background')));
+assert('the pinned strip owns its background', isOpaqueBackground(value('.overview', 'background')));
+// The plot is a separate requirement and not a substitute for the one above it. The gaps between
+// the three lanes are the plot's own background, so a ledger row showing through them is its own
+// defect, and it is caught by its own rule.
+assert("the strip's lanes area is painted", isOpaqueBackground(value('.overview-plot', 'background')));
 assert('the window bar is opaque', isOpaqueBackground(value('.window-bar', 'background')));
 assert('the turn head is opaque', isOpaqueBackground(value('.turn-head', 'background')));
+
+// The strip is the only pinned box here that sits directly on top of another one. That is what
+// makes its own background load-bearing rather than cosmetic: everything below it in the chain
+// scrolls into its seam, so an opaque sibling cannot cover for it.
+const pinnedStacks = [['.overview', '.window-bar'], ['.window-bar', '.turn-head']];
+assert('every pinned strip has something scrolling into its seam',
+  pinnedStacks.every(([above, below]) =>
+    Number(value(above, 'z-index')) > Number(value(below, 'z-index'))));
 
 /* ---------- CSS: the offsets come from variables, and chain down the page ---------- */
 
