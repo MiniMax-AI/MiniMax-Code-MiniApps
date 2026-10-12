@@ -859,6 +859,50 @@
         background: var(--mcode-bg);
       }
 
+      /* The 上下文代 picker is L1 — it chooses which slice of the conversation is on screen,
+         the same class of control as 会话 — so it belongs in the band that does not scroll
+         away, not in the toolbar that does. It shares the type row when the width allows and
+         drops to a line of its own when it does not.
+
+         `flex-wrap` is the entire graceful-degradation story, and it is here because
+         .traj-controls is `flex: none`: without wrapping, a tail that does not fit would push
+         the row wider than the page instead of stepping down. Wrapping keeps the band honest
+         at every width — no clipping, no sideways overflow, and no assumption about which
+         widths are "normal". Nothing in this arrangement is measured by hand: syncStickyOffsets()
+         reads the band's real offsetHeight on the one exit that can change it (D9). */
+      .filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        column-gap: 12px;
+      }
+
+      /* Only the right padding: `margin-left: auto` is what separates this from the type row, and a
+         left padding here is width the row has to find. It is 32px of the 9px shortfall measured on
+         2026-10-12 — the arithmetic that predicted the picker would fit had forgotten that this box
+         carries its own padding at all, so the browser is the only authority on whether they share
+         a line and this is the second attempt. The right padding keeps the picker's right edge on
+         the same 790px line the toolbar's fields end on. */
+      .filter-row-tail {
+        display: flex;
+        flex: none;
+        align-items: center;
+        margin-left: auto;
+        padding: 6px 16px 6px 0;
+      }
+
+      /* 14px/36px is the toolbar's control size. Every other control in this band is a 20px
+         chip, so carrying the toolbar's height would grow the band by 16px on every page — and
+         the band is pinned over the ledger, so its height is reading area the reader does not
+         get. Only the size changes; the options, their labels and their counts are untouched.
+         No width is set here: the browser sizes a <select> to the widest option it has to draw,
+         and a number written in the stylesheet would only be a guess at that on this machine. */
+      .filter-row-tail select {
+        min-height: 20px;
+        font-size: 12px;
+        border-radius: 4px;
+      }
+
       .traj-controls-actions {
         display: flex;
         flex: none;
@@ -1940,6 +1984,22 @@
           max-width: none;
         }
 
+        /* Those two rules were written for the toolbar's fields, which are allowed to take a
+           whole line each. This select no longer lives there: it sits in a `flex: none` tail
+           inside a row that wraps, so `width: 100%` would size it against that tail and the
+           band would grow sideways rather than wrap. Written here rather than left to chance
+           because a rule that silently starts governing a second layer is exactly the drift
+           LAYERS.md calls 联动异常 — the override has to exist even though no browser here is
+           narrow enough to exercise it (未做清单第 6 项). */
+        .filter-row-tail .field {
+          flex: none;
+        }
+
+        .filter-row-tail select {
+          width: auto;
+          max-width: min(320px, 70vw);
+        }
+
         /* All five columns stay so the 失败 text never disappears on narrow screens.
            The index column is deliberately left at its own width: it is the one track
            sized by data rather than by the text it holds, and the 28px this rule used
@@ -2039,10 +2099,6 @@
             <label class="field-label" for="session-select">会话</label>
             <select id="session-select" aria-describedby="window-count"></select>
           </div>
-          <div class="field" id="generation-field" hidden>
-            <label class="field-label" for="generation-select">上下文代</label>
-            <select id="generation-select" aria-describedby="generation-hint"></select>
-          </div>
           <div class="field field-grow" data-filter-scope>
             <label class="field-label" for="search-input">搜索</label>
             <input type="search" id="search-input" placeholder="搜索摘要、正文、结果与思考" autocomplete="off" />
@@ -2094,6 +2150,7 @@
       </section>
 
       <div class="filter-sticky" id="filter-sticky">
+        <div class="filter-row">
         <div class="traj-controls" id="kind-controls" role="toolbar" aria-label="按类型筛选轨迹" aria-controls="overview" data-filter-scope>
         <nav class="traj-controls-actions" aria-label="按类型筛选轨迹">
           <button type="button" class="tbtn tbtn-action tbtn-all" id="kind-all" aria-pressed="true"
@@ -2147,6 +2204,25 @@
             </button>
         </nav>
         </div>
+        <!-- Unmarked on purpose, and the reason is already written where the mechanism is, in the
+             `body[data-anomaly-mode='on'] [data-filter-scope]` rule above: syncAnomalyMode() sets
+             `inert` on everything carrying the attribute, so marking this one would grey the
+             picker out and take it out of the tab order at exactly the moment a reader reading a
+             list of failures most wants to switch generation. It chooses which session is on
+             screen, not which records, so it is not one of the controls a rule suspends.
+
+             The label is sr-only rather than dropped, and that is a measured decision rather than
+             a taste one: at 845px the type row leaves 176px and the picker itself measures 141px
+             once it is sized like the chips, so a visible 「上下文代」 (48px of text plus an 8px
+             gap) is exactly what pushes it off the row. The accessible name is the whole point
+             of a <label>; its pixels are not. -->
+        <div class="filter-row-tail">
+          <div class="field" id="generation-field" hidden>
+            <label class="field-label sr-only" for="generation-select">上下文代</label>
+            <select id="generation-select" aria-describedby="generation-hint"></select>
+          </div>
+        </div>
+        </div>
 
         <!-- 异常 is a second filter system, not a fourth field of the first one, and it is said
              so here rather than implied: while a rule is on, the kind axis, the search box and
@@ -2172,6 +2248,17 @@
           <div class="anomaly-quick" id="anomaly-controls" role="group" aria-labelledby="anomaly-label"></div>
           <span class="anomaly-bar-note" id="anomaly-mode-note" hidden></span>
         </div>
+
+        <!-- The banner travels with the picker, and that is the whole argument for moving it.
+             It only exists while a generation is pinned, which is precisely when a reader who
+             has scrolled thousands of pixels into a frozen pre-compaction snapshot is most
+             likely to have forgotten they are looking at one. Left at the top of the ledger
+             panel, it would scroll away from the control that caused it while that control
+             stayed pinned — the warning and the thing being warned about on opposite sides of
+             a scroll boundary. Its text and its source (statsAll()) are untouched; only where
+             it is pinned changed. syncStickyOffsets() reads the band's real height, so the line
+             appearing and disappearing re-measures everything pinned below it (D9). -->
+        <p class="generation-note" id="generation-hint" hidden></p>
       </div>
 
       <section class="overview" id="overview" aria-labelledby="overview-heading">
@@ -2201,7 +2288,6 @@
             <h2 class="section-title" id="ledger-heading">轨迹</h2>
             <span class="panel-head-meta" id="ledger-meta"></span>
           </div>
-          <p class="generation-note" id="generation-hint" hidden></p>
           <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>
           <div class="ledger-body" id="ledger"></div>
         </section>
