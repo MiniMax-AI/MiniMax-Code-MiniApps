@@ -108,6 +108,40 @@ const sizeFirst = step ? step.indexOf('sizeBuiltGroup(firstBatch[f])') : -1;
 assert('the first batch, which existed before there was anything to predict from, is sized too',
   sizeFirst > calibAt);
 
+// The one that was missing, and the one that cost a day: the class goes on LAST.
+//
+// `content-visibility: auto` lays a skipped element out by its contain-intrinsic-size, and an
+// element with none is laid out as if it were empty. Switching skipping on before sizeBuiltGroup()
+// therefore does not merely degrade the measurement — it makes it read 0, and 0 is then written
+// onto the group. A group sized 0px takes up no space, so it can never re-enter the viewport, so
+// it is never re-rendered: the ledger stays collapsed and a 140 KB list becomes a 2,000 px page.
+// It survived D15's own A/B because that ran on 显示全部, where the batch is long enough to be in
+// the viewport; in the default window 200 records span fewer turns than LEDGER_BATCH_GROUPS, so
+// the whole ledger is this batch and every group in it is measured under skipping.
+assert('the class goes on after the first batch has been measured, not before',
+  sizeFirst > 0 && classOn > sizeFirst);
+
+// The one that actually shipped the bug, and the reason the ordering above was not enough.
+//
+// `is-skipping-offscreen` is set on the ledger element and `clear(ledger)` empties that
+// element's children without touching its own class. So the class survives into the next build,
+// every group appended by it lands already skipped, and the first batch is measured through
+// `content-visibility: auto` — which lays a skipped element out by its contain-intrinsic-size,
+// i.e. by the number being written. First build after a page load measures correctly; every
+// rebuild after it measures 0. That is why the ledger worked on arrival and collapsed a couple of
+// seconds later, and why fixing only the ordering left the symptom in place.
+const render = functionSource('renderLedger');
+const skipOff = render ? render.indexOf("classList.remove('is-skipping-offscreen')") : -1;
+// Anchored with the semicolon and its own line, not on the bare call: renderLedger's own doc
+// comment contains the sentence "clear(ledger) below collapses a 716,000px document", and a
+// bare-name anchor finds that comment first and puts the statement 2,500 characters late. An
+// anchor that can match a comment is not an anchor.
+const clearAt = render ? render.indexOf('\n        clear(ledger);') : -1;
+assert('the ledger turns skipping off before it starts building, so a rebuild does not measure under it',
+  skipOff > 0 && clearAt > skipOff
+  // And it has to be a remove on the same element, not a stray remove of something else.
+  && new RegExp("ledger\\.classList\\.remove\\('is-skipping-offscreen'\\)").test(render));
+
 /* ---------- the arithmetic, run ---------- */
 
 /**

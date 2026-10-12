@@ -66,14 +66,17 @@ MUTATIONS = [
 
     # ---- 2. a new exit retires the build in flight ------------------------------
     #
-    # Re-anchored 2026-10-12 for D14. These two used to hang off `ledgerBuildToken += 1;`
-    # followed by `applyFilterScope();`, which is where the bump sat before the four early
-    # returns below it were found to retire nothing. The bump now sits directly above
-    # `clear(ledger);`, so the line that follows it changed. The rules they encode did not.
+    # Re-anchored 2026-10-12 for D14, then again the same day for the D15 collapse fix.
+    # These two used to hang off `ledgerBuildToken += 1;` followed by `applyFilterScope();`,
+    # which is where the bump sat before the four early returns below it were found to retire
+    # nothing. The bump then moved directly above `clear(ledger);`, and the third re-anchor is
+    # this one: the two lines are no longer adjacent, because turning `is-skipping-offscreen` off
+    # now sits between them. Two adjacent statements are a fragile anchor — every future
+    # insertion between them costs a re-anchor. The anchor is now the bump on its own, which is
+    # unique in the file and is the thing the rule is actually about. The rules did not change.
 
     ("the exit retires the build twice",
-     [("        ledgerBuildToken += 1;\n        clear(ledger);\n",
-       "        ledgerBuildToken += 1;\n        ledgerBuildToken += 1;\n        clear(ledger);\n")],
+     [("        ledgerBuildToken += 1;\n", "        ledgerBuildToken += 1;\n        ledgerBuildToken += 1;\n")],
      "every pass through the exit retires the build in flight"),
 
     # The new build is handed the token the previous build was still using, so the two compare
@@ -84,7 +87,7 @@ MUTATIONS = [
     # being claimed, not the shape of the object carrying it, so the anchor is the first half of
     # the literal alone — which is stable against fields being added after it.
     ("the new build claims a token that is not yet retired",
-     [("        ledgerBuildToken += 1;\n        clear(ledger);\n", "        clear(ledger);\n"),
+     [("        ledgerBuildToken += 1;\n", ""),
       ("at: 0, rows: 0, bands: 0, heights: null };\n",
        "at: 0, rows: 0, bands: 0, heights: null };\n        ledgerBuildToken += 1;\n")],
      "the exit retires the old build before the new one claims a token"),
@@ -96,7 +99,7 @@ MUTATIONS = [
     # there and still unique, which is why verify-ledger-batch.mjs counts the returns between it
     # and clear() rather than asserting a position.
     ("a pass that returns early retires nothing",
-     [("        ledgerBuildToken += 1;\n        clear(ledger);\n", "        clear(ledger);\n"),
+     [("        ledgerBuildToken += 1;\n", ""),
       ("        var matched = visibleEntries();\n",
        "        ledgerBuildToken += 1;\n        var matched = visibleEntries();\n")],
      "no early return sits between the token bump and the clear"),

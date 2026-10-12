@@ -37,10 +37,32 @@ MUTATIONS = [
 
     # The class goes on in the same batch that builds the groups it will skip. Nothing is laid out
     # yet, so `build.heights` is null forever and every group is sized from nothing.
+    # Re-anchored 2026-10-12: the shipped order now puts the class after the measurement loop, so
+    # this mutation restores the old one by hoisting the class above the guard instead of editing a
+    # line that is no longer there. The mutation is not the defect — dropping it would leave the
+    # guard weaker than it was on the day it was written.
     ("the class is switched on before the first batch exists",
-     [("          if (!build.heights) {\n            build.heights = calibrateRowHeights(ledger);\n            ledger.classList.add('is-skipping-offscreen');\n",
+     [("          if (!build.heights) {\n            build.heights = calibrateRowHeights(ledger);\n",
        "          ledger.classList.add('is-skipping-offscreen');\n          if (!build.heights) {\n            build.heights = calibrateRowHeights(ledger);\n")],
      "the class is switched on inside the calibration guard, not before it"),
+
+    # The shipped bug, verbatim: skipping on before the measurement rather than after it.
+    # Unlike the mutation above this one leaves the class inside the guard and before the
+    # "more batches remain" check, so it satisfies the assertion that was already here and gets
+    # through — which is exactly why it shipped through 44 guards, a validation, a publish and a
+    # browser measurement. It reads 0 for every group in the batch and writes that 0 onto them.
+    ("the class goes on before the first batch is measured",
+     [("            for (var f = 0; f < firstBatch.length && f < LEDGER_BATCH_GROUPS; f += 1) {\n              sizeBuiltGroup(firstBatch[f]);\n            }\n            ledger.classList.add('is-skipping-offscreen');\n",
+       "            ledger.classList.add('is-skipping-offscreen');\n            for (var f = 0; f < firstBatch.length && f < LEDGER_BATCH_GROUPS; f += 1) {\n              sizeBuiltGroup(firstBatch[f]);\n            }\n")],
+     "the class goes on after the first batch has been measured, not before"),
+
+    # The half that actually shipped. The class lives on the ledger element and clear(ledger)
+    # empties its children without touching its own class, so the ordering fix above only covers
+    # the first build after a page load: every rebuild after it appends groups that are already
+    # skipped and measures them at 0. Dropping the removal restores that.
+    ("skipping is never turned off, so a rebuild measures through it",
+     [("        ledger.classList.remove('is-skipping-offscreen');\n", "")],
+     "the ledger turns skipping off before it starts building, so a rebuild does not measure under it"),
 
     # Calibrating per batch instead of once: every later batch mixes measured heights with
     # skipped ones, and the numbers drift batch by batch instead of staying fixed.

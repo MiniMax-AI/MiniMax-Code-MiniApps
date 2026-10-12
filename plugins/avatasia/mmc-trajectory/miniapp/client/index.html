@@ -5288,6 +5288,21 @@
            turn groups into a skeleton — and, since it would then reach restoreRowAnchor()
            with an anchor from a table that no longer exists, to move the page for it. */
         ledgerBuildToken += 1;
+        /* Skipping has to be off for the whole build, not just for the first measurement.
+
+           `is-skipping-offscreen` lives on the ledger element, and clear(ledger) empties its
+           children without touching its own class — so the class set by one build is still there
+           for the next one. Every group appended from the second build onwards therefore lands
+           with `content-visibility: auto` already applied, and a skipped element is laid out by
+           its contain-intrinsic-size: the group measures 0, sizeBuiltGroup writes that 0 onto
+           it, and a group sized 0px occupies no space, so it can never re-enter the viewport and
+           is never re-rendered. The ledger stays collapsed — 140 KB of rows inside a 2,000 px
+           page — and because it collapses, scrolling up a little lands the reader at the top
+           instead of one row higher.
+
+           Ordering the class-on after the measurement loop is necessary but not sufficient: it
+           only fixes the first build after a page load. This line is what fixes the rest. */
+        ledger.classList.remove('is-skipping-offscreen');
         clear(ledger);
 
         if (state.loading) {
@@ -5437,13 +5452,25 @@
           // have been laid out for real, and reading a height off a skipped subtree would be
           // reading the prediction back. Read once — after this the class is on, and the same
           // measurement would be quoting itself.
+          //
+          // The class therefore goes on LAST, after both measurements, and that ordering is the
+          // fix rather than a style preference. `content-visibility: auto` sizes a skipped element
+          // by its `contain-intrinsic-size`, and an element with none is laid out as if it were
+          // empty — so turning skipping on first makes every group in this batch measure 0, and
+          // sizeBuiltGroup then writes that 0 onto it. A group sized 0px occupies no space, so it
+          // can never come back into the viewport, so it is never re-rendered: the ledger stays
+          // collapsed for good and the document is two thousand pixels tall above a hundred and
+          // forty kilobytes of rows. It only showed up in the default window, where 200 records
+          // span fewer turns than LEDGER_BATCH_GROUPS and therefore the *whole* ledger is this
+          // batch; D15's own A/B ran on 显示全部, where the batch is long enough to sit in the
+          // viewport and get measured for real.
           if (!build.heights) {
             build.heights = calibrateRowHeights(ledger);
-            ledger.classList.add('is-skipping-offscreen');
             var firstBatch = ledger.querySelectorAll('.turn-group');
             for (var f = 0; f < firstBatch.length && f < LEDGER_BATCH_GROUPS; f += 1) {
               sizeBuiltGroup(firstBatch[f]);
             }
+            ledger.classList.add('is-skipping-offscreen');
           }
 
           if (build.at < groups.length) {
