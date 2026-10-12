@@ -19,11 +19,16 @@
  * claim becomes false.
  *
  * What this guard deliberately does NOT check: R5, the claim that L3 writes L2 through exactly
- * one setter. That is a real defect and it is not closed — `state.overviewSelection` has five
- * writers today (`clearOverviewSelection`, `setActualDuration`, `onOverviewPointerMove`,
- * `onOverviewPointerUp`, `resetBaseFilters`). Asserting a convergence that has not happened
- * would be a guard that cannot pass; asserting the current count would be a guard that cannot
- * fail. See docs/LAYERS.md R5 / D4.
+ * one setter. That is a real defect and it is not closed — `state.overviewSelection` has four
+ * writers today (`dropOverviewSelection`, `setActualDuration`, `onOverviewPointerMove`,
+ * `onOverviewPointerUp`). Asserting a convergence that has not happened would be a guard that
+ * cannot pass; asserting the current count would be a guard that cannot fail. See docs/LAYERS.md
+ * R5 / D4.
+ *
+ * What it *does* check about R5 is the part that is true and load-bearing: the two paths whose
+ * job is to clear the field go through one writer. They used to assign it in two places, and one
+ * of them — resetBaseFilters, the one the empty ledger's 「清除筛选」 reaches — was not clearing it
+ * at all, which is a defect this guard now names rather than a count it merely records.
  *
  * mutate-cross-layer.py breaks each rule below in the shipped file and requires this guard to
  * report it by name.
@@ -139,6 +144,30 @@ function stateWrites(src) {
   assert('visibleEntries exists', visible !== null);
   assert('the L2 visibility entry point reads state.overviewSelection',
     visible !== null && /state\.overviewSelection/.test(visible));
+}
+
+// ------------------------------------------------------- the one clear path that exists
+// R5 wants exactly one writer for the L3→L2 field and there is still no single one: the two
+// pointer handlers write during a gesture and setActualDuration writes on a mode switch, and
+// those are three different events rather than three spellings of one. So the count stays
+// unasserted on purpose.
+//
+// What is asserted is the part that is both true and was previously false: the two paths whose
+// *job* is to clear the field share one writer. The negative half of each check matters as much
+// as the positive one — a path that both calls the writer and assigns the field itself is the
+// drift this started from, and only the negative catches it.
+{
+  const drop = functionSource('dropOverviewSelection');
+  const clear = functionSource('clearOverviewSelection');
+  const resetBase = functionSource('resetBaseFilters');
+  const assignsItself = (src) => src !== null && /state\.overviewSelection\s*=[^=]/.test(src);
+
+  assert('dropOverviewSelection exists and is what writes the field to null',
+    drop !== null && /state\.overviewSelection = null;/.test(drop));
+  assert('the strip control clears through it rather than through its own assignment',
+    clear !== null && /dropOverviewSelection\(\);/.test(clear) && !assignsItself(clear));
+  assert('and so does the base-filter reset, which is the one the empty ledger reaches',
+    resetBase !== null && /dropOverviewSelection\(\);/.test(resetBase) && !assignsItself(resetBase));
 }
 
 // ---------------------------------------------------------------- reporting

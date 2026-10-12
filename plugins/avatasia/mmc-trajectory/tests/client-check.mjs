@@ -392,7 +392,17 @@ const checks = [
   // condition that is not in force. A fifth would be another path deciding what is on screen,
   // which is what this check exists to catch; if one is ever genuinely wanted, change the check
   // in the same commit that adds the control rather than loosening it silently.
-  ['state.kinds is written from exactly four controls', (html.match(/state\.kinds\s*=[^=]/g) || []).length === 4],
+  //
+  // 清除筛选 reaches the field by *delegating* to resetBaseFilters() rather than through a
+  // fourth assignment, so counting assignments alone would report a control gone missing the
+  // moment two paths share one writer. The delegation is counted in its place. Both halves are
+  // checked because either alone is satisfiable by the wrong thing: three assignments with no
+  // delegation is three controls, and a delegation that never happens is one.
+  ['state.kinds is written from exactly four controls', (() => {
+    const direct = (html.match(/state\.kinds\s*=[^=]/g) || []).length;
+    const delegated = /function clearFilters\(\)\s*\{\s*resetBaseFilters\(\);/.test(html);
+    return direct === 3 && delegated;
+  })()],
   // That the fourth writer also updates the buttons is checked by verify-anomaly.mjs, not here:
   // it is a property of 异常, and it needs a mutation control that mutate-anomaly.py can run.
   // The breakdown is the only place the turn count explains itself, and its whole job is that

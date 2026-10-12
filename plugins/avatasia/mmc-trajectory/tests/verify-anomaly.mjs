@@ -486,6 +486,15 @@ vm.runInContext(toggleSource, page);
 // stubbed, because what they do to the widgets is checked by their own guards.
 const resetBaseSource = fnSource('function resetBaseFilters(');
 if (!resetBaseSource) throw new Error('could not extract resetBaseFilters');
+// dropOverviewSelection is loaded verbatim for the same reason resetBaseFilters is: whether the
+// brush is dropped is the thing under test here. Its one call out is stubbed rather than loaded —
+// abortOverviewDrag reaches for the drag state, the edge-pan timer and the track element, and what
+// it must do is a property of the strip (verify-overview.mjs), not of 异常. Stubbing it keeps this
+// file from having to grow the drag's whole dependency tree to test one assignment.
+page.abortOverviewDrag = () => {};
+const dropSelSource = fnSource('function dropOverviewSelection(');
+if (!dropSelSource) throw new Error('could not extract dropOverviewSelection');
+vm.runInContext(dropSelSource, page);
 vm.runInContext(resetBaseSource, page);
 let rangeCleared = 0;
 page.clearTimeRange = () => { rangeCleared += 1; };
@@ -823,6 +832,29 @@ const clearSrc = fnSource('function clearFilters()');
 assert('清除筛选 drops it too', /state\.anomaly = defaultAnomaly\(\);/.test(clearSrc));
 assert('and re-syncs the buttons with it', /syncAnomalyButtons\(anomalyCounts\(\)\);/.test(clearSrc));
 
+// 清除筛选 has to reach the base axes through resetBaseFilters(), because that is where the strip
+// brush is dropped. It used to assign kinds / query / range itself and leave the brush standing —
+// and that is the worst shape the defect could take, because the button lives in the *empty* ledger
+// and a brush on the strip is one of the reasons the ledger is empty. Press it and nothing comes
+// back; press it again and nothing comes back.
+//
+// Run rather than read, so that "it delegates" and "delegating actually clears the brush" cannot
+// drift apart: a clearFilters() that went back to assigning on its own would still satisfy the
+// delegation check in client-check.mjs while doing the old thing.
+const clearFull = fnSource('function clearFilters()');
+if (!clearFull) throw new Error('could not extract clearFilters');
+page.syncAnomalyButtons = () => {};
+vm.runInContext(clearFull, page);
+page.state.overviewSelection = { start: 1, end: 2 };
+page.state.kinds = [];
+page.state.query = 'needle';
+page.state.anomaly.rules = ['toolError'];
+page.clearFilters();
+assert('清除筛选 drops the strip brush, which it used to leave standing', page.state.overviewSelection === null);
+check('and the kinds it used to assign itself are back to the default', page.state.kinds, pure.KIND_ORDER);
+check('and the query it used to assign itself', page.state.query, '');
+check('and the anomaly axis it always handled', page.state.anomaly.rules, []);
+
 assert('the filter counts as a filter',
   /state\.anomaly\.rules\.length !== 0/.test(fnSource('function isFiltering()')));
 
@@ -878,8 +910,13 @@ const modeSrc = fnSource('function syncAnomalyMode(counts)');
 const baseSrc = fnSource('function resetBaseFilters(');
 assert('the reset updates the buttons, or the axis would show a condition that is not in force',
   !!baseSrc && /state\.kinds = KIND_ORDER\.slice\(\);/.test(baseSrc) && /syncKindButtons\(\);/.test(baseSrc));
+// The brush is no longer written inline here — it is written by dropOverviewSelection(), which is
+// also what aborts the drag. Re-anchoring must not weaken this: the rule is still "the row above is
+// cleared whole", so it now follows the call and then checks the assignment at the far end of it.
+// Checking only that the call happens would let a dropOverviewSelection() that clears nothing pass.
 assert('and it clears every part of the row above, not just the types',
-  !!baseSrc && /state\.query = '';/.test(baseSrc) && /state\.overviewSelection = null;/.test(baseSrc)
+  !!baseSrc && /state\.query = '';/.test(baseSrc) && /dropOverviewSelection\(\);/.test(baseSrc)
+  && !!dropSelSource && /state\.overviewSelection = null;/.test(dropSelSource)
   && /clearTimeRange\(\);/.test(baseSrc));
 const toggleFull = fnSource('function onAnomalyToggle(');
 assert('and it runs on every tick into the mode, not only the first',

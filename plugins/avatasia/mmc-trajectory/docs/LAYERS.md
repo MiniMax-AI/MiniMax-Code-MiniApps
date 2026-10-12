@@ -78,17 +78,17 @@
 
 原文记的是：`state.kinds` 4 处写入、`state.anomalyRules` 4 处、`multiAnomaly` 3 处、`query` 3 处、`limit` 3 处。互斥不变量只能靠一个协调函数 `resetBaseFilters()` 去维持，而协调函数本身就是「没有共享模型」的产物。
 
-**Stage 2 之后重新数过（2026-10-12，`index.html` 当前值）：**
+**Stage 2 之后重新数过（2026-10-12，`index.html` 当前值；`kinds` 与 `overviewSelection` 那一列在本轮第 9 项之后再数了一次）：**
 
 | 字段 | 写者 | 读者 | 状态 |
 | --- | --- | --- | --- |
 | `state.anomaly` | **2**（都是 `= defaultAnomaly()` 整体赋值） | 36 | **已收敛**：一个字段、一个工厂、每键一个写者 |
-| `state.kinds` | 4 | 15 | 未动 |
+| `state.kinds` | **3 直接 + 1 委托**（四条控制路径，`清除筛选` 改为调用 `resetBaseFilters()`） | 15 | 未动 |
 | `state.query` | 3 | 4 | 未动 |
-| `state.overviewSelection` | 5 | 4 | 未动（R5，见 Stage 3） |
+| `state.overviewSelection` | **4**（两个「清空」路径已收敛到 `dropOverviewSelection()`） | 4 | 部分进展，离 R5 还差三个（R5，见 Stage 3） |
 | `state.limit` | 2 | 12 | D13 顺带从 3 降到 2 |
 
-所以这条**没有整条关闭**：异常轴那半已经交出去了，基础轴那半没动，而 `resetBaseFilters()` 这个协调函数还在。收它属于 Stage 2-c 未做的另一半，四问要重答——见未做清单第 9 行。
+所以这条**仍然没有整条关闭**：异常轴那半已经交出去了；基础轴那半的**「默认值只有一份」拿到了**，`state.base` 那个命名空间按 codex 的排序显式放在最后。`resetBaseFilters()` 这个协调函数还在——它现在是**唯一**的基础轴默认值写者，而不是两个平行函数各写一遍。见未做清单第 9 行。
 
 ### D6 — 控件的位置和它写入的层不是一回事
 
@@ -960,11 +960,19 @@ console 零 warn / 零 error。
 
 **这条不变式本身被守了**（`verify-anomaly-model.mjs` 新增 2 条，共 17 条）：`index.html` 里 "the only filter" 与 "the one filter" 各必须出现 **0** 次，而带限定词的那句仍然在 `README.md` 里。守一段散文听起来奇怪，但这句话是本模型唯一一处**改错了也不会有任何运行时报错**的地方——而一句与架构相矛盾的注释并不因为它是注释就不算假话。两条变异分别把它插回 `KIND_ORDER` 上方与 `kinds:` 字段上方。
 
-**没做的：`resetBaseFilters()` 变一次赋值。** 现状是它手写清 5 样（kinds / query / overviewSelection / clearTimeRange + 搜索框 + `syncKindButtons()`）。要变成「一次赋值」，必须先把基础轴也收成一个字段（`state.base = defaultBase()`），像 2-a 对异常轴做的那样。**本轮不做，理由是它越界：**
+**`resetBaseFilters()` 变一次赋值：收字段那一半仍不做，「默认值只有一个写者」那一半已做（2026-10-12）。**
+
+原状是它手写清 5 样（kinds / query / overviewSelection / clearTimeRange + 搜索框 + `syncKindButtons()`），而 `clearFilters()` **平行地又手写了一遍**其中大半——两个函数读起来都叫「重置」，做的却不是同一件事。已做的一半：`clearFilters()` 改为**调用** `resetBaseFilters()`，于是基础轴的默认值只剩一处。
+
+**这一步顺带修掉一个真缺陷，而不是顺手清理。** `clearFilters()` 从来不清 `state.overviewSelection`，而那个字段参与 `visibleEntries()`——于是空态里那个「清除筛选」按钮清了类型、搜索词、异常规则和时间区间，唯独把概览条上的刷选留着，而刷选正是账本为空的原因之一。**读者按了按钮，什么都没回来。** 浏览器同页 A/B 见未做清单第 9 行。
+
+**另一半仍不做：`state.base = defaultBase()`。理由与初稿一致，未因上面那一步而改变：**
 
 - Stage 2 自己的「归层」答案是「**不改 L1/L3/L4/L5/L6 任何一层**」。`overviewSelection` 是 **L3→L2 的回写**（R5 声明的那一条），把它嵌进 L2 的 `state.base` 就改了 L3 声明的形状。
 - `state.overviewSelection` 今天有 **5 个写点**且 R5 未闭合（本文件 Stage 3 已记）。收字段不收 setter，只是把 D4 的问题换个位置——而 D4 本轮明确不做。
 - 代价是 `state.kinds` + `state.query` + `state.overviewSelection` 三个字段的**全部读写点**。跨三层，且要改写 `verify-cross-layer.mjs` 的断言。
+
+**而且上面那一步已经把收字段唯一的实际收益拿走了**：codex 指出收字段「确实买到」的东西是「默认值只有一份」——**这一份现在有了**（`resetBaseFilters()` 是唯一写者）。剩下的只有「一个命名空间」，那不足以支付 35 个跨层读写点加一次 L3 形状变更。
 
 **这三个数字在初稿里写错了，codex 交叉核对时查出来的**：初稿写「`query` ~15 处、共约 40 个站点」。按当前文件实测 `state.query` 是 **3 写 4 读 = 7 处**，不是 15；三个字段合计约 **35 处**，不是 40。把机械引用说成「三层改动」也是夸大——那 35 处里绝大多数是同一个模式的替换。** blast radius 只说明改动量，不说明严重性。**
 
@@ -976,7 +984,9 @@ console 零 warn / 零 error。
 
 **codex 指出我原始论证里三处错**（不改结论，但都该记）：① 我说基础轴三个字段「恰好互斥」——错，`recordVisible()` 是把它们**求交**（任一不满足即不可见），互斥只存在于轴与轴之间；这是「轴间互斥」与「轴内组合」的混淆。② 我说的失败模式后果也错了：漏清一个基础筛选，症状不是「它继续限制异常结果」（异常开着时 `recordVisible()` 根本不看它），而是**取消异常规则后它悄悄复活**。③ `state.query` 的站点数我说成 ~15，实测 7。
 
-**但 codex 也同意结论**，并补了一条我没想到的正面理由：如果**初始化和 reset 都用 `defaultBase()`**，新增一个被正确建模的字段只需要改一处定义，而不必分别改初始状态和 reset 逻辑（今天的 `state.kinds: KIND_ORDER.slice()` 在状态字面量、`resetBaseFilters()`、`clearFilters()`、`onKindToggle()` 里各写了一遍）。这是收字段**确实**买到的东西——但它是「默认值只有一份」，不是「一次赋值」。
+**但 codex 也同意结论**，并补了一条我没想到的正面理由：如果**初始化和 reset 都用 `defaultBase()`**，新增一个被正确建模的字段只需要改一处定义，而不必分别改初始状态和 reset 逻辑（当时的 `state.kinds: KIND_ORDER.slice()` 在状态字面量、`resetBaseFilters()`、`clearFilters()`、`onKindToggle()` 里各写了一遍）。这是收字段**确实**买到的东西——但它是「默认值只有一份」，不是「一次赋值」。
+
+**2026-10-12 补记**：上一段那四份里，`clearFilters()` 那份已经没了（它改为调用 `resetBaseFilters()`）。**也就是说 codex 指出的那份收益，是在不收字段的前提下拿到的** ——「默认值只有一份」要求的是「只有一处写它」，不是「它们住在同一个对象里」。这一条把收字段的剩余价值削到只剩一个命名空间，而那不足以支付跨三层 35 个读写点加一次 L3 形状变更。
 
 **顺带修掉一处 2-a 的漏**：`verify-anomaly-model.mjs` 的文件头写着「`mutate-anomaly-model.py` breaks each rule below」，而那个文件**当时并不存在**。这正是守卫本身要抓的那类缺陷——树里一句没有任何东西在检查的声明。现已补上，16 条变异全捕（其中 5 条初版写错：三条只加了不带 `state.` 前缀的键，那不是「第二个答案」只是一个死键；一条改条件而没删赋值；一条把写者改成自赋值，写者数没变）。
 
@@ -998,7 +1008,9 @@ console 零 warn / 零 error。
 
 六条变异分别对应六条断言，守卫必须**按名字**报出来：把 window-bar 挪出面板、给它加一个 `state.` 赋值、给进度写者加一个、把 `state.overviewSelection` 塞进窗口条、让刷选落点不再写该字段、让 L2 入口不再读它。第 6 条的锚点重锚过一次——`var selection = state.overviewSelection;` 在 `renderOverviewSelection()` 里也有一处，锚在 `visibleEntries()` 的函数头上，否则命中的是 L3 的那个读者。
 
-**这条守卫刻意不覆盖 R5，而 R5 没有闭合。** `state.overviewSelection` 今天有 **5 个写点**：`clearOverviewSelection()`（4126）、`setActualDuration()`（4139）、`onOverviewPointerMove()`（4337，拖拽中）、`onOverviewPointerUp()`（4442，落点）、`resetBaseFilters()`（6871）。R5 要求 L3→L2 的区间回写只经一个 setter，而它一个都没有。断言「已经收敛」是一条过不了的守卫，断言「当前是 5 个」是一条恒真的守卫——两条都是错的写法，所以这条缺口留在这里而不是被断言盖住。收它属于 D4，见 Stage 4。
+**这条守卫刻意不覆盖 R5，而 R5 没有闭合。** `state.overviewSelection` 原本有 **5 个写点**：`clearOverviewSelection()`、`setActualDuration()`、`onOverviewPointerMove()`（拖拽中）、`onOverviewPointerUp()`（落点）、`resetBaseFilters()`。R5 要求 L3→L2 的区间回写只经一个 setter，而它一个都没有。断言「已经收敛」是一条过不了的守卫，断言「当前是 5 个」是一条恒真的守卫——两条都是错的写法，所以这条缺口留在这里而不是被断言盖住。收它属于 D4，见 Stage 4。
+
+**2026-10-12：5 → 4，其中两个「清空」路径已收敛。** 新增 `dropOverviewSelection()`（`abortOverviewDrag()` + 写 null），`clearOverviewSelection()` 与 `resetBaseFilters()` 都改走它。当前四个写点：`dropOverviewSelection()`（4403）、`setActualDuration()`（4421）、`onOverviewPointerMove()`（4619，拖拽中）、`onOverviewPointerUp()`（4724，落点）。**离 R5 还差三个**——`setActualDuration()` 与两个 pointer 处理器仍直接赋值，而它们三个语义各异（模式切换 / 拖拽中 / 落点），并不是同一个事件的三种写法，所以不该被塞进同一个 setter。**这里只记进展，不记收敛。**
 
 ### ~~Stage 4 — 增量协议 `?since=`（L0 / 协议）~~ **已完成（A 方案）**
 
@@ -1142,12 +1154,12 @@ tail     (游标 3)            t2 CLOSED [r4]
 | 1c | ~~一次未解释的位置跳变~~ **已解释（D15 自身那个 class 跨重建留存）** | 验证 | — | 原观测：某一趟近底部的重建 `postY` 比 `preY` 高了 77,226 px，屏上的行没有变，随后被后续重建带下去。**时序是关键**：那次观测发生在 D15 实测**期间**，而「`is-skipping-offscreen` 跨重建留存」是**之后**才定位并修掉的（`index.html:5426`，在 `clear(ledger)` **之前** `ledger.classList.remove('is-skipping-offscreen')`）。那一趟里 25 个首批轮组被量成 `0px`——`content-visibility: auto` 把跳过的元素按空元素排版——文档塌掉又长回来，位置跳变正是这个过程的副产品（77,226 px ÷ 36 px/行 ≈ 2,145 行，与 25 个轮组的量级相符）。**2026-10-12 复测关闭，分两层**。**结构层（决定性）**：那个机制现在**结构上不存在**，且被 `verify-intrinsic-size.mjs` 钉住（`skipOff > 0 && clearAt > skipOff`，外加正则确认删的是 `ledger.classList` 而不是误删别的东西），`mutate-intrinsic-size.py` 里有一条变异专门删掉这一行并被点名捕获。**实测层（对齐了原本错开的条件）**：条件必须是「显示全部」**且**读者不在首批附近——默认窗口只有 200 条、跨 2–3 个轮组，小于 `LEDGER_BATCH_GROUPS = 25`，整个账本就是首批，缺陷根本不发作，这正是当初复测对不上的原因。照这个条件复现：`pageHeight` 892,011、`scrollY` 884,913.5（锚点恢复后屏上仍是同一批行 #24337–#24355），连续等距滚动 300 px × 2，`actualDeltaY` **精确等于请求值**，文档未塌。**样本只有 2 个，证明不了罕见事件不发生——关掉这一条的是结构层，不是样本。** 上一轮这里写「很可能」而不是「已解释」，是因为**没去查那个机制还在不在**；查了，它不在，而且被守着。 |
 | 2 | ~~增量协议 `?since=`~~ **已做** | 代码 + 协议 | — | payload 只有 `session` / `stats` / `turns` 三个键，41 MB 全在 `turns`；`stats` 是累加器必须全量来，所以 **`?since=` 省的是传输与客户端 `JSON.parse`，不是服务端 CPU**。游标取 `record.index`。`applyPayload` 从整体替换改为追加合并（本轮唯一一处真口径变更），读点已列全——写侧只有 1 处。实测冷缓存 **43,159,724 → 19,663 字节（0.046%）**，服务端墙钟两次都是 1,124 ms；浏览器端页面记录数与 API 同步（21,680 vs 21,679，差 1 条即读取间隔），console 零错误。`verify-incremental.mjs` 63 条 + `mutate-incremental.py` 16 条变异全捕。详见 Stage 4。 |
 | 3 | ~~给「显示全部」封顶~~ **已否决，不做** | 口径 | — | **chli 2026-10-12 定：不封顶。** 理由是「无限大无非是极端情况下假死，碰到的几率很小」。补充一条事实（已告知，不影响决定）：18,924 行不是极端情况，就是本会话现在的规模，3,956 ms 就是在它上面测出来的。封顶还会把「读完整个会话」从点一次变成点约 69 次「向上加载更早的 200 条」，而那个控件今天只在 `hiddenAbove > 0` 时出现，等于新增一条路。此路不再讨论。 |
-| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **2-a、2-b 已做；2-c 注释半已做，赋值半不做** | 四问已答，读点已数清。2-a 把 `anomalyRules` / `multiAnomaly` / `anomalyLast` 收成 `state.anomaly {mode, rules, last}`（`694cd8a`，新增 `verify-anomaly-model.mjs`，本轮补上它缺失的 `mutate-anomaly-model.py` 16 条变异）。2-b 把 `passesBaseFilter()` + `anomalyContext()` 合成 `recordVisible(record, turn, selection)`，账本与总览条都不再持有判断（R2 闭合，3 条断言 + 3 条变异），**并已配一次独立浏览器实测**（探针独立算并集 → 页面三个面各自读数 → 三者对到 513，详见 2-b 的实测小节）。2-c 删掉 D2 那三句互相矛盾的设计声明并给它加了限定词；**`resetBaseFilters()` 变一次赋值那一半显式不做**——它要收 `state.base`，而 `overviewSelection` 是 L3→L2 的回写（R5 未闭合），收字段就改了 L3 的形状，且约 40 个站点横跨 L3/L4/L5，超出 Stage 2 自己「不改 L3/L4/L5」的归层边界。详见 Stage 2。 |
-| 5 | ~~Stage 3 — 声明跨层关系（R6）~~ **已做** | 代码 | — | `verify-cross-layer.mjs`（12 条）+ `mutate-cross-layer.py`（6 条变异全捕），为「window-bar 在 L5 内写 L3」与「overview 持有写 L2 的控件」各加一组断言。调研中撞见 **R5 未闭合**：`state.overviewSelection` 有 5 个写点，没有单一 setter——这条守卫刻意不覆盖它（断言「已收敛」过不了，断言「当前 5 个」恒真），收它属于 D4。详见 Stage 3。 |
+| 4 | **Stage 2 — 异常轴建模**（见第 5 节） | 代码 | **2-a、2-b 已做；2-c 注释半已做，赋值半不做** | 四问已答，读点已数清。2-a 把 `anomalyRules` / `multiAnomaly` / `anomalyLast` 收成 `state.anomaly {mode, rules, last}`（`694cd8a`，新增 `verify-anomaly-model.mjs`，本轮补上它缺失的 `mutate-anomaly-model.py` 16 条变异）。2-b 把 `passesBaseFilter()` + `anomalyContext()` 合成 `recordVisible(record, turn, selection)`，账本与总览条都不再持有判断（R2 闭合，3 条断言 + 3 条变异），**并已配一次独立浏览器实测**（探针独立算并集 → 页面三个面各自读数 → 三者对到 513，详见 2-b 的实测小节）。2-c 删掉 D2 那三句互相矛盾的设计声明并给它加了限定词；**`resetBaseFilters()` 那一条按 codex 的排序拆成两半：「默认值只有一个写者」已做**（`clearFilters()` 改为调用它，并因此修掉一个真缺陷——空态「清除筛选」不清概览条刷选，而刷选正被 `visibleEntries()` 读取，见第 9 行），**「收成 `state.base`」显式不做**——`overviewSelection` 是 L3→L2 的回写（R5 未闭合），收字段就改了 L3 的形状，且约 35 个站点横跨三层。**而且收字段唯一的实际收益已被前一半拿走**（codex 说的就是「默认值只有一份」，这一份现在有了），剩下的只有命名空间。详见 Stage 2。 |
+| 5 | ~~Stage 3 — 声明跨层关系（R6）~~ **已做** | 代码 | — | `verify-cross-layer.mjs`（12 条）+ `mutate-cross-layer.py`（6 条变异全捕），为「window-bar 在 L5 内写 L3」与「overview 持有写 L2 的控件」各加一组断言。调研中撞见 **R5 未闭合**：`state.overviewSelection` 有 5 个写点，没有单一 setter——这条守卫刻意不覆盖它（断言「已收敛」过不了，断言「当前 5 个」恒真），收它属于 D4。**2026-10-12 有了部分进展**：两个「清空」路径收敛到 `dropOverviewSelection()`，写点 5 → 4；`setActualDuration()` 与两个 pointer 处理器仍直接赋值，**R5 仍未闭合**，守卫的缺口依旧留着。详见 Stage 3。 |
 | 6 | ~~窄屏 sticky 只有代码证据，没有浏览器实测~~ **已做，且查出 D21** | 验证 + 布局 | — | **原来那条「in-app 浏览器视口固定 735×900 且不可 resize」是错的** —— headless Edge + CDP 的 `Emulation.setDeviceMetricsOverride` 可设任意视口，Node 24 自带 `WebSocket` 无需装依赖，视口宽度从此是**可扫的参数**而不是本机碰巧的值。**sticky 三段堆叠在 390px 下本来就是对的**（钉住态 `band|overview = -0.2`、`overview|window = 0.0`，三段实测高度与 `syncStickyOffsets()` 写的 var 全一致），**但整页横向溢出**：文档恒为 622px，视口窄于 640 时左右滚动 22–262px，元凶是十个类型 chips 恒为 574px 且拒绝收缩。查出 **D21** 并已修：`.traj-controls` 加 `max-width: 100%`、chips 改 `flex: 0 1 auto` + `min-width: 0` + `flex-wrap: wrap`，修后 360–900 全部 `ovf = 0`，≥640 逐值不变。**这一项最贵的地方不是缺陷，是修法** —— 我第一版只加 `flex-wrap` 就配了一条断言，守卫绿、变异也抓，而实测 `scrollWidth` 一个像素没变：shrink-to-fit 的 flex 容器永远等于最宽一行，**永远不可能换行**。详见 D21。 |
 | 7 | **跨家族验证只有 codex 一条腿** | 验证 | 环境 | claude OAuth 过期、codebuddy 要 `/login`，需 chli 交互式处理。 |
 | 8 | **PR #16 reviews=0** | 流程 | 等 maintainer | `.probe\perf-payload.json`（34 MB 临时产物）已于 2026-10-12 移入回收站，不再列。 |
-| 9 | **`resetBaseFilters()` 变一次赋值（Stage 2-c 的另一半）** | 代码 | 需重答四问 | 要「一次赋值」就得把基础轴收成 `state.base = {kinds, query, selection}` + 工厂。**已走 codex 交叉核对（2026-10-12），结论：先做 setter / 变更 API，`state.base` 放最后，且它本身不强制轴互斥、不收敛写者、不同步控件。** 收字段确实买到的只有「默认值只有一份」——若初始化与 reset 共用 `defaultBase()`，新增一个字段只改一处定义。代价约 35 个读写点跨三层（**初稿写「~15/~15、约 40」是错的，实测 `query` 3 写 4 读，`query` 不是 15 是 7**）。详见 Stage 2 的 2-c。 |
+| 9 | ~~`resetBaseFilters()` 变一次赋值~~ **已收口**（`state.base` 那一半显式不做） | 代码 + **口径** | — | codex 交叉核对的结论照办：**先做 setter / 变更 API，`state.base` 放最后** —— 所以本条做的是「默认值只有一个写者」，不是「把字段收进一个对象」。做法是 `clearFilters()` **复用** `resetBaseFilters()`，而不是平行地再赋一遍，于是基础轴的默认值只剩 `resetBaseFilters()` 一处。**顺带修掉一个真缺陷**：`clearFilters()` 从来不清 `state.overviewSelection`，而那个字段**参与 `visibleEntries()`**（`:4931`）与 `isFiltered()`（`:5178`）—— 空态里那个「清除筛选」按钮清了类型、搜索词、异常规则和时间区间，唯独把概览条上的刷选留着，而刷选正是账本为空的原因之一。读者按了按钮，什么都没回来；再按一次，还是什么都没回来。**浏览器同页 A/B**：刷选后 `命中 2,522` → 搜索词打空（`rows: 0`，按钮出现）→ 点「清除筛选」→ **修后无「命中」**（`共 25,162 · 已显示 200 · 更早的 24,962`，刷选不显示）；**把缺陷放回去 → `命中 2,520` 仍在**，探针精确报出两条 FAIL。**行数不能当判据**：无筛选和刷选后都是 200 条窗口上限，两者都读 200，天然不敏感 —— 判据只能是窗口条的「命中」出没。守卫：`verify-anomaly.mjs` 265 → **269** 条（新增**运行时**跑 `clearFilters()`——页面是 IIFE，刷选只能真拖、按钮只能真点，读源码看不到行为）+ `mutate-anomaly.py` 74 → **75** 条变异（新增「退回自己赋值并漏掉 brush」，这是代码自己会漂回去的形状，比删掉整个调用更安静）。**代价要记清**：`state.kinds` 的字面赋值点从 4 变 3，`client-check.mjs` 那条 policy 改成「3 处直接 + 1 处委托 = 4 条路径」（控件数没变，只是两条路径共用一个写者了）；`verify-anomaly.mjs` 与 `mutate-anomaly.py` 共 **5 条锚点**因函数搬家与 `clearFilters` 瘦身而失效，逐条重新锚定——其中 `resetBaseFilters → dropOverviewSelection → abortOverviewDrag` 这条链按本文件既有风格 **stub 而非提取**（拖拽的中止属于概览条，不属于异常轴）。**`state.base` 为什么仍不做**：收字段买到的只有「默认值只有一份」，而这一份已经拿到了；剩下的代价是约 35 个读写点跨三层，且 `overviewSelection` 是 L3→L2 的回写（R5 未闭合），收字段就改了 L3 的形状。详见 Stage 2 的 2-c。 |
 | 10 | ~~窗口条把两个口径印在同一行~~ **已修** | 口径 | — | 缺陷：筛选开着时窗口条印「共 **22,066** 条」（`total` = `state.flat.length`，整场未筛选），而同一行的「已显示 200 · 更早的 313 未加载」加起来只有 **513**（来自 `matched`，筛选后）——读者把同一行两个数相加会得到两个答案。**基线就有**（`origin/add-mmc-trajectory-tests` 的 `index.html:5202` / `5206` 就是这两行），8 个提交一行未改，不是 Stage 2 制造的。**修法：加数，不改口径**——现有四个数字的口径一个都不动，只补上缺失的那个：在 `updateWindowBar()` 结算那一支里 `var matchedCount = shown.length + hiddenAbove`，印成 `· 命中 N 条`，**只在 `matchedCount !== total` 时打印**（无筛选时不多打一遍「共 24,657 / 命中 24,657」）。**派生而非传参**：`windowed` 和那两个数本来就在函数手上，再加第四个参数就是同一事实的第四份拷贝，而四份拷贝的计数正是两份开始打架的起点。**进度那一支刻意不插**：那支的 `shown` / `hiddenAbove` 存于 `ledgerWindow`，是**上一趟**的值，插进去是过期数；且 `ledgerProgress.total` 本就是窗口规模，那行不可相加，本来就没有歧义要修——配了一条断言专门禁止它印。**浏览器实测**：取消「思考」后读到 `共 24,657 · 命中 20,540 · 已显示 200 · 更早的 20,340`，`200 + 20,340 = 20,540` 闭合；下一次轮询后 `共 24,661 · 命中 20,543 · 已显示 200 · 更早的 20,343` 仍闭合（会话是活的，两个数同步长）。**变长不会溢出是既有结构保证**：`.window-bar-actions` 有 `flex-wrap: wrap`、计数 `margin-left: auto`，变长最多换行，897px 实测未换行。`verify-ledger-batch.mjs` 21 → **25** 条（派生而非第四参数 / 结算行打印 / 只在不同时打印 / 进度行不得打印）+ `mutate-ledger-batch.py` 21 → **25** 条变异全捕。**顺带重锚两处**：`client-check.mjs` 的两条分支断言与 `mutate-turn-breakdown.py` 的一条变异，锚点因新字面量失效（0 命中），已重新锚定到含 `+ matchedLabel + ` 的文本并保持原有严格度——锚点失效必须重锚，不能因为「新写法更顺眼」就顺手动断言。 |
 | 11 | ~~D17 — 19 行空白的系统记录~~ **已修** | 口径 + 服务端 | — | **chli 改写了我原本的方向**：我主张「不渲染成一行」，他选「保留 + 可筛」，理由是这类记录占位有原因、抹掉就无从查证。实现走服务端派生字段：导出纯函数 `isHostOnlyMessage()`，判据用**运行时实际过滤用的那个字段** `role==='custom' && hostMetadata.providerVisibility==='omit'`，`base` 带恒为 boolean 的 `internalOnly`，客户端 `ANOMALY_RULES` 加第五条「内部记账」。**不硬编码 `customType` 名单——名单会过时，字段不会**：实测当场就新生了一条 #22568 并被自动计入。**记录与 index 全部保留**（Stage 4 的理由不变）。口径只变一处（`全部异常` 计数），四处读点逐个加了断言。`verify-anomaly.mjs` 265 条 + `verify-raw-lazy.mjs` 新增 §6 六条 + `mutate-host-only.py` 5 条变异全捕。浏览器实测：payload 20 条 → 按钮 20 条 → 账本 20 行索引逐条对上；多选 5 条规则 2,125、去掉本条 4 条规则 2,105，**差值 20 闭合**（同时证明零重叠）。详见 D17 的修复小节。 |
 | 12 | ~~总览条与窗口条之间漏出一行~~ **已修** | 布局 + **验证方法** | — | 原描述两处都错，已改。**一、不是「1–2 px」**：chli 截图与我本地两次复现都显示，那是一整行里约 7px 高的字形残片，横跨窗口条整行宽度。**二、不是「轮组标题的边缘」**：它是 `.window-bar` 自己那行的文字。**真根因在守卫不在 CSS**——`verify-sticky.mjs` 断言的是 `.overview-plot` 不透明，还配注释说 section 可以借用这份绘制，于是「钉住盒子 `.overview` 自己不透明」从未被任何守卫看着；而它是这条链里唯一直接压在另一段上、却唯一不自带底色的一段。修法是给它 `background: var(--mcode-bg)`。**顺带一条元教训**：`verify-sticky.mjs` 原本只证明「`syncStickyOffsets()` 写的是实测高度」，不证明「被遮住的是哪个盒子」——高度和遮盖是两件事，缺陷藏在后者里。守卫拆成三条（盒子自带底色 / plot 的轨道区自带底色 / 上段 z-index 必须压过下段），变异 25 → 28 全捕。偏移 84/51/51 改前改后逐个相同。详见 D20。 |

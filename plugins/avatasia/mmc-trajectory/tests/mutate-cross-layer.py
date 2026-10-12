@@ -70,6 +70,30 @@ MUTATIONS = [
      '        var out = [];\n        var selection = state.overviewSelection;',
      '        var out = [];\n        var selection = null;',
      "the L2 visibility entry point reads state.overviewSelection"),
+
+    # ---- the one clear path R5 has, and the drift it came from (2026-10-12) ----
+    #
+    # The strip's brush is written from four places and R5 wants one setter; the count is
+    # deliberately unasserted because a count cannot fail. What can fail is the two paths whose
+    # job is to clear it sharing one writer — and the third mutation below is the actual defect,
+    # rebuilt: resetBaseFilters assigning the field itself, which is what the empty ledger's
+    # 「清除筛选」 used to do, leaving a brush filtering a ledger the reader had just emptied.
+
+    ("the shared clear writer stops writing the field",
+     "        abortOverviewDrag();\n        state.overviewSelection = null;",
+     "        abortOverviewDrag();",
+     "dropOverviewSelection exists and is what writes the field to null"),
+
+    ("the strip control goes back to assigning the field itself",
+     "        dropOverviewSelection();\n        state.overviewViewport = null;",
+     "        abortOverviewDrag();\n        state.overviewSelection = null;\n"
+     "        state.overviewViewport = null;",
+     "the strip control clears through it rather than through its own assignment"),
+
+    ("the base-filter reset goes back to assigning the field itself, and misses the brush",
+     "        dropOverviewSelection();\n        clearTimeRange();",
+     "        clearTimeRange();",
+     "and so does the base-filter reset, which is the one the empty ledger reaches"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

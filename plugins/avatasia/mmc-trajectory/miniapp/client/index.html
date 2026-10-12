@@ -4388,10 +4388,24 @@
         dom.overviewTrack.removeAttribute('data-panning');
       }
 
-      function clearOverviewSelection() {
-        if (!state.overviewSelection && !state.overviewViewport) return;
+      /**
+       * Drops the strip selection and nothing else — no zoom, no window re-decision, no render.
+       *
+       * Split out of clearOverviewSelection() because that one is a *control*: it clears the zoom
+       * too, because a reader pressing it wants the strip back the way it was. A filter reset needs
+       * only the selection, and needs it for two reasons: a reader who zoomed the strip to find a
+       * turn should not lose that zoom because they widened the filters, and writing the field
+       * directly never aborted the brush — so a drag left in flight kept repainting a range the
+       * filters had just discarded.
+       */
+      function dropOverviewSelection() {
         abortOverviewDrag();
         state.overviewSelection = null;
+      }
+
+      function clearOverviewSelection() {
+        if (!state.overviewSelection && !state.overviewViewport) return;
+        dropOverviewSelection();
         state.overviewViewport = null;
         resetWindowMode();
         renderOverview();
@@ -6145,15 +6159,19 @@
         return { mode: 'single', rules: [], last: null };
       }
 
+      /**
+       * Every axis back to its default, from the empty ledger's 「清除筛选」 button.
+       *
+       * The base axes are reset by resetBaseFilters() rather than assigned here, because two
+       * functions that both mean 「put it back」 and carry different fields is how the empty-state
+       * button came to leave a brush standing: it read as clearing the filters, and it cleared all
+       * but the one that visibleEntries() also reads.
+       */
       function clearFilters() {
-        state.kinds = KIND_ORDER.slice();
-        state.query = '';
+        resetBaseFilters();
         state.anomaly = defaultAnomaly();
-        clearTimeRange();
         resetWindowMode();
-        if (dom.searchInput) dom.searchInput.value = '';
         if (dom.anomalyMulti) dom.anomalyMulti.checked = false;
-        syncKindButtons();
         syncAnomalyButtons(anomalyCounts());
         render();
       }
@@ -7176,16 +7194,23 @@
       }
 
       /**
-       * The row above, put back to its default: every kind, no query, no range, no brush.
+       * The row above, put back to its default: every kind, no query, no strip selection, no range.
        *
        * Written once and called from both directions into anomaly mode, because the controls and
        * the state have to move together — setting `state.kinds` without `syncKindButtons()` is
        * how the axis ends up showing 「用户」 while the table is not filtered by it.
+       *
+       * This is also the one writer of the base axes' defaults, which is why clearFilters() below
+       * calls it rather than repeating the assignments. The two used to be parallel functions with
+       * the same name in spirit and different contents: clearFilters() left state.overviewSelection
+       * alone, and that field is read by visibleEntries() — so the 「清除筛选」 button in the empty
+       * ledger cleared the kinds, the query, the anomaly rules and the range, and the ledger stayed
+       * filtered by a brush on the strip that the reader had just pressed a button to get rid of.
        */
       function resetBaseFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
-        state.overviewSelection = null;
+        dropOverviewSelection();
         clearTimeRange();
         if (dom.searchInput) dom.searchInput.value = '';
         syncKindButtons();

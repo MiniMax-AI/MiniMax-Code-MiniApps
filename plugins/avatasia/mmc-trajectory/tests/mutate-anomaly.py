@@ -126,14 +126,27 @@ CASES = [
     ("the filter is not counted as a filter", "the filter counts as a filter",
      "          || state.anomaly.rules.length !== 0", "          || false"),
     ("清除筛选 leaves the filter on", "清除筛选 drops it too",
-     "        state.anomaly = defaultAnomaly();\n        clearTimeRange();",
-     "        clearTimeRange();"),
+     "        state.anomaly = defaultAnomaly();\n        resetWindowMode();",
+     "        resetWindowMode();"),
+    # 清除筛选 used to sync the kind buttons itself; it now reaches them through
+    # resetBaseFilters(), which owns them. So the line this mutation removes is the anomaly
+    # sync, the one that stayed behind — the kind sync is still covered, by the reset's own
+    # assertion that it updates the buttons.
     ("清除筛选 leaves the buttons showing the old state", "and re-syncs the buttons with it",
-     "        syncKindButtons();\n        syncAnomalyButtons(anomalyCounts());\n        render();",
-     "        syncKindButtons();\n        render();"),
+     "        syncAnomalyButtons(anomalyCounts());\n        render();",
+     "        render();"),
     ("a poll stops refreshing the counts", "every poll re-syncs the buttons",
      "        syncAnomalyButtons(anomaly);\n        renderOverview();",
      "        renderOverview();"),
+    # The defect this consolidation removed, rebuilt exactly as it was: 清除筛选 assigning the
+    # base axes itself instead of calling the reset, and so no longer dropping the brush. It is
+    # here rather than as a deletion because deleting `resetBaseFilters()` outright is a louder
+    # change that several other rules notice — this is the quiet one, the shape the code drifts
+    # back into on its own.
+    ("清除筛选 goes back to assigning the base axes and forgets the brush",
+     "清除筛选 drops the strip brush, which it used to leave standing",
+     "      function clearFilters() {\n        resetBaseFilters();",
+     "      function clearFilters() {\n        state.kinds = KIND_ORDER.slice();\n        state.query = '';"),
 
     # --- ticking, run rather than read ---
     ("ticking no longer resets the window", "and it resets the window like every other filter",
@@ -217,8 +230,8 @@ CASES = [
      "        if (next.length > 0) resetBaseFilters();",
      "        if (next.length > 0 && false) resetBaseFilters();"),
     ("the reset forgets the search box", "and drops the search",
-     "        state.query = '';\n        state.overviewSelection = null;",
-     "        state.overviewSelection = null;"),
+     "        state.query = '';\n        dropOverviewSelection();",
+     "        dropOverviewSelection();"),
     # Distinct from the one above, and it was missing until a cross-check read the names rather
     # than the diffs: that mutation deletes `state.query`, not `dom.searchInput.value`. The box
     # is cleared by its own line, and with `dom.searchInput` nulled in the sandbox that line had
@@ -228,7 +241,7 @@ CASES = [
      "        clearTimeRange();\n        if (dom.searchInput) dom.searchInput.value = '';\n        syncKindButtons();",
      "        clearTimeRange();\n        syncKindButtons();"),
     ("the reset forgets the overview brush", "and drops the overview brush",
-     "        state.overviewSelection = null;\n        clearTimeRange();",
+     "        dropOverviewSelection();\n        clearTimeRange();",
      "        clearTimeRange();"),
     # Setting state.kinds without syncKindButtons() is how the axis ends up drawing a condition
     # the table is not filtered by, which is the whole reason the reset exists.
