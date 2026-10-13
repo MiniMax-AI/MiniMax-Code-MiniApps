@@ -2615,14 +2615,14 @@
                minimize button has no aria-expanded on purpose — the dash is the glyph, and the
                attribute would make `.section-toggle` rotate it. -->
           <div class="panel-head-actions">
-            <button type="button" class="section-toggle" id="inspector-minimize" aria-controls="panels" aria-label="折叠到最小" title="折叠到最小" hidden>
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M3.5 8 H12.5" />
-              </svg>
-            </button>
             <button type="button" class="section-toggle" id="inspector-expand" aria-expanded="false" aria-controls="panels" aria-label="完全展开检视" title="完全展开检视" hidden>
               <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path id="inspector-expand-icon" d="M4 6.5 8 10.5 12 6.5" />
+              </svg>
+            </button>
+            <button type="button" class="section-toggle" id="inspector-minimize" aria-controls="panels" aria-label="折叠到最小" title="折叠到最小" hidden>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path id="inspector-minimize-icon" d="M3.5 8 H12.5" />
               </svg>
             </button>
           </div>
@@ -3508,6 +3508,12 @@
         // pinned and uncapped. Wide screens never leave 'flow' — in two columns the panel is
         // beside the ledger, so there is nothing to dock away from.
         inspectorDock: 'flow',
+        // Which pinned height the panel was at on the way INTO folded, so the minimize button can put
+        // it back where the reader left it rather than always at half. Read only while folded, and
+        // written only on the way into folded — see setInspectorDock(). That one property is why it
+        // can never be stale: outside the folded state nothing looks at it, so there is no window in
+        // which the dock has moved on and the memory has not.
+        inspectorDockBeforeFold: 'docked',
         // The docked height in px, once the reader has dragged it. null means "they have not", and
         // the quarter-window default applies. A separate field rather than an extra mode on
         // inspectorDock because it survives the state leaving the dock: coming back to the panel
@@ -3665,6 +3671,7 @@
         dom.inspectorMinimize = document.getElementById('inspector-minimize');
         dom.inspectorExpand = document.getElementById('inspector-expand');
         dom.inspectorExpandIcon = document.getElementById('inspector-expand-icon');
+        dom.inspectorMinimizeIcon = document.getElementById('inspector-minimize-icon');
         dom.inspectorResize = document.getElementById('inspector-resize');
         dom.footerTruncated = document.getElementById('footer-truncated');
         dom.footerBinding = document.getElementById('footer-binding');
@@ -6753,7 +6760,13 @@
         // Each label names what this click does, which is the whole reason there are two of
         // them: before D38 one label had to cover three states and the reader had to count
         // clicks to use it.
-        var minLabel = folded ? '恢复到半高' : '折叠到最小';
+        //
+        // The folded label is the one that has to be data-dependent. It used to be the constant
+        // 「恢复到半高」, so a panel folded from fully expanded came back to half height — an exit
+        // announcing something it was not going to do. It reads the same function the click reads.
+        var minLabel = folded
+          ? (inspectorFoldReturnDock() === 'full' ? '恢复到完全展开' : '恢复到半高')
+          : '折叠到最小';
         minimize.setAttribute('aria-label', minLabel);
         minimize.setAttribute('title', minLabel);
 
@@ -6770,6 +6783,17 @@
           dom.inspectorExpandIcon.setAttribute(
             'd',
             expanded ? 'M4 9.5 8 5.5 12 9.5' : 'M4 6.5 8 10.5 12 6.5'
+          );
+        }
+
+        // The minimize control's glyph follows its label: a dash while it means 「fold this away」,
+        // the standard restore mark while it means 「put it back where it was」. Same reason as the
+        // chevron above, and the same single writer — two glyphs toggled by `hidden` would not work
+        // anyway, since `hidden` is not reliably honoured on an SVG element.
+        if (dom.inspectorMinimizeIcon) {
+          dom.inspectorMinimizeIcon.setAttribute(
+            'd',
+            folded ? 'M3.5 8.5 h5.5 v5 h-5.5 z M6.5 8.5 v-5 h6 v5 h-2.5' : 'M3.5 8 H12.5'
           );
         }
       }
@@ -6843,8 +6867,23 @@
        * the panel is already in still costs nothing.
        */
       function setInspectorDock(next) {
+        // Written here and nowhere else, on the way IN. 'flow' can only be folded away from if the
+        // control is reachable in flow, which it is not, so the panel is always at one of the two
+        // pinned heights by the time this runs — and `full` is the only one worth remembering.
+        if (next === 'folded') state.inspectorDockBeforeFold = state.inspectorDock;
         state.inspectorDock = next;
         applyInspectorDock();
+      }
+
+      /**
+       * The height the minimize control puts the panel back at when it is folded.
+       *
+       * One function for both readers — the button's click target and the button's own label. Two
+       * readers each spelling the rule is how they end up disagreeing, which is the exact defect this
+       * exists to close: a button that says 「恢复到半高」 and takes you to full height.
+       */
+      function inspectorFoldReturnDock() {
+        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'docked';
       }
 
       function dockInspector() {
@@ -7967,7 +8006,7 @@
         // 「半高」 from 「完全展开」 took two clicks and a reader had to know which click they were
         // on. What each button does is now in its own aria-label and nowhere else.
         dom.inspectorMinimize.addEventListener('click', function () {
-          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');
+          setInspectorDock(state.inspectorDock === 'folded' ? inspectorFoldReturnDock() : 'folded');
         });
         dom.inspectorExpand.addEventListener('click', function () {
           setInspectorDock(state.inspectorDock === 'full' ? 'docked' : 'full');
