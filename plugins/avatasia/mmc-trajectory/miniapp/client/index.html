@@ -4923,6 +4923,33 @@
       }
 
       /**
+       * The one writer of `state.overviewSelection` — R5: L3 writes L2 through exactly one setter.
+       *
+       * It used to be four writers (`dropOverviewSelection`, `setActualDuration`,
+       * `onOverviewPointerMove`, `onOverviewPointerUp`), which is a number no guard could assert:
+       * asserting four is a guard that cannot fail once the code is fixed, and asserting one is a
+       * guard that cannot pass until it is. The rule was written down and never checked.
+       *
+       * Only the field and the invariant that belongs to the field came in. What each call site does
+       * around it — resetting the window, re-rendering one face or both, starting the edge pan —
+       * differs at all four, and folding that in would trade 「one writer per field」 for 「one
+       * function that knows everything」. `overviewViewport` is a different field and a different
+       * write (L3's viewport, not L2's range); it stays where it is.
+       *
+       * The invariant is the one the old comment above dropOverviewSelection() stated as a rule:
+       * anything that clears the range has to disarm the gesture too. A brush in flight repaints the
+       * range on every pointer move, so clearing the field while it is armed lets a gesture the
+       * reader already abandoned keep painting the range back. Two of the four writers honoured that
+       * because they were the two that had been written to honour it; the other two set the field
+       * directly. One writer makes it true for all of them, which is the whole thing a single writer
+       * buys — not a smarter function, but nobody left who can forget.
+       */
+      function setOverviewSelection(value) {
+        if (value === null) abortOverviewDrag();
+        state.overviewSelection = value;
+      }
+
+      /**
        * Drops the strip selection and nothing else — no zoom, no window re-decision, no render.
        *
        * Split out of clearOverviewSelection() because that one is a *control*: it clears the zoom
@@ -4933,8 +4960,7 @@
        * filters had just discarded.
        */
       function dropOverviewSelection() {
-        abortOverviewDrag();
-        state.overviewSelection = null;
+        setOverviewSelection(null);
       }
 
       function clearOverviewSelection() {
@@ -4952,7 +4978,7 @@
         writeDurationPreference(value);
         // The two modes share no axis, so a range or a zoom made in one is meaningless
         // in the other. Reset rather than reinterpret.
-        state.overviewSelection = null;
+        setOverviewSelection(null);
         state.overviewViewport = null;
         resetWindowMode();
         renderOverview();
@@ -5150,7 +5176,7 @@
           }
           overviewDrag.start = Math.min(overviewDrag.anchorTime, time);
           overviewDrag.end = Math.max(overviewDrag.anchorTime, time);
-          state.overviewSelection = { start: overviewDrag.start, end: overviewDrag.end };
+          setOverviewSelection({ start: overviewDrag.start, end: overviewDrag.end });
           startOverviewEdgePan();
           renderOverviewSelection();
           return;
@@ -5255,7 +5281,7 @@
           start = center - minimum / 2;
           end = center + minimum / 2;
         }
-        state.overviewSelection = { start: start, end: end };
+        setOverviewSelection({ start: start, end: end });
         resetWindowMode();
         renderOverviewSelection();
         renderLedger();
