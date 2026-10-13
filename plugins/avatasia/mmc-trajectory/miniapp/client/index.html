@@ -4015,16 +4015,55 @@
        * records are unioned by index rather than appended, so a delta replayed against a
        * copy that already has it changes nothing instead of doubling a turn.
        */
+      /**
+       * One turn's records plus whatever the incoming copy says about the turn itself.
+       *
+       * The turn-level fields are taken from the incoming copy rather than kept, because
+       * `closed` flips as the conversation moves on and the old copy still says `false`. The
+       * records are merged by index, and a record the page already has is **replaced** rather
+       * than skipped.
+       *
+       * Replacing is the whole point, and it is the second of two causes. A tool call's
+       * `durationMs` and its 「→ 结果预览」 are written onto the record after it was first
+       * pushed, when the result message arrives — so the copy that carries a new value is an old
+       * record with an index the page has already seen. This used to read
+       *
+       *     if (seen[added[i].index]) continue;
+       *
+       * which is a correct way to keep a delta from doubling a turn and an incorrect way to
+       * merge one: a delta replayed against a copy that already has a record must leave it
+       * unchanged, and it must also be allowed to *change* it. Those are different requirements
+       * and one line cannot serve both. Running it — old record with `durationMs: null`, incoming
+       * copy with 1533 — left the reader looking at a call row with no time on it until they
+       * refreshed.
+       *
+       * Replacing is safe against the doubling this line used to prevent, because the incoming
+       * copy is keyed by the same index: laying the same delta down twice replaces a record with
+       * the identical object rather than adding a second one. `verify-incremental.mjs` asserts
+       * that replay is a fixed point.
+       *
+       * @param {any} existing
+       * @param {any} incoming
+       * @returns {any}
+       */
       function mergeTurnRecords(existing, incoming) {
-        var records = Array.isArray(existing.records) ? existing.records.slice() : [];
-        var seen = {};
+        var records = [];
+        var at = {};
         var i;
-        for (i = 0; i < records.length; i += 1) seen[records[i].index] = true;
+        var kept = Array.isArray(existing.records) ? existing.records : [];
+        for (i = 0; i < kept.length; i += 1) {
+          at[kept[i].index] = records.length;
+          records.push(kept[i]);
+        }
         var added = Array.isArray(incoming.records) ? incoming.records : [];
         for (i = 0; i < added.length; i += 1) {
-          if (seen[added[i].index]) continue;
-          seen[added[i].index] = true;
-          records.push(added[i]);
+          var index = added[i].index;
+          if (at[index] === undefined) {
+            at[index] = records.length;
+            records.push(added[i]);
+          } else {
+            records[at[index]] = added[i];
+          }
         }
         records.sort(function (a, b) { return a.index - b.index; });
         var merged = {};

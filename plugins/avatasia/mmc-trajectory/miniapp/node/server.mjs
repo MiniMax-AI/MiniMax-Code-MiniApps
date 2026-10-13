@@ -1603,11 +1603,26 @@ export function parseSince(raw) {
  * hundred bytes and answering it from the previous copy would make each payload depend on
  * a history the server does not keep.
  *
- * A turn travels whole too, with only its `records` cut down. That repeats fields the page
- * already has, deliberately: a turn's `closed` flips as the conversation moves on, and
- * 无答复 is decided by it. A partial turn would leave the page holding a stale `closed` for
- * the one turn that is still being written into — the turn where it decides whether rows
- * are anomalies at all.
+ * A turn travels whole. Its turn-level fields were always sent whole — a turn's `closed` flips as
+ * the conversation moves on, and 无答复 is decided by it — but its `records` used to be cut down
+ * to the ones after the cursor, and that cut is what dropped a tool call's duration.
+ *
+ * `durationMs` and the result preview are written onto the call record *after* it was first
+ * pushed, when its result message arrives. So the record that gains a value is an OLD one, with
+ * an index below the cursor: it was never in the tail, and the row the reader was already looking
+ * at stayed blank until they refreshed. Measured by running both halves: with the cut in place
+ * the page holds `durationMs: null` while the server holds 1533.
+ *
+ * The fix is to cut at turn granularity — a turn with anything new after the cursor travels whole
+ * — and the cost is bounded rather than open-ended, because `?since=` never saved the server any
+ * work to begin with: the whole body is serialized either way for the cache entry and `/raw`. This
+ * only moves bytes on the wire and work into the page's `JSON.parse`.
+ *
+ * A call and its result sit in the SAME turn — a turn opens on a prompt and closes when the agent
+ * finishes responding, so the tool cycle is inside one span. That is what makes turn granularity
+ * sufficient rather than a narrowing: the turn that gains a record is the turn that gets written
+ * back onto. A result that landed in a later turn than its call would still wait for a refresh,
+ * and that is the one shape this does not cover.
  *
  * Returns null when a delta would not be a faithful answer; that is the caller's signal to
  * send the whole payload instead. It happens when the payload carries no records, and when
@@ -1632,13 +1647,20 @@ export function buildDeltaPayload(payload, since) {
   }
   if (since > upTo) return null;
   const tail = [];
+  // `records` counts what is NEW, not what travels. A turn that ships whole with 300 records
+  // contributes 1 here. The page reads `delta.upTo` for its next cursor and never reads this
+  // number, but three guards pin it as the count of additions — and that is what it is, so the
+  // count and the cut are computed apart instead of the count inheriting the cut.
   let records = 0;
   for (const turn of turns) {
-    const kept = (turn && Array.isArray(turn.records) ? turn.records : [])
-      .filter((record) => typeof record.index === 'number' && record.index > since);
-    if (kept.length === 0) continue;
-    records += kept.length;
-    tail.push({ ...turn, records: kept });
+    const all = turn && Array.isArray(turn.records) ? turn.records : [];
+    let fresh = 0;
+    for (const record of all) {
+      if (typeof record.index === 'number' && record.index > since) fresh += 1;
+    }
+    if (fresh === 0) continue;
+    records += fresh;
+    tail.push({ ...turn, records: all.slice() });
   }
   return {
     session: payload.session,
