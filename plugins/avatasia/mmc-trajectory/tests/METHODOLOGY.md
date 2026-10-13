@@ -267,6 +267,37 @@ does not ship measures nothing, all three offsets fall back to their constants, 
 raised anywhere. A guard that hands the function a stub cannot catch this — the stub supplies
 exactly what the function asked for — so the binding is checked against the markup instead.
 
+### 8.1 Assert the thing, not its name, and not its prefix
+
+Two assertions written for the folded inspector state survived their own mutations, and both were
+the same mistake wearing different clothes.
+
+**A regex that stops early.** The rule was "the handle stays in the folded state":
+
+```js
+/toggle\.hidden\s*=\s*!narrow\s*\|\|\s*!docked/    // passes on `… || docked || folded`
+/toggle\.hidden\s*=\s*!narrow\s*\|\|\s*!docked\s*;/ // does not
+```
+
+The mutation appended `|| folded` — the exact defect — and the pattern matched the prefix and never
+read what followed. **An unanchored pattern is satisfied by the correct code plus anything at all.**
+When the assertion is about a whole statement, anchor it at the statement's end.
+
+**An assertion about a name instead of about the thing.** The rule was "folded carries no cap of its
+own":
+
+```js
+valueIn(sel, 'display') === 'none' && !jsHtml.includes('--inspector-folded-h')   // insufficient
+```
+
+Nothing stops a `max-height: 51px` being added to the same rule. The cap was back, and the guard was
+still green, because the guard had been about a *variable name* rather than about *a cap*. Assert
+the shape instead: the rule declares **exactly one** property and it is the one.
+
+The common form: **「there is no X」 must be asserted as "the thing that would be X is absent", never
+as "the name we used to call X is absent".** The first is a property of the code; the second is a
+property of one spelling of it.
+
 ---
 
 ## 9. Say what you did not manage to check

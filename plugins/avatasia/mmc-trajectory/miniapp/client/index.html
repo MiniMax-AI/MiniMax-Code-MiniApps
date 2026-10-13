@@ -2153,6 +2153,32 @@
           background: var(--mcode-surface);
         }
 
+        /* Folded down to its own header. This is the third height the reader can pick, and it is
+           the one that was missing: `flow` and `docked`/`full` are three class values, but only two
+           of them are heights — flow is a *position* ("not pinned"), so the panel could go from two
+           fifths to fully expanded and had nowhere smaller to go.
+
+           Folded by taking the content out of flow rather than by capping the panel. The obvious
+           version is `max-height: <the header's own height>`, and that is the version this section
+           shipped first: it needs the header's height written into a custom property, which means
+           measuring it, which means deciding *when* to measure — and the call that repaints the
+           panel sits before the tabpanels are written, so it measured the empty header, 2px short of
+           the real one, and the header came out clipped. Measured after the fact it is right (this
+           machine: a 51px header under a 52px cap, the extra pixel being the panel's own border
+           inside a border-box) — but it is a number that has to be kept right, for nothing.
+
+           With everything but the header out of flow the panel's height *is* the header's height,
+           whatever that turns out to be. Nothing to write, nothing to cache, nothing to go stale,
+           and no way for the cap to disagree with the thing it is capping.
+
+           `display: none` rather than a clip, so the record is not laid out while it is folded away.
+           It stays selected and stays rendered — the reader folded it, they did not dismiss it, and
+           the handle in the header is the only way back — but nothing is measured for a box nobody
+           is looking at. */
+        #inspector-panel.is-inspector-folded > *:not(.panel-head) {
+          display: none;
+        }
+
         /* The grip, on the panel's top edge — which is the edge that moves when the panel is
            pinned to the bottom, so dragging it up makes the panel taller.
 
@@ -6527,10 +6553,11 @@
       /**
        * The narrow-screen docking, and the one place that decides where the inspector is.
        *
-       * Three states, and the boundary between them is measured rather than inferred:
+       * Four values, of which three are heights the reader picks and one is a position:
        *
        *   flow   — the panel is in the document below the ledger. Where it starts, and where
-       *            「滚到最底部」 brings it back.
+       *            「滚到最底部」 brings it back. This one is a position, not a height.
+       *   folded — pinned, down to its own header and nothing else.
        *   docked — pinned to the bottom of the viewport at half height.
        *   full   — pinned, uncapped, because the reader asked with the handle.
        *
@@ -6610,23 +6637,30 @@
           dom.inspectorPanel.style.setProperty('--inspector-dock-h', dockH + 'px');
         }
 
+        var folded = state.inspectorDock === 'folded';
+
         if (dom.inspectorPanel) {
           dom.inspectorPanel.classList.toggle('is-inspector-docked', state.inspectorDock === 'docked');
           dom.inspectorPanel.classList.toggle('is-inspector-full', state.inspectorDock === 'full');
+          dom.inspectorPanel.classList.toggle('is-inspector-folded', folded);
         }
 
         // The grip exists only while the panel is pinned: in flow there is no height to decide, and
-        // a grip that does nothing is worse than no grip.
-        if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked);
+        // a grip that does nothing is worse than no grip. Folded has no height to drag either — its
+        // cap is the header, and dragging a header that cannot grow is the same dead control.
+        if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked && !folded);
 
         var toggle = dom.inspectorToggle;
         if (!toggle) return;
-        // The handle only appears once there is a pinned height to change. In flow the panel is
-        // already on screen and there is nothing for it to decide.
+        // The handle appears once there is a pinned panel to change, and it stays in the folded
+        // state on purpose: folded is the only state with no other way out. Hiding it there would
+        // turn 「fold it away」 into 「dismiss it」, which is not what the reader asked for.
         toggle.hidden = !narrow || !docked;
         var expanded = state.inspectorDock === 'full';
         toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        var label = expanded ? '收起到半高' : '完全展开检视';
+        // Three heights, so three labels, each naming what the click does next rather than which
+        // state it is in: folded -> half, half -> expanded, expanded -> folded.
+        var label = folded ? '展开到半高' : (expanded ? '折叠到最小' : '完全展开检视');
         toggle.setAttribute('aria-label', label);
         toggle.setAttribute('title', label);
       }
@@ -7800,10 +7834,13 @@
         window.addEventListener('resize', scheduleInspectorDock);
 
         dom.inspectorToggle.addEventListener('click', function () {
-          // Two states to toggle between while docked; flow has no handle, so this never runs
-          // there. Decided here rather than by negating the state so that 「半高 ↔ 完全展开」 is
-          // stated once — the alternative, a boolean somewhere, is a fourth state nobody can name.
-          state.inspectorDock = state.inspectorDock === 'full' ? 'docked' : 'full';
+          // Three heights to move between while pinned — folded, half, expanded — so one cycle, not
+          // two booleans. flow has no handle, so this never runs there. Named rather than negated so
+          // that 「折叠到最小 → 半高 → 完全展开 → 折叠到最小」 is stated once; the alternative is a
+          // boolean beside the field, which is a fourth state nobody can name.
+          state.inspectorDock = state.inspectorDock === 'full' ? 'folded'
+            : state.inspectorDock === 'folded' ? 'docked'
+              : 'full';
           applyInspectorDock();
         });
 

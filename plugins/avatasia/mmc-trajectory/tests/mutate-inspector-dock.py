@@ -323,11 +323,13 @@ MUTATIONS = [
      "the grip is on the edge that moves when the panel is pinned to the bottom"),
 
     # A grip that does nothing in flow is worse than no grip: it promises a control that has no
-    # effect.
+    # effect. The anchor moved when D34 added `&& !folded` to the same condition — re-anchored on
+    # the new expression rather than deleted, because the guard it reports is still the one that has
+    # to fail.
     ("the grip is offered even when the panel is not pinned",
-     "        if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked);\n",
+     "        if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked && !folded);\n",
      "        if (dom.inspectorResize) dom.inspectorResize.hidden = false;\n",
-     "the grip is only offered while the panel is pinned"),
+     "the grip is offered exactly where there is a height to drag"),
 
     # A drag that ends because the browser took the capture leaves the drag object alive, and every
     # later pointermove then resizes a panel nobody is touching.
@@ -349,10 +351,12 @@ MUTATIONS = [
      "        toggle.setAttribute('aria-expanded', 'true');\n",
      "the handle reports which of the two pinned states it is in"),
 
-    ("only one of the two labels is written",
-     "        var label = expanded ? '收起到半高' : '完全展开检视';\n",
+    # D34 turned this line into a three-way chain; the mutation is the same defect (one label for
+    # every state) and now removes the branch that decides which of the three the reader is offered.
+    ("only one of the labels is written",
+     "        var label = folded ? '展开到半高' : (expanded ? '折叠到最小' : '完全展开检视');\n",
      "        var label = '完全展开检视';\n",
-     "the two pinned states are named by one rule, so the labels cannot disagree"),
+     "the three heights are named by one rule, so the labels cannot disagree"),
 
     ("the expanded height stops being measured",
      "          var panelMax = Math.max(\n            INSPECTOR_MIN_DOCK_H,\n"
@@ -455,11 +459,11 @@ MUTATIONS = [
      "        dom.followBtn",
      "the dock state is decided once at wire time"),
 
+    # Re-anchored on D34's three-way chain: same defect — the field moves, the panel does not.
     ("pressing the handle changes the field but not the panel",
-     "          state.inspectorDock = state.inspectorDock === 'full' ? 'docked' : 'full';\n"
-     "          applyInspectorDock();\n",
-     "          state.inspectorDock = state.inspectorDock === 'full' ? 'docked' : 'full';\n",
-     "pressing the handle moves between the two pinned states and repaints"),
+     "              : 'full';\n          applyInspectorDock();\n",
+     "              : 'full';\n",
+     "pressing the handle walks folded -> half -> expanded -> folded and repaints"),
 
     # ---- the selection is a dock input, and nothing else fires for it ----
     #
@@ -481,6 +485,34 @@ MUTATIONS = [
      "          dom.panels.appendChild(panel);\n          return;",
      "          dom.panels.appendChild(panel);\n          scheduleInspectorDock();\n          return;",
      "the empty-selection branch has no panel left to measure"),
+
+    # ---- the third height, and the one that was missing ----
+    #
+    # `flow` is a position, not a height, so a field with three values had only two the reader could
+    # pick. Each of these leaves the panel rendering, the selection intact and every other guard
+    # green.
+
+    ("folding takes the header away with the content",
+     "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;",
+     "        #inspector-panel.is-inspector-folded > * {\n          display: none;",
+     "folded keeps the header and takes the rest out of flow"),
+
+    ("folding takes the only way back with it",
+     "        toggle.hidden = !narrow || !docked;",
+     "        toggle.hidden = !narrow || !docked || folded;",
+     "the handle survives folding, because it is the only way back"),
+
+    ("the panel can be folded away but never unfolded",
+     "            : state.inspectorDock === 'folded' ? 'docked'\n",
+     "            : state.inspectorDock === 'folded' ? 'full'\n",
+     "pressing the handle walks folded -> half -> expanded -> folded and repaints"),
+
+    # The version this section shipped first: a cap written down as a number, which then had to be
+    # measured correctly and was not — it came out 2px short and clipped the header it was capping.
+    ("the folded height is a number written into the stylesheet",
+     "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;",
+     "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;\n          max-height: 51px;",
+     "folded is the header alone, so its height needs no number of its own"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

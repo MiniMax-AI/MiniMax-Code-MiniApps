@@ -309,8 +309,12 @@ assert('the handle reports which of the two pinned states it is in',
   !!applyFn
   && /var\s+expanded\s*=\s*state\.inspectorDock\s*===\s*'full'/.test(applyFn)
   && /aria-expanded',\s*expanded\s*\?/.test(applyFn));
-assert('the two pinned states are named by one rule, so the labels cannot disagree',
-  !!applyFn && /收起到半高/.test(applyFn) && /完全展开检视/.test(applyFn));
+// Three heights now, and the labels are still produced by one expression off the field. Matched as a
+// ternary chain rather than by counting strings: a hard-coded label satisfies a presence check and
+// then reports the same action in every state, which is the failure this assertion exists to prevent.
+assert('the three heights are named by one rule, so the labels cannot disagree',
+  !!applyFn
+  && /var\s+label\s*=\s*folded\s*\?\s*'展开到半高'\s*:\s*\(\s*expanded\s*\?\s*'折叠到最小'\s*:\s*'完全展开检视'\s*\)/.test(applyFn));
 
 // The fully expanded height is measured, not derived from vh: this page runs in a host iframe where
 // 100vh is not the reader's height, which is the reason client-check bans it.
@@ -430,9 +434,16 @@ assert('the dock state is decided once at wire time',
 
 // Pressing the handle has to repaint: the class and the height are both written there, and a click
 // that only changed the field would leave the panel looking exactly as it did.
+//
+// All three transitions are named rather than "the value changed": a cycle that jumped from half
+// height straight to expanded, or left folded unreachable, satisfies a looser check and is exactly
+// the shape of the bug this replaced — three class values, only two of them reachable.
 const clickReg = /dom\.inspectorToggle\.addEventListener\(\s*'click'\s*,\s*function\s*\(\s*\)\s*\{([\s\S]*?)\n\s*\}\);/.exec(jsHtml);
-assert('pressing the handle moves between the two pinned states and repaints',
-  !!clickReg && /'full'\s*\?\s*'docked'\s*:\s*'full'/.test(clickReg[1])
+assert('pressing the handle walks folded -> half -> expanded -> folded and repaints',
+  !!clickReg
+  && /'full'\s*\?\s*'folded'/.test(clickReg[1])
+  && /'folded'\s*\?\s*'docked'/.test(clickReg[1])
+  && /:\s*'full'\s*;/.test(clickReg[1])
   && clickReg[1].includes('applyInspectorDock()'));
 
 /* ---------- visibility: the panel is the selection ----------
@@ -551,12 +562,58 @@ const gripRule = narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 
 assert('a vertical drag on the grip resizes instead of scrolling the page', gripRule === 'none');
 assert('the grip is on the edge that moves when the panel is pinned to the bottom',
   narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 'top') === '-7px' : false);
-assert('the grip is only offered while the panel is pinned',
-  !!applyFn && /dom\.inspectorResize\.hidden\s*=\s*!\(\s*narrow\s*&&\s*docked\s*\)/.test(applyFn));
+// Offered exactly where there is a height to drag: pinned, and not folded. A folded panel is down to
+// its own header, and dragging a header that cannot grow is the same dead control as no grip at all.
+assert('the grip is offered exactly where there is a height to drag',
+  !!applyFn && /dom\.inspectorResize\.hidden\s*=\s*!\(\s*narrow\s*&&\s*docked\s*&&\s*!folded\s*\)/.test(applyFn));
 // …and 「pinned」 has to mean both pinned states, not just the default one, or the grip disappears
 // in exactly the state the reader most wants to make taller.
 assert('pinned means both docked and expanded, so the grip survives expanding',
   !!applyFn && /var\s+docked\s*=\s*state\.inspectorDock\s*!==\s*'flow'/.test(applyFn));
+
+/* ---------- D34: the third height, and the one that was missing ----------
+ *
+ * chli: 「不是三态么？- 折叠到最小 这个按钮没做。」
+ *
+ * The field had three values and only two of them were heights: `flow` is a position ("not pinned").
+ * So the panel could go from two fifths to fully expanded and had nowhere smaller to go. Nothing in
+ * this file could see that — every assertion here counted values, classes or writers, and the count
+ * was three.
+ */
+
+const foldedSel = '#inspector-panel.is-inspector-folded > *:not(.panel-head)';
+const foldedRule = narrow ? valueIn(narrow, foldedSel, 'display') : null;
+
+// Folded is the header alone: everything else leaves the flow, so the panel's height IS the
+// header's height. Asserted as "this rule declares nothing but that", not as "the property is
+// there": the first version of this checked `display: none` plus the absence of a property named
+// `--inspector-folded-h`, and a `max-height: 51px` added alongside it sailed past — the cap was
+// back, wearing a different variable's absence as camouflage. A cap that has to be measured is a
+// cap that can be wrong, and this one was measured wrong twice on the way here.
+const foldedDecls = narrow ? declsIn(narrow, foldedSel) : new Map();
+assert('folded is the header alone, so its height needs no number of its own',
+  foldedDecls.size === 1 && foldedDecls.get('display') === 'none' && !/--inspector-folded-h/.test(jsHtml));
+
+// The header survives by exclusion, which is also what makes it fragile to read: written as `> *`
+// the rule would fold the handle away along with the content, and the reader would be stuck.
+assert('folded keeps the header and takes the rest out of flow',
+  !!narrow && new RegExp(foldedSel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(narrow));
+
+// Folded is the only state with no other way out, so the handle has to stay. This single condition
+// is the difference between 「fold it away」 and 「dismiss it」, and nothing else in the file would
+// notice it flipping: the panel still renders, the selection is still there, the guard still passes.
+//
+// Anchored at the semicolon on purpose. Without it this was a prefix match, and `|| folded` — the
+// exact mutation this assertion exists for — passed it: the pattern stopped at `!docked` and never
+// saw what came after. The mutation survived, so the assertion was wrong, not the mutation.
+assert('the handle survives folding, because it is the only way back',
+  !!applyFn && /toggle\.hidden\s*=\s*!narrow\s*\|\|\s*!docked\s*;/.test(applyFn)
+  && /var\s+docked\s*=\s*state\.inspectorDock\s*!==\s*'flow'/.test(applyFn));
+
+// Reachable from the reader, not merely present in the field's value set — which is the distinction
+// the original bug turned on.
+assert('the third height is reachable from the reader, not just present in the field',
+  !!clickReg && /'folded'\s*\?\s*'docked'/.test(clickReg[1]) && /'折叠到最小'/.test(applyFn));
 
 /* ---------- D27: the grip had every property right and was still invisible ---------- */
 //
