@@ -347,10 +347,32 @@ assert('the ledger share is subtracted from the height the panel may take',
 assert('expanding and dragging are bounded by the same ceiling',
   !!applyFn && /Math\.min\(\s*Math\.max\(\s*Math\.round\(dockH\)\s*,\s*INSPECTOR_MIN_DOCK_H\s*\)\s*,\s*panelMax\s*\)/.test(applyFn)
   && /setProperty\(\s*'--inspector-full-h'\s*,\s*panelMax\s*\+\s*'px'\s*\)/.test(applyFn));
-// flow has no cap at all, so 「完全显示」 is the end of the document and only the end of it.
-const flowRule = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-full', 'max-height') : null;
-assert('no cap applies while the panel is in the document',
-  flowRule !== null && !/^#inspector-panel\s*\{[^}]*max-height/s.test(narrow || ''));
+// D32 replaced this assertion. It used to read `no cap applies while the panel is in the
+// document`, which encoded the opposite rule and was the reason the defect shipped: the panel
+// carries `position: sticky; bottom: 0` in EVERY state, and a sticky-bottom element taller than
+// the scrollport has nowhere legal to sit. Measured on 2026-10-13 at 863x803 with one record
+// selected: layout position document y=8302, rendered position document y=885, 972px tall in a
+// 706px viewport, covering the ledger. `main.columns` had rows `7400px 849px` — the grid was
+// never wrong; the sticky offset was.
+//
+// What replaces it is the property that would have caught it, stated where it is decided rather
+// than per state: the rule that hands out `position: sticky` is the rule that carries the cap.
+const baseSticky = narrow ? valueIn(narrow, '#inspector-panel', 'position') : null;
+const baseCap = narrow ? valueIn(narrow, '#inspector-panel', 'max-height') : null;
+const fullCap = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-full', 'max-height') : null;
+assert('the rule that makes the panel sticky-bottom is the rule that caps it',
+  baseSticky === 'sticky' && baseCap !== null && varsRead(baseCap).has('--inspector-full-h'),
+  `position=${baseSticky} max-height=${baseCap}`);
+// One ceiling, two states. If these can differ, 「完全显示」 in the document and 「完全展开」 while
+// pinned stop meaning the same thing, and the two numbers drift apart with no failure anywhere.
+assert('in the document and fully expanded are bounded by the same number',
+  baseCap !== null && fullCap !== null && baseCap === fullCap,
+  `${baseCap} vs ${fullCap}`);
+// …and that number is the one that already reserves the ledger's quarter, not a fresh constant.
+assert('the document state is bounded by the ceiling that spares the rows',
+  varsRead(baseCap || '').has('--inspector-full-h')
+  && !!applyFn && /setProperty\(\s*'--inspector-full-h'\s*,\s*panelMax\s*\+\s*'px'\s*\)/.test(applyFn)
+  && /ledgerReserve/.test(applyFn));
 assert('the expanded height is written in pixels',
   !!applyFn && /setProperty\(\s*'--inspector-full-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
 
@@ -573,14 +595,13 @@ assert('a cancelled drag is released like a finished one',
 // can break is the *mechanism*, by someone writing `height` instead of `max-height`, and a `height`
 // looks right in review and puts a blank band inside a short panel with every other rule still
 // green. Hence the negative half of this rule, which is the half that does the work.
-// The base rule is deliberately NOT in the first list: with no state class the panel is in the
-// document and has no cap at all, which is the one place where 「完全显示」 means uncapped. Adding
-// a cap there would put the cap back on the state chli asked to be the only uncapped one.
-const cappedSels = ['#inspector-panel.is-inspector-docked', '#inspector-panel.is-inspector-full'];
-const allPanelSels = ['#inspector-panel', ...cappedSels];
-assert('both pinned states cap the panel rather than fixing its height',
-  cappedSels.every((s) => narrow && valueIn(narrow, s, 'max-height') !== null)
-  && valueIn(narrow || '', '#inspector-panel', 'max-height') === null);
+// The base rule is in the list now, and that is the whole point of D32: it used to be excluded on
+// the grounds that flow is 「the one place where 完全显示 means uncapped」, which is exactly the
+// claim that shipped the defect. The rule below is that sticky and cap travel together.
+const allPanelSels = ['#inspector-panel', '#inspector-panel.is-inspector-docked', '#inspector-panel.is-inspector-full'];
+assert('every state the panel can be in carries a cap',
+  allPanelSels.every((s) => narrow && valueIn(narrow, s, 'max-height') !== null)
+  && allPanelSels.some((s) => narrow && varsRead(valueIn(narrow, s, 'max-height') || '').has('--inspector-dock-h')));
 assert('nothing forces the panel taller than its own content',
   !allPanelSels.some((s) => narrow && ['height', 'min-height'].some((p) => valueIn(narrow, s, p) !== null))
   && !/#[^{]*inspector-panel[^{]*\{[^{}]*\bmin-height\s*:/s.test(narrow || ''));

@@ -56,10 +56,41 @@ MUTATIONS = [
 
     # The third state has to be a different number, or 「完全展开」 and 「半高」 are the same panel
     # with two names.
+    # The selector is in the anchor because D32 put the same declaration on the base rule too, and
+    # a bare property line now matches twice. Anchoring a rule by its property alone is what makes
+    # this kind of edit look like a silent anchor drift.
     ("fully expanded is capped by the default docked number",
-     "          max-height: var(--inspector-full-h, 70vh);\n",
-     "          max-height: var(--inspector-dock-h);\n",
+     "#inspector-panel.is-inspector-full {\n          max-height: var(--inspector-full-h, 70vh);\n",
+     "#inspector-panel.is-inspector-full {\n          max-height: var(--inspector-dock-h);\n",
      "fully expanded is capped by a different number than half height"),
+
+    # One expect name below used to be `both pinned states cap the panel rather than fixing its
+    # height`. D32 replaced that assertion, so the mutation was reported as SURVIVED while three
+    # assertions were reporting it by other names -- one of them the pre-existing mechanism rule.
+    # A survivor here means "the named witness is gone", not "the guard is blind". Read the guard's
+    # own output before believing either.
+
+    # ---- D32: sticky and cap travel together, or the panel leaves its grid row ----
+    #
+    # A sticky-bottom element taller than the scrollport has no legal position: the browser slides
+    # it up by the difference and it covers the ledger. Measured 2026-10-13 at 863x803, one record
+    # selected: layout position document y=8302, rendered y=885, 972px tall in a 706px viewport.
+    # The grid was never wrong. So the cap has to live on the rule that hands out `position: sticky`.
+
+    ("the sticky panel stops being capped",
+     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "the rule that makes the panel sticky-bottom is the rule that caps it"),
+
+    ("the document state is capped by a number of its own",
+     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "          max-height: 92vh;\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "in the document and fully expanded are bounded by the same number"),
+
+    ("the sticky panel is given a fixed height instead of a ceiling",
+     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "          height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "nothing forces the panel taller than its own content"),
 
     ("the two-fifths fallback stops being declared",
      "        --inspector-dock-h: 40vh;\n",
@@ -159,7 +190,7 @@ MUTATIONS = [
     ("the docked panel is given a fixed height instead of a cap",
      "          max-height: var(--inspector-dock-h);\n",
      "          height: var(--inspector-dock-h);\n",
-     "both pinned states cap the panel rather than fixing its height"),
+     "half height is a cap on the panel, not a cap on its content"),
 
     ("a floor is added under the cap, padding short panels out",
      "          max-height: var(--inspector-dock-h);\n",

@@ -728,6 +728,8 @@ B 等于 A 是决定性的那条。真正要打破的是**「宽度由内容决�
 
 #### D22 — 窄屏检视面板三态（2026-10-12 新增功能）
 
+> **D32 修订了本条的两个数字之外的东西**：三态本身不变，但「flow 无上限」被推翻——flow 也用 `panelMax`，因为它同样带 `position: sticky; bottom: 0`。见 D32。
+
 **chli 的原话**：「目前的检视，在窄窗口下，是在最下面，不可见，需要固定到最下方。当滚动到最下方的时候才正常显示。如果是滚动超过了可见区域，则半高显示，然后有一个完全展开的按钮，我们目前有个展开按钮效果，只有检视是三种状态。滚动到最底部的时候，恢复到正常。」
 
 **这不是缺陷，是缺一个能力。** 宽屏下 `.columns` 是两列，检视常驻右列，读者一眼就能看到它；≤767px 塌成单列之后，它是 `main.columns` 的第二个子元素，排在账本后面 —— 读者要滚到文档最末尾才看得到检视。而检视恰恰是「点某条消息看详情」的**结果面板**：读者点完之后，视线要立刻落到那里。「滚到底才看得见」等于让结果出现在读者已经离开的地方。
@@ -1182,6 +1184,71 @@ codex 给了一个我没试过的反例：**把一个 assistant 的 `thinking` /
 补完变异跑第一遍，14 条里报 2 条存活。逐条跑了一遍才发现**两条都让守卫红了**，红得很具体：synth 那条红 6 条断言，配对那条红 1 条并直接点名 `on a "unpaired" tree`。是我把期望字符串写成了 `an`（`unpaired` 以元音开头，但守卫那句是 `a`）。改名字之前先确认了红的是哪几条 —— 否则「把期望名改对」和「为了让变异通过而改断言」在输出上长得一模一样。
 
 **最终**：`tests/verify-fixture.mjs` 18 → **21 条断言**，`tests/mutate-fixture.py` 10 → **14 条变异，14/14 全捕 0 存活**。守卫总数仍是 53。
+
+**七、D32 — 选中一条记录，检视面板占满整屏（2026-10-13，chli 报）**
+
+**症状**：chli 报「随便选中一条，然后检视完全显示，占满了」。实测比描述更严重。
+
+**测量**（本机 863×803，窄屏断点 1080px 生效，选中一条记录）：
+
+| | 修前 | 修后 |
+| --- | --- | --- |
+| 面板渲染高度 | **972 px** | **467 px**（= `panelMax`） |
+| 视口高 | 706 px | 803 px |
+| 面板占视口 | **138%** | **58%** |
+| 面板渲染文档位置 | **y = 885** | y = 8314 |
+| 面板布局文档位置 | y = 8302（正确，在账本之后） | 同上 |
+| 账本剩余可见高度 | **66 px** | **336 px** |
+| 面板底边 | 在视口底边**之下 416 px**，够不到 | 正好在视口底 |
+
+**根因**：`#inspector-panel` 的基础规则（`index.html:2109`，在 `@media (max-width: 1080px)` 内）对**三态一律**给出 `position: sticky; bottom: 0`。而 `bottom: 0` 是一个关于**高度**的承诺：它把元素的下边缘钉在滚动视口的下边缘，**这只在元素比视口矮的时候**才叫「保持可达」。元素比视口高时它没有合法位置 —— 浏览器把它往上滑一个差值，于是它离开了自己的网格行。
+
+于是有了这个形状：**布局是对的，位置是错的**。`main.columns` 的网格行实测是 `7400px 849px`，检视面板老老实实排在账本之后（文档位置 8302）；是 sticky 的偏移量把它拽到了 885，叠在账本上。
+
+**为什么 68 条断言全绿**：`verify-inspector-dock.mjs` 全部断言的是**样式表文本**与**函数源码文本**。其中两条恰好编码了**相反的规则**：
+
+- `no cap applies while the panel is in the document`（断言基础规则里没有 `max-height`）
+- 以及它上面那段注释：「基础规则刻意不在列表里：无状态类时面板在文档流里且**完全没有上限**，那正是「完全显示」意为不设上限的唯一地方」
+
+也就是说，守卫**主动声明**了「只有两个吸住态有上限，flow 没有」，而 flow 恰恰是那个带 `position: sticky` 却不受限的态。守卫守的是规则，实现违反的是规则，两者都没有测过真实盒子。
+
+`updateInspectorDock()` 的判定也是对的 —— `Math.abs(rect.bottom - innerHeight) <= 1`，flow 下面板底边在 1141、视口 706，差 435，判定「没吸住」，状态机保持 flow。**判定没错，面板的位置错了，而没有任何一条检查问过 flow 面板是否还在布局给它的位置上。**
+
+**四问**
+
+1. **归层** —— L6 检视层。只改 L6 面板自己的高度上限，写在 `applyInspectorDock()` 已经写好的 CSS 变量上。不新增 state 字段、不新增 DOM 节点、不触碰 L2 / L3 / L5。
+2. **关联** —— 抓手 `.inspector-resize` 与 `.section-toggle` 仍只在 docked 时出现，与同层控件的关联关系一个没动。变的是三态**之间的高度关系**：今天 flow 是唯一无上限的一态，改后三态共用同一个天花板。互斥（吸住 vs 不吸住）仍由 `state.inspectorDock` 的五个声明写者决定，一个都不增不减。
+3. **布局** —— 不新增 sticky 区域、不新增 panel、不移动容器。网格行本来就是对的，改的只是 sticky 偏移量能拽多远。
+4. **口径** —— **改了一个对外承诺，读点全部列出**：
+   - **不变**：`--inspector-dock-h`（2/5，D28）；`--inspector-full-h` 的算法 `panelMax = max(160, innerHeight − 吸住区 − max(140, 25%·innerHeight))`。
+   - **新增读点**：`#inspector-panel` 基础规则开始读 `--inspector-full-h`。CSS 里这个变量现在有**三个**读者（基础规则 / `.is-inspector-docked` 读 dock / `.is-inspector-full` 读 full），守卫逐个断言。
+   - **变的数字**：flow 态面板从「内容高度（本机实测 972 px，可能更高）」变成「≤ `panelMax`（本机实测 467 px）」。也就是「完全显示」不再等于「内容全部展开在文档流里」，而是「内容全部可达、在面板内滚动」。
+   - 其余读点（`--sticky-band-h` / `--sticky-overview-h` 由 `syncStickyOffsets()` 写、`panelMax` 读）链路不变。
+
+**修法**：把上限从两个吸住态**移到发出 `position: sticky` 的那条规则上**，用同一个 `panelMax`。这样「sticky ⟹ 有上限 ⟹ 比视口矮」成为**结构性质**，而不是对内容长度的祈望。零 DOM。
+
+**`.is-inspector-full` 变成了冗余规则**，它的注释「the cap comes off」也已经是假的 —— 已改写，并写明为什么保留这条规则（状态仍要在样式表里有名字）。守卫现在断言两条声明**保持一致**，而不是允许它们各自漂移。
+
+**候选是量出来的，不是推出来的**。注入 CSS 覆盖实测了三个版本：
+
+| | 面板高 | 顶部时位置 | 结论 |
+| --- | --- | --- | --- |
+| 现状 | 972 px | `top 150`，盖住账本 | 缺陷 |
+| A：flow 不吸底 | 972 px | `top 8314`，正确 | 覆盖没了，但 `\|rect.bottom − innerHeight\| <= 1` 永远不成立，吸底机制整个失效 |
+| **A′：flow 也用同一个天花板** | **394 px** | 折叠线以下 | **采纳** |
+
+**为什么守卫这次抓得住**：替换掉的两条断言不是删掉，是换成**在决定处陈述、而不是逐态点名**的性质：
+
+- `the rule that makes the panel sticky-bottom is the rule that caps it`
+- `in the document and fully expanded are bounded by the same number`
+- `the document state is bounded by the ceiling that spares the rows`
+- `every state the panel can be in carries a cap`
+
+配 3 条新变异：`the sticky panel stops being capped`、`the document state is capped by a number of its own`、`the sticky panel is given a fixed height instead of a ceiling`。`mutate-inspector-dock.py` 59 → **62 条，62/62 全捕 0 存活**；`verify-inspector-dock.mjs` 74 → **77 条断言**。
+
+**一个变异报「存活」，但守卫其实抓到了**：`the docked panel is given a fixed height instead of a cap` 报的期望名是 `both pinned states cap the panel rather than fixing its height` —— 那条断言在 D32 里被替换掉了。手工跑一遍发现它被**三条**断言抓到，其中一条是本来就管这件事的 D26 机制规则。所以这里的「存活」意思是「点名的证人没了」，不是「守卫瞎了」。改期望名之前先读了守卫自己的输出 —— 否则「为了让变异通过而改断言」和「证人改名了」在输出上长得一模一样。
+
+**方法论补一条**：**断言规则 ≠ 断言盒子。** 这次全部 68 条断言读的都是文本，而缺陷在布局里。文本断言能守住「规则没被改回去」，守不住「盒子在它该在的地方」。
 
 评审同时确认了两件否定结论：**没有 CRLF 回归**（改动过的 harness 在 LF checkout 上 5/5 与 25/25），**10 条变异本身没有空变异**。
 

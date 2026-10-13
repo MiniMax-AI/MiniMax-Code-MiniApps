@@ -2110,6 +2110,27 @@
           position: sticky;
           bottom: 0;
           z-index: 5;
+
+          /* The cap belongs here, on the rule that hands out `position: sticky` to all three
+             states, and not only on the two pinned ones. `bottom: 0` is a promise about height:
+             it pins the element's BOTTOM edge to the scrollport's bottom edge, which only means
+             "stay reachable" while the element is shorter than the scrollport. An element taller
+             than the scrollport has no legal position — the browser slides it up by the
+             difference, and it leaves its grid row to do it.
+
+             Measured on 2026-10-13, 863x803, one record selected: the panel's layout position was
+             document y=8302 (after the ledger, which is correct) and its rendered position was
+             document y=885 — dragged 7417px up, covering the ledger, 972px tall in a 706px
+             viewport, with the bottom 416px below the fold and unreachable. Nothing was wrong
+             with the grid: `main.columns` had rows `7400px 849px`.
+
+             The cap is `--inspector-full-h`, the same number `is-inspector-full` uses, because
+             that is already `innerHeight - pinned strips - the ledger's reserved quarter`: the
+             panel can be neither taller than the window nor able to squeeze the rows. Giving flow
+             the same ceiling is what makes 「sticky ⟹ capped ⟹ shorter than the scrollport」 a
+             structural property instead of a hope about content length. */
+          max-height: var(--inspector-full-h, 70vh);
+          overflow-y: auto;
         }
 
         /* Two fifths by default, and the reader can drag it. The content scrolls inside the
@@ -2187,12 +2208,20 @@
           background: var(--mcode-accent, currentColor);
         }
 
-        /* Fully expanded: the cap comes off and the panel takes the viewport the pinned strips
-           above it are not using. Both numbers are measured by syncStickyOffsets() and written by
+        /* Fully expanded: the panel is pinned and takes the whole viewport the pinned strips above
+           it are not using. Both numbers are measured by syncStickyOffsets() and written by
            applyInspectorDock() rather than computed from 100vh: this page runs inside a host
            iframe, where 100vh is not the height the reader can see, which is why client-check
            bans it and why every other offset here is measured. The vh fallbacks are what shows
-           before the first measurement, not what ships. */
+           before the first measurement, not what ships.
+
+           This used to say 「the cap comes off」, and D32 is why that stopped being true: the cap
+           has to stay on for the cap to be the thing that keeps a sticky-bottom panel shorter than
+           the scrollport. Expanding and sitting in the document are now the same *height* at two
+           different *positions* — pinned to the viewport bottom, or at the end of the document —
+           which is what the handle was buying in the first place. The rule is kept so the state
+           still has a name in the stylesheet, and verify-inspector-dock.mjs asserts that the two
+           declarations stay identical rather than drifting apart. */
         #inspector-panel.is-inspector-full {
           max-height: var(--inspector-full-h, 70vh);
           overflow-y: auto;
@@ -6548,10 +6577,15 @@
         // written here.
         //
         // panelMax is what is left after the pinned strips *and* the ledger's guaranteed quarter.
-        // It is the ceiling for both pinned states, so the expanded panel stops short of covering
-        // the rows and a drag cannot grow past it either. Nothing caps the panel in flow: at the
-        // end of the document it is an ordinary block in the page, and that is the one place where
-        // 「完全显示」 means uncapped.
+        // It is the ceiling for all three states, so the expanded panel stops short of covering
+        // the rows and a drag cannot grow past it either.
+        //
+        // Flow used to be exempt, on the grounds that at the end of the document it is an ordinary
+        // block and 「完全显示」 means uncapped. That is what shipped, and it was wrong: the panel
+        // carries `position: sticky; bottom: 0` in every state, and a sticky-bottom element taller
+        // than the scrollport has nowhere legal to sit. See the rule's own comment for the
+        // measurement. 「完全显示」 now means the content is all reachable and scrolls inside the
+        // panel, not that the panel grows without bound.
         if (dom.inspectorPanel) {
           var root = getComputedStyle(document.documentElement);
           var band = parseFloat(root.getPropertyValue('--sticky-band-h')) || 0;
