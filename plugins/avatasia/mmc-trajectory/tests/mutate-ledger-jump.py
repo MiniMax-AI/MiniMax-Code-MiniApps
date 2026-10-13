@@ -93,9 +93,50 @@ MUTATIONS = [
      [("          var glyph = icon(name);\n", "          var glyph = document.createTextNode(atEnd ? '\u5230\u6700\u4e0a' : '\u5230\u6700\u4f4e');\n")],
      "the control shows an arrow rather than a word"),
 
+    # Re-anchored 2026-10-14 (D46). The arrow no longer reads `ledgerEndInView()` directly: the two
+    # states now differ by the `ledgerJumpUsed` flag, so both the glyph and the click go through
+    # `ledgerJumpGoesUp()`. The job is unchanged — the arrow still follows a reading rather than a
+    # constant — so the mutation is the same one pointed at the line that now carries it.
     ("the arrow stops following the reading",
-     [("var name = atEnd ? 'arrowUp' : 'arrowDown';", "var name = 'arrowDown';")],
-     "which arrow it is comes from the reading, not from a counter"),
+     [("var name = up ? 'arrowUp' : 'arrowDown';", "var name = 'arrowDown';")],
+     "the reading that picks the arrow exists and is the one the label reads"),
+
+    # ---- D46: the first screen points down whatever the page is at ----
+
+    # The flag starts armed, so the first screen reports position and the control is back to
+    # 「go to where you already are」 — the failure the arrow's own comment says it must never be.
+    ("the reading starts armed instead of on the first press",
+     [("var ledgerJumpUsed = false;", "var ledgerJumpUsed = true;")],
+     "the reading starts unarmed, so the first screen points down whatever the page is at"),
+
+    # The flag is never armed, so 「在底部」 never gets a vote and the control can only ever go
+    # down. Reads like a working button: it scrolls, it relabels, it just never comes back up.
+    ("the first press never arms the reading",
+     [("          ledgerJumpUsed = true;\n", "")],
+     "the first press arms the reading, and only the press does"),
+
+    # The two lines in the wrong order. This is the original bug re-created from the inside: arm
+    # first, then ask, so the first press consults a position the reader never chose.
+    ("the reading is armed before the destination is chosen",
+     [("          var up = ledgerJumpGoesUp();\n"
+       "          window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());\n"
+       "          // Armed after the scroll is issued, and the label is rewritten here rather than left to\n"
+       "          // the observer: scrolling to the end you are already at fires no intersection event, and\n"
+       "          // that is exactly the case where the arrow has to change.\n"
+       "          ledgerJumpUsed = true;\n",
+       "          ledgerJumpUsed = true;\n"
+       "          var up = ledgerJumpGoesUp();\n"
+       "          window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());\n")],
+     "the destination is chosen before the reading is armed"),
+
+    # The glyph and the scroll each read the reading themselves. They agree today because they are
+    # the same call — and that is exactly why letting them drift is the one thing not to allow, now
+    # that a flag is the only thing between the two states.
+    ("the click stops reading what the arrow reads",
+     [("          var up = ledgerJumpGoesUp();\n"
+       "          window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());",
+       "          window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());")],
+     "the click chooses between the two ends from the same reading the arrow does"),
 
     # Scoped to the attribute: the function's own comment names both old labels, so a mutation that
     # only changed the string would still be satisfied by the prose.
@@ -129,12 +170,12 @@ MUTATIONS = [
     # ---------- the two targets ----------
 
     ("up goes to the top of the page",
-     [("window.scrollTo(0, ledgerEndInView() ? ledgerTopOffset() : ledgerBottomOffset());",
+     [("window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());",
        "window.scrollTo(0, 0);")],
      "the click never scrolls to the top of the document"),
 
     ("the two ends are swapped",
-     [("window.scrollTo(0, ledgerEndInView() ? ledgerTopOffset() : ledgerBottomOffset());",
+     [("window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());",
        "window.scrollTo(0, ledgerEndInView() ? ledgerBottomOffset() : ledgerTopOffset());")],
      "the click chooses between the two ends from the same reading the arrow does"),
 

@@ -117,8 +117,21 @@ assert('the label setter is in the shipped script', !!labelSrc);
 // presentation and not of what the control announces to anyone not looking at it.
 assert('the control shows an arrow rather than a word',
   !!labelSrc && /icon\(name\)/.test(labelSrc) && !/textContent = atEnd/.test(labelSrc));
-assert('which arrow it is comes from the reading, not from a counter',
-  !!labelSrc && /var name = atEnd \? 'arrowUp' : 'arrowDown'/.test(labelSrc));
+// D46 rewrote the reading, not the requirement. It used to be `var name = atEnd ? …` straight off
+// `ledgerEndInView()`; now the two states differ by one flag — the ledger has to have been jumped
+// once before 「在底部」 is allowed a vote — so the arrow comes off `ledgerJumpGoesUp()`. Same rule
+// (which arrow is showing follows the reading, never a counter), pointed at the function that now
+// holds the reading.
+const goesUpSrc = functionSource('ledgerJumpGoesUp');
+assert('the reading that picks the arrow exists and is the one the label reads',
+  !!goesUpSrc && /return ledgerJumpUsed && ledgerEndInView\(\);/.test(goesUpSrc)
+  && !!labelSrc && /var up = ledgerJumpGoesUp\(\);/.test(labelSrc)
+  && /var name = up \? 'arrowUp' : 'arrowDown'/.test(labelSrc));
+// …and the flag has to start out false, in the shipped file rather than in the markup, or the
+// reading is permanently 「not yet jumped」 and the control can only ever go down. (The press that
+// arms it is asserted in the click section below, where buildSrc is in scope.)
+assert('the reading starts unarmed, so the first screen points down whatever the page is at',
+  /var ledgerJumpUsed = false;/.test(html));
 // Scoped to the attribute itself, not to the function: this file's own comment explains what the
 // two labels used to be, so a search for the words anywhere in the source is satisfied by prose.
 const ariaLine = labelSrc ? /setAttribute\('aria-label',[^\n]*\)/.exec(labelSrc) : null;
@@ -168,7 +181,26 @@ assert("down means the sentinel at the ledger's own bottom",
   && !/lastElementChild/.test(bottomSrc));
 
 assert('the click chooses between the two ends from the same reading the arrow does',
-  !!buildSrc && /window\.scrollTo\(0, ledgerEndInView\(\) \? ledgerTopOffset\(\) : ledgerBottomOffset\(\)\)/.test(buildSrc));
+  !!buildSrc && /var up = ledgerJumpGoesUp\(\);/.test(buildSrc)
+  && /window\.scrollTo\(0, up \? ledgerTopOffset\(\) : ledgerBottomOffset\(\)\)/.test(buildSrc));
+// …and the press is what arms the reading. One writer; without it the control can only ever go down.
+assert('the first press arms the reading, and only the press does',
+  !!buildSrc && /ledgerJumpUsed = true;/.test(buildSrc));
+// …armed AFTER the destination is chosen. Arming it first would let the very first press consult
+// the position, and on a ledger that already fits on screen that sends the reader UP on the one
+// press that is supposed to go down — the bug this whole flag exists to remove, reintroduced by
+// writing the two lines in the wrong order.
+assert('the destination is chosen before the reading is armed',
+  !!buildSrc
+  && buildSrc.indexOf('var up = ledgerJumpGoesUp();') >= 0
+  && buildSrc.indexOf('var up = ledgerJumpGoesUp();') < buildSrc.indexOf('ledgerJumpUsed = true;'));
+// The label is rewritten by the press rather than left to the observer: scrolling to the end the
+// reader is already at fires no intersection event, and that is exactly when the arrow has to move.
+// Matched as an adjacent pair rather than by index, because buildLedgerJump() contains a
+// setLedgerJumpLabel() of its own inside the observer callback — an index comparison would find
+// THAT one and report the arrow never being relabelled, which is the opposite of the defect.
+assert('the press relabels the arrow itself instead of waiting for the observer',
+  !!buildSrc && /ledgerJumpUsed = true;\s*setLedgerJumpLabel\(\);/.test(buildSrc));
 assert('the click never scrolls to the top of the document',
   !!buildSrc && !/scrollTo\(0, 0\)/.test(buildSrc));
 assert('the jump is built once, on the wire path',
