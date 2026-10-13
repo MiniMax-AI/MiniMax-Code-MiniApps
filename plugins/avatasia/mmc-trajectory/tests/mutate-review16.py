@@ -87,46 +87,49 @@ MUTATIONS = [
     ("the withdrawn spec comes back",
      None,
      "docs/STAGE1-SPEC.md",
-     "the withdrawn stage 1 spec is gone"),
+     "the design document is not in the plugin directory"),
 
+    # Re-anchored onto README.md when docs/LAYERS.md left the package. The promise is unchanged and
+    # still worth guarding: a shipped file that names a document the reader does not have is a
+    # dangling link, and it is the README a reader actually opens. The old anchors
+    # (「否决理由就是本节…」 and the 未做清单 row) were both inside LAYERS.md.
     ("a document points at the deleted spec",
-     "否决理由就是本节，不用第二份文件再存一遍。",
-     "否决理由见 `docs/STAGE1-SPEC.md`。",
-     "no document still points at the deleted spec"),
+     "### Before you change this page",
+     "Before changing the page, read [docs/STAGE1-SPEC.md](docs/STAGE1-SPEC.md).",
+     "nothing still points at a docs/ file that does not ship"),
 
-    ("a shell invocation and a home-directory path ship to the reader",
-     "| 7 | **跨家族验证只有一条腿**",
-     "| 7 | 跑 `codex exec -s read-only`，模型见 `~/.codex/models_cache.json`。**跨家族验证只有一条腿**",
+    (  # same reason: the 未做清单 row it used to rewrite was in LAYERS.md
+     "a shell invocation and a home-directory path ship to the reader",
+     "### Before you change this page",
+     "### Before you change this page\n\nRun `codex exec -s read-only`; the model list is in `~/.codex/models_cache.json`.",
      "no shipped file carries /codex exec/"),
 
-    # ---- 4. the design document becomes a status board ----
-    ("the review-count row comes back",
-     "| 8 | ~~PR review 状态~~",
-     "| 8 | **PR #16 reviews=0**",
-     "LAYERS.md carries no process snapshot (/reviews\\s*=\\s*0/)"),
+    # ---- 4. the design document comes back ----
+    #
+    # The four mutations this used to hold were all "put one specific line back into LAYERS.md", and
+    # they are gone with the file. They are replaced, not dropped: the reviewer's complaint was that
+    # the document was in the plugin directory at all — plugin.json declares no files/exclude, so the
+    # whole directory installs onto every reader's machine — and that complaint outlives any one line.
+    # What a later "let me put the design doc back" pass looks like is exactly this: the file reappears,
+    # carrying its process snapshots, its reader-facing to-do and its decision provenance all at once.
+    # So each mutation below restores the file and the guard must report that it is back.
+    ("the design document is put back into the package",
+     None,
+     "docs/LAYERS.md",
+     "the design document is not in the plugin directory"),
 
-    ("a temp file's disposal is recorded as a design item",
-     "| 8 | ~~PR review 状态~~",
-     "| 8 | `.probe\\perf-payload.json`（34 MB 临时产物）待删 |",
-     "LAYERS.md carries no process snapshot (/perf-payload/)"),
+    ("the withdrawn spec is put back into the package",
+     None,
+     "docs/STAGE1-SPEC.md",
+     "the design document is not in the plugin directory"),
 
-    # The replacement has to name a *person*, because that is what the detector matches on. An
-    # earlier draft used 「需在交互式会话中处理」, the neutral wording this workspace actually ships —
-    # and it survived, because the rule is about handing the reader a to-do, not about any one word.
-    ("the reader is handed a to-do on their own machine",
-     "需要另外两把交叉核对的腿",
-     "需报告者在交互式会话中处理",
-     "LAYERS.md does not hand the reader a to-do on their own machine"),
-
-    # Every occurrence, because the invariant is bulk attribution: sweeping one citation is not the
-    # failure being guarded against, sweeping them all is. `all=True` below is what says so.
-    # Anchored on the role word, not the author's name: LAYERS.md ships to every reader, so the name
-    # is out of it. The detector keeps naming only what it detects.
-    ("provenance is swept away wholesale",
-     "报告者的原话",
-     "原始反馈",
-     "LAYERS.md keeps attributing decisions to whoever made them",
-     True),
+    # And the reverse: pointing a shipped file back at it is the same defect one layer over, because
+    # the README is what a reader actually opens. A dangling link in the package is the reader's copy
+    # of a missing file.
+    ("a shipped README points at the document that left the package",
+     "### Before you change this page",
+     "Before changing the page, read [docs/LAYERS.md](docs/LAYERS.md).",
+     "nothing still points at a docs/ file that does not ship"),
 
     # ---- 5. the cache stops being released ----
     # Anchored without any line ending on purpose. The first version of these two used \r\n because
@@ -250,12 +253,21 @@ for entry in MUTATIONS:
         expect = entry[3]
         path = os.path.join(ROOT, rel)
         existed = os.path.exists(path)
-        # Keep the real bytes, not a flag. This branch currently only ever targets a file that was
-        # already deleted, so `existed` is false and nothing is read -- but recording bytes rather
-        # than assuming "it was absent" is what makes the branch correct if a second file-level
-        # mutation ever targets a file that ships.
+        # Keep the real bytes, not a flag: recording bytes rather than assuming "it was absent" is
+        # what makes the branch correct if a file-level mutation ever targets a file that ships.
         _prior = read(rel) if existed else None
         _pending_files[rel] = _prior
+        # docs/LAYERS.md left the package, so the whole docs/ directory is gone — and creating a
+        # file whose parent does not exist raises FileNotFoundError before the guard ever runs. That
+        # is not a mutation surviving; it is the control crashing, which would report as "caught"
+        # for the wrong reason. Make the directory, and take it away again afterwards if this run is
+        # what created it.
+        _made_dir = []
+        parent = os.path.dirname(path)
+        while parent and not os.path.isdir(parent) and parent != ROOT:
+            os.makedirs(parent, exist_ok=True)
+            _made_dir.append(parent)
+            parent = os.path.dirname(parent)
         try:
             with io.open(path, "w", encoding="utf-8", newline="") as f:
                 f.write("# reintroduced by mutate-review16.py\n")
@@ -265,6 +277,11 @@ for entry in MUTATIONS:
                 os.remove(path)
             except OSError:
                 pass
+            for d in reversed(_made_dir):
+                try:
+                    os.rmdir(d)
+                except OSError:
+                    pass
             if _prior is not None:
                 write(rel, _prior)
             _pending_files.pop(rel, None)
@@ -276,14 +293,14 @@ for entry in MUTATIONS:
         # guess that silently lands in the wrong file is worse than a mutation that does not run.
         target = None
         if replace_all:
-            for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md", "docs/LAYERS.md",
+            for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
                         ".minimax-plugin/plugin.json"):
                 if old in read(rel):
                     target = rel
                     break
         else:
-            for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md", "docs/LAYERS.md",
+            for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
                         ".minimax-plugin/plugin.json"):
                 if read(rel).count(old) == 1:

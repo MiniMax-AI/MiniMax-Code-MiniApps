@@ -6,7 +6,18 @@ Browse the model trajectory of a MiniMax Code conversation: messages, reasoning,
 
 Author: [avatasia](https://github.com/avatasia) · Version: `1.0.0`
 
-Before changing the page, read [docs/LAYERS.md](docs/LAYERS.md): which functional layer a control belongs to, what it may read, and the four questions to answer before implementing a new one. It exists because this page's filter logic grew one feature at a time, and the defects that produced are all traceable to that.
+### Before you change this page
+
+New features on this page grew one at a time, and most of the defects that survived review came from the same place: a control added without asking which layer it belongs to. So answer four questions in writing before writing any code.
+
+1. **Layer** — which functional layer does this belong to, and which layer's state does it write?
+2. **Relation** — beside, mutually exclusive with, or subordinate to which existing controls of that same layer?
+3. **Layout** — which container holds it? Does it need a new sticky region, panel, or layer?
+4. **Contract** — does it change a number another part of the page already promises? If yes, list every place that reads that number before you change it.
+
+The fourth is where the coordination bugs come from: one feature changed a number and every other surface kept speaking the old one. Mutual exclusion belongs in one place — one writer per state field — never as a convention spread across functions.
+
+`tests/` carries the regression guards for all of this; `npm test` runs them.
 
 ## Install and use
 
