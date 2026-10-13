@@ -1348,6 +1348,38 @@
         border-bottom: 1px solid var(--mcode-border);
       }
 
+      /* The inspector's own header stays put while its content scrolls under it.
+       *
+       * `.panel-head` is an ordinary block, and the panel is a scroll container, so a plain child
+       * scrolls away with its content — no bug required, that is the default. Measured in the real
+       * window (897x900, 2x DPR screenshot): the panel's inner scroll was 160px from the top, and
+       * those 160px had taken the header, the 「第 N 轮 · #NNNNN · 思考」 line and the whole tab
+       * bar off the screen. What was left was a table starting mid-way, with no title and no
+       * tabs — and, after D34 added the folded state, with no handle either. Folded hides every
+       * child except this header, so a header that scrolls away is not an inconvenience there, it
+       * is the loss of the only way back.
+       *
+       * This rule used to sit inside the dock's own media query, and the reason it was scoped
+       * there has since stopped being true. That reason said: above 1080px the panel is not a scroll
+       * container and there is nothing to stick to. D40 gave the wide panel a ceiling and an inner
+       * scroller, so above 1080px the panel scrolls as well — and a header that scrolls away there
+       * is the same loss, reached from the other side. So the rule is now unconditional, and what
+       * scopes it is the panel rather than a breakpoint.
+       *
+       * Scoped to this panel and to nothing else: a bare `.panel-head` rule would do the same to the
+       * ledger's header, which has no handle to lose but has a title that would stop being where the
+       * reader left it.
+       *
+       * Sticky to the panel's own scrollport, not the page's: the scroll container is the panel, so
+       * nothing here moves when the page does. Same shape as `.turn-head` in the ledger — sticky,
+       * z-index, an opaque background, the bottom border it already had. */
+      #inspector-panel > .panel-head {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--mcode-surface);
+      }
+
       .panel-head-meta {
         font-size: 12px;
         color: var(--mcode-text-muted);
@@ -2269,29 +2301,6 @@
            is looking at. */
         #inspector-panel.is-inspector-folded > *:not(.panel-head) {
           display: none;
-        }
-
-        /* The panel's own header stays put while its content scrolls under it.
-
-           `.panel-head` is an ordinary block, and the panel is a scroll container, so a plain child
-           scrolls away with its content — no bug required, that is the default. Measured in the real
-           window (897x900, 2x DPR screenshot): the panel's inner scroll was 160px from the top, and
-           those 160px had taken the header, the 「第 N 轮 · #NNNNN · 思考」 line and the whole tab
-           bar off the screen. What was left was a table starting mid-way, with no title and no
-           tabs — and, after D34 added the folded state, with no handle either. Folded hides every
-           child except this header, so a header that scrolls away is not an inconvenience there, it
-           is the loss of the only way back.
-
-           Sticky to the panel's own scrollport, not the page's: the scroll container is the panel,
-           so nothing here moves when the page does. Scoped to this panel and to the same media
-           query the dock lives in, because above 1080px the panel is not a scroll container and
-           there is nothing to stick to. Same shape as `.turn-head` in the ledger — sticky, z-index,
-           an opaque background, the bottom border it already had. */
-        #inspector-panel > .panel-head {
-          position: sticky;
-          top: 0;
-          z-index: 2;
-          background: var(--mcode-surface);
         }
 
         /* The grip, on the panel's top edge — which is the edge that moves when the panel is
