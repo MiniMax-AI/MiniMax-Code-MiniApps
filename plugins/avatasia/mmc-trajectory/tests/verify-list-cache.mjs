@@ -93,6 +93,48 @@ if (probe && peek) {
     Number(peek[1]) <= Number(probe[1]) * 4);
 }
 
+/* ---------- 6: what the bounded prefix is allowed to be reported as ---------- */
+
+// The rule above is the one that rules out counting exactly: the list must not read the whole
+// active file, so a count it can afford is a count of a PREFIX. That used to be fine because the
+// constant's own comment said the counters were for 「counts nobody treats as exact」 — and the page
+// treated them as exact, printing 「（3 分钟前 · 10 条）」 for a session with 23,642 messages. The
+// prefix stays; what changed is that its numbers are only sent when the prefix was the whole file.
+//
+// So the invariant is two halves and both are load-bearing. Bounded-but-reported is the defect, and
+// absent is the only other answer available at this budget: an exact count would need the whole
+// active file, and would still miss the rest of the lineage besides.
+const gatedOnWholeFile = /messageCount:\s*peekIsWhole\s*\?\s*peek\.messages\s*:\s*null/;
+const turnsGatedTheSame = /turnCount:\s*peekIsWhole\s*\?\s*peek\.turns\s*:\s*null/;
+
+assert('the list asks whether its prefix was the whole file',
+  /const\s+head\s*=\s*await readHead\([\s\S]{0,120}?LIST_PEEK_BYTES\)/.test(server)
+  && /peekIsWhole\s*=\s*!truncatedByCap\(head\.size,\s*LIST_PEEK_BYTES\)/.test(server));
+
+assert('a prefix message count is not sent as the session message count', gatedOnWholeFile.test(server));
+// Same rule, same reason: turnCount comes out of the same prefix. Fixing one and leaving the other
+// is the same lie under a second name, and a mutation below does exactly that.
+assert('a prefix turn count is not sent either', turnsGatedTheSame.test(server));
+
+// A failed read has counted nothing at all. Reporting its zeros would be the same untrue number
+// with a smaller magnitude, so the flag must default to "not the whole file" rather than to true.
+assert('a read that failed is not reported as a count of zero',
+  /let peekIsWhole = false;/.test(server)
+  && !/let peekIsWhole = true;/.test(server));
+
+// The reader-facing half. When there is no count the page omits the whole segment rather than
+// printing a dash, because 「— 条」 renders the absence of a number in the shape of a number.
+//
+// Read off the client with its comments stripped. The comment above `sessionOptionLabel` quotes the
+// old string `（3 分钟前 · 10 条）`, so an assertion made against the raw file would be satisfied by
+// prose describing the very defect it exists to catch — which is what D27 was.
+const clientJs = html
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+assert('the session picker omits the count segment instead of printing a placeholder',
+  /var tail = isCount\(count\) \?/.test(clientJs)
+  && /'（' \+ when \+ '）'/.test(clientJs));
+
 console.log('[list-cache] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));

@@ -26,8 +26,14 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.dirname(HERE)
 SERVER = os.path.join(PLUGIN, "miniapp", "node", "server.mjs")
+CLIENT = os.path.join(PLUGIN, "miniapp", "client", "index.html")
 PROBE = os.path.join(HERE, "verify-list-cache.mjs")
 
+# Each entry is (title, edits, expect) and optionally a fourth element naming the file to mutate,
+# defaulting to the server. The fourth element exists because one rule of D45's lives in the page
+# rather than in the service: whether a session picker prints a count it does not have is decided on
+# the client, so a mutation that proves the rule can fail has to be made there. Both files are read
+# once at startup and restored byte for byte in the same `finally` that already covered the server.
 MUTATIONS = [
     # The defect verbatim: the cache is shorter than the interval that expires it, so it is never
     # hit. Not a slow cache — a cache that cannot be reached.
@@ -61,9 +67,59 @@ MUTATIONS = [
      [("titleCache = { at: 0, key: '', map: new Map() };\n    descriptorCache.clear();",
        "descriptorCache.clear();")],
      "dispose releases the title cache"),
+
+    # ---- D45: a prefix count is not a count. ----
+    #
+    # The constant's own comment said the counters were for 「counts nobody treats as exact」, and the
+    # page treated them as exact: a session with 23,642 messages was offered to the reader as
+    # 「（3 分钟前 · 10 条）」, the count in the first 64 KB of its active file. These five are the
+    # ways back, and each one restores a number that is untrue in a way the reader cannot detect.
+
+    # The gate removed. This is the original defect: the peek is still bounded, so this is not a
+    # performance question, it is a "10 条" with no hint of being 10-out-of-23642.
+    ("a prefix count is sent as the session message count again",
+     [("      messageCount: peekIsWhole ? peek.messages : null,",
+       "      messageCount: peek.messages,")],
+     "a prefix message count is not sent as the session message count"),
+
+    # The same lie under the other field name. Half a fix is the outcome to fear most here: the
+    # session picker shows the message count and the turn count comes from the same prefix, so
+    # fixing only one leaves a reader-visible number that is still a prefix.
+    ("the message count is gated but the turn count is not",
+     [("      turnCount: peekIsWhole ? peek.turns : null,", "      turnCount: peek.turns,")],
+     "a prefix turn count is not sent either"),
+
+    # The flag that decides it, defaulted the other way. A read that threw has counted nothing, and
+    # this turns 「I could not count it」 into 「there are none」 — the same untrue number, zero.
+    ("a read that failed is reported as a count of zero",
+     [("    let peekIsWhole = false;", "    let peekIsWhole = true;"),
+      ("      messageCount: peekIsWhole ? peek.messages : null,",
+       "      messageCount: peek.messages,"),
+      ("      turnCount: peekIsWhole ? peek.turns : null,", "      turnCount: peek.turns,")],
+     "a read that failed is not reported as a count of zero"),
+
+    # The gate is asked the wrong question: `read` is the bytes actually filled in, and it equals the
+    # file's size on every read that reached the end — so it cannot distinguish "the whole file fit in
+    # the budget" from "we stopped early". Asking about size is what makes the gate mean anything.
+    ("the gate asks how much was read rather than how big the file is",
+     [("      peekIsWhole = !truncatedByCap(head.size, LIST_PEEK_BYTES);",
+       "      peekIsWhole = head.read >= LIST_PEEK_BYTES;")],
+     "the list asks whether its prefix was the whole file"),
+
+    # The client half. Printing a dash for a number that does not exist renders the absence of a
+    # number in the shape of a number, which is the same defect one layer down: 「— 条」 is still a
+    # 条 count, just an impossible one.
+    ("the session picker prints a placeholder instead of omitting the count",
+     [("        var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';",
+       "        var tail = '（' + when + ' · ' + formatInt(count) + ' 条）';")],
+     "the session picker omits the count segment instead of printing a placeholder",
+     CLIENT),
 ]
 
-original = io.open(SERVER, encoding="utf-8", newline="").read()
+ORIGINALS = {
+    SERVER: io.open(SERVER, encoding="utf-8", newline="").read(),
+    CLIENT: io.open(CLIENT, encoding="utf-8", newline="").read(),
+}
 
 
 def run():
@@ -79,7 +135,10 @@ print(("ok   " if base_ok else "FAIL ") + "baseline green")
 ok = ok and base_ok
 
 caught = []
-for title, edits, expect in MUTATIONS:
+for entry in MUTATIONS:
+    title, edits, expect = entry[0], entry[1], entry[2]
+    target = entry[3] if len(entry) > 3 else SERVER
+    original = ORIGINALS[target]
     for old, new in edits:
         hits = original.count(old)
         if hits != 1:
@@ -92,7 +151,7 @@ for title, edits, expect in MUTATIONS:
             mutated = mutated.replace(old, new, 1)
         if mutated == original:
             raise SystemExit("FAIL  mutation for %r changed nothing" % title)
-        io.open(SERVER, "w", encoding="utf-8", newline="").write(mutated)
+        io.open(target, "w", encoding="utf-8", newline="").write(mutated)
         during_code, during = run()
         named = expect in during
         red = during_code != 0
@@ -107,12 +166,13 @@ for title, edits, expect in MUTATIONS:
             print("       the rule was reported but the guard still exited 0")
         caught.append(named and red)
     finally:
-        io.open(SERVER, "w", encoding="utf-8", newline="").write(original)
+        io.open(target, "w", encoding="utf-8", newline="").write(original)
 
-restored = io.open(SERVER, encoding="utf-8", newline="").read()
+restored = all(io.open(path, encoding="utf-8", newline="").read() == text
+               for path, text in ORIGINALS.items())
 after_code, after = run()
 after_ok = after_code == 0 and "0 failed" in after
-print(("ok   " if restored == original else "FAIL ") + "server restored byte for byte")
+print(("ok   " if restored else "FAIL ") + "both files restored byte for byte")
 print(("ok   " if after_ok else "FAIL ") + "green again after restore")
 
-sys.exit(0 if (ok and all(caught) and restored == original and after_ok) else 1)
+sys.exit(0 if (ok and all(caught) and restored and after_ok) else 1)
