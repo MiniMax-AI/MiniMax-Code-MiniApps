@@ -298,6 +298,30 @@ The common form: **「there is no X」 must be asserted as "the thing that would
 as "the name we used to call X is absent".** The first is a property of the code; the second is a
 property of one spelling of it.
 
+### 8.2 The same trap, catching the other one
+
+§8.1 was written about guards that are too narrow. D36 lost a mutation to the mirror image: a guard
+naming a handle, where the mutation reaches the same handle through a local.
+
+```js
+!/filterSticky\s*\.\s*(classList|setAttribute|dataset|hidden|style)/.test(updateFn)   // passes
+```
+
+The rule it was meant to enforce is 「the dock decision writes nothing anywhere」. The mutation
+aliases the band (`var band = dom.filterSticky;`) and writes `band.classList.toggle(...)`, which
+writes to the filter layer exactly as much and passes the name check. Naming the handle only ever
+caught writes spelled that one way.
+
+Both failures are the same sentence: **the assertion was about a spelling, and the mutation was free
+to use another one.** The narrow pattern that reads "not `filterSticky.something`" has to become
+the wide one that reads "not `.classList` / `.setAttribute(` / `.dataset` / `.style` / `.hidden =`
+anywhere in this function" — a claim about the function rather than about one identifier in it. The
+wider pattern is less specific about *what* was written and more specific about *that nothing* was,
+which is what the rule actually claims.
+
+The tell in both cases: the assertion's subject could be renamed, aliased or reformatted without the
+code changing what it does. If that is possible, the assertion is measuring the spelling.
+
 ---
 
 ## 9. Say what you did not manage to check

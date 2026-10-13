@@ -7,15 +7,19 @@ fail with the right reason before the file is restored byte for byte.
 Three of them are the ones a reader should be least able to guess, because all three leave the file
 looking like it works:
 
-  - the pinned test loosened from a bounded comparison to `>=`. A panel that has not been scrolled
-    to yet also has its bottom below the viewport, so the panel shrinks into half height in front of
-    the reader.
-  - the second reference (main.columns) added back. The panel is a child of that container, so
-    pinning the panel pins it too and the conjunction is false in every state — the panel then never
-    docks at all, which is the opposite failure from the one it was added to fix.
-  - offsetTop read as the panel's position. The ledger is virtualised, so offsetTop is ~7,300px
-    short of the real layout position and the rule fires on scroll position instead of on the panel
-    leaving.
+  - the pinned test loosened from a bounded comparison to `>=`. A band that has not reached the top
+    yet and one that is already there both satisfy it, so the panel pins before the region the
+    report is about has arrived.
+  - the second reference added back. The panel is a child of main.columns, so pinning the panel
+    pins it too and the conjunction is false in every state — the panel then never docks at all,
+    which is the opposite failure from the one it was added to fix.
+  - offsetTop read as a position. The ledger is virtualised, so offsetTop is ~7,300px short of the
+    real layout position and the rule fires on scroll position instead of on the region arriving.
+
+D36 changed the subject of the decision and that changes what those three have to look like, so
+every anchor below was re-read rather than re-used: the predicate is now the filter band's top
+edge, and the panel is not in the decision at all. A mutation whose anchor was left pointing at
+the old shape would have kept reporting a catch for a rule that had stopped being the reason.
 
 A note on the two that change a *count* rather than a behaviour: removing the `else if` leaves
 `if (pinned) dockInspector();`, which looks like it can still unpin. It cannot, and the guard that
@@ -34,15 +38,32 @@ PROBE = os.path.join(HERE, "verify-inspector-dock.mjs")
 MUTATIONS = [
     # ---- the CSS, in the media query that makes the feature exist ----
 
+    # D36 re-anchored both of these. `position: sticky` used to be on the BASE rule, which is the
+    # defect itself: `bottom: 0` pins the BOTTOM edge, so it only means 「stay reachable」 while the
+    # panel is shorter than the scrollport, and taller than that the browser slides it out of its
+    # grid row. Measured 2026-10-13 at 897x858: layout position document y=8250 (after the ledger,
+    # correct), rendered document y=858 — 7392px up and in FRONT of the ledger at 959. So sticky now
+    # lives on the three states that are pinned and the base rule declares none, which is why these
+    # two are anchored inside that rule rather than on the panel.
+
     ("the panel is not sticky at all",
-     "        #inspector-panel {\n          position: sticky;\n",
-     "        #inspector-panel {\n          position: static;\n",
-     "on a narrow screen the panel sticks to the bottom of the viewport"),
+     "        #inspector-panel.is-inspector-folded {\n          position: sticky;\n",
+     "        #inspector-panel.is-inspector-folded {\n          position: static;\n",
+     "the three pinned states stick to the bottom of the viewport"),
 
     ("the panel sticks to the top instead of the bottom",
-     "          position: sticky;\n          bottom: 0;\n",
-     "          position: sticky;\n          top: 0;\n",
-     "on a narrow screen the panel sticks to the bottom of the viewport"),
+     "        #inspector-panel.is-inspector-folded {\n          position: sticky;\n          bottom: 0;\n",
+     "        #inspector-panel.is-inspector-folded {\n          position: sticky;\n          top: 0;\n",
+     "the three pinned states stick to the bottom of the viewport"),
+
+    # The state the reader never asked for, and the one that shipped: re-adding it to the base rule
+    # makes every state sticky again while every assertion about the pinned three still passes.
+    # This is the whole D36 defect as one edit, so it is the one that must be caught by name.
+    ("flow is pinned by default again",
+     "        #inspector-panel {\n          max-height: var(--inspector-full-h, 70vh);\n",
+     "        #inspector-panel {\n          position: sticky;\n          bottom: 0;\n"
+     "          max-height: var(--inspector-full-h, 70vh);\n",
+     "flow is not pinned: the base rule declares no position at all"),
 
     ("half height is written down instead of being half",
      "          max-height: var(--inspector-dock-h);\n",
@@ -77,19 +98,29 @@ MUTATIONS = [
     # selected: layout position document y=8302, rendered y=885, 972px tall in a 706px viewport.
     # The grid was never wrong. So the cap has to live on the rule that hands out `position: sticky`.
 
-    ("the sticky panel stops being capped",
-     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
-     "          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
-     "the rule that makes the panel sticky-bottom is the rule that caps it"),
+    # D36 moved sticky off the base rule, so the three anchors below now end at the pinned-states
+    # rule instead of at the 「Two fifths」 comment. The cap itself did not move: it is still on the
+    # base rule, because it is a property of every state and not of the pinned ones.
+
+    ("the panel in the document stops being capped",
+     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n"
+     "        }\n\n        /* The pinned states, and only these three.",
+     "          overflow-y: auto;\n"
+     "        }\n\n        /* The pinned states, and only these three.",
+     "every state is capped, including the one that is no longer pinned"),
 
     ("the document state is capped by a number of its own",
-     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
-     "          max-height: 92vh;\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n"
+     "        }\n\n        /* The pinned states, and only these three.",
+     "          max-height: 92vh;\n          overflow-y: auto;\n"
+     "        }\n\n        /* The pinned states, and only these three.",
      "in the document and fully expanded are bounded by the same number"),
 
-    ("the sticky panel is given a fixed height instead of a ceiling",
-     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
-     "          height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n        }\n\n        /* Two fifths by default",
+    ("the panel in the document is given a fixed height instead of a ceiling",
+     "          max-height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n"
+     "        }\n\n        /* The pinned states, and only these three.",
+     "          height: var(--inspector-full-h, 70vh);\n          overflow-y: auto;\n"
+     "        }\n\n        /* The pinned states, and only these three.",
      "nothing forces the panel taller than its own content"),
 
     ("the two-fifths fallback stops being declared",
@@ -394,24 +425,57 @@ MUTATIONS = [
 
     # ---- the scroll decision ----
 
-    # The one that shows up as working code. `>=` is true both above and below the fold.
-    ("the pinned test loosened to fit both sides of the fold",
-     "var pinned = Math.abs(pr.bottom - window.innerHeight) <= 1;",
-     "var pinned = pr.bottom >= window.innerHeight;",
-     "the panel counts as pinned only when its bottom equals the viewport bottom"),
+    # The one that shows up as working code. `>=` is true both above and below the fold. D36 moved
+    # the question from the panel to the band, and `>=` is still wrong there for the same reason:
+    # `>= -1` is true for a band parked anywhere at the top AND for one just above it.
 
-    # The reference that was added to fix the one above, and made the panel never dock at all.
-    ("the container is consulted as a second reference again",
-     "var pinned = Math.abs(pr.bottom - window.innerHeight) <= 1;",
-     "var pinned = Math.abs(pr.bottom - window.innerHeight) <= 1\n"
+    ("the band test loosened to fit both sides of the fold",
+     "var pinned = band.getBoundingClientRect().top <= 1;",
+     "var pinned = band.getBoundingClientRect().top >= -1;",
+     "pinned means the filter band is at the top of the viewport"),
+
+    # The reference that was added to fix the one above, and made the panel never dock at all. Same
+    # edit against the new subject: a second reference that is not the band is still a second
+    # reference, and #overview is the strip directly above the columns, so it is tempting.
+    ("a different strip is consulted as the second reference",
+     "var band = dom.filterSticky;",
+     "var band = dom.overview;",
+     "the band it reads is the element the report names"),
+
+    # Virtualised ledger: offsetTop is ~7,300px short, so this fires on scroll position. The D32
+    # form of this mutation read the panel's offsetTop; the panel is no longer in the decision at
+    # all, so the same mistake now has to be written the way it would actually be written — as the
+    # band being asked for its position in the document as well as on screen.
+    ("the decision reads a position in the document",
+     "var pinned = band.getBoundingClientRect().top <= 1;",
+     "var pinned = band.getBoundingClientRect().top <= 1 || dom.inspectorPanel.offsetTop < 1;",
+     "the decision does not read the panel's position in the document"),
+
+    # The panel's own bottom edge: the predicate D36 removed, and the one that made it wrong. It
+    # still reads true, still looks like a position test, and pins the panel around scrollY 550 —
+    # 140px before the band has reached the top.
+    ("the decision falls back to the panel's own bottom edge",
+     "var pinned = band.getBoundingClientRect().top <= 1;",
+     "var pinned = Math.abs(dom.inspectorPanel.getBoundingClientRect().bottom - window.innerHeight) <= 1;",
+     "pinned means the filter band is at the top of the viewport"),
+
+    # The band is read across a layer boundary and written across none. One line here gives the
+    # filter layer a second owner of its state, and every other assertion in this file still passes
+    # because none of them look at what was done to the band.
+    ("the dock decision writes a class onto the band",
+     "        var band = dom.filterSticky;\n        if (!band) return;\n",
+     "        var band = dom.filterSticky;\n        if (!band) return;\n"
+     "        band.classList.toggle('is-inspector-pinned', true);\n",
+     "the decision reads a rectangle and writes nothing to any object"),
+
+    # The same conjunction aimed at a strip that is not the band. Kept separate from the one above
+    # because it fires a different rule: that one is 「is it the band」, this one is 「is it the only
+    # reference」, and a guard that had only the first would pass this.
+    ("a second reference is consulted as well",
+     "var pinned = band.getBoundingClientRect().top <= 1;",
+     "var pinned = band.getBoundingClientRect().top <= 1\n"
      "          && dom.columns.getBoundingClientRect().bottom < window.innerHeight - 1;",
      "no second reference is consulted: the panel is a child of anything it would be compared to"),
-
-    # Virtualised ledger: offsetTop is ~7,300px short, so this fires on scroll position.
-    ("the decision reads the panel's position in the document",
-     "var pr = panel.getBoundingClientRect();",
-     "var pr = panel.getBoundingClientRect();\n        var docTop = panel.offsetTop;",
-     "the decision does not read the panel's position in the document"),
 
     # Looks able to unpin. Cannot: without the else there is no path back to flow except the
     # media-query clause, which does not run while the reader is still on a narrow screen.

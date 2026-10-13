@@ -164,14 +164,37 @@ const queryConst = /var INSPECTOR_DOCK_QUERY = '\(max-width:\s*(\d+)px\)'/.exec(
 assert('the script and the stylesheet dock at the same width',
   !!queryConst && dockCondition !== null && Number(queryConst[1]) === dockCondition);
 
-const dockRule = narrow ? valueIn(narrow, '#inspector-panel', 'position') : null;
-const panelBottom = narrow ? valueIn(narrow, '#inspector-panel', 'bottom') : null;
+// The three states that are pinned. Named here because D36 made the selector itself the rule: a
+// state is pinned by being listed, and `flow` is pinned by nothing. Reading them off one list keeps
+// the guard from being able to assert three states while checking two.
+const PINNED_STATES = ['.is-inspector-docked', '.is-inspector-full', '.is-inspector-folded'];
+
+const basePosition = narrow ? valueIn(narrow, '#inspector-panel', 'position') : null;
+const baseBottom = narrow ? valueIn(narrow, '#inspector-panel', 'bottom') : null;
+const pinnedPosition = PINNED_STATES.map((s) => (narrow ? valueIn(narrow, '#inspector-panel' + s, 'position') : null));
+const pinnedBottom = PINNED_STATES.map((s) => (narrow ? valueIn(narrow, '#inspector-panel' + s, 'bottom') : null));
 const dockedMax = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-docked', 'max-height') : null;
 const dockedOverflow = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-docked', 'overflow-y') : null;
 const fullMax = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-full', 'max-height') : null;
 
-assert('on a narrow screen the panel sticks to the bottom of the viewport',
-  dockRule === 'sticky' && panelBottom === '0');
+assert('the three pinned states stick to the bottom of the viewport',
+  pinnedPosition.every((v) => v === 'sticky') && pinnedBottom.every((v) => v === '0'),
+  PINNED_STATES.map((s, i) => `${s}=${pinnedPosition[i]}/${pinnedBottom[i]}`).join(' '));
+
+// D36 replaced the assertion this one used to make. It read `position: sticky` off the BASE rule and
+// called it correct, because the base rule is where the panel's `position` used to be declared — for
+// all four states. `bottom: 0` is a promise about height, and it only means 「stay reachable」 while
+// the panel is shorter than the scrollport; taller than that the browser slides it up out of its
+// grid row. So `flow` was a class name and not a position. Measured 2026-10-13 at 897x858 with one
+// record selected: the panel's layout position is document y=8250, which is correctly after the
+// ledger, and its rendered position was document y=858 — 7392px up and in FRONT of the ledger at
+// 959. `covers` was true at all sixteen scroll stops, and at scrollY=0 the panel's top edge sat
+// exactly on the fold with the whole ledger below it.
+//
+// The fix is an omission, so the property is the omission: flow must not be pinned by a default.
+assert('flow is not pinned: the base rule declares no position at all',
+  basePosition === null && baseBottom === null,
+  `position=${basePosition} bottom=${baseBottom}`);
 assert('half height is a cap on the panel, not a cap on its content',
   dockedMax !== null && varsRead(dockedMax).has('--inspector-dock-h'));
 assert('the half-height panel scrolls its own content', dockedOverflow === 'auto');
@@ -359,14 +382,17 @@ assert('expanding and dragging are bounded by the same ceiling',
 // 706px viewport, covering the ledger. `main.columns` had rows `7400px 849px` — the grid was
 // never wrong; the sticky offset was.
 //
-// What replaces it is the property that would have caught it, stated where it is decided rather
-// than per state: the rule that hands out `position: sticky` is the rule that carries the cap.
-const baseSticky = narrow ? valueIn(narrow, '#inspector-panel', 'position') : null;
+// D32 put the cap on the sticky rule because sticky was on the base rule. D36 moved sticky to the
+// three pinned states and left the cap on the base one, so the pairing that mattered is not
+// 「sticky and capped are the same rule」 but 「every state is capped」. The cap no longer exists to
+// give a sticky element a legal position — flow is an ordinary static block now — it exists because
+// the panel is the last thing in the document and a panel taller than the window is one the reader
+// has to scroll past to reach the end of the page.
 const baseCap = narrow ? valueIn(narrow, '#inspector-panel', 'max-height') : null;
 const fullCap = narrow ? valueIn(narrow, '#inspector-panel.is-inspector-full', 'max-height') : null;
-assert('the rule that makes the panel sticky-bottom is the rule that caps it',
-  baseSticky === 'sticky' && baseCap !== null && varsRead(baseCap).has('--inspector-full-h'),
-  `position=${baseSticky} max-height=${baseCap}`);
+assert('every state is capped, including the one that is no longer pinned',
+  baseCap !== null && varsRead(baseCap).has('--inspector-full-h'),
+  `max-height=${baseCap}`);
 // One ceiling, two states. If these can differ, 「完全显示」 in the document and 「完全展开」 while
 // pinned stop meaning the same thing, and the two numbers drift apart with no failure anywhere.
 assert('in the document and fully expanded are bounded by the same number',
@@ -382,10 +408,41 @@ assert('the expanded height is written in pixels',
 
 /* ---------- the scroll decision ---------- */
 
-// The predicate, and specifically that it is bounded. A loose comparison against the viewport edge
-// passes this test's shape and fails in the browser.
-assert('the panel counts as pinned only when its bottom equals the viewport bottom',
-  !!updateFn && /Math\.abs\([\w.]+\.bottom\s*-\s*window\.innerHeight\)\s*<=\s*1/.test(updateFn));
+// The predicate, and specifically what it is a predicate ABOUT. It used to ask whether the panel's
+// own bottom edge had reached the viewport bottom, which is a question about the panel, and it
+// answered it early: measured at 897x858 the panel was already pinned around scrollY 550 while the
+// filter band was still 140px short of the top of the window. The reported rule is about the band —
+// 「只有全部、异常、轨迹这个区域处于最上方的时候, 检视才会强制下部显示」 — and `#filter-sticky` is
+// `position: sticky; top: 0`, so whether it is at the top is a reading rather than a computation.
+// Measured after the change: the band pins at scrollY 691 and the decision flips at 691, in both
+// scroll directions, which is the whole acceptance condition.
+assert('pinned means the filter band is at the top of the viewport',
+  !!updateFn && /var\s+pinned\s*=\s*band\.getBoundingClientRect\(\)\.top\s*<=\s*1\s*;/.test(updateFn));
+assert('the band it reads is the element the report names',
+  !!updateFn && /dom\.filterSticky/.test(updateFn));
+// Asserting only the new predicate would pass on a function that also kept the old one. The old one
+// is the failure — it is what pinned the panel before the band arrived — so its absence is part of
+// the rule and is asserted separately rather than left implicit in a regex swap.
+assert('the decision no longer reads the panel\'s own geometry',
+  !!updateFn && !/getBoundingClientRect\(\)\.bottom/.test(updateFn)
+  && !/\.bottom\s*-\s*window\.innerHeight/.test(updateFn));
+// The band is read across a layer boundary and written across none. A writer here would give the
+// filter layer a second owner of its state, which is what R1 exists to prevent — and this read is
+// the one place in the dock feature that is not intra-layer, so it is the one that needs saying.
+//
+// Asserted as 「this function writes nothing to any object」 rather than as 「it does not touch
+// dom.filterSticky」. Naming the handle would only catch a write spelled `filterSticky.something`;
+// one aliased through a local reads the same band and passes. The first version of this rule was
+// written that way and the mutation that aliases the band survived it — the same mistake as §8.1 of
+// METHODOLOGY, in the other direction: there it was a name too narrow, here it would be a name.
+assert('the decision reads a rectangle and writes nothing to any object',
+  !!updateFn
+  && !/\.\s*classList/.test(updateFn)
+  && !/\.\s*setAttribute\s*\(/.test(updateFn)
+  && !/\.\s*removeAttribute\s*\(/.test(updateFn)
+  && !/\.\s*dataset\b/.test(updateFn)
+  && !/\.\s*style\b/.test(updateFn)
+  && !/\.\s*hidden\s*=/.test(updateFn));
 assert('no second reference is consulted: the panel is a child of anything it would be compared to',
   !!updateFn && !/dom\.columns/.test(updateFn) && !/querySelector\(\s*'main\.columns'\s*\)/.test(jsHtml));
 assert('the decision does not read the panel\'s position in the document',
