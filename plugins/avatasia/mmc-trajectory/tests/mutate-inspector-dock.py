@@ -54,8 +54,8 @@ PROBE = os.path.join(HERE, "verify-inspector-dock.mjs")
 # Anchors for the header rule at the top level. Note the explicit newlines: adjacent Python string
 # literals concatenate with NOTHING between them, so a constant written as one literal per line
 # without them collapses into a single line and then matches nothing in the file.
-HEAD_RULE = (
-    "      #inspector-panel > .panel-head {\n"
+CHROME_RULE = (
+    "      #inspector-panel > .inspector-chrome {\n"
     "        position: sticky;\n"
     "        top: 0;\n"
     "        z-index: 2;\n"
@@ -63,11 +63,11 @@ HEAD_RULE = (
     "      }"
 )
 
-# Appended straight after HEAD_RULE, so that rule closing brace sits immediately before the bare
-# selector — which is the shape `bareHeadSticky` looks for.
-BARE_HEAD = (
+# Appended straight after CHROME_RULE, so that rule closing brace sits immediately before the bare
+# selector — which is the shape `bareChromeSticky` looks for.
+BARE_CHROME = (
     "\n"
-    "      .panel-head {\n"
+    "      .inspector-chrome {\n"
     "        position: sticky;\n"
     "        top: 0;\n"
     "      }"
@@ -80,10 +80,10 @@ DOCK_RULE = (
     "        }"
 )
 
-# A second copy of the header rule, indented as if it still lived inside the dock query.
-DOCK_HEAD_COPY = (
+# A second copy of the pinned-unit rule, indented as if it still lived inside the dock query.
+DOCK_CHROME_COPY = (
     "\n"
-    "        #inspector-panel > .panel-head {\n"
+    "        #inspector-panel > .inspector-chrome {\n"
     "          position: sticky;\n"
     "          top: 0;\n"
     "          z-index: 2;\n"
@@ -843,12 +843,12 @@ MUTATIONS = [
     # Position is a promise like any other: both controls still ship, still are wired, still are
     # labelled correctly, and the one that folds the panel is now on the left.
     ("the control that folds the panel moves back to the left",
-     "          <div class=\"panel-head-actions\">\n"
-     "            <button type=\"button\" class=\"section-toggle\" id=\"inspector-expand\"",
-     "          <div class=\"panel-head-actions\">\n"
-     "            <button type=\"button\" class=\"section-toggle\" id=\"inspector-minimize\"\n"
-     "              aria-controls=\"panels\" aria-label=\"折叠到最小\" title=\"折叠到最小\" hidden></button>\n"
-     "            <button type=\"button\" class=\"section-toggle\" id=\"inspector-expand\"",
+     "            <div class=\"panel-head-actions\">\n"
+     "              <button type=\"button\" class=\"section-toggle\" id=\"inspector-expand\"",
+     "            <div class=\"panel-head-actions\">\n"
+     "              <button type=\"button\" class=\"section-toggle\" id=\"inspector-minimize\"\n"
+     "                aria-controls=\"panels\" aria-label=\"折叠到最小\" title=\"折叠到最小\" hidden></button>\n"
+     "              <button type=\"button\" class=\"section-toggle\" id=\"inspector-expand\"",
      "the control that folds the panel is the rightmost of the two"),
 
     ("the minimize glyph stops following its label and stays a dash",
@@ -985,8 +985,8 @@ MUTATIONS = [
     # green.
 
     ("folding takes the header away with the content",
-     "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;",
-     "        #inspector-panel.is-inspector-folded > * {\n          display: none;",
+     "        #inspector-panel.is-inspector-folded > *:not(.inspector-chrome),\n",
+     "        #inspector-panel.is-inspector-folded > * {\n",
      "folded keeps the header and takes the rest out of flow"),
 
     ("the panel can be folded away but never unfolded",
@@ -997,49 +997,81 @@ MUTATIONS = [
     # The version this section shipped first: a cap written down as a number, which then had to be
     # measured correctly and was not — it came out 2px short and clipped the header it was capping.
     ("the folded height is a number written into the stylesheet",
-     "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;",
-     "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;\n          max-height: 51px;",
+     "        #inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head) {\n          display: none;\n        }",
+     "        #inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head) {\n          display: none;\n          max-height: 51px;\n        }",
      "folded is the header alone, so its height needs no number of its own"),
 
-    # ---- the header, and the control that lives in it ----
+    # ---- D43: the folded rule grew a second selector, and it is the one that saves the header ----
     #
-    # The file already lost a round to this shape once: `.panel { overflow: hidden }` turned every
-    # sticky descendant into a child pinned inside a box that never scrolls. This is the mirror of
-    # it — a panel that scrolls, and a header that is not sticky, so the handle scrolls out of reach.
+    # `.inspector-chrome` wraps the three identifying rows so they can be pinned as one unit, and a
+    # wrapper is exactly what the old `:not(.panel-head)` was protecting. The outer selector now has
+    # to name the wrapper, and a second selector one level in has to do the work the old one did.
 
-    ("the panel header scrolls away with the content again",
-     HEAD_RULE,
-     HEAD_RULE.replace("position: sticky;", "position: static;"),
-     "the panel header stays at the top while its content scrolls under it, at every width"),
+    ("folded stops reaching inside the wrapper, so the turn line and tab bar come back",
+     "        #inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head) {\n",
+     "        #inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head-x) {\n",
+     "folded keeps the wrapper and takes out everything inside it except the header"),
 
-    ("the sticky header handed to every panel on the page",
-     HEAD_RULE,
-     HEAD_RULE + BARE_HEAD,
-     "the sticky header is declared once, at the top level, for the inspector panel alone"),
+    ("folded takes the header away from inside the wrapper",
+     "        #inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head) {\n",
+     "        #inspector-panel.is-inspector-folded .inspector-chrome > * {\n",
+     "folded keeps the wrapper and takes out everything inside it except the header"),
+
+    # ---- the pinned unit, and the rows it is supposed to hold ----
+    #
+    # The file has already lost two rounds to the shape in this section: `.panel { overflow: hidden }`
+    # turned every sticky descendant into a child pinned inside a box that never scrolls (D27's
+    # neighbour), and D41 pinned the header while leaving the two rows below it to scroll away. The
+    # second one is the mirror of the first, and it is the one that shipped green twice.
+
+    ("the turn line is left outside the pinned unit, which is the defect D43 reported",
+     "            <p class=\"inspector-locator\" id=\"inspector-locator\">尚未选择记录</p>\n            <div class=\"tablist\" id=\"tablist\" role=\"tablist\" aria-label=\"记录详情视图\"></div>\n          </div>",
+     "          </div>\n            <p class=\"inspector-locator\" id=\"inspector-locator\">尚未选择记录</p>\n            <div class=\"tablist\" id=\"tablist\" role=\"tablist\" aria-label=\"记录详情视图\"></div>",
+     "the pinned unit holds the header, the turn line and the tab bar together"),
+
+    ("the tab bar is left outside the pinned unit",
+     "            <div class=\"tablist\" id=\"tablist\" role=\"tablist\" aria-label=\"记录详情视图\"></div>\n          </div>",
+     "          </div>\n          <div class=\"tablist\" id=\"tablist\" role=\"tablist\" aria-label=\"记录详情视图\"></div>",
+     "the pinned unit holds the header, the turn line and the tab bar together"),
+
+    ("a row inside the pinned unit pins itself, which does nothing and reads as covered",
+     CHROME_RULE,
+     CHROME_RULE + "\n\n      #inspector-panel .inspector-locator {\n        position: sticky;\n        top: 0;\n      }",
+     "no row inside the pinned unit declares a sticky of its own"),
+
+    ("the pinned unit scrolls away with the content again",
+     CHROME_RULE,
+     CHROME_RULE.replace("position: sticky;", "position: static;"),
+     "the identifying rows stay at the top while content scrolls under them, at every width"),
+
+    ("the pinned unit handed to every panel on the page",
+     CHROME_RULE,
+     CHROME_RULE + BARE_CHROME,
+     "the pinned unit is declared once, at the top level, for the inspector panel alone"),
 
     # ---- D41: the scope a correct rule was written for stopped being true ----
 
-    # D40 gave the wide panel a ceiling and an inner scroller, so the sentence that scoped this
+    # D40 gave the wide panel a ceiling and an inner scroller, so the sentence that scoped the
     # header to the dock query — above 1080px the panel is not a scroll container and there is
     # nothing to stick to — stopped being true, and the narrow-only scoping went with it.
-    ("the sticky header pinned one band down instead of to the edge",
-     HEAD_RULE,
-     HEAD_RULE.replace("top: 0;", "top: 4px;"),
-     "the panel header stays at the top while its content scrolls under it, at every width"),
+    ("the pinned unit pinned one band down instead of to the edge",
+     CHROME_RULE,
+     CHROME_RULE.replace("top: 0;", "top: 4px;"),
+     "the identifying rows stay at the top while content scrolls under them, at every width"),
 
     # A second copy, back inside the dock query: still sticky, still one declaration per property,
     # still correct-looking in review — and unreachable above the breakpoint, which IS the defect.
-    ("the sticky header declared a second time inside the dock query",
+    ("the pinned unit declared a second time inside the dock query",
      DOCK_RULE,
-     DOCK_RULE + DOCK_HEAD_COPY,
-     "the sticky header is declared once, at the top level, for the inspector panel alone"),
+     DOCK_RULE + DOCK_CHROME_COPY,
+     "the pinned unit is declared once, at the top level, for the inspector panel alone"),
 
     # The premise, not the rule: a panel that is not a scroll container anywhere is what makes an
-    # unscoped sticky head unsafe.
+    # unscoped pinned unit unsafe.
     ("the wide panel losing its own scroller",
      WIDE_OVERFLOW,
      WIDE_OVERFLOW.replace("overflow-y: auto;", "overflow-y: visible;"),
-     "every width gives the panel its own scroller, which is what makes an unscoped sticky head safe"),
+     "every width gives the panel its own scroller, which is what makes an unscoped pinned unit safe"),
 
     # ---- D42: two derivations of one fact, and a write nobody reads ----
 

@@ -1143,8 +1143,17 @@ assert('pinned means both docked and expanded, so the grip survives expanding',
  * was three.
  */
 
-const foldedSel = '#inspector-panel.is-inspector-folded > *:not(.panel-head)';
-const foldedRule = narrow ? valueIn(narrow, foldedSel, 'display') : null;
+// Folded has carried two selectors since D43, and the second half is the load-bearing one.
+// `.inspector-chrome` wraps the three identifying rows so they can be pinned as one unit, and a
+// wrapper is exactly what `:not(.panel-head)` used to be protecting: written as the outer selector
+// alone it keeps the wrapper and takes out its whole contents, so folded would have no header at
+// all — and the minimize control that is the only way out of folded lives inside that header.
+// The failure is asymmetric, which is why the halves are asserted separately: losing the outer half
+// leaves folded standing at the chrome's full 124px, and losing the inner half deletes the one row
+// the state exists to keep.
+const foldedOuter = '#inspector-panel.is-inspector-folded > *:not(.inspector-chrome)';
+const foldedInner = '#inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head)';
+const foldedRule = narrow ? valueIn(narrow, foldedOuter, 'display') : null;
 
 // Folded is the header alone: everything else leaves the flow, so the panel's height IS the
 // header's height. Asserted as "this rule declares nothing but that", not as "the property is
@@ -1152,15 +1161,24 @@ const foldedRule = narrow ? valueIn(narrow, foldedSel, 'display') : null;
 // `--inspector-folded-h`, and a `max-height: 51px` added alongside it sailed past — the cap was
 // back, wearing a different variable's absence as camouflage. A cap that has to be measured is a
 // cap that can be wrong, and this one was measured wrong twice on the way here.
-const foldedDecls = narrow ? declsIn(narrow, foldedSel) : new Map();
+const foldedDecls = narrow ? declsIn(narrow, foldedOuter) : new Map();
 assert('folded is the header alone, so its height needs no number of its own',
   foldedDecls.size === 1 && foldedDecls.get('display') === 'none' && !/--inspector-folded-h/.test(jsHtml));
+
+// Both halves belong to one rule, and `declsIn` splits on commas, so either selector finds it. That
+// is what lets the two assertions below be about *which* rows each half keeps rather than about
+// there being a folded rule at all.
+const foldedInnerDecls = narrow ? declsIn(narrow, foldedInner) : new Map();
+assert('folded keeps the wrapper and takes out everything inside it except the header',
+  !!narrow
+  && foldedInnerDecls.size === 1 && foldedInnerDecls.get('display') === 'none'
+  && new RegExp(foldedInner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(narrow));
 
 // The header survives by exclusion, which is also what makes it fragile to read: written as `> *`
 // the rule would fold the minimize control away along with the content, and the reader would be
 // stuck in the one state with no other way out.
 assert('folded keeps the header and takes the rest out of flow',
-  !!narrow && new RegExp(foldedSel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(narrow));
+  !!narrow && new RegExp(foldedOuter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(narrow));
 
 // Folded is the only state with no other way out, so the minimize control has to stay there. That
 // single condition is the difference between 「fold it away」 and 「dismiss it」, and nothing else in
@@ -1177,47 +1195,39 @@ assert('folded is reachable in one press, and so is the way back out of it',
   && !!applyFn && /'折叠到最小'/.test(applyFn)
   && /'恢复到半高'/.test(applyFn) && /'恢复到完全展开'/.test(applyFn));
 
-/* ---------- D35: the control has to stay where the reader can reach it ---------- *
+/* ---------- D43: the pinned unit was one row out of the three that belong together ---------- *
  *
- * the reviewer: 「滚动到顶部, 检视框变成现在这样了。」
+ * the reviewer: 「宽屏下, 检视向下滚动到底, title又没了.」
  *
- * `.panel-head` is an ordinary block inside a scroll container, so it scrolls away with its
- * content — no bug, just the default. Measured in the real window: 160px of panel scroll had taken
- * the header, the locator line and the whole tab bar off the screen, leaving a table that started
- * mid-way with no title, no tabs and no handle. After D34 that is not an inconvenience: folded hides
- * every child but the header, so a header that scrolls away is the loss of the only way back.
- */
-const headSticky = valueIn(css, '#inspector-panel > .panel-head', 'position');
-const headStickyTop = valueIn(css, '#inspector-panel > .panel-head', 'top');
-// The background is part of the property, not decoration: a sticky header with a transparent
-// background paints the content scrolling underneath straight through it, and the header reads as
-// part of the table rather than as the thing the table is inside.
-assert('the panel header stays at the top while its content scrolls under it, at every width',
-  headSticky === 'sticky' && headStickyTop === '0'
-  && /#inspector-panel\s*>\s*\.panel-head\s*\{[^}]*background:\s*var\(--mcode-surface\)/.test(css));
-
-/* ---------- D41: the scope a rule was written for stopped being true ---------- *
+ * D41 pinned `.panel-head`, and the comment above that rule named the loss as three rows: the
+ * header, the 「第 N 轮 · #NNNNN · 思考」 line, and the whole tab bar. Two of the three were still
+ * ordinary blocks, scrolling away like anything else. Measured in the real window with real records
+ * scrolled to their real bottom, counting the pixels still inside the panel's own scrollport:
  *
- * D35 scoped the sticky header to the dock's media query, and the comment said why: above 1080px
- * the panel is not a scroll container and there is nothing to stick to. That was true when D35
- * shipped. D40 gave the wide panel a ceiling and an inner scroller, so above 1080px the panel
- * scrolls too — and a header that scrolls away there is the same loss D35 was called about,
- * reached from the other side. Measured at 1600x900 with one record chosen: computed position
- * `static`, top `auto`, z-index `auto`, and 80px of panel scroll took the header and the locator
- * line off the top, leaving the tab bar and a table that started mid-way.
+ *     1366x768   212px of scroll   header 49/49   turn line 0/36   tab bar 0/39
+ *     1100x900   169px             header 76/76   turn line 0/36   tab bar 0/39
+ *     897x900    329px             header 49/49   turn line 0/36   tab bar 0/39
  *
- * So the rule moved out of the query to the top level, and the two things that made that safe are
- * asserted rather than assumed. Both are about SCOPE, not about declarations:
+ * The header being 76px at one width and 49px at another is why the fix is a wrapper and not three
+ * sticky siblings with stacked `top` offsets: a stacked version needs 49/85/124 written down, and is
+ * wrong the moment a long record id wraps the header onto a second line, with nothing able to say so.
+ * This file has already paid for the other answer — the folded state's comment explains why the
+ * header's height was never measured into a custom property. So the three rows are one element, and
+ * nothing about its height is written down anywhere.
  *
- *   1. Declared once, and outside every media query. `valueIn` cannot tell the two apart —
- *      `declsIn` matches any line-initial selector, so a rule buried in a media block reads
- *      exactly like one at the top. Braces have to be counted to know which it is.
- *   2. Still `#inspector-panel >`, never a bare `.panel-head`. A bare rule would pin the
- *      ledger's header too, and that one has no handle to lose but has a title that would stop
- *      being where the reader left it.
+ * The loss also scales with how far the panel can scroll, which is why this shipped green twice: at
+ * 1600x900 the panel scrolls 80px, the tab bar survives by accident and the turn line keeps 5 of its
+ * 36 pixels, so D41's 12/12 and its re-measurement at 18/18 both read correct over a defect that was
+ * still there. Three assertions follow, and none of them is the old one restated:
  *
- * And the premise the old scoping leaned on is now asserted too: a sticky head is harmless only
- * while the panel is its own scroll container, at every width.
+ *   1. The pinned unit CONTAINS all three rows — asserted as containment, not as three separate
+ *      "is it sticky" checks. "The header is sticky" was true the whole time the defect shipped; it
+ *      was true of the one row that worked. The claim is about the unit, not about a member.
+ *   2. What disappeared is asserted too: no row inside may declare a sticky of its own. That is the
+ *      defect's shape coming back through a different door, and it reads green against every other
+ *      assertion in this block.
+ *   3. Declared once, at the top level, scoped to this panel — carried over from D41 unchanged,
+ *      because the scope's REASON is what expires, so the scope is part of the property.
  */
 function allMediaBodies(text) {
   const out = [];
@@ -1237,20 +1247,58 @@ function allMediaBodies(text) {
   return out;
 }
 
-const headRuleHits = (css.match(/#inspector-panel\s*>\s*\.panel-head\s*\{/g) || []).length;
-const headInsideAnyQuery = allMediaBodies(css)
-  .filter((b) => /#inspector-panel\s*>\s*\.panel-head\s*\{/.test(b));
-const bareHeadSticky = /(?:^|[},])\s*\.panel-head\s*\{[^}]*position:\s*sticky/.test(css);
-assert('the sticky header is declared once, at the top level, for the inspector panel alone',
-  headRuleHits === 1 && headInsideAnyQuery.length === 0 && !bareHeadSticky);
+const CHROME_SEL = '#inspector-panel > .inspector-chrome';
+const chromeSticky = valueIn(css, CHROME_SEL, 'position');
+const chromeStickyTop = valueIn(css, CHROME_SEL, 'top');
+
+// Located from inside the panel region, so "the three rows are together" cannot be satisfied by a
+// wrapper that happens to sit elsewhere on the page with the right class. Null-safe on purpose: a
+// mutation that renames the panel's class leaves `panelRegion` null, and a guard that dereferences it
+// dies before it can report anything — the harness then reads that as "no assertion caught this",
+// which is the correct verdict about a guard that crashes, and a very misleading one about the
+// assertion that was supposed to catch it.
+const chromeRegion = panelRegion
+  ? elementRegion(html, 'div', '<div class="inspector-chrome">', panelRegion.start)
+  : null;
+const chromeBody = chromeRegion ? chromeRegion.body : '';
+assert('the pinned unit holds the header, the turn line and the tab bar together',
+  !!chromeRegion && !!panelRegion
+  && chromeRegion.start > panelRegion.start && chromeRegion.end < panelRegion.end
+  && chromeBody.indexOf('<div class="panel-head">') >= 0
+  && chromeBody.indexOf('id="inspector-locator"') >= 0
+  && chromeBody.indexOf('id="tablist"') >= 0);
+
+// The background is part of the property, not decoration: a sticky band with a transparent background
+// paints the content scrolling underneath straight through it, and the rows read as part of the table
+// rather than as the thing the table is inside.
+assert('the identifying rows stay at the top while content scrolls under them, at every width',
+  chromeSticky === 'sticky' && chromeStickyTop === '0'
+  && /#inspector-panel\s*>\s*\.inspector-chrome\s*\{[^}]*background:\s*var\(--mcode-surface\)/.test(css));
+
+// A member that pins itself is not harmless: it pins to the wrapper, which does not scroll, so the
+// declaration does nothing at all — and it reads as though the row were taken care of. That is the
+// exact shape of the defect this replaced, one row at a time.
+const chromeRows = ['#inspector-panel > .panel-head', '#inspector-panel .inspector-locator', '#inspector-panel #tablist'];
+const selfPinnedRows = chromeRows.filter((s) => valueIn(css, s, 'position') === 'sticky');
+assert('no row inside the pinned unit declares a sticky of its own',
+  selfPinnedRows.length === 0, selfPinnedRows.join(' '));
+
+// `valueIn` cannot tell the top level from inside a media block — `declsIn` matches any line-initial
+// selector, so a rule buried in a query reads exactly like one at the top. Braces have to be counted.
+const chromeRuleHits = (css.match(/#inspector-panel\s*>\s*\.inspector-chrome\s*\{/g) || []).length;
+const chromeInsideAnyQuery = allMediaBodies(css)
+  .filter((b) => /#inspector-panel\s*>\s*\.inspector-chrome\s*\{/.test(b));
+const bareChromeSticky = /(?:^|[},])\s*\.inspector-chrome\s*\{[^}]*position:\s*sticky/.test(css);
+assert('the pinned unit is declared once, at the top level, for the inspector panel alone',
+  chromeRuleHits === 1 && chromeInsideAnyQuery.length === 0 && !bareChromeSticky);
 
 // Any `#inspector-panel` rule that mentions overflow-y has to say auto, and both sides of the
-// breakpoint have to have said it — otherwise some width leaves the panel in flow and the head
+// breakpoint have to have said it — otherwise some width leaves the panel in flow and the pinned unit
 // falls back to the viewport, following the reader down a 7,000px ledger column.
 const panelOverflows = [...css.matchAll(/#inspector-panel\s*\{([^{}]*)\}/g)]
   .map((m) => (m[1].match(/overflow-y:\s*([^;]+);/) || [])[1])
   .filter(Boolean);
-assert('every width gives the panel its own scroller, which is what makes an unscoped sticky head safe',
+assert('every width gives the panel its own scroller, which is what makes an unscoped pinned unit safe',
   panelOverflows.length >= 2 && panelOverflows.every((v) => v.trim() === 'auto'));
 
 /* ---------- D42: one sum, one reader, and a write only where something reads it ---------- *

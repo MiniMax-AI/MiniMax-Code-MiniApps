@@ -544,6 +544,48 @@ And the meta-point, which is the one worth carrying: **assertions cover behaviou
 between behaviours.** Any time two things share a fact, the guards will happily cover each of them
 and leave the sharing unguarded. Ask what would have to be true of BOTH for the page to be wrong, and
 whether any assertion says that.
+
+### 8.8 A guard that crashes has not caught anything; a member is not a whole
+
+The inspector's header was pinned by a rule whose own comment above it named the loss as three rows —
+the header, the 「第 N 轮 · #NNNNN · 思考」 line, and the whole tab bar. The rule pinned one of them.
+Every assertion about it was true the whole time: "the header is sticky", "declared once at the top
+level", "for this panel alone". Measured in a real browser, the other two rows had **0 of 36** and
+**0 of 39** pixels left inside the panel's scrollport after scrolling to the bottom.
+
+Three things generalise, and the first is the one that should change how you write an assertion:
+
+- **Assert the container, not its members.** "This element is sticky" is a claim about one element.
+  When several elements are supposed to move together, the property belongs to the thing that holds
+  them, and the assertion has to be *containment* — all three inside the pinned unit, which is itself
+  a child of the right parent. Containment is what failed; membership is what was checked.
+- **Assert what disappeared.** A member that declares its own `position: sticky` pins to the wrapper,
+  which does not scroll, so the declaration does nothing — and reads as though the row were handled.
+  Nothing else in the block notices. The negative clause (`no row inside declares a sticky of its
+  own`) is the only thing that catches it.
+- **A guard that throws has caught nothing, and the harness will say so in words that mislead you.**
+  The new block dereferenced `panelRegion.start` without a null check. A mutation that renames the
+  panel's class makes `panelRegion` null, the guard dies on the `TypeError` before it prints a single
+  verdict, and the harness reports `no assertion reported '<name>'`. That is a *correct* verdict about
+  a guard that crashes and a *misleading* one about the assertion that was supposed to catch it —
+  the two are easy to tell apart only if you read the stack trace the harness prints underneath. Fix
+  the guard before believing the mutation, and when a guard reads a structure other assertions build,
+  guard the lookup itself: `panelRegion ? elementRegion(...) : null`.
+
+The measurement also produced a negative result worth its cost. The reviewer's screenshot showed an
+expand control in the wide layout while every wide measurement read it `hidden`, which made a leak of
+narrow dock classes across a resize a plausible second defect. Crossing the breakpoint and reading the
+class list, both controls and the grip cleared everything: `class` back to `panel`, both controls and
+the grip back to `hidden`, the cap back to the wide number. **A hypothesis that costs one probe to
+kill is cheaper than one you carry into the fix and design around.**
+
+And the reason two rounds of measurement read green over a live defect: the probe asserted against
+one viewport whose panel happened to scroll only 80px, where the tab bar survives by accident and the
+turn line keeps 5 of its 36 pixels. **The defect was load-dependent and the measurement was not.** A
+screenshot of a wide window is not a wide viewport — measure the shortest cap and the longest content
+on both sides of the breakpoint, and say out loud which tabs cannot scroll at all instead of letting
+them pad the pass count.
+
 ## 9. Say what you did not manage to check
 
 Some things cannot be driven through the browser harness. The honest form is the useful one:
@@ -573,6 +615,8 @@ A harness limitation reported as a limitation is useful. The same limitation sil
 [ ] no layout offset is written down; anything pinned is measured, and measured at the end of render
 [ ] every variable the stylesheet reads is written by the measurement, and one written is one read
 [ ] every element the measurement reads is bound to an id the markup actually ships
+[ ] things that must move together are asserted as containment, not as one member's property
+[ ] a fix that removes something is asserted by what is gone; a guard that can throw is null-safe
 [ ] anything not verified is written down as not verified
 ```
 
