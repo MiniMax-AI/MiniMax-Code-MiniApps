@@ -2106,31 +2106,50 @@
            「滚到最底部恢复正常」 is about. So there is no travel class and no scroll
            compensation. */
 
+        /* Flow is not pinned. That is the whole of D36, and it is a statement about where the panel
+           SITS, not about how tall it may be.
+
+           `position: sticky; bottom: 0` used to sit on this rule, so all four states carried it.
+           `bottom: 0` is a promise about height: it pins the element's BOTTOM edge to the
+           scrollport's bottom edge, which means 「stay reachable」 only while the element is
+           SHORTER than the scrollport. Taller than that, the browser slides it up by the
+           difference — it leaves its grid row in order to do it — and that grid row is exactly what
+           `flow` is supposed to mean. Measured 2026-10-13 at 897x858 with one record selected:
+           layout position document y=8329 (after the ledger, which is right) and rendered position
+           document y=858 — dragged 7471px up, and in FRONT of the ledger at 959 rather than after
+           it, covering it at every one of sixteen scroll stops. `covers` was true at all sixteen,
+           and at scrollY=0 the panel's top edge sat exactly on the fold with the whole ledger
+           below it: the report was 「滚到最上面，轨迹不见了」.
+
+           So sticky moves down to the three states that are actually pinned, and flow falls back
+           to `position: static`, which puts the panel back in its own grid row. Measured again at
+           the same sixteen stops: document y=8329 throughout, after the ledger, `covers` false
+           throughout.
+
+           The cap stays on this rule, because it is a property of every state and not of the
+           pinned ones. It is `--inspector-full-h`, the same number `is-inspector-full` uses,
+           because that is already `innerHeight - pinned strips - the ledger's reserved quarter`:
+           the panel can be neither taller than the window nor able to squeeze the rows. What
+           changed is the reason. It used to be 「a sticky-bottom element has nowhere legal to
+           sit」, which was true while sticky was here and is not true now; in flow this is an
+           ordinary static block. It is capped because the panel is the last thing in the
+           document, and a panel taller than the window is one the reader has to scroll past to
+           reach the end of the page. */
         #inspector-panel {
+          max-height: var(--inspector-full-h, 70vh);
+          overflow-y: auto;
+        }
+
+        /* The pinned states, and only these three. That selector is what `position: sticky`
+           means on this page, so a state that should be pinned gets pinned by being named here and
+           a state that should not be pinned is not pinned by a default instead of a decision —
+           which is the mistake the old base rule was. */
+        #inspector-panel.is-inspector-docked,
+        #inspector-panel.is-inspector-full,
+        #inspector-panel.is-inspector-folded {
           position: sticky;
           bottom: 0;
           z-index: 5;
-
-          /* The cap belongs here, on the rule that hands out `position: sticky` to all three
-             states, and not only on the two pinned ones. `bottom: 0` is a promise about height:
-             it pins the element's BOTTOM edge to the scrollport's bottom edge, which only means
-             "stay reachable" while the element is shorter than the scrollport. An element taller
-             than the scrollport has no legal position — the browser slides it up by the
-             difference, and it leaves its grid row to do it.
-
-             Measured on 2026-10-13, 863x803, one record selected: the panel's layout position was
-             document y=8302 (after the ledger, which is correct) and its rendered position was
-             document y=885 — dragged 7417px up, covering the ledger, 972px tall in a 706px
-             viewport, with the bottom 416px below the fold and unreachable. Nothing was wrong
-             with the grid: `main.columns` had rows `7400px 849px`.
-
-             The cap is `--inspector-full-h`, the same number `is-inspector-full` uses, because
-             that is already `innerHeight - pinned strips - the ledger's reserved quarter`: the
-             panel can be neither taller than the window nor able to squeeze the rows. Giving flow
-             the same ceiling is what makes 「sticky ⟹ capped ⟹ shorter than the scrollport」 a
-             structural property instead of a hope about content length. */
-          max-height: var(--inspector-full-h, 70vh);
-          overflow-y: auto;
         }
 
         /* Two fifths by default, and the reader can drag it. The content scrolls inside the
@@ -6581,26 +6600,20 @@
        *   flow   — the panel is in the document below the ledger. Where it starts, and where
        *            「滚到最底部」 brings it back. This one is a position, not a height.
        *   folded — pinned, down to its own header and nothing else.
-       *   docked — pinned to the bottom of the viewport at half height.
+       *   docked — pinned to the bottom of the viewport at two fifths.
        *   full   — pinned, uncapped, because the reader asked with the handle.
        *
-       * The measurement differs by state, because one number cannot serve both directions:
-       *
-       *   - To LEAVE flow, the panel's layout position is read with offsetTop, not
-       *     getBoundingClientRect(). The rect is where sticky has placed the panel, and at that
-       *     moment sticky is not engaged, so the rect answers 「读者滚到哪了」 rather than 「面板在
-       *     哪」. Measured here: the panel is 6,000px up the document and the rect tracks scrollY
-       *     exactly, so a rect-based rule here fires on scroll position, not on the panel leaving.
-       *   - To LEAVE docked, the rect is right and the layout position is wrong. Docked, the
-       *     panel's offsetHeight is the cap, so offsetTop + offsetHeight understates where the
-       *     panel ends and the panel would drop out of docking before it came back into view.
-       *     The rect cannot understate: a pinned panel's bottom IS the viewport bottom, and the
-       *     instant it is anything else sticky has released it and the panel is on screen again.
+       * Three of those four are pinned and one is not, and D36 is the story of how the fourth one
+       * did not exist: the panel carried `position: sticky; bottom: 0` in every state, so `flow`
+       * was a class name rather than a position — sticky dragged the panel 7471px up the document
+       * and in front of the ledger. The measurement is in the stylesheet; which of the two it is
+       * comes from updateInspectorDock() below.
        *
        * Nothing here reads a scroll *direction* and nothing writes a class on <body>. That is the
        * shape D19 was withdrawn for — a scroll signal from outside the layer deciding what
        * something inside it does. This decides the presentation of one panel, from that panel's
-       * own geometry, and touches nothing else on the page.
+       * own geometry plus one rectangle read out of the band above it, and touches nothing else on
+       * the page.
        */
       function applyInspectorDock() {
         var docked = state.inspectorDock !== 'flow';
@@ -6755,40 +6768,43 @@
       }
 
       function updateInspectorDock() {
-        var panel = dom.inspectorPanel;
-        if (!panel) return;
+        if (!dom.inspectorPanel) return;
         if (!window.matchMedia(INSPECTOR_DOCK_QUERY).matches) {
           if (state.inspectorDock !== 'flow') resetInspectorDock();
           return;
         }
-        // Whether the panel has left the viewport is read off *sticky's own behaviour*, not off a
-        // position computed here. Three positions have to be told apart and only one of them is
-        // pinned:
+        // The question is the band's, not the panel's. D36: the reported rule is 「只有全部、异常、
+        // 轨迹这个区域处于最上方的时候, 检视才会强制下部显示」 — pinned while that region is at the top
+        // of the viewport, back in the document the moment it comes back down into view.
         //
-        //   above   — the panel is gone upward; sticky pins its bottom to the viewport bottom
-        //   inside  — the panel is on screen; nothing is pinned and the panel bottom is wherever
-        //             the layout puts it
-        //   below   — the panel has not been reached yet; its bottom is below the viewport
+        // `#filter-sticky` IS that region — 全部 / 类型 / 异常 / the generation note — and it is
+        // `position: sticky; top: 0`. Whether it is pinned at the top is therefore not a thing to
+        // compute: `rect.top` sits at 0 while the reader is past it and turns positive again the
+        // moment they scroll back up. No threshold to tune, no direction to read. Measured
+        // 2026-10-13 at 897x858: pinned at scrollY 692, released at 691, and tracking scrollY
+        // exactly (691.1 - scrollY) in between.
         //
-        // One reading separates all three, and the tolerance is what does the work: a pinned
-        // panel's bottom *equals* the viewport bottom, while "inside" and "below" are both
-        // strictly away from it. So `rect.bottom >= innerHeight` — the loose form — reads true
-        // for both "above" and "below" and docks a panel the reader has not scrolled to yet,
-        // caught by the probe as 「它缩在眼前」. Tightening to a 1px band around the edge is the
-        // whole fix; no second measurement is needed.
+        // What this replaced asked a different question and answered it early.
+        // `panel.rect.bottom === innerHeight` answers 「has the panel been pinned yet」, which on the
+        // same page happens around scrollY 550 — a hundred pixels before the band has reached the
+        // top, so the panel sat stuck to the bottom while the reader was still down in the filters.
         //
-        // Two ways of adding one were tried first and are recorded so they are not re-added:
+        // Two earlier attempts are recorded because they will look reasonable again:
         //
-        //   - main.columns as the second reference, on the theory that a never-sticky container's
-        //     bottom sits above the viewport while the panel is pinned. False: the panel is a
-        //     child of main.columns, so pinning the panel pins the container's bottom edge too.
-        //     The conjunction was then false for every state and the panel never docked at all.
-        //   - `panel.offsetTop + panel.offsetHeight < scrollY`. The ledger is virtualised, so the
-        //     height above the panel is an estimate: measured offsetTop was 926,767 where the real
-        //     layout position is about 934,100, a 7,300px gap, and the rule fired on scroll
-        //     position instead of on the panel leaving.
-        var pr = panel.getBoundingClientRect();
-        var pinned = Math.abs(pr.bottom - window.innerHeight) <= 1;
+        //   - `rect.bottom >= innerHeight`, the loose form of the same idea, reads true for both
+        //     「scrolled past it」 and 「not reached yet」, and docks a panel the reader has not come
+        //     down to. Caught by probe as 「它缩在眼前」.
+        //   - `panel.offsetTop + panel.offsetHeight < scrollY`, and main.columns' bottom as a
+        //     second reference. The ledger is virtualised, so the height above the panel is an
+        //     estimate — measured offsetTop 926,767 against a real layout position near 934,100 —
+        //     and the panel is a child of main.columns, so pinning the panel pins the container's
+        //     bottom edge too. Both fire on scroll position rather than on the region leaving.
+        //
+        // Nothing is written to the band: no class, no attribute, no listener. The scroll handler
+        // is on `window`, and its only statement is scheduleInspectorDock() below.
+        var band = dom.filterSticky;
+        if (!band) return;
+        var pinned = band.getBoundingClientRect().top <= 1;
         if (pinned) dockInspector();
         else if (state.inspectorDock !== 'flow') resetInspectorDock();
       }
