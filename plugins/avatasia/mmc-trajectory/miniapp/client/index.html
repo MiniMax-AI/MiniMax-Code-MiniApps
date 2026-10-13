@@ -6728,6 +6728,27 @@
        * own geometry plus one rectangle read out of the band above it, and touches nothing else on
        * the page.
        */
+      /**
+       * How much of the window is left under the pinned strips — the number both inspector layouts
+       * build their ceiling on.
+       *
+       * One reader for both values, deliberately. `syncStickyOffsets()` measures the band and the
+       * overview and writes them out; `applyInspectorDock()` used to read them back and re-derive the
+       * same sum on its own, and the wide ceiling was a third derivation from those same two numbers.
+       * Two derivations of one fact drift, and nothing noticed — each half had its own guards, and no
+       * guard ever said the two halves have to agree with each other.
+       *
+       * Read from the CSS variables rather than from `offsetHeight`, because those variables are what
+       * the panel's own `top` is built from. One source, so the top of the region and the height of
+       * the region cannot disagree about where the pinned stack ends.
+       */
+      function inspectorUnderPins() {
+        var root = getComputedStyle(document.documentElement);
+        var band = parseFloat(root.getPropertyValue('--sticky-band-h')) || 0;
+        var overview = parseFloat(root.getPropertyValue('--sticky-overview-h')) || 0;
+        return Math.round(window.innerHeight - band - overview);
+      }
+
       function applyInspectorDock() {
         var docked = state.inspectorDock !== 'flow';
         var narrow = window.matchMedia(INSPECTOR_DOCK_QUERY).matches;
@@ -6762,18 +6783,22 @@
         // than the scrollport has nowhere legal to sit. See the rule's own comment for the
         // measurement. 「完全显示」 now means the content is all reachable and scrolls inside the
         // panel, not that the panel grows without bound.
-        if (dom.inspectorPanel) {
-          var root = getComputedStyle(document.documentElement);
-          var band = parseFloat(root.getPropertyValue('--sticky-band-h')) || 0;
-          var overview = parseFloat(root.getPropertyValue('--sticky-overview-h')) || 0;
+        // Both ceilings are `underPins` minus a reserve, and only the reserve depends on the layout:
+        // in one column the ledger sits above the panel and cannot be squeezed out of the window, in
+        // two the ledger is in the other column and the two do not interact at all. So the reserve is
+        // the only thing this function decides, and the sum it subtracts from comes from the one
+        // helper — the same number the panel's `top` is built out of.
+        //
+        // Narrow only, and on purpose. Both variables written here are read by rules inside
+        // `max-width: 1080px` and by nothing else, so on a wide screen they were numbers that looked
+        // authoritative and governed nothing: measured at 1600x900, `--inspector-full-h` stood at
+        // 540px while the panel was being capped at 753px by a different variable entirely.
+        if (dom.inspectorPanel && narrow) {
           var ledgerReserve = Math.max(
             INSPECTOR_MIN_LEDGER_H,
             Math.round(window.innerHeight * INSPECTOR_LEDGER_SHARE)
           );
-          var panelMax = Math.max(
-            INSPECTOR_MIN_DOCK_H,
-            Math.round(window.innerHeight - band - overview - ledgerReserve)
-          );
+          var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, inspectorUnderPins() - ledgerReserve);
           dom.inspectorPanel.style.setProperty('--inspector-full-h', panelMax + 'px');
           // A quarter of the measured window, or the height the reader dragged to — clamped to the
           // same ceiling the expanded state gets, so the two ways of making the panel taller cannot
@@ -7550,10 +7575,16 @@
         // D40: the wide-screen inspector's ceiling, from the same two numbers the panel's `top` is
         // built out of — so the top of the region and the height of the region cannot disagree about
         // where the pinned stack ends. Measured, never vh; see the note in client-check.
-        root.setProperty('--inspector-wide-h', Math.max(
-          0,
-          Math.round(window.innerHeight - band - overview - INSPECTOR_WIDE_BOTTOM_GAP)
-        ) + 'px');
+        //
+        // Wide only, for the reason given on the other writer: on a narrow screen this variable is
+        // read by nothing at all. It was written on both, which meant that at every width exactly
+        // one of the two ceilings was live and the other was a number nobody was reading.
+        if (!window.matchMedia(INSPECTOR_DOCK_QUERY).matches) {
+          root.setProperty('--inspector-wide-h', Math.max(
+            0,
+            inspectorUnderPins() - INSPECTOR_WIDE_BOTTOM_GAP
+          ) + 'px');
+        }
       }
 
       var stickyFrame = null;
