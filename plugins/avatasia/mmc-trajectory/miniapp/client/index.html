@@ -1348,32 +1348,47 @@
         border-bottom: 1px solid var(--mcode-border);
       }
 
-      /* The inspector's own header stays put while its content scrolls under it.
+      /* The inspector's identifying rows stay put while its content scrolls under them.
        *
-       * `.panel-head` is an ordinary block, and the panel is a scroll container, so a plain child
-       * scrolls away with its content — no bug required, that is the default. Measured in the real
-       * window (897x900, 2x DPR screenshot): the panel's inner scroll was 160px from the top, and
-       * those 160px had taken the header, the 「第 N 轮 · #NNNNN · 思考」 line and the whole tab
-       * bar off the screen. What was left was a table starting mid-way, with no title and no
-       * tabs — and, after D34 added the folded state, with no handle either. Folded hides every
-       * child except this header, so a header that scrolls away is not an inconvenience there, it
-       * is the loss of the only way back.
+       * Three rows, one unit: the header with the record id, the 「第 N 轮 · #NNNNN · 思考」 line
+       * that says which turn this is, and the tab bar that says which view is open. None of them is
+       * readable without the other two, so they move together or not at all.
        *
-       * This rule used to sit inside the dock's own media query, and the reason it was scoped
-       * there has since stopped being true. That reason said: above 1080px the panel is not a scroll
+       * They are a container rather than three sticky siblings with stacked `top` offsets, because
+       * those heights are not constants. Measured in the real window: the header is 49px at
+       * 1366x768 and **76px** at 1100x900, where a long record id wraps onto a second line. Three
+       * hardcoded offsets (49 / 85 / 124) would be right at one width and wrong the moment the head
+       * wrapped, with nothing able to report it. This file has already paid for the other answer:
+       * the folded state's own comment below explains why measuring the header into a custom
+       * property was abandoned — the call that repaints the panel runs before the tabpanels are
+       * written, so it measured an empty header, 2px short, and clipped it. Wrapping the rows means
+       * the sticky element's height follows its content and no number has to be written down.
+       *
+       * `.inspector-chrome` is an ordinary block, and the panel is a scroll container, so a plain
+       * child scrolls away with its content — no bug required, that is the default. Measured with
+       * real records scrolled to their real bottom, counting the pixels still inside the panel's
+       * own scrollport: at 1366x768 the 212px of panel scroll took the locator line and the whole
+       * tab bar off the top (0/36 and 0/39 visible), the same at 1100x900 with 169px, and the same
+       * on the narrow layout at 897x900 with 329px. What was left was a table starting mid-way,
+       * with no title, no turn and no tabs. The loss scales with how far the panel can scroll, so
+       * a window that scrolls only 80px still reads as correct — which is why this rule's first
+       * version measured 12/12 green and the re-measurement 18/18 green over a defect still there.
+       *
+       * The rule used to sit inside the dock's own media query, and the reason it was scoped there
+       * has since stopped being true. That reason said: above 1080px the panel is not a scroll
        * container and there is nothing to stick to. D40 gave the wide panel a ceiling and an inner
-       * scroller, so above 1080px the panel scrolls as well — and a header that scrolls away there
-       * is the same loss, reached from the other side. So the rule is now unconditional, and what
+       * scroller, so above 1080px the panel scrolls as well — and rows that scroll away there are
+       * the same loss, reached from the other side. So the rule is now unconditional, and what
        * scopes it is the panel rather than a breakpoint.
        *
-       * Scoped to this panel and to nothing else: a bare `.panel-head` rule would do the same to the
-       * ledger's header, which has no handle to lose but has a title that would stop being where the
-       * reader left it.
+       * Scoped to this panel and to nothing else: a bare `.inspector-chrome`, or a bare
+       * `.panel-head`, would do the same to the ledger's header, which has no handle to lose but has
+       * a title that would stop being where the reader left it.
        *
        * Sticky to the panel's own scrollport, not the page's: the scroll container is the panel, so
        * nothing here moves when the page does. Same shape as `.turn-head` in the ledger — sticky,
-       * z-index, an opaque background, the bottom border it already had. */
-      #inspector-panel > .panel-head {
+       * z-index, an opaque background, and the borders it already had. */
+      #inspector-panel > .inspector-chrome {
         position: sticky;
         top: 0;
         z-index: 2;
@@ -2298,8 +2313,18 @@
            `display: none` rather than a clip, so the record is not laid out while it is folded away.
            It stays selected and stays rendered — the reader folded it, they did not dismiss it, and
            the handle in the header is the only way back — but nothing is measured for a box nobody
-           is looking at. */
-        #inspector-panel.is-inspector-folded > *:not(.panel-head) {
+           is looking at.
+           *
+           * Two selectors, and the second one exists only because of `.inspector-chrome`. Those rows
+           * are wrapped so they can be pinned as one unit, and a wrapper is precisely what this rule
+           * would otherwise hide: `:not(.inspector-chrome)` keeps the wrapper, and the second selector
+           * then takes out everything inside it that is not the header. Same shape one level in, so
+           * folded is still the header alone and the panel's height is still the header's height,
+           * whatever that turns out to be. Without that second half folded would stand 124px tall
+           * instead of 49px — a "collapsed" panel 2.5x its collapsed height, which is no longer a
+           * collapsed panel. */
+        #inspector-panel.is-inspector-folded > *:not(.inspector-chrome),
+        #inspector-panel.is-inspector-folded .inspector-chrome > *:not(.panel-head) {
           display: none;
         }
 
@@ -2654,35 +2679,37 @@
 
         <section class="panel" id="inspector-panel" aria-labelledby="inspector-heading">
           <div class="inspector-resize" id="inspector-resize" role="separator" aria-orientation="horizontal" aria-label="拖动调整检视高度" tabindex="-1"></div>
-          <div class="panel-head">
-            <h2 class="section-title" id="inspector-heading">检视</h2>
-            <span class="panel-head-meta" id="inspector-meta"></span>
-            <!-- Two buttons, one job each, in the order a window uses them. D38 replaced a single
-               button that cycled folded -> half -> expanded -> folded: it worked, and reaching
-               「半高」 from 「完全展开」 still took two clicks and from 「折叠」 took one, so the
-               control's contract was a sequence rather than a height. Each of these states what
-               its click does instead, and neither one writes the dock state — they hand a named
-               target to setInspectorDock(), which is the only writer.
+          <div class="inspector-chrome">
+            <div class="panel-head">
+              <h2 class="section-title" id="inspector-heading">检视</h2>
+              <span class="panel-head-meta" id="inspector-meta"></span>
+              <!-- Two buttons, one job each, in the order a window uses them. D38 replaced a single
+                 button that cycled folded -> half -> expanded -> folded: it worked, and reaching
+                 「半高」 from 「完全展开」 still took two clicks and from 「折叠」 took one, so the
+                 control's contract was a sequence rather than a height. Each of these states what
+                 its click does instead, and neither one writes the dock state — they hand a named
+                 target to setInspectorDock(), which is the only writer.
 
-               Both ship hidden: nothing is pinned until the reader selects a record on a narrow
-               screen, and in flow there is no height to change and no reason to offer to. The
-               minimize button has no aria-expanded on purpose — the dash is the glyph, and the
-               attribute would make `.section-toggle` rotate it. -->
-          <div class="panel-head-actions">
-            <button type="button" class="section-toggle" id="inspector-expand" aria-expanded="false" aria-controls="panels" aria-label="完全展开检视" title="完全展开检视" hidden>
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path id="inspector-expand-icon" d="M4 6.5 8 10.5 12 6.5" />
-              </svg>
-            </button>
-            <button type="button" class="section-toggle" id="inspector-minimize" aria-controls="panels" aria-label="折叠到最小" title="折叠到最小" hidden>
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path id="inspector-minimize-icon" d="M3.5 8 H12.5" />
-              </svg>
-            </button>
+                 Both ship hidden: nothing is pinned until the reader selects a record on a narrow
+                 screen, and in flow there is no height to change and no reason to offer to. The
+                 minimize button has no aria-expanded on purpose — the dash is the glyph, and the
+                 attribute would make `.section-toggle` rotate it. -->
+            <div class="panel-head-actions">
+              <button type="button" class="section-toggle" id="inspector-expand" aria-expanded="false" aria-controls="panels" aria-label="完全展开检视" title="完全展开检视" hidden>
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path id="inspector-expand-icon" d="M4 6.5 8 10.5 12 6.5" />
+                </svg>
+              </button>
+              <button type="button" class="section-toggle" id="inspector-minimize" aria-controls="panels" aria-label="折叠到最小" title="折叠到最小" hidden>
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path id="inspector-minimize-icon" d="M3.5 8 H12.5" />
+                </svg>
+              </button>
+            </div>
+            </div>
+            <p class="inspector-locator" id="inspector-locator">尚未选择记录</p>
+            <div class="tablist" id="tablist" role="tablist" aria-label="记录详情视图"></div>
           </div>
-          </div>
-          <p class="inspector-locator" id="inspector-locator">尚未选择记录</p>
-          <div class="tablist" id="tablist" role="tablist" aria-label="记录详情视图"></div>
           <div id="panels">
             <div class="tabpanel" role="tabpanel" id="panel-summary" tabindex="0" aria-labelledby="tab-summary"></div>
           </div>
