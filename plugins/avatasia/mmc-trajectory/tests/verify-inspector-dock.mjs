@@ -1133,6 +1133,64 @@ assert('the grip is offered exactly where there is a height to drag',
 assert('pinned means both docked and expanded, so the grip survives expanding',
   !!applyFn && /var\s+docked\s*=\s*state\.inspectorDock\s*!==\s*'flow'/.test(applyFn));
 
+// review #5. The grip used to ship `position: absolute` on the panel's top edge, and every
+// assertion above still passed — the same shape as D27 one layer down. Inside a scrolling box an
+// absolutely positioned child travels WITH the content, so the strip left the scrollport on the
+// first scroll: measured at 900x780, its overlap with the panel was 8px at scrollTop 0 and 0px by
+// scrollTop 174. `sticky` is what pins a box to the SCROLLPORT instead, which is the thing a grip
+// has to survive.
+//
+// Not D45. That number is already taken by the endpoint-count mismatch recorded in docs/LAYERS.md,
+// and a defect number that points at two different things is a number that will be cited wrong.
+assert('the grip is pinned to the panel scrollport, not carried along by its content',
+  narrow ? valueIn(narrow, '#inspector-panel .inspector-resize', 'position') === 'sticky' : false,
+  narrow ? `position: ${valueIn(narrow, '#inspector-panel .inspector-resize', 'position')}` : 'no narrow block');
+
+// …and it has to be pinned there BY ONE RULE. The D27 lesson is that a later rule can undo the one
+// keeping a property, so reading the base rule is not enough: enumerate every `position` that can
+// land on the grip and require it to be exactly the one value. Same shape as the display-pair
+// enumeration at the end of this section.
+//
+// The pseudo-elements are excluded, and deliberately so rather than by accident: `.inspector-resize::after`
+// is the visible hairline and it legitimately carries `position: absolute` against the strip, which is
+// the one thing the strip itself must not be. Counting it would make this assertion demand the strip
+// lose the thing that draws it.
+const gripPositions = [...(narrow || '').matchAll(/^([^{}@][^{}]*?)\{([^{}]*)\}/gm)]
+  .filter((m) => m[1].split(',').map((s) => s.trim()).some((s) =>
+    s.includes('.inspector-resize') && !s.includes('::')))
+  .map((m) => (/^[ \t]*position\s*:\s*([^;]+)/m.exec(m[2]) || [, ''])[1].trim())
+  .filter(Boolean);
+assert('exactly one rule positions the grip itself, and it is the one that pins it',
+  gripPositions.length === 1 && gripPositions[0] === 'sticky',
+  JSON.stringify(gripPositions));
+
+// The second cause, and the one that outlived scrollTop 0. The grip shares its edge with
+// `.inspector-chrome`, which is sticky at the panel's top with an opaque background at z-index 2.
+// The grip sat at z-index 1, so of the 8px where the two overlapped, 45 of 45 sampled points hit
+// the header: the reader could not drag the panel taller on ANY scroll position, not only after
+// scrolling. Same family as D27 — the properties were all present and all correct in isolation.
+//
+// The chrome is read out of `css` and not out of `narrow`, and that is not tidiness. The chrome rule
+// lives in the base stylesheet and the grip rule lives in the dock query, so reading both from
+// `narrow` finds nothing for the chrome, `Number(null)` is 0, and `3 > 0` is true whatever the grip
+// says — an assertion that cannot fail, produced by writing the same variable twice. The first
+// version of this line did exactly that and caught none of the mutations below.
+const gripZ = narrow ? Number(valueIn(narrow, '#inspector-panel .inspector-resize', 'z-index')) : NaN;
+const chromeZ = Number(valueIn(css, '#inspector-panel > .inspector-chrome', 'z-index'));
+assert('the grip paints above the header it shares an edge with, so it can be reached',
+  Number.isFinite(gripZ) && Number.isFinite(chromeZ) && gripZ > chromeZ,
+  `grip z-index ${gripZ}, chrome z-index ${chromeZ}`);
+
+// Sticky puts the strip back IN the flow, which costs height the panel did not used to pay, so the
+// margin has to take exactly that back. Two numbers that have to be one rule: change `height`
+// without changing the margin and the chrome is pushed down by the difference, which is a layout
+// change nobody asked for and no assertion would otherwise catch.
+const gripHeight = narrow ? parseFloat(valueIn(narrow, '#inspector-panel .inspector-resize', 'height')) : NaN;
+const gripMargin = narrow ? parseFloat(valueIn(narrow, '#inspector-panel .inspector-resize', 'margin-bottom')) : NaN;
+assert('the negative margin cancels the height the strip now takes in the flow',
+  Number.isFinite(gripHeight) && Number.isFinite(gripMargin) && gripMargin === -gripHeight,
+  `height ${gripHeight}px, margin-bottom ${gripMargin}px`);
+
 /* ---------- D34: the third height, and the one that was missing ----------
  *
  * the reviewer: 「不是三态么？- 折叠到最小 这个按钮没做。」

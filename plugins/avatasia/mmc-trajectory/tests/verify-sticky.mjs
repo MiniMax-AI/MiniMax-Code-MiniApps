@@ -153,10 +153,23 @@ assert('the turn head is opaque', isOpaqueBackground(value('.turn-head', 'backgr
 // The strip is the only pinned box here that sits directly on top of another one. That is what
 // makes its own background load-bearing rather than cosmetic: everything below it in the chain
 // scrolls into its seam, so an opaque sibling cannot cover for it.
-const pinnedStacks = [['.overview', '.window-bar'], ['.window-bar', '.turn-head']];
+//
+// The inspector's grip joined this list when it stopped being `position: absolute` and became
+// sticky to the panel's own scrollport. It belongs here rather than only in
+// `verify-inspector-dock.mjs` because this list is the ENUMERATION of pinned strips, and a list
+// that quietly omits one member is how the grip shipped with z-index 1 under a z-index 2 header:
+// 45 of 45 sampled points on the 8px where they overlapped hit the header, at every scroll
+// position including 0. The rule was already written down in this file — just not applied to it.
+const pinnedStacks = [
+  ['.overview', '.window-bar'],
+  ['.window-bar', '.turn-head'],
+  ['#inspector-panel .inspector-resize', '#inspector-panel > .inspector-chrome'],
+];
 assert('every pinned strip has something scrolling into its seam',
   pinnedStacks.every(([above, below]) =>
-    Number(value(above, 'z-index')) > Number(value(below, 'z-index'))));
+    Number(value(above, 'z-index')) > Number(value(below, 'z-index'))),
+  JSON.stringify(pinnedStacks.map(([a, b]) =>
+    [value(a, 'z-index'), value(b, 'z-index')])));
 
 /* ---------- CSS: the offsets come from variables, and chain down the page ---------- */
 

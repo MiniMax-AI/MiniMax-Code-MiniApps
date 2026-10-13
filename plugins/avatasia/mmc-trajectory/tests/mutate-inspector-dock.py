@@ -388,6 +388,48 @@ MUTATIONS = [
      "        #inspector-panel .inspector-resize.is-open {\n",
      "the grip is shown by removing the very attribute that hides it"),
 
+    # review #5. Three causes, three mutations, and each one leaves the file looking like a grip
+    # that works. Measured at 900x780 before the fix: overlap with the panel 8px at scrollTop 0 and
+    # 0px by scrollTop 174, and of the 8px that was left, 45 of 45 sampled points hit the header.
+    # So the reader could not resize on ANY scroll position — the report said 「scrolled away」,
+    # which is true and is the milder half.
+    #
+    # This first one is the shape the guard file kept missing twice (D27 and now this): every
+    # property is present and every property is correct in isolation. Nothing about the declarations
+    # says the strip travels with the content, because that is not a property — it is what
+    # `position: absolute` means INSIDE a scrolling box.
+    ("the grip is carried along by the panel's content instead of pinned to it",
+     "          position: sticky;\n          top: -7px;\n",
+     "          position: absolute;\n          left: 0;\n          right: 0;\n          top: -7px;\n",
+     "the grip is pinned to the panel scrollport, not carried along by its content"),
+
+    # The second cause, and the one that survived scrollTop 0. `.inspector-chrome` is sticky at the
+    # panel's top edge with an opaque background at z-index 2; the grip sat below it. Every
+    # declaration still said what it was supposed to say.
+    ("the grip is painted under the header it shares an edge with",
+     "          z-index: 3;\n",
+     "          z-index: 1;\n",
+     "the grip paints above the header it shares an edge with"),
+
+    # The third: sticky puts the strip back in the flow, and the panel did not used to pay for it.
+    # Dropping the negative margin is not a subtle layout drift, it is 14px of chrome pushed down —
+    # and every other assertion in this file still passes, because none of them ever asked where the
+    # header starts.
+    ("the strip's own height is no longer paid back in the flow",
+     "          margin-bottom: -14px;\n",
+     "",
+     "the negative margin cancels the height the strip now takes in the flow"),
+
+    # …and the other direction of the same pair: the height changes and the margin does not. The
+    # guard compares the two numbers to each other rather than to a constant, so a taller strip with
+    # a stale margin is caught too. The anchor is the two adjacent declarations above the comment
+    # that explains them — `height` and `margin-bottom` are not adjacent in the file, and an anchor
+    # spanning the comment matches nothing.
+    ("the strip gets taller and its negative margin is left behind",
+     "          top: -7px;\n          height: 14px;\n",
+     "          top: -7px;\n          height: 20px;\n",
+     "the negative margin cancels the height the strip now takes in the flow"),
+
     # D28. The share drifts back to a quarter: the two numeric assertions stop agreeing with each
     # other only if both are read, and the stylesheet fallback is what catches it, because 40vh no
     # longer describes the same promise as INSPECTOR_DOCK_SHARE.

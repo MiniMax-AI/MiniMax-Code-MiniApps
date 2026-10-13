@@ -97,6 +97,17 @@ MUTATIONS = [
      "        z-index: 2;\n        background: var(--mcode-bg);\n",
      "every pinned strip has something scrolling into its seam"),
 
+    # The same rule, the other way round, on the pair that was missing from the list until the grip
+    # stopped being `position: absolute`. The header is opaque and sticky at the panel's top edge,
+    # so climbing it over the grip does not move anything a reader can see — it just makes the grip
+    # unreachable: 45 of 45 sampled points on the 8px they shared hit the header. `verify-inspector-dock.mjs`
+    # guards the same pair from the grip's side; this one proves the list in THIS file can fail,
+    # because a list of pairs cannot test its own completeness.
+    ("the inspector's header climbs above the grip it covers",
+     "      #inspector-panel > .inspector-chrome {\n        position: sticky;\n        top: 0;\n        z-index: 2;\n",
+     "      #inspector-panel > .inspector-chrome {\n        position: sticky;\n        top: 0;\n        z-index: 4;\n",
+     "every pinned strip has something scrolling into its seam"),
+
     ("the window bar goes transparent",
      "        z-index: 3;\n        padding: 8px 16px;\n        background: var(--mcode-bg);\n        border-bottom: 1px solid var(--mcode-border);\n      }\n",
      "        z-index: 3;\n        padding: 8px 16px;\n        border-bottom: 1px solid var(--mcode-border);\n      }\n",
