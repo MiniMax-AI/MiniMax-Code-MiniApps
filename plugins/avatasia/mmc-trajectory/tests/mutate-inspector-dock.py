@@ -460,6 +460,27 @@ MUTATIONS = [
      "          applyInspectorDock();\n",
      "          state.inspectorDock = state.inspectorDock === 'full' ? 'docked' : 'full';\n",
      "pressing the handle moves between the two pinned states and repaints"),
+
+    # ---- the selection is a dock input, and nothing else fires for it ----
+    #
+    # These three are the ones to guess least easily, because each leaves the file looking like the
+    # feature works. The CSS is right, the decision function is right, and the panel does pin itself
+    # to the viewport bottom — it just never gets *asked* whether it is pinned.
+
+    ("selecting a record shows the panel without asking how it should sit",
+     "        scheduleInspectorDock();\n      }\n",
+     "      }\n",
+     "the exit that shows the record is the exit that re-decides how it is docked"),
+
+    ("the selection reaches the scheduler but the scheduler stopped deciding",
+     "          updateInspectorDock();\n        });",
+     "          applyInspectorDock();\n        });",
+     "the dock decision is reachable from a change that fires no scroll event"),
+
+    ("the re-decision is also made in the branch that has no panel to measure",
+     "          dom.panels.appendChild(panel);\n          return;",
+     "          dom.panels.appendChild(panel);\n          scheduleInspectorDock();\n          return;",
+     "the empty-selection branch has no panel left to measure"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

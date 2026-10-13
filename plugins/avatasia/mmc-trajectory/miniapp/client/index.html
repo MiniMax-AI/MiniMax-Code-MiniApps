@@ -6859,6 +6859,21 @@
 
         dom.copyBtn.disabled = false;
         updateHandoffButton();
+
+        // The panel just changed height, and its height is what decides whether sticky has it
+        // pinned to the viewport bottom. Nothing that got here fires scroll or resize, so the
+        // decision those two listeners normally make had not been made: the first appearance of
+        // the inspector inherited whatever state came before it. D32 made that visible — a panel
+        // that was already pinned reported `flow`, so it came up at panelMax with no handle.
+        //
+        // renderInspector() is the exit every selection change goes through (see above), so this is
+        // the one place that owns re-deciding it. The scheduler rather than updateInspectorDock()
+        // directly, because more DOM writes follow this call and a rAF measures what they settled
+        // into rather than what they are halfway through.
+        //
+        // The empty-selection branch above deliberately does not call it: applyInspectorDock() has
+        // already forced `hidden` and `flow` for that case, and there is no panel left to measure.
+        scheduleInspectorDock();
       }
 
       function activateTab(id) {

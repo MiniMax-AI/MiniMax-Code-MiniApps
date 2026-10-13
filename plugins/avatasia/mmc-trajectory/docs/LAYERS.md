@@ -742,6 +742,8 @@ B 等于 A 是决定性的那条。真正要打破的是**「宽度由内容决�
 | `docked` | 面板底部被钉在视口底部 | `max-height: var(--inspector-dock-h)`（50vh）+ `overflow-y: auto` | 显 |
 | `full` | 读者按了把手 | `max-height: var(--inspector-full-h)`，由 JS 实测写入 | 显 |
 
+> **D33 修订了本表的一行语义**：表里 `flow` 写的是「顶端、面板尚未进入视野、滚到文档末尾」—— 这三处仍然成立。但**「选中一条记录后首次出现」不再落在 `flow`**：那一刻面板其实已经被 sticky 钉在视口底（实测 `rect.bottom == innerHeight`），只是判定没被调用过，于是它以 flow 的身份呈现。修好后首次出现即 `docked`（2/5、把手显）。**原表不改，因为 flow 那一行描述的仍然是那三处**；只有「首次出现」被移了出去。见 D33。
+
 ##### 四问
 
 1. **归层** — L6 检视层的**呈现规则**，写 `state.inspectorDock`（`'flow' | 'docked' | 'full'`），一个三值字段。它**不写任何 L0 字段、不改 L2 筛选、不碰 L4 账本的行数据**。
@@ -1257,6 +1259,48 @@ codex 给了一个我没试过的反例：**把一个 assistant 的 `thinking` /
 **（已被下一节取代：那一轮没有结果，下一节那一轮真跑了并拿到了结果）** 第二轮 codex 评审（2026-10-13 00:25）返回的是一份「无法完成评审」。stderr 显示只读沙箱内 `CreateProcess` 一律被拒（`Failed to create unified exec process: helper_unknown_error: setup refresh had errors`），PowerShell 与 cmd 都在执行前失败——**它连一个文件都没读到**，token 用量 26,933。
 
 同一个 Windows 沙箱错误在本次之前已经出现过一次（记在已删除的 stage 1 规格文档 L216，那份文档已随上一轮评审一起删除），第二次复现。**不得把这次失败读成「评审通过」或「评审有意见」。**
+
+**八、D33 — 首次出现既不是 2/5，也没有折叠按钮（2026-10-13，chli 直接报）**
+
+**chli 的原话**：「当前检视第一次出现的高度太高，我之前说是 2/5，还有折叠的按钮也没了。我之前说过是三态吧。」
+
+**这不是 D32 的残留，是 D32 没有覆盖到的那一半。** D32 修的是「flow 态被 sticky 拽走」，落在 `#inspector-panel` 的高度上限上；D33 修的是「首次出现时根本没有判态」，落在**谁来调用判定**上。两者的可观测面完全不同，所以 D32 全绿之后这里仍然是坏的。
+
+**实测（本机 863×803，选中一条记录后立刻读，不做任何滚动）**：
+
+| | D32 修完（当时报绿的那一版） | D33 修后 |
+| --- | --- | --- |
+| `state.inspectorDock` | `flow` | **`docked`** |
+| 面板 class | `panel` | `panel is-inspector-docked` |
+| 面板高 | 467 px（`panelMax`） | **321 px = 2/5** |
+| `#inspector-toggle` | `hidden=""` | **可见**（`aria-label="完全展开检视"`） |
+| `.inspector-resize` 抓手 | `display: none` | **`block`** |
+| 三态可达性 | 只有一态可见 | **三态都可达** |
+
+**根因**：`updateInspectorDock()` —— 那个唯一决定 `state.inspectorDock` 的函数 —— **只挂在 `scroll` 和 `resize` 两个监听上**（`index.html:7784-7785`），中间隔着 `scheduleInspectorDock()` 的 rAF 节流。**选中一条记录改变的是面板的内容和高度，它既不发 `scroll` 也不发 `resize`。** 于是首次出现时判定从未发生，`state.inspectorDock` 沿用上一次的值（flow）。
+
+而 D32 之后 flow 恰好是被 `max-height` 盖住的，于是这个「没判定」表现为**一个看起来已经吸底、逻辑上却是 flow 的面板**：实测首次出现时 `rect.bottom == innerHeight == 803`，即 sticky 其实已经把它钉住了，但 `updateInspectorDock()` 没被叫过，所以状态是 flow，高度用 `panelMax`，而 `applyInspectorDock()` 的 `toggle.hidden = !narrow || !docked` 照着 flow 把折叠按钮藏了。**视觉上吸底、状态上没吸底，这就是 chli 说的「太高」加「按钮没了」。**
+
+**形状上是 D14 的同一条禁令**：内容或位置一变，就必须有**一个**具名出口负责重判依赖它的东西。D14 立的那个出口是 `renderLedger()`（重判 D8 的选中、重测 D9 的偏移）；检视面板的出口是 `renderInspector()` —— 它的注释本来就写着「renderInspector() is the single exit every selection change goes through」—— 而它只调了 `applyInspectorDock()`，**那是个写变量、写 class、写按钮可见性的函数，它不判态**。判态那一半从来没接上。
+
+**四问**
+
+1. **归层** —— L6 检视层的**呈现规则**，写的还是 `state.inspectorDock` 这一个三值字段。不新增 state 字段、不新增 DOM 节点、不新增 CSS 规则，不触碰 L2 筛选 / L3 指标 / L5 账本的行数据。
+2. **关联** —— 与 `applyInspectorDock()` 是**同一个出口的两半**，而且必须是同一个出口：`renderInspector()` 第 6788 行的 `applyInspectorDock()` 把 state 落到 DOM，新增的那一句把 state 判出来。互斥（吸住 vs 不吸住）的写者仍是 `dockInspector()` / `resetInspectorDock()`，判定者仍是 `updateInspectorDock()` —— **我加的是一个调用点，不是一个新的判定点，也不新增写者**。抓手 `.inspector-resize` 与按钮 `.section-toggle` 的显隐规则一个字没改，它们只是第一次拿到了为 true 的输入。
+3. **布局** —— 零 DOM、零 CSS、零 sticky 区域。面板的 `is-inspector-docked` class 由既有 `applyInspectorDock()` 写；`#inspector-toggle` 从 `hidden` 变可见。没有任何容器移动。
+4. **口径** —— **改了一个对外承诺，读点全部列出**：
+   - **不变的数字**：`--inspector-dock-h` 的 2/5（D28）、`--inspector-full-h` 的 `panelMax` 算法、`INSPECTOR_LEDGER_SHARE`、`--sticky-band-h` / `--sticky-overview-h` 链路。**一个常量都没动。**
+   - **不变的读点**：`--inspector-dock-h` 仍只被 `.is-inspector-docked` 读，`--inspector-full-h` 仍只被基础规则与 `.is-inspector-full` 读。**没有新增读点。**
+   - **变的承诺**：「选中一条记录后检视**首次出现**的样子」从 `panelMax`（本机 467 px）变成 **2/5**（本机 321 px）；「首次出现时折叠按钮可见」从**否**变成**是**。flow 态本身仍在（滚回文档顶部、滚到文档末尾），且仍按 D32 用 `panelMax` —— **D32 不撤销，两条一起才成立**。
+   - **D22 的表格要改一行**：`flow` 那一行的「原高，不吸 / 把手隐」在「首次出现」这个时刻已经不成立了，因为首次出现不再是 flow。已在 D22 表下加注，没有偷偷改原表。
+
+**修法**：在 `renderInspector()` 的**收尾**加一句 `scheduleInspectorDock()`。用 scheduler 而不是直调 `updateInspectorDock()`，因为此刻函数体内还有别的 DOM 写入要发生，rAF 保证量到的是最终布局。
+
+**空选中的那一支刻意不调**：`applyInspectorDock()` 第 6568-6570 行已经在 `!hasSelection` 时强制 `panel.hidden = true` 且 `state.inspectorDock = 'flow'`，页面上根本没有面板可量。所以**只有一个调用点**，不是两个分支各来一次。
+
+**守卫**：这次要守的不是 CSS 文本（那正是 D32 漏掉这一层的原因），而是**「选中的出口会重新判态」这条结构性质**，外加两条把这次的范围钉死的性质。三条各配一条变异，共 3 条，全部在 shipped 文件里改：`the exit that shows the record is the exit that re-decides how it is docked` / `the dock decision is reachable from a change that fires no scroll event` / `the empty-selection branch has no panel left to measure`。守卫从 77 条增加到 **80 条**，变异从 62 条到 **65 条**。
+
+**一条方法论，与 D32 那条同族**：**断言规则 ≠ 断言盒子 ≠ 断言「谁在正确的时刻调用了判定」。** D32 的 77 条断言全绿时，面板的**高度规则**是对的、**盒子的位置**也修好了，而**判定的触发时机**从来没被任何一条断言问过。三层里漏掉的那一层不会让前两层的断言变红 —— 所以「上两轮都全绿」不能推出「这一层也在」。
 
 ---
 

@@ -460,6 +460,38 @@ assert('one exit re-decides the panel\'s visibility',
 assert('losing the selection takes the panel back out of the dock',
   !!applyFn && /!hasSelection[\s\S]*?state\.inspectorDock\s*=\s*'flow'/.test(applyFn));
 
+/* ---------- the selection is a dock input, and nothing else fires for it ----------
+ *
+ * chli: 「当前检视第一次出现的高度太高，我之前说是 2/5，还有折叠的按钮也没了。」
+ *
+ * The decision above is reached from three wires — scroll, resize, wire time — and none of them
+ * fires when the reader selects a record. Selecting changes what the panel contains and therefore
+ * how tall it is, which is exactly the input the decision reads, and it emits no event at all. So
+ * the first appearance inherited the previous state: measured `rect.bottom == innerHeight`, i.e.
+ * sticky had already pinned the panel, while `state.inspectorDock` still said `flow`. A panel that
+ * reports flow comes up at panelMax with no handle — too tall, and no way to change it.
+ *
+ * These three guard the trigger, which the 77 assertions above it never did: they read whether the
+ * exit that shows the record re-decides. The CSS rules and the decision function were both correct
+ * throughout, and every assertion about them stayed green.
+ */
+const renderScheduleCalls = (renderFn.match(/scheduleInspectorDock\(\)/g) || []).length;
+assert('the exit that shows the record is the exit that re-decides how it is docked',
+  !!renderFn && renderScheduleCalls > 0);
+
+// Resolved through the call chain rather than by name: a scheduler that stops calling the decision
+// still leaves renderInspector() mentioning it, and reading the call site alone would pass.
+assert('the dock decision is reachable from a change that fires no scroll event',
+  !!renderFn && renderScheduleCalls > 0
+  && !!scheduleFn && /updateInspectorDock\(\)/.test(scheduleFn));
+
+// One call site, and it is past the early return. The empty branch has no panel left to measure —
+// applyInspectorDock() has already forced `hidden` and `flow` for that case — so a call there would
+// be a second place deciding the same thing, which is the shape D14 rules out.
+assert('the empty-selection branch has no panel left to measure',
+  !!renderFn && renderScheduleCalls === 1
+  && renderFn.indexOf('scheduleInspectorDock();') > renderFn.indexOf('if (!entry)'));
+
 /* ---------- the docked height: two fifths of the window, and the reader can move it ---------- */
 
 // chli: 「检视的中间高度改为2/5」. The share is a named constant rather than a bare `/ 4` so that the
