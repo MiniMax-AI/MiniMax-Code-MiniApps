@@ -1308,6 +1308,34 @@
         color: var(--mcode-text-muted);
       }
 
+      /* The inspector's two window buttons, side by side, minimize first — the order every
+         window uses, so the pair reads without being told.
+
+         The wrapper exists so the head still has three flex children and not four: `.panel-head`
+         is `justify-content: space-between`, and a fourth child would put a gap between the
+         record id and the first button instead of one between the buttons and none between
+         those and their neighbours. It is also what keeps the pair together when the head
+         wraps at a narrow width — the id drops to a second line and the buttons stay as one
+         unit on the first. */
+      .panel-head-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        flex: none;
+      }
+
+      /* `.section-toggle` rotates its icon off `aria-expanded`, which is the right idiom for a
+         disclosure triangle and the wrong one for these two. The minimize button's glyph is a
+         dash and must never rotate; the expand button's glyph is written by applyInspectorDock()
+         to point the way its click goes, and a rotation on top of that would point it two ways
+         at once. Both opt out here rather than by dropping `aria-expanded`, which is the honest
+         signal and is what the guard reads. */
+      #inspector-minimize .icon,
+      #inspector-expand .icon {
+        transform: none;
+        transition: none;
+      }
+
       /* ---------------- ledger ---------------- */
 
       .ledger-body {
@@ -2575,11 +2603,29 @@
           <div class="panel-head">
             <h2 class="section-title" id="inspector-heading">检视</h2>
             <span class="panel-head-meta" id="inspector-meta"></span>
-            <button type="button" class="section-toggle" id="inspector-toggle" aria-expanded="true" aria-controls="panels" aria-label="完全展开检视" title="完全展开检视" hidden>
+            <!-- Two buttons, one job each, in the order a window uses them. D38 replaced a single
+               button that cycled folded -> half -> expanded -> folded: it worked, and reaching
+               「半高」 from 「完全展开」 still took two clicks and from 「折叠」 took one, so the
+               control's contract was a sequence rather than a height. Each of these states what
+               its click does instead, and neither one writes the dock state — they hand a named
+               target to setInspectorDock(), which is the only writer.
+
+               Both ship hidden: nothing is pinned until the reader selects a record on a narrow
+               screen, and in flow there is no height to change and no reason to offer to. The
+               minimize button has no aria-expanded on purpose — the dash is the glyph, and the
+               attribute would make `.section-toggle` rotate it. -->
+          <div class="panel-head-actions">
+            <button type="button" class="section-toggle" id="inspector-minimize" aria-controls="panels" aria-label="折叠到最小" title="折叠到最小" hidden>
               <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M4 6.5 8 10.5 12 6.5" />
+                <path d="M3.5 8 H12.5" />
               </svg>
             </button>
+            <button type="button" class="section-toggle" id="inspector-expand" aria-expanded="false" aria-controls="panels" aria-label="完全展开检视" title="完全展开检视" hidden>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path id="inspector-expand-icon" d="M4 6.5 8 10.5 12 6.5" />
+              </svg>
+            </button>
+          </div>
           </div>
           <p class="inspector-locator" id="inspector-locator">尚未选择记录</p>
           <div class="tablist" id="tablist" role="tablist" aria-label="记录详情视图"></div>
@@ -3616,7 +3662,9 @@
         dom.handoffBtn = document.getElementById('handoff-btn');
         dom.inspectorStatus = document.getElementById('inspector-status');
         dom.inspectorPanel = document.getElementById('inspector-panel');
-        dom.inspectorToggle = document.getElementById('inspector-toggle');
+        dom.inspectorMinimize = document.getElementById('inspector-minimize');
+        dom.inspectorExpand = document.getElementById('inspector-expand');
+        dom.inspectorExpandIcon = document.getElementById('inspector-expand-icon');
         dom.inspectorResize = document.getElementById('inspector-resize');
         dom.footerTruncated = document.getElementById('footer-truncated');
         dom.footerBinding = document.getElementById('footer-binding');
@@ -6686,19 +6734,44 @@
         // cap is the header, and dragging a header that cannot grow is the same dead control.
         if (dom.inspectorResize) dom.inspectorResize.hidden = !(narrow && docked && !folded);
 
-        var toggle = dom.inspectorToggle;
-        if (!toggle) return;
-        // The handle appears once there is a pinned panel to change, and it stays in the folded
-        // state on purpose: folded is the only state with no other way out. Hiding it there would
-        // turn 「fold it away」 into 「dismiss it」, which is not what the reader asked for.
-        toggle.hidden = !narrow || !docked;
+        var minimize = dom.inspectorMinimize;
+        var expand = dom.inspectorExpand;
+        if (!minimize || !expand) return;
         var expanded = state.inspectorDock === 'full';
-        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        // Three heights, so three labels, each naming what the click does next rather than which
-        // state it is in: folded -> half, half -> expanded, expanded -> folded.
-        var label = folded ? '展开到半高' : (expanded ? '折叠到最小' : '完全展开检视');
-        toggle.setAttribute('aria-label', label);
-        toggle.setAttribute('title', label);
+
+        // Both buttons exist only while the panel is pinned — in flow there is no height to
+        // change and a grip that does nothing is worse than no grip.
+        //
+        // They do not agree about the folded state, and that is the point. The minimize button
+        // stays: folded is the only state with no other way out, so hiding it there would turn
+        // 「fold it away」 into 「dismiss it」, which is not what the reader asked for. The expand
+        // button goes, because its contract is 「展开 与 半高两种状态切换」 and folded is neither
+        // of the two — leaving it on screen would mean inventing a third behaviour for it.
+        minimize.hidden = !narrow || !docked;
+        expand.hidden = !narrow || !docked || folded;
+
+        // Each label names what this click does, which is the whole reason there are two of
+        // them: before D38 one label had to cover three states and the reader had to count
+        // clicks to use it.
+        var minLabel = folded ? '恢复到半高' : '折叠到最小';
+        minimize.setAttribute('aria-label', minLabel);
+        minimize.setAttribute('title', minLabel);
+
+        expand.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        var expandLabel = expanded ? '收起为半高' : '完全展开检视';
+        expand.setAttribute('aria-label', expandLabel);
+        expand.setAttribute('title', expandLabel);
+
+        // The glyph points the way the click goes: up while it makes the panel taller, down
+        // while it takes the height back. Written here rather than carried as two icons toggled
+        // by `hidden`, because `hidden` is not reliably honoured on an SVG element and this is
+        // the one place that already knows which state it is in.
+        if (dom.inspectorExpandIcon) {
+          dom.inspectorExpandIcon.setAttribute(
+            'd',
+            expanded ? 'M4 9.5 8 5.5 12 9.5' : 'M4 6.5 8 10.5 12 6.5'
+          );
+        }
       }
 
       /* ---------------- resizing the docked panel ----------------
@@ -6744,8 +6817,7 @@
         // scroll offset into the height.
         var next = inspectorResizeDrag.anchorH + (inspectorResizeDrag.anchorClientY - event.clientY);
         state.inspectorDockH = next;
-        state.inspectorDock = 'docked';
-        applyInspectorDock();
+        setInspectorDock('docked');
         event.preventDefault();
       }
 
@@ -6756,15 +6828,32 @@
         inspectorResizeDrag = null;
       }
 
-      function dockInspector() {
-        if (state.inspectorDock !== 'flow') return;
-        state.inspectorDock = 'docked';
+      /**
+       * The one writer of `state.inspectorDock`, and the only reason it is a function.
+       *
+       * D38 turned one control into two, and two controls each assigning the field is two
+       * writers of one value — the thing R1 exists to prevent, and the thing that makes two
+       * controls quietly grow a third state nobody can name. So the buttons do not assign; they
+       * name where the click goes and this does the writing.
+       *
+       * No early return on an unchanged value, and that is load-bearing twice over. A drag calls
+       * this once per pointermove with the same `'docked'` it already had; skipping the repaint
+       * would make the panel stop growing halfway through a resize. `dockInspector()` and
+       * `resetInspectorDock()` keep their own guards, so a scroll frame that asks for the state
+       * the panel is already in still costs nothing.
+       */
+      function setInspectorDock(next) {
+        state.inspectorDock = next;
         applyInspectorDock();
       }
 
+      function dockInspector() {
+        if (state.inspectorDock !== 'flow') return;
+        setInspectorDock('docked');
+      }
+
       function resetInspectorDock() {
-        state.inspectorDock = 'flow';
-        applyInspectorDock();
+        setInspectorDock('flow');
       }
 
       function updateInspectorDock() {
@@ -7872,15 +7961,16 @@
         window.addEventListener('scroll', scheduleInspectorDock, { passive: true });
         window.addEventListener('resize', scheduleInspectorDock);
 
-        dom.inspectorToggle.addEventListener('click', function () {
-          // Three heights to move between while pinned — folded, half, expanded — so one cycle, not
-          // two booleans. flow has no handle, so this never runs there. Named rather than negated so
-          // that 「折叠到最小 → 半高 → 完全展开 → 折叠到最小」 is stated once; the alternative is a
-          // boolean beside the field, which is a fourth state nobody can name.
-          state.inspectorDock = state.inspectorDock === 'full' ? 'folded'
-            : state.inspectorDock === 'folded' ? 'docked'
-              : 'full';
-          applyInspectorDock();
+        // Two buttons, one job each, and neither writes the field itself — each names the state its
+        // click goes to and hands it to the one writer. The single button this replaced cycled
+        // folded -> half -> expanded -> folded, which was correct and still wrong to use: reaching
+        // 「半高」 from 「完全展开」 took two clicks and a reader had to know which click they were
+        // on. What each button does is now in its own aria-label and nowhere else.
+        dom.inspectorMinimize.addEventListener('click', function () {
+          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');
+        });
+        dom.inspectorExpand.addEventListener('click', function () {
+          setInspectorDock(state.inspectorDock === 'full' ? 'docked' : 'full');
         });
 
         // The grip, beside the handle rather than instead of it: the handle chooses which of the
