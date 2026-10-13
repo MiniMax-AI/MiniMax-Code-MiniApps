@@ -332,7 +332,7 @@ assert('the expanded height is measured from the window and the pinned offsets',
 
 /* ---------- the ledger keeps its share of the window ----------
  *
- * chli's words: 「全高把轮次的表格给覆盖了，建议表格至少留整个页面高度的1/4」. Measured before
+ * review feedback: 「全高把轮次的表格给覆盖了，建议表格至少留整个页面高度的1/4」. Measured before
  * the fix at 900 CSS px wide: the expanded panel ran from y=135 to the bottom of a 900px window,
  * and not one ledger row was visible.
  *
@@ -473,7 +473,7 @@ assert('losing the selection takes the panel back out of the dock',
 
 /* ---------- the selection is a dock input, and nothing else fires for it ----------
  *
- * chli: 「当前检视第一次出现的高度太高，我之前说是 2/5，还有折叠的按钮也没了。」
+ * the reviewer: 「当前检视第一次出现的高度太高，我之前说是 2/5，还有折叠的按钮也没了。」
  *
  * The decision above is reached from three wires — scroll, resize, wire time — and none of them
  * fires when the reader selects a record. Selecting changes what the panel contains and therefore
@@ -505,7 +505,7 @@ assert('the empty-selection branch has no panel left to measure',
 
 /* ---------- the docked height: two fifths of the window, and the reader can move it ---------- */
 
-// chli: 「检视的中间高度改为2/5」. The share is a named constant rather than a bare `/ 4` so that the
+// the reviewer: 「检视的中间高度改为2/5」. The share is a named constant rather than a bare `/ 4` so that the
 // two places that need it — the height the panel is given, and the height a drag starts from — read
 // the same number instead of each carrying its own copy of the arithmetic.
 assert('the default docked height is two fifths of the measured window',
@@ -573,7 +573,7 @@ assert('pinned means both docked and expanded, so the grip survives expanding',
 
 /* ---------- D34: the third height, and the one that was missing ----------
  *
- * chli: 「不是三态么？- 折叠到最小 这个按钮没做。」
+ * the reviewer: 「不是三态么？- 折叠到最小 这个按钮没做。」
  *
  * The field had three values and only two of them were heights: `flow` is a position ("not pinned").
  * So the panel could go from two fifths to fully expanded and had nowhere smaller to go. Nothing in
@@ -615,9 +615,37 @@ assert('the handle survives folding, because it is the only way back',
 assert('the third height is reachable from the reader, not just present in the field',
   !!clickReg && /'folded'\s*\?\s*'docked'/.test(clickReg[1]) && /'折叠到最小'/.test(applyFn));
 
+/* ---------- D35: the control has to stay where the reader can reach it ---------- *
+ *
+ * the reviewer: 「滚动到顶部, 检视框变成现在这样了。」
+ *
+ * `.panel-head` is an ordinary block inside a scroll container, so it scrolls away with its
+ * content — no bug, just the default. Measured in the real window: 160px of panel scroll had taken
+ * the header, the locator line and the whole tab bar off the screen, leaving a table that started
+ * mid-way with no title, no tabs and no handle. After D34 that is not an inconvenience: folded hides
+ * every child but the header, so a header that scrolls away is the loss of the only way back.
+ */
+const headSticky = narrow ? valueIn(narrow, '#inspector-panel > .panel-head', 'position') : null;
+const headStickyTop = narrow ? valueIn(narrow, '#inspector-panel > .panel-head', 'top') : null;
+// The background is part of the property, not decoration: a sticky header with a transparent
+// background paints the content scrolling underneath straight through it, and the header reads as
+// part of the table rather than as the thing the table is inside.
+assert('the panel header stays at the top while its content scrolls under it',
+  headSticky === 'sticky' && headStickyTop === '0'
+  && !!narrow && /#inspector-panel\s*>\s*\.panel-head\s*\{[^}]*background:\s*var\(--mcode-surface\)/.test(narrow));
+
+// Scoped twice, and both matter. Above 1080px the panel is not a scroll container — there is
+// nothing to stick to, and a sticky header would follow the reader down a 7,000px ledger column.
+// And a bare `.panel-head` rule would do the same thing to the 轨迹 header, which has no handle to
+// lose but has a title that would stop being where the reader left it.
+const bareHeadSticky = /(?:^|[},])\s*\.panel-head\s*\{[^}]*position:\s*sticky/.test(css);
+assert('the sticky header belongs to the inspector panel alone, and only where the panel scrolls',
+  !!narrow && !bareHeadSticky
+  && /#inspector-panel\s*>\s*\.panel-head\s*\{[\s\S]{0,200}?position:\s*sticky/.test(narrow));
+
 /* ---------- D27: the grip had every property right and was still invisible ---------- */
 //
-// On 2026-10-13 chli reported 「刚才说的支持resize，没做」 and he was right. The grip had shipped
+// On 2026-10-13 the reviewer reported 「刚才说的支持resize，没做」 and he was right. The grip had shipped
 // with D24 carrying a correct top, a correct cursor, a correct touch-action, four attached pointer
 // listeners and a `hidden` attribute the script was setting correctly — and it had never rendered
 // once. `display: none` on the base rule outranks the `hidden` attribute, and nothing in the file
@@ -673,7 +701,7 @@ for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
 assert('a cancelled drag is released like a finished one',
   /dom\.inspectorResize\.addEventListener\(\s*'pointercancel'\s*,\s*onInspectorResizeUp\s*\)/.test(jsHtml));
 
-// chli's question: 「窗口的高度和 检视的完整高度, 取最大还是最小?」 Answer: the smaller one — and
+// the open question: 「窗口的高度和 检视的完整高度, 取最大还是最小?」 Answer: the smaller one — and
 // it already is, because both pinned states cap with `max-height` rather than setting `height`, so
 // what the reader sees is min(content, cap).
 //

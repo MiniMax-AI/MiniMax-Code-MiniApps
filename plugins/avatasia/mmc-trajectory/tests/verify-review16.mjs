@@ -12,9 +12,9 @@
  * a rule. mutate-review16.py breaks each of these in the shipped file and requires this guard to
  * report it by name.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PKG = join(HERE, '..');
@@ -96,6 +96,44 @@ for (const re of leaks) {
   assert(`no shipped file carries ${re}`, !shipped.some((t) => re.test(t)));
 }
 
+/* ---------- 3b. nothing that ships may name the author ---------- */
+
+// A real name in a shipped file identifies the author to every reader who installs the plugin, and
+// plugin.json declares no `files`/`exclude`, so the whole directory ships. This was found in
+// index.html, where two comments said the height cap was 「on chli's instruction」, and in
+// docs/LAYERS.md, where 48 attributions used the name.
+//
+// Two files are exempt, and the exemption is the point rather than a loophole:
+//   mutate-review16.py  — 「需 chli 交互式处理」 is a mutation *anchor*; rewrite it and the anchor
+//                         stops resolving, so the mutation reports as survived.
+//   verify-review16.mjs — this file; those strings are the pattern the rule below matches on.
+// A guard has to keep naming the thing it detects, exactly as verify-parsers.mjs keeps
+// C:\Users\ava\.minimax. Rewriting a detector's own vocabulary makes it vacuously true.
+//
+// docs/LAYERS.md is NOT exempt. The attributions there are load-bearing — they are what separates a
+// settled decision from a preference someone happened to hold — but attribution does not require a
+// name. It ships 「报告者的原话」 and 「报告者直接指定」 instead, which keeps the who-decided and the
+// quoted words and drops only the name. The floor count below is asserted over those role words, so
+// scrubbing the provenance still fails exactly as before.
+const AUTHOR_NAME = /\bchli\b/i;
+const NAME_EXEMPT = new Set(['mutate-review16.py', 'verify-review16.mjs']);
+function shippedSourceFiles(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === '__pycache__' || entry.name === 'fixtures' || entry.name === 'node_modules') continue;
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...shippedSourceFiles(p));
+    else if (/\.(mjs|js|py|ts|html|json|md|yml|yaml)$/i.test(entry.name)) out.push(p);
+  }
+  return out;
+}
+const namedFiles = shippedSourceFiles(PKG)
+  .filter((p) => !NAME_EXEMPT.has(basename(p)))
+  .filter((p) => AUTHOR_NAME.test(readFileSync(p, 'utf8')));
+assert(`no shipped file names the author (${namedFiles.length} do)`,
+  namedFiles.length === 0,
+  namedFiles.map((p) => p.slice(PKG.length + 1)).join(', '));
+
 /* ---------- 4. the design document holds conclusions, not this week's process ---------- */
 
 // These were rows in the 未做清单: one said which PR had no reviews yet, the other named a temp
@@ -106,26 +144,25 @@ for (const re of processMarkers) {
   assert(`LAYERS.md carries no process snapshot (${re})`, !re.test(layers));
 }
 // Scoped deliberately, because the obvious version of this rule is wrong. LAYERS.md attributes
-// decisions to the person who made them in 35 places — 「chli 的原话」, 「chli 截图」 — and that
-// provenance is the most load-bearing part of the document: without it, a reader cannot tell a
-// settled decision from a preference someone happened to hold. What has to go is the shape where
-// the reader is named as the person who still has to *do* something on their own machine.
+// decisions to whoever made them in 25 places — 「报告者的原话」, 「报告截图」 — and that provenance
+// is the most load-bearing part of the document: without it, a reader cannot tell a settled decision
+// from a preference someone happened to hold. What has to go is the shape where the reader is named
+// as the person who still has to *do* something on their own machine.
 assert('LAYERS.md does not hand the reader a to-do on their own machine',
-  !/需\s*chli/.test(layers) && !/chli\s*交互式/.test(layers) && !/由\s*chli\s*处理/.test(layers));
+  !/需\s*报告者/.test(layers) && !/报告者\s*交互式/.test(layers) && !/由\s*报告者\s*处理/.test(layers));
 // Provenance is the most load-bearing part of the document: without it a reader cannot tell a
 // settled decision from a preference someone happened to hold. Asserted in bulk rather than per
-// quote — scrubbing one citation is not a failure mode anyone commits on purpose, and pinning 19
-// individual strings here would be maintenance with no defect behind it. What must not happen is
+// quote — scrubbing one citation is not a failure mode anyone commits on purpose, and pinning each
+// individual string here would be maintenance with no defect behind it. What must not happen is
 // attribution being swept away wholesale, which is what a "tidy up the docs" pass looks like.
 //
-// The bound is derived, not guessed. The document carries 19 of these markers across 9 distinct
-// forms (原话 ×6, 截图 ×4, 直接指定 ×3, and one each of 直接报 / 直接问 / 先报 / 定的方向 /
-// 的反应 / 改写了我). mutate-review16.py sweeps the largest form and leaves 13. The floor is 16:
-// above the mutated count with room to spare, and below the real 19 so ordinary edits that add or
+// The bound is derived, not guessed. The document carries 25 of these markers across 9 distinct
+// forms. mutate-review16.py sweeps the largest form (报告者的原话 ×10) and leaves 15. The floor is 18:
+// above the mutated count with room to spare, and below the real 25 so ordinary edits that add or
 // drop a citation do not turn the guard red.
-const attributions = (layers.match(/chli (?:的原话|截图|直接指定|直接问|直接报|定的方向|的反应|先报|改写了我)/g) || []).length;
+const attributions = (layers.match(/报告者(?:的原话|直接指定|直接问|直接报|先报|定的方向|的反应|改写了我)|报告截图/g) || []).length;
 assert('LAYERS.md keeps attributing decisions to whoever made them',
-  attributions >= 16, `only ${attributions} attributions left, floor is 16`);
+  attributions >= 18, `only ${attributions} attributions left, floor is 18`);
 assert('LAYERS.md still keeps the real pending items',
   /未做清单/.test(layers) && /跨家族验证/.test(layers));
 

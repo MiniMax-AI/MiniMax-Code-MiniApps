@@ -2179,6 +2179,29 @@
           display: none;
         }
 
+        /* The panel's own header stays put while its content scrolls under it.
+
+           `.panel-head` is an ordinary block, and the panel is a scroll container, so a plain child
+           scrolls away with its content — no bug required, that is the default. Measured in the real
+           window (897x900, 2x DPR screenshot): the panel's inner scroll was 160px from the top, and
+           those 160px had taken the header, the 「第 N 轮 · #NNNNN · 思考」 line and the whole tab
+           bar off the screen. What was left was a table starting mid-way, with no title and no
+           tabs — and, after D34 added the folded state, with no handle either. Folded hides every
+           child except this header, so a header that scrolls away is not an inconvenience there, it
+           is the loss of the only way back.
+
+           Sticky to the panel's own scrollport, not the page's: the scroll container is the panel,
+           so nothing here moves when the page does. Scoped to this panel and to the same media
+           query the dock lives in, because above 1080px the panel is not a scroll container and
+           there is nothing to stick to. Same shape as `.turn-head` in the ledger — sticky, z-index,
+           an opaque background, the bottom border it already had. */
+        #inspector-panel > .panel-head {
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          background: var(--mcode-surface);
+        }
+
         /* The grip, on the panel's top edge — which is the edge that moves when the panel is
            pinned to the bottom, so dragging it up makes the panel taller.
 
@@ -6525,7 +6548,7 @@
 
       var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
       // The height the panel gets when the reader has not asked for another one. 2/5 of the
-      // window, on chli's instruction (it was 1/4 through D22–D26).
+      // window, on the reviewer's instruction (it was 1/4 through D22–D26).
       //
       // One constant, because this number used to be written twice — applyInspectorDock() and
       // inspectorDockHeightNow() each had their own `innerHeight / 4`. Two writers of one number is
@@ -6542,7 +6565,7 @@
       // locator and a couple of lines of the summary.
       var INSPECTOR_MIN_DOCK_H = 160;
       // The ledger keeps at least this share of the window, whatever the inspector is doing. It is
-      // one rule with two uses — the expanded cap and the drag clamp — because chli's complaint
+      // one rule with two uses — the expanded cap and the drag clamp — because the reported complaint
       // was that expanding the panel covered the rows outright, and a rule that only bounds one of
       // the two ways the panel can grow is not that rule. Two copies of it would be two rules.
       var INSPECTOR_LEDGER_SHARE = 0.25;

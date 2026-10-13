@@ -110,15 +110,20 @@ MUTATIONS = [
      "| 8 | `.probe\\perf-payload.json`（34 MB 临时产物）待删 |",
      "LAYERS.md carries no process snapshot (/perf-payload/)"),
 
+    # The replacement has to name a *person*, because that is what the detector matches on. An
+    # earlier draft used 「需在交互式会话中处理」, the neutral wording this workspace actually ships —
+    # and it survived, because the rule is about handing the reader a to-do, not about any one word.
     ("the reader is handed a to-do on their own machine",
      "需要另外两把交叉核对的腿",
-     "需 chli 交互式处理",
+     "需报告者在交互式会话中处理",
      "LAYERS.md does not hand the reader a to-do on their own machine"),
 
     # Every occurrence, because the invariant is bulk attribution: sweeping one citation is not the
     # failure being guarded against, sweeping them all is. `all=True` below is what says so.
+    # Anchored on the role word, not the author's name: LAYERS.md ships to every reader, so the name
+    # is out of it. The detector keeps naming only what it detects.
     ("provenance is swept away wholesale",
-     "chli 的原话",
+     "报告者的原话",
      "原始反馈",
      "LAYERS.md keeps attributing decisions to whoever made them",
      True),

@@ -199,7 +199,7 @@ MUTATIONS = [
 
     # D27. This one deletes the rule that makes the grip reachable, which is the whole defect: the
     # base rule's `display: none` becomes final, `hidden` loses to it, and the strip keeps a 0x0 box
-    # on every screen at every width. It is the mutation that reproduces chli's 「支持resize,没做」
+    # on every screen at every width. It is the mutation that reproduces the reviewer's 「支持resize,没做」
     # exactly, and the guard that has to catch it is the one that asks whether anything undoes the
     # rule keeping it invisible rather than whether its properties are present.
     ("the grip can no longer be turned on at all",
@@ -513,6 +513,22 @@ MUTATIONS = [
      "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;",
      "        #inspector-panel.is-inspector-folded > *:not(.panel-head) {\n          display: none;\n          max-height: 51px;",
      "folded is the header alone, so its height needs no number of its own"),
+
+    # ---- the header, and the control that lives in it ----
+    #
+    # The file already lost a round to this shape once: `.panel { overflow: hidden }` turned every
+    # sticky descendant into a child pinned inside a box that never scrolls. This is the mirror of
+    # it — a panel that scrolls, and a header that is not sticky, so the handle scrolls out of reach.
+
+    ("the panel header scrolls away with the content again",
+     "        #inspector-panel > .panel-head {\n          position: sticky;\n",
+     "        #inspector-panel > .panel-head {\n          position: static;\n",
+     "the panel header stays at the top while its content scrolls under it"),
+
+    ("the sticky header is handed to every panel on the page",
+     "        #inspector-panel > .panel-head {\n",
+     "        .panel-head {\n",
+     "the sticky header belongs to the inspector panel alone, and only where the panel scrolls"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

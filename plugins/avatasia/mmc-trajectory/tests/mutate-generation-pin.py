@@ -141,7 +141,7 @@ MUTATIONS = [
 
     # ---- the withdrawal, in the three shapes it can come back in (D19, 2026-10-12) ----
     #
-    # chli reported 「只要滚动就不见」. The picker was being hidden by `body.is-reading-down`, a
+    # the reviewer reported 「只要滚动就不见」. The picker was being hidden by `body.is-reading-down`, a
     # class on <body> toggled by a scroll listener from the direction of travel. Putting the control
     # in the band was right and this undid the benefit of it, so all three mutations below put it
     # back rather than only the one that was there before.

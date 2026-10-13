@@ -1,7 +1,7 @@
 /**
  * The 上下文代 picker has to be readable from anywhere in the ledger, and it was not.
  *
- * What chli reported on 2026-10-12 was 「上下文代的筛选条件没有了」. It was not gone: the element
+ * What the reviewer reported on 2026-10-12 was 「上下文代的筛选条件没有了」. It was not gone: the element
  * ships without `hidden`, carries all 29 options and holds 「全部（默认）」. It lived in #toolbar,
  * which is the one block above the band that scrolls away — so a reader 6,000 px into the ledger
  * had to climb back to the top of the page to change generation, and from up there the control
@@ -36,7 +36,7 @@
  *      pinned over the ledger: its height is reading area the reader does not get.
  *   9. the band is not driven from outside itself. It used to be: a `body.is-reading-down` class,
  *      toggled from a scroll listener by the direction the reader was scrolling, decided whether the
- *      picker was on screen. chli reported on 2026-10-12 that it 「只要滚动就不见」. A filter that
+ *      picker was on screen. the reviewer reported on 2026-10-12 that it 「只要滚动就不见」. A filter that
  *      hides itself the moment the reader starts reading is gone exactly when it is wanted, scroll
  *      direction is not a statement about which filters the reader wants, and visibility inside a
  *      band is the band's own business. D19 is withdrawn; these three are what stops it coming back.
