@@ -2411,14 +2411,36 @@
            script says, and the grip keeps a 0x0 box no matter how correctly the state is decided. */
         #inspector-panel .inspector-resize {
           display: none;
-          position: absolute;
-          left: 0;
-          right: 0;
+          /* Sticky to the PANEL's own scrollport, not the page's — the panel is the scroll
+             container, so `top` is measured against it. This used to be `position: absolute`,
+             which put the strip in the flow's coordinate system but not the flow itself: inside a
+             scrolling box an absolutely positioned child travels WITH the content, so the grip
+             left the scrollport on the first scroll and there was nothing left to grab. Measured
+             2026-10-13 at 900x780: at scrollTop 174 the grip's overlap with the panel was already
+             0px, and at 697 it sat 235px above the panel entirely.
+
+             `left`/`right` went with it. They never applied — a block-level box in flow sizes
+             itself — and keeping them would read as "this is how wide it is" when it is not. */
+          position: sticky;
           top: -7px;
           height: 14px;
+          /* Sticky puts the strip back IN the flow, which costs 14px the panel did not used to
+             pay. Take exactly that back, so the panel's internal layout — and its scrollHeight,
+             which is what a reader scrolls to the end of — is unchanged. The same number as
+             `height`, and it has to stay that number: a strip taller than its own negative margin
+             pushes the chrome down by the difference, and a shorter one leaves a seam. */
+          margin-bottom: -14px;
           cursor: ns-resize;
           touch-action: none;
-          z-index: 1;
+          /* Above `.inspector-chrome` (z-index 2), and this is not cosmetic — it is the second of
+             two reasons the grip was unusable, and the one that survived scrollTop 0. The chrome is
+             sticky at the panel's top edge with an opaque background, and the strip lives on that
+             same edge: of the 8px where the two overlapped, 45 of 45 sampled points hit the header
+             and none hit the grip. So the reader could not drag the panel taller on ANY scroll
+             position, not only after scrolling. Same family as D27 (a `display: none` that put the
+             grip outside the hit tree): every assertion checked that a property appeared in some
+             rule, and none asked whether a later sibling could cover the result. */
+          z-index: 3;
         }
 
         /* The one thing that turns the grip on, and the only one. `hidden` is written by
