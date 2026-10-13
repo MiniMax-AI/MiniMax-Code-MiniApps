@@ -1,9 +1,11 @@
 /**
- * The inspector has three states on a narrow screen and only one of them is a scroll decision:
+ * The inspector has four values on a narrow screen, three of which are heights, and only one of the
+ * four is a scroll decision:
  *
- *   flow   — the panel is in the document; nothing is pinned and the handle is absent
- *   docked — the panel's bottom is pinned to the viewport bottom at half height, handle present
- *   full   — the reader pressed the handle; the cap comes off
+ *   flow   — the panel is in the document; nothing is pinned and neither control is offered
+ *   docked — the panel's bottom is pinned to the viewport bottom at half height; both controls are
+ *   full   — the reader pressed expand; the cap comes off
+ *   folded — the reader pressed minimize; the panel is its own header and only that control remains
  *
  * and it returns to `flow` at the end of the document, which is the state the reader needs in order
  * to reach the footer at all.
@@ -22,9 +24,19 @@
  *      against a real layout position near 934,100. A predicate built on it fires on scroll position
  *      instead of on the panel leaving.
  *
- * The transitions are guarded as three named exits with one literal each, rather than as one
+ * D38 is the same shape one layer up, and the third time this page has produced it. The field had
+ * four values and one control that cycled through them: `folded -> half -> full` reaches `full` in
+ * one press from `folded` and two from `half`, so what the button offered was a sequence, and a
+ * reader had to know which click they were on. Two controls, each with one sentence, fixed it.
+ *
+ * So what this file asserts below is each control's CONTRACT — what one press of it does, where it
+ * is offered, what it says — and never the NUMBER of controls. A third control with a real job
+ * would be an improvement, and a guard that counted controls would report it as a defect.
+ *
+ * The transitions are guarded as one named writer plus the exits that reach it, rather than as one
  * boolean flipped in three places: a boolean makes the third state unnameable, and the third state
- * is the entire feature.
+ * is the entire feature. Two controls each assigning the field would have made that worse rather
+ * than better, which is why both of them hand a named target to `setInspectorDock()` instead.
  *
  * mutate-inspector-dock.py breaks each rule in the shipped file and requires this guard to report
  * it by name, so nothing here can be decorative.
@@ -42,23 +54,34 @@ if (!styleMatch) {
 }
 const css = styleMatch[1].replace(/\/\*[\s\S]*?\*\//g, '');
 
-// The client with its comments removed. Two of the rules below are about what the code *does*, and
+// The client with its comments removed. Three of the rules below are about what the code *does*, and
 // the reasoning for the mistakes they encode sits in comments immediately next to the code — the
 // offsetTop alternative is named in the comment precisely so it is not re-added. Reading the raw
 // text would let a correct explanation of a bug look like the bug still being there, which is the
 // same way client-check's vh rule used to punish its own documentation.
 //
+// HTML comments are removed too, and not only for tidiness: the D38 markup comment explains that
+// the buttons hand a target to `setInspectorDock()`, and an argument-extraction rule that reads the
+// whole file then finds a call that does not exist.
+//
 // Line comments are stripped whole-line, and a `//` preceded by `:` is left alone, so a URL in a
 // string survives.
 const jsHtml = html
+  .replace(/<!--[\s\S]*?-->/g, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^[ \t]*\/\/[^\n]*$/gm, '');
 
 let pass = 0;
 const failures = [];
-function assert(name, cond) {
+/**
+ * `detail` is carried into the failure line. Several rules below pass one — a value, a rule list, a
+ * JSON dump — and they used to be dropped on the floor, which is the worst kind of silent: the guard
+ * said which rule broke and nothing about what it saw, so a failure was a thing to re-derive by hand
+ * from the regex that produced it. Which is exactly the loop the guard exists to end.
+ */
+function assert(name, cond, detail) {
   if (cond) pass += 1;
-  else failures.push(name);
+  else failures.push(detail ? `${name} — ${detail}` : name);
 }
 
 /* ---------- CSS ---------- */
@@ -218,18 +241,98 @@ assert('the docked panel paints a background over the rows under it',
 
 /* ---------- markup ---------- */
 
+/**
+ * The region between `<tag …>` and the matching close, by counting tags. Used to answer 「is this
+ * inside the panel head」 rather than 「does the file contain it」, and to answer it relative to the
+ * inspector rather than to the document.
+ *
+ * The `from` argument is the half of this that matters. The ledger has its own `.panel-head`, it
+ * appears earlier in the document, and a whole-file lookup finds that one — the first version of
+ * the assertion below was satisfied by a head holding neither control, which is §8.2 of METHODOLOGY
+ * in the other direction: not a name too narrow, but a name where a relation was meant.
+ */
+function elementRegion(text, tag, openTag, from = 0) {
+  const at = text.indexOf(openTag, from);
+  if (at < 0) return null;
+  const re = new RegExp('<' + tag + '\\b|</' + tag + '>', 'g');
+  re.lastIndex = at + openTag.length;
+  let depth = 1;
+  let m;
+  while ((m = re.exec(text))) {
+    depth += m[0].charAt(1) === '/' ? -1 : 1;
+    if (depth === 0) {
+      return { start: at, end: m.index + m[0].length, body: text.slice(at, m.index + m[0].length) };
+    }
+  }
+  return null;
+}
+
 const panelTag = /<section([^>]*\bid="inspector-panel"[^>]*)>/.exec(html);
-const toggleTag = /<button([^>]*\bid="inspector-toggle"[^>]*)>/.exec(html);
 const panelClass = panelTag ? /class="([^"]*)"/.exec(panelTag[1]) : null;
-const toggleClass = toggleTag ? /class="([^"]*)"/.exec(toggleTag[1]) : null;
+const minTag = /<button([^>]*\bid="inspector-minimize"[^>]*)>/.exec(html);
+const expTag = /<button([^>]*\bid="inspector-expand"[^>]*)>/.exec(html);
 
 assert('the inspector panel ships the id the script looks it up by', !!panelTag);
-assert('the handle ships inside the panel head, as one of the existing section toggles',
-  !!toggleClass && toggleClass[1].split(/\s+/).includes('section-toggle'));
-assert('the handle ships hidden, because in flow there is nothing to expand',
-  !!toggleTag && /\shidden(\s|=|$)/.test(toggleTag[1]));
-assert('the handle names the action it performs, for both directions of the cycle',
-  !!toggleTag && /aria-label="完全展开检视"/.test(toggleTag[1]));
+
+// Both controls, as a set. An assertion written against 「the handle」 in the singular is satisfied
+// by one of the two shipping, which is exactly what happened once: the count went from one to two
+// and the guard kept reading as though it were still one.
+const CONTROL_TAGS = [['inspector-minimize', minTag], ['inspector-expand', expTag]];
+assert('both controls ship, as the existing section toggle rather than as new kinds of control',
+  CONTROL_TAGS.every(([, tag]) => {
+    const c = tag && /class="([^"]*)"/.exec(tag[1]);
+    return !!c && c[1].split(/\s+/).includes('section-toggle');
+  }),
+  'ids present: ' + (CONTROL_TAGS.filter(([, t]) => !!t).map(([id]) => id).join(' ') || 'none'));
+
+const panelRegion = elementRegion(html, 'section', '<section class="panel" id="inspector-panel"');
+const headRegion = panelRegion
+  && elementRegion(html, 'div', '<div class="panel-head">', panelRegion.start);
+const actionsRegion = headRegion
+  && elementRegion(html, 'div', '<div class="panel-head-actions">', headRegion.start);
+assert('both controls ship inside the inspector panel\'s own head',
+  !!panelRegion && !!headRegion && !!actionsRegion
+  && headRegion.end <= panelRegion.end && actionsRegion.end <= headRegion.end
+  && actionsRegion.body.includes('id="inspector-minimize"')
+  && actionsRegion.body.includes('id="inspector-expand"'));
+
+assert('both controls ship hidden, because in flow there is no height to change',
+  !!minTag && /\shidden(\s|=|$)/.test(minTag[1])
+  && !!expTag && /\shidden(\s|=|$)/.test(expTag[1]));
+
+// Each one names what its first press does, in both the accessible name and the tooltip, and the
+// two are the same string — a tooltip that describes the previous action is the failure mode of
+// writing the two attributes from separate ternaries, which every presence check would accept.
+assert('each control ships a label naming what its first press does',
+  !!minTag && /aria-label="折叠到最小"/.test(minTag[1]) && /title="折叠到最小"/.test(minTag[1])
+  && !!expTag && /aria-label="完全展开检视"/.test(expTag[1]) && /title="完全展开检视"/.test(expTag[1]));
+
+// `aria-controls` that points at nothing is an accessibility defect no other rule here can see, and
+// this is the first control in the panel to carry one.
+assert('both controls point at a container that exists',
+  /<div id="panels">/.test(html)
+  && !!minTag && /aria-controls="panels"/.test(minTag[1])
+  && !!expTag && /aria-controls="panels"/.test(expTag[1]));
+
+// The two halves of the glyph problem, asserted as two facts because they are two facts. The
+// minimize button's glyph is a dash, and `.section-toggle` rotates its icon off `aria-expanded` —
+// so the attribute must not be on it. The expand button legitimately carries `aria-expanded`, and
+// therefore needs the rotation switched off for it, or the chevron points sideways whenever the
+// panel is at half height. Neither half is visible in the other.
+assert('the minimize control carries no aria-expanded, which would rotate its dash',
+  !!minTag && !/aria-expanded/.test(minTag[1]));
+assert('the expand control carries aria-expanded, and its glyph opts out of the disclosure rotation',
+  !!expTag && /aria-expanded="false"/.test(expTag[1])
+  && /rotate\(\s*-?[\d.]+(?:deg|turn)\s*\)/.test(valueIn(css, ".section-toggle[aria-expanded='false'] .icon", 'transform') || '')
+  && valueIn(css, '#inspector-expand .icon', 'transform') === 'none');
+
+// `.panel-head` wraps. Two loose children are two flex items and either can take its own line; one
+// inline-flex group with `flex: none` cannot. Asserted with the hazard beside it, for the same
+// reason as the rotation above: the rule is only load-bearing while `flex-wrap: wrap` is there.
+assert('the two controls are one flex group, so a wrapped header cannot split them across lines',
+  valueIn(css, '.panel-head', 'flex-wrap') === 'wrap'
+  && valueIn(css, '.panel-head-actions', 'display') === 'inline-flex'
+  && valueIn(css, '.panel-head-actions', 'flex') === 'none');
 
 // A panel that is not a sticky candidate cannot be docked: the rules above are all id-based, so a
 // missing class would leave them matching nothing while still reading as present.
@@ -258,8 +361,9 @@ function functionSource(name) {
  *
  * Needed because a call made by an enclosing function and the same call made inside an event handler
  * it registers read identically to a regex over the whole body: wire() calls applyInspectorDock()
- * once for itself and once more inside the handle's click handler, so asserting "wire calls it"
- * passes whether or not the top-level call is still there.
+ * once for itself and once more inside the two controls' click handlers, so asserting "wire calls it"
+ * passes whether or not the top-level call is still there. D38 made this worse rather than better —
+ * one extra call site became two.
  */
 function withoutNestedFunctions(src) {
   let out = src;
@@ -282,62 +386,139 @@ function withoutNestedFunctions(src) {
 const stateDecl = /inspectorDock\s*:\s*'([^']+)'/.exec(jsHtml);
 assert('the panel starts in the document, not pinned', !!stateDecl && stateDecl[1] === 'flow');
 
-// Three named exits, one literal each. A version that toggles a boolean cannot express the third
-// state, so this is asserted as three separate literals rather than as "three states exist".
+// Three named exits with one literal each became one writer with the exits handing it a target, in
+// D38: turning one control into two would otherwise mean two places assigning the field, which is
+// the thing R1 exists to prevent and the thing that lets two controls quietly grow a third height
+// nobody can name.
 const dockFn = functionSource('dockInspector');
 const resetFn = functionSource('resetInspectorDock');
 const applyFn = functionSource('applyInspectorDock');
 const updateFn = functionSource('updateInspectorDock');
 const scheduleFn = functionSource('scheduleInspectorDock');
+const setFn = functionSource('setInspectorDock');
+const moveFn = functionSource('onInspectorResizeMove');
 
-assert('one exit pins the panel', !!dockFn && /state\.inspectorDock\s*=\s*'docked'/.test(dockFn));
-assert('one exit puts the panel back in the document', !!resetFn && /state\.inspectorDock\s*=\s*'flow'/.test(resetFn));
-assert('both exits repaint the panel before returning', !!dockFn && !!resetFn
-  && dockFn.includes('applyInspectorDock()') && resetFn.includes('applyInspectorDock()'));
+assert('one function writes the dock state, for everything that reacts to input',
+  !!setFn && /state\.inspectorDock\s*=\s*next\s*;/.test(setFn) && /applyInspectorDock\(\)\s*;/.test(setFn));
 
-// Every write to the field, listed. R5 is "one writer per state field"; the honest form of that for a
-// three-state field is a closed set of the places allowed to write it, so a sixth writer added
-// somewhere unrelated fails here instead of quietly becoming a fourth state.
+// The writer must not early-return on a same-value call. The drag calls it with 'docked' on every
+// pointermove, so `if (state.inspectorDock === next) return;` would look like a harmless
+// optimisation and would freeze the panel at whatever height it had reached halfway through the
+// drag.
 //
-// The set grew from three to five, and the count alone would not say whether that was justified —
-// so each writer is named, with the state it is allowed to write. Two of them are new: losing the
-// selection has to take the panel out of the dock, and a drag settles it into the docked state
-// rather than leaving it expanded.
+// Asserted as the body BEING those two statements, not as them being adjacent. Adjacency was the
+// first version and the mutation survived it — a version that guards the call and then does exactly
+// the same two things still has them adjacent. "Nothing sits between these two" and "nothing sits
+// before these two" are different claims, and only the second one is the rule.
+assert('the writer never skips a call that asks for the state it is already in, because the drag repeats',
+  !!setFn
+  && setFn.replace(/^[^]*?\{/, '').replace(/\}\s*$/, '').replace(/\s+/g, ' ').trim()
+    === 'state.inspectorDock = next; applyInspectorDock();');
+
+assert('the scroll exit that pins the panel hands its literal to that one writer',
+  !!dockFn && /setInspectorDock\(\s*'docked'\s*\)/.test(dockFn)
+  && /state\.inspectorDock\s*!==\s*'flow'\s*\)\s*return/.test(dockFn));
+assert('the scroll exit that unpins hands its literal to that one writer',
+  !!resetFn && /setInspectorDock\(\s*'flow'\s*\)/.test(resetFn));
+// Neither exit repaints on its own. A `applyInspectorDock()` beside the writer call is a second
+// repaint path through the same state change, and the reason the writer exists is that there is one.
+assert('both scroll exits repaint through the writer, not on their own',
+  dockFn.includes('setInspectorDock(') && resetFn.includes('setInspectorDock(')
+  && !/applyInspectorDock/.test(dockFn) && !/applyInspectorDock/.test(resetFn));
+
+// Every write to the field, listed. R5 is "one writer per state field"; with two controls the honest
+// form of that is a closed set of TWO writes — the writer, and the one place that forces the panel
+// back into the document when the selection is lost. A third write is a fourth door, and the count
+// is what notices it.
 //
 // `(?!=)` on the assignment is not decoration: without it the `!==` comparisons read as writes too,
 // and the count becomes a statement about how often the field is compared rather than how often it
 // is changed.
 const writes = [...jsHtml.matchAll(/state\.inspectorDock\s*=(?!=)\s*([^;\n]+)/g)].map((m) => m[1].trim());
-assert('the field names all three states, not a boolean',
-  ['flow', 'docked', 'full'].every((s) => jsHtml.includes(`'${s}'`)));
-assert('nothing writes the dock state from outside the five declared exits',
-  writes.length === 5
-  && writes.filter((w) => w === "'docked'").length === 2
-  && writes.filter((w) => w === "'flow'").length === 2
-  && writes.filter((w) => w.includes("=== 'full'")).length === 1);
-assert('the declared writers are the ones that exist, and each writes what it is allowed to',
-  /state\.inspectorDock\s*=\s*'docked'/.test(dockFn)
-  && /state\.inspectorDock\s*=\s*'flow'/.test(resetFn)
-  && /state\.inspectorDock\s*=\s*'flow'/.test(applyFn)
-  && /state\.inspectorDock\s*=\s*'docked'/.test(functionSource('onInspectorResizeMove')));
+assert('the field names its one position and all three heights, not a boolean',
+  ['flow', 'docked', 'folded', 'full'].every((s) => jsHtml.includes(`'${s}'`)));
+assert('nothing writes the dock state except the one writer and the lost-selection exit',
+  writes.length === 2
+  && writes.filter((w) => w === 'next').length === 1
+  && writes.filter((w) => w === "'flow'").length === 1,
+  'writes: ' + JSON.stringify(writes));
 
-/* ---------- the handle contract ---------- */
+// The write count above is a count, not a statement about what the values are. A caller that hands
+// the writer a computed height — a variable, an expression — would pass it while inventing a fourth
+// state nobody declared, so every argument is required to be a spelled-out member of the set.
+//
+// The leading `\b` is load-bearing and is here because of what it refuses: `resetInspectorDock`
+// CONTAINS the substring `setInspectorDock`, so without it every one of the three `resetInspectorDock()`
+// occurrences in the file was read as a fourth, fifth and sixth call into the writer with no
+// argument. §8.1 of METHODOLOGY — a name that is a prefix of another name is still a name.
+const dockArgs = [...jsHtml.matchAll(/\bsetInspectorDock\(\s*([^)]*)\)/g)].map((m) => m[1].trim());
+const SPELLED_STATE = /^'[^']+'$/;
+const SPELLED_CHOICE = /^state\.inspectorDock\s*===\s*'[^']+'\s*\?\s*'[^']+'\s*:\s*'[^']+'$/;
+assert('every caller hands the writer one of the declared states, spelled out',
+  dockArgs.length > 0
+  && dockArgs.every((a) => a === 'next' || SPELLED_STATE.test(a) || SPELLED_CHOICE.test(a)),
+  'arguments: ' + JSON.stringify(dockArgs));
+assert('the only unspelled argument is the writer\'s own parameter declaration',
+  dockArgs.filter((a) => a === 'next').length === 1
+  && /function\s+setInspectorDock\(\s*next\s*\)/.test(jsHtml));
 
-assert('the handle is hidden unless the panel is pinned',
-  !!applyFn && /toggle\.hidden\s*=\s*!narrow\s*\|\|\s*!docked/.test(applyFn));
-// Read through the derived variable, not through the presence of the word: applyInspectorDock
-// mentions 'full' in three other places (the class toggle and both label branches), so an assertion
-// that only looks for the literal is satisfied by a handle that reports a hard-coded "true".
-assert('the handle reports which of the two pinned states it is in',
+/* ---------- the two contracts ---------- */
+
+// Visibility. The two rules differ by exactly one term, and the difference IS the design: folded is
+// the only state with no other way out, so the minimize control stays — hiding it there would turn
+// 「fold it away」 into 「dismiss it」, which is not what the reader asked for. The expand control
+// goes, because its contract is 「完全展开 ↔ 半高」 and folded is neither of the two.
+//
+// Both anchored at the semicolon on purpose. Without it these were prefix matches, and `|| folded`
+// — the exact mutation the second one exists for — passed: the pattern stopped at `!docked` and
+// never saw what came after. The mutation survived, so the assertion was wrong, not the mutation.
+assert('the minimize control is offered wherever there is a height to change',
+  !!applyFn && /minimize\.hidden\s*=\s*!narrow\s*\|\|\s*!docked\s*;/.test(applyFn)
+  && !/minimize\.hidden\s*=[^;]*folded/.test(applyFn));
+assert('the expand control is offered on the two heights it toggles between',
+  !!applyFn && /expand\.hidden\s*=\s*!narrow\s*\|\|\s*!docked\s*\|\|\s*folded\s*;/.test(applyFn));
+
+// Labels, read through the derived variables rather than through the presence of the words:
+// applyInspectorDock mentions 'full' and 'folded' in several other places — both class toggles and
+// both label branches — so a check that only looks for a literal is satisfied by a control that
+// reports a hard-coded label and never changes it.
+assert('the minimize label is produced from the field, and both its outcomes are named',
+  !!applyFn && /var\s+minLabel\s*=\s*folded\s*\?\s*'恢复到半高'\s*:\s*'折叠到最小'\s*;/.test(applyFn)
+  && /minimize\.setAttribute\(\s*'aria-label',\s*minLabel\s*\)/.test(applyFn)
+  && /minimize\.setAttribute\(\s*'title',\s*minLabel\s*\)/.test(applyFn));
+assert('the expand label is produced from the field, and both its outcomes are named',
+  !!applyFn && /var\s+expandLabel\s*=\s*expanded\s*\?\s*'收起为半高'\s*:\s*'完全展开检视'\s*;/.test(applyFn)
+  && /expand\.setAttribute\(\s*'aria-label',\s*expandLabel\s*\)/.test(applyFn)
+  && /expand\.setAttribute\(\s*'title',\s*expandLabel\s*\)/.test(applyFn));
+
+// Tooltip and accessible name come from one variable, so a label change cannot leave the tooltip
+// describing the previous action — the failure mode of writing the two attributes from separate
+// ternaries, which every presence check above would have accepted. Counted inside the function
+// rather than the file: other controls set their own titles for their own reasons.
+assert('no control writes its tooltip from anything but its own label variable',
+  !!applyFn
+  && (applyFn.match(/setAttribute\(\s*'title'/g) || []).length === 2
+  && (applyFn.match(/setAttribute\(\s*'title',\s*\w+Label\s*\)/g) || []).length === 2);
+
+// The expand control's own state signal, read through the derived variable rather than through the
+// presence of the word: `expanded` is what both the attribute and the glyph are written from, so an
+// assertion satisfied by a hard-coded 'true' would pass while the chevron pointed the wrong way.
+assert('the expand control reports which of the two heights it is in',
   !!applyFn
   && /var\s+expanded\s*=\s*state\.inspectorDock\s*===\s*'full'/.test(applyFn)
-  && /aria-expanded',\s*expanded\s*\?/.test(applyFn));
-// Three heights now, and the labels are still produced by one expression off the field. Matched as a
-// ternary chain rather than by counting strings: a hard-coded label satisfies a presence check and
-// then reports the same action in every state, which is the failure this assertion exists to prevent.
-assert('the three heights are named by one rule, so the labels cannot disagree',
-  !!applyFn
-  && /var\s+label\s*=\s*folded\s*\?\s*'展开到半高'\s*:\s*\(\s*expanded\s*\?\s*'折叠到最小'\s*:\s*'完全展开检视'\s*\)/.test(applyFn));
+  && /expand\.setAttribute\(\s*'aria-expanded',\s*expanded\s*\?\s*'true'\s*:\s*'false'\s*\)/.test(applyFn));
+
+// The glyph points the way the click goes. Bound once at lookup and written through that same
+// binding, because the write sits inside `if (dom.inspectorExpandIcon)` — delete the lookup and the
+// guard stops doing anything at all, silently, for the life of the panel. That is the D27 shape
+// exactly: the property is present, the code is right, and the arrow points the wrong way.
+assert('the expand glyph is bound at lookup, and its direction comes from the same field',
+  /dom\.inspectorExpandIcon\s*=\s*document\.getElementById\(\s*'inspector-expand-icon'\s*\)/.test(jsHtml)
+  && /<path id="inspector-expand-icon"/.test(html)
+  && !!applyFn
+  && /dom\.inspectorExpandIcon\.setAttribute\(\s*'d',\s*expanded\s*\?\s*'M4 9\.5 8 5\.5 12 9\.5'\s*:\s*'M4 6\.5 8 10\.5 12 6\.5'/.test(
+    applyFn.replace(/\s+/g, ' '))
+  && /<path id="inspector-expand-icon" d="M4 6\.5 8 10\.5 12 6\.5"/.test(html));
 
 // The fully expanded height is measured, not derived from vh: this page runs in a host iframe where
 // 100vh is not the reader's height, which is the reason client-check bans it.
@@ -489,19 +670,66 @@ const wireFn = functionSource('wire');
 assert('the dock state is decided once at wire time',
   !!wireFn && /^\s*applyInspectorDock\(\);/m.test(withoutNestedFunctions(wireFn)));
 
-// Pressing the handle has to repaint: the class and the height are both written there, and a click
-// that only changed the field would leave the panel looking exactly as it did.
-//
-// All three transitions are named rather than "the value changed": a cycle that jumped from half
-// height straight to expanded, or left folded unreachable, satisfies a looser check and is exactly
-// the shape of the bug this replaced — three class values, only two of them reachable.
-const clickReg = /dom\.inspectorToggle\.addEventListener\(\s*'click'\s*,\s*function\s*\(\s*\)\s*\{([\s\S]*?)\n\s*\}\);/.exec(jsHtml);
-assert('pressing the handle walks folded -> half -> expanded -> folded and repaints',
-  !!clickReg
-  && /'full'\s*\?\s*'folded'/.test(clickReg[1])
-  && /'folded'\s*\?\s*'docked'/.test(clickReg[1])
-  && /:\s*'full'\s*;/.test(clickReg[1])
-  && clickReg[1].includes('applyInspectorDock()'));
+/* ---------- wiring: what one press of each control does ---------- *
+ *
+ * The report D38 answers was not that the cycle was wrong. `folded -> half -> full -> folded` was
+ * correct and complete, and it still made the reader count: reaching 半高 from 完全展开 took two
+ * clicks and a reader had to know which click they were on. What each control does now lives in its
+ * own handler and nowhere else, so each handler is read and turned into a transition table below —
+ * and the assertions are made against that table rather than against a sentence restating the code,
+ * because a handler that grew a fourth height has to change the table.
+ */
+const pressReg = (prop) => new RegExp(
+  'dom\\.' + prop + '\\.addEventListener\\(\\s*\'click\'\\s*,\\s*function\\s*\\(\\s*\\)\\s*\\{([\\s\\S]*?)\\n\\s*\\}\\);'
+);
+const minClick = pressReg('inspectorMinimize').exec(jsHtml);
+const expClick = pressReg('inspectorExpand').exec(jsHtml);
+
+// `state.X === P ? A : B` reads as: from P this press lands on A, from anywhere else on B. Both
+// controls are written that way because each one names its own partner state, and P is the state the
+// label was read from — which is why the table below needs both halves and not just `from`.
+const PRESS = new Map();
+for (const [key, hit] of [['minimize', minClick], ['expand', expClick]]) {
+  if (!hit) continue;
+  const m = /state\.inspectorDock\s*===\s*'([^']+)'\s*\?\s*'([^']+)'\s*:\s*'([^']+)'/.exec(hit[1]);
+  if (m) PRESS.set(key, { probe: m[1], escapeTo: m[2], fallbackTo: m[3], body: hit[1] });
+}
+const pressTo = (key, from) => {
+  const p = PRESS.get(key);
+  if (!p) return null;
+  return from === p.probe ? p.escapeTo : p.fallbackTo;
+};
+
+assert('each control is wired to a press, and each names the one state it is the partner of',
+  !!minClick && !!expClick && !!PRESS.get('minimize') && !!PRESS.get('expand')
+  && PRESS.get('minimize').probe === 'folded' && PRESS.get('expand').probe === 'full');
+// Neither control assigns the field or repaints by itself. Two controls that each assigned it would
+// be two writers of one value, which is the shape D38 had to be careful not to introduce while
+// removing the shape it was removing.
+assert('no control writes the dock state itself: both hand a target to the one writer',
+  ['minimize', 'expand'].every((k) => PRESS.get(k).body.includes('setInspectorDock('))
+  && !/state\.inspectorDock\s*=(?!=)/.test((minClick ? minClick[1] : '') + (expClick ? expClick[1] : '')));
+// …and neither repaints on its own either. Calling the writer and then calling applyInspectorDock()
+// again looks like belt-and-braces and is a second path from a change to a repaint, which is the
+// reason the writer exists.
+assert('no control repaints on its own: the writer is the only place a change becomes visible',
+  ['minimize', 'expand'].every((k) => !/applyInspectorDock/.test(PRESS.get(k).body)));
+
+// The table. Written against the transitions rather than against the literals in the source, so the
+// claims below are the ones a reader would make about the panel and not the ones a reader of the
+// diff would make about the code.
+assert('both heights other than half are one press away from half height',
+  ['folded', 'full'].every((s) => [...PRESS.keys()].some((k) => pressTo(k, s) === 'docked')));
+assert('the two heights the expand control owns exchange in a single press each way',
+  pressTo('expand', 'docked') === 'full' && pressTo('expand', 'full') === 'docked');
+assert('the minimize control is the only way into folded and the only way out of it',
+  pressTo('minimize', 'docked') === 'folded' && pressTo('minimize', 'folded') === 'docked'
+  && [...PRESS.entries()].every(([k, p]) => k === 'minimize' || (p.escapeTo !== 'folded' && p.fallbackTo !== 'folded')));
+// `flow` is a scroll decision, not a button target. A control that could put the panel back in the
+// document would give the reader a way to leave the dock that nothing re-decides — and the band
+// predicate, which is the only thing allowed to make that call, would stop being the only one.
+assert('no control can put the panel back in the document; the scroll decision owns that alone',
+  [...PRESS.values()].every((p) => p.escapeTo !== 'flow' && p.fallbackTo !== 'flow'));
 
 /* ---------- visibility: the panel is the selection ----------
  *
@@ -602,8 +830,8 @@ assert('a drag is driven only by the pointer that started it',
   !!functionSource('onInspectorResizeMove')
   && /inspectorResizeDrag\.pointerId\s*!==\s*event\.pointerId/.test(functionSource('onInspectorResizeMove')));
 assert('a drag settles the panel into the docked state rather than leaving it expanded',
-  !!functionSource('onInspectorResizeMove')
-  && /state\.inspectorDock\s*=\s*'docked'/.test(functionSource('onInspectorResizeMove')));
+  !!moveFn && /setInspectorDock\(\s*'docked'\s*\)/.test(moveFn)
+  && !/state\.inspectorDock\s*=/.test(moveFn));
 assert('the dragged height is kept in its own field, so it survives leaving the dock',
   /inspectorDockH\s*:\s*null/.test(jsHtml) && /state\.inspectorDockH\s*=\s*next/.test(jsHtml));
 
@@ -652,25 +880,23 @@ assert('folded is the header alone, so its height needs no number of its own',
   foldedDecls.size === 1 && foldedDecls.get('display') === 'none' && !/--inspector-folded-h/.test(jsHtml));
 
 // The header survives by exclusion, which is also what makes it fragile to read: written as `> *`
-// the rule would fold the handle away along with the content, and the reader would be stuck.
+// the rule would fold the minimize control away along with the content, and the reader would be
+// stuck in the one state with no other way out.
 assert('folded keeps the header and takes the rest out of flow',
   !!narrow && new RegExp(foldedSel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(narrow));
 
-// Folded is the only state with no other way out, so the handle has to stay. This single condition
-// is the difference between 「fold it away」 and 「dismiss it」, and nothing else in the file would
-// notice it flipping: the panel still renders, the selection is still there, the guard still passes.
+// Folded is the only state with no other way out, so the minimize control has to stay there. That
+// single condition is the difference between 「fold it away」 and 「dismiss it」, and nothing else in
+// the file would notice it flipping: the panel still renders, the selection is still there, the
+// guard still passes. Written in the negative as well as the positive, because the first version of
+// this was a prefix match and `|| folded` sailed through it — the mutation survived, so the
+// assertion was wrong, not the mutation.
 //
-// Anchored at the semicolon on purpose. Without it this was a prefix match, and `|| folded` — the
-// exact mutation this assertion exists for — passed it: the pattern stopped at `!docked` and never
-// saw what came after. The mutation survived, so the assertion was wrong, not the mutation.
-assert('the handle survives folding, because it is the only way back',
-  !!applyFn && /toggle\.hidden\s*=\s*!narrow\s*\|\|\s*!docked\s*;/.test(applyFn)
-  && /var\s+docked\s*=\s*state\.inspectorDock\s*!==\s*'flow'/.test(applyFn));
-
 // Reachable from the reader, not merely present in the field's value set — which is the distinction
-// the original bug turned on.
-assert('the third height is reachable from the reader, not just present in the field',
-  !!clickReg && /'folded'\s*\?\s*'docked'/.test(clickReg[1]) && /'折叠到最小'/.test(applyFn));
+// the original bug turned on, and the one D38 had to preserve while splitting the control in two.
+assert('folded is reachable in one press, and so is the way back out of it',
+  pressTo('minimize', 'docked') === 'folded' && pressTo('minimize', 'folded') === 'docked'
+  && !!applyFn && /'折叠到最小'/.test(applyFn) && /'恢复到半高'/.test(applyFn));
 
 /* ---------- D35: the control has to stay where the reader can reach it ---------- *
  *

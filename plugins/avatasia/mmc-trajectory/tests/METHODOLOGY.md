@@ -322,6 +322,51 @@ which is what the rule actually claims.
 The tell in both cases: the assertion's subject could be renamed, aliased or reformatted without the
 code changing what it does. If that is possible, the assertion is measuring the spelling.
 
+### 8.3 "Adjacent" is not "first", and "in the file" is not "in the thing"
+
+D38 lost four mutations to two related mistakes, and the first one is the more general of the two.
+
+**Adjacency only excludes what sits *between*.** The rule was "the dock writer must not early-return on
+a same-value call", because the drag calls it with `'docked'` on every `pointermove` and an early
+return freezes the panel halfway through a resize. The first assertion asked for the assignment and the
+repaint to be adjacent:
+
+```js
+/state\.inspectorDock\s*=\s*next\s*;\s*applyInspectorDock\(\)\s*;\s*\}\s*$/   // passes
+```
+
+The mutation inserts `if (state.inspectorDock === next) return;` **above** both of them. They are still
+adjacent, still in that order, still the last two statements — and the guard stays green through a
+defect that silently breaks every drag. The rule is not "nothing between these two statements", it is
+**"these two statements are the whole body"**, so the assertion has to say that:
+
+```js
+setFn.replace(/^[^]*?\{/, '').replace(/\}\s*$/, '').replace(/\s+/g, ' ').trim()
+  === 'state.inspectorDock = next; applyInspectorDock();'
+```
+
+The general form: **an ordering or proximity assertion answers a weaker question than the rule it
+stands for.** Proving `A` precedes `B` is not proving `A` is the first thing. When the rule is about
+an *absence*, the assertion has to bound the whole region, not draw a line inside it.
+
+**A name looked up in the whole file is a name looked up in the wrong file.** The same rule read "both
+controls ship inside the panel head", and the first version found `<div class="panel-head">` with
+`html.indexOf`. The ledger has its own `.panel-head`, it appears earlier in the document, and the
+result was a green assertion on a head that contained neither control. Containment is a relation
+between two positions, so it has to be resolved relatively:
+
+```js
+const head = elementRegion(html, 'div', '<div class="panel-head">', panelRegion.start);
+```
+
+The tell is the same as §8.2's, pointed the other way: not "the subject could be renamed" but **"the
+subject could be the wrong one and the assertion would not know"**. A lookup with no `from` is a
+claim that the thing is unique in the document. If it is not unique — or you have not checked — it is
+a claim about the first occurrence.
+
+And the two together are why so much of this file reads as it does: **every assertion has to name the
+region it is talking about, and every absence has to be bounded rather than spotted.**
+
 ---
 
 ## 9. Say what you did not manage to check

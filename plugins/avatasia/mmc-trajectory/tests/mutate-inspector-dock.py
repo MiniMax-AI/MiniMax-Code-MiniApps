@@ -1,4 +1,4 @@
-"""Mutation control for the inspector's three dock states.
+"""Mutation control for the inspector's dock states.
 
 A guard that cannot fail is not a guard. Each mutation below breaks one of the rules in
 verify-inspector-dock.mjs the way it would actually break in the file, and requires that guard to
@@ -20,6 +20,21 @@ D36 changed the subject of the decision and that changes what those three have t
 every anchor below was re-read rather than re-used: the predicate is now the filter band's top
 edge, and the panel is not in the decision at all. A mutation whose anchor was left pointing at
 the old shape would have kept reporting a catch for a rule that had stopped being the reason.
+
+D38 split one control into two, and that invalidates the same kind of thing one layer up. Ten
+anchors here pointed at `#inspector-toggle`, at `toggle.hidden`, or at a single three-way label
+expression, and every one of them would have raised 「anchor matched 0 times」 — the harness refuses
+rather than reporting a catch for a rule that is no longer the reason. Each was re-read against the
+shipped file rather than re-worded.
+
+Two of the new ones are the ones to guess least easily:
+
+  - `setInspectorDock` gaining `if (state.inspectorDock === next) return;`. That is a correct-looking
+    optimisation and it freezes the panel halfway through every drag, because the drag calls it with
+    'docked' on each pointermove. Nothing else in the file changes.
+  - the expand control's glyph being left to `.section-toggle`'s disclosure rotation. The button
+    legitimately carries `aria-expanded`, so the rotation rule matches it, and the chevron points
+    sideways whenever the panel is at half height — which is the state it spends most of its time in.
 
 A note on the two that change a *count* rather than a behaviour: removing the `else if` leaves
 `if (pinned) dockInspector();`, which looks like it can still unpin. It cannot, and the guard that
@@ -166,22 +181,67 @@ MUTATIONS = [
      "var INSPECTOR_DOCK_QUERY = '(max-width: 767px)';",
      "the script and the stylesheet dock at the same width"),
 
-    # ---- markup: two names in two places ----
+    # ---- markup: two controls, two names in two places ----
+    #
+    # D38 replaced one button with two, so every anchor in this block used to name 「the handle」 and
+    # a mutation that changed one control while the assertion was satisfied by the other would have
+    # reported a catch for the wrong reason. Each control now gets its own mutation for each rule.
 
-    ("the handle ships visible, so it offers to expand a panel that is not pinned",
+    ("the minimize control ships visible, so it offers a height change to a panel in the document",
+     " aria-label=\"折叠到最小\" title=\"折叠到最小\" hidden>",
+     " aria-label=\"折叠到最小\" title=\"折叠到最小\">",
+     "both controls ship hidden, because in flow there is no height to change"),
+
+    ("the expand control ships visible, so a panel in the document offers to expand",
      " aria-label=\"完全展开检视\" title=\"完全展开检视\" hidden>",
      " aria-label=\"完全展开检视\" title=\"完全展开检视\">",
-     "the handle ships hidden, because in flow there is nothing to expand"),
+     "both controls ship hidden, because in flow there is no height to change"),
 
-    ("the handle stops being one of the existing section toggles",
-     "class=\"section-toggle\" id=\"inspector-toggle\"",
-     "class=\"dock-handle\" id=\"inspector-toggle\"",
-     "the handle ships inside the panel head, as one of the existing section toggles"),
+    ("the minimize control stops being one of the existing section toggles",
+     "class=\"section-toggle\" id=\"inspector-minimize\"",
+     "class=\"dock-button\" id=\"inspector-minimize\"",
+     "both controls ship, as the existing section toggle rather than as new kinds of control"),
 
-    ("the handle names only one direction of the cycle",
-     "aria-label=\"完全展开检视\" title=\"完全展开检视\" hidden>",
-     "aria-label=\"切换检视\" title=\"切换检视\" hidden>",
-     "the handle names the action it performs, for both directions of the cycle"),
+    ("the expand control stops being one of the existing section toggles",
+     "class=\"section-toggle\" id=\"inspector-expand\"",
+     "class=\"dock-button\" id=\"inspector-expand\"",
+     "both controls ship, as the existing section toggle rather than as new kinds of control"),
+
+    # One label for both directions is the defect the single control had by construction; here it is
+    # one control among two saying something the other control means.
+    ("the minimize control names an action it does not perform",
+     "aria-label=\"折叠到最小\" title=\"折叠到最小\"",
+     "aria-label=\"切换检视\" title=\"切换检视\"",
+     "each control ships a label naming what its first press does"),
+
+    # A dangling aria-controls is invisible to every other rule here and to a reader of the diff.
+    ("a control points at a container that does not exist",
+     "aria-controls=\"panels\" aria-label=\"折叠到最小\"",
+     "aria-controls=\"panel\" aria-label=\"折叠到最小\"",
+     "both controls point at a container that exists"),
+
+    # The attribute is what makes `.section-toggle` rotate its icon. On the expand button it is the
+    # honest signal and the glyph opts out in CSS instead; on the minimize button there is no honest
+    # signal to carry — the dash IS the glyph — so the attribute has no business being there.
+    ("the minimize control gains the attribute that rotates its dash",
+     "class=\"section-toggle\" id=\"inspector-minimize\" aria-controls=\"panels\"",
+     "class=\"section-toggle\" id=\"inspector-minimize\" aria-expanded=\"false\" aria-controls=\"panels\"",
+     "the minimize control carries no aria-expanded, which would rotate its dash"),
+
+    # Containment, not presence. The ledger has its own `.panel-head` and it appears earlier in the
+    # document, so the first version of this assertion — which looked the wrapper up in the whole
+    # file — was satisfied by a head holding neither control. See §8.2 in the guard.
+    ("the controls move out of the inspector's own head",
+     "<div class=\"panel-head-actions\">",
+     "<div class=\"panel-head-actions-outside\">",
+     "both controls ship inside the inspector panel's own head"),
+
+    # `.panel-head` is `flex-wrap: wrap`. Two loose children are two flex items and either can take
+    # its own line; one inline-flex group with `flex: none` cannot.
+    ("the two controls become two loose children of a header that wraps",
+     "      .panel-head-actions {\n        display: inline-flex;\n",
+     "      .panel-head-actions {\n",
+     "the two controls are one flex group, so a wrapped header cannot split them across lines"),
 
     ("the inspector panel loses the class every other section uses",
      "<section class=\"panel\" id=\"inspector-panel\"",
@@ -195,24 +255,23 @@ MUTATIONS = [
      "        inspectorDock: 'docked',\n",
      "the panel starts in the document, not pinned"),
 
-    ("the exit that pins the panel stops naming the pinned state",
-     "        state.inspectorDock = 'docked';\n        applyInspectorDock();\n      }\n\n"
-     "      function resetInspectorDock() {",
-     "        state.inspectorDock = 'full';\n        applyInspectorDock();\n      }\n\n"
-     "      function resetInspectorDock() {",
-     "one exit pins the panel"),
+    ("the exit that pins the panel names the wrong pinned state",
+     "        setInspectorDock('docked');\n      }\n\n      function resetInspectorDock() {",
+     "        setInspectorDock('full');\n      }\n\n      function resetInspectorDock() {",
+     "the scroll exit that pins the panel hands its literal to that one writer"),
+
+    # The early return is what keeps a scroll handler that fires on every frame from re-running the
+    # whole repaint on every tick. Without it nothing looks wrong and the panel does the same work
+    # sixty times a second.
+    ("the exit that pins the panel stops guarding against a redundant call",
+     "      function dockInspector() {\n        if (state.inspectorDock !== 'flow') return;\n",
+     "      function dockInspector() {\n",
+     "the scroll exit that pins the panel hands its literal to that one writer"),
 
     ("the exit that unpins stops putting the panel back in the document",
-     "      function resetInspectorDock() {\n        state.inspectorDock = 'flow';\n",
-     "      function resetInspectorDock() {\n        state.inspectorDock = 'docked';\n",
-     "one exit puts the panel back in the document"),
-
-    ("an exit changes the field without repainting",
-     "      function dockInspector() {\n        if (state.inspectorDock !== 'flow') return;\n"
-     "        state.inspectorDock = 'docked';\n        applyInspectorDock();\n",
-     "      function dockInspector() {\n        if (state.inspectorDock !== 'flow') return;\n"
-     "        state.inspectorDock = 'docked';\n",
-     "both exits repaint the panel before returning"),
+     "        setInspectorDock('flow');\n",
+     "        setInspectorDock('docked');\n",
+     "the scroll exit that unpins hands its literal to that one writer"),
 
     # `height` instead of `max-height` is the change that looks right in review and pads a short
     # panel out to a quarter of the window with a blank band inside it. It cannot be caught by a
@@ -269,12 +328,45 @@ MUTATIONS = [
      "            dockH = Math.round(window.innerHeight / 4);\n",
      "the default docked height is computed once and both readers call it"),
 
-    # A sixth writer is how a three-state field quietly grows a fourth state. Inserted into wire(),
-    # where nothing else writes the field, so it is a genuinely new writer.
-    ("a sixth place writes the dock state",
+    # D38 collapsed five writers into one. A fourth place to write the field is still how a
+    # three-state field quietly grows a fourth state, so this one survives with a new name: inserted
+    # into wire(), where nothing else writes the field, so it is a genuinely new writer.
+    ("a fourth place writes the dock state",
      "      function wire() {\n",
      "      function wire() {\n        state.inspectorDock = 'docked';\n",
-     "nothing writes the dock state from outside the five declared exits"),
+     "nothing writes the dock state except the one writer and the lost-selection exit"),
+
+    # …and the shape D38 had to be careful not to introduce while removing the shape it was
+    # removing: two controls, each assigning the field. R1 in one edit.
+    ("one of the two controls writes the dock state instead of handing it to the writer",
+     "          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');\n",
+     "          state.inspectorDock = state.inspectorDock === 'folded' ? 'docked' : 'folded';\n",
+     "no control writes the dock state itself: both hand a target to the one writer"),
+
+    # Looks like a harmless optimisation, and freezes the panel halfway through every drag: the drag
+    # calls the writer with 'docked' on each pointermove, so the early return eats every one of them
+    # after the first. Nothing else in the file changes and the panel still works until you resize.
+    ("the writer skips a call that asks for the state it is already in",
+     "        state.inspectorDock = next;\n        applyInspectorDock();\n",
+     "        if (state.inspectorDock === next) return;\n"
+     "        state.inspectorDock = next;\n        applyInspectorDock();\n",
+     "the writer never skips a call that asks for the state it is already in, because the drag repeats"),
+
+    ("the writer changes the field and never repaints",
+     "        state.inspectorDock = next;\n        applyInspectorDock();\n",
+     "        state.inspectorDock = next;\n",
+     "one function writes the dock state, for everything that reacts to input"),
+
+    # A second repaint path through the same state change — the reason the writer is a function.
+    ("a scroll exit repaints on its own instead of going through the writer",
+     "        setInspectorDock('flow');\n",
+     "        state.inspectorDock = 'flow';\n        applyInspectorDock();\n",
+     "both scroll exits repaint through the writer, not on their own"),
+
+    ("a drag writes the dock state instead of handing it to the writer",
+     "        setInspectorDock('docked');\n        event.preventDefault();\n",
+     "        state.inspectorDock = 'docked';\n        event.preventDefault();\n",
+     "a drag settles the panel into the docked state rather than leaving it expanded"),
 
     # ---- visibility: the panel is the selection ----
 
@@ -330,12 +422,12 @@ MUTATIONS = [
      "        // The panel is pinned to the bottom",
      "a drag is driven only by the pointer that started it"),
 
-    # 'full' means no cap, so a drag that leaves the panel there is a grip that does nothing in the
-    # state where it is most visible.
+    # 'full' means the cap comes off, so a drag that leaves the panel there is a grip that does
+    # nothing in the state where it is most visible. Re-anchored on D38's writer rather than deleted:
+    # the rule is unchanged, the spelling of the line it breaks is not.
     ("a drag leaves the panel fully expanded",
-     "        state.inspectorDockH = next;\n        state.inspectorDock = 'docked';\n"
-     "        applyInspectorDock();\n",
-     "        state.inspectorDockH = next;\n        applyInspectorDock();\n",
+     "        setInspectorDock('docked');\n        event.preventDefault();\n",
+     "        setInspectorDock('full');\n        event.preventDefault();\n",
      "a drag settles the panel into the docked state rather than leaving it expanded"),
 
     # ---- the grip ----
@@ -369,25 +461,88 @@ MUTATIONS = [
      "",
      "the grip listens for pointercancel"),
 
-    # ---- the handle contract ----
+    # ---- the two contracts ----
+    #
+    # The two visibility rules differ by exactly one term, and the difference IS the design, so each
+    # gets its own mutation in each direction: a rule that lost `|| docked` offers a control for a
+    # panel in the document, and a rule that gained `|| folded` takes away the only way out of the
+    # one state that has none.
 
-    ("the handle stays on screen when the panel is not pinned",
-     "        toggle.hidden = !narrow || !docked;\n",
-     "        toggle.hidden = !narrow;\n",
-     "the handle is hidden unless the panel is pinned"),
+    ("the minimize control stays on screen when the panel is not pinned",
+     "        minimize.hidden = !narrow || !docked;\n",
+     "        minimize.hidden = !narrow;\n",
+     "the minimize control is offered wherever there is a height to change"),
 
-    ("the handle stops reporting which pinned state it is in",
-     "        var expanded = state.inspectorDock === 'full';\n"
-     "        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');\n",
-     "        toggle.setAttribute('aria-expanded', 'true');\n",
-     "the handle reports which of the two pinned states it is in"),
+    ("the expand control is offered on a panel that has nowhere to expand to",
+     "        expand.hidden = !narrow || !docked || folded;\n",
+     "        expand.hidden = !narrow || !docked;\n",
+     "the expand control is offered on the two heights it toggles between"),
 
-    # D34 turned this line into a three-way chain; the mutation is the same defect (one label for
-    # every state) and now removes the branch that decides which of the three the reader is offered.
-    ("only one of the labels is written",
-     "        var label = folded ? '展开到半高' : (expanded ? '折叠到最小' : '完全展开检视');\n",
-     "        var label = '完全展开检视';\n",
-     "the three heights are named by one rule, so the labels cannot disagree"),
+    # The difference between the two rules, and the only state with no other way out: this one turns
+    # 「fold it away」 into 「dismiss it」, and the panel still renders, the selection is still there,
+    # and every other rule in the guard still passes.
+    ("folding takes the only way back with it",
+     "        minimize.hidden = !narrow || !docked;\n",
+     "        minimize.hidden = !narrow || !docked || folded;\n",
+     "the minimize control is offered wherever there is a height to change"),
+
+    ("the expand control stops reporting which of the two heights it is in",
+     "        expand.setAttribute('aria-expanded', expanded ? 'true' : 'false');\n",
+     "        expand.setAttribute('aria-expanded', 'true');\n",
+     "the expand control reports which of the two heights it is in"),
+
+    # Tooltip and accessible name from two separate ternaries: the tooltip keeps describing the
+    # action the control stopped performing, and every presence check on the labels still passes.
+    ("a control writes its tooltip from its own copy of the label",
+     "        minimize.setAttribute('title', minLabel);\n",
+     "        minimize.setAttribute('title', '折叠到最小');\n",
+     "no control writes its tooltip from anything but its own label variable"),
+
+    # The disclosure rotation is the correct idiom for a disclosure triangle and the wrong one here:
+    # the expand button legitimately carries aria-expanded, so the rule matches it, and without the
+    # opt-out the chevron points sideways in the state it spends most of its time in.
+    ("the expand glyph is left to the disclosure rotation",
+     "      #inspector-expand .icon {\n        transform: none;\n        transition: none;\n      }\n",
+     "      #inspector-expand .icon {\n        transition: none;\n      }\n",
+     "the expand control carries aria-expanded, and its glyph opts out of the disclosure rotation"),
+
+    # The D27 shape again, one level down: the write sits inside `if (dom.inspectorExpandIcon)`, so
+    # losing the lookup turns the whole branch into a silent no-op while every other rule stays green.
+    ("the expand glyph is looked up under a name nothing writes",
+     "        dom.inspectorExpandIcon = document.getElementById('inspector-expand-icon');\n",
+     "",
+     "the expand glyph is bound at lookup, and its direction comes from the same field"),
+
+    ("the expand glyph stops pointing the way its click goes",
+     "        if (dom.inspectorExpandIcon) {\n"
+     "          dom.inspectorExpandIcon.setAttribute(\n"
+     "            'd',\n"
+     "            expanded ? 'M4 9.5 8 5.5 12 9.5' : 'M4 6.5 8 10.5 12 6.5'\n"
+     "          );\n"
+     "        }\n",
+     "        if (dom.inspectorExpandIcon) {\n"
+     "          dom.inspectorExpandIcon.setAttribute('d', 'M4 6.5 8 10.5 12 6.5');\n"
+     "        }\n",
+     "the expand glyph is bound at lookup, and its direction comes from the same field"),
+
+    # Anchored on the whole path element, not on the `d` alone: three glyphs in the file share this
+    # chevron, so a bare `d="…"` matched three times and the harness refused rather than guessing.
+    ("the expand glyph ships pointing at nothing",
+     "<path id=\"inspector-expand-icon\" d=\"M4 6.5 8 10.5 12 6.5\" />",
+     "<path id=\"inspector-expand-icon\" d=\"\" />",
+     "the expand glyph is bound at lookup, and its direction comes from the same field"),
+
+    # D34 turned one label expression into a chain; D38 turned the chain into two, one per control.
+    # Same defect — one label for every state — and now there are two copies of it to catch.
+    ("the minimize label is written once for every state",
+     "        var minLabel = folded ? '恢复到半高' : '折叠到最小';\n",
+     "        var minLabel = '折叠到最小';\n",
+     "the minimize label is produced from the field, and both its outcomes are named"),
+
+    ("the expand label is written once for every state",
+     "        var expandLabel = expanded ? '收起为半高' : '完全展开检视';\n",
+     "        var expandLabel = '完全展开检视';\n",
+     "the expand label is produced from the field, and both its outcomes are named"),
 
     ("the expanded height stops being measured",
      "          var panelMax = Math.max(\n            INSPECTOR_MIN_DOCK_H,\n"
@@ -523,11 +678,38 @@ MUTATIONS = [
      "        dom.followBtn",
      "the dock state is decided once at wire time"),
 
-    # Re-anchored on D34's three-way chain: same defect — the field moves, the panel does not.
-    ("pressing the handle changes the field but not the panel",
-     "              : 'full';\n          applyInspectorDock();\n",
-     "              : 'full';\n",
-     "pressing the handle walks folded -> half -> expanded -> folded and repaints"),
+    # ---- what one press of each control does ----
+    #
+    # D38's report was not that the cycle was wrong — it was complete and correct, and reaching 半高
+    # from 完全展开 still took two clicks. So the mutations below are no longer about a cycle losing
+    # a state; they are about each control's own pair losing its partner.
+
+    # Each of these three keeps the handler's shape and changes only the destination, so the one
+    # that fires is the reachability rule and not 「the control is wired at all」. Deleting the whole
+    # line instead would trip a coarser assertion and report a catch for the wrong reason — which is
+    # what happened to the first attempt at all three.
+    ("the expand control no longer comes back down to half height",
+     "state.inspectorDock === 'full' ? 'docked' : 'full'",
+     "state.inspectorDock === 'full' ? 'full' : 'full'",
+     "both heights other than half are one press away from half height"),
+
+    ("a control offers to put the panel back in the document",
+     "state.inspectorDock === 'full' ? 'docked' : 'full'",
+     "state.inspectorDock === 'full' ? 'flow' : 'full'",
+     "no control can put the panel back in the document; the scroll decision owns that alone"),
+
+    ("the expand control can fold the panel away, so folded has two doors",
+     "state.inspectorDock === 'full' ? 'docked' : 'full'",
+     "state.inspectorDock === 'full' ? 'docked' : 'folded'",
+     "the minimize control is the only way into folded and the only way out of it"),
+
+    # The field moves and the panel is repainted twice: one call through the writer and one beside
+    # it. Reads as harmless, and it is a second path from a change to a repaint.
+    ("a control repaints the panel a second time on its own",
+     "          setInspectorDock(state.inspectorDock === 'full' ? 'docked' : 'full');\n",
+     "          setInspectorDock(state.inspectorDock === 'full' ? 'docked' : 'full');\n"
+     "          applyInspectorDock();\n",
+     "no control repaints on its own: the writer is the only place a change becomes visible"),
 
     # ---- the selection is a dock input, and nothing else fires for it ----
     #
@@ -561,15 +743,10 @@ MUTATIONS = [
      "        #inspector-panel.is-inspector-folded > * {\n          display: none;",
      "folded keeps the header and takes the rest out of flow"),
 
-    ("folding takes the only way back with it",
-     "        toggle.hidden = !narrow || !docked;",
-     "        toggle.hidden = !narrow || !docked || folded;",
-     "the handle survives folding, because it is the only way back"),
-
     ("the panel can be folded away but never unfolded",
-     "            : state.inspectorDock === 'folded' ? 'docked'\n",
-     "            : state.inspectorDock === 'folded' ? 'full'\n",
-     "pressing the handle walks folded -> half -> expanded -> folded and repaints"),
+     "          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');\n",
+     "          setInspectorDock(state.inspectorDock === 'folded' ? 'folded' : 'folded');\n",
+     "both heights other than half are one press away from half height"),
 
     # The version this section shipped first: a cap written down as a number, which then had to be
     # measured correctly and was not — it came out 2px short and clipped the header it was capping.
