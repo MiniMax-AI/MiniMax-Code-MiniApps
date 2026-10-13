@@ -191,15 +191,23 @@ function functionSource(name) {
 }
 
 /** Run syncStickyOffsets() against stub bands and report what it wrote. */
-function measure(dom) {
+function measure(dom, innerHeight) {
   const written = {};
   const sandbox = {
     dom,
+    // D40 made the measurement read the window for the inspector's wide-screen ceiling. The window
+    // is an INPUT here, the same way the three band heights are — so it is a stub, not a constant.
+    window: { innerHeight },
     document: {
       documentElement: {
         style: { setProperty(name, val) { written[name] = val; } },
       },
     },
+    // …but the gap is NOT an input and is NOT stubbed. Hard-coding it here would hand the test its
+    // own answer: the assertion below would compare the shipped file against a copy of the shipped
+    // file's number and pass whatever the file did. It is read out of the file instead, so a mutated
+    // constant moves the expectation with it and the arithmetic is still checked.
+    INSPECTOR_WIDE_BOTTOM_GAP: wideGap,
   };
   vm.createContext(sandbox);
   const src = functionSource('syncStickyOffsets');
@@ -220,20 +228,43 @@ const stub = {
   overview: { offsetHeight: 65 },
   windowBar: { offsetHeight: 57 },
 };
-const run = measure(stub);
-assert('the measurement runs without throwing on the page it ships with', run.error === null);
+// 900 tall with 137 and 65 above it: the ceiling has to be 900 - 137 - 65 - gap. Nothing in the file
+// can produce that number by accident, and the two operands it subtracts are the same two the panel's
+// `top` is built out of, so a version that measures the strips and computes the height from something
+// else fails here rather than agreeing by coincidence.
+const WINDOW_H = 900;
+// The gap the shipped file declares, read out of the shipped file. `verify-inspector-dock.mjs`
+// separately asserts that this media query sits exactly one pixel above the dock query's, so the
+// number below does not need pinning here.
+const wideGapMatch = /var\s+INSPECTOR_WIDE_BOTTOM_GAP\s*=\s*(\d+)\s*;/.exec(html);
+const wideGap = wideGapMatch ? Number(wideGapMatch[1]) : null;
+const run = measure(stub, WINDOW_H);
+assert('the measurement runs without throwing on the page it ships with', run.error === null,
+  'error: ' + run.error);
 assert('the measured band height is the one that gets written',
   run.written['--sticky-band-h'] === '137px');
 assert('the measured strip height is the one that gets written',
   run.written['--sticky-overview-h'] === '65px');
 assert('the measured window bar height is the one that gets written',
   run.written['--sticky-window-h'] === '57px');
+// The wide ceiling is the window minus the two strips that own the top of it, minus the named gap.
+// The strip heights are the ones the panel's `top` is built from, so if either side stopped using
+// them the two numbers would drift apart silently — the panel would sit under a stack of one height
+// while its ceiling reserved room for another.
+assert('the wide ceiling is the window less the same two strips the panel pins below',
+  wideGap !== null
+  && run.written['--inspector-wide-h'] === `${WINDOW_H - 137 - 65 - wideGap}px`,
+  `wide-h=${run.written['--inspector-wide-h']} gap=${wideGap}`);
 
 // The set of variables the stylesheet reads has to be exactly the set the measurement writes. One
 // side alone is not enough: a variable the stylesheet reads but nothing writes falls back to its
 // constant silently, and a variable the measurement writes but nothing reads is a dead measurement
 // that means the offsets went back to being constants.
-const read = varsRead([overviewTop, windowTop, turnTop].join(' '));
+// The wide-screen panel's cap is a fifth reader of these variables, and it lives inside a media query
+// rather than beside the other three — so it has to be pulled out separately. Leaving it out made the
+// measurement's new variable look like a dead write, which is what the assertion below is for.
+const wideBlock = /@media\s*\(min-width:\s*\d+px\)\s*\{[\s\S]*?#inspector-panel\s*\{([^}]*)\}/.exec(css);
+const read = varsRead([overviewTop, windowTop, turnTop, wideBlock ? wideBlock[1] : ''].join(' '));
 const writtenSet = new Set(Object.keys(run.written));
 const orphan = [...read].filter((v) => !writtenSet.has(v));
 const dead = [...writtenSet].filter((v) => !read.has(v));

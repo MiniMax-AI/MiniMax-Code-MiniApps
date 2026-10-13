@@ -1280,6 +1280,51 @@
         align-items: start;
       }
 
+      /* ---------------- D40: the inspector's own viewport, on wide screens ----------
+       *
+       * Measured 2026-10-13 at 1276x1280 with one record selected: the right column is a static
+       * block 833px tall sitting at the top of a 7,545px grid row, so it scrolled away after about
+       * 600px and never came back — invisible for 88% of the trajectory. The ledger scrolls; the
+       * inspector is the thing being read while it scrolls.
+       *
+       * The mirror image of what D36 does on a narrow screen, and deliberately not the same
+       * mechanism: there the panel pins to the viewport BOTTOM because it is the last thing in the
+       * document, here it pins just under the stacked strips because the ledger beside it is a
+       * quarter of a million pixels tall. Both are 「stop scrolling away」, and they take opposite
+       * offsets because the thing that scrolls is on the other side.
+       *
+       * `top` is the sum of the two measured strips rather than a number, and the two variables are
+       * read rather than re-measured here: band is L2 and overview is L3, and re-deriving their
+       * heights inside the inspector's rule would be a fifth place holding the same fact (verify-
+       * generation-pin's 23 assertions exist to keep the fourth from drifting). The window bar is
+       * left out of the sum because it only ever occupies the LEFT column.
+       *
+       * The ceiling is `--inspector-wide-h`, written by syncStickyOffsets() from window.innerHeight.
+       * It cannot be `100vh`: this page runs in a host iframe where vh is not the reader's viewport,
+       * which is the whole reason client-check bans it. A record measured 1,022px tall, so without a
+       * ceiling plus its own scroller the panel would simply grow past the fold again — the same
+       * invisible-again defect by a different door.
+       *
+       * The closer rides on this line on purpose. verify-comment-shape counts a line that is exactly a
+       * bare terminator as a closer with no opener, and this file's CSS comments open with a rule line
+       * for the same reason they close inline.
+       *
+       * A WARNING to whoever edits this block next, paid for once already. A comment in CSS does not
+       * nest, so a comment that spells the terminator inside itself ends there, on the spot. Everything
+       * after it — the rest of this prose, then the at-rule on the next line — becomes the prelude of a
+       * qualified rule whose selector is invalid, so the browser drops the whole block including the
+       * declarations nested inside it. What that looks like from the outside: the rule is present in
+       * the file, every guard that reads the text passes, the braces still balance, and the property
+       * simply does not exist. verify-comment-shape now scans the style block for the residue. */
+      @media (min-width: 1081px) {
+        #inspector-panel {
+          position: sticky;
+          top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));
+          max-height: var(--inspector-wide-h, 70vh);
+          overflow-y: auto;
+        }
+      }
+
       .panel {
         border: 1px solid var(--mcode-border);
         border-radius: 12px;
@@ -6643,6 +6688,10 @@
       // was that expanding the panel covered the rows outright, and a rule that only bounds one of
       // the two ways the panel can grow is not that rule. Two copies of it would be two rules.
       var INSPECTOR_LEDGER_SHARE = 0.25;
+      // D40: the hair of viewport the wide-screen inspector leaves below itself. Its bottom edge
+      // landing exactly on the window's reads as cut off rather than as 「there is more below」, and
+      // the region it scrolls in is only worth having if the reader can see that it scrolls.
+      var INSPECTOR_WIDE_BOTTOM_GAP = 12;
       // …but never so little that the rows become a sliver. Below this the reader cannot read a
       // row, which defeats the point of keeping any.
       var INSPECTOR_MIN_LEDGER_H = 140;
@@ -7489,6 +7538,13 @@
         root.setProperty('--sticky-band-h', band + 'px');
         root.setProperty('--sticky-overview-h', overview + 'px');
         root.setProperty('--sticky-window-h', dom.windowBar.offsetHeight + 'px');
+        // D40: the wide-screen inspector's ceiling, from the same two numbers the panel's `top` is
+        // built out of — so the top of the region and the height of the region cannot disagree about
+        // where the pinned stack ends. Measured, never vh; see the note in client-check.
+        root.setProperty('--inspector-wide-h', Math.max(
+          0,
+          Math.round(window.innerHeight - band - overview - INSPECTOR_WIDE_BOTTOM_GAP)
+        ) + 'px');
       }
 
       var stickyFrame = null;

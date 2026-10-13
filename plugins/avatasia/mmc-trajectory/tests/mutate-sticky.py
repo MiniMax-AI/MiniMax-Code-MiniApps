@@ -59,9 +59,14 @@ MUTATIONS = [
      "        top: 32px;\n",
      "the strip pins below the band it measures, not below a constant"),
 
+    # D40 gave the file a second `calc(var(--sticky-band-h…) + var(--sticky-overview-h…))`, ten spaces
+    # in and inside a media query. The bare 8-space line this used to anchor on became a PREFIX of it
+    # and matched twice, so the harness refused rather than mutating an arbitrary one of the two.
+    # §8.1: an anchor has to be unambiguous about which line it means, not just about which text.
+    # The `z-index: 3` below is what makes this one the window bar and not the inspector.
     ("the window bar forgets the band above it",
-     "        top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));\n",
-     "        top: calc(var(--sticky-overview-h, 51px));\n",
+     "        top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));\n        z-index: 3;\n",
+     "        top: calc(var(--sticky-overview-h, 51px));\n        z-index: 3;\n",
      "the window bar pins below the band and the strip"),
 
     ("a turn head forgets the window bar",
