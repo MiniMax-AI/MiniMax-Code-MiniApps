@@ -417,6 +417,58 @@ covering three heights, then two controls with one of them lying about its own d
 
 ---
 
+### 8.5 Reading the text is not the same as parsing it
+
+A guard that reads `index.html` sees the same characters the browser sees. It is still possible
+for a rule to be in the file, every assertion about it to pass, and the browser to have no such
+rule — because between "the characters are there" and "the parser built a rule out of them"
+there is a step nothing in this suite was watching.
+
+That is what happened to D40. The wide-screen `@media (min-width: 1081px)` block shipped with
+the inspector pinned to the top of the stack. The block was in the file. `verify-inspector-dock`
+had ten assertions naming it, every mutation was caught, `npm run validate` said OK, 53/53
+passed twice, and the braces balanced. In the browser's CSSOM there were **zero** rules
+mentioning `#inspector-panel`, and the panel computed `position: static`, `max-height: none`.
+
+The cause was the comment directly above it. CSS comments **do not nest** — the first `*/`
+found inside one ends it there. That comment was explaining `verify-comment-shape`'s own rule
+and spelled the terminator inline to do it. So it ended mid-sentence, the rest of the prose
+plus the `@media` keyword became the prelude of a qualified rule, its selector was invalid, and
+the browser dropped the rule, declarations included, without a word. The braces balanced
+because both blocks were still there — one of them just swallowed the other.
+
+Two things make this worth its own section:
+
+- **Brace balance cannot see it.** The damaged parse has exactly the same `{` and `}` as the
+  healthy one. Any assertion of the form "the block is well formed" is satisfied by the broken
+  version, which is why `verify-comment-shape` was green.
+- **The evidence was in the residue, not in the rule.** Prose standing at the top level of a
+  stylesheet is never valid CSS. This file quotes prose with a backtick every time, so an
+  early-closed comment leaves backticks standing outside any comment. That is an assertion now,
+  and `mutate-comment-shape.py` reproduces the shipped line on purpose.
+
+The rule: **an assertion about a rule proves the text is there; only the browser proves a rule
+exists.** When a measurement contradicts a green suite, suspect the parse before the logic —
+and check whether the runtime is even serving the bytes on disk, because a stale runtime looks
+exactly like a broken rule and costs an hour to tell apart.
+
+Two more from the same afternoon, both about reading:
+
+**A hand-written character can vanish without a word.** The first version of that new assertion
+held a regular expression typed by hand whose closing slash was lost in transit — `\*\/.test`
+instead of `\*\//.test`. It did not fail an assertion; it failed to parse, and the error pointed
+at a later line complaining about invalid flags, so it read like a V8 quirk. It was found by
+printing the bytes: `2f 5c 2a 5c 2f 2e` where a second `2f` belonged. **When code you wrote by
+hand will not parse, print the characters before you theorise.** The assertion now uses string
+slicing and contains no pattern at all.
+
+**A probe that finds nothing must not exit 0.** The scan looking for a record taller than the
+ceiling reported `0 samples, 0 skipped` — not because every panel was hidden, but because
+`#tablist` is empty in the markup until a record is chosen, so the loop never ran. Only the
+deliberate "found nothing → exit non-zero" turned that into a failure instead of a pass. And
+`if (r.cssRules)` is no longer a safe way to walk CSSOM: **CSS Nesting gave `CSSStyleRule` a
+`cssRules` property**, so an empty list is truthy, every ordinary style rule gets recursed into
+instead of read, and the walker reports an empty stylesheet that is in fact full.
 ## 9. Say what you did not manage to check
 
 Some things cannot be driven through the browser harness. The honest form is the useful one:

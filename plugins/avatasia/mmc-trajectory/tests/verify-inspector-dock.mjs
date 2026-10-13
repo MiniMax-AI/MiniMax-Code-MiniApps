@@ -215,7 +215,14 @@ assert('the three pinned states stick to the bottom of the viewport',
 // exactly on the fold with the whole ledger below it.
 //
 // The fix is an omission, so the property is the omission: flow must not be pinned by a default.
-assert('flow is not pinned: the base rule declares no position at all',
+//
+// D40 renamed this rule, because by D40 its NAME was the wrong one. It always read the narrow
+// query — `valueIn(narrow, …)` — and said 「the base rule」, which was true only while the base had
+// no other job. D40 gave the wide side its own `@media (min-width: …)` block and its own sticky
+// scheme, so 「base」 stopped naming a region and started naming a coincidence (§8.3). The rule is
+// unchanged and still passes; what changed is that it now says which width it is about, and the
+// wide side is asserted separately below instead of being implied by the narrow one.
+assert('flow is not pinned on a narrow screen: no position at all inside the dock query',
   basePosition === null && baseBottom === null,
   `position=${basePosition} bottom=${baseBottom}`);
 assert('half height is a cap on the panel, not a cap on its content',
@@ -892,6 +899,107 @@ assert('the minimize glyph follows its label: a dash to fold away, a restore mar
 // had open. What this file CAN refuse is a version that never reads the memory, and that is the
 // assertion above. The two branches are measured in the browser instead; see the note at the end of
 // METHODOLOGY.md §9 on stating what was not checked here.
+
+/* ---------- D40: the same layer, a different region on the other side of the breakpoint ----------
+ *
+ * Measured 2026-10-13 at 1276x1280 with one record selected: the right column was a `static` block
+ * 833px tall at the top of a 7,545px grid row. Visible 692px at scrollY=0, full at 200–400, 621 at
+ * 800, and **0 from scrollY 1645 onward** — it scrolled away after about 600px and never came back,
+ * so it was invisible across 88% of the trajectory. The ledger scrolls; the thing being read while it
+ * scrolls was not on screen.
+ *
+ * This is the same layer and the same element as everything above, in a mutually exclusive media
+ * query, with the OPPOSITE kind of sticky: the narrow side pins to the viewport bottom because the
+ * panel is the last thing in the document, the wide side pins under the stacked strips because the
+ * ledger beside it is a quarter of a million pixels tall. Both mean 「stop scrolling away」.
+ *
+ * Every assertion here is scoped to the WIDE query. Nothing above can see this side: it was written
+ * when the panel had no wide behaviour at all, and an assertion that cannot see the thing it is about
+ * is worse than no assertion, because it reads as coverage.
+ */
+
+const wideCondition = '(min-width: 1081px)';
+const wideBodies = mediaBodies(wideCondition);
+const wide = wideBodies.find((b) => /#inspector-panel\s*\{/.test(b)) || null;
+
+assert('the wide-screen region exists and is scoped above the single-column breakpoint',
+  !!wide && dockCondition !== null,
+  `wide bodies: ${wideBodies.length}, dock at: ${dockCondition}`);
+// …and the two queries cannot both match. `max-width: 1080` and `min-width: 1081` leave no width
+// where both fire and none where neither does; an overlapping pair would give the panel two
+// contradictory positions and the later rule would win by source order, silently.
+assert('the two layouts are mutually exclusive, with no width claimed by both or neither',
+  dockCondition !== null && Number(wideCondition.match(/(\d+)px/)[1]) === dockCondition + 1,
+  `dock ${dockCondition} vs wide ${wideCondition}`);
+
+// The top is a sum of two MEASURED strips, not a number and not a re-measurement. band is L2 and
+// overview is L3, and verify-generation-pin already exists to stop the fourth place that holds the
+// same fact from drifting — so a new reader has to read them, not recompute them.
+const wideTop = wide ? valueIn(wide, '#inspector-panel', 'top') : null;
+assert('the wide panel sticks under the two measured strips',
+  !!wide && valueIn(wide, '#inspector-panel', 'position') === 'sticky'
+  && /calc\(\s*var\(\s*--sticky-band-h[^)]*\)\s*\+\s*var\(\s*--sticky-overview-h[^)]*\)\s*\)/.test(wideTop || ''),
+  `position=${wide ? valueIn(wide, '#inspector-panel', 'position') : null} top=${wideTop}`);
+// The window bar is left out on purpose: it only ever occupies the LEFT column, so including it
+// would drop the panel 45px below the overview for no reason. Asserted so the "harmless addition"
+// that would be wrong has a name.
+assert('the wide top excludes the window bar, which only ever occupies the left column',
+  !!wide && !/sticky-window-h/.test(wideTop || ''));
+// …and it is not a bottom-pinned region. `bottom` here would mean the narrow scheme leaking across,
+// and the narrow scheme is a promise about a panel shorter than the scrollport.
+assert('the wide panel is not pinned to the bottom of anything',
+  !!wide && valueIn(wide, '#inspector-panel', 'bottom') === null
+  && !/is-inspector-/.test(wide || ''));
+
+// The ceiling. A record measured 1,022px and the cap on a 768px-tall window is 621px, so without
+// one the panel simply grows past the fold again — the same invisible defect by a different door.
+const wideMax = wide ? valueIn(wide, '#inspector-panel', 'max-height') : null;
+assert('the wide panel is capped, and scrolls its own content',
+  !!wide && wideMax !== null && varsRead(wideMax).has('--inspector-wide-h')
+  && valueIn(wide, '#inspector-panel', 'overflow-y') === 'auto');
+// Measured from the window, never `vh`: this page runs in a host iframe where 100vh is not the
+// reader's viewport, which is the whole reason client-check bans it. Asserted as the expression
+// rather than the token, because a version that computes the ceiling from `band` alone satisfies a
+// presence check and disagrees with the `top` by exactly the overview's height.
+const syncFn = functionSource('syncStickyOffsets');
+const wideWrites = [...jsHtml.matchAll(/setProperty\(\s*'--inspector-wide-h'\s*,\s*([^;]*)\)/g)]
+  .map((m) => m[1].replace(/\s+/g, ' ').trim());
+assert('the wide ceiling is measured from the window, and never from vh',
+  !!syncFn && wideWrites.length === 1
+  && /window\.innerHeight\s*-\s*band\s*-\s*overview\s*-\s*INSPECTOR_WIDE_BOTTOM_GAP/.test(wideWrites[0])
+  && !/vh\b/.test(wideWrites[0]),
+  'writes: ' + JSON.stringify(wideWrites));
+// One writer. `--inspector-wide-h` is a fact about the window, so a second place computing it is
+// two places able to disagree about where the pinned stack ends.
+assert('the wide ceiling has exactly one writer, and it is the function that already owns the strips',
+  wideWrites.length === 1 && !!syncFn
+  && /--sticky-band-h'\s*,\s*band\s*\+\s*'px'/.test(syncFn)
+  && /--sticky-overview-h'\s*,\s*overview\s*\+\s*'px'/.test(syncFn));
+// The gap below the panel has to be a named constant, not a literal in the arithmetic: it is the
+// difference between 「there is more below」 and 「cut off at the window's edge」, and a literal is
+// where the two would start to drift.
+assert('the hair of viewport below the wide panel is a named number, not a literal in the arithmetic',
+  /var\s+INSPECTOR_WIDE_BOTTOM_GAP\s*=\s*\d+\s*;/.test(jsHtml)
+  && (jsHtml.match(/INSPECTOR_WIDE_BOTTOM_GAP/g) || []).length === 2,
+  'uses: ' + (jsHtml.match(/INSPECTOR_WIDE_BOTTOM_GAP/g) || []).length);
+
+/** Every selector in a rule list, one entry per rule and one per comma. */
+function selectorsIn(text) {
+  return [...(text || '').matchAll(/^[ \t]*([^{}@][^{}]*?)\s*\{/gm)]
+    .map((m) => m[1].split(',').map((s) => s.trim()));
+}
+
+// One line of CSS for a whole new positioning scheme, and nothing else changed on the narrow side.
+//
+// The first version of this asserted 「no offset is re-declared here」, which is a real rule and not
+// the one that was asked for — and it was vacuous: a mutation that added a `#filter-sticky` rule to
+// the same block passed it, because moving something the report never mentioned is not re-declaring
+// an offset. What the rule actually says is that the block has one selector, so it is enumerated
+// rather than spot-checked.
+assert('the wide region touches the panel and nothing else',
+  !!wide && selectorsIn(wide).length === 1
+  && selectorsIn(wide)[0].length === 1 && selectorsIn(wide)[0][0] === '#inspector-panel',
+  'selectors: ' + JSON.stringify(selectorsIn(wide)));
 
 /* ---------- visibility: the panel is the selection ----------
  *

@@ -25,6 +25,15 @@ OPEN_RULE = "      /**\n       * One rule, one answer."
 CLOSE_COUNTS = ("       * @returns {{byRule: Object, unit: Object, any: number, "
                 "selected: number, total: number}}\n       */")
 
+
+# --- the <style> block, which the four above never read ------------------------------------
+
+CSS_SPELLS = '       * which is the whole reason client-check bans it. A record measured 1,022px tall, so without a'
+CSS_SPELLS_AFTER = '       * which is the whole reason client-check bans it, exactly as a line holding `*/` does.'
+CSS_CLOSER = '       * simply does not exist. verify-comment-shape now scans the style block for the residue. */'
+CSS_CLOSER_GONE = '       * simply does not exist. verify-comment-shape now scans the style block for the residue.'
+CSS_CLOSER_BARE = CSS_CLOSER_GONE + '\n       */'
+
 MUTATIONS = [
     # What the probe actually did: the new block opener went in, the old one stayed.
     ("a second block opener on top of the first",
@@ -51,7 +60,31 @@ MUTATIONS = [
      OPEN_RULE,
      "      */\n" + OPEN_RULE,
      ["no closer runs ahead of its opener"]),
-]
+
+    # The first of these is not invented either. It is the line that actually shipped on
+    # 2026-10-13: a CSS comment that spelled the terminator inside itself, which — CSS comments
+    # do not nest — ended the comment right there. The prose after it became a selector prelude,
+    # the @media block that followed was swallowed by a qualified rule with an invalid selector,
+    # and the browser was left holding zero rules mentioning #inspector-panel. Every guard that
+    # reads text passed, the braces balanced, validate said OK, and the property did not exist.
+    ("a CSS comment that spells its own terminator",
+     CSS_SPELLS,
+     CSS_SPELLS_AFTER,
+     ["every comment terminator in the style block ends its line",
+      "no prose survives outside a CSS comment"]),
+
+    # The other way to lose a rule without losing a character anybody can see: the closer never
+    # arrives, so the comment eats the declarations behind it.
+    ("a CSS comment with no terminator",
+     CSS_CLOSER,
+     CSS_CLOSER_GONE,
+     ["every CSS comment in the style block is terminated"]),
+
+    # The convention itself, dropped for exactly one comment.
+    ("a CSS comment closing on a line of its own",
+     CSS_CLOSER,
+     CSS_CLOSER_BARE,
+     ["every CSS comment closes after its prose, not on a line of its own"]),]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
 

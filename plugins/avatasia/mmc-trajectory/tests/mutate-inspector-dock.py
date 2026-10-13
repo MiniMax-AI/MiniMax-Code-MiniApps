@@ -78,7 +78,7 @@ MUTATIONS = [
      "        #inspector-panel {\n          max-height: var(--inspector-full-h, 70vh);\n",
      "        #inspector-panel {\n          position: sticky;\n          bottom: 0;\n"
      "          max-height: var(--inspector-full-h, 70vh);\n",
-     "flow is not pinned: the base rule declares no position at all"),
+     "flow is not pinned on a narrow screen: no position at all inside the dock query"),
 
     ("half height is written down instead of being half",
      "          max-height: var(--inspector-dock-h);\n",
@@ -773,6 +773,94 @@ MUTATIONS = [
      "            folded ? 'M3.5 8.5 h5.5 v5 h-5.5 z M6.5 8.5 v-5 h6 v5 h-2.5' : 'M3.5 8 H12.5'\n",
      "            'M3.5 8 H12.5'\n",
      "the minimize glyph follows its label: a dash to fold away, a restore mark to come back"),
+
+    # ---- D40: the same layer, a different region above the breakpoint ----
+    #
+    # The narrow-side assertions cannot see any of this: they are scoped to `(max-width: 1080px)` and
+    # read as if the panel had no wide behaviour at all, which until D40 it did not.
+
+    # The defect as shipped, in one edit. Without the sticky the panel is a static block at the top of
+    # a 7,545px grid row: measured, it showed 692px at scrollY=0 and 0 from scrollY 1645 onward, so it
+    # was invisible across 88% of the trajectory.
+    ("the wide panel stops being pinned and scrolls away again",
+     "      @media (min-width: 1081px) {\n        #inspector-panel {\n          position: sticky;\n",
+     "      @media (min-width: 1081px) {\n        #inspector-panel {\n          position: static;\n",
+     "the wide panel sticks under the two measured strips"),
+
+    # Both offsets matter and neither is decorative: without the band the panel rides over the filter
+    # row, without the overview it disappears under it.
+    ("the wide panel pins to the wrong place under the strips",
+     "          top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));\n",
+     "          top: var(--sticky-band-h, 32px);\n",
+     "the wide panel sticks under the two measured strips"),
+
+    # The 「harmless addition」: the window bar only ever occupies the LEFT column, so adding it to
+    # the sum drops the panel 45px for no reason — and nothing else in the guard would notice.
+    ("the wide top starts including the window bar, which is never on this side",
+     "          top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));\n",
+     "          top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px) + var(--sticky-window-h, 45px));\n",
+     "the wide top excludes the window bar, which only ever occupies the left column"),
+
+    # A re-measurement instead of a read: band and overview are L2's and L3's facts, and a fifth
+    # place holding them is exactly what verify-generation-pin's 23 assertions exist to prevent.
+    ("the wide top measures the strips again instead of reading them",
+     "          top: calc(var(--sticky-band-h, 32px) + var(--sticky-overview-h, 51px));\n",
+     "          top: 135px;\n",
+     "the wide panel sticks under the two measured strips"),
+
+    # The narrow scheme leaking across. `bottom: 0` is a promise about a panel shorter than the
+    # scrollport, and on a wide screen the panel is its own column beside a very tall ledger.
+    ("the narrow scheme leaks into the wide region",
+     "      @media (min-width: 1081px) {\n        #inspector-panel {\n          position: sticky;\n",
+     "      @media (min-width: 1081px) {\n        #inspector-panel {\n          position: sticky;\n          bottom: 0;\n",
+     "the wide panel is not pinned to the bottom of anything"),
+
+    # The ceiling and its scroller are one rule. Drop the ceiling and the panel grows past the fold
+    # again — the same invisible defect by a different door — and drop the scroller and what is left
+    # of it is a truncated panel with no way to reach the rest.
+    ("the wide panel loses its ceiling and grows out of the viewport again",
+     "          max-height: var(--inspector-wide-h, 70vh);\n",
+     "",
+     "the wide panel is capped, and scrolls its own content"),
+
+    ("the wide panel is capped but cannot scroll, so the rest of the record is unreachable",
+     "          max-height: var(--inspector-wide-h, 70vh);\n          overflow-y: auto;\n",
+     "          max-height: var(--inspector-wide-h, 70vh);\n",
+     "the wide panel is capped, and scrolls its own content"),
+
+    # `vh` here would be the reader's window on no host at all — this page runs in an iframe. The
+    # assertion is on the expression because a token check is satisfied by reading band and overview
+    # while computing the ceiling from neither.
+    ("the wide ceiling is computed from the strips instead of the window",
+     "          Math.round(window.innerHeight - band - overview - INSPECTOR_WIDE_BOTTOM_GAP)\n",
+     "          Math.round(band + overview + INSPECTOR_WIDE_BOTTOM_GAP)\n",
+     "the wide ceiling is measured from the window, and never from vh"),
+
+    ("the wide ceiling goes back to vh",
+     "          Math.round(window.innerHeight - band - overview - INSPECTOR_WIDE_BOTTOM_GAP)\n",
+     "          Math.round(window.innerHeight * 0.7)\n",
+     "the wide ceiling is measured from the window, and never from vh"),
+
+    ("a second place computes the wide ceiling",
+     "      function syncStickyOffsets() {\n",
+     "      function syncInspectorWideHeight() {\n"
+     "        document.documentElement.style.setProperty('--inspector-wide-h', '620px');\n"
+     "      }\n\n"
+     "      function syncStickyOffsets() {\n",
+     "the wide ceiling has exactly one writer, and it is the function that already owns the strips"),
+
+    ("the hair of viewport below the wide panel becomes a literal",
+     " - INSPECTOR_WIDE_BOTTOM_GAP)",
+     " - 12)",
+     "the hair of viewport below the wide panel is a named number, not a literal in the arithmetic"),
+
+    # A wide block that reached outside `#inspector-panel` would move something the report never
+    # mentioned, and no other assertion in this file would see it.
+    ("the wide region starts moving the filter band as well",
+     "      @media (min-width: 1081px) {\n        #inspector-panel {\n",
+     "      @media (min-width: 1081px) {\n        #filter-sticky {\n"
+     "          max-height: var(--inspector-wide-h, 70vh);\n        }\n\n        #inspector-panel {\n",
+     "the wide region touches the panel and nothing else"),
 
     ("the expand control can fold the panel away, so folded has two doors",
      "state.inspectorDock === 'full' ? 'docked' : 'full'",
