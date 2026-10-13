@@ -169,6 +169,28 @@ MUTATIONS = [
      '"version": "1.1.0",',
      '"version": "1.0.0",',
      "the plugin version was bumped off 1.0.0"),
+
+    # The two the reviewer actually named. The mutation above only touches plugin.json, and it was
+    # the only one: the guard read plugin.json and called the rule done while both READMEs kept
+    # announcing 1.0.0 to every reader who opens the plugin's front page. A rule that checks the
+    # field nobody complained about is not the rule that was asked for.
+    ("the English README goes back to announcing the old version",
+     'Version: `1.1.0`',
+     'Version: `1.0.0`',
+     "the English README carries the shipped version"),
+
+    ("the Chinese README goes back to announcing the old version",
+     '版本：`1.1.0`',
+     '版本：`1.0.0`',
+     "the Chinese README carries the shipped version"),
+
+    # And the next bump, which is the one that would have happened next anyway: plugin.json moves
+    # on and the READMEs stay behind. Asserted as equality with plugin.json rather than as "not
+    # 1.0.0", so this is the case the rule is actually for.
+    ("the manifest moves on and the READMEs do not follow",
+     '"version": "1.1.0",',
+     '"version": "1.2.0",',
+     "the English README carries the shipped version"),
 ]
 
 

@@ -193,6 +193,22 @@ assert('the plugin version was bumped off 1.0.0', plugin.version !== '1.0.0', `s
 assert('the plugin version is a valid semver minor bump',
   /^1\.[1-9]\d*\.\d+$/.test(plugin.version), plugin.version);
 
+// The two READMEs were the actual complaint, and this block covered neither of them: it read
+// `plugin.json` and called that done, while both READMEs still announced `1.0.0` to every reader
+// who opens the plugin's front page. A rule that checks the field nobody complained about and not
+// the two files that were named is the same shape as the D43 bug — a list of three where the rule
+// pinned one.
+//
+// Asserted as *equality with plugin.json*, not as "not 1.0.0": the failure this prevents is the
+// next bump, where plugin.json moves to 1.2.0 and the READMEs quietly stay behind again.
+const versionTag = '`' + plugin.version + '`';
+assert('the English README carries the shipped version',
+  readme.includes('Version: ' + versionTag), `looking for Version: ${versionTag}`);
+assert('the Chinese README carries the shipped version',
+  readmeZh.includes('版本：' + versionTag), `looking for 版本：${versionTag}`);
+assert('neither README still announces the old version',
+  !/1\.0\.0/.test(readme) && !/1\.0\.0/.test(readmeZh));
+
 console.log('[review16] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));
