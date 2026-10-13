@@ -6450,6 +6450,32 @@
 
       var atLedgerEnd = false;
       var ledgerEndObserver = null;
+      /**
+       * Has this ledger been jumped yet. False until the reader presses it once.
+       *
+       * D46: the first screen always points down, whatever the page is sitting at, because the
+       * reading 「the end is on screen」 is not yet true of anything the reader did — and drawing
+       * 「读者还没动」 as 「读者在最上」 invents a state that does not exist. So the position only
+       * gets a vote after the first press.
+       *
+       * One writer, the click handler, and it is never cleared: 「首屏」 is this page, not each
+       * session, so a reader who switches sessions has already moved on this page and the arrow
+       * goes straight back to reporting position. Resetting it per session is a different decision
+       * and wants its own round of questions.
+       */
+      var ledgerJumpUsed = false;
+
+      /**
+       * Where the next press goes — and the ONE answer both the arrow and the press read.
+       *
+       * These two used to call `ledgerEndInView()` each, which agreed because they were the same
+       * call. They agree here too, and for a stronger reason: the two states now differ by one
+       * flag, so reading the predicate twice instead of once would let the glyph and the scroll
+       * disagree for the first time. One function, two callers, no way for them to part.
+       */
+      function ledgerJumpGoesUp() {
+        return ledgerJumpUsed && ledgerEndInView();
+      }
 
       /**
        * A picture of the trip, not its name.
@@ -6476,8 +6502,8 @@
         var empty = !state.payload || !state.flat || state.flat.length === 0;
         button.hidden = empty;
         if (empty) return;
-        var atEnd = ledgerEndInView();
-        var name = atEnd ? 'arrowUp' : 'arrowDown';
+        var up = ledgerJumpGoesUp();
+        var name = up ? 'arrowUp' : 'arrowDown';
         // Rebuilt rather than swapped in place: there is no attribute selector that exchanges two
         // `d` values, and a cross-fade on a 16px glyph reads as a flicker rather than as motion.
         // The `data-arrow` read is what keeps this from rebuilding on every one of the scroll
@@ -6489,7 +6515,7 @@
           glyph.setAttribute('data-arrow', name);
           button.appendChild(glyph);
         }
-        button.setAttribute('aria-label', atEnd ? '跳到轨迹的最上（最早一条已加载的记录）' : '跳到轨迹的最低（最新一条已加载的记录）');
+        button.setAttribute('aria-label', up ? '跳到轨迹的最上（最早一条已加载的记录）' : '跳到轨迹的最低（最新一条已加载的记录）');
       }
 
       /**
@@ -6556,7 +6582,16 @@
         ledgerEndObserver.observe(sentinel);
 
         button.addEventListener('click', function () {
-          window.scrollTo(0, ledgerEndInView() ? ledgerTopOffset() : ledgerBottomOffset());
+          // Read the predicate BEFORE arming it. Setting the flag first would make the very first
+          // press consult the position, and on a ledger that already fits on screen that sends the
+          // reader UP on the press that is supposed to be the one that goes down.
+          var up = ledgerJumpGoesUp();
+          window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());
+          // Armed after the scroll is issued, and the label is rewritten here rather than left to
+          // the observer: scrolling to the end you are already at fires no intersection event, and
+          // that is exactly the case where the arrow has to change.
+          ledgerJumpUsed = true;
+          setLedgerJumpLabel();
         });
 
         setLedgerJumpLabel();
