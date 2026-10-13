@@ -17,6 +17,13 @@ window stopped being the judgement's to widen (docs/LAYERS.md D13). The mutation
 "the window is never pulled down to the selection" was guarding a behaviour that was itself the
 defect: it pinned the `state.limit` write in place. It now breaks the rule that replaced it, and
 "the selection is judged after the window is sliced" guards the ordering the other way round.
+
+D44 inverted one of these again, and the mutation followed the rule rather than staying where it
+was. "the selection is judged against the window again" used to be *the* rule: the window was the
+tail `state.limit` slice, the slice slides a row on every new record, and a selection on the oldest
+loaded record therefore died after one poll with the reader touching nothing. The judgement now runs
+against `matched`, the filter result, and two more mutations guard what that must not take with it —
+the ordering, and the fact that the tail keeps sliding.
 """
 import io
 import os
@@ -67,15 +74,15 @@ MUTATIONS = [
 
     # The poll path was the only caller, which is why a local filter change never reached it.
     ("the selection is never re-judged when the table changes",
-     [("        if (revealSelection(windowed)) renderInspector();\n", "")],
+     [("        if (revealSelection(matched)) renderInspector();\n", "")],
      "the selection is re-judged at the one exit every filter passes through"),
 
     # The half that is easy to miss, because the state is correct afterwards and only the DOM is
     # stale: nine writers reach renderLedger() without redrawing the panel, so the search box left
     # the inspector naming a record that had just been dropped.
     ("the judgement is made but the panel is never redrawn",
-     [("        if (revealSelection(windowed)) renderInspector();\n",
-       "        revealSelection(windowed);\n")],
+     [("        if (revealSelection(matched)) renderInspector();\n",
+       "        revealSelection(matched);\n")],
      "the panel is redrawn when the selection is dropped"),
 
     # And the other half: a verdict nobody is told about cannot be acted on.
@@ -84,14 +91,32 @@ MUTATIONS = [
        "        state.selectedId = null;\n        return false;\n")],
      "dropping the selection is reported so the panel can be redrawn"),
 
-    # Judged against `matched` — the filter result — rather than `windowed`. A record that survived
-    # every filter and was still cut off by the window keeps its selection, and the inspector goes
-    # on describing a row that is not on screen. That was this mutation's premise before the
-    # ordering changed; the defect it names has simply moved to the other side of the slice.
-    ("the selection is judged against the filtered rows rather than the window",
-     [("        if (revealSelection(windowed)) renderInspector();\n",
-       "        if (revealSelection(matched)) renderInspector();\n")],
-     "the selection is judged against the window, not the filter result"),
+    # Judged against `windowed` — the tail slice — rather than `matched`, the filter result. That
+    # was the D37 defect: the window slides forward by a row on every new record, so a selection on
+    # the oldest loaded record died after ONE poll, with the reader touching nothing. Reinstating the
+    # argument must be caught by name — this mutation's premise used to be the rule, and D44
+    # inverted it.
+    ("the selection is judged against the window again",
+     [("        if (revealSelection(matched)) renderInspector();\n",
+       "        if (revealSelection(windowed)) renderInspector();\n")],
+     "the selection is judged against the filter result, not against the window"),
+
+    # And the ordering is a separate rule from the argument. A version that judges before the slice
+    # sees a list that is not the one the table is about to draw, and passes the argument rule
+    # while failing this one — so it needs its own break rather than sharing the mutation above.
+    ("the selection is judged before the window is sliced",
+     [("        if (revealSelection(matched)) renderInspector();\n", ""),
+      ("        var windowed = matched.length",
+       "        if (revealSelection(matched)) renderInspector();\n        var windowed = matched.length")],
+     "the re-judgement runs after the window is sliced"),
+
+    # The window keeps sliding. D44 changed which list is judged; it did not freeze the tail, and a
+    # guard that only watched the judgement would stay green through a version that quietly stopped
+    # sliding — which is the one thing that would make the window bar's 「更早的 K 条未加载」 a lie.
+    ("the window stops sliding and becomes a frozen prefix",
+     [("matched.length > state.limit ? matched.slice(matched.length - state.limit) : matched",
+       "matched.length > state.limit ? matched.slice(0, state.limit) : matched")],
+     "the window is still a sliding tail slice, not a frozen prefix"),
 
     # Two writers. The poll path judged the selection again, and a reader could be told two
     # different things depending on which one ran last.

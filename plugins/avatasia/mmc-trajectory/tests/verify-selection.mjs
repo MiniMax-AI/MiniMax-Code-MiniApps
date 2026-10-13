@@ -20,10 +20,20 @@
  * window controls, and a judgement. Every other two-writer defect in this client has had that
  * shape.
  *
- * So the judgement is now a predicate over the rows that will actually be drawn, and it writes
- * `state.selectedId` and nothing else. A selection below the window is *dropped*, not revealed:
- * the reader's explicit window choice outranks an earlier click, and it matches what the filter
- * axes already do.
+ * So the judgement writes `state.selectedId` and nothing else.
+ *
+ * What changed again in D44 is *which list* it is a predicate over. It was the window — the tail
+ * `state.limit` slice — and that made the window a second thing that could end a selection without
+ * the reader doing anything. The window is a tail slice and it slides: every poll that brought one
+ * new record in pushed the oldest loaded record out of it, and a selection sitting on that record
+ * was dropped by a poll (D37). One new record was enough, so 「显示最新 200 条」 was never the
+ * cause, only where a reader happened to notice it.
+ *
+ * So the judgement runs against `matched`, the filter result, while `windowed` is still what gets
+ * drawn. Nothing freezes and `state.limit` does not move, which is the point: the window bar's
+ * 「已显示 N 条 · 更早的 K 条未加载」 only stays true while the tail is allowed to slide. A selection
+ * now ends when the *filters* end it — like every other filter axis — and not when the window slides
+ * underneath it.
  *
  * It is checked by *running* revealSelection() against a `state` that carries both the unfiltered
  * session and the filtered list, so a version that reads the unfiltered one again produces the
@@ -104,16 +114,13 @@ const kept = reveal({ selectedId: 'r3', limit: 10, entries: rows, flat: session 
 assert('a record still in the table keeps its selection',
   kept.error === null && kept.selectedId === 'r3' && kept.limit === 10 && kept.dropped === false);
 
-// Below the window. This is the reported defect: the reader had an old record selected in 全部,
-// pressed 「显示最新 200 条」, the record left the table and the inspector went on naming it.
-//
-// It used to be answered by widening the window to reach the selection — which is why pressing
-// 显示最新 200 条 could leave the bar reading 「已显示 15,224 条」 a second after promising 200.
-// The selection is dropped instead, and the window is left exactly where the reader put it.
-const belowWindow = reveal({ selectedId: 'r2', limit: 3, entries: rows.slice(7), flat: session });
-assert('a selection below the window is dropped, and the window is left alone',
-  belowWindow.error === null && belowWindow.selectedId === null
-  && belowWindow.limit === 3 && belowWindow.dropped === true);
+// The window slid past it. This is D44, and it is the case the old judgement got wrong: the record
+// is loaded, it passes every filter, and it has simply been pushed off the end of the last 200 by
+// newer arrivals. `limit: 3` with ten filtered rows means `windowed` is r7..r9 — r2 is not in it —
+// while `entries` is the whole filtered list, which is what the exit now hands in.
+const slid = reveal({ selectedId: 'r2', limit: 3, entries: rows, flat: session });
+assert('a selection the window slid past, but the filters kept, survives — and the window is left alone',
+  slid.error === null && slid.selectedId === 'r2' && slid.limit === 3 && slid.dropped === false);
 
 const none = reveal({ selectedId: null, limit: 10, entries: rows, flat: session });
 assert('no selection means nothing to reveal',
@@ -149,17 +156,25 @@ const ledgerBody = ledgerSrc ? ledgerSrc.slice(ledgerSrc.indexOf('{') + 1, ledge
 const ledgerCalls = ledgerBody.match(/revealSelection\(/g) ?? [];
 assert('the selection is re-judged at the one exit every filter passes through', ledgerCalls.length === 1);
 
-// Judged against the rows the table will actually draw, and after they are sliced. Judging the
-// filtered list would leave a selection standing on a record that survived the filters and was
-// still cut off by the window — the same page-contradicts-itself defect, one layer further in.
+// Judged after the slice is taken, and against `matched` rather than `windowed`. Both halves matter
+// and they are independent: the order says the judgement sees the window the table is really
+// showing, and the argument says a record the window slid past is still the reader's selection
+// until a filter says otherwise. The first version of D44 put the call before the slice, which
+// passed the order and failed the argument.
 const atMatched = ledgerBody.indexOf('var matched = visibleEntries();');
 const atSlice = ledgerBody.indexOf('var windowed');
-const atReveal = ledgerBody.indexOf('revealSelection(windowed)');
-assert('the re-judgement runs against the rows the table will actually draw',
+const atReveal = ledgerBody.indexOf('revealSelection(matched)');
+assert('the re-judgement runs after the window is sliced',
   atMatched >= 0 && atSlice > atMatched && atReveal > atSlice);
 
-assert('the selection is judged against the window, not the filter result',
-  /revealSelection\(windowed\)/.test(ledgerBody) && !/revealSelection\(matched\)/.test(ledgerBody));
+assert('the selection is judged against the filter result, not against the window',
+  /revealSelection\(matched\)/.test(ledgerBody) && !/revealSelection\(windowed\)/.test(ledgerBody));
+
+// The tail is still a tail. D44 changed which list is judged; it did not freeze the window, and a
+// guard that only checked the judgement would stay green through a version that quietly stopped
+// sliding — which is the one thing that would make the window bar's 「更早的 K 条未加载」 a lie.
+assert('the window is still a sliding tail slice, not a frozen prefix',
+  /var windowed = matched\.length > state\.limit\s*\n?\s*[\s\S]{0,80}?matched\.slice\(matched\.length - state\.limit\)/.test(ledgerBody));
 
 // The poll path used to be the only caller, which is precisely why a local filter change — none of
 // which go through applyPayload — never touched it.
@@ -184,10 +199,10 @@ assert('the rows on screen are built from the same list',
 // itself again, one layer further along. This is the half that is easy to miss, because the state
 // is correct after the judgement and only the DOM is stale.
 assert('the panel is redrawn when the selection is dropped',
-  /if\s*\(\s*revealSelection\(windowed\)\s*\)\s*renderInspector\(\);/.test(ledgerBody));
+  /if\s*\(\s*revealSelection\(matched\)\s*\)\s*renderInspector\(\);/.test(ledgerBody));
 
 console.log('[selection] ' + pass + ' passed, ' + failures.length + ' failed');
-for (const [label, run] of Object.entries({ gone, kept, belowWindow, none, empty })) {
+for (const [label, run] of Object.entries({ gone, kept, slid, none, empty })) {
   if (run.error) console.log('  ' + label + ' threw: ' + run.error);
 }
 if (failures.length) {

@@ -23,11 +23,34 @@ GREEN = "ALL PASSED"
 
 MUTATIONS = [
     # Declaration 1, position half: the window bar leaves the L5 panel entirely.
+    #
+    # The anchor spans the whole panel body because the replacement has to put the bar *outside*
+    # `</section>`, so the edit has to reach the close. D44 is what made it long: the ledger's
+    # two-ends control put a sentinel and a button between the bar and the close, and the previous
+    # three-line anchor stopped resolving. A broken anchor is a loud failure — this harness refuses
+    # to start rather than silently mutating nothing — but it is still a failure a change caused and
+    # did not mean to.
     ("the window bar is presented outside the ledger panel",
      '          <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>\n'
      '          <div class="ledger-body" id="ledger"></div>\n'
+     '          <!-- D44: the two ends of the ledger, and the one reading that says which end the reader is\n'
+     '               at. See `.ledger-end` and `.ledger-jump` for why the sentinel is outside #ledger. -->\n'
+     '          <div class="ledger-end" id="ledger-end" aria-hidden="true"></div>\n'
+     '          <!-- No text and no glyph in the markup: buildLedgerJump() fills the arrow in, and the\n'
+     '               button starts hidden so the first paint is never an empty circle. The label for a\n'
+     '               reader of assistive tech lives in aria-label, which setLedgerJumpLabel() rewrites\n'
+     '               with the arrow. -->\n'
+     '          <button type="button" class="ledger-jump" id="ledger-jump" hidden aria-label="跳到轨迹的最低"></button>\n'
      '        </section>',
      '          <div class="ledger-body" id="ledger"></div>\n'
+     '          <!-- D44: the two ends of the ledger, and the one reading that says which end the reader is\n'
+     '               at. See `.ledger-end` and `.ledger-jump` for why the sentinel is outside #ledger. -->\n'
+     '          <div class="ledger-end" id="ledger-end" aria-hidden="true"></div>\n'
+     '          <!-- No text and no glyph in the markup: buildLedgerJump() fills the arrow in, and the\n'
+     '               button starts hidden so the first paint is never an empty circle. The label for a\n'
+     '               reader of assistive tech lives in aria-label, which setLedgerJumpLabel() rewrites\n'
+     '               with the arrow. -->\n'
+     '          <button type="button" class="ledger-jump" id="ledger-jump" hidden aria-label="跳到轨迹的最低"></button>\n'
      '        </section>\n'
      '        <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>',
      "#window-bar is presented inside the ledger panel (L5)"),

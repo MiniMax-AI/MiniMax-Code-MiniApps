@@ -586,6 +586,37 @@ screenshot of a wide window is not a wide viewport — measure the shortest cap 
 on both sides of the breakpoint, and say out loud which tabs cannot scroll at all instead of letting
 them pad the pass count.
 
+### 8.9 An assertion scoped to a whole function is satisfied by that function's prose
+
+The ledger's two-ends control shipped with 30 mutations and 38 assertions. Three mutations survived
+the first run, and all three were the guard's fault rather than the mutation's — which is the shape
+that costs the most, because the next move is usually "the mutation is wrong".
+
+- **Two were scoped too wide.** `assert(/data-arrow/.test(setLedgerJumpLabelSrc))` reads *somewhere in
+  the function*; the rule is about the `if` guard clause, and `glyph.setAttribute('data-arrow', …)`
+  sits two lines below it. So a mutation that replaced the whole guard with `if (true)` left the
+  substring in place and the rule uncaught. Same failure, different disguise:
+  `/getBoundingClientRect/.test(ledgerEndInViewSrc)` is satisfied by the function's own
+  `typeof sentinel.getBoundingClientRect !== 'function'` null check, so deleting the actual
+  `sentinel.getBoundingClientRect()` call changed nothing the assertion could see. Both fixes are the
+  same move: **narrow the assertion to the expression the rule is about** — the `if (…)` clause, the
+  `var r = …` read, the `setAttribute(…)` argument — never the whole function.
+- **The same trap with words instead of identifiers.** A rule "the label says which end" written as
+  `/最上/.test(src)` is satisfied by the function's own comment explaining which labels it *used to*
+  have. Assertions that look for prose have to be scoped to the line that writes the prose.
+- **One mutation was a no-op.** It moved the sentinel markup to immediately *before* the button — which
+  is exactly where it already was. A mutation that changes nothing proves nothing and reads as a
+  survived guard, which sends you to fix the guard instead of the edit. Re-read what the shipped order
+  actually is before writing an edit that depends on it.
+
+One more, from the browser probe rather than the guard: an assertion can be **correct in shape and
+impossible to satisfy**. `endBottom ≈ viewH` asserted that the ledger's sentinel lands on the viewport
+bottom after pressing 「到最低」, and measured `391` against `900`. Nothing was broken — the document was
+8,740px tall, the maximum scroll was 7,840, and the sentinel sat 3,231px down, so `scrollTo` was
+clamped. The promise 「到最低」 actually makes is "as far as the page goes, with the newest records and
+the control still on screen and clear of the panel", and that is what the assertion now says. **Before
+asserting where something lands, check the page is tall enough to land there.**
+
 ## 9. Say what you did not manage to check
 
 Some things cannot be driven through the browser harness. The honest form is the useful one:
