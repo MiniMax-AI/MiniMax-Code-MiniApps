@@ -492,6 +492,13 @@ if (!resetBaseSource) throw new Error('could not extract resetBaseFilters');
 // it must do is a property of the strip (verify-overview.mjs), not of 异常. Stubbing it keeps this
 // file from having to grow the drag's whole dependency tree to test one assignment.
 page.abortOverviewDrag = () => {};
+// …and setOverviewSelection is loaded verbatim too, because dropOverviewSelection no longer assigns
+// the field itself: R5 gave it one writer, so the reset path runs through it. Stubbing it instead
+// would have been the smaller change and the wrong one — the sandbox would then pass while the
+// shipped reset quietly stopped clearing the brush, which is the property this file exists to hold.
+const setSelSource = fnSource('function setOverviewSelection(');
+if (!setSelSource) throw new Error('could not extract setOverviewSelection');
+vm.runInContext(setSelSource, page);
 const dropSelSource = fnSource('function dropOverviewSelection(');
 if (!dropSelSource) throw new Error('could not extract dropOverviewSelection');
 vm.runInContext(dropSelSource, page);
@@ -910,13 +917,15 @@ const modeSrc = fnSource('function syncAnomalyMode(counts)');
 const baseSrc = fnSource('function resetBaseFilters(');
 assert('the reset updates the buttons, or the axis would show a condition that is not in force',
   !!baseSrc && /state\.kinds = KIND_ORDER\.slice\(\);/.test(baseSrc) && /syncKindButtons\(\);/.test(baseSrc));
-// The brush is no longer written inline here — it is written by dropOverviewSelection(), which is
-// also what aborts the drag. Re-anchoring must not weaken this: the rule is still "the row above is
-// cleared whole", so it now follows the call and then checks the assignment at the far end of it.
-// Checking only that the call happens would let a dropOverviewSelection() that clears nothing pass.
+// The brush is not written inline here, and it is not written by dropOverviewSelection() either —
+// R5 gave it one writer, so the chain is resetBaseFilters -> dropOverviewSelection ->
+// setOverviewSelection -> the assignment. Following the call and checking the assignment at the far
+// end of it is what keeps this from weakening: checking only that the calls happen would let a
+// setOverviewSelection that clears nothing pass, which is the same hole one hop further down.
 assert('and it clears every part of the row above, not just the types',
   !!baseSrc && /state\.query = '';/.test(baseSrc) && /dropOverviewSelection\(\);/.test(baseSrc)
-  && !!dropSelSource && /state\.overviewSelection = null;/.test(dropSelSource)
+  && !!dropSelSource && /setOverviewSelection\(null\);/.test(dropSelSource)
+  && !!setSelSource && /state\.overviewSelection = value;/.test(setSelSource)
   && /clearTimeRange\(\);/.test(baseSrc));
 const toggleFull = fnSource('function onAnomalyToggle(');
 assert('and it runs on every tick into the mode, not only the first',

@@ -76,8 +76,11 @@ MUTATIONS = [
      "neither window-bar writer touches state.overviewSelection"),
 
     # Declaration 2, write half: the brush stops writing the L2 field entirely.
+    # Re-anchored 2026-10-14: the landing write went through setOverviewSelection(), so the old
+    # `state.overviewSelection = { start: start, end: end }` anchor no longer resolves. The job is
+    # unchanged, so the mutation is the same one pointed at the line that now carries it.
     ("the overview brush stops writing the L2 range",
-     '        state.overviewSelection = { start: start, end: end };\n'
+     '        setOverviewSelection({ start: start, end: end });\n'
      '        resetWindowMode();\n'
      '        renderOverviewSelection();',
      '        resetWindowMode();\n'
@@ -103,9 +106,9 @@ MUTATIONS = [
     # 「清除筛选」 used to do, leaving a brush filtering a ledger the reader had just emptied.
 
     ("the shared clear writer stops writing the field",
-     "        abortOverviewDrag();\n        state.overviewSelection = null;",
-     "        abortOverviewDrag();",
-     "dropOverviewSelection exists and is what writes the field to null"),
+     "        setOverviewSelection(null);\n      }",
+     "      }",
+     "dropOverviewSelection exists and clears the field through the one writer"),
 
     ("the strip control goes back to assigning the field itself",
      "        dropOverviewSelection();\n        state.overviewViewport = null;",
@@ -117,6 +120,49 @@ MUTATIONS = [
      "        dropOverviewSelection();\n        clearTimeRange();",
      "        clearTimeRange();",
      "and so does the base-filter reset, which is the one the empty ledger reaches"),
+
+    # ---- R5, closed 2026-10-14: the four writers are one, and that is now assertable ----
+    #
+    # Everything above could be true while the field still had four writers. The count could not be
+    # asserted (four is unassertable before the fix and unassertable after it), so the rule sat in
+    # prose. These four are the things that make 「exactly one writer」 fail, one per way it can.
+
+    # A second writer, at the mode switch. This is the path that used to disagree with the others
+    # about the invariant: it cleared the range without disarming the brush.
+    ("the mode switch goes back to writing the field itself",
+     "        setOverviewSelection(null);\n        state.overviewViewport = null;",
+     "        state.overviewSelection = null;\n        state.overviewViewport = null;",
+     "R5 holds: state.overviewSelection has exactly one writer"),
+
+    # …and one during the gesture, which is the other half of that disagreement.
+    ("the in-flight brush goes back to writing the field itself",
+     "          setOverviewSelection({ start: overviewDrag.start, end: overviewDrag.end });",
+     "          state.overviewSelection = { start: overviewDrag.start, end: overviewDrag.end };",
+     "onOverviewPointerMove reaches the field through the one writer"),
+
+    # The writer keeps its single ownership and loses the invariant. Enumeration still shows one
+    # name, so only the second assertion can catch this — which is the reason it exists separately.
+    ("the one writer no longer disarms the brush",
+     "        if (value === null) abortOverviewDrag();\n        state.overviewSelection = value;",
+     "        state.overviewSelection = value;",
+     "clearing the range through the writer also disarms the brush in flight"),
+]
+
+# Mutations that must leave the guard GREEN. They exist because a guard that cannot pass is as
+# useless as one that cannot fail, and this file needed one claim of the second kind to be provable.
+#
+# The single-writer assertion counts writers by scanning for assignments with the comments stripped
+# out — the JSDoc above dropOverviewSelection() spent years describing `state.overviewSelection = null`
+# in prose, which is exactly the shape that would make the count come out wrong. Stripping is not
+# observable from a failing mutation: without it this edit would be caught, with it the edit is
+# invisible, and the two cases are indistinguishable by anything else in this file. So the edit is
+# made and the guard is required to stay green.
+MUST_STAY_GREEN = [
+    ("a comment quoting the old assignment is not counted as a writer",
+     "      function dropOverviewSelection() {\n        setOverviewSelection(null);",
+     "      function dropOverviewSelection() {\n"
+     "        // state.overviewSelection = null;  <- what this used to do\n"
+     "        setOverviewSelection(null);"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
@@ -151,10 +197,31 @@ for title, old, new, expect in MUTATIONS:
     finally:
         io.open(CLIENT, "w", encoding="utf-8", newline="").write(original)
 
+# The mirror image, and the only way to prove a guard is not simply strict. These edits must leave it
+# green: they change what the file SAYS about the writers without changing who the writers are.
+stayed_green = []
+for title, old, new in MUST_STAY_GREEN:
+    hits = original.count(old)
+    if hits != 1:
+        raise SystemExit("FAIL  anchor for %r matched %d times" % (title, hits))
+    try:
+        io.open(CLIENT, "w", encoding="utf-8", newline="").write(original.replace(old, new, 1))
+        during = run()
+        green = GREEN in during
+        print(("ok   " if green else "FAIL ") + "guard ignores: " + title)
+        if not green:
+            print("       the guard reacted to an edit that changes no writer:")
+            for line in during.splitlines()[-5:]:
+                print("       " + line.strip())
+        stayed_green.append(green)
+    finally:
+        io.open(CLIENT, "w", encoding="utf-8", newline="").write(original)
+
 restored = io.open(CLIENT, encoding="utf-8", newline="").read()
 after = run()
 after_ok = GREEN in after
 print(("ok   " if restored == original else "FAIL ") + "client restored byte for byte")
 print(("ok   " if after_ok else "FAIL ") + "green again after restore")
 
-sys.exit(0 if (ok and all(caught_all) and restored == original and after_ok) else 1)
+sys.exit(0 if (ok and all(caught_all) and all(stayed_green)
+                and restored == original and after_ok) else 1)
