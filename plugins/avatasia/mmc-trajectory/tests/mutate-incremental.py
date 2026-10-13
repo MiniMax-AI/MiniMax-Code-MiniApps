@@ -37,7 +37,7 @@ CLIENT_CASES = [
      "          if (at[incoming.id] === undefined) {", "          if (true) {"),
     ("replaying a tail duplicates the records it already had",
      "replaying the same tail changes nothing",
-     "          if (seen[added[i].index]) continue;", "          if (false) continue;"),
+     "          if (at[index] === undefined) {", "          if (true) {"),
     ("the merge keeps the turn fields it already had instead of the fresh ones",
      "the merge takes the closed flag from the tail, not from the copy it already had",
      "          if (Object.prototype.hasOwnProperty.call(incoming, key)) merged[key] = incoming[key];",
@@ -63,10 +63,10 @@ SERVER_CASES = [
      "  if (value < 0) return null;"),
     ("a turn that gained nothing is sent anyway",
      "a turn that gained no records is absent from the tail",
-     "    if (kept.length === 0) continue;", "    // every turn, gained or not"),
+     "    if (fresh === 0) continue;", "    // every turn, gained or not"),
     ("a tail turn travels only its records and loses its identity",
      "the merge takes the closed flag from the tail, not from the copy it already had",
-     "    tail.push({ ...turn, records: kept });", "    tail.push({ records: kept });"),
+     "    tail.push({ ...turn, records: all.slice() });", "    tail.push({ records: all.slice() });"),
     ("stats are thinned down to one counter on the way out",
      "stats travel whole, because a tail cannot be added to an accumulator",
      "    stats: payload.stats,", "    stats: { messages: (payload.stats || {}).messages },"),
@@ -80,6 +80,29 @@ SERVER_CASES = [
      "the server cuts a tail only where it has just built the payload",
      "    const delta = since === null ? null : buildDeltaPayload(payload, since);",
      "    const delta = buildDeltaPayload(payload, since || 0);"),
+
+    # ---- the cut moves back to record granularity ----
+    # This is the reported defect. The count is what decides *whether* a turn travels, and
+    # re-applying the filter to what travels undoes the whole point: the record that gained a
+    # duration has an index below the cursor, so a filter puts it back out of the tail. Both of
+    # these keep `delta.records` correct, which is why the count is asserted apart from the cut.
+    ("the cut goes back to per record, so the rewritten record is not sent",
+     "the tail carries the old record that just gained a duration",
+     "    tail.push({ ...turn, records: all.slice() });",
+     "    tail.push({ ...turn, records: all.filter((r) => typeof r.index === 'number' && r.index > since) });"),
+    ("a whole turn ships and the count inherits the whole turn instead of the additions",
+     "while still counting only what is new",
+     "    records += fresh;", "    records += all.length;"),
+]
+
+# The page side. A delta replayed against a copy that already has a record must be allowed to
+# CHANGE it, and `continue` is the line that stops it — the same line that used to keep a replay
+# from doubling a turn. Both jobs cannot live in one line, and replacing by index does both.
+CLIENT_CASES += [
+    ("the page goes back to skipping a record it already has",
+     "a record the page already had takes the incoming copy, not the stale one",
+     "          } else {\n            records[at[index]] = added[i];\n          }\n",
+     "          } else {\n            continue;\n          }\n"),
 ]
 
 

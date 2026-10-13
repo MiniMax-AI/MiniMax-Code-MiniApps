@@ -126,17 +126,29 @@ assert('stats travel whole, because a tail cannot be added to an accumulator',
 assert('and so does session', JSON.stringify(delta.session) === JSON.stringify(full.session));
 
 // A turn that gained nothing is not in the tail at all.
+//
+// This block used to walk `full.turns`, assert on the FIRST turn that gained nothing, and break.
+// That is the same defect twice over: it checked one turn instead of all of them, and when the
+// mutation under test made every turn appear to have gained something, the loop found nothing to
+// check and the whole block passed **without running a single assertion**. A guard that checks
+// nothing when the thing it guards is broken is not a guard — so the precondition is asserted
+// first, and every untouched turn is checked rather than the first one.
 {
-  const gained = new Set();
-  for (const turn of delta.turns) for (const record of turn.records) gained.add(record.index);
-  for (const turn of full.turns) {
-    const any = turn.records.some((record) => gained.has(record.index));
-    if (!any) {
-      assert('a turn that gained no records is absent from the tail',
-        !delta.turns.some((incoming) => incoming.id === turn.id));
-      break;
-    }
-  }
+  // The precondition is a fact about the FIXTURE and the cursor, not about the delta — computing
+  // it from `delta` made it depend on the code under test, so the mutation that sends every turn
+  // made the precondition fail and the real assertion below never ran. A precondition that can be
+  // broken by the thing it guards is not a precondition.
+  const untouched = full.turns.filter((turn) =>
+    !turn.records.some((record) => typeof record.index === 'number' && record.index > CUT));
+  assert('the fixture has a turn that gained nothing, or this block would check nothing',
+    untouched.length > 0, `turns=${full.turns.length} untouched=${untouched.length}`);
+  // One assertion covering every untouched turn, with the offenders named in the detail. Labelling
+  // each one separately read better in the output but gave the assertion a different name per
+  // turn, which a mutation harness matching on the name cannot use.
+  const present = untouched.filter((turn) => delta.turns.some((incoming) => incoming.id === turn.id));
+  assert('a turn that gained no records is absent from the tail',
+    present.length === 0,
+    present.length ? `leaked: ${present.map((turn) => turn.id).join(', ')}` : `${untouched.length} checked`);
 }
 
 // A turn travels whole, with only its records cut down. `closed` in particular: the live turn
@@ -262,9 +274,15 @@ assert('the cursor of an empty payload is zero, not NaN',
   const tail = buildDeltaPayload(after, 3);
   assert('the tail from cursor 3 is one turn with one record',
     tail !== null && tail.turns.length === 1 && tail.delta.records === 1);
-  assert('and that turn is t2, closed, carrying only r4',
+  // The cut used to be per record, so this turn carried r4 alone. It travels whole now — see the
+  // block below for why — and the rewrite keeps the shape of the claim while pointing it at the
+  // whole turn. `delta.records` on the line above is the other half: the turn grew by four bytes
+  // of bookkeeping and by exactly one record, and those two numbers stopped agreeing when the
+  // cut moved. They have to be computed apart.
+  assert('and that turn is t2, closed, carrying its own records whole',
     tail.turns[0].id === 't2' && tail.turns[0].closed === true
-    && tail.turns[0].records.length === 1 && tail.turns[0].records[0].id === 'r4');
+    && tail.turns[0].records.length === 2
+    && tail.turns[0].records[0].id === 'r3' && tail.turns[0].records[1].id === 'r4');
   assert('and the untouched turn t1 is not in the tail at all',
     !tail.turns.some((turn) => turn.id === 't1'));
 
@@ -278,6 +296,66 @@ assert('the cursor of an empty payload is zero, not NaN',
     merged.turns.length === 2 && merged.turns[0].records.length === 2);
   assert('stats came from the tail, whole', merged.stats.messages === 4);
   assert('and the merge of before+tail equals after', JSON.stringify(merged) === JSON.stringify(after));
+}
+
+/**
+ * The second cause, and the reason the cut moved to turn granularity.
+ *
+ * A tool call's `durationMs` and its 「→ 结果预览」 are written onto the record AFTER it was first
+ * pushed — the value appears when its result message arrives, on a record whose index is well
+ * below the cursor. So the copy carrying a new value is an OLD record the page already has, and
+ * two separate things have to hold for that value to reach a reader's screen:
+ *
+ *   1. the server has to send that record, which means cutting at turn granularity rather than
+ *      record granularity — the record's own index will never be above the cursor;
+ *   2. the page has to take the incoming copy instead of skipping it, which means replacing by
+ *      index rather than `continue`.
+ *
+ * The first version of this protocol broke both, and the symptom was a call row with no time on
+ * it until the reader refreshed. Nothing here is about idempotence: replaying a delta is still a
+ * fixed point (asserted above and again below), because the replacement is keyed by the same
+ * index, so the same record replaces itself with an identical object.
+ */
+{
+  const call = {
+    id: 'r10', index: 10, kind: 'toolCall', title: 'read', summary: '读取文件', durationMs: null,
+  };
+  const fresh = {
+    id: 'r11', index: 11, kind: 'assistant', title: 'reply', summary: '好的', durationMs: null,
+  };
+  const held = {
+    session: { id: 's1' }, stats: { records: 1 },
+    turns: [{ id: 't9', closed: false, records: [call] }],
+  };
+  // What the server holds once the result message has been parsed.
+  const rewritten = {
+    session: { id: 's1' }, stats: { records: 2 },
+    turns: [{
+      id: 't9',
+      closed: false,
+      records: [{ ...call, durationMs: 1533, summary: '读取文件 → file contents' }, fresh],
+    }],
+  };
+
+  const tail = buildDeltaPayload(rewritten, 10);
+  assert('the tail carries the old record that just gained a duration',
+    tail !== null && tail.turns.length === 1
+    && tail.turns[0].records.some((record) => record.index === 10));
+  assert('while still counting only what is new',
+    tail !== null && tail.delta.records === 1, `records=${tail && tail.delta.records}`);
+
+  const merged = page.mergeDelta(held, tail);
+  const onScreen = merged.turns[0].records.find((record) => record.index === 10);
+  assert('a record the page already had takes the incoming copy, not the stale one',
+    onScreen.durationMs === 1533, `durationMs=${onScreen.durationMs}`);
+  assert('and the result preview arrives with it',
+    onScreen.summary === '读取文件 → file contents', JSON.stringify(onScreen.summary));
+  assert('the new record is there too',
+    merged.turns[0].records.some((record) => record.index === 11));
+  assert('and no record was doubled',
+    merged.turns[0].records.length === 2, `records=${merged.turns[0].records.length}`);
+  assert('laying the same delta down again changes nothing',
+    JSON.stringify(page.mergeDelta(merged, tail)) === JSON.stringify(merged));
 }
 
 // --------------------------------------------------------------- the wiring
