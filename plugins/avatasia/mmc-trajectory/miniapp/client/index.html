@@ -4183,10 +4183,21 @@
 
       /* ---------------- rendering: session select ---------------- */
 
+      /* The count is omitted whole when there is none, rather than printed as a dash.
+       *
+       * `/api/sessions` reads the first 64 KB of the active `messages.jsonl` to build this list, so
+       * it used to send a message count that was really 「how many messages are in the first 64 KB」.
+       * On a session whose active file is 1 MB that is 10 against 23,642 — and this line put it in
+       * front of the reader as `（3 分钟前 · 10 条）`, with nothing to say it was a prefix. It now
+       * sends no count when the prefix was not the whole file, so `— 条` here would be printing the
+       * absence of a number in the shape of a number. Omitting the segment is the honest rendering
+       * of 「这个数不存在」: the reader still has the label and the recency, which is what the picker
+       * is for. See docs/LAYERS.md §21. */
       function sessionOptionLabel(session, now) {
         var label = truncateText(session && session.label ? session.label : '', 42);
         var when = formatAgo(session ? session.lastActiveAt : null, now);
-        var tail = '（' + when + ' · ' + formatInt(session ? session.messageCount : null) + ' 条）';
+        var count = session ? session.messageCount : null;
+        var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
         if (!label) return '未命名会话 ' + tail;
         return label + ' ' + tail;
       }

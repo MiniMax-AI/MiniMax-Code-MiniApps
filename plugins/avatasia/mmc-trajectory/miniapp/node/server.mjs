@@ -33,9 +33,18 @@ const GENERATION_PROBE_BYTES = 64 * 1024;
  *
  * Kept at the generation probe's budget on purpose: the generation marker lives on the first row,
  * so a list that needed more than that to find one would be a list wanting the whole session.
+ *
  * The counters this buys are approximate by design (see countRolesInPrefix), so a narrower prefix
  * costs accuracy, not correctness — 256 KB was reading four times what the label needed, on every
- * cache miss, for counts nobody treats as exact.
+ * cache miss.
+ *
+ * The last clause used to end "for counts nobody treats as exact", and that is what D45 found
+ * false: the page printed the message count in the session picker (`（3 分钟前 · 10 条）`), so it
+ * was treated as exact. On a session whose active file is 1 MB, the first 64 KB held 10 messages
+ * out of 23,642 — a number that was wrong by three orders of magnitude and carried no hint of it.
+ * So the prefix stays bounded and the counters it buys are only REPORTED when the prefix was the
+ * whole file; see {@link describeSession}. Counting exactly is not available: the list reads the
+ * active file, and an exact count there would still miss the rest of the lineage.
  */
 const LIST_PEEK_BYTES = 64 * 1024;
 const MAX_FIELD_CHARS = 20000;
@@ -1915,23 +1924,33 @@ export async function start(context) {
     let peek = { messages: 0, userMessages: 0, assistantMessages: 0, toolResults: 0, toolCalls: 0, thinkingBlocks: 0, turns: 0 };
     let label = null;
     let startedAt = identity.createdAtMs;
+    // Whether the prefix was the whole file, and so whether its counters mean what their names say.
+    // False until a read proves otherwise: a failed read has counted nothing at all, and reporting
+    // its zeros as 「0 条」 would be the same lie with a smaller number.
+    let peekIsWhole = false;
     try {
       const head = await readHead(join(entry.dir, 'messages.jsonl'), LIST_PEEK_BYTES);
       peek = countRolesInPrefix(head.text);
       label = findFirstUserLabel(head.text, redact);
       const firstTimestamp = firstTimestampIn(head.text);
       if (firstTimestamp !== null) startedAt = firstTimestamp;
+      peekIsWhole = !truncatedByCap(head.size, LIST_PEEK_BYTES);
     } catch (error) {
       context.logger.warn('miniapp.trajectory.read_error', { reason: 'peek_failed', code: errorCode(error) });
     }
     const value = {
       id: identity.id,
       label: label ?? `会话 ${String(identity.id).slice(4, 12)}`,
-      messageCount: peek.messages,
+      // A prefix count is a prefix count. Reported as the session's message count it is simply
+      // untrue, so when the prefix was not the whole file these are absent rather than approximate —
+      // and the page's job is to print nothing rather than to print a number it cannot stand behind.
+      messageCount: peekIsWhole ? peek.messages : null,
       startedAt,
       lastActiveAt: entry.lastActiveAt,
+      // The active file's size, which is exactly what it is: `sizeBytes` is not a lineage total
+      // here, and /api/trajectory's is. Same name, different scope — see docs/LAYERS.md §21.
       sizeBytes: entry.sizeBytes,
-      turnCount: peek.turns,
+      turnCount: peekIsWhole ? peek.turns : null,
       cacheId,
     };
     descriptorCache.set(cacheKey, { at: Date.now(), value });
