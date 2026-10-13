@@ -96,6 +96,43 @@ WIDE_OVERFLOW = (
     "          overflow-y: auto;"
 )
 
+
+# ---- D42 anchors. The first three are the shipped shapes verbatim; the fourth is the one
+# reader D42 introduced, and the mutation that proves it is the only one.
+NARROW_WRITER = "        if (dom.inspectorPanel && narrow) {"
+
+WIDE_WRITER = ("        if (!window.matchMedia(INSPECTOR_DOCK_QUERY).matches) {\n"
+               "          root.setProperty('--inspector-wide-h', Math.max(")
+
+UNDERPINS_BODY = "      function inspectorUnderPins() {"
+
+SECOND_READER = ("\n"
+                 "      var spill = getComputedStyle(document.documentElement)\n"
+                 "        .getPropertyValue('--sticky-band-h');")
+
+
+# The same ceiling, spelled out the way it was before D42: its own strip reads and its own sum.
+CEILING_REDERIVED = (
+    "          var root = getComputedStyle(document.documentElement);"
+    + "\n"
+    + "          var band = parseFloat(root.getPropertyValue('--sticky-band-h')) || 0;"
+    + "\n"
+    + "          var overview = parseFloat(root.getPropertyValue('--sticky-overview-h')) || 0;"
+    + "\n"
+    + "          var ledgerReserve = Math.max("
+    + "\n"
+    + "            INSPECTOR_MIN_LEDGER_H,"
+    + "\n"
+    + "            Math.round(window.innerHeight * INSPECTOR_LEDGER_SHARE)"
+    + "\n"
+    + "          );"
+    + "\n"
+    + "          var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, Math.round(window.innerHeight - band - overview - ledgerReserve));")
+CEILING_BODY = ("          var ledgerReserve = Math.max(\n"
+                 "            INSPECTOR_MIN_LEDGER_H,\n"
+                 "            Math.round(window.innerHeight * INSPECTOR_LEDGER_SHARE)\n"
+                 "          );\n"
+                 "          var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, inspectorUnderPins() - ledgerReserve);")
 MUTATIONS = [
     # ---- the CSS, in the media query that makes the feature exist ----
 
@@ -592,9 +629,8 @@ MUTATIONS = [
      "the expand label is produced from the field, and both its outcomes are named"),
 
     ("the expanded height stops being measured",
-     "          var panelMax = Math.max(\n            INSPECTOR_MIN_DOCK_H,\n"
-     "            Math.round(window.innerHeight - band - overview - ledgerReserve)\n          );\n",
-     "          var panelMax = 480;\n",
+     CEILING_BODY,
+     "          var panelMax = 480;",
      "the expanded height is measured from the window and the pinned offsets"),
 
     # ---- the ledger keeps its share of the window ----
@@ -602,8 +638,8 @@ MUTATIONS = [
     # The defect as shipped: the expanded panel ran the full height below the pinned strips and
     # not one ledger row was left on screen.
     ("the expanded panel covers the ledger again",
-     "            Math.round(window.innerHeight - band - overview - ledgerReserve)\n",
-     "            Math.round(window.innerHeight - band - overview)\n",
+     "          var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, inspectorUnderPins() - ledgerReserve);",
+     "          var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, inspectorUnderPins());",
      "the ledger share is subtracted from the height the panel may take"),
 
     ("the ledger keeps a tenth of the window instead of a quarter",
@@ -878,13 +914,13 @@ MUTATIONS = [
     # assertion is on the expression because a token check is satisfied by reading band and overview
     # while computing the ceiling from neither.
     ("the wide ceiling is computed from the strips instead of the window",
-     "          Math.round(window.innerHeight - band - overview - INSPECTOR_WIDE_BOTTOM_GAP)\n",
-     "          Math.round(band + overview + INSPECTOR_WIDE_BOTTOM_GAP)\n",
+     "            inspectorUnderPins() - INSPECTOR_WIDE_BOTTOM_GAP\n",
+     "            Math.round(band + overview + INSPECTOR_WIDE_BOTTOM_GAP)\n",
      "the wide ceiling is measured from the window, and never from vh"),
 
     ("the wide ceiling goes back to vh",
-     "          Math.round(window.innerHeight - band - overview - INSPECTOR_WIDE_BOTTOM_GAP)\n",
-     "          Math.round(window.innerHeight * 0.7)\n",
+     "            inspectorUnderPins() - INSPECTOR_WIDE_BOTTOM_GAP\n",
+     "            Math.round(window.innerHeight * 0.7)\n",
      "the wide ceiling is measured from the window, and never from vh"),
 
     ("a second place computes the wide ceiling",
@@ -896,8 +932,8 @@ MUTATIONS = [
      "the wide ceiling has exactly one writer, and it is the function that already owns the strips"),
 
     ("the hair of viewport below the wide panel becomes a literal",
-     " - INSPECTOR_WIDE_BOTTOM_GAP)",
-     " - 12)",
+     "inspectorUnderPins() - INSPECTOR_WIDE_BOTTOM_GAP",
+     "inspectorUnderPins() - 12",
      "the hair of viewport below the wide panel is a named number, not a literal in the arithmetic"),
 
     # A wide block that reached outside `#inspector-panel` would move something the report never
@@ -1004,6 +1040,38 @@ MUTATIONS = [
      WIDE_OVERFLOW,
      WIDE_OVERFLOW.replace("overflow-y: auto;", "overflow-y: visible;"),
      "every width gives the panel its own scroller, which is what makes an unscoped sticky head safe"),
+
+    # ---- D42: two derivations of one fact, and a write nobody reads ----
+
+    # The narrow ceiling goes back to doing its own arithmetic. The helper is still there and
+    # still used by the wide side, so every pre-existing assertion stays green; what changes is
+    # that the two halves can now drift apart without a single guard noticing.
+    ("the narrow ceiling stops borrowing the shared sum",
+     CEILING_BODY,
+     CEILING_REDERIVED,
+     "both ceilings subtract their reserve from one shared sum, not from their own copy of it"),
+
+    # The narrow writer stops looking at the layout. The numbers it writes are then correct in
+    # the layout that reads them and authoritative-looking in the one that does not — which is
+    # how --inspector-full-h came to sit at 540px on a screen whose panel was capped at 753px.
+    ("the narrow ceiling is written on a wide screen too, where nothing reads it",
+     NARROW_WRITER,
+     '        if (dom.inspectorPanel) {',
+     'each ceiling is written only in the layout whose rules read it'),
+
+    # The mirror: the wide ceiling gets written at every width, including the one whose rules
+    # live inside the dock query and never mention it.
+    ("the wide ceiling is written on a narrow screen too, where nothing reads it",
+     WIDE_WRITER,
+     '        if (true) {',
+     'each ceiling is written only in the layout whose rules read it'),
+
+    # A second reader of the strips is the shape this had before D42: two functions each pulling
+    # the same two numbers out of the document element for their own ceiling.
+    ("a second place reads the measured strips for its own ceiling",
+     UNDERPINS_BODY,
+     UNDERPINS_BODY + SECOND_READER,
+     'one place reads the measured strips when it needs a ceiling'),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

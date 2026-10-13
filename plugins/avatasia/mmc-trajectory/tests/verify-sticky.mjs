@@ -190,28 +190,56 @@ function functionSource(name) {
   return null;
 }
 
-/** Run syncStickyOffsets() against stub bands and report what it wrote. */
-function measure(dom, innerHeight) {
+/**
+ * Run inspectorUnderPins() + syncStickyOffsets() against stub bands and report what they wrote.
+ *
+ * D42 put the ceiling arithmetic in a helper that reads the two strips back out of the document
+ * element, so this sandbox grew three things: a document element that reflects what has been
+ * written to it, a `getComputedStyle` that answers from that same element, and a `matchMedia`
+ * that evaluates the shipped query against a real width rather than answering from a constant.
+ */
+function measure(dom, innerHeight, width) {
   const written = {};
+  const bands = {};
+  const documentElement = {
+    style: {
+      setProperty(name, val) { written[name] = val; bands[name] = val; },
+      getPropertyValue(name) { return bands[name] || ''; },
+    },
+    getPropertyValue(name) { return bands[name] || ''; },
+  };
   const sandbox = {
     dom,
     // D40 made the measurement read the window for the inspector's wide-screen ceiling. The window
     // is an INPUT here, the same way the three band heights are — so it is a stub, not a constant.
-    window: { innerHeight },
-    document: {
-      documentElement: {
-        style: { setProperty(name, val) { written[name] = val; } },
+    // D42 added `width` because the wide ceiling is now written only when the dock query does NOT
+    // match, and a stub that hard-coded `matches: false` would agree with the file whatever the
+    // file did. This one evaluates the shipped query against a real width.
+    window: {
+      innerHeight,
+      innerWidth: width,
+      matchMedia(query) {
+        const m = /max-width:\s*(\d+)px/.exec(query);
+        return { matches: m ? width <= Number(m[1]) : false };
       },
     },
+    getComputedStyle: () => documentElement,
+    document: { documentElement },
     // …but the gap is NOT an input and is NOT stubbed. Hard-coding it here would hand the test its
     // own answer: the assertion below would compare the shipped file against a copy of the shipped
     // file's number and pass whatever the file did. It is read out of the file instead, so a mutated
     // constant moves the expectation with it and the arithmetic is still checked.
     INSPECTOR_WIDE_BOTTOM_GAP: wideGap,
+    // Read out of the shipped file for the same reason the gap is: a constant typed here would
+    // hand the test its own answer.
+    INSPECTOR_DOCK_QUERY: dockQuery,
   };
   vm.createContext(sandbox);
-  const src = functionSource('syncStickyOffsets');
-  if (!src) return { written, error: 'syncStickyOffsets is not in the shipped script' };
+  // The helper has to run too: syncStickyOffsets() now calls it, and a sandbox that only had
+  // the caller would throw `inspectorUnderPins is not defined` rather than measure anything.
+  const src = [functionSource('inspectorUnderPins'), functionSource('syncStickyOffsets')]
+    .filter(Boolean).join('\n');
+  if (!src) return { written, error: 'the inspector measurement is not in the shipped script' };
   try {
     vm.runInContext(src, sandbox);
     sandbox.syncStickyOffsets();
@@ -238,7 +266,12 @@ const WINDOW_H = 900;
 // number below does not need pinning here.
 const wideGapMatch = /var\s+INSPECTOR_WIDE_BOTTOM_GAP\s*=\s*(\d+)\s*;/.exec(html);
 const wideGap = wideGapMatch ? Number(wideGapMatch[1]) : null;
-const run = measure(stub, WINDOW_H);
+const dockQueryMatch = /var\s+INSPECTOR_DOCK_QUERY\s*=\s*'([^']+)'/.exec(html);
+const dockQuery = dockQueryMatch ? dockQueryMatch[1] : null;
+// A width well above the dock query, so the branch under test is the one that runs. Measured
+// against the real number in the file rather than a literal here.
+const WIDE_W = dockQueryMatch ? Number(/max-width:\s*(\d+)px/.exec(dockQuery)[1]) + 200 : 1600;
+const run = measure(stub, WINDOW_H, WIDE_W);
 assert('the measurement runs without throwing on the page it ships with', run.error === null,
   'error: ' + run.error);
 assert('the measured band height is the one that gets written',

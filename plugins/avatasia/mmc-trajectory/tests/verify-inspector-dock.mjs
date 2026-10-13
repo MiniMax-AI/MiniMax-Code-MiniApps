@@ -560,10 +560,17 @@ assert('the expand glyph is bound at lookup, and its direction comes from the sa
 // window.innerHeight somewhere in the function is satisfied by a version that computes the ceiling
 // from neither of them — the mutation replaces the arithmetic with a constant and leaves all four
 // tokens in place, and a token-presence check calls that a pass.
+// D42: the sum moved into inspectorUnderPins(). What this still asserts is the pair of facts that
+// matters — the caller subtracts its own reserve from that helper, and the helper is where the
+// two strips and the window are combined. Reading for the helper by name rather than for a
+// literal `Math.round(window.innerHeight - band - overview ...)`, because a second derivation of
+// the same sum is exactly the drift this change exists to remove.
+const underPinsFn = functionSource('inspectorUnderPins');
 assert('the expanded height is measured from the window and the pinned offsets',
-  !!applyFn
-  && /var\s+panelMax\s*=\s*Math\.max\(\s*\w+\s*,\s*Math\.round\(\s*window\.innerHeight\s*-\s*band\s*-\s*overview\s*-\s*ledgerReserve\s*\)\s*\)/.test(applyFn)
-  && /--sticky-band-h/.test(applyFn) && /--sticky-overview-h/.test(applyFn));
+  !!applyFn && !!underPinsFn
+  && /var\s+panelMax\s*=\s*Math\.max\(\s*INSPECTOR_MIN_DOCK_H\s*,\s*inspectorUnderPins\(\)\s*-\s*ledgerReserve\s*\)/.test(applyFn)
+  && /window\.innerHeight\s*-\s*band\s*-\s*overview/.test(underPinsFn)
+  && /--sticky-band-h/.test(underPinsFn) && /--sticky-overview-h/.test(underPinsFn));
 
 /* ---------- the ledger keeps its share of the window ----------
  *
@@ -580,7 +587,7 @@ assert('the ledger keeps a quarter of the window',
   !!applyFn && /window\.innerHeight\s*\*\s*INSPECTOR_LEDGER_SHARE/.test(applyFn)
   && /var\s+INSPECTOR_LEDGER_SHARE\s*=\s*0\.25/.test(jsHtml));
 assert('the ledger share is subtracted from the height the panel may take',
-  !!applyFn && /-\s*ledgerReserve\s*\)\s*\)/.test(applyFn));
+  !!applyFn && /inspectorUnderPins\(\)\s*-\s*ledgerReserve/.test(applyFn));
 // Both ceilings, one number. A drag that could exceed the expanded cap is a panel that covers the
 // rows — the defect — reached by a different door.
 assert('expanding and dragging are bounded by the same ceiling',
@@ -966,7 +973,7 @@ const wideWrites = [...jsHtml.matchAll(/setProperty\(\s*'--inspector-wide-h'\s*,
   .map((m) => m[1].replace(/\s+/g, ' ').trim());
 assert('the wide ceiling is measured from the window, and never from vh',
   !!syncFn && wideWrites.length === 1
-  && /window\.innerHeight\s*-\s*band\s*-\s*overview\s*-\s*INSPECTOR_WIDE_BOTTOM_GAP/.test(wideWrites[0])
+  && /inspectorUnderPins\(\)\s*-\s*INSPECTOR_WIDE_BOTTOM_GAP/.test(wideWrites[0])
   && !/vh\b/.test(wideWrites[0]),
   'writes: ' + JSON.stringify(wideWrites));
 // One writer. `--inspector-wide-h` is a fact about the window, so a second place computing it is
@@ -1245,6 +1252,53 @@ const panelOverflows = [...css.matchAll(/#inspector-panel\s*\{([^{}]*)\}/g)]
   .filter(Boolean);
 assert('every width gives the panel its own scroller, which is what makes an unscoped sticky head safe',
   panelOverflows.length >= 2 && panelOverflows.every((v) => v.trim() === 'auto'));
+
+/* ---------- D42: one sum, one reader, and a write only where something reads it ---------- *
+ *
+ * The report was 「为什么窄屏和宽屏检视内部的滚动逻辑会不一样, 我认为这个是内部的逻辑, 应该要统一的」.
+ * The honest answer splits three ways, and only one of them was a defect:
+ *
+ *   - the SCROLL MECHANISM was already one thing (`max-height` plus `overflow-y: auto`), and the
+ *     header became the same after D41. Measured, both widths.
+ *   - the EDGE each layout pins to cannot be unified, and unifying it re-opens D36: a sticky
+ *     element pinned to the bottom and taller than the scrollport is dragged out of its grid row
+ *     and in front of the ledger (897x858: dragged 7,471px, covering it at all sixteen stops).
+ *   - the CEILING was computed twice, in two functions, from two different sources. That was the
+ *     defect, and these are the three assertions that say so.
+ *
+ * The third one is the important shape: every guard here covers one side or the other, and none
+ * of them ever covered the RELATION between the two. So the common sum could drift and stay green.
+ */
+assert('both ceilings subtract their reserve from one shared sum, not from their own copy of it',
+  !!underPinsFn && !!applyFn && !!syncFn
+  && /window\.innerHeight\s*-\s*band\s*-\s*overview/.test(underPinsFn)
+  && /inspectorUnderPins\(\)/.test(applyFn) && /inspectorUnderPins\(\)/.test(syncFn)
+  // …and neither caller may still be doing the arithmetic itself. This pair is the teeth:
+  // without it, adding the helper while leaving the old expressions in place would pass everything
+  // above and leave the drift exactly where it was.
+  && !/innerHeight\s*-\s*band\s*-\s*overview/.test(applyFn)
+  && !/innerHeight\s*-\s*band\s*-\s*overview/.test(syncFn));
+
+// One reader of the two measured strips for a ceiling. Measured at 1600x900: --inspector-full-h
+// stood at 540px while the panel was being capped at 753px by a different variable, so the number
+// that looked like the truth governed nothing.
+const bandReaders = (jsHtml.match(/getPropertyValue\(\s*'--sticky-band-h'\s*\)/g) || []).length;
+const overviewReaders = (jsHtml.match(/getPropertyValue\(\s*'--sticky-overview-h'\s*\)/g) || []).length;
+assert('one place reads the measured strips when it needs a ceiling',
+  bandReaders === 1 && overviewReaders === 1
+  && !!underPinsFn && /getPropertyValue\(\s*'--sticky-band-h'\s*\)/.test(underPinsFn));
+
+// Each variable is written only in the layout whose rules read it. Both writers used to write on
+// both sides, which meant that at every width exactly one ceiling was live and the others were
+// numbers nobody was reading. The predicate is the shipped dock query, not a hard-coded width.
+assert('each ceiling is written only in the layout whose rules read it',
+  !!applyFn && !!syncFn
+  && /if \(dom\.inspectorPanel && narrow\)/.test(applyFn)
+  && /if \(!window\.matchMedia\(INSPECTOR_DOCK_QUERY\)\.matches\)/.test(syncFn)
+  // …and neither writer touches the other layout's variables at all, which is the other half of
+  // 「only where something reads it».
+  && !/--inspector-wide-h/.test(applyFn)
+  && !/--inspector-(full|dock)-h/.test(syncFn));
 
 /* ---------- D27: the grip had every property right and was still invisible ---------- */
 //

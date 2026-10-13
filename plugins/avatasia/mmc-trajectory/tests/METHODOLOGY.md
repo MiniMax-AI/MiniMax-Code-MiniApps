@@ -505,6 +505,45 @@ panel's own border, and the assertion was measuring a border. It also demanded 4
 scroll, which a 751px-tall panel holding an 831px record does not have. Both were me asserting
 a tidier number than the rule talks about, and both failed on correct behaviour. Write the
 assertion as the rule, not as its ideal.
+### 8.7 Every guard covered one side; none covered the relation
+
+The two inspector ceilings were the same expression written twice, in two functions, from two
+different sources. `syncStickyOffsets()` measured the strips and computed from its own locals;
+`applyInspectorDock()` read the variables back and computed from those. Each had its own guards —
+correct, complete guards for what each one does — and no guard anywhere said the two halves had to
+agree. So the sum they share could change in one place only, the suite would stay green, and the
+panel's `top` (built from the variables) would end up describing a stack of one height while its
+ceiling reserved room for another.
+
+The fix is three assertions, and the interesting one is not about any single function:
+
+```
+both ceilings subtract their reserve from one shared sum, NOT from their own copy of it
+  &&  /innerHeight - band - overview/.test(applyFn)   === false
+  &&  /innerHeight - band - overview/.test(syncFn)    === false
+```
+
+The two negative clauses are the teeth. A positive assertion that both callers *use* the helper
+passes just as happily while both callers keep their own copy of the arithmetic behind it — which is
+the state this shipped in for two releases. **When the fix is "share one thing", assert the sharing
+by what is gone, not only by what is there.**
+
+Two more generalisable shapes came out of the same change:
+
+- **Count the readers, not the readers you know about.** The assertion is on the number of
+  `getPropertyValue('--sticky-band-h')` occurrences in the whole script, so a second reader added
+  anywhere — a new function, a new branch — is the failure. Naming the two functions that exist
+  today would have made it a snapshot.
+- **A stub that encodes the answer is not a stub.** `verify-sticky.mjs` runs the measurement in a vm,
+  and the cheap way to make the new layout branch run is `matchMedia: () => ({ matches: false })`.
+  That makes the stub agree with the file whatever the file does — which is the exact hazard the
+  comment beside `INSPECTOR_WIDE_BOTTOM_GAP` already documents for a hard-coded constant. The stub
+  reads the query out of the file and evaluates it against a real width instead.
+
+And the meta-point, which is the one worth carrying: **assertions cover behaviour, not relations
+between behaviours.** Any time two things share a fact, the guards will happily cover each of them
+and leave the sharing unguarded. Ask what would have to be true of BOTH for the page to be wrong, and
+whether any assertion says that.
 ## 9. Say what you did not manage to check
 
 Some things cannot be driven through the browser harness. The honest form is the useful one:
