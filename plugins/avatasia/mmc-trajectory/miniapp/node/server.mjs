@@ -28,13 +28,32 @@ const COMPACTION_TURN_SUFFIX = ':compaction';
 // Enough of a file to read its opening line. A generation marker lives on the first row, so
 // deciding whether a snapshot belongs to the lineage never needs more than this.
 const GENERATION_PROBE_BYTES = 64 * 1024;
-const LIST_PEEK_BYTES = 256 * 1024;
+/**
+ * Bytes of `messages.jsonl` the session list reads to derive one label and one set of counters.
+ *
+ * Kept at the generation probe's budget on purpose: the generation marker lives on the first row,
+ * so a list that needed more than that to find one would be a list wanting the whole session.
+ * The counters this buys are approximate by design (see countRolesInPrefix), so a narrower prefix
+ * costs accuracy, not correctness — 256 KB was reading four times what the label needed, on every
+ * cache miss, for counts nobody treats as exact.
+ */
+const LIST_PEEK_BYTES = 64 * 1024;
 const MAX_FIELD_CHARS = 20000;
 const MAX_SUMMARY_CHARS = 160;
 const MAX_ARGUMENT_BYTES = 32000;
 const MAX_LABEL_CHARS = 60;
 const MAX_RAW_BYTES = 65536;
-const LIST_CACHE_TTL_MS = 1000;
+/**
+ * How long the session list may keep its scan of the store before walking it again.
+ *
+ * This has to stay at or above the page's poll interval, and that relationship — not this
+ * number — is the invariant tests/verify-list-cache.mjs holds. Below the interval the cache
+ * cannot survive a single poll: every tick expires it, so the list re-walks the session tree
+ * and reopens the runtime database on every tick. Measured on this machine, that was most of
+ * the 16 GB this process read in 68 minutes, and the allocation behind it held the process at
+ * a 1.2-2.5 GB high-water mark for as long as the page stayed open.
+ */
+const LIST_CACHE_TTL_MS = 3000;
 const SESSION_CACHE_TTL_MS = 5000;
 const SESSION_CACHE_ENTRIES = 80;
 const TRAJECTORY_CACHE_ENTRIES = 4;
@@ -1845,6 +1864,26 @@ export async function start(context) {
     return entries;
   };
 
+  /**
+   * Titles and kinds for the visible slice, cached on the same budget as the walk above.
+   *
+   * readSessionTitles opens the runtime database on every call, and the list route calls it once
+   * per poll for rows that only change when somebody renames a session. Raising the walk's TTL
+   * without this would still reopen a 700 MB store every 2.5 s forever, so the two caches answer
+   * the same poll or neither does.
+   * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null }> }}
+   */
+  let titleCache = { at: 0, key: '', map: new Map() };
+  /** @param {readonly string[]} ids */
+  const sessionTitles = async (ids) => {
+    const key = ids.join(' ');
+    const now = Date.now();
+    if (key === titleCache.key && now - titleCache.at < LIST_CACHE_TTL_MS) return titleCache.map;
+    const map = await readSessionTitles(location.root, ids);
+    titleCache = { at: now, key, map };
+    return map;
+  };
+
   const describeSession = async (entry) => {
     const cacheKey = `${entry.dir}|${entry.sizeBytes}|${entry.lastActiveAt}`;
     const cached = descriptorCache.get(cacheKey);
@@ -1956,8 +1995,7 @@ export async function start(context) {
     const visible = entries.slice(0, limit);
     // Real titles from the runtime database; sub-agent and cron sessions get a kind badge so
     // the picker never presents them as if they were the user's conversation.
-    const titles = await readSessionTitles(
-      location.root,
+    const titles = await sessionTitles(
       visible.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean),
     );
     for (const entry of visible) {
@@ -2384,6 +2422,7 @@ export async function start(context) {
     if (disposal) return disposal;
     context.signal.removeEventListener('abort', onAbort);
     listCache = { at: 0, entries: null };
+    titleCache = { at: 0, key: '', map: new Map() };
     descriptorCache.clear();
     trajectoryCache.clear();
     // The parsed-row cache is the largest of the three and was the only one not released here, so a
