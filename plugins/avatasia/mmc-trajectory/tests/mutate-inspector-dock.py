@@ -339,8 +339,8 @@ MUTATIONS = [
     # …and the shape D38 had to be careful not to introduce while removing the shape it was
     # removing: two controls, each assigning the field. R1 in one edit.
     ("one of the two controls writes the dock state instead of handing it to the writer",
-     "          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');\n",
-     "          state.inspectorDock = state.inspectorDock === 'folded' ? 'docked' : 'folded';\n",
+     "          setInspectorDock(state.inspectorDock === 'folded' ? inspectorFoldReturnDock() : 'folded');\n",
+     "          state.inspectorDock = state.inspectorDock === 'folded' ? inspectorFoldReturnDock() : 'folded';\n",
      "no control writes the dock state itself: both hand a target to the one writer"),
 
     # Looks like a harmless optimisation, and freezes the panel halfway through every drag: the drag
@@ -350,7 +350,7 @@ MUTATIONS = [
      "        state.inspectorDock = next;\n        applyInspectorDock();\n",
      "        if (state.inspectorDock === next) return;\n"
      "        state.inspectorDock = next;\n        applyInspectorDock();\n",
-     "the writer never skips a call that asks for the state it is already in, because the drag repeats"),
+     "the writer\'s whole body is the memory write plus the change, with no early return"),
 
     ("the writer changes the field and never repaints",
      "        state.inspectorDock = next;\n        applyInspectorDock();\n",
@@ -535,7 +535,8 @@ MUTATIONS = [
     # D34 turned one label expression into a chain; D38 turned the chain into two, one per control.
     # Same defect — one label for every state — and now there are two copies of it to catch.
     ("the minimize label is written once for every state",
-     "        var minLabel = folded ? '恢复到半高' : '折叠到最小';\n",
+     "          ? (inspectorFoldReturnDock() === 'full' ? '恢复到完全展开' : '恢复到半高')\n"
+     "          : '折叠到最小';\n",
      "        var minLabel = '折叠到最小';\n",
      "the minimize label is produced from the field, and both its outcomes are named"),
 
@@ -691,12 +692,87 @@ MUTATIONS = [
     ("the expand control no longer comes back down to half height",
      "state.inspectorDock === 'full' ? 'docked' : 'full'",
      "state.inspectorDock === 'full' ? 'full' : 'full'",
-     "both heights other than half are one press away from half height"),
+     "from fully expanded one press reaches either of the other two heights"),
 
     ("a control offers to put the panel back in the document",
      "state.inspectorDock === 'full' ? 'docked' : 'full'",
      "state.inspectorDock === 'full' ? 'flow' : 'full'",
      "no control can put the panel back in the document; the scroll decision owns that alone"),
+
+    ("a control repaints the panel a second time on its own",
+     "          setInspectorDock(state.inspectorDock === 'full' ? 'docked' : 'full');\n",
+     "          setInspectorDock(state.inspectorDock === 'full' ? 'docked' : 'full');\n"
+     "          applyInspectorDock();\n",
+     "no control repaints on its own: the writer is the only place a change becomes visible"),
+
+    # ---- D39: the way out of folded remembers where the reader came from ----
+    #
+    # 「恢复到半高」 shipped as a literal and was wrong for half the cases: fold a fully expanded panel
+    # and it came back to half height. Every assertion about the label and the press stayed green
+    # throughout, because both were present and both worked — they just did not agree about where the
+    # reader was going. That is the shape these seven reproduce.
+
+    ("the folded exit goes back to half height whatever came before it",
+     "          setInspectorDock(state.inspectorDock === 'folded' ? inspectorFoldReturnDock() : 'folded');\n",
+     "          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');\n",
+     "the way out of folded is decided by where the reader came from, not written at the control"),
+
+    ("the folded exit ignores the height the reader came from",
+     "      function inspectorFoldReturnDock() {\n"
+     "        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'docked';\n",
+     "      function inspectorFoldReturnDock() {\n"
+     "        return state.inspectorDockBeforeFold === 'full' ? 'docked' : 'docked';\n",
+     "a full panel comes back full, and every other height comes back to half"),
+
+    # The false branch, not the true one. `resolveDestination` can only follow the branch the memory
+    # is currently set to, so a defect in the other branch is invisible to every reachability
+    # assertion in the guard — which is why there is a rule over the tokens rather than over the
+    # resolved value.
+    ("the folded exit drops a half-height panel into a state that is not one",
+     "        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'docked';\n",
+     "        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'flow';\n",
+     "the way out of folded can only name a pinned height, never a position"),
+
+    # The label is the same rule read a second time. A label that picks its own branch is how the
+    # button ends up saying 「恢复到半高」 and taking the reader to full height.
+    ("the folded label picks its own branch instead of reading the rule",
+     "          ? (inspectorFoldReturnDock() === 'full' ? '恢复到完全展开' : '恢复到半高')\n",
+     "          ? '恢复到半高'\n",
+     "the minimize label is produced from the field, and both its outcomes are named"),
+
+    # A second reader of the memory is free to disagree with the function, and nothing else in the
+    # file would see it: both spellings are individually correct.
+    ("the memory gains a second reader that can disagree with the rule",
+     "      function inspectorFoldReturnDock() {\n"
+     "        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'docked';\n",
+     "      function inspectorFoldReturnDock() {\n"
+     "        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'docked';\n"
+     "      }\n\n"
+     "      function inspectorFoldReturnDockUnused() {\n"
+     "        return state.inspectorDockBeforeFold === 'full' ? 'docked' : 'full';\n",
+     "the remembered height is read in exactly one place"),
+
+    ("the memory is written outside the one writer of the dock state",
+     "      function dockInspector() {\n        if (state.inspectorDock !== 'flow') return;\n",
+     "      function dockInspector() {\n        state.inspectorDockBeforeFold = 'full';\n"
+     "        if (state.inspectorDock !== 'flow') return;\n",
+     "one place remembers the height, and it is the writer of the dock state"),
+
+    # Position is a promise like any other: both controls still ship, still are wired, still are
+    # labelled correctly, and the one that folds the panel is now on the left.
+    ("the control that folds the panel moves back to the left",
+     "          <div class=\"panel-head-actions\">\n"
+     "            <button type=\"button\" class=\"section-toggle\" id=\"inspector-expand\"",
+     "          <div class=\"panel-head-actions\">\n"
+     "            <button type=\"button\" class=\"section-toggle\" id=\"inspector-minimize\"\n"
+     "              aria-controls=\"panels\" aria-label=\"折叠到最小\" title=\"折叠到最小\" hidden></button>\n"
+     "            <button type=\"button\" class=\"section-toggle\" id=\"inspector-expand\"",
+     "the control that folds the panel is the rightmost of the two"),
+
+    ("the minimize glyph stops following its label and stays a dash",
+     "            folded ? 'M3.5 8.5 h5.5 v5 h-5.5 z M6.5 8.5 v-5 h6 v5 h-2.5' : 'M3.5 8 H12.5'\n",
+     "            'M3.5 8 H12.5'\n",
+     "the minimize glyph follows its label: a dash to fold away, a restore mark to come back"),
 
     ("the expand control can fold the panel away, so folded has two doors",
      "state.inspectorDock === 'full' ? 'docked' : 'full'",
@@ -744,9 +820,9 @@ MUTATIONS = [
      "folded keeps the header and takes the rest out of flow"),
 
     ("the panel can be folded away but never unfolded",
-     "          setInspectorDock(state.inspectorDock === 'folded' ? 'docked' : 'folded');\n",
-     "          setInspectorDock(state.inspectorDock === 'folded' ? 'folded' : 'folded');\n",
-     "both heights other than half are one press away from half height"),
+     "        return state.inspectorDockBeforeFold === 'full' ? 'full' : 'docked';\n",
+     "        return state.inspectorDockBeforeFold === 'full' ? 'folded' : 'docked';\n",
+     "from folded one press lands on a pinned height rather than on nothing"),
 
     # The version this section shipped first: a cap written down as a number, which then had to be
     # measured correctly and was not — it came out 2px short and clipped the header it was capping.

@@ -367,6 +367,54 @@ a claim about the first occurrence.
 And the two together are why so much of this file reads as it does: **every assertion has to name the
 region it is talking about, and every absence has to be bounded rather than spotted.**
 
+### 8.4 A contract can be wrong while the control is exactly right
+
+D38 split one three-state cycling button into two, one job each, and that was correct. D39 then found
+that the folded button's exit said 「恢复到半高」 as a **literal** — so folding a fully expanded panel
+brought it back to half height. The button existed, was wired, reported both directions, and did
+exactly what it said. It was just saying the wrong thing half the time.
+
+The shape worth naming: **splitting a control decides which branch each control owns; it does not
+decide what that branch points at.** The exit target is a function of something the reader did
+earlier, so it needs a field and a function:
+
+```js
+function setInspectorDock(next) {
+  if (next === 'folded') state.inspectorDockBeforeFold = state.inspectorDock;
+  state.inspectorDock = next;
+  applyInspectorDock();
+}
+```
+
+The property that makes it correct is narrow and worth copying: **the field is written only on the way
+IN and read only while folded.** There is no window in which the dock has moved on and the memory has
+not, so nothing has to clear it — no reset in `resetInspectorDock`, no reset when the selection is
+lost. "Can this go stale?" is answered structurally rather than by adding the clearing code that would
+have needed its own guard.
+
+Three sub-rules came out of writing the guards for it, and all three are about the same seam:
+
+- **Two readers of one rule must call the same function.** The label and the click both pick a branch;
+  spelled separately they are free to disagree, and disagreeing IS the defect. The guard counts the
+  calls rather than checking either spelling, so a third reader fails too.
+- **A parser that only understands literals stops seeing the control at all.** The transition table's
+  `state.X === P ? A : B` matcher needed `A` to become "a literal *or* a call", and until it did, four
+  assertions silently went quiet rather than going red. A parser that cannot represent the code is
+  indistinguishable from code that is not there — so when a matcher is widened, check that the
+  assertions downstream came *back*, not that they still pass.
+- **Following one call is not seeing both branches.** `resolveDestination` reads the exit function and
+  takes the branch the memory currently points at, which is a fact about the reader, not about the
+  file. A mutation putting `'flow'` in the *other* branch survived every reachability assertion, and
+  the fix was a separate rule over the tokens: **every state the exit is capable of naming must be a
+  declared one.** The reachability table can only ever prove one branch; the token rule covers the
+  other, and the gap is a property of static checking, not something to fix with a cleverer regex.
+
+The general form, and the one to check before writing a guard for any new control: **「is the control
+wired correctly」 and 「does the control say the truth」 are different claims, and the second one is not
+implied by the first.** D34 → D38 → D39 is three rounds of the same page rediscovering that, in
+ascending order of how invisible it was: three class values with one unreachable, then one control
+covering three heights, then two controls with one of them lying about its own destination.
+
 ---
 
 ## 9. Say what you did not manage to check

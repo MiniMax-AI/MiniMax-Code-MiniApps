@@ -406,14 +406,19 @@ assert('one function writes the dock state, for everything that reacts to input'
 // optimisation and would freeze the panel at whatever height it had reached halfway through the
 // drag.
 //
-// Asserted as the body BEING those two statements, not as them being adjacent. Adjacency was the
+// Asserted as the body BEING exactly those statements, not as them being adjacent. Adjacency was the
 // first version and the mutation survived it — a version that guards the call and then does exactly
 // the same two things still has them adjacent. "Nothing sits between these two" and "nothing sits
 // before these two" are different claims, and only the second one is the rule.
-assert('the writer never skips a call that asks for the state it is already in, because the drag repeats',
+//
+// D39 gave the body a third statement, and that is why the assertion is an equality rather than a
+// pattern: the set of things this function is allowed to do is exactly these, and a fourth is a
+// decision somebody has to make here rather than in a regex.
+assert('the writer\'s whole body is the memory write plus the change, with no early return',
   !!setFn
   && setFn.replace(/^[^]*?\{/, '').replace(/\}\s*$/, '').replace(/\s+/g, ' ').trim()
-    === 'state.inspectorDock = next; applyInspectorDock();');
+    === "if (next === 'folded') state.inspectorDockBeforeFold = state.inspectorDock; "
+       + 'state.inspectorDock = next; applyInspectorDock();');
 
 assert('the scroll exit that pins the panel hands its literal to that one writer',
   !!dockFn && /setInspectorDock\(\s*'docked'\s*\)/.test(dockFn)
@@ -451,9 +456,20 @@ assert('nothing writes the dock state except the one writer and the lost-selecti
 // CONTAINS the substring `setInspectorDock`, so without it every one of the three `resetInspectorDock()`
 // occurrences in the file was read as a fourth, fifth and sixth call into the writer with no
 // argument. §8.1 of METHODOLOGY — a name that is a prefix of another name is still a name.
-const dockArgs = [...jsHtml.matchAll(/\bsetInspectorDock\(\s*([^)]*)\)/g)].map((m) => m[1].trim());
-const SPELLED_STATE = /^'[^']+'$/;
-const SPELLED_CHOICE = /^state\.inspectorDock\s*===\s*'[^']+'\s*\?\s*'[^']+'\s*:\s*'[^']+'$/;
+//
+// The argument pattern allows ONE level of nested parentheses, because D39's exit target is a call.
+// `[^)]*` truncates it at `inspectorFoldReturnDock(` and yields an argument no reader can make
+// anything of — which reads as a violated rule rather than as a broken parser.
+const dockArgs = [...jsHtml.matchAll(/\bsetInspectorDock\(\s*((?:[^()]|\([^()]*\))*)\)/g)]
+  .map((m) => m[1].trim());
+const STATE_FRAG = "'[^']+'";
+const CALL_FRAG = '[A-Za-z_]\\w*\\(\\)';
+const SPELLED_STATE = new RegExp('^' + STATE_FRAG + '$');
+const SPELLED_CHOICE = new RegExp(
+  '^state\\.inspectorDock\\s*===\\s*' + STATE_FRAG
+  + '\\s*\\?\\s*(?:' + STATE_FRAG + '|' + CALL_FRAG + ')'
+  + '\\s*:\\s*' + STATE_FRAG + '$'
+);
 assert('every caller hands the writer one of the declared states, spelled out',
   dockArgs.length > 0
   && dockArgs.every((a) => a === 'next' || SPELLED_STATE.test(a) || SPELLED_CHOICE.test(a)),
@@ -461,6 +477,13 @@ assert('every caller hands the writer one of the declared states, spelled out',
 assert('the only unspelled argument is the writer\'s own parameter declaration',
   dockArgs.filter((a) => a === 'next').length === 1
   && /function\s+setInspectorDock\(\s*next\s*\)/.test(jsHtml));
+// A computed destination has to name something that exists. Nothing else in this file follows a call
+// into the function it names, so a typo here would be a runtime no-op reported by no assertion at all.
+const computedTargets = [...new Set(dockArgs.flatMap((a) => a.match(new RegExp(CALL_FRAG, 'g')) || []))];
+assert('a computed destination names a function that exists',
+  computedTargets.length > 0
+  && computedTargets.every((c) => !!functionSource(c.slice(0, -2))),
+  'computed: ' + JSON.stringify(computedTargets));
 
 /* ---------- the two contracts ---------- */
 
@@ -483,7 +506,8 @@ assert('the expand control is offered on the two heights it toggles between',
 // both label branches — so a check that only looks for a literal is satisfied by a control that
 // reports a hard-coded label and never changes it.
 assert('the minimize label is produced from the field, and both its outcomes are named',
-  !!applyFn && /var\s+minLabel\s*=\s*folded\s*\?\s*'恢复到半高'\s*:\s*'折叠到最小'\s*;/.test(applyFn)
+  !!applyFn
+  && /var\s+minLabel\s*=\s*folded\s*\?\s*\(\s*inspectorFoldReturnDock\(\)\s*===\s*'full'\s*\?\s*'恢复到完全展开'\s*:\s*'恢复到半高'\s*\)\s*:\s*'折叠到最小'\s*;/.test(applyFn)
   && /minimize\.setAttribute\(\s*'aria-label',\s*minLabel\s*\)/.test(applyFn)
   && /minimize\.setAttribute\(\s*'title',\s*minLabel\s*\)/.test(applyFn));
 assert('the expand label is produced from the field, and both its outcomes are named',
@@ -678,6 +702,12 @@ assert('the dock state is decided once at wire time',
  * own handler and nowhere else, so each handler is read and turned into a transition table below —
  * and the assertions are made against that table rather than against a sentence restating the code,
  * because a handler that grew a fourth height has to change the table.
+ *
+ * `state.X === P ? A : B` reads as 「from P this press lands on A, from anywhere else on B」, and A may
+ * be a literal OR a call to the one function that decides it. D39 is why that has to be allowed: the
+ * way out of folded depends on the height the reader came from, so it cannot be spelled at the call
+ * site — and a parser that only understands literals stops seeing the control at all, which is worse
+ * than failing loudly.
  */
 const pressReg = (prop) => new RegExp(
   'dom\\.' + prop + '\\.addEventListener\\(\\s*\'click\'\\s*,\\s*function\\s*\\(\\s*\\)\\s*\\{([\\s\\S]*?)\\n\\s*\\}\\);'
@@ -685,19 +715,43 @@ const pressReg = (prop) => new RegExp(
 const minClick = pressReg('inspectorMinimize').exec(jsHtml);
 const expClick = pressReg('inspectorExpand').exec(jsHtml);
 
-// `state.X === P ? A : B` reads as: from P this press lands on A, from anywhere else on B. Both
-// controls are written that way because each one names its own partner state, and P is the state the
-// label was read from — which is why the table below needs both halves and not just `from`.
 const PRESS = new Map();
 for (const [key, hit] of [['minimize', minClick], ['expand', expClick]]) {
   if (!hit) continue;
-  const m = /state\.inspectorDock\s*===\s*'([^']+)'\s*\?\s*'([^']+)'\s*:\s*'([^']+)'/.exec(hit[1]);
+  const m = /state\.inspectorDock\s*===\s*'([^']+)'\s*\?\s*([A-Za-z_]\w*\(\)|'[^']+')\s*:\s*'([^']+)'/.exec(hit[1]);
   if (m) PRESS.set(key, { probe: m[1], escapeTo: m[2], fallbackTo: m[3], body: hit[1] });
 }
+
+/** A destination the handler computes instead of spelling. */
+const isComputed = (t) => /[(][)]$/.test(t);
+
+/**
+ * A destination resolved to a state, following the one call it may make.
+ *
+ * Two spellings arrive here and both have to work: the probe's branch is captured WITH its quotes
+ * (it has to, or a call and a literal are indistinguishable) and the other branch without them.
+ * Normalising inside the resolver is the fix; normalising them at the parse site is what the first
+ * version tried, and it made one comparison in the table silently vacuous.
+ *
+ * The function's body is READ, not assumed: a handler calling something the guard cannot resolve
+ * yields null and the assertions below fail, rather than quietly comparing against a guess.
+ */
+function resolveDestination(dest) {
+  const lit = /^'([^']+)'$/.exec(dest);
+  if (lit) return lit[1];
+  if (isComputed(dest)) {
+    const src = functionSource(dest.slice(0, -2));
+    if (!src) return null;
+    const m = /return\s+state\.(\w+)\s*===\s*'([^']+)'\s*\?\s*'([^']+)'\s*:\s*'([^']+)'\s*;/.exec(src);
+    return m ? (m[2] === 'full' ? m[3] : m[4]) : null;
+  }
+  return dest || null;
+}
+
 const pressTo = (key, from) => {
   const p = PRESS.get(key);
   if (!p) return null;
-  return from === p.probe ? p.escapeTo : p.fallbackTo;
+  return resolveDestination(from === p.probe ? p.escapeTo : p.fallbackTo);
 };
 
 assert('each control is wired to a press, and each names the one state it is the partner of',
@@ -718,18 +772,126 @@ assert('no control repaints on its own: the writer is the only place a change be
 // The table. Written against the transitions rather than against the literals in the source, so the
 // claims below are the ones a reader would make about the panel and not the ones a reader of the
 // diff would make about the code.
-assert('both heights other than half are one press away from half height',
-  ['folded', 'full'].every((s) => [...PRESS.keys()].some((k) => pressTo(k, s) === 'docked')));
+//
+// D39 rewrote the folded row. 「both heights other than half are one press away from half height」 was
+// true for the wrong reason: from folded the answer depended on the memory, and the memory was not a
+// thing this file could see. It is now stated as what the control actually guarantees — one press
+// out of folded reaches a PINNED height, and which one is the reader's earlier choice, not the
+// control's.
+assert('from half height one press reaches either of the other two heights',
+  pressTo('expand', 'docked') === 'full' && pressTo('minimize', 'docked') === 'folded');
+assert('from fully expanded one press reaches either of the other two heights',
+  pressTo('expand', 'full') === 'docked' && pressTo('minimize', 'full') === 'folded');
+assert('from folded one press lands on a pinned height rather than on nothing',
+  ['full', 'docked'].includes(pressTo('minimize', 'folded')));
 assert('the two heights the expand control owns exchange in a single press each way',
   pressTo('expand', 'docked') === 'full' && pressTo('expand', 'full') === 'docked');
 assert('the minimize control is the only way into folded and the only way out of it',
-  pressTo('minimize', 'docked') === 'folded' && pressTo('minimize', 'folded') === 'docked'
-  && [...PRESS.entries()].every(([k, p]) => k === 'minimize' || (p.escapeTo !== 'folded' && p.fallbackTo !== 'folded')));
+  pressTo('minimize', 'docked') === 'folded' && pressTo('minimize', 'full') === 'folded'
+  && pressTo('minimize', 'folded') !== 'folded'
+  && [...PRESS.keys()].every((k) => k === 'minimize'
+    || ['docked', 'folded', 'full'].every((from) => pressTo(k, from) !== 'folded')));
 // `flow` is a scroll decision, not a button target. A control that could put the panel back in the
 // document would give the reader a way to leave the dock that nothing re-decides — and the band
 // predicate, which is the only thing allowed to make that call, would stop being the only one.
+//
+// Stated over EVERY source state and through the resolver, because the two branches of a ternary
+// arrive here with different quoting: the probe's branch is captured WITH its quotes — it has to be,
+// or a call and a literal become indistinguishable — and the other without. Comparing the raw
+// strings therefore passes for `'flow'` while it is exactly the value that must not appear, which is
+// a vacuous rule; the first version of this was one, and a mutation got through it. The computed
+// destination counts too: a function that can answer 'flow' opens the same door.
 assert('no control can put the panel back in the document; the scroll decision owns that alone',
-  [...PRESS.values()].every((p) => p.escapeTo !== 'flow' && p.fallbackTo !== 'flow'));
+  [...PRESS.keys()].every((k) => ['flow', 'docked', 'folded', 'full']
+    .every((from) => {
+      const dest = pressTo(k, from);
+      return dest !== null && dest !== 'flow';
+    })));
+
+/* ---------- D39: the way out of folded remembers where the reader came from ---------- *
+ *
+ * 「恢复到半高」 shipped as a literal and was wrong for half the cases: fold a fully expanded panel
+ * and it came back to half height. The exit was announcing something it was not going to do, and
+ * every assertion above was green throughout, because the label was present and the press worked —
+ * they just did not agree about the destination.
+ *
+ * Splitting the control in two (D38) did not fix this and could not have: the split decided WHICH
+ * branch each control owns, not what that branch points at. The target is a function of the reader's
+ * earlier action, so it has to be carried in a field and computed in one place.
+ */
+
+const foldReturnFn = functionSource('inspectorFoldReturnDock');
+
+assert('the way out of folded is decided by where the reader came from, not written at the control',
+  !!PRESS.get('minimize') && !isComputed(PRESS.get('minimize').fallbackTo)
+  && isComputed(PRESS.get('minimize').escapeTo)
+  && /inspectorFoldReturnDock/.test(PRESS.get('minimize').body));
+
+// One function, both readers. A label that picked its own branch is exactly how a button ends up
+// saying 「恢复到半高」 and taking the reader to full height — the two disagreeing IS the defect, and
+// counting the calls keeps a third reader from appearing too.
+assert('the folded label and the folded press read the same rule, and nobody else does',
+  !!foldReturnFn && /inspectorFoldReturnDock/.test(applyFn || '')
+  && (jsHtml.match(/inspectorFoldReturnDock\(\)/g) || []).length === 3
+  && /function\s+inspectorFoldReturnDock\(\s*\)/.test(jsHtml));
+
+// The rule itself, as the expression. Not as the presence of two state strings: a version that
+// returns one of them unconditionally is satisfied by a token check and is the old defect back.
+assert('a full panel comes back full, and every other height comes back to half',
+  !!foldReturnFn
+  && /return\s+state\.inspectorDockBeforeFold\s*===\s*'full'\s*\?\s*'full'\s*:\s*'docked'\s*;/.test(foldReturnFn));
+
+// Every state the exit is even capable of naming must be a pinned height.
+//
+// Stated over the tokens rather than over the one branch, because `resolveDestination` can only
+// follow the branch the memory is currently set to — a defect in the OTHER branch is invisible to
+// every reachability assertion in this file, and a mutation that put `'flow'` there survived until
+// this rule existed. The resolver cannot be fixed for this: which branch a reader takes depends on
+// what they had open, and a static file does not get to decide that.
+assert('the way out of folded can only name a pinned height, never a position',
+  !!foldReturnFn
+  && [...foldReturnFn.matchAll(/'([^']+)'/g)].map((m) => m[1])
+    .every((s) => s === 'docked' || s === 'folded' || s === 'full'),
+  'named: ' + JSON.stringify(foldReturnFn ? [...foldReturnFn.matchAll(/'([^']+)'/g)].map((m) => m[1]) : null));
+
+// The memory. One writer, and it writes on the way IN — which is the whole reason it cannot go
+// stale: the field is read only while folded, so there is no window in which the dock has moved on
+// and the memory has not, and nothing has to clear it.
+const memWrites = [...jsHtml.matchAll(/state\.inspectorDockBeforeFold\s*=(?!=)\s*([^;\n]+)/g)]
+  .map((m) => m[1].trim());
+assert('one place remembers the height, and it is the writer of the dock state',
+  memWrites.length === 1 && memWrites[0] === 'state.inspectorDock'
+  && /if\s*\(\s*next\s*===\s*'folded'\s*\)\s*state\.inspectorDockBeforeFold\s*=/.test(setFn || ''),
+  'writes: ' + JSON.stringify(memWrites));
+// Read in exactly one place. A second reader — an inline `=== 'full'` at the click site — is free to
+// disagree with the function, and the disagreement is invisible because both spellings are correct.
+assert('the remembered height is read in exactly one place',
+  (jsHtml.match(/state\.inspectorDockBeforeFold/g) || []).length === 2
+  && /inspectorDockBeforeFold\s*:\s*'docked'\s*,/.test(jsHtml)
+  && /state\.inspectorDockBeforeFold\s*===\s*'full'/.test(foldReturnFn || ''));
+
+// The control that folds the panel is the rightmost one. A position is a promise like any other —
+// 「where the window puts it」 — and nothing else in this file could see it move: both controls would
+// still ship, still be wired, still be labelled correctly.
+assert('the control that folds the panel is the rightmost of the two',
+  !!actionsRegion
+  && actionsRegion.body.indexOf('id="inspector-expand"') >= 0
+  && actionsRegion.body.indexOf('id="inspector-minimize"') > actionsRegion.body.indexOf('id="inspector-expand"'));
+
+// The glyph follows the label, same as the chevron above. Two glyphs toggled by `hidden` would not
+// work — `hidden` is not reliably honoured on an SVG element — and a dash that means both 「fold this
+// away」 and 「put it back」 is the thing D38 was fixing in the label.
+assert('the minimize glyph follows its label: a dash to fold away, a restore mark to come back',
+  /dom\.inspectorMinimizeIcon\s*=\s*document\.getElementById\(\s*'inspector-minimize-icon'\s*\)/.test(jsHtml)
+  && /<path id="inspector-minimize-icon" d="M3\.5 8 H12\.5"/.test(html)
+  && !!applyFn
+  && /dom\.inspectorMinimizeIcon\.setAttribute\(\s*'d',\s*folded\s*\?\s*'[^']+'\s*:\s*'M3\.5 8 H12\.5'/.test(
+    applyFn.replace(/\s+/g, ' ')));
+
+// Which branch a given fold takes cannot be read from a static file — it depends on what the reader
+// had open. What this file CAN refuse is a version that never reads the memory, and that is the
+// assertion above. The two branches are measured in the browser instead; see the note at the end of
+// METHODOLOGY.md §9 on stating what was not checked here.
 
 /* ---------- visibility: the panel is the selection ----------
  *
@@ -895,8 +1057,10 @@ assert('folded keeps the header and takes the rest out of flow',
 // Reachable from the reader, not merely present in the field's value set — which is the distinction
 // the original bug turned on, and the one D38 had to preserve while splitting the control in two.
 assert('folded is reachable in one press, and so is the way back out of it',
-  pressTo('minimize', 'docked') === 'folded' && pressTo('minimize', 'folded') === 'docked'
-  && !!applyFn && /'折叠到最小'/.test(applyFn) && /'恢复到半高'/.test(applyFn));
+  pressTo('minimize', 'docked') === 'folded'
+  && ['full', 'docked'].includes(pressTo('minimize', 'folded'))
+  && !!applyFn && /'折叠到最小'/.test(applyFn)
+  && /'恢复到半高'/.test(applyFn) && /'恢复到完全展开'/.test(applyFn));
 
 /* ---------- D35: the control has to stay where the reader can reach it ---------- *
  *
