@@ -1434,6 +1434,74 @@
         padding: 8px 0 12px;
       }
 
+      /* The end-of-ledger sentinel. One pixel, no content, and never scrolled past deliberately —
+       * it exists so 「读者已经在最底下了」 can be a reading rather than a computation. An
+       * IntersectionObserver on it is the whole of the 「到最低 / 到最上」 state machine, which is
+       * why this control needed no scroll listener: the two scroll handlers on this page are
+       * already one-per-consumer, and a third that exists only to relabel a button would be a
+       * third reader of the same scroll position.
+       *
+       * It sits OUTSIDE #ledger on purpose. That element is cleared and rebuilt on every poll, so
+       * anything living inside it would need re-observing every build; here it is the panel's last
+       * child, its position follows the panel's height, and the observer is created once. */
+      .ledger-end {
+        height: 1px;
+      }
+
+      /* The two-ends jump: a round arrow pinned to the ledger's bottom edge and centred on it.
+       *
+       * Sticky on the panel rather than fixed on the viewport, and that is the whole design. The
+       * ledger is not a scroll container — `.ledger-body` has no overflow and `restoreRowAnchor()`
+       * moves `window`, not a box — so the ledger grows in the document flow and the page is the
+       * scroll axis. A fixed button would hover over the inspector for the entire session; sticky
+       * inside the panel rides the panel, which is what 「轨迹表格中间的下方」 means.
+       *
+       * `bottom` is a measured offset, and it is measured rather than derived because the thing it
+       * has to clear is a panel whose height the reader chooses by dragging, in three different
+       * states, on a screen narrow enough that the two share one column. `--inspector-bottom-reserve`
+       * is written by the one function that already owns that height (applyInspectorDock), so this
+       * rule never re-derives it and cannot disagree with what is on screen.
+       *
+       * Measured on a 22,527-message session at 897x900, sweeping every scroll position where the
+       * inspector is pinned: with a flat 12px the button sat at 853..888 against a panel at
+       * 540..900 — a 35px overlap at 12 of 18 stops, and because this button is z-index 6 over the
+       * panel's 5 it both covered the 「复制 JSON / 交接 AI」 row and took its clicks. Only the very
+       * last stop cleared, and only because the ledger's own bottom edge had by then passed above
+       * the panel: a single measurement there would have said there was no collision at all. */
+      .ledger-jump {
+        position: sticky;
+        bottom: calc(12px + var(--inspector-bottom-reserve, 0px));
+        z-index: 6;
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        margin: 0 auto;
+        padding: 0;
+        border: 1px solid var(--mcode-border);
+        border-radius: 50%;
+        background: var(--mcode-surface);
+        color: var(--mcode-text-muted);
+        cursor: pointer;
+        transition: color 150ms ease-out, background-color 150ms ease-out;
+      }
+
+      .ledger-jump:hover {
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+      }
+
+      .ledger-jump:focus-visible {
+        outline: 2px solid var(--mcode-accent, currentColor);
+        outline-offset: 2px;
+      }
+
+      /* `display: grid` above would otherwise beat the `hidden` attribute, which is the same
+       * mistake the grip's `display: none` default runs into (see its own comment). */
+      .ledger-jump[hidden] {
+        display: none;
+      }
+
       .turn-group {
         display: block;
       }
@@ -2675,6 +2743,14 @@
           </div>
           <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>
           <div class="ledger-body" id="ledger"></div>
+          <!-- D44: the two ends of the ledger, and the one reading that says which end the reader is
+               at. See `.ledger-end` and `.ledger-jump` for why the sentinel is outside #ledger. -->
+          <div class="ledger-end" id="ledger-end" aria-hidden="true"></div>
+          <!-- No text and no glyph in the markup: buildLedgerJump() fills the arrow in, and the
+               button starts hidden so the first paint is never an empty circle. The label for a
+               reader of assistive tech lives in aria-label, which setLedgerJumpLabel() rewrites
+               with the arrow. -->
+          <button type="button" class="ledger-jump" id="ledger-jump" hidden aria-label="跳到轨迹的最低"></button>
         </section>
 
         <section class="panel" id="inspector-panel" aria-labelledby="inspector-heading">
@@ -3493,7 +3569,11 @@
       var ICON_PATHS = {
         chevronDown: ['M4 6.2 8 10.2 12 6.2'],
         copy: ['M5.6 5.6h7.8v7.8H5.6z', 'M2.6 2.6h7.8v7.8'],
-        arrowRight: ['M2.6 8h9.2', 'M8.6 4.6 12 8l-3.4 3.4', 'M13.4 2.6v10.8']
+        arrowRight: ['M2.6 8h9.2', 'M8.6 4.6 12 8l-3.4 3.4', 'M13.4 2.6v10.8'],
+        // D44: the ledger's two-ends jump. A shaft and a head, mirrored about the 8px centre, so the
+        // two directions cannot drift apart the way two separately-drawn glyphs would.
+        arrowDown: ['M8 2.8v10.4', 'M4.6 9.6 8 13l3.4-3.4'],
+        arrowUp: ['M8 13.2V2.8', 'M4.6 6.4 8 3l3.4 3.4']
       };
 
       function icon(name) {
@@ -3740,6 +3820,8 @@
         dom.overviewTip = document.getElementById('overview-tip');
         dom.overviewClear = document.getElementById('overview-clear');
         dom.ledger = document.getElementById('ledger');
+        dom.ledgerEnd = document.getElementById('ledger-end');
+        dom.ledgerJump = document.getElementById('ledger-jump');
         dom.ledgerMeta = document.getElementById('ledger-meta');
         dom.inspectorMeta = document.getElementById('inspector-meta');
         dom.inspectorLocator = document.getElementById('inspector-locator');
@@ -5902,19 +5984,42 @@
         // Both answers belong to this exit rather than to each of its callers: whether the record
         // the inspector is showing is still in the table, and how tall the pinned strips above it
         // are now. Nine writers reach the table without going through render(), and judging the
-        // selection here is what stops the inspector describing a row that is no longer on screen.
+        // selection here is what stops the inspector describing a row the filters have removed.
         //
-        // `windowed`, not `matched`: what the reader can see is the window, not the filter result.
-        // Judged before the slice this used to raise `state.limit` to reach a selection below the
-        // window, which made the window a thing the inspector could widen — and left the promise
-        // 「已显示 200 条」 true at the moment the reader pressed 显示最新 200 条 and false a
-        // second later. See docs/LAYERS.md D13.
+        // `matched`, not `windowed` — and this line used to say the opposite, so the reason it
+        // changed is worth more than the reason it was written.
+        //
+        // It said: what the reader can see is the window, not the filter result. That was written
+        // to fix a real thing (D13): this call used to RAISE `state.limit` to reach a selection
+        // below the window, which made the window a thing the inspector could widen, and left the
+        // promise 「已显示 200 条」 true at the moment the reader pressed 显示最新 200 条 and false a
+        // second later. **That part is still true and the prohibition still stands** — the window
+        // never widens to reach a selection, and it still does not below.
+        //
+        // What was wrong was the next inference: that a record leaving the window means the reader
+        // can no longer see it. The window is a *projection*, and it moves on its own — every new
+        // record slides the whole tail forward by one row. So 「not in the window」 was measuring
+        // the projection's motion, not the reader's attention. Measured on a real session (32,386
+        // records, 216 turns, the reader touching nothing): a record selected at position p of the
+        // 200-row tail survived exactly `200 - p` new records, and p=0 died after ONE of them,
+        // inside a single poll. On a session that is still being written, that is every selection
+        // that is not already the newest — which is why it read as 「过一会检视会消失」.
+        //
+        // The cost of the old judgement is visible in one measurement: on a narrow screen the scroll
+        // that pins the inspector to the viewport bottom is also the scroll that slides the selected
+        // row out of the window, so the reader could not look at a record and scroll to the panel at
+        // the same time. The inspector did not need the record to be on screen to describe it; it
+        // needed the record to still be something the reader chose.
+        //
+        // What `matched` does still do, and is the half of the promise that survives: a record the
+        // filters removed loses its selection, because then the inspector really would be describing
+        // something the reader cannot get back by clearing a filter.
         //
         // The redraw is part of that, not a follow-up: clearing the id on its own is not enough.
         // The search box, the type axis and the overview brush call renderLedger() and nothing
         // else, so the panel kept showing the record that had just been dropped — no row carried
         // the selection mark and the inspector still named one.
-        if (revealSelection(windowed)) renderInspector();
+        if (revealSelection(matched)) renderInspector();
 
         if (matched.length === 0) {
           var reset = el('button', 'btn', '清除筛选');
@@ -5937,6 +6042,18 @@
         }
 
         updateWindowBar(windowed, hiddenAbove, total);
+
+        // D44: the two-ends jump is re-decided here rather than only from its observer. Measured on
+        // a real session: wired to the observer alone, the button stayed `hidden` for 24 of 30 scroll
+        // positions, because the observer only speaks when the intersection CHANGES and going from
+        // an empty ledger to 32,000 rows never changed it — the sentinel was simply somewhere else
+        // the whole time. The label was wrong at the top for the same reason, and stayed wrong until
+        // the next intersection change.
+        //
+        // So the render is the trigger, and the observer is the cheap hint for the scrolls in
+        // between. Both go through this one function, and it re-reads the sentinel rather than
+        // trusting the callback's own flag: a missed callback then costs one render, not one session.
+        setLedgerJumpLabel();
 
         var groups = visibleTurns(windowed);
 
@@ -6198,6 +6315,153 @@
         actions.appendChild(count);
 
         return { actions: actions, axis: axis, more: more, mode: mode, count: count };
+      }
+
+      /* ---------------- D44: the ledger's two ends ---------------- */
+
+      /**
+       * Whether the ledger's end is on screen, which is the whole of 「到最低 / 到最上」.
+       *
+       * A reading rather than a computation, and the reason is that 「the end」 moves every poll:
+       * the window is the newest N records and each new one slides it forward, so the bottom of the
+       * ledger is a different document position every 2.5 seconds. Anything derived from
+       * scrollHeight against a remembered value would be correct only between polls.
+       *
+       * One IntersectionObserver on one sentinel, created once. The alternative — a scroll listener —
+       * would be the third reader of the same scroll position on this page (the other two are
+       * scheduleInspectorDock and scheduleStickyOffsets), and it would exist only to relabel a
+       * button.
+       *
+       * @returns {boolean}
+       */
+      function ledgerEndInView() {
+        // Re-read the sentinel rather than returning the observer's flag. The flag is right when the
+        // callback fires and silently stale when it does not, and the states it describes — an empty
+        // ledger, a ledger that grew by 32,000 rows — are exactly the ones that never make it fire.
+        var sentinel = dom.ledgerEnd;
+        if (!sentinel || typeof sentinel.getBoundingClientRect !== 'function') return atLedgerEnd;
+        var r = sentinel.getBoundingClientRect();
+        var viewH = window.innerHeight || 0;
+        // Both edges, or neither: the first version tested `r.height > 0 || r.top < viewH`, and the
+        // sentinel is one pixel tall — so `r.height > 0` was always true and the label read 「到最上」
+        // at every scroll position. A trivially-true term inside an `||` is the same defect as a
+        // tautology in an assertion: it looks like a test and measures nothing.
+        atLedgerEnd = r.top < viewH && r.bottom > 0;
+        return atLedgerEnd;
+      }
+
+      var atLedgerEnd = false;
+      var ledgerEndObserver = null;
+
+      /**
+       * A picture of the trip, not its name.
+       *
+       * The first version of this control printed 「到最低」 / 「到最上」. Text is the wrong shape
+       * for it twice over: the two labels are different widths, so a circle drawn around them
+       * changes size when it flips, and answering 「which end will this take me to」 costs a
+       * translation and a reading. The arrow answers it in one glance, and `aria-label` still
+       * carries the full sentence — this is a change of presentation, not of what the control
+       * announces to anyone who is not looking at it.
+       *
+       * The arrow names where a click would take you, so the control is never a 「go to where you
+       * already are」 button — which is the failure mode of a fixed two-state label, and the reason
+       * up is only the right arrow when up is the action and down only when it is.
+       *
+       * It moves the page and nothing else. It does not touch `state.limit`, so it cannot make the
+       * window wider — the prohibition D13 exists to enforce, and the one the window bar's
+       * 「已显示 N 条」 depends on. Both ends are already loaded: down reaches the newest 200, up
+       * reaches the oldest of them.
+       */
+      function setLedgerJumpLabel() {
+        var button = dom.ledgerJump;
+        if (!button) return;
+        var empty = !state.payload || !state.flat || state.flat.length === 0;
+        button.hidden = empty;
+        if (empty) return;
+        var atEnd = ledgerEndInView();
+        var name = atEnd ? 'arrowUp' : 'arrowDown';
+        // Rebuilt rather than swapped in place: there is no attribute selector that exchanges two
+        // `d` values, and a cross-fade on a 16px glyph reads as a flicker rather than as motion.
+        // The `data-arrow` read is what keeps this from rebuilding on every one of the scroll
+        // positions where the answer did not change.
+        var current = button.firstElementChild;
+        if (!current || current.getAttribute('data-arrow') !== name) {
+          button.textContent = '';
+          var glyph = icon(name);
+          glyph.setAttribute('data-arrow', name);
+          button.appendChild(glyph);
+        }
+        button.setAttribute('aria-label', atEnd ? '跳到轨迹的最上（最早一条已加载的记录）' : '跳到轨迹的最低（最新一条已加载的记录）');
+      }
+
+      /**
+       * How much of the viewport the pinned filter band covers right now.
+       *
+       * Measured rather than read out of `--sticky-band-h`. The band is sticky, so its own
+       * rectangle already answers the question at the moment it is asked, and the variable is what
+       * the other pinned rows position themselves from — subtracting it here would be the second
+       * place on this page that knows the band is there.
+       */
+      function pinnedBandBottom() {
+        if (!dom.filterSticky || typeof dom.filterSticky.getBoundingClientRect !== 'function') return 0;
+        var bottom = dom.filterSticky.getBoundingClientRect().bottom;
+        return bottom > 0 ? bottom : 0;
+      }
+
+      /**
+       * The ledger's top, in document coordinates.
+       *
+       * 轨迹的最上, and not the page's — those are different places and the difference is most of
+       * the travel. `window.scrollTo(0, 0)` lands the reader above the filter band and the overview
+       * strip with the trajectory still entirely off screen below, so the control that claims to go
+       * 「up」 ends up showing the one place in this app that contains no records at all. The
+       * band's height is subtracted so the panel's own title clears it.
+       */
+      function ledgerTopOffset() {
+        var panel = dom.ledgerJump && typeof dom.ledgerJump.closest === 'function'
+          ? dom.ledgerJump.closest('.panel')
+          : null;
+        if (!panel) return 0;
+        var top = panel.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
+        return Math.max(0, top - pinnedBandBottom());
+      }
+
+      /**
+       * The ledger's bottom, in document coordinates.
+       *
+       * The sentinel's own bottom edge rather than the last row's, for the reason the sentinel
+       * exists at all: it is one element outside `#ledger`, so its position follows the panel
+       * instead of whatever the last poll happened to build. No band subtraction here, and the
+       * asymmetry with ledgerTopOffset() is the point — that one parks a top edge under the band,
+       * this one parks a bottom edge at the bottom of the viewport, and subtracting the band from
+       * both would push the last row under the pinned rows for no gain.
+       */
+      function ledgerBottomOffset() {
+        var sentinel = dom.ledgerEnd;
+        if (!sentinel || typeof sentinel.getBoundingClientRect !== 'function') return 0;
+        var bottom = sentinel.getBoundingClientRect().bottom + (window.scrollY || window.pageYOffset || 0);
+        return Math.max(0, bottom);
+      }
+
+      /** One-time. See setLedgerJumpLabel() for why the observer and not a scroll listener. */
+      function buildLedgerJump() {
+        var button = dom.ledgerJump;
+        var sentinel = dom.ledgerEnd;
+        if (!button || !sentinel || typeof IntersectionObserver !== 'function') return;
+
+        ledgerEndObserver = new IntersectionObserver(function (entries) {
+          for (var i = 0; i < entries.length; i += 1) {
+            atLedgerEnd = entries[i].isIntersecting;
+          }
+          setLedgerJumpLabel();
+        }, { rootMargin: '0px 0px -1px 0px' });
+        ledgerEndObserver.observe(sentinel);
+
+        button.addEventListener('click', function () {
+          window.scrollTo(0, ledgerEndInView() ? ledgerTopOffset() : ledgerBottomOffset());
+        });
+
+        setLedgerJumpLabel();
       }
 
       /**
@@ -6728,6 +6992,43 @@
       // landing exactly on the window's reads as cut off rather than as 「there is more below」, and
       // the region it scrolls in is only worth having if the reader can see that it scrolls.
       var INSPECTOR_WIDE_BOTTOM_GAP = 12;
+      // D44: the hair of viewport between the ledger's two-ends jump and the top of a pinned
+      // inspector. It is a gap rather than a butt joint because a button flush against another
+      // control's border reads as one control with two labels. Measured on the narrow layout: the
+      // panel renders 360px and the button must sit 368px up, so the clearance is counted from the
+      // panel's own top edge rather than merely made non-negative.
+      var LEDGER_JUMP_CLEARANCE = 8;
+      var bottomReserveFrame = 0;
+
+      /**
+       * The viewport bottom the pinned inspector is occupying, measured and written once a frame
+       * after the dock state changed.
+       *
+       * Written to the root rather than to the panel, because the reader is in the OTHER panel: in
+       * the other column on a wide screen and below it on a narrow one, and a custom property only
+       * reaches descendants.
+       *
+       * Measured rather than derived from the caps, and the reader can drag one of those caps and
+       * folded's height is its header's height rather than any cap at all — so a formula here would
+       * be a third derivation of a number two other places already own.
+       *
+       * Coalesced into one frame because this runs from applyInspectorDock(), which runs on scroll.
+       */
+      function scheduleInspectorBottomReserve() {
+        if (bottomReserveFrame) return;
+        bottomReserveFrame = window.requestAnimationFrame(function () {
+          bottomReserveFrame = 0;
+          var panel = dom.inspectorPanel;
+          var reserve = 0;
+          if (panel && !panel.hidden
+              && panel.className.indexOf('is-inspector-') !== -1
+              && window.matchMedia(INSPECTOR_DOCK_QUERY).matches) {
+            reserve = Math.round(panel.getBoundingClientRect().height) + LEDGER_JUMP_CLEARANCE;
+          }
+          document.documentElement.style.setProperty('--inspector-bottom-reserve', reserve + 'px');
+        });
+      }
+
       // …but never so little that the rows become a sliver. Below this the reader cannot read a
       // row, which defeats the point of keeping any.
       var INSPECTOR_MIN_LEDGER_H = 140;
@@ -6845,6 +7146,17 @@
           dom.inspectorPanel.classList.toggle('is-inspector-full', state.inspectorDock === 'full');
           dom.inspectorPanel.classList.toggle('is-inspector-folded', folded);
         }
+
+        // How much of the viewport bottom the panel is sitting on, for the one reader that needs it:
+        // the ledger's two-ends jump, which is sticky to the bottom of the same viewport and would
+        // otherwise land on top of the panel's action row.
+        //
+        // SCHEDULED, not written here, and the reason is the measurement. Reading
+        // `getBoundingClientRect()` in the same turn that toggles the class measures the layout as it
+        // was: measured on a real session the reserve came out 177px against a panel rendering at
+        // 360px, which put the button 32px inside the panel at eleven of eighteen scroll positions. So
+        // the read waits a frame, by which time the sticky layout has settled.
+        scheduleInspectorBottomReserve();
 
         // The grip exists only while the panel is pinned: in flow there is no height to decide, and
         // a grip that does nothing is worse than no grip. Folded has no height to drag either — its
@@ -8235,6 +8547,11 @@
           resetWindowMode();
           render();
         });
+
+        // D44: the ledger's two-ends jump. Wired here with everything else, once — the observer it
+        // creates outlives every rebuild of #ledger, which is why its sentinel is a sibling of
+        // #ledger rather than a child.
+        buildLedgerJump();
 
         // Built before it is bound, so the buttons and their handlers come from the same
         // table and cannot be two lists that drift.
