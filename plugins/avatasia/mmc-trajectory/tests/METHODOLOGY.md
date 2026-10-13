@@ -469,6 +469,42 @@ deliberate "found nothing → exit non-zero" turned that into a failure instead 
 `if (r.cssRules)` is no longer a safe way to walk CSSOM: **CSS Nesting gave `CSSStyleRule` a
 `cssRules` property**, so an empty list is truthy, every ordinary style rule gets recursed into
 instead of read, and the walker reports an empty stylesheet that is in fact full.
+### 8.6 A rule's scope is part of the claim, and the reason for the scope expires
+
+The sticky panel header was scoped to the dock's media query, and the comment said why: above
+1080px the panel is not a scroll container and there is nothing to stick to. Every assertion
+about it matched that scope. It was all correct — and then D40 gave the wide panel a ceiling
+and an inner scroller, which is exactly what made the reason false. The rule stopped applying
+where it was needed, and two guards stayed green the whole time because what they asserted —
+"sticky only where the panel scrolls" — was still a true statement about a premise that had
+died underneath it.
+
+Two things follow, and both are about how the claim is written rather than about the CSS.
+
+**When a change invalidates the reason for a scope, move the reason.** The four declarations are
+cheap; the sentence that justified where they sit is the part that rots, and it rots silently
+because nothing reads it. Lifting the rule without rewriting that sentence leaves the next
+reader with a justification they can act on — put it back. The comment has to end up stating
+the reason that is true *now*.
+
+**A reader cannot tell top level from inside a query by reading a value out.** `valueIn(css,
+sel, prop)` matches any line-initial selector, so a rule buried in a media block reads exactly
+like one at the top of the stylesheet — the old assertions only found the narrow copy because
+they were handed `narrow` explicitly. Once the rule was unscoped, "is this declaration at the
+top level" became a question the existing helpers could not answer, so the assertion now counts
+braces to find every media body and checks the rule is in none of them. **Adding a value helper
+is not the same as adding a scope check; the second one is usually the one that matters.**
+
+And the premise itself became an assertion. An unscoped sticky head is only harmless while the
+panel is its own scroll container at every width, so that is now stated as a rule about
+`overflow-y` on both sides of the breakpoint, rather than as a sentence in a comment.
+
+The companion failure is the mirror image: **an assertion sharper than the rule it stands for.**
+The probe checked `headTop === panelTop` and found a 1px difference at both widths — that is the
+panel's own border, and the assertion was measuring a border. It also demanded 400px of internal
+scroll, which a 751px-tall panel holding an 831px record does not have. Both were me asserting
+a tidier number than the rule talks about, and both failed on correct behaviour. Write the
+assertion as the rule, not as its ideal.
 ## 9. Say what you did not manage to check
 
 Some things cannot be driven through the browser harness. The honest form is the useful one:

@@ -50,6 +50,52 @@ ROOT = os.path.dirname(HERE)
 CLIENT = os.path.join(ROOT, "miniapp", "client", "index.html")
 PROBE = os.path.join(HERE, "verify-inspector-dock.mjs")
 
+
+# Anchors for the header rule at the top level. Note the explicit newlines: adjacent Python string
+# literals concatenate with NOTHING between them, so a constant written as one literal per line
+# without them collapses into a single line and then matches nothing in the file.
+HEAD_RULE = (
+    "      #inspector-panel > .panel-head {\n"
+    "        position: sticky;\n"
+    "        top: 0;\n"
+    "        z-index: 2;\n"
+    "        background: var(--mcode-surface);\n"
+    "      }"
+)
+
+# Appended straight after HEAD_RULE, so that rule closing brace sits immediately before the bare
+# selector — which is the shape `bareHeadSticky` looks for.
+BARE_HEAD = (
+    "\n"
+    "      .panel-head {\n"
+    "        position: sticky;\n"
+    "        top: 0;\n"
+    "      }"
+)
+
+DOCK_RULE = (
+    "        #inspector-panel {\n"
+    "          max-height: var(--inspector-full-h, 70vh);\n"
+    "          overflow-y: auto;\n"
+    "        }"
+)
+
+# A second copy of the header rule, indented as if it still lived inside the dock query.
+DOCK_HEAD_COPY = (
+    "\n"
+    "        #inspector-panel > .panel-head {\n"
+    "          position: sticky;\n"
+    "          top: 0;\n"
+    "          z-index: 2;\n"
+    "          background: var(--mcode-surface);\n"
+    "        }"
+)
+
+WIDE_OVERFLOW = (
+    "          max-height: var(--inspector-wide-h, 70vh);\n"
+    "          overflow-y: auto;"
+)
+
 MUTATIONS = [
     # ---- the CSS, in the media query that makes the feature exist ----
 
@@ -926,14 +972,38 @@ MUTATIONS = [
     # it — a panel that scrolls, and a header that is not sticky, so the handle scrolls out of reach.
 
     ("the panel header scrolls away with the content again",
-     "        #inspector-panel > .panel-head {\n          position: sticky;\n",
-     "        #inspector-panel > .panel-head {\n          position: static;\n",
-     "the panel header stays at the top while its content scrolls under it"),
+     HEAD_RULE,
+     HEAD_RULE.replace("position: sticky;", "position: static;"),
+     "the panel header stays at the top while its content scrolls under it, at every width"),
 
-    ("the sticky header is handed to every panel on the page",
-     "        #inspector-panel > .panel-head {\n",
-     "        .panel-head {\n",
-     "the sticky header belongs to the inspector panel alone, and only where the panel scrolls"),
+    ("the sticky header handed to every panel on the page",
+     HEAD_RULE,
+     HEAD_RULE + BARE_HEAD,
+     "the sticky header is declared once, at the top level, for the inspector panel alone"),
+
+    # ---- D41: the scope a correct rule was written for stopped being true ----
+
+    # D40 gave the wide panel a ceiling and an inner scroller, so the sentence that scoped this
+    # header to the dock query — above 1080px the panel is not a scroll container and there is
+    # nothing to stick to — stopped being true, and the narrow-only scoping went with it.
+    ("the sticky header pinned one band down instead of to the edge",
+     HEAD_RULE,
+     HEAD_RULE.replace("top: 0;", "top: 4px;"),
+     "the panel header stays at the top while its content scrolls under it, at every width"),
+
+    # A second copy, back inside the dock query: still sticky, still one declaration per property,
+    # still correct-looking in review — and unreachable above the breakpoint, which IS the defect.
+    ("the sticky header declared a second time inside the dock query",
+     DOCK_RULE,
+     DOCK_RULE + DOCK_HEAD_COPY,
+     "the sticky header is declared once, at the top level, for the inspector panel alone"),
+
+    # The premise, not the rule: a panel that is not a scroll container anywhere is what makes an
+    # unscoped sticky head unsafe.
+    ("the wide panel losing its own scroller",
+     WIDE_OVERFLOW,
+     WIDE_OVERFLOW.replace("overflow-y: auto;", "overflow-y: visible;"),
+     "every width gives the panel its own scroller, which is what makes an unscoped sticky head safe"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

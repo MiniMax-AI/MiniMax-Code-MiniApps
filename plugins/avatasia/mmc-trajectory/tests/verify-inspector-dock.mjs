@@ -1180,23 +1180,71 @@ assert('folded is reachable in one press, and so is the way back out of it',
  * mid-way with no title, no tabs and no handle. After D34 that is not an inconvenience: folded hides
  * every child but the header, so a header that scrolls away is the loss of the only way back.
  */
-const headSticky = narrow ? valueIn(narrow, '#inspector-panel > .panel-head', 'position') : null;
-const headStickyTop = narrow ? valueIn(narrow, '#inspector-panel > .panel-head', 'top') : null;
+const headSticky = valueIn(css, '#inspector-panel > .panel-head', 'position');
+const headStickyTop = valueIn(css, '#inspector-panel > .panel-head', 'top');
 // The background is part of the property, not decoration: a sticky header with a transparent
 // background paints the content scrolling underneath straight through it, and the header reads as
 // part of the table rather than as the thing the table is inside.
-assert('the panel header stays at the top while its content scrolls under it',
+assert('the panel header stays at the top while its content scrolls under it, at every width',
   headSticky === 'sticky' && headStickyTop === '0'
-  && !!narrow && /#inspector-panel\s*>\s*\.panel-head\s*\{[^}]*background:\s*var\(--mcode-surface\)/.test(narrow));
+  && /#inspector-panel\s*>\s*\.panel-head\s*\{[^}]*background:\s*var\(--mcode-surface\)/.test(css));
 
-// Scoped twice, and both matter. Above 1080px the panel is not a scroll container — there is
-// nothing to stick to, and a sticky header would follow the reader down a 7,000px ledger column.
-// And a bare `.panel-head` rule would do the same thing to the 轨迹 header, which has no handle to
-// lose but has a title that would stop being where the reader left it.
+/* ---------- D41: the scope a rule was written for stopped being true ---------- *
+ *
+ * D35 scoped the sticky header to the dock's media query, and the comment said why: above 1080px
+ * the panel is not a scroll container and there is nothing to stick to. That was true when D35
+ * shipped. D40 gave the wide panel a ceiling and an inner scroller, so above 1080px the panel
+ * scrolls too — and a header that scrolls away there is the same loss D35 was called about,
+ * reached from the other side. Measured at 1600x900 with one record chosen: computed position
+ * `static`, top `auto`, z-index `auto`, and 80px of panel scroll took the header and the locator
+ * line off the top, leaving the tab bar and a table that started mid-way.
+ *
+ * So the rule moved out of the query to the top level, and the two things that made that safe are
+ * asserted rather than assumed. Both are about SCOPE, not about declarations:
+ *
+ *   1. Declared once, and outside every media query. `valueIn` cannot tell the two apart —
+ *      `declsIn` matches any line-initial selector, so a rule buried in a media block reads
+ *      exactly like one at the top. Braces have to be counted to know which it is.
+ *   2. Still `#inspector-panel >`, never a bare `.panel-head`. A bare rule would pin the
+ *      ledger's header too, and that one has no handle to lose but has a title that would stop
+ *      being where the reader left it.
+ *
+ * And the premise the old scoping leaned on is now asserted too: a sticky head is harmless only
+ * while the panel is its own scroll container, at every width.
+ */
+function allMediaBodies(text) {
+  const out = [];
+  const re = /@media[^{]*\{/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    let depth = 1;
+    let i = re.lastIndex;
+    while (i < text.length && depth > 0) {
+      if (text[i] === '{') depth += 1;
+      else if (text[i] === '}') depth -= 1;
+      i += 1;
+    }
+    out.push(text.slice(re.lastIndex, i - 1));
+    re.lastIndex = i;
+  }
+  return out;
+}
+
+const headRuleHits = (css.match(/#inspector-panel\s*>\s*\.panel-head\s*\{/g) || []).length;
+const headInsideAnyQuery = allMediaBodies(css)
+  .filter((b) => /#inspector-panel\s*>\s*\.panel-head\s*\{/.test(b));
 const bareHeadSticky = /(?:^|[},])\s*\.panel-head\s*\{[^}]*position:\s*sticky/.test(css);
-assert('the sticky header belongs to the inspector panel alone, and only where the panel scrolls',
-  !!narrow && !bareHeadSticky
-  && /#inspector-panel\s*>\s*\.panel-head\s*\{[\s\S]{0,200}?position:\s*sticky/.test(narrow));
+assert('the sticky header is declared once, at the top level, for the inspector panel alone',
+  headRuleHits === 1 && headInsideAnyQuery.length === 0 && !bareHeadSticky);
+
+// Any `#inspector-panel` rule that mentions overflow-y has to say auto, and both sides of the
+// breakpoint have to have said it — otherwise some width leaves the panel in flow and the head
+// falls back to the viewport, following the reader down a 7,000px ledger column.
+const panelOverflows = [...css.matchAll(/#inspector-panel\s*\{([^{}]*)\}/g)]
+  .map((m) => (m[1].match(/overflow-y:\s*([^;]+);/) || [])[1])
+  .filter(Boolean);
+assert('every width gives the panel its own scroller, which is what makes an unscoped sticky head safe',
+  panelOverflows.length >= 2 && panelOverflows.every((v) => v.trim() === 'auto'));
 
 /* ---------- D27: the grip had every property right and was still invisible ---------- */
 //
