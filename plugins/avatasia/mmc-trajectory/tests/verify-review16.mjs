@@ -76,6 +76,33 @@ const nulIn = Object.keys(SHIPPED_TEXT).filter((rel) => SHIPPED_TEXT[rel].includ
 assert('no shipped source file carries a NUL byte',
   nulIn.length === 0, nulIn.join(', '));
 
+// The same dangling reference with no file name attached, so the check above cannot see it. D8,
+// `D40:` and R1 are labels in a defect registry this reader does not have; L0-L6 is a layer model
+// defined in a document that left the package. Most of them sat on a comment that explains itself
+// on the next line, so a reader is not going to go looking -- which is exactly why they need a
+// check rather than an argument. What they did tell a reader of the installed plugin is that the
+// project keeps a numbered defect list it cannot see, and that is the part that does not ship.
+//
+// The boundary of this check is deliberate, and the next person will trip over it. It covers the
+// runtime sources and the two shipped test files, and NOT the guard and mutation files -- which
+// carry more of this numbering than the runtime did, by a factor of five. Those are not the same
+// shape. Here: `D40:` on a section header, with the explanation a screen away or not at all, so
+// the number is a label and nothing else. There: "D40 gave the wide panel a ceiling and an inner
+// scroller, so the sentence that scoped the header ... stopped being true" -- the number names the
+// defect and the same sentence says what it did, which is the provenance that tells a reader WHY
+// a mutation exists. tests/METHODOLOGY.md is built the same way. Stripping those would cost the
+// reason a control is in the suite, to remove a word nobody follows anyway.
+//
+// Word boundaries are the rest of it: `#D8D8` is a colour and `R1` could be an identifier, so the
+// pattern has to fire on neither. Anything looser makes this a guard that fails for the wrong
+// reason, which is worse than not having it.
+const PRIVATE_IDS = /\b(?:[DR][0-9]+|L[0-9])\b/;
+const numberedIn = Object.entries(SHIPPED_TEXT)
+  .filter(([, t]) => PRIVATE_IDS.test(t))
+  .map(([rel]) => rel);
+assert('no shipped file carries a private defect or layer number',
+  numberedIn.length === 0, numberedIn.join(', '));
+
 /* ---------- 1. the harness must be able to find Python, and must say so when it cannot ---------- */
 
 // A hardcoded `python` is not portable: it does not exist on a stock Linux or macOS image. The

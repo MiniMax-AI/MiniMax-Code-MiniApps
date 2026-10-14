@@ -157,6 +157,21 @@ MUTATIONS = [
      "const key = ids.join('" + chr(0) + "');",
      "no shipped source file carries a NUL byte"),
 
+    # The other half of the same defect: the numbering on its own, with no file name for the first
+    # check to match against. These were labels on comments that explain themselves one line later,
+    # so no reader goes looking -- which is the reason they need a check rather than an argument.
+    # The layer numbers (L0-L6) are the same leak from the same missing document, so one pattern
+    # covers both and the assertion names them together.
+    ("a private defect number comes back into a shipped comment",
+     "/* ---------------- the ledger's two ends ---------------- */",
+     "/* ---------------- D44: the ledger's two ends ---------------- */",
+     "no shipped file carries a private defect or layer number"),
+
+    ("a private layer number comes back into a shipped comment",
+     "       * read rather than re-measured here: the band is filters, the overview is the strip, and",
+     "       * read rather than re-measured here: band is L2 and overview is L3, and",
+     "no shipped file carries a private defect or layer number"),
+
     # ---- 5. the cache stops being released ----
     # Anchored without any line ending on purpose. The first version of these two used \r\n because
     # server.mjs is CRLF in the working tree — and that is exactly the trap: it only matched because

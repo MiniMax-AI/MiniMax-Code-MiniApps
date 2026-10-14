@@ -33,7 +33,7 @@ MUTATIONS = [
     ("the window bar is presented outside the ledger panel",
      '          <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>\n'
      '          <div class="ledger-body" id="ledger"></div>\n'
-     '          <!-- D44: the two ends of the ledger, and the one reading that says which end the reader is\n'
+     '          <!-- The two ends of the ledger, and the one reading that says which end the reader is\n'
      '               at. See `.ledger-end` and `.ledger-jump` for why the sentinel is outside #ledger. -->\n'
      '          <div class="ledger-end" id="ledger-end" aria-hidden="true"></div>\n'
      '          <!-- No text and no glyph in the markup: buildLedgerJump() fills the arrow in, and the\n'
@@ -43,7 +43,7 @@ MUTATIONS = [
      '          <button type="button" class="ledger-jump" id="ledger-jump" hidden aria-label="跳到轨迹的最低"></button>\n'
      '        </section>',
      '          <div class="ledger-body" id="ledger"></div>\n'
-     '          <!-- D44: the two ends of the ledger, and the one reading that says which end the reader is\n'
+     '          <!-- The two ends of the ledger, and the one reading that says which end the reader is\n'
      '               at. See `.ledger-end` and `.ledger-jump` for why the sentinel is outside #ledger. -->\n'
      '          <div class="ledger-end" id="ledger-end" aria-hidden="true"></div>\n'
      '          <!-- No text and no glyph in the markup: buildLedgerJump() fills the arrow in, and the\n'
