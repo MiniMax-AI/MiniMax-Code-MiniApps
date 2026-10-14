@@ -30,6 +30,12 @@ const filter = args.find((a) => !a.startsWith('--')) ?? '';
 // rewrite are hashed before the first control runs and checked after the last one. A mismatch is
 // reported as a failed guard of its own, with the restore command, instead of being inferred from
 // whatever the next person sees.
+//
+// That catches a control that failed to restore DURING a run. A run that was killed outright writes
+// nothing, so its residue can only be seen by comparing against the state the run BEFORE it ended
+// with — which means a snapshot on disk, read at startup, and a report that is deliberately not a
+// verdict. The two are separate findings: the drift below says "this run dirtied the source", the
+// warning at startup says "the source was already different when this run began".
 // The shipped files a mutate-* control rewrites in place — that is the whole membership rule, and
 // it is a rule about files rather than about importance. docs/LAYERS.md sat in this list until it
 // moved out of the package to the workspace root: it then hashed to 'absent' on every run, which
@@ -55,10 +61,52 @@ const digest = (rel) => {
 
 const snapshotBefore = Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]));
 
+// What the previous run left behind. The snapshot this reads was written by that run and meant the
+// bytes it ended with, so a file that differs now is one of two things — a mutate-* control killed
+// mid-run, or somebody edited the plugin after that run — and this suite cannot tell them apart.
+// Both were once silent: nothing read the snapshot at all, so the residue surfaced only as unrelated
+// red in whatever guard happened to read the mutated file, which reads as that guard being broken
+// rather than as the checkout being dirty.
+//
+// Reported, not failed, and that is a decision rather than a dodge. The suite runs on machines with
+// uncommitted work; failing on "these files are not what the last run left" would report a
+// contributor writing code as a broken checkout, and the fix for that — trusting git — is exactly
+// what is unavailable in an unpackaged copy. So the two states are named separately and only one
+// of them is a verdict: this is a line above the results, the drift below is a failed guard.
+const readSnapshot = () => {
+  try {
+    return existsSync(SNAPSHOT) ? JSON.parse(readFileSync(SNAPSHOT, 'utf8')) : null;
+  } catch {
+    // A missing or unreadable baseline is not a reason to stop. Without one there is nothing to
+    // compare against, which is the state a fresh checkout is in, and that is a normal first run.
+    return null;
+  }
+};
+
+const previous = readSnapshot();
+const leftover = previous
+  ? SHIPPED.filter((rel) => previous[rel] !== undefined && previous[rel] !== digest(rel))
+  : [];
+
+if (leftover.length) {
+  console.log('');
+  console.log(`WARN  ${'shipped files differ from the last run'.padEnd(30)}  ${leftover.join(', ')}`);
+  console.log('       either a mutate-* control was killed mid-run and left the source mutated,');
+  console.log('       or these files were edited after that run. Not a failure: this suite runs on');
+  console.log('       machines with uncommitted work, and a contributor writing code is not a broken');
+  console.log('       checkout. The results below are only meaningful if you know which one it was.');
+  console.log('       if you did not just edit them:  git checkout -- <file>');
+}
+
 function checkShipped() {
   const drift = SHIPPED.filter((rel) => digest(rel) !== snapshotBefore[rel]);
-  try { existsSync(SNAPSHOT) && writeFileSync(SNAPSHOT, JSON.stringify(snapshotBefore)); }
-  catch { /* the snapshot is a convenience, never a reason to fail the suite */ }
+  // Only a clean end becomes the baseline for the next run. Recording a drifted end would make the
+  // next comparison agree with the mutation, which is the one thing this file exists to prevent.
+  if (drift.length === 0) {
+    try {
+      writeFileSync(SNAPSHOT, JSON.stringify(Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]))));
+    } catch { /* the snapshot is bookkeeping, never a reason to fail the suite */ }
+  }
   return drift;
 }
 
@@ -131,7 +179,8 @@ const drift = checkShipped();
 if (drift.length) {
   console.log('');
   console.log(`FAIL  ${'shipped files restored'.padEnd(30)}  ${drift.join(', ')}`);
-  console.log('       a mutate-* control was killed mid-run and left the source mutated.');
+  console.log('       a mutate-* control ran to completion and left the source mutated. This run\'s own');
+  console.log('       residue, not the one the warning above reported.');
   console.log('       restore with:  git checkout -- <file>');
   failed.push({ name: 'shipped files restored byte for byte', ok: false });
 }
