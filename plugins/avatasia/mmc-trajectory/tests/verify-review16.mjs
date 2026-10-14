@@ -266,6 +266,57 @@ assert('the Chinese README carries the shipped version',
 assert('neither README still announces the old version',
   !/1\.0\.0/.test(readme) && !/1\.0\.0/.test(readmeZh));
 
+/* ---------- 8. the harness must notice what the LAST run left behind ---------- */
+
+// Section 1 is about a run that cannot find its interpreter. This one is about a run that cannot
+// see what the previous run left on disk, which is the failure mode the snapshot in run.mjs was
+// written for and then did not have.
+//
+// The gap was three bugs that each disabled the check on their own: the snapshot was written only
+// when the file already existed (so a fresh checkout never had a baseline), it recorded the run's
+// START state rather than the state it ended with, and — the one that made the whole thing
+// decorative — nothing ever read it. The visible symptom was exactly the one the reviewer reported:
+// after a `kill -9` mid-mutation, `index.html` stayed mutated and the next run reported unrelated
+// red with no mention of the residue, because the only guard that knew about residue was comparing
+// the start of a run with the end of the SAME run.
+//
+// Reproduced on 2026-10-14 before changing anything: a run left no snapshot at all, and with a
+// snapshot planted by hand plus one real mutation in index.html, `node tests/run.mjs
+// verify-ledger-jump` printed `0/1 guards passed / failed: verify-ledger-jump.mjs` and one line
+// about nothing being left over.
+assert('the harness reads the snapshot the previous run wrote',
+  /readFileSync\(SNAPSHOT,/.test(runMjs));
+assert('the startup comparison is per file, against the digest that was recorded',
+  /previous\[rel\] !== undefined && previous\[rel\] !== digest\(rel\)/.test(runMjs));
+// A checkout nobody has run the suite on has no baseline. Treating that as "everything differs"
+// would warn on every first run, and treating it as a failure would fail every fresh clone.
+assert('a missing baseline is neither a difference nor a failure',
+  /const readSnapshot = \(\) => \{[\s\S]*?return null;/.test(runMjs)
+  && /const leftover = previous\s*\?/.test(runMjs));
+// Reported, not failed. The suite runs on machines with uncommitted work, and "these files are not
+// what the last run left" is true of a contributor mid-edit. So this must never reach `failed`.
+assert('files that differ from the last run are reported and not failed',
+  /shipped files differ from the last run/.test(runMjs)
+  && !/failed\.push\([^\n]*leftover/.test(runMjs));
+// Written on every clean run. Gating the write on the file already existing is what left a fresh
+// checkout with nothing to compare against — the machine least likely to have a stale snapshot is
+// the one that could never get one.
+assert('the snapshot is written on every clean run, not only when it already exists',
+  !/existsSync\(SNAPSHOT\)\s*&&/.test(runMjs) && !/if\s*\(existsSync\(SNAPSHOT\)/.test(runMjs));
+// And it records the state the run ENDED with, only when that state was clean. Recording a drifted
+// end would make the next run's comparison agree with the mutation, which is the one thing this
+// file exists to prevent.
+assert('the snapshot records the state the run ended with, and only a clean end',
+  /if \(drift\.length === 0\) \{[\s\S]*?writeFileSync\(SNAPSHOT/.test(runMjs)
+  && !/JSON\.stringify\(snapshotBefore\)/.test(runMjs));
+// Two findings, two names. Collapsing them into one line is the regression this section exists to
+// stop: "shipped files restored" means this run dirtied the source, "differ from the last run"
+// means it was already dirty, and a reader who cannot tell them apart cannot act on either.
+assert('this run\'s own residue and last run\'s residue are named differently',
+  /shipped files restored/.test(runMjs)
+  && /shipped files differ from the last run/.test(runMjs)
+  && /WARN/.test(runMjs));
+
 console.log('[review16] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));

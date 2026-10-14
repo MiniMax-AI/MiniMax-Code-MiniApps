@@ -232,6 +232,44 @@ MUTATIONS = [
      '"version": "1.1.0",',
      '"version": "1.2.0",',
      "the English README carries the shipped version"),
+
+    # ---- the snapshot the last run left, and the run that never looked at it ----
+    # All five break the cross-start check in tests/run.mjs, which existed on paper and did nothing:
+    # the snapshot was written only when it already existed, recorded the run's start rather than
+    # its end, and was never read. A hard kill mid-mutation therefore left the source mutated and
+    # the next run said nothing about it -- it reported whatever guard happened to read the mutated
+    # file, which reads as that guard being broken.
+
+    ("the harness never reads the snapshot it writes",
+     "readFileSync(SNAPSHOT, 'utf8')",
+     "'{}'",
+     "the harness reads the snapshot the previous run wrote"),
+
+    ("the startup check stops comparing per file",
+     "previous[rel] !== undefined && previous[rel] !== digest(rel)",
+     "false",
+     "the startup comparison is per file, against the digest that was recorded"),
+
+    # The old form: record the state the run STARTED with. Identical to the end state whenever
+    # nothing drifted, and a record of the mutation whenever something did.
+    ("the snapshot records the state the run started with",
+     "writeFileSync(SNAPSHOT, JSON.stringify(Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]))));",
+     "writeFileSync(SNAPSHOT, JSON.stringify(snapshotBefore));",
+     "the snapshot records the state the run ended with, and only a clean end"),
+
+    # Recording a drifted end is the one that hides the thing twice: the next run compares against
+    # the mutation and agrees with it.
+    ("the snapshot is written even when this run dirtied the source",
+     "if (drift.length === 0) {",
+     "if (drift.length >= 0) {",
+     "the snapshot records the state the run ended with, and only a clean end"),
+
+    # The two findings collapse into one line. Reads fine, costs the reader the only thing that
+    # distinguishes "this run broke it" from "it was already broken".
+    ("last run's residue is named exactly like this run's",
+     "'shipped files differ from the last run'",
+     "'shipped files restored'",
+     "this run's own residue and last run's residue are named differently"),
 ]
 
 
