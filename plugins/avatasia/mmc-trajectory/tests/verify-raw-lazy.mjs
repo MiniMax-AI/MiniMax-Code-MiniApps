@@ -150,9 +150,12 @@ assert('it calls buildRawPayload, i.e. it builds rather than looks up a stored m
 assert('it follows the locator back to a row', handleRawBody.includes('cached.rows[rowIndex]'));
 assert('it reports the verdict alongside the message', /omitted: built\.omitted/.test(handleRawBody));
 assert('a missing row is still a 404, not an empty message', handleRawBody.includes("'record_not_found'"));
+// The entry shape lives in createTrajectoryCache now, so this asserts the thing the two
+// assertions above jointly depend on: the route stores `rows` into the entry, and /raw reads
+// `cached.rows` back out of it. Anchoring on the old JSDoc type comment instead would have made
+// the assertion a check on where a type was written rather than on what the route does.
 assert('the cache entry keeps the rows the locators point into',
-  SERVER.includes('raws: Map<number, number>, rows: Array<Record<string, any>>'));
-assert('the cache entry is written with the rows', SERVER.includes('{ at: Date.now(), etag, body, raws, rows }'));
+  SERVER.includes('trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rows })'));
 
 /* =====================================================================
  * 4 — each of the five readers, by name

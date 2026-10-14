@@ -184,9 +184,12 @@ MUTATIONS = [
      "",
      "dispose() clears the parsed-row cache too"),
 
+    # `clear() {` on its own stopped being unique once createTrajectoryCache grew one of its own,
+    # and this harness reports an ambiguous anchor as unresolved rather than guessing. The bytes
+    # below are what make it specific to the parsed-row cache: its counter has to be reset too.
     ("the parsed-row cache loses its clear()",
-     "    clear() {",
-     "    reset() {",
+     "    clear() {\n      entries.clear();\n      bytes = 0;\n    },",
+     "    reset() {\n      entries.clear();\n      bytes = 0;\n    },",
      "the parsed-row cache really does expose clear()"),
 
     # ---- 6. the empty state points at inert controls again ----

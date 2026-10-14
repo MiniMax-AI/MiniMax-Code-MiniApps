@@ -1704,6 +1704,24 @@ export function sessionsValidator(visible, titles, limit) {
 }
 
 /**
+ * The part of a cache key that says WHAT is being asked, as opposed to which version of it.
+ *
+ * Everything after this — lineage, size, mtime, catalog bytes, binding — decides whether the answer
+ * went stale. Everything in it decides what the answer is. A newer version of one family must
+ * replace its predecessor; two families are two different questions and must not evict each other.
+ * Exported because `trajectoryCacheKey` builds the same prefix, and two copies of that expression
+ * would be free to drift.
+ *
+ * @param {string} dir
+ * @param {number | null | undefined} filter
+ * @returns {string}
+ */
+export function trajectoryCacheFamily(dir, filter) {
+  const gen = filter === null || filter === undefined ? 'all' : String(filter);
+  return `${dir}|gen=${gen}|`;
+}
+
+/**
  * The cache key for one rendered trajectory. Every component comes from a `stat`, a small
  * manifest/catalog file, or the already-resolved session binding — never from reading
  * `messages.jsonl`, which is the whole point: a matching key proves the file did not grow.
@@ -1730,8 +1748,7 @@ export function trajectoryCacheKey(entry, identity, binding, filter) {
     .join(',');
   // The requested slice is part of the answer too: the same session stitched and unfiltered is
   // two different bodies and must never share an entry.
-  const gen = filter === null || filter === undefined ? 'all' : String(filter);
-  return `${entry.dir}|gen=${gen}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
+  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
 }
 /**
  * The `?since=` cursor, or null when there is not a usable one.
@@ -1927,6 +1944,68 @@ export function createParsedRowsCache(budget) {
  * @param {number} limit
  * @returns {Promise<ParsedRows>}
  */
+/**
+ * LRU over rendered trajectory bodies, bounded by entries.
+ *
+ * The bound alone is not enough. `trajectoryCacheKey` carries the active file's size and mtime, so
+ * a session that is still being written to mints a NEW key every time it grows — and every miss
+ * stores another complete body. A plain FIFO therefore keeps four versions of the SAME question
+ * alive, three of which no request can reach any more: `/raw` resolves the current key, and the
+ * page's next poll produces a newer one. Measured on a 9.1 MB session polled every 8s, the cache
+ * held four bodies (49.6 MB) after four polls; at this machine's 68 MB body that is three dead
+ * copies.
+ *
+ * So an entry carries the family it answers for — the session directory plus the requested slice —
+ * and storing a new one drops its predecessor. Everything that changes the ANSWER stays in the
+ * key; everything that only marks it stale stays in the family.
+ *
+ * Different `?generation=` slices are different families and each keeps its own entry, bounded by
+ * `limit` as before.
+ *
+ * @param {number} limit
+ */
+export function createTrajectoryCache(limit) {
+  /** @type {Map<string, { at: number, family: string, value: any }>} */
+  const entries = new Map();
+  return {
+    get size() { return entries.size; },
+    /**
+     * @param {string} key
+     * @returns {any | null}
+     */
+    get(key) {
+      const hit = entries.get(key);
+      if (hit === undefined) return null;
+      // Re-reading is the only signal that an entry is still hot, so it refreshes recency.
+      entries.delete(key);
+      entries.set(key, hit);
+      return hit.value;
+    },
+    /**
+     * @param {string} key
+     * @param {string} family the (session, slice) this answers for; a newer version of the same
+     *   family replaces the older one instead of stacking beside it
+     * @param {any} value
+     */
+    set(key, family, value) {
+      const previous = entries.get(key);
+      if (previous !== undefined) entries.delete(key);
+      entries.set(key, { at: Date.now(), family, value });
+      for (const [existingKey, existing] of entries) {
+        if (existingKey !== key && existing.family === family) entries.delete(existingKey);
+      }
+      while (entries.size > limit) {
+        const oldest = entries.keys().next();
+        if (oldest.done) break;
+        entries.delete(oldest.value);
+      }
+    },
+    clear() {
+      entries.clear();
+    },
+  };
+}
+
 export async function loadParsedRows(cache, filePath, limit) {
   // Stat for the key rather than trusting the catalog, for the same reason the read limit is
   // not taken from it: the active file grows past its recorded size between polls. If the file
@@ -2018,9 +2097,9 @@ export async function start(context) {
    * but is only ever read for one record at a time, so keeping it beside the body means
    * the poll transfers the small payload and the record that gets opened still costs
    * nothing extra.
-   * @type {Map<string, { at: number, etag: string, body: string, raws: Map<number, number>, rows: Array<Record<string, any>> }>}
+   * @type {ReturnType<typeof createTrajectoryCache>}
    */
-  const trajectoryCache = new Map();
+  const trajectoryCache = createTrajectoryCache(TRAJECTORY_CACHE_ENTRIES);
   /**
    * Parsed generation rows, keyed by path+size+mtime+limit. Beside trajectoryCache, not
    * inside it: a whole-session hit still short-circuits before this is touched at all, so
@@ -2540,12 +2619,10 @@ export async function start(context) {
       sendJson(response, 500, { error: 'trajectory_unserializable', message: '会话数据暂时无法读取' });
       return;
     }
-    trajectoryCache.set(cacheKey, { at: Date.now(), etag, body, raws, rows });
-    while (trajectoryCache.size > TRAJECTORY_CACHE_ENTRIES) {
-      const oldest = trajectoryCache.keys().next();
-      if (oldest.done) break;
-      trajectoryCache.delete(oldest.value);
-    }
+    // The family is the session plus the requested slice: the parts of the answer that stay the
+    // same while it goes stale. Everything that decides whether the answer changed stays in the
+    // key, so a newer version of one family replaces its predecessor instead of stacking beside it.
+    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rows });
     // `?since=` asks for the tail. The whole body is serialized either way — the cache
     // entry and /raw both need it — so this saves the transfer and the page's JSON.parse,
     // and not the server's work. Any reading of "41 MB → a few KB, so polling got faster"
