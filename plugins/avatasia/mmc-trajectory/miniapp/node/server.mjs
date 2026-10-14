@@ -76,7 +76,7 @@ const TRAJECTORY_CACHE_ENTRIES = 4;
  * A 95 MB lineage lands somewhere in 130-290 MB.
  *
  * The trade is deliberate: it converts roughly 350 MB of allocation every 2.5 s into one
- * resident cost. See docs/LAYERS.md D10.
+ * resident cost. Pinned by tests/verify-parsed-rows.mjs.
  */
 const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
 /**
@@ -852,7 +852,7 @@ export function toolCallSummary(name, args) {
  * the size was decided: buildRawPayload() had to JSON.stringify the message to measure it, so
  * every rebuild serialized about 100 MB of message bodies to compare them against a 64 KB cap
  * and then threw the string away — for a body the page reads for one record at a time, if at
- * all. See docs/LAYERS.md D11.
+ * all. Pinned by tests/verify-raw-lazy.mjs.
  *
  * What the row carries now is the position of the message it came from. One row can produce
  * several records (an assistant message yields its thinking, its text and each tool call),
@@ -1876,7 +1876,7 @@ export async function start(context) {
   /**
    * Parsed generation rows, keyed by path+size+mtime+limit. Beside trajectoryCache, not
    * inside it: a whole-session hit still short-circuits before this is touched at all, so
-   * the two caches never answer for each other. See docs/LAYERS.md D10.
+   * the two caches never answer for each other. Pinned by tests/verify-parsed-rows.mjs.
    */
   const parsedRows = createParsedRowsCache(PARSED_ROWS_CACHE_BYTES);
 
@@ -1907,7 +1907,7 @@ export async function start(context) {
   let titleCache = { at: 0, key: '', map: new Map() };
   /** @param {readonly string[]} ids */
   const sessionTitles = async (ids) => {
-    const key = ids.join(' ');
+    const key = ids.join('');
     const now = Date.now();
     if (key === titleCache.key && now - titleCache.at < LIST_CACHE_TTL_MS) return titleCache.map;
     const map = await readSessionTitles(location.root, ids);
@@ -1948,7 +1948,7 @@ export async function start(context) {
       startedAt,
       lastActiveAt: entry.lastActiveAt,
       // The active file's size, which is exactly what it is: `sizeBytes` is not a lineage total
-      // here, and /api/trajectory's is. Same name, different scope — see docs/LAYERS.md §21.
+      // here, and /api/trajectory's is. Same name, different scope. Pinned by tests/verify-list-cache.mjs.
       sizeBytes: entry.sizeBytes,
       turnCount: peekIsWhole ? peek.turns : null,
       cacheId,
@@ -2263,7 +2263,7 @@ export async function start(context) {
       const keep = filter === null || filter === link.generation;
       // The rows are shared with the cache and with every other request that read this file.
       // Stamping the generation is the only write to them, and one filePath always maps to one
-      // generation, so it is idempotent — see docs/LAYERS.md D10.
+      // generation, so it is idempotent. Pinned by tests/verify-parsed-rows.mjs.
       for (const row of parsedFile.rows) {
         if (keep) {
           row[ROW_GENERATION] = link.generation;
@@ -2329,7 +2329,7 @@ export async function start(context) {
     // `?since=` asks for the tail. The whole body is serialized either way — the cache
     // entry and /raw both need it — so this saves the transfer and the page's JSON.parse,
     // and not the server's work. Any reading of "41 MB → a few KB, so polling got faster"
-    // has to carry that with it. See docs/LAYERS.md Stage 4.
+    // has to carry that with it. Pinned by tests/verify-incremental.mjs.
     const since = parseSince(url.searchParams.get('since'));
     const delta = since === null ? null : buildDeltaPayload(payload, since);
     sendJsonBody(response, 200, delta === null ? body : JSON.stringify(delta), { etag, revalidate: true });
@@ -2367,7 +2367,7 @@ export async function start(context) {
     }
     // The one place the untouched message is materialised, for one record, on request. The
     // size verdict travels with it because the page has to be able to say "omitted" rather
-    // than silently show something else — see docs/LAYERS.md D11.
+    // than silently show something else — see tests/verify-raw-lazy.mjs.
     const built = buildRawPayload(row.message, redact);
     sendJson(response, 200, { index: wanted, raw: built.value, omitted: built.omitted });
   };

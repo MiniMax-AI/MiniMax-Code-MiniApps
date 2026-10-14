@@ -961,8 +961,7 @@
          moment it is wanted, and scroll direction is not a statement about which filters the
          reader wants. It also meant visibility inside this band was decided from outside it, by
          a signal that has nothing to do with filtering. What decides visibility here now is the
-         band's own state — a pinned 上下文代 and the 异常 axis — and nothing else.
-         See docs/LAYERS.md D19. */
+         band's own state — a pinned 上下文代 and the 异常 axis — and nothing else. */
 
         line-height: 14px;
       }
@@ -1509,9 +1508,9 @@
       /* Off-screen turn groups stop being laid out. Gated on a class the ledger owns rather than
          being unconditional, because the first batch is what the height calibration is measured
          from: those groups have to be laid out for real before anything can be told apart from a
-         guess. See docs/LAYERS.md D15.
+         guess. Pinned by tests/verify-intrinsic-size.mjs.
 
-         contain-intrinsic-size is NOT set here. One number for every group is the thing D12
+         contain-intrinsic-size is NOT set here. One number for every group is the thing that was
          measured and rejected — real heights span 11× across a session — so each group carries its
          own on its inline style, computed from its own (rows, bands) once the three heights have
          been calibrated off the real DOM. A written-down constant would be a guess at someone
@@ -2239,9 +2238,10 @@
            whole line each. This select no longer lives there: it sits in a `flex: none` tail
            inside a row that wraps, so `width: 100%` would size it against that tail and the
            band would grow sideways rather than wrap. Written here rather than left to chance
-           because a rule that silently starts governing a second layer is exactly the drift
-           LAYERS.md calls 联动异常 — the override has to exist even though no browser here is
-           narrow enough to exercise it (未做清单第 6 项). */
+           because a rule that silently starts governing a second layer is the drift this file
+           keeps refusing: the override has to exist even though no browser here is narrow enough
+           to exercise it. tests/verify-cross-layer.mjs pins that a rule must not acquire a second
+           layer to govern. */
         .filter-row-tail .field {
           flex: none;
         }
@@ -2873,7 +2873,7 @@
       // table too: 异常 replaces this axis outright while a rule is ticked, a range bounds the
       // session to a stretch of wall-clock time, and a brush bounds it to a stretch of the
       // overview. Two comments in this file used to claim exclusivity for this axis with no
-      // qualifier; each of them was describing an earlier page. See docs/LAYERS.md D2.
+      // qualifier; each of them was describing an earlier page.
       //
       // There is deliberately no second row of layer buttons. Three fixed presets looked
       // like a coarser version of the chips, but any preset the reader outgrows became a
@@ -2965,7 +2965,7 @@
           // first time the runtime adds another host-only record type; the flag arrives flagged.
           //
           // It is here rather than hidden because being able to select exactly these rows is how
-          // you answer 「这行空白是什么」 without leaving the page. docs/LAYERS.md D17.
+          // you answer 「这行空白是什么」 without leaving the page.
           record: function (record) {
             return !!record && record.internalOnly === true;
           }
@@ -3723,7 +3723,7 @@
         // 「no rule is on」 had to be re-derived from three places, and that turning one of them
         // off without the other two read as a different state rather than as a bug: the
         // coordination could only live in call order, because there was no shared model for it to
-        // live in. See docs/LAYERS.md D5.
+        // live in. tests/verify-anomaly-model.mjs pins that shape.
         anomaly: {
           // 'single' or 'multi'. Single by default: a plain click answers 「点什么就显示什么」,
           // and adding to what is already ticked breaks that. In 'multi' the buttons union. It
@@ -4192,7 +4192,7 @@
        * sends no count when the prefix was not the whole file, so `— 条` here would be printing the
        * absence of a number in the shape of a number. Omitting the segment is the honest rendering
        * of 「这个数不存在」: the reader still has the label and the recency, which is what the picker
-       * is for. See docs/LAYERS.md §21. */
+       * is for. tests/verify-list-cache.mjs pins the gate that produces the absence. */
       function sessionOptionLabel(session, now) {
         var label = truncateText(session && session.label ? session.label : '', 42);
         var when = formatAgo(session ? session.lastActiveAt : null, now);
@@ -5928,8 +5928,13 @@
        *
        * Measured, not chosen. On this session at 18,924 rows across 150 turns, 25 groups is
        * ~3,150 rows and ~145 ms of row construction — the largest slice of a frame this loop can
-       * take before the page stops answering the pointer. The full picture, including the
-       * content-visibility alternative that was measured and rejected, is in docs/LAYERS.md D12.
+       * take before the page stops answering the pointer.
+       *
+       * The alternative was measured and rejected rather than untried: skipping layout for the
+       * off-screen groups is about 4x faster over the whole build, but it needs one
+       * contain-intrinsic-size per group and real group heights span 11x across a session, so any
+       * single value makes the scroll height lie about how much document there is.
+       * tests/verify-intrinsic-size.mjs pins the per-group sizing used instead.
        */
       var LEDGER_BATCH_GROUPS = 25;
 
@@ -6007,7 +6012,7 @@
            to match (measured 715,080 → 616), so there is no scroll position at all between
            here and the build that puts it back. A pass that is superseded before it gets
            there has to hand the intent on rather than re-read it from the wreckage — that
-           is what dropped the reader on the first turn. See docs/LAYERS.md D14. */
+           is what dropped the reader on the first turn. tests/verify-anchor-carry.mjs pins it. */
         if (!pendingAnchor) {
           pendingAnchor = { row: firstVisibleRow(), y: window.scrollY || window.pageYOffset || 0 };
         }
@@ -6682,7 +6687,7 @@
        * finishes consumes it. Anything else and each pass reads an anchor out of the wreckage:
        * measured, a click on any row that landed while a poll build was in flight left the page
        * anchored on the first turn for good, because the superseded build stopped at the token
-       * check and never reached the restore. See docs/LAYERS.md D14.
+       * check and never reached the restore. Pinned by tests/verify-anchor-carry.mjs.
        *
        * It is dropped, not restored, by the paths that end a chain with no table to anchor to —
        * loading, error, no payload, no sessions, no matches. Carrying an intent across one of
@@ -7831,7 +7836,7 @@
        * Resolves to `{ raw, omitted }`. Whether the message was too large to carry used to be
        * a field on the record, checked here to short-circuit the fetch; it now travels with
        * the answer instead, because deciding it meant serializing every message in the session
-       * on every poll to measure them against a cap — see docs/LAYERS.md D11.
+       * on every poll to measure them against a cap. Pinned by tests/verify-raw-lazy.mjs.
        *
        * `omitted` and `raw === null` are the same state stated two ways, and a caller may test
        * either. Everything else resolves to the message or rejects: silently substituting the
@@ -7857,7 +7862,7 @@
         wrap.appendChild(pre);
         // The two states the reader sees are unchanged; they now arrive with the answer rather
         // than ahead of it, because deciding which one applied was what made the bulk response
-        // serialize every message in the session — see docs/LAYERS.md D11.
+        // serialize every message in the session — see tests/verify-raw-lazy.mjs.
         pre.textContent = '正在读取原文…';
         rawSourceFor(record).then(function (fetched) {
           if (fetched.omitted === true) {
