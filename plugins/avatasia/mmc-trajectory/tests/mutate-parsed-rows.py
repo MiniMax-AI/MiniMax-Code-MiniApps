@@ -49,7 +49,7 @@ MUTATIONS = [
     (
         "server: `empty` is not carried on the cached value, so a hit stops reporting it",
         SERVER,
-        "    empty: head.text === '',\n",
+        "    empty: head.buffer.length === 0,\n",
         "    empty: false,\n",
     ),
     (
@@ -109,8 +109,8 @@ MUTATIONS = [
     (
         "the route parses the file inline again instead of going through the cache",
         SERVER,
-        "        parsedFile = await loadParsedRows(parsedRows, filePath, limit);",
-        "        parsedFile = await (async () => { const h = await readHead(filePath, limit); const p = parseMessagesJsonl(h.text); return { rows: p.rows, skipped: p.skipped, size: h.size, read: h.read, empty: h.text === '', truncated: truncatedByCap(h.size, limit) }; })();",
+        "        parsedFile = await loadParsedRows(parsedRows, filePath, limit, { cacheable: link.fileName !== activeFileName });",
+        "        parsedFile = await (async () => { const h = await readHead(filePath, limit); const p = parseMessagesJsonl(h.buffer); return { rows: p.rows, locators: p.spans.map(([s, e]) => ({ start: s, end: e, digest: lineDigest(h.buffer.subarray(s, e)) })), skipped: p.skipped, size: h.size, read: h.read, empty: h.buffer.length === 0, truncated: truncatedByCap(h.size, limit) }; })();",
     ),
 ]
 

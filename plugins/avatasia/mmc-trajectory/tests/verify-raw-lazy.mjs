@@ -147,15 +147,18 @@ assert('handleRaw exists', handleRawAt > 0);
 const handleRawBody = SERVER.slice(handleRawAt, SERVER.indexOf('};', handleRawAt));
 assert('it calls buildRawPayload, i.e. it builds rather than looks up a stored message',
   handleRawBody.includes('buildRawPayload(row.message, redact)'));
-assert('it follows the locator back to a row', handleRawBody.includes('cached.rows[rowIndex]'));
+assert('it follows the locator back into the file the record came from',
+  handleRawBody.includes('readRange(locator.filePath, locator.start, locator.end)'));
 assert('it reports the verdict alongside the message', /omitted: built\.omitted/.test(handleRawBody));
 assert('a missing row is still a 404, not an empty message', handleRawBody.includes("'record_not_found'"));
-// The entry shape lives in createTrajectoryCache now, so this asserts the thing the two
-// assertions above jointly depend on: the route stores `rows` into the entry, and /raw reads
-// `cached.rows` back out of it. Anchoring on the old JSDoc type comment instead would have made
-// the assertion a check on where a type was written rather than on what the route does.
-assert('the cache entry keeps the rows the locators point into',
-  SERVER.includes('trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rows })'));
+// The entry shape lives in createTrajectoryCache now, so this asserts the thing the assertions
+// above jointly depend on: the route stores the record->locator map into the entry, and /raw reads
+// `cached.raws` back out of it. It used to store `rows` and read `cached.rows`, which is the thing
+// that was costing 233 MB; anchoring on the JSDoc type comment instead would have made this a
+// check on where a type was written rather than on what the route does.
+assert('the cache entry keeps the locators /raw follows, keyed by record',
+  SERVER.includes('raws, decoded: new Map() })')
+  && handleRawBody.includes('cached.raws.get(wanted)'));
 
 /* =====================================================================
  * 4 — each of the five readers, by name

@@ -144,8 +144,8 @@ MUTATIONS = [
      "nothing still points at a docs/ file that does not ship"),
 
     ("the server source points at the document that left the package",
-     "// generation, so it is idempotent. Pinned by",
-     "// generation, so it is idempotent — see docs/LAYERS.md D10.",
+     "// only write, and one filePath always maps to one generation, so it is idempotent.",
+     "// only write, and one filePath always maps to one generation, so it is idempotent. See docs/LAYERS.md §5.",
      "nothing still points at a docs/ file that does not ship"),
 
     # And the reason an audit of server.mjs under-reported it by two thirds: one NUL byte, in a string

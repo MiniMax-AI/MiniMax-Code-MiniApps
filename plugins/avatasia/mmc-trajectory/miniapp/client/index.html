@@ -7953,7 +7953,11 @@
         var session = payload && payload.session ? payload.session : null;
         var sid = session && typeof session.id === 'string' ? session.id : '';
         var gen = state.generation === null ? 'all' : String(state.generation);
-        return sid + '#' + gen + '#' + index;
+        // The validator belongs in this key. A record index is only a position within one version
+        // of one body: the same index in the next version of the session is a different message.
+        // Without the tag, a body that changed since the raw was read kept being served from here
+        // forever, and the page had no way to notice. Pinned by tests/verify-raw-lazy.mjs.
+        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;
       }
 
       function requestRaw(index) {
@@ -7977,6 +7981,11 @@
        * cache rolled past it. Reloading the session repopulates it, so that is tried once
        * before giving up; without the retry the tab would be permanently broken after any
        * restart, and without the retry cap it would loop.
+       *
+       * A 409 `raw_stale` is deliberately NOT on that path. It means the file a record was read
+       * from has been rewritten, which is not something a reload retries its way out of on a
+       * timer — and the reader is told so by the same 原文读取失败 line every other raw failure
+       * uses. A stale record is a hint, not an unavailable session.
        *
        * @param {Record<string, any>} record
        * @param {boolean} [retried]

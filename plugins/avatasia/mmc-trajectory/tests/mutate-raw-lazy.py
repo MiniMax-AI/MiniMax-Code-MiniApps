@@ -67,8 +67,8 @@ MUTATIONS = [
     (
         "server: /raw keeps the rows out of the cache entry, so it cannot resolve a locator",
         SERVER,
-        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rows });",
-        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws });",
+        "body, raws, decoded: new Map() });",
+        "body, decoded: new Map() });",
     ),
     # ---- the cap must still hold, wherever it now lives ----------------------
     (

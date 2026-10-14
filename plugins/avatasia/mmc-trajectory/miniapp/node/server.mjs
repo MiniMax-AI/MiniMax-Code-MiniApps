@@ -69,14 +69,17 @@ const TRAJECTORY_CACHE_ENTRIES = 4;
 /**
  * Upper bound on the parsed generation rows kept resident, in bytes.
  *
- * The whole-session cache above stores serialized bodies; this one stores parsed object
- * graphs, which cost several times their source text. Measured on this machine: JSON.parse
- * retains 1.36x the text of the emitted payload, and that is a floor — the payload has
- * already had its message bodies stripped by splitRawRecords, so the rows graph is larger.
- * A 95 MB lineage lands somewhere in 130-290 MB.
+ * This budget no longer covers the file that matters. A cache keyed on path+size+mtime for a file
+ * that is being appended to has no hit rate to speak of: `handleTrajectory` only reaches the parse
+ * after the trajectory key — which carries the same size and mtime — has already missed, so every
+ * store here is followed by a miss and the entry is dead weight that still costs its rows'
+ * memory. Measured on this machine, retaining it was the largest single cost in the process: 378 MB
+ * of heap after one session and 304 polls, against 145 MB once it is not retained.
  *
- * The trade is deliberate: it converts roughly 350 MB of allocation every 2.5 s into one
- * resident cost. Pinned by tests/verify-parsed-rows.mjs.
+ * What is left is the sealed generations, whose stat never changes and which are therefore the
+ * only parses a second request can genuinely reuse. Those files are rare at a session root — the
+ * store keeps rotated generations under `snapshots/`, not beside `messages.jsonl` — so the budget
+ * is now generous rather than tuned. Pinned by tests/verify-parsed-rows.mjs.
  */
 const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
 /**
@@ -93,6 +96,15 @@ const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
  * re-parsed them on the next poll. The budget is only as good as this number.
  */
 const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
+/**
+ * How many decoded messages one trajectory entry keeps for `/raw`, per open session.
+ *
+ * Bounded by count rather than bytes because the thing being kept is one message, and a 64 KB cap
+ * is already what decides whether a message is too big to show. The point is not to be a cache —
+ * it is so that paging back and forth in the inspector does not re-read the file each time — and a
+ * reader who opens more than this many at once is served correctly either way.
+ */
+const RAW_DECODE_CACHE_ENTRIES = 32;
 const SESSION_STORE_TOKEN = '<session-store>';
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 /**
@@ -188,33 +200,71 @@ export function createRedactor(secrets) {
 }
 
 /**
- * @param {string} text
- * @returns {{ rows: Array<Record<string, any>>, skipped: number }}
+ * One generation file's rows, plus where each row's line sits in the bytes they were read from.
+ *
+ * The positions are the second half of what this returns, and they are not a convenience: they
+ * are the only thing `/raw` has left once the parsed rows are released, which is what stops a
+ * 68 MB session from costing hundreds of megabytes of resident object graph. A line's bytes are
+ * found again by seeking to `start` and taking `end - start` of them, and the digest is what says
+ * they are still the same bytes.
+ *
+ * Offsets are byte offsets into `source`. For the route that source is a file read from offset 0,
+ * so they are byte offsets into the file; the guards that pass text get offsets into that text's
+ * UTF-8 encoding, which is the same relation.
+ *
+ * @param {string | Buffer} source
+ * @returns {{ rows: Array<Record<string, any>>, skipped: number, spans: Array<[number, number]> }}
  */
-export function parseMessagesJsonl(text) {
+export function parseMessagesJsonl(source) {
+  // One code path, two inputs. The route hands over the bytes it already read, which costs
+  // nothing; a caller holding text pays one encode here. Scanning the bytes rather than the string
+  // is also what makes the offsets free — a UTF-16 index is not a byte offset.
+  const bytes = typeof source === 'string' ? Buffer.from(source, 'utf8') : source;
   /** @type {Array<Record<string, any>>} */
   const rows = [];
+  /** @type {Array<[number, number]>} */
+  const spans = [];
   let skipped = 0;
   let start = 0;
-  while (start <= text.length) {
-    let end = text.indexOf('\n', start);
-    if (end === -1) end = text.length;
-    const line = text.slice(start, end);
-    start = end + 1;
-    if (line.trim() === '') {
-      if (end >= text.length) break;
-      continue;
+  while (start < bytes.length) {
+    const newline = bytes.indexOf(0x0a, start);
+    const end = newline === -1 ? bytes.length : newline;
+    const line = bytes.subarray(start, end).toString('utf8');
+    if (line.trim() !== '') {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed && typeof parsed === 'object') {
+          rows.push(parsed);
+          spans.push([start, end]);
+        } else skipped += 1;
+      } catch {
+        skipped += 1;
+      }
     }
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed && typeof parsed === 'object') rows.push(parsed);
-      else skipped += 1;
-    } catch {
-      skipped += 1;
-    }
-    if (end >= text.length) break;
+    if (newline === -1) break;
+    start = newline + 1;
   }
-  return { rows, skipped };
+  return { rows, skipped, spans };
+}
+
+/**
+ * How much of a line's SHA-256 is kept.
+ *
+ * Sixteen hex characters is 64 bits, which is chosen against the thing it has to survive: two
+ * different lines of the same length producing the same digest. Not a collision an adversary
+ * would have to find — nothing here is attacker-controlled — but the 32-bit FNV that was
+ * considered first, where a 68 MB session makes birthday-range collisions a matter of how many
+ * lines you are willing to hash. A full digest would cost the same to compare and twice the memory
+ * per row.
+ */
+const LINE_DIGEST_CHARS = 16;
+
+/**
+ * @param {Buffer} bytes
+ * @returns {string}
+ */
+export function lineDigest(bytes) {
+  return createHash('sha256').update(bytes).digest('hex').slice(0, LINE_DIGEST_CHARS);
 }
 
 /**
@@ -329,9 +379,20 @@ export function truncatedByCap(size, limit) {
 }
 
 /**
+ * Read at most `limit` bytes from the start of a file, cut back to the last complete line.
+ *
+ * The read always starts at offset 0 and never moves, so an index into `buffer` is also the byte
+ * offset of the same place in the file. That is what lets `/raw` go back to one line later without
+ * the parsed rows still being in memory, and it is the reason `buffer` is the primary result:
+ * decoding the whole thing into a JS string is what this function used to return, and a 68 MB
+ * JSONL read as UTF-16 is up to 136 MB of heap for the duration of the parse.
+ *
+ * `text` is derived from those bytes on demand for the callers that want a string, and cached
+ * because the fixtures read it more than once.
+ *
  * @param {string} filePath
  * @param {number} limit
- * @returns {Promise<{ text: string, size: number, read: number }>}
+ * @returns {Promise<{ buffer: Buffer, text: string, size: number, read: number }>}
  */
 export async function readHead(filePath, limit) {
   const handle = await open(filePath, 'r');
@@ -349,9 +410,58 @@ export async function readHead(filePath, limit) {
     const view = buffer.subarray(0, filled);
     const lastNewline = view.lastIndexOf(0x0a);
     const usable = lastNewline === -1 ? filled : lastNewline;
-    return { text: view.subarray(0, usable).toString('utf8'), size, read: filled };
+    const usableBytes = view.subarray(0, usable);
+    /** @type {string | null} */
+    let decoded = null;
+    return {
+      buffer: usableBytes,
+      size,
+      read: filled,
+      get text() {
+        if (decoded === null) decoded = usableBytes.toString('utf8');
+        return decoded;
+      },
+    };
   } finally {
     await handle.close();
+  }
+}
+
+/**
+ * Read exactly `[start, end)` out of a file, for one line.
+ *
+ * Used only by `/raw`, and only after the line's position was recorded during the parse. The
+ * length check is not decoration: a file that shrank since then would otherwise answer with
+ * whatever now sits at that offset.
+ *
+ * @param {string} filePath
+ * @param {number} start
+ * @param {number} end
+ * @returns {Promise<Buffer | null>} null when the file no longer reaches `end`
+ */
+export async function readRange(filePath, start, end) {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) return null;
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const stat = await handle.stat();
+    if (stat.size < end) return null;
+    const buffer = Buffer.allocUnsafe(end - start);
+    let filled = 0;
+    while (filled < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, start + filled);
+      if (bytesRead <= 0) return null;
+      filled += bytesRead;
+    }
+    return buffer;
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
 }
 
@@ -1844,7 +1954,14 @@ export function buildDeltaPayload(payload, since) {
 }
 
 /**
- * @typedef {{ rows: Array<Record<string, any>>, skipped: number, size: number, read: number, empty: boolean, truncated: boolean }} ParsedRows
+ * One generation file, parsed once.
+ *
+ * `locators` is parallel to `rows` and is what makes releasing `rows` safe: each entry says which
+ * file the line came from, where in it, and what it hashed to, which is everything `/raw` needs to
+ * fetch that one line again.
+ *
+ * @typedef {{ filePath: string, start: number, end: number, digest: string }} LineLocator
+ * @typedef {{ rows: Array<Record<string, any>>, locators: Array<LineLocator>, skipped: number, size: number, read: number, empty: boolean, truncated: boolean }} ParsedRows
  */
 
 /**
@@ -1930,21 +2047,6 @@ export function createParsedRowsCache(budget) {
 }
 
 /**
- * One generation file's rows, from the cache when the filesystem still agrees with the key.
- *
- * Extracted from the route so a test can run the real step twice and compare: a cache hit
- * that is even slightly different from a cold read is the one failure this cache may not
- * have, and it is invisible to any test that does not run this function.
- *
- * Throws whatever readHead throws; the caller owns the error response, because the route
- * needs to answer 500 and the test needs the throw.
- *
- * @param {ReturnType<typeof createParsedRowsCache>} cache
- * @param {string} filePath
- * @param {number} limit
- * @returns {Promise<ParsedRows>}
- */
-/**
  * LRU over rendered trajectory bodies, bounded by entries.
  *
  * The bound alone is not enough. `trajectoryCacheKey` carries the active file's size and mtime, so
@@ -2006,7 +2108,30 @@ export function createTrajectoryCache(limit) {
   };
 }
 
-export async function loadParsedRows(cache, filePath, limit) {
+/**
+ * One generation file, parsed once, from the cache when the caller says the file can be reused.
+ *
+ * `cacheable` is the whole of what step 2 changed, and it is not a tuning knob: a cache entry
+ * keyed on path+size+mtime for a file that grows between polls cannot be hit, because the caller
+ * only gets here after a key carrying that same size and mtime already missed. The active file is
+ * therefore parsed every time and retained never, and `/raw` finds its lines from the locators
+ * instead. Sealed generations still go in, because for those the stat really is constant.
+ *
+ * Extracted from the route so a test can run the real step twice and compare: a cache hit
+ * that is even slightly different from a cold read is the one failure this cache may not
+ * have, and it is invisible to any test that does not run this function.
+ *
+ * Throws whatever readHead throws; the caller owns the error response, because the route
+ * needs to answer 500 and the test needs the throw.
+ *
+ * @param {ReturnType<typeof createParsedRowsCache>} cache
+ * @param {string} filePath
+ * @param {number} limit
+ * @param {{ cacheable?: boolean }} [options]
+ * @returns {Promise<ParsedRows>}
+ */
+export async function loadParsedRows(cache, filePath, limit, options) {
+  const cacheable = options === undefined || options.cacheable !== false;
   // Stat for the key rather than trusting the catalog, for the same reason the read limit is
   // not taken from it: the active file grows past its recorded size between polls. If the file
   // changes between this stat and readHead the entry ends up keyed on a size it does not
@@ -2015,21 +2140,33 @@ export async function loadParsedRows(cache, filePath, limit) {
   // different key.
   const current = await stat(filePath);
   const key = parsedRowsKey(filePath, current.size, current.mtimeMs, limit);
-  const hit = cache.get(key);
-  if (hit !== null) return hit;
+  if (cacheable) {
+    const hit = cache.get(key);
+    if (hit !== null) return hit;
+  }
 
   const head = await readHead(filePath, limit);
-  const parsed = parseMessagesJsonl(head.text);
+  const parsed = parseMessagesJsonl(head.buffer);
+  // Built complete rather than completed by the caller: one locator per row is 36,527 objects on a
+  // session this size, and spreading each of them into a second object to add a field the parse
+  // already had in hand cost more than the digests do.
+  const locators = parsed.spans.map(([start, end]) => ({
+    filePath,
+    start,
+    end,
+    digest: lineDigest(head.buffer.subarray(start, end)),
+  }));
   const value = {
     rows: parsed.rows,
+    locators,
     skipped: parsed.skipped,
     size: head.size,
     read: head.read,
-    empty: head.text === '',
+    empty: head.buffer.length === 0,
     // Truncated means our cap cut the read, nothing else.
     truncated: truncatedByCap(head.size, limit),
   };
-  cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));
+  if (cacheable) cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));
   return value;
 }
 
@@ -2101,9 +2238,11 @@ export async function start(context) {
    */
   const trajectoryCache = createTrajectoryCache(TRAJECTORY_CACHE_ENTRIES);
   /**
-   * Parsed generation rows, keyed by path+size+mtime+limit. Beside trajectoryCache, not
-   * inside it: a whole-session hit still short-circuits before this is touched at all, so
-   * the two caches never answer for each other. Pinned by tests/verify-parsed-rows.mjs.
+   * Parsed generation rows, keyed by path+size+mtime+limit, and now holding sealed generations
+   * only — `loadParsedRows` is called with `cacheable: false` for the file being appended to.
+   * Beside trajectoryCache, not inside it: a whole-session hit still short-circuits before this is
+   * touched at all, so the two caches never answer for each other.
+   * Pinned by tests/verify-parsed-rows.mjs.
    */
   const parsedRows = createParsedRowsCache(PARSED_ROWS_CACHE_BYTES);
 
@@ -2462,8 +2601,8 @@ export async function start(context) {
       // cursor carries the validator it was taken against, so a request that reaches this
       // line with a cursor means the session changed — which is the branch below. Cutting
       // a tail out of a cached payload would also mean holding that payload in memory, and
-      // this cache deliberately does not: it holds the serialized bytes and the rows /raw
-      // needs, not the object graph the bytes came from.
+      // this cache deliberately does not: it holds the serialized bytes and the locators
+      // /raw needs, not the object graph the bytes came from.
       sendJsonBody(response, 200, cached.body, { etag, revalidate: true });
       return;
     }
@@ -2524,6 +2663,11 @@ export async function start(context) {
     // Concatenate oldest → newest, which is the order the conversation actually happened in.
     /** @type {Array<Record<string, any>>} */
     const rows = [];
+    // Parallel to `rows`, and the reason `rows` is allowed to be a local. One entry per row,
+    // holding where that row's line was read from and what it hashed to — enough for `/raw` to go
+    // back to one line without any of the parsed rows still being alive.
+    /** @type {Array<LineLocator>} */
+    const rowLocators = [];
     let skippedTotal = 0;
     let truncated = false;
     let readBytes = 0;
@@ -2545,7 +2689,7 @@ export async function start(context) {
       /** @type {ParsedRows} */
       let parsedFile;
       try {
-        parsedFile = await loadParsedRows(parsedRows, filePath, limit);
+        parsedFile = await loadParsedRows(parsedRows, filePath, limit, { cacheable: link.fileName !== activeFileName });
       } catch (error) {
         context.logger.error('miniapp.trajectory.read_error', { reason: 'messages_unreadable', code: errorCode(error) });
         sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
@@ -2560,13 +2704,16 @@ export async function start(context) {
       readBytes += parsedFile.read;
       skippedTotal += parsedFile.skipped;
       const keep = filter === null || filter === link.generation;
-      // The rows are shared with the cache and with every other request that read this file.
-      // Stamping the generation is the only write to them, and one filePath always maps to one
-      // generation, so it is idempotent. Pinned by tests/verify-parsed-rows.mjs.
-      for (const row of parsedFile.rows) {
+      // A sealed file's rows are shared with every other request that read it; the active file's
+      // are this request's alone and are released below. Either way stamping the generation is the
+      // only write, and one filePath always maps to one generation, so it is idempotent.
+      // Pinned by tests/verify-parsed-rows.mjs.
+      for (let index = 0; index < parsedFile.rows.length; index += 1) {
         if (keep) {
+          const row = parsedFile.rows[index];
           row[ROW_GENERATION] = link.generation;
           rows.push(row);
+          rowLocators.push(parsedFile.locators[index]);
         }
       }
     }
@@ -2606,11 +2753,15 @@ export async function start(context) {
 
     // Last thing before serializing, and the only place `raw` is ever touched: from here on
     // the body carries no message bodies at all.
-    // The locator map plus the rows it points into. Both are references: the rows are the
-    // same objects the parsed-rows cache holds, so this adds a map of numbers and an array of
-    // pointers rather than a second copy of the session. Keeping the array here also means
-    // /raw still answers after the parsed-rows cache has evicted the file.
-    const raws = splitRawRecords(payload.turns);
+    // The record -> locator map. Locators, not row references: the parsed rows behind them are
+    // about to stop existing, and this entry is what has to outlive them for `/raw` to still work.
+    const rowIndexByRecord = splitRawRecords(payload.turns);
+    /** @type {Map<number, LineLocator>} */
+    const raws = new Map();
+    for (const [recordIndex, rowIndex] of rowIndexByRecord) {
+      const locator = rowLocators[rowIndex];
+      if (locator !== undefined) raws.set(recordIndex, locator);
+    }
 
     let body;
     try {
@@ -2622,7 +2773,14 @@ export async function start(context) {
     // The family is the session plus the requested slice: the parts of the answer that stay the
     // same while it goes stale. Everything that decides whether the answer changed stays in the
     // key, so a newer version of one family replaces its predecessor instead of stacking beside it.
-    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rows });
+    // `decoded` is filled in by /raw, at most RAW_DECODE_CACHE_ENTRIES lines' worth.
+    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, decoded: new Map() });
+    // Nothing below reads `rows` or `rowLocators`, and `payload` holds its own projections rather
+    // than the rows, so this is where the object graph stops being reachable. A sealed generation's
+    // rows are still held by the parsed-rows cache — that is the point of that cache — but the
+    // active file's are now only held by this array.
+    rows.length = 0;
+    rowLocators.length = 0;
     // `?since=` asks for the tail. The whole body is serialized either way — the cache
     // entry and /raw both need it — so this saves the transfer and the page's JSON.parse,
     // and not the server's work. Any reading of "41 MB → a few KB, so polling got faster"
@@ -2635,10 +2793,18 @@ export async function start(context) {
   /**
    * One record's untouched message, fetched only when something actually reads it.
    *
-   * Served out of the same cache entry as the bulk body, so opening the inspector's raw
-   * tab costs one record rather than a session. A miss means this process restarted
-   * between the two calls; saying so is more honest than silently showing the normalized
-   * record in a panel labelled 原文.
+   * The body no longer has the parsed rows behind it, so the line is read back out of the file it
+   * came from. That is a seek and a digest over one line, against the alternative of holding every
+   * session's object graph in memory for the life of the page — measured at 233 MB of the 378 MB
+   * this process held while one session was open.
+   *
+   * The digest is what makes that safe to do. Between building the body and answering this request
+   * the file can be rewritten; the trajectory entry is keyed on the file's size and mtime, so a
+   * rewrite that preserved both would otherwise be served the wrong message under the right
+   * record's name. Answering `raw_stale` says the session moved instead.
+   *
+   * A missing entry means this process restarted between the two calls; saying so is more honest
+   * than silently showing the normalized record in a panel labelled 原文.
    */
   const handleRaw = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
@@ -2656,9 +2822,34 @@ export async function start(context) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;
     }
-    const rowIndex = cached.raws.get(wanted);
-    const row = rowIndex === undefined ? undefined : cached.rows[rowIndex];
-    if (rowIndex === undefined || !row || typeof row !== 'object') {
+    // Re-reading a record the reader has already opened is the common case, and a decoded message
+    // is far smaller than a session, so the entry keeps the ones it has already paid for.
+    const alreadyDecoded = cached.decoded.get(wanted);
+    if (alreadyDecoded !== undefined) {
+      sendJson(response, 200, { index: wanted, raw: alreadyDecoded.value, omitted: alreadyDecoded.omitted });
+      return;
+    }
+    const locator = cached.raws.get(wanted);
+    if (locator === undefined || typeof locator.filePath !== 'string') {
+      sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    const bytes = await readRange(locator.filePath, locator.start, locator.end);
+    if (bytes === null || lineDigest(bytes) !== locator.digest) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: 'raw_stale' });
+      sendError(response, 409, 'raw_stale', '该记录所在的文件已变化，请重新加载会话');
+      return;
+    }
+    /** @type {any} */
+    let row;
+    try {
+      row = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: 'raw_unparseable' });
+      sendError(response, 409, 'raw_stale', '该记录所在的文件已变化，请重新加载会话');
+      return;
+    }
+    if (!row || typeof row !== 'object') {
       sendError(response, 404, 'record_not_found', '找不到该记录');
       return;
     }
@@ -2666,6 +2857,12 @@ export async function start(context) {
     // size verdict travels with it because the page has to be able to say "omitted" rather
     // than silently show something else — see tests/verify-raw-lazy.mjs.
     const built = buildRawPayload(row.message, redact);
+    cached.decoded.set(wanted, built);
+    while (cached.decoded.size > RAW_DECODE_CACHE_ENTRIES) {
+      const oldest = cached.decoded.keys().next();
+      if (oldest.done) break;
+      cached.decoded.delete(oldest.value);
+    }
     sendJson(response, 200, { index: wanted, raw: built.value, omitted: built.omitted });
   };
 
@@ -2764,10 +2961,9 @@ export async function start(context) {
     sessionsBody = { material: '', body: null };
     descriptorCache.clear();
     trajectoryCache.clear();
-    // The parsed-row cache is the largest of the three and was the only one not released here, so a
-    // disposed runtime kept a whole session's parsed rows alive — measured at roughly 43MB of heap
-    // still held for a 39MB session after dispose. It has the same clear() as the others and was
-    // simply missed; the line is here so the next cache added cannot repeat the omission quietly.
+    // The parsed-row cache only ever holds sealed generations now, but it is still a cache that
+    // has to be released here: a disposed runtime that kept it would still hold a rotated
+    // generation's rows. The line is here so the next cache added cannot repeat the omission.
     parsedRows.clear();
     clientEntry = null;
     disposal = close(server).then(() => undefined);
