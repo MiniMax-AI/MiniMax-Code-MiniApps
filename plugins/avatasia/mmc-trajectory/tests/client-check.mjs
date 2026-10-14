@@ -311,6 +311,38 @@ assert('...and reads which one applies from the active generation',
 const statsAllBody = fnSource('function statsAll()') || '';
 assert('the whole-context count reads the session total', statsAllBody.includes('stats.messagesAll'));
 
+/* ---------- the row key, and the one place selection is per message ---------- */
+// One message can expand into several rows. Anything that has to name ONE row has to use the
+// row's own key; selection is the deliberate exception, and that exception is the feature.
+const keySrc = fnSource('function recordKey(record)') || '';
+assert('the row key prefers the row index over the message id',
+  /isCount\(record\.index\)\)\s*return String\(record\.index\)/.test(keySrc));
+const rowSrc = fnSource('function buildRow(entry, rail)') || '';
+assert('a ledger row is keyed by its own row, not by its message',
+  /setAttribute\('data-row-id', recordKey\(record\)\)/.test(rowSrc));
+assert('...while clicking a row still selects the message it belongs to',
+  /selectRecord\(record\.id\)/.test(rowSrc) && /aria-current/.test(rowSrc));
+assert('the scroll anchor reads that key back out of the DOM',
+  /querySelector\('\[data-row-id="'/.test(html));
+
+// The overview had one id doing two jobs. A hover needs the row's key to mark one span; a click
+// needs the message's id. Returning the key forced both onto one number.
+const spanSrc = fnSource('function overviewModel(entries)') || '';
+assert('an overview span is keyed by its row, not by its message', /id: recordKey\(record\)/.test(spanSrc));
+const selSrc = fnSource('function recordInSelection(record, selection, spansById)') || '';
+assert('the time brush looks a span up by the row key too',
+  /spansById\.get\(recordKey\(record\)\)/.test(selSrc));
+const spanAtSrc = fnSource('function spanAt(clientX, clientY)') || '';
+assert('the hit test returns the span, so click and hover stop sharing one number',
+  /overviewSpansById\.get\(key\)/.test(spanAtSrc));
+const nearestSrc = fnSource('function nearestSpanAt(time)') || '';
+assert('...and so does the nearest-span lookup', /best = span;/.test(nearestSrc) && !/best = span\.id;/.test(nearestSrc));
+const pointerUp = fnSource('function onOverviewPointerUp(event)') || '';
+assert('clicking a span selects the message, not the row',
+  /selectRecord\(span\.record\.id\)/.test(pointerUp) && /selectRecord\(nearest\.record\.id\)/.test(pointerUp));
+assert('hovering a span marks only that span',
+  /var id = hovered \? hovered\.id : null;/.test(html));
+
 // turnContext builds its string from turnContextParts, and turnContextSuffix calls
 // turnContext, so a check that wants to RUN any of them has to lift all three, in dependency
 // order. Lifting by regex is acceptable here because these are leaf functions ending in a
@@ -749,11 +781,13 @@ const checks = [
     && /item\.appendChild\(buildCompactionBand\(group\.entries\[j\]\)\)/.test(loop);
 })()],
   // The band is a real control: it carries the same data-row-id the inspector looks up, so
-  // clicking it opens the checkpoint's details rather than doing nothing.
+  // clicking it opens the checkpoint's details rather than doing nothing. The two halves are
+  // deliberately different units — the DOM key has to name ONE row for the scroll anchor, and
+  // the selection stays on the message — so both are matched.
   ['the compaction band is selectable and states what it is', (() => {
   const src = fnSource('function buildCompactionBand(entry)');
   if (!src) return false;
-  return /setAttribute\('data-row-id', record\.id \|\| String\(record\.index\)\)/.test(src)
+  return /setAttribute\('data-row-id', recordKey\(record\)\)/.test(src)
     && /selectRecord\(record\.id\)/.test(src)
     // The point of the band is that it says what changed, so the generation and the moment both
     // have to be in it. Neither is decoration. The condition is matched whole: a mutation that

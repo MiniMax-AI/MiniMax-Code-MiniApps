@@ -70,6 +70,27 @@ MUTATIONS = [
      "      continuationTurns += 1;\n"
      "      qaTurns += 1;",
      "the turn after it is a continuation, not a Q&A"),
+    # A file that declares nothing used to be read as generation 0, which ended the walk and
+    # turned every sealed generation the session had into an orphan.
+    ("an active file with no marker starts the walk at generation 0 again",
+     "  const activeGeneration = activeProbe.marker\n"
+     "    ? activeProbe.marker.generation\n"
+     "    : activeCatalogGeneration(null, catalog.generations) ?? 0;",
+     "  const activeGeneration = activeProbe.marker ? activeProbe.marker.generation : 0;",
+     "an active file with no marker still starts at the generation the catalog names"),
+    ("a sealed file with no marker is refused again",
+     "    const declared = parent.marker ? parent.marker.generation : want;",
+     "    const declared = parent.marker ? parent.marker.generation : 0;",
+     "a sealed snapshot reached at a generation it does not declare is still stitched"),
+    # ...and the counter-example must keep passing, or the fix has quietly turned the catalog
+    # into the authority: a file that DOES declare its generation still overrides it.
+    ("the catalog overrides a file that declares its own generation",
+     "  const activeGeneration = activeProbe.marker\n"
+     "    ? activeProbe.marker.generation\n"
+     "    : activeCatalogGeneration(null, catalog.generations) ?? 0;",
+     "  const activeGeneration = activeCatalogGeneration(null, catalog.generations)\n"
+     "    ?? (activeProbe.marker ? activeProbe.marker.generation : 0);",
+     "a file that declares its own generation still wins over the catalog"),
 ]
 
 

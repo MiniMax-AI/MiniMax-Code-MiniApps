@@ -249,6 +249,62 @@ check('no orphans on a clean chain', full.orphans, []);
 const single = await walkLineage(fixtureCatalog([[0,'messages.jsonl']]), probeFrom({ ...FILES, gen1: 'g1.jsonl', 'messages.jsonl': plainRow }));
 check('an uncompacted session is one generation', single.chain.map((l) => l.generation), [0]);
 
+/* An active file that opens with no marker. The marker rides on the checkpoint row that rotated
+   the generation, so a session whose active file was rewritten in place has none — and reading
+   nothing off its head used to start the walk at generation 0, which reached no parent and
+   turned every sealed generation it actually had into an orphan. Measured over the store: one
+   session in 139, and it is the only one the runtime ever rewrote tool results in. */
+{
+  const noMarker = await walkLineage(
+    fixtureCatalog([[0,'g0.jsonl'],[1,'g1.jsonl'],[2,'messages.jsonl']]),
+    probeFrom({ ...FILES, gen0: 'g0.jsonl', gen1: 'g1.jsonl', 'messages.jsonl': plainRow }),
+  );
+  check('an active file with no marker still starts at the generation the catalog names',
+    noMarker.chain.map((l) => l.generation), [0, 1, 2]);
+  check('...so its sealed generations are reached, not orphaned', noMarker.orphans, []);
+
+  // The shape the store actually has: a session that compacted once and whose files declare
+  // nothing at all, because the marker rides on a checkpoint row that is not there. Both the
+  // active file and its one sealed snapshot are marker-less, and the snapshot is reached at
+  // generation 1 — where reading "no marker" as generation 0 used to refuse it.
+  const noMarkersAtAll = await walkLineage(
+    fixtureCatalog([[1,'g1.jsonl'],[2,'messages.jsonl']]),
+    probeFrom({ 'g1.jsonl': plainRow, gen1: 'g1.jsonl', 'messages.jsonl': plainRow }),
+  );
+  check('a sealed snapshot reached at a generation it does not declare is still stitched',
+    noMarkersAtAll.chain.map((l) => l.generation), [1, 2]);
+  check('...and nothing is left as an orphan', noMarkersAtAll.orphans, []);
+
+  // The counter-example, and the reason this is a fallback rather than a new source of truth: a
+  // file that DOES declare its generation still overrides the catalog, so this cannot become a
+  // way for a hand-edited catalog to place a file in a lineage.
+  const lying = await walkLineage(
+    fixtureCatalog([[0,'g0.jsonl'],[1,'g1.jsonl'],[2,'messages.jsonl']]),
+    probeFrom({ ...FILES, gen0: 'g0.jsonl', gen1: 'g1.jsonl', 'messages.jsonl': markerRow(7, 6) }),
+  );
+  check('a file that declares its own generation still wins over the catalog',
+    lying.chain.map((l) => l.generation), [7]);
+  check('...and everything the walk cannot reach stays orphaned', lying.orphans.map((o) => o.generation), [0, 1]);
+
+  // And the fork case is unchanged: a sealed file that names a generation other than the one it
+  // was reached for is still refused, marker or no marker.
+  const forkedOnPurpose = await walkLineage(
+    fixtureCatalog([[0,'g0.jsonl'],[1,'g1.jsonl'],[2,'messages.jsonl']]),
+    probeFrom({ ...FILES, gen0: 'g0.jsonl', gen1: 'g1.jsonl', 'g1.jsonl': markerRow(7, 6), 'messages.jsonl': markerRow(2, 1) + plainRow }),
+  );
+  check('a sealed file declaring the wrong generation is still refused',
+    forkedOnPurpose.chain.map((l) => l.generation), [2]);
+  check('...and is reported as an orphan', forkedOnPurpose.orphans.map((o) => o.generation), [0, 1]);
+
+  // A catalog that names no active entry at all leaves nothing to fall back to, and the walk
+  // still starts rather than throwing.
+  const nameless = await walkLineage(
+    { generations: [{ generation: 4, kind: 'snapshot', fileName: 'g0.jsonl', byteLength: 1, messageCount: 1, revision: null, active: false }] },
+    probeFrom({ 'g0.jsonl': plainRow, 'messages.jsonl': plainRow }),
+  );
+  assert('a catalog with no active entry still yields a chain', nameless.chain.length >= 1);
+}
+
 /* a snapshot whose parent generation is not exactly one lower is not part of this lineage */
 const skipped = await walkLineage(fixtureCatalog([[0,'g0.jsonl'],[1,'g1.jsonl'],[2,'messages.jsonl']]), probeFrom({
   ...FILES, gen0: 'g0.jsonl', gen1: 'g1.jsonl',
