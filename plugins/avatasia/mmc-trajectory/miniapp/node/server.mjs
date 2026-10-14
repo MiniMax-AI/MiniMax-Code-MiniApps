@@ -1105,6 +1105,346 @@ export function splitRawRecords(turns) {
 }
 
 /**
+ * The runtime's marker for a tool result it dropped while compacting the context.
+ *
+ * Measured across the whole session store: 141 occurrences, and every one of them the same
+ * wording. This is what separates "the runtime rewrote this message" from "something else
+ * changed it" — and that distinction decides whether a repeated message_id is a second COPY of
+ * one message or a second VERSION of it.
+ */
+const TOOL_RESULT_REMOVED = /\[Tool result removed by context compaction\.\]/;
+
+/**
+ * Two rows are the same message with its content taken out — the comparison that tells a declared
+ * trim apart from a rewrite nobody claimed.
+ *
+ * Only `message.content` is removed, because only it is supposed to change: a trim replaces the
+ * result text and leaves the tool name, the call id, the error flag and the turn alone. Anything
+ * else moving means this is not the transformation we recognise.
+ *
+ * `history_artifact` is removed too, for the same reason `contentFingerprint()` removes it. It is
+ * the declaring generation's provenance about itself, not a property of the message, and the store
+ * attaches it to a generation's own opener row rather than to the message it rewrote. Counting it
+ * here made whether a trim was recognised depend on which row happened to carry the annotation —
+ * so a correct rewrite sitting on an annotated row read as an unexplained difference, and the two
+ * functions disagreed about the same field for opposite reasons.
+ *
+ * @param {any} a
+ * @param {any} b
+ * @returns {boolean}
+ */
+function equalOutsideContent(a, b) {
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  const am = a.message;
+  const bm = b.message;
+  if (am === null || bm === null || typeof am !== 'object' || typeof bm !== 'object') return false;
+  const { history_artifact: _omittedFromA, ...restA } = a;
+  const { history_artifact: _omittedFromB, ...restB } = b;
+  const left = JSON.stringify({ ...restA, message: { ...am, content: null } });
+  const right = JSON.stringify({ ...restB, message: { ...bm, content: null } });
+  return left === right;
+}
+
+/**
+ * What makes two occurrences the same CONTENT VERSION of a message.
+ *
+ * Not the raw line. The newer generation's own opener carries `history_artifact`, so its bytes
+ * differ from the identical row in the sealed snapshot while nothing about the message changed —
+ * that row is the same version with provenance attached, not a second version. So the fingerprint
+ * drops `history_artifact` and nothing else; `message.content` stays in, because that is exactly
+ * what a version difference is.
+ *
+ * @param {any} row
+ * @returns {string}
+ */
+function contentFingerprint(row) {
+  if (row === null || typeof row !== 'object') return '';
+  const { history_artifact: _omitted, ...rest } = row;
+  return JSON.stringify(rest);
+}
+
+/**
+ * Is this row one the runtime trimmed?
+ *
+ * All four have to hold, and each one on its own is not enough. The marker describes a
+ * GENERATION, not every change inside it; the placeholder wording on its own is just a string that
+ * happens to appear. What is not stated anywhere is assumed not to have happened.
+ *
+ * @param {any} olderRow
+ * @param {any} newerRow
+ * @param {Set<number>} trimmedGenerations generations that declare `producedBy: 'tool_trim'`
+ * @param {number|null} newerGeneration
+ * @returns {boolean}
+ */
+function isDeclaredTrim(olderRow, newerRow, trimmedGenerations, newerGeneration) {
+  if (olderRow?.message?.role !== 'toolResult' || newerRow?.message?.role !== 'toolResult') return false;
+  if (!equalOutsideContent(olderRow, newerRow)) return false;
+  const text = contentToPlainText(newerRow.message.content) ?? '';
+  if (!TOOL_RESULT_REMOVED.test(text)) return false;
+  return newerGeneration !== null && trimmedGenerations.has(newerGeneration);
+}
+
+/**
+ * One logical message, and every content version it was stored in.
+ *
+ * @typedef {object} MessageVersion
+ * @property {string|null} digest
+ * @property {number|null} generation
+ * @property {any} locator
+ * @property {any} row
+ * @property {number} occurrences how many times this exact version turned up
+ * @property {'only'|'trimmed'|'unclassified'} relation how it differs from the first version
+ */
+
+/**
+ * Merge every occurrence of a message across the whole lineage into one identity.
+ *
+ * A message can be stored more than once: the active file may re-record a message a sealed
+ * snapshot already holds (the same bytes, so it is a second copy of one version), and sealing a
+ * generation can rewrite old tool results in place (different bytes, so it is a second version).
+ * Treating either as "delete the later row" loses a message or loses a version, so neither is
+ * what this does: it keeps both and says which kind it is.
+ *
+ * Rows with no usable id are NOT keyed together. The builder accepts a non-string id and maps it
+ * to null, and a shared `null` key would delete real rows or reject the request outright, so
+ * those rows pass straight through in `unkeyed`.
+ *
+ * @param {Array<{ row: any, generation: number|null, locator: any }>} occurrences in lineage order, oldest first
+ * @returns {{
+ *   identities: Map<string, { id: string, turnId: string|null, role: string|null, versions: MessageVersion[], openers: string[] }>,
+ *   unkeyed: Array<{ row: any, generation: number|null, locator: any }>,
+ *   openers: Map<string, string>,
+ *   openerOccurrence: Map<string, { row: any, generation: number|null, locator: any }>,
+ *   conflicts: Array<{ id: string, reason: string, expected: any, found: any }>,
+ *   unclassified: Array<{ id: string, olderGeneration: number|null, newerGeneration: number|null }>,
+ *   trimmedGenerations: Set<number>,
+ *   stats: { occurrences: number, identities: number, identical: number, trimmed: number, unclassified: number, conflicts: number, unkeyed: number },
+ * }}
+ */
+export function buildMessageIdentity(occurrences) {
+  const identities = new Map();
+  const unkeyed = [];
+  const conflicts = [];
+  const unclassified = [];
+  const trimmedGenerations = new Set();
+  const openers = new Map();
+  // Which OCCURRENCE opened each turn, not just which id. A view can contain a message without
+  // containing the copy of it that opened the turn, and "is this row the opener" has to be
+  // answerable by comparing rows rather than by comparing ids.
+  const openerOccurrence = new Map();
+  let identical = 0;
+  let total = 0;
+
+  for (const occ of occurrences) {
+    const row = occ.row;
+    const artifact = row?.history_artifact;
+    if (artifact && artifact.producedBy === 'tool_trim' && Number.isInteger(artifact.generation)) {
+      trimmedGenerations.add(artifact.generation);
+    }
+    const id = typeof row?.message_id === 'string' && row.message_id !== '' ? row.message_id : null;
+    if (id === null) { unkeyed.push(occ); continue; }
+    total += 1;
+
+    const role = typeof row?.message?.role === 'string' ? row.message.role : null;
+    const turnId = typeof row?.turn_id === 'string' ? row.turn_id : null;
+    let entry = identities.get(id);
+    if (entry === undefined) {
+      entry = { id, turnId, role, versions: [], byFingerprint: new Map() };
+      identities.set(id, entry);
+    } else if (turnId !== entry.turnId) {
+      conflicts.push({ id, reason: 'turn_id', expected: entry.turnId, found: turnId });
+    } else if (role !== entry.role) {
+      conflicts.push({ id, reason: 'role', expected: entry.role, found: role });
+    }
+
+    const digest = typeof occ.locator?.digest === 'string' ? occ.locator.digest : null;
+    const fingerprint = contentFingerprint(row);
+    const occurrence = { row, generation: occ.generation ?? null, locator: occ.locator ?? null };
+    const seen = entry.byFingerprint.get(fingerprint);
+    if (seen !== undefined) {
+      // Same content version showing up again. Which generation it belongs to is a property of
+      // the OCCURRENCE, not of the version: a sealed snapshot and the active file can both hold
+      // it, and a generation view has to be able to find the copy that file actually stores.
+      seen.occurrences.push(occurrence);
+      identical += 1;
+      continue;
+    }
+    const version = {
+      fingerprint,
+      digest,
+      generation: occurrence.generation,
+      locator: occurrence.locator,
+      row,
+      occurrences: [occurrence],
+      relation: 'only',
+    };
+    entry.versions.push(version);
+    entry.byFingerprint.set(fingerprint, version);
+  }
+
+  let trimmed = 0;
+  for (const entry of identities.values()) {
+    const first = entry.versions[0];
+    for (let v = 1; v < entry.versions.length; v += 1) {
+      const other = entry.versions[v];
+      if (isDeclaredTrim(first.row, other.row, trimmedGenerations, other.generation)) {
+        other.relation = 'trimmed';
+        trimmed += 1;
+      } else {
+        other.relation = 'unclassified';
+        unclassified.push({ id: entry.id, olderGeneration: first.generation, newerGeneration: other.generation });
+      }
+    }
+  }
+
+  // The turn opener, decided over the whole lineage rather than over whatever a request kept.
+  // Deciding it from the projected slice is what would let a real steer become the first visible
+  // prompt of its turn and be counted as dialogue.
+  for (const entry of identities.values()) {
+    if (entry.role !== 'user' || entry.turnId === null) continue;
+    const message = entry.versions[0].row?.message;
+    const plain = contentToPlainText(message?.content) ?? (typeof message?.text === 'string' ? message.text : null);
+    if (splitUserMessage(message ?? {}, plain).prompt === null) continue;
+    if (!openers.has(entry.turnId)) {
+      openers.set(entry.turnId, entry.id);
+      openerOccurrence.set(entry.turnId, entry.versions[0].occurrences[0]);
+    }
+  }
+
+  return {
+    identities,
+    unkeyed,
+    openers,
+    openerOccurrence,
+    conflicts,
+    unclassified,
+    trimmedGenerations,
+    stats: {
+      occurrences: total,
+      identities: identities.size,
+      identical,
+      trimmed,
+      unclassified: unclassified.length,
+      conflicts: conflicts.length,
+      unkeyed: unkeyed.length,
+    },
+  };
+}
+
+/**
+ * Where each turn's opener stands relative to one projected view.
+ *
+ * A turn has an entry here whenever the WHOLE lineage has an opener for it, and `row` is that
+ * opener only when this view actually contains it. The two facts are kept apart on purpose: a
+ * generation slice that does not hold the opener still has to classify the prompt it does show
+ * as a steer, and still has to call the turn a prompted turn — it just has no opener row to point
+ * at. Collapsing them into "the opener is this row, else there is no opener" is what let a real
+ * steer become the first visible prompt of its own turn.
+ *
+ * @param {ReturnType<typeof buildMessageIdentity>} identity
+ * @param {Array<{ row: any, generation: number|null, locator: any }>} occurrences the projected rows
+ * @returns {Map<string, { row: any | null }>} turn id -> its lineage opener, row null when out of view
+ */
+export function openerRowsForView(identity, occurrences) {
+  // Compared by the ROW, not by the occurrence wrapper. `buildMessageIdentity` wraps every
+  // occurrence in a fresh object of its own, so a caller's own array never contains the same
+  // wrapper the identity table holds — comparing wrappers made every turn look like its opener was
+  // missing, and every prompt in it a steer. Each stored copy is a distinct row object, so the row
+  // is the thing that actually says "this is the copy the view contains".
+  const rows = new Set(occurrences.map((occurrence) => occurrence.row));
+  /** @type {Map<string, { row: any | null }>} */
+  const byTurn = new Map();
+  for (const [turnId, occurrence] of identity.openerOccurrence) {
+    byTurn.set(turnId, { row: rows.has(occurrence.row) ? occurrence.row : null });
+  }
+  return byTurn;
+}
+
+/**
+ * How many logical messages each generation's stored context holds.
+ *
+ * A generation's count is the number of identities with at least one occurrence in it, plus its
+ * own unkeyed rows. The counts OVERLAP and their sum is not the conversation: a message sealed
+ * into generation 0 and re-recorded in generation 1 is in both, which is what a stored context
+ * is. That is also why this cannot be derived from the catalog's per-file `messageCount` — that
+ * counts stored rows, so a message recorded twice in one file, and one written three times across
+ * a lineage, are both invisible to it.
+ *
+ * @param {ReturnType<typeof buildMessageIdentity>} identity
+ * @returns {Map<number, number>}
+ */
+export function logicalCountByGeneration(identity) {
+  /** @type {Map<number, number>} */
+  const counts = new Map();
+  const bump = (generation) => {
+    if (generation === null || generation === undefined) return;
+    counts.set(generation, (counts.get(generation) ?? 0) + 1);
+  };
+  for (const entry of identity.identities.values()) {
+    // One tick per generation the message appears in, however many copies that generation holds
+    // of it — a sealed snapshot and the active file can both store the same version.
+    const generations = new Set();
+    for (const version of entry.versions) {
+      for (const occurrence of version.occurrences) generations.add(occurrence.generation);
+    }
+    for (const generation of generations) bump(generation);
+  }
+  for (const occurrence of identity.unkeyed) bump(occurrence.generation);
+  return counts;
+}
+
+/**
+ * The rows one request should project, given the identity table and the generation it asked for.
+ *
+ * `null` generation is the whole lineage: every logical message appears once, at its first
+ * version, because the reader wants the original. A generation number is that generation's own
+ * stored context: every message that appears in it, at ITS version, including the trimmed
+ * placeholder. Those are different views of one message, not different messages — a generation can
+ * therefore hold a message the whole-lineage view already counted, which is why the generation
+ * counts are overlapping sets and their sum need not equal the lineage total.
+ *
+ * @param {ReturnType<typeof buildMessageIdentity>} identity
+ * @param {number|null} generation `null` for the whole lineage
+ * @returns {{ rows: Array<any>, occurrences: Array<{ row: any, generation: number|null, locator: any }>, versionOf: Map<string, number>, openerByTurn: Map<string, { row: any | null }> }}
+ */
+export function selectIdentityView(identity, generation) {
+  const occurrences = [];
+  /** logical id -> index into `versions` of the one being shown */
+  const versionOf = new Map();
+  for (const entry of identity.identities.values()) {
+    if (generation === null) {
+      const first = entry.versions[0];
+      occurrences.push(first.occurrences[0]);
+      versionOf.set(entry.id, 0);
+      continue;
+    }
+    // A generation view is that generation's own stored context: pick the version that file
+    // actually holds, and among its occurrences the one from that file — the rows of one version
+    // differ only in `history_artifact`, which is provenance about the generation.
+    let picked = null;
+    let pickedIndex = -1;
+    for (let v = 0; v < entry.versions.length && picked === null; v += 1) {
+      const version = entry.versions[v];
+      const hit = version.occurrences.find((o) => o.generation === generation);
+      if (hit !== undefined) { picked = hit; pickedIndex = v; }
+    }
+    if (picked === null) continue;
+    occurrences.push(picked);
+    versionOf.set(entry.id, pickedIndex);
+  }
+  // Rows with no usable id were never merged, so they pass through filtered like anything else.
+  for (const occ of identity.unkeyed) {
+    if (generation === null || (occ.generation ?? null) === generation) occurrences.push(occ);
+  }
+  return {
+    rows: occurrences.map((o) => o.row),
+    occurrences,
+    versionOf,
+    openerByTurn: openerRowsForView(identity, occurrences),
+  };
+}
+
+/**
  * A record the runtime keeps for itself: written to the session, never shown, never sent.
  *
  * Mirrors the runtime's own `isHostOnlyMessage()` — a `custom`-role record whose
@@ -1131,6 +1471,19 @@ export function isHostOnlyMessage(message) {
 export function buildTrajectoryPayload(input) {
   const { session, rows, sizeBytes = 0, truncated = false } = input;
   const redact = input.redact ?? ((value) => value);
+  // The identity table the route already built over the whole lineage, so that a turn's opener is
+  // known even when the opener's own row falls outside the generation being projected. A caller
+  // that only holds a slice derives one from the rows it was given — the same function, so
+  // "how many messages is this" has one definition rather than one per caller.
+  const sliceOccurrences = input.identity
+    ? null
+    : rows.map((row) => ({
+      row,
+      generation: typeof row[ROW_GENERATION] === 'number' ? row[ROW_GENERATION] : null,
+      locator: null,
+    }));
+  const identity = input.identity ?? buildMessageIdentity(sliceOccurrences);
+  const openerByTurn = input.openerByTurn ?? openerRowsForView(identity, sliceOccurrences);
   /** @type {Array<Record<string, any>>} */
   const records = [];
   /** @type {Array<Record<string, any>>} */
@@ -1446,14 +1799,20 @@ export function buildTrajectoryPayload(input) {
         // The first prompt of a turn is what opened it. Anything later arrived while the
         // turn was still running — a steer, redirecting work already under way.
         //
-        // Nothing in the session file marks this. Compared field by field, a steer is
-        // byte-identical to a typed prompt in role, stopReason, api, model, provider, tokens,
-        // producedBy, turnId and everything else; only id, timestamp and index differ. The
-        // signal available is position: measured across every turn that has one, its prompt
-        // sits at record 1 or 2 and never further in, so a user record past that point can
-        // only have been written mid-turn. That is an inference from ordering, not a fact
-        // the file asserts, and it is recorded as `steered` so the detail panel can say so.
-        const steered = turn.records.some((r) => r.kind === 'user');
+        // Nothing in the session file marks this, so it is decided from the lineage: the turn's
+        // opener is its earliest prompt across every generation, and this row is a steer exactly
+        // when it is not that row. Deciding it from the projected slice instead is what let a real
+        // steer become the first visible prompt of its own turn whenever the opener's generation
+        // was filtered away — and it counted as a new turn rather than as a redirect.
+        //
+        // The older fallback, kept for a turn the lineage says nothing about: position within the
+        // records seen so far. A steer is byte-identical to a typed prompt in role, stopReason,
+        // api, model, provider, tokens, producedBy, turnId and everything else; only id, timestamp
+        // and index differ, so position was the only signal available before the lineage was read.
+        const opener = openerByTurn.get(turnKey);
+        const steered = opener === undefined
+          ? turn.records.some((r) => r.kind === 'user')
+          : opener.row !== row;
         if (steered) stats.steers += 1; else stats.userMessages += 1;
         if (label === null) label = singleLine(redact(split.prompt), MAX_LABEL_CHARS);
         const promptField = clipField(redact(split.prompt), MAX_FIELD_CHARS);
@@ -1580,6 +1939,13 @@ export function buildTrajectoryPayload(input) {
       if (record.kind === 'toolCall' && typeof record.toolName === 'string'
         && USER_INPUT_TOOLS.has(record.toolName)) askedReader = true;
     }
+    // A turn somebody opened, and whether this view can show the row that opened it. The two are
+    // separate because a generation slice routinely holds a turn's steer without holding its
+    // opener: reading "no opener row" as "no opener" is what filed that turn as 其他 and lost it
+    // from the 对话 count while the reader was looking at a prompted turn.
+    const opener = turn.id === null ? undefined : openerByTurn.get(turn.id);
+    turn.openerInView = opener !== undefined && opener.row !== null;
+    turn.openerOutOfView = opener !== undefined && opener.row === null;
     turn.askedReader = askedReader;
     turn.closed = closed;
     // A turn that *contains* a checkpoint is still judged on what it did. A checkpoint used to be
@@ -1587,7 +1953,9 @@ export function buildTrajectoryPayload(input) {
     // rejoins the turn it interrupted, that would relabel every turn the runtime ever compacted
     // as a checkpoint and drop all of them out of the prompted count. Only a turn that holds
     // nothing but its checkpoint is one.
-    if (hasPrompt) {
+    // `hasPrompt` already covers the opener being in view — a prompt row in the records is what sets
+    // it — so only the out-of-view case adds anything here.
+    if (hasPrompt || turn.openerOutOfView) {
       turn.turnClass = 'prompt';
       turnsWithPrompt += 1;
       if (!closed) openTurns += 1;
@@ -1620,14 +1988,24 @@ export function buildTrajectoryPayload(input) {
   // to nothing. Both are fixed by reporting the chain rather than the catalog — the rejected ones
   // are still disclosed through `orphans`.
   const orphanFiles = new Set(orphans.map((orphan) => orphan.fileName));
+  const logicalPerGeneration = logicalCountByGeneration(identity);
+  // A copy per entry rather than the caller's objects: the count is ours to attach, and the
+  // catalog entries are read by other callers.
   const generations = (Array.isArray(input.generations) ? input.generations : [])
-    .filter((entry) => !orphanFiles.has(entry.fileName));
-  // `messages` counts what is on screen. When the whole lineage is stitched that already
-  // spans every generation; when the reader filtered to one, `messagesAll` keeps the
-  // session-wide number from silently shrinking to a single slice.
-  const messagesAll = generations.length > 1
-    ? generations.reduce((sum, entry) => sum + (Number.isInteger(entry.messageCount) ? entry.messageCount : 0), 0)
-    : rows.length;
+    .filter((entry) => !orphanFiles.has(entry.fileName))
+    .map((entry) => ({ ...entry, logicalMessageCount: logicalPerGeneration.get(entry.generation) ?? 0 }));
+  // `messages` counts what is on screen. `messagesAll` counts the conversation: one entry per
+  // LOGICAL message over the whole reachable lineage, so a message the store wrote into two
+  // generations is one message and a message the runtime trimmed into a new content version is
+  // still one message. It is therefore not a function of the generation the reader picked, which
+  // is the whole reason it exists — the previous definition summed the per-file counts the
+  // catalog recorded, so it counted the stored copies rather than the conversation, and a forked
+  // snapshot the lineage walk had already rejected still reached the total.
+  //
+  // `messageRowsAll` is the physical counterpart, kept because the two answer different questions
+  // and only one of them is "how many messages did this conversation have".
+  const messagesAll = identity.stats.identities + identity.stats.unkeyed;
+  const messageRowsAll = identity.stats.occurrences + identity.stats.unkeyed;
 
   return {
     session: {
@@ -1646,7 +2024,7 @@ export function buildTrajectoryPayload(input) {
       generations,
       orphans,
     },
-    stats: { ...stats, messagesAll },
+    stats: { ...stats, messagesAll, messageRowsAll },
     turns: turns.map((turn) => ({
       id: turn.id,
       index: turn.index,
@@ -1663,6 +2041,12 @@ export function buildTrajectoryPayload(input) {
       // turn count and the reply count.
       askedReader: turn.askedReader === true,
       closed: turn.closed === true,
+      // The turn's opener over the whole lineage: whether this view holds the row that opened it,
+      // and whether the lineage says the turn was opened at all while the row is somewhere else.
+      // `openerOutOfView` is why a `steer` record can be the only prompt a turn shows and the turn
+      // is still 对话 rather than 其他.
+      openerInView: turn.openerInView === true,
+      openerOutOfView: turn.openerOutOfView === true,
       records: turn.records,
     })),
   };
@@ -2661,13 +3045,14 @@ export async function start(context) {
     const activeArtifact = activeArtifactFor(activeFileName);
 
     // Concatenate oldest → newest, which is the order the conversation actually happened in.
-    /** @type {Array<Record<string, any>>} */
-    const rows = [];
-    // Parallel to `rows`, and the reason `rows` is allowed to be a local. One entry per row,
-    // holding where that row's line was read from and what it hashed to — enough for `/raw` to go
-    // back to one line without any of the parsed rows still being alive.
-    /** @type {Array<LineLocator>} */
-    const rowLocators = [];
+    //
+    // Every generation's rows are collected even when the reader filtered to one. They have to
+    // be: a turn's opener is its earliest prompt across the WHOLE lineage, so filtering first
+    // would leave the reader looking at a steer that looks like the first prompt of its turn. The
+    // cost is a list of references, not a second copy of any row — each `row` is the same object
+    // `parsedFile` holds, and the view below drops the ones this request does not project.
+    /** @type {Array<{ row: Record<string, any>, generation: number | null, locator: LineLocator }>} */
+    const occurrences = [];
     let skippedTotal = 0;
     let truncated = false;
     let readBytes = 0;
@@ -2703,22 +3088,35 @@ export async function start(context) {
       if (parsedFile.truncated) truncated = true;
       readBytes += parsedFile.read;
       skippedTotal += parsedFile.skipped;
-      const keep = filter === null || filter === link.generation;
       // A sealed file's rows are shared with every other request that read it; the active file's
       // are this request's alone and are released below. Either way stamping the generation is the
       // only write, and one filePath always maps to one generation, so it is idempotent.
       // Pinned by tests/verify-parsed-rows.mjs.
       for (let index = 0; index < parsedFile.rows.length; index += 1) {
-        if (keep) {
-          const row = parsedFile.rows[index];
-          row[ROW_GENERATION] = link.generation;
-          rows.push(row);
-          rowLocators.push(parsedFile.locators[index]);
-        }
+        const row = parsedFile.rows[index];
+        row[ROW_GENERATION] = link.generation;
+        // One entry per row, holding where that row's line was read from and what it hashed to —
+        // enough for `/raw` to go back to one line without any of the parsed rows still being
+        // alive, which is what lets the rows be released once the payload is serialized.
+        occurrences.push({ row, generation: link.generation, locator: parsedFile.locators[index] });
       }
     }
     if (skippedTotal > 0) {
       context.logger.warn('miniapp.trajectory.parse_warn', { skipped: skippedTotal });
+    }
+
+    // One logical message per id, every stored copy of it folded in, and the versions it was
+    // written in kept rather than dropped. `filter === null` shows every message once at its
+    // first version; a generation number shows that generation's own stored context.
+    const identityTable = buildMessageIdentity(occurrences);
+    const view = selectIdentityView(identityTable, filter);
+    const rows = view.rows;
+    const rowLocators = view.occurrences.map((occurrence) => occurrence.locator);
+    if (identityTable.conflicts.length > 0) {
+      context.logger.warn('miniapp.trajectory.parse_warn', { identity_conflicts: identityTable.conflicts.length });
+    }
+    if (identityTable.stats.unclassified > 0) {
+      context.logger.warn('miniapp.trajectory.parse_warn', { identity_unclassified: identityTable.stats.unclassified });
     }
 
     const shown = filter === null ? lineage.chain : lineage.chain.filter((link) => link.generation === filter);
@@ -2731,6 +3129,8 @@ export async function start(context) {
       generations,
       generation: shown.length === 1 ? shown[0].generation : null,
       orphans: lineage.orphans,
+      identity: identityTable,
+      openerByTurn: view.openerByTurn,
     });
     payload.session.lastActiveAt = entry.lastActiveAt;
     payload.session.activeGeneration = activeArtifact === null ? null : activeArtifact.generation;

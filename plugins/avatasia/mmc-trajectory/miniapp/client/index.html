@@ -3080,12 +3080,16 @@
           .map(function (entry) {
             var active = entry.generation === activeGeneration || entry.active === true;
             var label = '第 ' + formatInt(entry.generation) + ' 代';
+            // The count is how many logical messages THAT generation stores, which is not the
+            // catalog's per-file row count: one message recorded twice is one message, and a
+            // message sealed in an earlier generation and re-recorded here counts in both.
+            var stored = isCount(entry.logicalMessageCount) ? entry.logicalMessageCount : null;
             if (active) label += '（当前）';
-            else if (isCount(entry.messageCount)) label += '（' + formatInt(entry.messageCount) + ' 条）';
+            else if (isCount(stored)) label += '（' + formatInt(stored) + ' 条）';
             return {
               generation: entry.generation,
               active: active,
-              messageCount: isCount(entry.messageCount) ? entry.messageCount : null,
+              messageCount: stored,
               label: label
             };
           });
@@ -8351,9 +8355,13 @@
         var shown = session && isCount(session.generation) ? session.generation : state.generation;
         dom.generationHint.hidden = !pinned;
         if (pinned) {
+          // Whether this generation is still growing is the difference between a promise and a
+          // description, and the picker can pin the live one. The old wording promised a sealed
+          // snapshot never changes while being shown for whichever generation was picked.
+          var live = !session || !isCount(session.activeGeneration) || session.activeGeneration === shown;
           dom.generationHint.textContent = '正在查看第 ' + formatInt(shown) +
-            ' 代上下文 —— 这是压缩前的历史快照，不会随后续对话更新。全部上下文共 ' +
-            formatInt(statsAll()) + ' 条消息。';
+            ' 代存储的上下文' + (live ? '，它仍在随后续对话更新' : '，这是当时封存的快照，不会随后续对话更新') +
+            '。全部上下文共 ' + formatInt(statsAll()) + ' 条消息。';
         }
       }
 
