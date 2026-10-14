@@ -53,7 +53,10 @@ const baseInput = {
 };
 
 const withFork = buildTrajectoryPayload(baseInput);
-check('messagesAll leaves the forked generation out', withFork.stats.messagesAll, 676 + 548 + 186);
+// The count is built from the identity table over the lineage, so a catalog entry has no way into
+// it at all — which is a stronger statement than the sum-and-filter this replaced, and the
+// counter-example below is what keeps it honest.
+check('messagesAll counts the conversation, not the catalog', withFork.stats.messagesAll, 2);
 check(
   'the picker never offers the forked generation',
   withFork.session.generations.map((g) => g.generation),
@@ -61,11 +64,11 @@ check(
 );
 check('the fork is still disclosed as an orphan', withFork.session.orphans.map((o) => o.generation), [7]);
 
-// Counter-example: the identical catalog with nothing marked as an orphan. This is what
-// the page got before the fix, and it is what proves the filter is what moved the number
-// rather than the sum itself being wrong.
+// Counter-example: the identical catalog with nothing marked as an orphan. Before the fix the sum
+// walked the catalog and this extra entry moved the total; the count no longer reads the catalog,
+// so the entry cannot reach it even unmarked. Asserting the number is UNCHANGED is the whole claim.
 const noOrphans = buildTrajectoryPayload({ ...baseInput, orphans: [] });
-check('counter-example: an unmarked extra generation is still counted', noOrphans.stats.messagesAll, 676 + 548 + 186 + 999);
+check('counter-example: an unmarked extra generation cannot move the count', noOrphans.stats.messagesAll, 2);
 check(
   'counter-example: an unmarked extra generation is still listed',
   noOrphans.session.generations.map((g) => g.generation),

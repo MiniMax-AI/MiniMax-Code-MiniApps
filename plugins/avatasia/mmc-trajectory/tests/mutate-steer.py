@@ -1,14 +1,17 @@
 """Mutation controls for the steer split and the turn classification.
 
-Two mistakes worth being able to catch automatically:
+Three mistakes worth being able to catch automatically:
 
   1. Filing every prompt in a turn as `user`. The count then reads as conversations but is
      really messages, and a turn can show three of them — the exact mismatch that sent
      someone looking for a mechanism.
   2. Filing 问答 as the turn *after* the question again, which puts the label on a turn while
      the reader still has not answered.
+  3. Deciding the opener from the projected slice instead of the lineage. A steer whose turn
+     opened in an earlier generation is then the only prompt the slice shows, so it reads as
+     that turn's first prompt: counted as dialogue, and its turn filed 其他 instead of 对话.
 
-Both are one-line edits, which is exactly why they need a guard that has been seen to fail.
+All are one-line edits, which is exactly why they need a guard that has been seen to fail.
 """
 import io
 import os
@@ -20,9 +23,9 @@ ROOT = os.path.dirname(HERE)
 SERVER = os.path.join(ROOT, "miniapp", "node", "server.mjs")
 PROBE = os.path.join(HERE, "verify-generations.mjs")
 
-# server.mjs is CRLF. A multi-line anchor written with bare \n never matches it, which reads as
-# "the anchor drifted" and sends you off to re-find a rule that never moved. Build every anchor
-# in the file's own line ending.
+# server.mjs is LF (pinned by .gitattributes). Build every multi-line anchor in the file's own
+# line ending anyway: this script once read a CRLF working copy, and an anchor written with the
+# other ending reads as "the rule drifted" and sends you off to re-find a rule that never moved.
 original = io.open(SERVER, encoding="utf-8", newline="").read()
 NL = "\r\n" if "\r\n" in original else "\n"
 
@@ -31,7 +34,10 @@ def anchored(*lines):
     return NL.join(lines)
 
 
-OLD_STEER = "        const steered = turn.records.some((r) => r.kind === 'user');"
+OLD_STEER = anchored("        const opener = openerByTurn.get(turnKey);",
+                     "        const steered = opener === undefined",
+                     "          ? turn.records.some((r) => r.kind === 'user')",
+                     "          : opener.row !== row;")
 OLD_CONT = anchored("    } else if (closed) {",
                     "      turn.turnClass = 'continuation';",
                     "      continuationTurns += 1;")
@@ -45,6 +51,18 @@ MUTATIONS = [
      OLD_STEER,
      "        const steered = true;",
      "the prompt that opened the turn is the only one counted as dialogue"),
+    ("the opener is decided from the slice, not the lineage",
+     OLD_STEER,
+     anchored("        const opener = openerByTurn.get(turnKey);",
+              "        const steered = turn.records.some((r) => r.kind === 'user');"),
+     "the prompt alone in the slice is still a steer"),
+    ("an opener outside the view counts as no opener at all",
+     OLD_STEER,
+     anchored("        const opener = openerByTurn.get(turnKey);",
+              "        const steered = opener === undefined || opener.row === null",
+              "          ? turn.records.some((r) => r.kind === 'user')",
+              "          : opener.row !== row;"),
+     "the prompt alone in the slice is still a steer"),
     ("Q and A goes back to the turn after the question",
      OLD_CONT,
      "    } else if (closed) {\n"

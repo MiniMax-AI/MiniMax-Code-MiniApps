@@ -16,11 +16,17 @@ PROBE = HERE / "verify-pr15-fixes.mjs"
 
 MUTATIONS = [
     (
-        "server: list the whole catalog again (orphan counted + offered)",
+        # Only the "offered" half of the original label is still observable. The count is built
+        # from the identity table over the lineage and no longer reads the catalog at all, so a
+        # catalog entry cannot reach it — that is pinned by its own assertion in
+        # verify-generations.mjs, not by this one.
+        "server: offer the whole catalog again, orphan pick included",
         SERVER,
         "  const generations = (Array.isArray(input.generations) ? input.generations : [])\n"
-        "    .filter((entry) => !orphanFiles.has(entry.fileName));",
-        "  const generations = Array.isArray(input.generations) ? input.generations : [];",
+        "    .filter((entry) => !orphanFiles.has(entry.fileName))\n"
+        "    .map((entry) => ({ ...entry, logicalMessageCount: logicalPerGeneration.get(entry.generation) ?? 0 }));",
+        "  const generations = (Array.isArray(input.generations) ? input.generations : [])\n"
+        "    .map((entry) => ({ ...entry, logicalMessageCount: logicalPerGeneration.get(entry.generation) ?? 0 }));",
     ),
     (
         "server: match orphans by generation number instead of file name",

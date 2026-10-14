@@ -102,11 +102,13 @@ check('kindLabel ignores title', sandbox.kindLabel({ kind: 'system', title: 'com
 check('every kind has a label', sandbox.KIND_ORDER.every((k) => typeof sandbox.KIND_LABELS[k] === 'string' && sandbox.KIND_LABELS[k].length > 0), true);
 check('every label has a kind', Object.keys(sandbox.KIND_LABELS).every((k) => sandbox.KIND_ORDER.indexOf(k) >= 0), true);
 
-/* generation selector — one generation is not a choice, and the newest comes first */
+/* generation selector — one generation is not a choice, and the newest comes first.
+   `logicalMessageCount` is how many logical messages that generation stores; the catalog's
+   `messageCount` counts stored rows, and a message the store wrote twice is one message. */
 const gens = [
-  { generation: 0, kind: 'snapshot', messageCount: 676, active: false },
-  { generation: 1, kind: 'snapshot', messageCount: 548, active: false },
-  { generation: 2, kind: 'active', messageCount: 186, active: true }
+  { generation: 0, kind: 'snapshot', messageCount: 676, logicalMessageCount: 610, active: false },
+  { generation: 1, kind: 'snapshot', messageCount: 548, logicalMessageCount: 494, active: false },
+  { generation: 2, kind: 'active', messageCount: 186, logicalMessageCount: 180, active: true }
 ];
 check('generationOptions empty for one', sandbox.generationOptions([{ generation: 0 }], 0), []);
 check('generationOptions empty for none', sandbox.generationOptions([], null), []);
@@ -119,7 +121,16 @@ check('generationOptions all is never marked active', opts[0].active, false);
 check('generationOptions newest generation first', opts[1].generation, 2);
 check('generationOptions active marked', opts[1].active, true);
 check('generationOptions active label', opts[1].label, '第 2 代（当前）');
-check('generationOptions archived label carries count', opts[2].label, '第 1 代（548 条）');
+check('generationOptions archived label carries the stored count', opts[2].label, '第 1 代（494 条）');
+check('generationOptions exposes that count to the option', opts[2].messageCount, 494);
+check(
+  'generationOptions prefers the stored count over the catalog row count',
+  sandbox.generationOptions([
+    { generation: 0, messageCount: 676, logicalMessageCount: 610 },
+    { generation: 1, messageCount: 548, logicalMessageCount: 494 }
+  ], 1)[2].label,
+  '第 0 代（610 条）'
+);
 check('generationOptions last option', opts[3].generation, 0);
 check(
   'generationOptions drops entries without a generation',
@@ -129,7 +140,7 @@ check(
 check('generationOptions falls back to the active flag', sandbox.generationOptions(gens, null)[1].active, true);
 check(
   'generationOptions missing count drops the suffix',
-  sandbox.generationOptions([{ generation: 0, messageCount: null }, { generation: 1, messageCount: 5, active: true }], 1)[2].label,
+  sandbox.generationOptions([{ generation: 0, logicalMessageCount: null }, { generation: 1, messageCount: 5, logicalMessageCount: 5, active: true }], 1)[2].label,
   '第 0 代'
 );
 
@@ -283,6 +294,22 @@ assert('style block has balanced /* */ comments', opensBeforeCloses === 0);
 for (const selector of ['.tbtn', '.tbtn-icon', '.overview-plot', '.ov-span', '.window-bar', '.turn-head']) {
   assert('css rule survives comment stripping: ' + selector, styleNoComments.includes(selector + ' {') || styleNoComments.includes(selector + ','));
 }
+
+// The generation banner describes a context the reader chose out of a lineage. Whether that
+// generation is still growing is the difference between a promise and a description, and the
+// picker can pin the LIVE one — so promising immutability for whichever generation was picked is
+// the wrong sentence half the time. The wording is only reachable through the DOM, so it is
+// checked here against the delivered file rather than through the sandbox.
+assert('the generation banner names both states, not just the sealed one',
+  html.includes('当时封存的快照') && html.includes('仍在随后续对话更新'));
+assert('...and reads which one applies from the active generation',
+  /var live = [^;]*session\.activeGeneration === shown;/.test(html));
+
+// 「全部上下文共 N 条」 is the comparison the reader is there for. Taking it from the generation
+// on screen leaves the sentence true and useless, so it has to read the session total — which is
+// the logical message count, not the rows the catalog counted per file.
+const statsAllBody = fnSource('function statsAll()') || '';
+assert('the whole-context count reads the session total', statsAllBody.includes('stats.messagesAll'));
 
 // turnContext builds its string from turnContextParts, and turnContextSuffix calls
 // turnContext, so a check that wants to RUN any of them has to lift all three, in dependency
