@@ -30,6 +30,11 @@ const filter = args.find((a) => !a.startsWith('--')) ?? '';
 // rewrite are hashed before the first control runs and checked after the last one. A mismatch is
 // reported as a failed guard of its own, with the restore command, instead of being inferred from
 // whatever the next person sees.
+// The shipped files a mutate-* control rewrites in place — that is the whole membership rule, and
+// it is a rule about files rather than about importance. docs/LAYERS.md sat in this list until it
+// moved out of the package to the workspace root: it then hashed to 'absent' on every run, which
+// is inert (absent matches absent, so it never reported drift) but means one of the entries this
+// guard advertises protecting was not a shipped file at all.
 const SHIPPED = [
   'miniapp/client/index.html',
   'miniapp/node/server.mjs',
@@ -37,7 +42,6 @@ const SHIPPED = [
   'tests/client-check.mjs',
   'README.md',
   'README.zh-CN.md',
-  'docs/LAYERS.md',
   '.minimax-plugin/plugin.json',
 ];
 const ROOT = join(HERE, '..');
