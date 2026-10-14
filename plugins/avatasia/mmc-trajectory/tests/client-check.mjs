@@ -197,7 +197,8 @@ check('truncateJson caps at 8000', raw.text.length, 8000);
 check('truncateJson flags', raw.truncated, true);
 check('truncateJson small', sandbox.truncateJson({ a: 1 }, 8000).truncated, false);
 // 「原文过大」 is not a field on the record any more: it arrives with the /raw answer, because
-// deciding it meant serializing every message in the session on every poll (LAYERS.md D11).
+// deciding it meant serializing every message in the session on every poll (see
+// tests/verify-raw-lazy.mjs).
 // The markdown therefore takes the verdict as its own argument, and this asserts that a
 // caller who passes it still gets the line — and that one who does not, gets silence.
 const md = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated, true);

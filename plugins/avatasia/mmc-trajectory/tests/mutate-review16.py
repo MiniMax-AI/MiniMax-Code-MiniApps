@@ -131,6 +131,32 @@ MUTATIONS = [
      "Before changing the page, read [docs/LAYERS.md](docs/LAYERS.md).",
      "nothing still points at a docs/ file that does not ship"),
 
+    # ---- the same defect one layer over, in the two shipped source files ----
+    #
+    # The assertion those two README mutations exercise was written over the two READMEs and the two
+    # source files were never added to it. Between them they carried 19 of those pointers, so the
+    # check was passing over an object it did not read. A mutation that puts one back therefore has
+    # to land in a source file: without these two, the assertion could have gone on green while the
+    # defect was fully back, which is the hole restated as a test.
+    ("the client source points at the document that left the package",
+     "guess. Pinned by tests/verify-intrinsic-size.mjs.",
+     "guess. See docs/LAYERS.md D15.",
+     "nothing still points at a docs/ file that does not ship"),
+
+    ("the server source points at the document that left the package",
+     "// generation, so it is idempotent. Pinned by",
+     "// generation, so it is idempotent — see docs/LAYERS.md D10.",
+     "nothing still points at a docs/ file that does not ship"),
+
+    # And the reason an audit of server.mjs under-reported it by two thirds: one NUL byte, in a string
+    # literal that was meant to be empty. It was correct by luck and it made the whole file read as
+    # binary to grep, git and diff, so nothing that scans shipped source could see past it. chr(0)
+    # rather than an escape so the byte is written literally instead of being re-read as text.
+    ("a NUL byte ships inside the server source",
+     "const key = ids.join('');",
+     "const key = ids.join('" + chr(0) + "');",
+     "no shipped source file carries a NUL byte"),
+
     # ---- 5. the cache stops being released ----
     # Anchored without any line ending on purpose. The first version of these two used \r\n because
     # server.mjs is CRLF in the working tree — and that is exactly the trap: it only matched because

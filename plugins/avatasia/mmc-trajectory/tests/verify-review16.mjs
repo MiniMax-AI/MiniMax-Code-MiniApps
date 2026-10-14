@@ -39,12 +39,42 @@ const layers = existsSync(join(PKG, 'docs')) ? (readdirSync(join(PKG, 'docs')).j
 assert('the design document is not in the plugin directory',
   !existsSync(join(PKG, LAYERS_REL)) && !existsSync(join(PKG, 'docs', 'STAGE1-SPEC.md')),
   layers);
-assert('nothing still points at a docs/ file that does not ship',
-  !/LAYERS\.md/.test(readme) && !/LAYERS\.md/.test(readmeZh)
-  && !/STAGE1-SPEC/.test(readme) && !/STAGE1-SPEC/.test(readmeZh));
 const serverJs = read('miniapp/node/server.mjs');
 const clientHtml = read('miniapp/client/index.html');
 const plugin = JSON.parse(read('.minimax-plugin/plugin.json'));
+
+// Every shipped text file, once. Two checks below read this same map, which is the point: the first
+// version of the dangling check hard-coded two paths, and the second one invented its own list, so
+// the two could not disagree about what ships. If a file is added to the package it belongs here.
+const SHIPPED_TEXT = {
+  'README.md': readme,
+  'README.zh-CN.md': readmeZh,
+  'miniapp/client/index.html': clientHtml,
+  'miniapp/node/server.mjs': serverJs,
+  'tests/make-fixtures.mjs': read('tests/make-fixtures.mjs'),
+  'tests/client-check.mjs': read('tests/client-check.mjs'),
+  '.minimax-plugin/plugin.json': read('.minimax-plugin/plugin.json'),
+};
+
+// This assertion was written over the two READMEs, because those are what a reader opens first, and
+// the two shipped source files were never added to it. They carried 19 of these pointers between
+// them — 13 in the client, 7 in the server, and one of those a bare section number with no file name
+// at all, so grepping for the filename could not find it. The label claimed a coverage it did not
+// have, which is the shape this project keeps finding: the check and the thing it is about turned
+// out to be two different objects.
+const DANGLING = /\b(?:LAYERS\.md|STAGE1-SPEC)\b/;
+const danglingIn = Object.entries(SHIPPED_TEXT).filter(([, t]) => DANGLING.test(t)).map(([rel]) => rel);
+assert('nothing still points at a docs/ file that does not ship',
+  danglingIn.length === 0, danglingIn.join(', '));
+
+// A NUL byte shipped inside server.mjs, in a string literal that was meant to be empty — it was
+// correct by luck and invisible on purpose. What makes it worth a guard is not the behaviour: it is
+// that one byte made the whole file read as binary, so an audit of server.mjs under-reported it by
+// two thirds and grep stopped halfway through it. A file that reads as binary cannot be reviewed,
+// and a reviewer has no way to learn that from a diff.
+const nulIn = Object.keys(SHIPPED_TEXT).filter((rel) => SHIPPED_TEXT[rel].includes('\u0000'));
+assert('no shipped source file carries a NUL byte',
+  nulIn.length === 0, nulIn.join(', '));
 
 /* ---------- 1. the harness must be able to find Python, and must say so when it cannot ---------- */
 
