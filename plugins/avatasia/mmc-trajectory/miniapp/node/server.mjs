@@ -583,15 +583,50 @@ export async function readSessionIdentity(dir) {
 }
 
 /**
- * Depth-capped walk that only descends into dated folders and never into a session folder twice.
+ * The whole candidate set from one walk, as two products of the same traversal.
+ *
+ * These used to be one thing, and that is the defect. `slice(0, MAX_SESSION_LIST)` ran last,
+ * so the only handle the service had on a session directory was "one of the 30 most recently
+ * touched" — and `resolveTrajectoryRequest` resolved an explicit id by scanning exactly those
+ * 30. Measured on this machine: 146 candidate directories, 30 exposed, 116 of them
+ * unreachable by id (window inside 200/200, a sample outside 404/404). A session the user
+ * could name but not open is a correctness bug, not a small one.
+ *
+ * So the traversal now yields two things:
+ *
+ *  - `recentEntries` — sorted by mtime, capped at `MAX_SESSION_LIST`. This is what the picker
+ *    shows, and it stays exactly as small as it was.
+ *  - `byDecodedId` — every candidate directory, keyed by the id decoded from its own name.
+ *    Decoding reads no file: the walk already stat'ed `messages.jsonl` for every candidate, so
+ *    the index costs no I/O the walk was not doing anyway.
+ *
+ * Two properties this must not lose:
+ *
+ *  - A decoded name is a *claim*, not a fact. `readSessionIdentity` prefers `manifest.sessionId`
+ *    over the directory name, so every caller of this index still reads the identity of the one
+ *    directory it picked and checks the id before serving it.
+ *  - Two directories can decode to the same id. `Map.set` would silently keep whichever came
+ *    last, which makes the answer depend on `readdir` order. Duplicates are therefore kept as a
+ *    list and resolved against the manifests, not discarded and not guessed.
+ *
+ * `truncated` says the walk hit `MAX_SESSION_CANDIDATES` and stopped early. That budget is a
+ * resource guard, and it must not be allowed to masquerade as "this session does not exist" —
+ * callers use it to say the scan budget was exhausted, which is a different answer and a
+ * truthful one.
+ *
  * @param {string} sessionsRoot
+ * @returns {Promise<{ recentEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>,
+ *   byDecodedId: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>,
+ *   truncated: boolean }>}
  */
-export async function collectSessionEntries(sessionsRoot) {
+export async function collectSessionCandidates(sessionsRoot) {
   /** @type {Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>} */
   const entries = [];
+  let truncated = false;
   /** @param {string} dir @param {number} depth */
   const walk = async (dir, depth) => {
-    if (depth > MAX_WALK_DEPTH || entries.length >= MAX_SESSION_CANDIDATES) return;
+    if (depth > MAX_WALK_DEPTH) return;
+    if (entries.length >= MAX_SESSION_CANDIDATES) { truncated = true; return; }
     let names;
     try {
       names = await readdir(dir);
@@ -599,7 +634,7 @@ export async function collectSessionEntries(sessionsRoot) {
       return;
     }
     for (const name of names) {
-      if (entries.length >= MAX_SESSION_CANDIDATES) return;
+      if (entries.length >= MAX_SESSION_CANDIDATES) { truncated = true; return; }
       const child = join(dir, name);
       if (isSessionDirName(name)) {
         try {
@@ -616,7 +651,34 @@ export async function collectSessionEntries(sessionsRoot) {
   };
   await walk(sessionsRoot, 0);
   entries.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
-  return entries.slice(0, MAX_SESSION_LIST);
+
+  /** @type {Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>} */
+  const byDecodedId = new Map();
+  for (const entry of entries) {
+    const id = decodeSessionIdFromDirName(basename(entry.dir));
+    // A name that does not decode is still a real session; it just has no fast path and is
+    // found the slow way. Dropping it here would turn "no fast path" into "does not exist".
+    if (!id) continue;
+    const bucket = byDecodedId.get(id);
+    if (bucket) bucket.push(entry);
+    else byDecodedId.set(id, [entry]);
+  }
+
+  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };
+}
+
+/**
+ * Depth-capped walk that only descends into dated folders and never into a session folder twice.
+ *
+ * Kept as its own export with its old shape and its old meaning — "the most recent sessions" —
+ * because the fixture builders and several guards consume exactly that. The id index lives in
+ * `collectSessionCandidates` and is deliberately not exposed through this one.
+ *
+ * @param {string} sessionsRoot
+ * @returns {Promise<Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>}
+ */
+export async function collectSessionEntries(sessionsRoot) {
+  return (await collectSessionCandidates(sessionsRoot)).recentEntries;
 }
 
 /**
@@ -1944,7 +2006,8 @@ export async function start(context) {
   const redact = createRedactor(secrets);
   /** @type {Buffer | null} */
   let clientEntry = null;
-  let listCache = { at: 0, entries: null };
+  /** @type {{ at: number, candidates: Awaited<ReturnType<typeof collectSessionCandidates>> | null }} */
+  let listCache = { at: 0, candidates: null };
   /** @type {Map<string, { at: number, value: any }>} */
   const descriptorCache = new Map();
   /**
@@ -1974,10 +2037,10 @@ export async function start(context) {
 
   const listEntries = async () => {
     const now = Date.now();
-    if (listCache.entries && now - listCache.at < LIST_CACHE_TTL_MS) return listCache.entries;
-    const entries = await collectSessionEntries(location.sessionsRoot);
-    listCache = { at: now, entries };
-    return entries;
+    if (listCache.candidates && now - listCache.at < LIST_CACHE_TTL_MS) return listCache.candidates;
+    const candidates = await collectSessionCandidates(location.sessionsRoot);
+    listCache = { at: now, candidates };
+    return candidates;
   };
 
   /**
@@ -2112,10 +2175,14 @@ export async function start(context) {
    }
   };
 
-  const handleSessions = async (response, url) => {    const limit = normalizeLimit(url.searchParams.get('limit'), 20, 1, 50);
+  const handleSessions = async (response, url) => {
+    const limit = normalizeLimit(url.searchParams.get('limit'), 20, 1, 50);
     let entries;
     try {
-      entries = await listEntries();
+      // The picker still sees only the most recent sessions. The id index beside it is what
+      // `handleTrajectory` resolves explicit ids against, and it is deliberately not what the
+      // picker is built from — widening the list is a separate decision about the UI.
+      entries = (await listEntries()).recentEntries;
     } catch (error) {
       context.logger.error('miniapp.trajectory.read_error', { reason: 'root_unreadable', code: errorCode(error) });
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
@@ -2174,14 +2241,15 @@ export async function start(context) {
    * @param {URL} url
    */
   const resolveTrajectoryRequest = async (url) => {
-    let entries;
+    let candidates;
     try {
-      entries = await listEntries();
+      candidates = await listEntries();
     } catch (error) {
       context.logger.error('miniapp.trajectory.read_error', { reason: 'root_unreadable', code: errorCode(error) });
       return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
-    if (entries.length === 0) {
+    const entries = candidates.recentEntries;
+    if (entries.length === 0 && candidates.byDecodedId.size === 0) {
       return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     const requested = url.searchParams.get('session');
@@ -2216,18 +2284,59 @@ export async function start(context) {
       }
       if (!entry) entry = entries[0];
     } else {
-      const matched = [];
-      for (const candidate of entries) {
-        const identity = await readSessionIdentity(candidate.dir);
-        if (identity.id === requested || basename(candidate.dir) === requested) {
-          matched.push({ entry: candidate, identity });
-          break;
+      // Two ways in, and the order matters.
+      //
+      // Fast path: the id was decoded from a directory name during the walk, so the directory is
+      // already known and no scanning is needed. This is what makes a session outside the recent
+      // 30 reachable at all — before this, the only directories this branch could see were the 30
+      // the picker shows, so 116 of 146 sessions on this machine answered 404 to their own id.
+      //
+      // The decoded name is still only a claim. `readSessionIdentity` prefers `manifest.sessionId`,
+      // so a directory whose name disagrees with its manifest must not be served under the
+      // requested id; it falls through to the slow path instead, which re-checks every candidate.
+      const fastPath = candidates.byDecodedId.get(requested);
+      let picked = null;
+      if (fastPath) {
+        // Duplicates are kept as a list rather than collapsed, because collapsing them with
+        // `Map.set` would make the answer depend on `readdir` order. Here the manifests decide.
+        const verified = [];
+        for (const candidate of fastPath) {
+          const candidateIdentity = await readSessionIdentity(candidate.dir);
+          if (candidateIdentity.id === requested) verified.push({ entry: candidate, identity: candidateIdentity });
+        }
+        if (verified.length === 1) picked = verified[0];
+        else if (verified.length > 1) {
+          // Two directories both claim this id. Rather than pick one by directory order, fall
+          // through to the slow path, which keeps the original scan-and-compare behaviour.
+          context.logger.warn('miniapp.trajectory.read_error', { reason: 'ambiguous_session_id', code: requested });
         }
       }
-      if (matched.length === 0) {
-        return { ok: false, status: 404, code: 'session_not_found', message: '找不到该会话' };
+
+      if (!picked) {
+        const matched = [];
+        for (const candidate of entries) {
+          const candidateIdentity = await readSessionIdentity(candidate.dir);
+          if (candidateIdentity.id === requested || basename(candidate.dir) === requested) {
+            matched.push({ entry: candidate, identity: candidateIdentity });
+            break;
+          }
+        }
+        if (matched.length === 0) {
+          // The scan budget stopped the walk before this id could be seen. That is not the same
+          // answer as "no such session", and reporting it as one is how 400 became a correctness
+          // boundary instead of a resource guard.
+          if (candidates.truncated) {
+            return {
+              ok: false, status: 404, code: 'session_scan_budget_exhausted',
+              message: '会话数量超出本次扫描预算，请重试或缩小会话目录范围',
+            };
+          }
+          return { ok: false, status: 404, code: 'session_not_found', message: '找不到该会话' };
+        }
+        entry = matched[0].entry;
+      } else {
+        entry = picked.entry;
       }
-      entry = matched[0].entry;
     }
 
     const identity = await readSessionIdentity(entry.dir);
@@ -2573,7 +2682,7 @@ export async function start(context) {
   const dispose = () => {
     if (disposal) return disposal;
     context.signal.removeEventListener('abort', onAbort);
-    listCache = { at: 0, entries: null };
+    listCache = { at: 0, candidates: null };
     titleCache = { at: 0, key: '', map: new Map() };
     sessionsBody = { material: '', body: null };
     descriptorCache.clear();

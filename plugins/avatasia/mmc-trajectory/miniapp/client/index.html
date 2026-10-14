@@ -3684,7 +3684,13 @@
         sessionsLoaded: false,
         sessionsError: false,
         followLatest: true,
-        sessionId: null,
+        // Seeded from the host id so the picker and the content agree. `sessionParam()` already
+        // prefers `hostSessionId`, so a host-pinned page used to render 「跟随最新（自动切换）」
+        // above content pinned to a different conversation that it would never switch away from.
+        // That contradiction predates the server-side reachability fix, but the fix turns it from
+        // a visible error into a silent lie, so the seed belongs with it. `renderSessionSelect`
+        // already inserts 「当前会话（不在最近列表）」 for a pinned id the recent list omits.
+        sessionId: detectHostSessionId(),
         payload: null,
         signature: '',
         loading: true,

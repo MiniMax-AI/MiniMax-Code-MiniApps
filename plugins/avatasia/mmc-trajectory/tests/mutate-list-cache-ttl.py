@@ -81,9 +81,9 @@ MUTATIONS = [
     # The parsed-row cache leaked here once — a disposed runtime held ~43 MB for a 39 MB session —
     # and the line that fixed it is in server.mjs precisely so the next cache cannot repeat it.
     ("dispose stops releasing the title cache",
-     [("    listCache = { at: 0, entries: null };\n"
+     [("    listCache = { at: 0, candidates: null };\n"
        "    titleCache = { at: 0, key: '', map: new Map() };\n",
-       "    listCache = { at: 0, entries: null };\n")],
+       "    listCache = { at: 0, candidates: null };\n")],
      "dispose releases the title cache"),
 
     # ---- D45: a prefix count is not a count. ----
