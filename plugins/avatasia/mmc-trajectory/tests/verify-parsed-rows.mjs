@@ -75,7 +75,11 @@ const jsonl = [
 // 6 parseable rows, 2 skipped (one unparseable, one not an object). Counted by hand.
 const EXPECTED_SKIPPED = 2;
 
-const other = { session: { id: 'sess-b', createdAtMs: 1791617886000 }, sizeBytes: 0, truncated: false };
+// A stand-in session, so a key built for one conversation cannot be served another's. It carries a
+// session and nothing else: `sizeBytes` and `truncated` are spread BELOW this, so any value added
+// here would silently replace what the loop just computed — and the body-equality comparison would
+// then be asserting a constant instead of what was actually read.
+const other = { session: { id: 'sess-b', createdAtMs: 1791617886000 } };
 
 /** Build the body the way the route does, from a set of per-file results. */
 async function buildBody(files, filter) {
