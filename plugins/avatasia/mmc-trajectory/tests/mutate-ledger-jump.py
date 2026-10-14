@@ -190,6 +190,47 @@ MUTATIONS = [
      [("return ledgerScrollDir === 'up';", "return ledgerScrollDir === 'up' && canUp;")],
      "the rule is not collapsed into two terms whose order would decide a case silently"),
 
+    # ---- D49: the landing and the test for it ----
+
+    # This is the defect itself, taken back out. It is the only mutation here that a reader can
+    # reach by accident rather than on purpose: the un-rounded form is the shorter expression, it
+    # reads as the obvious way to ask 「is there more above」, and nothing in the source suggests a
+    # landing does not land exactly where it was aimed. Measured: at the top of the ledger the arrow
+    # pointed up and a second press moved the page by zero pixels.
+    ("the top test loses the arrival boundary",
+     [("var canUp = y > Math.ceil(ledgerTopOffset());", "var canUp = y > ledgerTopOffset();")],
+     "the top test tolerates the landing itself, so arriving at the top cannot read as 「more above」"),
+
+    # Down is the wrong direction: the browser rounds to the nearest pixel, so on any width whose
+    # offset lands on a fraction above the nearest integer the landing sits ABOVE the rounded-down
+    # boundary and the control freezes again. This one is worth keeping precisely because it passes
+    # at one measured width — it is what makes the wrong direction easy to pick.
+    ("the arrival boundary is rounded down",
+     [("Math.ceil(ledgerTopOffset())", "Math.floor(ledgerTopOffset())")],
+     "the arrival boundary is rounded up, which holds for floor, nearest and ceiling alike"),
+
+    # Nearest is what this browser does today, which is exactly why it is dangerous: it is right
+    # until the rounding rule is not the one it was written against, and nothing in the run would
+    # have said so. Up is the only direction that holds for all three, so up is what is pinned.
+    ("the arrival boundary is rounded to nearest, one browser's rule",
+     [("Math.ceil(ledgerTopOffset())", "Math.round(ledgerTopOffset())")],
+     "the arrival boundary is rounded up, which holds for floor, nearest and ceiling alike"),
+
+    # The bottom's landing is the end at the top of the viewport and its test asks whether the end is
+    # still below the fold — a whole viewport apart. Giving it the same tolerance tunes a boundary
+    # that was never wrong, and it would be the kind of change that looks like symmetry.
+    ("the bottom test grows the tolerance the top needed",
+     [("var canDown = ledgerEndBelow();", "var canDown = ledgerEndBelow() + 1;")],
+     "the bottom test is left alone: its landing is a whole viewport away from its own boundary"),
+
+    # The same fix reached a second way. Rounding the landing too also makes the two agree, so it
+    # passes the tolerance assertion — and it is a different change, because it moves where a jump
+    # ends rather than how 「arrived」 is read. The landing is never what was wrong.
+    ("the landing is rounded as well, moving where a jump goes",
+     [("window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset())",
+       "window.scrollTo(0, up ? Math.ceil(ledgerTopOffset()) : ledgerBottomOffset())")],
+     "the landing keeps the un-rounded offset: the defect was in the test, not in where a jump goes"),
+
     # ---- D47: the scroll listener ----
 
     # Nothing on the page says which way the reader went, so the arrow sits at whatever the last

@@ -203,8 +203,37 @@ assert('an end that is in view or already passed leaves up as the only move',
 assert('a top that is in view leaves down as the only move',
   !!goesUpSrc && /if \(!canUp\) return false;/.test(goesUpSrc));
 assert('the direction decides only the case neither end has already vetoed',
-  !!goesUpSrc && /var canUp = y > ledgerTopOffset\(\);/.test(goesUpSrc)
+  !!goesUpSrc && /var canUp = y > Math\.ceil\(ledgerTopOffset\(\)\);/.test(goesUpSrc)
   && goesUpSrc.indexOf('if (!canUp) return false;') < goesUpSrc.indexOf('return ledgerScrollDir'));
+
+/* ---------- the landing and the test for it ---------- */
+
+// These three are about one relationship rather than about the four branches: the top's landing
+// point and the test for it read the SAME number, and the browser does not keep it. So they are
+// written next to the branches and not with the two targets, even though a landing point is what
+// they are about.
+//
+// The first version of this file asserted the zero-tolerance form as if it were the rule, so the
+// defect was pinned rather than missed: 57 green assertions, one of them holding the bug in place.
+// That is the other half of 「a guard that cannot fail is not a guard」 — a guard can pass while
+// naming the wrong thing as right, and nothing in a green run distinguishes the two.
+assert('the top test tolerates the landing itself, so arriving at the top cannot read as 「more above」',
+  !!goesUpSrc && !/var canUp = y > ledgerTopOffset\(\);/.test(goesUpSrc));
+// Rounding DOWN fails whenever the browser rounds up; rounding to NEAREST is right only for the one
+// rounding rule that happens to be in force. Measured widths showed the landing on the nearest
+// pixel, but the reader cannot know that about the next browser, and a test that holds for all
+// three does not need to be re-derived when the answer moves. Up is the direction that holds.
+assert('the arrival boundary is rounded up, which holds for floor, nearest and ceiling alike',
+  !!goesUpSrc && /Math\.ceil\(ledgerTopOffset\(\)\)/.test(goesUpSrc)
+  && !/Math\.floor\(ledgerTopOffset\(\)\)/.test(goesUpSrc)
+  && !/Math\.round\(ledgerTopOffset\(\)\)/.test(goesUpSrc));
+// The bottom gets no tolerance, and this pins that it does not start getting one. Its landing is the
+// end at the top of the viewport while its test asks whether the end is still below the fold — a
+// whole viewport apart, so no rounding error reaches across. A tolerance there would move a boundary
+// that is already correct, and the two ends would then be tuned for different reasons.
+assert('the bottom test is left alone: its landing is a whole viewport away from its own boundary',
+  !!goesUpSrc && /var canDown = ledgerEndBelow\(\);/.test(goesUpSrc)
+  && !/ledgerEndBelow\(\)\s*[+\-*/]/.test(goesUpSrc));
 // 「Follows the reader, unless an end is on screen」 cannot be written as two terms joined by `&&` or
 // `||`: the order of those terms decides the both-ends-off-screen case, and it would decide it
 // silently. This pins the shape, not the truth table — a two-term rewrite reads correctly at every
@@ -264,6 +293,13 @@ assert("down means the sentinel at the ledger's own bottom",
 assert('the click chooses between the two ends from the same reading the arrow does',
   !!buildSrc && /var up = ledgerJumpGoesUp\(\);/.test(buildSrc)
   && /window\.scrollTo\(0, up \? ledgerTopOffset\(\) : ledgerBottomOffset\(\)\)/.test(buildSrc));
+// The landing stays on the un-rounded offset. Rounding it too would also make the two agree, and it
+// would be a different change: it moves where a jump actually ends. The defect was never in the
+// landing — a press that arrives a fraction of a pixel past the top is still arriving — it was in
+// reading that arrival as 「not there yet」. Pinned so the same fix cannot be reached a second way.
+assert('the landing keeps the un-rounded offset: the defect was in the test, not in where a jump goes',
+  !!buildSrc && /window\.scrollTo\(0, up \? ledgerTopOffset\(\) : ledgerBottomOffset\(\)\)/.test(buildSrc)
+  && !/Math\.(ceil|floor|round)\(ledgerTopOffset\(\)\)/.test(buildSrc));
 // A jump IS a movement, and the reader did not scroll themselves — so the press writes the
 // direction rather than waiting for a scroll event that `scrollTo()` does not fire synchronously,
 // and that fires not at all when the press targets the end the reader is already at. Waiting there
