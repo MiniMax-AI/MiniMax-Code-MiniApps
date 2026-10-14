@@ -6431,63 +6431,118 @@
       /* ---------------- the ledger's two ends ---------------- */
 
       /**
-       * Whether the ledger's end is on screen, which is the whole of 「到最低 / 到最上」.
+       * Whether the ledger's end is still below the fold — which is the whole of 「还能往下跳」.
        *
-       * A reading rather than a computation, and the reason is that 「the end」 moves every poll:
-       * the window is the newest N records and each new one slides it forward, so the bottom of the
-       * ledger is a different document position every 2.5 seconds. Anything derived from
-       * scrollHeight against a remembered value would be correct only between polls.
+       * This asks 「can I still go down」 and deliberately does NOT ask 「is the end on screen」.
+       * That older question was true for two opposite states — the end not reached yet, and the end
+       * already gone past — and the two want opposite arrows. Past the end the sentinel sits ABOVE
+       * the viewport, so 「not on screen」 said yes to going down: the arrow pointed down while the
+       * press scrolled the reader UP to the ledger's bottom. A down arrow that lifts you is the
+       * same defect as a label that names a place you are already standing in.
        *
-       * One IntersectionObserver on one sentinel, created once. The alternative — a scroll listener —
-       * would be the third reader of the same scroll position on this page (the other two are
-       * scheduleInspectorDock and scheduleStickyOffsets), and it would exist only to relabel a
-       * button.
+       * The state needs a session whose inspector column outgrows its ledger by more than a
+       * viewport, so a long session cannot show it at all (there the ledger is the tallest thing on
+       * the page and the document cannot scroll past its bottom) and a short one carries it
+       * routinely. That is the shape of a defect that survives reading the numbers: the only
+       * numbers you have are from the session where it cannot happen.
+       *
+       * The sentinel and not the last row, because the sentinel is one element outside #ledger and
+       * so follows the panel rather than whatever the last poll happened to build. And it is re-read
+       * on every frame rather than remembered, because 「the end」 moves every poll: the window is
+       * the newest N records and each new one slides it forward, so the bottom of the ledger is a
+       * different document position every 2.5 seconds. Anything derived from scrollHeight against a
+       * stored value would be correct only between polls.
+       *
+       * Both edges, or neither: an earlier version tested `r.height > 0 || r.top < viewH`, and the
+       * sentinel is one pixel tall — so `r.height > 0` was always true and the label read 「到最上」
+       * at every scroll position. A trivially-true term inside an `||` is the same defect as a
+       * tautology in an assertion: it looks like a test and measures nothing.
        *
        * @returns {boolean}
        */
-      function ledgerEndInView() {
-        // Re-read the sentinel rather than returning the observer's flag. The flag is right when the
-        // callback fires and silently stale when it does not, and the states it describes — an empty
-        // ledger, a ledger that grew by 32,000 rows — are exactly the ones that never make it fire.
+      function ledgerEndBelow() {
         var sentinel = dom.ledgerEnd;
-        if (!sentinel || typeof sentinel.getBoundingClientRect !== 'function') return atLedgerEnd;
+        if (!sentinel || typeof sentinel.getBoundingClientRect !== 'function') return false;
         var r = sentinel.getBoundingClientRect();
         var viewH = window.innerHeight || 0;
-        // Both edges, or neither: the first version tested `r.height > 0 || r.top < viewH`, and the
-        // sentinel is one pixel tall — so `r.height > 0` was always true and the label read 「到最上」
-        // at every scroll position. A trivially-true term inside an `||` is the same defect as a
-        // tautology in an assertion: it looks like a test and measures nothing.
-        atLedgerEnd = r.top < viewH && r.bottom > 0;
-        return atLedgerEnd;
+        return r.top >= viewH && r.bottom > viewH;
       }
 
-      var atLedgerEnd = false;
       var ledgerEndObserver = null;
       /**
-       * Has this ledger been jumped yet. False until the reader presses it once.
+       * Which way the reader last moved. `null` until they have moved at all.
        *
-       * The first screen always points down, whatever the page is sitting at, because the
-       * reading 「the end is on screen」 is not yet true of anything the reader did — and drawing
-       * 「读者还没动」 as 「读者在最上」 invents a state that does not exist. So the position only
-       * gets a vote after the first press.
+       * One writer: the scroll listener in buildLedgerJump(), plus the click handler, which sets it
+       * to the direction it just jumped because a jump IS a movement and the reader did not scroll
+       * themselves. Never cleared — direction has no 「首屏」 state to get out of, which is exactly
+       * why this replaced the `ledgerJumpUsed` flag: that flag existed only to remember whether a
+       * press had happened, and the new rule needs no such memory because the arrow has an answer
+       * before the reader has touched anything.
        *
-       * One writer, the click handler, and it is never cleared: 「首屏」 is this page, not each
-       * session, so a reader who switches sessions has already moved on this page and the arrow
-       * goes straight back to reporting position. Resetting it per session is a different decision
-       * and wants its own round of questions.
+       * Deliberately NOT published on <body>. A scroll-driven hide of the generation picker was
+       * withdrawn for exactly that — a control's visibility decided from outside its layer — and
+       * that reason does not carry here: this is the orientation of a navigation affordance, which
+       * is what direction is for, and nothing else reads it. Same signal, two uses, one right and
+       * one wrong — so the test is the use, not the signal.
+       *
+       * @type {'up'|'down'|null}
        */
-      var ledgerJumpUsed = false;
+      var ledgerScrollDir = null;
+      /** The scrollY this control last saw. The direction is the sign of the difference, nothing else. */
+      var ledgerLastY = null;
+      var ledgerJumpFrame = null;
+
+      /**
+       * One layout read per frame while scrolling, not one per scroll event.
+       *
+       * The predicate below reaches getBoundingClientRect() through ledgerEndBelow(), and this
+       * document is measured at 617 ms of layout per frame. A scroll event fires more often than a
+       * frame, so reading the rectangles on each one is the same mistake as measuring on each poll:
+       * the work is real, it is just repeated before it can be reused. requestAnimationFrame is the
+       * batcher already used for the sticky offsets above, and the label's own `data-arrow` check
+       * means a frame that changed nothing costs one comparison.
+       */
+      function scheduleLedgerJumpLabel() {
+        if (ledgerJumpFrame !== null) return;
+        ledgerJumpFrame = window.requestAnimationFrame(function () {
+          ledgerJumpFrame = null;
+          setLedgerJumpLabel();
+        });
+      }
 
       /**
        * Where the next press goes — and the ONE answer both the arrow and the press read.
        *
-       * These two used to call `ledgerEndInView()` each, which agreed because they were the same
-       * call. They agree here too, and for a stronger reason: the two states now differ by one
-       * flag, so reading the predicate twice instead of once would let the glyph and the scroll
-       * disagree for the first time. One function, two callers, no way for them to part.
+       * Three inputs now: which way the reader is moving, and whether either end is still off
+       * screen. The ends get a veto and the direction only decides the case that is left, which is
+       * the whole rule — 「at the top it points down, at the bottom it points up, otherwise it
+       * follows the reader」 cannot be written as `dir === 'up' && canGoUp || !canGoDown`, because
+       * the order of those two terms decides the case where BOTH ends are on screen and the order
+       * would decide it silently. Four named branches instead, and the first one is the degenerate
+       * one the old flag used to break the tie on: a ledger short enough to fit entirely on screen
+       * has neither end to jump to, so the arrow names the default and the press goes nowhere.
+       *
+       * 「At the top」 is `scrollY > ledgerTopOffset()`, which already subtracts the pinned band —
+       * that offset is the scrollY at which the panel's top clears it. 「Can still go down」 is
+       * ledgerEndBelow(), and it is the same one-reader discipline: one function measures the end,
+       * the predicate above consumes it, and neither the glyph nor the press gets to take its own
+       * reading. The two ends are measured differently on purpose — the top is compared in document
+       * coordinates because the reader's own position is already in document coordinates, while the
+       * end has to be compared against the fold — and the asymmetry is what keeps a past-the-end
+       * reader from being told there is still something below.
+       *
+       * Reading the predicate twice instead of once would let the glyph and the scroll disagree
+       * for the first time: under the old flag they agreed for free, and under this rule they agree
+       * only because there is one function. One function, two callers, no way for them to part.
        */
       function ledgerJumpGoesUp() {
-        return ledgerJumpUsed && ledgerEndInView();
+        var y = window.scrollY || window.pageYOffset || 0;
+        var canUp = y > ledgerTopOffset();
+        var canDown = ledgerEndBelow();
+        if (!canUp && !canDown) return false; // the whole ledger is on screen: nothing to jump to
+        if (!canDown) return true;           // the end is reached or gone past: up is all that is left
+        if (!canUp) return false;             // the top is in view: down is the only move left
+        return ledgerScrollDir === 'up';
       }
 
       /**
@@ -6502,7 +6557,15 @@
        *
        * The arrow names where a click would take you, so the control is never a 「go to where you
        * already are」 button — which is the failure mode of a fixed two-state label, and the reason
-       * up is only the right arrow when up is the action and down only when it is.
+       * up is only the right arrow when up is the action and down only when it is. Which end is the
+       * action now follows the reader: the last direction they moved, with either end on screen
+       * vetoing it. 「Follows the reader」 is what makes the two-state label wrong rather than merely
+       * verbose — a label that only asked the position would be right exactly when they had just
+       * arrived somewhere, and wrong for every scroll in between.
+       *
+       * This function is called from the scroll listener now, through a frame, and the `data-arrow`
+       * comparison below is what keeps a frame that changed nothing from touching the DOM. That
+       * check was written for exactly this before the scroll listener existed.
        *
        * It moves the page and nothing else. It does not touch `state.limit`, so it cannot make the
        * window wider — the prohibition this function exists to enforce, and the one the window bar's
@@ -6580,33 +6643,73 @@
         return Math.max(0, bottom);
       }
 
-      /** One-time. See setLedgerJumpLabel() for why the observer and not a scroll listener. */
+      /**
+       * The scroll listener, as a named function rather than an inline one.
+       *
+       * What the observer cannot say is WHICH WAY the reader moved, which is why the arrow could go
+       * stale through an ordinary scroll: nothing on the page said it.
+       *
+       * Named because of what a withdrawal looks like. The signal that used to drive this — a
+       * class on `<body>` — was taken back out, and the mutation that proves it can be put back
+       * re-adds the listener registration that names its handler while the function behind that
+       * name is gone, because that is what a partial withdrawal leaves on disk. An inline handler
+       * has the same shape of hazard with none of the auditability: there is no name for a reader,
+       * a grep, or verify-generation-pin to check against, and the rule that every scroll handler
+       * names something that exists cannot see it at all.
+       *
+       * …which is also why the sentence above does not spell that registration out. The guard reads
+       * raw text, so a comment quoting the old call is indistinguishable from the call, and the
+       * first version of this comment made the guard report a dangling handler that exists only in
+       * prose. A detector that scans text has no way to tell prose from code, so a comment that
+       * quotes code has to describe it instead.
+       *
+       * window.scrollY does not force layout, so reading it per event is free — the expensive part
+       * is what the label does with the answer, and that goes through a frame. Passive because
+       * nothing in here writes scroll; the only thing on this page that does is the press handler.
+       */
+      function ledgerJumpOnScroll() {
+        var y = window.scrollY || window.pageYOffset || 0;
+        if (ledgerLastY !== null && y !== ledgerLastY) {
+          ledgerScrollDir = y < ledgerLastY ? 'up' : 'down';
+          scheduleLedgerJumpLabel();
+        }
+        ledgerLastY = y;
+      }
+
+      /**
+       * One-time wiring, and all three parts of it live here: the sentinel observer, the scroll
+       * listener that supplies the direction, and the press. They are together because they are all
+       * about this one control, and the direction is meaningless to anything else on the page.
+       */
       function buildLedgerJump() {
         var button = dom.ledgerJump;
         var sentinel = dom.ledgerEnd;
         if (!button || !sentinel || typeof IntersectionObserver !== 'function') return;
 
-        ledgerEndObserver = new IntersectionObserver(function (entries) {
-          for (var i = 0; i < entries.length; i += 1) {
-            atLedgerEnd = entries[i].isIntersecting;
-          }
+        // The end moving is the one change the scroll listener below cannot hear: a poll that adds
+        // rows pushes the sentinel down under a reader parked at the bottom, and no scroll event
+        // fires for it. The observer therefore carries no flag any more — it is a 「something about
+        // the end changed, re-read it」 trigger, and the reading itself happens in ledgerEndBelow()
+        // where the arrow and the press share it.
+        ledgerEndObserver = new IntersectionObserver(function () {
           setLedgerJumpLabel();
         }, { rootMargin: '0px 0px -1px 0px' });
         ledgerEndObserver.observe(sentinel);
 
+        window.addEventListener('scroll', ledgerJumpOnScroll, { passive: true });
+
         button.addEventListener('click', function () {
-          // Read the predicate BEFORE arming it. Setting the flag first would make the very first
-          // press consult the position, and on a ledger that already fits on screen that sends the
-          // reader UP on the press that is supposed to be the one that goes down.
           var up = ledgerJumpGoesUp();
           window.scrollTo(0, up ? ledgerTopOffset() : ledgerBottomOffset());
-          // Armed after the scroll is issued, and the label is rewritten here rather than left to
-          // the observer: scrolling to the end you are already at fires no intersection event, and
-          // that is exactly the case where the arrow has to change.
-          ledgerJumpUsed = true;
+          // A jump is a movement and the reader did not scroll themselves, so the direction is set
+          // here instead of waited for: scrollTo() does not fire the scroll event synchronously, and
+          // a press toward the end you are already at fires none at all — waiting would leave the
+          // glyph answering for a position the page has already left.
+          ledgerScrollDir = up ? 'up' : 'down';
           setLedgerJumpLabel();
         });
 
+        ledgerLastY = window.scrollY || window.pageYOffset || 0;
         setLedgerJumpLabel();
       }
 
