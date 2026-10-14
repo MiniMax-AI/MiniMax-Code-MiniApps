@@ -3658,7 +3658,15 @@
 
       /* ---------------- state ---------------- */
 
-      var POLL_INTERVAL = 2500;
+      // Two cadences, one per fetch, because the two are not the same work. See startPolling().
+      //
+      // 2500 for the list, which is a cached walk and a cached title read and now usually a 304 —
+      // and which the picker renders 「刚刚」 against. 8000 for the trajectory, which reparses a
+      // lineage and reopens the runtime database on every request. The list wakes the trajectory
+      // early when it has evidence, so the slow tick is a floor on latency, not a replacement for
+      // noticing a change.
+      var SESSION_POLL_INTERVAL = 2500;
+      var TRAJECTORY_POLL_INTERVAL = 8000;
       var PAGE_STEP = 200;
       var SEARCH_DEBOUNCE = 200;
       // Which window the page opens on, and which every reset returns to. A constant rather
@@ -3782,6 +3790,11 @@
         // unchanged session costs a 304 with no body instead of a multi-megabyte reply.
         etag: '',
         etagFor: '',
+        // The same pair for the session list, and separate for the same reason: a validator
+        // means nothing against a different request, and the list's request is a limit. Written
+        // in exactly one place — fetchSessions — the way `etag` is written only in fetchTrajectory.
+        sessionsEtag: '',
+        sessionsEtagFor: '',
         // Cursor for `?since=`: the highest record index already on screen, so a poll that
         // finds new records transfers the tail instead of the session. Bound to a cache key
         // for the same reason the validator is — a cursor means nothing against a different
@@ -3797,7 +3810,8 @@
       var dom = {};
       var inflight = null;
       var sessionsInflight = null;
-      var pollTimer = null;
+      var sessionPollTimer = null;
+      var trajectoryPollTimer = null;
       var searchTimer = null;
       var rangeTimer = null;
       var refreshSeq = 0;
@@ -3902,27 +3916,69 @@
         return state.followLatest || !state.sessionId ? 'latest' : encodeURIComponent(state.sessionId);
       }
 
-      function fetchSessions() {
+      /**
+       * The session list, on its own validator.
+       *
+       * `manual` is the refresh button asking for the truth, and it drops the validator the way
+       * `fetchTrajectory(manual)` does — a refresh that revalidated the list would be a refresh
+       * of half the page. Every other caller passes nothing.
+       *
+       * Resolves to whether the list actually changed, and that is the part other code reads: a
+       * 200 means something in the visible slice moved, which is the cheap evidence the slow
+       * trajectory tick is waiting for; a 304 means nothing on screen can be stale.
+       *
+       * @param {boolean} [manual]
+       * @returns {Promise<boolean>}
+       */
+      function fetchSessions(manual) {
         if (sessionsInflight) sessionsInflight.abort();
         var controller = new AbortController();
         sessionsInflight = controller;
-        var query = '?limit=20';
-        return fetch('/api/sessions' + query, { signal: controller.signal, headers: { Accept: 'application/json' } })
+        var key = 'limit=20';
+        var query = '?' + key;
+        var headers = { Accept: 'application/json' };
+        if (manual) {
+          state.sessionsEtag = '';
+          state.sessionsEtagFor = '';
+        } else if (state.sessionsEtag && state.sessionsEtagFor === key) {
+          headers['If-None-Match'] = state.sessionsEtag;
+        }
+        return fetch('/api/sessions' + query, { signal: controller.signal, headers: headers })
           .then(function (response) {
+            // Nothing moved since the copy already on screen. Keep every piece of state and
+            // re-render nothing: the picker, its 「刚刚」 labels and its counts are all still true.
+            if (response.status === 304) {
+              var fresh = response.headers.get('etag');
+              if (fresh) state.sessionsEtag = fresh;
+              state.sessionsEtagFor = key;
+              return { changed: false, body: null, etag: state.sessionsEtag };
+            }
             if (!response.ok) throw new Error('http');
-            return response.json();
+            return response
+              .json()
+              .catch(function () { return null; })
+              .then(function (body) {
+                if (!body || typeof body !== 'object') throw new Error('api');
+                return { changed: true, body: body, etag: response.headers.get('etag') || '' };
+              });
           })
-          .then(function (data) {
+          .then(function (result) {
             sessionsInflight = null;
-            state.sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+            // One writer for the list's validator, on the one path that carried a body.
+            state.sessionsEtag = result.etag;
+            state.sessionsEtagFor = key;
+            if (!result.changed) return false;
+            state.sessions = Array.isArray(result.body.sessions) ? result.body.sessions : [];
             state.sessionsLoaded = true;
             state.sessionsError = false;
             renderSessionSelect();
+            return true;
           })
           .catch(function (error) {
             sessionsInflight = null;
-            if (error && error.name === 'AbortError') return;
+            if (error && error.name === 'AbortError') return false;
             state.sessionsError = true;
+            return false;
           });
       }
 
@@ -8658,26 +8714,53 @@
 
       function startPolling() {
         stopPolling();
-        pollTimer = window.setInterval(function () {
+        // Two ticks, because the two fetches are not the same cost class and were never the same
+        // work. The list is a cached walk, a cached title read and a descriptor cache; once the
+        // page can revalidate it, an unchanged list costs a 304. The trajectory is the one that
+        // reparses a lineage and rebuilds a payload that measured 18,924 rows, and it also opens
+        // the runtime database on every request to work out which conversation is live.
+        //
+        // The list therefore keeps the fast tick, and it is not only for freshness: the picker
+        // renders 「刚刚」 against a render-time clock, so at a slow cadence that label would sit
+        // still and then jump. The trajectory gets the slower tick, and is woken early by the
+        // list instead of by the clock — see the fetchSessions call below.
+        sessionPollTimer = window.setInterval(function () {
+          if (document.hidden) return;
+          fetchSessions().then(function (changed) {
+            // A 200 is cheap evidence that something on screen may be stale, and a misfire is
+            // nearly free: the trajectory carries its own validator, so a tick that finds nothing
+            // changed ends in a 304 without touching a file. A 304 means nothing moved, so there
+            // is nothing to wake for.
+            if (changed) fetchTrajectory(false);
+          });
+        }, SESSION_POLL_INTERVAL);
+        trajectoryPollTimer = window.setInterval(function () {
           if (document.hidden) return;
           // A table that is still being built is not a table this tick may replace. An 全部 window
           // over 18,924 rows takes about 4 s to lay out — longer than this interval — so letting
           // every tick through would restart the build before it reached the end, and the reader
           // would watch the count reset from 3,000 back to 0 forever. The tick is remembered
           // instead, and flushDeferredPoll() runs it once the build finishes.
+          //
+          // This belongs to the trajectory alone. The list never renders the ledger; it rebuilds
+          // an <option> list, and holding it back because the ledger is mid-build was the two
+          // fetches sharing one tick rather than anything the build needs.
           if (ledgerBuilding()) {
             pollDeferred = true;
             return;
           }
-          fetchSessions();
           fetchTrajectory(false);
-        }, POLL_INTERVAL);
+        }, TRAJECTORY_POLL_INTERVAL);
       }
 
       function stopPolling() {
-        if (pollTimer !== null) {
-          window.clearInterval(pollTimer);
-          pollTimer = null;
+        if (sessionPollTimer !== null) {
+          window.clearInterval(sessionPollTimer);
+          sessionPollTimer = null;
+        }
+        if (trajectoryPollTimer !== null) {
+          window.clearInterval(trajectoryPollTimer);
+          trajectoryPollTimer = null;
         }
       }
 
@@ -8726,7 +8809,7 @@
 
         dom.refreshBtn.addEventListener('click', function () {
           announce('正在刷新…');
-          fetchSessions();
+          fetchSessions(true);
           fetchTrajectory(true);
         });
 

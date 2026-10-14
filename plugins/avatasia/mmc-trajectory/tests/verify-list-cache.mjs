@@ -52,15 +52,33 @@ function assert(name, cond) {
 
 /* ---------- 1: the TTL outlives the poll that expires it ---------- */
 
+// The governing cadence is the LIST's, not the page's. One `POLL_INTERVAL` drove both fetches when
+// this was written, so the two were the same number by coincidence; the page now has a tick per
+// fetch, and asserting against the trajectory's would let the list be polled twice as often as
+// its cache can answer.
 const ttl = /const LIST_CACHE_TTL_MS\s*=\s*(\d+)/.exec(server);
-const poll = /var POLL_INTERVAL\s*=\s*(\d+)/.exec(html);
+const sessionPoll = /var SESSION_POLL_INTERVAL\s*=\s*(\d+)/.exec(html);
 
 assert('the list TTL is still declared in the server', ttl !== null);
-assert('the poll interval is still declared in the client', poll !== null);
+assert('the list\'s poll interval is still declared in the client', sessionPoll !== null);
 
-if (ttl && poll) {
-  assert('LIST_CACHE_TTL_MS (' + ttl[1] + ') is at or above POLL_INTERVAL (' + poll[1] + ') — a cache below the poll interval can never be hit',
-    Number(ttl[1]) >= Number(poll[1]));
+if (ttl && sessionPoll) {
+  assert('LIST_CACHE_TTL_MS (' + ttl[1] + ') is at or above the list poll interval (' + sessionPoll[1] + ') — a cache below the poll interval can never be hit',
+    Number(ttl[1]) >= Number(sessionPoll[1]));
+}
+
+// The other direction, and it is what makes a 304 on this route honest. A revalidated list means
+// "the payload I would send you now is the one you have", so its staleness bound cannot be looser
+// than the descriptor cache whose entries it is derived from. The tag is computed from the walk's
+// output, so it is as old as LIST_CACHE_TTL_MS; the descriptors behind it are as old as
+// SESSION_CACHE_TTL_MS. If that ever inverts, the validator is the freshest input in the route
+// and a stale descriptor can be pinned in place by a tag that says nothing changed.
+const descriptorTtl = /const SESSION_CACHE_TTL_MS\s*=\s*(\d+)/.exec(server);
+assert('the descriptor cache budget is still declared', descriptorTtl !== null);
+if (ttl && descriptorTtl) {
+  assert('LIST_CACHE_TTL_MS (' + ttl[1] + ') is at or below SESSION_CACHE_TTL_MS (' + descriptorTtl[1]
+    + ') — the walk must not be able to feed a validator built on fresher facts than the descriptors it stands for',
+    Number(ttl[1]) <= Number(descriptorTtl[1]));
 }
 
 /* ---------- 2 & 3: one poll, one walk, one database open ---------- */
@@ -79,6 +97,11 @@ assert('the list route reaches titles through the cache',
 
 assert('dispose releases the title cache',
   /titleCache = \{ at: 0, key: '', map: new Map\(\) \};[\s\S]{0,240}?descriptorCache\.clear\(\)/.test(server));
+
+// The list body cache is a third thing the poll built, and it holds serialized bytes this time.
+// It is small next to the two above, which is exactly why it is the one that gets forgotten.
+assert('dispose releases the list body cache',
+  /sessionsBody = \{ material: '', body: null \};[\s\S]{0,240}?descriptorCache\.clear\(\)/.test(server));
 
 /* ---------- 5: the peek that backs the list is bounded ---------- */
 

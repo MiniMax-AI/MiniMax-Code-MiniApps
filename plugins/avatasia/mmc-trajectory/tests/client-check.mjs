@@ -353,7 +353,12 @@ const checks = [
   ['role=status present', (html.match(/role="status"/g) || []).length >= 3],
   ['semantic header/main/section/footer/nav/form', ['<header', '<main', '<section', '<footer', '<nav', '<form'].every((tag) => html.includes(tag))],
   ['semantic table rendered (static or via createElement)', html.includes('<table') || html.includes("el('table'")],
-  ['poll interval 2500ms', /POLL_INTERVAL = 2500/.test(html)],
+  ['session poll interval 2500ms, declared as the list\'s own cadence', /\bSESSION_POLL_INTERVAL = 2500\b/.test(html) && !/\bPOLL_INTERVAL = /.test(html)],
+  ['trajectory poll interval 8000ms, slower than the list\'s', /\bTRAJECTORY_POLL_INTERVAL = 8000\b/.test(html)],
+  // Two ticks, not one. The single `POLL_INTERVAL` this replaced cannot come back as a substring
+  // of either name — `SESSION_POLL_INTERVAL` contains `POLL_INTERVAL`, so an assertion written
+  // against the old bare name passes against either constant and means nothing.
+  ['no single shared poll interval is left behind', !/\bPOLL_INTERVAL\b/.test(html.replace(/SESSION_POLL_INTERVAL|TRAJECTORY_POLL_INTERVAL/g, ''))],
   ['handoff raw limit 8000', /HANDOFF_RAW_LIMIT = 8000/.test(html)],
   ['all 6 append error codes handled', ['user_cancelled', 'invalid_request', 'text_too_large', 'not_allowed', 'target_unavailable', 'result_unknown'].every((c) => html.includes(c))],
   // The type chips are the one filter. A second row of layer buttons was removed because a

@@ -36,10 +36,27 @@ PROBE = os.path.join(HERE, "verify-list-cache.mjs")
 # once at startup and restored byte for byte in the same `finally` that already covered the server.
 MUTATIONS = [
     # The defect verbatim: the cache is shorter than the interval that expires it, so it is never
-    # hit. Not a slow cache — a cache that cannot be reached.
+    # hit. Not a slow cache — a cache that cannot be reached. Measured against the LIST's cadence
+    # rather than the page's, which is the one that actually calls this route.
     ("the list TTL drops below the poll interval",
      [("const LIST_CACHE_TTL_MS = 3000;", "const LIST_CACHE_TTL_MS = 1000;")],
-     "is at or above POLL_INTERVAL"),
+     "is at or above the list poll interval"),
+
+    # The other direction, and the one a 304 depends on. If the descriptor cache expires sooner
+    # than the walk that feeds the validator, the tag is built from facts newer than the entries
+    # it stands for, and a stale descriptor can be pinned in place by a tag that says nothing
+    # changed. Raising the walk's TTL is the cheapest way in, because it never trips the rule
+    # above on its own.
+    ("the descriptor cache expires sooner than the walk that feeds the validator",
+     [("const SESSION_CACHE_TTL_MS = 5000;", "const SESSION_CACHE_TTL_MS = 2000;")],
+     "is at or below SESSION_CACHE_TTL_MS"),
+
+    # The list body cache is a third thing the poll built, and it holds serialized bytes this
+    # time. Small next to the other two, which is exactly why it is the one that gets forgotten —
+    # the parsed-row cache leaked here once for the same reason.
+    ("dispose stops releasing the list body cache",
+     [("    sessionsBody = { material: '', body: null };\n", "")],
+     "dispose releases the list body cache"),
 
     # The quieter cousin: the label and counters come from a prefix of messages.jsonl, and a
     # generation marker lives on the first row. Reading far past it costs a full page of I/O on
@@ -64,8 +81,9 @@ MUTATIONS = [
     # The parsed-row cache leaked here once — a disposed runtime held ~43 MB for a 39 MB session —
     # and the line that fixed it is in server.mjs precisely so the next cache cannot repeat it.
     ("dispose stops releasing the title cache",
-     [("titleCache = { at: 0, key: '', map: new Map() };\n    descriptorCache.clear();",
-       "descriptorCache.clear();")],
+     [("    listCache = { at: 0, entries: null };\n"
+       "    titleCache = { at: 0, key: '', map: new Map() };\n",
+       "    listCache = { at: 0, entries: null };\n")],
      "dispose releases the title cache"),
 
     # ---- D45: a prefix count is not a count. ----

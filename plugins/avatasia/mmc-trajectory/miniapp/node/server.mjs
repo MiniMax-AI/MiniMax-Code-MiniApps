@@ -95,9 +95,21 @@ const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
 const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
 const SESSION_STORE_TOKEN = '<session-store>';
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
-const ROLE_PATTERN = /"role"\s*:\s*"(user|assistant|toolResult|custom)"/g;
-const TURN_PATTERN = /"turn_id"\s*:\s*"([^"]*)"/g;
-const BLOCK_PATTERN = /"type"\s*:\s*"(toolCall|thinking|text)"/g;
+/**
+ * Scans for the list counters, one per field. Each one stops right after the opening quote of
+ * the value, so the value can be read out of `text` by position instead of being captured —
+ * which is the whole point: a capturing `matchAll` allocates a match object per hit, and on a
+ * 64 KB prefix with thousands of messages that is thousands of short-lived objects per session,
+ * per rebuild.
+ *
+ * They carry `/g` and are driven with `test`, which allocates nothing. That mutates `lastIndex`,
+ * and `matchAll` (which the previous version used) did not, so every scan resets it first.
+ * These are module-level on purpose — a `new RegExp` per call would trade the allocation back.
+ */
+const MESSAGE_ID_SCAN = /"message_id"\s*:/g;
+const ROLE_SCAN = /"role"\s*:\s*"/g;
+const TURN_SCAN = /"turn_id"\s*:\s*"/g;
+const BLOCK_SCAN = /"type"\s*:\s*"/g;
 const ABSOLUTE_STORE_PATTERN = /(?:[A-Za-z]:[\\/])?[^\s"'`<>|]{0,120}?[\\/]?\.minimax(?:[\\/][^\s"'`<>|]{0,160})?/g;
 
 /**
@@ -207,24 +219,60 @@ export function parseMessagesJsonl(text) {
 
 /**
  * Cheap single-pass counters used by the session list; values are approximate by design.
+ *
+ * Allocation-free apart from the turn-id set, which has to hold the ids to count them
+ * distinctly. `tests/verify-count-roles.mjs` runs this against the capturing implementation it
+ * replaced over real session prefixes and hand-written edges, so the rewrite is held to being
+ * the same function rather than merely a faster one.
  * @param {string} text
  */
 export function countRolesInPrefix(text) {
-  const turnIds = new Set();
   const counts = { messages: 0, userMessages: 0, assistantMessages: 0, toolResults: 0, systemMessages: 0, toolCalls: 0, thinkingBlocks: 0, turns: 0 };
-  for (const match of text.matchAll(/"message_id"\s*:/g)) counts.messages += 1;
-  for (const match of text.matchAll(ROLE_PATTERN)) {
-    if (match[1] === 'user') counts.userMessages += 1;
-    else if (match[1] === 'assistant') counts.assistantMessages += 1;
-    else if (match[1] === 'toolResult') counts.toolResults += 1;
-    else counts.systemMessages += 1;
+
+  MESSAGE_ID_SCAN.lastIndex = 0;
+  while (MESSAGE_ID_SCAN.test(text)) counts.messages += 1;
+
+  // The value runs from the scan's `lastIndex` (just past the opening quote) to the next quote.
+  // Comparing length first is what makes `user` not also match `userSomething`, and reading the
+  // span with `startsWith` keeps the comparison from building a substring per hit.
+  const valueIs = (start, literal) => text.startsWith(literal, start)
+    && start + literal.length === valueEnd;
+  /** @type {number} */
+  let valueEnd = 0;
+
+  ROLE_SCAN.lastIndex = 0;
+  while (ROLE_SCAN.test(text)) {
+    const start = ROLE_SCAN.lastIndex;
+    valueEnd = text.indexOf('"', start);
+    // No closing quote left means no later field of this kind can match either, so stop.
+    if (valueEnd < 0) break;
+    if (valueIs(start, 'user')) counts.userMessages += 1;
+    else if (valueIs(start, 'assistant')) counts.assistantMessages += 1;
+    else if (valueIs(start, 'toolResult')) counts.toolResults += 1;
+    // `custom` is the fourth role the counters recognize. A value outside the four is not a
+    // role this list counts at all, and must stay uncounted rather than falling into the else.
+    else if (valueIs(start, 'custom')) counts.systemMessages += 1;
   }
-  for (const match of text.matchAll(TURN_PATTERN)) turnIds.add(match[1]);
-  for (const match of text.matchAll(BLOCK_PATTERN)) {
-    if (match[1] === 'toolCall') counts.toolCalls += 1;
-    else if (match[1] === 'thinking') counts.thinkingBlocks += 1;
+
+  const turnIds = new Set();
+  TURN_SCAN.lastIndex = 0;
+  while (TURN_SCAN.test(text)) {
+    const start = TURN_SCAN.lastIndex;
+    const end = text.indexOf('"', start);
+    if (end < 0) break;
+    turnIds.add(text.slice(start, end));
   }
   counts.turns = turnIds.size;
+
+  BLOCK_SCAN.lastIndex = 0;
+  while (BLOCK_SCAN.test(text)) {
+    const start = BLOCK_SCAN.lastIndex;
+    valueEnd = text.indexOf('"', start);
+    if (valueEnd < 0) break;
+    if (valueIs(start, 'toolCall')) counts.toolCalls += 1;
+    else if (valueIs(start, 'thinking')) counts.thinkingBlocks += 1;
+  }
+
   return counts;
 }
 
@@ -1557,6 +1605,43 @@ export function etagMatches(header, etag) {
 }
 
 /**
+ * The material a `/api/sessions` validator is derived from.
+ *
+ * The soundness of a 304 is not "this covers every input that could change the payload" — it is
+ * "this is built from the same values the payload is built from, in the same request". So the
+ * function takes the two things the payload is built from and nothing else, and the route builds
+ * both from one call: a tag derived from anything else is a tag about a different payload.
+ *
+ * `visible` contributes `dir|sizeBytes|lastActiveAt` — exactly what `describeSession` keys its
+ * descriptor cache on, so a matching tag means the descriptors this request would produce are the
+ * ones behind the tag the caller already holds. `titles` contributes the renamed-session case,
+ * which no file stat can see. `limit` is in it because `?limit=10` and `?limit=20` are different
+ * payloads and must not satisfy one another.
+ *
+ * What it does not claim: a session whose `manifest.json` appears after the walk listed it would
+ * change `startedAt` without changing anything here. That is already invisible for up to
+ * SESSION_CACHE_TTL_MS to the descriptor cache this reuses, so the bound is that cache's and not
+ * a new one. tests/verify-list-cache.mjs pins the TTL relationship that says so.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} visible
+ * @param {Map<string, { title: string | null, kind: string | null }>} titles
+ * @param {number} limit
+ * @returns {string}
+ */
+export function sessionsValidator(visible, titles, limit) {
+  const parts = ['limit=' + limit];
+  for (const entry of visible) {
+    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+    // A NUL between the fields, so a rename cannot be masked by the stat beside it: with a plain
+    // separator, {"ab",""} and {"a","b"} concatenate to the same string and the tag does not move.
+    parts.push(entry.dir + "|" + entry.sizeBytes + "|" + entry.lastActiveAt
+      + "|" + (meta ? String(meta.title ?? "") : "")
+      + "\u0000" + (meta ? String(meta.kind ?? "") : ""));
+  }
+  return parts.join("\n");
+}
+
+/**
  * The cache key for one rendered trajectory. Every component comes from a `stat`, a small
  * manifest/catalog file, or the already-resolved session binding — never from reading
  * `messages.jsonl`, which is the whole point: a matching key proves the file did not grow.
@@ -1905,6 +1990,14 @@ export async function start(context) {
    * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null }> }}
    */
   let titleCache = { at: 0, key: '', map: new Map() };
+  /**
+   * The last list body, kept under the tag it was built for. One entry, not a cache: the tag is
+   * recomputed per request and a mismatch simply means the list moved, which is the common case
+   * while the reader is working. Its job is the page that arrives with no validator — first load
+   * or a fresh tab — so the descriptors behind the previous answer can be reused instead of read.
+   * @type {{ material: string, body: string | null }}
+   */
+  let sessionsBody = { material: '', body: null };
   /** @param {readonly string[]} ids */
   const sessionTitles = async (ids) => {
     const key = ids.join('');
@@ -2032,27 +2125,45 @@ export async function start(context) {
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
       return;
     }
-    const described = [];
     const visible = entries.slice(0, limit);
     // Real titles from the runtime database; sub-agent and cron sessions get a kind badge so
     // the picker never presents them as if they were the user's conversation.
     const titles = await sessionTitles(
       visible.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean),
     );
-    for (const entry of visible) {
-      try {
-        const descriptor = await describeSession(entry);
-        const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
-        if (meta) {
-          if (meta.title) descriptor.label = meta.title;
-          descriptor.sessionKind = meta.kind;
-        }
-        described.push(descriptor);
-      } catch (error) {
-        context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
-      }
+
+    // Built from the same two values the payload below is built from, and computed before any
+    // descriptor work — which is what lets an unchanged list answer without building it.
+    const etag = weakETag(sessionsValidator(visible, titles, limit));
+    const requestEtag = response.req && response.req.headers ? response.req.headers['if-none-match'] : null;
+    if (etagMatches(requestEtag, etag)) {
+      sendJsonBody(response, 304, '', { etag, revalidate: true });
+      return;
     }
-    sendJson(response, 200, { sessions: described.map(stripInternalFields) });
+
+    // Same shape as the trajectory route's cache-hit branch: a page that arrives without a
+    // validator — first load, a fresh tab — still gets bytes it does not have to cause a rebuild
+    // to produce.
+    let body = sessionsBody.material === etag ? sessionsBody.body : null;
+    if (body === null) {
+      const described = [];
+      for (const entry of visible) {
+        try {
+          const descriptor = await describeSession(entry);
+          const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+          if (meta) {
+            if (meta.title) descriptor.label = meta.title;
+            descriptor.sessionKind = meta.kind;
+          }
+          described.push(descriptor);
+        } catch (error) {
+          context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
+        }
+      }
+      body = JSON.stringify({ sessions: described.map(stripInternalFields) });
+      sessionsBody = { material: etag, body };
+    }
+    sendJsonBody(response, 200, body, { etag, revalidate: true });
   };
 
   /**
@@ -2464,6 +2575,7 @@ export async function start(context) {
     context.signal.removeEventListener('abort', onAbort);
     listCache = { at: 0, entries: null };
     titleCache = { at: 0, key: '', map: new Map() };
+    sessionsBody = { material: '', body: null };
     descriptorCache.clear();
     trajectoryCache.clear();
     // The parsed-row cache is the largest of the three and was the only one not released here, so a
