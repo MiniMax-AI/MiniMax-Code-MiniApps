@@ -6537,7 +6537,19 @@
        */
       function ledgerJumpGoesUp() {
         var y = window.scrollY || window.pageYOffset || 0;
-        var canUp = y > ledgerTopOffset();
+        // The landing point and this test read one number, and the browser does not keep it:
+        // getBoundingClientRect() answers in 1/64px while scrollTo() lands on a whole pixel, so the
+        // landing sits within half a pixel either side of what the offset says. A zero-tolerance
+        // 「strictly greater」 then reads the landing itself as 「there is more above」 — at the top of
+        // the ledger the arrow points up and pressing it again moves nothing at all.
+        //
+        // Rounding the offset up is what 「arrived」 means; a tolerance chosen to cover the
+        // measurement would instead have to be right about the rounding, which is the browser's
+        // business. Every landing is at or below the rounded-up offset whichever way it rounded,
+        // so the two agree on floor, on nearest, and on ceiling alike. Measured across viewport
+        // widths the gap never reached half a pixel, and it decided the outcome: the same code
+        // landed correctly at one width and froze the control at another.
+        var canUp = y > Math.ceil(ledgerTopOffset());
         var canDown = ledgerEndBelow();
         if (!canUp && !canDown) return false; // the whole ledger is on screen: nothing to jump to
         if (!canDown) return true;           // the end is reached or gone past: up is all that is left
