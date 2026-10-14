@@ -5516,21 +5516,27 @@
        * It used to ask `state.flat` — the whole session, unfiltered — so a record stayed selected
        * after every filter had already removed it: the ledger read 已显示 2 条, the inspector still
        * showed the row the reader had picked, and no row anywhere carried the selection mark. The
-       * list handed in here is the same one the rows are built from, so the two agree by
-       * construction instead of by convention.
+       * list handed in here is the filter result the table is narrowed from, not the session, so a
+       * record this accepts is by construction one the filters kept.
        *
        * It runs from renderLedger(), which is the one exit every path that changes what the table
        * shows goes through: the filters that call render() and the ones that call renderLedger()
        * directly.
        *
-       * The list is the *windowed* rows, not the filtered ones, and this is where the order
-       * finally settled. It used to be judged before the slice and used to raise `state.limit` to
-       * reach a selection sitting below the window — see docs/LAYERS.md D13 for the two things
-       * that were wrong with that. It writes one field, `state.selectedId`, and nothing else: the
-       * window belongs to the window controls, and a judgement that also moves it is a second
-       * writer of `state.limit`.
+       * The list is the *filtered* rows, not the windowed ones, and this paragraph used to say the
+       * opposite. The order settled first: the judgement runs after the window is sliced, so it
+       * looks at the table as it is about to be drawn rather than at a pre-slice list. The
+       * argument was corrected after that, and the reason is measured rather than argued — the
+       * window is a projection that slides on its own, every new record pushing the tail forward
+       * by a row, so a record leaving it measures the projection's motion and not the reader's
+       * attention. The numbers behind that are written out at the call site in renderLedger().
        *
-       * @param {Array<{record: any}>} entries the rows about to be built from
+       * The order half has never stopped holding, and neither has the prohibition it came with:
+       * the window is not widened to reach a selection sitting below it. This writes one field,
+       * `state.selectedId`, and nothing else — the window belongs to the window controls, and a
+       * judgement that also moved it would be a second writer of `state.limit`.
+       *
+       * @param {Array<{record: any}>} entries the filtered rows — `matched`, not `windowed`
        * @returns {boolean} true when it dropped the selection — the caller has to redraw the panel,
        *   because nine of the paths that reach here never redraw it themselves
        */
