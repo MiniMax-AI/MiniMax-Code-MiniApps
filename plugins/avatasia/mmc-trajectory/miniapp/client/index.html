@@ -3067,6 +3067,27 @@
         return typeof value === 'number' && isFinite(value);
       }
 
+      /**
+       * The key that identifies ONE row.
+       *
+       * `record.id` is the message's id, and one message can expand into several rows — a
+       * thought, a sentence and six tool calls all share it. So it answers "which message", and
+       * using it as a row key collapses those rows onto one entry: the scroll anchor lands back
+       * on the first of them, and the overview resolves a hover or a time brush against the last.
+       * `record.index` is dense from 1 and already the public `/raw?index=` key, so it is the one
+       * that says "which row".
+       *
+       * Selection is the exception and stays on `record.id` on purpose — picking a row highlights
+       * the whole message it belongs to, and that grouping is the feature.
+       *
+       * @param {{ id?: any, index?: any }} record
+       * @returns {string}
+       */
+      function recordKey(record) {
+        if (record && isCount(record.index)) return String(record.index);
+        return record && record.id ? String(record.id) : '';
+      }
+
       // The runtime rotates a compacted session into generations: the previous messages.jsonl
       // becomes a snapshot and a fresh active file takes its place. A session can therefore
       // hold more than one generation, and the ledger can be narrowed to any one of them.
@@ -4792,7 +4813,10 @@
           if (!isCount(timestamp)) continue;
           var range = timedRange(record, prevTimestamp, timestamp);
           timed.push({
-            id: record.id,
+            // The span's key is the ROW's, not the message's: one span is one record, and the
+            // hover hairline, the tooltip and the time brush all have to find the span the
+            // reader is pointing at rather than the last one its message expanded into.
+            id: recordKey(record),
             record: record,
             start: range.start,
             end: range.end,
@@ -4873,7 +4897,7 @@
 
       function recordInSelection(record, selection, spansById) {
         if (!selection) return true;
-        var span = spansById.get(record.id);
+        var span = spansById.get(recordKey(record));
         // A record with no span has no position on the strip, so a range cannot claim
         // to contain it. Leaving it out is the honest answer; putting it in would let
         // a time brush silently match records it never saw.
@@ -5131,10 +5155,23 @@
         return view.start + fraction * view.duration;
       }
 
+      /**
+       * The span under a point, or null.
+       *
+       * The SPAN rather than its key, because the two callers want different halves of it: a
+       * hover needs the span's own key to mark one row, and a click needs the record's message id
+       * because selection is per message. Returning the key forced both to use one number, and
+       * picking for the hover is what broke selection.
+       *
+       * @returns {any|null}
+       */
       function spanAt(clientX, clientY) {
         var node = document.elementFromPoint(clientX, clientY);
         while (node && node !== dom.overviewTrack) {
-          if (node.classList && node.classList.contains('ov-span')) return node.getAttribute('data-record-id');
+          if (node.classList && node.classList.contains('ov-span')) {
+            var key = node.getAttribute('data-record-id');
+            return key === null ? null : (overviewSpansById.get(key) || null);
+          }
           node = node.parentNode;
         }
         return null;
@@ -5252,7 +5289,8 @@
 
         // Idle: a hairline marks the pointer, and a span shows its detail only after
         // the reader has held still long enough to mean it.
-        var id = spanAt(event.clientX, event.clientY);
+        var hovered = spanAt(event.clientX, event.clientY);
+        var id = hovered ? hovered.id : null;
         dom.overviewHover.hidden = false;
         dom.overviewHover.style.setProperty('--ov-hover-left', (fraction * 100).toFixed(3) + '%');
         if (overviewHoverTimer !== null) window.clearTimeout(overviewHoverTimer);
@@ -5329,13 +5367,13 @@
         }
 
         if (!drag.moved) {
-          var id = spanAt(event.clientX, event.clientY);
-          if (id) {
+          var span = spanAt(event.clientX, event.clientY);
+          if (span) {
             clearOverviewSelection();
-            selectRecord(id);
+            selectRecord(span.record.id);
           } else {
             var nearest = nearestSpanAt(overviewTimeAt(overviewFractionAt(event.clientX)));
-            if (nearest) selectRecord(nearest);
+            if (nearest) selectRecord(nearest.record.id);
           }
           return;
         }
@@ -5355,6 +5393,7 @@
         renderLedger();
       }
 
+      /** The span nearest a point in time, or null. The span, for the reason spanAt() gives. */
       function nearestSpanAt(time) {
         var model = overviewCache.model;
         if (!model) return null;
@@ -5364,12 +5403,12 @@
           var span = model.spans[i];
           if (span.end < time) {
             var after = span.end - time;
-            if (after < bestDistance) { bestDistance = after; best = span.id; }
+            if (after < bestDistance) { bestDistance = after; best = span; }
           } else if (span.start > time) {
             var before = time - span.start;
-            if (before < bestDistance) { bestDistance = before; best = span.id; }
+            if (before < bestDistance) { bestDistance = before; best = span; }
           } else {
-            return span.id;
+            return span;
           }
         }
         return best;
@@ -5677,7 +5716,10 @@
         var record = entry.record;
         var row = el('button', 'row');
         row.type = 'button';
-        row.setAttribute('data-row-id', record.id || String(record.index));
+        // The scroll anchor reads this back with querySelector, which returns the FIRST match.
+        // Keyed by the message id it would resolve to the first row of the message, so a reader
+        // whose topmost row was the seventh of eight came back at the first. One row, one key.
+        row.setAttribute('data-row-id', recordKey(record));
         if (record.id === state.selectedId) row.setAttribute('aria-current', 'true');
         else row.removeAttribute('aria-current');
         var failed = !!(record.isError || record.error);
@@ -5748,7 +5790,7 @@
         var record = entry.record;
         var band = el('button', 'compaction-band');
         band.type = 'button';
-        band.setAttribute('data-row-id', record.id || String(record.index));
+        band.setAttribute('data-row-id', recordKey(record));
         if (record.id === state.selectedId) band.setAttribute('aria-current', 'true');
         else band.removeAttribute('aria-current');
 
