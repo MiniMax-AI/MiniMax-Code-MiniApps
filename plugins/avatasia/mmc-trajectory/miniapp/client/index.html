@@ -874,7 +874,7 @@
         background: var(--mcode-bg);
       }
 
-      /* The 上下文代 picker is L1 — it chooses which slice of the conversation is on screen,
+      /* The 上下文代 picker belongs to the filter layer — it chooses which slice of the conversation is on screen,
          the same class of control as 会话 — so it belongs in the band that does not scroll
          away, not in the toolbar that does. It shares the type row when the width allows and
          drops to a line of its own when it does not.
@@ -884,7 +884,7 @@
          the row wider than the page instead of stepping down. Wrapping keeps the band honest
          at every width — no clipping, no sideways overflow, and no assumption about which
          widths are "normal". Nothing in this arrangement is measured by hand: syncStickyOffsets()
-         reads the band's real offsetHeight on the one exit that can change it (D9). */
+         reads the band's real offsetHeight on the one exit that can change it. */
       .filter-row {
         display: flex;
         flex-wrap: wrap;
@@ -1279,22 +1279,23 @@
         align-items: start;
       }
 
-      /* ---------------- D40: the inspector's own viewport, on wide screens ----------
+      /* ---------------- the inspector's own viewport, on wide screens ----------
        *
        * Measured 2026-10-13 at 1276x1280 with one record selected: the right column is a static
        * block 833px tall sitting at the top of a 7,545px grid row, so it scrolled away after about
        * 600px and never came back — invisible for 88% of the trajectory. The ledger scrolls; the
        * inspector is the thing being read while it scrolls.
        *
-       * The mirror image of what D36 does on a narrow screen, and deliberately not the same
+       * The mirror image of the narrow-screen behaviour below, and deliberately not the same
        * mechanism: there the panel pins to the viewport BOTTOM because it is the last thing in the
        * document, here it pins just under the stacked strips because the ledger beside it is a
        * quarter of a million pixels tall. Both are 「stop scrolling away」, and they take opposite
        * offsets because the thing that scrolls is on the other side.
        *
        * `top` is the sum of the two measured strips rather than a number, and the two variables are
-       * read rather than re-measured here: band is L2 and overview is L3, and re-deriving their
-       * heights inside the inspector's rule would be a fifth place holding the same fact (verify-
+       * read rather than re-measured here: the band is filters, the overview is the strip, and
+       * re-deriving their heights inside the inspector's rule would be a fifth place holding the
+       * same fact (verify-
        * generation-pin's 23 assertions exist to keep the fourth from drifting). The window bar is
        * left out of the sum because it only ever occupies the LEFT column.
        *
@@ -1375,7 +1376,7 @@
        *
        * The rule used to sit inside the dock's own media query, and the reason it was scoped there
        * has since stopped being true. That reason said: above 1080px the panel is not a scroll
-       * container and there is nothing to stick to. D40 gave the wide panel a ceiling and an inner
+       * container and there is nothing to stick to. The wide panel has a ceiling and an inner
        * scroller, so above 1080px the panel scrolls as well — and rows that scroll away there are
        * the same loss, reached from the other side. So the rule is now unconditional, and what
        * scopes it is the panel rather than a breakpoint.
@@ -2294,7 +2295,7 @@
            「滚到最底部恢复正常」 is about. So there is no travel class and no scroll
            compensation. */
 
-        /* Flow is not pinned. That is the whole of D36, and it is a statement about where the panel
+        /* Flow is not pinned. That is the whole of it, and it is a statement about where the panel
            SITS, not about how tall it may be.
 
            `position: sticky; bottom: 0` used to sit on this rule, so all four states carried it.
@@ -2437,8 +2438,8 @@
              sticky at the panel's top edge with an opaque background, and the strip lives on that
              same edge: of the 8px where the two overlapped, 45 of 45 sampled points hit the header
              and none hit the grip. So the reader could not drag the panel taller on ANY scroll
-             position, not only after scrolling. Same family as D27 (a `display: none` that put the
-             grip outside the hit tree): every assertion checked that a property appeared in some
+             position, not only after scrolling. Same family as the `display: none` that put the
+             grip outside the hit tree: every assertion checked that a property appeared in some
              rule, and none asked whether a later sibling could cover the result. */
           z-index: 3;
         }
@@ -2447,7 +2448,7 @@
            applyInspectorDock() and by nothing else, so this selector is the whole switch: the
            default is off, and the single way to reach on is for that one writer to stop hiding it.
 
-           D27: this rule did not exist, and the reader could not resize on any screen at any width.
+           This rule did not exist, and the reader could not resize on any screen at any width.
            The state was right and the geometry was right and four pointer listeners were attached;
            the strip simply never entered the hit tree. Every guard passed, because each of them
            asserted that some property appeared in some rule — and no assertion asked whether any
@@ -2480,8 +2481,8 @@
            bans it and why every other offset here is measured. The vh fallbacks are what shows
            before the first measurement, not what ships.
 
-           This used to say 「the cap comes off」, and D32 is why that stopped being true: the cap
-           has to stay on for the cap to be the thing that keeps a sticky-bottom panel shorter than
+           This used to say 「the cap comes off」, and it stopped being true when the cap had to stay
+           on: the cap is the thing that keeps a sticky-bottom panel shorter than
            the scrollport. Expanding and sitting in the document are now the same *height* at two
            different *positions* — pinned to the viewport bottom, or at the end of the document —
            which is what the handle was buying in the first place. The rule is kept so the state
@@ -2732,7 +2733,7 @@
              stayed pinned — the warning and the thing being warned about on opposite sides of
              a scroll boundary. Its text and its source (statsAll()) are untouched; only where
              it is pinned changed. syncStickyOffsets() reads the band's real height, so the line
-             appearing and disappearing re-measures everything pinned below it (D9). -->
+             appearing and disappearing re-measures everything pinned below it. -->
         <p class="generation-note" id="generation-hint" hidden></p>
       </div>
 
@@ -2765,7 +2766,7 @@
           </div>
           <div class="window-bar" id="window-bar" aria-label="列表视图控制"></div>
           <div class="ledger-body" id="ledger"></div>
-          <!-- D44: the two ends of the ledger, and the one reading that says which end the reader is
+          <!-- The two ends of the ledger, and the one reading that says which end the reader is
                at. See `.ledger-end` and `.ledger-jump` for why the sentinel is outside #ledger. -->
           <div class="ledger-end" id="ledger-end" aria-hidden="true"></div>
           <!-- No text and no glyph in the markup: buildLedgerJump() fills the arrow in, and the
@@ -2781,7 +2782,7 @@
             <div class="panel-head">
               <h2 class="section-title" id="inspector-heading">检视</h2>
               <span class="panel-head-meta" id="inspector-meta"></span>
-              <!-- Two buttons, one job each, in the order a window uses them. D38 replaced a single
+              <!-- Two buttons, one job each, in the order a window uses them. They replaced a single
                  button that cycled folded -> half -> expanded -> folded: it worked, and reaching
                  「半高」 from 「完全展开」 still took two clicks and from 「折叠」 took one, so the
                  control's contract was a sequence rather than a height. Each of these states what
@@ -3592,7 +3593,7 @@
         chevronDown: ['M4 6.2 8 10.2 12 6.2'],
         copy: ['M5.6 5.6h7.8v7.8H5.6z', 'M2.6 2.6h7.8v7.8'],
         arrowRight: ['M2.6 8h9.2', 'M8.6 4.6 12 8l-3.4 3.4', 'M13.4 2.6v10.8'],
-        // D44: the ledger's two-ends jump. A shaft and a head, mirrored about the 8px centre, so the
+        // The ledger's two-ends jump. A shaft and a head, mirrored about the 8px centre, so the
         // two directions cannot drift apart the way two separately-drawn glyphs would.
         arrowDown: ['M8 2.8v10.4', 'M4.6 9.6 8 13l3.4-3.4'],
         arrowUp: ['M8 13.2V2.8', 'M4.6 6.4 8 3l3.4 3.4']
@@ -4923,7 +4924,8 @@
       }
 
       /**
-       * The one writer of `state.overviewSelection` — R5: L3 writes L2 through exactly one setter.
+       * The one writer of `state.overviewSelection` — the overview's selection reaches the filter
+       * state through exactly one setter.
        *
        * It used to be four writers (`dropOverviewSelection`, `setActualDuration`,
        * `onOverviewPointerMove`, `onOverviewPointerUp`), which is a number no guard could assert:
@@ -4934,7 +4936,7 @@
        * around it — resetting the window, re-rendering one face or both, starting the edge pan —
        * differs at all four, and folding that in would trade 「one writer per field」 for 「one
        * function that knows everything」. `overviewViewport` is a different field and a different
-       * write (L3's viewport, not L2's range); it stays where it is.
+       * write (the strip's own viewport, not the filter range); it stays where it is.
        *
        * The invariant is the one the old comment above dropOverviewSelection() stated as a rule:
        * anything that clears the range has to disarm the gesture too. A brush in flight repaints the
@@ -5367,7 +5369,7 @@
       }
 
       /**
-       * Whether one record is in the current view — the one function that answers it (R2).
+       * Whether one record is in the current view — the one function that answers it.
        *
        * The ledger walks `state.flat` and is handed `{turn, record}`; the overview strip is
        * handed a bare record and looks the turn back up. Both ask here now. They each had
@@ -5957,7 +5959,7 @@
        *
        * Kept so that progress can be re-reported by re-running that function rather than by
        * writing the count node directly — the window bar has one writer and a second one is the
-       * two-writers defect this exit exists to prevent (D8).
+       * two-writers defect this exit exists to prevent.
        */
       var ledgerWindow = null;
 
@@ -6099,7 +6101,7 @@
         // changed is worth more than the reason it was written.
         //
         // It said: what the reader can see is the window, not the filter result. That was written
-        // to fix a real thing (D13): this call used to RAISE `state.limit` to reach a selection
+        // to fix a real thing: this call used to RAISE `state.limit` to reach a selection
         // below the window, which made the window a thing the inspector could widen, and left the
         // promise 「已显示 200 条」 true at the moment the reader pressed 显示最新 200 条 and false a
         // second later. **That part is still true and the prohibition still stands** — the window
@@ -6152,7 +6154,7 @@
 
         updateWindowBar(windowed, hiddenAbove, total);
 
-        // D44: the two-ends jump is re-decided here rather than only from its observer. Measured on
+        // The two-ends jump is re-decided here rather than only from its observer. Measured on
         // a real session: wired to the observer alone, the button stayed `hidden` for 24 of 30 scroll
         // positions, because the observer only speaks when the intersection CHANGES and going from
         // an empty ledger to 32,000 rows never changed it — the sentinel was simply somewhere else
@@ -6245,7 +6247,7 @@
           // collapsed for good and the document is two thousand pixels tall above a hundred and
           // forty kilobytes of rows. It only showed up in the default window, where 200 records
           // span fewer turns than LEDGER_BATCH_GROUPS and therefore the *whole* ledger is this
-          // batch; D15's own A/B ran on 显示全部, where the batch is long enough to sit in the
+          // batch; the A/B that measured it ran on 显示全部, where the batch is long enough to sit in the
           // viewport and get measured for real.
           if (!build.heights) {
             build.heights = calibrateRowHeights(ledger);
@@ -6426,7 +6428,7 @@
         return { actions: actions, axis: axis, more: more, mode: mode, count: count };
       }
 
-      /* ---------------- D44: the ledger's two ends ---------------- */
+      /* ---------------- the ledger's two ends ---------------- */
 
       /**
        * Whether the ledger's end is on screen, which is the whole of 「到最低 / 到最上」.
@@ -6464,7 +6466,7 @@
       /**
        * Has this ledger been jumped yet. False until the reader presses it once.
        *
-       * D46: the first screen always points down, whatever the page is sitting at, because the
+       * The first screen always points down, whatever the page is sitting at, because the
        * reading 「the end is on screen」 is not yet true of anything the reader did — and drawing
        * 「读者还没动」 as 「读者在最上」 invents a state that does not exist. So the position only
        * gets a vote after the first press.
@@ -6503,7 +6505,7 @@
        * up is only the right arrow when up is the action and down only when it is.
        *
        * It moves the page and nothing else. It does not touch `state.limit`, so it cannot make the
-       * window wider — the prohibition D13 exists to enforce, and the one the window bar's
+       * window wider — the prohibition this function exists to enforce, and the one the window bar's
        * 「已显示 N 条」 depends on. Both ends are already loaded: down reaches the newest 200, up
        * reaches the oldest of them.
        */
@@ -7111,7 +7113,7 @@
 
       var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
       // The height the panel gets when the reader has not asked for another one. 2/5 of the
-      // window, on the reviewer's instruction (it was 1/4 through D22–D26).
+      // window, on the reviewer's instruction (it was a quarter for a while before that).
       //
       // One constant, because this number used to be written twice — applyInspectorDock() and
       // inspectorDockHeightNow() each had their own `innerHeight / 4`. Two writers of one number is
@@ -7132,11 +7134,11 @@
       // was that expanding the panel covered the rows outright, and a rule that only bounds one of
       // the two ways the panel can grow is not that rule. Two copies of it would be two rules.
       var INSPECTOR_LEDGER_SHARE = 0.25;
-      // D40: the hair of viewport the wide-screen inspector leaves below itself. Its bottom edge
+      // The hair of viewport the wide-screen inspector leaves below itself. Its bottom edge
       // landing exactly on the window's reads as cut off rather than as 「there is more below」, and
       // the region it scrolls in is only worth having if the reader can see that it scrolls.
       var INSPECTOR_WIDE_BOTTOM_GAP = 12;
-      // D44: the hair of viewport between the ledger's two-ends jump and the top of a pinned
+      // The hair of viewport between the ledger's two-ends jump and the top of a pinned
       // inspector. It is a gap rather than a butt joint because a button flush against another
       // control's border reads as one control with two labels. Measured on the narrow layout: the
       // panel renders 360px and the button must sit 368px up, so the clearance is counted from the
@@ -7188,14 +7190,14 @@
        *   docked — pinned to the bottom of the viewport at two fifths.
        *   full   — pinned, uncapped, because the reader asked with the handle.
        *
-       * Three of those four are pinned and one is not, and D36 is the story of how the fourth one
-       * did not exist: the panel carried `position: sticky; bottom: 0` in every state, so `flow`
+       * Three of those four are pinned and one is not, and the fourth one did not exist for a while:
+       * the panel carried `position: sticky; bottom: 0` in every state, so `flow`
        * was a class name rather than a position — sticky dragged the panel 7471px up the document
        * and in front of the ledger. The measurement is in the stylesheet; which of the two it is
        * comes from updateInspectorDock() below.
        *
        * Nothing here reads a scroll *direction* and nothing writes a class on <body>. That is the
-       * shape D19 was withdrawn for — a scroll signal from outside the layer deciding what
+       * shape a scroll-driven hide was withdrawn for — a scroll signal from outside the layer deciding what
        * something inside it does. This decides the presentation of one panel, from that panel's
        * own geometry plus one rectangle read out of the band above it, and touches nothing else on
        * the page.
@@ -7324,7 +7326,7 @@
         expand.hidden = !narrow || !docked || folded;
 
         // Each label names what this click does, which is the whole reason there are two of
-        // them: before D38 one label had to cover three states and the reader had to count
+        // them: when there was one button, its label had to cover three states and the reader had to count
         // clicks to use it.
         //
         // The folded label is the one that has to be data-dependent. It used to be the constant
@@ -7421,10 +7423,10 @@
       /**
        * The one writer of `state.inspectorDock`, and the only reason it is a function.
        *
-       * D38 turned one control into two, and two controls each assigning the field is two
-       * writers of one value — the thing R1 exists to prevent, and the thing that makes two
-       * controls quietly grow a third state nobody can name. So the buttons do not assign; they
-       * name where the click goes and this does the writing.
+       * Splitting one control into two, and two controls each assigning the field is two writers
+       * of one value — the thing this file's one-writer rule exists to prevent, and the thing that
+       * makes two controls quietly grow a third state nobody can name. So the buttons do not
+       * assign; they name where the click goes and this does the writing.
        *
        * No early return on an unchanged value, and that is load-bearing twice over. A drag calls
        * this once per pointermove with the same `'docked'` it already had; skipping the repaint
@@ -7467,7 +7469,7 @@
           if (state.inspectorDock !== 'flow') resetInspectorDock();
           return;
         }
-        // The question is the band's, not the panel's. D36: the reported rule is 「只有全部、异常、
+        // The question is the band's, not the panel's. The reported rule is 「只有全部、异常、
         // 轨迹这个区域处于最上方的时候, 检视才会强制下部显示」 — pinned while that region is at the top
         // of the viewport, back in the document the moment it comes back down into view.
         //
@@ -7630,8 +7632,8 @@
         // The panel just changed height, and its height is what decides whether sticky has it
         // pinned to the viewport bottom. Nothing that got here fires scroll or resize, so the
         // decision those two listeners normally make had not been made: the first appearance of
-        // the inspector inherited whatever state came before it. D32 made that visible — a panel
-        // that was already pinned reported `flow`, so it came up at panelMax with no handle.
+        // the inspector inherited whatever state came before it. A first measurement made that
+        // visible — a panel that was already pinned reported `flow`, so panelMax, with no handle.
         //
         // renderInspector() is the exit every selection change goes through (see above), so this is
         // the one place that owns re-deciding it. The scheduler rather than updateInspectorDock()
@@ -8055,7 +8057,7 @@
         root.setProperty('--sticky-band-h', band + 'px');
         root.setProperty('--sticky-overview-h', overview + 'px');
         root.setProperty('--sticky-window-h', dom.windowBar.offsetHeight + 'px');
-        // D40: the wide-screen inspector's ceiling, from the same two numbers the panel's `top` is
+        // The wide-screen inspector's ceiling, from the same two numbers the panel's `top` is
         // built out of — so the top of the region and the height of the region cannot disagree about
         // where the pinned stack ends. Measured, never vh; see the note in client-check.
         //
@@ -8692,7 +8694,7 @@
           render();
         });
 
-        // D44: the ledger's two-ends jump. Wired here with everything else, once — the observer it
+        // The ledger's two-ends jump. Wired here with everything else, once — the observer it
         // creates outlives every rebuild of #ledger, which is why its sentinel is a sibling of
         // #ledger rather than a child.
         buildLedgerJump();

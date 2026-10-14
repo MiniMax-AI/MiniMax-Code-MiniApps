@@ -38,8 +38,8 @@ const GENERATION_PROBE_BYTES = 64 * 1024;
  * costs accuracy, not correctness — 256 KB was reading four times what the label needed, on every
  * cache miss.
  *
- * The last clause used to end "for counts nobody treats as exact", and that is what D45 found
- * false: the page printed the message count in the session picker (`（3 分钟前 · 10 条）`), so it
+ * The last clause used to end "for counts nobody treats as exact", and that is what turned out
+ * to be false: the page printed the message count in the session picker (`（3 分钟前 · 10 条）`), so it
  * was treated as exact. On a session whose active file is 1 MB, the first 64 KB held 10 messages
  * out of 23,642 — a number that was wrong by three orders of magnitude and carried no hint of it.
  * So the prefix stays bounded and the counters it buys are only REPORTED when the prefix was the
