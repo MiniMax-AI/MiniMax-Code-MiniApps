@@ -12,7 +12,17 @@ it must not hold a predicate of its own. It did once — a copy of the whole dec
 drifted from the list's — and the copy drifted again the moment the search moved to the
 server, because the copy still scanned text while the list was asking a set. The strip is now
 a one-line adapter, and the only way to get a predicate back into it is to write a new one, so
-that is what this mutation writes.
+that is what the first mutation writes.
+
+The second mutation is a different shape and the more dangerous one, because it leaves the
+predicate alone. A local flag in front of the call — 「only bother asking when something is
+filtered」 — is an optimisation that costs nothing while the axes it lists agree with the
+filter. They did not: the flag was `isFiltering()` with three of its five axes dropped, so a
+time range or an 异常 rule alone left it false and the strip went on drawing every span the
+list had already dropped. Reading to the reader that is 「筛选了但什么都没变」, which is
+indistinguishable from a filter that is not wired up. The predicate was never wrong, so no
+assertion about the predicate could have caught it — only running the render and holding the
+strip against the list can.
 """
 import subprocess
 import sys
@@ -27,6 +37,10 @@ SPAN_ADAPTER = """      function spanPassesFilter(record) {
         var owner = record ? turnById.get(record.turnId) : null;
         return recordVisible(record, owner || null, null);
       }"""
+
+# The one call site inside the span loop, with its exact indentation — an anchor that does not
+# carry its own leading whitespace would also match the predicate's other references.
+STRIP_GATE = """          if (!spanPassesFilter(span.record)) continue;"""
 
 MUTATIONS = [
     (
@@ -44,6 +58,12 @@ MUTATIONS = [
         """      function spanPassesFilter(record) {
         return recordVisible(record, null, null);
       }""",
+    ),
+    (
+        "the strip asks the filter only when a local flag says something is filtered",
+        STRIP_GATE,
+        """          var filtering = state.query !== '' || state.kinds.length !== KIND_ORDER.length;
+          if (filtering && !spanPassesFilter(span.record)) continue;""",
     ),
 ]
 

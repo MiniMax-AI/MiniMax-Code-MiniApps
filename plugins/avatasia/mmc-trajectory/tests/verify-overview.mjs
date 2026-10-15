@@ -24,6 +24,25 @@ const body = bootIndex === -1 ? script : script.slice(0, bootIndex);
 const store = new Map();
 const noop = () => {};
 
+/** The smallest node that `el()`, `clear()` and the overview renderer can run against. */
+function domNode(tag) {
+  const kids = [];
+  const attrs = {};
+  return {
+    tag,
+    childNodes: kids,
+    get firstChild() { return kids.length ? kids[0] : null; },
+    appendChild(n) { kids.push(n); return n; },
+    removeChild(n) { const i = kids.indexOf(n); if (i >= 0) kids.splice(i, 1); return n; },
+    setAttribute(k, v) { attrs[k] = String(v); },
+    getAttribute(k) { return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null; },
+    removeAttribute(k) { delete attrs[k]; },
+    style: { setProperty: noop },
+    className: '',
+    textContent: ''
+  };
+}
+
 /** Boot the delivered script in a sandbox, optionally with storage pre-seeded. */
 function buildSandbox(seed) {
   const local = seed || new Map();
@@ -40,7 +59,11 @@ function buildSandbox(seed) {
       setInterval: () => 0,
       clearInterval: noop
     },
-    document: { documentElement: { dataset: {} }, body: { classList: { add: noop, remove: noop } } }
+    document: {
+      documentElement: { dataset: {} },
+      body: { classList: { add: noop, remove: noop } },
+      createElement: (tag) => domNode(tag)
+    }
   };
   vm.createContext(sandbox);
   vm.runInContext(body, sandbox);
@@ -626,6 +649,125 @@ check('strip: a record whose turn is unknown is dropped, because no turn rule fi
   sandbox.spanPassesFilter(rec('a3', 'user', 3600, 0, { turnId: 't-absent' })), false);
 sandbox.state.anomaly.rules = [];
 sandbox.turnById = new Map();
+
+/* ------------------------------------------------- the strip, drawn by the shipped code */
+/* Everything above asks `spanPassesFilter()` about one record. That is the predicate, not the
+ * strip. The defect this section exists for was a gate *in front of* the predicate inside
+ * `renderOverview()`, so a predicate-only guard could never see it: the predicate was always
+ * right, the caller had simply stopped asking. Hence the render runs here, and the invariant is
+ * the one a reader would state out loud — the strip is a picture of the list under it. Same
+ * records, same order, under every filter the page offers.
+ *
+ * A property, not a shape. The gate named two of five axes, and both cases below are one axis
+ * each — which is the whole reason the fix removed the gate instead of completing it: a list
+ * of axes is a list that drifts the next time an axis is added. Asserting "the strip equals
+ * the list" holds for an axis that does not exist yet; asserting "the gate mentions these two"
+ * would have passed while the strip was lying. */
+const STRIP_DOM_KEYS = ['overviewTrack', 'overviewTurns', 'overviewLanes', 'overviewSelection',
+  'overviewHover', 'overviewEmpty', 'overviewTip', 'overviewClear'];
+for (const key of STRIP_DOM_KEYS) sandbox.dom[key] = domNode('div');
+
+/* Five records carrying one difference each: a kind that can be unticked, a record the 异常
+ * axis can name, a timestamp a range can cut, and two records nothing touches. Both bounds are
+ * carried because the two readers disagree about which field they use: spans are placed by
+ * `timestamp`, the range filter reads `relativeMs`. A fixture with only one of them drops
+ * records for a reason that has nothing to do with the filter under test. */
+const STRIP = [
+  ent(rec('g1', 'user', 1000, 0, { relativeMs: 1000 }), 1),
+  ent(rec('g2', 'toolCall', 1100, 400, { relativeMs: 1100, responseId: 'R1', toolCallId: 'tc1', toolName: 'bash' }), 1),
+  ent(rec('g3', 'toolResult', 1100, 400, { relativeMs: 1100, toolCallId: 'tc1' }), 1),
+  ent(rec('g4', 'toolResult', 1600, 200, { relativeMs: 1600, toolCallId: 'tc2', isError: true }), 2),
+  ent(rec('g5', 'narration', 2000, 100, { relativeMs: 2000, responseId: 'R2' }), 2)
+];
+
+const stripIds = () => sandbox.dom.overviewLanes.childNodes.map((n) => n.getAttribute('data-record-id'));
+const listIds = () => sandbox.visibleEntries().map((e) => e.record.id);
+
+function resetStrip() {
+  sandbox.state.flat = STRIP.slice();
+  sandbox.state.kinds = ALL_KINDS;
+  sandbox.state.query = '';
+  sandbox.state.searchHits = null;
+  sandbox.state.overviewSelection = null;
+  sandbox.state.overviewViewport = null;
+  sandbox.state.anomaly.rules = [];
+  sandbox.state.rangeFrom = null;
+  sandbox.state.rangeTo = null;
+  sandbox.state.rangeCutoff = null;
+  sandbox.state.selectedId = null;
+}
+
+/* Render, then hold the strip to the list. Every case also states the rows outright, so a
+ * comparison cannot pass by both sides being empty — the failure mode a mirror assertion
+ * invites, and the one this section has the most reason to be suspicious of. */
+function stripIsTheList(name, expected) {
+  sandbox.renderOverview();
+  check(name + ': the rows under it', stripIds(), expected);
+  check(name + ': the strip draws exactly those rows', stripIds(), listIds());
+}
+
+resetStrip();
+stripIsTheList('strip under no filter', ['g1', 'g2', 'g3', 'g4', 'g5']);
+
+/* The kind axis, which the gate did list. Unchanged behaviour — and unchanged is the point:
+ * a fix that silently moved this one would be a fix that broke the case it looked right on. */
+resetStrip();
+sandbox.state.kinds = NO_TOOLS;
+stripIsTheList('strip under a kind filter', ['g1', 'g5']);
+
+/* The range axis. The gate did not list it, which is the defect: set a range and the strip
+ * went on drawing every span the list had already dropped. */
+resetStrip();
+sandbox.state.rangeTo = 1500;
+stripIsTheList('strip under a time range', ['g1', 'g2', 'g3']);
+
+/* The 异常 axis, which replaces the filter outright. Same shape of gap: tick one rule and the
+ * strip ignored it until a kind filter happened to be on as well. */
+resetStrip();
+sandbox.state.anomaly.rules = ['toolError'];
+stripIsTheList('strip under one 异常 rule', ['g4']);
+
+/* 异常 is exclusive by construction, so a kind filter left on beside it must change nothing —
+ * on either surface. If these two ever disagree the strip is not exclusive, whatever the
+ * button says. */
+resetStrip();
+sandbox.state.anomaly.rules = ['toolError'];
+sandbox.state.kinds = ['user'];
+stripIsTheList('strip under 异常 with a kind filter left on', ['g4']);
+
+/* The selected row is a deliberate exception, and an exception nobody asserts is one more
+ * thing the next reader cannot tell from a bug. Its scope is the viewport, not the filter:
+ * panning the strip must not delete the row the reader is on, while every other clipped span
+ * goes.
+ *
+ * The viewport is in the model's own position space — `overviewModel()` renumbers every span
+ * onto 0..n — so these bounds are fractions of the strip's width, not timestamps. Reading them
+ * as milliseconds does not fail loudly; the viewport simply reads as wider than the domain and
+ * nothing clips. */
+resetStrip();
+sandbox.state.overviewViewport = { start: 0, duration: 2.5 };
+sandbox.renderOverview();
+check('strip: panning the viewport draws only the spans still inside it',
+  stripIds(), ['g1', 'g2', 'g3']);
+sandbox.state.selectedId = 'g4';
+sandbox.renderOverview();
+check('strip: the selected row survives being panned off, since it is the row being read',
+  stripIds(), ['g1', 'g2', 'g3', 'g4']);
+
+/* And the brush itself is exempt, by argument rather than by omission: `spanPassesFilter`
+ * passes a null selection so the window you are dragging over does not erase its own
+ * contents. Asserted from the other side — with a brush in state, the list loses records and
+ * the strip does not. */
+resetStrip();
+sandbox.state.overviewSelection = { start: 1100, end: 1600 };
+sandbox.renderOverview();
+check('strip: a brush empties the list', listIds(), []);
+check('strip: and the strip keeps everything it is drawn over', stripIds(), ['g1', 'g2', 'g3', 'g4', 'g5']);
+
+resetStrip();
+sandbox.renderOverview();
+check('strip: with nothing filtered again the strip is whole',
+  stripIds(), ['g1', 'g2', 'g3', 'g4', 'g5']);
 
 /* ----------------------------------------------------------------------- report */
 console.log('overview + toolbar controls: ' + pass + ' passed, ' + failures.length + ' failed');

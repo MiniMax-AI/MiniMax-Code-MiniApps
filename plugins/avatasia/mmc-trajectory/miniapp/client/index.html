@@ -5151,8 +5151,6 @@
         track.style.setProperty('--ov-domain-left', ((view.start - model.start) / fullDuration * 100).toFixed(4) + '%');
         track.style.setProperty('--ov-domain-width', (view.duration / fullDuration * 100).toFixed(4) + '%');
 
-        var hasQuery = state.query !== '';
-        var filtering = hasQuery || state.kinds.length !== KIND_ORDER.length;
         var lanes = dom.overviewLanes;
         clear(lanes);
         for (var i = 0; i < model.spans.length; i += 1) {
@@ -5173,7 +5171,16 @@
           // it kept the excluded work visible enough that turning off 工具结果 left the
           // tool lane reading as a solid band, which is indistinguishable from no filter
           // at all. Positions still come from the full model, so the axis does not move.
-          if (filtering && !spanPassesFilter(span.record)) continue;
+          //
+          // Asked unconditionally, with no local "is anything filtered" flag in front of it.
+          // There used to be one, over two of the five axes, and it was the same defect the
+          // comment on `spanPassesFilter()` records: set only a time range, or only an anomaly
+          // rule, and the flag said nothing was filtered, so the strip kept drawing spans the
+          // list had already dropped — which a reader reads as "I filtered it and nothing
+          // changed". A flag listing the axes is a list that drifts the next time an axis is
+          // added, so the flag is gone rather than completed. The brush stays out of this
+          // because `spanPassesFilter` passes a null selection, not because it is missing here.
+          if (!spanPassesFilter(span.record)) continue;
           node.style.setProperty('--ov-lane', String(span.lane));
           node.style.setProperty('--ov-left', (left * 100).toFixed(4) + '%');
           node.style.setProperty('--ov-width', (width * 100).toFixed(4) + '%');
