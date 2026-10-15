@@ -2371,9 +2371,14 @@ export function sessionsValidator(visible, titles, limit) {
     const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
     // A NUL between the fields, so a rename cannot be masked by the stat beside it: with a plain
     // separator, {"ab",""} and {"a","b"} concatenate to the same string and the tag does not move.
+    // Every value the body carries has to be in the material, and the comment sits out here so
+    // the three field lines stay contiguous — a mutation anchor that has to reach past a comment
+    // stops resolving the next time the comment is reworded, and an anchor that stops resolving
+    // is an assertion that quietly stops being tested.
     parts.push(entry.dir + "|" + entry.sizeBytes + "|" + entry.lastActiveAt
       + "|" + (meta ? String(meta.title ?? "") : "")
-      + "\u0000" + (meta ? String(meta.kind ?? "") : ""));
+      + "\u0000" + (meta ? String(meta.kind ?? "") : "")
+      + "\u0000" + (meta ? String(meta.parent ?? "") : ""));
   }
   return parts.join("\n");
 }

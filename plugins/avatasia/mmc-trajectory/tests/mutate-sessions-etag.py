@@ -38,8 +38,9 @@ MUTATIONS = [
     # `kind` is what puts the sub-agent and cron badges on the rows, so a page that keeps a stale
     # tag is offering the reader a worker's session as if it were their conversation.
     ("a changed session kind stops moving the tag",
-     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\"));",
-       "      + \"\");")],
+     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\")\n"
+       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));",
+       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));")],
      "a changed session kind moves the tag, even with no title", SERVER),
 
     # The one that looks like a simplification. Two different requests, one tag.
@@ -50,8 +51,10 @@ MUTATIONS = [
     # The separator. Without one, {"ab",""} and {"a","b"} concatenate to the same string, so two
     # different payloads share a tag and the 304 is served for one the caller never held.
     ("the title and kind are concatenated with no separator",
-     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\"));",
-       "      + (meta ? String(meta.kind ?? \"\") : \"\"));")],
+     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\")\n"
+       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));",
+       "      + (meta ? String(meta.kind ?? \"\") : \"\")\n"
+       "      + (meta ? String(meta.parent ?? \"\") : \"\"));")],
      "a title/kind split cannot be hidden inside the separator", SERVER),
 
     # mtime is one of the three facts the descriptor cache keys on, and the only one that moves
@@ -137,6 +140,17 @@ MUTATIONS = [
     ("the list validator stops being bound to its request key",
      [("state.sessionsEtagFor === key", "true")],
      "the list validator is bound to the request key", CLIENT),
+
+    # The one that looks like tidying. `parent` is in the body — it is what puts 「子会话」 on the
+    # row — so leaving it out of the material makes the tag constant across a change the reader
+    # can see, and the 304 that follows is a statement about bytes nobody re-computed. Found by
+    # review, not by a failing test: the guard was passing because every map it built varied only
+    # the title and the kind, so nothing ever asked the question.
+    ("the validator stops covering the parent the body sends",
+     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\")\n"
+       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));",
+       "      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\"));")],
+     "a changed parent moves the tag, even with the title and kind held constant", SERVER),
 ]
 
 ORIGINALS = {

@@ -41,12 +41,20 @@ const html = readFileSync(HTML, 'utf8');
 // under test, in the file that serves it. Section 3 asks "does the page's re-derivation agree with
 // the server's numbers", and both sides of that question are still the real implementations.
 //
-// Three properties are load-bearing, and none of them is "big":
+// Four properties are load-bearing, and none of them is "big":
 //
 //   - over a thousand messages, or the half-range comparison compares two numbers too close to tell
 //   - a local midnight with rows on both sides of it, or the wall-clock arithmetic is never exercised
-//   - no turn that is nothing but a checkpoint, or `compactionTurns` is not 0 and the two sides are
-//     re-deriving different populations rather than disagreeing about the same one
+//   - EVERY field section 3 compares is non-zero, or the comparison is `0 === 0`: green, and not
+//     evidence of anything. That includes the two compaction counters, so the session carries a
+//     turn that is nothing but a checkpoint. Leaving them at zero looked like a deliberate choice
+//     — "no bare checkpoint turn, or the two sides re-derive different populations" — and it was
+//     exactly backwards: it meant `stats.compactions += 1` and `stats.compactionTurns += 1` could
+//     both be deleted from the page and this guard would still pass. A turn that is nothing but a
+//     checkpoint is also the only way that branch of the classifier is reachable, so it is what
+//     makes the two counters comparable rather than assumed. The product invariant that a real
+//     session has none of these belongs to `verify-compaction-turn.mjs`; asserting it here proved
+//     nothing, because the number it asserted was this file's own choice.
 const SYNTHETIC_TURNS = 300;
 // Eight hours from 20:00 local puts the midnight four hours in, with roughly half the records on
 // each side of it — dense enough that the ±5 minute window section 3b picks is never empty, and
@@ -105,6 +113,19 @@ function buildRows(start) {
     // in `turnsWithoutPrompt` instead and the classifier's second branch is never taken.
     if (t % 12 === 5) {
       add(turnId, assistant(t, [thinking(t), { type: 'text', text: 'synthetic resumed ' + t }], 'stop'));
+      continue;
+    }
+
+    // Every twenty-third turn is a checkpoint that opened a turn the file never named — the only
+    // shape the server classifies as `compaction`, and the reason the two compaction counters are
+    // compared rather than assumed. Without it the page's `+= 1` for either one could be deleted
+    // and every assertion below would still pass on `0 === 0`.
+    if (t % 23 === 7) {
+      add(turnId, {
+        role: 'compactionSummary',
+        summary: 'synthetic checkpoint ' + t,
+        tokensBefore: 1000 + t,
+      });
       continue;
     }
 
@@ -443,11 +464,16 @@ for (const field of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'
 // The one field that must NOT be re-scoped: 「全程 N」 beside the range is the comparison the
 // reader wants, and re-scoping it would leave the note with nothing to say.
 check('messagesAll stays whole-session', whole.messagesAll, payload.stats.messagesAll);
-// The preconditions of section 3b, asserted rather than assumed. A generator edited down to a
-// tenth of its size, or one that grew a bare checkpoint turn, would leave every assertion below it
-// comparing two near-identical small numbers — still green, and no longer evidence of anything.
+// The preconditions of section 3, asserted rather than assumed. A generator edited down to a
+// tenth of its size would leave every assertion below it comparing two near-identical small
+// numbers — still green, and no longer evidence of anything.
 assert('the synthetic session is big enough to be worth checking', payload.stats.messages > 1000);
-assert('compactionTurns is 0 after the turn fix, as it must be', payload.stats.compactionTurns === 0);
+// The one that was wrong before. It read `compactionTurns === 0`, which made the fixture guarantee
+// the precondition of the comparison it was about to perform: two counters that are zero by
+// construction compare equal whether or not the page counts them at all. Asking for a non-zero
+// one is what turns two tautologies into two checks.
+assert('the compaction counters are non-zero, so the page is actually counted against them',
+  payload.stats.compactions > 0 && payload.stats.compactionTurns > 0);
 
 // A narrower range must produce strictly fewer messages, or the filter is not filtering.
 const halfEnd = Math.floor((mins + maxs) / 2);

@@ -72,6 +72,24 @@ MUTATIONS = [
         "          state.rangeCutoff = latestRecordIndex();\n        }\n        syncRangeButtons();",
         "          state.rangeCutoff = null;\n        }\n        syncRangeButtons();",
     ),
+    # ---- the two counters that were being compared at zero ------------------------------------
+    # Both of these survived an earlier version of this guard, and that is worth recording rather
+    # than just fixing: the fixture was built WITHOUT a bare checkpoint turn, so both sides read 0,
+    # so `0 === 0` passed with the page's `+= 1` deleted outright. The guard was comparing two
+    # zeros that it had itself arranged — a self-fulfilling comparison, which is the failure mode a
+    # mutation control exists to surface and a count of assertions cannot.
+    (
+        "the page stops counting compactions, which the fixture now makes non-zero",
+        "whole-session compactions",
+        "        else if (kind === 'compaction') stats.compactions += 1;",
+        "",
+    ),
+    (
+        "the page stops counting turns that are nothing but a checkpoint",
+        "whole-session compactionTurns",
+        "        stats.compactionTurns += 1;",
+        "",
+    ),
 ]
 
 

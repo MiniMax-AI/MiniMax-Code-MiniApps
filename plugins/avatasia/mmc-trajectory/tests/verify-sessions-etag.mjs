@@ -95,6 +95,20 @@ const kindAfter = new Map([[A, { title: '第一段会话', kind: 'conversation' 
 assert('a changed session kind moves the tag, even with no title',
   sessionsValidator(visible, kindBefore, 20) !== sessionsValidator(visible, kindAfter, 20));
 
+// The parent is what puts 「子会话」 on the row, so it is reader-visible on its own and belongs in
+// the material for the same reason `kind` does. The title AND the kind are held constant here, so
+// this cannot pass on either of them: the two maps differ in the parent and in nothing else.
+const parentBefore = new Map([[A, { title: '第一段会话', kind: 'conversation', parent: null }]]);
+const parentAfter = new Map([[A, { title: '第一段会话', kind: 'conversation', parent: 'mvs_0000000000000000000000000000bbbb' }]]);
+assert('a changed parent moves the tag, even with the title and kind held constant',
+  sessionsValidator(visible, parentBefore, 20) !== sessionsValidator(visible, parentAfter, 20));
+
+// And the null case, which is the other half: a row with no parent and a row whose parent is the
+// empty string render identically on the page, so they must not read as a change.
+const parentEmpty = new Map([[A, { title: '第一段会话', kind: 'conversation', parent: '' }]]);
+assert('an empty parent and a null one agree — they render the same row',
+  sessionsValidator(visible, parentBefore, 20) === sessionsValidator(visible, parentEmpty, 20));
+
 // A null title and an absent one are the same payload — the picker falls back to 「会话 <id>」 — so
 // they have to be the same tag, or every poll would look like a change.
 const nullTitle = new Map([[A, { title: null, kind: 'conversation' }]]);
