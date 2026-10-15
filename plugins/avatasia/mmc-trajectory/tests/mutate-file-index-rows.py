@@ -1,21 +1,26 @@
-"""Mutation control for the locator projection.
+"""Mutation control for the file-index projection.
 
-`verify-locator-rows.mjs` states one property per case, and each mutation here breaks exactly one
+`verify-file-index-rows.mjs` states one property per case, and each mutation here breaks exactly one
 of them in the shipped module. The cases that are easy to get wrong are all about **file 0**:
 
   - A record whose line was never located is repaired to the first source file. Nothing else about
-    the answer changes — the record is still there, still searchable, still carries a byte range
-    if it had one — so this is invisible until someone maps a hit back to the wrong generation.
-    `buildSegment` cannot catch it: it faithfully carries whatever `fileIdx` it is handed, so the
-    122 segment assertions stay green.
+    the answer changes — the record is still there, still searchable — so this is invisible until
+    someone answers from a different generation's message. `buildSegment` cannot catch it: it
+    faithfully carries whatever `fileIdx` it is handed, so every segment assertion stays green.
   - The same repair reached by the other route: the locator names a file that is not in the table
     (a source that moved) and gets filed under the first entry instead.
   - Two generations that hold a file of the same name are matched by basename rather than by full
     path, which files one generation's records under the other.
 
-The fourth takes the byte range away, because a locator that answers "which file" but not "where
-in it" cannot map a hit back to a line — and the surface still looks complete, so nothing reports
-it.
+The fourth runs the other way. The projection used to copy the locator's byte range onto the row, and
+that pair of fields rode along on every segment line for nothing — read back by no code in the
+shipped search path, 4.36% of a real segment surface. This mutation puts them back, which is the
+shape of mistake that retirement is supposed to prevent: a guard that only checks the fields it
+expects will not notice a field that came back.
+
+Its twin lives in `mutate-search-segments.py`, because the same two fields can come back at the
+other end — written by `buildSegment` instead of by this projection — and a control that only owns
+one of the two doors can be walked around through the other.
 
 Each mutation must be caught *by name*. A probe that dies on an exception names nothing, and a
 control that reports that as caught is reporting a crash as if it were evidence.
@@ -27,17 +32,17 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 MODULE = ROOT / "miniapp" / "node" / "search-segments.mjs"
-PROBE = HERE / "verify-locator-rows.mjs"
+PROBE = HERE / "verify-file-index-rows.mjs"
 
-UNLOCATED = """      out.push(locator === undefined
-        ? { fileIdx: -1, byteStart: -1, byteEnd: -1 }
-        : {"""
-UNLOCATED_REPAIRED = """      out.push(locator === undefined
-        ? { fileIdx: 0, byteStart: 0, byteEnd: 0 }
-        : {"""
+ROW = "{ fileIdx: pathToFileIdx.get(locator.filePath) ?? -1 }"
+ROW_UNLOCATED = "? { fileIdx: -1 }\n        : " + ROW + ");"
 
-MOVED_SOURCE = "          fileIdx: pathToFileIdx.get(locator.filePath) ?? -1,"
-MOVED_REPAIRED = "          fileIdx: pathToFileIdx.get(locator.filePath) ?? 0,"
+UNLOCATED_REPAIRED = "? { fileIdx: 0 }\n        : " + ROW + ");"
+BYTES_BACK = ("? { fileIdx: -1, byteStart: -1, byteEnd: -1 }\n        : "
+              "{ fileIdx: pathToFileIdx.get(locator.filePath) ?? -1, "
+              "byteStart: locator.start, byteEnd: locator.end });")
+
+MOVED_REPAIRED = "{ fileIdx: pathToFileIdx.get(locator.filePath) ?? 0 }"
 
 FULL_PATH = """    if (typeof file.filePath === 'string' && !pathToFileIdx.has(file.filePath)) {
       pathToFileIdx.set(file.filePath, i);
@@ -46,20 +51,15 @@ BASENAME = """    if (typeof file.fileName === 'string' && !pathToFileIdx.has(fi
       pathToFileIdx.set(file.fileName, i);
     }"""
 
-BYTES = """          byteStart: locator.start,
-          byteEnd: locator.end"""
-BYTES_DROPPED = """          byteStart: -1,
-          byteEnd: -1"""
-
 MUTATIONS = [
     (
         "a record with no locator is repaired to the first file instead of -1",
-        UNLOCATED,
+        ROW_UNLOCATED,
         UNLOCATED_REPAIRED,
     ),
     (
         "a locator whose file moved is filed under the first file instead of -1",
-        MOVED_SOURCE,
+        ROW,
         MOVED_REPAIRED,
     ),
     (
@@ -68,9 +68,9 @@ MUTATIONS = [
         BASENAME,
     ),
     (
-        "the byte range is dropped, so a hit cannot be mapped back to its line",
-        BYTES,
-        BYTES_DROPPED,
+        "the byte range is copied onto the row again, so it rides along on every segment",
+        ROW_UNLOCATED,
+        BYTES_BACK,
     ),
 ]
 

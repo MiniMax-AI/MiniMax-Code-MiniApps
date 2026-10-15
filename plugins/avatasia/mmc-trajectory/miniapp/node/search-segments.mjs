@@ -44,7 +44,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** Bumped when the on-disk shape changes in a way an older reader cannot survive. */
-export const SEGMENT_SCHEMA_VERSION = 2;
+export const SEGMENT_SCHEMA_VERSION = 3;
 
 /**
  * The fields a search reads, in the page's order.
@@ -54,8 +54,6 @@ export const SEGMENT_SCHEMA_VERSION = 2;
  * for a phrase that spans two of them would hit in one build and miss in another.
  */
 export const SEARCH_FIELDS = ['summary', 'text', 'result', 'thinking', 'toolName'];
-
-/** @typedef {{ ordinal: number, fileIdx: number, byteStart: number, byteEnd: number }} SegmentLocator */
 
 /** @typedef {{ fileName: string, generation: number | null, size: number, revision: string | null, truncated?: boolean }} SegmentSource */
 
@@ -113,37 +111,43 @@ export function normaliseWhitespace(value) {
  * artifact could be written to disk. Nothing read that artifact back, so the shape was paid for on
  * every publish and consumed by exactly one caller.
  *
- * That caller reads **one** of the three fields. `fileIdx` is the per-generation grouping key: a
- * record goes into the segment for the source file its locator names, so a record with no locator
- * lands in no segment at all rather than in whichever generation happens to be first. The other
- * two ride along on the segment line's JSON prefix — and as of this change **nothing in the shipped
- * search path reads them back**. `readSegmentHits` picks five fields off that prefix and drops the
- * rest, and `/api/trajectory/record` answers from the in-memory lineage cache rather than from a
- * segment. What they buy today is a capability nothing exercises: a hit in a sealed generation
- * could be mapped back to the line it came from. Measured cost of carrying it: 4.36% of a real
- * segment surface, 49 bytes a line (1,177-line, 1.3 MB segment).
+ * That caller read **one** of the three fields, and still does: `fileIdx` is the per-generation
+ * grouping key, so a record goes into the segment for the source file its locator names, and a
+ * record with no locator lands in no segment at all rather than in whichever generation happens to
+ * be first.
  *
- * They stay because they are part of the **segment format**, not of this function. Dropping them
- * means a format change with a schema bump and every already-written segment invalidated, which is
- * its own batch with its own four questions — carrying them is the cheap half of that decision, and
- * the expensive half is what other people already have on disk.
+ * The other two — `byteStart` and `byteEnd`, the byte range the record occupied in that file — are
+ * gone as of schema 3. They rode along on the segment line's JSON prefix and **nothing in the
+ * shipped search path ever read them back**: `readSegmentHits` picks five fields off that prefix and
+ * drops the rest, and `/api/trajectory/record` answers from the in-memory lineage cache rather than
+ * from a segment. What they bought was a capability nothing exercised — a hit in a sealed
+ * generation mapped back to the line it came from — for 4.36% of a real segment surface, 49 bytes a
+ * line (1,177-line, 1.3 MB segment).
  *
- * So this is the producer of part of the segment format, and it lives here rather than beside a
- * directory nothing reads.
+ * They came from a design rule that was right and unfinished: a segment line carries *everything a
+ * hit has to answer with*, so a hit would be self-sufficient. The route that opens a hit never took
+ * that path — it answers from the lineage cache and reports `trajectory_not_cached` when that cache
+ * is cold, and it does not re-parse to get out of it. So the promise was never kept and the fields
+ * were paid for in full. Completing it would have been the wrong fix anyway: the trajectory route
+ * re-parses (`loadParsedRows` keys on size and mtime) and refills that cache, and a record is only
+ * ever opened from a ledger the page could already draw — which came from one of those payloads.
+ * Nothing on this path needs a position on disk.
+ *
+ * The function is renamed with the shape. It no longer produces locators, and a name that still
+ * claimed to is the kind of debt this file has been paying down since the index was retired.
  *
  * `raws` is the record -> locator map the route already builds for `/raw`. A record with no
- * locator gets `-1` in all three fields, and that is a real state rather than a gap to be filled:
- * repairing it to `0` would file the record under whichever source file happens to be first,
- * which is a different generation's message. `-1` also stays distinguishable from byte `0`, which
- * is a position a record really can have.
+ * locator gets `-1`, and that is a real state rather than a gap to be filled: repairing it to `0`
+ * would file the record under whichever source file happens to be first, which is a different
+ * generation's message.
  *
  * @param {{ turns: Array<{ records: Array<{ index: number }> }> }} payload
- * @param {Map<number, { filePath: string, start: number, end: number }>} raws
+ * @param {Map<number, { filePath: string }>} raws
  * @param {Array<{ filePath?: string }>} files
- * @returns {Array<{ fileIdx: number, byteStart: number, byteEnd: number }>} one entry per record,
+ * @returns {Array<{ fileIdx: number }>} one entry per record,
  *   in the same order the payload's turns and their records are walked
  */
-export function locatorRowsFromPayload(payload, raws, files) {
+export function fileIdxRowsFromPayload(payload, raws, files) {
   const pathToFileIdx = new Map();
   files.forEach((file, i) => {
     // Matched on the full path, not the file name: two generations can each hold a file the
@@ -158,12 +162,8 @@ export function locatorRowsFromPayload(payload, raws, files) {
     for (const record of turn.records) {
       const locator = raws.get(record.index);
       out.push(locator === undefined
-        ? { fileIdx: -1, byteStart: -1, byteEnd: -1 }
-        : {
-          fileIdx: pathToFileIdx.get(locator.filePath) ?? -1,
-          byteStart: locator.start,
-          byteEnd: locator.end
-        });
+        ? { fileIdx: -1 }
+        : { fileIdx: pathToFileIdx.get(locator.filePath) ?? -1 });
     }
   }
   return out;
@@ -174,13 +174,19 @@ export function locatorRowsFromPayload(payload, raws, files) {
  *
  * Each line is `<compact json>\t<searchable text>`, one line per record in ledger order, and it
  * carries everything a hit has to answer with: the ledger `index`, the `turnIndex`, `kind`,
- * `generation` and the projected `summary`, plus the locator triple.
+ * `generation`, the projected `summary`, and the `fileIdx` it was filed under.
  *
  * Why the answer travels with the searchable text: answering used to mean reading the session's
  * whole record index as well — measured at 34.2 MB of JSONL for the largest session on this
  * machine, parsed on every search, which was 1.7 s of the 1.7 s left after the projection stopped
  * being rebuilt. A needle that matches 14 records out of 36,525 does not need the other 36,511,
  * and it does not need them parsed either.
+ *
+ * `fileIdx` is the one field here that is not part of a hit's answer: nothing reads it back, because
+ * the segment a record lands in already *is* the generation it came from. It survives because the
+ * grouping is done by comparing against it, and a comparison needs both sides to name the same
+ * number. The byte range that used to sit beside it had no such caller and is gone at schema 3 —
+ * see `fileIdxRowsFromPayload`.
  *
  * The separator is a TAB and the searchable part comes last, so a needle can never match across the
  * boundary into the JSON prefix — the record it would name is then a match spanning two records,
@@ -201,8 +207,6 @@ export function buildSegment(input) {
       generation: typeof record.generation === 'number' ? record.generation : null,
       summary: typeof record.summary === 'string' ? record.summary : '',
       fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,
-      byteStart: typeof record.byteStart === 'number' ? record.byteStart : -1,
-      byteEnd: typeof record.byteEnd === 'number' ? record.byteEnd : -1,
     }) + '\t' + searchSurfaceOf(record));
   }
   return { surface: lines.join('\n') };

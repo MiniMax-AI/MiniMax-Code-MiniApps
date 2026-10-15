@@ -173,6 +173,22 @@ MUTATIONS = [
         "/** @deprecated one ordinal at a time — walks the whole segment to find it. */\n"
         "export function readSegmentHit(surface, ordinal) {\n  return readSegmentHits(surface, [ordinal])[0] ?? null;\n}",
     ),
+    # ---- a retired field must not come back through this door ---------------------------
+    (
+        # The pair of fields this module stopped writing at schema 3. Nothing read them back, they
+        # cost 4.36% of every segment surface, and retiring them was its own batch — so the one
+        # thing worth guarding is that they stay gone. `buildSegment` writes whatever a record is
+        # handed, which means stopping is not a decision this function makes on its own: any
+        # upstream that starts supplying a byte range again puts it straight back on every line.
+        # `mutate-file-index-rows.py` closes the other door — the projection — and a control that
+        # owned only one of them could be walked around through the other.
+        "the byte range rides along on every segment line again",
+        "      fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,\n    }) + '\\t' + searchSurfaceOf(record));",
+        "      fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,\n"
+        "      byteStart: typeof record.byteStart === 'number' ? record.byteStart : -1,\n"
+        "      byteEnd: typeof record.byteEnd === 'number' ? record.byteEnd : -1,\n"
+        "    }) + '\\t' + searchSurfaceOf(record));",
+    ),
 ]
 
 

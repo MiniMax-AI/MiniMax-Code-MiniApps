@@ -350,46 +350,58 @@ check('whitespace does not count toward the floor', needleIsUsable('  '), false)
 assert('a needle longer than the floor passes', needleIsUsable('  real words  '));
 
 /* =====================================================================
- * 3 — a hit maps back to the line it came from
+ * 3 — a hit is answered from the line the scan named
  * ===================================================================== */
 
-const withLocators = buildSegment({
-  records: RECORDS.map((r, i) => ({ ...r, index: i, fileIdx: i < 4 ? 0 : 1, byteStart: i * 100, byteEnd: i * 100 + 40 })),
-});
-// The locator triple rides on the same line as the searchable text, so it is read back from the
-// line the scan named rather than from a second file that had to be walked in parallel with this one.
-const lineAt = (n) => withLocators.surface.split('\n')[n] ?? '';
-const locatorAt = (n) => {
+/* The records handed to `buildSegment` still carry a byte range, and they still will: the lineage
+ * produces one per record whatever this build does with it. So the check below is not "the input has
+ * no byte range, therefore neither does the output" — it is that the input HAS one and the line
+ * does not, which is the only version of the assertion that could have failed before the fields were
+ * retired. */
+const SEGMENT_INPUT = RECORDS.map((r, i) => ({
+  ...r, index: i, fileIdx: i < 4 ? 0 : 1, byteStart: i * 100, byteEnd: i * 100 + 40
+}));
+const withFileIdx = buildSegment({ records: SEGMENT_INPUT });
+check('the records handed to the build really did carry a byte range',
+  SEGMENT_INPUT.map((r) => typeof r.byteStart === 'number'), RECORDS.map(() => true));
+
+// The line's own prefix is read back from the line the scan named, rather than from a second file
+// that had to be walked in parallel with this one.
+const lineAt = (n) => withFileIdx.surface.split('\n')[n] ?? '';
+const prefixAt = (n) => {
   const tab = lineAt(n).indexOf('\t');
   return tab < 0 ? null : JSON.parse(lineAt(n).slice(0, tab));
 };
-check('locator ordinals are the record order',
-  RECORDS.map((_, i) => locatorAt(i)?.ordinal ?? null), RECORDS.map((_, i) => i));
-check('locators carry which file',
-  RECORDS.map((_, i) => locatorAt(i)?.fileIdx ?? null), RECORDS.map((_, i) => (i < 4 ? 0 : 1)));
-check('locators carry where the line sat',
-  RECORDS.map((_, i) => locatorAt(i)?.byteStart ?? null), RECORDS.map((_, i) => i * 100));
-check('a record with no position says -1, not 0',
-  RECORDS.map((_, i) => locatorAt(i)?.byteEnd ?? null),
-  RECORDS.map((_, i) => (i === 0 ? 40 : i * 100 + 40)));
-check('a record that carries no locator at all still gets a line',
-  RECORDS.map((_, i) => locatorAt(i) !== null), RECORDS.map(() => true));
+check('the ordinal is the record order',
+  RECORDS.map((_, i) => prefixAt(i)?.ordinal ?? null), RECORDS.map((_, i) => i));
+check('the line carries which file',
+  RECORDS.map((_, i) => prefixAt(i)?.fileIdx ?? null), RECORDS.map((_, i) => (i < 4 ? 0 : 1)));
+check('a record that carries no file number at all still gets a line',
+  RECORDS.map((_, i) => prefixAt(i) !== null), RECORDS.map(() => true));
 {
   const bare = buildSegment({ records: [{ summary: 'x' }] }).surface.split('\n')[0];
   const parsed = JSON.parse(bare.slice(0, bare.indexOf('\t')));
-  check('a record with no position says -1',
-    { fileIdx: parsed.fileIdx, byteStart: parsed.byteStart, byteEnd: parsed.byteEnd },
-    { fileIdx: -1, byteStart: -1, byteEnd: -1 });
+  check('a record with no file number says -1, not 0', parsed.fileIdx, -1);
 }
 
-const hit = scanSegment(withLocators.surface, foldNeedle('grep'))[0];
+/* The retirement, pinned from the one door the projection does not own. `fileIdxRowsFromPayload` can
+ * stop emitting the pair, but `buildSegment` writes whatever a record is handed, so the same two
+ * fields come back the moment anything upstream starts supplying them again — which is why the
+ * assertion below sits here and not only at the projection. The check at the top of this section is
+ * its other half: without a byte range going in, "no line carries one" would pass for free. */
+assert('no line carries a byte range any more',
+  RECORDS.every((_, i) => {
+    const p = prefixAt(i);
+    return p !== null && !('byteStart' in p) && !('byteEnd' in p);
+  }));
+
+const hit = scanSegment(withFileIdx.surface, foldNeedle('grep'))[0];
 // Read through `?.` so a build whose surfaces no longer line up with their records FAILS HERE BY
-// NAME rather than throwing on an undefined locator — a crash names no rule, and the reader is left
+// NAME rather than throwing on an undefined prefix — a crash names no rule, and the reader is left
 // with a stack trace instead of the thing that moved.
-check('a hit resolves to the line it came from', locatorAt(hit)?.ordinal ?? null, hit ?? null);
-check('and that line names where the record sat', locatorAt(hit)?.byteStart ?? null, hit === undefined ? null : hit * 100);
+check('a hit resolves to the line it came from', prefixAt(hit)?.ordinal ?? null, hit ?? null);
 check('and reads back as the answer, not as a locator',
-  oneHit(withLocators.surface, hit)?.index ?? null, hit ?? null);
+  oneHit(withFileIdx.surface, hit)?.index ?? null, hit ?? null);
 
 /* =====================================================================
  * 4 — a half-published segment is never consumed
@@ -427,7 +439,7 @@ try {
   // trial. Here the surface gains a line AND the manifest's digest for it is re-taken, so both
   // bytes check out and only the count disagrees.
   const baseManifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
-  const grownSurface = `${segment.surface}\n${JSON.stringify({ ordinal: RECORDS.length, index: -1, fileIdx: 0, byteStart: 0, byteEnd: 1 })}\t${'extra'}`;
+  const grownSurface = `${segment.surface}\n${JSON.stringify({ ordinal: RECORDS.length, index: -1, fileIdx: 0 })}\t${'extra'}`;
   await writeFile(join(dir, 'surface.txt'), grownSurface, 'utf8');
   await writeFile(join(dir, 'manifest.json'),
     JSON.stringify({ ...baseManifest, surfaceDigest: digestOf(grownSurface), surfaceBytes: Buffer.byteLength(grownSurface) }), 'utf8');

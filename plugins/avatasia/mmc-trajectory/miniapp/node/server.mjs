@@ -11,9 +11,9 @@ import {
   SEARCH_FIELDS,
   buildSegment,
   createSegmentStore,
+  fileIdxRowsFromPayload,
   foldNeedle,
   generationKey,
-  locatorRowsFromPayload,
   needleIsUsable,
   normaliseWhitespace,
   readSegmentHits,
@@ -3674,7 +3674,7 @@ export async function start(context) {
       const locator = rowLocators[rowIndex];
       if (locator !== undefined) locators.set(recordIndex, locator);
     }
-    const locatorRows = locatorRowsFromPayload(payload, locators, files);
+    const fileIdxRows = fileIdxRowsFromPayload(payload, locators, files);
 
     // One segment per generation, the active one included. §8.8.1 rule 5 excluded the active
     // generation on the grounds that a segment for it would be stale before it was written — true,
@@ -3693,8 +3693,9 @@ export async function start(context) {
     //
     // What the payload cannot say on its own is which source file a record came from, so that is
     // what gets projected out of the lineage's row locators: the payload's fields for the surface,
-    // and a locator whose file number is the grouping key below. The byte range rides along on the
-    // segment line and is read by nothing here — see the note on locatorRowsFromPayload.
+    // and a file number to group by below. The locator's byte range is not projected — nothing on
+    // the segment line reads it back, so carrying it cost 4.36% of every segment for nothing.
+    // See the note on fileIdxRowsFromPayload.
     const flatRecords = [];
     for (const turn of payload.turns) {
       for (const record of turn.records) flatRecords.push({ record, turn });
@@ -3702,7 +3703,7 @@ export async function start(context) {
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
       const records = [];
       for (let i = 0; i < flatRecords.length; i += 1) {
-        const located = locatorRows[i];
+        const located = fileIdxRows[i];
         if (located === undefined || located.fileIdx !== fileIdx) continue;
         records.push({
           ...flatRecords[i].record,
@@ -3710,8 +3711,6 @@ export async function start(context) {
           // back out of the session's turn table would mean reading that table on every search.
           turnIndex: flatRecords[i].turn.index,
           fileIdx: located.fileIdx,
-          byteStart: located.byteStart,
-          byteEnd: located.byteEnd,
         });
       }
       // A generation with no records still gets a segment, and it is an empty one. Skipping it

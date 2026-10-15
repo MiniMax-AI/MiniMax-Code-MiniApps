@@ -35,7 +35,7 @@ import {
   splitRawRecords,
   ROW_GENERATION,
 } from '../miniapp/node/server.mjs';
-import { buildSegment, locatorRowsFromPayload, readSegmentHits, scanSegment } from '../miniapp/node/search-segments.mjs';
+import { buildSegment, fileIdxRowsFromPayload, readSegmentHits, scanSegment } from '../miniapp/node/search-segments.mjs';
 
 const SERVER = readFileSync(new URL('../miniapp/node/server.mjs', import.meta.url), 'utf8');
 const CLIENT = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
@@ -360,7 +360,7 @@ const ARTIFACT_FILES = [
   { filePath: '/store/s/g0.jsonl', fileName: 'g0.jsonl', generation: 0, size: 300, mtimeMs: 1, revision: 'r0', truncated: false },
   { filePath: '/store/s/g1.jsonl', fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 1, revision: 'r1', truncated: false },
 ];
-// `locatorRowsFromPayload` wants the record -> locator map, not the record -> row map the split
+// `fileIdxRowsFromPayload` wants the record -> locator map, not the record -> row map the split
 // produces; the server builds it the same way before handing it over. Getting this wrong leaves
 // every record at `-1`, which is a locator set with no file in it and would answer with no line.
 const rowIndexByRecord = splitRawRecords(allPayload.turns);
@@ -369,7 +369,7 @@ const locatorByRecord = new Map();
 for (const [recordIndex, rowIndex] of rowIndexByRecord) {
   locatorByRecord.set(recordIndex, rowLocators[rowIndex]);
 }
-const locatorRows = locatorRowsFromPayload(allPayload, locatorByRecord, ARTIFACT_FILES);
+const fileIdxRows = fileIdxRowsFromPayload(allPayload, locatorByRecord, ARTIFACT_FILES);
 const flatPairs = [];
 for (const turn of allPayload.turns) for (const record of turn.records) flatPairs.push({ record, turn });
 // The same merge the server does: the surface is built from the PAYLOAD's records and only the
@@ -380,14 +380,12 @@ for (const turn of allPayload.turns) for (const record of turn.records) flatPair
 const segmentRecordsFor = (fileIdx) => {
   const out = [];
   for (let i = 0; i < flatPairs.length; i += 1) {
-    const located = locatorRows[i];
+    const located = fileIdxRows[i];
     if (located === undefined || located.fileIdx !== fileIdx) continue;
     out.push({
       ...flatPairs[i].record,
       turnIndex: flatPairs[i].turn.index,
       fileIdx: located.fileIdx,
-      byteStart: located.byteStart,
-      byteEnd: located.byteEnd,
     });
   }
   return out;
@@ -423,9 +421,9 @@ const withLimit = (n) => {
 };
 
 check('the locator projection kept every record the rebuild would have shown',
-  locatorRows.length, allRecords.length);
+  fileIdxRows.length, allRecords.length);
 assert('and it kept the generation each record came from',
-  new Set(locatorRows.map((r) => r.fileIdx)).size === ARTIFACT_FILES.length);
+  new Set(fileIdxRows.map((r) => r.fileIdx)).size === ARTIFACT_FILES.length);
 
 // The direct version of the bug: a segment's line for a record must contain that record's own
 // searchable text, in every field the endpoint searches. Read from the shipped server's own merge,
@@ -433,8 +431,8 @@ assert('and it kept the generation each record came from',
 const bulkOnly = allRecords.find((r) => typeof r.result === 'string' && r.result.length > 0);
 assert('the fixture really does hold a record whose match is only in a bulk field', bulkOnly !== undefined);
 if (bulkOnly !== undefined) {
-  const located = locatorRows[flatPairs.findIndex((pair) => pair.record === bulkOnly)];
-  const line = buildSegment({ records: [{ ...bulkOnly, fileIdx: located.fileIdx, byteStart: 0, byteEnd: 1 }] }).surface;
+  const located = fileIdxRows[flatPairs.findIndex((pair) => pair.record === bulkOnly)];
+  const line = buildSegment({ records: [{ ...bulkOnly, fileIdx: located.fileIdx }] }).surface;
   assert('and the segment carries that field, though the projection does not',
     !Object.prototype.hasOwnProperty.call(located, 'result') && line.includes(normaliseWhitespace(bulkOnly.result)));
   assert('the shipped server merges the payload into the segment for the same reason',
