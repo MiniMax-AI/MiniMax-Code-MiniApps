@@ -208,13 +208,24 @@ with the reason stated rather than quietly dropped.
   guards is gone.
 - **`mutate-qa-lens.py`** — not carried. Guards the 问答 turn-lens. Same removal; no lens symbol
   remains.
-- **`verify-time-range.mjs`** and its control **`mutate-time-range.py`** — present, skipped by
-  `run.mjs`. Its assertions are calibrated against a full multi-generation session:
-  `stats.messages > 1000`, and a checkpoint nested inside a turn rather than being one. The
-  committed fixture is a single-file session of a few dozen rows. Reproducing those numbers
-  faithfully would mean committing a multi-megabyte payload; relaxing them would stop exercising
-  the timezone arithmetic the file exists for. Run it by hand against a booted service:
+- **`verify-time-range.mjs`** — present, skipped by `run.mjs`. Its assertions are calibrated against a
+  full multi-generation session: `stats.messages > 1000`, and a checkpoint nested inside a turn rather
+  than being one. The committed fixture is a single-file session of a few dozen rows. Reproducing those
+  numbers faithfully would mean committing a multi-megabyte payload; relaxing them would stop
+  exercising the timezone arithmetic the file exists for. Run it by hand against a booted service:
   `node tests/verify-time-range.mjs <port>`.
+
+  It has **no mutation control**, and there is no way to give it one inside this suite: `run.mjs`
+  promises that nothing here needs a running Mini App, and this file cannot be checked at all without
+  one — it derives its own fixture from `GET /api/trajectory`. So the teeth were checked by hand
+  instead, against a throwaway copy of the package taken outside this tree, so that no shipped byte
+  was touched. Six mutations, each required to fail with the assertion that owns the rule rather than
+  any nearby one: the bound read as UTC, the session-start subtraction dropped, one comparison in
+  `recordInRange()` flipped, `resetBaseFilters()` no longer called from `clearFilters()`,
+  `clearTimeRange()` no longer called from `resetBaseFilters()`, and the two clears in the wrong
+  order. All six were caught by name. That is a one-off result, not a control: nothing re-runs it,
+  and a later edit can pass everything else in this directory while this file goes unverified. Worth
+  knowing before trusting it.
 
 ### Two anchors that were wrong, and one mutation that could not be caught
 

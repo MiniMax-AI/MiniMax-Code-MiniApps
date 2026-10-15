@@ -324,10 +324,83 @@ check('half-range duration == span of the rows kept',
 const START = payload.session.startedAt;
 assert('the payload carries a session start', Number.isFinite(START) && START > 0);
 {
-  const wallFrom = new Date(2026, 9, 10, 23, 50, 0).getTime();
-  const wallTo = new Date(2026, 9, 11, 0, 20, 0).getTime();
-  const from = pure.parseRangeBound('2026-10-10T23:50', START);
-  const to = pure.parseRangeBound('2026-10-11T00:20', START);
+  /* The window is chosen from the payload, not written down.
+   *
+   * It used to be a literal -- 23:50 to 00:20 on fixed October dates -- which made this section a
+   * statement about the store rather than about the code. When that session was compacted away
+   * both sides of the equality below were 0, so it passed while comparing nothing; only the
+   * assertion after it noticed. A literal window is the one input here that silently stops being
+   * evidence, and nothing about the code can tell you that.
+   *
+   * What stays literal is the part that makes it worth running: the window crosses a LOCAL
+   * midnight, so converting each bound really is a subtraction the machine's distance from
+   * Greenwich gets to corrupt. */
+  const pad2n = (n) => (n < 10 ? '0' + n : String(n));
+  const dayKey = (ts) => {
+    const d = new Date(ts);
+    return d.getFullYear() + '-' + pad2n(d.getMonth() + 1) + '-' + pad2n(d.getDate());
+  };
+  const wallClock = (ts) => {
+    const d = new Date(ts);
+    return dayKey(ts) + ' ' + pad2n(d.getHours()) + ':' + pad2n(d.getMinutes()) + ':' + pad2n(d.getSeconds());
+  };
+  const stamped = scoped.state.flat
+    .map((e) => e.record.timestamp)
+    .filter((ts) => Number.isFinite(ts))
+    .sort((a, b) => a - b);
+
+  const PAD = 5 * 60000;
+  const wholeMinute = (ms, dir) => (dir < 0 ? Math.floor(ms / 60000) * 60000 : Math.ceil(ms / 60000) * 60000);
+  const span = stamped.length ? stamped[stamped.length - 1] - stamped[0] : 0;
+  let chosen = null;
+  let cursor = stamped.length ? new Date(stamped[0]) : null;
+  if (cursor) {
+    cursor.setHours(0, 0, 0, 0);
+    if (cursor.getTime() < stamped[0]) cursor.setDate(cursor.getDate() + 1);
+    for (let guard = 0; cursor.getTime() <= stamped[stamped.length - 1] && guard < 400; guard += 1) {
+      const midnight = cursor.getTime();
+      // Reached from the rows themselves rather than from a fixed number of minutes: the reader
+      // steps away, and on this session the last record before the one usable midnight was 41
+      // minutes early. A window of ±10 minutes would have found nothing and reported the store's
+      // habits as a fault in the arithmetic. Both ends have to exist, and the two ends together
+      // have to stay a small slice, or it is not a window.
+      let beforeAt = -1;
+      let afterAt = -1;
+      for (let i = 0; i < stamped.length; i += 1) {
+        if (stamped[i] < midnight) beforeAt = stamped[i];
+        else {
+          afterAt = stamped[i];
+          break;
+        }
+      }
+      const lo = beforeAt < 0 ? NaN : wholeMinute(beforeAt - PAD, -1);
+      const hi = afterAt < 0 ? NaN : wholeMinute(afterAt + PAD, 1);
+      if (Number.isFinite(lo) && Number.isFinite(hi) && hi - lo <= span / 4) {
+        chosen = { wallFrom: lo, wallTo: hi };
+        break;
+      }
+      cursor = new Date(cursor.getTime());
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  if (!chosen) {
+    // Failing by name beats carrying on: everything below reads `chosen`, and a guard that
+    // limps past its own precondition reports the arithmetic's faults for the store's.
+    console.log('[3b] no local midnight inside this session has rows on both sides of it');
+    console.log('FAILED_NAMES\t'
+      + JSON.stringify(['the session spans a local midnight with rows on both sides of it']));
+    process.exit(1);
+  }
+  const wallFrom = chosen.wallFrom;
+  const wallTo = chosen.wallTo;
+  assert('the window crosses a local midnight', dayKey(wallFrom) !== dayKey(wallTo));
+
+  // Typed into the pickers as the control actually sends them, so the strings under test are the
+  // ones the page reads rather than ones written to match the arithmetic.
+  const fromText = pure.formatRangeInput(wallFrom);
+  const toText = pure.formatRangeInput(wallTo);
+  const from = pure.parseRangeBound(fromText, START);
+  const to = pure.parseRangeBound(toText, START);
   check('a pair of bounds across midnight converts to the window it names',
     [from, to], [wallFrom - START, wallTo - START]);
 
@@ -341,13 +414,13 @@ assert('the payload carries a session start', Number.isFinite(START) && START > 
 
   scoped.state.rangeFrom = from;
   scoped.state.rangeTo = to;
-  scoped.state.rangeFromText = '2026-10-10T23:50';
-  scoped.state.rangeToText = '2026-10-11T00:20';
+  scoped.state.rangeFromText = fromText;
+  scoped.state.rangeToText = toText;
   const stats = scoped.scopedStats();
   check('the KPI over a date range equals the distinct ids of those rows',
     stats.messages, new Set(byClock.map((e) => e.record.id)).size);
   check('and the page-level label reads back as the wall clock it was typed as',
-    scoped.timeRangeLabel(), '2026-10-10 23:50:00 – 2026-10-11 00:20:00');
+    scoped.timeRangeLabel(), wallClock(wallFrom) + ' – ' + wallClock(wallTo));
 
   // And the same window, typed into the pickers as what the control actually sends.
   check('the control round trips back to the same offsets',
@@ -498,9 +571,16 @@ assert('the range opens unset', /rangeFrom: null,\s*\n\s*rangeTo: null,/.test(st
 // two-line regex failed on that instead of on anything wrong — it had frozen the shape of the
 // function rather than what the function has to do. What matters is that both are cleared and
 // that the query goes before the range, so the ledger never re-renders once with neither.
+// The reset then moved into `resetBaseFilters`, and the same mistake repeated one indirection
+// later: the lines were read out of `clearFilters`, which no longer has them, so the assertion
+// went red on a code change that broke nothing. Naming the function that owns the rule fixes it;
+// dropping the hop would not have. Checked order alone would pass on a 清除筛选 that had stopped
+// calling the reset altogether, which is a filter the reader cannot see and cannot turn off.
 const clearSrc = fnSource('function clearFilters()');
-const queryAt = clearSrc.indexOf("state.query = '';");
-const rangeAt = clearSrc.indexOf('clearTimeRange();');
+assert('清除筛选 runs the base reset', /resetBaseFilters\(\);/.test(clearSrc));
+const resetSrc = fnSource('function resetBaseFilters()');
+const queryAt = resetSrc.indexOf("state.query = '';");
+const rangeAt = resetSrc.indexOf('clearTimeRange();');
 assert('清除筛选 also drops the range', queryAt >= 0 && rangeAt > queryAt);
 
 // A picker the page could not read must not reach the filter. `NaN` fails the `isCount` test
