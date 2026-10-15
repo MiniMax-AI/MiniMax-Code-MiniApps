@@ -4363,10 +4363,55 @@
         return { session: delta.session, stats: delta.stats, turns: turns };
       }
 
+      /**
+       * Whether this delta was cut from the numbering the page is still holding.
+       *
+       * The cursor is `record.index`, and the server can renumber a payload that is otherwise
+       * untouched: a message arriving that is a newer version of an earlier one suppresses that
+       * earlier copy, and every record after it shifts down. A tail cut at the old number then
+       * lands in the middle of the wrong turn — no error, no empty table, just records in the
+       * wrong place, which is the kind of wrong a reader cannot notice and cannot believe.
+       *
+       * So the delta names the record its cursor pointed at, and this compares it against the one
+       * the page holds at that index. They agree, nothing before the cursor moved, and the tail is
+       * this payload's. They do not, and the only honest answer is the whole payload.
+       *
+       * A delta with no `basedOn` at all is refused rather than trusted: this page cannot tell such
+       * a tail from a correct one, and guessing 「it is probably fine」 is the failure it exists to
+       * prevent.
+       */
+      function deltaMatchesNumbering(previous, delta) {
+        var based = delta && delta.delta ? delta.delta.basedOn : null;
+        if (!based || typeof based.index !== 'number' || based.index < 0) return false;
+        if (based.index === 0) return true;
+        var turns = previous && Array.isArray(previous.turns) ? previous.turns : [];
+        for (var i = 0; i < turns.length; i += 1) {
+          var records = Array.isArray(turns[i].records) ? turns[i].records : [];
+          for (var j = 0; j < records.length; j += 1) {
+            var record = records[j];
+            if (!record || record.index !== based.index) continue;
+            return String(record.id) === String(based.id);
+          }
+        }
+        return false;
+      }
+
       function applyPayload(body, manual) {
         // A delta is only ever laid onto a payload this page actually has. Without one —
         // first load, a session switch, a manual refresh — the whole payload is the answer.
-        var mergeable = body && body.delta && state.payload && Array.isArray(state.payload.turns);
+        var hasDelta = !!(body && body.delta && state.payload && Array.isArray(state.payload.turns));
+        // And only when the numbering it was cut from is the numbering in hand. This is checked
+        // BEFORE the merge and returns early, because the alternative — merging it and noticing
+        // afterwards — leaves records in the wrong turn with nothing to undo them.
+        if (hasDelta && !deltaMatchesNumbering(state.payload, body)) {
+          state.since = null;
+          state.sinceFor = null;
+          state.loading = true;
+          render();
+          fetchTrajectory(true);
+          return;
+        }
+        var mergeable = hasDelta;
         var payload = mergeable ? mergeDelta(state.payload, body) : body;
         var next = signatureOf(payload);
         var changed = next !== state.signature;

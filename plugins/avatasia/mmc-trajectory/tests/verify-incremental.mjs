@@ -370,8 +370,30 @@ assert('a manual refresh drops the cursor as well as the validator',
   /if \(manual\) \{\s*\n\s*state\.etag = '';\s*\n\s*state\.etagFor = '';\s*\n\s*state\.since = 0;\s*\n\s*state\.sinceFor = '';/.test(html));
 // The merge is gated on the delta marker *and* on having a payload to lay it onto. Without the
 // second half a delta after a session switch would be merged onto a different session's turns.
+// It is gated on a THIRD thing now: whether the tail was cut from the numbering in hand. That is
+// not the same question as either of the other two — a delta can be well-formed and for the right
+// session and still be cut from a numbering that has since moved.
 assert('the merge needs both the delta marker and a payload in hand',
-  /var mergeable = body && body\.delta && state\.payload && Array\.isArray\(state\.payload\.turns\);/.test(html));
+  /var hasDelta = !!\(body && body\.delta && state\.payload && Array\.isArray\(state\.payload\.turns\)\);/.test(html)
+  && /var mergeable = hasDelta;/.test(html));
+assert('and it checks the numbering the tail was cut from before merging anything',
+  /if \(hasDelta && !deltaMatchesNumbering\(state\.payload, body\)\) \{/.test(html)
+  && html.indexOf('deltaMatchesNumbering(state.payload, body)') < html.indexOf('mergeDelta(state.payload, body)'));
+assert('a tail cut from another numbering is refused outright, and the cursor is dropped with it',
+  /state\.since = null;\s*\n\s*state\.sinceFor = null;[\s\S]{0,200}fetchTrajectory\(true\);/.test(html));
+assert('the check is refused, not assumed, when the tail names no record at the cursor',
+  /if \(!based \|\| typeof based\.index !== 'number' \|\| based\.index < 0\) return false;/.test(html));
+assert('and a cursor of zero has nothing before it that could have moved',
+  /if \(based\.index === 0\) return true;/.test(html));
+// And the server has to say which record it assumed, or the client has nothing to compare against.
+// The lookup is pinned separately because the assignment's shape is the same whichever record it
+// reads — naming upTo instead of since would produce a well-formed `basedOn` that answers the
+// wrong question, and every other assertion here would still pass.
+assert('the tail names the record its cursor pointed at',
+  /basedOn = \{ index: since, id: record\.id === undefined \? null : record\.id \};/.test(server)
+  && /delta: \{ since, upTo, records, basedOn \}/.test(server));
+assert('and it is looked up at the cursor, not at the end of the payload',
+  /if \(record && record\.index === since\) \{/.test(server));
 // The server cuts the tail only on the fresh-build path. The cached path serves the bytes it
 // already has, and reaching it with a cursor means the session changed anyway.
 assert('the server cuts a tail only where it has just built the payload',

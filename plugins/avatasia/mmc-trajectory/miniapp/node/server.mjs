@@ -2494,6 +2494,26 @@ export function buildDeltaPayload(payload, since) {
     }
   }
   if (since > upTo) return null;
+  // Which record the cursor is pointing AT, so the page can tell whether the numbering it is
+  // holding is still the numbering this tail was cut from.
+  //
+  // The cursor is `record.index`, and the identity layer can renumber a payload that is otherwise
+  // untouched: a message arriving that is a newer version of an earlier one suppresses that
+  // earlier copy, and every record after it shifts down by one. A tail cut at the old number then
+  // lands in the middle of the wrong turn, with no error anywhere — which is why the delta says
+  // what it assumed rather than leaving the page to guess.
+  //
+  // `null` for index 0 and for a cursor that names no record, which is the same thing the page
+  // treats as 「there is nothing before here to have moved」.
+  let basedOn = null;
+  for (const turn of turns) {
+    const all = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of all) {
+      if (record && record.index === since) {
+        basedOn = { index: since, id: record.id === undefined ? null : record.id };
+      }
+    }
+  }
   const tail = [];
   // `records` counts what is NEW, not what travels. A turn that ships whole with 300 records
   // contributes 1 here. The page reads `delta.upTo` for its next cursor and never reads this
@@ -2514,7 +2534,7 @@ export function buildDeltaPayload(payload, since) {
     session: payload.session,
     stats: payload.stats,
     turns: tail,
-    delta: { since, upTo, records },
+    delta: { since, upTo, records, basedOn },
   };
 }
 
