@@ -969,13 +969,21 @@ export async function readSessionTitles(home, sessionIds) {
   if (!db) return result;
   try {
     if (sessionIds.length === 0) return result;
-    const stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+    // The parent id is the fact that a branch exists, and it is the ONLY part of that
+    // relationship that is always available: the list is the most recent N sessions, and a child
+    // is always newer than the parent that spawned it, so the parent's title is routinely outside
+    // the window. Carrying the id and looking the title up would therefore be a lookup that fails
+    // exactly when a reader is most likely to want it.
+    const stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
     for (const id of sessionIds) {
       const row = stmt.get(id);
       if (!row) continue;
       result.set(id, {
         title: typeof row.title === 'string' && row.title.trim() ? row.title.trim() : null,
         kind: typeof row.session_kind === 'string' ? row.session_kind : null,
+        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''
+          ? row.parent_session_id
+          : null,
       });
     }
   } catch {
@@ -3048,6 +3056,7 @@ export async function start(context) {
           if (meta) {
             if (meta.title) descriptor.label = meta.title;
             descriptor.sessionKind = meta.kind;
+            descriptor.sessionParentId = meta.parent;
           }
           described.push(descriptor);
         } catch (error) {
@@ -4051,6 +4060,10 @@ function stripInternalFields(value) {
     sizeBytes: value.sizeBytes,
     turnCount: value.turnCount,
     sessionKind: value.sessionKind ?? null,
+    // Null is the normal case and has to survive as null rather than as `undefined`: the page
+    // decides by whether this field is set, so a missing key and a present key both reading
+    // "not set" is what keeps one row from being a branch and the next from merely lacking it.
+    sessionParentId: value.sessionParentId ?? null,
   };
 }
 

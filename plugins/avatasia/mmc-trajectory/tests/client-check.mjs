@@ -462,6 +462,49 @@ const codeOnly = html
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^[ \t]*\/\/.*$/gm, '');
 
+/* ------------------------------------------------------------------ session picker: branch marker */
+// A session that the runtime spawned from another one used to be listed exactly like a top-level
+// conversation, because nothing in the list said otherwise: the parent column existed in the store
+// and was never read, and the one field that did reach the page (`sessionKind`) had no reader in
+// it at all. A reader comparing two entries could not tell a sub-agent run from a conversation.
+//
+// The marker is checked here by RUNNING it rather than by matching its text, because the failure
+// worth catching is not a typo in the string — it is the marker being applied to everything, or to
+// nothing, and both of those still contain the right characters. The decisive case is the third
+// one: two sessions identical except for `sessionParentId`, whose labels must differ by exactly
+// the marker and nothing else. A version that appended the marker unconditionally passes every
+// "does it contain 子会话" check and fails this one.
+const branchMarkSrc = /var BRANCH_MARK = '[^']*';/.exec(html);
+const branchLabelSrc = fnSource('function sessionOptionLabel(session, now)');
+if (!branchMarkSrc || !branchLabelSrc) {
+  failures.push('session picker: could not lift sessionOptionLabel / BRANCH_MARK');
+} else {
+  vm.runInContext(branchMarkSrc[0] + '\n' + branchLabelSrc, sandbox);
+  const NOW = 1_800_000_000_000;
+  const base = { label: '一个会话', lastActiveAt: NOW - 60_000, messageCount: 42 };
+  const plain = sandbox.sessionOptionLabel({ ...base }, NOW);
+  const branch = sandbox.sessionOptionLabel({ ...base, sessionParentId: 'mvs_parent' }, NOW);
+
+  assert('a top-level session is not marked as a branch',
+    plain.indexOf('子会话') < 0);
+  assert('a session the runtime spawned is marked as one',
+    branch.indexOf('子会话') >= 0);
+  // Identity, not shape: the only thing that differs between these two inputs is the field, so
+  // the only thing allowed to differ between the two labels is the marker.
+  assert('the marker is driven by the field, not by where the row sits in the list',
+    branch.replace(' · 子会话', '') === plain);
+  assert('and nothing else about the label changes with it',
+    branch.length === plain.length + ' · 子会话'.length);
+  // An empty parent string is "no parent", not "a parent named the empty string".
+  assert('an empty parent id is not a parent',
+    sandbox.sessionOptionLabel({ ...base, sessionParentId: '' }, NOW) === plain);
+  // The unnamed branch takes the marker too — otherwise the one case with no title to read is
+  // the one case a reader cannot place.
+  assert('an unnamed branch is still marked',
+    sandbox.sessionOptionLabel({ lastActiveAt: NOW - 60_000, messageCount: 42,
+      sessionParentId: 'mvs_parent' }, NOW).indexOf('子会话') >= 0);
+}
+
 const checks = [
   ['no remote http(s) resource', !/<(script|link|img|iframe)[^>]+(src|href)=["']https?:/i.test(html)],
   ['no @import', !/@import/.test(html)],

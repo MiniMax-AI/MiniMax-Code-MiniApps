@@ -132,6 +132,41 @@ MUTATIONS = [
        "        var tail = '（' + when + ' · ' + formatInt(count) + ' 条）';")],
      "the session picker omits the count segment instead of printing a placeholder",
      CLIENT),
+
+    # ---- the branch a session was spawned from -------------------------------------------
+    # Four links between the store's parent column and the mark on the option, and dropping any
+    # one of them produces the SAME silent list: a sub-agent run listed exactly like a top-level
+    # conversation, with no error and no number moved. So they are four separate mutations rather
+    # than one, because a single one would pass as long as the guard happened to watch that link
+    # and not the three that were actually cut.
+    ("the titles query stops reading the parent column",
+     [("select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?",
+       "select session_id, title, session_kind from local_runtime_sessions where session_id = ?")],
+     "the titles query reads the parent column"),
+
+    ("the parent row is read but never mapped",
+     [("        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''\n"
+       "          ? row.parent_session_id\n"
+       "          : null,\n", "")],
+     'the parent row is mapped, and an empty id is no parent rather than a parent named ""'),
+
+    ("the descriptor is built without the parent",
+     [("            descriptor.sessionParentId = meta.parent;", "")],
+     "the descriptor carries the parent onto the row the page receives"),
+
+    # This one is the most likely to be reintroduced by accident: it is a whole-field removal in
+    # a function whose job is to decide what may leave the service, and nothing else in it fails.
+    ("the field is stripped before it is sent",
+     [("    sessionParentId: value.sessionParentId ?? null,", "")],
+     "the field survives the strip, with null as the floor"),
+
+    # The direction that looks right and is not: marking every row. Every string the guard looks
+    # for is still present, and the list reads as though every conversation were a sub-agent run.
+    ("the mark is applied to every session rather than the branches",
+     [("        var branch = session && session.sessionParentId ? BRANCH_MARK : '';",
+       "        var branch = BRANCH_MARK;")],
+     "the page decides the marker by the field and not unconditionally",
+     CLIENT),
 ]
 
 ORIGINALS = {

@@ -4453,13 +4453,26 @@
        * absence of a number in the shape of a number. Omitting the segment is the honest rendering
        * of 「这个数不存在」: the reader still has the label and the recency, which is what the picker
        * is for. tests/verify-list-cache.mjs pins the gate that produces the absence. */
+      /* 「子会话」 says the structural fact and stops there.
+       *
+       * The parent is named by nobody, on purpose. A branch is always newer than the session that
+       * spawned it, so its parent has usually aged out of the most-recent-N window this list is
+       * built from — naming it would mean a lookup that fails exactly when a reader wants the
+       * answer most, and a lookup that fails quietly is how a picker ends up asserting something
+       * it cannot see.
+       *
+       * It is a marker and not a filter: nothing here writes state, so there is no second opinion
+       * about which records are on screen that could disagree with the table. */
+      var BRANCH_MARK = ' · 子会话';
+
       function sessionOptionLabel(session, now) {
         var label = truncateText(session && session.label ? session.label : '', 42);
         var when = formatAgo(session ? session.lastActiveAt : null, now);
         var count = session ? session.messageCount : null;
         var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
-        if (!label) return '未命名会话 ' + tail;
-        return label + ' ' + tail;
+        var branch = session && session.sessionParentId ? BRANCH_MARK : '';
+        if (!label) return '未命名会话 ' + tail + branch;
+        return label + ' ' + tail + branch;
       }
 
       function renderSessionSelect() {

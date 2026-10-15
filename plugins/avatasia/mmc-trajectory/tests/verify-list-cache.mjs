@@ -158,6 +158,37 @@ assert('the session picker omits the count segment instead of printing a placeho
   /var tail = isCount\(count\) \?/.test(clientJs)
   && /'（' \+ when \+ '）'/.test(clientJs));
 
+/* ---------- 7: the branch a session was spawned from is carried, not dropped ---------- */
+// The store has always had a `parent_session_id`, and the list route has always read the titles
+// beside it without reading it — so every sub-agent run the runtime spawned was listed exactly
+// like a top-level conversation. Nothing caught that, because nothing was pinned about WHICH
+// fields the list is allowed to drop: `stripInternalFields` had no reader anywhere in this
+// directory, so a field could be added, or lost, and the suite stayed green either way.
+//
+// Four links, and dropping any one of them produces the same silent list: the column is not
+// selected, or it is selected and not mapped, or it is mapped and not put on the descriptor, or
+// it reaches the descriptor and is stripped before it is sent. Each gets its own assertion
+// because each is a place the value can be lost without a type error or a crash.
+assert('the titles query reads the parent column',
+  /select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = \?/.test(server));
+
+assert('the parent row is mapped, and an empty id is no parent rather than a parent named ""',
+  /parent:\s*typeof row\.parent_session_id === 'string' && row\.parent_session_id !== ''\s*\n\s*\?\s*row\.parent_session_id\s*\n\s*:\s*null,/.test(server));
+
+assert('the descriptor carries the parent onto the row the page receives',
+  /descriptor\.sessionParentId = meta\.parent;/.test(server));
+
+// `?? null` rather than a bare copy: the page decides by whether this field is SET, so a missing
+// key and a present-but-undefined one have to land in the same place as a row that has no parent.
+assert('the field survives the strip, with null as the floor',
+  /sessionParentId:\s*value\.sessionParentId \?\? null,/.test(server));
+
+// The reader-facing half, off the comment-stripped client for the reason given in section 6: the
+// comment above `sessionOptionLabel` names the marker, so an assertion made against the raw file
+// would be satisfied by prose describing the very thing it exists to require.
+assert('the page decides the marker by the field and not unconditionally',
+  /var branch = session && session\.sessionParentId \? BRANCH_MARK : '';/.test(clientJs));
+
 console.log('[list-cache] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));
