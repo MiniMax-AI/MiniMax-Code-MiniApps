@@ -298,7 +298,78 @@ MUTATIONS = [
      "const filesMissingSinceLastRun = (prev) => [...new Set([...Object.keys(snapshotBefore), ...Object.keys(prev)])]",
      "const filesMissingSinceLastRun = (prev) => [...new Set([...Object.keys(snapshotBefore)])]",
      "the startup comparison names a path the last run recorded and this tree no longer has"),
+
+    # The suite was red on a freshly cloned checkout and nothing here said so, because the baseline
+    # file is gitignored: it exists in a working tree that has run before and does not exist in a
+    # clone. Reading it was "equivalent" — the recorded set was right there in `snapshotBefore` — and
+    # it made a first run throw. The guard runs the self-test in a copy of the package that has no
+    # baseline at all, so this fails there and nowhere else.
+    ("the self-test reads the baseline file again",
+     "    const recorded = Object.assign({}, snapshotBefore, { [GONE]: 'absent-probe' });",
+     "    const recorded = JSON.parse(readFileSync(SNAPSHOT, 'utf8'));",
+     "the startup comparison names a path the last run recorded and this tree no longer has"),
+    # The deepest one, and it took a self-chosen attack line rather than reading the diff: the residue
+    # self-test builds its own input and hands it straight to the comparison, so it measured the
+    # comparison function and never the startup that feeds it. Nulling the one assignment between
+    # reading the baseline and reporting on it left all 45 assertions green and `leftover` empty on
+    # every run. The assertion this control feeds is the only one that spawns the harness and reads
+    # back what its own startup decided.
+    ("the startup stops reading the baseline it recorded",
+     "const previous = readSnapshot();",
+     "const previous = null;",
+     "the startup comparison warns when the baseline records a difference"),
+
+    # The scratch copy is the design, and these two are what keeps it honest: one leaves the baseline
+    # in the copy, the other skips planting one. Both fail by name, which is the point -- the
+    # properties they cover are the ones a later edit could quietly undo.
+
+    ("the scratch copy is made with the baseline still in it",
+     "      filter: notTheBaseline,",
+     "      filter: () => true,",
+     "the residue self-test runs on a package that has no baseline"),
+
+    ("the wiring probe never plants a baseline",
+     "  writeFileSync(join(scratch, 'tests', '.shipped-snapshot.json'),\n    JSON.stringify({ [GONE]: 'planted-by-verify-review16' }));",
+     "  // the baseline is never planted, so the harness is asked with nothing to find",
+     "the startup comparison warns when the baseline records a difference"),
+
+    # The scratch copy is refused when the temporary directory sits inside the package, because
+    # cpSync will not copy a directory into its own subtree -- it throws, and a throw out of the guard
+    # is the reading that looks exactly like a surviving mutation. The refusal is now a named failure,
+    # but only if this predicate says no.
+    ("nothing is ever recognised as being inside the package",
+     "  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));",
+     "  return false;",
+     "a path under the package is recognised as under the package"),
+
+    # The diagnostic was matched by substring, which any output mentioning the path satisfies -- a
+    # debug line, an error, a hard-coded string. It is parsed now, so a payload that says it read a
+    # baseline but does not report what it found is caught here.
+    ("the startup diagnostic reports that it looked without saying what it found",
+     "  console.log('startup-leftover=' + JSON.stringify({ hadBaseline: previous !== null, leftover, warned }));",
+     "  console.log('startup-leftover=' + JSON.stringify({ hadBaseline: previous !== null, warned }));",
+     "the startup comparison warns when the baseline records a difference"),
+
+    # A basename filter is not a path filter. It also drops every file with that name anywhere in the
+    # tree, so the copy stops being "the package without its bookkeeping file".
+    ("the copy filter recognises a name rather than a path",
+     "const notTheBaseline = (src) => relative(PKG, src) !== join('tests', '.shipped-snapshot.json');",
+     "const notTheBaseline = (src) => basename(src) !== '.shipped-snapshot.json';",
+     "the copy leaves out the bookkeeping file and nothing else"),
+
+    # Computing the comparison and reporting it are two things. Gating the warning off leaves every
+    # value the diagnostic prints exactly as it was, which is why the diagnostic reports which branch
+    # it took rather than only what it computed.
+    ("the residue comparison runs and then nobody is told",
+     "if (leftover.length) {",
+     "if (false && leftover.length) {",
+     "the startup comparison warns when the baseline records a difference"),
 ]
+
+
+
+
+
 
 
 def read(rel):
@@ -420,18 +491,28 @@ for entry in MUTATIONS:
         # Which file the mutation belongs to. A single-occurrence mutation must anchor somewhere
         # it appears exactly once — an anchor that matches in several places is a guess, and a
         # guess that silently lands in the wrong file is worse than a mutation that does not run.
+        #
+        # The guard is in this list because some rules live in the guard rather than in shipped code,
+        # and a guard nobody can break is the failure this whole control exists to catch. It goes LAST,
+        # and that is the load-bearing part: this file holds the checks for every other file's wording,
+        # so a README string also occurs here, exactly once, inside a regex. Searched earlier it wins
+        # those ties and the mutation lands in the wrong file — which is the failure the comment above
+        # names, reached by the honest-looking route of adding an entry in a careless place.
+        #
+        # Mutating the guard is still safe to read as caught: a crash cannot count, because the verdict
+        # needs `expect in out` and a run that produced no output contains no name.
         target = None
         if replace_all:
             for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
-                        ".minimax-plugin/plugin.json"):
+                        ".minimax-plugin/plugin.json", "tests/verify-review16.mjs"):
                 if old in read(rel):
                     target = rel
                     break
         else:
             for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
-                        ".minimax-plugin/plugin.json"):
+                        ".minimax-plugin/plugin.json", "tests/verify-review16.mjs"):
                 if read(rel).count(old) == 1:
                     target = rel
                     break

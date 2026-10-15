@@ -12,10 +12,12 @@
  * a rule. mutate-review16.py breaks each of these in the shipped file and requires this guard to
  * report it by name.
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, rmSync,
+         cpSync, mkdtempSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { join, basename } from 'node:path';
+import { join, basename, dirname, relative, isAbsolute } from 'node:path';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PKG = join(HERE, '..');
@@ -329,15 +331,115 @@ const warnLabel = /console\.log\(`WARN\s+\$\{'([^']+)'/.exec(runMjs);
 const failLabel = /console\.log\(`FAIL\s+\$\{'([^']+)'/.exec(runMjs);
 assert('this run\'s own residue and last run\'s residue are named differently',
   warnLabel !== null && failLabel !== null && warnLabel[1] !== failLabel[1]);
+// Run the harness against a copy of the package in a temp directory, never against this one.
+//
+// That sentence is the fix for a family of problems this file spent several revisions creating. The
+// state under test is "a package with no baseline", and a scratch copy is in exactly that state by
+// construction -- nobody had to delete anything to get there. Nothing is shared, so nothing another
+// process can reach, so there is no lock to key, no key to canonicalise, no owner to record, and no
+// way for a recycled pid to impersonate one. Four concurrent invocations of the version that moved
+// the real baseline aside deleted it outright, and a hard kill left a lock file in the temp directory
+// that the residue check cannot see and that kept every later run out. `cpSync` is one call.
+// Is `child` this package or somewhere under it? The scratch destination is refused when it is,
+// because a copy of the package into its own subtree is exactly what `cpSync` declines to do, and it
+// declines by throwing -- which would take this guard down before any assertion ran, on a machine
+// whose TEMP simply points somewhere unusual.
+//
+// Physical identity, not lexical. A temporary directory reached through a junction that points back
+// here is inside the package even though no string in it says so, and on that machine cpSync refuses
+// the copy by luck rather than by decision. The destination does not exist yet, so its parent is what
+// gets resolved and the last segment is put back.
+//
+// The alias case itself is not exercised below: making a junction needs a privilege this suite does not
+// assume, and a mutation that only differs under an alias would survive rather than fail.
+const insidePackage = (child) => {
+  let target = child;
+  try {
+    target = join(realpathSync.native(dirname(child)), basename(child));
+  } catch { /* a parent that is not there has nothing to resolve */ }
+  const rel = relative(realpathSync.native(PKG), target);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+};
 
-// And the one thing the wording above cannot establish: that the comparison's subject is the whole
-// package. Reading the walk's source would only prove someone wrote the code we expect. So make it
-// fail instead — the runner has a mode that plants residue in a file the hand-maintained list never
-// covered and requires the comparison to name it, and this requires that mode to succeed. A walk
-// narrowed back down to a subset stops catching, and the mutation that narrows it is caught here.
+// One path, not one basename. `basename(src) !== '.shipped-snapshot.json'` also drops every file
+// with that name anywhere in the tree, so the copy stops being "the package without its bookkeeping
+// file" and becomes "the package without anything so named" -- a difference no assertion would have
+// noticed while the tree happened to hold no second one.
+const notTheBaseline = (src) => relative(PKG, src) !== join('tests', '.shipped-snapshot.json');
+
+const scratchPackage = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mmc-trajectory-selfcheck-'));
+  if (insidePackage(dir)) {
+    rmSync(dir, { recursive: true, force: true });
+    const e = new Error('the temporary directory is inside the package; set TEMP somewhere else');
+    e.code = 'ERR_SCRATCH_INSIDE_PACKAGE';
+    throw e;
+  }
+  try {
+    cpSync(PKG, dir, {
+      recursive: true,
+      filter: notTheBaseline,
+    });
+  } catch (err) {
+    // The caller cannot clean up a path it was never handed, so this function has to.
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  return dir;
+};
+
+assert('the copy leaves out the bookkeeping file and nothing else',
+  notTheBaseline(join(PKG, 'tests', '.shipped-snapshot.json')) === false
+  && notTheBaseline(join(PKG, 'fixtures', '.shipped-snapshot.json')) === true
+  && notTheBaseline(join(PKG, 'tests', 'run.mjs')) === true,
+  'pkg=' + PKG);
+
+// The predicate above is what decides whether the copy is attempted at all, and the whole guard hangs
+// off it, so it is checked against paths with known answers rather than trusted.
+assert('a path under the package is recognised as under the package',
+  insidePackage(PKG) && insidePackage(join(PKG, 'tests', 'scratch'))
+  && !insidePackage(join(PKG, '..', 'scratch'))
+  && !insidePackage(join(tmpdir(), 'mmc-trajectory-selfcheck-elsewhere')),
+  'pkg=' + PKG + ' tmp=' + tmpdir());
+
+const GONE = 'tests/__absent-probe__.mjs';
+let scratch = null;
+let sawBaseline = null;
+let selfTest = { status: null, stdout: '', stderr: '' };
+let wiring = { status: null, stdout: '' };
+let scratchError = null;
+try {
+  scratch = scratchPackage();
+  const harness = join(scratch, 'tests', 'run.mjs');
+  const there = (...args) => spawnSync(process.execPath, [harness, ...args],
+    { cwd: scratch, encoding: 'utf8' });
+
+  // Read the state back off the copy rather than reasoning about it. "The filter excludes the
+  // baseline" is a claim about a line of code; this is the file system answering.
+  sawBaseline = existsSync(join(scratch, 'tests', '.shipped-snapshot.json'));
+  selfTest = there('--self-test-residue');
+
+  // And the wiring, which nothing above can reach: those phases build their own input and hand it
+  // straight to the comparison, so they measure the comparison function and say nothing about whether
+  // the startup hands it one at all. Planting a baseline and asking the harness what its own startup
+  // made of that measures the part with no other check. The harness picks no input here -- and here it
+  // is planting into a directory this process created, so the question of whose file that is does not
+  // arise.
+  writeFileSync(join(scratch, 'tests', '.shipped-snapshot.json'),
+    JSON.stringify({ [GONE]: 'planted-by-verify-review16' }));
+  wiring = there('--print-startup-leftover');
+} catch (err) {
+  // Named rather than thrown. A machine whose TEMP points inside the package cannot produce the state
+  // under test, and saying so is a result; an uncaught exception out of here is the reading that looks
+  // exactly like a surviving mutation.
+  scratchError = err.code || String(err);
+} finally {
+  if (scratch !== null) rmSync(scratch, { recursive: true, force: true });
+}
+
+assert('the residue self-test runs on a package that has no baseline',
+  scratchError === null && sawBaseline === false, 'scratchError=' + scratchError + ' sawBaseline=' + sawBaseline);
 {
-  const selfTest = spawnSync(process.execPath, [join(HERE, 'run.mjs'), '--self-test-residue'],
-    { cwd: PKG, encoding: 'utf8' });
   const say = 'exit=' + selfTest.status + ' out=' + JSON.stringify((selfTest.stdout || '').slice(0, 200))
     + ' err=' + JSON.stringify((selfTest.stderr || '').slice(0, 160));
   // Two phases, two assertions, two mutations. One assertion covering both would let either
@@ -348,7 +450,24 @@ assert('this run\'s own residue and last run\'s residue are named differently',
   assert('the startup comparison names a path the last run recorded and this tree no longer has',
     selfTest.status === 0 && /^caught-absent /m.test(selfTest.stdout || ''), say);
 }
-
+// Parsed, not matched. Substring membership was enough to pass while the mode printed anything at all
+// that mentioned the path -- a debug line, an error, a hard-coded string. What has to hold is the
+// shape the mode promises: a baseline was read, and the one path the planted baseline recorded is the
+// one it named, and nothing else was.
+//
+// `warned` is the part that cannot be read off the computed values. A comparison that runs correctly
+// and a comparison whose result is then gated out of the warning look identical from here, and the
+// whole point of the residue check is that somebody is told. So the mode reports which branch it took.
+const wiringLine = /^startup-leftover=(.*)$/m.exec(wiring.stdout || '');
+let payload = null;
+try {
+  payload = JSON.parse(wiringLine === null ? '' : wiringLine[1]);
+} catch { payload = null; }
+assert('the startup comparison warns when the baseline records a difference',
+  wiring.status === 0 && payload !== null && payload.hadBaseline === true && payload.warned === true
+  && Array.isArray(payload.leftover) && payload.leftover.length === 1
+  && payload.leftover[0] === GONE,
+  'exit=' + wiring.status + ' payload=' + JSON.stringify(payload).slice(0, 200));
 console.log('[review16] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));

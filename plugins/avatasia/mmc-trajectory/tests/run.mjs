@@ -12,7 +12,7 @@
 // Nothing here needs a running Mini App, a network, or a specific machine's paths: every path
 // resolves from this file's own location.
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -113,7 +113,14 @@ const filesMissingSinceLastRun = (prev) => [...new Set([...Object.keys(snapshotB
 
 const leftover = previous ? filesMissingSinceLastRun(previous) : [];
 
+// Whether the warning below actually went out. The comparison being computed is one thing and being
+// reported is another, and a guard that only inspects the computed value cannot tell them apart: the
+// whole block could be gated off and everything downstream would still agree that the comparison works.
+// This is the flag the diagnostic reports.
+let warned = false;
+
 if (leftover.length) {
+  warned = true;
   console.log('');
   console.log(`WARN  ${'files differ from the last run'.padEnd(30)}  ${leftover.join(', ')}`);
   console.log('       either a mutate-* control was killed mid-run and left the source mutated,');
@@ -159,7 +166,6 @@ if (args.includes('--self-test-residue')) {
   const TARGET = 'tests/verify-freshness.mjs';
   const GONE = 'tests/__absent-probe__.mjs';
   const original = readFileSync(join(ROOT, TARGET));
-  const savedSnapshot = existsSync(SNAPSHOT) ? readFileSync(SNAPSHOT) : null;
   let caught = 1;
   try {
     writeFileSync(join(ROOT, TARGET), Buffer.concat([original, Buffer.from('\n')]));
@@ -167,9 +173,14 @@ if (args.includes('--self-test-residue')) {
     caught = named.includes(TARGET) ? 0 : 1;
     console.log((caught === 0 ? 'caught ' : 'MISSED ') + TARGET + '  ' + JSON.stringify(named));
 
-    const recorded = JSON.parse(readFileSync(SNAPSHOT, 'utf8'));
-    writeFileSync(SNAPSHOT, JSON.stringify(Object.assign({}, recorded, { [GONE]: 'absent-probe' })));
-    const named2 = filesMissingSinceLastRun(JSON.parse(readFileSync(SNAPSHOT, 'utf8')));
+    // Phase two asks about the recorded set, not about the bookkeeping file. Reading SNAPSHOT here
+    // looked equivalent and was not: that file is gitignored, so on a freshly cloned checkout it
+    // does not exist, phase one cannot create it (the write is gated on a clean end, and phase one
+    // is dirty by design), and the self-test died with ENOENT — taking `verify-review16.mjs` down
+    // with it. Nothing here touched that file, because `snapshotBefore` is the same recorded set,
+    // already in hand, and it is the thing under test rather than a copy of it.
+    const recorded = Object.assign({}, snapshotBefore, { [GONE]: 'absent-probe' });
+    const named2 = filesMissingSinceLastRun(recorded);
     const caught2 = named2.includes(GONE);
     console.log((caught2 ? 'caught-absent ' : 'MISSED-absent ') + GONE + '  ' + JSON.stringify(named2));
     if (caught === 0 && !caught2) caught = 1;
@@ -179,12 +190,22 @@ if (args.includes('--self-test-residue')) {
     // unwinding — a `process.exit` inside the try skips this finally, which is exactly the residue
     // this check exists to catch. The whole-tree comparison caught that on its first real run.
     writeFileSync(join(ROOT, TARGET), original);
-    // The snapshot is bookkeeping this mode borrowed and must give back, or the next run compares
-    // against a path that never existed.
-    if (savedSnapshot === null) rmSync(SNAPSHOT, { force: true });
-    else writeFileSync(SNAPSHOT, savedSnapshot);
   }
   process.exit(caught);
+}
+
+// `--print-startup-leftover` reports what the startup comparison actually decided, and exits without
+// touching the baseline or running the suite.
+//
+// It exists because every other check here can be satisfied by a comparison function that nothing
+// calls. The self-test builds its own input and hands it straight to `filesMissingSinceLastRun`, so
+// nulling the module-level `previous` left all of it passing while the real startup stopped warning --
+// measured rather than assumed: with `const previous = null` this suite is green and `leftover` is `[]`
+// on every run. This mode has no input of its own. It reports the pair the startup built, so what is
+// measured is the wiring, and the only ways to break it are the two functions already covered.
+if (args.includes('--print-startup-leftover')) {
+  console.log('startup-leftover=' + JSON.stringify({ hadBaseline: previous !== null, leftover, warned }));
+  process.exit(0);
 }
 
 // Nothing is excluded any more. `verify-time-range.mjs` used to be here, not run, because the only
