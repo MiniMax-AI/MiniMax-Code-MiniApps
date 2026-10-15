@@ -31,13 +31,30 @@ function domNode(tag) {
   return {
     tag,
     childNodes: kids,
+    // 0 = "never laid out", which is what the page's own fallback keys off. Tests that care
+    // about the width set it; everything else inherits the un-measured path.
+    layoutWidth: 0,
+    getBoundingClientRect() {
+      return { left: 0, right: this.layoutWidth, width: this.layoutWidth, top: 0, bottom: 8, height: 8 };
+    },
+    querySelectorAll(sel) {
+      const attr = String(sel).replace(/^\[/, '').replace(/\]$/, '');
+      return kids.filter((k) => k.getAttribute && k.getAttribute(attr) !== null);
+    },
+    querySelector(sel) {
+      const all = this.querySelectorAll(sel);
+      return all.length ? all[0] : null;
+    },
     get firstChild() { return kids.length ? kids[0] : null; },
     appendChild(n) { kids.push(n); return n; },
     removeChild(n) { const i = kids.indexOf(n); if (i >= 0) kids.splice(i, 1); return n; },
     setAttribute(k, v) { attrs[k] = String(v); },
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null; },
     removeAttribute(k) { delete attrs[k]; },
-    style: { setProperty: noop },
+    style: {
+      props: Object.create(null),
+      setProperty(k, v) { this.props[k] = v; }
+    },
     className: '',
     textContent: ''
   };
@@ -680,7 +697,22 @@ const STRIP = [
   ent(rec('g5', 'narration', 2000, 100, { relativeMs: 2000, responseId: 'R2' }), 2)
 ];
 
-const stripIds = () => sandbox.dom.overviewLanes.childNodes.map((n) => n.getAttribute('data-record-id'));
+/* What the strip puts on screen, as record ids in the order they were first drawn.
+ *
+ * The strip draws one node per PIXEL COLUMN, so one record can own several columns and appear
+ * several times. Deduplicating is not softening the assertion — the claim it rests on is
+ * "every visible record is represented", and the old form ("one node per record") was a claim
+ * no reader could check at forty-two records to the pixel. Both are stated in the guard: the
+ * set equality below, and the column count further down. */
+const stripIds = () => {
+  const seen = new Set();
+  const out = [];
+  for (const n of sandbox.dom.overviewLanes.childNodes) {
+    const id = n.getAttribute('data-record-id');
+    if (id !== null && !seen.has(id)) { seen.add(id); out.push(id); }
+  }
+  return out;
+};
 const listIds = () => sandbox.visibleEntries().map((e) => e.record.id);
 
 function resetStrip() {
@@ -768,6 +800,91 @@ resetStrip();
 sandbox.renderOverview();
 check('strip: with nothing filtered again the strip is whole',
   stripIds(), ['g1', 'g2', 'g3', 'g4', 'g5']);
+
+/* ------------------------------------------------------------ one node per pixel column */
+/* What this pins: at 36,525 records the strip built 36,525 `.ov-span` nodes and rebuilt them on
+ * every poll that carried a body — 3,937 ms measured in the browser, against a 2.5s poll. The
+ * fix is aggregation, and an aggregation nobody can see from outside is indistinguishable from
+ * not having done it.
+ *
+ * The promise this layer makes is written out here because aggregation changes its SHAPE, not its
+ * truth. Two cases, and they are not the same claim:
+ *
+ *   strip wider than the record count — every record is bigger than a pixel, gets a column of
+ *     its own, and the old "the strip is the list" holds exactly. This is the case a reader can
+ *     check, and it is the one a zoomed-in view is always in.
+ *   strip narrower — records share a pixel and are indistinguishable there. What still holds is
+ *     that every record drawn is one the list kept, and that the strip covers every column the
+ *     records reach. "Every record appears" cannot be checked at forty-two records to the pixel,
+ *     and before aggregation it was not true either: the nodes were stacked, and what a reader
+ *     saw in each pixel was whichever record was painted last.
+ *
+ * `layoutWidth` is the one thing this fixture controls. 0 means "never laid out", which is the
+ * page's own fallback and gets its own assertion below. */
+
+const paintedColumns = () => [...new Set(sandbox.dom.overviewLanes.childNodes.map((n) => n.style.props['--ov-left']))].sort();
+const paintedIds = () => [...new Set(sandbox.dom.overviewLanes.childNodes.map((n) => n.getAttribute('data-record-id')))];
+
+resetStrip();
+sandbox.dom.overviewLanes.layoutWidth = 20;
+sandbox.renderOverview();
+check('a strip wider than the record count gives every record its own column',
+  stripIds(), ['g1', 'g2', 'g3', 'g4', 'g5']);
+check('and the column count follows the strip, not the records',
+  sandbox.overviewCache.columns, 20);
+check('so the strip and the list still say the same thing',
+  stripIds(), listIds());
+
+resetStrip();
+sandbox.dom.overviewLanes.layoutWidth = 3;
+sandbox.renderOverview();
+check('a strip narrower than the record count builds fewer nodes than there are records',
+  sandbox.dom.overviewLanes.childNodes.length < 5, true);
+check('the column count is the strip width', sandbox.overviewCache.columns, 3);
+check('nothing on the strip is a record the list dropped',
+  paintedIds().every((id) => listIds().includes(id)), true);
+check('and the strip covers every column the records reach',
+  paintedColumns(), ['0.0000%', '33.3333%', '66.6667%']);
+
+resetStrip();
+sandbox.dom.overviewLanes.layoutWidth = 0;
+sandbox.renderOverview();
+check('a strip that has never been laid out falls back to one column per record',
+  sandbox.overviewCache.columns, 5);
+check('not to a single column, which would be a solid block',
+  stripIds(), ['g1', 'g2', 'g3', 'g4', 'g5']);
+
+/* The selected and hovered records are the two things a column cannot say, so each gets its own
+ * node. Without them the strip would still be right and the reader would still be lost. */
+resetStrip();
+sandbox.dom.overviewLanes.layoutWidth = 20;
+sandbox.state.selectedId = 'g3';
+sandbox.renderOverview();
+check('the selected record has a node marked as the selected one',
+  sandbox.dom.overviewLanes.childNodes.filter(
+    (n) => n.getAttribute('data-record-id') === 'g3' && n.getAttribute('data-current') === 'true').length >= 1,
+  true);
+check('and it is marked as a record rather than as a column',
+  sandbox.dom.overviewLanes.childNodes.some((n) => n.getAttribute('data-current-marker') === 'true'), true);
+
+/* g3 is the record a 3px strip leaves without a column of its own — exactly the case the hover
+ * marker exists for. On the wide strip above it owns a column and needs no marker. */
+resetStrip();
+sandbox.dom.overviewLanes.layoutWidth = 3;
+sandbox.renderOverview();
+check('the crowded record is the one with no column of its own',
+  paintedIds().includes('g3'), false);
+sandbox.markOverviewHover('g3');
+check('a hovered record that owns no column still gets a node of its own',
+  sandbox.dom.overviewLanes.childNodes.some((n) => n.getAttribute('data-hovered-marker') === 'true'), true);
+check('and it is the record under the pointer',
+  sandbox.dom.overviewLanes.childNodes.filter((n) => n.getAttribute('data-hovered-marker') === 'true')
+    .map((n) => n.getAttribute('data-record-id')), ['g3']);
+sandbox.markOverviewHover(null);
+check('moving off takes that node away again',
+  sandbox.dom.overviewLanes.childNodes.some((n) => n.getAttribute('data-hovered-marker') === 'true'), false);
+check('and leaves the columns exactly as they were',
+  paintedColumns(), ['0.0000%', '33.3333%', '66.6667%']);
 
 /* ----------------------------------------------------------------------- report */
 console.log('overview + toolbar controls: ' + pass + ' passed, ' + failures.length + ' failed');

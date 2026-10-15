@@ -122,19 +122,25 @@ def main():
     text, newline = read_exact(HTML)
     anchor = "      function renderBars() {"
     note = "/* note-only-edit-marker */"
-    probe_text = PROBE.read_text(encoding="utf-8")
+    # Bytes, not text: `Path.write_text` translates "\n" to "\r\n" on write, so restoring the
+    # probe through it rewrote all 273 lines and the file came back CRLF. The shipped-file half of
+    # this control already reads bytes for exactly this reason; the probe half has to as well.
+    probe_bytes = PROBE.read_bytes()
+    probe_text = probe_bytes.decode("utf-8")
     if anchor not in text or note in probe_text:
         print("SKIP  comment-only edit: precondition not met")
         missed.append("comment-only edit")
     else:
-        PROBE.write_text(
-            probe_text.replace(anchor, "      " + note + "\n" + anchor, 1),
-            encoding="utf-8",
+        PROBE.write_bytes(
+            probe_text.replace(anchor, "      " + note + "\n" + anchor, 1).encode("utf-8")
         )
         try:
             code, output = run_probe()
         finally:
-            PROBE.write_text(probe_text, encoding="utf-8")
+            PROBE.write_bytes(probe_bytes)
+        if PROBE.read_bytes() != probe_bytes:
+            print("NOT RESTORED %s" % PROBE)
+            return 1
         if code != 0:
             print(f"MISSED comment-only edit: adding a note turned the probe red\n{output}")
             missed.append("comment-only edit")

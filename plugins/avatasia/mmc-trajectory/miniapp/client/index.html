@@ -1025,7 +1025,7 @@
         left: calc(var(--ov-left) + var(--ov-gap));
         width: max(2px, calc(var(--ov-width) - var(--ov-gap) - var(--ov-gap)));
         height: 8px;
-        min-width: 2px;
+        min-width: var(--ov-min, 2px);
         border-radius: 1px;
         background: var(--mcode-text-subtle);
         opacity: 0.78;
@@ -5083,6 +5083,82 @@
         return { start: model.start, duration: Math.max(1e-6, model.end - model.start) };
       }
 
+      /**
+       * How many pixel columns the strip has — or `spanCount` when it has not been laid out.
+       *
+       * The fallback is load-bearing rather than defensive: a strip that has never been measured
+       * must not collapse into one column (a solid block) or into an unbounded loop. Falling
+       * back to one column per record is exactly what shipped before, which is a safe way to be
+       * wrong, and it means this function cannot make the picture worse than it was.
+       */
+      function overviewColumnCount(lanes, spanCount) {
+        if (!lanes || typeof lanes.getBoundingClientRect !== 'function') return spanCount;
+        var width = lanes.getBoundingClientRect().width;
+        if (!(width > 0)) return spanCount;
+        return Math.max(1, Math.round(width));
+      }
+
+      /**
+       * Which column a moment on the axis falls in — measured against the VIEW, not the domain,
+       * because a column is a pixel of the strip the reader is looking at, and the strip shows
+       * the view.
+       *
+       * @returns {number} 0..columns, clamped: a moment outside the view still has to land
+       *   somewhere rather than index out of the bucket map.
+       */
+      function overviewColumnAt(time, view, columns) {
+        var duration = view && view.duration > 0 ? view.duration : 1;
+        var column = Math.floor(((time - view.start) / duration) * columns);
+        if (!isFinite(column) || column < 0) return 0;
+        if (column > columns) return columns;
+        return column;
+      }
+
+      /**
+       * One `.ov-span` node.
+       *
+       * Colour, opacity, lane and the `data-kind` rules all still come from the stylesheet: this
+       * decides only how MANY nodes there are and where they sit. A `column` of null means the
+       * node stands for one record at that record's own position — used for the selected record
+       * and for a hover, neither of which is a range.
+       */
+      function overviewAppendSpan(lanes, span, column, columns, view, model, fullDuration) {
+        var marker = column === null;
+        var left = marker ? (span.start - model.start) / fullDuration : column / columns;
+        var width = marker ? (span.end - span.start) / fullDuration : 1 / columns;
+        var node = el('span', 'ov-span');
+        node.setAttribute('data-kind', span.record.kind);
+        if (span.record.kind === 'toolResult' && span.record.isError === true) node.setAttribute('data-error', 'true');
+        node.style.setProperty('--ov-lane', String(span.lane));
+        node.style.setProperty('--ov-left', (left * 100).toFixed(4) + '%');
+        node.style.setProperty('--ov-width', (width * 100).toFixed(4) + '%');
+        // A column is one pixel wide. `.ov-span` floors at 2px, which would make every column
+        // overlap its right-hand neighbour and shift the whole picture by one pixel — so the
+        // floor is a custom property and a column lowers it. The default stays 2px for the
+        // markers, which are positioned by their record and should read as a dot, not a pixel.
+        node.style.setProperty('--ov-min', marker ? '2px' : '1px');
+        node.style.setProperty('--ov-gap', '0px');
+        node.setAttribute('data-record-id', span.id);
+        if (span.record.id === state.selectedId) node.setAttribute('data-current', 'true');
+        lanes.appendChild(node);
+        return node;
+      }
+
+      /**
+       * The selected record, as its own node rather than as part of a column.
+       *
+       * @param {string|null} recordId
+       * @param {string} markerAttr an attribute the caller can find and remove again
+       */
+      function overviewAppendMarker(lanes, recordId, markerAttr, columns, view, model, fullDuration) {
+        if (!recordId) return null;
+        var span = overviewSpansById.get(recordId);
+        if (!span) return null;
+        var node = overviewAppendSpan(lanes, span, null, columns, view, model, fullDuration);
+        node.setAttribute(markerAttr, 'true');
+        return node;
+      }
+
       function renderOverview() {
         var track = dom.overviewTrack;
         if (!track) return;
@@ -5112,19 +5188,33 @@
 
         var lanes = dom.overviewLanes;
         clear(lanes);
+
+        // One node per PIXEL COLUMN, not one per record.
+        //
+        // `.ov-span` is `width: max(2px, …)`, so at the measured 872px viewport the strip has
+        // ~436 slots and the 36,525 spans of the largest session were stacked ~42 deep on top
+        // of each other — the picture a reader saw was already "whichever record was painted
+        // last on this pixel", which is exactly what a column is. Bucketing therefore does not
+        // approximate the old picture, it is the old picture, one pixel sharper.
+        //
+        // Measured (`.probe/_strip-canvas-cost.mjs`, sandbox): 546.5 ms and 36,525 nodes at
+        // 36,525 records, against 3,937 ms in the browser. That is the whole cost of a rebuild
+        // that ran on every poll carrying a body.
+        //
+        // What is NOT approximated: the span map below is still built for every record, because
+        // `recordInSelection` reads it to decide whether a brushed range contains a record. Only
+        // the drawing is aggregated.
+        var columns = overviewColumnCount(lanes, model.spans.length);
+        overviewCache.columns = columns;
+        /** @type {Map<string, any>} last span painted into each `lane:column` */
+        var winners = new Map();
+        var painted = [];
+        var drawn = new Set();
+
         for (var i = 0; i < model.spans.length; i += 1) {
           var span = model.spans[i];
           overviewSpansById.set(span.id, span);
-          if (span.end < view.start || span.start > view.start + view.duration) {
-            if (span.record.id !== state.selectedId) continue;
-          }
-          var left = (span.start - model.start) / fullDuration;
-          var width = (span.end - span.start) / fullDuration;
-          var node = el('span', 'ov-span');
-          node.setAttribute('data-kind', span.record.kind);
-          if (span.record.kind === 'toolResult' && span.record.isError === true) node.setAttribute('data-error', 'true');
-          if (span.record.id === state.selectedId) node.setAttribute('data-current', 'true');
-          if (state.overviewHoverId === span.id) node.setAttribute('data-hovered', 'true');
+          if (span.end < view.start || span.start > view.start + view.duration) continue;
           // The strip claims to be a picture of the list below it, so it has to be one.
           // A record the filter excluded is not drawn faint — it is not drawn. Dimming
           // it kept the excluded work visible enough that turning off 工具结果 left the
@@ -5139,14 +5229,34 @@
           // changed". A flag listing the axes is a list that drifts the next time an axis is
           // added, so the flag is gone rather than completed. The brush stays out of this
           // because `spanPassesFilter` passes a null selection, not because it is missing here.
+          //
+          // Still the same line, still the same order: aggregation happens AFTER this asks, so
+          // the question of "which records belong on the strip" keeps exactly one owner.
           if (!spanPassesFilter(span.record)) continue;
-          node.style.setProperty('--ov-lane', String(span.lane));
-          node.style.setProperty('--ov-left', (left * 100).toFixed(4) + '%');
-          node.style.setProperty('--ov-width', (width * 100).toFixed(4) + '%');
-          node.style.setProperty('--ov-gap', Math.min(width * 100 * 0.08, 1).toFixed(4) + 'px');
-          node.setAttribute('data-record-id', span.id);
-          lanes.appendChild(node);
+
+          // A column's value is the record painted last on it, which is how overlapping spans
+          // already resolved. `for` runs in ledger order, so the last write wins.
+          var from = overviewColumnAt(span.start, view, columns);
+          var to = overviewColumnAt(span.end, view, columns);
+          if (to <= from) to = from + 1;
+          for (var c = from; c < to; c += 1) winners.set(span.lane + ':' + c, span);
         }
+
+        winners.forEach(function (span, key) {
+          var column = Number(key.slice(key.indexOf(':') + 1));
+          overviewAppendSpan(lanes, span, column, columns, view, model, fullDuration);
+          if (!drawn.has(span.id)) { drawn.add(span.id); painted.push(span.id); }
+        });
+
+        // The selected record gets its own node, on top, at its own position — not at the
+        // column it may have won. A column is a range, and 「这一条」 is not a range. It also
+        // covers the selected record sitting outside the current view, which no column can.
+        overviewAppendMarker(lanes, state.selectedId, 'data-current-marker', columns, view, model, fullDuration);
+
+        // What the strip actually shows, for the guard. "Every visible record has a node" is not
+        // a claim a reader could check at 42 records to the pixel; "every visible record falls
+        // inside a column that was drawn" is, and it is what this list is for.
+        overviewCache.painted = painted;
 
         var turns = dom.overviewTurns;
         clear(turns);
@@ -5487,11 +5597,31 @@
       }
 
       function markOverviewHover(id) {
-        var nodes = dom.overviewLanes.querySelectorAll('[data-record-id]');
+        var lanes = dom.overviewLanes;
+        if (!lanes) return;
+        state.overviewHoverId = id || null;
+        var nodes = lanes.querySelectorAll('[data-record-id]');
+        var found = false;
         for (var i = 0; i < nodes.length; i += 1) {
-          if (nodes[i].getAttribute('data-record-id') === id) nodes[i].setAttribute('data-hovered', 'true');
-          else nodes[i].removeAttribute('data-hovered');
+          if (id && nodes[i].getAttribute('data-record-id') === id) {
+            nodes[i].setAttribute('data-hovered', 'true');
+            found = true;
+          } else {
+            nodes[i].removeAttribute('data-hovered');
+          }
         }
+        // The strip draws one node per pixel column now, so the hovered record usually does not
+        // have a node of its own — it lost its column to whichever record was painted last on
+        // that pixel, which at the measured session is one of about forty-two. Without this the
+        // hover highlight would simply stop existing on a big session, and the table row it
+        // marks would be pointing at nothing. One extra node, not one per record.
+        var previous = lanes.querySelector('[data-hovered-marker]');
+        if (previous) lanes.removeChild(previous);
+        if (!id || found) return;
+        var span = overviewSpansById.get(id);
+        if (!span) return;
+        overviewAppendMarker(lanes, id, 'data-hovered-marker', overviewCache.columns, overviewCache.view,
+          overviewCache.model, overviewCache.fullDuration);
       }
 
       /** Keep brushing usable once the axis is zoomed in: slide the window near the edges. */

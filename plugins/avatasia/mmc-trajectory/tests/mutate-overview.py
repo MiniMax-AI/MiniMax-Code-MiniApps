@@ -42,6 +42,11 @@ SPAN_ADAPTER = """      function spanPassesFilter(record) {
 # carry its own leading whitespace would also match the predicate's other references.
 STRIP_GATE = """          if (!spanPassesFilter(span.record)) continue;"""
 
+COLUMN_COUNT = """        if (!lanes || typeof lanes.getBoundingClientRect !== 'function') return spanCount;
+        var width = lanes.getBoundingClientRect().width;
+        if (!(width > 0)) return spanCount;
+        return Math.max(1, Math.round(width));"""
+
 MUTATIONS = [
     (
         "the strip keeps a predicate of its own instead of asking the list",
@@ -64,6 +69,32 @@ MUTATIONS = [
         STRIP_GATE,
         """          var filtering = state.query !== '' || state.kinds.length !== KIND_ORDER.length;
           if (filtering && !spanPassesFilter(span.record)) continue;""",
+    ),
+    # ---- one node per pixel column, not one per record -------------------------------------
+    # The three above are about WHICH records belong on the strip. These four are about HOW it
+    # draws the ones that do, which is where the 3,937 ms went: one node per record meant 36,525
+    # nodes stacked ~42 deep on every pixel of an 872px strip.
+    (
+        "the strip draws one node for the whole axis, which is a solid block",
+        COLUMN_COUNT,
+        """        var width = lanes.getBoundingClientRect().width;
+        if (!(width > 0)) return spanCount;
+        return 1;""",
+    ),
+    (
+        "the strip stops counting columns and is back to a node per record",
+        COLUMN_COUNT,
+        """        return spanCount;""",
+    ),
+    (
+        "the selected record no longer gets a node of its own, so it loses its highlight",
+        "        overviewAppendMarker(lanes, state.selectedId, 'data-current-marker', columns, view, model, fullDuration);",
+        "        /* the selected record is left to whichever column it happens to own */",
+    ),
+    (
+        "a hovered record that owns no column loses its highlight with it",
+        "        if (!id || found) return;\n        var span = overviewSpansById.get(id);",
+        "        if (!id || found) return;\n        if (true) return;\n        var span = overviewSpansById.get(id);",
     ),
 ]
 
