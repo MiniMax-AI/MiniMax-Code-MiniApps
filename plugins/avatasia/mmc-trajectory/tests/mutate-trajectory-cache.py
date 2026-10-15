@@ -47,8 +47,8 @@ MUTATIONS = [
     (
         "the route names the whole key as the family, so every version is its own family",
         SERVER,
-        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, decoded: new Map() });",
-        "trajectoryCache.set(cacheKey, cacheKey, { at: Date.now(), etag, body, raws, decoded: new Map() });",
+        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
+        "trajectoryCache.set(cacheKey, cacheKey, { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
     ),
     (
         "the family stops naming the slice, so one session's generations evict each other",

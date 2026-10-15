@@ -75,14 +75,22 @@ function pageRecordSearchText(record) {
 // each one is something the reader is shown. That a record also carries them is checked below,
 // once there is a record to carry them.
 const CARRIED = ['summary', 'text', 'result', 'thinking', 'toolName'];
-// The page has to show them somewhere, or searching them finds something the reader cannot open.
-for (const field of CARRIED) {
+// Still on the row, so still read from the row.
+for (const field of ['summary', 'toolName']) {
   assert(`the page renders "${field}"`, CLIENT.includes(`record.${field}`));
 }
-// `arguments` is shown and deliberately NOT searched: it is the page's own choice, recorded as one
-// rather than left to look like an oversight. Search it and the coverage grows; do not search it and
-// a reader is never shown the field list, so the omission is a decision rather than a defect.
-assert('the page shows tool arguments', /record\.arguments/.test(CLIENT));
+// Shown, but no longer from the row: these three come from `/api/trajectory/record`, which is what
+// makes 「命中 → 看得见」 still true without the page holding them.
+for (const [field, label] of [['result', '工具结果'], ['thinking', '思考过程'], ['arguments', '工具参数']]) {
+  assert(`the page renders "${field}"`, CLIENT.includes(`buildDetailBlock('${label}', record, '${field}'`));
+}
+// `text` is the honest exception and it always was: no inspector tab has ever shown it. What a hit
+// on it leads to is 原文, which every record has. So the assertion is that the path exists, not
+// that the field is rendered.
+assert('a hit on "text" still leads somewhere: every record has the 原文 tab',
+  CLIENT.includes("{ id: 'raw', label: '原文', available: function () { return true; } }"));
+assert('and 原文 is drawn for a record, not only when something was selected',
+  /if \(tabId === 'raw'\) return buildRaw\(record\);/.test(CLIENT));
 assert('and arguments are deliberately not searched', !SEARCH_FIELDS.includes('arguments'));
 
 /** The page's filter, given a payload and a needle. This is what the endpoint must reproduce. */
@@ -115,6 +123,9 @@ const RAW = [
       timestamp: 1100,
       stopReason: 'toolUse',
       content: [
+        // A thinking block, because `thinking` is one of the five searched fields and a fixture
+        // with none of them makes every assertion about it pass by having nothing to look at.
+        { type: 'thinking', thinking: 'first I need the file, then the answer' },
         { type: 'text', text: 'working on it' },
         { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a' } },
       ],
@@ -169,8 +180,15 @@ const allPayload = buildTrajectoryPayload({
 assert('the identity layer really did keep one version of the message stored twice',
   allPayload.turns.flatMap((t) => t.records).filter((r) => r.id === 'tr1').length === 1);
 const firstRecord = allPayload.turns.flatMap((t) => t.records)[0];
+const allRecords = allPayload.turns.flatMap((t) => t.records);
+// Every searched field used to be on EVERY record, null when it had none, which is what let the
+// old loop ask `hasOwnProperty` of the first record and mean anything by the answer. A record now
+// carries only the field its kind has — a reply has no `arguments` to carry — so the question is
+// whether the projection still has each one SOMEWHERE, which is what this search is reading. The
+// wire copy is the other half of that, and tests/verify-record-detail.mjs holds it.
 for (const field of SEARCH_FIELDS) {
-  assert(`a projected record carries "${field}"`, Object.prototype.hasOwnProperty.call(firstRecord, field));
+  assert(`the projection carries "${field}" where it exists`,
+    allRecords.some((r) => Object.prototype.hasOwnProperty.call(r, field) && r[field] !== null));
 }
 check('and the searched fields are exactly the five that are both carried and shown', SEARCH_FIELDS, CARRIED);
 assert('and it is the one with the real result',

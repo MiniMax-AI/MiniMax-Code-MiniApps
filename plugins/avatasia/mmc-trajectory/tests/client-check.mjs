@@ -227,14 +227,18 @@ assert('signature changes with counts', sigA !== sandbox.signatureOf(payload));
 
 /* handoff markdown */
 const turn = { id: 't1', index: 3 };
+// No `error` field any more: it was the same string as `result`, set only when `isError` was already
+// true, and it no longer rides along on the row at all. The message comes from the record-detail
+// read and is passed in, so the fixture passes it in too.
 const failing = {
   kind: 'toolCall', index: 42, toolName: 'read', toolCallId: 'call_bb89',
   timestamp: 1791603931971, relativeMs: 887, durationMs: null, isError: true,
-  error: 'boom <b>x</b>', model: 'MiniMax-M3.1-Flash-Preview', provider: 'minimax',
+  model: 'MiniMax-M3.1-Flash-Preview', provider: 'minimax',
   api: 'anthropic-messages', stopReason: 'toolUse', textTruncated: true,
   tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15 },
   arguments: { path: 'a.txt' }
 };
+const ERROR_TEXT = 'boom <b>x</b>';
 const raw = sandbox.truncateJson({ blob: 'x'.repeat(20000) }, sandbox.HANDOFF_RAW_LIMIT);
 check('truncateJson caps at 8000', raw.text.length, 8000);
 check('truncateJson flags', raw.truncated, true);
@@ -244,13 +248,18 @@ check('truncateJson small', sandbox.truncateJson({ a: 1 }, 8000).truncated, fals
 // tests/verify-raw-lazy.mjs).
 // The markdown therefore takes the verdict as its own argument, and this asserts that a
 // caller who passes it still gets the line — and that one who does not, gets silence.
-const md = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated, true);
-const mdWithoutVerdict = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated);
+const md = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated, true, ERROR_TEXT);
+const mdWithoutVerdict = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated, undefined, ERROR_TEXT);
 assert('md omits the flag when no verdict was passed', !mdWithoutVerdict.includes('原文过大已被省略'));
 assert('md locates turn', md.includes('第 3 轮'));
 assert('md locates record', md.includes('#42'));
 assert('md names kind', md.includes('工具调用'));
-assert('md marks failure', md.includes('状态：失败') && md.includes('boom <b>x</b>'));
+assert('md marks failure', md.includes('状态：失败') && md.includes(ERROR_TEXT));
+// The detail read is allowed to fail on its own so the report still goes out. Saying so beats a
+// line reading 「失败」 with nothing after it, which reads as "the tool said nothing".
+const mdWithoutError = sandbox.buildHandoffMarkdown({ id: 'mvs_1', label: '测试会话' }, turn, failing, raw.text, raw.truncated, true);
+assert('md still reports the failure when the error text did not arrive', mdWithoutError.includes('状态：失败'));
+assert('and says the text is missing rather than printing an empty value', mdWithoutError.includes('（错误信息未能读取）'));
 assert('md renders null duration as dash', md.includes('耗时：—'));
 assert('md notes truncation', md.includes('已截断到 8000 字符'));
 assert('md notes flags', md.includes('原文过大已被省略') && md.includes('正文已被上游截断'));
@@ -424,7 +433,16 @@ const checks = [
   ['has --mcode-* tokens', (html.match(/--mcode-/g) || []).length > 40],
   ['no --dsw-* leakage', !/--dsw-/.test(html)],
   ['no remote font family names', !/JetBrains|Inter['"]?\s*,|@font-face/.test(html)],
-  ['innerHTML only on pre via jsonColorize', (html.match(/\.innerHTML/g) || []).length === 2],
+  // This used to be `(html.match(/\.innerHTML/g) || []).length === 2` — a count wearing a
+  // property's name. It failed the moment a third legitimate `jsonColorize` call was added, and
+  // it would have passed just as happily if one of the two had been deleted and the other turned
+  // into an injection. The property is the rule: every one of them writes through jsonColorize,
+  // and only onto a <pre>.
+  ['innerHTML only on pre via jsonColorize',
+    [...html.matchAll(/([A-Za-z_$][\w$]*)\.innerHTML\s*=\s*([^;\n]*)/g)]
+      .length > 0
+    && [...html.matchAll(/([A-Za-z_$][\w$]*)\.innerHTML\s*=\s*([^;\n]*)/g)]
+      .every((m) => m[1] === 'pre' && /jsonColorize\(/.test(m[2]))],
   ['lang zh-CN', /<html lang="zh-CN">/.test(html)],
   ['title 会话轨迹', /<title>会话轨迹<\/title>/.test(html)],
   ['AbortController used', /new AbortController\(\)/.test(html)],

@@ -2950,8 +2950,11 @@
           // instead of one. 无答复 cannot see it either way: an empty reply closes its turn, so
           // `closed` is true and that rule has nothing to fire on. Measured on this session:
           // two, one of them the turn that ended in front of the reader with nothing shown.
+          // `hasText` is the server's own verdict, measured from the text it projected, and it is
+          // NOT the same question as whether `summary` is empty: a body-less reply is given its
+          // title as a summary, so reading one from the other would find nothing to flag.
           record: function (record) {
-            return !!record && record.kind === 'reply' && isNil(record.text);
+            return !!record && record.kind === 'reply' && record.hasText === false;
           }
         },
         {
@@ -3536,7 +3539,7 @@
         return { text: text.slice(0, cap), truncated: true };
       }
 
-      function buildHandoffMarkdown(session, turn, record, rawText, rawTruncated, rawOmitted) {
+      function buildHandoffMarkdown(session, turn, record, rawText, rawTruncated, rawOmitted, errorText) {
         var lines = [];
         lines.push('请分析这条会话轨迹记录，说明它在做什么、有没有问题，以及是否需要改进。');
         lines.push('');
@@ -3570,9 +3573,12 @@
         if (record.stopReason) lines.push('- 结束原因：' + record.stopReason);
         if (record.textTruncated) lines.push('- 提示：正文已被上游截断。');
         if (rawOmitted) lines.push('- 提示：原文过大已被省略。');
-        if (record.isError || record.error) {
+        // The message behind a failure is the tool result, which no longer rides along on the row.
+        // `errorText` is null when the read did not arrive, and that is said rather than printed as
+        // an empty value: a report that says 「失败」 with nothing after it reads as "no message".
+        if (record.isError === true) {
           lines.push('- 状态：失败');
-          lines.push('- 错误：' + safeText(record.error));
+          lines.push('- 错误：' + (errorText ? safeText(errorText) : '（错误信息未能读取）'));
         } else {
           lines.push('- 状态：已完成');
         }
@@ -5877,7 +5883,7 @@
         row.setAttribute('data-row-id', recordKey(record));
         if (record.id === state.selectedId) row.setAttribute('aria-current', 'true');
         else row.removeAttribute('aria-current');
-        var failed = !!(record.isError || record.error);
+        var failed = record.isError === true;
         if (failed) row.classList.add('is-error');
 
         row.appendChild(el('span', 'row-index', '#' + (isCount(record.index) ? record.index : DASH)));
@@ -5885,7 +5891,11 @@
         var label = pill(kindLabel(record), kindTone(record.kind));
         row.appendChild(label);
 
-        var summaryText = record.summary || record.text || record.toolName || record.title || '';
+        // The server derives this one, folding in the tool name and the title when a record has no
+        // text of its own. It used to be a four-step chain here; measured over this machine's
+        // store, the `text` step never decided a single row, and the other two now live server-side
+        // where the rest of the summary is made.
+        var summaryText = record.summary || '';
         var summary = el('span', 'row-summary', truncateText(safeText(summaryText), 160) || DASH);
         summary.title = truncateText(safeText(summaryText), 600);
         row.appendChild(summary);
@@ -5899,7 +5909,7 @@
         // finished normally — but on the row the only thing separating it from an answer is
         // the absence of one, and a row that silently shows nothing is indistinguishable from
         // one the page failed to load.
-        var silent = record.kind === 'reply' && isNil(record.text);
+        var silent = record.kind === 'reply' && record.hasText === false;
         if (failed) {
           row.appendChild(pill('失败', 'error'));
           row.title = '失败 · 耗时 ' + durationText + '（详情见右侧检视）';
@@ -5957,7 +5967,7 @@
         var opened = isCount(record.generation)
           ? '开启第 ' + formatInt(record.generation) + ' 代'
           : '开启新的一代';
-        var summary = truncateText(safeText(record.summary || record.text || ''), 200);
+        var summary = truncateText(safeText(record.summary), 200);
         band.appendChild(el('span', 'compaction-what', summary ? summary : '之前的上下文已被摘要'));
 
         var when = isNil(record.relativeMs)
@@ -7901,23 +7911,21 @@
           id: 'args',
           label: '参数',
           available: function (record) {
-            return record.kind === 'toolCall' && record.arguments !== null && record.arguments !== undefined;
+            return record.kind === 'toolCall' && record.hasArguments === true;
           }
         },
         {
           id: 'result',
           label: '结果',
           available: function (record) {
-            return record.kind === 'toolResult' && record.result !== null && record.result !== undefined;
+            return record.kind === 'toolResult' && record.hasResult === true;
           }
         },
         {
           id: 'thinking',
           label: '思考',
           available: function (record) {
-            if (record.kind !== 'thinking') return false;
-            var value = record.thinking;
-            return value !== null && value !== undefined && safeText(value).trim() !== '';
+            return record.kind === 'thinking' && record.hasThinking === true;
           }
         }
       ];
@@ -8062,9 +8070,9 @@
       function buildPanel(tabId, record, turn) {
         if (tabId === 'summary') return buildSummary(record, turn);
         if (tabId === 'raw') return buildRaw(record);
-        if (tabId === 'args') return buildBlock('工具参数', record.arguments, true);
-        if (tabId === 'result') return buildBlock('工具结果', record.result, false);
-        return buildBlock('思考过程', record.thinking, false);
+        if (tabId === 'args') return buildDetailBlock('工具参数', record, 'arguments', true);
+        if (tabId === 'result') return buildDetailBlock('工具结果', record, 'result', false);
+        return buildDetailBlock('思考过程', record, 'thinking', false);
       }
 
       function buildSummary(record, turn) {
@@ -8074,13 +8082,23 @@
         wrap.style.flexDirection = 'column';
         wrap.style.gap = '12px';
 
-        if (record.isError || record.error) {
+        // `isError` alone decides this. It used to be `isError || error`, and that second term was
+        // never a second opinion: `error` was the same string as `result`, set only when
+        // `isError` was already true, so the test could only ever have agreed. The text it showed
+        // is `result`, which now arrives with the record's details.
+        if (record.isError === true) {
           var alert = el('div', 'bar bar-danger');
           var texts = el('div');
           texts.appendChild(el('p', 'bar-title', '失败'));
-          texts.appendChild(el('p', 'bar-hint', safeText(record.error) || '该记录以错误结束，但没有给出错误信息。'));
+          var hint = el('p', 'bar-hint', '正在读取错误信息…');
+          texts.appendChild(hint);
           alert.appendChild(texts);
           wrap.appendChild(alert);
+          fetchDetail(record).then(function (detail) {
+            hint.textContent = safeText(detail.result) || '该记录以错误结束，但没有给出错误信息。';
+          }, function () {
+            hint.textContent = '该记录以错误结束，错误信息暂时取不到。';
+          });
         }
 
         var scroll = el('div', 'table-scroll');
@@ -8114,7 +8132,7 @@
         kvRow(table, '提供方', isNil(record.provider) ? DASH : String(record.provider));
         kvRow(table, '接口', isNil(record.api) ? DASH : String(record.api));
         kvRow(table, '结束原因', isNil(record.stopReason) ? DASH : String(record.stopReason));
-        kvRow(table, '状态', record.isError || record.error ? '失败' : '已完成');
+        kvRow(table, '状态', record.isError === true ? '失败' : '已完成');
         scroll.appendChild(table);
         wrap.appendChild(scroll);
 
@@ -8236,6 +8254,123 @@
        */
       function rawSourceFor(record) {
         return fetchRaw(record);
+      }
+
+      /* ---------------- record fields on demand ---------------- */
+
+      // The four bulk fields. They used to be on every row of every poll — 59.1% of the body,
+      // measured over this machine's whole session store — and the page held all of it to draw a
+      // row and, when a record was opened, four tabs. What a row carries now is four presence
+      // flags; this is where the values come from, for the one record the reader is looking at.
+      //
+      // The cache key is `rawCacheKey`'s, not a second one, and for the same reason: a record index
+      // is a position within one version of one body, so a value that changed since it was read
+      // must not keep being served. Sharing the key rather than copying it is what keeps the two
+      // answers from describing different versions of the same record.
+      var detailCache = {};
+      var detailPending = {};
+
+      function requestDetail(index) {
+        var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))
+          + '&session=' + sessionParam();
+        if (state.generation !== null) {
+          url += '&generation=' + encodeURIComponent(String(state.generation));
+        }
+        return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
+          return response.json().then(
+            function (body) { return { ok: response.ok, body: body }; },
+            function () { return { ok: false, body: null }; }
+          );
+        });
+      }
+
+      /**
+       * Resolves to the record's four bulk fields, or rejects.
+       *
+       * Same contract as `fetchRaw`: a 503 means the server released this session, so the session
+       * is reloaded once and the read retried; a 409 means the file moved, which a reload retries
+       * its way out of on a timer, so it is reported instead.
+       *
+       * @param {Record<string, any>} record
+       * @param {boolean} [retried]
+       */
+      function fetchDetail(record, retried) {
+        var index = record && record.index;
+        if (!isCount(index) || index < 1) return Promise.reject(new Error('record_index_missing'));
+        var key = rawCacheKey(index);
+        if (Object.prototype.hasOwnProperty.call(detailCache, key)) return Promise.resolve(detailCache[key]);
+        if (detailPending[key]) return detailPending[key];
+        var attempt = requestDetail(index).then(function (result) {
+          delete detailPending[key];
+          if (result.ok && result.body && typeof result.body.index === 'number') {
+            var entry = {
+              text: typeof result.body.text === 'string' ? result.body.text : null,
+              thinking: typeof result.body.thinking === 'string' ? result.body.thinking : null,
+              arguments: result.body.arguments === undefined ? null : result.body.arguments,
+              result: typeof result.body.result === 'string' ? result.body.result : null,
+              textTruncated: result.body.textTruncated === true
+            };
+            detailCache[key] = entry;
+            return entry;
+          }
+          var code = result.body && typeof result.body.error === 'string' ? result.body.error : '';
+          var err = new Error(code || 'record_unavailable');
+          err.code = code;
+          throw err;
+        }).catch(function (err) {
+          if (!retried && err && err.code === 'trajectory_not_cached') {
+            return new Promise(function (resolve) { resolve(fetchTrajectory(false)); })
+              .then(function () { return fetchDetail(record, true); });
+          }
+          throw err;
+        });
+        detailPending[key] = attempt;
+        return attempt;
+      }
+
+      /**
+       * The record's bulk fields, for a panel that draws them after it is on the page.
+       *
+       * Three states and they are not the same: not yet read, read and empty, and read and failed.
+       * A panel that cannot tell them apart either shows nothing for a record that has content, or
+       * shows a failure for one that simply has none.
+       *
+       * @param {string} title
+       * @param {Record<string, any>} record
+       * @param {string} field one of text / thinking / arguments / result
+       * @param {boolean} colored
+       */
+      function buildDetailBlock(title, record, field, colored) {
+        var wrap = el('div');
+        wrap.style.display = 'flex';
+        wrap.style.flexDirection = 'column';
+        wrap.style.gap = '8px';
+        wrap.appendChild(el('p', 'block-title', title));
+        var pre = el('pre', 'pre');
+        pre.setAttribute('tabindex', '0');
+        wrap.appendChild(pre);
+        pre.textContent = '正在读取…';
+        fetchDetail(record).then(function (detail) {
+          var value = detail[field];
+          if (detail.textTruncated === true) {
+            wrap.insertBefore(el('p', 'note', '正文已截断：仅保留前段内容。'), pre);
+          }
+          if (value === null || value === undefined) {
+            pre.textContent = DASH;
+            return;
+          }
+          var text = safeText(value);
+          if (!text) {
+            pre.textContent = DASH;
+          } else if (colored && typeof value === 'object') {
+            pre.innerHTML = jsonColorize(value);
+          } else {
+            pre.textContent = text;
+          }
+        }, function () {
+          pre.textContent = '读取失败，这条记录的详细内容暂时取不到。';
+        });
+        return wrap;
       }
 
       function buildRaw(record) {
@@ -8382,7 +8517,15 @@
         var record = entry.record;
         dom.handoffBtn.disabled = true;
         inspectorSay('正在读取原文…');
-        rawSourceFor(record).then(function (fetched) {
+        // Both reads are one step for the reader, and the detail one is allowed to fail on its own:
+        // the report is still worth sending without the error text, and saying so in the text is
+        // better than dropping the whole handoff over a field the reader may not even look at.
+        Promise.all([
+          rawSourceFor(record),
+          fetchDetail(record).then(function (detail) { return detail; }, function () { return null; })
+        ]).then(function (both) {
+          var fetched = both[0];
+          var detail = both[1];
           // A message too large to carry has no raw; the normalized record is then the most
           // there is, which is what this sent before raw became a separate fetch.
           var omitted = fetched.omitted === true;
@@ -8396,7 +8539,8 @@
             record,
             raw.text,
             raw.truncated,
-            omitted
+            omitted,
+            detail && detail.result ? detail.result : null
           );
           inspectorSay('已发出请求，等待你在弹出的确认框中确认…');
           var result = message.append(text);

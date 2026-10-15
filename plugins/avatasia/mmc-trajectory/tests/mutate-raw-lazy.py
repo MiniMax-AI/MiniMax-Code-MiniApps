@@ -55,8 +55,8 @@ MUTATIONS = [
     (
         "server: /raw hands back a stored message instead of building one",
         SERVER,
-        "    const built = buildRawPayload(row.message, redact);\n",
-        "    const built = { value: row.message, omitted: false };\n",
+        "    const built = buildRawPayload(found.row.message, redact);\n",
+        "    const built = { value: found.row.message, omitted: false };\n",
     ),
     (
         "server: /raw stops reporting whether the message was too large",
@@ -67,7 +67,7 @@ MUTATIONS = [
     (
         "server: /raw keeps the rows out of the cache entry, so it cannot resolve a locator",
         SERVER,
-        "body, raws, decoded: new Map() });",
+        "body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
         "body, decoded: new Map() });",
     ),
     # ---- the cap must still hold, wherever it now lives ----------------------
@@ -97,10 +97,14 @@ MUTATIONS = [
         "          if (false) {\n",
     ),
     (
+        # Anchored on the insertBefore above it, not on the dash alone. `pre.textContent = DASH;`
+        # followed by `return;` now appears twice — once where an omitted message is drawn and once
+        # where a detail read came back empty — and an anchor loose enough to match either made this
+        # rewrite the wrong one, which the guard's own substring could not tell apart.
         "client: the raw tab shows the message even when it was omitted",
         CLIENT,
-        "            pre.textContent = DASH;\n            return;",
-        "            pre.innerHTML = jsonColorize(fetched.raw);\n            return;",
+        "              pre\n            );\n            pre.textContent = DASH;\n            return;",
+        "              pre\n            );\n            pre.innerHTML = jsonColorize(fetched.raw);\n            return;",
     ),
     (
         "client: copySelected stops honouring the omitted verdict",

@@ -105,10 +105,23 @@ check('the field list is the page\'s, in the page\'s order',
 const CLIENT = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
 check('the field list is the five the page can show',
   SEARCH_FIELDS, ['summary', 'text', 'result', 'thinking', 'toolName']);
-for (const field of SEARCH_FIELDS) {
+// Every field the segment stores must be something the reader is shown, or a search finds text
+// nobody can open. Three of them are no longer on the row — they arrive from the record-detail
+// read — so the check follows the value to where it is drawn rather than to where it used to live.
+// `text` is the honest exception and always was: no inspector tab has ever rendered it, and what a
+// hit on it leads to is the 原文 tab, which every record has.
+const SHOWN_FROM_DETAIL = [['result', '工具结果'], ['thinking', '思考过程'], ['arguments', '工具参数']];
+for (const field of ['summary', 'toolName']) {
   assert(`the page renders "${field}", so a hit on it leads somewhere`,
     CLIENT.includes(`record.${field}`));
 }
+for (const [field, label] of SHOWN_FROM_DETAIL) {
+  assert(`the page renders "${field}", so a hit on it leads somewhere`,
+    CLIENT.includes(`buildDetailBlock('${label}', record, '${field}'`));
+}
+assert('a hit on "text" still leads somewhere: 原文 is on every record',
+  CLIENT.includes("{ id: 'raw', label: '原文', available: function () { return true; } }")
+  && /if \(tabId === 'raw'\) return buildRaw\(record\);/.test(CLIENT));
 assert('the page has no local search left to disagree with',
   !/recordSearchText/.test(CLIENT) && !/indexOf\(String\(needle\)/.test(CLIENT));
 

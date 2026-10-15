@@ -243,9 +243,21 @@ const handleRawAt = startBody.indexOf('const handleRaw = async');
 assert('handleRaw exists', handleRawAt > 0);
 const rawBody = startBody.slice(handleRawAt, startBody.indexOf('const handleDashboard'));
 assert('handleRaw does not read the rows the entry used to keep', !rawBody.includes('cached.rows'));
-assert('it reads the line back through readRange', rawBody.includes('readRange(locator.filePath, locator.start, locator.end)'));
+// The read and its digest check moved into `readRecordRow` when `/api/trajectory/record` needed
+// the same two steps. They are asserted there and the handler is asserted to call it — a second
+// copy in one of the handlers would be a second answer to the same question, and would also have
+// made these two assertions pass for the wrong copy.
+const readRowAt = startBody.indexOf('const readRecordRow = async');
+assert('the shared line reader exists', readRowAt > 0);
+const readRowBody = startBody.slice(readRowAt, startBody.indexOf('const handleRaw = async'));
+assert('it reads the line back through readRange', readRowBody.includes('readRange(locator.filePath, locator.start, locator.end)'));
 assert('and refuses the answer when the digest disagrees',
-  rawBody.includes('lineDigest(bytes) !== locator.digest') && rawBody.includes("'raw_stale'"));
+  readRowBody.includes('lineDigest(bytes) !== locator.digest') && readRowBody.includes("'raw_stale'"));
+assert('handleRaw goes through it rather than reading a line of its own',
+  rawBody.includes('readRecordRow(locator)') && !rawBody.includes('lineDigest('));
+assert('and so does the record-detail endpoint',
+  startBody.includes("url.pathname === '/api/trajectory/record'")
+  && !startBody.slice(startBody.indexOf('const handleRecord = async'), readRowAt).includes('lineDigest('));
 assert('the decode cache is bounded rather than grown',
   rawBody.includes('cached.decoded.size > RAW_DECODE_CACHE_ENTRIES'));
 assert('RAW_DECODE_CACHE_ENTRIES is a real bound, not a comment',

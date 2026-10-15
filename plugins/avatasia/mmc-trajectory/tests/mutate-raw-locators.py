@@ -127,8 +127,8 @@ MUTATIONS = [
     (
         "server: the rows are put back into the cache entry, so the object graph stays resident",
         SERVER,
-        "body, raws, decoded: new Map() });",
-        "body, raws, decoded: new Map(), rows });",
+        "body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
+        "body, raws, rowPos: rowPosByRecord, decoded: new Map(), rows });",
     ),
     (
         "server: the rows are never released, so the request holds them until it returns",

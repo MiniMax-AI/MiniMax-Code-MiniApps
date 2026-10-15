@@ -214,6 +214,19 @@ export function clipField(value, max) {
 }
 
 /**
+ * Whether a projected field carries nothing a reader could be shown.
+ *
+ * The page has its own `isNil` and it counts an empty string as nothing; this is the same three
+ * cases. They have to agree, because the page decides whether to draw a tab from the flag this
+ * produces — a definition that treated `''` as present would offer a tab that renders an empty box.
+ *
+ * @param {unknown} value
+ */
+function isNilField(value) {
+  return value === null || value === undefined || value === '';
+}
+
+/**
  * Replaces internal store locations so the browser never learns where sessions live.
  * @param {readonly string[]} secrets
  */
@@ -1131,10 +1144,17 @@ export function toolCallSummary(name, args) {
  *
  * Records are carried per turn, not as one flat list, so this walks the turns.
  *
+ * `rowPos` is optional and collected in the same pass. It is the record's position among the
+ * records its own row produced, which `/api/trajectory/record` needs to say *which* of them it is
+ * answering for — the locator alone says which message, and one message can be several records.
+ * It is an out-parameter rather than a second return because this is the one place already walking
+ * every record, and a second walk to read a number is how two passes drift apart.
+ *
  * @param {Array<Record<string, any>>} turns
+ * @param {Map<number, number> | null} [rowPos]
  * @returns {Map<number, number>}
  */
-export function splitRawRecords(turns) {
+export function splitRawRecords(turns, rowPos = null) {
   /** @type {Map<number, number>} */
   const raws = new Map();
   if (!Array.isArray(turns)) return raws;
@@ -1148,11 +1168,50 @@ export function splitRawRecords(turns) {
       const rowIndex = record.rawRow;
       if (Number.isInteger(index) && index > 0 && typeof rowIndex === 'number' && Number.isInteger(rowIndex) && rowIndex >= 0) {
         raws.set(index, rowIndex);
+        // Collected here, while the record is in hand, and only for a record that has a locator to
+        // answer with. A position with no message behind it cannot be projected and must not be
+        // offered as if it could.
+        const pos = record.rowPos;
+        if (rowPos !== null && typeof pos === 'number' && Number.isInteger(pos) && pos >= 0) {
+          rowPos.set(index, pos);
+        }
       }
       delete record.rawRow;
     }
   }
   return raws;
+}
+
+/**
+ * Takes the four heavy fields off every record, in place, and hands the payload back.
+ *
+ * Measured over this machine's whole session store — 149 files, 13223 records, 27.2 MB of payload:
+ * `result` 26.6%, `thinking` 13.2%, `arguments` 9.3%, `text` 8.9%. **59.1% of the body**, and the
+ * page was holding all of it to draw a ledger row and, once in a while, one inspector tab.
+ *
+ * The values are on the records when this is called and still on them afterwards: the search reads
+ * them in this process, and `/api/trajectory/record` re-projects the one row it needs. What goes
+ * away is the copy that crosses the wire and lands in the page's heap.
+ *
+ * In place, and in one place. The flags were measured at `push()`, so there is nothing here that
+ * can disagree with them — a second measurement site is exactly how the page and the server came
+ * to answer 「这条记录有没有正文」 differently.
+ *
+ * @param {{ turns?: Array<any> }} payload
+ */
+export function slimPayloadForWire(payload) {
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const records = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      delete record.text;
+      delete record.thinking;
+      delete record.arguments;
+      delete record.result;
+    }
+  }
+  return payload;
 }
 
 /**
@@ -1721,17 +1780,35 @@ export function buildTrajectoryPayload(input) {
       textTruncated: false,
     };
 
+    /**
+     * Where this record sits among the records its own source row produced.
+     *
+     * A message can expand into several records — an assistant turn yields its text, each of its
+     * thinking blocks and each of its tool calls — and `/api/trajectory/record` re-projects that one
+     * row to answer for one record. Without a position it would have to guess which of the row's
+     * records was meant, and a guess that picks the wrong thinking block shows the reader another
+     * block's reasoning as if it were this one.
+     */
+    let rowPos = 0;
+
     /** @param {Partial<Record<string, any>> & { kind: string, title: string, summary: string }} patch */
     const push = (patch) => {
       const record = {
         ...base,
         index: records.length + 1,
         relativeMs: timestamp === null || startedAt === null ? null : timestamp - startedAt,
-        text: null,
-        thinking: null,
-        arguments: null,
-        result: null,
-        error: null,
+        // Four presence flags, measured here and nowhere else. The values themselves stay on the
+        // record — the search reads them in this process — and `slimPayloadForWire()` is what stops
+        // them crossing to the page. Deciding it anywhere else would give the page a second answer
+        // to 「这条记录有没有正文」, and the two would disagree exactly the way they did before.
+        hasText: !isNilField(patch.text),
+        hasThinking: !isNilField(patch.thinking),
+        // Not `!isNilField(...)`: the page's own test for the 参数 tab is `!== null && !== undefined`,
+        // and an empty string is a present argument to it. Matching it here keeps the tab from
+        // appearing and disappearing when the payload changes shape.
+        hasArguments: patch.arguments !== null && patch.arguments !== undefined,
+        hasResult: !isNilField(patch.result),
+        rowPos: rowPos++,
         tokensBefore: null,
         producedBy: null,
         parentGeneration: null,
@@ -1739,6 +1816,12 @@ export function buildTrajectoryPayload(input) {
         parentRevision: null,
         ...patch,
       };
+      // The row summary the page used to assemble itself: `summary || text || toolName || title`.
+      // Measured over this machine's store, the `text` step never decided anything — `singleLine`
+      // had already reduced that text to nothing — and the `toolName`/`title` step decided it for
+      // 5 of 1287 records, all `system`. So the chain is folded here, once, and the page reads one
+      // field. It is a fold and not a replacement: a record that already has a summary keeps it.
+      if (!record.summary) record.summary = record.toolName || record.title || '';
       if (record.textTruncated) textTruncatedAny = true;
       records.push(record);
       turn.records.push(record);
@@ -1871,7 +1954,6 @@ export function buildTrajectoryPayload(input) {
         textTruncated: resultField.truncated,
         toolName,
         toolCallId,
-        error: source.isError === true && resultField.text ? resultField.text : null,
       });
       const pending = toolCallId ? toolCallsById.get(toolCallId) : null;
       if (pending && !pending.result) pending.result = record;
@@ -3344,13 +3426,25 @@ export async function start(context) {
     // the body carries no message bodies at all.
     // The record -> locator map. Locators, not row references: the parsed rows behind them are
     // about to stop existing, and this entry is what has to outlive them for `/raw` to still work.
-    const rowIndexByRecord = splitRawRecords(payload.turns);
+    // `rowPos` says which of that row's records this index is, which is what lets
+    // `/api/trajectory/record` project one line and answer for one record out of it.
+    /** @type {Map<number, number>} */
+    const rowPosByRecord = new Map();
+    const rowIndexByRecord = splitRawRecords(payload.turns, rowPosByRecord);
     /** @type {Map<number, LineLocator>} */
     const raws = new Map();
     for (const [recordIndex, rowIndex] of rowIndexByRecord) {
       const locator = rowLocators[rowIndex];
       if (locator !== undefined) raws.set(recordIndex, locator);
     }
+
+    // Last thing before serializing, and the only place the bulk fields are ever taken off a
+    // record. It happens here rather than at `push()` because the search, which runs in this
+    // process and never serialises, still reads those fields off the projected records — so
+    // removing them at the projection would have broken search to save the page memory. The delta
+    // below is built from the same payload, so it is slim too: a poll carries no more bulk than
+    // the first load did.
+    slimPayloadForWire(payload);
 
     let body;
     try {
@@ -3363,7 +3457,7 @@ export async function start(context) {
     // same while it goes stale. Everything that decides whether the answer changed stays in the
     // key, so a newer version of one family replaces its predecessor instead of stacking beside it.
     // `decoded` is filled in by /raw, at most RAW_DECODE_CACHE_ENTRIES lines' worth.
-    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, decoded: new Map() });
+    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });
     // Nothing below reads `rows` or `rowLocators`, and `payload` holds its own projections rather
     // than the rows, so this is where the object graph stops being reachable. A sealed generation's
     // rows are still held by the parsed-rows cache — that is the point of that cache — but the
@@ -3537,6 +3631,123 @@ export async function start(context) {
    * A missing entry means this process restarted between the two calls; saying so is more honest
    * than silently showing the normalized record in a panel labelled 原文.
    */
+  /**
+   * One record's four bulk fields, read on request.
+   *
+   * The page used to receive all four on every row of every poll — measured over this machine's
+   * whole store, 59.1% of the body: `result` 26.6%, `thinking` 13.2%, `arguments` 9.3%, `text`
+   * 8.9% — and used them to draw a ledger row and, when the reader opened one record, four tabs.
+   * It now receives four presence flags and asks for the values when it is going to show them.
+   *
+   * It re-projects the ONE stored line that record came from, rather than rebuilding the session.
+   * A line can expand into several records (its text, each thinking block, each tool call), so the
+   * answer has to name which of them — `rowPos`, stamped at `push()` — and rebuilding the whole
+   * session to return one field would cost exactly what this change exists to stop paying.
+   *
+   * The bytes come through the same locator `/raw` uses and carry the same digest check, so a file
+   * that moved under the cache answers 「该记录所在的文件已变化」 here too, instead of projecting a
+   * line that is no longer the one the page is looking at.
+   */
+  const handleRecord = async (response, url) => {
+    const ctx = await resolveTrajectoryRequest(url);
+    if (!ctx.ok) {
+      sendError(response, ctx.status, ctx.code, ctx.message);
+      return;
+    }
+    const wanted = Number.parseInt(url.searchParams.get('index') ?? '', 10);
+    if (!Number.isInteger(wanted) || wanted < 1) {
+      sendError(response, 400, 'record_index_required', '缺少记录序号');
+      return;
+    }
+    const cached = trajectoryCache.get(ctx.cacheKey);
+    if (!cached) {
+      sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
+      return;
+    }
+    const locator = cached.raws.get(wanted);
+    const rowPos = cached.rowPos.get(wanted);
+    if (locator === undefined || typeof locator.filePath !== 'string' || typeof rowPos !== 'number') {
+      sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    const found = await readRecordRow(locator);
+    if ('error' in found) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: `record_${found.reason}` });
+      sendError(response, found.status, found.error, found.error === 'raw_stale'
+        ? '该记录所在的文件已变化，请重新加载会话'
+        : '找不到该记录');
+      return;
+    }
+    // One row in, one row's records out. `sizeBytes` is this line's own length: the only thing the
+    // projection does with it is report truncation, and a one-line view is never truncated.
+    const one = buildTrajectoryPayload({
+      session: { id: ctx.identity.id, createdAtMs: ctx.entry.lastActiveAt },
+      rows: [found.row],
+      sizeBytes: found.sizeBytes,
+      truncated: false,
+      redact,
+      generation: null,
+    });
+    const record = one.turns.flatMap((turn) => turn.records ?? [])[rowPos];
+    if (record === undefined) {
+      // The line projected into fewer records than the payload had for it. That means the two
+      // projections disagree about what this line contains, and answering with the wrong one would
+      // show the reader another record's content — so it is a 404, not a best effort.
+      context.logger.warn('miniapp.trajectory.read_error', { reason: 'record_position_gone', rowPos });
+      sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    sendJson(response, 200, {
+      index: wanted,
+      // No `kind`. Measured over 6568 records of this machine's store: re-projecting one row
+      // returns the same four values every time, but it disagrees about `kind` for an opener —
+      // a `steer` row projected alone has no earlier turn to have been interrupted by, so it
+      // comes back a `user`. The page already has the record and its kind; handing back a second
+      // one that is known to differ on openers is a second answer to a question it already
+      // answered, and the kind is the one field a reader would act on.
+      text: typeof record.text === 'string' ? record.text : null,
+      thinking: typeof record.thinking === 'string' ? record.thinking : null,
+      arguments: record.arguments ?? null,
+      result: typeof record.result === 'string' ? record.result : null,
+      textTruncated: record.textTruncated === true,
+    });
+  };
+
+  /**
+   * The stored line a record was projected from, or the reason there isn't one.
+   *
+   * ONE place, because there are two readers of it: `/api/trajectory/raw` wants the untouched
+   * message and `/api/trajectory/record` wants the projected fields. The check that the bytes are
+   * still the bytes that record was built from belongs to neither of them. Written twice it is two
+   * answers to "is this still the right line", and the copy nobody thinks about is the one that
+   * eventually stops answering — which is also how the guard stopped being able to tell the two
+   * apart.
+   *
+   * The digest is the whole point. A file that rotated under the cache has the same path and
+   * different bytes, and without this a record index would quietly resolve to whichever line now
+   * sits at that offset.
+   *
+   * @param {{ filePath: string, start: number, end: number, digest: string }} locator
+   * @returns {Promise<{ row: any, sizeBytes: number } | { error: string, status: number, reason: string }>}
+   */
+  const readRecordRow = async (locator) => {
+    const bytes = await readRange(locator.filePath, locator.start, locator.end);
+    if (bytes === null || lineDigest(bytes) !== locator.digest) {
+      return { error: 'raw_stale', status: 409, reason: 'stale' };
+    }
+    /** @type {any} */
+    let row;
+    try {
+      row = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      return { error: 'raw_stale', status: 409, reason: 'unparseable' };
+    }
+    if (!row || typeof row !== 'object') {
+      return { error: 'record_not_found', status: 404, reason: 'not_object' };
+    }
+    return { row, sizeBytes: bytes.length };
+  };
+
   const handleRaw = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
     if (!ctx.ok) {
@@ -3565,29 +3776,18 @@ export async function start(context) {
       sendError(response, 404, 'record_not_found', '找不到该记录');
       return;
     }
-    const bytes = await readRange(locator.filePath, locator.start, locator.end);
-    if (bytes === null || lineDigest(bytes) !== locator.digest) {
-      context.logger.warn('miniapp.trajectory.read_error', { reason: 'raw_stale' });
-      sendError(response, 409, 'raw_stale', '该记录所在的文件已变化，请重新加载会话');
-      return;
-    }
-    /** @type {any} */
-    let row;
-    try {
-      row = JSON.parse(bytes.toString('utf8'));
-    } catch {
-      context.logger.warn('miniapp.trajectory.read_error', { reason: 'raw_unparseable' });
-      sendError(response, 409, 'raw_stale', '该记录所在的文件已变化，请重新加载会话');
-      return;
-    }
-    if (!row || typeof row !== 'object') {
-      sendError(response, 404, 'record_not_found', '找不到该记录');
+    const found = await readRecordRow(locator);
+    if ('error' in found) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: `raw_${found.reason}` });
+      sendError(response, found.status, found.error, found.error === 'raw_stale'
+        ? '该记录所在的文件已变化，请重新加载会话'
+        : '找不到该记录');
       return;
     }
     // The one place the untouched message is materialised, for one record, on request. The
     // size verdict travels with it because the page has to be able to say "omitted" rather
     // than silently show something else — see tests/verify-raw-lazy.mjs.
-    const built = buildRawPayload(row.message, redact);
+    const built = buildRawPayload(found.row.message, redact);
     cached.decoded.set(wanted, built);
     while (cached.decoded.size > RAW_DECODE_CACHE_ENTRIES) {
       const oldest = cached.decoded.keys().next();
@@ -3661,6 +3861,13 @@ export async function start(context) {
       void handleSearch(response, url).catch((error) => {
         context.logger.error('miniapp.trajectory.read_error', { reason: 'search_failed', code: errorCode(error) });
         sendError(response, 500, 'trajectory_unreadable', '搜索暂时不可用');
+      });
+      return;
+    }
+    if (url.pathname === '/api/trajectory/record') {
+      void handleRecord(response, url).catch((error) => {
+        context.logger.error('miniapp.trajectory.read_error', { reason: 'record_failed', code: errorCode(error) });
+        sendError(response, 500, 'trajectory_unreadable', '记录详情暂时无法读取');
       });
       return;
     }
