@@ -208,24 +208,46 @@ with the reason stated rather than quietly dropped.
   guards is gone.
 - **`mutate-qa-lens.py`** — not carried. Guards the 问答 turn-lens. Same removal; no lens symbol
   remains.
-- **`verify-time-range.mjs`** — present, skipped by `run.mjs`. Its assertions are calibrated against a
-  full multi-generation session: `stats.messages > 1000`, and a checkpoint nested inside a turn rather
-  than being one. The committed fixture is a single-file session of a few dozen rows. Reproducing those
-  numbers faithfully would mean committing a multi-megabyte payload; relaxing them would stop
-  exercising the timezone arithmetic the file exists for. Run it by hand against a booted service:
-  `node tests/verify-time-range.mjs <port>`.
+- **`verify-time-range.mjs`** — used to be here, skipped by `run.mjs`, and is now in the default
+  run. It was skipped for one reason: the only session it could get was whatever a booted service
+  had, while its assertions want `stats.messages > 1000` and a local midnight with rows on both
+  sides of it. The committed fixture is sixty rows of one afternoon. Shipping it anyway would have
+  meant shipping a red suite; relaxing the numbers would have stopped exercising the timezone
+  arithmetic the file exists for; committing a multi-megabyte real transcript would have put a
+  session's contents in the package.
 
-  It has **no mutation control**, and there is no way to give it one inside this suite: `run.mjs`
-  promises that nothing here needs a running Mini App, and this file cannot be checked at all without
-  one — it derives its own fixture from `GET /api/trajectory`. So the teeth were checked by hand
-  instead, against a throwaway copy of the package taken outside this tree, so that no shipped byte
-  was touched. Six mutations, each required to fail with the assertion that owns the rule rather than
-  any nearby one: the bound read as UTC, the session-start subtraction dropped, one comparison in
-  `recordInRange()` flipped, `resetBaseFilters()` no longer called from `clearFilters()`,
-  `clearTimeRange()` no longer called from `resetBaseFilters()`, and the two clears in the wrong
-  order. All six were caught by name. That is a one-off result, not a control: nothing re-runs it,
-  and a later edit can pass everything else in this directory while this file goes unverified. Worth
-  knowing before trusting it.
+  It now builds its own transcript — 300 turns, 1,348 rows, ~2,400 records, spanning eight hours
+  across a local midnight — and hands it to the server's own `buildTrajectoryPayload`, the same
+  exported function `/api/trajectory` calls. **What is synthetic is the conversation; the `stats`
+  being compared is still computed by the code under test.** That is what makes section 3 still a
+  real comparison: it asks whether the page's re-derivation agrees with the server's numbers, and
+  both sides are the shipped implementations.
+
+  The generator is written to make the comparison bite rather than merely pass. It is not enough
+  for the session to be large: the fields section 3 compares have to be **non-zero**, or `0 === 0`
+  is green and means nothing. So the mix is deliberate — prompt turns, continuations, unfinished
+  turns, a turn that asks the reader something, steers, failing tool calls, and all five token
+  counters. Only `compactions` and `compactionTurns` are zero, and `compactionTurns === 0` is
+  asserted on purpose: a session with a bare checkpoint turn would have the two sides re-deriving
+  different populations rather than disagreeing about the same one.
+
+  Two shapes in it are not obvious and were both wrong on the first attempt:
+
+  - `closed` is **not** a stop reason. The server sets it from a record of kind `reply`, and that
+    kind is assigned from the literal string `stop`. A closing assistant row written as `'endTurn'`
+    projects as `narration`, and every turn in the session silently stays open — `openTurns` came
+    out at 275 of 275, which is the shape that made the comparison look fine while testing nothing.
+  - A turn only closes when a **second** assistant row follows its tool results. One assistant row
+    carrying both text and tool calls is not a reply.
+
+  **It has a mutation control now: `mutate-time-range.py`, eight cases.** Six of them are the
+  mutations that were previously checked by hand against a throwaway copy of the package while this
+  file sat outside the suite — that was a one-off result nothing re-ran, so a later edit could pass
+  everything else here while this file went unverified. Each must now be caught **by name**, via the
+  `FAILED_NAMES` line the guard prints, because a mutation is not satisfied by the suite going red.
+  Two more cover the re-derived stats literal losing `steers` and the range ceasing to re-cut its
+  snapshot. A comment-only edit is required to leave every verdict unchanged, the other direction:
+  a guard that cannot pass is as broken as one that cannot fail.
 
 ### Two anchors that were wrong, and one mutation that could not be caught
 

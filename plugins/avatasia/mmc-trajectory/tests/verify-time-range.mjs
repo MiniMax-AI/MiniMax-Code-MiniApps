@@ -14,27 +14,169 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { buildTrajectoryPayload } from '../miniapp/node/server.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const HTML = join(HERE, '..', 'miniapp', 'client', 'index.html');
 
-// NOT part of `run.mjs`, and deliberately so. Its assertions are calibrated against a full
-// multi-generation session -- `stats.messages > 1000`, and a checkpoint that sits inside a turn
-// rather than being one -- and the committed fixture is a single-file session of a few dozen
-// rows. Reproducing those numbers faithfully would mean committing a multi-megabyte payload.
-// Relaxing them to fit would be worse: the point of this file is the timezone arithmetic, which
-// a small window would stop exercising.
-//
-// Run it against a booted service instead:
-//   node tests/verify-time-range.mjs <port>
-const port = process.argv[2];
-if (!port) {
-  console.error('usage: node verify-time-range.mjs <port>   (needs a running Mini App)');
-  process.exit(2);
-}
-const BASE_URL = 'http://127.0.0.1:' + port;
-
 const html = readFileSync(HTML, 'utf8');
+
+/* ---------- the session section 3 runs against ---------- */
+// WHY IT IS BUILT HERE. This file was excluded from `run.mjs` for its whole life, and the reason
+// was always the input: its assertions want a session with more than a thousand messages spanning a
+// local midnight, and the only one available was whatever the machine running the service happened
+// to have. The committed fixture is sixty rows of one afternoon. So the file sat in the directory,
+// looked like coverage, and proved nothing — 509 lines of timezone arithmetic that no run exercised.
+//
+// Relaxing the numbers to fit the fixture was the alternative on the table and it is worse: the
+// whole point of the file is that a bound is a subtraction, and a window that no longer crosses a
+// midnight stops exercising the machine's distance from Greenwich at all.
+//
+// Committing a multi-megabyte real transcript was the other alternative. Rejected: it puts a
+// session's contents in the package, and this is a fixture, not a corpus.
+//
+// So the transcript is synthetic and built here, and it is handed to the server's OWN
+// `buildTrajectoryPayload` — the same exported function the `/api/trajectory` route calls. What is
+// synthetic is the conversation; the `stats` this compares against is still computed by the code
+// under test, in the file that serves it. Section 3 asks "does the page's re-derivation agree with
+// the server's numbers", and both sides of that question are still the real implementations.
+//
+// Three properties are load-bearing, and none of them is "big":
+//
+//   - over a thousand messages, or the half-range comparison compares two numbers too close to tell
+//   - a local midnight with rows on both sides of it, or the wall-clock arithmetic is never exercised
+//   - no turn that is nothing but a checkpoint, or `compactionTurns` is not 0 and the two sides are
+//     re-deriving different populations rather than disagreeing about the same one
+const SYNTHETIC_TURNS = 300;
+// Eight hours from 20:00 local puts the midnight four hours in, with roughly half the records on
+// each side of it — dense enough that the ±5 minute window section 3b picks is never empty, and
+// spread thinly enough that the window stays far under the tenth-of-the-session slice it asserts.
+const SYNTHETIC_SPAN_MS = 8 * 3600 * 1000;
+
+/**
+ * A local wall-clock instant far enough from any daylight-saving step to span one safely.
+ *
+ * Anchored to the calendar rather than to a UTC instant on purpose: the crossing under test is a
+ * LOCAL midnight, so a fixed UTC start would place it somewhere else on every other machine's
+ * clock and the file would be testing the store's timezone instead of the arithmetic. The retry is
+ * for the remaining case — a zone whose transition falls inside the eight hours, where the wall
+ * clock moves without `relativeMs` moving and the two readings section 3b compares part company.
+ *
+ * @returns {number} epoch ms
+ */
+function syntheticStart() {
+  let start = new Date(2026, 9, 10, 20, 0, 0).getTime();
+  for (let guard = 0; guard < 14; guard += 1) {
+    const offset = new Date(start).getTimezoneOffset();
+    if (offset === new Date(start + SYNTHETIC_SPAN_MS).getTimezoneOffset()) return start;
+    start = new Date(2026, 9, 10 + guard + 1, 20, 0, 0).getTime();
+  }
+  return start;
+}
+
+/**
+ * @returns {Array<Record<string, any>>} rows in the file shape the store keeps
+ */
+function buildRows(start) {
+  /** @type {Array<{ turn: string, message: Record<string, any>, stamp: number }>} */
+  const plan = [];
+  let at = 0;
+  const add = (turnId, message) => {
+    at += 1;
+    plan.push({ turn: turnId, message, stamp: at });
+  };
+  const assistant = (t, blocks, stopReason) => ({
+    role: 'assistant',
+    content: blocks,
+    api: 'synthetic-api', provider: 'synthetic-provider', model: 'synthetic-model',
+    usage: {
+      input: 1000 + t, output: 40 + (t % 17), cacheRead: 9000 + t * 2, cacheWrite: 7 * t,
+      totalTokens: 1000 + t + 40 + (t % 17) + 9000 + t * 2 + 7 * t,
+    },
+    stopReason,
+  });
+  const thinking = (t) => ({ type: 'thinking', thinking: 'synthetic reasoning ' + t, thinkingSignature: 'sig-' + t });
+
+  for (let t = 1; t <= SYNTHETIC_TURNS; t += 1) {
+    const turnId = 'turn-' + String(t).padStart(4, '0');
+
+    // Every twelfth turn is the model resuming without a new reader message — the shape the
+    // server files as a continuation. It needs a `reply` record to be closed, otherwise it lands
+    // in `turnsWithoutPrompt` instead and the classifier's second branch is never taken.
+    if (t % 12 === 5) {
+      add(turnId, assistant(t, [thinking(t), { type: 'text', text: 'synthetic resumed ' + t }], 'stop'));
+      continue;
+    }
+
+    // Every seventeenth turn has neither an opener nor a closing reply, so the classifier falls
+    // through to its last branch. Left uncovered, the page's `else` arm was being compared with
+    // the server's against zero.
+    if (t % 17 === 3) {
+      add(turnId, assistant(t, [
+        thinking(t),
+        { type: 'text', text: 'synthetic unfinished ' + t },
+        { type: 'toolCall', id: 'call_' + t + '_0', name: 'tool_' + (t % 7), arguments: { n: t } },
+      ], 'toolUse'));
+      add(turnId, {
+        role: 'toolResult',
+        toolCallId: 'call_' + t + '_0',
+        toolName: 'tool_' + (t % 7),
+        content: [{ type: 'text', text: 'synthetic result ' + t }],
+        isError: false,
+      });
+      continue;
+    }
+
+    add(turnId, { role: 'user', content: [{ type: 'text', text: 'synthetic prompt ' + t }] });
+
+    // `closed` is not a stop reason: the server sets it from a record of kind `reply`, and that
+    // kind is assigned from the literal string `stop` — anything else projects as `narration`. So a
+    // turn only closes when a second assistant row follows its tool results carrying `'stop'`, and
+    // a generator that omits it — or spells it `'endTurn'` — leaves every turn open.
+    const asks = t === SYNTHETIC_TURNS;
+    const open = asks || t % 9 === 4;
+    const callIds = ['call_' + t + '_0', 'call_' + t + '_1'];
+    // The last turn calls a tool whose answer arrives through the tool, which is what makes it a
+    // question to the reader (`qaTurns`) rather than just an unfinished turn.
+    const callNames = asks ? ['ask_user', 'tool_' + (t % 7)] : ['tool_' + (t % 7), 'tool_' + ((t + 3) % 7)];
+    add(turnId, assistant(t, [
+      thinking(t),
+      { type: 'text', text: 'synthetic answer ' + t },
+      { type: 'toolCall', id: callIds[0], name: callNames[0], arguments: { n: t } },
+      { type: 'toolCall', id: callIds[1], name: callNames[1], arguments: { n: t } },
+    ], 'toolUse'));
+
+    // Two tool results, and every ninth one fails — so `errors` is non-zero and the
+    // de-duplication of errors by message id has something to de-duplicate.
+    for (let c = 0; c < 2; c += 1) {
+      add(turnId, {
+        role: 'toolResult',
+        toolCallId: callIds[c],
+        toolName: callNames[c],
+        content: [{ type: 'text', text: 'synthetic result ' + t + '.' + c }],
+        isError: (t + c) % 9 === 0,
+      });
+    }
+
+    if (!open) add(turnId, assistant(t, [thinking(t), { type: 'text', text: 'synthetic close ' + t }], 'stop'));
+    // A prompt typed while the turn was still running. The server projects a user row that is not
+    // its turn's opener as a steer rather than as a message, so without one `steers` is 0 on both
+    // sides and the check degenerates to comparing 0 with 0.
+    else if (!asks) add(turnId, { role: 'user', content: [{ type: 'text', text: 'synthetic steer ' + t }] });
+  }
+
+  // Timestamps are laid over the span only once the row count is known, so the density does not
+  // depend on how many rows a turn happens to contribute.
+  const step = SYNTHETIC_SPAN_MS / plan.length;
+  return plan.map((entry, i) => ({
+    message_id: 'msg-' + String(i + 1).padStart(5, '0'),
+    turn_id: entry.turn,
+    message: { ...entry.message, timestamp: start + Math.round(i * step) },
+  }));
+}
+
+const SYNTHETIC_START = syntheticStart();
+const SYNTHETIC_ROWS = buildRows(SYNTHETIC_START);
 
 /* ---------- helpers ---------- */
 let pass = 0;
@@ -242,8 +384,16 @@ assert('the unreadable branch names the range still in force', /hasTimeRange\(\)
   assert('and does not blame the value', noBase.textContent.indexOf('无法识别') < 0);
 }
 
-/* ---------- 3) against the live session ---------- */
-const payload = await (await fetch(BASE_URL + '/api/trajectory')).json();
+/* ---------- 3) against a projected session ---------- */
+// The one line that used to be `await fetch(BASE_URL + '/api/trajectory')`. Same builder, no
+// service: what the route adds around `buildTrajectoryPayload` is a handful of `session.*` fields
+// this file never reads, which is the same observation `make-payload.mjs` is built on.
+const payload = buildTrajectoryPayload({
+  session: { id: 'mvs_0000000000000000000000000000000f', createdAtMs: SYNTHETIC_START },
+  rows: SYNTHETIC_ROWS,
+  sizeBytes: SYNTHETIC_ROWS.length,
+  truncated: false,
+});
 
 const scoped = { console, state: { payload, flat: [], rangeFrom: null, rangeTo: null, rangeCutoff: null } };
 scoped.state.flat = payload.turns.flatMap((turn) => turn.records.map((record) => ({ turn, record })));
@@ -293,7 +443,10 @@ for (const field of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'
 // The one field that must NOT be re-scoped: 「全程 N」 beside the range is the comparison the
 // reader wants, and re-scoping it would leave the note with nothing to say.
 check('messagesAll stays whole-session', whole.messagesAll, payload.stats.messagesAll);
-assert('the fixture is big enough to be worth checking', payload.stats.messages > 1000);
+// The preconditions of section 3b, asserted rather than assumed. A generator edited down to a
+// tenth of its size, or one that grew a bare checkpoint turn, would leave every assertion below it
+// comparing two near-identical small numbers — still green, and no longer evidence of anything.
+assert('the synthetic session is big enough to be worth checking', payload.stats.messages > 1000);
 assert('compactionTurns is 0 after the turn fix, as it must be', payload.stats.compactionTurns === 0);
 
 // A narrower range must produce strictly fewer messages, or the filter is not filtering.
@@ -597,7 +750,7 @@ assert('an unreadable box is not assigned',
 
 /* ---------- report ---------- */
 console.log('[1] parse / format / compare: ' + pass + ' assertions, ' + failures.length + ' failed');
-console.log('    fixture: ' + payload.stats.messages + ' messages, ' + scoped.state.flat.length + ' records, '
+console.log('    session: ' + payload.stats.messages + ' messages, ' + scoped.state.flat.length + ' records, '
   + payload.turns.length + ' turns, span ' + maxs + ' ms');
 // Machine-readable, so the mutation runner can require the *named* guard to fire instead of
 // matching on a substring that any nearby assertion can satisfy by accident. Assertion names

@@ -111,15 +111,16 @@ function checkShipped() {
   return drift;
 }
 
-// verify-time-range.mjs is here but not run. Its assertions are calibrated against a full
-// multi-generation session — stats.messages > 1000, a checkpoint nested inside a turn — and the
-// committed fixture is a single-file session of a few dozen rows. Shipping it in the default set
-// would mean shipping a red suite; relax the numbers instead and the timezone arithmetic stops
-// being exercised at all. Run it by hand against a booted service: see its own header.
-const SKIP = new Set(['verify-time-range.mjs']);
-
+// Nothing is excluded any more. `verify-time-range.mjs` used to be here, not run, because the only
+// session it could get was whatever a booted service had — and the committed fixture is sixty rows
+// of one afternoon, against assertions that want more than a thousand messages spanning a local
+// midnight. Shipping it anyway would have meant shipping a red suite, and relaxing the numbers to
+// fit the fixture would have meant not testing the timezone arithmetic at all. So it now builds its
+// own transcript and hands it to the server's own `buildTrajectoryPayload`; see that file's header
+// for why that is not the same as testing a fixture. A guard that is in the directory but never
+// runs is not a guard, and that one was 152 assertions of one.
 const files = readdirSync(HERE)
-  .filter((n) => n !== 'run.mjs' && n !== 'README.md' && !SKIP.has(n)
+  .filter((n) => n !== 'run.mjs' && n !== 'README.md'
     && (n.startsWith('verify-') || n.startsWith('mutate-')
       || n === 'client-check.mjs' || n === 'check-light-theme.mjs'))
   .filter((n) => !filter || n.startsWith(filter))
