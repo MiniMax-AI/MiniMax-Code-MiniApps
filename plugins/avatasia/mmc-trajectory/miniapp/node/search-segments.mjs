@@ -44,7 +44,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** Bumped when the on-disk shape changes in a way an older reader cannot survive. */
-export const SEGMENT_SCHEMA_VERSION = 1;
+export const SEGMENT_SCHEMA_VERSION = 2;
 
 /**
  * The fields a search reads, in the page's order.
@@ -59,7 +59,7 @@ export const SEARCH_FIELDS = ['summary', 'text', 'result', 'thinking', 'toolName
 
 /** @typedef {{ fileName: string, generation: number | null, size: number, revision: string | null, truncated?: boolean }} SegmentSource */
 
-/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, locatorBytes: number, surfaceDigest: string, locatorDigest: string, source: SegmentSource[] }} SegmentManifest */
+/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, surfaceDigest: string, source: SegmentSource[] }} SegmentManifest */
 
 /**
  * One record's searchable text.
@@ -106,35 +106,51 @@ export function normaliseWhitespace(value) {
 }
 
 /**
- * Builds one generation's pair: the surface and the locators that name where each of its records
- * came from.
+ * Builds one generation's searchable lines.
+ *
+ * Each line is `<compact json>\t<searchable text>`, one line per record in ledger order, and it
+ * carries everything a hit has to answer with: the ledger `index`, the `turnIndex`, `kind`,
+ * `generation` and the projected `summary`, plus the locator triple.
+ *
+ * Why the answer travels with the searchable text: answering used to mean reading the session's
+ * whole record index as well — measured at 34.2 MB of JSONL for the largest session on this
+ * machine, parsed on every search, which was 1.7 s of the 1.7 s left after the projection stopped
+ * being rebuilt. A needle that matches 14 records out of 36,525 does not need the other 36,511,
+ * and it does not need them parsed either.
+ *
+ * The separator is a TAB and the searchable part comes last, so a needle can never match across the
+ * boundary into the JSON prefix — the record it would name is then a match spanning two records,
+ * which is the one thing a per-record scan exists to prevent.
  *
  * @param {{ records: Array<Record<string, any>> }} input records of ONE generation, in ledger order
- * @returns {{ surface: string, locators: string }}
+ * @returns {{ surface: string }}
  */
 export function buildSegment(input) {
-  const surfaceLines = [];
-  const locatorLines = [];
+  const lines = [];
   for (let i = 0; i < input.records.length; i += 1) {
     const record = input.records[i];
-    surfaceLines.push(searchSurfaceOf(record));
-    /** @type {SegmentLocator} */
-    const locator = {
+    lines.push(JSON.stringify({
       ordinal: i,
+      index: typeof record.index === 'number' ? record.index : -1,
+      turnIndex: typeof record.turnIndex === 'number' ? record.turnIndex : null,
+      kind: typeof record.kind === 'string' ? record.kind : '',
+      generation: typeof record.generation === 'number' ? record.generation : null,
+      summary: typeof record.summary === 'string' ? record.summary : '',
       fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,
       byteStart: typeof record.byteStart === 'number' ? record.byteStart : -1,
       byteEnd: typeof record.byteEnd === 'number' ? record.byteEnd : -1,
-    };
-    locatorLines.push(JSON.stringify(locator));
+    }) + '\t' + searchSurfaceOf(record));
   }
-  return { surface: surfaceLines.join('\n'), locators: locatorLines.join('\n') };
+  return { surface: lines.join('\n') };
 }
 
 /**
- * Every record ordinal whose own surface contains the needle.
+ * Every record ordinal whose own searchable text contains the needle.
  *
  * Per line, on purpose: this is the boundary. A needle cannot be answered from anything but one
- * record's own five fields, because a match spanning two records describes no record.
+ * record's own five fields, because a match spanning two records describes no record. So only the
+ * part after the TAB is tested — the JSON prefix holds the record's kind and summary, and a needle
+ * matching there would be matching an answer rather than the text being looked for.
  *
  * @param {string} surface
  * @param {string} needle already folded, by {@link foldNeedle}
@@ -149,12 +165,67 @@ export function scanSegment(surface, needle) {
     const nl = surface.indexOf('\n', start);
     const end = nl === -1 ? surface.length : nl;
     const line = surface.slice(start, end);
-    if (line.includes(needle)) hits.push(ordinal);
+    const tab = line.indexOf('\t');
+    if (tab >= 0 && line.slice(tab + 1).includes(needle)) hits.push(ordinal);
     ordinal += 1;
     if (nl === -1) break;
     start = nl + 1;
   }
   return hits;
+}
+
+/**
+ * One record's answer, read back out of the line {@link scanSegment} matched.
+ *
+ * Walks the segment ONCE for the whole batch. The first version took one ordinal and scanned from
+ * the beginning to find it, which is fine for a guard checking one record and catastrophic for the
+ * route: a needle like "the" matched 14,092 records on the largest session here, and 14,092 scans
+ * of a 1.3 MB segment is eighteen gigabytes of walking to answer a search. Measured, and it is the
+ * reason this looked like no improvement at all.
+ *
+ * The ordinals come from the scan, so a caller cannot answer with a record other than the one the
+ * scan named, and they are returned in the order asked for rather than the order they sit.
+ *
+ * @param {string} surface the whole segment text
+ * @param {number[]} ordinals as returned by {@link scanSegment}
+ * @returns {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null } | null>}
+ */
+export function readSegmentHits(surface, ordinals) {
+  const wanted = new Set(ordinals);
+  /** @type {Map<number, { index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null } | null>} */
+  const found = new Map();
+  if (wanted.size === 0) return [];
+  let start = 0;
+  let at = 0;
+  while (start <= surface.length) {
+    const nl = surface.indexOf('\n', start);
+    const end = nl === -1 ? surface.length : nl;
+    if (wanted.has(at)) {
+      const tab = surface.indexOf('\t', start);
+      if (tab < 0 || tab > end) {
+        found.set(at, null);
+      } else {
+        /** @type {any} */
+        let parsed;
+        try {
+          parsed = JSON.parse(surface.slice(start, tab));
+        } catch {
+          parsed = null;
+        }
+        found.set(at, parsed === null || typeof parsed !== 'object' ? null : {
+          index: typeof parsed.index === 'number' ? parsed.index : -1,
+          turnIndex: typeof parsed.turnIndex === 'number' ? parsed.turnIndex : null,
+          kind: typeof parsed.kind === 'string' ? parsed.kind : '',
+          summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+          generation: typeof parsed.generation === 'number' ? parsed.generation : null,
+        });
+      }
+    }
+    at += 1;
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  return ordinals.map((ordinal) => found.get(ordinal) ?? null);
 }
 
 /**
@@ -224,14 +295,19 @@ export function createSegmentStore(root) {
     dirOf,
 
     /**
-     * Publishes one generation's pair. The surface lands, then the locators, then the manifest that
-     * makes the pair readable — so a run interrupted anywhere leaves a directory that reads as "no
-     * segment" rather than as half of one.
+     * Publishes one generation's text. The surface lands first, then the manifest that makes it
+     * readable — so a run interrupted anywhere leaves a directory that reads as "no segment"
+     * rather than as half of one.
+     *
+     * There used to be a second file, the locators, holding one small JSON object per record. It
+     * was never read on the search path: it names where each record came from, and nothing that
+     * answers a search needs that. When the answer itself moved onto each line, the locator fields
+     * came with it and the file had nothing left to say.
      *
      * @param {string} sessionKey
      * @param {string} view
      * @param {string} generationKey
-     * @param {{ surface: string, locators: string }} segment
+     * @param {{ surface: string }} segment
      * @param {{ generation: number | null, source: SegmentManifest['source'] }} meta
      */
     async write(sessionKey, view, generationKey, segment, meta) {
@@ -239,18 +315,14 @@ export function createSegmentStore(root) {
       await mkdir(dir, { recursive: true });
       await writeFile(`${join(dir, 'surface.txt')}.tmp`, segment.surface, 'utf8');
       await rename(`${join(dir, 'surface.txt')}.tmp`, join(dir, 'surface.txt'));
-      await writeFile(`${join(dir, 'locators.jsonl')}.tmp`, segment.locators, 'utf8');
-      await rename(`${join(dir, 'locators.jsonl')}.tmp`, join(dir, 'locators.jsonl'));
       /** @type {SegmentManifest} */
       const manifest = {
         schemaVersion: SEGMENT_SCHEMA_VERSION,
         generation: meta.generation,
         view,
-        recordCount: segment.locators === '' ? 0 : segment.locators.split('\n').length,
+        recordCount: segment.surface === '' ? 0 : segment.surface.split('\n').length,
         surfaceBytes: Buffer.byteLength(segment.surface),
-        locatorBytes: Buffer.byteLength(segment.locators),
         surfaceDigest: digestOf(segment.surface),
-        locatorDigest: digestOf(segment.locators),
         source: meta.source,
       };
       await writeFile(`${join(dir, 'manifest.json')}.tmp`, `${JSON.stringify(manifest)}\n`, 'utf8');
@@ -282,18 +354,15 @@ export function createSegmentStore(root) {
       if (manifest.view !== view) return null;
       if (!sameSource(manifest.source, source)) return null;
       let surface;
-      let locators;
       try {
         surface = await readFile(join(dir, 'surface.txt'), 'utf8');
-        locators = await readFile(join(dir, 'locators.jsonl'), 'utf8');
       } catch {
         return null;
       }
       if (digestOf(surface) !== manifest.surfaceDigest) return null;
-      if (digestOf(locators) !== manifest.locatorDigest) return null;
-      const lines = locators === '' ? [] : locators.split('\n');
-      if (lines.length !== manifest.recordCount) return null;
-      return { manifest, surface, locators: lines };
+      const lines = surface === '' ? 0 : surface.split('\n').length;
+      if (lines !== manifest.recordCount) return null;
+      return { manifest, surface };
     },
 
     /** @param {string} sessionKey @param {string} view @param {string} generationKey */

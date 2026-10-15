@@ -58,9 +58,13 @@ MUTATIONS = [
         "  const hits = [];\n  const flat = surface.replace(/\\n/g, ' ');\n  if (flat.includes(needle)) hits.push(0);\n  let start = 0;\n  let ordinal = 0;",
     ),
     (
-        "the scan counts only non-empty lines, so every ordinal after an empty record is one short",
-        "    if (line.includes(needle)) hits.push(ordinal);\n    ordinal += 1;",
-        "    if (line.includes(needle)) hits.push(ordinal);\n    if (line !== '') ordinal += 1;",
+        # Was about empty lines in a plain surface, which the new format cannot produce: every
+        # record's line starts with its answer, so an empty line means a record that is not there.
+        # The hazard that replaced it is the prefix itself — a scan that tested the whole line would
+        # answer from a record's KIND and SUMMARY rather than from the text being searched.
+        "the scan tests the record's answer as well as its text",
+        "    if (tab >= 0 && line.slice(tab + 1).includes(needle)) hits.push(ordinal);",
+        "    if (tab >= 0 && line.includes(needle)) hits.push(ordinal);",
     ),
     (
         "the locators are numbered from one while the scan numbers from zero",
@@ -84,8 +88,8 @@ MUTATIONS = [
         "",
     ),
     (
-        "a surface with a line the locators do not account for is accepted",
-        "  if (lines.length !== manifest.recordCount) return null;",
+        "a surface with a line the manifest does not count is accepted",
+        "  if (lines !== manifest.recordCount) return null;",
         "",
     ),
     (
@@ -111,6 +115,13 @@ MUTATIONS = [
     ),
     # ---- a generation read short must not look like one read whole --------------------------
     (
+        # The summary a search hit answers with is written onto the segment line, so this is where
+        # a search can start reporting the kind of a record instead of what it says.
+        "the segment line reports the kind where the summary belongs",
+        "      summary: typeof record.summary === 'string' ? record.summary : '',",
+        "      summary: typeof record.kind === 'string' ? record.kind : '',",
+    ),
+    (
         # `size` is the whole file whether or not the read covered it, so this comparison is the
         # only thing standing between a segment covering a PREFIX and being served as if it covered
         # everything. Remove it and a truncated generation answers with a smaller total and says
@@ -118,6 +129,49 @@ MUTATIONS = [
         "a source that was read short is trusted as if it had been read whole",
         "    if ((a.truncated === true) !== (b.truncated === true)) return false;\n    if (typeof a.revision === 'string' && a.revision.length > 0",
         "    if (typeof a.revision === 'string' && a.revision.length > 0",
+    ),
+    # ---- the answer is read back in ONE walk -----------------------------------------------
+    (
+        # The one that matters most here, because it is the version that was actually written and
+        # then measured to be SLOWER than the 34.2 MB index read it replaced. It changes no answer:
+        # every hit still names the right record and every assertion about values still passes. The
+        # only symptom is that a needle matching 14,092 records walks the segment 14,092 times — so
+        # the guard counts the walk instead of checking the answers.
+        "the answers are read by walking the segment once per ordinal again",
+        "  return ordinals.map((ordinal) => found.get(ordinal) ?? null);",
+        "  return ordinals.map((ordinal) => {\n"
+        "    let from = 0;\n"
+        "    let line = 0;\n"
+        "    while (from <= surface.length) {\n"
+        "      const nl = surface.indexOf('\\n', from);\n"
+        "      if (line === ordinal) {\n"
+        "        const tab = surface.indexOf('\\t', from);\n"
+        "        return tab < 0 ? null : JSON.parse(surface.slice(from, tab));\n"
+        "      }\n"
+        "      if (nl === -1) break;\n"
+        "      from = nl + 1;\n"
+        "      line += 1;\n"
+        "    }\n"
+        "    return found.get(ordinal) ?? null;\n"
+        "  });",
+    ),
+    (
+        # The batch is a batch because the scan hands back every ordinal at once. Answering in the
+        # order they sit in the segment looks identical until the caller asks for a capped, sorted or
+        # otherwise reordered subset — and then every hit names a different record.
+        "the answers come back in the order they sit rather than the order asked",
+        "  return ordinals.map((ordinal) => found.get(ordinal) ?? null);",
+        "  return [...found.values()];",
+    ),
+    (
+        # Structural, and the reason the first one is worth a mutation at all: a per-ordinal reader
+        # could be reintroduced beside the batch one, break nothing above, and sit there waiting to be
+        # called — which is how the O(n²) version got shipped in the first place.
+        "a per-ordinal reader is exported again for a caller to reach for",
+        "export function generationKey(generation) {\n  return generation === null || generation === undefined ? 'active' : `g${generation}`;\n}",
+        "export function generationKey(generation) {\n  return generation === null || generation === undefined ? 'active' : `g${generation}`;\n}\n\n"
+        "/** @deprecated one ordinal at a time — walks the whole segment to find it. */\n"
+        "export function readSegmentHit(surface, ordinal) {\n  return readSegmentHits(surface, [ordinal])[0] ?? null;\n}",
     ),
 ]
 

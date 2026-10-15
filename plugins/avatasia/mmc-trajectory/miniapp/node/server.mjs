@@ -26,6 +26,7 @@ import {
   generationKey,
   needleIsUsable,
   normaliseWhitespace,
+  readSegmentHits,
   scanSegment,
   searchSurfaceOf,
 } from './search-segments.mjs';
@@ -1255,69 +1256,6 @@ export function collectSearchHits(payload, needle, limit) {
   return { hits, total };
 }
 
-/**
- * The same answers {@link collectSearchHits} gives, assembled from what is already on disk.
- *
- * Not a speed-up for its own sake: the rebuild is the only part of a search that touches every row
- * of every generation, and on the largest session measured on this machine that was 3.7 seconds.
- * The artifacts already hold the searchable surface per generation and a record table naming where
- * each record sits, so answering from them is a scan rather than a projection.
- *
- * `null` means they cannot answer, and that is not a partial answer: `total` counts every match in
- * the session, so a generation whose segment went missing would silently lower it and the reader
- * would be told the needle matched fewer things than it did. The caller falls back instead.
- *
- * @param {{ turns: Array<Record<string, any>>, records: Array<Record<string, any>> }} index
- * @param {Array<{ fileIdx: number, ordinals: number[] }>} scanned per generation, in lineage order
- * @param {number} limit
- * @returns {{ hits: Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null }>, total: number } | null}
- */
-export function collectSearchHitsFromArtifacts(index, scanned, limit) {
-  const records = index && Array.isArray(index.records) ? index.records : [];
-  const turns = index && Array.isArray(index.turns) ? index.turns : [];
-  if (records.length === 0) return null;
-  // Positions within `records`, grouped by the generation each came from. A segment's ordinal is
-  // the position of its record inside that generation's own run of records, so this is the whole
-  // mapping between a scan result and the ledger.
-  /** @type {Map<number, number[]>} */
-  const byFile = new Map();
-  for (let pos = 0; pos < records.length; pos += 1) {
-    const key = records[pos].fileIdx;
-    const list = byFile.get(key);
-    if (list === undefined) byFile.set(key, [pos]);
-    else list.push(pos);
-  }
-  /** @type {number[]} */
-  const wanted = [];
-  for (const entry of scanned) {
-    const list = byFile.get(entry.fileIdx);
-    if (list === undefined) return null;
-    for (const ordinal of entry.ordinals) {
-      const pos = list[ordinal];
-      // An ordinal past the end means the segment and the index were built from different sources.
-      // Answering from one of them would be answering a question about a session that never existed.
-      if (pos === undefined) return null;
-      wanted.push(pos);
-    }
-  }
-  wanted.sort((a, b) => a - b);
-  const hits = [];
-  let turnCursor = 0;
-  for (const pos of wanted) {
-    if (hits.length >= limit) break;
-    while (turnCursor + 1 < turns.length && pos > turns[turnCursor].lastRecord) turnCursor += 1;
-    const turn = turns[turnCursor];
-    const record = records[pos];
-    hits.push({
-      index: record.index,
-      turnIndex: turn === undefined ? null : turn.index,
-      kind: record.kind,
-      summary: typeof record.summary === 'string' ? record.summary : '',
-      generation: typeof record.generation === 'number' ? record.generation : null,
-    });
-  }
-  return { hits, total: wanted.length };
-}
 
 /**
  * The five fields a search reads, in the page's order, normalised and folded exactly as the stored
@@ -3678,29 +3616,30 @@ export async function start(context) {
   };
 
   /**
-   * Answers a search from the stored index and one segment per generation, or `null` when they
-   * cannot.
+   * Answers a search from the stored segment of each generation, or `null` when they cannot.
    *
-   * `null` is the answer for every "no" here — no index, an index whose sources have moved, a
-   * segment missing or unreadable — and the caller rebuilds. It is deliberately not a partial
-   * answer: `total` is how many records in the whole session matched, so answering from 44 of 45
-   * generations would report a smaller total and the page would tell the reader the needle matched
-   * fewer things than it did, with nothing anywhere saying so.
+   * `null` is the answer for every "no" here — a segment missing, unreadable, or not readable
+   * back once the scan has named a line in it — and the caller rebuilds. It is deliberately not a
+   * partial answer: `total` is how many records in the whole session matched, so answering from 44
+   * of 45 generations would report a smaller total and the page would tell the reader the needle
+   * matched fewer things than it did, with nothing anywhere saying so.
    *
-   * What makes the artifacts trustworthy without re-deriving anything: `indexStore.read` checks the
-   * source identity of every generation and the projection version, and the identity decisions the
-   * index was built from are a pure function of exactly those. Same sources and same code, so the
-   * answers are the ones the rebuild would have produced — which is why no second intersection
-   * against the current view is done here. That extra intersection is the kind of step that
-   * silently disagrees with the thing it is checking.
+   * What makes the segments trustworthy without re-deriving anything: `sameSource` checks each
+   * generation's identity and whether its read was cut short, the manifest pins the schema and the
+   * bytes' digest, and the identity decisions baked into them are a pure function of exactly those.
+   * Same sources and same code, so the answers are the ones the rebuild would have produced —
+   * which is why no second intersection against the current view is done here. That extra
+   * intersection is the kind of step that silently disagrees with the thing it is checking.
+   *
+   * The session's record index is NOT read. Each segment line carries its own answer, so a needle
+   * matching 14 records out of 36,525 reads those 14 lines rather than parsing 34.2 MB of index.
    *
    * @param {{ sessionKey: string, viewKey: string, files: Array<any>, needle: string }} input
    */
   const searchFromArtifacts = async ({ sessionKey, viewKey, files, needle }) => {
-    const index = await indexStore.read(sessionKey, viewKey, files);
-    if (index === null) return null;
-    /** @type {Array<{ fileIdx: number, ordinals: number[] }>} */
-    const scanned = [];
+    /** @type {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null }>} */
+    const hits = [];
+    let total = 0;
     // `files` is the lineage walk's own output, so a generation that is no longer in the lineage
     // has no entry here and no segment is read — a leftover on disk cannot keep it searchable.
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
@@ -3708,9 +3647,20 @@ export async function start(context) {
       const segment = await segmentStore.read(sessionKey, viewKey, generationKey(file.generation), [file]);
       if (segment === null) return null;
       const ordinals = scanSegment(segment.surface, needle);
-      if (ordinals.length > 0) scanned.push({ fileIdx, ordinals });
+      const answers = readSegmentHits(segment.surface, ordinals);
+      for (const hit of answers) {
+        // A line the scan named that cannot be read back is a segment written by something that
+        // does not agree with this reader. Answering without it would quietly drop a record.
+        if (hit === null) return null;
+        total += 1;
+        if (hits.length < MAX_SEARCH_HITS) hits.push(hit);
+      }
     }
-    return collectSearchHitsFromArtifacts(index, scanned, MAX_SEARCH_HITS);
+    // Ascending ledger order, because the segments were read oldest generation first and a hit's
+    // place in that list is what the page scrolls to. Sorting by the index itself is the order the
+    // rebuild produces, and two answers that differ only in order are two answers.
+    hits.sort((a, b) => a.index - b.index);
+    return { hits, total };
   };
 
   /**
@@ -3752,14 +3702,20 @@ export async function start(context) {
     // through the rebuild, and the two answers were both plausible. The index is still needed — it
     // is what names each record's index, turn and kind — so the two are merged: the payload's
     // fields for the surface, the index's fileIdx and byte range for the locator.
-    const flatRecords = payload.turns.flatMap((turn) => turn.records);
+    const flatRecords = [];
+    for (const turn of payload.turns) {
+      for (const record of turn.records) flatRecords.push({ record, turn });
+    }
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
       const records = [];
       for (let i = 0; i < flatRecords.length; i += 1) {
         const located = indexRows.records[i];
         if (located === undefined || located.fileIdx !== fileIdx) continue;
         records.push({
-          ...flatRecords[i],
+          ...flatRecords[i].record,
+          // The turn this record sits in travels with it: the answer names a turn, and reading it
+          // back out of the session's turn table would mean reading that table on every search.
+          turnIndex: flatRecords[i].turn.index,
           fileIdx: located.fileIdx,
           byteStart: located.byteStart,
           byteEnd: located.byteEnd,

@@ -119,18 +119,46 @@ MUTATIONS = [
     ),
     (
         "the artifact path reports how many it sent instead of how many matched",
-        "  return { hits, total: wanted.length };",
-        "  return { hits, total: hits.length };",
+        "    return { hits, total };",
+        "    return { hits, total: hits.length };",
     ),
     (
-        "the artifact path reports the kind where the summary belongs",
-        "      turnIndex: turn === undefined ? null : turn.index,\n      kind: record.kind,\n      summary: typeof record.summary === 'string' ? record.summary : '',",
-        "      turnIndex: turn === undefined ? null : turn.index,\n      kind: record.kind,\n      summary: String(record.kind),",
-    ),
-    (
+        # The summary a hit answers with now lives on the segment line, so the mutation that swaps it
+        # for the kind belongs with the module that writes it — mutate-search-segments.py.
         "writing the artifacts can fail the search that asked for them",
         "    }).catch(() => undefined);",
         "    });",
+    ),
+    # ---- the scan is resolved in one batch ---------------------------------------------------
+    (
+        # The route's half of the batch rule. The answers it builds are the same answers either way —
+        # which is why the cost cannot be asserted here and lives in verify-search-segments.mjs
+        # instead. What changes here is the shape: a walk per hit rather than one walk for the scan.
+        "the route resolves the scan one ordinal at a time, walking the segment once per hit",
+        "      const answers = readSegmentHits(segment.surface, ordinals);",
+        "      const answers = ordinals.map((ordinal) => {\n"
+        "        let from = 0;\n"
+        "        let line = 0;\n"
+        "        while (from <= segment.surface.length) {\n"
+        "          const nl = segment.surface.indexOf('\\n', from);\n"
+        "          if (line === ordinal) {\n"
+        "            const tab = segment.surface.indexOf('\\t', from);\n"
+        "            const parsed = tab < 0 ? null : JSON.parse(segment.surface.slice(from, tab));\n"
+        "            return { index: parsed.index, turnIndex: parsed.turnIndex, kind: parsed.kind, summary: parsed.summary, generation: parsed.generation };\n"
+        "          }\n"
+        "          if (nl === -1) break;\n"
+        "          from = nl + 1;\n"
+        "          line += 1;\n"
+        "        }\n"
+        "        return null;\n"
+        "      });",
+    ),
+    (
+        # A hit that cannot be resolved is a segment written by something this reader disagrees
+        # with. Dropping it would answer with a smaller `total` and say nothing about being wrong.
+        "a hit the reader could not resolve is skipped instead of falling back",
+        "        if (hit === null) return null;",
+        "        if (hit === null) continue;",
     ),
 ]
 

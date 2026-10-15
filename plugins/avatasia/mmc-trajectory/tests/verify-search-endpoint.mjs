@@ -28,7 +28,6 @@ import {
   buildMessageIdentity,
   buildTrajectoryPayload,
   collectSearchHits,
-  collectSearchHitsFromArtifacts,
   foldNeedle,
   needleIsUsable,
   normaliseWhitespace,
@@ -37,7 +36,7 @@ import {
   ROW_GENERATION,
 } from '../miniapp/node/server.mjs';
 import { indexRowsFromPayload } from '../miniapp/node/trajectory-index.mjs';
-import { buildSegment, scanSegment } from '../miniapp/node/search-segments.mjs';
+import { buildSegment, readSegmentHits, scanSegment } from '../miniapp/node/search-segments.mjs';
 
 const SERVER = readFileSync(new URL('../miniapp/node/server.mjs', import.meta.url), 'utf8');
 const CLIENT = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
@@ -373,7 +372,8 @@ for (const [recordIndex, rowIndex] of rowIndexByRecord) {
   locatorByRecord.set(recordIndex, rowLocators[rowIndex]);
 }
 const indexRows = indexRowsFromPayload(allPayload, locatorByRecord, ARTIFACT_FILES);
-const flatRecords = allPayload.turns.flatMap((t) => t.records);
+const flatPairs = [];
+for (const turn of allPayload.turns) for (const record of turn.records) flatPairs.push({ record, turn });
 // The same merge the server does: the surface is built from the PAYLOAD's records and only the
 // locator fields come from the index. Building it from the index alone searches two of the five
 // fields — `text`, `result` and `thinking` are excluded from the index on purpose — and that was a
@@ -381,20 +381,47 @@ const flatRecords = allPayload.turns.flatMap((t) => t.records);
 // needle that happens to match.
 const segmentRecordsFor = (fileIdx) => {
   const out = [];
-  for (let i = 0; i < flatRecords.length; i += 1) {
+  for (let i = 0; i < flatPairs.length; i += 1) {
     const located = indexRows.records[i];
     if (located === undefined || located.fileIdx !== fileIdx) continue;
-    out.push({ ...flatRecords[i], fileIdx: located.fileIdx, byteStart: located.byteStart, byteEnd: located.byteEnd });
+    out.push({
+      ...flatPairs[i].record,
+      turnIndex: flatPairs[i].turn.index,
+      fileIdx: located.fileIdx,
+      byteStart: located.byteStart,
+      byteEnd: located.byteEnd,
+    });
   }
   return out;
 };
+// What the route now does: scan each generation's segment, then read the answers back off the lines
+// the scan named, in one batch. The index is not consulted — that was the 34.2 MB it used to read on
+// every search. The batch is the shape on purpose: reading one ordinal at a time walked the segment
+// once per hit, which for a common needle is once per thousand records. The count is this guard's,
+// the walk bound lives in verify-search-segments.mjs where the reader is.
 const scanArtifacts = (folded) => {
-  const scanned = [];
+  /** @type {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null }>} */
+  const hits = [];
+  let total = 0;
   for (let fileIdx = 0; fileIdx < ARTIFACT_FILES.length; fileIdx += 1) {
-    const ordinals = scanSegment(buildSegment({ records: segmentRecordsFor(fileIdx) }).surface, folded);
-    if (ordinals.length > 0) scanned.push({ fileIdx, ordinals });
+    const surface = buildSegment({ records: segmentRecordsFor(fileIdx) }).surface;
+    const found = readSegmentHits(surface, scanSegment(surface, folded));
+    if (found.some((hit) => hit === null)) return null;
+    total += found.length;
+    for (const hit of found) {
+      if (hits.length < limit) hits.push(hit);
+    }
   }
-  return scanned;
+  hits.sort((a, b) => a.index - b.index);
+  return { hits, total };
+};
+let limit = 500;
+const withLimit = (n) => {
+  const saved = limit;
+  limit = n;
+  const out = scanArtifacts(foldNeedle('needle'));
+  limit = saved;
+  return out;
 };
 
 check('the index kept every record the rebuild would have shown',
@@ -408,35 +435,45 @@ assert('and it kept the generation each record came from',
 const bulkOnly = allRecords.find((r) => typeof r.result === 'string' && r.result.length > 0);
 assert('the fixture really does hold a record whose match is only in a bulk field', bulkOnly !== undefined);
 if (bulkOnly !== undefined) {
-  const located = indexRows.records[flatRecords.indexOf(bulkOnly)];
+  const located = indexRows.records[flatPairs.findIndex((pair) => pair.record === bulkOnly)];
   const line = buildSegment({ records: [{ ...bulkOnly, fileIdx: located.fileIdx, byteStart: 0, byteEnd: 1 }] }).surface;
   assert('and the segment carries that field, though the index does not',
     !Object.prototype.hasOwnProperty.call(located, 'result') && line.includes(normaliseWhitespace(bulkOnly.result)));
   assert('the shipped server merges the payload into the segment for the same reason',
-    /records\.push\(\{\s*\n\s*\.\.\.flatRecords\[i\],\s*\n\s*fileIdx: located\.fileIdx,/.test(SERVER));
+    /flatRecords\.push\(\{ record, turn \}\)/.test(SERVER)
+    && /\.\.\.flatRecords\[i\]\.record,/.test(SERVER)
+    && /turnIndex: flatRecords\[i\]\.turn\.index,/.test(SERVER));
 }
 
 for (const needle of NEEDLES) {
   const folded = foldNeedle(needle);
   const rebuilt = collectSearchHits(allPayload, folded, 500);
-  const fromDisk = collectSearchHitsFromArtifacts(indexRows, scanArtifacts(folded), 500);
+  const fromDisk = scanArtifacts(folded);
   check(`"${needle}" — the artifact path sends the same hits`, fromDisk.hits, rebuilt.hits);
   check(`"${needle}" — and counts them the same way`, fromDisk.total, rebuilt.total);
 }
 
 const capRebuilt = collectSearchHits(allPayload, foldNeedle('needle'), 2);
-const capFromDisk = collectSearchHitsFromArtifacts(indexRows, scanArtifacts(foldNeedle('needle')), 2);
+const capFromDisk = withLimit(2);
 check('a cap bounds what is sent, on the artifact path too',
   capFromDisk.hits.length, Math.min(2, capRebuilt.total));
 check('and never bounds what is counted', capFromDisk.total, capRebuilt.total);
 
-// An ordinal the index does not have means the segment and the index were built from different
-// sources. Answering from one of them would be answering about a session that never existed, and
-// nothing downstream could tell.
-check('an ordinal past the end of its generation is refused, not guessed',
-  collectSearchHitsFromArtifacts(indexRows, [{ fileIdx: 0, ordinals: [9999] }], 500), null);
-check('and a generation the index never held is refused too',
-  collectSearchHitsFromArtifacts(indexRows, [{ fileIdx: 7, ordinals: [0] }], 500), null);
+// A line the scan named that cannot be read back is a segment written by something that does not
+// agree with this reader. Answering without it would quietly drop a record, so the route falls
+// back instead — and that decision has to be visible here, not only in the route's source text.
+const gen0Surface = buildSegment({ records: segmentRecordsFor(0) }).surface;
+const oneAnswer = (surface, ordinal) => readSegmentHits(surface, [ordinal])[0] ?? null;
+check('an ordinal past the end of a segment is refused, not guessed',
+  oneAnswer(gen0Surface, 9999), null);
+check('and so is a negative or fractional one',
+  [oneAnswer(gen0Surface, -1), oneAnswer(gen0Surface, 1.5)], [null, null]);
+check('while the ordinals the scan really returns do read back',
+  scanSegment(gen0Surface, foldNeedle('the needle is in')).map((o) => oneAnswer(gen0Surface, o)?.index ?? null),
+  scanSegment(gen0Surface, foldNeedle('the needle is in')).map((o) => {
+    const recs = segmentRecordsFor(0);
+    return typeof recs[o].index === 'number' ? recs[o].index : -1;
+  }));
 
 /* ---------------------------------------------------------------------
  * A generation read short by our own cap produces a segment covering a
@@ -457,6 +494,37 @@ assert('a generation with no records still gets one, and it is empty — "no seg
   !/records\.length === 0\) continue/.test(SERVER));
 assert('one missing segment makes the whole search fall back rather than answer from the rest',
   /if \(segment === null\) return null;/.test(SERVER));
+
+// The cap assertions above run against a copy of the loop written here, so they say the rule holds
+// and not that the shipped route holds it. These read the shipped function: `total` is incremented
+// for every match, the push is the thing that is bounded, and the return hands back the count.
+const artifactsSrc = SERVER.slice(
+  SERVER.indexOf('const searchFromArtifacts = async'),
+  SERVER.indexOf('const publishSearchArtifacts = async'));
+assert('and the shipped artifact path counts every match rather than what it sent',
+  /total \+= 1;/.test(artifactsSrc)
+  && /if \(hits\.length < MAX_SEARCH_HITS\) hits\.push\(hit\);/.test(artifactsSrc)
+  && /return \{ hits, total \};/.test(artifactsSrc));
+
+// The route resolves a whole scan in ONE call, because resolving one ordinal at a time walks the
+// segment once per hit. That version is not a slower version of this one, it is the version that
+// was shipped first: for a two-letter needle on the largest session here it walked 1.3 MB of
+// segment 14,092 times and measured SLOWER than the 34.2 MB index read this step removed. The cost
+// bound is pinned in verify-search-segments.mjs, where the reader itself is; what is pinned here is
+// that the ROUTE takes the batch shape rather than a loop of single reads.
+assert('the shipped artifact path resolves a whole scan in one batch call',
+  /readSegmentHits\(segment\.surface, ordinals\)/.test(artifactsSrc)
+  && !/for \(const ordinal of /.test(artifactsSrc));
+// A hit the scan named that the reader cannot resolve means the segment was written by something
+// that disagrees with this reader. Skipping it would drop a record and report a smaller total with
+// nothing said about being wrong, so the route falls back like it does for a missing segment.
+assert('a hit the scan named but the reader could not resolve falls back rather than being skipped',
+  /if \(hit === null\) return null;/.test(artifactsSrc));
+// And the index is not consulted at all — reading it was the 34.2 MB this step took off the path.
+// Scoped to this path, because `indexStore.write` still exists for a different reason (see the
+// defect list: nothing reads what it writes).
+assert('and this path reads no record index at all',
+  !/indexStore\.read\(|collectSearchHitsFromArtifacts/.test(SERVER));
 // Two paths answering one request is only a performance change if they answer it identically,
 // and the response body is part of the answer the page reads.
 check('both paths send the same session field',
