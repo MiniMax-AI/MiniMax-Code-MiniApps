@@ -61,9 +61,6 @@ check('duration NaN', sandbox.formatDuration(NaN), '—');
 check('int null', sandbox.formatInt(null), '—');
 check('int group', sandbox.formatInt(1234567), '1,234,567');
 check('int zero', sandbox.formatInt(0), '0');
-check('compact null', sandbox.formatCompact(null), '—');
-check('compact 12500', sandbox.formatCompact(12500), '12.5k');
-check('compact 2500000', sandbox.formatCompact(2500000), '2.5M');
 check('offset null', sandbox.formatOffset(null), '—');
 check('offset 887', sandbox.formatOffset(887), '+887 ms');
 check('offset 12000', sandbox.formatOffset(12000), '+12 s');
@@ -384,20 +381,52 @@ assert('clicking a span selects the message, not the row',
 assert('hovering a span marks only that span',
   /var id = hovered \? hovered\.id : null;/.test(html));
 
-// turnContext builds its string from turnContextParts, and turnContextSuffix calls
-// turnContext, so a check that wants to RUN any of them has to lift all three, in dependency
-// order. Lifting by regex is acceptable here because these are leaf functions ending in a
-// single `}` at a fixed indent; the alternative — moving them into the PURE block — would put
-// UI string helpers in the unit-tested core for no unit test's benefit.
+// turnSubNode is the one presenter of the line under 对话轮次. It used to have a dead
+// sibling: turnContextSuffix() built the same string, had no caller outside this file, and
+// these two checks ran against it. That was the wrong subject — a check that exercises a
+// presenter nothing renders passes while the rendered line is broken, which is the very defect
+// the checks exist to catch.
+//
+// So they run turnSubNode now, and really run it: `el` and `document.createTextNode` are
+// stubbed below and the rendered text is read back off the tree. Reading its source with a
+// regex is the pattern two checks further down, and it is weaker — the invariant is about the
+// characters the reader receives, not about a substring surviving an edit.
 function fnSource(signature) {
   const m = html.match(new RegExp(signature.replace(/[()]/g, '\\$&') + ' \\{[\\s\\S]*?\\n {6}\\}'));
   return m ? m[0] : null;
 }
+function stubNode(tag, text) {
+  return {
+    tag,
+    textContent: text === undefined || text === null ? '' : String(text),
+    className: '',
+    children: [],
+    setAttribute: () => {},
+    addEventListener: () => {},
+    appendChild(n) { this.children.push(n); return n; }
+  };
+}
+function textOf(node) {
+  return node.children.length ? node.children.map(textOf).join('') : node.textContent;
+}
 function liftTurnFns() {
+  // The stubs go in before the lift: turnSubNode reads state and KIND_LABELS at render time
+  // and builds its tree through el() and document.createTextNode(), none of which the PURE
+  // sandbox has. Installing them after would leave the lift failing for a reason that has
+  // nothing to do with what is under test.
+  sandbox.el = (tag, className, text) => {
+    const n = stubNode(tag, text);
+    if (className) n.className = className;
+    return n;
+  };
+  sandbox.document = { createTextNode: (t) => stubNode('#text', t) };
+  sandbox.state = { kinds: ['steer', 'compaction'] };
+  sandbox.KIND_LABELS = { steer: '追加', compaction: '压缩' };
+  sandbox.onKindToggle = () => {};
   for (const name of [
     'function turnContextParts(stats)',
-    'function turnContext(stats)',
-    'function turnContextSuffix(stats)',
+    'function turnBreakdown(stats)',
+    'function turnSubNode(stats)'
   ]) {
     const src = fnSource(name);
     if (!src) return false;
@@ -563,7 +592,7 @@ const checks = [
     return sum === stats.turnsWithPrompt;
   });
 })()],
-  // Scoped to the rendered label, not the whole file: the doc comment above turnContext
+  // Scoped to the rendered label, not the whole file: the doc comment above turnSubNode
   // explains why 续作答答 was renamed and has to be able to say so.
   ['turn breakdown renders 提问轮, not 提问待答',
     /'提问轮 ' \+ formatInt\(asked\)/.test(html) && !/'提问待答 ' \+ formatInt/.test(html) && !/'续作答答 ' \+ formatInt/.test(html)],
@@ -574,17 +603,17 @@ const checks = [
   // the fix, so assert it is there rather than asserting the reader will notice.
 ['context group is marked as a separate population', (() => {
   if (!liftTurnFns()) return false;
-  const suffix = sandbox.turnContextSuffix({ steers: 15, compactionTurns: 10, continuationTurns: 5 });
+  const line = textOf(sandbox.turnSubNode({ steers: 15, compactions: 10, continuationTurns: 5 }));
   // The boundary is the separator FOLLOWED by 另有. The leading `·` is what joins this group
   // to the breakdown and must stay — an earlier version of this guard asserted it was absent,
   // which was wrong: without it the two groups run together, which is the original defect.
-  return /·\s*另有\s/.test(suffix);
+  return /·\s*另有\s/.test(line);
 })()],
   // And the whole rendered line, as the reader receives it, still partitions correctly once
   // the context group is set aside: the numbers before 另有 sum to the headline.
   ['numbers before 另有 sum to the headline', (() => {
-  const line = sandbox.turnBreakdown({ turnsWithPrompt: 63, qaTurns: 5, openTurns: 9 })
-    + sandbox.turnContextSuffix({ steers: 15, compactionTurns: 10, continuationTurns: 5 });
+  const line = textOf(sandbox.turnSubNode({ turnsWithPrompt: 63, qaTurns: 5, openTurns: 9,
+    steers: 15, compactions: 10, continuationTurns: 5 }));
   const before = line.split('另有')[0];
   const nums = [...before.matchAll(/(\d[\d,]*)/g)].map((m) => Number(m[1].replace(/,/g, '')));
   return nums.reduce((a, n) => a + n, 0) === 63;

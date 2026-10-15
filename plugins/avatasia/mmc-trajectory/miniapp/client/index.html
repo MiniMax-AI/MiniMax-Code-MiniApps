@@ -3010,15 +3010,6 @@
         return (negative ? '-' : '') + grouped;
       }
 
-      /** Compact form for dense metadata rows. Null never becomes 0. */
-      function formatCompact(value) {
-        if (!isCount(value)) return DASH;
-        var abs = Math.abs(value);
-        if (abs >= 1000000) return trimZeros((value / 1000000).toFixed(1)) + 'M';
-        if (abs >= 10000) return trimZeros((value / 1000).toFixed(1)) + 'k';
-        return formatInt(value);
-      }
-
       function trimZeros(text) {
         return text.indexOf('.') >= 0 ? text.replace(/\.0$/, '') : text;
       }
@@ -4459,22 +4450,6 @@
       }
 
       /**
-       * What the turn count leaves out — a DIFFERENT population, not more of the same one.
-       * A checkpoint is not a conversation and a continuation is not a new one.
-       *
-       * This line used to sit in the same `·`-separated run as the breakdown, which put two
-       * numbers worth 5 side by side: 续作答答 (the turns that stopped to ask) and 续作 (the
-       * prompt-less turns that carried the answers). They are disjoint — overlap measured 0 —
-       * but read as one list they look like the same five counted twice. 另有 marks the
-       * boundary so the second group cannot be added to the first by eye.
-       */
-      function turnContext(stats) {
-        return turnContextParts(stats).map(function (p) {
-          return p.label + ' ' + p.value;
-        }).join(' · ');
-      }
-
-      /**
        * The out-of-headline terms, each tagged with the kind it stands for — or null when it
        * counts turns rather than records. 追加 is the steer records and 压缩 is the compaction
        * records, so those two are literally what the chips filter. The rest count turns, which
@@ -4497,15 +4472,19 @@
         return parts;
       }
 
-      function turnContextSuffix(stats) {
-        var context = turnContext(stats);
-        return context ? '   ·   另有 ' + context : '';
-      }
-
       /**
-       * The same line, with the two record-counting terms as live controls. Pressed state is
-       * read from state.kinds, so it is the same state the chips show and cannot disagree;
-       * the accessible name is the chip's, word for word.
+       * The line under 对话轮次: the breakdown, then 另有 and a DIFFERENT population — not more
+       * of the same one. A checkpoint is not a conversation and a continuation is not a new one.
+       *
+       * That second group used to sit in the same `·`-separated run as the breakdown, which put
+       * two numbers worth 5 side by side: 续作答答 (the turns that stopped to ask) and 续作 (the
+       * prompt-less turns that carried the answers). They are disjoint — overlap measured 0 —
+       * but read as one list they look like the same five counted twice. 另有 marks the
+       * boundary so the second group cannot be added to the first by eye.
+       *
+       * The two record-counting terms are live controls here. Pressed state is read from
+       * state.kinds, so it is the same state the chips show and cannot disagree; the accessible
+       * name is the chip's, word for word.
        */
       function turnSubNode(stats) {
         var wrap = el('span', 'kpi-sub');
@@ -8351,26 +8330,6 @@
           if (Object.prototype.hasOwnProperty.call(record, key)) copy[key] = record[key];
         }
         return copy;
-      }
-
-      function buildBlock(title, value, colored) {
-        var wrap = el('div');
-        wrap.style.display = 'flex';
-        wrap.style.flexDirection = 'column';
-        wrap.style.gap = '8px';
-        wrap.appendChild(el('p', 'block-title', title));
-        var pre = el('pre', 'pre');
-        pre.setAttribute('tabindex', '0');
-        var text = safeText(value);
-        if (!text) {
-          pre.textContent = DASH;
-        } else if (colored && typeof value === 'object') {
-          pre.innerHTML = jsonColorize(value);
-        } else {
-          pre.textContent = text;
-        }
-        wrap.appendChild(pre);
-        return wrap;
       }
 
       /* ---------------- copy & handoff ---------------- */

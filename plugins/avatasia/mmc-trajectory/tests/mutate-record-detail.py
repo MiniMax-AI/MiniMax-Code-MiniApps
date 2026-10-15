@@ -114,10 +114,16 @@ MUTATIONS = [
         "        var summaryText = record.summary || record.toolName || '';",
     ),
     (
+        # The replacement text is written in live code on purpose. It used to call
+        # `buildBlock(...)`, which was retired as dead — leaving it would have turned this
+        # control into a crash (`ReferenceError` at render time) instead of a named failure,
+        # and a control that crashes reports nothing. The defect under test is unchanged: the
+        # 结果 tab renders `record.result` directly, which after the payload slimming is always
+        # empty, instead of going through the folding builder.
         "the 结果 tab renders the record again, which after the slimming is always empty",
         CLIENT,
         "        if (tabId === 'result') return buildDetailBlock('工具结果', record, 'result', false);",
-        "        if (tabId === 'result') return buildBlock('工具结果', record.result, false);",
+        "        if (tabId === 'result') return el('div', 'note', String(record.result));",
     ),
     (
         "the tab is offered from a field the page no longer has, so it is always on",

@@ -44,10 +44,13 @@ MUTATIONS = [
      "'提问待答 ' + formatInt(asked)\n        ];",
      "turn breakdown renders 提问轮, not 提问待答"),
     # Removing 另有 is the exact regression this guard exists for: the two groups go back to
-    # being one undifferentiated `·` run.
+    # being one undifferentiated `·` run. The anchor follows the separator to where it now
+    # lives: it used to sit in turnContextSuffix(), which was retired as dead, and the live
+    # presenter turnSubNode() writes the same boundary itself. The regression is unchanged —
+    # only the line it happens on.
     ("boundary mark 另有 removed",
-     "   ·   另有 ' + context",
-     "   ·   ' + context",
+     "wrap.appendChild(document.createTextNode('   ·   另有 '));",
+     "wrap.appendChild(document.createTextNode('   ·   '));",
      "context group is marked as a separate population"),
     ("whole breakdown and context line claims to sum to the headline",
      OPENED,
