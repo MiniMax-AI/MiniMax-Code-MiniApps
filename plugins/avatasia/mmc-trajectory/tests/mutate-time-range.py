@@ -1,7 +1,7 @@
 """Mutation control for verify-time-range.mjs.
 
-This guard was excluded from `run.mjs` for its entire life, and the six mutations below are the
-ones that were checked BY HAND against a throwaway copy of the package while it sat there — a
+This guard was excluded from `run.mjs` for its entire life, and the first six mutations below are
+the ones that were checked BY HAND against a throwaway copy of the package while it sat there — a
 one-off result that nothing re-ran, so a later edit could pass everything else in this directory
 while this file went unverified. It runs in the default suite now, so they run here too.
 
@@ -11,6 +11,9 @@ not count as catching the rule it was aimed at.
 
 The expected name is the assertion that OWNS the rule. A mutation here is not satisfied by the
 suite going red.
+
+The long family at the bottom is one dropped count per compared field, and the reason it is a family
+rather than three hand-picked cases is written where it is built.
 """
 import json
 import subprocess
@@ -92,6 +95,112 @@ MUTATIONS = [
     ),
 ]
 
+# ---- one dropped count per compared field ----------------------------------------------------
+# The guard compares twenty numbers between the page's re-derivation and the server's own. Both
+# sides are correct in a passing run, so a comparison is only capable of failing if one of them is
+# broken — which means a field nobody mutates is a field whose comparison could be satisfied by a
+# page that never counts it at all. Three fields had a mutation here; the other seventeen had none,
+# and 「the page re-derives all twenty fields correctly」 was asserted by a guard that could not tell
+# a page that re-derives nineteen of them.
+#
+# Driven off the same names the guard compares, with the label built from the field name for the
+# same reason: a hand-written label and a hand-written expected name drift apart silently, and the
+# control would then report a caught mutation that was caught by the wrong assertion.
+N = "\n"
+COUNT_ANCHORS = [
+    ("messages", "            stats.messages += 1;\n"),
+    ("toolCalls", N + "          else if (kind === 'toolCall') stats.toolCalls += 1;"),
+    ("toolResults", N + "          else if (kind === 'toolResult') stats.toolResults += 1;"),
+    ("thinkingBlocks", N + "          else if (kind === 'thinking') stats.thinkingBlocks += 1;"),
+    ("steers", N + "          else if (kind === 'steer') stats.steers += 1;"),
+    ("errors", "            stats.errors += 1;\n"),
+    ("tokens.input", "            if (isCount(tokens.input)) stats.tokens.input += tokens.input;\n"),
+    ("tokens.output", "            if (isCount(tokens.output)) stats.tokens.output += tokens.output;\n"),
+    ("tokens.cacheRead", "            if (isCount(tokens.cacheRead)) stats.tokens.cacheRead += tokens.cacheRead;\n"),
+    ("tokens.cacheWrite", "            if (isCount(tokens.cacheWrite)) stats.tokens.cacheWrite += tokens.cacheWrite;\n"),
+    ("tokens.totalTokens", "            if (isCount(tokens.totalTokens)) stats.tokens.totalTokens += tokens.totalTokens;\n"),
+    ("turnsWithPrompt", "            stats.turnsWithPrompt += 1;\n"),
+    ("openTurns", "            if (turn.closed !== true) stats.openTurns += 1;\n"),
+    ("qaTurns", "            if (turn.askedReader === true && turn.closed !== true) stats.qaTurns += 1;\n"),
+    ("continuationTurns", "            stats.continuationTurns += 1;\n"),
+    ("turnsWithoutPrompt", "            stats.turnsWithoutPrompt += 1;\n"),
+]
+for _field, _anchor in COUNT_ANCHORS:
+    MUTATIONS.append(
+        (
+            "the page stops counting " + _field,
+            "whole-session " + _field,
+            _anchor,
+            "",
+        )
+    )
+
+# durationMs is not a count, so it gets a mutation of its own shape: the span of the rows kept is
+# replaced by a constant. `0` is the value that says "this conversation took no time at all", which
+# is what a reader would be shown if the subtraction went missing.
+MUTATIONS.append(
+    (
+        "the page stops measuring the span of the rows it kept",
+        "whole-session durationMs",
+        "        stats.durationMs = first === null ? null : last - first;\n",
+        "        stats.durationMs = first === null ? null : 0;\n",
+    )
+)
+
+# `userMessages` cannot be deleted the way its neighbours are. It is the head of the
+# `if / else if` chain over `record.kind`, so removing the line leaves an `else if` with nothing to
+# attach to: the page stops parsing, the guard throws, and it prints no FAILED_NAMES at all. That is
+# reported as UNNAMED, which is weaker than being reported as caught — the suite is red either way,
+# but nothing says which rule was broken. Accumulating zero instead keeps the chain intact and
+# produces the defect the field is compared on.
+MUTATIONS.append(
+    (
+        "the page stops counting userMessages, the head of the record-kind chain",
+        "whole-session userMessages",
+        "          if (kind === 'user') stats.userMessages += 1;",
+        "          if (kind === 'user') stats.userMessages += 0;",
+    )
+)
+
+# The field the one above cannot be reached from. `messagesAll` is the only number on the card that
+# must NOT be re-scoped — 「全程 N」 beside a range is the comparison the reader wants — so it is
+# compared the other way round, against the server's own figure. In a fixture whose view was the
+# whole conversation those two numbers were the same number, the assertion was the page agreeing
+# with itself, and swapping the field for the view-scoped one changed nothing an assertion could
+# see. That edit is this case.
+MUTATIONS.append(
+    (
+        "the page re-scopes messagesAll onto the view, so 「全程 N」 quietly becomes the range's count",
+        "messagesAll stays whole-session",
+        "          messagesAll: base.messagesAll,\n",
+        "          messagesAll: base.messages,\n",
+    )
+)
+
+# ---- the fixture itself, so its own preconditions are known to be able to fail ----------------
+# Everything above breaks the page and asks the guard to notice. These two break the guard's own
+# session and ask the guard to notice that IT lost the property it depends on. Without them the
+# twenty non-zero assertions are a claim about a generator nobody has tried to starve: shrink the
+# session until a counter reads zero and every comparison below it becomes `0 === 0` again, with
+# nothing in the suite able to say so.
+#
+# They target the guard rather than the page, so they are kept apart from MUTATIONS above: this file
+# is the thing being run, and the two are restored by separate before/after byte snapshots.
+FIXTURE_MUTATIONS = [
+    (
+        "the session stops generating checkpoint turns, so both compaction counters read zero",
+        "the fixture makes compactions non-zero, so the page is counted against something",
+        "    if (t % 23 === 7) {\n",
+        "    if (t % 23 === 777) {\n",
+    ),
+    (
+        "the view becomes the whole conversation again, so messagesAll and messages are one number",
+        "the conversation and this view are different sizes, so the two cannot be swapped",
+        "const FIRST_VIEWED_GENERATION = 1;",
+        "const FIRST_VIEWED_GENERATION = 0;",
+    ),
+]
+
 
 def read_exact(path):
     """Normalise to LF for matching, and report the file's own newline so it can be put back."""
@@ -129,19 +238,15 @@ def failed_names(output):
     return None
 
 
-def main():
-    code, output = run_guard()
-    if code != 0:
-        print("baseline guard does not pass; fix that first")
-        print(output)
-        return 1
-    print("baseline clean")
+def run_cases(cases, path, original, missed, unnamed):
+    """Apply each case to `path` in turn, restoring the file's startup bytes after every one.
 
-    original = HTML.read_bytes()
-    missed = []
-    unnamed = []
-    for label, expected, old, new in MUTATIONS:
-        text, newline = read_exact(HTML)
+    The restore is the bytes read before the first case rather than HEAD, so a run against a
+    working tree holding uncommitted work in this file puts that work back rather than the
+    committed version of it.
+    """
+    for label, expected, old, new in cases:
+        text, newline = read_exact(path)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
             missed.append(label)
@@ -150,11 +255,11 @@ def main():
             print(f"SKIP  {label}: the mutation changes nothing")
             missed.append(label)
             continue
-        write_exact(HTML, text.replace(old, new, 1), newline)
+        write_exact(path, text.replace(old, new, 1), newline)
         try:
             code, output = run_guard()
         finally:
-            HTML.write_bytes(original)
+            path.write_bytes(original)
         if code == 0:
             print(f"MISSED {label}: the guard still passed")
             missed.append(label)
@@ -168,6 +273,23 @@ def main():
         else:
             print(f"MISSED {label}: guard failed, but not on {expected!r}\n         -> {names}")
             missed.append(label)
+
+
+def main():
+    code, output = run_guard()
+    if code != 0:
+        print("baseline guard does not pass; fix that first")
+        print(output)
+        return 1
+    print("baseline clean")
+
+    original = HTML.read_bytes()
+    guard_original = GUARD.read_bytes()
+    missed = []
+    unnamed = []
+    run_cases(MUTATIONS, HTML, original, missed, unnamed)
+    if FIXTURE_MUTATIONS:
+        run_cases(FIXTURE_MUTATIONS, GUARD, guard_original, missed, unnamed)
 
     # ---- the other direction ---------------------------------------------------------------
     # A note in the shipped file must not change a single verdict. If adding prose can turn this
@@ -197,7 +319,10 @@ def main():
     if HTML.read_bytes() != original:
         print(f"NOT RESTORED {HTML}")
         return 1
-    print("file restored byte-for-byte")
+    if GUARD.read_bytes() != guard_original:
+        print(f"NOT RESTORED {GUARD}")
+        return 1
+    print("files restored byte-for-byte")
 
     if missed or unnamed:
         if missed:

@@ -216,20 +216,27 @@ with the reason stated rather than quietly dropped.
   arithmetic the file exists for; committing a multi-megabyte real transcript would have put a
   session's contents in the package.
 
-  It now builds its own transcript — 300 turns, 1,348 rows, ~2,400 records, spanning eight hours
-  across a local midnight — and hands it to the server's own `buildTrajectoryPayload`, the same
-  exported function `/api/trajectory` calls. **What is synthetic is the conversation; the `stats`
-  being compared is still computed by the code under test.** That is what makes section 3 still a
-  real comparison: it asks whether the page's re-derivation agrees with the server's numbers, and
-  both sides are the shipped implementations.
+  It now builds its own transcript — 400 turns across four generations of 100, spanning eight hours
+  across a local midnight — and hands the **last three generations** to the server's own
+  `buildTrajectoryPayload`, the same exported function `/api/trajectory` calls. **What is synthetic
+  is the conversation; the `stats` being compared is still computed by the code under test.** That is
+  what makes section 3 still a real comparison: it asks whether the page's re-derivation agrees with
+  the server's numbers, and both sides are the shipped implementations.
+
+  The view is deliberately **not** the whole conversation, and that is what makes one of its numbers
+  testable. `messagesAll` counts the lineage; `messages` counts what this view holds. Hand the server
+  everything and the two are the same number, the 「全程 N」 assertion becomes the page agreeing with
+  itself, and re-scoping that field onto the view changes nothing any assertion can see. The
+  generator therefore keeps a whole generation out of the payload, and asserts the two differ before
+  asserting anything about either.
 
   The generator is written to make the comparison bite rather than merely pass. It is not enough
   for the session to be large: the fields section 3 compares have to be **non-zero**, or `0 === 0`
   is green and means nothing. So the mix is deliberate — prompt turns, continuations, unfinished
-  turns, a turn that asks the reader something, steers, failing tool calls, and all five token
-  counters. Only `compactions` and `compactionTurns` are zero, and `compactionTurns === 0` is
-  asserted on purpose: a session with a bare checkpoint turn would have the two sides re-deriving
-  different populations rather than disagreeing about the same one.
+  turns, a turn that asks the reader something, steers, failing tool calls, bare checkpoint turns,
+  and all five token counters. Every compared field is checked non-zero *by the guard*, driven off
+  the same list the comparisons are driven off, so a field added there arrives covered rather than
+  waiting to be discovered at zero.
 
   Two shapes in it are not obvious and were both wrong on the first attempt:
 
@@ -240,13 +247,17 @@ with the reason stated rather than quietly dropped.
   - A turn only closes when a **second** assistant row follows its tool results. One assistant row
     carrying both text and tool calls is not a reply.
 
-  **It has a mutation control now: `mutate-time-range.py`, eight cases.** Six of them are the
-  mutations that were previously checked by hand against a throwaway copy of the package while this
-  file sat outside the suite — that was a one-off result nothing re-ran, so a later edit could pass
-  everything else here while this file went unverified. Each must now be caught **by name**, via the
-  `FAILED_NAMES` line the guard prints, because a mutation is not satisfied by the suite going red.
-  Two more cover the re-derived stats literal losing `steers` and the range ceasing to re-cut its
-  snapshot. A comment-only edit is required to leave every verdict unchanged, the other direction:
+  **It has a mutation control now: `mutate-time-range.py`, 29 cases in three groups.** The first six
+  are the mutations that were previously checked by hand against a throwaway copy of the package
+  while this file sat outside the suite — that was a one-off result nothing re-ran, so a later edit
+  could pass everything else here while this file went unverified. Each must be caught **by name**,
+  via the `FAILED_NAMES` line the guard prints, because a mutation is not satisfied by the suite
+  going red. The second group is one dropped count per compared field: both sides of a comparison are
+  correct in a passing run, so a field nobody mutates is a field whose comparison could be satisfied
+  by a page that never counts it at all. The third group breaks the guard's own session instead of
+  the page's code — removing the checkpoint turns, and making the view the whole conversation again
+  — because otherwise the twenty non-zero assertions are a claim about a generator nobody has tried to
+  starve. A comment-only edit is required to leave every verdict unchanged, the other direction:
   a guard that cannot pass is as broken as one that cannot fail.
 
 ### Two anchors that were wrong, and one mutation that could not be caught

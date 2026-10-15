@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { buildTrajectoryPayload } from '../miniapp/node/server.mjs';
+import { buildMessageIdentity, buildTrajectoryPayload, openerRowsForView } from '../miniapp/node/server.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const HTML = join(HERE, '..', 'miniapp', 'client', 'index.html');
@@ -55,7 +55,7 @@ const html = readFileSync(HTML, 'utf8');
 //     makes the two counters comparable rather than assumed. The product invariant that a real
 //     session has none of these belongs to `verify-compaction-turn.mjs`; asserting it here proved
 //     nothing, because the number it asserted was this file's own choice.
-const SYNTHETIC_TURNS = 300;
+const SYNTHETIC_TURNS = 400;
 // Eight hours from 20:00 local puts the midnight four hours in, with roughly half the records on
 // each side of it — dense enough that the ±5 minute window section 3b picks is never empty, and
 // spread thinly enough that the window stays far under the tenth-of-the-session slice it asserts.
@@ -409,11 +409,29 @@ assert('the unreadable branch names the range still in force', /hasTimeRange\(\)
 // The one line that used to be `await fetch(BASE_URL + '/api/trajectory')`. Same builder, no
 // service: what the route adds around `buildTrajectoryPayload` is a handful of `session.*` fields
 // this file never reads, which is the same observation `make-payload.mjs` is built on.
+//
+// IT IS A GENERATION VIEW OVER A LINEAGE, not the whole conversation in one pass, and that is not
+// tidiness — it is what makes `messagesAll` testable. `messagesAll` counts the conversation;
+// `messages` counts what this view holds. When the two are the same number, re-scoping the whole
+// figure on the page is undetectable, and that is precisely the rule the assertion below states.
+// A single-view fixture made them equal, and 「全程 N」 was a comparison of the page with itself.
+const GENERATION_SIZE = 100;
+const FIRST_VIEWED_GENERATION = 1; // the view is generations 1..3 — it straddles the local midnight
+const generationOf = (row) => Math.floor((Number(row.turn_id.slice(5)) - 1) / GENERATION_SIZE);
+
+const occurrences = SYNTHETIC_ROWS.map((row) => ({ row, generation: generationOf(row), locator: null }));
+const identity = buildMessageIdentity(occurrences);
+const viewOccurrences = occurrences.filter((o) => o.generation >= FIRST_VIEWED_GENERATION);
+const viewRows = viewOccurrences.map((o) => o.row);
+
 const payload = buildTrajectoryPayload({
   session: { id: 'mvs_0000000000000000000000000000000f', createdAtMs: SYNTHETIC_START },
-  rows: SYNTHETIC_ROWS,
-  sizeBytes: SYNTHETIC_ROWS.length,
+  rows: viewRows,
+  identity,
+  openerByTurn: openerRowsForView(identity, viewOccurrences),
+  sizeBytes: viewRows.length,
   truncated: false,
+  generations: [],
 });
 
 const scoped = { console, state: { payload, flat: [], rangeFrom: null, rangeTo: null, rangeCutoff: null } };
@@ -454,26 +472,42 @@ const FIELDS = [
   // number check for this one.
   'steers'
 ];
+const TOKEN_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'];
 for (const field of FIELDS) {
   check('whole-session ' + field, whole[field], payload.stats[field]);
 }
-for (const field of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens']) {
+for (const field of TOKEN_FIELDS) {
   check('whole-session tokens.' + field, whole.tokens[field], payload.stats.tokens[field]);
+}
+
+// The precondition of every comparison above, asserted for all twenty numbers rather than for the
+// two that happened to break first. `0 === 0` is not evidence that the page counts a field; it is
+// evidence that nothing counted it and both sides agreed. This used to read `compactionTurns === 0`
+// — the fixture guaranteeing the precondition of the comparison it was about to perform, so the
+// page's `+= 1` could be deleted outright and the guard stayed green. The other eighteen fields were
+// in exactly that state and nothing said so, which is the same defect one field narrower. Driven off
+// FIELDS, so the next field added to that list arrives covered instead of waiting to be discovered.
+for (const field of FIELDS) {
+  assert('the fixture makes ' + field + ' non-zero, so the page is counted against something',
+    typeof payload.stats[field] === 'number' && payload.stats[field] !== 0);
+}
+for (const field of TOKEN_FIELDS) {
+  assert('the fixture makes tokens.' + field + ' non-zero, so the page is counted against something',
+    typeof payload.stats.tokens[field] === 'number' && payload.stats.tokens[field] !== 0);
 }
 
 // The one field that must NOT be re-scoped: 「全程 N」 beside the range is the comparison the
 // reader wants, and re-scoping it would leave the note with nothing to say.
 check('messagesAll stays whole-session', whole.messagesAll, payload.stats.messagesAll);
+// ...and the precondition that makes it a check rather than an equality with itself. Without this
+// the assertion above is satisfied by any page that re-scopes the whole figure onto the view, and
+// that is the whole rule.
+assert('the conversation and this view are different sizes, so the two cannot be swapped',
+  payload.stats.messagesAll > payload.stats.messages);
 // The preconditions of section 3, asserted rather than assumed. A generator edited down to a
 // tenth of its size would leave every assertion below it comparing two near-identical small
 // numbers — still green, and no longer evidence of anything.
 assert('the synthetic session is big enough to be worth checking', payload.stats.messages > 1000);
-// The one that was wrong before. It read `compactionTurns === 0`, which made the fixture guarantee
-// the precondition of the comparison it was about to perform: two counters that are zero by
-// construction compare equal whether or not the page counts them at all. Asking for a non-zero
-// one is what turns two tautologies into two checks.
-assert('the compaction counters are non-zero, so the page is actually counted against them',
-  payload.stats.compactions > 0 && payload.stats.compactionTurns > 0);
 
 // A narrower range must produce strictly fewer messages, or the filter is not filtering.
 const halfEnd = Math.floor((mins + maxs) / 2);
