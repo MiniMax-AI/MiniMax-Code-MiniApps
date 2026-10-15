@@ -371,9 +371,23 @@ const selSrc = fnSource('function recordInSelection(record, selection, spansById
 assert('the time brush looks a span up by the row key too',
   /spansById\.get\(recordKey\(record\)\)/.test(selSrc));
 const spanAtSrc = fnSource('function spanAt(clientX, clientY)') || '';
+// The hit test has to hand back a SPAN. It used to read the record id off the DOM node under the
+// pointer, and that is what forced click and hover onto one number; it now resolves through the
+// model instead, which returns the span. Asserting the *shape* of the answer rather than the line
+// that produced it is what lets the resolution move without the requirement moving with it.
+//
+// This is NOT the whole property, and the two rejections below are not an exhaustive account of it.
+// They catch the two spellings that have actually shipped here — resolving through the DOM, and
+// returning `.record.id` directly — and a second acceptance review found a third that walks past
+// both: `recordKey(hit.record)` and `hit.id` both return a key, keep the model resolution, and read
+// clean. Enumerating return values as syntax does not terminate. `verify-overview.mjs` owns the
+// property itself: it runs `spanAt` and asks what came back, because every key-returning shape
+// answers a string and a span is not one.
 assert('the hit test returns the span, so click and hover stop sharing one number',
-  /overviewSpansById\.get\(key\)/.test(spanAtSrc));
-const nearestSrc = fnSource('function nearestSpanAt(time)') || '';
+  /nearestSpanAt\(/.test(spanAtSrc)
+  && !/getAttribute\('data-record-id'\)/.test(spanAtSrc)
+  && !/\.record\.(id|index)\b/.test(spanAtSrc));
+const nearestSrc = fnSource('function nearestSpanAt(time, lane)') || '';
 assert('...and so does the nearest-span lookup', /best = span;/.test(nearestSrc) && !/best = span\.id;/.test(nearestSrc));
 const pointerUp = fnSource('function onOverviewPointerUp(event)') || '';
 assert('clicking a span selects the message, not the row',

@@ -53,7 +53,15 @@ function domNode(tag) {
     removeAttribute(k) { delete attrs[k]; },
     style: {
       props: Object.create(null),
-      setProperty(k, v) { this.props[k] = v; }
+      setProperty(k, v) { this.props[k] = v; },
+      // The page reads the lane back off the node under the pointer, so the stub has to answer
+      // the read as well as the write. A stub that only records writes would make `overviewLaneAt`
+      // return -1 and quietly turn every hover assertion into "nothing was hovered".
+      getPropertyValue(k) { return this.props[k] ?? ''; }
+    },
+    get classList() {
+      const self = this;
+      return { contains: (c) => String(self.className || '').split(/\s+/).includes(c) };
     },
     className: '',
     textContent: ''
@@ -868,22 +876,80 @@ check('and it is marked as a record rather than as a column',
   sandbox.dom.overviewLanes.childNodes.some((n) => n.getAttribute('data-current-marker') === 'true'), true);
 
 /* g3 is the record a 3px strip leaves without a column of its own — exactly the case the hover
- * marker exists for. On the wide strip above it owns a column and needs no marker. */
+ * marker exists for, and exactly the case the old `document.elementFromPoint` hit-test could not
+ * reach. An earlier version of this guard called `markOverviewHover('g3')` directly, which passed:
+ * the id was injected, so nothing had to discover it. The whole defect lived on the other side of
+ * that call. So this drives the real pointer path with the DOM answering as the browser would —
+ * returning whichever column node is topmost — and asks for a record that owns none. */
 resetStrip();
+sandbox.overviewDrag = null;          // a brush left armed by an earlier case would take the
+                                       // drag branch and return before the hover is ever asked for
+// The track and the lanes are two different elements on the page: the track is the full strip the
+// pointer's x is measured against, the lanes are the domain window inset inside it. Giving the
+// stub one width for both makes `overviewFractionAt` answer 0 for every x, and every hover
+// assertion then quietly measures "the record nearest the start of the session".
+sandbox.dom.overviewTrack.layoutWidth = 1000;
 sandbox.dom.overviewLanes.layoutWidth = 3;
 sandbox.renderOverview();
+const crowdedModel = sandbox.overviewCache.model;
+const crowded = crowdedModel.spans.find((s) => s.id === 'g3');
 check('the crowded record is the one with no column of its own',
   paintedIds().includes('g3'), false);
-sandbox.markOverviewHover('g3');
-check('a hovered record that owns no column still gets a node of its own',
+
+// Whatever the browser hands back has to be a real, wrong answer for the test to mean anything.
+const domAnswer = sandbox.dom.overviewLanes.childNodes.find(
+  (n) => n.getAttribute('data-record-id') !== null && Number(n.style.props['--ov-lane']) === crowded.lane);
+check('the DOM can only answer with a different record in that lane',
+  domAnswer.getAttribute('data-record-id') !== 'g3', true);
+sandbox.document.elementFromPoint = () => domAnswer;
+
+const crowdedView = sandbox.overviewCache.view;
+const crowdedX = (((crowded.start + crowded.end) / 2 - crowdedView.start) / crowdedView.duration) * 1000;
+
+/* What the hit test RETURNS, asked of the function rather than of the handler that uses it.
+ *
+ * `client-check.mjs` can only read this one as source text, and enumerating the syntaxes that
+ * produce a key does not end: `hit.id`, `recordKey(hit.record)` and `hit.record.id` are three
+ * spellings of one defect, and a fourth is always available. Running it is what makes the check
+ * total — every one of them answers a string, and a span is not a string.
+ *
+ * Placed before the handler cases on purpose: a key-returning hit test also breaks those, so if
+ * this ran second the mutation would be attributed to whichever of them failed first and would
+ * never be given the name it is about. */
+const directHit = sandbox.spanAt(crowdedX, 8);
+/* Both reads go through the same guard. A hit test that answers null, or answers a key, must fail
+ * HERE BY NAME — `directHit.record.id` on a null throws, and a throw names no rule at all, which
+ * this suite treats as a weaker outcome than a red assertion and reports as UNNAMED. */
+const directIsSpan = directHit !== null && typeof directHit === 'object' && 'record' in directHit;
+check('the hit test hands back a span, not a key, whichever way it spells the lookup',
+  directIsSpan && 'id' in directHit, true);
+/* Shape is not enough, and a second acceptance review showed why: `{ id: hit.id, record: hit.record }`
+ * carries every field the shape check looks at and names the right record, so it passes — while
+ * being a different object from the one the hit test found. Click and hover act on this value, so
+ * what has to hold is that it IS the model's span, not that it resembles one. `crowded` is the very
+ * object out of `overviewCache.model.spans`, which is what `nearestSpanAt` returns by reference. */
+check('and it is that span itself, not something shaped like it',
+  directIsSpan && directHit === crowded, true);
+check('and the record it carries is the one under the pointer',
+  directIsSpan ? directHit.record.id : null, 'g3');
+
+sandbox.onOverviewPointerMove({ clientX: crowdedX, clientY: 8, pointerId: 3 });
+check('the hovered record comes from the model, not from the node under the pointer',
+  sandbox.state.overviewHoverId, 'g3');
+check('and it is drawn, since it has no column of its own',
   sandbox.dom.overviewLanes.childNodes.some((n) => n.getAttribute('data-hovered-marker') === 'true'), true);
-check('and it is the record under the pointer',
+check('and the mark is on that record',
   sandbox.dom.overviewLanes.childNodes.filter((n) => n.getAttribute('data-hovered-marker') === 'true')
     .map((n) => n.getAttribute('data-record-id')), ['g3']);
-sandbox.markOverviewHover(null);
-check('moving off takes that node away again',
+
+// A point that is over no span at all must still answer with nothing, rather than snapping to
+// whatever record happens to be nearest in time.
+sandbox.document.elementFromPoint = () => sandbox.dom.overviewTrack;
+sandbox.onOverviewPointerMove({ clientX: crowdedX, clientY: 8, pointerId: 3 });
+check('a point over no span hovers nothing', sandbox.state.overviewHoverId, null);
+check('and leaves no marker behind',
   sandbox.dom.overviewLanes.childNodes.some((n) => n.getAttribute('data-hovered-marker') === 'true'), false);
-check('and leaves the columns exactly as they were',
+check('and the columns are exactly as they were',
   paintedColumns(), ['0.0000%', '33.3333%', '66.6667%']);
 
 /* ----------------------------------------------------------------------- report */

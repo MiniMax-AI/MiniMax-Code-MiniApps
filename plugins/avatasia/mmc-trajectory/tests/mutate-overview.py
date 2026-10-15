@@ -47,6 +47,16 @@ COLUMN_COUNT = """        if (!lanes || typeof lanes.getBoundingClientRect !== '
         if (!(width > 0)) return spanCount;
         return Math.max(1, Math.round(width));"""
 
+SPAN_AT = """        var lane = overviewLaneAt(clientX, clientY);
+        if (lane < 0) return null;
+        return nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);"""
+
+# The last line of the same body, on its own. Two mutations need to sit on this function and they
+# replace different things: one reinstates the whole body to move the RESOLUTION back to the DOM,
+# the other leaves the resolution alone and changes only the RETURN. Sharing SPAN_AT between them
+# would make the second one's replacement collide with the first one's anchor.
+SPAN_AT_RETURN = "        return nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);"
+
 MUTATIONS = [
     (
         "the strip keeps a predicate of its own instead of asking the list",
@@ -95,6 +105,53 @@ MUTATIONS = [
         "a hovered record that owns no column loses its highlight with it",
         "        if (!id || found) return;\n        var span = overviewSpansById.get(id);",
         "        if (!id || found) return;\n        if (true) return;\n        var span = overviewSpansById.get(id);",
+    ),
+    (
+        # The one an acceptance review caught: hover resolved the record from the DOM, so after
+        # aggregation — where only a column winner has a node — every other record became
+        # unreachable, and the marker above could never fire for the case it was written for.
+        # Reinstating the previous implementation verbatim is the honest shape of this mutation:
+        # it is not a plausible typo, it is the code that shipped an hour earlier.
+        "hover takes the record from the node under the pointer, so a record with no column cannot be hovered",
+        SPAN_AT,
+        """      function spanAt(clientX, clientY) {
+        var node = document.elementFromPoint(clientX, clientY);
+        while (node && node !== dom.overviewTrack) {
+          if (node.classList && node.classList.contains('ov-span')) {
+            var key = node.getAttribute('data-record-id');
+            return key === null ? null : (overviewSpansById.get(key) || null);
+          }
+          node = node.parentNode;
+        }
+        return null;
+      }""",
+    ),
+    (
+        # The one a second acceptance review caught, and the reason this list needed a
+        # behavioural check rather than another regex. Every earlier mutation here changes HOW the
+        # hit test resolves; this one leaves the resolution exactly right — the model, the lane, the
+        # nearest span — and changes only what it hands back, turning the span into its row key.
+        # `client-check.mjs` reads that one as source text, and both of its rejection conditions are
+        # written against spellings: no `getAttribute('data-record-id')`, no `.record.id`. This
+        # passes both. `hit.id` and `hit.record.index` pass both. Enumerating them does not end.
+        # The assertion that catches it runs the function and asks what came back, because every
+        # key-returning shape answers a string and a span is not a string.
+        "the hit test hands back the row key, which click and hover then cannot share",
+        SPAN_AT_RETURN,
+        """        var hit = nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);
+        return hit ? recordKey(hit.record) : null;""",
+    ),
+    (
+        # The one a third review round caught, and the reason the check above asserts identity and
+        # not shape. This wrapper carries every field a shape check looks at and names the right
+        # record, so "is it an object with `record` and `id`" answers yes and "is `record.id` g3"
+        # answers yes — while the value on hand is a NEW object, not the span the hit test found.
+        # Everything the page does next would work on a wrapper today, which is exactly why a guard
+        # that only asks about the shape reports safety it has not checked.
+        "the hit test hands back a wrapper shaped like the span instead of the span",
+        SPAN_AT_RETURN,
+        """        var hit = nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);
+        return hit ? { id: hit.id, record: hit.record } : null;""",
     ),
 ]
 

@@ -5454,16 +5454,46 @@
        *
        * @returns {any|null}
        */
+      /**
+       * The record under a point on the strip, or null.
+       *
+       * The LANE still comes from the DOM, because the lanes are laid out in CSS and the pointer's
+       * y position is the only honest way to know which one it is over. The RECORD comes from the
+       * complete model.
+       *
+       * It used to come from the DOM entirely — `document.elementFromPoint` returned whichever
+       * node was topmost at that pixel. That was already arbitrary, since at the measured session
+       * forty-two records share a pixel, but it became arbitrary in a *new* way once the strip
+       * drew one node per column: only the record that won a column had a node at all, so every
+       * other record was unreachable by hover and by click. Resolving in time instead makes the
+       * answer the record nearest the pointer rather than the one painted last, which is the
+       * question a reader is asking either way.
+       */
       function spanAt(clientX, clientY) {
+        var lane = overviewLaneAt(clientX, clientY);
+        if (lane < 0) return null;
+        return nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);
+      }
+
+      /**
+       * Which lane the point is over, read off the node under it rather than recomputed here —
+       * the 14px lane pitch lives in the stylesheet and duplicating it in JS is a second copy of
+       * a number that decides what the reader is pointing at.
+       *
+       * @returns {number} the lane index, or -1 when the point is not over a span
+       */
+      function overviewLaneAt(clientX, clientY) {
         var node = document.elementFromPoint(clientX, clientY);
         while (node && node !== dom.overviewTrack) {
           if (node.classList && node.classList.contains('ov-span')) {
-            var key = node.getAttribute('data-record-id');
-            return key === null ? null : (overviewSpansById.get(key) || null);
+            var declared = node.style && node.style.getPropertyValue
+              ? node.style.getPropertyValue('--ov-lane') : '';
+            var lane = Number(declared);
+            return Number.isFinite(lane) ? lane : -1;
           }
           node = node.parentNode;
         }
-        return null;
+        return -1;
       }
 
       function cancelOverviewHover() {
@@ -5702,14 +5732,26 @@
         renderLedger();
       }
 
-      /** The span nearest a point in time, or null. The span, for the reason spanAt() gives. */
-      function nearestSpanAt(time) {
+      /**
+       * The span nearest a point in time, or null. The span, for the reason spanAt() gives.
+       *
+       * Read off the COMPLETE model rather than the painted nodes, so a record that owns no
+       * column is still reachable. `lane`, when given, restricts the search to one row of the
+       * strip; without it a wheel gesture can work in time alone.
+       *
+       * @param {number} time
+       * @param {number} [lane]
+       */
+      function nearestSpanAt(time, lane) {
         var model = overviewCache.model;
         if (!model) return null;
         var best = null;
         var bestDistance = Infinity;
         for (var i = 0; i < model.spans.length; i += 1) {
           var span = model.spans[i];
+          // A lane is optional because not every caller has one to offer: a wheel gesture works in
+          // time alone, while a pointer also says which row it is over.
+          if (lane !== undefined && span.lane !== lane) continue;
           if (span.end < time) {
             var after = span.end - time;
             if (after < bestDistance) { bestDistance = after; best = span; }

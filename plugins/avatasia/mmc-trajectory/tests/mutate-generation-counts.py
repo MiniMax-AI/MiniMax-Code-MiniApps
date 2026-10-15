@@ -42,7 +42,7 @@ LIVE_TEST = "          var live = !session || !isCount(session.activeGeneration)
 ROW_KEY = "  if (record && isCount(record.index)) return String(record.index);"
 SPAN_KEY = "            id: recordKey(record),"
 BRUSH_LOOKUP = "        var span = spansById.get(recordKey(record));"
-HIT_TEST = "            return key === null ? null : (overviewSpansById.get(key) || null);"
+HIT_TEST = "        return nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);"
 CLICK_SELECT = "            selectRecord(span.record.id);"
 
 MUTATIONS = [
@@ -68,10 +68,15 @@ MUTATIONS = [
      "        var span = spansById.get(record.id);",
      "the time brush looks a span up by the row key too"),
     # And the split itself: one number cannot serve both, which is why the hit test hands back the
-    # span rather than its key.
+    # span rather than its key. Re-anchored when the hit test stopped reading the DOM: the line
+    # this used to replace is gone, and re-anchoring it to the DOM lookup instead would have made
+    # this a second copy of the mutation in mutate-overview.py under a name it no longer earns.
+    # The defect is unchanged — one number doing two jobs — and it now enters through the return
+    # value, so that is where this mutates.
     ("the hit test returns the key again, so click and hover share one number",
      HIT_TEST,
-     "            return key;",
+     "        var hit = nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);\n"
+     "        return hit ? String(hit.record.index) : null;",
      "the hit test returns the span, so click and hover stop sharing one number"),
     ("clicking a span selects the row rather than the message",
      CLICK_SELECT,
