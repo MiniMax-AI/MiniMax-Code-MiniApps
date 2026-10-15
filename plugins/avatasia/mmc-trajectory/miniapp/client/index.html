@@ -3632,7 +3632,6 @@
       var state = {
         sessions: [],
         sessionsLoaded: false,
-        sessionsError: false,
         followLatest: true,
         // Seeded from the host id so the picker and the content agree. `sessionParam()` already
         // prefers `hostSessionId`, so a host-pinned page used to render 「跟随最新（自动切换）」
@@ -3645,7 +3644,6 @@
         signature: '',
         loading: true,
         hardError: null,
-        stale: false,
         selectedId: null,
         // Disclosure state for the two blocks that are read once and then only take
         // up room. Folding them hands the height back to the ledger.
@@ -3777,6 +3775,88 @@
         // ledger to one slice of a rotated history so pre-compaction turns stay reachable.
         generation: null
       };
+
+      /**
+       * 新鲜度：这一层（文档位置 2，`#error-bar` / `#stale-bar`，回答「出错了吗」）的全部状态。
+       *
+       * 它顶掉了两个散落的布尔，都是有理由的。
+       *
+       * `state.stale` 有三个写点，其中「恢复」那一个写在 `applyPayload` 里 —— 而 304 那条路
+       * 不经过 `applyPayload`。于是「恢复」被定义成了「收到一个 body」，而一个安静会话的每一次
+       * 轮询都是 304：cacheKey 只由 `dir|sizeBytes|lastActiveAt` 决定，没动就是同一个 tag，
+       * 服务端必然回 304。所以一次瞬时的连接抖动之后，横幅可以永久停留，而它自己写着
+       * 「正在重试」。
+       *
+       * `state.sessionsError` 更干脆：写了三处、读了零处，会话列表读取失败对读者完全不可见。
+       *
+       * 两个来源是**并列**的信号，不是互斥的：轨迹好了不能掩盖列表还在失败。谁更严重谁说话，
+       * 所以不需要 `resetBaseFilters` 那种跨函数协调。
+       *
+       * 每个字段有且只有一个写者（`noteFresh`），这同时修掉「一个字段一个写者」这条规矩原本被
+       * 打破的地方 —— `state.stale` 有三个写点，而其中两个根本不是它的。
+       */
+      var freshness = {
+        trajectory: { streak: 0, reason: '' },
+        sessions: { streak: 0, reason: '' }
+      };
+
+      /**
+       * The one writer for this layer, and it reports whether the bar's state actually moved.
+       *
+       * That return value is load-bearing rather than a convenience: `render()` rebuilds the
+       * whole ledger, and a quiet session revalidates into a 304 every 8 seconds, so a fix that
+       * re-rendered on every 304 would trade a sticky banner for a permanent rebuild.
+       *
+       * @param {'trajectory'|'sessions'} source
+       * @param {boolean} ok
+       * @param {string} [reason]
+       * @returns {boolean} whether the bar's contents would differ afterwards
+       */
+      function noteFresh(source, ok, reason) {
+        var slot = freshness[source];
+        if (!slot) return false;
+        // A failure always moves: the streak it writes is the count the reader sees. A success
+        // only moves if there was something to clear.
+        var moved = ok ? slot.streak !== 0 : true;
+        if (ok) {
+          slot.streak = 0;
+          slot.reason = '';
+        } else {
+          slot.streak += 1;
+          slot.reason = reason || 'offline';
+        }
+        return moved;
+      }
+
+      /**
+       * 失败分成两类，因为读者的下一步不一样：根本没连上，和连上了但回的东西读不懂。
+       *
+       * 原来这两类加上四种结构化错误码全部塌缩成同一句「更新失败」，页面既不留计数也不打
+       * 日志，于是「抖了一下」和「一直不通」事后无法区分。
+       */
+      function freshnessReason(error) {
+        var code = error && error.code ? String(error.code) : '';
+        if (code === 'session_not_found' || code === 'not_found') return 'session_gone';
+        if (code === 'trajectory_unavailable') return 'store_unavailable';
+        if (code === 'trajectory_unreadable') return 'unreadable';
+        // A status means the server answered and the answer was not usable. No status means the
+        // request itself failed — a different thing to go and look at.
+        if (error && typeof error.status === 'number') return 'bad_response';
+        return 'offline';
+      }
+
+      /** 连续失败时读者才需要知道次数：第一次是抖动，不必加一句解释。 */
+      var FRESH_STREAK_SHOWN = 2;
+
+      var FRESH_TITLES = {
+        session_gone: '该会话已不可用，正在重试',
+        store_unavailable: '本地会话数据目录暂时不可用，正在重试',
+        unreadable: '会话数据暂时无法读取，正在重试',
+        bad_response: '服务端返回了无法读取的内容，正在重试',
+        offline: '与本地服务的连接中断，正在重试'
+      };
+
+      var FRESH_SOURCE_LABELS = { trajectory: '轨迹', sessions: '会话列表' };
 
       var dom = {};
       var inflight = null;
@@ -3929,7 +4009,14 @@
               state.sessionsEtagFor = key;
               return { changed: false, body: null, etag: state.sessionsEtag };
             }
-            if (!response.ok) throw new Error('http');
+            if (!response.ok) {
+              // The status is what tells a dropped connection apart from a server that answered
+              // with something unusable, and this path used to throw it away.
+              var httpError = new Error('http');
+              httpError.status = response.status;
+              throw httpError;
+            }
+
             return response
               .json()
               .catch(function () { return null; })
@@ -3943,17 +4030,26 @@
             // One writer for the list's validator, on the one path that carried a body.
             state.sessionsEtag = result.etag;
             state.sessionsEtagFor = key;
-            if (!result.changed) return false;
+            // A 304 is an answer. The server has just said the list on screen is current, so this
+            // is fresh — leaving it out is what let a list failure sit there with nothing on the
+            // page to show for it. `renderSessionSelect` does not re-render, so the bar is told
+            // separately, and only when its contents actually moved.
+            var cleared = noteFresh('sessions', true, '');
+            if (!result.changed) {
+              if (cleared) renderBars();
+              return false;
+            }
             state.sessions = Array.isArray(result.body.sessions) ? result.body.sessions : [];
             state.sessionsLoaded = true;
-            state.sessionsError = false;
             renderSessionSelect();
+            if (cleared) renderBars();
             return true;
           })
           .catch(function (error) {
             sessionsInflight = null;
             if (error && error.name === 'AbortError') return false;
-            state.sessionsError = true;
+            noteFresh('sessions', false, freshnessReason(error));
+            renderBars();
             return false;
           });
       }
@@ -4027,10 +4123,19 @@
             if (payload === null) {
               // 304: the previous render is still accurate. Only clear a pending loading
               // state, because nothing on screen should have been replaced.
+              //
+              // The server answered, though, so this is fresh. Treating a 304 as "nothing
+              // happened" is what let the warning outlive the fault that raised it — a quiet
+              // session revalidates into a 304 every tick, so once it was up, only a session
+              // that started growing again could take it down.
+              var cleared = noteFresh('trajectory', true, '');
               if (state.loading) {
                 state.loading = false;
-                render();
+                cleared = true;
               }
+              // Rendering on every 304 would rebuild the whole ledger every 8 seconds on an
+              // idle session. Escaping the sticky banner must not cost that.
+              if (cleared) render();
               return;
             }
             applyPayload(payload, manual);
@@ -4291,7 +4396,7 @@
         state.signature = next;
         state.loading = false;
         state.hardError = null;
-        state.stale = false;
+        noteFresh('trajectory', true, '');
         state.flat = flattenTurns(payload.turns);
         // The cursor is the server's own word for how far it got, so a delta is O(1) here and
         // only a whole payload has to walk the records to find the end of them.
@@ -4326,17 +4431,11 @@
         // Never surface status codes, URLs, or local paths.
         var serverMessage = error && error.serverMessage ? String(error.serverMessage) : '';
         if (state.payload) {
-          state.stale = true;
-          var code = error && error.code ? error.code : '';
-          var title = dom.staleBar.querySelector('.bar-title');
-          if (title) {
-            if (code === 'session_not_found' || code === 'not_found') title.textContent = '该会话已不可用，正在重试';
-            else if (code === 'trajectory_unavailable') title.textContent = '本地会话数据目录暂时不可用，正在重试';
-            else if (code === 'trajectory_unreadable') title.textContent = '会话数据暂时无法读取，正在重试';
-            else title.textContent = '更新失败，正在重试';
-          }
+          // There is something on screen and it is now out of date. That is this layer's whole
+          // subject, so it is reported here rather than as a hard error — which is for a reader
+          // who has nothing at all to look at.
+          noteFresh('trajectory', false, freshnessReason(error));
         } else {
-          state.stale = false;
           state.hardError = serverMessage || '暂时无法读取会话轨迹数据。';
         }
         render();
@@ -8615,11 +8714,36 @@
           dom.errorBar.hidden = false;
           dom.errorTitle.textContent = '无法读取会话轨迹';
           dom.errorText.textContent = state.hardError;
-        } else {
-          dom.errorBar.hidden = true;
-          dom.errorText.textContent = '';
+          // Nothing is on screen to be out of date, so the freshness bar has nothing to add to
+          // what the error bar already says. The counts are still being kept, so a later success
+          // hides this one and the freshness bar comes back on its own terms.
+          dom.staleBar.hidden = true;
+          return;
         }
-        dom.staleBar.hidden = !state.stale;
+        dom.errorBar.hidden = true;
+        dom.errorText.textContent = '';
+
+        // Two independent signals, and the worse one speaks. Either recovering must not hide the
+        // other, which is why this is not a single boolean with two writers.
+        var sources = ['trajectory', 'sessions'];
+        var worst = null;
+        for (var i = 0; i < sources.length; i += 1) {
+          var slot = freshness[sources[i]];
+          if (slot.streak > 0 && (worst === null || slot.streak > worst.streak)) {
+            worst = { source: sources[i], streak: slot.streak, reason: slot.reason };
+          }
+        }
+        dom.staleBar.hidden = worst === null;
+        if (worst === null) return;
+
+        var title = dom.staleBar.querySelector('.bar-title');
+        if (title) title.textContent = FRESH_TITLES[worst.reason] || FRESH_TITLES.offline;
+        var hint = dom.staleBar.querySelector('.bar-hint');
+        if (hint) {
+          hint.textContent = worst.streak >= FRESH_STREAK_SHOWN
+            ? FRESH_SOURCE_LABELS[worst.source] + '已连续 ' + worst.streak + ' 次更新失败。下方保留的是上一次成功读取的数据。'
+            : '下方保留的是上一次成功读取的数据。';
+        }
       }
 
       function renderFooter() {
