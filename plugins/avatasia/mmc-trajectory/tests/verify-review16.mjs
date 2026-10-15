@@ -286,10 +286,14 @@ assert('neither README still announces the old version',
 // snapshot planted by hand plus one real mutation in index.html, `node tests/run.mjs
 // verify-ledger-jump` printed `0/1 guards passed / failed: verify-ledger-jump.mjs` and one line
 // about nothing being left over.
+// Pinned to the one return expression that exists for this, not to a bare `readFileSync(SNAPSHOT`
+// and not to a lazy span from `readSnapshot` onwards — the runner's self-test reads the snapshot too,
+// and both looser forms are satisfied by that, so a mutation removing the harness's own read leaves
+// the assertion green. The cost of this one was 38 of 39 mutations caught.
 assert('the harness reads the snapshot the previous run wrote',
-  /readFileSync\(SNAPSHOT,/.test(runMjs));
+  /return existsSync\(SNAPSHOT\) \? JSON\.parse\(readFileSync\(SNAPSHOT, 'utf8'\)\) : null;/.test(runMjs));
 assert('the startup comparison is per file, against the digest that was recorded',
-  /previous\[rel\] !== undefined && previous\[rel\] !== digest\(rel\)/.test(runMjs));
+  /!== undefined && \w+\[rel\] !== digest\(rel\)/.test(runMjs));
 // A checkout nobody has run the suite on has no baseline. Treating that as "everything differs"
 // would warn on every first run, and treating it as a failure would fail every fresh clone.
 assert('a missing baseline is neither a difference nor a failure',
@@ -334,10 +338,15 @@ assert('this run\'s own residue and last run\'s residue are named differently',
 {
   const selfTest = spawnSync(process.execPath, [join(HERE, 'run.mjs'), '--self-test-residue'],
     { cwd: PKG, encoding: 'utf8' });
+  const say = 'exit=' + selfTest.status + ' out=' + JSON.stringify((selfTest.stdout || '').slice(0, 200))
+    + ' err=' + JSON.stringify((selfTest.stderr || '').slice(0, 160));
+  // Two phases, two assertions, two mutations. One assertion covering both would let either
+  // direction fail alone while the other still passes, which is how the first version of this
+  // reported an exhaustive check that was silent about a deleted file.
   assert('the residue check names a file the old hand-maintained list did not cover',
-    selfTest.status === 0 && /caught/.test(selfTest.stdout || ''),
-    'exit=' + selfTest.status + ' out=' + JSON.stringify((selfTest.stdout || '').slice(0, 160))
-      + ' err=' + JSON.stringify((selfTest.stderr || '').slice(0, 160)));
+    selfTest.status === 0 && /^caught /m.test(selfTest.stdout || ''), say);
+  assert('the startup comparison names a path the last run recorded and this tree no longer has',
+    selfTest.status === 0 && /^caught-absent /m.test(selfTest.stdout || ''), say);
 }
 
 console.log('[review16] ' + pass + ' passed, ' + failures.length + ' failed');

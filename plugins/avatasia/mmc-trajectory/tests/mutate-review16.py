@@ -244,13 +244,13 @@ MUTATIONS = [
     # file, which reads as that guard being broken.
 
     ("the harness never reads the snapshot it writes",
-     "readFileSync(SNAPSHOT, 'utf8')",
-     "'{}'",
+     "return existsSync(SNAPSHOT) ? JSON.parse(readFileSync(SNAPSHOT, 'utf8')) : null;",
+     "return '{}';",
      "the harness reads the snapshot the previous run wrote"),
 
     ("the startup check stops comparing per file",
-     "previous[rel] !== undefined && previous[rel] !== digest(rel)",
-     "false",
+     ".filter((rel) => prev[rel] !== undefined && prev[rel] !== digest(rel));",
+     ".filter(() => false);",
      "the startup comparison is per file, against the digest that was recorded"),
 
     # The old form: record the state the run STARTED with. Identical to the end state whenever
@@ -288,6 +288,16 @@ MUTATIONS = [
      "    else if (!SELF_EXCLUDE.includes(rel)) out[rel] = digest(rel);",
      "    else if (!SELF_EXCLUDE.includes(rel) && !rel.startsWith('tests/')) out[rel] = digest(rel);",
      "the residue check names a file the old hand-maintained list did not cover"),
+
+    # The other direction, and the one the whole-tree comparison was first credited with covering.
+    # A control or an interruption that DELETES or RENAMES a package file between runs leaves a path
+    # that is in the previous snapshot and in no tree, so a comparison that walks only the tree as it
+    # stands now walks straight past it. Found by a blind pass that attacked the previous-snapshot
+    # direction rather than the one the self-test already covered.
+    ("the startup comparison walks only the tree as it stands now",
+     "const filesMissingSinceLastRun = (prev) => [...new Set([...Object.keys(snapshotBefore), ...Object.keys(prev)])]",
+     "const filesMissingSinceLastRun = (prev) => [...new Set([...Object.keys(snapshotBefore)])]",
+     "the startup comparison names a path the last run recorded and this tree no longer has"),
 ]
 
 

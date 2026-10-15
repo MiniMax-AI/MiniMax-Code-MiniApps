@@ -12,7 +12,7 @@
 // Nothing here needs a running Mini App, a network, or a specific machine's paths: every path
 // resolves from this file's own location.
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -98,9 +98,20 @@ const readSnapshot = () => {
 };
 
 const previous = readSnapshot();
-const leftover = previous
-  ? Object.keys(snapshotBefore).filter((rel) => previous[rel] !== undefined && previous[rel] !== digest(rel))
-  : [];
+
+// Both key sets, and that is the whole fix. Iterating only the tree as it is now walks straight past
+// a path the last run recorded and this tree no longer has — a rename, or a control that deleted a
+// file — because that path is in neither `snapshotBefore` nor anywhere the filter would reach. It was
+// a hole in a check whose entire claim is "compare against what the previous run left behind", and it
+// was not in either direction: the end-of-run comparison already looked at both sides.
+//
+// A path that is NEW since the last run is not residue, so it stays filtered out: somebody adding a
+// file is a contributor working, and calling that residue is the false positive that would make a
+// contributor delete their own work.
+const filesMissingSinceLastRun = (prev) => [...new Set([...Object.keys(snapshotBefore), ...Object.keys(prev)])]
+  .filter((rel) => prev[rel] !== undefined && prev[rel] !== digest(rel));
+
+const leftover = previous ? filesMissingSinceLastRun(previous) : [];
 
 if (leftover.length) {
   console.log('');
@@ -131,25 +142,47 @@ function checkShipped() {
 
 // `--self-test-residue` proves the comparison above can fail, which a passing run cannot show.
 //
-// It plants a byte in `tests/verify-freshness.mjs` on purpose: that is a file `mutate-freshness.py`
+// Two phases, because there are two directions and they fail for different reasons.
+//
+// Phase one plants a byte in `tests/verify-freshness.mjs`: that is a file `mutate-freshness.py`
 // rewrites, and it was never on the hand-maintained list this replaced, so residue there used to be
-// invisible by construction. Requiring the runner to name it is the whole content of the rule —
-// narrow the walk and this stops catching, which is what `mutate-review16.py` then checks.
+// invisible by construction. This covers what moves DURING one invocation.
+//
+// Phase two asks the startup comparison about a path the last run recorded and this tree does not
+// have — a rename, or a control that deleted a file. Phase one cannot reach it at all, because the
+// snapshot it compares against was taken from a tree that still had everything in it. An earlier
+// version of this file had only phase one and so reported the end-of-run check as exhaustive while
+// the other direction walked past a deleted file in silence.
+//
+// Run by `verify-review16.mjs`, and by the mutations that narrow either direction.
 if (args.includes('--self-test-residue')) {
   const TARGET = 'tests/verify-freshness.mjs';
+  const GONE = 'tests/__absent-probe__.mjs';
   const original = readFileSync(join(ROOT, TARGET));
+  const savedSnapshot = existsSync(SNAPSHOT) ? readFileSync(SNAPSHOT) : null;
   let caught = 1;
   try {
     writeFileSync(join(ROOT, TARGET), Buffer.concat([original, Buffer.from('\n')]));
     const named = checkShipped();
     caught = named.includes(TARGET) ? 0 : 1;
     console.log((caught === 0 ? 'caught ' : 'MISSED ') + TARGET + '  ' + JSON.stringify(named));
+
+    const recorded = JSON.parse(readFileSync(SNAPSHOT, 'utf8'));
+    writeFileSync(SNAPSHOT, JSON.stringify(Object.assign({}, recorded, { [GONE]: 'absent-probe' })));
+    const named2 = filesMissingSinceLastRun(JSON.parse(readFileSync(SNAPSHOT, 'utf8')));
+    const caught2 = named2.includes(GONE);
+    console.log((caught2 ? 'caught-absent ' : 'MISSED-absent ') + GONE + '  ' + JSON.stringify(named2));
+    if (caught === 0 && !caught2) caught = 1;
   } finally {
     // Restored here rather than left to the end-of-run check: this mode exits before the suite does.
     // And `process.exit` is called OUTSIDE the try, because it terminates the process without
     // unwinding — a `process.exit` inside the try skips this finally, which is exactly the residue
     // this check exists to catch. The whole-tree comparison caught that on its first real run.
     writeFileSync(join(ROOT, TARGET), original);
+    // The snapshot is bookkeeping this mode borrowed and must give back, or the next run compares
+    // against a path that never existed.
+    if (savedSnapshot === null) rmSync(SNAPSHOT, { force: true });
+    else writeFileSync(SNAPSHOT, savedSnapshot);
   }
   process.exit(caught);
 }
