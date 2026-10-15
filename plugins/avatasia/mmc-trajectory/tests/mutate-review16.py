@@ -256,7 +256,7 @@ MUTATIONS = [
     # The old form: record the state the run STARTED with. Identical to the end state whenever
     # nothing drifted, and a record of the mutation whenever something did.
     ("the snapshot records the state the run started with",
-     "writeFileSync(SNAPSHOT, JSON.stringify(Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]))));",
+     "writeFileSync(SNAPSHOT, JSON.stringify(after));",
      "writeFileSync(SNAPSHOT, JSON.stringify(snapshotBefore));",
      "the snapshot records the state the run ended with, and only a clean end"),
 
@@ -269,10 +269,25 @@ MUTATIONS = [
 
     # The two findings collapse into one line. Reads fine, costs the reader the only thing that
     # distinguishes "this run broke it" from "it was already broken".
+    #
+    # The anchor moved with the labels when the whole-tree comparison replaced the shipped-file list,
+    # and the assertion it drives no longer matches wording at all: it reads both labels back out of
+    # the file and compares them. The bug this introduces is now a label collision rather than a
+    # duplicated sentence, which is the same defect one level up.
     ("last run's residue is named exactly like this run's",
-     "'shipped files differ from the last run'",
-     "'shipped files restored'",
+     "'files differ from the last run'",
+     "'package restored byte for byte'",
      "this run's own residue and last run's residue are named differently"),
+
+    # The defect this whole change exists for, reintroduced in its new form. The list is gone, so the
+    # way to be wrong again is to narrow the walk: skip a subtree and residue there goes unseen again.
+    # It is caught by the assertion that makes the runner plant residue in exactly such a file and
+    # requires the runner to name it, so this is a check on the comparison's subject rather than on
+    # the source of the walk.
+    ("the residue comparison skips a subtree",
+     "    else if (!SELF_EXCLUDE.includes(rel)) out[rel] = digest(rel);",
+     "    else if (!SELF_EXCLUDE.includes(rel) && !rel.startsWith('tests/')) out[rel] = digest(rel);",
+     "the residue check names a file the old hand-maintained list did not cover"),
 ]
 
 

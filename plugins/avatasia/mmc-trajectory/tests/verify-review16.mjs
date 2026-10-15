@@ -13,6 +13,7 @@
  * report it by name.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, basename } from 'node:path';
 
@@ -294,10 +295,13 @@ assert('the startup comparison is per file, against the digest that was recorded
 assert('a missing baseline is neither a difference nor a failure',
   /const readSnapshot = \(\) => \{[\s\S]*?return null;/.test(runMjs)
   && /const leftover = previous\s*\?/.test(runMjs));
-// Reported, not failed. The suite runs on machines with uncommitted work, and "these files are not
-// what the last run left" is true of a contributor mid-edit. So this must never reach `failed`.
+// Reported, not failed. The suite runs on machines with uncommitted work, and "these files are
+// not what the last run left" is true of a contributor mid-edit. So this must never reach
+// `failed`. The check is structural -- a WARN line exists, and `leftover` reaches no `failed`
+// call -- because the alternative was a regex for the wording, which is a test of the message
+// rather than of the rule, and which this suite has now been bitten by for both of these.
 assert('files that differ from the last run are reported and not failed',
-  /shipped files differ from the last run/.test(runMjs)
+  /console\.log\(`WARN/.test(runMjs)
   && !/failed\.push\([^\n]*leftover/.test(runMjs));
 // Written on every clean run. Gating the write on the file already existing is what left a fresh
 // checkout with nothing to compare against — the machine least likely to have a stale snapshot is
@@ -311,12 +315,30 @@ assert('the snapshot records the state the run ended with, and only a clean end'
   /if \(drift\.length === 0\) \{[\s\S]*?writeFileSync\(SNAPSHOT/.test(runMjs)
   && !/JSON\.stringify\(snapshotBefore\)/.test(runMjs));
 // Two findings, two names. Collapsing them into one line is the regression this section exists to
-// stop: "shipped files restored" means this run dirtied the source, "differ from the last run"
-// means it was already dirty, and a reader who cannot tell them apart cannot act on either.
+// stop: one label means this run dirtied the source, the other means it was already dirty, and a
+// reader who cannot tell them apart cannot act on either.
+//
+// Read the two labels back out of the file and compare them, rather than matching either against a
+// literal. Pinning the exact words made this a check on the message, not on the rule, and the round
+// that changed the residue label broke it for no reason a reviewer could have acted on.
+const warnLabel = /console\.log\(`WARN\s+\$\{'([^']+)'/.exec(runMjs);
+const failLabel = /console\.log\(`FAIL\s+\$\{'([^']+)'/.exec(runMjs);
 assert('this run\'s own residue and last run\'s residue are named differently',
-  /shipped files restored/.test(runMjs)
-  && /shipped files differ from the last run/.test(runMjs)
-  && /WARN/.test(runMjs));
+  warnLabel !== null && failLabel !== null && warnLabel[1] !== failLabel[1]);
+
+// And the one thing the wording above cannot establish: that the comparison's subject is the whole
+// package. Reading the walk's source would only prove someone wrote the code we expect. So make it
+// fail instead — the runner has a mode that plants residue in a file the hand-maintained list never
+// covered and requires the comparison to name it, and this requires that mode to succeed. A walk
+// narrowed back down to a subset stops catching, and the mutation that narrows it is caught here.
+{
+  const selfTest = spawnSync(process.execPath, [join(HERE, 'run.mjs'), '--self-test-residue'],
+    { cwd: PKG, encoding: 'utf8' });
+  assert('the residue check names a file the old hand-maintained list did not cover',
+    selfTest.status === 0 && /caught/.test(selfTest.stdout || ''),
+    'exit=' + selfTest.status + ' out=' + JSON.stringify((selfTest.stdout || '').slice(0, 160))
+      + ' err=' + JSON.stringify((selfTest.stderr || '').slice(0, 160)));
+}
 
 console.log('[review16] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

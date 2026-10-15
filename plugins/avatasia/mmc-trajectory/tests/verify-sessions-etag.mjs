@@ -135,13 +135,35 @@ const splitTwo = new Map([[A, { title: 'a', kind: 'b' }]]);
 assert('a title/kind split cannot be hidden inside the separator',
   sessionsValidator(visible, splitOne, 20) !== sessionsValidator(visible, splitTwo, 20));
 
-// The separator must also not be something a title can contain, or a title can move the boundary.
+// The other half, and the one this file got wrong for a while. Above used to be followed by
+// `the separator is a character a title cannot contain`, whose check was a regex for a NUL in the
+// function body: it tested the IDENTITY of the separator and called the result a property. The
+// property is false -- a SQLite TEXT column can hold any character, the NUL included -- so a title of
+// `a<NUL>b` beside a kind of `c` and a title of `a` beside a kind of `b<NUL>c` produced byte-identical
+// material. That assertion passed for a reason, not because the thing it names was true.
+//
+// So the rule is now stated as the property it always was, and checked as one: two metadata tuples a
+// reader can tell apart must not share a material, with the ambiguous character placed INSIDE a value
+// rather than at a boundary. No choice of separator character can satisfy this, which is the point --
+// it has to be satisfied by the representation, not by the delimiter.
+const NUL = String.fromCharCode(0);
+const insideSeparator = new Map([[A, { title: 'a' + NUL + 'b', kind: 'c', parent: 'p' }]]);
+const insideSeparatorShifted = new Map([[A, { title: 'a', kind: 'b' + NUL + 'c', parent: 'p' }]]);
+assert('a separator-like character inside a value cannot merge two readable rows into one tag',
+  sessionsValidator(visible, insideSeparator, 20)
+  !== sessionsValidator(visible, insideSeparatorShifted, 20));
+
+// The same character in the parent -- the third field, and the one nobody had looked at.
+const parentInside = new Map([[A, { title: 't', kind: 'k', parent: 'a' + NUL + 'b' }]]);
+const parentInsideShifted = new Map([[A, { title: 't', kind: 'k' + NUL + 'a', parent: 'b' }]]);
+assert('the same collision in the parent cannot merge two readable rows either',
+  sessionsValidator(visible, parentInside, 20)
+  !== sessionsValidator(visible, parentInsideShifted, 20));
+
+// The material is still built in server.mjs, which is what the three assertions above are testing
+// rather than a copy of it.
 const material = /export function sessionsValidator\(visible, titles, limit\) \{[\s\S]*?\n\}/.exec(server);
 assert('the material is still built in server.mjs', material !== null);
-if (material) {
-  assert('the separator between the title and the kind is a character a title cannot contain',
-    /\\u0000/.test(material[0]));
-}
 
 // Empty input, because the route calls this before it knows the walk found anything.
 assert('an empty list still produces a material', typeof sessionsValidator([], noTitles, 20) === 'string'

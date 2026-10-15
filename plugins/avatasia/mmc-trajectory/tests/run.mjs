@@ -36,29 +36,35 @@ const filter = args.find((a) => !a.startsWith('--')) ?? '';
 // with — which means a snapshot on disk, read at startup, and a report that is deliberately not a
 // verdict. The two are separate findings: the drift below says "this run dirtied the source", the
 // warning at startup says "the source was already different when this run began".
-// The shipped files a mutate-* control rewrites in place — that is the whole membership rule, and
-// it is a rule about files rather than about importance. docs/LAYERS.md sat in this list until it
-// moved out of the package to the workspace root: it then hashed to 'absent' on every run, which
-// is inert (absent matches absent, so it never reported drift) but means one of the entries this
-// guard advertises protecting was not a shipped file at all.
-const SHIPPED = [
-  'miniapp/client/index.html',
-  'miniapp/node/server.mjs',
-  'miniapp/node/search-segments.mjs',
-  'tests/make-fixtures.mjs',
-  'tests/client-check.mjs',
-  // Added with the third group of `mutate-time-range.py`'s cases. Two of them edit the guard's own
-  // session generator instead of the page, so this file became a file a control rewrites in place —
-  // and a hard kill during that window would have left a generator with no checkpoints in it, which
-  // every subsequent run would report as ordinary red. The membership rule is "files a control
-  // rewrites", not "files that look important", and this one had stopped being protected the moment
-  // it became a target.
-  'tests/verify-time-range.mjs',
-  'README.md',
-  'README.zh-CN.md',
-  '.minimax-plugin/plugin.json',
-];
+// There is no list here, and there was one until an independent review pass found what that cost.
+//
+// The rule this file enforces is "a mutate-* control leaves the source exactly as it found it". The
+// first version enforced it over a hand-maintained list of the files a control rewrites, and the
+// list — not the rule — was the weak point: `mutate-review16.py` rewrites this very file and
+// `mutate-freshness.py` rewrites `verify-freshness.mjs`, and neither was on it, so a control killed
+// mid-run could leave residue there and no check would have said so. A list that has to stay in step
+// with 45 controls is a list that will not, and nothing owned the membership rule, so it drifted.
+//
+// So the whole tree is the subject instead. That cannot fall behind: a file nobody thought to list
+// is still hashed, and one that appears during the run is still compared. The list also carried a
+// dead entry — `docs/LAYERS.md` hashed to 'absent' on every run after it moved out of the package —
+// which advertised protecting a shipped file that no longer existed here.
+//
+// The one exclusion is this runner's own bookkeeping file: it is written by this run, on purpose.
+const SELF_EXCLUDE = ['tests/.shipped-snapshot.json'];
+
 const ROOT = join(HERE, '..');
+
+function treeDigests(prefix = '') {
+  const out = {};
+  for (const entry of readdirSync(join(ROOT, prefix), { withFileTypes: true })) {
+    if (entry.name === '.git') continue;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) Object.assign(out, treeDigests(rel));
+    else if (!SELF_EXCLUDE.includes(rel)) out[rel] = digest(rel);
+  }
+  return out;
+}
 const SNAPSHOT = join(HERE, '.shipped-snapshot.json');
 
 const digest = (rel) => {
@@ -67,7 +73,7 @@ const digest = (rel) => {
   return createHash('sha256').update(readFileSync(p)).digest('hex');
 };
 
-const snapshotBefore = Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]));
+const snapshotBefore = treeDigests();
 
 // What the previous run left behind. The snapshot this reads was written by that run and meant the
 // bytes it ended with, so a file that differs now is one of two things — a mutate-* control killed
@@ -93,12 +99,12 @@ const readSnapshot = () => {
 
 const previous = readSnapshot();
 const leftover = previous
-  ? SHIPPED.filter((rel) => previous[rel] !== undefined && previous[rel] !== digest(rel))
+  ? Object.keys(snapshotBefore).filter((rel) => previous[rel] !== undefined && previous[rel] !== digest(rel))
   : [];
 
 if (leftover.length) {
   console.log('');
-  console.log(`WARN  ${'shipped files differ from the last run'.padEnd(30)}  ${leftover.join(', ')}`);
+  console.log(`WARN  ${'files differ from the last run'.padEnd(30)}  ${leftover.join(', ')}`);
   console.log('       either a mutate-* control was killed mid-run and left the source mutated,');
   console.log('       or these files were edited after that run. Not a failure: this suite runs on');
   console.log('       machines with uncommitted work, and a contributor writing code is not a broken');
@@ -107,15 +113,45 @@ if (leftover.length) {
 }
 
 function checkShipped() {
-  const drift = SHIPPED.filter((rel) => digest(rel) !== snapshotBefore[rel]);
+  const after = treeDigests();
+  // Both directions. A file that moved is residue; a file that appeared is a control that wrote
+  // something it did not clean up, which the old list could not have seen even in principle.
+  const drift = Object.keys(snapshotBefore)
+    .filter((rel) => after[rel] !== snapshotBefore[rel])
+    .concat(Object.keys(after).filter((rel) => !(rel in snapshotBefore)));
   // Only a clean end becomes the baseline for the next run. Recording a drifted end would make the
   // next comparison agree with the mutation, which is the one thing this file exists to prevent.
   if (drift.length === 0) {
     try {
-      writeFileSync(SNAPSHOT, JSON.stringify(Object.fromEntries(SHIPPED.map((rel) => [rel, digest(rel)]))));
+      writeFileSync(SNAPSHOT, JSON.stringify(after));
     } catch { /* the snapshot is bookkeeping, never a reason to fail the suite */ }
   }
   return drift;
+}
+
+// `--self-test-residue` proves the comparison above can fail, which a passing run cannot show.
+//
+// It plants a byte in `tests/verify-freshness.mjs` on purpose: that is a file `mutate-freshness.py`
+// rewrites, and it was never on the hand-maintained list this replaced, so residue there used to be
+// invisible by construction. Requiring the runner to name it is the whole content of the rule —
+// narrow the walk and this stops catching, which is what `mutate-review16.py` then checks.
+if (args.includes('--self-test-residue')) {
+  const TARGET = 'tests/verify-freshness.mjs';
+  const original = readFileSync(join(ROOT, TARGET));
+  let caught = 1;
+  try {
+    writeFileSync(join(ROOT, TARGET), Buffer.concat([original, Buffer.from('\n')]));
+    const named = checkShipped();
+    caught = named.includes(TARGET) ? 0 : 1;
+    console.log((caught === 0 ? 'caught ' : 'MISSED ') + TARGET + '  ' + JSON.stringify(named));
+  } finally {
+    // Restored here rather than left to the end-of-run check: this mode exits before the suite does.
+    // And `process.exit` is called OUTSIDE the try, because it terminates the process without
+    // unwinding — a `process.exit` inside the try skips this finally, which is exactly the residue
+    // this check exists to catch. The whole-tree comparison caught that on its first real run.
+    writeFileSync(join(ROOT, TARGET), original);
+  }
+  process.exit(caught);
 }
 
 // Nothing is excluded any more. `verify-time-range.mjs` used to be here, not run, because the only
@@ -187,11 +223,11 @@ console.log();
 const drift = checkShipped();
 if (drift.length) {
   console.log('');
-  console.log(`FAIL  ${'shipped files restored'.padEnd(30)}  ${drift.join(', ')}`);
+  console.log(`FAIL  ${'package restored byte for byte'.padEnd(30)}  ${drift.join(', ')}`);
   console.log('       a mutate-* control ran to completion and left the source mutated. This run\'s own');
   console.log('       residue, not the one the warning above reported.');
   console.log('       restore with:  git checkout -- <file>');
-  failed.push({ name: 'shipped files restored byte for byte', ok: false });
+  failed.push({ name: 'package restored byte for byte', ok: false });
 }
 
 console.log(`${results.length - failed.length}/${results.length} guards passed`);

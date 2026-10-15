@@ -32,15 +32,13 @@ MUTATIONS = [
     # ---- the material forgets something the payload uses ----
 
     ("a rename stops moving the tag",
-     [("      + \"|\" + (meta ? String(meta.title ?? \"\") : \"\")\n", "")],
+     [("    const title = meta ? String(meta.title ?? \"\") : \"\";\n", "    const title = \"\";\n")],
      "a renamed session moves the tag", SERVER),
 
     # `kind` is what puts the sub-agent and cron badges on the rows, so a page that keeps a stale
     # tag is offering the reader a worker's session as if it were their conversation.
     ("a changed session kind stops moving the tag",
-     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\")\n"
-       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));",
-       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));")],
+     [("    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n", "    const kind = \"\";\n")],
      "a changed session kind moves the tag, even with no title", SERVER),
 
     # The one that looks like a simplification. Two different requests, one tag.
@@ -49,19 +47,22 @@ MUTATIONS = [
      "a different limit moves the tag", SERVER),
 
     # The separator. Without one, {"ab",""} and {"a","b"} concatenate to the same string, so two
-    # different payloads share a tag and the 304 is served for one the caller never held.
-    ("the title and kind are concatenated with no separator",
-     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\")\n"
-       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));",
-       "      + (meta ? String(meta.kind ?? \"\") : \"\")\n"
-       "      + (meta ? String(meta.parent ?? \"\") : \"\"));")],
+    # The separator, and there are two ways to get this wrong rather than one. Dropping it entirely
+    # merges {"ab",""} with {"a","b"}. Keeping a delimiter that a value can contain moves the same
+    # collision one character along: the boundary is still forgeable from inside a field. Only a
+    # representation with no ambiguity in it survives both, so there are two cases and each owns the
+    # assertion that names it.
+    ("the fields are concatenated with no separator at all",
+     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
+       "    parts.push(\"\" + entry.dir + entry.sizeBytes + entry.lastActiveAt"
+       " + title + kind + parent);")],
      "a title/kind split cannot be hidden inside the separator", SERVER),
 
     # mtime is one of the three facts the descriptor cache keys on, and the only one that moves
     # when a session is rewritten in place without growing.
     ("a newer mtime stops moving the tag",
-     [("    parts.push(entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt",
-       "    parts.push(entry.dir + \"|\" + entry.sizeBytes")],
+     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
+       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, title, kind, parent]));\n")],
      "a newer mtime moves the tag", SERVER),
 
     # ---- the 304 that is not earned, because it is decided too late ----
@@ -147,10 +148,21 @@ MUTATIONS = [
     # review, not by a failing test: the guard was passing because every map it built varied only
     # the title and the kind, so nothing ever asked the question.
     ("the validator stops covering the parent the body sends",
-     [("      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\")\n"
-       "      + \"\\u0000\" + (meta ? String(meta.parent ?? \"\") : \"\"));",
-       "      + \"\\u0000\" + (meta ? String(meta.kind ?? \"\") : \"\"));")],
+     [("    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n", "    const parent = \"\";\n")],
      "a changed parent moves the tag, even with the title and kind held constant", SERVER),
+
+    # The one this round's independent pass found. The material joined its fields on a bare NUL, and
+    # a SQLite TEXT column can hold a NUL: a title of "a<NUL>b" beside a kind of "c" and a title of "a"
+    # beside a kind of "b<NUL>c" produced byte-identical material, so two rows a reader can tell apart
+    # shared an ETag and the 304 that followed was served for a payload the caller never held.
+    # `String.fromCharCode(0)` rather than an escape in the replacement, because the point of the
+    # mutation is the character, not how it is spelled.
+    ("the fields go back to being joined on a bare NUL",
+     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
+       "    parts.push(entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt"
+       " + \"|\" + title + String.fromCharCode(0) + kind"
+       " + String.fromCharCode(0) + parent);")],
+     "a separator-like character inside a value cannot merge two readable rows into one tag", SERVER),
 ]
 
 ORIGINALS = {

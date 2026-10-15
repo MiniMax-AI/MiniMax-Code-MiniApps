@@ -2369,16 +2369,17 @@ export function sessionsValidator(visible, titles, limit) {
   const parts = ['limit=' + limit];
   for (const entry of visible) {
     const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
-    // A NUL between the fields, so a rename cannot be masked by the stat beside it: with a plain
-    // separator, {"ab",""} and {"a","b"} concatenate to the same string and the tag does not move.
-    // Every value the body carries has to be in the material, and the comment sits out here so
-    // the three field lines stay contiguous — a mutation anchor that has to reach past a comment
-    // stops resolving the next time the comment is reworded, and an anchor that stops resolving
-    // is an assertion that quietly stops being tested.
-    parts.push(entry.dir + "|" + entry.sizeBytes + "|" + entry.lastActiveAt
-      + "|" + (meta ? String(meta.title ?? "") : "")
-      + "\u0000" + (meta ? String(meta.kind ?? "") : "")
-      + "\u0000" + (meta ? String(meta.parent ?? "") : ""));
+    const title = meta ? String(meta.title ?? "") : "";
+    const kind = meta ? String(meta.kind ?? "") : "";
+    const parent = meta ? String(meta.parent ?? "") : "";
+    // Injective by construction, which no delimiter is. Any character can occur inside a SQLite TEXT
+    // column — including the NUL this used to join on — so a title of "a\0b" beside a kind of "c" and
+    // a title of "a" beside a kind of "b\0c" produced byte-identical material: one ETag for two rows
+    // a reader can tell apart, and a 304 served for a payload the caller never held. Choosing a
+    // different separator cannot fix that, because no character is excluded from a TEXT value.
+    // JSON escapes the ambiguous characters, so the tuple's boundaries survive anything the store
+    // can return, and no field needs a second representation to be safe.
+    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));
   }
   return parts.join("\n");
 }
