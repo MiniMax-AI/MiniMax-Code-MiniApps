@@ -47,6 +47,13 @@ const SHIPPED = [
   'miniapp/node/search-segments.mjs',
   'tests/make-fixtures.mjs',
   'tests/client-check.mjs',
+  // Added with the third group of `mutate-time-range.py`'s cases. Two of them edit the guard's own
+  // session generator instead of the page, so this file became a file a control rewrites in place —
+  // and a hard kill during that window would have left a generator with no checkpoints in it, which
+  // every subsequent run would report as ordinary red. The membership rule is "files a control
+  // rewrites", not "files that look important", and this one had stopped being protected the moment
+  // it became a target.
+  'tests/verify-time-range.mjs',
   'README.md',
   'README.zh-CN.md',
   '.minimax-plugin/plugin.json',
