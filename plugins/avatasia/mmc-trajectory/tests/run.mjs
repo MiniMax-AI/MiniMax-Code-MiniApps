@@ -44,6 +44,8 @@ const filter = args.find((a) => !a.startsWith('--')) ?? '';
 const SHIPPED = [
   'miniapp/client/index.html',
   'miniapp/node/server.mjs',
+  'miniapp/node/trajectory-index.mjs',
+  'miniapp/node/search-segments.mjs',
   'tests/make-fixtures.mjs',
   'tests/client-check.mjs',
   'README.md',
