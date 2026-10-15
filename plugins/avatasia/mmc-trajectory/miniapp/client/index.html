@@ -4726,6 +4726,13 @@
         var stats = {
           messages: 0,
           userMessages: 0,
+          // Prompts written mid-turn are counted apart from prompts that opened one, and this
+          // copy of the server's stats shape had lost the field: the server declares
+          // `steers: 0` and this literal did not, so the `+= 1` below ran on `undefined`, every
+          // value became NaN, and `isCount()` refused it. The whole-session cards read the
+          // server's stats and showed 「追加 N」; these are the same numbers re-scoped to a range,
+          // so the moment a range went on the term disappeared from the card that reports it.
+          steers: 0,
           toolCalls: 0,
           toolResults: 0,
           thinkingBlocks: 0,

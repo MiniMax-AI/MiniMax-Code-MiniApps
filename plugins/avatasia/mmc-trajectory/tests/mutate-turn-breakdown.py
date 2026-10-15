@@ -81,6 +81,18 @@ MUTATIONS = [
      "'收尾 ' + formatInt(Math.max(0, total - open)) + ' · 答复在本轮内交付',",
      "'这一类轮次在本轮内交付了答复',",
      "the tip explains every term on the line"),
+    # ...and the whole shape behind them is a hand-copied second of the server's stats, held in a
+    # different process. Dropping one declared field leaves `undefined + 1` in the loop, which is
+    # NaN, and NaN is refused by isCount() — so 「追加 N」 disappears from the card the moment a
+    # time range goes on, while the whole-session card (reading the server's stats) keeps showing
+    # it. Both numbers were right and nothing said so. The guard for it reads the two halves off
+    # the function rather than off a hardcoded field list, because the hardcoded list is what let
+    # this through the first time: `steers` was simply not written down in it.
+    ("the re-scoped stats loses the field the server declares",
+     "          steers: 0,\n          toolCalls: 0,",
+     "          toolCalls: 0,",
+     "every stats field scopedStats writes is one it declares"),
+
     # The original defect: title and header both said 轮次, one a total one an ordinal. Put the
     # shared label back on either side and the two numbers look like they should be equal.
     ("turn header reverts to the shared label",

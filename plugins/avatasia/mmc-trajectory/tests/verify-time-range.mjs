@@ -276,7 +276,12 @@ const whole = scoped.scopedStats();
 const FIELDS = [
   'messages', 'userMessages', 'toolCalls', 'toolResults', 'thinkingBlocks', 'errors',
   'compactions', 'turnsWithPrompt', 'continuationTurns', 'qaTurns', 'openTurns',
-  'turnsWithoutPrompt', 'compactionTurns', 'durationMs'
+  'turnsWithoutPrompt', 'compactionTurns', 'durationMs',
+  // Added 2026-10-15. This list is hand-written, and `steers` was missing from it — so the one
+  // field the re-scoped stats had actually lost went unchecked. `client-check.mjs` now reads both
+  // halves off the function itself, which is what stops the NEXT one; this entry is the direct
+  // number check for this one.
+  'steers'
 ];
 for (const field of FIELDS) {
   check('whole-session ' + field, whole[field], payload.stats[field]);

@@ -635,6 +635,42 @@ const checks = [
     && parts[0].value === '12'
     && parts[0].kind === 'compaction';
 })()],
+  // ---------------------------------------------------------------------------------
+  // Every field scopedStats WRITES has to be one it DECLARES.
+  //
+  // scopedStats re-scopes the server's stats to a time range, and it does that by writing its
+  // own literal rather than reading the server's. That literal is a second copy of a shape that
+  // lives in two processes, and a copy of a shape drifts silently: `steers` was declared on the
+  // server (server.mjs `steers: 0`) and not here, while the function still did
+  // `stats.steers += 1`. `undefined + 1` is NaN, NaN is sticky, and `isCount()` refuses a
+  // non-finite number — so both readers of that field quietly dropped the term, and 「追加 N」
+  // vanished from the card the moment a range went on. Nothing threw.
+  //
+  // It stayed invisible because the guard that compares scopedStats against the server numbers
+  // field by field carries a HARDCODED list, and `steers` was not in it. A hardcoded list can
+  // only catch the fields someone remembered to write down. This one cannot: it reads the two
+  // halves off the function itself, so a field that is written without being declared fails by
+  // name whatever it is called.
+  // ---------------------------------------------------------------------------------
+  ['every stats field scopedStats writes is one it declares', (() => {
+    const src = fnSource('function scopedStats()');
+    if (!src) return false;
+    const literal = src.slice(src.indexOf('var stats = {'), src.indexOf('};', src.indexOf('var stats = {')));
+    if (!literal) return false;
+    const declared = new Set();
+    // `field: 0,` and `field: { ... }` — the two shapes the literal actually uses.
+    for (const m of literal.matchAll(/^\s*([A-Za-z_$][\w$]*):/gm)) declared.add(m[1]);
+    const written = new Set();
+    // `stats.x += 1`, `stats.x = 0`, `stats.x++`, and the nested `stats.tokens.input += 1`:
+    // a nested write needs its PARENT declared, which is the root name this captures.
+    for (const m of src.matchAll(/\bstats\.([A-Za-z_$][\w$]*)\s*(?==[^=]|\+\+|--|\+=|-=|\*=|\/=|\.\w)/g)) {
+      written.add(m[1]);
+    }
+    // Reads are not writes: `stats.messagesAll` is read from `base` and `stats.tokens` is only
+    // ever read as a parent, so neither has to be a counter. What must hold is the other
+    // direction — nothing may be written that the literal does not declare.
+    return [...written].every((field) => declared.has(field));
+  })()],
   // The explanation has to exist on the card, be reachable without a mouse, and be named by
   // aria-describedby rather than only by a `title` (which is invisible to touch and to most
   // assistive tech once the hover is gone).
