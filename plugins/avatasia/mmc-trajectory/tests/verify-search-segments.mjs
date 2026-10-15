@@ -97,11 +97,20 @@ const RECORDS = [
 
 check('the field list is the page\'s, in the page\'s order',
   SEARCH_FIELDS, ['summary', 'text', 'result', 'thinking', 'toolName']);
-// The field list is only the page's if the page still says it is. Read out of the shipped client
-// rather than out of this file's own copy of it, or the check would be true by construction.
+// The page does not search any more — the server does, from segments — so the list cannot be
+// pinned against a client function that is gone. What still has to be true is that every field the
+// segment stores is something the reader is shown, or a search finds text nobody can open. Read
+// out of the shipped client rather than out of this file's own copy, or the check is true by
+// construction.
 const CLIENT = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
-assert('the page still searches exactly these five fields, in this order',
-  /\[record\.summary, record\.text, safeText\(record\.result\), thinkingText, record\.toolName\]/.test(CLIENT));
+check('the field list is the five the page can show',
+  SEARCH_FIELDS, ['summary', 'text', 'result', 'thinking', 'toolName']);
+for (const field of SEARCH_FIELDS) {
+  assert(`the page renders "${field}", so a hit on it leads somewhere`,
+    CLIENT.includes(`record.${field}`));
+}
+assert('the page has no local search left to disagree with',
+  !/recordSearchText/.test(CLIENT) && !/indexOf\(String\(needle\)/.test(CLIENT));
 
 // The page's surface under the ONE normalisation the module states: runs of whitespace become one
 // space, ends trimmed. Anything else — a field dropped, a field reordered, a field read in the

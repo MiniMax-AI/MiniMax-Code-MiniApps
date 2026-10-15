@@ -121,8 +121,8 @@ MUTATIONS = [
     # Two writers. The poll path judged the selection again, and a reader could be told two
     # different things depending on which one ran last.
     ("the poll path judges the selection a second time",
-     [("        if (changed) rePinWindow();\n        render();\n",
-       "        if (changed) { rePinWindow(); revealSelection(visibleEntries()); }\n        render();\n")],
+     [("        if (changed) rePinWindow();\n",
+       "        if (changed) { rePinWindow(); revealSelection(visibleEntries()); }\n")],
      "the poll path does not judge the selection a second time"),
 
     # The list becomes a second read. The caller hands over the rows it is about to build and the

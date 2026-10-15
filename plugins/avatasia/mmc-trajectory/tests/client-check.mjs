@@ -162,21 +162,53 @@ assert('jsonColorize colors numbers', colored.includes('tok-num'));
 check('jsonColorize undefined', sandbox.jsonColorize(undefined), '');
 check('jsonColorize null', sandbox.jsonColorize(null), '<span class="tok-null">null</span>');
 
-/* search: case-insensitive over summary + text + result + thinking, hostile content */
+/* search: the server says which records match, and the page asks a set */
 const hostile = {
+  index: 41,
   kind: 'reply',
   summary: 'Ask about <script>alert(1)</script>',
   text: 'Answering now',
   result: null,
   thinking: null
 };
-check('match lowercase', sandbox.matchesQuery(hostile, 'script'), true);
-check('match uppercase', sandbox.matchesQuery(hostile, 'ALERT'), true);
-check('match miss', sandbox.matchesQuery(hostile, 'zzz'), false);
-check('match empty query', sandbox.matchesQuery(hostile, ''), true);
-check('match result field', sandbox.matchesQuery({ kind: 'toolResult', result: { code: 'ENOENT' } }, 'enoent'), true);
-check('match thinking object', sandbox.matchesQuery({ kind: 'thinking', thinking: { text: 'chain of thought' } }, 'thought'), true);
-check('match null thinking safe', sandbox.matchesQuery({ kind: 'thinking', thinking: null }, 'thought'), false);
+// The five fields are no longer scanned here — that is the whole point of the move — so what is
+// held is a set of record indexes and the record's own content is irrelevant to the decision.
+const hit41 = sandbox.searchHitSet([{ index: 41 }, { index: 7 }]);
+check('the hit set holds the server\'s indexes', Array.from(hit41).sort((a, b) => a - b), [7, 41]);
+check('a record the server named passes whatever the needle says', sandbox.matchesQuery(hostile, 'script', hit41), true);
+check('a record whose text contains the needle but which the server did not name fails',
+  sandbox.matchesQuery(hostile, 'script', sandbox.searchHitSet([{ index: 7 }])), false);
+check('an unmatched needle matches nothing', sandbox.matchesQuery(hostile, 'zzz', sandbox.searchHitSet([])), false);
+check('an empty query filters nothing', sandbox.matchesQuery(hostile, '', hit41), true);
+check('an unanswered needle filters nothing, and says so elsewhere', sandbox.matchesQuery(hostile, 'zzz', null), true);
+check('an unanswered needle is not an empty result', sandbox.searchHitSet(null), null);
+check('a real empty result is an empty set', sandbox.searchHitSet([]).size, 0);
+check('a hit without an index is dropped rather than becoming one', sandbox.searchHitSet([{ index: 'x' }, { index: 3 }]).size, 1);
+check('a null hit is dropped', sandbox.searchHitSet([null, { index: 3 }]).size, 1);
+check('a record with no index cannot be in the set',
+  sandbox.matchesQuery({ kind: 'user' }, 'x', sandbox.searchHitSet([{ index: 1 }])), false);
+check('a missing record does not throw',
+  sandbox.matchesQuery(null, 'x', sandbox.searchHitSet([{ index: 1 }])), false);
+
+/* search: the four states the count line has to tell apart */
+const status = (over) => sandbox.searchStatusLabel(Object.assign(
+  { query: 'abc', searchError: null, searchPending: false, searchHits: new Set([1]), searchTotal: 3, searchTruncated: false },
+  over,
+));
+check('no needle, no status', sandbox.searchStatusLabel({ query: '', searchTotal: 0 }), '');
+check('a needle answered with hits', status({}), '命中 3 条');
+check('a needle answered with nothing', status({ searchHits: new Set(), searchTotal: 0 }), '未找到');
+check('a needle still out', status({ searchPending: true }), '搜索中');
+check('a needle that failed says so rather than showing an empty table',
+  status({ searchError: 'search_failed' }), '搜索失败，以下为上次结果');
+check('a failure outranks 「searching」, because it is the truth about the request',
+  status({ searchPending: true, searchError: 'search_failed' }), '搜索失败，以下为上次结果');
+check('an unanswered needle is not 「未找到」',
+  status({ searchHits: null, searchTotal: 0, searchPending: false }), '命中 0 条');
+check('a truncated answer says so', status({ searchTruncated: true }), '命中 3 条（已截断）');
+check('a needle answered with nothing and truncated reads as not found',
+  status({ searchHits: new Set(), searchTotal: 0, searchTruncated: true }), '未找到');
+check('no state is not a crash', sandbox.searchStatusLabel(null), '');
 check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
 
 /* flatten + signature */
@@ -706,16 +738,48 @@ const checks = [
   // through the helper. The \b matters — resetWindowMode contains the substring setWindowMode,
   // and without it every reset counts as a direct call and the guard can never pass.
   //
-  // The reset count is an inventory, not a rule: eight when every filter reset the window,
-  // ten since the time range gained resets on both sides of its own lifecycle, eleven once
-  // 异常 became a filter of its own and had to reset the window like the others do, and twelve
-  // once 异常 grew a way back — 全部数据 — which is a filter change like any other and would
-  // otherwise leave the reader on a stale window after leaving anomaly mode. It used to force
-  // 「全部」 instead of resetting, which would have shown up here as a second direct call — and
-  // measured, that cost a 414,000px document on a range covering the session.
+  // The window-reset inventory moved by one because the search answer now arrives from the server:
+  // the moment it does, the table holds a different set of records, and that is a filter change
+  // like any other. It used to be twelve because the page filtered its own records synchronously,
+  // so there was never a moment at which the answer changed.
   const direct = (html.match(/\bsetWindowMode\((?!mode\)|DEFAULT_WINDOW_MODE)/g) || []).length;
-  return direct === 1 && (html.match(/resetWindowMode\(\);/g) || []).length === 12;
+  return direct === 1 && (html.match(/resetWindowMode\(\);/g) || []).length === 13;
 })()],
+  // The search half is asynchronous now, so the four rules below have no pure function to hang on
+  // and are read out of the source instead. Each of them is a way the page can render something
+  // plausible and wrong: a stale answer on screen, an answer that empties the table while it is
+  // still out, a filter left applied after the reader cleared it, and a slice search answered about
+  // the whole lineage.
+  ['the search request in flight is aborted when a newer one starts', (() => {
+    const src = fnSource('function runSearch(needle)');
+    if (!src) return false;
+    if (!/if \(searchController\) searchController\.abort\(\);/.test(src)) return false;
+    return /var controller = new AbortController\(\);/.test(src) && /signal: controller\.signal/.test(src);
+  })()],
+  ['only the newest search answer is allowed to write', (() => {
+    const src = fnSource('function runSearch(needle)');
+    if (!src) return false;
+    // One guard on the way in is not enough: the catch must be gated too, or a FAILED older
+    // request can put its error on top of a newer request's answer.
+    const gates = src.match(/if \(seq !== searchSeq\) return;/g) || [];
+    return gates.length === 2 && /var seq = \(searchSeq \+= 1\);/.test(src);
+  })()],
+  ['a payload that changed re-runs the search rather than filtering by the old answer', (() => {
+    const src = fnSource('function applyPayload(body, manual)');
+    if (!src) return false;
+    return /if \(changed && state\.query\) runSearch\(state\.query\);/.test(src);
+  })()],
+  ['clearing the filters drops the answer with them', (() => {
+    const src = fnSource('function resetBaseFilters()');
+    if (!src) return false;
+    return /state\.searchHits = null;/.test(src) && /state\.searchError = null;/.test(src);
+  })()],
+  ['a search is asked about the slice the reader is looking at', (() => {
+    const src = fnSource('function runSearch(needle)');
+    if (!src) return false;
+    return /'\/api\/trajectory\/search\?session='/.test(src)
+      && /&generation=' \+ encodeURIComponent\(String\(state\.generation\)\)/.test(src);
+  })()],
   // Clicking the window button must not move the page. It scrolled to the document tail
   // whenever it narrowed the window, on the theory that "back to the tail" should land on the
   // newest record. The reader clicked a control they were already looking at, so the jump threw

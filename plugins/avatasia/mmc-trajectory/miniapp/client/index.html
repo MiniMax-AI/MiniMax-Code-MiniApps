@@ -3416,23 +3416,70 @@
         );
       }
 
-      /** Record fields the search box scans, flattened to one lowercase string. */
-      function recordSearchText(record) {
-        if (!record || typeof record !== 'object') return '';
-        var thinking = record.thinking;
-        var thinkingText =
-          thinking && typeof thinking === 'object' ? safeText(thinking.text !== undefined ? thinking.text : thinking) : safeText(thinking);
-        return [record.summary, record.text, safeText(record.result), thinkingText, record.toolName]
-          .map(function (part) {
-            return safeText(part);
-          })
-          .join('\n')
-          .toLowerCase();
+      /**
+       * The record indexes a search answered with, as a set the filter can ask in constant time.
+       *
+       * `null` is the answer "this page has no search result in force", which is NOT the same as an
+       * empty set: an empty set means the needle matched nothing, and a page that rendered them the
+       * same way would show a full table in one case and a blank one in the other with nothing on
+       * screen to say which had happened.
+       *
+       * @param {Array<{index: number}> | null} hits
+       * @returns {Set<number> | null}
+       */
+      function searchHitSet(hits) {
+        if (!Array.isArray(hits)) return null;
+        var set = new Set();
+        for (var i = 0; i < hits.length; i += 1) {
+          var entry = hits[i];
+          var index = entry && typeof entry.index === 'number' ? entry.index : NaN;
+          if (Number.isInteger(index)) set.add(index);
+        }
+        return set;
       }
 
-      function matchesQuery(record, needle) {
+      /**
+       * Whether a record survives the text filter.
+       *
+       * The needle is no longer scanned here. It used to be, over the record's own summary, text,
+       * result, thinking and tool name — which is the whole bulk of the payload, and searching the
+       * page meant the page had to be holding the bulk. The server answers which records match, from
+       * the same projection this payload was built from, so the page asks a set.
+       *
+       * `hitSet === null` means the needle has not been answered yet. The record passes, and the
+       * count line says 正在搜索 — an unapplied filter that says so beats an applied one that lies.
+       *
+       * @param {any} record
+       * @param {string} needle
+       * @param {Set<number> | null} hitSet
+       */
+      function matchesQuery(record, needle, hitSet) {
         if (!needle) return true;
-        return recordSearchText(record).indexOf(String(needle).toLowerCase()) >= 0;
+        if (hitSet === null || hitSet === undefined) return true;
+        return !!(record && hitSet.has(record.index));
+      }
+
+      /**
+       * What the text filter is doing, in the one place that can say it.
+       *
+       * Four states, and the reason there are four rather than two is that the answer now comes
+       * from somewhere else. 「没搜到」 and 「没搜成」 used to be the same table — an empty one — and
+       * they are not the same thing: one is the server saying there is no such record, the other is
+       * the page not knowing yet. A needle answered with nothing reads as 「未找到」, a needle still
+       * out reads as 「搜索中」, and a needle that failed says so rather than showing an empty table
+       * that reads as an answer.
+       *
+       * Takes the state as an argument so the four can be tested without a page.
+       *
+       * @param {any} searchState
+       */
+      function searchStatusLabel(searchState) {
+        if (!searchState || !searchState.query) return '';
+        if (searchState.searchError) return '搜索失败，以下为上次结果';
+        if (searchState.searchPending) return '搜索中';
+        if (searchState.searchHits !== null && searchState.searchTotal === 0) return '未找到';
+        if (searchState.searchTruncated) return '命中 ' + formatInt(searchState.searchTotal) + ' 条（已截断）';
+        return '命中 ' + formatInt(searchState.searchTotal) + ' 条';
       }
 
       function hasKind(record, kinds) {
@@ -3778,6 +3825,21 @@
           last: null
         },
         query: '',
+        // Which records the last ANSWERED search matched, as a set. `null` is "no answer in force",
+        // which is different from an empty set and is never rendered as one — see searchHitSet.
+        searchHits: null,
+        // Whether a search is in flight. The table keeps showing the previous answer meanwhile,
+        // because a filter that empties and refills on every keystroke is worse than one that lags
+        // visibly; `searchPending` is what makes the lag visible.
+        searchPending: false,
+        // What the server said, as distinct from what the page can count. `total` is every match,
+        // `truncated` says the response carried only the first N of them — so the count line can
+        // report a number that is not the number of rows on screen.
+        searchTotal: 0,
+        searchTruncated: false,
+        // Why the last search could not be answered, or null. 「没搜到」 and 「没搜成」 are
+        // different states and the count line has to be able to tell them apart.
+        searchError: null,
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
         // and both null is the default: no range, whole session.
@@ -3844,6 +3906,11 @@
       var sessionPollTimer = null;
       var trajectoryPollTimer = null;
       var searchTimer = null;
+      // The in-flight search and the sequence that decides which of several is allowed to answer.
+      // Both are needed only because the answer comes from somewhere else now: when the page
+      // scanned its own records there was nothing to wait for and nothing to arrive out of order.
+      var searchController = null;
+      var searchSeq = 0;
       var rangeTimer = null;
       var refreshSeq = 0;
 
@@ -4099,6 +4166,83 @@
       }
 
       /**
+       * Asks the server which records a needle matches, and puts the answer in force.
+       *
+       * Three things this has to get right, and each of them used to be free when the page scanned
+       * its own records:
+       *
+       *  - **A late answer must not win.** Every request carries a sequence number, and only the
+       *    newest one is allowed to write. Typing "abc" then "abcd" must not leave "abc" on screen
+       *    because its slower answer arrived second.
+       *  - **A needle of one character is not a question.** The server refuses it, and the page
+       *    does not ask: a needle that short matches nearly every record, and the answer would be
+       *    the whole ledger arriving to be discarded.
+       *  - **A changed session invalidates the answer.** The hit set names record indexes of a
+       *    projection that has since been replaced, so a poll that changed the payload re-runs the
+       *    search rather than filtering the new table by the old answer. That is one writer —
+       *    applyPayload — because two callers deciding when to re-search is two chances to forget.
+       *
+       * @param {string} needle
+       */
+      function runSearch(needle) {
+        if (searchController) searchController.abort();
+        var asked = String(needle == null ? '' : needle).trim();
+        if (asked === '') {
+          state.searchHits = null;
+          state.searchPending = false;
+          state.searchTotal = 0;
+          state.searchTruncated = false;
+          searchSeq += 1;
+          return;
+        }
+        var controller = new AbortController();
+        searchController = controller;
+        var seq = (searchSeq += 1);
+        state.searchPending = true;
+        var session = sessionParam();
+        var url = '/api/trajectory/search?session=' + session
+          + '&q=' + encodeURIComponent(asked)
+          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));
+
+        fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
+          .then(function (response) {
+            return response
+              .json()
+              .catch(function () { return null; })
+              .then(function (body) {
+                if (!response.ok || !body || typeof body !== 'object') {
+                  var error = new Error('api');
+                  error.status = response.status;
+                  error.code = body && body.error ? body.error : 'unknown';
+                  throw error;
+                }
+                return body;
+              });
+          })
+          .then(function (body) {
+            if (seq !== searchSeq) return;
+            searchController = null;
+            state.searchPending = false;
+            state.searchHits = searchHitSet(body.hits);
+            state.searchTotal = Number.isInteger(body.total) ? body.total : 0;
+            state.searchTruncated = body.truncated === true;
+            resetWindowMode();
+            renderLedger();
+          })
+          .catch(function (error) {
+            if (seq !== searchSeq) return;
+            searchController = null;
+            state.searchPending = false;
+            if (error && error.name === 'AbortError') return;
+            // A search that could not be answered leaves the previous answer standing rather than
+            // emptying the table: 「没搜到」 and 「没搜成」 are different, and only one of them is
+            // true. The count line carries the reason.
+            state.searchError = error && error.code ? String(error.code) : 'search_failed';
+            renderLedger();
+          });
+      }
+
+      /**
        * The highest record index in a payload, which is the cursor the next poll sends.
        *
        * `record.index` rather than anything else: it is dense from 1, it only ever grows (a
@@ -4244,6 +4388,12 @@
         // table shows goes through; answering the question here as well would give the field two
         // writers, and the poll path is the one that used to leave it stale.
         if (changed) rePinWindow();
+        // The hit set names record indexes of the payload that was on screen a moment ago. A
+        // payload that just changed is a different set of indexes, so filtering the new table by
+        // the old answer would show the reader rows that never matched. Re-running it here is the
+        // whole of the rule; doing it at the reader would leave the poll path stale, which is the
+        // same mistake the window pinning above used to make.
+        if (changed && state.query) runSearch(state.query);
         render();
         if (manual) announce('已刷新，正在显示最新数据。');
       }
@@ -4487,9 +4637,14 @@
        * how many records are not loaded, which is the question it actually answers.
        */
       function turnRangeLabel(firstTurn, lastTurn) {
-        if (!isCount(firstTurn) || !isCount(lastTurn)) return DASH;
-        if (firstTurn === lastTurn) return '第 ' + formatInt(firstTurn) + ' 轮';
-        return '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';
+        var range = DASH;
+        if (isCount(firstTurn) && isCount(lastTurn)) {
+          range = firstTurn === lastTurn
+            ? '第 ' + formatInt(firstTurn) + ' 轮'
+            : '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';
+        }
+        var status = searchStatusLabel(state);
+        return status ? range + ' · ' + status : range;
       }
 
       /**
@@ -5502,7 +5657,7 @@
           return passesAnomaly(record, { turn: turn || null, liveTurn: liveTurn() }, state.anomaly.rules);
         }
         if (!hasKind(record, state.kinds)) return false;
-        if (state.query && !matchesQuery(record, state.query)) return false;
+        if (state.query && !matchesQuery(record, state.query, state.searchHits)) return false;
         // The overview brush is a further filter, applied after kind and text so that
         // clearing it never silently changes what the other two meant.
         if (selection && !recordInSelection(record, selection, overviewSpansById)) return false;
@@ -8683,6 +8838,11 @@
       function resetBaseFilters() {
         state.kinds = KIND_ORDER.slice();
         state.query = '';
+        state.searchHits = null;
+        state.searchPending = false;
+        state.searchTotal = 0;
+        state.searchTruncated = false;
+        state.searchError = null;
         dropOverviewSelection();
         clearTimeRange();
         if (dom.searchInput) dom.searchInput.value = '';
@@ -8913,8 +9073,11 @@
           searchTimer = window.setTimeout(function () {
             searchTimer = null;
             state.query = dom.searchInput.value.trim();
+            state.searchError = null;
             resetWindowMode();
-            renderLedger();
+            // The table does not move until the answer arrives; runSearch is what puts the answer
+            // in force, and the count line says 正在搜索 while it is out.
+            runSearch(state.query);
           }, SEARCH_DEBOUNCE);
         });
 

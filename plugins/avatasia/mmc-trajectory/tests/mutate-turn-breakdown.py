@@ -91,12 +91,12 @@ MUTATIONS = [
     # 第 82 轮, two scopes in one label, so the pair reads as a contradiction that no wording
     # can fix. Both numbers were true.
     ("session total put back in the title",
-     "if (!isCount(firstTurn) || !isCount(lastTurn)) return DASH;",
-     "if (!isCount(firstTurn) || !isCount(lastTurn)) return DASH;\n        var totalTurns = state.payload.stats.turns;\n        if (firstTurn === lastTurn) return '共 ' + formatInt(totalTurns) + ' 轮 · 当前第 ' + formatInt(firstTurn) + ' 轮';\n        return '共 ' + formatInt(totalTurns) + ' 轮 · 当前第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';",
+     "        var range = DASH;\n        if (isCount(firstTurn) && isCount(lastTurn)) {",
+     "        var range = DASH;\n        if (isCount(state.payload && state.payload.stats ? state.payload.stats.turns : null)) return '共 ' + formatInt(state.payload.stats.turns) + ' 轮';\n        if (isCount(firstTurn) && isCount(lastTurn)) {",
      "panel title states only the rendered turn range"),
     ("title drops the range entirely",
-     "return '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';",
-     "return '轨迹';",
+     ": '第 ' + formatInt(firstTurn) + '–' + formatInt(lastTurn) + ' 轮';",
+     ": '轨迹';",
      "panel title states only the rendered turn range"),
     # Anchored on two lines with their indentation: updateWindowBar() now writes the 全场 total in
     # both its mid-build and its settled branch, and a one-line anchor matches both.

@@ -70,8 +70,8 @@ CASES = [
     # case honest: if passesBaseFilter stopped applying the query, the list would stop being
     # filtered at all and the exclusivity check above it would pass for the wrong reason.
     ("the base filter stops applying the query",
-     "but with no rule ticked the search is still a filter for the list",
-     "        if (state.query && !matchesQuery(record, state.query)) return false;",
+     "and once the server has answered, the search narrows the list",
+     "        if (state.query && !matchesQuery(record, state.query, state.searchHits)) return false;",
      "        if (false && state.query) return false;"),
     # Dropping the range from passesBaseFilter is deliberately NOT here: that guard lives in
     # verify-time-range.mjs, and a case listed against a probe that does not own it would be
@@ -183,7 +183,7 @@ CASES = [
     # Anchored with the signature above it: `if (state.anomaly.rules.length > 0)` appears twice
     # — once in recordVisible(), once in applyFilterScope() — and the two mean nothing alike.
     ("the mode is read backwards, so the search stops filtering at all",
-     "but with no rule ticked the search is still a filter for the list",
+     "and once the server has answered, the search narrows the list",
      "      function recordVisible(record, turn, selection) {\n        if (state.anomaly.rules.length > 0) {",
      "      function recordVisible(record, turn, selection) {\n        if (state.anomaly.rules.length >= 0) {"),
     ("the two axes stacked instead of alternated",
@@ -229,9 +229,10 @@ CASES = [
      "ticking a rule puts every type back",
      "        if (next.length > 0) resetBaseFilters();",
      "        if (next.length > 0 && false) resetBaseFilters();"),
-    ("the reset forgets the search box", "and drops the search",
-     "        state.query = '';\n        dropOverviewSelection();",
-     "        dropOverviewSelection();"),
+    ("the reset forgets the search box",
+     "and it drops the search answer with the needle, not just the needle",
+     "        state.query = '';\n        state.searchHits = null;",
+     "        state.query = '';"),
     # Distinct from the one above, and it was missing until a cross-check read the names rather
     # than the diffs: that mutation deletes `state.query`, not `dom.searchInput.value`. The box
     # is cleared by its own line, and with `dom.searchInput` nulled in the sandbox that line had

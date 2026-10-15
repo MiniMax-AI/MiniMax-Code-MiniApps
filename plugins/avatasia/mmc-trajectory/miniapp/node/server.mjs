@@ -6,6 +6,29 @@ import { createServer } from 'node:http';
 import { basename, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
+import {
+  MAX_WINDOW_RECORDS,
+  buildSecondary,
+  createIndexStore,
+  indexRowsFromPayload,
+  projectionDigestOf,
+  recordsInTimeRange,
+  resolveWindow,
+  stripPath,
+  windowTurns,
+} from './trajectory-index.mjs';
+import {
+  MAX_HITS,
+  SEARCH_FIELDS,
+  buildSegment,
+  createSegmentStore,
+  foldNeedle,
+  generationKey,
+  needleIsUsable,
+  normaliseWhitespace,
+  scanSegment,
+  searchSurfaceOf,
+} from './search-segments.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
@@ -66,6 +89,12 @@ const LIST_CACHE_TTL_MS = 3000;
 const SESSION_CACHE_TTL_MS = 5000;
 const SESSION_CACHE_ENTRIES = 80;
 const TRAJECTORY_CACHE_ENTRIES = 4;
+/**
+ * The most hits one search response carries. The count is still reported in full — a needle that
+ * matches ten thousand records is a real answer — so this is a transport bound and not a claim
+ * about how many there were.
+ */
+const MAX_SEARCH_HITS = MAX_HITS;
 /**
  * Upper bound on the parsed generation rows kept resident, in bytes.
  *
@@ -1125,6 +1154,54 @@ export function splitRawRecords(turns) {
   }
   return raws;
 }
+
+/**
+ * Every record of a built payload whose own search text contains the needle.
+ *
+ * The whole of the search's answer, and a pure function of what is already in hand, so the rule can
+ * be pinned without a runtime: it runs over the PROJECTED view rather than over the stored rows, so
+ * a version the identity layer suppressed cannot be reported as a row in the ledger, and it tests
+ * one record at a time, so a needle cannot be answered by a phrase that spans two of them.
+ *
+ * `limit` bounds what is RETURNED and never what is COUNTED. A needle that matches ten thousand
+ * records is a real answer, and saying so is more useful than a silent truncation.
+ *
+ * @param {{ turns: Array<any> }} payload
+ * @param {string} needle already normalised and folded
+ * @param {number} limit
+ * @returns {{ hits: Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>, total: number }}
+ */
+export function collectSearchHits(payload, needle, limit) {
+  /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>} */
+  const hits = [];
+  let total = 0;
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const records = Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (!searchSurfaceOf(record).includes(needle)) continue;
+      total += 1;
+      if (hits.length >= limit) continue;
+      hits.push({
+        index: record.index,
+        turnIndex: turn.index,
+        kind: record.kind,
+        // Already projected and already redacted. Sending it is how the reader sees WHAT matched
+        // without opening every row the needle found.
+        summary: typeof record.summary === 'string' ? record.summary : '',
+        generation: typeof record.generation === 'number' ? record.generation : null,
+      });
+    }
+  }
+  return { hits, total };
+}
+
+/**
+ * The five fields a search reads, in the page's order, normalised and folded exactly as the stored
+ * surfaces are. Re-exported so a guard can compare the page's own `recordSearchText` against this
+ * without reaching into a private module.
+ */
+export { SEARCH_FIELDS, normaliseWhitespace, searchSurfaceOf, scanSegment, foldNeedle, needleIsUsable };
 
 /**
  * The runtime's marker for a tool result it dropped while compacting the context.
@@ -2652,6 +2729,34 @@ export async function start(context) {
    */
   const parsedRows = createParsedRowsCache(PARSED_ROWS_CACHE_BYTES);
 
+  // Derived artifacts, under the runtime's own data dir and nowhere else. The session history is
+  // read-only input and the plugin package installs onto every reader's machine, so neither is a
+  // place to write. Held per runtime instance rather than as module state, so two runtimes in one
+  // process cannot share a root.
+  const artifactRoot = join(context.dataDir, 'trajectory-artifacts');
+  const indexStore = createIndexStore(join(artifactRoot, 'index'));
+  const segmentStore = createSegmentStore(join(artifactRoot, 'search'));
+
+  /**
+   * A name for one session's artifacts, derived rather than quoted.
+   *
+   * Hashed because the key becomes a DIRECTORY NAME: a session id is not something to scatter across
+   * a filesystem, and two stores on one machine can hold the same id for different sessions, so the
+   * store's own path has to be part of it. The two are joined by a newline CHARACTER at runtime,
+   * written here as an escape rather than as the byte — a literal NUL here made this file binary to
+   * every text tool reading it, and the guard that says so is the one that caught it.
+   *
+   * @param {string} dir
+   * @param {string} sessionId
+   */
+  const searchSessionKey = (dir, sessionId) =>
+    createHash('sha256').update(`${dir}\n${sessionId}`).digest('hex').slice(0, 32);
+
+  /**
+   * @param {number | null} filter
+   */
+  const searchViewKey = (filter) => (filter === null || filter === undefined ? 'all' : `g${filter}`);
+
   const loadClientEntry = async () => {
     if (clientEntry) return clientEntry;
     const buffer = await readFile(join(context.pluginRoot, 'miniapp', 'client', 'index.html'));
@@ -2986,6 +3091,169 @@ export async function start(context) {
     return { ok: true, entry, binding, identity, generations, filter, cacheKey: trajectoryCacheKey(entry, identity, binding, filter) };
   };
 
+  /**
+   * One session's lineage, and every stored row of every generation that belongs to it.
+   *
+   * The ONE place the lineage is walked. Two readers need it and they must not be allowed to walk it
+   * separately: the payload answers from the whole chain, and a search answers from the same chain
+   * with the active generation read fresh. A second walk would be a second answer to "which files
+   * are this session made of", and the two could disagree about a generation that rotated between
+   * two requests.
+   *
+   * `files` is the same chain as a table the index and the search segments address: one entry per
+   * generation, carrying the identity that decides whether a stored artifact may be reused. It holds
+   * the resolved path so a record can be matched to its file exactly; the index strips it before
+   * anything is written.
+   *
+   * Throws rather than answering: an unreadable lineage is reported by the caller, which is the only
+   * place that knows how to phrase it.
+   *
+   * @param {{ dir: string }} entry
+   * @param {Array<any>} generations
+   */
+  const collectLineage = async (entry, generations) => {
+    const artifactByFile = new Map(generations.map((candidate) => [candidate.fileName, candidate]));
+    // history-catalog.json is written by the runtime when it rotates generations, so a session
+    // that has never compacted does not have one and its `generations` list is empty. The active
+    // file is real regardless, and `probe` below already synthesises an artifact for it; reuse
+    // that same shape here instead of rejecting the whole session with artifact_path_rejected.
+    const artifactFor = (fileName) => artifactByFile.get(fileName)
+      ?? (fileName === 'messages.jsonl'
+        ? {
+          fileName: 'messages.jsonl',
+          active: true,
+          generation: null,
+          kind: 'messages',
+          byteLength: null,
+          messageCount: null,
+          revision: null,
+        }
+        : null);
+    /** @type {Map<number, { marker: any, head: string }>} */
+    const probed = new Map();
+    const probe = async (generation) => {
+      const artifact = generation === null
+        ? { fileName: 'messages.jsonl', active: true, byteLength: null }
+        : generations.find((candidate) => candidate.generation === generation) ?? null;
+      if (artifact === null) return null;
+      if (generation !== null && artifact.active) return null;
+      const filePath = resolveArtifactPath(entry.dir, artifact);
+      if (filePath === null) return null;
+      if (probed.has(artifact.fileName)) return probed.get(artifact.fileName);
+      const head = await readHead(filePath, GENERATION_PROBE_BYTES);
+      const result = { fileName: artifact.fileName, marker: readGenerationMarker(head.text) };
+      probed.set(artifact.fileName, result);
+      return result;
+    };
+
+    const lineage = await walkLineage({ generations }, probe);
+    if (lineage.chain.length === 0) throw new Error('lineage_empty');
+    const activeFileName = lineage.chain[lineage.chain.length - 1].fileName;
+
+    /** @type {Array<{ row: Record<string, any>, generation: number | null, locator: any }>} */
+    const occurrences = [];
+    /** @type {Array<any>} */
+    const files = [];
+    let skippedTotal = 0;
+    let truncated = false;
+    let readBytes = 0;
+    for (const link of lineage.chain) {
+      const artifact = artifactFor(link.fileName);
+      const filePath = artifact === null ? null : resolveArtifactPath(entry.dir, artifact);
+      if (filePath === null) throw new Error('artifact_path_rejected');
+      // Bound the read by our own cap only. The catalog's recorded sizes are a snapshot and the
+      // active messages.jsonl keeps being appended to after the catalog was written, so using
+      // them as a read limit both dropped records that were really on disk and — because the read
+      // then stopped short of the file — made `head.read < head.size` report "file too large" for
+      // a file that was merely newer than its catalog entry. `readHead` already clamps to the real
+      // stat size, so MAX_MESSAGE_BYTES bounds memory on its own.
+      const limit = MAX_MESSAGE_BYTES;
+      /** @type {ParsedRows} */
+      let parsedFile;
+      try {
+        parsedFile = await loadParsedRows(parsedRows, filePath, limit, { cacheable: link.fileName !== activeFileName });
+      } catch {
+        throw new Error('messages_unreadable');
+      }
+      // Kept as a flag on the cached value rather than a log line at the read site: a file that
+      // parsed empty once will parse empty every time, and a hit must still say so.
+      if (parsedFile.empty) {
+        context.logger.warn('miniapp.trajectory.read_error', { reason: 'empty_messages' });
+      }
+      if (parsedFile.truncated) truncated = true;
+      readBytes += parsedFile.read;
+      skippedTotal += parsedFile.skipped;
+      // The identity a stored index or search segment is reused under. Read before the rows so a
+      // file that cannot be stat()ed is a missing entry rather than a wrong one — a file that
+      // cannot be stat()ed was not read either.
+      let size = 0;
+      let mtimeMs = 0;
+      try {
+        const fileStat = await stat(filePath);
+        size = fileStat.size;
+        mtimeMs = fileStat.mtimeMs;
+      } catch {
+        throw new Error('messages_unreadable');
+      }
+      files.push({
+        fileName: link.fileName,
+        generation: link.generation,
+        size,
+        mtimeMs,
+        revision: typeof artifact.revision === 'string' ? artifact.revision : null,
+        filePath,
+      });
+      // A sealed file's rows are shared with every other request that read it; the active file's
+      // are this request's alone and are released below. Either way stamping the generation is the
+      // only write, and one filePath always maps to one generation, so it is idempotent.
+      // Pinned by tests/verify-parsed-rows.mjs.
+      for (let index = 0; index < parsedFile.rows.length; index += 1) {
+        const row = parsedFile.rows[index];
+        row[ROW_GENERATION] = link.generation;
+        // One entry per row, holding where that row's line was read from and what it hashed to —
+        // enough for `/raw` to go back to one line without any of the parsed rows still being
+        // alive, which is what lets the rows be released once the payload is serialized.
+        occurrences.push({ row, generation: link.generation, locator: parsedFile.locators[index] });
+      }
+    }
+    return {
+      lineage,
+      occurrences,
+      files,
+      skippedTotal,
+      truncated,
+      readBytes,
+      activeFileName,
+      activeArtifact: artifactFor(activeFileName),
+      artifactFor,
+    };
+  };
+
+  /**
+   * Why a lineage could not be collected. Named here so the caller reports the same reason the
+   * walk used to, from one table instead of two blocks of inline sends.
+   * @param {unknown} error
+   */
+  const lineageFailure = (error) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason === 'lineage_unreadable') {
+      context.logger.error('miniapp.trajectory.read_error', { reason: 'lineage_unreadable' });
+      return '会话数据暂时无法读取';
+    }
+    if (reason === 'artifact_path_rejected') {
+      context.logger.error('miniapp.trajectory.read_error', { reason: 'artifact_path_rejected', code: errorCode(null) });
+      return '会话数据暂时无法读取';
+    }
+    if (reason === 'messages_unreadable') {
+      context.logger.error('miniapp.trajectory.read_error', { reason: 'messages_unreadable', code: errorCode(error) });
+      return '会话数据暂时无法读取';
+    }
+    // `lineage_empty` and anything unforeseen both land here, and both are the same answer to the
+    // reader: there is nothing to show. The reason is kept for the log, never for the page.
+    context.logger.error('miniapp.trajectory.read_error', { reason: `lineage_${reason}` });
+    return '会话数据暂时无法读取';
+  };
+
   const handleTrajectory = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
     if (!ctx.ok) {
@@ -3013,120 +3281,19 @@ export async function start(context) {
       return;
     }
 
-    // Walk the lineage from the active file outward. A small head of each candidate is enough
-    // to learn which generation it claims to be, so only the files that actually belong to the
-    // chain get parsed in full.
-    const artifactByFile = new Map(generations.map((candidate) => [candidate.fileName, candidate]));
-    // history-catalog.json is written by the runtime when it rotates generations, so a session
-    // that has never compacted does not have one and its `generations` list is empty. The active
-    // file is real regardless, and `probe` below already synthesises an artifact for it; reuse
-    // that same shape here instead of rejecting the whole session with artifact_path_rejected.
-    const activeArtifactFor = (fileName) => artifactByFile.get(fileName)
-      ?? (fileName === 'messages.jsonl'
-        ? {
-          fileName: 'messages.jsonl',
-          active: true,
-          generation: null,
-          kind: 'messages',
-          byteLength: null,
-          messageCount: null,
-          revision: null,
-        }
-        : null);
-    /** @type {Map<number, { marker: any, head: string }>} */
-    const probed = new Map();
-    const probe = async (generation) => {
-      const artifact = generation === null
-        ? { fileName: 'messages.jsonl', active: true, byteLength: identity.catalogBytes }
-        : generations.find((candidate) => candidate.generation === generation) ?? null;
-      if (artifact === null) return null;
-      if (generation !== null && artifact.active) return null;
-      const filePath = resolveArtifactPath(entry.dir, artifact);
-      if (filePath === null) return null;
-      if (probed.has(artifact.fileName)) return probed.get(artifact.fileName);
-      const head = await readHead(filePath, GENERATION_PROBE_BYTES);
-      const result = { fileName: artifact.fileName, marker: readGenerationMarker(head.text) };
-      probed.set(artifact.fileName, result);
-      return result;
-    };
-
-    /** @type {{ chain: Array<{ generation: number, fileName: string }>, orphans: Array<{ generation: number, fileName: string }> }} */
-    let lineage;
+    // The lineage is walked in ONE place (`collectLineage`), because two readers need it and a
+    // second walk would be a second answer to "which files is this session made of".
+    let walked;
     try {
-      lineage = await walkLineage({ generations }, probe);
+      walked = await collectLineage(entry, generations);
     } catch (error) {
-      context.logger.error('miniapp.trajectory.read_error', { reason: 'lineage_unreadable', code: errorCode(error) });
-      sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
+      sendError(response, 500, 'trajectory_unreadable', lineageFailure(error));
       return;
     }
-    if (lineage.chain.length === 0) {
-      sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
-      return;
+    const { lineage, occurrences, files, truncated, readBytes, activeFileName, activeArtifact } = walked;
+    if (walked.skippedTotal > 0) {
+      context.logger.warn('miniapp.trajectory.parse_warn', { skipped: walked.skippedTotal });
     }
-    const activeFileName = lineage.chain[lineage.chain.length - 1].fileName;
-    const activeArtifact = activeArtifactFor(activeFileName);
-
-    // Concatenate oldest → newest, which is the order the conversation actually happened in.
-    //
-    // Every generation's rows are collected even when the reader filtered to one. They have to
-    // be: a turn's opener is its earliest prompt across the WHOLE lineage, so filtering first
-    // would leave the reader looking at a steer that looks like the first prompt of its turn. The
-    // cost is a list of references, not a second copy of any row — each `row` is the same object
-    // `parsedFile` holds, and the view below drops the ones this request does not project.
-    /** @type {Array<{ row: Record<string, any>, generation: number | null, locator: LineLocator }>} */
-    const occurrences = [];
-    let skippedTotal = 0;
-    let truncated = false;
-    let readBytes = 0;
-    for (const link of lineage.chain) {
-      const artifact = activeArtifactFor(link.fileName);
-      const filePath = artifact === null ? null : resolveArtifactPath(entry.dir, artifact);
-      if (filePath === null) {
-        context.logger.error('miniapp.trajectory.read_error', { reason: 'artifact_path_rejected', code: errorCode(null) });
-        sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
-        return;
-      }
-      // Bound the read by our own cap only. The catalog's recorded sizes are a snapshot and the
-      // active messages.jsonl keeps being appended to after the catalog was written, so using
-      // them as a read limit both dropped records that were really on disk and — because the read
-      // then stopped short of the file — made `head.read < head.size` report "file too large" for
-      // a file that was merely newer than its catalog entry. `readHead` already clamps to the real
-      // stat size, so MAX_MESSAGE_BYTES bounds memory on its own.
-      const limit = MAX_MESSAGE_BYTES;
-      /** @type {ParsedRows} */
-      let parsedFile;
-      try {
-        parsedFile = await loadParsedRows(parsedRows, filePath, limit, { cacheable: link.fileName !== activeFileName });
-      } catch (error) {
-        context.logger.error('miniapp.trajectory.read_error', { reason: 'messages_unreadable', code: errorCode(error) });
-        sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
-        return;
-      }
-      // Kept as a flag on the cached value rather than a log line at the read site: a file that
-      // parsed empty once will parse empty every time, and a hit must still say so.
-      if (parsedFile.empty) {
-        context.logger.warn('miniapp.trajectory.read_error', { reason: 'empty_messages' });
-      }
-      if (parsedFile.truncated) truncated = true;
-      readBytes += parsedFile.read;
-      skippedTotal += parsedFile.skipped;
-      // A sealed file's rows are shared with every other request that read it; the active file's
-      // are this request's alone and are released below. Either way stamping the generation is the
-      // only write, and one filePath always maps to one generation, so it is idempotent.
-      // Pinned by tests/verify-parsed-rows.mjs.
-      for (let index = 0; index < parsedFile.rows.length; index += 1) {
-        const row = parsedFile.rows[index];
-        row[ROW_GENERATION] = link.generation;
-        // One entry per row, holding where that row's line was read from and what it hashed to —
-        // enough for `/raw` to go back to one line without any of the parsed rows still being
-        // alive, which is what lets the rows be released once the payload is serialized.
-        occurrences.push({ row, generation: link.generation, locator: parsedFile.locators[index] });
-      }
-    }
-    if (skippedTotal > 0) {
-      context.logger.warn('miniapp.trajectory.parse_warn', { skipped: skippedTotal });
-    }
-
     // One logical message per id, every stored copy of it folded in, and the versions it was
     // written in kept rather than dropped. `filter === null` shows every message once at its
     // first version; a generation number shows that generation's own stored context.
@@ -3210,6 +3377,148 @@ export async function start(context) {
     const since = parseSince(url.searchParams.get('since'));
     const delta = since === null ? null : buildDeltaPayload(payload, since);
     sendJsonBody(response, 200, delta === null ? body : JSON.stringify(delta), { etag, revalidate: true });
+  };
+
+/**
+ * One needle against one session, answered from the same projection the payload is built from.
+   *
+   * WHY IT IS A READ AND NOT A SCAN OF WHAT THE PAGE ALREADY HAS. The page searches five fields per
+   * record, and those five fields are the bulk of the payload — so a search the page can do itself
+   * requires the page to hold the bulk, which is the thing being removed. A search that is answered
+   * here does not have to be shipped to it.
+   *
+   * WHY IT REBUILDS FOR NOW. This walks the lineage and projects it exactly as `/api/trajectory`
+   * does, so the records it searches are the records that payload would carry — which is what makes
+   * a hit a row the reader can actually be sent to. Segments are written as a side effect here, so a
+   * later pass can answer a search without the rebuild; until then this is the correct answer and
+   * the measured cost of one.
+   *
+   * The two rules that are not negotiable, because both were true of the version it replaces:
+   *
+   *  - **A hit is a DISPLAYED record.** The scan runs over the projected view, not over the stored
+   *    rows, so a version the identity layer suppressed — a copy of a message already shown, or the
+   *    trimmed half of a rewrite — cannot be reported as a row in the ledger.
+   *  - **A needle never crosses a record.** Each record is tested on its own, which is what
+   *    `scanSegment` is for and what a joined blob would quietly stop doing.
+   */
+  const handleSearch = async (response, url) => {
+    const ctx = await resolveTrajectoryRequest(url);
+    if (!ctx.ok) {
+      sendError(response, ctx.status, ctx.code, ctx.message);
+      return;
+    }
+    const asked = url.searchParams.get('q') ?? '';
+    // A needle too short to be a question matches almost every record; answering with the whole
+    // ledger is not an answer, and returning it would cost more than the reader wanted to know.
+    if (!needleIsUsable(asked)) {
+      sendError(response, 400, 'search_query_required', '请输入至少两个字符');
+      return;
+    }
+    const needle = foldNeedle(asked);
+    const { entry, filter } = ctx;
+
+    let walked;
+    try {
+      walked = await collectLineage(entry, ctx.generations);
+    } catch (error) {
+      sendError(response, 500, 'trajectory_unreadable', lineageFailure(error));
+      return;
+    }
+    const { occurrences, files } = walked;
+
+    const identityTable = buildMessageIdentity(occurrences);
+    const view = selectIdentityView(identityTable, filter);
+    const payload = buildTrajectoryPayload({
+      session: { id: ctx.identity.id, createdAtMs: entry.lastActiveAt },
+      rows: view.rows,
+      sizeBytes: walked.readBytes,
+      truncated: walked.truncated,
+      redact,
+      generations: ctx.generations,
+      generation: null,
+      orphans: walked.lineage.orphans,
+      identity: identityTable,
+      openerByTurn: view.openerByTurn,
+    });
+    const rowLocators = view.occurrences.map((occurrence) => occurrence.locator);
+    const rowIndexByRecord = splitRawRecords(payload.turns);
+
+    /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>} */
+    const hits = [];
+    let total = 0;
+    const searched = collectSearchHits(payload, needle, MAX_SEARCH_HITS);
+    hits.push(...searched.hits);
+    total = searched.total;
+
+    // Written as a side effect, never awaited into the answer: an artifact that cannot be written is
+    // a slower next search, not a failed one, and a failure here must not turn a hit into an error.
+    void publishSearchArtifacts({
+      entry,
+      sessionKey: searchSessionKey(entry.dir, ctx.identity.id),
+      viewKey: searchViewKey(filter),
+      payload,
+      raws: rowIndexByRecord,
+      rowLocators,
+      files,
+      activeFileName: walked.activeFileName,
+    }).catch(() => undefined);
+
+    sendJson(response, 200, {
+      query: asked,
+      hits,
+      total,
+      truncated: total > hits.length,
+      session: { id: ctx.identity.id, generation: filter },
+    });
+    // Nothing below reads the view, and the payload holds projections rather than rows, so this is
+    // where the object graph stops being reachable.
+    view.rows.length = 0;
+    rowLocators.length = 0;
+  };
+
+  /**
+   * The artifacts a search would like the NEXT search to be able to skip the rebuild for.
+   *
+   * Best effort by construction: every step is wrapped, and the whole thing is fire-and-forget from
+   * the caller. A session that never gets an index keeps answering correctly, just at the rebuild's
+   * cost — which is what it did before any of this existed.
+   *
+   * @param {{ entry: any, sessionKey: string, viewKey: string, payload: any, raws: Map<number, number>, rowLocators: Array<any>, files: Array<any>, activeFileName: string }} input
+   */
+  const publishSearchArtifacts = async (input) => {
+    const { entry, sessionKey, viewKey, payload, raws, rowLocators, files, activeFileName } = input;
+    /** @type {Map<number, any>} */
+    const locators = new Map();
+    for (const [recordIndex, rowIndex] of raws) {
+      const locator = rowLocators[rowIndex];
+      if (locator !== undefined) locators.set(recordIndex, locator);
+    }
+    const indexRows = indexRowsFromPayload(payload, locators, files);
+    await indexStore.write(sessionKey, viewKey, indexRows, {
+      files,
+      projectionDigest: projectionDigestOf(payload),
+    });
+
+    // One segment per SEALED generation. The active one is being appended to, so a segment for it
+    // would be stale before it was written; it is searched from the rows the request read instead.
+    const activeIdx = files.findIndex((file) => file.fileName === activeFileName);
+    for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
+      if (fileIdx === activeIdx) continue;
+      const records = indexRows.records.filter((record) => record.fileIdx === fileIdx);
+      if (records.length === 0) continue;
+      const generation = files[fileIdx].generation;
+      const generationKeyValue = generationKey(generation);
+      // Already there and still matching its source: nothing to do, which is the common case on a
+      // session that is not being compacted right now.
+      const existing = await segmentStore.read(sessionKey, viewKey, generationKeyValue, [files[fileIdx]]);
+      if (existing !== null) continue;
+      const segment = buildSegment({ records });
+      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {
+        generation,
+        source: [files[fileIdx]],
+      });
+    }
+    void entry;
   };
 
   /**
@@ -3345,6 +3654,13 @@ export async function start(context) {
       void handleTrajectory(response, url).catch((error) => {
         context.logger.error('miniapp.trajectory.read_error', { reason: 'trajectory_failed', code: errorCode(error) });
         sendError(response, 500, 'trajectory_unreadable', '会话数据暂时无法读取');
+      });
+      return;
+    }
+    if (url.pathname === '/api/trajectory/search') {
+      void handleSearch(response, url).catch((error) => {
+        context.logger.error('miniapp.trajectory.read_error', { reason: 'search_failed', code: errorCode(error) });
+        sendError(response, 500, 'trajectory_unreadable', '搜索暂时不可用');
       });
       return;
     }

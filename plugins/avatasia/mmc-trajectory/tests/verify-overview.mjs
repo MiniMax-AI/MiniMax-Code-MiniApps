@@ -569,19 +569,63 @@ sandbox.state.kinds = ['user'];
 check('strip: a record of a filtered-out kind is not drawn', sandbox.spanPassesFilter(fCall, false), false);
 check('strip: a record of a kept kind is drawn', sandbox.spanPassesFilter(fUser, false), true);
 /* Search is checked on its own, with every kind back on, so a pass can only come from
- * the text and a fail can only come from the text. */
+ * the hit set and a fail can only come from it.
+ *
+ * These three used to be about text. They are now about the server's answer, and the shape
+ * of the question changed with it: there is no needle to match against in the page any
+ * more, so "does this record contain the needle" is not a question the strip can answer at
+ * all. What it must do is follow the answer — and while there is no answer yet, draw
+ * everything, because a strip that empties itself before the search has come back is the
+ * exact symptom the count line's 正在搜索 exists to make legible.
+ *
+ * The records carry an `index` because that is what the answer names, and the set is built
+ * through the page's own `searchHitSet` rather than a literal `new Set`, so this goes
+ * through the same conversion the response goes through.
+ */
+const sHit = rec('s1', 'thinking', 3200, 0, { index: 41 });
+const sMiss = rec('s2', 'thinking', 3300, 0, { index: 42 });
 sandbox.state.kinds = ALL_KINDS;
 sandbox.state.query = 'needle-that-is-absent';
-check('strip: search rejects a record that does not contain the needle',
-  sandbox.spanPassesFilter(fThink, true), false);
-sandbox.state.query = 'bash';
-check('strip: search keeps a record that does',
-  sandbox.spanPassesFilter(fCall, true), true);
-check('strip: the same record is dropped when the needle is elsewhere',
-  sandbox.spanPassesFilter(fThink, true), false);
+sandbox.state.searchHits = null;
+check('strip: a search with no answer yet draws every record, not none',
+  [sandbox.spanPassesFilter(sHit), sandbox.spanPassesFilter(sMiss)], [true, true]);
+sandbox.state.searchHits = sandbox.searchHitSet([{ index: 41 }]);
+check('strip: the strip keeps the record the server hit',
+  sandbox.spanPassesFilter(sHit), true);
+check('strip: the strip drops the record the server did not hit',
+  sandbox.spanPassesFilter(sMiss), false);
+sandbox.state.searchHits = sandbox.searchHitSet([]);
+check('strip: an answered search that hit nothing draws nothing',
+  sandbox.spanPassesFilter(sHit), false);
+sandbox.state.searchHits = null;
 sandbox.state.query = '';
 check('strip: with nothing filtered every record is drawn',
   sandbox.spanPassesFilter(fCall, false), true);
+
+/* The turn handoff. `noReply` is the only rule that cannot be decided from a record alone —
+ * 无答复 is a property of the turn — so it is the only way to see whether the strip actually
+ * looks the owning turn up or just calls the list with nothing.
+ *
+ * Ticking a rule is a filter, not a highlight: it keeps what fires and drops the rest. So the
+ * three below are one contrast — same record shape, three turns — and the open/closed pair is
+ * the one that matters: only the turn lookup can tell those two apart.
+ *
+ * `turnById` is seeded here rather than by pushing a payload through, because the map is built
+ * on the poll path and this guard has no fetch to drive it with. That is a seam, not the
+ * thing under test: what is under test is that the strip consults the map at all.
+ */
+const openTurn = { id: 't-open', index: 1, closed: false };
+const shutTurn = { id: 't-shut', index: 2, closed: true };
+sandbox.turnById = new Map([[openTurn.id, openTurn], [shutTurn.id, shutTurn]]);
+sandbox.state.anomaly.rules = ['noReply'];
+check('strip: a record in an unclosed turn is drawn under 无答复, which only the turn lookup can decide',
+  sandbox.spanPassesFilter(rec('a1', 'user', 3400, 0, { turnId: openTurn.id })), true);
+check('strip: the same record in a closed turn is dropped under the same tick',
+  sandbox.spanPassesFilter(rec('a2', 'user', 3500, 0, { turnId: shutTurn.id })), false);
+check('strip: a record whose turn is unknown is dropped, because no turn rule fires on nothing',
+  sandbox.spanPassesFilter(rec('a3', 'user', 3600, 0, { turnId: 't-absent' })), false);
+sandbox.state.anomaly.rules = [];
+sandbox.turnById = new Map();
 
 /* ----------------------------------------------------------------------- report */
 console.log('overview + toolbar controls: ' + pass + ' passed, ' + failures.length + ' failed');

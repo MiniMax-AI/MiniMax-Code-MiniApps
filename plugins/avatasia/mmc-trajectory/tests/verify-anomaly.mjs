@@ -445,8 +445,19 @@ page.state.anomaly.rules = ['toolError'];
 check('and while a rule is ticked the search does not narrow the list either',
   page.visibleEntries().length, expect.toolError);
 page.state.anomaly.rules = [];
-assert('but with no rule ticked the search is still a filter for the list',
-  page.visibleEntries().length < page.state.flat.length);
+// This used to set only `query` and expect the list to narrow, which it did because the page
+// scanned the records it already had. The page no longer holds the text, so it narrows by the set
+// the server sent — and `query` with no set in force is a state that now has a name (搜索中) and a
+// consequence, so it is asked about separately rather than quietly assumed away.
+page.state.searchHits = null;
+page.state.searchPending = false;
+assert('but with no answer yet the search does not narrow the list, so an unapplied filter never reads as an applied one',
+  page.visibleEntries().length === page.state.flat.length);
+const answered = new Set(page.state.flat.slice(0, 2).map((entry) => entry.record.index));
+page.state.searchHits = answered;
+assert('and once the server has answered, the search narrows the list',
+  page.visibleEntries().length === answered.size && page.visibleEntries().length < page.state.flat.length);
+page.state.searchHits = null;
 page.state.query = '';
 
 page.state.kinds = pure.KIND_ORDER.filter((k) => k !== 'toolResult');
@@ -917,6 +928,12 @@ const modeSrc = fnSource('function syncAnomalyMode(counts)');
 const baseSrc = fnSource('function resetBaseFilters(');
 assert('the reset updates the buttons, or the axis would show a condition that is not in force',
   !!baseSrc && /state\.kinds = KIND_ORDER\.slice\(\);/.test(baseSrc) && /syncKindButtons\(\);/.test(baseSrc));
+// Clearing the needle but keeping the SERVER'S ANSWER would leave the next query filtering by a
+// set of record indexes from a session the reader has already moved away from. The answer is the
+// state now, so clearing the base axes has to clear it too — and this file is where the reset is
+// already on trial, so the rule is asserted here as well as in the search guard.
+assert('and it drops the search answer with the needle, not just the needle',
+  !!baseSrc && /state\.searchHits = null;/.test(baseSrc) && /state\.searchError = null;/.test(baseSrc));
 // The brush is not written inline here, and it is not written by dropOverviewSelection() either —
 // R5 gave it one writer, so the chain is resetBaseFilters -> dropOverviewSelection ->
 // setOverviewSelection -> the assignment. Following the call and checking the assignment at the far
@@ -925,8 +942,7 @@ assert('the reset updates the buttons, or the axis would show a condition that i
 assert('and it clears every part of the row above, not just the types',
   !!baseSrc && /state\.query = '';/.test(baseSrc) && /dropOverviewSelection\(\);/.test(baseSrc)
   && !!dropSelSource && /setOverviewSelection\(null\);/.test(dropSelSource)
-  && !!setSelSource && /state\.overviewSelection = value;/.test(setSelSource)
-  && /clearTimeRange\(\);/.test(baseSrc));
+  && !!setSelSource && /state\.overviewSelection = value;/.test(setSelSource)  && /clearTimeRange\(\);/.test(baseSrc));
 const toggleFull = fnSource('function onAnomalyToggle(');
 assert('and it runs on every tick into the mode, not only the first',
   !!toggleFull && /if \(next\.length > 0\) resetBaseFilters\(\);/.test(toggleFull));

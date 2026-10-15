@@ -223,8 +223,20 @@ assert('the entry keeps a locator map and a decode cache',
   /trajectoryCache\.set\(cacheKey,[\s\S]{0,200}?raws[\s\S]{0,200}?decoded: new Map\(\)/.test(startBody));
 assert('and not the rows it used to keep',
   !/trajectoryCache\.set\(cacheKey,[\s\S]{0,200}?\{[^}]*\brows\b[^}]*\}\)/.test(startBody));
-assert('the rows array is emptied once nothing else can reach it', startBody.includes('rows.length = 0;'));
-assert('and the locator array goes with it', startBody.includes('rowLocators.length = 0;'));
+// The release has to be read INSIDE `handleTrajectory`, not anywhere in the runtime. It used to be
+// `startBody.includes('rows.length = 0;')`, which the search handler's own `view.rows.length = 0;`
+// satisfies — the assertion passed for a reason that had nothing to do with the thing it claimed to
+// hold, and the mutation that deletes the real release went unnoticed. The same trap as a label that
+// does not describe what it covers; it is caught here by asking the question of the right text.
+const handleTrajectoryAt = startBody.indexOf('const handleTrajectory = async');
+assert('handleTrajectory exists', handleTrajectoryAt > 0);
+const handleTrajectoryBody = startBody.slice(handleTrajectoryAt, startBody.indexOf('const handleSearch = async'));
+assert('the rows array is emptied once nothing else can reach it',
+  /\n {4}rows\.length = 0;/.test(handleTrajectoryBody));
+assert('and the locator array goes with it',
+  /\n {4}rowLocators\.length = 0;/.test(handleTrajectoryBody));
+assert('the release is the payload\'s own row array, not some other array that ends in rows.length',
+  handleTrajectoryBody.includes('const rows = view.rows;'));
 
 // The route must not reach into rows for /raw any more; it seeks.
 const handleRawAt = startBody.indexOf('const handleRaw = async');
