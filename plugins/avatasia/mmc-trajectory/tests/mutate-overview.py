@@ -57,7 +57,32 @@ SPAN_AT = """        var lane = overviewLaneAt(clientX, clientY);
 # would make the second one's replacement collide with the first one's anchor.
 SPAN_AT_RETURN = "        return nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);"
 
+# ---- the model's own reuse -----------------------------------------------------------------
+# The two below do not touch what the model computes; they change whether it is computed again.
+# That is the whole shape of this cache, and it is the shape a shape-only assertion cannot see: a
+# stripped-down version that stores both inputs and then rebuilds anyway produces an identical
+# model, so every value check still passes. Only counting the rebuilds tells them apart.
+CACHE_HIT = """        if (overviewCache.flat === flat && overviewCache.axis === state.actualDuration) {
+          return overviewCache.model;
+        }"""
+
+CACHE_HIT_ROWS_ONLY = "        if (overviewCache.flat === flat && overviewCache.axis === state.actualDuration) {"
+
 MUTATIONS = [
+    (
+        "the model is rebuilt on every render, so the seven callers that change nothing pay for it",
+        CACHE_HIT,
+        """        if (false) {
+          return overviewCache.model;
+        }""",
+        "the same rows again do not rebuild it",
+    ),
+    (
+        "the model is keyed on the rows alone, so turning the duration axis keeps a model built on the other one",
+        CACHE_HIT_ROWS_ONLY,
+        "        if (overviewCache.flat === flat) {",
+        "turning the duration axis on rebuilds",
+    ),
     (
         "the strip keeps a predicate of its own instead of asking the list",
         SPAN_ADAPTER,
@@ -188,11 +213,17 @@ def named_failure(output):
     probe that dies on an exception names nothing, and a control that calls that 「caught」
     would be reporting a crash as if it were evidence.
     """
-    return next(
-        (line.strip()[len("FAIL"):].strip() for line in output.splitlines()
-         if line.strip().startswith("FAIL")),
-        None,
-    )
+    hits = named_failures(output)
+    return hits[0] if hits else None
+
+
+def named_failures(output):
+    """Every rule the probe named, in order."""
+    return [
+        line.strip()[len("FAIL"):].strip()
+        for line in output.splitlines()
+        if line.strip().startswith("FAIL")
+    ]
 
 
 def main():
@@ -206,7 +237,12 @@ def main():
     original = CLIENT.read_bytes()
     missed = []
     unnamed = []
-    for label, old, new in MUTATIONS:
+    for entry in MUTATIONS:
+        label, old, new = entry[0], entry[1], entry[2]
+        # Optional fourth element: the assertion that OWNS the rule this mutation targets. A probe
+        # that goes red on something else has not caught this bug, and reporting that as caught is
+        # how a mutation control ends up proving nothing while counting.
+        expect = entry[3] if len(entry) > 3 else None
         text, newline = read_exact(CLIENT)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
@@ -229,6 +265,9 @@ def main():
         if name is None:
             print(f"UNNAMED {label}: the probe failed without naming a rule")
             unnamed.append(label)
+        elif expect is not None and expect not in named_failures(output):
+            print(f"MISSED {label}: probe failed, but not on {expect!r}\n         -> {named_failures(output)}")
+            missed.append(label)
         else:
             print(f"caught {label}\n         -> {name}")
 

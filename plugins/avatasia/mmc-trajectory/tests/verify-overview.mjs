@@ -203,6 +203,70 @@ const UNDATED = [ent(rec('u1', 'user', null, null), 1), ent(rec('u2', 'user', 50
 check('a record with no timestamp is not given a position', sandbox.overviewModel(UNDATED).spans.map((s) => s.id), ['u2']);
 check('no timed records yields no timeline at all', sandbox.overviewModel([ent(rec('u1', 'user', null, null), 1)]), null);
 
+/* --------------------------------------------------- the model is reused, not rebuilt */
+// Count the rebuilds rather than checking that the cache carries the two fields it needs. A cache
+// whose key is written but never read, or read but never compared, passes any assertion that only
+// looks for the shape — and a shell that stores the inputs and then rebuilds anyway would pass
+// one that only checks the values are equal, because a rebuilt model of the same rows IS the same
+// model. What has to be true is that the second call does no work.
+{
+  const realModel = sandbox.overviewModel;
+  let builds = 0;
+  sandbox.overviewModel = function (entries) { builds += 1; return realModel(entries); };
+
+  sandbox.state.actualDuration = false;
+  builds = 0;
+  const cold = sandbox.cachedOverviewModel(MIXED);
+  check('a cold cache builds the model', builds, 1);
+  const warm = sandbox.cachedOverviewModel(MIXED);
+  check('the same rows again do not rebuild it', builds, 1);
+  assert('and they hand back the very model that was built', cold === warm);
+
+  // A different array holding equal rows is still a rebuild. That is the price of the key: the
+  // payload path hands over a fresh array on every poll, so "deeply equal" would mean comparing
+  // every record to answer a question identity already answers.
+  builds = 0;
+  const equalRows = sandbox.cachedOverviewModel(MIXED.slice());
+  check('a different array of the same rows rebuilds', builds, 1);
+  check('and produces an equal model', JSON.stringify(equalRows), JSON.stringify(cold));
+
+  // Put MIXED back before the axis test. The step above leaves a *different* array in the cache,
+  // so a key that compared the rows but dropped the axis would still miss here and rebuild — and
+  // the rebuild the axis test observes would then prove nothing about the axis at all. That is
+  // not hypothetical: dropping `axis` from the key survived this file until this line was added.
+  sandbox.cachedOverviewModel(MIXED);
+
+  // The axis is the model's other input, read from state when it is built. Keying on the rows
+  // alone would keep a model from the other axis, and every record would be drawn at its
+  // position on the axis the reader just turned off.
+  builds = 0;
+  sandbox.state.actualDuration = true;
+  const onAxis = sandbox.cachedOverviewModel(MIXED);
+  check('turning the duration axis on rebuilds', builds, 1);
+  check('and the rebuilt model is on the compressed axis', onAxis.end - onAxis.start, 300);
+  check('with the idle gap removed, not shrunk', onAxis.spans[4].start, 1300);
+
+  builds = 0;
+  sandbox.cachedOverviewModel(MIXED);
+  check('the rebuilt axis is cached as well', builds, 0);
+
+  // An empty session produces no model at all, and reusing that answer must not depend on there
+  // being one: `overviewModel` returns null, and the caller branches on exactly that.
+  builds = 0;
+  const emptyRows = [ent(rec('z1', 'user', null, null), 1)];
+  check('a session with nothing dated yields no model', sandbox.cachedOverviewModel(emptyRows), null);
+  check('and building that answer counted once', builds, 1);
+  check('reusing it costs nothing', sandbox.cachedOverviewModel(emptyRows), null);
+  check('which is still no rebuild', builds, 1);
+
+  sandbox.overviewModel = realModel;
+  sandbox.state.actualDuration = false;
+  // Leave no cached model behind for the sections below, which build their own.
+  sandbox.overviewCache.flat = null;
+  sandbox.overviewCache.axis = null;
+  sandbox.overviewCache.model = null;
+}
+
 /* ------------------------------------------------------------- layer filters */
 /* 轮次 / 思考 / 调用 are presets over the same kind set the type chips edit — one filter,
  * two ways of setting it, so nothing here is a second copy that could disagree. Cancelling
