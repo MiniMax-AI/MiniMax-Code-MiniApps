@@ -35,8 +35,7 @@ import {
   splitRawRecords,
   ROW_GENERATION,
 } from '../miniapp/node/server.mjs';
-import { indexRowsFromPayload } from '../miniapp/node/trajectory-index.mjs';
-import { buildSegment, readSegmentHits, scanSegment } from '../miniapp/node/search-segments.mjs';
+import { buildSegment, locatorRowsFromPayload, readSegmentHits, scanSegment } from '../miniapp/node/search-segments.mjs';
 
 const SERVER = readFileSync(new URL('../miniapp/node/server.mjs', import.meta.url), 'utf8');
 const CLIENT = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
@@ -361,28 +360,27 @@ const ARTIFACT_FILES = [
   { filePath: '/store/s/g0.jsonl', fileName: 'g0.jsonl', generation: 0, size: 300, mtimeMs: 1, revision: 'r0', truncated: false },
   { filePath: '/store/s/g1.jsonl', fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 1, revision: 'r1', truncated: false },
 ];
-// `indexRowsFromPayload` wants the record -> locator map, not the record -> row map the split
+// `locatorRowsFromPayload` wants the record -> locator map, not the record -> row map the split
 // produces; the server builds it the same way before handing it over. Getting this wrong leaves
-// every record with `fileIdx: -1`, which is an index that still has the right records in it and
-// would answer with none.
+// every record at `-1`, which is a locator set with no file in it and would answer with no line.
 const rowIndexByRecord = splitRawRecords(allPayload.turns);
 const rowLocators = occurrences.map((o) => o.locator);
 const locatorByRecord = new Map();
 for (const [recordIndex, rowIndex] of rowIndexByRecord) {
   locatorByRecord.set(recordIndex, rowLocators[rowIndex]);
 }
-const indexRows = indexRowsFromPayload(allPayload, locatorByRecord, ARTIFACT_FILES);
+const locatorRows = locatorRowsFromPayload(allPayload, locatorByRecord, ARTIFACT_FILES);
 const flatPairs = [];
 for (const turn of allPayload.turns) for (const record of turn.records) flatPairs.push({ record, turn });
 // The same merge the server does: the surface is built from the PAYLOAD's records and only the
-// locator fields come from the index. Building it from the index alone searches two of the five
-// fields — `text`, `result` and `thinking` are excluded from the index on purpose — and that was a
-// real bug this comparison did not catch, so it is now pinned directly rather than left to a
-// needle that happens to match.
+// locator triple comes from the projection. Building it from anything else searches two of the five
+// fields — `text`, `result` and `thinking` are the bulk ones — and that was a real bug this
+// comparison did not catch, so it is now pinned directly rather than left to a needle that
+// happens to match.
 const segmentRecordsFor = (fileIdx) => {
   const out = [];
   for (let i = 0; i < flatPairs.length; i += 1) {
-    const located = indexRows.records[i];
+    const located = locatorRows[i];
     if (located === undefined || located.fileIdx !== fileIdx) continue;
     out.push({
       ...flatPairs[i].record,
@@ -424,10 +422,10 @@ const withLimit = (n) => {
   return out;
 };
 
-check('the index kept every record the rebuild would have shown',
-  indexRows.records.length, allRecords.length);
+check('the locator projection kept every record the rebuild would have shown',
+  locatorRows.length, allRecords.length);
 assert('and it kept the generation each record came from',
-  new Set(indexRows.records.map((r) => r.fileIdx)).size === ARTIFACT_FILES.length);
+  new Set(locatorRows.map((r) => r.fileIdx)).size === ARTIFACT_FILES.length);
 
 // The direct version of the bug: a segment's line for a record must contain that record's own
 // searchable text, in every field the endpoint searches. Read from the shipped server's own merge,
@@ -435,9 +433,9 @@ assert('and it kept the generation each record came from',
 const bulkOnly = allRecords.find((r) => typeof r.result === 'string' && r.result.length > 0);
 assert('the fixture really does hold a record whose match is only in a bulk field', bulkOnly !== undefined);
 if (bulkOnly !== undefined) {
-  const located = indexRows.records[flatPairs.findIndex((pair) => pair.record === bulkOnly)];
+  const located = locatorRows[flatPairs.findIndex((pair) => pair.record === bulkOnly)];
   const line = buildSegment({ records: [{ ...bulkOnly, fileIdx: located.fileIdx, byteStart: 0, byteEnd: 1 }] }).surface;
-  assert('and the segment carries that field, though the index does not',
+  assert('and the segment carries that field, though the projection does not',
     !Object.prototype.hasOwnProperty.call(located, 'result') && line.includes(normaliseWhitespace(bulkOnly.result)));
   assert('the shipped server merges the payload into the segment for the same reason',
     /flatRecords\.push\(\{ record, turn \}\)/.test(SERVER)
@@ -478,8 +476,7 @@ check('while the ordinals the scan really returns do read back',
 /* ---------------------------------------------------------------------
  * A generation read short by our own cap produces a segment covering a
  * PREFIX, while its recorded `size` is the whole file. That rule is owned
- * where the comparison lives — verify-search-segments.mjs for `sameSource`
- * and verify-trajectory-index.mjs for `sameSources` — and is deliberately
+ * where the comparison lives — verify-search-segments.mjs for `sameSource` — and is deliberately
  * NOT restated here: an assertion parked in a guard whose mutation control
  * never touches it reads as covered without being covered.
  * --------------------------------------------------------------------- */
@@ -521,10 +518,29 @@ assert('the shipped artifact path resolves a whole scan in one batch call',
 assert('a hit the scan named but the reader could not resolve falls back rather than being skipped',
   /if \(hit === null\) return null;/.test(artifactsSrc));
 // And the index is not consulted at all — reading it was the 34.2 MB this step took off the path.
-// Scoped to this path, because `indexStore.write` still exists for a different reason (see the
-// defect list: nothing reads what it writes).
-assert('and this path reads no record index at all',
-  !/indexStore\.read\(|collectSearchHitsFromArtifacts/.test(SERVER));
+// This used to be scoped to "this path", because a store was still being *written* under the same
+// name for a different reason. Nothing is written either now, so the rule is stated as what it is
+// actually about: the whole server has no record index, in any form, and the module that built
+// one is gone. A narrower version of this assertion would pass on a server that had reintroduced
+// the index under a different name, which is the thing worth ruling out.
+//
+// Comments are stripped first. The server explains where the index went, and an explanation that
+// named it would otherwise fail the rule that says there is none — so documenting the removal would
+// have been the one way guaranteed to break this, and the incentive would have been to write
+// nothing. `//` by whole line, because a `//` inside a string is a URL in this file.
+const serverCode = SERVER
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/^\s*\/\/.*$/gm, ' ');
+assert('and the server holds no record index at all, in any form',
+  !/indexStore|trajectory-index|collectSearchHitsFromArtifacts/.test(serverCode));
+// The three names above are a list, and a list only catches what is on it: a store rebuilt under a
+// fresh name would pass. The on-disk shape is not a name, though — the removed store's whole cost
+// was that it made a second directory under the artifact root and filled it on every publish, so
+// the property worth stating is that there IS no second directory. Segments are the only artifact;
+// the root holds exactly one subdirectory and it is the one they live in.
+const artifactDirs = [...serverCode.matchAll(/join\(\s*artifactRoot\s*,\s*'([^']+)'\s*\)/g)].map((m) => m[1]);
+assert('and the artifact root holds segments and nothing else',
+  artifactDirs.length === 1 && artifactDirs[0] === 'search');
 // Two paths answering one request is only a performance change if they answer it identically,
 // and the response body is part of the answer the page reads.
 check('both paths send the same session field',

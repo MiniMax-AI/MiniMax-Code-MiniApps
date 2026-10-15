@@ -106,6 +106,70 @@ export function normaliseWhitespace(value) {
 }
 
 /**
+ * Where each record sat in the file it came from, in ledger order.
+ *
+ * This used to be `indexRowsFromPayload` in a module called `trajectory-index`, and it used to
+ * return a whole index row per record — every field except five excluded ones — so that the index
+ * artifact could be written to disk. Nothing read that artifact back, so the shape was paid for on
+ * every publish and consumed by exactly one caller.
+ *
+ * That caller reads **one** of the three fields. `fileIdx` is the per-generation grouping key: a
+ * record goes into the segment for the source file its locator names, so a record with no locator
+ * lands in no segment at all rather than in whichever generation happens to be first. The other
+ * two ride along on the segment line's JSON prefix — and as of this change **nothing in the shipped
+ * search path reads them back**. `readSegmentHits` picks five fields off that prefix and drops the
+ * rest, and `/api/trajectory/record` answers from the in-memory lineage cache rather than from a
+ * segment. What they buy today is a capability nothing exercises: a hit in a sealed generation
+ * could be mapped back to the line it came from. Measured cost of carrying it: 4.36% of a real
+ * segment surface, 49 bytes a line (1,177-line, 1.3 MB segment).
+ *
+ * They stay because they are part of the **segment format**, not of this function. Dropping them
+ * means a format change with a schema bump and every already-written segment invalidated, which is
+ * its own batch with its own four questions — carrying them is the cheap half of that decision, and
+ * the expensive half is what other people already have on disk.
+ *
+ * So this is the producer of part of the segment format, and it lives here rather than beside a
+ * directory nothing reads.
+ *
+ * `raws` is the record -> locator map the route already builds for `/raw`. A record with no
+ * locator gets `-1` in all three fields, and that is a real state rather than a gap to be filled:
+ * repairing it to `0` would file the record under whichever source file happens to be first,
+ * which is a different generation's message. `-1` also stays distinguishable from byte `0`, which
+ * is a position a record really can have.
+ *
+ * @param {{ turns: Array<{ records: Array<{ index: number }> }> }} payload
+ * @param {Map<number, { filePath: string, start: number, end: number }>} raws
+ * @param {Array<{ filePath?: string }>} files
+ * @returns {Array<{ fileIdx: number, byteStart: number, byteEnd: number }>} one entry per record,
+ *   in the same order the payload's turns and their records are walked
+ */
+export function locatorRowsFromPayload(payload, raws, files) {
+  const pathToFileIdx = new Map();
+  files.forEach((file, i) => {
+    // Matched on the full path, not the file name: two generations can each hold a file the
+    // catalog names the same way, and a basename match would file one generation's records
+    // under the other. First writer wins, because a path is only in the table once per session.
+    if (typeof file.filePath === 'string' && !pathToFileIdx.has(file.filePath)) {
+      pathToFileIdx.set(file.filePath, i);
+    }
+  });
+  const out = [];
+  for (const turn of payload.turns) {
+    for (const record of turn.records) {
+      const locator = raws.get(record.index);
+      out.push(locator === undefined
+        ? { fileIdx: -1, byteStart: -1, byteEnd: -1 }
+        : {
+          fileIdx: pathToFileIdx.get(locator.filePath) ?? -1,
+          byteStart: locator.start,
+          byteEnd: locator.end
+        });
+    }
+  }
+  return out;
+}
+
+/**
  * Builds one generation's searchable lines.
  *
  * Each line is `<compact json>\t<searchable text>`, one line per record in ledger order, and it

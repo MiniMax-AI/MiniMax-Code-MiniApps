@@ -160,6 +160,16 @@ MUTATIONS = [
         "        if (hit === null) return null;",
         "        if (hit === null) continue;",
     ),
+    (
+        # The shape that was removed: a second store under the artifact root, filled on every
+        # publish, read by nothing — 8.6 MB a session a view on disk. Rebuilt here from live code
+        # rather than by re-adding the deleted module, so the mutation is a regression someone could
+        # actually write instead of a revert. It trips both halves of the rule: the store's name and
+        # the second directory it makes.
+        "a second artifact store is written beside the segments, and nothing reads it",
+        "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        source: [files[fileIdx]],\n      });",
+        "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        source: [files[fileIdx]],\n      });\n      const indexStore = createSegmentStore(join(artifactRoot, 'index'));\n      await indexStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        source: [files[fileIdx]],\n      });",
+    ),
 ]
 
 

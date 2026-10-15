@@ -51,7 +51,6 @@ const SHIPPED_TEXT = {
   'README.zh-CN.md': readmeZh,
   'miniapp/client/index.html': clientHtml,
   'miniapp/node/server.mjs': serverJs,
-  'miniapp/node/trajectory-index.mjs': read('miniapp/node/trajectory-index.mjs'),
   'miniapp/node/search-segments.mjs': read('miniapp/node/search-segments.mjs'),
   'tests/make-fixtures.mjs': read('tests/make-fixtures.mjs'),
   'tests/client-check.mjs': read('tests/client-check.mjs'),

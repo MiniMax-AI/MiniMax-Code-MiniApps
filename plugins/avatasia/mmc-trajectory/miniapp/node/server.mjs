@@ -7,23 +7,13 @@ import { basename, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
-  MAX_WINDOW_RECORDS,
-  buildSecondary,
-  createIndexStore,
-  indexRowsFromPayload,
-  projectionDigestOf,
-  recordsInTimeRange,
-  resolveWindow,
-  stripPath,
-  windowTurns,
-} from './trajectory-index.mjs';
-import {
   MAX_HITS,
   SEARCH_FIELDS,
   buildSegment,
   createSegmentStore,
   foldNeedle,
   generationKey,
+  locatorRowsFromPayload,
   needleIsUsable,
   normaliseWhitespace,
   readSegmentHits,
@@ -2837,8 +2827,12 @@ export async function start(context) {
   // read-only input and the plugin package installs onto every reader's machine, so neither is a
   // place to write. Held per runtime instance rather than as module state, so two runtimes in one
   // process cannot share a root.
+  //
+  // Only the search segments live here. There was a second store under `index/`, written on every
+  // publish and never read by anything; it is gone, and directories it already wrote are left
+  // alone — nothing consults them, and deleting them is a migration that does not belong in the
+  // same change as stopping the writes.
   const artifactRoot = join(context.dataDir, 'trajectory-artifacts');
-  const indexStore = createIndexStore(join(artifactRoot, 'index'));
   const segmentStore = createSegmentStore(join(artifactRoot, 'search'));
 
   /**
@@ -3680,11 +3674,7 @@ export async function start(context) {
       const locator = rowLocators[rowIndex];
       if (locator !== undefined) locators.set(recordIndex, locator);
     }
-    const indexRows = indexRowsFromPayload(payload, locators, files);
-    await indexStore.write(sessionKey, viewKey, indexRows, {
-      files,
-      projectionDigest: projectionDigestOf(payload),
-    });
+    const locatorRows = locatorRowsFromPayload(payload, locators, files);
 
     // One segment per generation, the active one included. §8.8.1 rule 5 excluded the active
     // generation on the grounds that a segment for it would be stale before it was written — true,
@@ -3694,14 +3684,17 @@ export async function start(context) {
     // segment for the active generation there would be nothing to scan at all on a session that is
     // still being written, which is the one case a reader is most likely to search.
     //
-    // The surface comes from the PAYLOAD's records, not the index's. The index deliberately drops
-    // the four bulk fields to stay small, and three of those five — `text`, `result`, `thinking` —
-    // are searchable. A segment built from index records therefore searches two of the five fields,
-    // which narrows what a reader can find with nothing anywhere reporting it. Measured on the
-    // largest session here: the needle "needle" reported 14 matches through the artifacts and 45
-    // through the rebuild, and the two answers were both plausible. The index is still needed — it
-    // is what names each record's index, turn and kind — so the two are merged: the payload's
-    // fields for the surface, the index's fileIdx and byte range for the locator.
+    // The surface comes from the PAYLOAD's records, not from a narrower copy of them. That copy
+    // dropped the four bulk fields to stay small, and three of the five fields — `text`, `result`,
+    // `thinking` — are searchable. A segment built from it therefore searched two of the five, which
+    // narrows what a reader can find with nothing anywhere reporting it. Measured on the largest
+    // session here: the needle "needle" reported 14 matches through the artifacts and 45 through
+    // the rebuild, and the two answers were both plausible.
+    //
+    // What the payload cannot say on its own is which source file a record came from, so that is
+    // what gets projected out of the lineage's row locators: the payload's fields for the surface,
+    // and a locator whose file number is the grouping key below. The byte range rides along on the
+    // segment line and is read by nothing here — see the note on locatorRowsFromPayload.
     const flatRecords = [];
     for (const turn of payload.turns) {
       for (const record of turn.records) flatRecords.push({ record, turn });
@@ -3709,7 +3702,7 @@ export async function start(context) {
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
       const records = [];
       for (let i = 0; i < flatRecords.length; i += 1) {
-        const located = indexRows.records[i];
+        const located = locatorRows[i];
         if (located === undefined || located.fileIdx !== fileIdx) continue;
         records.push({
           ...flatRecords[i].record,
