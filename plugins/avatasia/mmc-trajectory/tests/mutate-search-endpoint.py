@@ -102,9 +102,30 @@ MUTATIONS = [
         "  const artifactRoot = join(process.cwd(), 'trajectory-artifacts');",
     ),
     (
-        "the active generation is stored as a segment, so a growing file keeps a stale segment",
-        "      if (fileIdx === activeIdx) continue;",
-        "      if (false) continue;",
+        # Used to be the other way round: §8.8.1 rule 5 kept the active generation out of the store,
+        # and this mutation removed that skip. The rule is inverted now — the active generation IS
+        # stored, because `sameSource` reads its own size and a grown file invalidates itself — so
+        # the mutation puts the skip back and the guard has to notice the early exit it now forbids.
+        "the active generation is skipped again, so a session still being written has nothing to scan",
+        "    for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {\n      const records = [];",
+        "    for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {\n      if (fileIdx === 0) continue;\n      const records = [];",
+    ),
+    (
+        # The rule is that `total` counts every match, so a missing generation cannot be tolerated:
+        # answering from 44 of 45 reports a smaller number and says nothing about being wrong.
+        "one missing segment no longer makes the search fall back",
+        "      if (segment === null) return null;",
+        "      if (segment === null) continue;",
+    ),
+    (
+        "the artifact path reports how many it sent instead of how many matched",
+        "  return { hits, total: wanted.length };",
+        "  return { hits, total: hits.length };",
+    ),
+    (
+        "the artifact path reports the kind where the summary belongs",
+        "      turnIndex: turn === undefined ? null : turn.index,\n      kind: record.kind,\n      summary: typeof record.summary === 'string' ? record.summary : '',",
+        "      turnIndex: turn === undefined ? null : turn.index,\n      kind: record.kind,\n      summary: String(record.kind),",
     ),
     (
         "writing the artifacts can fail the search that asked for them",

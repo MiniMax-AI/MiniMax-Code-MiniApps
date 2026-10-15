@@ -57,7 +57,9 @@ export const SEARCH_FIELDS = ['summary', 'text', 'result', 'thinking', 'toolName
 
 /** @typedef {{ ordinal: number, fileIdx: number, byteStart: number, byteEnd: number }} SegmentLocator */
 
-/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, locatorBytes: number, surfaceDigest: string, locatorDigest: string, source: Array<{ fileName: string, generation: number | null, size: number, revision: string | null }> }} SegmentManifest */
+/** @typedef {{ fileName: string, generation: number | null, size: number, revision: string | null, truncated?: boolean }} SegmentSource */
+
+/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, locatorBytes: number, surfaceDigest: string, locatorDigest: string, source: SegmentSource[] }} SegmentManifest */
 
 /**
  * One record's searchable text.
@@ -320,6 +322,10 @@ export function sameSource(stored, live) {
     if (a.fileName !== b.fileName) return false;
     if (a.generation !== b.generation) return false;
     if (a.size !== b.size) return false;
+    // Same reason as in the index: a generation read short by our own cap produces a segment that
+    // covers a prefix, while `size` is the whole file. Trusting it would answer with a smaller
+    // `total` and say nothing about being wrong.
+    if ((a.truncated === true) !== (b.truncated === true)) return false;
     if (typeof a.revision === 'string' && a.revision.length > 0
       && typeof b.revision === 'string' && b.revision.length > 0 && a.revision !== b.revision) {
       return false;

@@ -254,6 +254,11 @@ export function stripPath(file) {
     size: file.size,
     mtimeMs: file.mtimeMs,
     revision: file.revision,
+    // Whether this generation's rows were cut short by our own read cap. `size` is the whole file
+    // whether or not the read covered it, so on its own a truncated generation's artifact looks
+    // exactly like a complete one. Carried because an answer assembled from artifacts would then
+    // report a smaller `total` than the rebuild would, and report nothing about being wrong.
+    truncated: file.truncated === true,
   };
 }
 
@@ -534,6 +539,10 @@ export function sameSources(stored, live) {
     if (a.fileName !== b.fileName) return false;
     if (a.generation !== b.generation) return false;
     if (a.size !== b.size) return false;
+    // A generation that was read short is not the same answer as one that was read whole, even
+    // though both report the same `size`. Compared as booleans so an artifact written before this
+    // field existed is rejected once and rebuilt, rather than trusted.
+    if ((a.truncated === true) !== (b.truncated === true)) return false;
     if (typeof a.revision === 'string' && a.revision.length > 0
       && typeof b.revision === 'string' && b.revision.length > 0 && a.revision !== b.revision) {
       return false;

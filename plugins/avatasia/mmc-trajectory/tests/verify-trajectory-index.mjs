@@ -519,6 +519,19 @@ try {
 
   check('sameSources is order sensitive', sameSources(FILES, [...FILES].reverse()), false);
   check('sameSources rejects a length mismatch', sameSources(FILES, FILES.slice(0, 1)), false);
+
+  // A generation read short by our own cap leaves a row set that covers a PREFIX, while `size` is
+  // the whole file. That is the one case the identity facts cannot tell apart, so it is carried
+  // and compared: an index built from it would otherwise be served as one holding every record.
+  const WHOLE = { fileName: 'messages.jsonl', generation: 3, size: 900, mtimeMs: 7, revision: 'r3' };
+  check('a source read short is not trusted as if read whole',
+    sameSources([{ ...WHOLE, truncated: false }], [{ ...WHOLE, truncated: true }]), false);
+  check('and not in the other direction either',
+    sameSources([{ ...WHOLE, truncated: true }], [{ ...WHOLE, truncated: false }]), false);
+  check('two sources that agree about truncation trust each other',
+    sameSources([{ ...WHOLE, truncated: true }], [{ ...WHOLE, truncated: true }]), true);
+  check('and so do two that agree it was read whole',
+    sameSources([WHOLE], [{ ...WHOLE, truncated: false }]), true);
 } catch (error) {
   storeFailures.push(`the store could not be exercised: ${error instanceof Error ? error.message : String(error)}`);
 } finally {

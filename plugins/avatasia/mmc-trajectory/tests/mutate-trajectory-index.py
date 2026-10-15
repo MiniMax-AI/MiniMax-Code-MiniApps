@@ -106,6 +106,15 @@ MUTATIONS = [
         "    if (a.size !== b.size) return false;",
         "    if (a.size !== b.size) return false;\n    if (a.mtimeMs !== b.mtimeMs) return false;",
     ),
+    (
+        # `size` is the whole file whether or not the read covered it, so this is the only thing
+        # telling a generation that was read short from one that was read whole. Without it the
+        # index built from a truncated generation is served as if it held every record, and a
+        # search over it reports fewer matches than there are — quietly.
+        "a source that was read short is trusted as if it had been read whole",
+        "    if ((a.truncated === true) !== (b.truncated === true)) return false;\n    if (typeof a.revision === 'string' && a.revision.length > 0",
+        "    if (typeof a.revision === 'string' && a.revision.length > 0",
+    ),
 ]
 
 

@@ -417,6 +417,29 @@ assert('nothing here spawns a thread; the route owns that',
 assert('the scan is a per-line test, not a joined blob',
   /line\.includes\(needle\)/.test(source) && !/\+ .*surface.*\+/.test(source.split('export function scanSegment')[1].split('export function')[0]));
 
+/* ---------------------------------------------------------------------
+ * A generation read short by our own read cap produces a segment that
+ * covers a PREFIX of the file, while `size` is the whole file. Without
+ * this comparison the two are indistinguishable, and a segment that
+ * covers a prefix would be served as one that covers everything: a
+ * smaller `total`, hits that went missing, and nothing said about it.
+ * --------------------------------------------------------------------- */
+const WHOLE_SOURCE = { fileName: 'g1.jsonl', generation: 1, size: 500, revision: 'r1' };
+const SHORT_SOURCE = { ...WHOLE_SOURCE, truncated: true };
+check('a source read short is not trusted as if it had been read whole',
+  sameSource([{ ...WHOLE_SOURCE, truncated: false }], [SHORT_SOURCE]), false);
+check('and not in the other direction either',
+  sameSource([SHORT_SOURCE], [{ ...WHOLE_SOURCE, truncated: false }]), false);
+check('two sources that agree about truncation still trust each other',
+  sameSource([SHORT_SOURCE], [SHORT_SOURCE]), true);
+check('and two that agree it was read whole do too',
+  sameSource([WHOLE_SOURCE], [{ ...WHOLE_SOURCE, truncated: false }]), true);
+assert('an older artifact that predates the field is rebuilt rather than trusted',
+  sameSource([{ fileName: 'g1.jsonl', generation: 1, size: 500, revision: 'r1' }], [{ ...WHOLE_SOURCE, truncated: false }]), true);
+assert('the comparison is in this module and not only in the caller',
+  /if \(\(a\.truncated === true\) !== \(b\.truncated === true\)\) return false;/.test(
+    source.split('export function sameSource')[1] || ''));
+
 /* --------------------------------------------------------------------- */
 
 if (failures.length) {

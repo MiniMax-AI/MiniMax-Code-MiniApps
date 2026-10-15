@@ -28,12 +28,16 @@ import {
   buildMessageIdentity,
   buildTrajectoryPayload,
   collectSearchHits,
+  collectSearchHitsFromArtifacts,
   foldNeedle,
   needleIsUsable,
   normaliseWhitespace,
   selectIdentityView,
+  splitRawRecords,
   ROW_GENERATION,
 } from '../miniapp/node/server.mjs';
+import { indexRowsFromPayload } from '../miniapp/node/trajectory-index.mjs';
+import { buildSegment, scanSegment } from '../miniapp/node/search-segments.mjs';
 
 const SERVER = readFileSync(new URL('../miniapp/node/server.mjs', import.meta.url), 'utf8');
 const CLIENT = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
@@ -341,8 +345,152 @@ assert('the session key is a hash, so no session id becomes a directory name',
   /createHash\('sha256'\)\.update\(`\$\{dir\}\\n\$\{sessionId\}`\)/.test(SERVER));
 assert('writing the artifacts cannot fail the request that asked for a search',
   /\.catch\(\(\) => undefined\)/.test(SERVER));
-assert('the active generation is not stored as a segment',
-  /if \(fileIdx === activeIdx\) continue;/.test(SERVER));
+/* =====================================================================
+ * 3 — the artifact path answers exactly what the rebuild answers
+ * ===================================================================== */
+
+/**
+ * The endpoint can now skip the rebuild: the stored index names every record and one segment per
+ * generation holds their searchable text. Two paths answering one request is only a performance
+ * change if they answer it IDENTICALLY, and the two ways they could differ are both silent — a hit
+ * the ledger does not have, and a `total` that is really a cap.
+ *
+ * The comparison is made against the same payload the rebuild would have produced, so it is a
+ * statement about the answers rather than about the plumbing.
+ */
+const ARTIFACT_FILES = [
+  { filePath: '/store/s/g0.jsonl', fileName: 'g0.jsonl', generation: 0, size: 300, mtimeMs: 1, revision: 'r0', truncated: false },
+  { filePath: '/store/s/g1.jsonl', fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 1, revision: 'r1', truncated: false },
+];
+// `indexRowsFromPayload` wants the record -> locator map, not the record -> row map the split
+// produces; the server builds it the same way before handing it over. Getting this wrong leaves
+// every record with `fileIdx: -1`, which is an index that still has the right records in it and
+// would answer with none.
+const rowIndexByRecord = splitRawRecords(allPayload.turns);
+const rowLocators = occurrences.map((o) => o.locator);
+const locatorByRecord = new Map();
+for (const [recordIndex, rowIndex] of rowIndexByRecord) {
+  locatorByRecord.set(recordIndex, rowLocators[rowIndex]);
+}
+const indexRows = indexRowsFromPayload(allPayload, locatorByRecord, ARTIFACT_FILES);
+const flatRecords = allPayload.turns.flatMap((t) => t.records);
+// The same merge the server does: the surface is built from the PAYLOAD's records and only the
+// locator fields come from the index. Building it from the index alone searches two of the five
+// fields — `text`, `result` and `thinking` are excluded from the index on purpose — and that was a
+// real bug this comparison did not catch, so it is now pinned directly rather than left to a
+// needle that happens to match.
+const segmentRecordsFor = (fileIdx) => {
+  const out = [];
+  for (let i = 0; i < flatRecords.length; i += 1) {
+    const located = indexRows.records[i];
+    if (located === undefined || located.fileIdx !== fileIdx) continue;
+    out.push({ ...flatRecords[i], fileIdx: located.fileIdx, byteStart: located.byteStart, byteEnd: located.byteEnd });
+  }
+  return out;
+};
+const scanArtifacts = (folded) => {
+  const scanned = [];
+  for (let fileIdx = 0; fileIdx < ARTIFACT_FILES.length; fileIdx += 1) {
+    const ordinals = scanSegment(buildSegment({ records: segmentRecordsFor(fileIdx) }).surface, folded);
+    if (ordinals.length > 0) scanned.push({ fileIdx, ordinals });
+  }
+  return scanned;
+};
+
+check('the index kept every record the rebuild would have shown',
+  indexRows.records.length, allRecords.length);
+assert('and it kept the generation each record came from',
+  new Set(indexRows.records.map((r) => r.fileIdx)).size === ARTIFACT_FILES.length);
+
+// The direct version of the bug: a segment's line for a record must contain that record's own
+// searchable text, in every field the endpoint searches. Read from the shipped server's own merge,
+// because a guard that builds the merge itself would only prove that it and itself agree.
+const bulkOnly = allRecords.find((r) => typeof r.result === 'string' && r.result.length > 0);
+assert('the fixture really does hold a record whose match is only in a bulk field', bulkOnly !== undefined);
+if (bulkOnly !== undefined) {
+  const located = indexRows.records[flatRecords.indexOf(bulkOnly)];
+  const line = buildSegment({ records: [{ ...bulkOnly, fileIdx: located.fileIdx, byteStart: 0, byteEnd: 1 }] }).surface;
+  assert('and the segment carries that field, though the index does not',
+    !Object.prototype.hasOwnProperty.call(located, 'result') && line.includes(normaliseWhitespace(bulkOnly.result)));
+  assert('the shipped server merges the payload into the segment for the same reason',
+    /records\.push\(\{\s*\n\s*\.\.\.flatRecords\[i\],\s*\n\s*fileIdx: located\.fileIdx,/.test(SERVER));
+}
+
+for (const needle of NEEDLES) {
+  const folded = foldNeedle(needle);
+  const rebuilt = collectSearchHits(allPayload, folded, 500);
+  const fromDisk = collectSearchHitsFromArtifacts(indexRows, scanArtifacts(folded), 500);
+  check(`"${needle}" — the artifact path sends the same hits`, fromDisk.hits, rebuilt.hits);
+  check(`"${needle}" — and counts them the same way`, fromDisk.total, rebuilt.total);
+}
+
+const capRebuilt = collectSearchHits(allPayload, foldNeedle('needle'), 2);
+const capFromDisk = collectSearchHitsFromArtifacts(indexRows, scanArtifacts(foldNeedle('needle')), 2);
+check('a cap bounds what is sent, on the artifact path too',
+  capFromDisk.hits.length, Math.min(2, capRebuilt.total));
+check('and never bounds what is counted', capFromDisk.total, capRebuilt.total);
+
+// An ordinal the index does not have means the segment and the index were built from different
+// sources. Answering from one of them would be answering about a session that never existed, and
+// nothing downstream could tell.
+check('an ordinal past the end of its generation is refused, not guessed',
+  collectSearchHitsFromArtifacts(indexRows, [{ fileIdx: 0, ordinals: [9999] }], 500), null);
+check('and a generation the index never held is refused too',
+  collectSearchHitsFromArtifacts(indexRows, [{ fileIdx: 7, ordinals: [0] }], 500), null);
+
+/* ---------------------------------------------------------------------
+ * A generation read short by our own cap produces a segment covering a
+ * PREFIX, while its recorded `size` is the whole file. That rule is owned
+ * where the comparison lives — verify-search-segments.mjs for `sameSource`
+ * and verify-trajectory-index.mjs for `sameSources` — and is deliberately
+ * NOT restated here: an assertion parked in a guard whose mutation control
+ * never touches it reads as covered without being covered.
+ * --------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------
+ * The wiring. These read the shipped source, so they hold the shape rather
+ * than the behaviour; the behaviour is the comparisons above.
+ * --------------------------------------------------------------------- */
+assert('the active generation IS stored as a segment, so a session still being written has something to scan',
+  !/if \(fileIdx === activeIdx\) continue;/.test(SERVER));
+assert('a generation with no records still gets one, and it is empty — "no segment" and "no records" must not read alike',
+  !/records\.length === 0\) continue/.test(SERVER));
+assert('one missing segment makes the whole search fall back rather than answer from the rest',
+  /if \(segment === null\) return null;/.test(SERVER));
+// Two paths answering one request is only a performance change if they answer it identically,
+// and the response body is part of the answer the page reads.
+check('both paths send the same session field',
+  (SERVER.match(/session: \{ id: ctx\.identity\.id, generation: filter \}/g) || []).length, 2);
+// Scoped to handleSearch's own text: the same two lines also appear in the trajectory route, and
+// a whole-file indexOf would compare a search against an unrelated request's body.
+const handleSearchSrc = SERVER.slice(
+  SERVER.indexOf('const handleSearch = async'),
+  SERVER.indexOf('const searchFromArtifacts = async'));
+assert('and the artifact path is tried before anything expensive',
+  handleSearchSrc.indexOf('const onDisk = await searchFromArtifacts(') > 0
+  && handleSearchSrc.indexOf('const identityTable = buildMessageIdentity(occurrences);') > 0
+  && handleSearchSrc.indexOf('const onDisk = await searchFromArtifacts(')
+    < handleSearchSrc.indexOf('const identityTable = buildMessageIdentity(occurrences);'));
+
+// "Every generation in the lineage ends up with a segment" is the rule; naming the skip that used
+// to be there would only pin the old bug. And the loop legitimately HAS early exits — an inner one
+// that collects this generation's records, and an outer one that skips a generation already on
+// disk — so the rule is about the OUTER level only, told apart by indentation: an outer exit is
+// indented six spaces, an inner one eight. A generation may only be passed over after something
+// was read back for it.
+const publishSrc = SERVER.slice(
+  SERVER.indexOf('const publishSearchArtifacts = async'),
+  SERVER.indexOf('void entry;'));
+const generationLoop = publishSrc.slice(
+  publishSrc.indexOf('for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {'));
+const outerContinues = generationLoop.match(/^ {6}(?! )[^\n]*\bcontinue;/gm) || [];
+assert('every generation ends up with a segment: the only outer early exit is "already on disk", and it comes after the read',
+  generationLoop.length > 0
+  && outerContinues.length <= 1
+  && (outerContinues.length === 0
+    || (outerContinues[0].includes('existing !== null')
+      && generationLoop.indexOf(outerContinues[0]) > generationLoop.indexOf('segmentStore.read('))));
+
 
 /* --------------------------------------------------------------------- */
 

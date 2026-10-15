@@ -109,6 +109,16 @@ MUTATIONS = [
         "  return generation === null || generation === undefined ? 'active' : `g${generation}`;",
         "  return generation === null || generation === undefined ? 'g0' : `g${generation}`;",
     ),
+    # ---- a generation read short must not look like one read whole --------------------------
+    (
+        # `size` is the whole file whether or not the read covered it, so this comparison is the
+        # only thing standing between a segment covering a PREFIX and being served as if it covered
+        # everything. Remove it and a truncated generation answers with a smaller total and says
+        # nothing about being wrong.
+        "a source that was read short is trusted as if it had been read whole",
+        "    if ((a.truncated === true) !== (b.truncated === true)) return false;\n    if (typeof a.revision === 'string' && a.revision.length > 0",
+        "    if (typeof a.revision === 'string' && a.revision.length > 0",
+    ),
 ]
 
 
