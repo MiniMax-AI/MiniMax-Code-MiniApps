@@ -1,0 +1,7 @@
+{
+  "name": "ai-office",
+  "version": "0.5.10",
+  "type": "module",
+  "license": "MIT",
+  "mcode": { "schemaVersion": 2, "miniApp": "./miniapp/miniapp.json" }
+}

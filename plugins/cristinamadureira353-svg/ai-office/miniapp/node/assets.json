@@ -1,0 +1,64 @@
+{
+  "/game/game.apple-touch-icon.png": {
+    "type": "image/png",
+    "bytes": 11952,
+    "file": "game/game.apple-touch-icon.png"
+  },
+  "/game/game.audio.position.worklet.js": {
+    "type": "text/javascript",
+    "bytes": 3149,
+    "file": "game/game.audio.position.worklet.js"
+  },
+  "/game/game.audio.worklet.js": {
+    "type": "text/javascript",
+    "bytes": 7298,
+    "file": "game/game.audio.worklet.js"
+  },
+  "/game/game.html": {
+    "type": "text/html",
+    "bytes": 5429,
+    "file": "game/game.html"
+  },
+  "/game/game.icon.png": {
+    "type": "image/png",
+    "bytes": 5702,
+    "file": "game/game.icon.png"
+  },
+  "/game/game.js": {
+    "type": "text/javascript",
+    "bytes": 317142,
+    "file": "game/game.js"
+  },
+  "/game/game.pck": {
+    "type": "application/octet-stream",
+    "bytes": 32071564,
+    "gzip": true,
+    "parts": [
+      "game/game.pck.gz.part000",
+      "game/game.pck.gz.part001",
+      "game/game.pck.gz.part002",
+      "game/game.pck.gz.part003"
+    ]
+  },
+  "/game/game.png": {
+    "type": "image/png",
+    "bytes": 21443,
+    "file": "game/game.png"
+  },
+  "/game/game.wasm": {
+    "type": "application/wasm",
+    "bytes": 9387768,
+    "file": "game/game.wasm.gz",
+    "gzip": true
+  },
+  "/game/stream.js": {
+    "type": "text/javascript",
+    "bytes": 1801,
+    "file": "game/stream.js"
+  },
+  "/index.html": {
+    "type": "text/html",
+    "bytes": 4906,
+    "file": "index.html"
+  }
+}

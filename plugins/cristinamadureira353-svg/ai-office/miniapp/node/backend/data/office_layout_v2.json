@@ -1,0 +1,1217 @@
+{
+  "version": 2,
+  "cell_px": 32,
+  "grid": {
+    "w": 40,
+    "h": 24
+  },
+  "zones": {
+    "lobby": {
+      "rect": [
+        1,
+        0,
+        12,
+        23
+      ],
+      "floor": "floor_oak"
+    },
+    "office": {
+      "rect": [
+        14,
+        0,
+        26,
+        23
+      ],
+      "floor": "floor_oak"
+    },
+    "meeting": {
+      "rect": [
+        28,
+        0,
+        38,
+        16
+      ],
+      "floor": "floor_walnut"
+    }
+  },
+  "floor_patches": [
+    {
+      "prop": "floor_stone",
+      "rect": [
+        22,
+        2.5,
+        4.5,
+        4.5
+      ]
+    },
+    {
+      "prop": "floor_carpet",
+      "rect": [
+        2,
+        15,
+        6.7,
+        7.4
+      ]
+    },
+    {
+      "prop": "floor_carpet",
+      "rect": [
+        15.7,
+        18.5,
+        10.5,
+        4.1
+      ]
+    }
+  ],
+  "labels": [
+    {
+      "label": "大堂 · 接待",
+      "x": 6.5,
+      "y": 2.1
+    },
+    {
+      "label": "五人办公区",
+      "x": 17.5,
+      "y": 6
+    },
+    {
+      "label": "茶水间",
+      "x": 24,
+      "y": 7.2
+    },
+    {
+      "label": "休息角",
+      "x": 19,
+      "y": 16.9
+    },
+    {
+      "label": "会议室",
+      "x": 33,
+      "y": 14.5
+    }
+  ],
+  "desks": {
+    "m3": [
+      16,
+      10
+    ],
+    "flash": [
+      20,
+      10
+    ],
+    "longcat": [
+      24,
+      10
+    ],
+    "kimi": [
+      16,
+      14
+    ],
+    "step5": [
+      20,
+      14
+    ]
+  },
+  "props": [
+    {
+      "prop": "reception_counter",
+      "x": 7,
+      "y": 7.4,
+      "width": 212,
+      "zone": "lobby",
+      "blocked_cells": [
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          7
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          7
+        ],
+        [
+          7,
+          6
+        ],
+        [
+          7,
+          7
+        ],
+        [
+          8,
+          6
+        ],
+        [
+          8,
+          7
+        ],
+        [
+          9,
+          6
+        ],
+        [
+          9,
+          7
+        ],
+        [
+          10,
+          6
+        ],
+        [
+          10,
+          7
+        ]
+      ]
+    },
+    {
+      "prop": "visitor_sofa",
+      "x": 5,
+      "y": 18,
+      "width": 183,
+      "zone": "lobby",
+      "blocked_cells": [
+        [
+          3,
+          16
+        ],
+        [
+          3,
+          17
+        ],
+        [
+          4,
+          16
+        ],
+        [
+          4,
+          17
+        ],
+        [
+          5,
+          16
+        ],
+        [
+          5,
+          17
+        ],
+        [
+          6,
+          16
+        ],
+        [
+          6,
+          17
+        ],
+        [
+          7,
+          16
+        ],
+        [
+          7,
+          17
+        ]
+      ]
+    },
+    {
+      "prop": "visitor_table",
+      "x": 5,
+      "y": 20.8,
+      "width": 118,
+      "zone": "lobby",
+      "blocked_cells": [
+        [
+          4,
+          19
+        ],
+        [
+          4,
+          20
+        ],
+        [
+          5,
+          19
+        ],
+        [
+          5,
+          20
+        ],
+        [
+          6,
+          19
+        ],
+        [
+          6,
+          20
+        ]
+      ]
+    },
+    {
+      "prop": "notice_board",
+      "x": 8.5,
+      "y": 3.8,
+      "width": 119,
+      "zone": "lobby",
+      "blocked_cells": []
+    },
+    {
+      "prop": "coat_stand",
+      "x": 11.4,
+      "y": 8,
+      "width": 36,
+      "zone": "lobby",
+      "blocked_cells": [
+        [
+          11,
+          7
+        ],
+        [
+          11,
+          8
+        ]
+      ]
+    },
+    {
+      "prop": "entrance_mat",
+      "x": 1.9,
+      "y": 12.5,
+      "width": 72,
+      "zone": "lobby",
+      "blocked_cells": [],
+      "layer": "floor"
+    },
+    {
+      "prop": "door_open",
+      "x": 0.4,
+      "y": 12.5,
+      "width": 49,
+      "zone": "lobby",
+      "blocked_cells": [],
+      "layer": "floor"
+    },
+    {
+      "prop": "meeting_plant",
+      "x": 10.8,
+      "y": 21.5,
+      "width": 64,
+      "zone": "lobby",
+      "blocked_cells": [
+        [
+          10,
+          20
+        ],
+        [
+          11,
+          20
+        ],
+        [
+          11,
+          21
+        ]
+      ]
+    },
+    {
+      "prop": "framed_picture",
+      "x": 11.2,
+      "y": 4.2,
+      "width": 58,
+      "zone": "lobby",
+      "blocked_cells": []
+    },
+    {
+      "prop": "wall_clock",
+      "x": 10.5,
+      "y": 1.5,
+      "width": 35,
+      "zone": "lobby",
+      "blocked_cells": []
+    },
+    {
+      "prop": "player_boss",
+      "x": 7,
+      "y": 5.2,
+      "width": 33,
+      "zone": "lobby",
+      "blocked_cells": [],
+      "category": "actor"
+    },
+    {
+      "prop": "complete_desk",
+      "x": 16,
+      "y": 10.100000000000001,
+      "width": 113,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          15,
+          8
+        ],
+        [
+          15,
+          9
+        ],
+        [
+          16,
+          8
+        ],
+        [
+          16,
+          9
+        ],
+        [
+          17,
+          8
+        ],
+        [
+          17,
+          9
+        ]
+      ],
+      "worker": "m3",
+      "role": "work_desk",
+      "sort_y": 9.100000000000001
+    },
+    {
+      "prop": "office_chair_back",
+      "x": 16,
+      "y": 10.7,
+      "width": 36,
+      "zone": "office",
+      "blocked_cells": [],
+      "worker": "m3"
+    },
+    {
+      "prop": "complete_desk",
+      "x": 20,
+      "y": 10.100000000000001,
+      "width": 113,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          19,
+          8
+        ],
+        [
+          19,
+          9
+        ],
+        [
+          20,
+          8
+        ],
+        [
+          20,
+          9
+        ],
+        [
+          21,
+          8
+        ],
+        [
+          21,
+          9
+        ]
+      ],
+      "worker": "flash",
+      "role": "work_desk",
+      "sort_y": 9.100000000000001
+    },
+    {
+      "prop": "office_chair_back",
+      "x": 20,
+      "y": 10.7,
+      "width": 36,
+      "zone": "office",
+      "blocked_cells": [],
+      "worker": "flash"
+    },
+    {
+      "prop": "complete_desk",
+      "x": 24,
+      "y": 10.100000000000001,
+      "width": 113,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          23,
+          8
+        ],
+        [
+          23,
+          9
+        ],
+        [
+          24,
+          8
+        ],
+        [
+          24,
+          9
+        ],
+        [
+          25,
+          8
+        ],
+        [
+          25,
+          9
+        ]
+      ],
+      "worker": "longcat",
+      "role": "work_desk",
+      "sort_y": 9.100000000000001
+    },
+    {
+      "prop": "office_chair_back",
+      "x": 24,
+      "y": 10.7,
+      "width": 36,
+      "zone": "office",
+      "blocked_cells": [],
+      "worker": "longcat"
+    },
+    {
+      "prop": "complete_desk",
+      "x": 16,
+      "y": 14.100000000000001,
+      "width": 113,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          15,
+          12
+        ],
+        [
+          15,
+          13
+        ],
+        [
+          16,
+          12
+        ],
+        [
+          16,
+          13
+        ],
+        [
+          17,
+          12
+        ],
+        [
+          17,
+          13
+        ]
+      ],
+      "worker": "kimi",
+      "role": "work_desk",
+      "sort_y": 13.100000000000001
+    },
+    {
+      "prop": "office_chair_back",
+      "x": 16,
+      "y": 14.7,
+      "width": 36,
+      "zone": "office",
+      "blocked_cells": [],
+      "worker": "kimi"
+    },
+    {
+      "prop": "complete_desk",
+      "x": 20,
+      "y": 14.100000000000001,
+      "width": 113,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          19,
+          12
+        ],
+        [
+          19,
+          13
+        ],
+        [
+          20,
+          12
+        ],
+        [
+          20,
+          13
+        ],
+        [
+          21,
+          12
+        ],
+        [
+          21,
+          13
+        ]
+      ],
+      "worker": "step5",
+      "role": "work_desk",
+      "sort_y": 13.100000000000001
+    },
+    {
+      "prop": "office_chair_back",
+      "x": 20,
+      "y": 14.7,
+      "width": 36,
+      "zone": "office",
+      "blocked_cells": [],
+      "worker": "step5"
+    },
+    {
+      "prop": "printer_cabinet",
+      "x": 15.1,
+      "y": 4.7,
+      "width": 63,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          15,
+          4
+        ]
+      ]
+    },
+    {
+      "prop": "server_rack",
+      "x": 19.1,
+      "y": 4.8,
+      "width": 46,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          19,
+          4
+        ]
+      ]
+    },
+    {
+      "prop": "filing_cabinet",
+      "x": 14.8,
+      "y": 21.6,
+      "width": 53,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          14,
+          20
+        ],
+        [
+          15,
+          20
+        ],
+        [
+          15,
+          21
+        ]
+      ]
+    },
+    {
+      "prop": "fern",
+      "x": 21.3,
+      "y": 5.3,
+      "width": 45,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          21,
+          5
+        ]
+      ]
+    },
+    {
+      "prop": "wall_clock",
+      "x": 20.5,
+      "y": 1.5,
+      "width": 35,
+      "zone": "office",
+      "blocked_cells": []
+    },
+    {
+      "prop": "waste_bin",
+      "x": 26.1,
+      "y": 15.8,
+      "width": 22,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          26,
+          15
+        ]
+      ]
+    },
+    {
+      "prop": "archive_boxes",
+      "x": 14.8,
+      "y": 22.4,
+      "width": 39,
+      "zone": "office",
+      "blocked_cells": [
+        [
+          14,
+          22
+        ],
+        [
+          15,
+          22
+        ]
+      ]
+    },
+    {
+      "prop": "tea_shelf",
+      "x": 24.3,
+      "y": 3.2,
+      "width": 100,
+      "zone": "tea",
+      "blocked_cells": []
+    },
+    {
+      "prop": "kitchenette",
+      "x": 24.1,
+      "y": 5.4,
+      "width": 141,
+      "zone": "tea",
+      "blocked_cells": [
+        [
+          22,
+          4
+        ],
+        [
+          22,
+          5
+        ],
+        [
+          23,
+          4
+        ],
+        [
+          23,
+          5
+        ],
+        [
+          24,
+          4
+        ],
+        [
+          24,
+          5
+        ],
+        [
+          25,
+          4
+        ],
+        [
+          25,
+          5
+        ]
+      ]
+    },
+    {
+      "prop": "water_dispenser",
+      "x": 22.1,
+      "y": 6.3,
+      "width": 27,
+      "zone": "tea",
+      "blocked_cells": [
+        [
+          22,
+          6
+        ]
+      ]
+    },
+    {
+      "prop": "fridge",
+      "x": 26.1,
+      "y": 5.8,
+      "width": 35,
+      "zone": "tea",
+      "blocked_cells": [
+        [
+          26,
+          5
+        ]
+      ]
+    },
+    {
+      "prop": "rust_sofa",
+      "x": 18.8,
+      "y": 21.8,
+      "width": 143,
+      "zone": "leisure",
+      "blocked_cells": [
+        [
+          17,
+          20
+        ],
+        [
+          18,
+          20
+        ],
+        [
+          18,
+          21
+        ],
+        [
+          19,
+          20
+        ],
+        [
+          19,
+          21
+        ],
+        [
+          20,
+          20
+        ]
+      ],
+      "role": "rest_seat",
+      "seat_y": 21,
+      "seats": [
+        {"worker": "flash", "approach": [17, 21], "contact_offset": [-0.8, -1.0]},
+        {"worker": "longcat", "approach": [20, 21], "contact_offset": [0.9, -1.0]}
+      ]
+    },
+    {
+      "prop": "round_tea_table",
+      "x": 18.8,
+      "y": 22.4,
+      "width": 62,
+      "zone": "leisure",
+      "blocked_cells": [
+        [
+          18,
+          22
+        ],
+        [
+          19,
+          22
+        ]
+      ]
+    },
+    {
+      "prop": "green_armchair",
+      "x": 22.6,
+      "y": 21.9,
+      "width": 55,
+      "zone": "leisure",
+      "blocked_cells": [
+        [
+          22,
+          21
+        ],
+        [
+          23,
+          22
+        ]
+      ],
+      "role": "rest_seat",
+      "seat_y": 21,
+      "seats": [
+        {"worker": "step5", "approach": [23, 21], "contact_offset": [0.0, -0.7]}
+      ]
+    },
+    {
+      "prop": "aquarium_cabinet",
+      "x": 25.1,
+      "y": 19.6,
+      "width": 73,
+      "zone": "leisure",
+      "blocked_cells": [
+        [
+          25,
+          19
+        ]
+      ]
+    },
+    {
+      "prop": "bookcase",
+      "x": 25.7,
+      "y": 22.4,
+      "width": 54,
+      "zone": "leisure",
+      "blocked_cells": [
+        [
+          25,
+          21
+        ],
+        [
+          26,
+          21
+        ],
+        [
+          25,
+          22
+        ],
+        [
+          26,
+          22
+        ]
+      ]
+    },
+    {
+      "prop": "floor_lamp",
+      "x": 22.3,
+      "y": 19.7,
+      "width": 28,
+      "zone": "leisure",
+      "blocked_cells": [
+        [
+          22,
+          19
+        ]
+      ]
+    },
+    {
+      "prop": "meeting_table",
+      "x": 33,
+      "y": 10.3,
+      "width": 255,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          30,
+          8
+        ],
+        [
+          30,
+          9
+        ],
+        [
+          30,
+          10
+        ],
+        [
+          31,
+          8
+        ],
+        [
+          31,
+          9
+        ],
+        [
+          31,
+          10
+        ],
+        [
+          32,
+          8
+        ],
+        [
+          32,
+          9
+        ],
+        [
+          32,
+          10
+        ],
+        [
+          33,
+          8
+        ],
+        [
+          33,
+          9
+        ],
+        [
+          33,
+          10
+        ],
+        [
+          34,
+          8
+        ],
+        [
+          34,
+          9
+        ],
+        [
+          34,
+          10
+        ],
+        [
+          35,
+          8
+        ],
+        [
+          35,
+          9
+        ],
+        [
+          35,
+          10
+        ],
+        [
+          36,
+          8
+        ],
+        [
+          36,
+          9
+        ],
+        [
+          36,
+          10
+        ]
+      ],
+      "role": "table"
+    },
+    {
+      "prop": "meeting_chair_front",
+      "x": 31,
+      "y": 7.6,
+      "width": 48,
+      "zone": "meeting",
+      "blocked_cells": [],
+      "role": "seat",
+      "worker": "m3"
+    },
+    {
+      "prop": "meeting_chair_front",
+      "x": 33,
+      "y": 7.6,
+      "width": 48,
+      "zone": "meeting",
+      "blocked_cells": [],
+      "role": "seat",
+      "worker": "flash"
+    },
+    {
+      "prop": "meeting_chair_front",
+      "x": 35,
+      "y": 7.6,
+      "width": 48,
+      "zone": "meeting",
+      "blocked_cells": [],
+      "role": "seat",
+      "worker": "kimi"
+    },
+    {
+      "prop": "meeting_chair_back",
+      "x": 32,
+      "y": 11.6,
+      "width": 48,
+      "zone": "meeting",
+      "blocked_cells": [],
+      "role": "seat",
+      "worker": "longcat"
+    },
+    {
+      "prop": "meeting_chair_back",
+      "x": 34,
+      "y": 11.6,
+      "width": 48,
+      "zone": "meeting",
+      "blocked_cells": [],
+      "role": "seat",
+      "worker": "step5"
+    },
+    {
+      "prop": "projection_screen",
+      "x": 35.2,
+      "y": 4.6,
+      "width": 151,
+      "zone": "meeting",
+      "blocked_cells": []
+    },
+    {
+      "prop": "whiteboard",
+      "x": 30.8,
+      "y": 5.8,
+      "width": 125,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          30,
+          5
+        ],
+        [
+          31,
+          5
+        ]
+      ]
+    },
+    {
+      "prop": "meeting_plant",
+      "x": 37.4,
+      "y": 7.7,
+      "width": 64,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          37,
+          7
+        ]
+      ]
+    },
+    {
+      "prop": "wall_clock",
+      "x": 37.3,
+      "y": 1.5,
+      "width": 35,
+      "zone": "meeting",
+      "blocked_cells": []
+    },
+    {
+      "prop": "waste_bin",
+      "x": 37.5,
+      "y": 15.6,
+      "width": 23,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          37,
+          15
+        ]
+      ]
+    },
+    {
+      "prop": "bookcase",
+      "x": 36.8,
+      "y": 21.8,
+      "width": 64,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          36,
+          20
+        ],
+        [
+          37,
+          20
+        ],
+        [
+          36,
+          21
+        ],
+        [
+          37,
+          21
+        ]
+      ]
+    },
+    {
+      "prop": "green_armchair",
+      "x": 30.2,
+      "y": 21.7,
+      "width": 63,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          30,
+          20
+        ],
+        [
+          30,
+          21
+        ]
+      ]
+    },
+    {
+      "prop": "standing_table",
+      "x": 34,
+      "y": 21.8,
+      "width": 57,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          34,
+          21
+        ]
+      ]
+    },
+    {
+      "prop": "fern",
+      "x": 28.9,
+      "y": 22.3,
+      "width": 44,
+      "zone": "meeting",
+      "blocked_cells": [
+        [
+          28,
+          22
+        ],
+        [
+          29,
+          22
+        ]
+      ]
+    }
+  ],
+  "notes": "家具宽度为世界像素，x/y 为脚底网格坐标；blocked_cells 同时供后端和 Godot 寻路。由 tools/scene_layout.py 同步。",
+  "art_layout_version": 3,
+  "entrance": {
+    "cell": [
+      0,
+      12
+    ],
+    "wall_opening": [
+      [
+        0,
+        11
+      ],
+      [
+        0,
+        12
+      ]
+    ],
+    "queue_cells": [
+      [
+        8,
+        8
+      ],
+      [
+        8,
+        10
+      ],
+      [
+        8,
+        12
+      ],
+      [
+        8,
+        14
+      ],
+      [
+        8,
+        16
+      ]
+    ],
+    "staff_cells": [
+      [
+        10,
+        8
+      ],
+      [
+        10,
+        10
+      ],
+      [
+        10,
+        12
+      ],
+      [
+        10,
+        14
+      ],
+      [
+        10,
+        16
+      ]
+    ]
+  }
+}

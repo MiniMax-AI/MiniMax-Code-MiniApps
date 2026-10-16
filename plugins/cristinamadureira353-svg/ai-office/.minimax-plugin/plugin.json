@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "ai-office",
+  "displayName": "AI 事务所",
+  "version": "0.5.10",
+  "description": "五个真实模型员工的像素事务所；新玩家由 AI 引导选择模型、申请 Key 和配置，之后直接开玩，额度耗尽时角色脑袋宕机。",
+  "author": "最爱双皮奶 (cristinamadureira353-svg)",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": ["打开 AI 事务所", "打开像素办公室游戏"],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
