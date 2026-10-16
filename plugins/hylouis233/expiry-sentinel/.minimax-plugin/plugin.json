@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "expiry-sentinel",
+  "displayName": "蹬王之王",
+  "version": "1.0.0",
+  "description": "实时追踪 MiniMax Code 积分与重置卡的到期时间，自动按「先过期先用」决定用卡还是留积分，榨干最后一点算力。",
+  "author": "hylouis233",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "打开蹬王之王",
+    "看看我的积分和重置卡什么时候过期",
+    "我的额度快用完了，该用重置卡还是留着？"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

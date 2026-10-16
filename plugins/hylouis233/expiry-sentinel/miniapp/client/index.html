@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>蹬王之王</title>
+    <style>
+      :root,
+      [data-theme='light'] {
+        --mcode-bg: #ffffff;
+        --mcode-bg-secondary: #f5f5f5;
+        --mcode-surface: #ffffff;
+        --mcode-surface-muted: #fafafa;
+        --mcode-text: #171717;
+        --mcode-text-muted: #666666;
+        --mcode-text-subtle: #adadad;
+        --mcode-border: #0a0a0a14;
+        --mcode-border-strong: #0a0a0af2;
+        --mcode-accent: #0094fc;
+        --mcode-success: #04b54b;
+        --mcode-warning: #f56811;
+        --mcode-danger: #f73646;
+        --mcode-primary-action-bg: #171717;
+        --mcode-primary-action-text: #ffffff;
+      }
+      [data-theme='dark'] {
+        --mcode-bg: #171717;
+        --mcode-bg-secondary: #1c1c1c;
+        --mcode-surface: #262626;
+        --mcode-surface-muted: #262626;
+        --mcode-text: #ededed;
+        --mcode-text-muted: #949494;
+        --mcode-text-subtle: #666666;
+        --mcode-border: #ffffff14;
+        --mcode-border-strong: #fffffff2;
+        --mcode-accent: #0077d9;
+        --mcode-success: #009c3d;
+        --mcode-warning: #e25507;
+        --mcode-danger: #e31937;
+        --mcode-primary-action-bg: #ffffff;
+        --mcode-primary-action-text: #171717;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --mcode-bg: #171717;
+          --mcode-bg-secondary: #1c1c1c;
+          --mcode-surface: #262626;
+          --mcode-surface-muted: #262626;
+          --mcode-text: #ededed;
+          --mcode-text-muted: #949494;
+          --mcode-text-subtle: #666666;
+          --mcode-border: #ffffff14;
+          --mcode-border-strong: #fffffff2;
+          --mcode-accent: #0077d9;
+          --mcode-success: #009c3d;
+          --mcode-warning: #e25507;
+          --mcode-danger: #e31937;
+          --mcode-primary-action-bg: #ffffff;
+          --mcode-primary-action-text: #171717;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * { transition: none !important; animation: none !important; }
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 24px;
+        background: var(--mcode-bg); color: var(--mcode-text);
+        font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px; line-height: 1.6;
+      }
+      .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+      header.page { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+      h1 { margin: 0; font-size: 18px; line-height: 28px; font-weight: 600; }
+      .sub { margin: 4px 0 0; color: var(--mcode-text-muted); font-size: 12px; line-height: 16px; }
+      h2 { margin: 0 0 12px; font-size: 16px; line-height: 24px; font-weight: 500; }
+
+      .card { background: var(--mcode-surface); border: 1px solid var(--mcode-border); border-radius: 12px; padding: 16px 20px; }
+
+      /* 过期预警：置顶，最高视觉权重 */
+      .alert {
+        border-radius: 12px; padding: 16px 20px; margin-bottom: 20px;
+        border: 1px solid var(--mcode-border); background: var(--mcode-surface-muted);
+        display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
+      }
+      .alert[data-tone='danger'] { border-color: var(--mcode-danger); }
+      .alert[data-tone='warning'] { border-color: var(--mcode-warning); }
+      .alert[data-tone='ok'] { border-color: var(--mcode-success); }
+      .alert-main { flex: 1 1 260px; min-width: 0; }
+      .alert-figure { font-size: 28px; line-height: 34px; font-weight: 600; }
+      .alert-figure[data-tone='danger'] { color: var(--mcode-danger); }
+      .alert-figure[data-tone='warning'] { color: var(--mcode-warning); }
+      .alert-label { font-size: 12px; color: var(--mcode-text-muted); }
+      .alert-side { display: flex; gap: 24px; flex-wrap: wrap; }
+      .alert-side > div { min-width: 96px; }
+      .side-value { font-size: 18px; line-height: 24px; font-weight: 500; }
+
+      .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 20px; }
+      .kpi-label { color: var(--mcode-text-muted); font-size: 12px; }
+      .kpi-value { font-size: 24px; line-height: 32px; font-weight: 600; margin-top: 2px; }
+      .kpi-foot { color: var(--mcode-text-subtle); font-size: 12px; }
+      .bar { height: 6px; border-radius: 3px; background: var(--mcode-surface-muted); overflow: hidden; margin-top: 8px; border: 1px solid var(--mcode-border); }
+      .bar > span { display: block; height: 100%; background: var(--mcode-accent); }
+      .bar > span[data-tone='warning'] { background: var(--mcode-warning); }
+      .bar > span[data-tone='danger'] { background: var(--mcode-danger); }
+
+      .verdict { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 12px;
+        border: 1px solid var(--mcode-border); background: var(--mcode-surface-muted); margin-bottom: 20px; }
+      .verdict[data-tone='use-card'] { border-color: var(--mcode-warning); }
+      .verdict[data-tone='use-credit'] { border-color: var(--mcode-accent); }
+      .verdict[data-tone='idle'] { border-color: var(--mcode-success); }
+      .verdict-badge { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+      .verdict[data-tone='use-card'] .verdict-badge { background: var(--mcode-warning); color: #fff; }
+      .verdict[data-tone='use-credit'] .verdict-badge { background: var(--mcode-accent); color: #fff; }
+      .verdict[data-tone='idle'] .verdict-badge { background: var(--mcode-success); color: #fff; }
+      .verdict[data-tone='wait'] .verdict-badge { background: var(--mcode-text-subtle); color: #fff; }
+      .verdict-body { min-width: 0; }
+      .verdict-title { font-weight: 500; }
+      .verdict-reason { color: var(--mcode-text-muted); font-size: 12px; margin-top: 2px; }
+
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+      @media (max-width: 768px) { .grid2 { grid-template-columns: 1fr; } }
+
+      .tablewrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align: left; color: var(--mcode-text-muted); font-weight: 400; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--mcode-border); white-space: nowrap; }
+      td { padding: 7px 8px; border-bottom: 1px solid var(--mcode-border); white-space: nowrap; }
+      tr:last-child td { border-bottom: none; }
+      tr[data-expired='1'] td { color: var(--mcode-text-subtle); }
+      tr[data-expired='1'] .pill { color: var(--mcode-danger); border-color: var(--mcode-danger); }
+
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--mcode-border); }
+      .pill[data-tone='soon'] { color: var(--mcode-warning); border-color: var(--mcode-warning); }
+      .pill[data-tone='urgent'] { color: var(--mcode-danger); border-color: var(--mcode-danger); }
+      .pill[data-tone='ok'] { color: var(--mcode-text-muted); }
+
+      .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+      .switch { display: inline-flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+      .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+      .track { width: 40px; height: 22px; border-radius: 999px; background: var(--mcode-surface-muted);
+        border: 1px solid var(--mcode-border-strong); position: relative; transition: background 150ms ease-out; flex: none; margin-top: 2px; }
+      .thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+        background: var(--mcode-surface); border: 1px solid var(--mcode-border); transition: transform 150ms ease-out; }
+      .switch input:checked + .track { background: var(--mcode-accent); border-color: var(--mcode-accent); }
+      .switch input:checked + .track .thumb { transform: translateX(18px); }
+      .switch input:focus-visible + .track { outline: 2px solid var(--mcode-accent); outline-offset: 2px; }
+
+      button { height: 36px; padding: 0 16px; border-radius: 8px; cursor: pointer; font-size: 14px;
+        font-family: inherit; border: 1px solid var(--mcode-border); background: var(--mcode-surface-muted);
+        color: var(--mcode-text); transition: opacity 150ms ease-out; }
+      button:hover:not(:disabled) { opacity: 0.85; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button:focus-visible { outline: 2px solid var(--mcode-accent); outline-offset: 2px; }
+      button.primary { background: var(--mcode-primary-action-bg); color: var(--mcode-primary-action-text); border-color: var(--mcode-primary-action-bg); }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+      .status { margin-top: 12px; font-size: 12px; min-height: 18px; }
+      .status[data-tone='ok'] { color: var(--mcode-success); }
+      .status[data-tone='err'] { color: var(--mcode-danger); }
+      .status[data-tone='info'] { color: var(--mcode-text-muted); }
+      .note { color: var(--mcode-text-subtle); font-size: 12px; margin-top: 12px; line-height: 16px; }
+      .empty { color: var(--mcode-text-muted); font-size: 13px; padding: 12px 0; }
+
+      /* 成果汇总：已用尽的积分折算成一句肯定的话 */
+      .usedup {
+        margin: 0 0 14px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--mcode-success);
+        background: var(--mcode-surface-muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .usedup strong { color: var(--mcode-success); font-weight: 600; }
+      .usedup[hidden] { display: none; }
+
+      /* 没来得及蹬完：与上方成果汇总相反的情绪，用警示色 */
+      .lostup {
+        margin: 0 0 14px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--mcode-warning);
+        background: var(--mcode-surface-muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .lostup strong { color: var(--mcode-warning); font-weight: 600; }
+      .lostup[hidden] { display: none; }
+
+      /* 重置卡成果汇总：与积分那两句同族的正反馈 */
+      .cardup {
+        margin: 0 0 12px;
+        padding: 10px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--mcode-accent);
+        background: var(--mcode-surface-muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .cardup strong { color: var(--mcode-accent); font-weight: 600; }
+      .cardup[hidden] { display: none; }
+      .skeleton { color: var(--mcode-text-subtle); font-size: 13px; padding: 12px 0; }
+      .log { margin-top: 8px; }
+      .log-row { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--mcode-border); font-size: 12px; }
+      .log-row:last-child { border-bottom: none; }
+      .log-time { color: var(--mcode-text-subtle); flex: none; }
+      #live-dot { display: inline-block; margin-right: 5px; color: var(--mcode-text-subtle); font-size: 10px; vertical-align: middle; }
+      #live-dot[data-state='live'] { color: var(--mcode-success); }
+      #live-dot[data-state='connecting'] { color: var(--mcode-warning); }
+      #live-dot[data-state='down'] { color: var(--mcode-danger); }
+      #live-status { vertical-align: middle; }
+    </style>
+  </head>
+  <body>
+    <header class="page">
+      <div>
+        <h1>蹬王之王</h1>
+        <p class="sub">实时追踪积分与重置卡的到期时间，按「先过期先用」决定用卡还是留积分，不让额度白白作废</p>
+        <p class="sub" style="margin-top: 2px">
+          <span id="live-dot" aria-hidden="true">●</span>
+          <span id="live-status">正在连接实时更新…</span>
+        </p>
+      </div>
+      <div class="actions">
+        <button id="refresh" type="button">刷新</button>
+        <button id="reconnect" type="button" hidden>立即重连</button>
+        <button id="use-card" type="button" class="primary" disabled>使用建议的重置卡</button>
+      </div>
+    </header>
+
+    <section class="alert" id="alert" data-tone="ok" role="status" aria-live="polite">
+      <div class="alert-main">
+        <div class="alert-label">7 天内将要过期</div>
+        <div class="alert-figure mono" id="alert-figure" data-tone="danger">—</div>
+        <div class="sub" id="alert-sub">正在统计…</div>
+      </div>
+      <div class="alert-side">
+        <div>
+          <div class="alert-label">30 天内过期</div>
+          <div class="side-value mono" id="soon30">—</div>
+        </div>
+        <div>
+          <div class="alert-label">有效余额</div>
+          <div class="side-value mono" id="live-balance">—</div>
+        </div>
+        <div>
+          <div class="alert-label">已过期损失</div>
+          <div class="side-value mono" id="lost-balance">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="kpis" aria-label="用量概览">
+      <div class="card">
+        <div class="kpi-label">5 小时限额</div>
+        <div class="kpi-value" id="kpi-5h">—</div>
+        <div class="bar"><span id="bar-5h" style="width:0%"></span></div>
+        <div class="kpi-foot" id="kpi-5h-foot"></div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">积分总余额</div>
+        <div class="kpi-value mono" id="kpi-total">—</div>
+        <div class="kpi-foot" id="kpi-total-foot"></div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">最早到期</div>
+        <div class="kpi-value mono" id="kpi-next">—</div>
+        <div class="kpi-foot" id="kpi-next-foot"></div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">可用重置卡</div>
+        <div class="kpi-value mono" id="kpi-card">—</div>
+        <div class="kpi-foot" id="kpi-card-foot"></div>
+      </div>
+    </section>
+
+    <div class="verdict" id="verdict" data-tone="idle" role="status">
+      <span class="verdict-badge" id="verdict-badge">加载中</span>
+      <div class="verdict-body">
+        <div class="verdict-title" id="verdict-title">正在读取额度与到期信息…</div>
+        <div class="verdict-reason" id="verdict-reason"></div>
+      </div>
+    </div>
+
+    <section class="card" style="margin-bottom: 20px">
+      <div class="toggle-row">
+        <label class="switch">
+          <input type="checkbox" id="auto-toggle" />
+          <span class="track"><span class="thumb"></span></span>
+          <span>
+            自动执行：额度耗尽时按「先过期先用」决定用卡或保留
+            <span class="sub" style="display: block" id="auto-hint">关闭时只在页面给出建议，不会扣卡</span>
+          </span>
+        </label>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+          <label for="interval-value" class="sub">检测间隔</label>
+          <input
+            type="number"
+            id="interval-value"
+            min="1"
+            step="1"
+            style="width: 84px; height: 36px; padding: 0 10px; border-radius: 8px;
+                   border: 1px solid var(--mcode-border); background: var(--mcode-surface);
+                   color: var(--mcode-text); font-family: inherit; font-size: 14px"
+          />
+          <select
+            id="interval-unit"
+            style="height: 36px; padding: 0 10px; border-radius: 8px;
+                   border: 1px solid var(--mcode-border); background: var(--mcode-surface);
+                   color: var(--mcode-text); font-family: inherit; font-size: 14px"
+          >
+            <option value="1000">秒</option>
+            <option value="60000">分钟</option>
+          </select>
+          <button id="auto-run" type="button">立即判定一次</button>
+        </div>
+      </div>
+      <div class="status" id="auto-status" role="status" aria-live="polite"></div>
+      <div class="log" id="auto-log"></div>
+      <p class="note" id="auto-note">
+        判定结论为「保留积分」时不执行任何写操作；「立即判定一次」可随时手动触发，无节流。
+      </p>
+    </section>
+
+    <section class="card" style="margin-bottom: 20px">
+      <div class="toggle-row">
+        <label class="switch">
+          <input type="checkbox" id="daemon-toggle" />
+          <span class="track"><span class="thumb"></span></span>
+          <span>
+            后台服务：关闭本页面也继续自动判定
+            <span class="sub" style="display: block" id="daemon-hint">由系统守护进程常驻，开机自启</span>
+          </span>
+        </label>
+        <button id="daemon-toggle-btn" type="button">启用</button>
+      </div>
+      <div class="status" id="daemon-status" role="status" aria-live="polite"></div>
+      <p class="note" id="daemon-note">
+        与上面的「自动执行」是两套独立机制：上面只在本页面打开时生效，这里交给系统常驻进程，
+        两者用同一套「先过期先用」决策，不会重复扣卡（服务端按幂等键去重）。
+      </p>
+    </section>
+
+    <section class="card" style="margin-bottom: 20px">
+      <h2>积分到期明细</h2>
+      <p class="sub" style="margin: -6px 0 12px" id="credit-caption"></p>
+      <p class="usedup" id="usedup-note" hidden></p>
+      <div class="tablewrap" id="credit-table"><div class="skeleton">读取中…</div></div>
+    </section>
+
+    <section class="grid2">
+      <div class="card">
+        <h2>重置卡到期</h2>
+        <p class="cardup" id="cardup-note" hidden></p>
+        <div class="tablewrap" id="cards"><div class="skeleton">读取中…</div></div>
+      </div>
+      <div class="card">
+        <h2>平台积分池</h2>
+        <div class="tablewrap" id="platform-pools"><div class="skeleton">读取中…</div></div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-bottom: 20px" id="lost-section">
+      <h2>你没来得及蹬完的 token</h2>
+      <p class="sub" style="margin: -6px 0 12px" id="lost-caption"></p>
+      <p class="lostup" id="lostup-note" hidden></p>
+      <div class="tablewrap" id="lost-table"><div class="empty">暂无过期未用完的积分</div></div>
+    </section>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let snapshot = null;
+      let busy = false;
+      // 服务端只推送变化的明细分区，未变化的部分在这里保留，避免每次重拉
+      const cachedCredits = { lost: null, active: null, usedUp: null };
+
+      const TONE = { 'use-card': 'use-card', 'use-credit': 'use-credit', idle: 'idle', wait: 'wait' };
+      const LABEL = { 'use-card': '建议用卡', 'use-credit': '建议用积分', idle: '额度充足', wait: '暂不处理' };
+      const OUTCOME = {
+        CARD_USED: '已用卡', CARD_FAILED: '扣卡失败', CARD_ERROR: '扣卡异常',
+        KEEP_CREDIT: '保留积分', NO_ACTION: '无需动作', ERROR: '判定失败',
+        AUTO_OFF: '自动未开启', SKIPPED_DUPLICATE: '已跳过（防重复）',
+      };
+
+      const DAY = 86400000;
+      const fmtDay = (ms) => {
+        if (!ms) return '未知';
+        const d = new Date(ms);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      };
+      const daysLeft = (ms) => (ms ? Math.round((ms - Date.now()) / DAY) : null);
+      const dayText = (ms) => {
+        const n = daysLeft(ms);
+        if (n === null) return '—';
+        if (n < 0) return `已过期 ${-n} 天`;
+        if (n === 0) return '今天到期';
+        return `剩 ${n} 天`;
+      };
+      const num = (v) => Number(v ?? 0).toLocaleString('zh-CN');
+      const label = (r) => OUTCOME[r?.outcome] || r?.outcome || '未知结果';
+      const setStatus = (el, text, tone) => { el.textContent = text || ''; el.dataset.tone = tone || 'info'; };
+
+      /** 把毫秒说成人话：90 秒 / 5 分钟。 */
+      function fmtInterval(ms) {
+        // SSE 首帧可能还没带上该字段，回退到服务端默认 15s 而不是显示「0 秒」
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n <= 0) return '15 秒';
+        if (n < 60000) return `${Math.round(n / 1000)} 秒`;
+        const m = n / 60000;
+        return `${Number.isInteger(m) ? m : m.toFixed(1)} 分钟`;
+      }
+
+      function renderAlert(d) {
+        const e = d.expiry || {};
+        const fig = $('alert-figure');
+        fig.textContent = num(Math.round(e.soon7Balance ?? 0));
+        const has = (e.soon7Count ?? 0) > 0;
+        const tone = !has ? 'ok' : (e.soon7Balance / Math.max(1, d.codeCredits.liveBalance) > 0.2 ? 'danger' : 'warning');
+        $('alert').dataset.tone = tone;
+        fig.dataset.tone = has ? tone : '';
+        $('alert-sub').textContent = has
+          ? `${e.soon7Count} 笔即将过期，占有效余额 ${((e.soon7Balance / Math.max(1, d.codeCredits.liveBalance)) * 100).toFixed(1)}%`
+          : '7 天内没有积分到期';
+        $('soon30').textContent = num(Math.round(e.soon30Balance ?? 0));
+        $('live-balance').textContent = num(Math.round(d.codeCredits.liveBalance ?? 0));
+        $('lost-balance').textContent = num(Math.round(d.codeCredits.lostBalance ?? 0));
+      }
+
+      function renderKpis(d) {
+        const f = d.quota?.fiveHour;
+        if (f) {
+          $('kpi-5h').textContent = f.unlimited ? '不限量' : `剩 ${f.remainingPercent.toFixed(0)}%`;
+          const bar = $('bar-5h');
+          bar.style.width = f.unlimited ? '100%' : `${Math.min(100, f.remainingPercent)}%`;
+          bar.dataset.tone = f.exhausted ? 'danger' : f.remainingPercent < 20 ? 'warning' : '';
+          $('kpi-5h-foot').textContent = f.exhausted ? '已耗尽，请求将扣积分' : `已用 ${f.usedPercent.toFixed(0)}%`;
+        }
+        const summary = d.creditSummary;
+        $('kpi-total').textContent = summary ? num(Math.round(summary.total)) : num(Math.round(d.codeCredits.liveBalance ?? 0));
+        $('kpi-total-foot').textContent = summary
+          ? `购入 ${num(Math.round(summary.purchased))} + 赠送 ${num(Math.round(summary.free))}`
+          : `共 ${d.codeCredits.totalCount ?? 0} 笔`;
+        const nx = d.expiry?.nextExpireMs;
+        $('kpi-next').textContent = fmtDay(nx);
+        $('kpi-next-foot').textContent = nx ? dayText(nx) : '—';
+        $('kpi-card').textContent = String(d.cards.live ?? 0);
+        $('kpi-card-foot').textContent = `共 ${d.cards.total ?? 0} 张`;
+      }
+
+      function renderVerdict(d) {
+        const v = d.decision || {};
+        const tone = TONE[v.action] || 'idle';
+        $('verdict').dataset.tone = tone;
+        $('verdict-badge').textContent = LABEL[v.action] || '未知';
+        $('verdict-title').textContent = v.reason || '暂无结论';
+        $('verdict-reason').textContent =
+          v.action === 'use-card' && v.target ? `目标卡 ${v.target.cardId}，到期 ${fmtDay(v.target.expireTimeMs)}` : '';
+        $('use-card').disabled = !(v.action === 'use-card' && v.target) || busy;
+      }
+
+      function renderCredits(d) {
+        const c = d.codeCredits;
+        if (c.usedUp) cachedCredits.usedUp = c.usedUp;
+
+        // 服务端按分区增量推送，未变化的分区不会重发；这里沿用上一帧的。
+        if (c.lost) cachedCredits.lost = c.lost;
+        if (c.active) cachedCredits.active = c.active;
+
+        const active = [...(cachedCredits.active ?? [])]
+          .sort((a, b) => (a.expireTimeMs ?? 0) - (b.expireTimeMs ?? 0));
+        const lost = [...(cachedCredits.lost ?? [])]
+          .sort((a, b) => (a.expireTimeMs ?? 0) - (b.expireTimeMs ?? 0));
+
+        $('credit-caption').textContent = c.available
+          ? `${active.length} 笔仍有余额待使用，另有 ${lost.length} 笔已过期未用完（见下方）`
+          : '未能读取积分明细';
+
+        // 成果汇总：已用尽的部分折叠成一句话
+        const usedUp = cachedCredits.usedUp;
+        if (usedUp && usedUp.consumed > 0) {
+          $('usedup-note').innerHTML =
+            `你已经蹬掉了 <strong class="mono">${num(Math.round(usedUp.consumed))}</strong> 积分！享受 MiniMax 吧！` +
+            `<span class="sub">（${usedUp.count} 笔已用尽，其中 ${usedUp.expiredCount} 笔已到期）</span>`;
+          $('usedup-note').hidden = false;
+        } else {
+          $('usedup-note').hidden = true;
+        }
+
+        // 主表格：只列仍有效的积分，过期的移到底部单独一块
+        const host = $('credit-table');
+        if (!c.available || active.length === 0) {
+          host.innerHTML = '<div class="empty">暂无有余额的积分</div>';
+        } else {
+          const rows = active
+            .map((i) => {
+              const n = daysLeft(i.expireTimeMs);
+              const tone = n <= 7 ? 'urgent' : n <= 14 ? 'soon' : 'ok';
+              return `<tr>
+                <td class="mono">${fmtDay(i.grantedAtMs)}</td>
+                <td>${i.label}</td>
+                <td class="mono">${num(i.granted)}</td>
+                <td class="mono">${num(i.consumed)}</td>
+                <td class="mono">${num(i.balance)}</td>
+                <td class="mono">${fmtDay(i.expireTimeMs)}</td>
+                <td><span class="pill" data-tone="${tone}">${dayText(i.expireTimeMs)}</span></td>
+              </tr>`;
+            })
+            .join('');
+          host.innerHTML = `<table>
+            <thead><tr><th>到账日</th><th>类型</th><th>授予</th><th>已用</th><th>剩余</th><th>到期日</th><th>状态</th></tr></thead>
+            <tbody>${rows}</tbody></table>`;
+        }
+
+        renderLost(lost, c);
+      }
+
+      /** 底部区块：已过期但仍有余额的积分 —— 没来得及蹬完的那部分。 */
+      function renderLost(lost, c) {
+        const host = $('lost-table');
+        $('lost-caption').textContent = lost.length
+          ? `${lost.length} 笔已过期，合计 ${num(Math.round(c.lostBalance ?? 0))} 积分作废`
+          : '';
+
+        const total = Math.round(c.lostBalance ?? 0);
+        if (lost.length === 0) {
+          $('lostup-note').hidden = true;
+          host.innerHTML = '<div class="empty">太好了，没有过期未用完的积分</div>';
+          return;
+        }
+        $('lostup-note').innerHTML =
+          `你未能蹬完 <strong class="mono">${num(total)}</strong> 积分！` +
+          `你的工作量不饱和！你辜负了小大老师的信任！老师对你很失望！😠`;
+        $('lostup-note').hidden = false;
+
+        const rows = lost
+          .map(
+            (i) => `<tr data-expired="1">
+              <td class="mono">${fmtDay(i.grantedAtMs)}</td>
+              <td>${i.label}</td>
+              <td class="mono">${num(i.granted)}</td>
+              <td class="mono">${num(i.consumed)}</td>
+              <td class="mono">${num(i.balance)}</td>
+              <td class="mono">${fmtDay(i.expireTimeMs)}</td>
+              <td><span class="pill" data-tone="urgent">${dayText(i.expireTimeMs)}</span></td>
+            </tr>`,
+          )
+          .join('');
+        host.innerHTML = `<table>
+          <thead><tr><th>到账日</th><th>类型</th><th>授予</th><th>已用</th><th>作废</th><th>到期日</th><th>状态</th></tr></thead>
+          <tbody>${rows}</tbody></table>`;
+      }
+
+      function renderCards(d) {
+        const host = $('cards');
+        const items = (d.cards.items || []).slice(0, 12);
+
+        // 成果汇总：用掉了几张重置卡（数据来自服务端流水，不用本地推算）
+        const u = d.cardUsage || {};
+        const note = $('cardup-note');
+        if (u.available && typeof u.usedCount === 'number') {
+          note.innerHTML =
+            `你已经蹬掉了 <strong class="mono">${num(u.usedCount)}</strong> 张重置卡！MiniMax 就是 Mibo！` +
+            (u.lastUsedAtMs
+              ? `<span class="sub">（最近一次 ${new Date(u.lastUsedAtMs).toLocaleString('zh-CN', { hour12: false })}）</span>`
+              : '');
+          note.hidden = false;
+        } else {
+          note.hidden = true;
+        }
+
+        if (items.length === 0) {
+          host.innerHTML = '<div class="empty">没有可用的重置卡</div>';
+          return;
+        }
+        host.innerHTML = `<table><thead><tr><th>序号</th><th>到期日</th><th>状态</th></tr></thead><tbody>${items
+          .map((c) => {
+            const n = daysLeft(c.expireTimeMs);
+            return `<tr><td class="mono">${c.index}</td><td class="mono">${fmtDay(c.expireTimeMs)}</td>
+              <td><span class="pill" data-tone="${n <= 7 ? 'soon' : 'ok'}">${dayText(c.expireTimeMs)}</span></td></tr>`;
+          })
+          .join('')}</tbody></table>`;
+      }
+
+      function renderPools(d) {
+        const host = $('platform-pools');
+        const pools = d.platformCredits?.pools || [];
+        if (pools.length === 0) { host.innerHTML = '<div class="empty">暂无平台积分池</div>'; return; }
+        host.innerHTML = `<table><thead><tr><th>池</th><th>余额</th><th>到期日</th></tr></thead><tbody>${pools
+          .map((p) => `<tr><td>${p.label}</td><td class="mono">${num(p.balance)}</td>
+            <td class="mono">${fmtDay(p.expireTimeMs)} <span class="pill" data-tone="${daysLeft(p.expireTimeMs) <= 14 ? 'soon' : 'ok'}">${dayText(p.expireTimeMs)}</span></td></tr>`)
+          .join('')}</tbody></table>`;
+      }
+
+      function renderAutoLog(runs) {
+        const host = $('auto-log');
+        if (!runs || runs.length === 0) { host.innerHTML = ''; return; }
+        host.innerHTML = runs
+          .map((r) => `<div class="log-row">
+            <span class="log-time mono">${new Date(r.atMs).toLocaleString('zh-CN', { hour12: false })}</span>
+            <span>${label(r)}</span>
+            <span class="sub" style="flex:1">${r.message || r.reason || ''}</span>
+          </div>`)
+          .join('');
+      }
+
+      function render(d) {
+        if (d.error) {
+          $('alert').dataset.tone = 'danger';
+          $('alert-figure').textContent = '读取失败';
+          $('alert-sub').textContent = d.error;
+          $('verdict-badge').textContent = '读取失败';
+          $('verdict-title').textContent = d.error;
+          $('use-card').disabled = true;
+          return;
+        }
+        snapshot = d;
+        $('reconnect').hidden = true;
+        renderAlert(d); renderKpis(d); renderVerdict(d);
+        renderCredits(d); renderCards(d); renderPools(d);
+        renderAutoLog(d.autoRuns);
+        $('auto-toggle').checked = Boolean(d.autoEnabled);
+        $('auto-hint').textContent = d.autoEnabled
+          ? `已开启：每 ${fmtInterval(d.autoIntervalMs)}自动判定一次，结论为用卡时才会扣卡`
+          : '关闭时只在页面给出建议，不会扣卡';
+        // 回显间隔（秒 / 分钟自动选更合适的单位），避免覆盖用户正在输入的内容
+        if (document.activeElement !== $('interval-value')) {
+          const ms = d.autoIntervalMs ?? 15000;
+          if (ms % 60000 === 0 && ms / 60000 >= 1) {
+            $('interval-unit').value = '60000';
+            $('interval-value').value = String(ms / 60000);
+          } else {
+            $('interval-unit').value = '1000';
+            $('interval-value').value = String(Math.round(ms / 1000));
+          }
+        }
+        $('auto-note').textContent = d.autoEnabled
+          ? `当前每 ${fmtInterval(d.autoIntervalMs)}自动判定一次，可在左侧随时调整。「立即判定一次」无节流，随时可点。判定为「保留积分」时不执行任何写操作。`
+          : '自动执行已关闭，页面只给出建议。开启后按设定间隔自动判定；「立即判定一次」无节流，随时可点。判定为「保留积分」时不执行任何写操作。';
+      }
+
+      /**
+       * 区分三类失败，避免把「凭据失效」说成「服务连不上」：
+       *   stale —— 401。Mini App 进程重启后换了新凭据，而这个标签页仍持有旧凭据。
+       *           Host 没有提供刷新凭据的接口（window.mcode 只有 message.append），
+       *           所以页面侧无法自愈，只能后台重试并在恢复时自动接上。
+       *   down  —— 网络/服务不可达。这类是可以自愈的。
+       */
+      function renderFailure(message, stale) {
+        $('alert').dataset.tone = 'warning';
+        $('alert-figure').textContent = stale ? '正在重连' : '连接失败';
+        $('alert-sub').textContent = message;
+        $('verdict').dataset.tone = 'wait';
+        $('verdict-badge').textContent = stale ? '正在重连' : '连接失败';
+        $('verdict-title').textContent = message;
+        $('verdict-reason').textContent = stale
+          ? '下方是上次读取到的数据；后台正在重试，连上后会自动恢复实时更新'
+          : '';
+        $('use-card').disabled = true;
+        // 只有断线时才露出「立即重连」，正常状态不占位置
+        $('reconnect').hidden = !stale;
+      }
+
+      /** 请求结果：区分 stale / down / ok，供重连逻辑判断。 */
+      async function fetchState() {
+        const res = await fetch('/api/state', { cache: 'no-store' });
+        if (res.status === 401) return { kind: 'stale' };
+        if (!res.ok) return { kind: 'down', status: res.status };
+        return { kind: 'ok', data: await res.json() };
+      }
+
+      async function load() {
+        if (busy) return;
+        busy = true; $('refresh').disabled = true;
+        try {
+          const r = await fetchState();
+          if (r.kind === 'stale') {
+            authStale = true;
+            renderFailure('Mini App 已重启，正在后台重连…', true);
+            scheduleReconnect();
+            return;
+          }
+          if (r.kind === 'down') {
+            renderFailure(`无法连接到 Mini App 服务（HTTP ${r.status}）`, false);
+            scheduleReconnect();
+            return;
+          }
+          authStale = false;
+          stopReconnect();
+          $('reconnect').hidden = true;
+          render(r.data);
+        } catch {
+          renderFailure('无法连接到 Mini App 服务', false);
+          scheduleReconnect();
+        } finally {
+          busy = false; $('refresh').disabled = false;
+          if (snapshot?.decision && !authStale) {
+            $('use-card').disabled = snapshot.decision.action !== 'use-card';
+          }
+        }
+      }
+
+      // ── 实时更新 ──────────────────────────────────────────────────────────
+      // 服务端每 30 秒取一次数据，只在关键字段变化时通过 SSE 推送，
+      // 所以页面不会被无意义的重绘打扰；断线时自动退回轮询。
+      function setLive(state, text) {
+        $('live-dot').dataset.state = state;
+        $('live-status').textContent = text;
+      }
+
+      let es = null;
+      let fallbackTimer = null;
+      /** 凭据失效标记：true 时优先走后台重连而不是普通轮询 */
+      let authStale = false;
+      /** 后台重连的定时器与当前退避档位 */
+      let reconnectTimer = null;
+      let reconnectAttempt = 0;
+
+      // 指数退避：1s 起，上限 30s。避免服务重启期间把 Host 打爆。
+      const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
+
+      function startFallbackPoll() {
+        if (fallbackTimer) return;
+        load();
+        fallbackTimer = setInterval(load, 60_000);
+      }
+      function stopFallbackPoll() {
+        if (!fallbackTimer) return;
+        clearInterval(fallbackTimer);
+        fallbackTimer = null;
+      }
+
+      /**
+       * 安排一次后台重连尝试。
+       * 成功一次即 stopReconnect()，并重新建立 SSE 实时连接。
+       */
+      function scheduleReconnect() {
+        if (reconnectTimer) return;
+        const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+        reconnectAttempt += 1;
+        reconnectTimer = setTimeout(async () => {
+          reconnectTimer = null;
+          try {
+            const r = await fetchState();
+            if (r.kind === 'ok') {
+              // 恢复了：停掉重连与降级轮询，重建 SSE，刷新页面数据
+              stopReconnect();
+              stopFallbackPoll();
+              authStale = false;
+              reconnectAttempt = 0;
+              setLive('connecting', '连接已恢复，正在恢复实时更新…');
+              connectStream();
+              render(r.data);
+              return;
+            }
+            // 仍是 stale / down：继续按退避重试
+            scheduleReconnect();
+          } catch {
+            scheduleReconnect();
+          }
+        }, delay);
+      }
+
+      function stopReconnect() {
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        reconnectAttempt = 0;
+      }
+
+      function connectStream() {
+        if (es) es.close();
+        setLive('connecting', '正在连接实时更新…');
+        es = new EventSource('/api/stream');
+
+        es.onopen = () => {
+          setLive('live', '实时更新已连接');
+          stopFallbackPoll();
+        };
+
+        es.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            render(data);
+            if (!data.error) {
+              const at = new Date(data.fetchedAtMs || Date.now());
+              setLive('live', `实时更新已连接 · 最近同步 ${at.toLocaleTimeString('zh-CN', { hour12: false })}`);
+            }
+          } catch {
+            // 单条消息解析失败不影响后续推送
+          }
+        };
+
+        es.onerror = () => {
+          // EventSource 读不到状态码，先按断线处理；
+          // 真正的 401 会由随后的 load() 识别并转入后台重连。
+          if (authStale) {
+            setLive('down', '实时连接中断，正在后台重连…');
+          } else {
+            setLive('down', '实时连接中断，已退回定时刷新');
+            startFallbackPoll();
+          }
+          scheduleReconnect();
+          void load();
+        };
+      }
+
+      $('refresh').addEventListener('click', load);
+
+      // 立即重连：跳过剩余退避时间，直接试一次
+      $('reconnect').addEventListener('click', () => {
+        stopReconnect();
+        $('reconnect').disabled = true;
+        setLive('connecting', '正在重连…');
+        void load().finally(() => { $('reconnect').disabled = false; });
+      });
+
+      $('use-card').addEventListener('click', async () => {
+        $('use-card').disabled = true;
+        setStatus($('auto-status'), '正在使用重置卡…', 'info');
+        try {
+          const r = await (await fetch('/api/use-card', { method: 'POST' })).json();
+          setStatus($('auto-status'), r.message, r.ok ? 'ok' : 'err');
+          await load();
+        } catch { setStatus($('auto-status'), '操作失败，请重试', 'err'); }
+      });
+
+      $('auto-toggle').addEventListener('change', async (e) => {
+        const enabled = e.target.checked;
+        try {
+          const r = await (await fetch(`/api/auto?enabled=${enabled ? 1 : 0}`, { method: 'POST' })).json();
+          $('auto-toggle').checked = r.autoEnabled;
+          $('auto-hint').textContent = r.autoEnabled
+            ? `已开启：每 ${fmtInterval(r.autoIntervalMs)}自动判定一次，结论为用卡时才会扣卡`
+            : '关闭时只在页面给出建议，不会扣卡';
+          $('auto-note').textContent = r.autoEnabled
+            ? `当前每 ${fmtInterval(r.autoIntervalMs)}自动判定一次，可在左侧随时调整。「立即判定一次」无节流，随时可点。判定为「保留积分」时不执行任何写操作。`
+            : '自动执行已关闭，页面只给出建议。开启后按设定间隔自动判定；「立即判定一次」无节流，随时可点。判定为「保留积分」时不执行任何写操作。';
+          if (enabled) {
+            const f = r.firstRun;
+            const txt = f?.message ? `${label(f)} · ${f.message}` : f?.reason || '';
+            setStatus($('auto-status'), txt ? `首次判定：${txt}` : '已开启自动执行', f?.outcome === 'CARD_ERROR' || f?.outcome === 'ERROR' ? 'err' : 'ok');
+          } else {
+            setStatus($('auto-status'), '已关闭自动执行', 'ok');
+          }
+          await load();
+        } catch { setStatus($('auto-status'), '开关设置失败', 'err'); }
+      });
+
+      // 手动判定：无任何节流，随时可点
+      $('auto-run').addEventListener('click', async () => {
+        $('auto-run').disabled = true;
+        setStatus($('auto-status'), '正在判定…', 'info');
+        try {
+          const r = await (await fetch('/api/auto-run', { method: 'POST' })).json();
+          const txt = r.message || r.reason || '';
+          const failed = ['CARD_FAILED', 'ERROR', 'CARD_ERROR'].includes(r?.outcome);
+          setStatus($('auto-status'), `${label(r)}${txt ? ' · ' + txt : ''}`, failed ? 'err' : 'ok');
+          await load();
+        } catch { setStatus($('auto-status'), '判定失败', 'err'); }
+        finally { $('auto-run').disabled = false; }
+      });
+
+      /** 调整自动检测间隔：单位换算后立即生效，无需重启。 */
+      async function saveInterval() {
+        const unit = Number($('interval-unit').value);
+        const raw = Number($('interval-value').value);
+        if (!Number.isFinite(raw) || raw <= 0) return;
+        try {
+          const r = await (await fetch(`/api/auto-interval?ms=${Math.round(raw * unit)}`, { method: 'POST' })).json();
+          const clamped = r.autoIntervalMs;
+          $('auto-hint').textContent = snapshot?.autoEnabled
+            ? `已开启：每 ${fmtInterval(clamped)}自动判定一次，结论为用卡时才会扣卡`
+            : '关闭时只在页面给出建议，不会扣卡';
+          $('auto-note').textContent = snapshot?.autoEnabled
+            ? `当前每 ${fmtInterval(clamped)}自动判定一次，可在左侧随时调整。「立即判定一次」无节流，随时可点。判定为「保留积分」时不执行任何写操作。`
+            : '自动执行已关闭，页面只给出建议。开启后按设定间隔自动判定；「立即判定一次」无节流，随时可点。判定为「保留积分」时不执行任何写操作。';
+          const wasClamped = Math.abs(clamped - raw * unit) > 1;
+          setStatus(
+            $('auto-status'),
+            `检测间隔已设为 ${fmtInterval(clamped)}${wasClamped ? '（超出范围，已调整到最近可用值）' : ''}`,
+            'ok',
+          );
+        } catch { setStatus($('auto-status'), '间隔设置失败', 'err'); }
+      }
+      $('interval-value').addEventListener('change', saveInterval);
+      $('interval-unit').addEventListener('change', saveInterval);
+
+      // ── 后台服务开关 ──────────────────────────────────────────────────────
+      // 走 launchctl 启停常驻守护进程，关闭本页面后它照常运行。
+      let daemonBusy = false;
+
+      async function loadDaemon() {
+        try {
+          const r = await (await fetch('/api/daemon')).json();
+          $('daemon-toggle').checked = Boolean(r.running);
+          $('daemon-toggle-btn').textContent = r.running ? '停用' : '启用';
+          $('daemon-hint').textContent = r.installed
+            ? (r.running ? `运行中（PID ${r.pid ?? '—'}），关掉本页面也会继续判定` : '已停止，开机自启已关闭')
+            : '未安装后台服务';
+          $('daemon-toggle').disabled = !r.installed || daemonBusy;
+          $('daemon-toggle-btn').disabled = !r.installed || daemonBusy;
+        } catch {
+          $('daemon-hint').textContent = '无法读取后台服务状态';
+        }
+      }
+
+      async function toggleDaemon(enable) {
+        if (daemonBusy) return;
+        daemonBusy = true;
+        $('daemon-toggle').disabled = true;
+        $('daemon-toggle-btn').disabled = true;
+        setStatus($('daemon-status'), enable ? '正在启动后台服务…' : '正在停止后台服务…', 'info');
+        try {
+          const r = await (await fetch(`/api/daemon?action=${enable ? 'start' : 'stop'}`, { method: 'POST' })).json();
+          setStatus($('daemon-status'), r.message ?? (r.ok ? '操作完成' : '操作失败'), r.ok ? 'ok' : 'err');
+        } catch {
+          setStatus($('daemon-status'), '操作失败，请重试', 'err');
+        } finally {
+          daemonBusy = false;
+          await loadDaemon();
+        }
+      }
+
+      $('daemon-toggle').addEventListener('change', (e) => toggleDaemon(e.target.checked));
+      $('daemon-toggle-btn').addEventListener('click', () => toggleDaemon(!$('daemon-toggle').checked));
+
+      connectStream();
+      loadDaemon();
+    </script>
+  </body>
+</html>
