@@ -69,6 +69,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [灵签易占](plugins/weekbin/chinese-divination/README.zh-CN.md) | 梅花易数起卦与解卦：时间、数字、铜钱摇卦、每日一卦四法起卦，按体用生克断吉凶，另备六十四卦全文与干支历法 | [weekbin](https://github.com/weekbin) |
 | [会话轨迹](plugins/avatasia/mmc-trajectory/README.zh-CN.md) | 按轮次浏览一段会话的模型轨迹：消息流、思考过程、工具调用与结果、token 用量与每轮耗时 | [avatasia](https://github.com/avatasia) |
 | [CadQuery Viewer](plugins/hanzijie/cq-viewer/README.zh-CN.md) | 本地查看项目里的 STL / STEP（保留装配零件名称、颜色和真实边线），实时显示 CadQuery 脚本推送的模型，在模型上标注位置后一键发给 AI；AI 可通过 MCP 工具添加模型文件夹、打开模型，并内置 CadQuery 参数化建模 skill | [HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai) |
+| [文本编辑器](plugins/trentchou/text-editor/README.zh-CN.md) | 与 Agent 实时共享的 Sublime 风格文本编辑器：Agent 读写、保存的就是你眼前的缓冲区；Review 时可以高亮代码并附上注释，不会改动文件 | [TrentChou](https://github.com/TrentChou) |
 
 <details>
 <summary>预览：Token 用量看板</summary>
