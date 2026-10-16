@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "xinyu-daily",
+  "displayName": "心屿",
+  "version": "1.0.0",
+  "description": "每日心情与灵感小岛：心情打卡、今日灵感卡、心情手账、纠结粉碎机、答案之书和能量风格小测。",
+  "author": "yujiachen-y",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": [
+    "打开心屿，记录一下今天的心情",
+    "打开心屿看看今天的灵感卡",
+    "用心屿帮我在几个选项里随机选一个"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

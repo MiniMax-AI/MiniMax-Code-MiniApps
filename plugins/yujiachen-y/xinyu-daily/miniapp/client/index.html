@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>心屿</title>
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="sky-stars" aria-hidden="true"></div>
+  <div class="app">
+    <header class="hud">
+      <div class="hud-greet">
+        <p class="hud-hello" id="hud-hello">心屿</p>
+        <p class="hud-date" id="hud-date"></p>
+      </div>
+      <div class="hud-right">
+        <button class="seed-badge" type="button" id="seed-btn" aria-label="小岛秘密图鉴"></button>
+        <button class="streak-badge" type="button" id="streak-pill" aria-label="连续打卡"></button>
+        <button class="round-btn" type="button" id="sound-btn" aria-label="音效"></button>
+        <button class="round-btn" type="button" id="open-settings" aria-label="设置" data-icon="gear"></button>
+      </div>
+    </header>
+
+    <main id="main">
+      <div class="state-msg" id="loading" role="status"><span class="spinner" aria-hidden="true"></span>小屿正在赶来…</div>
+      <div class="state-msg err" id="load-error" role="alert" hidden>
+        <span>没能加载数据。</span>
+        <button class="gbtn sm" type="button" id="retry-load">重试</button>
+      </div>
+
+      <!-- 今日 -->
+      <section class="screen" id="panel-today" role="tabpanel" aria-labelledby="tab-today" hidden>
+        <h1 class="sr-only">今日 · 心屿小岛</h1>
+        <section class="scene" id="scene" aria-label="心屿小岛"></section>
+        <section class="quests" id="quests" aria-labelledby="quest-title">
+          <div class="quest-head">
+            <h2 id="quest-title">今日旅程</h2>
+            <div class="quest-bar" id="quest-bar" aria-hidden="true"><span></span></div>
+            <span class="quest-count" id="quest-count"></span>
+          </div>
+          <ol class="quest-list" id="quest-list"></ol>
+        </section>
+        <div class="today-grid">
+          <section class="panel" aria-labelledby="card-title">
+            <div class="panel-head">
+              <h2 id="card-title">今日灵感卡</h2>
+              <span class="panel-sub" id="card-sub"></span>
+            </div>
+            <div id="pass"></div>
+          </section>
+          <div class="col">
+            <section class="panel" id="mood-panel" aria-labelledby="mood-title">
+              <div class="panel-head">
+                <h2 id="mood-title">心情贴纸</h2>
+                <span class="panel-sub">今天是哪一张？</span>
+              </div>
+              <div id="checkin-body"></div>
+            </section>
+            <section class="panel" aria-labelledby="joy-title">
+              <div class="panel-head">
+                <h2 id="joy-title">小确幸罐子</h2>
+                <span class="panel-sub" id="joy-sub">让你嘴角上扬的小事</span>
+              </div>
+              <div class="jar-row">
+                <button class="jar" type="button" id="jar" aria-label="摇一摇罐子，翻出一颗以前的小确幸"></button>
+                <div class="jar-side">
+                  <p class="jar-count" id="jar-count"></p>
+                  <p class="jar-hint">每件小事都会变成一颗星星。摇一摇罐子，看看翻出哪一颗。</p>
+                  <div id="jar-memory" role="status" aria-live="polite"></div>
+                </div>
+              </div>
+              <form class="input-row" id="joy-form">
+                <label class="sr-only" for="joy-input">小确幸内容</label>
+                <input class="field" id="joy-input" maxlength="80" placeholder="比如：楼下的猫今天让我摸了" autocomplete="off" />
+                <button class="gbtn primary" type="submit">放进罐子</button>
+              </form>
+              <ul class="slips" id="joy-today"></ul>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- 心情手账 -->
+      <section class="screen" id="panel-journal" role="tabpanel" aria-labelledby="tab-journal" hidden>
+        <h1 class="ribbon"><span>心情手账</span></h1>
+        <div class="badges" id="kpis"></div>
+        <div class="two-col">
+          <section class="panel" aria-labelledby="cal-title">
+            <div class="panel-head">
+              <h2 id="cal-title">贴纸月历</h2>
+              <div class="cal-nav">
+                <button class="round-btn sm" type="button" id="cal-prev" aria-label="上个月" data-icon="chevL"></button>
+                <span class="cal-month" id="cal-month" aria-live="polite"></span>
+                <button class="round-btn sm" type="button" id="cal-next" aria-label="下个月" data-icon="chevR"></button>
+              </div>
+            </div>
+            <div id="calendar"></div>
+            <div class="legend" id="legend" aria-label="心情图例"></div>
+          </section>
+          <section class="panel" aria-labelledby="trend-title">
+            <div class="panel-head"><h2 id="trend-title">近 30 天心情</h2></div>
+            <div id="trend"></div>
+          </section>
+        </div>
+        <div class="two-col">
+          <section class="panel" aria-labelledby="records-title">
+            <div class="panel-head"><h2 id="records-title">打卡记录</h2></div>
+            <ul class="records" id="records"></ul>
+          </section>
+          <section class="panel" aria-labelledby="fav-title">
+            <div class="panel-head">
+              <h2 id="fav-title">卡牌收藏册</h2>
+              <span class="panel-sub" id="fav-count"></span>
+            </div>
+            <div id="favorites"></div>
+          </section>
+        </div>
+        <section class="panel" aria-labelledby="joywall-title">
+          <div class="panel-head">
+            <h2 id="joywall-title">小确幸墙</h2>
+            <span class="panel-sub" id="joy-count"></span>
+          </div>
+          <ul class="slips wall" id="joy-wall"></ul>
+        </section>
+      </section>
+
+      <!-- 纠结粉碎机 -->
+      <section class="screen" id="panel-decide" role="tabpanel" aria-labelledby="tab-decide" hidden>
+        <h1 class="ribbon"><span>纠结粉碎机</span></h1>
+        <div class="two-col">
+          <section class="panel" aria-labelledby="picker-title">
+            <div class="panel-head">
+              <h2 id="picker-title">选择老虎机</h2>
+              <button class="text-btn" type="button" id="picker-preset">试试：今天吃什么</button>
+            </div>
+            <form class="input-row" id="picker-form">
+              <label class="sr-only" for="picker-input">新选项</label>
+              <input class="field" id="picker-input" maxlength="20" placeholder="写下一个选项，回车添加" autocomplete="off" />
+              <button class="gbtn" type="submit">添加</button>
+            </form>
+            <ul class="tags" id="picker-chips" aria-label="当前选项"></ul>
+            <div class="slot" id="slot">
+              <div class="slot-body">
+                <div class="bulbs" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <div class="reel" id="wheel"></div>
+              </div>
+              <button class="lever" type="button" id="lever" aria-label="拉动拉杆，随机选一个">
+                <span class="lever-stick"><span class="lever-knob"></span></span>
+                <span class="lever-base"></span>
+              </button>
+            </div>
+            <div class="pick-result" id="picker-result" role="status" aria-live="polite"></div>
+            <div class="btn-row">
+              <button class="gbtn ghost" type="button" id="picker-clear">清空</button>
+              <button class="gbtn primary big grow" type="button" id="picker-go">拉一下！</button>
+            </div>
+          </section>
+          <section class="panel" aria-labelledby="book-title">
+            <div class="panel-head">
+              <h2 id="book-title">答案之书</h2>
+              <span class="panel-sub">同一个问题，一天一个答案</span>
+            </div>
+            <div class="book-stage" id="book-stage" role="status" aria-live="polite"></div>
+            <form class="input-row" id="book-form">
+              <label class="sr-only" for="book-input">你的问题</label>
+              <input class="field" id="book-input" maxlength="100" placeholder="默念一个问题，写下来" autocomplete="off" />
+              <button class="gbtn primary" type="submit">翻开</button>
+            </form>
+            <div class="panel-head sub">
+              <h3>最近翻过的页</h3>
+              <button class="text-btn" type="button" id="book-clear">清空</button>
+            </div>
+            <ul class="records" id="book-history"></ul>
+          </section>
+        </div>
+      </section>
+
+      <!-- 自我探索 -->
+      <section class="screen" id="panel-explore" role="tabpanel" aria-labelledby="tab-explore" hidden>
+        <h1 class="ribbon"><span>自我探索</span></h1>
+        <section class="panel notebook" aria-labelledby="about-title">
+          <div class="panel-head">
+            <h2 id="about-title">小屿的笔记本</h2>
+            <span class="panel-sub">它记下的关于你的事</span>
+          </div>
+          <div class="about-head" id="about-head"></div>
+          <ul class="entries" id="about-list"></ul>
+        </section>
+        <div class="two-col">
+          <section class="panel" aria-labelledby="flower-title">
+            <div class="panel-head"><h2 id="flower-title">生日花画像</h2></div>
+            <div id="flower-body"></div>
+          </section>
+          <section class="panel" aria-labelledby="quiz-title">
+            <div class="panel-head">
+              <h2 id="quiz-title">能量风格小测</h2>
+              <span class="panel-sub">8 道题 · 约 1 分钟</span>
+            </div>
+            <div id="quiz-body"></div>
+          </section>
+        </div>
+      </section>
+
+      <p class="disclaimer">灵感卡、答案之书、生日花等内容按规则随机生成，仅供娱乐与自我觉察，不构成任何建议。数据只保存在本机。</p>
+    </main>
+  </div>
+
+  <nav class="dock" role="tablist" aria-label="功能切换">
+    <button role="tab" type="button" id="tab-today" aria-controls="panel-today" data-tab="today"><i data-icon="island"></i><span>小岛</span><b class="dock-dot" hidden><span class="sr-only">（今天还有小事没完成）</span></b></button>
+    <button role="tab" type="button" id="tab-journal" aria-controls="panel-journal" data-tab="journal"><i data-icon="book"></i><span>手账</span></button>
+    <button role="tab" type="button" id="tab-decide" aria-controls="panel-decide" data-tab="decide"><i data-icon="dice"></i><span>粉碎机</span></button>
+    <button role="tab" type="button" id="tab-explore" aria-controls="panel-explore" data-tab="explore"><i data-icon="compass"></i><span>探索</span></button>
+  </nav>
+
+  <dialog class="talk" id="talk" aria-labelledby="talk-q">
+    <div class="talk-portrait" id="talk-portrait" aria-hidden="true"></div>
+    <div class="talk-box">
+      <div class="talk-top">
+        <span class="talk-name">小屿</span>
+        <span class="talk-progress" id="talk-progress"></span>
+        <button class="round-btn sm" type="button" id="talk-close" aria-label="关闭对话" data-icon="xmark"></button>
+      </div>
+      <p class="talk-react" id="talk-react" hidden></p>
+      <p class="talk-q" id="talk-q"></p>
+      <div class="talk-options" id="talk-options" role="group" aria-labelledby="talk-q"></div>
+      <div class="talk-foot" id="talk-foot"></div>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="modal" aria-labelledby="modal-title">
+    <button class="round-btn sm modal-x" type="button" id="modal-x" aria-label="关闭" data-icon="xmark"></button>
+    <h2 id="modal-title"></h2>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions"></div>
+  </dialog>
+
+  <div class="banner" id="banner" role="status" aria-live="polite"></div>
+
+  <dialog class="intro" id="intro" aria-labelledby="intro-line">
+    <div class="lid top" aria-hidden="true"></div>
+    <div class="lid bottom" aria-hidden="true"></div>
+    <div class="intro-text">
+      <p id="intro-line"></p>
+      <button class="intro-tap" type="button" id="intro-tap" hidden>轻触，睁开眼睛</button>
+    </div>
+    <button class="intro-skip" type="button" id="intro-skip">跳过</button>
+  </dialog>
+
+  <div class="toast" id="toast" popover="manual" role="status" aria-live="polite"></div>
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>
