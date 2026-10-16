@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "text-editor",
+  "displayName": "文本编辑器",
+  "version": "1.3.1",
+  "description": "Sublime 风格的本地文本编辑器：多标签、快速打开、语法高亮、JSON/YAML/TOML 折叠、多光标。Agent 可通过 MCP 工具与你共同读写、创建和保存同一份文件，并在 Review 时高亮代码、附上注释（只叠加显示，不改文件）。",
+  "author": "TrentChou",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": [
+    "打开文本编辑器，加载当前项目",
+    "把编辑器里我正在看的 YAML 改成两空格缩进，然后保存",
+    "Review 一下当前文件，把有问题的地方在编辑器里高亮出来并写上原因"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": [],
+  "hooks": [
+    "hooks/hooks.json"
+  ]
+}

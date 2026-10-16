@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "text-editor": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/editor",
+      "headers": {},
+      "description": "Read, write, create and save files in the text editor Mini App, sharing live buffers with the user.",
+      "timeout": 30000
+    }
+  }
+}

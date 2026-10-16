@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文本编辑器</title>
+    <link rel="stylesheet" href="/static/fonts/jetbrains-mono.css" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <div class="app" id="app">
+      <nav class="sidebar" id="sidebar" aria-labelledby="app-title">
+        <header class="sidebar-header">
+          <h1 class="app-title" id="app-title">文本编辑器</h1>
+          <div class="icon-group">
+            <button type="button" class="icon-btn" data-cmd="file.new" aria-label="新建文件" title="新建文件"></button>
+            <button type="button" class="icon-btn" data-cmd="file.newFolder" aria-label="新建文件夹" title="新建文件夹"></button>
+            <button type="button" class="icon-btn" data-cmd="folder.add" aria-label="添加文件夹到侧边栏" title="添加文件夹到侧边栏"></button>
+            <button type="button" class="icon-btn" data-cmd="tree.refresh" aria-label="刷新文件列表" title="刷新文件列表"></button>
+          </div>
+        </header>
+        <h2 class="section-label" id="folders-label">文件夹</h2>
+        <div class="tree" id="tree" role="tree" aria-labelledby="folders-label"></div>
+        <section class="sidebar-empty" id="sidebar-empty" hidden aria-labelledby="sidebar-empty-title">
+          <h3 id="sidebar-empty-title">还没有文件夹</h3>
+          <p>添加一个本地文件夹后，可以在这里浏览和打开文件。</p>
+          <button type="button" class="btn" data-cmd="folder.add">添加文件夹</button>
+        </section>
+      </nav>
+      <div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="调整侧边栏宽度" tabindex="0"></div>
+      <main class="workbench" id="workbench">
+        <div class="tabbar">
+          <div class="tabs" id="tabs" role="tablist" aria-label="打开的文件"></div>
+          <div class="icon-group tabbar-actions">
+            <button type="button" class="icon-btn" data-cmd="palette.commands" aria-label="命令面板" title="命令面板"></button>
+            <button type="button" class="icon-btn" data-cmd="prefs" aria-label="设置" title="设置"></button>
+          </div>
+        </div>
+        <div class="banner" id="offline-banner" role="alert" hidden>
+          <span>与编辑器服务的连接已断开，正在重新连接…</span>
+        </div>
+        <div class="banner" id="doc-banner" role="alert" hidden></div>
+        <section class="editor-area" id="editor-area" aria-label="编辑器">
+          <div class="editor" id="editor"></div>
+          <section class="welcome" id="welcome" aria-labelledby="welcome-title">
+            <div class="welcome-inner">
+              <h2 id="welcome-title">没有打开的文件</h2>
+              <p id="welcome-text">从左侧选择文件，或把文件拖进窗口。你和 Agent 编辑的是同一份内容，保存后才会写入磁盘。</p>
+              <div class="welcome-actions">
+                <button type="button" class="btn primary" data-cmd="file.new">新建文件</button>
+                <button type="button" class="btn" data-cmd="goto.file">快速打开</button>
+                <button type="button" class="btn" data-cmd="folder.add">添加文件夹</button>
+              </div>
+              <dl class="shortcuts" id="shortcuts"></dl>
+            </div>
+          </section>
+        </section>
+        <footer class="statusbar" id="statusbar" aria-label="状态栏">
+          <span class="status-item" id="st-cursor"></span>
+          <span class="status-item status-message" id="st-message" role="status" aria-live="polite"></span>
+          <span class="status-spacer"></span>
+          <button type="button" class="status-btn" id="st-highlights" aria-haspopup="menu" hidden></button>
+          <button type="button" class="status-btn" id="st-indent" aria-label="缩进设置"></button>
+          <span class="status-item" id="st-encoding"></span>
+          <span class="status-item" id="st-eol"></span>
+          <button type="button" class="status-btn" id="st-lang" aria-label="设置语法"></button>
+        </footer>
+      </main>
+    </div>
+
+    <div class="drop-overlay" id="drop-overlay" hidden aria-hidden="true">
+      <div class="drop-card" id="drop-text">松开即可添加文件</div>
+    </div>
+    <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+    <div class="toasts errors" id="alerts" role="alert" aria-live="assertive"></div>
+
+    <dialog class="palette" id="palette" aria-label="命令面板">
+      <div class="palette-box">
+        <input type="text" class="palette-input" id="palette-input" role="combobox" aria-expanded="true"
+          aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" />
+        <ul class="palette-list" id="palette-list" role="listbox" aria-label="结果"></ul>
+        <p class="palette-hint" id="palette-hint"></p>
+      </div>
+    </dialog>
+
+    <dialog class="modal" id="prompt-dialog" aria-labelledby="prompt-title">
+      <form method="dialog" class="modal-form" id="prompt-form">
+        <h2 class="modal-title" id="prompt-title"></h2>
+        <label class="field">
+          <span class="field-label" id="prompt-label"></span>
+          <input type="text" class="input" id="prompt-input" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="field-hint" id="prompt-hint"></p>
+        <p class="field-error" id="prompt-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" value="cancel" id="prompt-cancel">取消</button>
+          <button type="submit" class="btn primary" value="ok" id="prompt-ok">确定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <form method="dialog" class="modal-form">
+        <h2 class="modal-title" id="confirm-title"></h2>
+        <p class="modal-message" id="confirm-message"></p>
+        <div class="modal-actions" id="confirm-actions"></div>
+      </form>
+    </dialog>
+
+    <dialog class="modal settings" id="settings-dialog" aria-labelledby="settings-title">
+      <form method="dialog" class="modal-form" id="settings-form">
+        <h2 class="modal-title" id="settings-title">设置</h2>
+        <div class="settings-grid">
+          <label class="field">
+            <span class="field-label">主题</span>
+            <select class="input" name="theme">
+              <option value="system">跟随系统</option>
+              <option value="dark">深色（Monokai）</option>
+              <option value="light">浅色</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">代码字体</span>
+            <select class="input" name="codeFont">
+              <option value="system">系统等宽（MiniMax Code 默认）</option>
+              <option value="menlo">Menlo</option>
+              <option value="jetbrains-mono">JetBrains Mono</option>
+              <option value="custom">自定义…</option>
+            </select>
+          </label>
+          <label class="field span-2" id="custom-font-field">
+            <span class="field-label">自定义字体名（需已安装在本机）</span>
+            <input class="input" type="text" name="fontFamily" placeholder="例如 Fira Code" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span class="field-label">字号（px）</span>
+            <input class="input" type="number" name="fontSize" min="8" max="40" step="1" required />
+          </label>
+          <label class="field">
+            <span class="field-label">行高</span>
+            <input class="input" type="number" name="lineHeight" min="1" max="2.5" step="0.05" required />
+          </label>
+          <label class="field">
+            <span class="field-label">默认 Tab 宽度</span>
+            <select class="input" name="tabSize">
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+            </select>
+          </label>
+          <fieldset class="checks span-2">
+            <legend class="field-label">显示与行为</legend>
+            <label class="check"><input type="checkbox" name="insertSpaces" /> 默认用空格缩进</label>
+            <label class="check"><input type="checkbox" name="wordWrap" /> 自动换行</label>
+            <label class="check"><input type="checkbox" name="minimap" /> 小地图</label>
+            <label class="check"><input type="checkbox" name="indentGuides" /> 缩进参考线</label>
+            <label class="check"><input type="checkbox" name="lineNumbers" /> 行号</label>
+            <label class="check"><input type="checkbox" name="showWhitespace" /> 显示空白字符</label>
+          </fieldset>
+          <fieldset class="checks span-2">
+            <legend class="field-label">Agent 高亮（只叠加显示，不会修改文件）</legend>
+            <label class="check"><input type="checkbox" name="highlightsVisible" /> 显示 Agent 高亮</label>
+            <label class="check"><input type="checkbox" name="highlightsPersist" /> 保留高亮，直到手动清除</label>
+            <p class="field-hint span-2">不勾选「保留」时，修改被高亮的代码或关闭文件后，高亮会自动消失；勾选后会一直保留（重启后也在），直到你或 Agent 清除。</p>
+          </fieldset>
+        </div>
+        <p class="field-hint">代码字体的选项与 MiniMax Code「设置 → 外观 → 代码字体」一致；Mini App 读取不到那里的设置，换了字体请在这里选同一项。打开文件时会自动识别缩进方式，也可以点击状态栏里的缩进按钮单独调整。</p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="settings-cancel">取消</button>
+          <button type="submit" class="btn primary">保存设置</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="menu" id="menu" role="menu" hidden></div>
+  </body>
+</html>
