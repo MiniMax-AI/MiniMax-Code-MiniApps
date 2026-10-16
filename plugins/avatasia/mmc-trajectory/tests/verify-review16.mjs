@@ -12,7 +12,7 @@
  * a rule. mutate-review16.py breaks each of these in the shipped file and requires this guard to
  * report it by name.
  */
-import { existsSync, readFileSync, readdirSync, writeFileSync, rmSync,
+import { existsSync, readFileSync, readdirSync, writeFileSync, rmSync, mkdirSync,
          cpSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -365,7 +365,18 @@ const insidePackage = (child) => {
 // with that name anywhere in the tree, so the copy stops being "the package without its bookkeeping
 // file" and becomes "the package without anything so named" -- a difference no assertion would have
 // noticed while the tree happened to hold no second one.
-const notTheBaseline = (src) => relative(PKG, src) !== join('tests', '.shipped-snapshot.json');
+//
+// A factory, not a constant over PKG, and the reason is a property this file could not check for a
+// year of looking: the filter's promise is "the copy has no baseline EVEN WHEN THE SOURCE HAS
+// ONE", and the only source available here is the package this guard is sitting in -- whose
+// baseline file is gitignored and therefore ABSENT on every fresh clone and on CI. There, a filter
+// that excluded nothing and this one produced identical copies, so `filter: () => true` survived
+// and the mutation counted 46/47 on a clean checkout while counting 47/47 on a developer machine
+// that had run the suite. Given a root, the same predicate can be asked about a source built here,
+// where a baseline is planted on purpose and its absence in the copy is therefore a fact about the
+// filter rather than about what happened to be lying around.
+const notTheBaselineIn = (root) => (src) => relative(root, src) !== join('tests', '.shipped-snapshot.json');
+const notTheBaseline = notTheBaselineIn(PKG);
 
 const scratchPackage = () => {
   const dir = mkdtempSync(join(tmpdir(), 'mmc-trajectory-selfcheck-'));
@@ -393,6 +404,36 @@ assert('the copy leaves out the bookkeeping file and nothing else',
   && notTheBaseline(join(PKG, 'fixtures', '.shipped-snapshot.json')) === true
   && notTheBaseline(join(PKG, 'tests', 'run.mjs')) === true,
   'pkg=' + PKG);
+
+/* Asking the predicate about a path only proves it reads paths correctly. What the filter is FOR is
+ * a property of a finished copy, and that one cannot be read off a path at all -- it has to be
+ * produced. The source is built here rather than borrowed, so it holds a baseline on every machine:
+ * `tests/.shipped-snapshot.json` is gitignored, so the real package has none on a fresh clone, and
+ * a copy of a source with nothing in it cannot tell this filter from `() => true`. That is not a
+ * theoretical gap -- with the filter neutered the mutation control reported 46/47 on a clean
+ * checkout and 47/47 only where an earlier suite run had left the file behind. */
+const filterSource = mkdtempSync(join(tmpdir(), 'mmc-trajectory-filtersrc-'));
+let filterCopy = null;
+try {
+  mkdirSync(join(filterSource, 'tests'), { recursive: true });
+  mkdirSync(join(filterSource, 'fixtures'), { recursive: true });
+  writeFileSync(join(filterSource, 'tests', '.shipped-snapshot.json'), '{"planted":"as-a-baseline"}');
+  writeFileSync(join(filterSource, 'fixtures', '.shipped-snapshot.json'), '{"planted":"under-fixtures"}');
+  writeFileSync(join(filterSource, 'tests', 'run.mjs'), '// planted\n');
+  filterCopy = mkdtempSync(join(tmpdir(), 'mmc-trajectory-filterdst-'));
+  cpSync(filterSource, filterCopy, { recursive: true, filter: notTheBaselineIn(filterSource) });
+  assert('a copy of a source that carries the bookkeeping file still comes out without it',
+    existsSync(join(filterSource, 'tests', '.shipped-snapshot.json'))
+    && !existsSync(join(filterCopy, 'tests', '.shipped-snapshot.json')),
+    'src=' + filterSource + ' dst=' + filterCopy);
+  assert('and it comes out without it by path, keeping the file of the same name under fixtures/',
+    existsSync(join(filterCopy, 'fixtures', '.shipped-snapshot.json'))
+    && existsSync(join(filterCopy, 'tests', 'run.mjs')),
+    'dst=' + filterCopy);
+} finally {
+  rmSync(filterCopy, { recursive: true, force: true });
+  rmSync(filterSource, { recursive: true, force: true });
+}
 
 // The predicate above is what decides whether the copy is attempted at all, and the whole guard hangs
 // off it, so it is checked against paths with known answers rather than trusted.

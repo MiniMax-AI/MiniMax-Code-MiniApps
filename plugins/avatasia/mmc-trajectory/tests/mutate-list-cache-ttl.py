@@ -144,6 +144,28 @@ MUTATIONS = [
        "select session_id, title, session_kind from local_runtime_sessions where session_id = ?")],
      "the titles query reads the parent column"),
 
+    # The one the acceptance review named, and the only one in this file that is invisible to every
+    # regex above it. Those regexes are all satisfied by a query that WORKS; none is satisfied by a
+    # query that fails, which is the whole case — `db.prepare` throws on a column the database does
+    # not have, the throw lands in the empty catch that exists for a different reason, and every
+    # title and every kind in the page reverts to the first sentence of the transcript. With the
+    # fallback gone the query text is exactly the text the guard requires, so the whole section
+    # above still passes and the page is simply broken on every database written before child
+    # sessions existed. The assertion that catches it is the one that builds such a database here.
+    ("a database without the parent column loses every title and kind, not just the parent",
+     [("""    let stmt;
+    try {
+      stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
+    } catch {
+      try {
+        stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+      } catch {
+        return result;
+      }
+    }
+""", "    const stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');")],
+     "a database WITHOUT the column keeps the title and the kind, and only loses the parent"),
+
     ("the parent row is read but never mapped",
      [("        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''\n"
        "          ? row.parent_session_id\n"

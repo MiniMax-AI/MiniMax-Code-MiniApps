@@ -974,7 +974,24 @@ export async function readSessionTitles(home, sessionIds) {
     // is always newer than the parent that spawned it, so the parent's title is routinely outside
     // the window. Carrying the id and looking the title up would therefore be a lookup that fails
     // exactly when a reader is most likely to want it.
-    const stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
+    //
+    // Asking for the column is the optional part, and it has to be optional: a runtime database
+    // written before child sessions existed has no `parent_session_id`, and preparing a statement
+    // over a column that is not there throws before a single row has been read. Under the empty
+    // catch below that is not a degraded list -- it is every title and every kind in the page
+    // silently reverting to the first sentence of the transcript, which is what a reader would see
+    // as "the titles broke and nothing says why". The mapping below already answers `null` for a
+    // row that carries no parent, so the row this fallback returns needs no change at all.
+    let stmt;
+    try {
+      stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
+    } catch {
+      try {
+        stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+      } catch {
+        return result;
+      }
+    }
     for (const id of sessionIds) {
       const row = stmt.get(id);
       if (!row) continue;

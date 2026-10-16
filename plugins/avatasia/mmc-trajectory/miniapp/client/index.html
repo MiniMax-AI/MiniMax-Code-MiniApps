@@ -5808,11 +5808,15 @@
           // A lane is optional because not every caller has one to offer: a wheel gesture works in
           // time alone, while a pointer also says which row it is over.
           if (lane !== undefined && span.lane !== lane) continue;
+          // Both distances are the LARGER time minus the SMALLER one, so both are positive and the
+          // `<` below keeps the closest. Subtracting the other way round leaves both negative,
+          // which still lets a first candidate in against Infinity and then keeps every further one
+          // that is further away -- the strip would answer with the record farthest from the pointer.
           if (span.end < time) {
-            var after = span.end - time;
+            var after = time - span.end;
             if (after < bestDistance) { bestDistance = after; best = span; }
           } else if (span.start > time) {
-            var before = time - span.start;
+            var before = span.start - time;
             if (before < bestDistance) { bestDistance = before; best = span; }
           } else {
             return span;

@@ -4,7 +4,7 @@
 
 按轮次浏览一段 MiniMax Code 对话的模型轨迹：消息流、思考过程、工具调用与结果、token 消耗与每轮耗时。
 
-作者：[avatasia](https://github.com/avatasia) · 版本：`1.1.0`
+作者：[avatasia](https://github.com/avatasia) · 版本：`1.2.0`
 
 ### 动手改这个页面前
 

@@ -209,8 +209,14 @@ MUTATIONS = [
      "the non-anomaly hint is still the one that names types and search"),
 
     # ---- 7. the version goes back ----
+    # Re-anchored at the 1.2.0 bump: the three below were written against the literal `1.1.0` in the
+    # manifest and in both READMEs, so leaving them would have made four mutations stop resolving —
+    # and one of them, the last, would have become an edit that changes nothing, which the runner
+    # rejects. The properties are the reviewer's complaint and are unchanged; only the text they are
+    # written against moved. The numbers are now `1.2.0` and `1.3.0` for the same reason the old pair
+    # was `1.1.0` and `1.2.0`: the replacement has to be a version the tree does not already carry.
     ("the version is put back to 1.0.0",
-     '"version": "1.1.0",',
+     '"version": "1.2.0",',
      '"version": "1.0.0",',
      "the plugin version was bumped off 1.0.0"),
 
@@ -219,12 +225,12 @@ MUTATIONS = [
     # announcing 1.0.0 to every reader who opens the plugin's front page. A rule that checks the
     # field nobody complained about is not the rule that was asked for.
     ("the English README goes back to announcing the old version",
-     'Version: `1.1.0`',
+     'Version: `1.2.0`',
      'Version: `1.0.0`',
      "the English README carries the shipped version"),
 
     ("the Chinese README goes back to announcing the old version",
-     '版本：`1.1.0`',
+     '版本：`1.2.0`',
      '版本：`1.0.0`',
      "the Chinese README carries the shipped version"),
 
@@ -232,8 +238,8 @@ MUTATIONS = [
     # on and the READMEs stay behind. Asserted as equality with plugin.json rather than as "not
     # 1.0.0", so this is the case the rule is actually for.
     ("the manifest moves on and the READMEs do not follow",
-     '"version": "1.1.0",',
      '"version": "1.2.0",',
+     '"version": "1.3.0",',
      "the English README carries the shipped version"),
 
     # ---- the snapshot the last run left, and the run that never looked at it ----
@@ -319,14 +325,24 @@ MUTATIONS = [
      "const previous = null;",
      "the startup comparison warns when the baseline records a difference"),
 
-    # The scratch copy is the design, and these two are what keeps it honest: one leaves the baseline
-    # in the copy, the other skips planting one. Both fail by name, which is the point -- the
-    # properties they cover are the ones a later edit could quietly undo.
+    # The copy filter is the design's load-bearing part, and these two are what keeps it honest.
+    #
+    # The first one used to be aimed at the single call in `scratchPackage`, which is where the
+    # mistake looked harmless: the package being copied IS this package, and
+    # `tests/.shipped-snapshot.json` is gitignored, so on a fresh clone there is no baseline in it
+    # for the filter to exclude. Neuter the filter there and the copy comes out the same either way
+    # -- so this mutation SURVIVED on a clean checkout and was counted as caught only on a machine
+    # where an earlier suite run had left the file behind. 46/47 versus 47/47, same commit, decided
+    # by what happened to be on disk.
+    #
+    # So the anchor is the factory both call sites are built from, and the assertion that catches it
+    # measures a finished copy of a source the guard planted a baseline into itself. That holds on
+    # every machine, which is the only property worth having in a check that runs on CI.
 
-    ("the scratch copy is made with the baseline still in it",
-     "      filter: notTheBaseline,",
-     "      filter: () => true,",
-     "the residue self-test runs on a package that has no baseline"),
+    ("the copy filter keeps the baseline, so a copy of a source that has one is no longer baseline-free",
+     "const notTheBaselineIn = (root) => (src) => relative(root, src) !== join('tests', '.shipped-snapshot.json');",
+     "const notTheBaselineIn = (root) => () => true;",
+     "a copy of a source that carries the bookkeeping file still comes out without it"),
 
     ("the wiring probe never plants a baseline",
      "  writeFileSync(join(scratch, 'tests', '.shipped-snapshot.json'),\n    JSON.stringify({ [GONE]: 'planted-by-verify-review16' }));",
@@ -352,9 +368,14 @@ MUTATIONS = [
 
     # A basename filter is not a path filter. It also drops every file with that name anywhere in the
     # tree, so the copy stops being "the package without its bookkeeping file".
+    #
+    # Re-anchored when the predicate became a factory: the line this names moved from
+    # `const notTheBaseline = (src) => …` to `const notTheBaselineIn = (root) => (src) => …`, and an
+    # anchor that no longer resolves is a mutation that has quietly stopped existing. The property
+    # is unchanged and so is the defect; only the text it is written against moved.
     ("the copy filter recognises a name rather than a path",
-     "const notTheBaseline = (src) => relative(PKG, src) !== join('tests', '.shipped-snapshot.json');",
-     "const notTheBaseline = (src) => basename(src) !== '.shipped-snapshot.json';",
+     "const notTheBaselineIn = (root) => (src) => relative(root, src) !== join('tests', '.shipped-snapshot.json');",
+     "const notTheBaselineIn = (root) => (src) => basename(src) !== '.shipped-snapshot.json';",
      "the copy leaves out the bookkeeping file and nothing else"),
 
     # Computing the comparison and reporting it are two things. Gating the warning off leaves every

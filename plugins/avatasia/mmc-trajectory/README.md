@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 Browse the model trajectory of a MiniMax Code conversation: messages, reasoning, tool calls and their results, Token usage, and per-turn timing.
 
-Author: [avatasia](https://github.com/avatasia) · Version: `1.1.0`
+Author: [avatasia](https://github.com/avatasia) · Version: `1.2.0`
 
 ### Before you change this page
 

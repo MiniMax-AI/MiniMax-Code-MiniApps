@@ -178,6 +178,36 @@ MUTATIONS = [
         """        var hit = nearestSpanAt(overviewTimeAt(overviewFractionAt(clientX)), lane);
         return hit ? { id: hit.id, record: hit.record } : null;""",
     ),
+    # ---- the two distances, which are the one part of the hit test nothing above reaches ------
+    # `nearestSpanAt` compares two candidate distances, and both are written as the larger time
+    # minus the smaller one so they are positive and the `<` keeps the closer. Subtracting the
+    # other way round leaves both NEGATIVE, which still admits the first candidate against
+    # Infinity and then keeps every LATER candidate that is FURTHER away: the strip answers with
+    # the record farthest from the pointer, and hover and click are wrong at the same time.
+    #
+    # This shipped. Every mutation above changes how the hit test resolves and none of them changes
+    # what it compares, and no assertion put the pointer in a gap between two spans — which is the
+    # only place the two candidate distances are both computed. A shape check cannot see it either:
+    # both subtractions are `span.start`/`span.end` against `time`, and which way round they go is
+    # exactly what reading the source cannot tell you.
+    #
+    # Two mutations, one per line, because each line is load-bearing on its own: with only the
+    # `span.end` one flipped, four assertions fail, and with only the `span.start` one flipped,
+    # six. The assertion both of them are caught by is the one with TWO candidates on the
+    # `span.start > time` side, because with a single candidate on that side the flipped
+    # subtraction and the correct one happen to name the same record.
+    (
+        "the gap after a span is measured the far way round, so the pointer picks the record farthest from it",
+        "            var after = time - span.end;",
+        "            var after = span.end - time;",
+        "with two spans on the same side, it is still the nearer one that wins",
+    ),
+    (
+        "the gap before a span is measured the far way round, so the pointer picks the record farthest from it",
+        "            var before = span.start - time;",
+        "            var before = time - span.start;",
+        "with two spans on the same side, it is still the nearer one that wins",
+    ),
 ]
 
 

@@ -1016,6 +1016,55 @@ check('and leaves no marker behind',
 check('and the columns are exactly as they were',
   paintedColumns(), ['0.0000%', '33.3333%', '66.6667%']);
 
+/* ----------------------------------------------------------------- distance arithmetic
+ * The hit test resolves in TIME so that the answer is the record nearest the pointer rather than
+ * whichever one was painted last. Nothing above puts the pointer in a gap between two spans, and
+ * that is exactly where the two candidate distances are computed and compared — so a comparison
+ * written the other way round leaves every one of those assertions green.
+ *
+ * Subtracting the smaller time from the larger one leaves both distances positive and the `<`
+ * keeps the closer. Subtracting the other way leaves both NEGATIVE, which still admits the first
+ * candidate against Infinity and then keeps every LATER candidate that is further away: the strip
+ * answers with the record farthest from the pointer. Three spans in one lane make that visible,
+ * because nearest and farthest are different records.
+ *
+ * Expected values are derived by hand from the coordinates below, not read back out of the
+ * function, so this block can fail rather than merely agree with itself. */
+const D = (id, lane, start, end) => ({ id, lane, start, end, record: { id } });
+const restoreModel = sandbox.overviewCache.model;
+sandbox.overviewCache.model = {
+  start: 0,
+  end: 900,
+  // near-x sits in the next row and straddles the gap the lane-1 probes use.
+  spans: [D('near-l', 1, 0, 100), D('near-m', 1, 220, 300), D('near-r', 1, 400, 900),
+    D('near-d', 1, 600, 700), D('near-x', 2, 104, 116)],
+};
+const at = (time, lane) => { const s = sandbox.nearestSpanAt(time, lane); return s ? s.record.id : null; };
+
+// 110 is in the gap after near-l: 10ms from its end, 110ms from near-m's start, 290 from near-r's.
+check('a pointer in a gap resolves to the nearer of the two spans around it, not the further one',
+  at(110, 1), 'near-l');
+// 390 is in the gap before near-r: 90ms from near-m's end, 10ms from near-r's start, 290 from near-l's.
+check('and the same when the nearer span is on the other side of the pointer', at(390, 1), 'near-r');
+/* 370 is the case that pins BOTH distance expressions on their own, so neither one can be the
+ * only thing carrying the rule: 30ms from near-r's start, 230 from near-d's start, 70 from near-m's
+ * end, 270 from near-l's. Flipping either subtraction turns its own candidates negative, and the
+ * further one of that side then wins — the `span.start > time` side has two candidates here, so it
+ * is distinguishable from the case above where it has only one. */
+check('with two spans on the same side, it is still the nearer one that wins', at(370, 1), 'near-r');
+// 150 with no row: near-x is 34ms away, near-l 50, near-m 70, near-r 250 — so a second row does
+// compete, which is the click fallback's case: it has no row to offer.
+check('a pointer with no row given is answered from every row', at(150), 'near-x');
+// Past the whole session every span is behind the pointer, so the nearest is the one that ENDS
+// last — near-r, at 100ms — not the one that ends first (900ms) and not the last in the array
+// (near-d ends at 700, which is 300ms away).
+check('a pointer past the whole session resolves to the last span, not the first', at(1000, 1), 'near-r');
+check('and one before it, to the first, not the last', at(-50, 1), 'near-l');
+// near-x contains 110 exactly, so with no row it wins outright; with lane 1 it is not consulted
+// at all, and the row the pointer is actually over answers instead.
+check('the row is a filter and not a preference: a span in another row is not consulted', at(110, 1), 'near-l');
+sandbox.overviewCache.model = restoreModel;
+
 /* ----------------------------------------------------------------------- report */
 console.log('overview + toolbar controls: ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

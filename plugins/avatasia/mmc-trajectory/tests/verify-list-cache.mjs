@@ -36,7 +36,7 @@
  * catch it by name, so nothing here can be an assertion nothing could fail.
  */
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SERVER = fileURLToPath(new URL('../miniapp/node/server.mjs', import.meta.url));
 const HTML = fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url));
@@ -188,6 +188,76 @@ assert('the field survives the strip, with null as the floor',
 // would be satisfied by prose describing the very thing it exists to require.
 assert('the page decides the marker by the field and not unconditionally',
   /var branch = session && session\.sessionParentId \? BRANCH_MARK : '';/.test(clientJs));
+
+/* ---------- 6. a database without the column, which the four regexes above cannot see ----------
+ *
+ * Everything above reads `server.mjs` as text, and every one of those regexes is satisfied by a
+ * query that works. None of them is satisfied by a query that FAILS, which is the whole case here:
+ * `db.prepare` throws on a column the database does not have, and the throw landed in the empty
+ * catch that exists for a different reason ("a title is a nicety"). So on a runtime database
+ * written before child sessions existed, the page showed no titles and no kinds at all — every
+ * session fell back to the first sentence of its transcript — and nothing in the suite could see
+ * it, because the shape of a correct query is the shape of a query nobody ran.
+ *
+ * So this runs the function against a real database built here, with and without the column. The
+ * without-case is the one that carries the rule: the titles and the kind are the page's whole
+ * reason for opening the database, and a missing optional column is not a reason to lose them. */
+const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+// `node:sqlite` is still flagged experimental, and the flag goes to stderr the moment the module
+// is first loaded. The runner reads `stdout + stderr` and prints the LAST non-empty line, so the
+// warning lands where this guard's own result line should be and `verify-list-cache.mjs` gets
+// reported with the text of an unrelated warning instead of its verdict. Narrowly filtered, and
+// installed BEFORE the import that provokes it: anything else still prints.
+const emitWarning = process.emitWarning;
+process.emitWarning = (warning, ...rest) => (
+  String(warning).startsWith('SQLite is an experimental feature')
+    ? undefined
+    : emitWarning.call(process, warning, ...rest));
+
+const { DatabaseSync } = await import('node:sqlite');
+// `SERVER` is a plain filesystem path, and a dynamic import of one on Windows is read as a URL
+// with an unsupported scheme. The module has to be asked for by its file: URL.
+const { readSessionTitles } = await import(pathToFileURL(SERVER).href);
+
+const runtimeDb = (columns) => {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-runtimedb-'));
+  mkdirSync(join(home, 'v2', 'sqlite'), { recursive: true });
+  const db = new DatabaseSync(join(home, 'v2', 'sqlite', 'runtime-state.sqlite'));
+  const extra = columns ? ', parent_session_id' : '';
+  const placeholders = columns ? '?, ?, ?, ?' : '?, ?, ?';
+  db.exec('create table local_runtime_sessions (session_id text primary key, title text,'
+    + ' session_kind text' + extra + ')');
+  const values = ['mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '一条真实的标题', 'conversation'];
+  if (columns) values.push('mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  db.prepare('insert into local_runtime_sessions (session_id, title, session_kind'
+    + extra + ') values (' + placeholders + ')').run(...values);
+  db.close();
+  return home;
+};
+
+const ids = ['mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+const homes = [];
+let withColumn = null;
+let withoutColumn = null;
+try {
+  homes.push(runtimeDb(true), runtimeDb(false));
+  withColumn = await readSessionTitles(homes[0], ids);
+  withoutColumn = await readSessionTitles(homes[1], ids);
+} finally {
+  // The homes are `mkdtemp` directories this call created, so they are cleaned up in the same
+  // breath rather than left behind for the OS to find.
+  for (const h of homes) rmSync(h, { recursive: true, force: true });
+}
+assert('a database with the parent column still reports the title, the kind and the parent',
+  withColumn.get(ids[0])?.title === '一条真实的标题'
+  && withColumn.get(ids[0])?.kind === 'conversation'
+  && withColumn.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+assert('a database WITHOUT the column keeps the title and the kind, and only loses the parent',
+  withoutColumn.get(ids[0])?.title === '一条真实的标题'
+  && withoutColumn.get(ids[0])?.kind === 'conversation'
+  && withoutColumn.get(ids[0])?.parent === null);
 
 console.log('[list-cache] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
