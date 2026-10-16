@@ -4209,6 +4209,14 @@
             state.searchHits = searchHitSet(body.hits);
             state.searchTotal = Number.isInteger(body.total) ? body.total : 0;
             state.searchTruncated = body.truncated === true;
+            // An answer that arrived retires the failure that preceded it. This line is here
+            // because the two other places that clear the field are the two a READER triggers —
+            // typing in the box and pressing clear — so nothing else could. A poll that re-runs the
+            // current query after the transcript changed is not a reader, and before this line a
+            // search that had failed once said 「搜索失败，以下为上次结果」 for the rest of the
+            // session: the label reads the error first, so the stale one outranked the fresh hit
+            // set it was describing.
+            state.searchError = null;
             resetWindowMode();
             renderLedger();
           })

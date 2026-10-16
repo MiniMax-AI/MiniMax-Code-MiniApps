@@ -221,6 +221,44 @@ function isNilField(value) {
  * Replaces internal store locations so the browser never learns where sessions live.
  * @param {readonly string[]} secrets
  */
+/** The three spellings an absolute path can appear in inside a stack frame or an error message. */
+const ABSOLUTE_PATH_SHAPES = [
+  // Node prints a frame as a URL: `file:///C:/Users/...`. Scheme, forward slashes, and the whole
+  // thing up to the first delimiter, which is why this has to come first — the drive-letter pattern
+  // below would match `C:/Users/...` inside it and leave `file:///` standing in front.
+  /file:\/\/\/?[^\s'"()<>\]]+/g,
+  // A drive-qualified Windows path, backslashed or forward-slashed, which is what an exception
+  // message from this platform uses. (Spelled out in words: a literal drive-qualified user
+  // directory in a comment trips the shipped-tree scan that forbids machine paths, which is the
+  // same rule this function exists to serve.)
+  /[A-Za-z]:[\\/][^\s'"()<>\]]+/g,
+  // A POSIX path with a root that only a filesystem has. Deliberately not a bare `/`: every URL,
+  // every route and every regex in this file starts with one, and blanking those would make the
+  // output useless for the job the route exists to do.
+  /(?<![\w./-])\/(?:Users|home|var|tmp|opt|etc|private|Volumes|Applications)\b[^\s'"()<>\]]*/g,
+];
+
+/**
+ * Blanks every absolute path in a string.
+ *
+ * `/api/runtime` is the one route whose entire contract is what it does NOT send, and a Node stack
+ * frame is mostly paths — one per frame, by absolute path. `createRedactor` covers the three store
+ * locations in the spelling it was handed, which is not the spelling a stack uses, so a stack passed
+ * through it keeps its `file:///` frames. That was measured rather than assumed: the route's
+ * `.minimax` fallback catches the store's own directories, and leaves everything else in the frame.
+ *
+ * Deliberately NOT folded into `createRedactor`. That one also runs over session CONTENT, where
+ * blanking an unrelated string would change what a reader is shown; a stack carries nothing a reader
+ * came for, which is exactly why this is allowed to be blunt where that one is not.
+ *
+ * @param {unknown} value
+ */
+export function scrubAbsolutePaths(value) {
+  let out = String(value);
+  for (const shape of ABSOLUTE_PATH_SHAPES) out = out.replace(shape, SESSION_STORE_TOKEN);
+  return out;
+}
+
 export function createRedactor(secrets) {
   const prefixes = [...new Set(secrets.filter((entry) => typeof entry === 'string' && entry.length > 0))]
     .sort((a, b) => b.length - a.length);
@@ -2979,6 +3017,18 @@ export async function start(context) {
    * Diagnostics: report what this Node process can actually observe about its own session
    * identity. Names and structure only — no environment *values* are returned unless the
    * value is itself a session id, which is the one fact this route exists to settle.
+   *
+   * The three free-form fields below are the only ones in this route that are not a basename, a
+   * count or a flag, and each of them breaks the promise above the same way: a SQLite message
+   * carries the database it could not open, and a stack frame carries every directory above it.
+   * Both are absolute paths on the reader's machine, on exactly the failure paths this route
+   * exists to report.
+   *
+   * Two passes, in this order, and then the clip. `redact` knows the three store locations but
+   * only in the spelling it was given; `scrubAbsolutePaths` is spelling-agnostic and blunts
+   * anything absolute, which is what a stack frame needs and what session content must never get.
+   * Clipping LAST is the part that is easy to get wrong: clipping first can cut a path in half
+   * and leave a drive-qualified fragment standing.
    */
       const handleRuntime = async (response) => {
    let diagError = null;
@@ -2990,7 +3040,7 @@ export async function start(context) {
       mod = await import('node:sqlite');
       sqlite.available = typeof mod.DatabaseSync === 'function';
     } catch (error) {
-      sqlite.error = String(/** @type {any} */ (error)?.message ?? error).slice(0, 200);
+      sqlite.error = scrubAbsolutePaths(redact(String(/** @type {any} */ (error)?.message ?? error))).slice(0, 200);
     }
     if (sqlite.available) {
       // Name only — this route must never hand the browser a filesystem location.
@@ -3005,7 +3055,7 @@ export async function start(context) {
         ).get();
         sqlite.conversationCount = count ? toNumber(count.n) : null;
       } catch (error) {
-        sqlite.queryError = String(/** @type {any} */ (error)?.message ?? error).slice(0, 240);
+        sqlite.queryError = scrubAbsolutePaths(redact(String(/** @type {any} */ (error)?.message ?? error))).slice(0, 240);
       } finally {
         // A schema mismatch is the case this route exists to report, and it is exactly the case
         // where `prepare` throws — so closing inside the try left the handle waiting for GC.
@@ -3028,7 +3078,7 @@ export async function start(context) {
       sessionRootExists: existsSync(location.sessionsRoot),
     });
    } catch (error) {
-    diagError = String(/** @type {any} */ (error)?.stack ?? error).slice(0, 600);
+    diagError = scrubAbsolutePaths(redact(String(/** @type {any} */ (error)?.stack ?? error))).slice(0, 600);
     sendJson(response, 200, { diagError });
    }
   };

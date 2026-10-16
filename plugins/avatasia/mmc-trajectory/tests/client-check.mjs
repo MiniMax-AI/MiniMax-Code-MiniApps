@@ -208,6 +208,71 @@ check('a needle answered with nothing and truncated reads as not found',
 check('no state is not a crash', sandbox.searchStatusLabel(null), '');
 check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
 
+/* search: the TRANSITION, which the four states above cannot see.
+ *
+ * Every case in the block above hands `searchStatusLabel` a state object written out for that one
+ * case, and the `runSearch` checks further down read its source as text. Both are blind to the same
+ * thing: a state is a snapshot, so neither can see that a search which failed once and was then
+ * re-run and answered still said 「搜索失败，以下为上次结果」 — the label reads the error first, so
+ * the stale error outranked the fresh hit set it was describing. Only the two paths a READER
+ * triggers cleared the field: typing, and pressing clear. A poll that re-runs the current query
+ * after the transcript changed is not a reader, so nothing it did could clear it.
+ *
+ * This runs it instead of reading it. `runSearch` is not between PURE:START and PURE:END — it
+ * talks to the network — so it could not join the sandbox above; here the SHIPPED source of the
+ * functions it needs is sliced out by `fnSource` and evaluated. That is the page's own text rather
+ * than a copy of it: rename a function in index.html and this fails with "no such function" instead
+ * of quietly continuing to exercise the old shape. */
+{
+  const netCtx = { console, AbortController, setTimeout, clearTimeout, encodeURIComponent };
+  vm.createContext(netCtx);
+  const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
+    'function sessionParam()', 'function searchStatusLabel(searchState)', 'function runSearch(needle)'];
+  const sources = needed.map((sig) => fnSource(sig));
+  check('the shipped search functions are all still findable by signature',
+    needed.filter((sig, i) => !sources[i]), []);
+
+  vm.runInContext([
+    // The shape `runSearch` writes into. Every field it touches is here; nothing else about the
+    // page's state is, because nothing else about the page's state is what is under test.
+    'var state = { query: "retry me", sessionId: null, hostSessionId: null, followLatest: true,',
+    '  generation: null, searchHits: null, searchTotal: 0, searchTruncated: false,',
+    '  searchPending: false, searchError: null };',
+    'var searchSeq = 0;',
+    'var searchController = null;',
+    // The two renderers paint the page; neither is what is being tested and neither has a DOM here.
+    'function resetWindowMode() {}',
+    'function renderLedger() {}',
+    // A signature that no longer resolves becomes a function that throws when reached, so the
+    // failure names the function rather than arriving as a syntax error nobody can read.
+    ...sources.map((src, i) => src || (needed[i] + ' { throw new Error(' + JSON.stringify(needed[i])
+      + ' is not in index.html any more); }')),
+  ].join('\n'), netCtx);
+
+  const settle = async () => {
+    // fetch -> response.json() -> then -> then -> then is all microtasks plus the json() promise.
+    // Three macrotask turns drain all of them, so the count does not have to be right.
+    for (let i = 0; i < 3; i += 1) await new Promise((done) => setImmediate(done));
+  };
+
+  netCtx.fetch = () => Promise.reject(Object.assign(new Error('api'), { code: 'search_failed' }));
+  netCtx.runSearch('retry me');
+  await settle();
+  const afterFailure = netCtx.searchStatusLabel(netCtx.state);
+
+  netCtx.fetch = () => Promise.resolve({ ok: true, status: 200,
+    json: () => Promise.resolve({ hits: [{ index: 7 }], total: 1, truncated: false }) });
+  netCtx.runSearch('retry me');
+  await settle();
+
+  check('a search that failed says so', afterFailure, '搜索失败，以下为上次结果');
+  check('and the retry that answers it clears the failure, not just the pending flag',
+    netCtx.state.searchError, null);
+  check('so the label reports the answer instead of the stale failure',
+    netCtx.searchStatusLabel(netCtx.state), '命中 1 条');
+  check('and the hit set it describes is the new one', [...netCtx.state.searchHits], [7]);
+}
+
 /* flatten + signature */
 check('flatten empty', sandbox.flattenTurns(undefined), []);
 check('flatten junk', sandbox.flattenTurns([{ id: 'a' }, null, { id: 'b', records: [null, { id: 'r' }] }]).length, 1);

@@ -82,6 +82,23 @@ MUTATIONS = [
         "          var index = entry && typeof entry.index === 'number' ? entry.index : NaN;",
         "          var index = entry && typeof entry.summary === 'string' ? entry.summary.length : NaN;",
     ),
+    # The one an acceptance review caught, and the reason the mutation list above is not the end of
+    # the story. Every entry there changes what the page COMPUTES. This one changes what it REMEMBERS
+    # about a request that already finished — and every existing check was blind to it from the same
+    # side: the `searchStatusLabel` cases each construct their own state, and a state cannot be stale,
+    # because it was written for the case it is asked about. The `runSearch` checks were source
+    # regexes, and the line being removed is a line they were not written against.
+    #
+    # So nothing cleared `searchError` except typing and pressing the clear button — the two a reader
+    # drives. A poll that re-runs the current query after the transcript changed is not a reader, so
+    # a search that had failed once said 「搜索失败，以下为上次结果」 for the rest of the session, and
+    # because the label reads the error before the counts, the stale error outranked the fresh hit set
+    # it was describing. The page showed the right rows under the wrong sentence.
+    (
+        "an answer that arrives leaves the failure that preceded it standing",
+        "            state.searchError = null;\n            resetWindowMode();",
+        "            resetWindowMode();",
+    ),
 ]
 
 
