@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 事务所</title>
+<link rel="icon" href="/game/game.icon.png" type="image/png">
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:#261b15;color:#f1dfba;font:14px system-ui,sans-serif}
+iframe{border:0;width:100%;height:100%;display:block}main{max-width:820px;margin:auto;padding:28px 24px}h1{font-size:24px;margin:0 0 12px}p{line-height:1.75;margin:12px 0}label{display:block;margin:18px 0 8px;font-weight:600}
+textarea{display:block;width:100%;height:220px;padding:14px;color:#f1dfba;background:#38251f;border:1px solid #ac804f;border-radius:6px;font:13px/1.75 system-ui,sans-serif;resize:vertical;min-height:140px;overflow:auto;overflow-wrap:anywhere}
+button{padding:11px 20px;background:#657044;color:#fff0cc;border:1px solid #c4a04e;border-radius:5px;cursor:pointer;font:inherit}button:disabled{opacity:.55;cursor:wait}button:focus-visible,textarea:focus-visible{outline:2px solid #ffdd91;outline-offset:3px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}.secondary{background:transparent;border-color:#ac804f}
+small{display:block;margin-top:6px;color:#b9a589;line-height:1.65}.keys{display:flex;gap:8px;flex-wrap:wrap;padding:0;margin:14px 0 0;list-style:none}.keys li{padding:5px 10px;border:1px solid #795b40;border-radius:4px;color:#dbc6a5}#message{min-height:24px;color:#ffdc99}#status{color:#b9a589;font-size:13px}[hidden]{display:none!important}@media(max-width:480px){main{padding:22px 18px}textarea{height:240px}.actions button{flex:1;padding:11px 12px}}
+</style>
+<main id="setup" hidden>
+<h1>AI 事务所</h1>
+<p>第一次玩？复制下面的引导提示词，发给 MiniMax Code 的 AI。它会带你选择员工模型、申请或填写 Key，并引导配置 Jev 自主决策。</p>
+<ul class="keys" aria-label="可配置的模型"><li>MiniMax</li><li>LongCat</li><li>Kimi</li><li>StepFun</li><li>Jev · OpenRouter（可选）</li></ul>
+<small>没有 Key 也可以从引导开始。至少启用一家员工模型；Jev 使用 OpenRouter Key，可选择启用或跳过。配置一次，以后直接进入游戏。</small>
+<label for="prompt">给 AI 的首次启动引导</label>
+<textarea id="prompt" readonly spellcheck="false" placeholder="正在准备提示词…"></textarea>
+<div class="actions"><button id="copy" type="button" disabled>复制引导提示词</button><button id="check" class="secondary" type="button">检查配置</button></div>
+<p id="message" role="status" aria-live="polite"></p>
+<p id="status" role="status">等待 AI 完成配置，保存后会自动进入游戏。</p>
+</main>
+<iframe id="game" title="AI 事务所游戏" allow="autoplay; fullscreen" hidden></iframe>
+<script type="module">
+const setup=document.getElementById('setup'), game=document.getElementById('game');
+const prompt=document.getElementById('prompt'), copy=document.getElementById('copy');
+const check=document.getElementById('check'), message=document.getElementById('message'), status=document.getElementById('status');
+let entered=false, checking=false, polling;
+function stopPolling(){clearInterval(polling);}
+function enter(){entered=true;stopPolling();setup.hidden=true;game.hidden=false;game.src='/game/game.html';}
+async function checkSettings(manual=false){
+ if(entered||checking)return;
+ checking=true;check.disabled=true;
+ try{
+  const response=await fetch('/api/settings');if(!response.ok)throw new Error();
+  const data=await response.json();if(!data.ok)throw new Error();
+  if(data.configured)enter();
+  else status.textContent=manual?'配置还未保存，请把提示词发给 AI，完成后这里会自动进入。':'等待 AI 完成配置，保存后会自动进入游戏。';
+ }catch{status.textContent='暂时没连上本地服务，可以点“检查配置”再试。';}
+ finally{checking=false;check.disabled=false;}
+}
+await checkSettings();
+if(!entered){
+ setup.hidden=false;
+ try{
+  const response=await fetch('/api/setup');if(!response.ok)throw new Error();
+  const data=await response.json();if(!data.ok||!data.prompt)throw new Error();
+  prompt.value=data.prompt;copy.disabled=false;
+ }catch{message.textContent='提示词暂时未准备好，重新打开 MiniApp 后再试。';}
+ polling=setInterval(()=>{void checkSettings();},2000);
+}
+copy.addEventListener('click',async()=>{
+ let copied=false;
+ try{await navigator.clipboard.writeText(prompt.value);copied=true;}
+ catch{prompt.focus();prompt.select();try{copied=document.execCommand('copy');}catch{}}
+ message.textContent=copied?'已复制。发给 AI，按它的引导选择模型、申请或提供 Key。':'提示词已选中，请按 ⌘C（Windows 按 Ctrl+C）复制后发给 AI。';
+});
+check.addEventListener('click',()=>{void checkSettings(true);});
+window.addEventListener('pagehide',stopPolling);
+</script>
+</html>
