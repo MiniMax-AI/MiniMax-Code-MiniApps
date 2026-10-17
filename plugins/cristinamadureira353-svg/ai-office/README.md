@@ -42,9 +42,11 @@ The first command is a local dependency check with an eight-second timeout. The 
 
 ## Tested environment
 
-Version **0.5.10**. Preparation environment: macOS 26.4, Node.js 22.23.2, Python 3.9.6 and Godot 4.4.1 single-threaded Web export. See [validation details](docs/VALIDATION.md) for commands, results and limitations.
+Version **0.5.10**. Recorded development and host environment: macOS 26.4, MiniMax Code 3.0.73, Node.js 22.23.2, Python 3.9.6 and Godot 4.4.1 single-threaded Web export.
 
-The package is tested with temporary Host-context fixtures and headless Chromium. MiniMax Code 3.0.73 is the official repository's documented contract baseline, not a claim of fresh manual acceptance of this package in that client. The submitted package has not been manually reinstalled and played in a real MiniMax Code host during this contribution. Real paid-provider responses, Windows/Linux host play, Chinese IME interaction and long-term balance remain unverified.
+The game has been installed, opened and manually played in the real MiniMax Code desktop host by the project author. The author confirmed this prior playtesting on 2026-10-17; existing host screenshots and gameplay feedback record game entry and interaction/layout issues involving employee controls, chat access, seating, conflict choices and HUD visibility. This corrects the earlier submission wording that omitted the manual host play history.
+
+For the submitted 0.5.10 package, a separate automated run with temporary Host-context fixtures and headless Chromium passed 34/34 interaction checks, including first-run configuration, entering the game, reopening and employee chat. These checks use simulated provider replies and do not validate actual provider billing. Windows/Linux host play, Chinese IME interaction and long-term balance remain outside the recorded test coverage. See [validation details](docs/VALIDATION.md) for the manual play record, commands and results.
 
 ## Source and build
 
