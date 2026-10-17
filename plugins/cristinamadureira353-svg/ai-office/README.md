@@ -44,9 +44,11 @@ The first command is a local dependency check with an eight-second timeout. The 
 
 Version **0.5.10**. Recorded development and host environment: macOS 26.4, MiniMax Code 3.0.73, Node.js 22.23.2, Python 3.9.6 and Godot 4.4.1 single-threaded Web export.
 
-The game has been installed, opened and manually played in the real MiniMax Code desktop host by the project author. The author confirmed this prior playtesting on 2026-10-17; existing host screenshots and gameplay feedback record game entry and interaction/layout issues involving employee controls, chat access, seating, conflict choices and HUD visibility. This corrects the earlier submission wording that omitted the manual host play history.
+**Manual play with real model providers.** The project author installed, opened and played the game in the real MiniMax Code desktop host using real provider-issued API keys, live model API calls and actual provider responses. The author confirmed this playtesting on 2026-10-17. Existing host screenshots and gameplay feedback record game entry and interaction/layout issues involving employee controls, chat access, seating, conflict choices and HUD visibility.
 
-For the submitted 0.5.10 package, a separate automated run with temporary Host-context fixtures and headless Chromium passed 34/34 interaction checks, including first-run configuration, entering the game, reopening and employee chat. These checks use simulated provider replies and do not validate actual provider billing. Windows/Linux host play, Chinese IME interaction and long-term balance remain outside the recorded test coverage. See [validation details](docs/VALIDATION.md) for the manual play record, commands and results.
+**Additional automated regression.** For the submitted 0.5.10 package, a separate run with temporary Host-context fixtures and headless Chromium passed 34/34 interaction checks, including first-run configuration, entering the game, reopening and employee chat. This automated suite substitutes provider replies to exercise repeatable success and failure cases; the author's manual playtesting above used live providers. See [validation details](docs/VALIDATION.md) for both test records, commands and results.
+
+Windows/Linux host play, Chinese IME interaction and long-term balance remain outside the recorded test coverage.
 
 ## Source and build
 
