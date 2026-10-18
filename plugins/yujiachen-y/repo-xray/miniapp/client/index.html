@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>仓库透视</title>
+    <meta name="theme-color" content="#fafafa" />
+    <link rel="icon" href="/assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <div class="shell">
+      <nav class="sidebar" aria-label="仓库">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><img src="/assets/icon.svg" alt="" width="30" height="30" /><span class="scan"></span></span>
+          <div>
+            <div class="brand-name">仓库透视</div>
+            <div class="brand-sub">Repo X-Ray</div>
+          </div>
+        </div>
+        <button class="search-trigger" type="button" data-action="palette" aria-label="搜索仓库、文件和贡献者（⌘K）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></svg><span>搜索…</span><kbd>⌘&nbsp;K</kbd></button>
+        <div class="nav-title">
+          <span>仓库</span>
+          <button class="btn icon-btn btn-ghost btn-sm" data-action="new" aria-label="分析新仓库"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></button>
+        </div>
+        <ul class="team-list" id="repo-list"></ul>
+        <div class="sidebar-foot">
+          <button class="btn btn-ghost btn-block" data-action="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg> 设置</button>
+          <button class="btn btn-ghost btn-block" data-action="keys"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2" /><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9" /></svg> 快捷键<kbd class="kbd-hint">?</kbd></button>
+          <button class="btn btn-ghost btn-block" id="theme-btn" data-action="theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 3v18a9 9 0 0 0 0-18" fill="currentColor" /></svg> 主题</button>
+          <div class="sidebar-status off" id="live" role="status"><span class="dot" aria-hidden="true"></span><span id="live-text">连接中…</span></div>
+        </div>
+      </nav>
+      <main id="main" tabindex="-1"><div class="skeleton" style="height: 200px"></div></main>
+    </div>
+    <dialog id="drawer" class="drawer"></dialog>
+    <dialog id="settings"></dialog>
+    <dialog id="palette" class="palette" aria-label="命令面板"></dialog>
+    <dialog id="keys" class="sheet" aria-labelledby="keys-title"></dialog>
+    <div class="tooltip" id="tooltip" role="tooltip"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

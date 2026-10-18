@@ -76,6 +76,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [心屿](plugins/yujiachen-y/xinyu-daily/README.zh-CN.md) | 像独立小游戏的每日心情小岛：由你的回答决定的今日灵感卡、心情贴纸、小确幸罐子、纠结老虎机、答案之书，还有坏脾气螃蟹藏起来的 20 个秘密；可选开启小屿陪伴，借用你的模型每天写信、陪你聊天。需要 MiniMax Code 3.1.2 或更高版本 | [yujiachen-y](https://github.com/yujiachen-y) |
 | [协作 · MoMo](plugins/amszuidas/momo-collab/README.zh-CN.md) | 项目管家 MoMo：把随手的想法、截图和链接攒成想法，写清后变成任务，派 Agent 会话带着完整背景去执行，按验收标准核对结果后交你审核，进展在看板上一眼可见。需要 MiniMax Code 3.1.2 或更高版本 | [amszuidas](https://github.com/amszuidas) |
 | [Anatomy 画廊](plugins/zch0227/anatomy-gallery/README.zh-CN.md) | 集中展示 anatomy 技能做出的交互式等距图解：按自建展区挂墙，全屏查看明暗两版，保留全部历史版本；在画廊里让 Agent 新建或修改作品，每次运行都有过程记录。自带 anatomy 技能。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
+| [仓库透视](plugins/yujiachen-y/repo-xray/README.zh-CN.md) | 从 Git 历史看懂一个代码仓库：可逐层下钻的代码地图、热点与 Bug 磁铁、高风险文件、负责人与知识流失、提交节奏与救火记录、技术栈；支持 GitHub、GitLab 和本机仓库，全部在本机分析 | [yujiachen-y](https://github.com/yujiachen-y) |
 
 <details>
 <summary>预览：Token 用量看板</summary>

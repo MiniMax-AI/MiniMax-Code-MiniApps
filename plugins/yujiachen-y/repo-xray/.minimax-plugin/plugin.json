@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "repo-xray",
+  "displayName": "仓库透视",
+  "version": "1.0.0",
+  "description": "从 Git 历史看懂一个代码仓库：代码地图、热点与 bug 磁铁、高风险文件、负责人与知识流失、提交节奏和技术栈。支持 GitHub / GitLab 仓库和本地仓库，全部在本机计算。",
+  "author": "yujiachen-y",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": ["打开仓库透视", "打开仓库透视，看看这个仓库的代码地图和高风险文件", "用仓库透视看看这个仓库主要是谁在维护"],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
