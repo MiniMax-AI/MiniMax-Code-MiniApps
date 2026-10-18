@@ -774,9 +774,13 @@ button {
   word-break: break-word;
 }
 
+/* The user's own bubble stays inside the theme's palette instead of inverting it:
+   a near-black bubble on the light surface and a near-white one on the dark surface read as
+   a system message rather than as outgoing chat. A 12% accent tint keeps the outgoing side
+   identifiable while following --accent, which inkOf() already resolves per theme. */
 .msg.user .bubble {
-  background: var(--user);
-  color: var(--user-ink);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--ink);
   white-space: pre-wrap;
   max-width: 100%;
 }
