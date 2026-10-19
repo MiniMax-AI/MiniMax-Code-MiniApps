@@ -7,7 +7,7 @@ import json
 import math
 from collections import defaultdict
 
-from PIL import Image, ImageColor
+from PIL import Image, ImageColor, ImageDraw
 
 
 def trace(mask, width, height):
@@ -119,6 +119,7 @@ def main():
     parser.add_argument("--smooth", type=int, default=1, help="circular smoothing radius, 0..4")
     parser.add_argument("--epsilon", type=float, default=0.6, help="simplification tolerance in analysis pixels")
     parser.add_argument("--stroke-length", type=float, default=100, help="maximum output pixels per stroke")
+    parser.add_argument("--preview", help="write a contour-check PNG to a new file (max 1024px)")
     args = parser.parse_args()
     values = (args.tolerance, args.min_area, args.epsilon, args.stroke_length)
     if not all(math.isfinite(v) for v in values) or not (0 <= args.tolerance <= 442 and
@@ -149,6 +150,18 @@ def main():
             "bounds": [min(p[0] for p in points), min(p[1] for p in points),
                        max(p[0] for p in points), max(p[1] for p in points)]})
     if len(output) > 512: parser.error("more than 512 strokes; simplify the mask or increase --stroke-length")
+    if args.preview:
+        # Bound the preview independently of the requested drawing dimensions.
+        factor = min(1024 / args.width, 1024 / (height * scale), 1)
+        preview = Image.new("RGB", (max(1, round(args.width * factor)),
+                                    max(1, round(height * scale * factor))), "white")
+        pen = ImageDraw.Draw(preview)
+        for stroke in output:
+            pen.line([(x * factor, y * factor) for x, y in stroke["points"]],
+                     fill="#444444", width=1)
+        # Never overwrite the reference image or an earlier output.
+        with open(args.preview, "xb") as destination:
+            preview.save(destination, format="PNG")
     print(json.dumps({"sourceSize": original, "analysisSize": [width, height],
         "canvasSize": [args.width, round(height * scale)], "regions": len(loops),
         "contours": contours, "strokes": output}, indent=2))

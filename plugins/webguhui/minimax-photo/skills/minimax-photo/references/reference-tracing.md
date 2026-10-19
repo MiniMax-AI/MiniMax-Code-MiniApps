@@ -7,12 +7,12 @@
 脚本位置相对本 Skill：`scripts/trace_reference.py`。需要 Python 3 和 Pillow；环境缺少时使用手工规划的曲线，不为此展开依赖安装。附件的本地文件只作为工具输入，不要求用户提供路径，不把路径替代为聊天附件。
 
 ```bash
-python3 <skill目录>/scripts/trace_reference.py <参考图> --color '#4080c0' --tolerance 70 --width 1000 > strokes.json
+python3 <skill目录>/scripts/trace_reference.py <参考图> --color '#4080c0' --tolerance 70 --width 1000 --preview outline-check.png > strokes.json
 ```
 
 颜色从当前参考图选择，此示例值无题材含义。多个相邻颜色可能需要分别提取；也可以先创建白色前景、黑色背景的蒙版，再省略 `--color`。不要对照片直接提取所有小色块。
 
-输出 `canvasSize`（保持长宽比）、`regions`、`contours` 和 `strokes`，每笔为 `{points:[[x,y],…]}`。`contours` 用 `firstStroke`（从 0 开始）和 `strokeCount` 标出同一闭合轮廓的笔触范围，并提供 `bounds:[左,上,右,下]` 与 `signedArea`（正数为外边界，负数为孔洞）。需要闭合选区时，按该范围连接各笔 points，跳过每笔重复的首点即可；无需按距离猜测分组或重新追踪边界。JSON 已换行，可用脚本读取并筛选所需轮廓，避免把全部坐标打印到上下文。先用 Pillow 在白底画这些线并查看一次，检查是否误选背景、漏掉主体或提取到不需要的内部边缘；必要时调整颜色容差或蒙版，不重复放大已经清楚的局部。
+输出 `canvasSize`（保持长宽比）、`regions`、`contours` 和 `strokes`，每笔为 `{points:[[x,y],…]}`。`contours` 用 `firstStroke`（从 0 开始）和 `strokeCount` 标出同一闭合轮廓的笔触范围，并提供 `bounds:[左,上,右,下]` 与 `signedArea`（正数为外边界，负数为孔洞）。需要闭合选区时，按该范围连接各笔 points，跳过每笔重复的首点即可；无需按距离猜测分组或重新追踪边界。预览路径必须是新文件，不会覆盖原图或已有输出。正常使用直接执行脚本，无需先读源码或临时编写预览程序。JSON 已换行，可用脚本读取并筛选所需轮廓，避免把全部坐标打印到上下文。使用 `--preview` 同时输出白底轮廓检查图（最长边不超过 1024 像素），直接查看一次，检查是否误选背景、漏掉主体或提取到不需要的内部边缘；必要时调整颜色容差或蒙版，不重复放大已经清楚的局部。
 
 `--min-area 12` 忽略碎片；`--smooth 1` 平滑轮廓，硬质拐角可设 0；`--epsilon 0.6` 简化点；`--stroke-length 100` 控制每笔长度。脚本最多分析 640×640 像素、64 个区域、512 笔，超限明确报错；不要在失败时原参数反复重试。
 
