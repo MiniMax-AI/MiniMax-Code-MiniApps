@@ -49,7 +49,8 @@ right panel or ask the Agent to "Open Page Designer".
   the Agent), two follow-up edits through `edit_design` (versions 2 and 3, the preview switched to
   each new version by itself), a second page from an English description, and Stop pressed during
   a run (the run ended with "Stopped." and the composer worked again). None of these runs raised a
-  permission request.
+  permission request. After the loopback check was added, a rename and one more `edit_design` turn
+  on the English page (version 3) were repeated in the real Host and still worked.
 - In the real page: version chips and the version menu, preview widths, Copy HTML (the clipboard
   held the raw HTML of version 3), "Show conversation" (the call resolved), and a click on an
   `https://` link inside the preview reaching `window.open`. No console errors or failed requests.
@@ -80,8 +81,9 @@ right panel or ask the Agent to "Open Page Designer".
 - **Agent turns** (`agentAccess: ["session.run"]`): each page gets one hidden session created with
   `context.agent.create()`, and every message you send is one turn in it, run from Node so it keeps
   going when the panel closes. These sessions use your primary MiniMax Code Agent, so its own
-  settings and memory apply, and they work in this Mini App's own Agent directory. The first turn carries the design brief (adapted from fx0), the
-  chosen style and your message; later turns carry a short reminder and your message. The brief asks
+  settings and memory apply, and they work in this Mini App's own Agent directory. The first turn
+  carries the design brief (adapted from fx0), the chosen style and your message; later turns carry
+  a short reminder and your message. The brief asks
   the Agent to work only through Page Designer's MCP tools, to stay away from files, the shell and
   subagents, and allows web search and web fetch for reference material. Your message is passed as
   marked user text; what the Agent sends back is shown as text and only the HTML it passes to the MCP
