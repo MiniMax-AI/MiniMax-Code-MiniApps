@@ -142,6 +142,20 @@ export async function createEditorService(dataDir) {
           input.name.length > 200)
       )
         throw Error('新建工程参数无效');
+      if (input.kind === 'craft' && ['execute', 'batch'].includes(input.options?.method)) {
+        const steps = input.options.method === 'batch' ? input.options.args : [input.options.args];
+        if (!Array.isArray(steps) || !steps.length || steps.length > 64)
+          throw Error('batch 需要 1–64 个命令');
+        for (const step of steps) {
+          if (!step || typeof step !== 'object' || Array.isArray(step) ||
+              typeof step.command !== 'string' || !step.command.trim() ||
+              (step.params !== undefined && (!step.params || typeof step.params !== 'object' || Array.isArray(step.params))))
+            throw Error('execute/batch 需要 {command,params}；params 必须是 JSON 对象');
+          if (step.command === 'document.pixel' && !['x', 'y'].every(key =>
+            Number.isInteger(step.params?.[key]) && step.params[key] >= -2147483648 && step.params[key] <= 2147483647))
+            throw Error('document.pixel 的 x、y 必须是 32 位整数，例如 {x:320,y:210}，不能使用字符串');
+        }
+      }
       if (input.kind === 'craft' && input.options?.method === 'export') {
         const args = input.options.args ?? {};
         if (typeof args !== 'object' || Array.isArray(args))

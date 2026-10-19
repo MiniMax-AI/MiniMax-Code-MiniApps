@@ -90,6 +90,18 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
       await assert.rejects(service.submit({...input, requestId, kind: 'craft', options: {method: 'export', args}}), /export|导出格式/);
       await assert.rejects(service.result(requestId), {code: 'ENOENT'});
     }
+    for (const options of [
+      {method:'execute', args:{command:'document.pixel', params:{x:'320',y:'210'}}},
+      {method:'execute', args:{command:'document.pixel', params:{x:0,y:0.5}}},
+      {method:'execute', args:{command:'document.pixel', params:{x:2147483648,y:0}}},
+      {method:'execute', args:{command:'document.pixel', params:{x:0}}},
+      {method:'execute', args:{command:'layer.select', params:'{}'}},
+      {method:'batch', args:[{command:'document.pixel',params:{x:'0',y:0}}]},
+    ]) {
+      const requestId = randomUUID();
+      await assert.rejects(service.submit({...input, requestId, kind:'craft', options}), /整数|JSON 对象/);
+      await assert.rejects(service.result(requestId), {code:'ENOENT'});
+    }
     const jobs = await Promise.all([service.submit(input), service.submit(input)]);
     assert.equal(jobs[0].jobId, jobs[1].jobId);
     await assert.rejects(
@@ -161,6 +173,17 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
     const importJob = await service.claim(importId, args.requestId);
     assert.deepEqual(importJob.options.args, file);
     request.emit('close');
+    for (const coords of [{x:320,y:210}, {x:-2147483648,y:2147483647}]) {
+      const pixelEditor = randomUUID();
+      service.register({editorId:pixelEditor,version:'p1',engine:'photocraft',document:{id:documentId}});
+      service.subscribe(pixelEditor,request,response);
+      const pixel = await service.submit({editorId:pixelEditor,expectedVersion:'p1',requestId:randomUUID(),
+        kind:'craft',options:{method:'execute',args:{command:'document.pixel',params:coords}}});
+      assert.equal(pixel.status,'queued');
+      assert.deepEqual(pixel.options.args.params,coords);
+      request.emit('close');
+    }
+
 
   } finally {
     service.close();

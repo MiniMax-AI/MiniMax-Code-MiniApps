@@ -73,3 +73,5 @@ PTC 支持 `console.log/info/warn/error/debug`，结果中最多保留 50 条、
 ## 打开本机文件
 
 `editor_open_file({editorId,expectedVersion,requestId,filePath})` 读取已知附件或导出文件路径，将 PNG/JPEG/WebP/PSD/pcraft（最多 32 MB）作为新文档打开。使用 editor_job 等待完成，再 inspect 核对尺寸和图层。旧文档保留；无需在上下文传 base64，也不通过 Web 引擎的 file.openAs 访问本机路径。原文件不修改，工具结果省略文件字节。
+
+`execute`/`batch` 的 params 必须是 JSON 对象。`document.pixel` 的 x、y 必须明确传入 32 位整数；字符串、小数、缺失坐标和越界值在任务入队前拒绝，不再落到默认的 (0,0) 像素。该检查用于取色命令，不表示所有引擎命令参数均有完整类型校验。
