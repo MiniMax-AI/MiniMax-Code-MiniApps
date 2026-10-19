@@ -1,0 +1,23 @@
+Page Designer
+Copyright 2026 Jiachen Yu (yujiachen-y)
+
+This product is a MiniMax Code port of fx0 by Vercel Labs
+(https://github.com/vercel-labs/fx0, commit e584782), which is licensed under
+the Apache License, Version 2.0. Copyright 2026 Vercel, Inc.
+
+The following parts are adapted from fx0, and each adapted file says so at
+its top together with the changes made:
+
+  miniapp/node/artifact.mjs   from lib/design-artifact.ts (HTML validation,
+                              the preview CSP and sandbox bootstrap) and the
+                              edit_design handler in lib/agent.ts
+  miniapp/node/prompts.mjs    from DESIGN_INSTRUCTIONS in lib/agent.ts
+  miniapp/node/server.mjs     the publish_design, edit_design and read_design
+                              tool descriptions, from lib/tools.ts
+
+Everything else, including the Mini App runtime, the page, the style presets
+and the icon, was written for this package.
+
+Page Designer is an independent community project. It is not affiliated with,
+sponsored by, or endorsed by Vercel. "fx0" and "Vercel" are used here only to
+identify the original work.

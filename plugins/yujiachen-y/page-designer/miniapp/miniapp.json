@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": ["./miniapp/client"],
+    "node": ["./miniapp/node"]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/studio",
+    "window": {
+      "width": 1280,
+      "height": 820,
+      "minWidth": 720,
+      "minHeight": 480
+    }
+  },
+  "mcpEndpoints": [{ "server": "page-designer", "path": "/mcp/page-designer" }],
+  "agentAccess": ["session.run"],
+  "agentConcurrency": 4
+}

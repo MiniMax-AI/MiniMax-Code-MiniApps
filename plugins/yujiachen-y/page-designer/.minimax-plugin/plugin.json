@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "page-designer",
+  "displayName": "Page Designer",
+  "version": "1.0.0",
+  "description": "Describe a page and an Agent writes it as one self-contained HTML file, with a live sandboxed preview, every version kept, and your MiniMax Code model. A MiniMax Code port of fx0 by Vercel Labs.",
+  "author": "yujiachen-y",
+  "icon": "icon.png",
+  "category": "Design & Sites",
+  "exampleQueries": [
+    "Open Page Designer",
+    "Open Page Designer and make a landing page for a neighborhood bakery",
+    "打开 Page Designer，做一个番茄钟小页面"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": []
+}

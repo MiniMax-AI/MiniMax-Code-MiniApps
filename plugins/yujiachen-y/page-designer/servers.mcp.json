@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "page-designer": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/page-designer",
+      "headers": {},
+      "description": "Page Designer: publish, edit and read self-contained HTML pages shown in its live preview.",
+      "timeout": 60000
+    }
+  }
+}
