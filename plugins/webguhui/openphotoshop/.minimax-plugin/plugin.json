@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "openphotoshop",
+  "displayName": "OpenPhotoShop",
+  "version": "0.2.13",
+  "description": "本地图像编辑、图层、选区、调色与工程管理。",
+  "author": "WebGuHui",
+  "icon": "icon.png",
+  "category": "Design & Sites",
+  "exampleQueries": [
+    "打开 OpenPhotoShop，编辑一张图片"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": []
+}

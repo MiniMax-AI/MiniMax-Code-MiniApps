@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "esbuild": "0.25.11",
+    "quickjs-emscripten-core": "0.32.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "openphotoshop-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "radix-ui": "1.4.3",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.3.1",
+    "lucide-react": "0.468.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.11",
+    "tailwindcss": "4.1.14",
+    "@tailwindcss/cli": "4.1.14"
+  }
+}

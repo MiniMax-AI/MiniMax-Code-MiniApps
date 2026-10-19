@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8" /><title>图层重绘检查</title
+><style>
+  body {
+    font: 16px system-ui;
+    background: #202226;
+    color: #eee;
+    margin: 28px;
+  }
+  canvas {
+    max-width: 90vw;
+    border: 1px solid #666;
+  }
+  pre {
+    white-space: pre-wrap;
+  }
+  button {
+    font: inherit;
+    padding: 8px 20px;
+  }
+</style>
+<h1>图层重绘检查</h1>
+<p>1280 × 800，文字图层，描边、浮雕和投影。同一浏览器、相同像素。</p>
+<button id="run">开始检查</button>
+<pre id="result">未开始</pre>
+<div id="image"></div>
+<script type="module" src="/cache-check.js"></script>

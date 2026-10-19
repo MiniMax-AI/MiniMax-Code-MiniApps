@@ -1,0 +1,2 @@
+# Unified patches contain single-space context lines for blank source lines.
+docs/photocraft/*.patch whitespace=-blank-at-eol

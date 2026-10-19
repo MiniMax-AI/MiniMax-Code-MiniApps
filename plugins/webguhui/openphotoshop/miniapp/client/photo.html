@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenPhotoShop</title>
+    <link rel="stylesheet" href="/components.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/photo.css" />
+  </head>
+  <body class="photo-app">
+    <header class="photo-header">
+      <strong>OpenPhotoShop</strong>
+      <nav>
+        <span id="photo-actions"></span>
+        <details id="photo-more">
+          <summary aria-label="更多" title="更多">•••</summary>
+          <div class="photo-more-content">
+            <label
+              ><span data-i18n="语言">语言</span
+              ><select id="photo-language" aria-label="Language"></select
+            ></label>
+            <button id="photo-save" hidden data-i18n="保存工程">保存工程</button>
+            <button id="photo-recover" data-i18n="恢复作品">恢复作品</button>
+            <a href="/photo-help.html" target="_blank" data-i18n="使用说明">使用说明</a>
+            <a href="/index.html" data-i18n="打开旧版工程">打开旧版工程</a>
+          </div>
+        </details>
+      </nav>
+    </header>
+    <main class="photo-main">
+      <iframe
+        id="craft"
+        title="PhotoCraft 图片编辑器"
+        sandbox="allow-scripts allow-downloads allow-same-origin"
+        src="/photocraft/index.html?webgl"
+      ></iframe>
+      <div id="loading" data-i18n="正在加载图片编辑器…">正在加载图片编辑器…</div>
+    </main>
+    <div id="photo-status" role="status" hidden></div>
+    <input id="photo-file" type="file" hidden />
+    <script type="module" src="/photo.js"></script>
+  </body>
+</html>

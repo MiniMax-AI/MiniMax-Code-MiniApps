@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "retouch-images": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/retouch-images",
+      "headers": {},
+      "description": "Read image requests and deliver generated PNG results to the Mini App.",
+      "timeout": 30000
+    }
+  }
+}

@@ -1,0 +1,17 @@
+@import 'tailwindcss/theme' layer(theme);
+@import 'tailwindcss/utilities' layer(utilities);
+@source './';
+@theme inline {
+ --color-background:var(--mcode-bg);
+ --color-foreground:var(--mcode-text);
+ --color-primary:var(--mcode-primary-action-bg);
+ --color-primary-foreground:var(--mcode-primary-action-text);
+ --color-secondary:var(--mcode-surface-muted);
+ --color-secondary-foreground:var(--mcode-text);
+ --color-accent:var(--mcode-surface-muted);
+ --color-accent-foreground:var(--mcode-text);
+ --color-destructive:var(--mcode-danger);
+ --color-ring:var(--mcode-accent);
+ --color-input:var(--mcode-border);
+ --radius-md:8px;
+}
