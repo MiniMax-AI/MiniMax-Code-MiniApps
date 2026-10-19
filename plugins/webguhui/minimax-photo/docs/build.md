@@ -56,3 +56,7 @@ python3 scripts/package-preview.py
 0.2.15 新增只读 `viewport` 桥接，用编辑器坐标映射显示 AI 操作轨迹。修改引擎后需重新编译 WASM，并同步 `docs/photocraft/miniapp.patch`。轨迹检查：`node scripts/check-activity.mjs`。
 
 逐笔显示验证：`node scripts/check-draw.mjs`。`miniapp/client/photocraft/draw.js` 顺序提交真实笔触并让出渲染时间；不修改原有原子批量命令。
+
+## 示例图压缩
+
+0.2.27 的三张示例图保留 1122×1402 尺寸，使用 WebP 有损编码 quality=90、method=6，总大小由 4,294,712 降为 535,320 字节。它们是教学示例，不是无损原片。后续更换素材请从原始图片重新编码，避免反复压缩已压缩的 WebP；检查人像纹理、海报文字及商品渐变，再检查解码尺寸。
