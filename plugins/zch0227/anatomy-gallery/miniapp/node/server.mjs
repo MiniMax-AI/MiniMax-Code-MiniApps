@@ -60,7 +60,7 @@ export async function start(context) {
 
   const mcp = createMcpEndpoint({
     name: 'anatomy-gallery',
-    version: '1.1.0',
+    version: '1.1.1',
     instructions:
       'Anatomy gallery: after building an anatomy figure, register each viewable version with register_figure_version. ' +
       'Use list_figures to find the figureId of an existing figure before registering a new version of it.',

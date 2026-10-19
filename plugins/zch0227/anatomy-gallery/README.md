@@ -148,7 +148,9 @@ miniapp/node/examples.mjs     Locates the anatomy skill and lists its examples
 miniapp/node/*.ts             Type declarations for the runtime APIs; not loaded at runtime
 skills/anatomy/               Bundled anatomy skill (third-party, MIT)
 docs/preview.jpg              README screenshot
-icon.png                      Plugin icon
+icon.png                      Plugin icon (light)
+icon-dark.png                 Plugin icon for dark mode (darkIcon)
+docs/icon.svg, docs/icon-dark.svg  Vector sources of the two icons
 ```
 
 ## License
