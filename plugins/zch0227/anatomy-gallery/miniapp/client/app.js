@@ -1241,13 +1241,16 @@ function renderLive() {
   );
 }
 
-/** @param {any} permission */
+/**
+ * One waiting permission request. The gallery only relays the user's own click; batch choices such as
+ * "allow for this conversation" live on MCode's own card in the chat side panel.
+ * @param {any} permission
+ */
 function askCard(permission) {
   const figureId = view.id;
-  /** @param {'allowOnce' | 'deny'} decision @param {boolean} [always] */
-  const decide = async (decision, always = false) => {
+  /** @param {'allowOnce' | 'deny'} decision */
+  const decide = async (decision) => {
     try {
-      if (always) await api(`/api/figures/${figureId}/auto-allow`, { method: 'POST', body: { value: true } });
       await api(`/api/figures/${figureId}/permissions/${encodeURIComponent(permission.requestId)}`, { method: 'POST', body: { decision } });
     } catch (error) {
       toast(message(error));
@@ -1258,7 +1261,7 @@ function askCard(permission) {
     permission.reason ? h('p', { class: 'small muted' }, permission.reason) : null,
     permission.toolInput ? h('pre', { class: 'mono' }, permission.toolInput) : null,
     h('div', { class: 'row' },
-      h('button', { type: 'button', class: 'btn ghost sm', onclick: () => void decide('allowOnce', true) }, '本次运行都允许'),
+      h('button', { type: 'button', class: 'btn ghost sm', title: '在聊天侧栏打开这个对话，用 MCode 的权限卡片批准，可选“全部仅本对话”等', onclick: () => void openConversation() }, '去对话里批准'),
       h('button', { type: 'button', class: 'btn secondary sm', onclick: () => void decide('deny') }, '拒绝'),
       h('button', { type: 'button', class: 'btn primary sm', onclick: () => void decide('allowOnce') }, '允许'),
     ),
@@ -1384,9 +1387,10 @@ function drawProcess() {
       items.push(h('li', { class: 'tl-item tl-ask' },
         h('div', { class: 'tl-meta' }, h('span', {}, `请求使用 ${e.toolName}`), h('span', {}, at)),
         e.reason ? h('p', { class: 'small muted' }, e.reason) : null,
+        // Only logs written before 1.1.0 carry `auto`; the gallery no longer answers requests itself.
         e.auto ? h('p', { class: 'small muted' }, '已按“本次运行都允许”自动放行') : null));
     } else if (e.type === 'decision') {
-      items.push(h('li', { class: 'tl-item tl-note' }, h('div', { class: 'tl-meta' }, h('span', {}, `你${e.decision === 'deny' ? '拒绝' : '允许'}了 ${e.toolName}`), h('span', {}, at))));
+      items.push(h('li', { class: 'tl-item tl-note' }, h('div', { class: 'tl-meta' }, h('span', {}, e.decision === 'elsewhere' ? `${e.toolName} 已在对话里处理` : `你${e.decision === 'deny' ? '拒绝' : '允许'}了 ${e.toolName}`), h('span', {}, at))));
     } else if (e.type === 'question') {
       items.push(h('li', { class: 'tl-item tl-ask' },
         h('div', { class: 'tl-meta' }, h('span', {}, `Agent 提问${e.title ? `：${e.title}` : ''}`), h('span', {}, at)),

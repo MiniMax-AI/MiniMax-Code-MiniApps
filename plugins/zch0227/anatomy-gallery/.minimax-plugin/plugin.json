@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "anatomy-gallery",
   "displayName": "Anatomy 画廊",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "集中展示 anatomy 技能做出的交互式等距图解，每张图解关联一个 MCode 对话，可以在画廊里新建、修改并查看历史版本。自带 anatomy 技能，不用另外安装。",
   "author": "zch0227",
   "icon": "icon.png",

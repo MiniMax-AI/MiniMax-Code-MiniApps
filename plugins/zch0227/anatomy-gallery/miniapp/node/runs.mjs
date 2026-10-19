@@ -167,7 +167,6 @@ export function createRunManager({ agent, store, publish, logger, logDir, plugin
       startedAt: live.startedAt,
       lastTool: live.lastTool,
       textTail: live.textTail,
-      autoAllow: live.autoAllow,
       model: live.model ?? null,
       permissions: [...live.permissions.values()].map((item) => ({
         requestId: item.requestId,
@@ -195,7 +194,7 @@ export function createRunManager({ agent, store, publish, logger, logDir, plugin
 
   /**
    * @param {string} figureId
-   * @param {{ kind: 'create' | 'edit', instruction?: string, example?: string | null, autoAllow?: boolean,
+   * @param {{ kind: 'create' | 'edit', instruction?: string, example?: string | null,
    *   model?: import('./miniapp-api.js').MiniAppAgentModelSelection | null }} input
    */
   async function start(figureId, input) {
@@ -214,7 +213,6 @@ export function createRunManager({ agent, store, publish, logger, logDir, plugin
       startedAt: Date.now(),
       sessionId: figure.sessionId,
       controller: new AbortController(),
-      autoAllow: !!input.autoAllow,
       permissions: new Map(),
       lastTool: '',
       textTail: '',
@@ -351,15 +349,14 @@ export function createRunManager({ agent, store, publish, logger, logDir, plugin
     }
   }
 
-  /** @param {any} live @param {Extract<MiniAppAgentRunEvent, { type: 'permission.requested' }>} event */
+  /**
+   * Every request waits for the user: a click on the gallery card, or the Host's own card in the chat
+   * side panel (where MCode offers its own "allow for this conversation"). The gallery never answers
+   * on the user's behalf.
+   * @param {any} live @param {Extract<MiniAppAgentRunEvent, { type: 'permission.requested' }>} event
+   */
   function onPermission(live, event) {
-    log(live, { type: 'permission', toolName: cleanText(event.toolName, 120), reason: cleanText(event.reason, 400), auto: !!live.autoAllow });
-    if (live.autoAllow) {
-      void agent
-        ?.reply({ sessionId: event.sessionId, requestId: event.requestId, decision: 'allowOnce' })
-        .catch(() => {});
-      return;
-    }
+    log(live, { type: 'permission', toolName: cleanText(event.toolName, 120), reason: cleanText(event.reason, 400) });
     live.permissions.set(event.requestId, {
       requestId: event.requestId,
       sessionId: event.sessionId,
@@ -375,22 +372,17 @@ export function createRunManager({ agent, store, publish, logger, logDir, plugin
     const live = active.get(figureId);
     const request = live?.permissions.get(requestId);
     if (!live || !request) throw new GalleryError('not_found', '这个确认请求已经结束');
+    let settledElsewhere = false;
     try {
       await /** @type {MiniAppAgentClient} */ (agent).reply({ sessionId: request.sessionId, requestId, decision });
     } catch (error) {
       if (errorCode(error) !== 'REQUEST_NOT_FOUND') throw error;
+      settledElsewhere = true; // decided on MCode's card in the side panel, or the run moved on
     }
     live.permissions.delete(requestId);
-    log(live, { type: 'decision', toolName: request.toolName, decision });
+    log(live, { type: 'decision', toolName: request.toolName, decision: settledElsewhere ? 'elsewhere' : decision });
     emitProgress(live);
-  }
-
-  /** @param {string} figureId @param {boolean} value */
-  function setAutoAllow(figureId, value) {
-    const live = active.get(figureId);
-    if (!live) throw new GalleryError('not_found', '当前没有进行中的运行');
-    live.autoAllow = value;
-    emitProgress(live);
+    if (settledElsewhere) throw new GalleryError('not_found', '这个请求已经在对话里处理过了');
   }
 
   /** @param {string} figureId */
@@ -404,7 +396,6 @@ export function createRunManager({ agent, store, publish, logger, logDir, plugin
     start,
     reply,
     cancel,
-    setAutoAllow,
     /** @param {string} figureId */
     live: (figureId) => {
       const run = active.get(figureId);

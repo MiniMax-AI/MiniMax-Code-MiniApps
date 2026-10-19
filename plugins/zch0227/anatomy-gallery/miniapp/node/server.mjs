@@ -60,7 +60,7 @@ export async function start(context) {
 
   const mcp = createMcpEndpoint({
     name: 'anatomy-gallery',
-    version: '1.0.0',
+    version: '1.1.0',
     instructions:
       'Anatomy gallery: after building an anatomy figure, register each viewable version with register_figure_version. ' +
       'Use list_figures to find the figureId of an existing figure before registering a new version of it.',
@@ -209,7 +209,7 @@ export async function start(context) {
         categoryId: body.categoryId,
       });
       publish({ type: 'changed', figureId: figure.id });
-      await runs.start(figure.id, { kind: 'create', example: example?.name ?? null, autoAllow: body.autoAllow === true, model: selectionFrom(body.model) });
+      await runs.start(figure.id, { kind: 'create', example: example?.name ?? null, model: selectionFrom(body.model) });
       return json(response, 201, { figureId: figure.id });
     }
     if (method === 'POST' && path === '/api/import') {
@@ -269,7 +269,7 @@ export async function start(context) {
       if (method === 'POST' && rest === 'runs') {
         const body = await readJson(request);
         const kind = body.kind === 'create' ? 'create' : 'edit';
-        await runs.start(id, { kind, instruction: body.instruction, autoAllow: body.autoAllow === true, model: selectionFrom(body.model) });
+        await runs.start(id, { kind, instruction: body.instruction, model: selectionFrom(body.model) });
         return json(response, 202, { ok: true });
       }
       const logMatch = /^runs\/([0-9a-f-]{36})\/log$/.exec(rest);
@@ -288,11 +288,6 @@ export async function start(context) {
       if (method === 'POST' && rest === 'cancel') {
         runs.cancel(id);
         return json(response, 202, { ok: true });
-      }
-      if (method === 'POST' && rest === 'auto-allow') {
-        const body = await readJson(request);
-        runs.setAutoAllow(id, body.value === true);
-        return json(response, 200, { ok: true });
       }
       const permissionMatch = /^permissions\/([A-Za-z0-9_.:-]{1,200})$/.exec(rest);
       if (method === 'POST' && permissionMatch) {

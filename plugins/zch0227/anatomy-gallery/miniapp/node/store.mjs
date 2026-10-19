@@ -1,7 +1,7 @@
 // @ts-check
 // Gallery state: figures, their versions (copied page snapshots) and recent Agent runs.
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 
 const MAX_PAGE_BYTES = 30 * 1024 * 1024;
@@ -17,6 +17,34 @@ const PREVIEW_TYPES = new Map([
 ]);
 /** Every anatomy page wraps the figure in `class="iso"` (kit ISO_CSS root). */
 const ANATOMY_MARKER = /class\s*=\s*["']iso["']/;
+
+/**
+ * The image type from the file's own header, never from its name: PNG, JPEG or WebP.
+ * @param {Buffer} buffer
+ * @returns {'.png' | '.jpg' | '.webp' | null}
+ */
+function imageType(buffer) {
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return '.png';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return '.jpg';
+  if (buffer.length >= 12 && buffer.toString('latin1', 0, 4) === 'RIFF' && buffer.toString('latin1', 8, 12) === 'WEBP') return '.webp';
+  return null;
+}
+
+/**
+ * Resolve symlinks first, so every later check applies to the file that will actually be read.
+ * @param {string} path @param {string} label
+ */
+async function resolveFile(path, label) {
+  let real;
+  try {
+    real = await realpath(path);
+  } catch {
+    throw new GalleryError('invalid', `${label}不存在：${path}`);
+  }
+  const info = await stat(real);
+  if (!info.isFile()) throw new GalleryError('invalid', `${label}不是文件：${path}`);
+  return { real, size: info.size };
+}
 
 export class GalleryError extends Error {
   /** @param {string} code @param {string} message */
@@ -261,17 +289,11 @@ export function createStore(dataDir) {
     if (typeof path !== 'string' || !isAbsolute(path)) {
       throw new GalleryError('invalid', `${label}需要是绝对路径`);
     }
-    const ext = extname(path).toLowerCase();
+    const { real, size } = await resolveFile(path, label);
+    const ext = extname(real).toLowerCase();
     if (ext !== '.html' && ext !== '.htm') throw new GalleryError('invalid', `${label}必须是 .html 文件`);
-    let info;
-    try {
-      info = await stat(path);
-    } catch {
-      throw new GalleryError('invalid', `${label}不存在：${path}`);
-    }
-    if (!info.isFile()) throw new GalleryError('invalid', `${label}不是文件：${path}`);
-    if (info.size > MAX_PAGE_BYTES) throw new GalleryError('invalid', `${label}超过 30 MB`);
-    const buffer = await readFile(path);
+    if (size > MAX_PAGE_BYTES) throw new GalleryError('invalid', `${label}超过 30 MB`);
+    const buffer = await readFile(real);
     const html = buffer.toString('utf8');
     if (!ANATOMY_MARKER.test(html)) {
       throw new GalleryError('invalid', `${label}看起来不是 anatomy 构建出的页面（缺少 class="iso"）`);
@@ -283,16 +305,13 @@ export function createStore(dataDir) {
   async function readPreview(path, label = '预览图') {
     if (!path) return null;
     if (!isAbsolute(path)) throw new GalleryError('invalid', `${label}需要是绝对路径`);
-    const ext = extname(path).toLowerCase();
-    if (!PREVIEW_TYPES.has(ext)) throw new GalleryError('invalid', `${label}只支持 PNG、WebP 或 JPEG`);
-    let info;
-    try {
-      info = await stat(path);
-    } catch {
-      throw new GalleryError('invalid', `${label}不存在：${path}`);
-    }
-    if (!info.isFile() || info.size > MAX_PREVIEW_BYTES) throw new GalleryError('invalid', `${label}无效或超过 15 MB`);
-    return { buffer: await readFile(path), ext };
+    const { real, size } = await resolveFile(path, label);
+    if (!PREVIEW_TYPES.has(extname(real).toLowerCase())) throw new GalleryError('invalid', `${label}只支持 PNG、WebP 或 JPEG`);
+    if (size > MAX_PREVIEW_BYTES) throw new GalleryError('invalid', `${label}超过 15 MB`);
+    const buffer = await readFile(real);
+    const ext = imageType(buffer);
+    if (!ext) throw new GalleryError('invalid', `${label}的内容不是 PNG、WebP 或 JPEG 图片`);
+    return { buffer, ext };
   }
 
   /** The kit writes `<name>-light.html` beside the dark page when built with `--light`. */
