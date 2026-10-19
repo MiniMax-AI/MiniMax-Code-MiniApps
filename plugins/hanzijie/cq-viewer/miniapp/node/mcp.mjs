@@ -6,7 +6,7 @@
 
 export const MCP_PATH = '/mcp/cq-viewer';
 
-const SERVER_INFO = { name: 'cq-viewer', version: '1.2.0' }; // keep equal to plugin.json (tests check)
+const SERVER_INFO = { name: 'cq-viewer', version: '1.2.1' }; // keep equal to plugin.json (tests check)
 
 const INSTRUCTIONS = [
   'CadQuery Viewer 是本机的 STL / STEP 查看器，页面在 MiniMax Code 的 Mini App 面板里打开。',

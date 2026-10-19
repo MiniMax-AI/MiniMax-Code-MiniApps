@@ -9,7 +9,7 @@
 
 MiniMax Code 里的本地 3D 模型查看器。打开项目文件夹里的 STL 和 STEP（STEP 装配保留零件名称、颜色和真实 CAD 边线），实时显示 CadQuery 脚本推送的模型，在模型上标出位置后一键发到对话里，让 AI 准确知道你说的是哪个面、哪个孔、哪条边。AI 可以通过 MCP 工具登记模型文件夹、在查看器里打开模型；包里还内置了 flowful-ai 的 CadQuery 参数化建模 skill。
 
-作者：[HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai)（内置的 CadQuery skill） · 版本：`1.2.0`
+作者：[HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai)（内置的 CadQuery skill） · 版本：`1.2.1`
 
 ![CadQuery Viewer：一个 STEP 装配，已标注三个位置，准备发送](docs/preview.jpg)
 

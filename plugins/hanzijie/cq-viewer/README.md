@@ -9,7 +9,7 @@
 
 A local 3D viewer for MiniMax Code. Open STL and STEP models from your project folder — STEP assemblies keep their part names, colours, and real CAD edges — watch models pushed live from CadQuery scripts, then mark positions on the model and send them to the conversation in one click, so the AI knows exactly which face, hole, or edge you mean. The AI can register model folders and open models in the viewer through MCP tools, and the package bundles flowful-ai's CadQuery parametric-design skill.
 
-Authors: [HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai) (bundled CadQuery skill) · Version: `1.2.0`
+Authors: [HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai) (bundled CadQuery skill) · Version: `1.2.1`
 
 ![CadQuery Viewer: a STEP assembly with three annotations ready to send](docs/preview.jpg)
 
