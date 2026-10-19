@@ -42,6 +42,9 @@ def inside(relative):
     return path
 
 inside(manifest['icon'])
+for skill in manifest['skills']:
+    assert skill.startswith('skills/') and skill.endswith('/SKILL.md'), skill
+    inside(skill)
 for role in ['client', 'node']:
     paths = app['artifacts'][role]
     assert paths and len(paths) == len(set(paths))
@@ -54,7 +57,7 @@ assert any(entry.is_relative_to(inside(p)) for p in app['artifacts']['node'])
 
 subprocess.run(['node', 'scripts/check.mjs'], cwd=root, check=True)
 subprocess.run(['node', 'scripts/check-ptc.mjs'], cwd=root, check=True)
-allowed = ['.minimax-plugin', 'miniapp', 'package.json', 'icon.png', 'servers.mcp.json', 'licenses']
+allowed = ['.minimax-plugin', 'miniapp', 'package.json', 'icon.png', 'servers.mcp.json', 'licenses', 'skills']
 files = []
 for relative in allowed:
     path = inside(relative)

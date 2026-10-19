@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "minimax-photo",
   "displayName": "MiniMax Photo",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "本地图像编辑、图层、选区、调色与工程管理。",
   "author": "WebGuHui",
   "icon": "icon.png",
@@ -14,5 +14,7 @@
   "mcpServers": [
     "servers.mcp.json"
   ],
-  "skills": []
+  "skills": [
+    "skills/minimax-photo/SKILL.md"
+  ]
 }

@@ -8,6 +8,8 @@
 
 ![MiniMax Photo welcome page with generated example images](docs/preview.png)
 
+附带 [图片编辑 Skill](skills/minimax-photo/SKILL.md)，指导 Agent 按需发现命令、组合批量编辑、检查预览和从失败处继续。策略不绑定特定题材，用户可以直接附图描述需求。
+
 ## 安装与使用
 
 需要 MiniMax Code 3.1.2 或更新版本。退出客户端，将本目录完整复制到 `<dataDir>/plugins/minimax-photo/`，保留隐藏的 `.minimax-plugin` 目录；默认 `<dataDir>` 为 `~/.minimax`。不要多套一层 `webguhui` 目录。重启并启用插件，向 Agent 说“打开 MiniMax Photo”。无需安装 npm 依赖。客户端的 GitHub 插件导入不支持此类包，请按社区仓库的手动安装流程操作。

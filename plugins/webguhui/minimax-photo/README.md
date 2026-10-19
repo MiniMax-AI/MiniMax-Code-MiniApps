@@ -27,6 +27,8 @@ Open an image or example, edit it, then use **More → Save project** to retain 
 
 When updating, save important projects, stop active AI work and close the client before replacing the complete plugin directory. This public `minimax-photo` package is a separate installation from the development `retouch-lab` package: it does not migrate that package's private state. Saved `.pcraft` and legacy `.retouch.json` files remain supported. Uninstalling the plugin may leave its Host-managed private data behind.
 
+The bundled [editing skill](skills/minimax-photo/SKILL.md) guides command discovery, batched edits, preview checks and recovery. It uses task-dependent strategies rather than subject-specific drawing templates.
+
 ## Tested environment
 
 - MiniMax Code **3.1.3-preview.4675** on macOS (Apple Silicon), tested on 2026-10-19 under the development package name.
