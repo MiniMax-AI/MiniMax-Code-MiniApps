@@ -1,3 +1,4 @@
+import { readEditorFile } from './editor-file.mjs';
 import { editorCapabilities } from '../client/editor-commands.js';
 const uuid = { type: 'string', pattern: '^[a-f0-9-]{36}$' };
 const schema = (properties) => ({
@@ -7,6 +8,12 @@ const schema = (properties) => ({
   additionalProperties: false,
 });
 export const editorTools = [
+  {
+    name: 'editor_open_file',
+    description: '在当前 PhotoCraft 编辑器以新文档打开用户指定的本机图片或工具返回的导出文件，保留现有文档。支持 PNG/JPEG/WebP/PSD/pcraft，最多32MB。filePath 只使用已知附件或导出路径，不扫描目录、不读取凭证。无需 base64、浏览器上传或 file.openAs。返回任务编号，用 editor_job 查询完成结果。',
+    inputSchema: schema({editorId: uuid, expectedVersion: {type: 'string'}, requestId: uuid, filePath: {type: 'string', maxLength: 4096}}),
+    annotations: {destructiveHint: false, idempotentHint: true},
+  },
   {
     name: 'photo_call',
     description:
@@ -159,7 +166,13 @@ export async function callEditorTool(name, args, editor) {
   )
     throw Error('编辑工具参数无效');
   let result;
-  if (name === 'photo_call')
+  if (name === 'editor_open_file') {
+    const state = editor.inspect(args.editorId);
+    if (state.engine !== 'photocraft') throw Error('需要 PhotoCraft 工作台');
+    const file = await readEditorFile(args.filePath);
+    result = await editor.submit({editorId: args.editorId, expectedVersion: args.expectedVersion,
+      requestId: args.requestId, kind: 'craft', options: {method: 'open', args: file}});
+  } else if (name === 'photo_call')
     result = await editor.submit({
       ...args,
       kind: 'craft',

@@ -1,3 +1,5 @@
+import { readEditorFile } from '../miniapp/node/editor-file.mjs';
+import { callEditorTool } from '../miniapp/node/editor-mcp.mjs';
 import { createEditorService } from '../miniapp/node/editor-service.mjs';
 import { EventEmitter } from 'node:events';
 import { colorReplacementPatch } from '../miniapp/client/color-replace.js';
@@ -137,6 +139,27 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
     const validExport = await service.submit({...input, editorId: craftEditorId, requestId: randomUUID(), expectedVersion: 'v3', kind: 'craft', options: {method: 'export', args: {format: 'png'}}});
     assert.equal(validExport.status, 'queued');
     assert.deepEqual(validExport.options.args, {format: 'png'});
+    request.emit('close');
+    const importId = randomUUID();
+    service.register({editorId: importId, version: 'empty', engine: 'photocraft', document: null});
+    service.subscribe(importId, request, response);
+    const filePath = join(root, 'icon.png');
+    const file = await readEditorFile(filePath);
+    assert.equal(file.data, (await readFile(filePath)).toString('base64'));
+    await assert.rejects(readEditorFile('relative.png'), /绝对路径/);
+    await assert.rejects(readEditorFile(join(root, 'package.json')), /支持/);
+    const fake = join(dir, 'fake.png');
+    await writeFile(fake, 'this is not an image');
+    await assert.rejects(readEditorFile(fake), /内容/);
+    const args = {editorId: importId, expectedVersion: 'empty', requestId: randomUUID(), filePath};
+    const first = await callEditorTool('editor_open_file', args, service);
+    const again = await callEditorTool('editor_open_file', args, service);
+    assert.deepEqual(first, again);
+    const summary = JSON.parse(first.content[0].text);
+    assert.equal(summary.status, 'queued');
+    assert.deepEqual(summary.options, {method: 'open', args: {name: 'icon.png'}});
+    const importJob = await service.claim(importId, args.requestId);
+    assert.deepEqual(importJob.options.args, file);
     request.emit('close');
 
   } finally {
@@ -598,6 +621,7 @@ try {
           'editor_code_result',
           'editor_export',
           'editor_create',
+          'editor_open_file',
         ].sort(),
       );
       assert.equal((await rpc('tools/list', {}, { Origin: 'https://example.org' })).status, 403);

@@ -69,3 +69,7 @@ PTC 支持 `console.log/info/warn/error/debug`，结果中最多保留 50 条、
 ### 多会话编辑器识别
 
 先在当前会话打开插件 ID `minimax-photo`，再读取当前 MiniApp 页面 `html` 的 `data-photo-editor-id`，与 `editor_list` 的 ID 精确匹配。页面会报告 `page.visibility`（visible/hidden/unknown）和 `page.focused`（布尔或 null）；旧页面不报告时返回 unknown/null。这两个值只作提示，不是会话归属或访问权限证明。工具不会自动选择最新、首个或可见实例。任务运行中的可见状态更新不会覆盖任务持有的文档版本。
+
+## 打开本机文件
+
+`editor_open_file({editorId,expectedVersion,requestId,filePath})` 读取已知附件或导出文件路径，将 PNG/JPEG/WebP/PSD/pcraft（最多 32 MB）作为新文档打开。使用 editor_job 等待完成，再 inspect 核对尺寸和图层。旧文档保留；无需在上下文传 base64，也不通过 Web 引擎的 file.openAs 访问本机路径。原文件不修改，工具结果省略文件字节。

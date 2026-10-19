@@ -42,6 +42,8 @@ One historical open failure required a restart; its cause is unresolved. Natural
 
 ## Data & access
 
+The editor_open_file tool reads an explicitly supplied local PNG/JPEG/WebP/PSD/pcraft file (up to 32 MB), checks its header, and sends a private copy to the connected editor as a new document. It does not scan directories or modify the original file. The task payload is stored under the plugin data directory; tool replies omit the file bytes.
+
 - The Node service binds only to the Host-provided loopback address. It reads bundled assets from the plugin directory and stores projects, recovery snapshots, assistant drafts/replies/session IDs, image requests/results, editor jobs and exports under opaque `context.dataDir` paths. It does not read Host configuration, credentials or conversation databases.
 - Images selected through file inputs are read in the page. Save/export uses the browser download dialog. The backend can read a PNG path supplied to `submit_image_result`; this is a privileged Agent tool, not an arbitrary-file HTTP endpoint. The Agent may write generated files into its working directory before returning them.
 - This package declares `agentAccess: ["session.run"]`. Sending a request runs a Host Agent that can access files, shell and MCP tools under Host permissions. Requests include the user's instructions and current artwork context; image tasks may include a reference image. Model/provider traffic is handled by the Host and its selected tools, not by an embedded API key.

@@ -15,6 +15,8 @@ const canonical = (value) =>
       : value;
 const visible = (job) => {
   const { checkpoint, preview, exportImage, craftExport, claim, fingerprint, ...summary } = job;
+  if (summary.options?.method === 'open')
+    summary.options = {method: 'open', args: {name: summary.options.args?.name}};
   return summary;
 };
 export async function createEditorService(dataDir) {

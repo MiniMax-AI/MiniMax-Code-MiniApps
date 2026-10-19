@@ -30,6 +30,10 @@ description: 在 MiniMax Photo 中创建和编辑图片，包括参考图绘制�
 
 工具的宿主前缀可能变化，按当前工具列表匹配以下名称。`editor_capabilities`、`editor_batch`、`editor_preview`、`editor_create` 和 `editor_export` 是旧版 canvas 引擎接口。PhotoCraft 使用 `photo_call` 或下表的 PTC 方法；尤其预览用 `photo_call(method:"preview", args:{})` 或 `editor.preview()`，新建用 PTC `editor.create()`。
 
+## 打开本机图片和分层工程
+
+使用 `editor_open_file({editorId, expectedVersion, requestId, filePath})`，随后用 `editor_job` 查询完成结果。支持 PNG/JPEG/WebP/PSD/pcraft，最大 32 MB，以新文档打开并保留旧作品。只使用用户指定的附件文件或工具返回的导出路径；无需把文件转成 base64 放入模型上下文。Web 编辑器不能用 `file.openAs` 或 `file.placeEmbedded` 读取本机路径，不搜索 HTTP 接口或凭证。完成后 inspect 核对新文档与图层。
+
 ## 调用约定
 
 直接调用：`photo_call({editorId, expectedVersion, requestId, method, args})`。
