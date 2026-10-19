@@ -1,0 +1,15 @@
+{
+  "name": "minimax-photo",
+  "version": "0.2.14",
+  "private": true,
+  "type": "module",
+  "description": "MiniMax Code 本地图像工作台",
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  },
+  "scripts": {
+    "start": "node scripts/preview.mjs",
+    "check": "node scripts/check.mjs"
+  }
+}

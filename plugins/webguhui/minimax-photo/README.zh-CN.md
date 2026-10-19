@@ -1,0 +1,35 @@
+# MiniMax Photo
+
+[English](README.md)
+
+运行在 MiniMax Code 中的图片编辑器。你可以手动编辑图层、选区和颜色，也可以直接在应用里的 AI 助手输入需求，让 Agent 读图、改图或调用宿主提供的生图工具。
+
+编辑器基于开源 PhotoCraft 的 WebAssembly 版本，增加了示例引导、可拖动和收起的助手、作品恢复、图片回传，以及程序化组合调用。没有打包 Electron、模型权重或 API 密钥。这是社区作品，不是 Adobe 产品，也不是 MiniMax 官方应用。
+
+![MiniMax Photo welcome page with generated example images](docs/preview.png)
+
+## 安装与使用
+
+需要 MiniMax Code 3.1.2 或更新版本。退出客户端，将本目录完整复制到 `<dataDir>/plugins/minimax-photo/`，保留隐藏的 `.minimax-plugin` 目录；默认 `<dataDir>` 为 `~/.minimax`。不要多套一层 `webguhui` 目录。重启并启用插件，向 Agent 说“打开 MiniMax Photo”。无需安装 npm 依赖。客户端的 GitHub 插件导入不支持此类包，请按社区仓库的手动安装流程操作。
+
+打开图片或示例后即可编辑。“更多 → 保存工程”保留图层，“导出 PNG”保存合并图片。AI 返回的图片会作为新作品打开。工程格式 `.pcraft` 来自 PhotoCraft。
+
+开源版使用新插件 ID `minimax-photo`，与开发版 `retouch-lab` 分开安装，不自动迁移旧版的内部备份和 AI 对话。已有 `.pcraft` 和旧版 `.retouch.json` 文件仍可打开。升级前先保存工程、停止 AI 并退出客户端，再替换完整插件目录。
+
+## 已验证环境
+
+2026-10-19 在 macOS Apple Silicon、MiniMax Code 3.1.3-preview.4675 中验证了开发版的安装、恢复、对话、停止、草稿保留、保存与导出；实际执行了黑白调整图层和宿主模型改图回传。开源改名版的检查另见 [验收说明](docs/validation.md)。未全面验证 Windows、稳定客户端、大图性能和复杂 PSD，不能据此声称完整兼容 Photoshop。
+
+## 数据与权限
+
+应用在宿主分配的本机端口运行，工程备份、草稿、回复、会话编号、图片和编辑任务存入宿主提供的 `context.dataDir`。不读取宿主配置、密钥或会话数据库。选择文件在页面中完成，保存使用下载对话框。图片回传 MCP 工具可读取 Agent 指定的 PNG 路径；不是任意文件下载接口。
+
+发送需求会运行宿主 Agent，它可以按宿主权限使用文件、Shell 和 MCP；需求和参考图片可能交给用户配置的模型服务。应用不自带密钥，不自动批准权限。后台不直接请求外部服务，也不自行启动 Shell 子进程；Agent 工具可能执行这些操作。PTC 运行于独立 QuickJS 工作线程，仅暴露编辑 API。
+
+自动备份只覆盖当前活动作品，存在几秒间隔；不要替代手动保存。不要同时在两个窗口修改同一 AI 会话，过期写入会被拒绝。本地备份和生成文件暂不自动清理；卸载插件后宿主私有数据可能仍然保留。
+
+## 文档与许可
+
+[用户手册](docs/user-guide.zh-CN.md) · [构建说明](docs/build.md) · [Agent 工具](docs/agent-tools.zh-CN.md)
+
+新增 MiniApp 代码采用 MIT；PhotoCraft、字体、图标和 QuickJS 的原许可证保留在 `licenses/`。展示图片由 Codex 生图工具制作，是单层示例图片。没有包含修图派的专有源码或素材。

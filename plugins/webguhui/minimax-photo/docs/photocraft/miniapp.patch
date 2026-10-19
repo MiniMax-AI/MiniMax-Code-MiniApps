@@ -1,0 +1,319 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 0167dea..213c764 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -5061,8 +5061,10 @@ dependencies = [
+  "js-sys",
+  "log",
+  "photocraft-codecs",
++ "photocraft-compose",
+  "photocraft-doc",
+  "photocraft-engine",
++ "photocraft-format",
+  "photocraft-io",
+  "photocraft-paint",
+  "photocraft-psd",
+diff --git a/apps/photocraft-web/Cargo.toml b/apps/photocraft-web/Cargo.toml
+index 786165b..3018c56 100644
+--- a/apps/photocraft-web/Cargo.toml
++++ b/apps/photocraft-web/Cargo.toml
+@@ -19,6 +19,10 @@ name = "photocraft-web"
+ path = "src/main.rs"
+ 
+ [dependencies]
++serde_json = { workspace = true }
++photocraft-compose = { workspace = true }
++photocraft-format = { workspace = true }
++photocraft-paint = { workspace = true }
+ photocraft-engine = { workspace = true }
+ photocraft-io = { workspace = true }
+ photocraft-codecs = { workspace = true }
+diff --git a/apps/photocraft-web/src/main.rs b/apps/photocraft-web/src/main.rs
+index 0802a02..dc38fbd 100644
+--- a/apps/photocraft-web/src/main.rs
++++ b/apps/photocraft-web/src/main.rs
+@@ -25,6 +25,9 @@ mod indexed_presets;
+ #[cfg(target_arch = "wasm32")]
+ mod web;
+ 
++#[cfg(target_arch = "wasm32")]
++mod miniapp;
++
+ #[cfg(target_arch = "wasm32")]
+ fn main() {
+     web::start();
+diff --git a/apps/photocraft-web/src/web.rs b/apps/photocraft-web/src/web.rs
+index eb350d1..17481d7 100644
+--- a/apps/photocraft-web/src/web.rs
++++ b/apps/photocraft-web/src/web.rs
+@@ -78,6 +78,7 @@ pub fn start() {
+                 options,
+                 Box::new(move |cc| {
+                     PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
++                    crate::miniapp::init(cc.egui_ctx.clone());
+                     let inbox: Inbox = Arc::default();
+                     let served: Served = Arc::default();
+                     load_font_manifest(served.clone(), cc.egui_ctx.clone());
+@@ -299,6 +300,7 @@ impl eframe::App for WebShell {
+                 }
+             });
+         }
++        crate::miniapp::drain(&mut self.app);
+         self.serve_fonts(ctx);
+         self.app.logic(ctx, frame);
+         self.save_presets(ctx);
+@@ -385,8 +387,8 @@ fn services(inbox: Inbox) -> Services {
+         })),
+         inbox: Some(inbox),
+         // Preferences live in the browser's localStorage.
+-        load_prefs: Some(Box::new(|| local_storage()?.get_item(PREFS_KEY).ok().flatten())),
+-        save_prefs: Some(Box::new(|text: &str| local_storage().ok_or("no localStorage")?.set_item(PREFS_KEY, text).map_err(|e| format!("{e:?}")))),
++        load_prefs: None, // Mini App iframe has an opaque origin; preferences are session-only.
++        save_prefs: None,
+         ..Default::default()
+     }
+ }
+diff --git a/crates/engine/src/presets/mod.rs b/crates/engine/src/presets/mod.rs
+index 0369629..81382b4 100644
+--- a/crates/engine/src/presets/mod.rs
++++ b/crates/engine/src/presets/mod.rs
+@@ -186,6 +186,7 @@ impl Session {
+             tool_presets: take(&mut m, "tool_presets"),
+             documents: take(&mut m, "documents"),
+             recent_documents: take(&mut m, "recent_documents"),
++            export_presets: take(&mut m, "export_presets"),
+             custom_shapes: take(&mut m, "custom_shapes"),
+             layer_defaults: take(&mut m, "layer_defaults"),
+             swatches: take(&mut m, "swatches"),
+diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
+index 914d395..0887f7d 100644
+--- a/crates/ui-egui/src/canvas.rs
++++ b/crates/ui-egui/src/canvas.rs
+@@ -2760,7 +2760,7 @@ fn start_screen(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+     ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
+         ui.vertical_centered(|ui| {
+             ui.horizontal(|ui| {
+-                let title = ui.painter().layout_no_wrap(tl!("PhotoCraft").into(), crate::theme::semibold(38.0), t.text);
++                let title = ui.painter().layout_no_wrap("MiniMax Photo".into(), crate::theme::semibold(38.0), t.text);
+                 let by = ui.painter().layout_no_wrap(tl!("open source").into(), egui::FontId::proportional(13.0), t.text_faint);
+                 let total = title.size().x + by.size().x + 10.0;
+                 ui.add_space(((card.width() - total) / 2.0).max(0.0));
+@@ -2796,10 +2796,7 @@ fn start_screen(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+                 ui.add_space(22.0);
+                 home_recent(app, ui, &recent);
+             }
+-            ui.add_space(26.0);
+-            crate::links::discord_button(app, ui, 190.0);
+-            ui.add_space(10.0);
+-            crate::links::link_row(app, ui);
++
+         });
+     });
+ }
+diff --git a/crates/ui-egui/src/panels.rs b/crates/ui-egui/src/panels.rs
+index 6fc8e2d..4a2424c 100644
+--- a/crates/ui-egui/src/panels.rs
++++ b/crates/ui-egui/src/panels.rs
+@@ -602,7 +602,7 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+                 let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+             }
+-            let title = app.session.active().map(|d| format!("{}{}", d.doc.name, if d.is_dirty() { "  •" } else { "" })).unwrap_or_else(|| "PhotoCraft".into());
++            let title = app.session.active().map(|d| format!("{}{}", d.doc.name, if d.is_dirty() { "  •" } else { "" })).unwrap_or_else(|| "MiniMax Photo".into());
+             // The menus and the far-end controls are laid out first; the title is centred in
+             // whatever room is left between them (`free`, left to right: menus then controls, or
+             // controls then menus in a right-to-left UI), shortened or dropped rather than drawn
+@@ -695,7 +695,7 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+                 return;
+             }
+             // A right-to-left document name in display order (the OS title keeps the logical text),
+-            // in a left-to-right line: "— PhotoCraft" stays after the name, at the right.
++            // in a left-to-right line: "— MiniMax Photo" stays after the name, at the right.
+             let title = crate::bidi_text::visual_ltr(&title).into_owned();
+             let font = theme::medium(13.0);
+             let galley = ui.painter().layout_no_wrap(title.clone(), font.clone(), t.text_dim);
+@@ -730,7 +730,7 @@ pub fn system_title_bar(app: &PhotocraftApp) -> bool {
+ /// marks unsaved changes, like the `•` in the app-drawn title), or just the app name with no
+ /// document open.
+ pub fn window_title(app: &PhotocraftApp) -> String {
+-    app.session.active().map(|d| format!("{}{} \u{2014} PhotoCraft", if d.is_dirty() { "*" } else { "" }, d.doc.name)).unwrap_or_else(|| "PhotoCraft".into())
++    app.session.active().map(|d| format!("{}{} \u{2014} MiniMax Photo", if d.is_dirty() { "*" } else { "" }, d.doc.name)).unwrap_or_else(|| "MiniMax Photo".into())
+ }
+ 
+ /// Keep the OS window title (and the taskbar / Alt-Tab entry) on the active file. Sends
+@@ -805,19 +805,19 @@ mod title_tests {
+ 
+     #[test]
+     fn window_title_with_no_document_is_the_app_name() {
+-        assert_eq!(window_title(&app(true)), "PhotoCraft");
++        assert_eq!(window_title(&app(true)), "MiniMax Photo");
+     }
+ 
+     #[test]
+     fn window_title_follows_the_active_file() {
+         let mut app = app(true);
+         open_named(&mut app, "foo.psd");
+-        assert_eq!(window_title(&app), "foo.psd \u{2014} PhotoCraft");
++        assert_eq!(window_title(&app), "foo.psd \u{2014} MiniMax Photo");
+         // Unsaved changes gain a `*` prefix, like the `•` in the app-drawn title.
+         if let Some(st) = app.session.active_mut() {
+             st.revision += 1;
+         }
+-        assert_eq!(window_title(&app), "*foo.psd \u{2014} PhotoCraft");
++        assert_eq!(window_title(&app), "*foo.psd \u{2014} MiniMax Photo");
+     }
+ 
+     #[test]
+@@ -855,11 +855,11 @@ mod title_tests {
+         let ctx = egui::Context::default();
+         crate::PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+         super::sync_window_title(&mut app, &ctx);
+-        assert_eq!(app.last_window_title, "PhotoCraft");
++        assert_eq!(app.last_window_title, "MiniMax Photo");
+         let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+         out.textures_delta.clear();
+         let cmds = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+-        assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(t) if t == "PhotoCraft")), "{cmds:?}");
++        assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(t) if t == "MiniMax Photo")), "{cmds:?}");
+         // Same document state again: the cached title stops a repeat command.
+         super::sync_window_title(&mut app, &ctx);
+         let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+@@ -868,7 +868,7 @@ mod title_tests {
+         assert!(!cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(_))), "repeat Title: {cmds:?}");
+         open_named(&mut app, "foo.psd");
+         super::sync_window_title(&mut app, &ctx);
+-        assert_eq!(app.last_window_title, "foo.psd \u{2014} PhotoCraft");
++        assert_eq!(app.last_window_title, "foo.psd \u{2014} MiniMax Photo");
+     }
+ }
+ 
+diff --git a/apps/photocraft-web/src/miniapp.rs b/apps/photocraft-web/src/miniapp.rs
+new file mode 100644
+index 0000000..d6893ab
+--- /dev/null
++++ b/apps/photocraft-web/src/miniapp.rs
+@@ -0,0 +1,124 @@
++//! MiniMax Photo browser adapter. JSON requests are processed on the UI thread.
++use std::cell::RefCell;
++use serde_json::{Value, json};
++use wasm_bindgen::prelude::*;
++use photocraft_ui_egui::PhotocraftApp;
++struct Request { input: Value, resolve: js_sys::Function, reject: js_sys::Function }
++thread_local! {
++    static QUEUE: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
++    static CONTEXT: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
++}
++pub fn init(ctx: egui::Context) { CONTEXT.with(|v| *v.borrow_mut() = Some(ctx)); }
++#[wasm_bindgen]
++pub fn miniapp_call(input: &str) -> Result<js_sys::Promise, JsValue> {
++    if input.len() > 96 * 1024 * 1024 { return Err(JsValue::from_str("request too large")); }
++    let value: Value = serde_json::from_str(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
++    if !CONTEXT.with(|v| v.borrow().is_some()) { return Err(JsValue::from_str("editor not ready")); }
++    if QUEUE.with(|q| q.borrow().len() >= 8) { return Err(JsValue::from_str("editor busy")); }
++    Ok(js_sys::Promise::new(&mut |resolve, reject| {
++        QUEUE.with(|q| q.borrow_mut().push(Request { input: value.clone(), resolve, reject }));
++        CONTEXT.with(|v| { if let Some(ctx) = v.borrow().as_ref() {ctx.request_repaint();} });
++    }))
++}
++fn inspect(app: &PhotocraftApp) -> Value {
++    let doc = app.session.active();
++    json!({"version": doc.map(|d| format!("{}:{}",d.doc.id.0,d.revision)).unwrap_or_else(|| "empty".into()),
++      "document":doc.map(photocraft_engine::inspect::document)})
++}
++fn dispatch(app: &mut PhotocraftApp, input: &Value) -> Result<Value,String> {
++    let method = input.get("method").and_then(Value::as_str).ok_or("missing method")?;
++    let args = input.get("args").cloned().unwrap_or(json!({}));
++    if let Some(expected) = input.get("expectedVersion").and_then(Value::as_str) {
++        if inspect(app).get("version").and_then(Value::as_str) != Some(expected) { return Err("document changed; inspect again".into()); }
++    }
++    match method {
++        "inspect" => Ok(inspect(app)),
++        "font" => {
++            let data=args.get("data").and_then(Value::as_str).ok_or("missing font")?;
++            let bytes=photocraft_paint::tile::b64_decode(data).ok_or("invalid font")?;
++            if bytes.len()>8*1024*1024 {return Err("font too large".into());}
++            CONTEXT.with(|v| {
++                if let Some(ctx)=v.borrow().as_ref() {
++                    let families=ctx.fonts(|f|f.definitions().families.keys().cloned().map(|family|egui::epaint::text::InsertFontFamily{family,priority:egui::epaint::text::FontPriority::Lowest}).collect());
++                    ctx.add_font(egui::epaint::text::FontInsert{name:"MiniMax Photo CJK".into(),data:egui::FontData::from_owned(bytes),families});
++                    ctx.request_repaint();
++                }
++            });
++            Ok(json!({"loaded":true}))
++        },
++        "language" => {
++            let code=args.get("code").and_then(Value::as_str).ok_or("missing language")?;
++            if !["en","zh-hans","zh-hant","ja"].contains(&code) {return Err("unsupported language".into());}
++            app.run("prefs.set",json!({"path":"interface.language","value":code}))?;
++            Ok(json!({"language":code}))
++        },
++        "commands" => Ok(Value::Array(photocraft_engine::commands::command_specs().iter()
++            .filter(|c| args.get("filter").and_then(Value::as_str).map(|f| c.id.to_lowercase().contains(&f.to_lowercase())).unwrap_or(true))
++            .map(|c| photocraft_engine::commands::list_entry(&app.session,c,app.session.disabled_reason(c.id))).collect())),
++        "batch" => {
++            let steps=args.as_array().ok_or("batch requires an array")?;
++            if steps.is_empty() || steps.len()>64 {return Err("batch requires 1..64 commands".into());}
++            let original=app.session.active().ok_or("no document")?.clone();
++            let mut staged=photocraft_engine::Session::new();
++            staged.add_document((*original.doc).clone(),None);
++            *staged.active_mut().unwrap()=original.clone();
++            staged.tools=app.session.tools.clone();
++            // Batch commands may only modify this detached document; nested commands use the same gate.
++            staged.authorize=Some(|id,_| {
++                if ["layer.","select.","paint.","filter.","adjust.","image.","transform.","text.","shape.","path.","mask."].iter().any(|p|id.starts_with(p)) {
++                    Ok(())
++                } else {Err(photocraft_engine::EngineError::Other(format!("command {id} is not allowed in a document batch; use execute")))}
++            });
++            let mut values=Vec::new();
++            for step in steps {
++                let id=step.get("command").and_then(Value::as_str).ok_or("missing command")?;
++                values.push(staged.execute(id,step.get("params").cloned().unwrap_or(json!({}))).map_err(|e|e.to_string())?);
++                if staged.documents().len()!=1 || staged.active().map(|d|d.doc.id)!=Some(original.doc.id) {return Err("batch cannot switch documents".into());}
++            }
++            let final_doc=staged.active().ok_or("no staged document")?.clone();
++            app.session.edit("AI batch",|doc,active| { *doc=(*final_doc.doc).clone(); *active=final_doc.active_layer; Ok(()) }).map_err(|e|e.to_string())?;
++            Ok(json!({"value":values,"state":inspect(app)}))
++        },
++        "execute" => {
++            let id=args.get("command").and_then(Value::as_str).ok_or("missing command")?;
++            // Only engine commands, never browser file pickers or arbitrary UI script actions.
++            if photocraft_engine::commands::find(id).is_none() {return Err("unknown engine command".into());}
++            let result=app.session.execute(id,args.get("params").cloned().unwrap_or(json!({}))).map_err(|e|e.to_string())?;
++            Ok(json!({"value":result,"state":inspect(app)}))
++        },
++        "preview" | "export" => {
++            let d=app.session.active().ok_or("no document")?;
++            let max=args.get("maxEdge").and_then(Value::as_u64).unwrap_or(1280).clamp(64,2048) as u32;
++            let (bytes,warnings)=if method=="preview" {
++                let img=photocraft_compose::thumbnail(&d.doc,max);
++                let image=photocraft_codecs::Image::from_u8(img.width,img.height,photocraft_codecs::ChannelLayout::Rgba,img.pixels).map_err(|e|e.to_string())?;
++                (photocraft_codecs::encode(&image,photocraft_codecs::Format::Png,&Default::default()).map_err(|e|e.to_string())?,vec![])
++            } else {
++                let format=args.get("format").and_then(Value::as_str).unwrap_or("png");
++                if format=="pcraft" {(photocraft_format::save_to_bytes(&d.doc,&Default::default()).map_err(|e|e.to_string())?,vec![])}
++                else {let result=photocraft_io::export(&d.doc,format,&Default::default()).map_err(|e|e.to_string())?;(result.bytes,result.warnings)}
++            };
++            if bytes.len()>64*1024*1024 {return Err("export exceeds 64 MB".into());}
++            Ok(json!({"data":photocraft_paint::tile::b64_encode(&bytes),"warnings":warnings,"state":inspect(app)}))
++        },
++        "open" => {
++            let name=args.get("name").and_then(Value::as_str).ok_or("missing file name")?;
++            let data=args.get("data").and_then(Value::as_str).ok_or("missing file data")?;
++            let bytes=photocraft_paint::tile::b64_decode(data).ok_or("invalid base64")?;
++            let (doc,warnings)=if name.ends_with(".pcraft") {(photocraft_format::load_from_bytes(&bytes).map_err(|e|e.to_string())?,vec![])}
++            else {let imported=photocraft_io::import(name,&bytes).map_err(|e|e.to_string())?;(imported.document,imported.warnings)};
++            app.session.add_document(doc,None);
++            Ok(json!({"warnings":warnings,"state":inspect(app)}))
++        },
++        _ => Err("unsupported Mini App method".into()),
++    }
++}
++pub fn drain(app: &mut PhotocraftApp) {
++    let pending=QUEUE.with(|q|std::mem::take(&mut *q.borrow_mut()));
++    for request in pending {
++        match dispatch(app,&request.input) {
++            Ok(value)=>{let _=request.resolve.call1(&JsValue::NULL,&JsValue::from_str(&value.to_string()));},
++            Err(error)=>{let _=request.reject.call1(&JsValue::NULL,&JsValue::from_str(&error));},
++        }
++    }
++}
