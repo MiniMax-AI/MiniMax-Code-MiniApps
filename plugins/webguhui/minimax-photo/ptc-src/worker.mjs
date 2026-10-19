@@ -14,10 +14,18 @@ const vm = runtime.newContext();
 let sequence = 0,
   done = false;
 const pending = new Map();
+const logs = [];
+let logBytes = 0;
+vm.newFunction('__log', (level, value) => {
+  if (logs.length >= 50 || logBytes >= 10000) return;
+  const text = vm.getString(value).slice(0, Math.min(1000, 10000 - logBytes));
+  logBytes += text.length;
+  logs.push({ level: vm.getString(level), text });
+}).consume(handle => vm.setProp(vm.global, '__log', handle));
 function fail(error) {
   if (!done) {
     done = true;
-    parentPort.postMessage({ type: 'done', error: String(error).slice(0, 2000) });
+    parentPort.postMessage({ type: 'done', error: String(error).slice(0, 2000), logs });
   }
 }
 function pump() {
@@ -49,6 +57,7 @@ vm.newFunction('__done', (value, error) => {
       type: 'done',
       result: JSON.parse(json),
       error: vm.getString(error) || undefined,
+      logs,
     });
   }
 }).consume((handle) => vm.setProp(vm.global, '__done', handle));
@@ -67,6 +76,15 @@ parentPort.on('message', (message) => {
   pump();
 });
 const source = `
+const console = Object.freeze(Object.fromEntries(
+  ['log','info','warn','error','debug'].map(level => [level, (...values) => {
+    const text = values.map(value => {
+      if (typeof value === 'string') return value;
+      try { return JSON.stringify(value) ?? String(value); } catch { return '[unserializable]'; }
+    }).join(' ');
+    __log(level, text);
+  }])
+));
 const editor = Object.freeze(Object.fromEntries(
   ['inspect','capabilities','preview','edit','create','export','commands','execute','draw'].map(name =>
     [name, async (args) => JSON.parse(await __call(name, JSON.stringify(args ?? null)))])

@@ -65,6 +65,7 @@ export async function createCodeService(dataDir, editor) {
     worker.on('message', (message) => {
       if (state.stopped) return;
       if (message.type === 'done') {
+        run.logs = message.logs;
         void finish(message.error, message.result);
         return;
       }

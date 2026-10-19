@@ -37,6 +37,12 @@ assert.deepEqual(composed.result, {
   require: 'undefined',
 });
 assert.equal(composed.calls, 3);
+const logged = await execute('await editor.inspect(); console.log("done", {steps:1}); for(let i=0;i<100;i++) console.warn("x".repeat(1000)); return 7;');
+assert.equal(logged.result, 7);
+assert.equal(logged.calls, 1);
+assert.deepEqual(logged.logs[0], {level:'log', text:'done {"steps":1}'});
+assert.ok(logged.logs.length <= 50);
+assert.ok(logged.logs.reduce((sum, item) => sum + item.text.length, 0) <= 10000);
 assert.match((await execute('while(true){}', 150)).error, /interrupt/i);
 assert.match(
   (await execute('return new Uint8Array(64 * 1024 * 1024);')).error,
