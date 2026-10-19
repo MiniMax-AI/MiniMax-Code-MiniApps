@@ -526,7 +526,7 @@ body.photo-app {
   margin-bottom: 10px;
 }
 .photo-ai-reply {
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
   max-height: 260px;
   overflow: auto;
@@ -688,3 +688,20 @@ body.photo-app {
 }
 
 #photo-more label:has(#photo-show-activity) { justify-content: flex-start; gap: 8px; }
+
+.photo-ai-reply p { margin: 0 0 0.65em; }
+.photo-ai-reply h1, .photo-ai-reply h2, .photo-ai-reply h3,
+.photo-ai-reply h4, .photo-ai-reply h5, .photo-ai-reply h6 {
+  font-size: inherit; font-weight: 600; margin: 0.9em 0 0.4em;
+}
+.photo-ai-reply ul, .photo-ai-reply ol { padding-left: 1.5em; margin: 0.5em 0; }
+.photo-ai-reply ul { list-style: disc; }
+.photo-ai-reply ol { list-style: decimal; }
+.photo-ai-reply pre { white-space: pre; overflow: auto; padding: 0.65em; background: #16171a; border-radius: 6px; }
+.photo-ai-reply code { font-family: monospace; }
+.photo-ai-reply a { text-decoration: underline; }
+.photo-ai-table { overflow-x: auto; margin: 0.65em 0; }
+.photo-ai-table table { border-collapse: collapse; width: 100%; }
+.photo-ai-table th, .photo-ai-table td { border: 1px solid #484a50; padding: 0.35em 0.6em; text-align: left; }
+.photo-ai-table th { font-weight: 600; }
+.photo-ai-reply > :first-child, .photo-ai-reply > :first-child > :first-child { margin-top: 0; }

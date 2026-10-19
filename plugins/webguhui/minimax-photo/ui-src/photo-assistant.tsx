@@ -5,24 +5,7 @@ import { Sparkles, Minus, ArrowUp, Square, Plus } from 'lucide-react';
 import { Button } from './components/button';
 import { t, subscribeLanguage, getLanguage } from './photo-i18n.js';
 
-// Host media tags refer to local files. Keep them out of plain-text replies;
-// generated images are opened through the app's validated result list.
-function AssistantReply({ text }: { text: string }) {
-  const readable = text.replace(/<media\b[^>]*(?:>|$)/gi, '').trim();
-  return (
-    <div className="photo-ai-reply">
-      {readable
-        .split(/(\*\*[^*]+\*\*)/g)
-        .map((part, index) =>
-          part.startsWith('**') && part.endsWith('**') ? (
-            <strong key={index}>{part.slice(2, -2)}</strong>
-          ) : (
-            part
-          ),
-        )}
-    </div>
-  );
-}
+import { AssistantReply } from './assistant-reply';
 
 export function mountPhotoAssistant({ context, prepare, showResults }) {
   const savedId = 'assistant-00000000-0000-4000-8000-000000000001';
