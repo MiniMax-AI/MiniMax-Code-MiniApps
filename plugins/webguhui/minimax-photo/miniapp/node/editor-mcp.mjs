@@ -42,7 +42,7 @@ export const editorTools = [
   {
     name: 'editor_capabilities',
     description:
-      '读取编辑操作目录、参数范围、混合模式和批量组合规则。首次编辑前调用。支持命名图层引用，最多64步的事务；不是任意 JavaScript 执行环境。',
+      '仅用于旧版 canvas 引擎；photocraft 请用 photo_call(method:commands) 或 PTC editor.commands()。读取编辑操作目录、参数范围、混合模式和批量组合规则。旧版编辑前调用。支持命名图层引用，最多64步的事务；不是任意 JavaScript 执行环境。',
     inputSchema: schema({}),
     annotations: { readOnlyHint: true },
   },
@@ -62,7 +62,7 @@ export const editorTools = [
   {
     name: 'editor_preview',
     description:
-      '请求合并画面、单图层或局部区域 PNG 预览，并可取样像素 RGBA。返回任务编号；随后用 editor_job 查询，完成后得到 image 内容。需要页面打开。',
+      '仅用于旧版 canvas 引擎；photocraft 请用 photo_call(method:preview) 或 PTC editor.preview()。请求合并画面、单图层或局部区域 PNG 预览，并可取样像素 RGBA。返回任务编号；随后用 editor_job 查询，完成后得到 image 内容。需要页面打开。',
     inputSchema: {
       ...schema({ editorId: uuid, expectedVersion: { type: 'string' }, requestId: uuid }),
       properties: {
@@ -100,7 +100,7 @@ export const editorTools = [
   {
     name: 'editor_batch',
     description:
-      '按顺序执行编辑计划，支持读到的图层ID及 $命名引用。整批失败不修改工程，成功可一次撤销。每次新计划用新 requestId；不确定结果时查询原任务，不重新提交不同编号。完成后生成持久化工程检查点和预览。',
+      '仅用于旧版 canvas 引擎；photocraft 请用 photo_call(method:batch) 或 PTC editor.edit()。按顺序执行编辑计划，支持读到的图层ID及 $命名引用。整批失败不修改工程，成功可一次撤销。每次新计划用新 requestId；不确定结果时查询原任务，不重新提交不同编号。完成后生成持久化工程检查点和预览。',
     inputSchema: schema({
       editorId: uuid,
       expectedVersion: { type: 'string' },
@@ -121,7 +121,7 @@ export const editorTools = [
   {
     name: 'editor_create',
     description:
-      '创建新的空白工程并显示，保留当前已打开工程。宽高为整数，最多3200万像素。创建后读取新文档再批量绘制。',
+      '仅用于旧版 canvas 引擎；photocraft 请用 PTC editor.create()。创建新的空白工程并显示，保留当前已打开工程。宽高为整数，最多3200万像素。创建后读取新文档再批量绘制。',
     inputSchema: schema({
       editorId: uuid,
       expectedVersion: { type: 'string' },
@@ -135,7 +135,7 @@ export const editorTools = [
   {
     name: 'editor_export',
     description:
-      '导出当前完整尺寸 PNG 和可编辑工程检查点到本机，返回任务编号。不会更改画布。用 editor_job 查询导出路径；PNG 最大16MB。',
+      '仅用于旧版 canvas 引擎；photocraft 请用 photo_call(method:export) 或 PTC editor.export()。导出当前完整尺寸 PNG 和可编辑工程检查点到本机，返回任务编号。不会更改画布。用 editor_job 查询导出路径；PNG 最大16MB。',
     inputSchema: schema({ editorId: uuid, expectedVersion: { type: 'string' }, requestId: uuid }),
     annotations: { destructiveHint: false, idempotentHint: true },
   },

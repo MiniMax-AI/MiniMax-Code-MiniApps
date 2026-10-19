@@ -20,7 +20,7 @@ description: 在 MiniMax Photo 中创建和编辑图片，包括参考图绘制�
 2. 下面列出的基础用法可直接使用；其他命令用 `photo_call` 的 `commands` 方法按需查询命令，例如 `args: {filter: "paint"}`。参数以当前返回的 schema 为准。过滤查询可减少上下文，不必先读完整目录。
 3. 工具不可用时先确认插件已启用并打开；刚安装或更新后可能需要新会话刷新工具。不要通过搜索宿主源码、凭证或扫描端口绕过工具发现。
 
-工具的宿主前缀可能变化，按当前工具列表匹配以下名称。`editor_capabilities` 和 `editor_batch` 是旧引擎接口，不能代替 Photo 的 `commands` 和 `batch`。
+工具的宿主前缀可能变化，按当前工具列表匹配以下名称。`editor_capabilities`、`editor_batch`、`editor_preview`、`editor_create` 和 `editor_export` 是旧版 canvas 引擎接口。PhotoCraft 使用 `photo_call` 或上表的 PTC 方法；尤其预览用 `photo_call(method:"preview", args:{})` 或 `editor.preview()`，新建用 PTC `editor.create()`。
 
 ## 调用约定
 
@@ -91,3 +91,9 @@ await editor.draw({intervalMs:550, strokes:[{
 ```
 
 这只示范调用方式，不是作品模板。需要改可见性或不透明度时，`layer.setProps` 接受 `{layer:layerId, visible:true, opacity:0.8}`；不需要填写 name。宽、淡的柔和阴影可用 `paint.stroke` 的 `hardness:0..1`（低值软边）、`size`、`opacity:0..1`，不必引入随机纸纹来掩盖结构。
+
+### 限制笔触范围（已在宿主验证）
+
+铺连续明暗时，可先调用 `select.lasso`：`params:{points:[[x,y],…], mode:"replace", antiAlias:true, feather:0}`。`points` 是沿目标边界排列的多边形顶点；`mode` 还支持 `add`、`subtract`、`intersect`。用 `subtract` 排除需要留白或被遮挡的部分，再在独立灰度层用宽软笔逐笔铺调子，笔触会被选区裁剪。范围由当前作品决定，不复用固定形状。结束后调用 `select.deselect`，参数 `{}`，避免后续笔触被旧选区意外截断。
+
+局部修复先检查目标层：轮廓、阴影和纹理混在同层时，宽橡皮可能同时擦出断口或白块。优先回退失败笔触或在独立层修补；修后查看交接处，不只确认杂线消失。
