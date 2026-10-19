@@ -70,7 +70,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [会话轨迹](plugins/avatasia/mmc-trajectory/README.zh-CN.md) | 按轮次浏览一段会话的模型轨迹：消息流、思考过程、工具调用与结果、token 用量与每轮耗时 | [avatasia](https://github.com/avatasia) |
 | [CadQuery Viewer](plugins/hanzijie/cq-viewer/README.zh-CN.md) | 本地查看项目里的 STL / STEP（保留装配零件名称、颜色和真实边线），实时显示 CadQuery 脚本推送的模型，在模型上标注位置后一键发给 AI；AI 可通过 MCP 工具添加模型文件夹、打开模型，并内置 CadQuery 参数化建模 skill | [HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai) |
 | [MiniMax Bot](plugins/minimax-ai/minimax-bot/) | 【官方插件】把 MiniMax Code 变成常驻的 Bot 团队：总管 Bot 帮你组建团队，群聊里用 `@` 在成员之间交接工作，每个 Bot 有自己的记忆、定时任务和用量统计；需要 MiniMax Code 3.1.2 或更高版本（说明文档为英文） | [MiniMax-AI](https://github.com/MiniMax-AI) |
-| [心屿](plugins/yujiachen-y/xinyu-daily/README.zh-CN.md) | 像独立小游戏的每日心情小岛：由你的回答决定的今日灵感卡、心情贴纸、小确幸罐子、纠结老虎机、答案之书，还有坏脾气螃蟹藏起来的 19 个秘密 | [yujiachen-y](https://github.com/yujiachen-y) |
+| [心屿](plugins/yujiachen-y/xinyu-daily/README.zh-CN.md) | 像独立小游戏的每日心情小岛：由你的回答决定的今日灵感卡、心情贴纸、小确幸罐子、纠结老虎机、答案之书，还有坏脾气螃蟹藏起来的 20 个秘密；可选开启小屿陪伴，借用你的模型每天写信、陪你聊天。需要 MiniMax Code 3.1.2 或更高版本 | [yujiachen-y](https://github.com/yujiachen-y) |
 
 <details>
 <summary>预览：Token 用量看板</summary>

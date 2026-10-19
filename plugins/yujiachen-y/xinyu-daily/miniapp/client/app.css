@@ -311,13 +311,26 @@ select.field {
 .mascot.backflip { animation: backflip .85s var(--out); }
 .mascot.dizzy-spin { animation: dizzySpin 1.3s ease-in-out; }
 .mascot.sleeping .m-body { transform-box: fill-box; transform-origin: 50% 100%; animation: breathe 3s ease-in-out infinite; }
-.m-cloud { fill: #fff; stroke: #e3ecf0; stroke-width: 2; }
+.m-cloud { fill: #fff; }
+.m-line { fill: none; stroke: #cfe0ec; stroke-width: 2.2; stroke-linejoin: round; }
+.m-skin { fill: #fff; stroke: #cfe0ec; stroke-width: 2.2; stroke-linejoin: round; }
 .m-shadow { fill: rgb(20 40 50 / 16%); }
 .m-look { transform: translate(var(--ex, 0px), var(--ey, 0px)); transition: transform .18s ease-out; }
 .m-eyes { transform-box: fill-box; transform-origin: center; animation: blink 5s infinite; }
 .m-sprout { transform-box: fill-box; transform-origin: 50% 100%; animation: sway 2.6s ease-in-out infinite alternate; }
 .mascot:hover .m-sprout { animation: sproutSpin .8s var(--spring); }
 .m-umbrella { transform-box: fill-box; transform-origin: 30% 100%; animation: sway 3s ease-in-out infinite alternate; }
+.m-arm { transform-box: fill-box; }
+.m-arm.l { transform-origin: 92% 30%; }
+.m-arm.r { transform-origin: 8% 30%; }
+.mood-5 .m-arm.l { animation: mCheerL 1.6s ease-in-out infinite; }
+.mood-5 .m-arm.r { animation: mCheerR 1.6s ease-in-out infinite; }
+.m-bubble { transform-box: fill-box; transform-origin: 10% 60%; animation: mSnore 3s ease-in-out infinite; }
+.m-tear { transform-box: fill-box; transform-origin: 50% 0; animation: mTear 2.4s ease-in-out infinite; }
+/* 岛上的小屿：轻轻漂浮，影子跟着一缩一放；鼠标停在身上时挥挥小手 */
+.mascot .m-body { animation: mBob 3.6s ease-in-out infinite; }
+.mascot .m-shadow { transform-box: fill-box; transform-origin: center; animation: mShadow 3.6s ease-in-out infinite; }
+.mascot:hover .m-arm.r { animation: mWave .45s ease-in-out 4 alternate; }
 .zzz { position: absolute; right: -4%; top: -14%; display: none; pointer-events: none; }
 .mascot.sleeping .zzz { display: block; }
 .zzz i {
@@ -380,7 +393,7 @@ select.field {
 .balloon.lifted { animation: balloonLift .7s ease-in forwards; }
 
 .bubble {
-  position: absolute; left: 53%; top: 4%; max-width: 44%; z-index: 2;
+  position: absolute; left: 53%; top: 4%; max-width: 44%; z-index: 4;
   padding: 12px 14px; border-radius: 20px; background: var(--paper); color: var(--ink);
   font-size: 14px; font-weight: 800; line-height: 1.5;
   box-shadow: 0 5px 0 var(--depth), 0 16px 30px -12px rgb(20 40 50 / 40%);
@@ -950,7 +963,7 @@ dialog.modal.open { opacity: 1; transform: none; }
 .modal-x { position: absolute; top: 14px; right: 14px; }
 #modal-title { margin: 0 0 16px; font-size: 20px; font-weight: 900; text-align: center; }
 .modal-text { color: var(--ink-2); font-weight: 700; text-align: center; }
-.modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .modal-actions .gbtn { flex: 1; }
 .field-group { display: grid; gap: 6px; margin-bottom: 16px; }
 .field-label { font-size: 14px; font-weight: 900; }
@@ -1063,6 +1076,13 @@ dialog.modal.open { opacity: 1; transform: none; }
 @keyframes dizzySpin { 0% { transform: rotate(0); } 25% { transform: rotate(-14deg); } 50% { transform: rotate(12deg); } 75% { transform: rotate(-8deg); } 100% { transform: rotate(0); } }
 @keyframes blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
 @keyframes sproutSpin { 0% { transform: rotate(0); } 50% { transform: rotate(-25deg) scale(1.2); } 100% { transform: rotate(0); } }
+@keyframes mBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes mShadow { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.86); opacity: .75; } }
+@keyframes mWave { from { transform: rotate(0); } to { transform: rotate(-58deg); } }
+@keyframes mCheerL { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-16deg); } }
+@keyframes mCheerR { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(16deg); } }
+@keyframes mSnore { 0%, 100% { transform: scale(.35); opacity: .6; } 55% { transform: scale(1); opacity: 1; } 62% { transform: scale(1.06); opacity: 1; } }
+@keyframes mTear { 0%, 100% { transform: translateY(0); opacity: 1; } 70% { transform: translateY(2.4px); opacity: .9; } }
 @keyframes zzz { 0% { opacity: 0; transform: translate(0, 0) scale(.6); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(22px, -42px) scale(1.1) rotate(12deg); } }
 @keyframes floatUp { 0% { opacity: 0; transform: translateY(0) scale(.4); } 20% { opacity: 1; transform: translateY(-10px) scale(1.1); } 100% { opacity: 0; transform: translateY(-64px) scale(.9) rotate(12deg); } }
 @keyframes dropFall { 0% { opacity: 0; transform: translateY(0); } 15% { opacity: 1; } 100% { opacity: 0; transform: translateY(80px); } }
@@ -1119,6 +1139,174 @@ dialog.modal.open { opacity: 1; transform: none; }
   75% { opacity: 1; }
   100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 50px)) scale(1) rotate(320deg); }
 }
+
+/* ---------- 小屿陪伴：邮筒 ---------- */
+.mailbox { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .3s var(--spring); }
+.mailbox:hover { transform: scale(1.08) rotate(-2deg); }
+.mailbox.knock { animation: knock .45s var(--spring); }
+.mailbox.mail-pop { animation: popIn .8s var(--spring); }
+.mb-flag { transform-box: view-box; transform-origin: 243.2px 191px; transform: rotate(90deg); transition: transform .6s var(--spring); }
+.mailbox.has-mail .mb-flag { transform: none; }
+.mb-mail, .mb-dots { opacity: 0; pointer-events: none; transition: opacity .3s; }
+.mb-mail { transform-box: fill-box; transform-origin: 50% 100%; }
+.mailbox.has-mail .mb-mail { opacity: 1; pointer-events: auto; animation: mailBob 1.8s ease-in-out infinite; }
+.mailbox.writing .mb-dots { opacity: 1; pointer-events: auto; }
+.mb-dots circle { transform-box: fill-box; transform-origin: center; }
+.mailbox.writing .mb-dots circle { animation: dotHop 1.2s ease-in-out infinite; }
+.mailbox.writing .mb-dots circle:nth-of-type(2) { animation-delay: .15s; }
+.mailbox.writing .mb-dots circle:nth-of-type(3) { animation-delay: .3s; }
+
+/* 气泡里的按钮行 */
+.bubble-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.bubble-actions[hidden] { display: none; }
+.bubble-actions .bubble-cta { margin-top: 0; }
+.bubble-chat {
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 12px; border: 0; border-radius: 11px;
+  background: var(--paper-2); color: var(--ink); font: inherit; font-size: 13px; font-weight: 900;
+  box-shadow: 0 3px 0 var(--paper-3); cursor: pointer; transition: transform .12s, box-shadow .12s;
+}
+.bubble-chat svg { width: 15px; height: 15px; }
+.bubble-chat:hover { background: var(--paper-3); }
+.bubble-chat:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--paper-3); }
+
+/* ---------- 信纸 ---------- */
+dialog.modal.letter-modal { width: min(500px, calc(100% - 28px)); }
+.letter {
+  position: relative; max-height: min(60vh, 540px); overflow-y: auto; padding: 26px 22px 16px; border-radius: 16px; color: #3f342c;
+  background-color: #fffaf0;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 31px, rgb(79 176 240 / 16%) 31px 32px);
+  background-position: 0 12px;
+  box-shadow: inset 0 0 0 2px #f1e3c8, 0 6px 0 rgb(120 85 50 / 14%);
+  transform-origin: 50% 0; animation: unfold .8s var(--spring) both;
+}
+.letter::before {
+  content: ''; position: absolute; inset: 0 0 auto; height: 7px; border-radius: 16px 16px 0 0;
+  background: repeating-linear-gradient(-45deg, #ff7a59 0 10px, #fffaf0 10px 16px, #4fb0f0 16px 26px, #fffaf0 26px 32px);
+}
+.lt-stamp {
+  position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 40px; height: 46px;
+  border: 2px dashed #e0a080; border-radius: 4px; background: #fff4e6; color: var(--coral); transform: rotate(6deg);
+}
+.lt-stamp svg { width: 26px; height: 26px; }
+.lt-date { color: #9a8b7c; font-size: 12.5px; font-weight: 800; }
+.lt-to { margin: 8px 56px 6px 0; font-size: 17px; line-height: 32px; font-weight: 900; }
+.lt-body p { margin: 0; font-size: 16px; line-height: 32px; font-weight: 700; text-indent: 2em; overflow-wrap: anywhere; }
+.lt-sign { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 2px; font-size: 16px; line-height: 32px; font-weight: 900; }
+.lt-sign::before { content: '——'; color: #b4a695; }
+.lt-sign-av { width: 34px; }
+.lt-sign-av svg { display: block; width: 100%; }
+.lt-tag { margin-top: 10px; color: #9a8b7c; font-size: 11.5px; font-weight: 800; text-align: center; }
+.letter.ai .lt-tag { color: #1f8a7e; }
+.care-art { width: 96px; margin: -4px auto 8px; }
+
+/* 心情贴纸下的回应 */
+.stuck-reply { display: flex; align-items: flex-end; gap: 8px; margin: 12px 0 0; }
+.sr-av { width: 34px; flex: none; }
+.sr-av svg { display: block; width: 100%; }
+.sr-text { padding: 9px 13px; border-radius: 16px 16px 16px 6px; background: var(--paper-2); font-size: 14px; font-weight: 800; line-height: 1.55; overflow-wrap: anywhere; }
+.sr-name { margin-right: 6px; color: var(--coral-d); font-weight: 900; }
+[data-theme='dark'] .sr-name { color: #ffb08f; }
+.stuck-reply.fresh { animation: msgIn .55s var(--spring) both; }
+.sr-text.dots, .msg.typing p { display: flex; align-items: center; gap: 5px; padding: 13px 15px; }
+.sr-text.dots i, .msg.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); animation: dotHop 1.2s ease-in-out infinite; }
+.sr-text.dots i:nth-child(2), .msg.typing i:nth-of-type(2) { animation-delay: .15s; }
+.sr-text.dots i:nth-child(3), .msg.typing i:nth-of-type(3) { animation-delay: .3s; }
+
+/* ---------- 来信匣 ---------- */
+.letters { display: grid; gap: 8px; max-height: 340px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.letter-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-radius: 16px;
+  background: var(--paper-2); color: var(--ink); font: inherit; text-align: left; cursor: pointer; transition: transform .15s;
+}
+.letter-row:hover { transform: translateY(-2px); }
+.letter-row:active { transform: translateY(1px); }
+.lr-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; background: var(--paper); color: var(--coral); box-shadow: 0 3px 0 var(--depth); }
+.lr-ic svg { width: 20px; height: 20px; }
+.letter-row.unread .lr-ic { background: var(--coral); color: #fff; box-shadow: 0 3px 0 var(--coral-d); }
+.lr-main { display: grid; flex: 1; min-width: 0; }
+.lr-date { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 900; }
+.lr-new { padding: 1px 7px; border-radius: 999px; background: var(--coral); color: #fff; font-size: 11px; }
+.lr-first { overflow: hidden; color: var(--ink-2); font-size: 13px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.lr-tag { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--paper); color: var(--ink-3); font-size: 11.5px; font-weight: 900; }
+.lr-tag.ai { color: var(--teal-d); }
+[data-theme='dark'] .lr-tag.ai { color: #8fd8c9; }
+
+/* ---------- 小屿记住的事 ---------- */
+.memos { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 14px; padding: 4px 0 0; list-style: none; }
+.memos .empty { width: 100%; }
+.memo {
+  position: relative; display: grid; gap: 2px; max-width: 100%; padding: 10px 34px 10px 12px; border-radius: 6px 14px 14px 14px;
+  background: #fff3c4; color: #3f342c; transform: rotate(var(--tilt)); box-shadow: 0 4px 0 rgb(120 85 50 / 14%);
+  transition: transform .25s var(--spring), opacity .25s; animation: memoIn .6s var(--spring) backwards;
+}
+.memo.user { background: #d9f3ee; }
+.memo:hover { transform: rotate(0) translateY(-2px); }
+.memo.poof { opacity: 0; transform: scale(.6) rotate(12deg); }
+.memo-by { color: #9a7b3c; font-size: 11px; font-weight: 900; }
+.memo.user .memo-by { color: #1f8a7e; }
+.memo-t { font-size: 14px; font-weight: 800; overflow-wrap: anywhere; }
+.memo-x {
+  position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: #9a8b7c; cursor: pointer;
+}
+.memo-x:hover { background: rgb(0 0 0 / 6%); color: #3f342c; }
+.memo-x svg { width: 13px; height: 13px; }
+
+/* ---------- 聊天窗 ---------- */
+dialog.chat {
+  position: fixed; inset: auto 0 16px 0; width: min(560px, calc(100% - 20px)); max-width: none; height: min(640px, calc(100vh - 32px)); max-height: none;
+  margin: 0 auto; padding: 0; border: 0; overflow: visible; background: transparent; color: var(--ink);
+  opacity: 0; transform: translateY(50px); transition: transform .5s var(--spring), opacity .25s;
+}
+dialog.chat[open] { display: flex; }
+dialog.chat.open { opacity: 1; transform: none; }
+dialog.chat::backdrop { background: rgb(8 28 36 / 45%); backdrop-filter: blur(3px); }
+.chat-box {
+  display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden;
+  border: 3px solid var(--paper-3); border-radius: 28px; background: var(--paper);
+  box-shadow: 0 7px 0 var(--depth), 0 30px 60px -20px rgb(0 0 0 / 55%);
+}
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border-bottom: 2px dashed var(--line); }
+.chat-portrait { width: 58px; flex: none; margin-bottom: -4px; }
+#chat-title { font-size: 18px; font-weight: 900; }
+.chat-sub { color: var(--ink-3); font-size: 11.5px; font-weight: 800; }
+.chat-log { display: flex; flex: 1; flex-direction: column; gap: 10px; min-height: 0; margin: 0; padding: 14px; overflow-y: auto; list-style: none; }
+.msg { display: flex; align-items: flex-end; gap: 8px; max-width: 86%; }
+.msg p { margin: 0; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.6; font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.xy p { border-bottom-left-radius: 6px; background: var(--paper-2); }
+.msg.me { align-self: flex-end; }
+.msg.me p { border-bottom-right-radius: 6px; background: var(--coral); color: #fff; box-shadow: 0 3px 0 var(--coral-d); }
+.msg-av { width: 34px; flex: none; }
+.msg-av svg { display: block; width: 100%; }
+.msg.in { animation: msgIn .45s var(--spring) both; }
+.msg.sys { align-self: center; max-width: 92%; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--paper-2); color: var(--ink-2); font-size: 12.5px; font-weight: 800; }
+.msg.sys svg { width: 14px; height: 14px; flex: none; }
+.msg.sys.err { color: var(--danger); }
+.msg.care { align-self: stretch; max-width: none; }
+.msg.care p { flex: 1; border: 2px solid #9fdcd1; border-radius: 16px; background: #e6f6f3; color: #1f5f57; }
+.msg.care strong { display: block; margin-bottom: 2px; }
+.chat-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 10px; }
+.chat-chips:empty { display: none; }
+.cchip {
+  height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--paper-2); color: var(--ink-2);
+  font: inherit; font-size: 13px; font-weight: 900; box-shadow: 0 2px 0 var(--paper-3); cursor: pointer;
+  transition: transform .12s, background-color .15s, color .15s; animation: optIn .45s var(--spring) backwards;
+}
+.cchip:nth-child(2) { animation-delay: .05s; }
+.cchip:nth-child(3) { animation-delay: .1s; }
+.cchip:nth-child(4) { animation-delay: .15s; }
+.cchip:hover { background: var(--paper-3); color: var(--ink); }
+.cchip:active { transform: translateY(2px); box-shadow: none; }
+.chat-form { padding: 0 14px 12px; }
+.chat-foot { margin-top: -4px; padding: 0 14px 10px; color: var(--ink-3); font-size: 12px; font-weight: 800; text-align: center; }
+.chat-foot:empty { display: none; }
+
+@keyframes memoIn { 0% { opacity: 0; transform: scale(1.4) rotate(-14deg); } 100% { opacity: 1; transform: rotate(var(--tilt)); } }
+@keyframes knock { 0%, 100% { transform: none; } 25% { transform: rotate(-7deg); } 55% { transform: rotate(5deg); } 80% { transform: rotate(-2deg); } }
+@keyframes mailBob { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(4deg); } }
+@keyframes dotHop { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-3px); opacity: 1; } }
+@keyframes msgIn { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes unfold { 0% { opacity: 0; transform: perspective(700px) rotateX(-65deg) scaleY(.6); } 55% { opacity: 1; } 100% { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 0ms !important; }

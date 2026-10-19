@@ -321,6 +321,6 @@ export const DAILY_QUESTIONS = [
 
 // ---------- 小岛秘密（岛霸横横藏起来的彩蛋），id 需与前端一致 ----------
 export const SECRET_IDS = [
-  'poke', 'backflip', 'dizzy', 'wake', 'sun', 'moon', 'cloud', 'tree', 'house', 'flower',
+  'poke', 'backflip', 'dizzy', 'wake', 'sun', 'moon', 'cloud', 'tree', 'house', 'flower', 'mailbox',
   'lighthouse', 'windmill', 'prop', 'meteor', 'balloon', 'jar', 'lever', 'shiny', 'cake',
 ];

@@ -21,6 +21,54 @@ export class DomainError extends Error {
 const MAX_JOYS = 500;
 const FLAG_KEY = /^(awoke|lastDay|questsDay|bdayDay|region\.(today|journal|decide|explore)|ms\.\d{1,3})$/;
 const MAX_ANSWERS = 200;
+const MAX_LETTERS = 60;
+const MAX_AI_MEMORY = 8;
+const MAX_USER_MEMORY = 6;
+const MAX_FORGOTTEN = 20;
+const MAX_CHAT = 60;
+const CHAT_DAYS = 3;
+
+function emptyCompanion() {
+  return {
+    /** null = 还没问过；true/false = 用户的选择 */
+    enabled: /** @type {null | boolean} */ (null),
+    /** @type {{id:string,text:string,by:'xiaoyu'|'user',at:string}[]} */
+    memory: [],
+    /** 用户让小屿忘掉的笔记，写信整理笔记时不再记回来 @type {string[]} */
+    forgotten: [],
+    /** @type {Record<string, {date:string,text:string,by:'ai'|'note',at:string,read:boolean}>} */
+    letters: {},
+    /** @type {Record<string, {role:'me'|'xiaoyu',text:string,kind:string,at:string}[]>} */
+    chats: {},
+    /** 当天的 Agent 会话 @type {null | {date:string,id:string}} */
+    session: null,
+  };
+}
+
+function normalizeCompanion(raw) {
+  const base = emptyCompanion();
+  if (!raw || typeof raw !== 'object') return base;
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  return {
+    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : null,
+    memory: Array.isArray(raw.memory) ? raw.memory.filter((m) => m && typeof m.id === 'string' && typeof m.text === 'string') : [],
+    forgotten: Array.isArray(raw.forgotten) ? raw.forgotten.filter((t) => typeof t === 'string') : [],
+    letters: obj(raw.letters),
+    chats: obj(raw.chats),
+    session: raw.session && typeof raw.session === 'object' && typeof raw.session.id === 'string' ? raw.session : null,
+  };
+}
+
+/** 按字符（而不是 UTF-16 单元）截断 */
+export function clipText(value, max) {
+  const chars = [...String(value ?? '')];
+  return chars.length > max ? chars.slice(0, max).join('') : chars.join('');
+}
+
+function ymd(date) {
+  const [y, m, d] = date.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
 
 function emptyState() {
   return {
@@ -42,6 +90,7 @@ function emptyState() {
     secrets: {},
     /** 引导类一次性标记（开场、区域横幅、当日庆祝等） @type {Record<string, string>} */
     flags: {},
+    companion: emptyCompanion(),
   };
 }
 
@@ -174,10 +223,12 @@ export async function createDomain({ dataDir, onChange }) {
     if (!state.about || typeof state.about !== 'object') state.about = {};
     if (!state.secrets || typeof state.secrets !== 'object') state.secrets = {};
     if (!state.flags || typeof state.flags !== 'object') state.flags = {};
+    state.companion = normalizeCompanion(raw.companion);
   } catch (error) {
     if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error;
   }
   let version = 0;
+  let epoch = 0;
   let queue = Promise.resolve();
 
   async function persist() {
@@ -223,11 +274,206 @@ export async function createDomain({ dataDir, onChange }) {
       secrets: state.secrets,
       flags: state.flags,
       dailyQuestions: dailyQuestionsFor(today).map((q) => ({ id: q.id, q: q.q, options: q.options.map((o) => o.label) })),
+      companion: {
+        enabled: state.companion.enabled,
+        memory: state.companion.memory.map(({ id, text, by }) => ({ id, text, by })),
+        letter: state.companion.letters[today] ?? null,
+        letters: Object.values(state.companion.letters).sort((a, b) => (a.date < b.date ? 1 : -1)),
+        chat: state.companion.chats[today] ?? [],
+      },
+    };
+  }
+
+  /** 发给模型的素材：只取心屿自己的数据，并且逐项限长。 */
+  function companionData() {
+    const today = localDate();
+    const c = state.companion;
+    const ago = (date) => Math.round((ymd(today) - ymd(date)) / 86400000);
+    const clip = (v, n) => clipText(String(v ?? '').replace(/\s+/g, ' ').trim(), n);
+    const moods = Object.keys(state.checkins)
+      .sort()
+      .reverse()
+      .filter((d) => ago(d) <= 14)
+      .slice(0, 7)
+      .map((d) => ({ date: d, mood: state.checkins[d].mood, note: clip(state.checkins[d].note, 60) }));
+    const chatSaid = Object.keys(c.chats)
+      .filter((d) => d < today && ago(d) <= 2)
+      .sort()
+      .flatMap((d) => c.chats[d].filter((m) => m.role === 'me').map((m) => clip(m.text, 60)))
+      .slice(-8);
+    const letterDates = Object.keys(c.letters).sort();
+    const prev = letterDates.filter((d) => d < today).pop();
+    const birth = birthProfile(state.profile.birthday, today);
+    const todayCheckin = state.checkins[today];
+    return {
+      today,
+      nickname: clip(state.profile.nickname, 20),
+      streak: streakOf(state.checkins, today),
+      untilBirthday: birth ? birth.untilBirthday : null,
+      moods,
+      joys: state.joys.slice(-6).reverse().map((j) => ({ date: j.date, text: clip(j.text, 40) })),
+      about: PROFILE_QUESTIONS.filter((q) => state.about[q.id] != null).map((q) => ({ q: q.q, a: q.options[state.about[q.id]] })),
+      aboutAnswered: PROFILE_QUESTIONS.filter((q) => state.about[q.id] != null).length,
+      quiz: state.quiz ? QUIZ_STYLES[state.quiz.style]?.name ?? '' : '',
+      card: state.cards[today]?.keyword ?? '',
+      aboutIdx: { ...state.about },
+      askedBook: state.answers.filter((a) => ago(a.date) <= 2).slice(-2).map((a) => clip(a.question, 40)),
+      chatSaid,
+      memory: c.memory.filter((m) => m.by === 'xiaoyu').map((m) => m.text),
+      userNotes: c.memory.filter((m) => m.by === 'user').map((m) => m.text),
+      letterCount: letterDates.length,
+      lastLetter: prev ? { date: prev, text: clip(c.letters[prev].text, 140) } : null,
+      todayLetter: c.letters[today]?.text ?? '',
+      todayMood: todayCheckin ? { mood: todayCheckin.mood, note: clip(todayCheckin.note, 60) } : null,
+      todayJoys: state.joys.filter((j) => j.date === today).slice(-3).map((j) => clip(j.text, 40)),
     };
   }
 
   return {
     snapshot,
+    companionData,
+
+    // ---------- 小屿陪伴 ----------
+    /** 每次清空数据加一，让清空前发起的 Agent 结果不再写回 */
+    epoch: () => epoch,
+    /** 只有运行时状态（例如“正在写信”）变了：广播但不落盘 */
+    touch() {
+      version++;
+      try { onChange(version); } catch { /* ignore */ }
+    },
+    companionEnabled: () => state.companion.enabled,
+    companionSession: () => state.companion.session,
+    letterOf: (date) => state.companion.letters[date] ?? null,
+    checkinOf: (date) => state.checkins[date] ?? null,
+    chatOf: (date) => state.companion.chats[date] ?? [],
+
+    setCompanionEnabled(body) {
+      if (typeof body?.enabled !== 'boolean') throw new DomainError(400, 'invalid_argument', '开关格式不正确');
+      const enabled = body.enabled;
+      return mutate(() => {
+        state.companion.enabled = enabled;
+      });
+    },
+
+    addMemory(body) {
+      const text = str(body?.text, '要记住的事', 30);
+      const c = state.companion;
+      if (c.memory.some((m) => m.text === text)) throw new DomainError(409, 'duplicate', '小屿已经记得这件事啦');
+      if (c.memory.filter((m) => m.by === 'user').length >= MAX_USER_MEMORY) {
+        throw new DomainError(409, 'too_many', `最多让小屿记 ${MAX_USER_MEMORY} 件你亲口说的事`);
+      }
+      return mutate(() => {
+        const cc = state.companion;
+        cc.forgotten = cc.forgotten.filter((t) => t !== text);
+        cc.memory.push({ id: randomUUID(), text, by: 'user', at: new Date().toISOString() });
+        // 记事本变了，当天会话里的素材就旧了：下次换新会话（会带上今天的聊天记录）
+        cc.session = null;
+      });
+    },
+
+    forgetMemory(id) {
+      const item = state.companion.memory.find((m) => m.id === id);
+      if (!item) throw new DomainError(404, 'not_found', '这条笔记已经不在了');
+      return mutate(() => {
+        const cc = state.companion;
+        cc.memory = cc.memory.filter((m) => m.id !== id);
+        // 不管是谁记的，被要求忘掉之后，小屿整理笔记时都不再记回来；这份名单只在本地过滤用，不发给模型
+        cc.forgotten = [...cc.forgotten.filter((t) => t !== item.text), item.text].slice(-MAX_FORGOTTEN);
+        // 当天会话里还带着这条笔记，换新会话让“忘掉”立刻生效
+        cc.session = null;
+      });
+    },
+
+    /** 写信后整理的笔记：只替换小屿自己记的部分，用户亲口让它记的不动，被要求忘掉的不再记回来。 */
+    replaceAiMemory(list) {
+      return mutate(() => {
+        const cc = state.companion;
+        const forgotten = cc.forgotten.filter(Boolean);
+        const keep = cc.memory.filter((m) => m.by === 'user');
+        const seen = new Set(keep.map((m) => m.text));
+        const fresh = [];
+        for (const raw of Array.isArray(list) ? list : []) {
+          if (typeof raw !== 'string') continue;
+          const text = clipText(raw.replace(/\s+/g, ' ').trim(), 30);
+          if (!text || seen.has(text) || forgotten.some((f) => text.includes(f) || f.includes(text))) continue;
+          seen.add(text);
+          fresh.push(cc.memory.find((m) => m.by === 'xiaoyu' && m.text === text) ?? { id: randomUUID(), text, by: 'xiaoyu', at: new Date().toISOString() });
+          if (fresh.length >= MAX_AI_MEMORY) break;
+        }
+        cc.memory = [...keep, ...fresh];
+      });
+    },
+
+    /** by: 'ai' 是模型写的信；'note' 是离线便条，fallback 表示模型没写成、用便条兜底（不再自动重试）。 */
+    putLetter({ date, text, by, fallback = false }) {
+      return mutate(() => {
+        const cc = state.companion;
+        cc.letters[date] = { date, text: clipText(text, 600), by, fallback, at: new Date().toISOString(), read: false };
+        const keys = Object.keys(cc.letters).sort();
+        for (const k of keys.slice(0, Math.max(0, keys.length - MAX_LETTERS))) delete cc.letters[k];
+      });
+    },
+
+    markLetterFallback(date) {
+      if (!state.companion.letters[date]) return Promise.resolve();
+      return mutate(() => {
+        const l = state.companion.letters[date];
+        if (l) l.fallback = true;
+      });
+    },
+
+    markLetterRead(date) {
+      const letter = isValidDate(date) ? state.companion.letters[date] : null;
+      if (!letter) throw new DomainError(404, 'not_found', '没有找到这封信');
+      if (letter.read) return Promise.resolve(false);
+      return mutate(() => {
+        const l = state.companion.letters[date];
+        if (l) l.read = true;
+        return true;
+      });
+    },
+
+    appendChat(date, msg) {
+      return mutate(() => {
+        const cc = state.companion;
+        const list = cc.chats[date] ?? (cc.chats[date] = []);
+        list.push({ role: msg.role, text: clipText(msg.text, 400), kind: msg.kind ?? '', at: new Date().toISOString() });
+        if (list.length > MAX_CHAT) list.splice(0, list.length - MAX_CHAT);
+        const keys = Object.keys(cc.chats).sort();
+        for (const k of keys.slice(0, Math.max(0, keys.length - CHAT_DAYS))) delete cc.chats[k];
+      });
+    },
+
+    /** at 是发起回应时那条打卡的时间；之后换过贴纸就不再写回旧的回应。 */
+    setMoodReply(date, text, at) {
+      if (state.checkins[date]?.at !== at) return Promise.resolve(false);
+      return mutate(() => {
+        const ck = state.checkins[date];
+        if (!ck || ck.at !== at) return false;
+        ck.reply = clipText(text, 120);
+        return true;
+      });
+    },
+
+    /** 用户在聊天里亲口让小屿记住的事：算作用户的笔记，写信整理时不会被替换。 */
+    rememberFromChat(raw) {
+      const text = clipText(String(raw ?? '').replace(/\s+/g, ' ').trim(), 30);
+      const c = state.companion;
+      if (!text || c.memory.some((m) => m.text === text)) return Promise.resolve(false);
+      if (c.memory.filter((m) => m.by === 'user').length >= MAX_USER_MEMORY) return Promise.resolve(false);
+      return mutate(() => {
+        const cc = state.companion;
+        cc.forgotten = cc.forgotten.filter((t) => t !== text);
+        cc.memory.push({ id: randomUUID(), text, by: 'user', at: new Date().toISOString() });
+        return true;
+      });
+    },
+
+    setCompanionSession(session) {
+      return mutate(() => {
+        state.companion.session = session;
+      });
+    },
 
     updateProfile(body) {
       const nickname = str(body?.nickname, '昵称', 20, { required: false });
@@ -409,6 +655,7 @@ export async function createDomain({ dataDir, onChange }) {
     },
 
     resetAll() {
+      epoch++;
       return mutate(() => {
         state = emptyState();
       });

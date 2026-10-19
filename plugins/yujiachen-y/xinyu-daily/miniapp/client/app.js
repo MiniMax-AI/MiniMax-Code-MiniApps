@@ -18,13 +18,26 @@ const MOUTH = {
   4: 'M13.5 25 Q20 30 26.5 25',
   5: 'M13 24 Q20 33 27 24 Z',
 };
+// ---------- 小屿的形象 ----------
+const M_INK = '#3b2c28';
+/** 小屿的身体：圆滚滚的麻薯云，三个顶泡、两侧鼓包、微圆的底。 */
+const MASCOT_BODY =
+  'M25 81.5 C36.5 85, 63.5 85, 75 81.5 C84.5 79.5, 90.5 71.5, 88 63 C92 55, 87 46.5, 78.5 46 C78 37.5, 70.5 31.5, 62.5 33 C61.5 22.5, 38.5 22.5, 37.5 33 C29.5 31.5, 22 37.5, 21.5 46 C13 46.5, 8 55, 12 63 C9.5 71.5, 15.5 79.5, 25 81.5 Z';
+/** 按今天的心情换嘴型：1 很糟 … 5 超开心。 */
 const MASCOT_MOUTH = {
-  1: 'M43 64 Q50 59 57 64',
-  2: 'M44 63 Q50 61 56 63',
-  3: 'M44.5 62 H55.5',
-  4: 'M43.5 60 Q50 66 56.5 60',
-  5: 'M43 59.5 Q50 69 57 59.5 Z',
+  1: `<path d="M45.6 66 Q50 62 54.4 66" fill="none" stroke="${M_INK}" stroke-width="2.5" stroke-linecap="round"/>`,
+  2: `<path d="M45.2 64.8 Q47.6 62.8 50 64.8 T54.8 64.8" fill="none" stroke="${M_INK}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`,
+  3: `<path d="M46 63.4 Q50 66 54 63.4" fill="none" stroke="${M_INK}" stroke-width="2.5" stroke-linecap="round"/>`,
+  4: `<path d="M45.4 62.3 Q50 69.2 54.6 62.3 Q50 63.5 45.4 62.3 Z" fill="${M_INK}" stroke="${M_INK}" stroke-width="1.2" stroke-linejoin="round"/><path d="M47.6 64.8 Q50 63.2 52.4 64.8 Q50 66.4 47.6 64.8 Z" fill="#ff8a7a"/>`,
+  5: `<path d="M43.6 61.6 Q50 71.5 56.4 61.6 Q50 63.2 43.6 61.6 Z" fill="${M_INK}" stroke="${M_INK}" stroke-width="1.2" stroke-linejoin="round"/><path d="M47 65.3 Q50 62.9 53 65.3 Q50 67.3 47 65.3 Z" fill="#ff8a7a"/>`,
 };
+/** 心情低落时的八字眉。 */
+const MASCOT_BROWS = {
+  1: `<path d="M34.6 48.4 Q38.6 47.6 42.6 44.6 M65.4 48.4 Q61.4 47.6 57.4 44.6" fill="none" stroke="${M_INK}" stroke-width="2.2" stroke-linecap="round" opacity=".85"/>`,
+  2: `<path d="M34.8 47.6 Q38.8 47.2 42.6 45.4 M65.2 47.6 Q61.2 47.2 57.4 45.4" fill="none" stroke="${M_INK}" stroke-width="2.1" stroke-linecap="round" opacity=".8"/>`,
+};
+const MASCOT_TEAR =
+  '<g class="m-tear"><path d="M33.2 60.4 Q30.9 64 33.2 65.3 Q35.5 64 33.2 60.4 Z" fill="#8fd3ff" stroke="#5cb8ee" stroke-width=".6"/><circle cx="32.6" cy="63.7" r=".55" fill="#fff"/></g>';
 const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
 const CN_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
 const PRESET = ['米饭套餐', '牛肉面', '麻辣烫', '轻食沙拉', '饺子', '汉堡'];
@@ -117,6 +130,7 @@ const SECRETS = [
   { id: 'tree', name: '摇一摇树', hint: '岛上长出树以后，去摇一摇。', desc: '树上掉下来好多东西。' },
   { id: 'house', name: '小屋的灯', hint: '小屋的窗户，能不能开灯？', desc: '小屋暖暖地亮了。' },
   { id: 'flower', name: '摸摸小花', hint: '花开了以后，去摸摸它们。', desc: '小花开心地蹦了一下。' },
+  { id: 'mailbox', name: '邮筒深处', hint: '邮筒好像比看起来更深，连着敲几下试试？', desc: '从邮筒深处翻出了一封旧信。' },
   { id: 'lighthouse', name: '灯塔的问候', hint: '灯塔也想和你打个招呼。', desc: '灯塔闪了一下光。' },
   { id: 'windmill', name: '风车加速', hint: '风车还能转得更快吗？', desc: '风车呼呼地转起来了。' },
   { id: 'prop', name: '周末摆件', hint: '告诉小屿理想的周末，岛上会多出点什么。', desc: '和岛上的摆件玩了一会儿。' },
@@ -147,7 +161,7 @@ const QUESTS = [
   { id: 'joy', icon: 'star5', title: '往罐子里放颗星星', sub: '记一件小确幸' },
   { id: 'secret', icon: 'shell', title: '找到一个小秘密', sub: '戳戳岛上的东西' },
 ];
-const HINT_POS = { poke: [322, 112], tree: [240, 108], house: [386, 122], flower: [444, 182], lighthouse: [476, 94], windmill: [178, 102], prop: [374, 158], cake: [200, 174] };
+const HINT_POS = { poke: [322, 112], tree: [240, 108], house: [386, 122], flower: [444, 182], lighthouse: [476, 94], windmill: [178, 102], prop: [374, 158], cake: [200, 174], mailbox: [230, 166] };
 const BULLY = '<svg viewBox="0 0 80 64" aria-hidden="true"><path d="M14 30 C4 26 2 14 10 8 C12 16 16 18 22 18 Z" fill="#ff7a59"/><path d="M66 30 C76 26 78 14 70 8 C68 16 64 18 58 18 Z" fill="#ff7a59"/><path d="M10 8 C6 4 8 0 13 2 C12 5 12 6 13 8 Z" fill="#ff7a59"/><path d="M70 8 C74 4 72 0 67 2 C68 5 68 6 67 8 Z" fill="#ff7a59"/><path d="M18 52 l-8 8 M24 55 l-5 8 M62 52 l8 8 M56 55 l5 8" stroke="#e0583a" stroke-width="3.4" stroke-linecap="round"/><ellipse cx="40" cy="42" rx="25" ry="17" fill="#ff8a66"/><ellipse cx="40" cy="46" rx="18" ry="9" fill="#ffb59a" opacity=".55"/><path d="M33 26 V18 M47 26 V18" stroke="#e0583a" stroke-width="3" stroke-linecap="round"/><circle cx="33" cy="16" r="5" fill="#fff"/><circle cx="47" cy="16" r="5" fill="#fff"/><circle cx="34" cy="17" r="2.4" fill="#3f342c"/><circle cx="46" cy="17" r="2.4" fill="#3f342c"/><path d="M27 10 L38 13 M53 10 L42 13" stroke="#3f342c" stroke-width="2.6" stroke-linecap="round"/><path d="M34 44 Q40 40 46 44" fill="none" stroke="#3f342c" stroke-width="2.4" stroke-linecap="round"/><path d="M28 30 L31 23 L35 28 L40 21 L45 28 L49 23 L52 30 Z" fill="#ffd166" stroke="#e3a024" stroke-width="1.4" stroke-linejoin="round"/></svg>';
 
 // ---------- icons ----------
@@ -178,11 +192,25 @@ const ICON = {
   soundOff: sv(`<path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4Z" ${S}/><path d="m16 9.5 5 5m0-5-5 5" ${S}/>`),
   shell: sv(`<path d="M12 4 C6 4 3 9 3.5 14 L5 18 H19 L20.5 14 C21 9 18 4 12 4Z" fill="currentColor"/><path d="M12 5.5 V17.5 M8 6.8 L9.6 17.5 M16 6.8 L14.4 17.5 M5 10.5 L7.4 17.5 M19 10.5 L16.6 17.5" stroke="#fff" stroke-width="1.2" stroke-linecap="round" opacity=".55"/><rect x="9" y="17.5" width="6" height="3" rx="1.2" fill="currentColor"/>`),
   question: sv(`<path d="M9.2 9.2a2.9 2.9 0 1 1 4.3 2.5c-.9.5-1.5 1.1-1.5 2.1v.4" ${S}/><circle cx="12" cy="17.6" r="1.3" fill="currentColor"/>`),
+  mail: sv(`<rect x="3.5" y="6" width="17" height="12.5" rx="2.6" ${S}/><path d="m4.6 7.6 7.4 5.8 7.4-5.8" ${S}/>`),
 };
 const FLOWER =
   '<svg viewBox="0 0 72 72" aria-hidden="true"><g fill="currentColor" opacity=".9"><ellipse cx="36" cy="18" rx="9" ry="13"/><ellipse cx="36" cy="46" rx="9" ry="13"/><ellipse cx="22" cy="32" rx="13" ry="9"/><ellipse cx="50" cy="32" rx="13" ry="9"/></g><circle cx="36" cy="32" r="7" fill="#ffe066"/></svg>';
 const BALLOON_SVG =
   '<svg viewBox="0 0 40 56" aria-hidden="true"><path d="M20 2C8 2 2 11 2 19c0 10 10 16 13 22h10c3-6 13-12 13-22C38 11 32 2 20 2Z" fill="#ff7a59"/><path d="M20 2c-6 4-8 11-8 17 0 10 3 16 4 22h8c1-6 4-12 4-22 0-6-2-13-8-17Z" fill="#ffd166"/><path d="M20 2c-2 6-2.5 12-2.5 17 0 10 1.5 16 1.8 22h1.4c.3-6 1.8-12 1.8-22 0-5-.5-11-2.5-17Z" fill="#ff7a59"/><path d="M15 41l1 5M25 41l-1 5" stroke="#8a6a55" stroke-width="1.2"/><rect x="14.5" y="46" width="11" height="8" rx="2" fill="#a8734f"/><path d="M15 49h10" stroke="#8a5a3f" stroke-width="1"/></svg>';
+const ENVELOPE =
+  '<svg viewBox="0 0 48 36" aria-hidden="true"><rect x="2" y="2" width="44" height="32" rx="5" fill="#fffaf0" stroke="#e0583a" stroke-width="2.4"/><path d="M4 5 L24 20 L44 5" fill="none" stroke="#e0583a" stroke-width="2.4" stroke-linejoin="round"/><circle cx="24" cy="21" r="5" fill="#ff7a59"/></svg>';
+/** 聊天、信纸、贴纸回应旁的小屿头像：静态、不含 id，同一页面里可以重复出现。 */
+const MINI_FACE = `<svg viewBox="0 0 40 34" aria-hidden="true"><path d="M20 8.6 V4.6" stroke="#3f9b6a" stroke-width="1.3" stroke-linecap="round"/><path d="M20 5 C20.8 2.3 23.6 1.3 25.9 2.1 C25.1 4.6 22.5 5.7 20 5 Z" fill="#5fd38f"/><path d="M20 5.6 C19.2 3.7 17.1 3 15.2 3.8 C16.2 5.7 18.1 6.3 20 5.6 Z" fill="#8ce3ad"/><path transform="translate(-1.6 -3.2) scale(.43)" d="${MASCOT_BODY}" fill="#fff"/><path d="M4.4 28.2 Q20 33.2 35.6 28.2 Q34.6 30.6 30.6 31 Q20 32.5 9.4 31 Q5.4 30.6 4.4 28.2 Z" fill="#e2f0fa"/><path transform="translate(-1.6 -3.2) scale(.43)" d="${MASCOT_BODY}" fill="none" stroke="#cfe0ec" stroke-width="3.6" stroke-linejoin="round"/><ellipse cx="11" cy="24.6" rx="3" ry="1.8" fill="#ff8d85" opacity=".5"/><ellipse cx="29" cy="24.6" rx="3" ry="1.8" fill="#ff8d85" opacity=".5"/><ellipse cx="15.4" cy="20.6" rx="2.4" ry="2.9" fill="${M_INK}"/><ellipse cx="24.6" cy="20.6" rx="2.4" ry="2.9" fill="${M_INK}"/><circle cx="16.3" cy="19.5" r="1" fill="#fff"/><circle cx="25.5" cy="19.5" r="1" fill="#fff"/><path d="M18.1 23.4 Q20 26.4 21.9 23.4 Q20 24 18.1 23.4 Z" fill="${M_INK}" stroke="${M_INK}" stroke-width=".6" stroke-linejoin="round"/></svg>`;
+
+// ---------- 小屿陪伴 ----------
+const CHAT_CHIPS = ['今天有点累', '夸夸我吧', '讲个岛上的小故事', '陪我发会儿呆'];
+const CHAT_HELLO = '想聊点什么都可以。今天过得怎么样？';
+const KNOCK_LINES = ['今天的信已经拆过啦，旧信都收在手账里。', '咚咚——邮筒说它今天下班了。', '明天这个时候，小旗还会竖起来的。'];
+const CARE_TEXT = '听起来你现在很不好受。你不是一个人：可以找一个信任的人说说，也可以拨打全国统一心理援助热线 12356。如果有立刻的危险，请拨打 110 或 120。';
+const INVITE_AI =
+  '我在岛上装了一个邮筒。如果你愿意，我想每天给你写一封信，也可以随时陪你聊聊天。\n写信和聊天的时候，我会借用你在 MiniMax Code 里使用的模型，读一读你在岛上留下的心情和备注、小确幸、「关于你」的回答、答案之书里的问题，还有我们的聊天。这些内容会发给那个模型，帮我组织语言；心屿自己不联网，也不会把它们存到别处。\n不开也没关系，我每天还是会手写一张小便条放进邮筒。之后随时可以在设置里改主意。';
+const INVITE_NOTE = '我在岛上装了一个邮筒。以后每天，我都会往里面放一张小便条，写写这几天你在岛上留下的点点滴滴。\n记得常来看看小旗有没有竖起来。';
 
 // ---------- sound (WebAudio 合成，无外部资源) ----------
 const sound = {
@@ -286,43 +314,74 @@ function face(v, cls = '') {
 }
 
 function spiral(cx, cy) {
-  return `<path d="M${cx} ${cy} m0 -1 a1 1 0 1 1 -1 1 a2 2 0 1 1 2 2 a3 3 0 1 1 -3 -3 a4 4 0 1 1 4 4" fill="none" stroke="#3f342c" stroke-width="1.8" stroke-linecap="round"/>`;
+  return `<path d="M${cx} ${cy} m0 -1 a1 1 0 1 1 -1 1 a2 2 0 1 1 2 2 a3 3 0 1 1 -3 -3 a4 4 0 1 1 4 4" fill="none" stroke="${M_INK}" stroke-width="1.9" stroke-linecap="round"/>`;
 }
+
+const mEye = (x) =>
+  `<ellipse cx="${x}" cy="56" rx="4.6" ry="5.7" fill="${M_INK}"/><circle cx="${x + 1.6}" cy="53.8" r="1.95" fill="#fff"/><circle cx="${x - 1.5}" cy="58.5" r=".95" fill="#fff" opacity=".9"/>`;
+/** 弯弯的眼睛：up 为笑眼 ^ ^，否则是睡着的 ︶ ︶。 */
+const mArc = (x, up) =>
+  `<path d="M${x - 4.3} ${up ? 57.6 : 55.4} Q${x} ${up ? 51.6 : 60.4} ${x + 4.3} ${up ? 57.6 : 55.4}" fill="none" stroke="${M_INK}" stroke-width="2.9" stroke-linecap="round"/>`;
+
+/** 小短手的姿势：[左手, 右手] 绕与身体相接处转的角度。 */
+function armPose(o, mood) {
+  if (o.sleep) return [-6, 6];
+  if (o.dizzy) return [30, -10];
+  if (mood >= 5) return [58, -58];
+  if (mood <= 2) return [-10, 10];
+  return [0, 0];
+}
+
+// 每个小屿自带 clipPath / 渐变，id 不能重复：关着的弹窗里也有小屿，跨 svg 引用会画不出来
+let svgSeq = 0;
 
 function mascotSvg(o = {}) {
   const mood = o.mood || 4;
-  const mouth = o.sleep ? 'M47 63 Q50 66.5 53 63 Q50 60 47 63 Z' : o.dizzy ? 'M42 62 q4 -4 8 0 t8 0' : MASCOT_MOUTH[mood] ?? MASCOT_MOUTH[4];
-  const closed = mouth.endsWith('Z');
-  const eyes = o.sleep
-    ? '<path d="M35.5 52 Q40 56 44.5 52" fill="none" stroke="#3f342c" stroke-width="2.6" stroke-linecap="round"/><path d="M55.5 52 Q60 56 64.5 52" fill="none" stroke="#3f342c" stroke-width="2.6" stroke-linecap="round"/>'
+  const id = `xy${++svgSeq}`;
+  let eyes;
+  if (o.sleep) eyes = `${mArc(39, false)}${mArc(61, false)}`;
+  else if (o.dizzy) eyes = `${spiral(39, 56)}${spiral(61, 56)}`;
+  else if (mood >= 5) eyes = `<g class="m-look">${mArc(39, true)}${mArc(61, true)}</g>`;
+  else eyes = `<g class="m-look"><g class="m-eyes">${mEye(39)}${mEye(61)}</g></g>`;
+  const brows = o.sleep || o.dizzy ? '' : (MASCOT_BROWS[mood] ?? '');
+  const mouth = o.sleep
+    ? `<ellipse cx="50" cy="64.2" rx="1.9" ry="1.6" fill="${M_INK}"/>`
     : o.dizzy
-      ? `${spiral(40, 52)}${spiral(60, 52)}`
-      : '<g class="m-look"><g class="m-eyes"><ellipse cx="40" cy="52" rx="3.6" ry="4.6" fill="#3f342c"/><ellipse cx="60" cy="52" rx="3.6" ry="4.6" fill="#3f342c"/><circle cx="41.3" cy="50.2" r="1.4" fill="#fff"/><circle cx="61.3" cy="50.2" r="1.4" fill="#fff"/></g></g>';
+      ? `<path d="M43.5 64.2 q3.25 -3 6.5 0 t6.5 0" fill="none" stroke="${M_INK}" stroke-width="2.4" stroke-linecap="round"/>`
+      : (MASCOT_MOUTH[mood] ?? MASCOT_MOUTH[4]);
+  const tear = !o.sleep && !o.dizzy && mood === 1 ? MASCOT_TEAR : '';
+  const bubble = o.sleep
+    ? '<g class="m-bubble"><circle cx="57" cy="63.4" r="3.7" fill="#e3f5ff" fill-opacity=".8" stroke="#9fd6f5" stroke-width=".8"/><circle cx="55.8" cy="62.1" r=".95" fill="#fff"/></g>'
+    : '';
+  const [la, ra] = armPose(o, mood);
+  const arms = `<g transform="rotate(${la} 24 70)"><g class="m-arm l"><ellipse class="m-skin" cx="14.6" cy="71.6" rx="6.4" ry="5.2" transform="rotate(-38 14.6 71.6)"/></g></g><g transform="rotate(${ra} 76 70)"><g class="m-arm r"><ellipse class="m-skin" cx="85.4" cy="71.6" rx="6.4" ry="5.2" transform="rotate(38 85.4 71.6)"/></g></g>`;
   const sprout = o.hat
     ? ''
-    : '<g class="m-sprout"><path d="M50 27V19" stroke="#3f9b6a" stroke-width="2.6" stroke-linecap="round"/><path d="M50 20 C52 13 59 10 65 12 C62 18 56 21 50 20 Z" fill="#5fd38f"/><path d="M50 22 C47 17 42 15 37 17 C40 22 45 23 50 22 Z" fill="#7fe0a5"/></g>';
+    : '<g class="m-sprout"><path d="M50 27 Q49 21.5 50 16.6" fill="none" stroke="#3f9b6a" stroke-width="2.6" stroke-linecap="round"/><path d="M50 17.6 C51.6 11 58.2 8.4 63.8 10.6 C61.8 16.6 55.6 19.4 50 17.6 Z" fill="#5fd38f"/><path d="M51.8 16.2 Q56.4 13.2 61.2 11.8" fill="none" stroke="#a8f0c6" stroke-width="1" stroke-linecap="round"/><path d="M50 19.2 C48 14.6 43 13 38.4 14.8 C41 19.6 45.6 20.8 50 19.2 Z" fill="#8ce3ad"/></g>';
   const hat =
     o.hat === 'party'
-      ? '<g class="m-hat" transform="rotate(12 50 30)"><path d="M50 2 L62 30 L38 30 Z" fill="#ff7a59"/><path d="M42.5 23 L57.5 23 M45.5 15 L54.5 15" stroke="#ffe066" stroke-width="3" stroke-linecap="round"/><circle cx="50" cy="3" r="4" fill="#ffe066"/></g>'
+      ? '<g class="m-hat" transform="rotate(12 50 28)"><path d="M50 0 L62 28 L38 28 Z" fill="#ff7a59"/><path d="M42.5 21 L57.5 21 M45.5 13 L54.5 13" stroke="#ffe066" stroke-width="3" stroke-linecap="round"/><circle cx="50" cy="1" r="4" fill="#ffe066"/></g>'
       : '';
   const glasses = o.glasses
-    ? '<g class="m-glasses"><rect x="31" y="46" width="17" height="11" rx="4.5" fill="#262a2c"/><rect x="52" y="46" width="17" height="11" rx="4.5" fill="#262a2c"/><path d="M48 50.5h4" stroke="#262a2c" stroke-width="2.6"/><path d="M34 49h5" stroke="#fff" stroke-width="1.8" stroke-linecap="round" opacity=".7"/></g>'
+    ? '<g class="m-glasses"><rect x="31" y="50" width="16" height="11.6" rx="5" fill="#262a2c"/><rect x="53" y="50" width="16" height="11.6" rx="5" fill="#262a2c"/><path d="M47 54.6h6" stroke="#262a2c" stroke-width="2.6"/><path d="M34 53.2h5" stroke="#fff" stroke-width="1.8" stroke-linecap="round" opacity=".7"/></g>'
     : '';
   const scarf = o.scarf
-    ? '<g class="m-scarf"><path d="M20 66 C38 73 62 73 80 66 L80 73 C62 80 38 80 20 73 Z" fill="#ff7a59"/><path d="M64 72 l3 13 l7 -2 l-3 -12 Z" fill="#e0583a"/></g>'
+    ? '<g class="m-scarf"><path d="M14.5 70.5 C31 79 69 79 85.5 70.5 L86 77.8 C69 86.5 31 86.5 14 77.8 Z" fill="#ff7a59"/><path d="M15 74.6 C31 82.6 69 82.6 85.6 74.6" fill="none" stroke="#ffd166" stroke-width="1.6" stroke-dasharray="3 3" opacity=".8"/><path d="M64.5 81 l2.4 10 l6.4 -1.8 l-2.4 -9.6 Z" fill="#e0583a"/></g>'
     : '';
   const umbrella = o.umbrella
-    ? '<g class="m-umbrella"><path d="M86 34 V82" stroke="#8a6a55" stroke-width="2.6" stroke-linecap="round"/><path d="M60 36 Q86 2 112 36 Q105 30 99 36 Q92 30 86 36 Q79 30 73 36 Q66 30 60 36 Z" fill="#4fb0f0"/><path d="M86 9 Q78 20 73 36 Q79 30 86 36 Z" fill="#fff" opacity=".85"/></g>'
+    ? '<g class="m-umbrella"><path d="M88.5 30 V71 q0 4.2 -3.6 4.2" fill="none" stroke="#8a6a55" stroke-width="2.6" stroke-linecap="round"/><path d="M62 32 Q88.5 -4 115 32 Q108.4 26 101.8 32 Q95.2 26 88.5 32 Q81.8 26 75.2 32 Q68.6 26 62 32 Z" fill="#4fb0f0"/><path d="M88.5 4 Q80 17 75.2 32 Q81.8 26 88.5 32 Z" fill="#fff" opacity=".85"/></g>'
     : '';
-  return `<svg class="mascot-svg" viewBox="0 0 100 92" aria-hidden="true">
-    <ellipse class="m-shadow" cx="50" cy="86" rx="24" ry="4"/>${umbrella}
-    <g class="m-body">${sprout}
-      <path class="m-cloud" d="M24 76 C12 76 6 68 8 59 C10 51 17 46 25 47 C26 35 37 26 50 26 C63 26 73 35 74 47 C83 46 92 52 92 62 C92 70 86 76 78 76 Z"/>
-      <path d="M20 70 C30 74 70 74 82 70" fill="none" stroke="#e3ecf0" stroke-width="3" stroke-linecap="round" opacity=".8"/>
-      ${eyes}${glasses}
-      <ellipse cx="31" cy="60" rx="5" ry="3" fill="#ff9db0" opacity=".65"/><ellipse cx="69" cy="60" rx="5" ry="3" fill="#ff9db0" opacity=".65"/>
-      <path d="${mouth}" fill="${closed ? '#3f342c' : 'none'}" stroke="#3f342c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-      ${scarf}${hat}
+  const look = o.sleep ? ' sleep' : o.dizzy ? ' dizzy' : ` mood-${mood}`;
+  return `<svg class="mascot-svg${look}" viewBox="0 0 100 92" aria-hidden="true">
+    <defs><clipPath id="${id}-c"><path d="${MASCOT_BODY}"/></clipPath><radialGradient id="${id}-b"><stop offset="0" stop-color="#ff8d85" stop-opacity=".85"/><stop offset=".6" stop-color="#ff8d85" stop-opacity=".45"/><stop offset="1" stop-color="#ff8d85" stop-opacity="0"/></radialGradient></defs>
+    <ellipse class="m-shadow" cx="50" cy="88.6" rx="22" ry="3.4"/>
+    <g class="m-body">${umbrella}${sprout}
+      <path class="m-cloud" d="${MASCOT_BODY}"/>
+      <g clip-path="url(#${id}-c)"><ellipse cx="50" cy="93" rx="47" ry="17" fill="#e2f0fa"/><ellipse cx="50" cy="96" rx="40" ry="13" fill="#d5e9f6"/></g>
+      <path class="m-line" d="${MASCOT_BODY}"/>
+      <ellipse cx="28.5" cy="64.6" rx="7.6" ry="4.8" fill="url(#${id}-b)"/><ellipse cx="71.5" cy="64.6" rx="7.6" ry="4.8" fill="url(#${id}-b)"/>
+      ${brows}${eyes}${tear}${glasses}${mouth}${bubble}
+      ${scarf}${arms}${hat}
     </g></svg>`;
 }
 
@@ -388,6 +447,17 @@ function replay(el, cls, ms = 0) {
   el.addEventListener('animationend', done);
 }
 
+/**
+ * 内容没变就不重写。小屿在后台写信、回复时状态会频繁更新，
+ * 这样动画不会反复重播，悬停和输入状态也不会被打断。返回是否真的重写了。
+ */
+function setHTML(el, html) {
+  if (!el || el.__html === html) return false;
+  el.innerHTML = html;
+  el.__html = html;
+  return true;
+}
+
 function countUp(el, to, dur = 900) {
   if (!el || !Number.isFinite(to)) return;
   const dec = Number.isInteger(to) ? 0 : 1;
@@ -432,7 +502,15 @@ let lookRaf = 0;
 let pokes = [];
 let questPrev = null;
 let introRunning = false;
-const anyOverlay = () => $('#talk').open || $('#modal').open || $('#intro').open;
+// 小屿陪伴
+let letterAsked = '';
+let letterKey = null;
+let mailTaps = [];
+let chatShown = -1;
+let chatKnown = null;
+let replyKnown = null;
+const chatState = { token: 0, opener: null };
+const anyOverlay = () => $('#talk').open || $('#modal').open || $('#intro').open || $('#chat').open;
 const flag = (k) => !!state?.flags?.[k];
 /** 一次性引导标记存到服务端，换端口或换窗口也不会重复播放。 */
 function setFlag(k, value) {
@@ -1132,16 +1210,22 @@ function render() {
   setTab(tab);
   renderHud();
   renderScene();
+  renderMailbox();
   renderQuests();
   renderPass();
   renderCheckin();
   renderJar();
   renderJoysToday();
   renderJournal();
+  renderLetters();
   renderBookHistory();
   renderAbout();
+  renderMemos();
   renderFlower();
   renderQuiz();
+  renderChat();
+  noticeChat();
+  maybeRequestLetter();
 }
 
 function greeting() {
@@ -1161,7 +1245,7 @@ function renderHud() {
   const pill = $('#streak-pill');
   const n = state.streak;
   pill.className = `streak-badge lv${n >= 7 ? 3 : n >= 3 ? 2 : 1}${n ? '' : ' cold'}`;
-  pill.innerHTML = `<span class="flame">${ICON.flame}</span><strong>${n}</strong><span>天</span>`;
+  setHTML(pill, `<span class="flame">${ICON.flame}</span><strong>${n}</strong><span>天</span>`);
   pill.setAttribute('aria-label', `连续打卡 ${n} 天`);
   const pending = !state.profile.birthday || !state.todayCard || !state.checkins[state.today];
   $('#tab-today .dock-dot').hidden = !pending;
@@ -1322,6 +1406,20 @@ function treeSvg(cls, season) {
   return `<g class="${cls}" data-egg="tree"><rect x="205" y="148" width="10" height="42" rx="4" fill="#a8734f"/><g class="canopy"><circle cx="210" cy="136" r="26" fill="${c1}"/><circle cx="191" cy="150" r="17" fill="${c2}"/><circle cx="229" cy="150" r="17" fill="${c2}"/><circle cx="203" cy="128" r="9" fill="${c3}" opacity=".8"/>${extra}</g></g>`;
 }
 
+/** 小屿的邮筒：有信时小旗竖起、信封上下跳；正在写信时冒出“…”。 */
+function mailboxSvg() {
+  return `<g class="mailbox egg" data-egg="post">
+    <ellipse cx="230" cy="214" rx="12" ry="2.6" fill="rgb(20 40 50 / 14%)"/>
+    <rect x="227.6" y="191" width="4.8" height="23" rx="1.6" fill="#a8734f"/>
+    <path d="M218 193 V181 C218 174.5 223 170 230 170 C237 170 242 174.5 242 181 V193 Z" fill="#2fb5a5" stroke="#1f8a7e" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M220.5 180 C221.5 175.5 225 173 229 172.6" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".45"/>
+    <rect x="223.5" y="184.2" width="13" height="2.8" rx="1.4" fill="#1f8a7e"/>
+    <g class="mb-flag"><rect x="242" y="176" width="2.4" height="15" rx="1.2" fill="#8a6a55"/><path d="M244.4 176 H253.5 L251 179.2 L253.5 182.4 H244.4 Z" fill="#ff7a59"/></g>
+    <g class="mb-mail"><rect x="223.5" y="151" width="14" height="10" rx="1.6" fill="#fffaf0" stroke="#e0583a" stroke-width="1.3"/><path d="M224.2 151.8 L230.5 156.8 L236.8 151.8" fill="none" stroke="#e0583a" stroke-width="1.3" stroke-linejoin="round"/><circle cx="230.5" cy="157.4" r="1.8" fill="#ff7a59"/></g>
+    <g class="mb-dots"><rect x="218.5" y="152" width="24" height="12" rx="6" fill="#fffaf0"/><circle cx="224.5" cy="158" r="1.8" fill="#2fb5a5"/><circle cx="230.5" cy="158" r="1.8" fill="#2fb5a5"/><circle cx="236.5" cy="158" r="1.8" fill="#2fb5a5"/></g>
+  </g>`;
+}
+
 function isleSvg(c, fresh, { popProp }) {
   const has = (k) => c.unlocked >= ISLAND_ITEMS.findIndex((i) => i.key === k) + 1;
   const cls = (k) => `item egg it-${k}${fresh.has(k) ? ' pending' : ''}`;
@@ -1343,6 +1441,7 @@ function isleSvg(c, fresh, { popProp }) {
       <g class="blades">${[0, 90, 180, 270].map((a) => `<path d="M150 140 L144 106 L156 108 Z" fill="#fffaf0" stroke="#c9a77f" stroke-width="1.6" transform="rotate(${a} 150 140)"/>`).join('')}<circle cx="150" cy="140" r="4" fill="#c9a77f"/></g></g>`;
   }
   if (has('tree')) s += treeSvg(cls('tree'), c.season);
+  s += mailboxSvg();
   if (has('house')) {
     s += `<g class="${cls('house')}${night ? ' lights-on' : ''}" data-egg="house"><rect x="358" y="130" width="8" height="16" fill="#c97b6b"/>${c.season === 'winter' ? '' : ''}<rect x="320" y="150" width="50" height="38" rx="4" fill="#fff4e0" stroke="#e8cfae" stroke-width="2"/><path d="M313 154 L345 126 L377 154 Z" fill="#ff7a6a" stroke="#e85d55" stroke-width="2" stroke-linejoin="round"/>${c.season === 'winter' ? '<path d="M318 150 L345 127 L372 150 L366 150 L345 133 L324 150 Z" fill="#fff"/>' : ''}<rect x="339" y="166" width="13" height="22" rx="5" fill="#b07a5a"/><circle cx="349" cy="178" r="1.2" fill="#ffe08a"/><rect class="window" x="325" y="160" width="10" height="10" rx="2"/><path d="M330 160 v10 M325 165 h10" stroke="#e8cfae" stroke-width="1.2"/></g>`;
   }
@@ -1429,11 +1528,12 @@ function renderScene() {
           <div class="hints" id="hints" aria-hidden="true"></div>
         </div></div>
       </div>
-      <div class="bubble" id="bubble"><p id="bubble-text"></p><button class="bubble-cta" type="button" id="bubble-cta"></button></div>
+      <div class="bubble" id="bubble"><p id="bubble-text"></p><div class="bubble-actions" id="bubble-actions"><button class="bubble-cta" type="button" id="bubble-cta"></button><button class="bubble-chat" type="button" id="bubble-chat">${ICON.bubble}<span>聊聊天</span></button></div></div>
       <div class="level" id="level"><span class="lv-badge"></span><div class="lv-main"><div class="lv-bar" role="progressbar" aria-label="小屿对你的了解" aria-valuemin="0"><span></span></div><p class="lv-hint"></p></div></div>`;
     updateMascot();
     $('#mascot').onclick = onMascotPoke;
     $('#bubble-cta').onclick = () => doMascotAct($('#bubble-cta').dataset.act);
+    $('#bubble-chat').onclick = () => openChat();
     bubbleShown = '';
     if (fresh.size && !$('#talk').open) playPendingPops();
   }
@@ -1467,6 +1567,7 @@ function bubbleLine() {
   const n = answeredCount();
   const next = ISLAND_ITEMS.find((it) => n < it.need);
   const mood = state.checkins[state.today]?.mood;
+  const c = state.companion;
   let text = '';
   let cta = null;
   let act = 'hop';
@@ -1474,10 +1575,20 @@ function bubbleLine() {
     text = '你好呀，我是小屿！先告诉我你的生日吧。';
     cta = '设置生日';
     act = 'settings';
+  } else if (c.letter && !c.letter.read) {
+    text = c.letter.by === 'ai' ? '邮筒的小旗竖起来了，我给你写了一封信！' : '邮筒里有一张我写的小便条，快去看看。';
+    cta = '拆信';
+    act = 'letter';
   } else if (!state.todayCard) {
     text = '今天的卡片还扣着呢，先陪我聊三句，再一起翻开它？';
     cta = '抽今日卡';
     act = 'daily';
+  } else if (c.enabled === null) {
+    text = '咦，岛上什么时候多了一个邮筒？里面好像有东西。';
+    cta = '去看看';
+    act = 'letter';
+  } else if (c.busy?.letter) {
+    text = '我在给你写信呢，写好了邮筒的小旗会竖起来～';
   } else if (n < total) {
     text = next ? `我还想多了解你一点。再聊 ${next.need - n} 个问题，岛上会出现${next.name}！` : '我还想多了解你一点。';
     cta = '陪小屿聊聊';
@@ -1490,7 +1601,7 @@ function bubbleLine() {
     const h = pickHint();
     text = h ? `悄悄告诉你：${h.hint}` : IDLE_LINES[hashStr(state.today) % IDLE_LINES.length];
   }
-  if (mood && mood <= 2) text = `${COMFORT_LINES[hashStr(state.today) % COMFORT_LINES.length]}${cta ? '想聊聊天也可以哦。' : ''}`;
+  if (mood && mood <= 2 && act !== 'letter') text = `${COMFORT_LINES[hashStr(state.today) % COMFORT_LINES.length]}${cta || chatReady() ? '想聊聊天也可以哦。' : ''}`;
   if (isBirthday()) text = '生日快乐！今天岛上为你准备了蛋糕，戳戳看～';
   if (mascotState.sleeping) text = '呼……呼……（小屿睡着了，戳戳它）';
   return { text, cta, act };
@@ -1522,6 +1633,9 @@ function refreshBubble() {
   cta.hidden = !line.cta;
   cta.textContent = line.cta ?? '';
   cta.dataset.act = line.act;
+  const chatBtn = $('#bubble-chat');
+  chatBtn.hidden = !chatReady();
+  $('#bubble-actions').hidden = cta.hidden && chatBtn.hidden;
   $('#bubble').classList.toggle('sleepy', mascotState.sleeping);
   if (sayTimer) return;
   if (line.text !== bubbleShown) {
@@ -1548,6 +1662,8 @@ function doMascotAct(kind) {
   if (kind === 'settings') openSettings();
   else if (kind === 'daily') dailyTalk();
   else if (kind === 'about') aboutTalk();
+  else if (kind === 'letter') openMailbox($('#stage .mailbox'));
+  else if (kind === 'chat') openChat();
   else if (kind === 'mood') {
     const panel = $('#mood-panel');
     panel.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
@@ -1693,6 +1809,9 @@ const EGGS = {
     replay(el, 'boing');
     sfx.pop();
     say(PROP_LINES[sceneParts?.prop] ?? '', 2800);
+  },
+  post(el) {
+    openMailbox(el);
   },
   cake(el) {
     if (el.classList.contains('blown')) {
@@ -1929,29 +2048,30 @@ function renderPass() {
   const c = state.todayCard;
   $('#card-sub').textContent = `已收集 ${state.cardCount} 张`;
   if (!state.profile.birthday) {
-    box.innerHTML = `<div class="deck-wrap"><div class="deck locked">${cardBack('d3')}${cardBack('d2')}${cardBack('d1')}</div>
+    const html = `<div class="deck-wrap"><div class="deck locked">${cardBack('d3')}${cardBack('d2')}${cardBack('d1')}</div>
       <p class="deck-text">先告诉小屿你的生日，才能抽出只属于你的卡。</p>
       <button class="gbtn primary big" type="button" id="deck-bday">设置生日</button></div>`;
-    $('#deck-bday').onclick = openSettings;
+    if (setHTML(box, html)) $('#deck-bday').onclick = openSettings;
     return;
   }
   if (!c) {
-    box.innerHTML = `<div class="deck-wrap"><button class="deck" type="button" id="deck" aria-label="抽一张今日灵感卡">${cardBack('d3')}${cardBack('d2')}${cardBack('d1')}</button>
+    const html = `<div class="deck-wrap"><button class="deck" type="button" id="deck" aria-label="抽一张今日灵感卡">${cardBack('d3')}${cardBack('d2')}${cardBack('d1')}</button>
       <p class="deck-text">回答小屿的三个小问题，你的选择会和生日一起决定今天这张卡。偶尔还会抽到闪卡哦。</p>
       <button class="gbtn primary big" type="button" id="draw-btn">抽一张</button></div>`;
-    $('#draw-btn').onclick = dailyTalk;
-    $('#deck').onclick = dailyTalk;
+    if (setHTML(box, html)) {
+      $('#draw-btn').onclick = dailyTalk;
+      $('#deck').onclick = dailyTalk;
+    }
     return;
   }
   if (flipPending) {
     if ($('.flipper', box)?.dataset.date === c.date) return;
-    box.innerHTML = `<div class="flip-stage"><div class="flipper" data-date="${esc(c.date)}"><div class="face back-face" inert>${cardBack('solo')}</div><div class="face front-face">${cardFront(c)}</div></div></div>`;
+    setHTML(box, `<div class="flip-stage"><div class="flipper" data-date="${esc(c.date)}"><div class="face back-face" inert>${cardBack('solo')}</div><div class="face front-face">${cardFront(c)}</div></div></div>`);
     $('.orb-num', box).textContent = '0';
     bindCard(box, c);
     return;
   }
-  box.innerHTML = cardFront(c);
-  bindCard(box, c);
+  if (setHTML(box, cardFront(c))) bindCard(box, c);
 }
 
 async function startFlip() {
@@ -1992,17 +2112,37 @@ function renderCheckin() {
   const box = $('#checkin-body');
   const today = state.checkins[state.today];
   if (today && !editingCheckin) {
-    box.innerHTML = `<div class="stuck"><div class="stuck-sticker">${face(today.mood)}<span class="tape" aria-hidden="true"></span></div>
+    const reply = today.reply || '';
+    const waiting = !reply && !!state.companion.busy?.reply;
+    const fresh = !!reply && replyKnown !== null && reply !== replyKnown;
+    replyKnown = reply;
+    const replyHtml = reply
+      ? `<p class="stuck-reply${fresh ? ' fresh' : ''}"><span class="sr-av" aria-hidden="true">${MINI_FACE}</span><span class="sr-text"><span class="sr-name">小屿</span>${esc(reply)}</span></p>`
+      : waiting
+        ? `<p class="stuck-reply" role="status"><span class="sr-av" aria-hidden="true">${MINI_FACE}</span><span class="sr-text dots" aria-label="小屿正在想怎么回你"><i></i><i></i><i></i></span></p>`
+        : '';
+    const view = `stuck|${today.mood}|${today.note}`;
+    if (box.dataset.view !== view) {
+      box.dataset.view = view;
+      box.innerHTML = `<div class="stuck"><div class="stuck-sticker">${face(today.mood)}<span class="tape" aria-hidden="true"></span></div>
       <div class="grow"><p class="stuck-title">今天是「${MOODS[today.mood]}」</p><p class="stuck-note">${today.note ? esc(today.note) : '没有写备注'}</p></div>
-      <button class="gbtn sm ghost" type="button" id="checkin-edit">换一张</button></div>`;
-    $('#checkin-edit').onclick = () => {
-      editingCheckin = true;
-      selectedMood = today.mood;
-      renderCheckin();
-      $('#mood-note').value = today.note || '';
-    };
+      <button class="gbtn sm ghost" type="button" id="checkin-edit">换一张</button></div><div id="mood-reply"></div>`;
+      $('#checkin-edit').onclick = () => {
+        const t = state.checkins[state.today];
+        editingCheckin = true;
+        selectedMood = t?.mood ?? null;
+        renderCheckin();
+        $('#mood-note').value = t?.note || '';
+      };
+    }
+    setHTML($('#mood-reply', box), replyHtml);
+    if (fresh && tab === 'today') sfx.chime();
     return;
   }
+  // 表单已经在页面上时不重画：选贴纸由 select() 局部更新，正在输入的备注也不会失焦
+  const view = `form|${editingCheckin}`;
+  if (box.dataset.view === view && $('#checkin-form', box)) return;
+  box.dataset.view = view;
   const prevNote = $('#mood-note')?.value ?? '';
   const tilts = [-7, 4, -3, 6, -5];
   box.innerHTML = `
@@ -2073,9 +2213,11 @@ function renderCheckin() {
     }
     selectedMood = null;
     sfx.pop();
+    const care = !!r.result?.care;
     if (wasEditing) {
       toast('换好新贴纸啦');
       burst($('.stuck-sticker'), 14);
+      if (care) setTimeout(openCare, reduceMotion() ? 0 : 700);
       return;
     }
     toast('贴好啦，今天也辛苦了');
@@ -2086,7 +2228,8 @@ function renderCheckin() {
         plusOne(pill, state.streak > prevStreak ? '+1' : '✓');
         burst(pill, 12, ['#ff9a3d', '#ffc24b', '#ff7a59']);
         sfx.chime();
-        maybeMilestone();
+        if (care) setTimeout(openCare, reduceMotion() ? 0 : 450);
+        else maybeMilestone();
       },
     });
   };
@@ -2117,7 +2260,7 @@ function renderJar() {
     stars += `<g transform="translate(${x} ${y}) rotate(${(h % 70) - 35})"><path class="jstar${isNew ? ' new' : ''}" d="${starPath(0, 0, 7.5)}" fill="${STAR_COLORS[h % STAR_COLORS.length]}" stroke="rgb(0 0 0 / 14%)" stroke-width="1" stroke-linejoin="round"/></g>`;
   });
   knownJoyIds = new Set(state.joys.map((j) => j.id));
-  jar.innerHTML = `<svg viewBox="0 0 120 140" aria-hidden="true">
+  setHTML(jar, `<svg viewBox="0 0 120 140" aria-hidden="true">
     <defs><clipPath id="jarClip"><path d="${JAR_BODY}"/></clipPath></defs>
     <path class="glass-back" d="${JAR_BODY}"/>
     <g clip-path="url(#jarClip)">${stars}</g>
@@ -2125,7 +2268,7 @@ function renderJar() {
     <path class="shine" d="M28 54 V104"/><path class="shine sm" d="M28 112 V116"/>
     <rect class="jar-label" x="38" y="44" width="44" height="17" rx="4"/><text class="jar-label-text" x="60" y="56.5" text-anchor="middle">小确幸</text>
     <rect x="20" y="24" width="80" height="14" rx="5" fill="#ff7a59"/><rect x="25" y="17" width="70" height="9" rx="4.5" fill="#ff9a7d"/><path d="M30 31 h60" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-dasharray="1 5" opacity=".7"/>
-  </svg>`;
+  </svg>`);
   const total = state.joyCount ?? state.joys.length;
   $('#jar-count').innerHTML = total ? `罐子里有 <strong>${total}</strong> 颗星星` : '罐子还空着';
 }
@@ -2170,8 +2313,7 @@ function renderJoysToday() {
   const list = $('#joy-today');
   const todays = state.joys.filter((j) => j.date === state.today);
   $('#joy-sub').textContent = todays.length ? `今天放进了 ${todays.length} 颗` : '让你嘴角上扬的小事';
-  list.innerHTML = todays.map((j) => slip(j, false)).join('');
-  bindJoyDeletes(list);
+  if (setHTML(list, todays.map((j) => slip(j, false)).join(''))) bindJoyDeletes(list);
 }
 
 // ---------- journal ----------
@@ -2182,7 +2324,7 @@ function renderJournal() {
   const prefix = state.today.slice(0, 7);
   const monthVals = Object.entries(ck).filter(([d]) => d.startsWith(prefix)).map(([, v]) => v.mood);
   const avg = monthVals.length ? Math.round((monthVals.reduce((a, b) => a + b, 0) / monthVals.length) * 10) / 10 : 0;
-  $('#kpis').innerHTML = [
+  setHTML($('#kpis'), [
     ['flame', '#ff8a3d', '连续打卡', state.streak, '天'],
     ['stamp', '#4fb0f0', '本月打卡', monthVals.length, '天'],
     ['heart', '#ff6f8e', '本月心情', avg || null, avg ? MOODS[Math.round(avg)] : ''],
@@ -2192,14 +2334,14 @@ function renderJournal() {
       ([ic, c, k, v, u]) =>
         `<div class="badge" style="--bc:${c}"><span class="medal">${ICON[ic]}</span><div><p class="badge-k">${k}</p><p class="badge-v">${v == null ? '—' : `<span class="num" data-to="${v}">${Number.isInteger(v) ? v : v.toFixed(1)}</span>`}<small>${u}</small></p></div></div>`,
     )
-    .join('');
+    .join(''));
 
   renderCalendar();
   renderTrend();
 
   const recs = Object.entries(ck).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 60);
   const rl = $('#records');
-  rl.innerHTML = recs.length
+  const recHtml = recs.length
     ? recs
         .map(
           ([d, v]) =>
@@ -2208,7 +2350,7 @@ function renderJournal() {
         )
         .join('')
     : '<li class="empty">还没有打卡记录。回小岛贴第一张心情贴纸吧。</li>';
-  $$('[data-ck]', rl).forEach((b) => {
+  if (setHTML(rl, recHtml)) $$('[data-ck]', rl).forEach((b) => {
     b.onclick = async () => {
       if (await confirmModal('撕掉这张贴纸？', `将删除 ${prettyDate(b.dataset.ck)} 的心情记录。`, '删除')) {
         const r = await act('DELETE', `/api/checkin/${b.dataset.ck}`);
@@ -2218,19 +2360,18 @@ function renderJournal() {
   });
 
   $('#fav-count').textContent = state.favorites.length ? `${state.favorites.length} 张` : '';
-  $('#favorites').innerHTML = state.favorites.length
+  setHTML($('#favorites'), state.favorites.length
     ? `<div class="fav-scroll">${state.favorites
         .map(
           (c) =>
             `<article class="mini-card${isShiny(c) ? ' shiny' : ''}" style="--c:${esc(c.color.hex)}" aria-label="${prettyDate(c.date)} 灵感卡：${esc(c.keyword)}"><p class="mini-date">${prettyDate(c.date)}</p><p class="mini-kw">${esc(c.keyword)}</p><p class="mini-msg">${esc(c.message)}</p></article>`,
         )
         .join('')}</div>`
-    : '<p class="empty">喜欢的灵感卡点右上角的星星，就会收进这里。</p>';
+    : '<p class="empty">喜欢的灵感卡点右上角的星星，就会收进这里。</p>');
 
   $('#joy-count').textContent = state.joys.length ? `共 ${state.joyCount ?? state.joys.length} 颗` : '';
   const wall = $('#joy-wall');
-  wall.innerHTML = state.joys.length ? state.joys.map((j) => slip(j, true)).join('') : '<li class="empty">星星会慢慢在这里贴成一面墙。</li>';
-  bindJoyDeletes(wall);
+  if (setHTML(wall, state.joys.length ? state.joys.map((j) => slip(j, true)).join('') : '<li class="empty">星星会慢慢在这里贴成一面墙。</li>')) bindJoyDeletes(wall);
 }
 
 function renderCalendar() {
@@ -2254,14 +2395,18 @@ function renderCalendar() {
       ${v ? face(v.mood) : `<span aria-hidden="true">${d}</span>`}<span class="sr-only">${esc(label)}</span></div>`;
   }
   html += '</div>';
-  $('#calendar').innerHTML = html;
-  $('#cal-today')?.addEventListener('click', () => {
-    setTab('today', true);
-    setTimeout(() => doMascotAct('mood'), reduceMotion() ? 0 : 350);
-  });
+  if (setHTML($('#calendar'), html)) {
+    const add = $('#cal-today');
+    if (add) {
+      add.onclick = () => {
+        setTab('today', true);
+        setTimeout(() => doMascotAct('mood'), reduceMotion() ? 0 : 350);
+      };
+    }
+  }
   const now = parseDate(state.today);
   $('#cal-next').disabled = y > now.getFullYear() || (y === now.getFullYear() && m >= now.getMonth());
-  $('#legend').innerHTML = [5, 4, 3, 2, 1].map((v) => `<span>${face(v, 'tiny')}${MOODS[v]}</span>`).join('');
+  setHTML($('#legend'), [5, 4, 3, 2, 1].map((v) => `<span>${face(v, 'tiny')}${MOODS[v]}</span>`).join(''));
 }
 
 function smoothPath(pts) {
@@ -2329,7 +2474,7 @@ function renderTrend() {
     const good = vals.filter((p) => p.v >= 4).length;
     head = `<div class="trend-head"><p class="trend-value">${avg.toFixed(1)}<small>${MOODS[Math.round(avg)]}</small></p><p class="trend-sub">平均心情 · 打卡 ${vals.length} 天，其中 ${good} 天心情不错</p></div>`;
   }
-  $('#trend').innerHTML = `${head}<div class="chart">${svg}</div>`;
+  setHTML($('#trend'), `${head}<div class="chart">${svg}</div>`);
 }
 
 function animateJournal() {
@@ -2480,9 +2625,12 @@ function renderBook(animate = false) {
 }
 function renderBookHistory() {
   const ul = $('#book-history');
-  ul.innerHTML = state.answers.length
-    ? state.answers.map((a) => `<li><div class="rec-main"><p class="rec-sub">${prettyDate(a.date)} · ${esc(a.question)}</p><p class="rec-title">${esc(a.answer)}</p></div></li>`).join('')
-    : '<li class="empty">翻过的页会留在这里。</li>';
+  setHTML(
+    ul,
+    state.answers.length
+      ? state.answers.map((a) => `<li><div class="rec-main"><p class="rec-sub">${prettyDate(a.date)} · ${esc(a.question)}</p><p class="rec-title">${esc(a.answer)}</p></div></li>`).join('')
+      : '<li class="empty">翻过的页会留在这里。</li>',
+  );
   $('#book-clear').disabled = !state.answers.length;
 }
 
@@ -2491,39 +2639,40 @@ function renderAbout() {
   const { questions, answers } = state.about;
   const n = answeredCount();
   const next = ISLAND_ITEMS.find((it) => n < it.need);
-  $('#about-head').innerHTML = `<div class="about-mascot" aria-hidden="true">${mascotSvg({ mood: 5 })}</div>
+  setHTML($('#about-head'), `<div class="about-mascot" aria-hidden="true">${mascotSvg({ mood: 5 })}</div>
     <div class="grow"><p class="about-title">小屿已经知道 <strong>${n}</strong> / ${questions.length} 件关于你的事</p>
       <div class="lv-bar" role="progressbar" aria-label="了解进度" aria-valuemin="0" aria-valuemax="${questions.length}" aria-valuenow="${n}"><span style="width:${(n / questions.length) * 100}%"></span></div>
       <p class="about-sub">${next ? `再聊 ${next.need - n} 题，小岛会出现${next.name}` : '你的小岛已经完全长好啦'} · 天气、季节和周末的回答还会改变小岛的样子</p></div>
-    ${n < questions.length ? '<button class="gbtn primary" type="button" id="about-continue">继续聊</button>' : ''}`;
-  $('#about-continue')?.addEventListener('click', () => aboutTalk());
+    ${n < questions.length ? '<button class="gbtn primary" type="button" id="about-continue">继续聊</button>' : ''}`);
+  const cont = $('#about-continue');
+  if (cont) cont.onclick = () => aboutTalk();
   const list = $('#about-list');
-  list.innerHTML = questions
+  const html = questions
     .map((q) => {
       const a = answers[q.id];
       return `<li><button class="entry${a == null ? ' blank' : ''}" type="button" data-q="${esc(q.id)}"><span class="entry-ic">${a == null ? ICON.question : ICON.check}</span><span class="entry-q">${esc(q.q)}</span><span class="entry-a">${a == null ? '还没告诉小屿' : esc(q.options[a])}</span><span class="entry-chev">${ICON.chevR}</span></button></li>`;
     })
     .join('');
-  $$('[data-q]', list).forEach((b) => (b.onclick = () => aboutTalk(b.dataset.q)));
+  if (setHTML(list, html)) $$('[data-q]', list).forEach((b) => (b.onclick = () => aboutTalk(b.dataset.q)));
 }
 
 function renderFlower() {
   const box = $('#flower-body');
   const b = state.birth;
   if (!b) {
-    box.innerHTML = '<p class="muted">每个月都有一朵属于它的生日花。填写生日后，这里会长出你的那一朵。</p><div class="btn-row"><button class="gbtn primary" type="button" id="flower-set">设置生日</button></div>';
+    setHTML(box, '<p class="muted">每个月都有一朵属于它的生日花。填写生日后，这里会长出你的那一朵。</p><div class="btn-row"><button class="gbtn primary" type="button" id="flower-set">设置生日</button></div>');
     $('#flower-set').onclick = openSettings;
     return;
   }
   const until = b.untilBirthday === 0 ? '就是今天' : `${b.untilBirthday} 天`;
-  box.innerHTML = `<div class="flower-hero"><button class="flower-icon" type="button" id="flower-icon" aria-label="摸摸${esc(b.flower)}">${FLOWER}</button><div><p class="hero-kicker">${b.month}月生日花</p><p class="hero-name">${esc(b.flower)}</p><p class="hero-sub">花语 · ${esc(b.words)}</p></div></div>
+  setHTML(box, `<div class="flower-hero"><button class="flower-icon" type="button" id="flower-icon" aria-label="摸摸${esc(b.flower)}">${FLOWER}</button><div><p class="hero-kicker">${b.month}月生日花</p><p class="hero-name">${esc(b.flower)}</p><p class="hero-sub">花语 · ${esc(b.words)}</p></div></div>
     <p class="flower-sketch">${esc(b.sketch)}</p>
     ${b.untilBirthday === 0 ? '<p class="win-banner small">生日快乐！今天的灵感卡也是给你的小礼物。</p>' : ''}
     <dl class="facts">
       <div><dt>出生季节</dt><dd>${esc(b.season)}天</dd></div>
       <div><dt>来到地球</dt><dd>${b.daysLived.toLocaleString('zh-CN')} 天</dd></div>
       <div><dt>距下次生日</dt><dd>${until}</dd></div>
-    </dl>`;
+    </dl>`);
   $('#flower-icon').onclick = (e) => {
     replay(e.currentTarget, 'boing', 650);
     burst(e.currentTarget, 18, ['#ffc2d1', '#ff9fb8', '#ffe3ea', '#ffe066']);
@@ -2551,16 +2700,16 @@ function renderQuiz() {
     const d = res.detail;
     const meta = STYLE_META[res.style] ?? STYLE_META.dawn;
     const total = Object.values(res.scores).reduce((a, b) => a + b, 0) || 1;
-    box.innerHTML = `<div class="style-hero" style="--a:${meta.a};--b:${meta.b}"><div><p class="hero-kicker">你的能量风格</p><p class="hero-name">${esc(d.name)}</p><span class="hero-tag">${esc(d.tag)}</span></div>${styleArt(res.style)}</div>
+    setHTML(box, `<div class="style-hero" style="--a:${meta.a};--b:${meta.b}"><div><p class="hero-kicker">你的能量风格</p><p class="hero-name">${esc(d.name)}</p><span class="hero-tag">${esc(d.tag)}</span></div>${styleArt(res.style)}</div>
       <p class="style-summary">${esc(d.summary)}</p>
       <ul class="bullets">${d.strengths.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
       <dl class="kv"><div><dt>充电方式</dt><dd>${esc(d.recharge)}</dd></div><div><dt>小提醒</dt><dd>${esc(d.tip)}</dd></div></dl>
       <ul class="scores" aria-label="各风格得分">${QUIZ_KEYS.map((k) => `<li><span>${STYLE_META[k].name}</span><span class="score-bar"><span style="width:${(res.scores[k] / total) * 100}%;background:${STYLE_META[k].a}"></span></span><span>${res.scores[k]}</span></li>`).join('')}</ul>
-      <div class="btn-row"><button class="gbtn" type="button" id="quiz-start">重新测试</button></div>`;
+      <div class="btn-row"><button class="gbtn" type="button" id="quiz-start">重新测试</button></div>`);
   } else {
-    box.innerHTML = `<p class="muted">每个人补充能量的方式都不一样。陪小屿回答 8 个日常小场景，看看你更像哪一种。</p>
+    setHTML(box, `<p class="muted">每个人补充能量的方式都不一样。陪小屿回答 8 个日常小场景，看看你更像哪一种。</p>
       <ul class="style-chips">${QUIZ_KEYS.map((k) => `<li style="--a:${STYLE_META[k].a};--b:${STYLE_META[k].b}">${STYLE_META[k].name}</li>`).join('')}</ul>
-      <div class="btn-row"><button class="gbtn primary" type="button" id="quiz-start">开始小测</button></div>`;
+      <div class="btn-row"><button class="gbtn primary" type="button" id="quiz-start">开始小测</button></div>`);
   }
   $('#quiz-start').onclick = quizTalk;
 }
@@ -2592,11 +2741,11 @@ function readBirthday(prefix) {
   return fmtDate(dt);
 }
 
-function segmented(label, id, options, current, onPick) {
+function segmented(label, id, options, current, onPick, help = '') {
   const html = `<div class="field-group"><span class="field-label" id="${id}-label">${label}</span>
     <div class="segmented" role="radiogroup" aria-labelledby="${id}-label">${options
       .map(([v, l]) => `<button type="button" role="radio" data-seg="${id}" data-v="${v}" aria-checked="${current === v}">${l}</button>`)
-      .join('')}</div></div>`;
+      .join('')}</div>${help ? `<p class="field-help">${help}</p>` : ''}</div>`;
   return { html, bind: (root) => $$(`[data-seg="${id}"]`, root).forEach((b) => (b.onclick = () => {
     $$(`[data-seg="${id}"]`, root).forEach((x) => x.setAttribute('aria-checked', String(x === b)));
     onPick(b.dataset.v);
@@ -2636,6 +2785,17 @@ function openSettings() {
     render();
   });
   const soundSeg = segmented('音效', 'sound', [['on', '开'], ['off', '关']], sound.on ? 'on' : 'off', (v) => setSound(v === 'on'));
+  const comp = state.companion;
+  const compSeg = comp.available
+    ? segmented(
+        '小屿陪伴（AI 来信与聊天）',
+        'comp',
+        [['on', '开'], ['off', '关']],
+        comp.enabled === true ? 'on' : 'off',
+        (v) => void setCompanion(v === 'on'),
+        '开启后，小屿会借用你在 MiniMax Code 中使用的模型，读一读你在岛上的心情、小确幸、回答和聊天，给你写信、陪你聊天；这些内容会发送给该模型处理。关闭后，小屿只写本地便条。',
+      )
+    : { html: '<div class="field-group"><span class="field-label">小屿陪伴</span><p class="field-help">当前的 MiniMax Code 没有为心屿开放 Agent 能力，小屿只能手写便条。</p></div>', bind() {} };
   openModal({
     title: '设置',
     render: (b) => {
@@ -2644,12 +2804,13 @@ function openSettings() {
           <input class="field" id="set-nickname" maxlength="20" placeholder="昵称（可不填）" autocomplete="off" /></div>
         <div class="field-group"><span class="field-label" id="setb-label">生日</span>${birthdayPicker('setb', state?.profile.birthday ?? '', 'setb-label')}
           <p class="field-help">用于生成专属灵感卡和生日花画像</p></div>
-        ${sceneSeg.html}${soundSeg.html}
+        ${compSeg.html}${sceneSeg.html}${soundSeg.html}
         <p class="field-error" id="settings-error" role="alert"></p>
         <button class="text-btn" type="button" id="replay-intro">重看开场动画</button>
         <button class="text-btn danger" type="button" id="reset-all">清空所有数据</button>
       </form>`;
       $('#set-nickname', b).value = state?.profile.nickname ?? '';
+      compSeg.bind(b);
       sceneSeg.bind(b);
       soundSeg.bind(b);
       $('#settings-form', b).onsubmit = (e) => {
@@ -2662,11 +2823,15 @@ function openSettings() {
       };
       $('#reset-all', b).onclick = async () => {
         await closeModal();
-        if (await confirmModal('清空所有数据？', '将删除心情贴纸、灵感卡、小确幸、答案之书、小屿的笔记和测试结果，且无法恢复。', '全部清空')) {
+        if (await confirmModal('清空所有数据？', '将删除心情贴纸、灵感卡、小确幸、答案之书、小屿的来信、聊天和笔记，以及测试结果，且无法恢复。', '全部清空')) {
           lastAnswer = null;
           knownUnlocked = null;
           knownJoyIds = null;
           sceneKey = '';
+          letterAsked = '';
+          letterKey = null;
+          chatKnown = null;
+          replyKnown = null;
           const r = await act('POST', '/api/reset');
           if (r.ok) {
             renderBook();
@@ -2682,6 +2847,395 @@ function openSettings() {
     ],
   });
   setTimeout(() => $('#set-nickname')?.focus(), 50);
+}
+
+// ---------- 小屿陪伴：邮筒、来信、聊天、记事本 ----------
+const chatReady = () => state?.companion?.enabled === true && !!state.companion.available;
+
+function renderMailbox() {
+  const c = state.companion;
+  const letter = c.letter;
+  const unread = !!letter && !letter.read;
+  const mb = $('#stage .mailbox');
+  if (mb) {
+    mb.classList.toggle('has-mail', unread || c.enabled === null);
+    mb.classList.toggle('writing', !!c.busy?.letter && !unread);
+  }
+  const key = letter ? `${letter.date}|${letter.at}` : '';
+  if (letterKey !== null && key && key !== letterKey && unread && !introRunning) {
+    sfx.chime();
+    if (mb) {
+      replay(mb, 'mail-pop');
+      burst(mb, 16, ['#fffaf0', '#ffd166', '#ff7a59', '#2fb5a5']);
+    }
+    if (tab === 'today' && !anyOverlay()) say(letter.by === 'ai' ? '信写好啦！邮筒的小旗竖起来了。' : '我在邮筒里放了一张小便条～', 4200);
+    else toast(letter.by === 'ai' ? '小屿的信写好啦' : '邮筒里有一张新便条', 'gift');
+  }
+  letterKey = key;
+}
+
+/** 每天第一次打开时请 Node 准备今天的信（开着陪伴就让小屿写，否则放离线便条）。 */
+function maybeRequestLetter() {
+  const c = state.companion;
+  if (c.enabled === null || c.letter || c.busy?.letter || letterAsked === state.today || introRunning) return;
+  letterAsked = state.today;
+  void api('POST', '/api/companion/letter', {})
+    .then((d) => {
+      if (d?.state) {
+        state = d.state;
+        render();
+      }
+    })
+    .catch(() => {});
+}
+
+function openMailbox(el) {
+  const c = state.companion;
+  const now = Date.now();
+  mailTaps = mailTaps.filter((t) => now - t < 1500);
+  mailTaps.push(now);
+  if (c.enabled === null) return openInvite();
+  if (c.letter && !c.letter.read) return openLetter(c.letter, { from: el });
+  if (el) replay(el, 'knock');
+  if (c.busy?.letter) {
+    sfx.tap();
+    return say('嘘——我正在写呢，写好了小旗会竖起来。', 3000);
+  }
+  if (!c.letter) {
+    sfx.tap();
+    letterAsked = '';
+    maybeRequestLetter();
+    return say('邮筒还空着呢，我这就去写！', 3000);
+  }
+  sfx.thunk();
+  if (mailTaps.length >= 3 && el) {
+    mailTaps = [];
+    return mailboxDeep(el);
+  }
+  say(pick(KNOCK_LINES), 2800);
+}
+
+/** 秘密：连敲三下邮筒，从深处翻出一封旧信。 */
+function mailboxDeep(el) {
+  const old = state.companion.letters.filter((l) => l.date !== state.today);
+  const first = !state.secrets?.mailbox;
+  sfx.sparkle();
+  burst(el, 14, ['#fffaf0', '#ffd166', '#2fb5a5']);
+  void found('mailbox', el);
+  if (!old.length) return say('邮筒深处只有一片羽毛，和一声回音：“你好呀——”', 4200);
+  say('邮筒深处好像卡着什么……', 2400);
+  setTimeout(() => openLetter(pick(old), { title: '从邮筒深处翻出的旧信' }), reduceMotion() ? 0 : first ? 2700 : 700);
+}
+
+function letterHtml(l) {
+  const name = state.profile.nickname;
+  const paras = String(l.text ?? '')
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${esc(p)}</p>`)
+    .join('');
+  const tag = l.by === 'ai' ? 'AI 代笔 · 由你在 MiniMax Code 中使用的模型生成，仅供陪伴' : l.by === 'note' ? '小屿手写的便条' : '';
+  return `<article class="letter${l.by === 'ai' ? ' ai' : ''}">
+    <span class="lt-stamp" aria-hidden="true">${ICON.island}</span>
+    <p class="lt-date">${prettyDate(l.date, true)}</p>
+    <p class="lt-to">${name ? `亲爱的${esc(name)}：` : '嗨，你好呀：'}</p>
+    <div class="lt-body">${paras}</div>
+    <p class="lt-sign"><span class="lt-sign-av" aria-hidden="true">${MINI_FACE}</span>小屿</p>
+    ${tag ? `<p class="lt-tag">${tag}</p>` : ''}
+  </article>`;
+}
+
+function openLetter(l, { title = '', from = null } = {}) {
+  const isToday = l.date === state.today;
+  const actions = [];
+  if (isToday && l.by === 'note' && l.fallback && chatReady()) {
+    actions.push({
+      label: '请小屿重写',
+      kind: 'ghost',
+      onClick: async () => {
+        await closeModal();
+        const r = await act('POST', '/api/companion/letter', { retry: true });
+        if (r.ok && r.result?.started) say('好，我再认真写一次！写好了小旗会竖起来。', 3600);
+      },
+    });
+  }
+  if (isToday && chatReady()) {
+    actions.push({
+      label: '回信',
+      kind: 'ghost',
+      onClick: async () => {
+        await closeModal();
+        openChat();
+      },
+    });
+  }
+  actions.push({ label: '收好啦', kind: 'primary', onClick: () => void closeModal() });
+  const show = () => {
+    sfx.page();
+    openModal({ title: title || (l.by === 'ai' ? '小屿的来信' : '小屿的便条'), cls: 'letter-modal', render: (b) => (b.innerHTML = letterHtml(l)), actions });
+  };
+  if (!l.read) {
+    void api('POST', `/api/companion/letter/${l.date}/read`)
+      .then((d) => {
+        if (d?.state) {
+          state = d.state;
+          render();
+        }
+      })
+      .catch(() => {});
+  }
+  if (from && !reduceMotion()) {
+    sfx.whoosh();
+    const center = { getBoundingClientRect: () => ({ left: innerWidth / 2 - 24, top: innerHeight / 2 - 24, width: 48, height: 48 }) };
+    flyTo(ENVELOPE, from.getBoundingClientRect(), center, { size: 56, onDone: show });
+  } else show();
+}
+
+/** 第一次打开邮筒：说明小屿陪伴会做什么、数据会去哪里，由用户决定开不开。 */
+function openInvite() {
+  const avail = !!state.companion.available;
+  sfx.chime();
+  openModal({
+    title: '邮筒里有一封信',
+    cls: 'letter-modal',
+    render: (b) => (b.innerHTML = letterHtml({ date: state.today, text: avail ? INVITE_AI : INVITE_NOTE, by: 'invite' })),
+    actions: avail
+      ? [
+          { label: '先不用', kind: 'ghost', onClick: () => void decideCompanion(false) },
+          { label: '好呀，给我写信', kind: 'primary', onClick: () => void decideCompanion(true) },
+        ]
+      : [{ label: '好呀', kind: 'primary', onClick: () => void decideCompanion(false) }],
+  });
+}
+
+async function decideCompanion(on) {
+  await closeModal();
+  const r = await act('POST', '/api/companion/enable', { enabled: on });
+  if (!r.ok || !on) return;
+  sfx.fanfare();
+  burst($('#stage .mailbox'), 24);
+  say('太好啦！我这就去写，写好了邮筒的小旗会竖起来。', 4800);
+}
+
+async function setCompanion(on) {
+  const r = await act('POST', '/api/companion/enable', { enabled: on });
+  if (r.ok) toast(on ? '小屿陪伴已打开' : '小屿陪伴已关闭');
+}
+
+/** 备注里流露出伤害自己的念头时：固定的求助信息，不经过模型。 */
+function openCare() {
+  sfx.soft();
+  openModal({
+    title: '小屿很在意你',
+    cls: 'care-modal',
+    render: (b) => (b.innerHTML = `<div class="care-art" aria-hidden="true">${mascotSvg({ mood: 2 })}</div><p class="modal-text">${esc(CARE_TEXT)}</p>`),
+    actions: [{ label: '我知道了', kind: 'primary', onClick: () => void closeModal() }],
+  });
+}
+
+const firstLine = (t) => {
+  const a = [...String(t ?? '').replace(/\s+/g, ' ').trim()];
+  return a.length > 36 ? `${a.slice(0, 36).join('')}…` : a.join('');
+};
+
+function renderLetters() {
+  const list = state.companion.letters;
+  $('#letters-count').textContent = list.length ? `${list.length} 封` : '';
+  const ul = $('#letters');
+  const html = list.length
+    ? list
+        .map(
+          (l) =>
+            `<li><button type="button" class="letter-row${l.read ? '' : ' unread'}" data-letter="${l.date}"><span class="lr-ic">${ICON.mail}</span><span class="lr-main"><span class="lr-date">${prettyDate(l.date, true)}${l.read ? '' : '<b class="lr-new">未读</b>'}</span><span class="lr-first">${esc(firstLine(l.text))}</span></span><span class="lr-tag${l.by === 'ai' ? ' ai' : ''}">${l.by === 'ai' ? 'AI 代笔' : '便条'}</span></button></li>`,
+        )
+        .join('')
+    : '<li class="empty">邮筒里收到的信，都会收在这里。</li>';
+  if (!setHTML(ul, html)) return;
+  $$('[data-letter]', ul).forEach(
+    (b) =>
+      (b.onclick = () => {
+        const l = state.companion.letters.find((x) => x.date === b.dataset.letter);
+        if (l) openLetter(l);
+      }),
+  );
+}
+
+function renderMemos() {
+  const c = state.companion;
+  $('#memo-sub').textContent = chatReady() ? '写信和聊天时，小屿会参考这些' : '小屿写便条时会参考这些';
+  const ul = $('#memos');
+  const tilts = [-2, 1.5, -1, 2, -1.5, 1];
+  const html = c.memory.length
+    ? c.memory
+        .map(
+          (m, i) =>
+            `<li class="memo ${m.by === 'user' ? 'user' : 'xy'}" style="--tilt:${tilts[i % tilts.length]}deg"><span class="memo-by">${m.by === 'user' ? '你让它记的' : '小屿自己记的'}</span><span class="memo-t">${esc(m.text)}</span><button type="button" class="memo-x" data-forget="${m.id}" aria-label="让小屿忘掉：${esc(m.text)}">${ICON.xmark}</button></li>`,
+        )
+        .join('')
+    : '<li class="empty">小屿还没记下什么。写信时它会自己整理，你也可以直接告诉它。</li>';
+  if (!setHTML(ul, html)) return;
+  $$('[data-forget]', ul).forEach(
+    (b) =>
+      (b.onclick = async () => {
+        const li = b.closest('.memo');
+        b.disabled = true;
+        li?.classList.add('poof');
+        await wait(240);
+        const r = await act('DELETE', `/api/companion/memory/${b.dataset.forget}`);
+        if (r.ok) {
+          sfx.soft();
+          toast('好，小屿忘掉啦');
+        } else {
+          li?.classList.remove('poof');
+          b.disabled = false;
+        }
+      }),
+  );
+}
+
+function openChat() {
+  const c = state?.companion;
+  if (!c) return;
+  if (mascotState.sleeping) {
+    mascotState.sleeping = false;
+    mascotState.wokeAt = Date.now();
+    updateMascot();
+  }
+  if (!c.available) return toast('当前的 MiniMax Code 还不能让小屿聊天', 'err');
+  if (c.enabled === null) return openInvite();
+  if (c.enabled !== true) return toast('在设置里打开「小屿陪伴」，就能和小屿聊天啦', 'gift');
+  const dlg = $('#chat');
+  chatState.token++;
+  $('#chat-portrait').innerHTML = mascotSvg({ mood: 5, hat: isBirthday() ? 'party' : '' });
+  chatShown = -1;
+  if (!dlg.open) {
+    chatState.opener = document.activeElement;
+    dlg.showModal();
+  }
+  renderChat();
+  requestAnimationFrame(() => dlg.classList.add('open'));
+  sfx.pop();
+  setTimeout(() => $('#chat-input')?.focus({ preventScroll: true }), 80);
+}
+
+function closeChat() {
+  const dlg = $('#chat');
+  if (!dlg.open) return Promise.resolve();
+  dlg.classList.remove('open');
+  const tk = chatState.token;
+  return new Promise((res) =>
+    setTimeout(
+      () => {
+        if (tk === chatState.token) {
+          dlg.close();
+          if (chatState.opener?.isConnected) chatState.opener.focus?.();
+          refreshBubble();
+        }
+        res();
+      },
+      reduceMotion() ? 0 : 280,
+    ),
+  );
+}
+
+function chatItemHtml(m) {
+  if (m.role === 'me') return `<li class="msg me"><p>${esc(m.text)}</p></li>`;
+  if (m.kind === 'care') return `<li class="msg care"><p><strong>小屿很在意你</strong>${esc(m.text)}</p></li>`;
+  if (m.kind === 'memo') return `<li class="msg sys">${ICON.book}<span>小屿把「${esc(m.text)}」记进了记事本</span></li>`;
+  if (m.kind === 'error') return `<li class="msg sys err">${ICON.exclaim}<span>${esc(m.text)}</span></li>`;
+  return `<li class="msg xy"><span class="msg-av" aria-hidden="true">${MINI_FACE}</span><p>${esc(m.text)}</p></li>`;
+}
+
+/**
+ * 新到的回复逐字出现。读屏只读一遍完整文本：打字期间正文用 aria-label 给出全文，
+ * 逐字变化的那一层设成 aria-hidden，打完再还原成普通文本。
+ */
+function typeChat(p, text, log) {
+  const chars = [...text];
+  if (!p || reduceMotion() || !chars.length) return;
+  p.setAttribute('aria-label', text);
+  p.innerHTML = '<span aria-hidden="true"></span>';
+  const vis = p.firstChild;
+  let i = 0;
+  const done = () => {
+    clearInterval(t);
+    p.textContent = text;
+    p.removeAttribute('aria-label');
+  };
+  const t = setInterval(() => {
+    if (!p.isConnected) return clearInterval(t);
+    i++;
+    vis.textContent = chars.slice(0, i).join('');
+    if (i % 3 === 1 && !NO_BLIP.test(chars[i - 1])) sfx.blip(0.5);
+    log.scrollTop = log.scrollHeight;
+    if (i >= chars.length) done();
+  }, 30);
+}
+
+function renderChat() {
+  const dlg = $('#chat');
+  if (!dlg?.open || !state) return;
+  const c = state.companion;
+  const log = $('#chat-log');
+  const list = c.chat;
+  if (chatShown < 0 || chatShown > list.length) {
+    log.innerHTML = `<li class="msg xy"><span class="msg-av" aria-hidden="true">${MINI_FACE}</span><p>${esc(CHAT_HELLO)}</p></li>${list.map(chatItemHtml).join('')}`;
+  } else if (list.length > chatShown) {
+    $('.msg.typing', log)?.remove();
+    list.slice(chatShown).forEach((m) => {
+      log.insertAdjacentHTML('beforeend', chatItemHtml(m));
+      const li = log.lastElementChild;
+      li.classList.add('in');
+      if (m.role === 'xiaoyu' && !m.kind) typeChat($('p', li), m.text, log);
+      else if (m.kind === 'memo') sfx.chime();
+    });
+  }
+  chatShown = list.length;
+  const last = list[list.length - 1];
+  const waiting = !!c.busy?.chat && !!last && (last.role === 'me' || last.kind === 'care');
+  const typing = $('.msg.typing', log);
+  if (waiting && !typing) {
+    log.insertAdjacentHTML(
+      'beforeend',
+      `<li class="msg xy typing in"><span class="msg-av" aria-hidden="true">${MINI_FACE}</span><p><span class="sr-only">小屿正在输入…</span><i></i><i></i><i></i></p></li>`,
+    );
+  } else if (!waiting && typing) typing.remove();
+  const out = c.chatLeft <= 0;
+  $('#chat-send').disabled = !!c.busy?.chat || out;
+  $('#chat-input').disabled = out;
+  const chips = $('#chat-chips');
+  const showChips = !c.busy?.chat && !out;
+  if (showChips !== chips.childElementCount > 0) {
+    chips.innerHTML = showChips ? CHAT_CHIPS.map((t, i) => `<button type="button" class="cchip" data-chip="${i}">${esc(t)}</button>`).join('') : '';
+    $$('[data-chip]', chips).forEach((b) => (b.onclick = () => void sendChat(CHAT_CHIPS[Number(b.dataset.chip)])));
+  }
+  $('#chat-foot').textContent = out ? '今天聊得够多啦，明天再来找小屿吧。' : c.chatLeft <= 5 ? `今天还能再聊 ${c.chatLeft} 句` : '';
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChat(raw) {
+  const input = $('#chat-input');
+  const text = String(raw ?? '').trim();
+  if (!text) {
+    replay(input, 'nudge', 420);
+    return;
+  }
+  if (state.companion.busy?.chat) return;
+  input.value = '';
+  sfx.pop();
+  const r = await act('POST', '/api/companion/chat', { text });
+  if (!r.ok && !input.value) input.value = text;
+}
+
+/** 聊天窗关着时小屿回了话：提醒一下。 */
+function noticeChat() {
+  const list = state.companion.chat;
+  if (chatKnown !== null && list.length > chatKnown && !$('#chat').open) {
+    const last = list[list.length - 1];
+    if (last.role === 'xiaoyu' && !last.kind) toast('小屿回你啦，点「聊聊天」看看', 'gift');
+  }
+  chatKnown = list.length;
 }
 
 // ---------- secrets: 岛霸横横 ----------
@@ -2770,7 +3324,7 @@ function renderSeed() {
   const b = $('#seed-btn');
   if (!b || !state) return;
   const n = secretCount();
-  b.innerHTML = `<span class="seed-ic">${ICON.shell}</span><strong>${n}</strong><span>/${SECRETS.length}</span>`;
+  setHTML(b, `<span class="seed-ic">${ICON.shell}</span><strong>${n}</strong><span>/${SECRETS.length}</span>`);
   b.setAttribute('aria-label', `小岛秘密图鉴：已找到 ${n} / ${SECRETS.length}`);
 }
 
@@ -2804,9 +3358,9 @@ function renderHints() {
     pos.sun = [x + 30, y - 30];
   }
   const list = undiscovered().filter((x) => pos[x.id]).slice(0, 2);
-  box.innerHTML = list
+  setHTML(box, list
     .map((x, i) => `<i class="hint" style="left:${((pos[x.id][0] / 600) * 100).toFixed(2)}%;top:${((pos[x.id][1] / 300) * 100).toFixed(2)}%;animation-delay:${i * 0.9}s"></i>`)
-    .join('');
+    .join(''));
 }
 
 // ---------- 今日旅程 ----------
@@ -2824,13 +3378,13 @@ function renderQuests() {
   const fresh = questPrev ? [...done].filter((id) => !questPrev.has(id)) : [];
   $('#quest-count').textContent = `${done.size}/${QUESTS.length}`;
   $('#quest-bar span').style.width = `${(done.size / QUESTS.length) * 100}%`;
-  box.innerHTML = QUESTS.map((q) => {
+  const html = QUESTS.map((q) => {
     const d = done.has(q.id);
     return `<li><button type="button" class="quest${d ? ' done' : ''}${fresh.includes(q.id) ? ' just' : ''}" data-quest="${q.id}" aria-label="${q.title}${d ? '（已完成）' : ''}">
       <span class="q-ic">${ICON[q.icon]}</span><span class="q-txt"><span class="q-t">${q.title}</span><span class="q-s">${d ? '已完成' : q.sub}</span></span>
       <span class="q-stamp" aria-hidden="true">${ICON.check}</span></button></li>`;
   }).join('');
-  $$('[data-quest]', box).forEach((b) => (b.onclick = () => questGo(b.dataset.quest)));
+  if (setHTML(box, html)) $$('[data-quest]', box).forEach((b) => (b.onclick = () => questGo(b.dataset.quest)));
   if (fresh.length) {
     sfx.chime();
     fresh.forEach((id) => setTimeout(() => burst($(`[data-quest="${id}"] .q-stamp`, box), 14), reduceMotion() ? 0 : 300));
@@ -3168,6 +3722,38 @@ function init() {
     const r = modalDlg.getBoundingClientRect();
     if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) cancelModal();
   });
+
+  const chatDlg = $('#chat');
+  $('#chat-close').onclick = () => void closeChat();
+  chatDlg.addEventListener('cancel', (e) => {
+    e.preventDefault();
+    void closeChat();
+  });
+  chatDlg.addEventListener('click', (e) => {
+    if (e.target !== chatDlg) return;
+    const r = $('.chat-box', chatDlg).getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) void closeChat();
+  });
+  $('#chat-form').onsubmit = (e) => {
+    e.preventDefault();
+    void sendChat($('#chat-input').value);
+  };
+  $('#memo-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $('#memo-input');
+    const text = input.value.trim();
+    if (!text) {
+      replay(input, 'nudge', 420);
+      return;
+    }
+    const r = await act('POST', '/api/companion/memory', { text });
+    if (r.ok) {
+      input.value = '';
+      sfx.chime();
+      toast('小屿记住啦');
+      burst($('#memos .memo:last-child'), 12);
+    }
+  };
 
   $('#jar').onclick = shakeJar;
   $('#joy-form').onsubmit = async (e) => {

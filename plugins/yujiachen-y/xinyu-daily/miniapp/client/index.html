@@ -85,6 +85,13 @@
       <section class="screen" id="panel-journal" role="tabpanel" aria-labelledby="tab-journal" hidden>
         <h1 class="ribbon"><span>心情手账</span></h1>
         <div class="badges" id="kpis"></div>
+        <section class="panel" aria-labelledby="letters-title">
+          <div class="panel-head">
+            <h2 id="letters-title">小屿的来信</h2>
+            <span class="panel-sub" id="letters-count"></span>
+          </div>
+          <ul class="letters" id="letters"></ul>
+        </section>
         <div class="two-col">
           <section class="panel" aria-labelledby="cal-title">
             <div class="panel-head">
@@ -187,6 +194,18 @@
           <div class="about-head" id="about-head"></div>
           <ul class="entries" id="about-list"></ul>
         </section>
+        <section class="panel" aria-labelledby="memo-title">
+          <div class="panel-head">
+            <h2 id="memo-title">小屿记住的事</h2>
+            <span class="panel-sub" id="memo-sub"></span>
+          </div>
+          <ul class="memos" id="memos"></ul>
+          <form class="input-row" id="memo-form">
+            <label class="sr-only" for="memo-input">让小屿记住一件事</label>
+            <input class="field" id="memo-input" maxlength="30" placeholder="让小屿记住一件事，比如：我在准备考研" autocomplete="off" />
+            <button class="gbtn" type="submit">记住</button>
+          </form>
+        </section>
         <div class="two-col">
           <section class="panel" aria-labelledby="flower-title">
             <div class="panel-head"><h2 id="flower-title">生日花画像</h2></div>
@@ -202,7 +221,7 @@
         </div>
       </section>
 
-      <p class="disclaimer">灵感卡、答案之书、生日花等内容按规则随机生成，仅供娱乐与自我觉察，不构成任何建议。数据只保存在本机。</p>
+      <p class="disclaimer">灵感卡、答案之书、生日花等内容按规则随机生成，小屿的信和聊天由 AI 生成，都仅供娱乐与自我觉察，不构成任何建议。数据只保存在本机；开启小屿陪伴后，相关记录会发送给你在 MiniMax Code 中使用的模型来生成回复。</p>
     </main>
   </div>
 
@@ -225,6 +244,27 @@
       <p class="talk-q" id="talk-q"></p>
       <div class="talk-options" id="talk-options" role="group" aria-labelledby="talk-q"></div>
       <div class="talk-foot" id="talk-foot"></div>
+    </div>
+  </dialog>
+
+  <dialog class="chat" id="chat" aria-labelledby="chat-title">
+    <div class="chat-box">
+      <header class="chat-head">
+        <div class="chat-portrait" id="chat-portrait" aria-hidden="true"></div>
+        <div class="grow">
+          <h2 id="chat-title">和小屿聊聊</h2>
+          <p class="chat-sub">AI 陪聊 · 由你在 MiniMax Code 中使用的模型生成，仅供陪伴</p>
+        </div>
+        <button class="round-btn sm" type="button" id="chat-close" aria-label="关闭聊天" data-icon="xmark"></button>
+      </header>
+      <ol class="chat-log" id="chat-log" role="log" aria-live="polite" aria-label="和小屿的聊天记录"></ol>
+      <div class="chat-chips" id="chat-chips"></div>
+      <form class="input-row chat-form" id="chat-form">
+        <label class="sr-only" for="chat-input">想对小屿说的话</label>
+        <input class="field" id="chat-input" maxlength="200" placeholder="想对小屿说点什么？" autocomplete="off" />
+        <button class="gbtn primary" type="submit" id="chat-send">发送</button>
+      </form>
+      <p class="chat-foot" id="chat-foot"></p>
     </div>
   </dialog>
 
