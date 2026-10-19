@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/dashboard",
+    "window": {
+      "width": 1120,
+      "height": 780,
+      "minWidth": 720,
+      "minHeight": 520
+    }
+  },
+  "mcpEndpoints": [],
+  "agentAccess": [
+    "session.run"
+  ],
+  "agentConcurrency": 2
+}
