@@ -20,7 +20,7 @@ description: 在 MiniMax Photo 中创建和编辑图片，包括参考图绘制�
 2. 下面列出的基础用法可直接使用；其他命令用 `photo_call` 的 `commands` 方法按需查询命令，例如 `args: {filter: "paint"}`。参数以当前返回的 schema 为准。过滤查询可减少上下文，不必先读完整目录。
 3. 工具不可用时先确认插件已启用并打开；刚安装或更新后可能需要新会话刷新工具。不要通过搜索宿主源码、凭证或扫描端口绕过工具发现。
 
-工具的宿主前缀可能变化，按当前工具列表匹配以下名称。`editor_capabilities`、`editor_batch`、`editor_preview`、`editor_create` 和 `editor_export` 是旧版 canvas 引擎接口。PhotoCraft 使用 `photo_call` 或上表的 PTC 方法；尤其预览用 `photo_call(method:"preview", args:{})` 或 `editor.preview()`，新建用 PTC `editor.create()`。
+工具的宿主前缀可能变化，按当前工具列表匹配以下名称。`editor_capabilities`、`editor_batch`、`editor_preview`、`editor_create` 和 `editor_export` 是旧版 canvas 引擎接口。PhotoCraft 使用 `photo_call` 或下表的 PTC 方法；尤其预览用 `photo_call(method:"preview", args:{})` 或 `editor.preview()`，新建用 PTC `editor.create()`。
 
 ## 调用约定
 
