@@ -22,6 +22,10 @@ Programmers write in an IDE; lawyers, analysts, and operators write in their own
 
 ![Self-drive Route Planner case study showing Agent collaboration and the MiniApp workspace](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
 
+> *CadQuery Viewer case: one prompt asks the Agent to design a 3D-printable MiniMax octopus figure, and the model takes shape live beside the conversation.* The Agent looks up the official mascot for reference, writes a parametric CadQuery script, runs and fixes it, and pushes each build to the Viewer on the right. You can orbit, switch views, and section the model at any point, then get print settings and a table of tunable parameters—pick what to change and let the Agent rebuild.
+
+![CadQuery Viewer case study: the Agent designs a MiniMax octopus figure while the model previews live in the Viewer](plugins/hanzijie/cq-viewer/docs/case-study.gif)
+
 **MiniApp's product stance: keep people involved in collaboration and decisions (Human-in-the-Loop).**
 
 We respect every industry, every profession, and the expertise people build over time. AI should be your smartest executor—amplifying your capabilities rather than pretending to have professional judgment on your behalf. MiniApps reconnect the part of the process that is too often split apart: turning work from something that can be refined into something that can be delivered.

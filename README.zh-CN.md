@@ -22,6 +22,10 @@
 
 ![自驾规划案例：Agent 协作与 MiniApp 工作台](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
 
+> *CadQuery Viewer 案例：一句话让 Agent 设计一个可 3D 打印的 MiniMax 小章鱼玩偶，模型在对话旁实时成形。* Agent 先查官方形象作参考，再编写 CadQuery 参数化脚本、自己运行并修正问题，每次构建都推送到右侧的 Viewer。你可以随时旋转、切换视角、剖切检查模型，最后拿到打印建议和一张可调参数表——决定改哪一项，再让 Agent 重新出图。
+
+![CadQuery Viewer 案例：Agent 设计 MiniMax 小章鱼玩偶，模型在 Viewer 中实时预览](plugins/hanzijie/cq-viewer/docs/case-study.gif)
+
 
 **MiniApp 的产品立场：让人始终参与协作与决策（Human-in-the-Loop）。**
 
