@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "anatomy-gallery",
+  "displayName": "Anatomy 画廊",
+  "version": "1.0.0",
+  "description": "集中展示 anatomy 技能做出的交互式等距图解，每张图解关联一个 MCode 对话，可以在画廊里新建、修改并查看历史版本。自带 anatomy 技能，不用另外安装。",
+  "author": "zch0227",
+  "icon": "icon.png",
+  "category": "Design & Sites",
+  "exampleQueries": [
+    "打开 Anatomy 画廊",
+    "用 anatomy 新建一张讲解缓存命中的图解，并登记到画廊",
+    "把画廊里的表盘图解改成浅色主题优先"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": [
+    "skills/anatomy/SKILL.md"
+  ]
+}

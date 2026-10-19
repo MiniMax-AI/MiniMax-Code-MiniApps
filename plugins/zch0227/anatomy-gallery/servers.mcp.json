@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "anatomy-gallery": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/anatomy-gallery",
+      "headers": {},
+      "description": "Registers finished anatomy figures and their versions in the Anatomy gallery.",
+      "timeout": 30000
+    }
+  }
+}

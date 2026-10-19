@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anatomy 画廊</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <header class="topbar" id="topbar">
+      <div class="brand">
+        <h1>Anatomy 画廊</h1>
+        <span class="brand-sub" id="brand-sub"></span>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" id="new-btn" class="btn primary">新建作品</button>
+        <div class="menu-wrap">
+          <button type="button" id="more-btn" class="icon-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" aria-label="更多操作"></button>
+          <div class="menu" id="more-menu" role="menu" hidden>
+            <button type="button" role="menuitem" id="import-item">导入已有作品…</button>
+            <div class="menu-sep" role="separator"></div>
+            <p class="menu-label" id="theme-label">画廊主题</p>
+            <div role="group" aria-labelledby="theme-label">
+              <button type="button" role="menuitemradio" data-theme-choice="system" aria-checked="true">跟随系统</button>
+              <button type="button" role="menuitemradio" data-theme-choice="light" aria-checked="false">浅色</button>
+              <button type="button" role="menuitemradio" data-theme-choice="dark" aria-checked="false">深色</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1" aria-busy="true">
+      <p class="loading-line">正在布展…</p>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="new-dialog" aria-labelledby="new-title-h">
+      <form id="new-form" method="dialog" class="dialog-body">
+        <h2 id="new-title-h">新建作品</h2>
+        <p class="muted small">画廊会新开一个 MCode 对话，由 Agent 用 anatomy 制作。完成后作品会自动挂上墙。</p>
+        <label class="field">
+          <span>想讲清楚什么</span>
+          <textarea id="new-prompt" name="prompt" rows="5" required maxlength="4000" placeholder="例如：缓存键没变就跳过重绘。写上涉及的数字、阈值和行为，图里的读数会照这些来。"></textarea>
+        </label>
+        <fieldset class="field">
+          <legend>规模</legend>
+          <div class="choice-cards">
+            <label class="choice">
+              <input type="radio" name="size" value="figure" checked />
+              <span class="choice-title">Figure</span>
+              <span class="choice-desc">一个机构，40–80 个零件，通常一小时内完成</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="size" value="hero" />
+              <span class="choice-title">Hero</span>
+              <span class="choice-desc">更密的整机，80–150 个零件，需要 2–4 小时</span>
+            </label>
+          </div>
+        </fieldset>
+        <div class="field-row" id="new-model-row">
+          <label class="field">
+            <span>模型</span>
+            <select id="new-model" name="model"></select>
+          </label>
+          <label class="field">
+            <span>思考强度</span>
+            <select id="new-effort" name="effort"></select>
+          </label>
+        </div>
+        <label class="field">
+          <span>放进展区</span>
+          <select id="new-category" name="category"></select>
+        </label>
+        <label class="field">
+          <span>参考示例</span>
+          <select id="new-example" name="example">
+            <option value="">不参考</option>
+          </select>
+        </label>
+        <p id="new-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" class="btn secondary" data-close>取消</button>
+          <button type="submit" class="btn primary" id="new-submit">开始制作</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="import-dialog" aria-labelledby="import-title-h">
+      <form id="import-form" method="dialog" class="dialog-body">
+        <h2 id="import-title-h">导入已有作品</h2>
+        <p class="muted small">填写 anatomy 构建出的 HTML 页面的绝对路径，同目录下的 <code>-light.html</code> 会一起导入。画廊保存的是副本，之后交给 Agent 修改时也会先复制，不会改动原文件。</p>
+        <label class="field">
+          <span>页面路径</span>
+          <input id="import-path" type="text" required placeholder="/Users/you/project/figures/my-figure/my-figure.html" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>放进展区</span>
+          <select id="import-category"></select>
+        </label>
+        <p id="import-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" class="btn secondary" data-close>取消</button>
+          <button type="submit" class="btn primary" id="import-submit">导入</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title-h">
+      <form method="dialog" class="dialog-body">
+        <h2 id="confirm-title-h">从画廊撤下这件作品？</h2>
+        <p class="muted small">画廊里保存的所有版本都会删除。Agent 工作目录里的源文件和关联对话不受影响。</p>
+        <div class="dialog-actions">
+          <button type="button" class="btn secondary" data-close>取消</button>
+          <button type="button" class="btn danger" id="confirm-ok">撤下作品</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="rooms-dialog" aria-labelledby="rooms-title-h">
+      <div class="dialog-body">
+        <h2 id="rooms-title-h">管理展区</h2>
+        <p class="muted small" id="rooms-hint">每件作品挂在一个展区里。改名后按回车保存；移除一个展区时，里面的作品会回到内置展区。内置展区不能移除。</p>
+        <ul class="room-rows" id="rooms-list" aria-label="展区列表"></ul>
+        <form id="rooms-add" class="room-add">
+          <input id="rooms-add-name" type="text" maxlength="20" placeholder="新展区名称，比如“科技”" aria-label="新展区名称" />
+          <button type="submit" class="btn secondary">新增展区</button>
+        </form>
+        <p id="rooms-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" class="btn primary" data-close>完成</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>
