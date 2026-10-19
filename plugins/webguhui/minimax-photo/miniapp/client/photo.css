@@ -598,11 +598,93 @@ body.photo-app {
   justify-self: start;
 }
 
-#recovery-dialog { color: #ededed; background: #252629; border: 1px solid #45464b; border-radius: 14px; width: min(440px, calc(100vw - 32px)); max-height: 70dvh; overflow: auto; padding: 20px; }
-#recovery-dialog::backdrop { background: #0008; }
-#recovery-dialog button { display: block; margin: 10px 0; max-width: 100%; overflow-wrap: anywhere; }
-@media (max-width: 520px) {
-  .photo-app #agent-panel-root .agent-panel { left: 8px !important; right: 8px !important; top: auto !important; bottom: 8px !important; width: auto; max-height: calc(100dvh - 72px); }
-  .photo-app .agent-panel-heading { cursor: default; }
-  .photo-ai-reply { max-height: 28dvh; overflow: auto; }
+#recovery-dialog {
+  color: #ededed;
+  background: #252629;
+  border: 1px solid #45464b;
+  border-radius: 14px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: 70dvh;
+  overflow: auto;
+  padding: 20px;
 }
+#recovery-dialog::backdrop {
+  background: #0008;
+}
+#recovery-dialog button {
+  display: block;
+  margin: 10px 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .photo-app #agent-panel-root .agent-panel {
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: 8px !important;
+    width: auto;
+    max-height: calc(100dvh - 72px);
+  }
+  .photo-app .agent-panel-heading {
+    cursor: default;
+  }
+  .photo-ai-reply {
+    max-height: 28dvh;
+    overflow: auto;
+  }
+}
+
+.photo-activity {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  overflow: hidden;
+}
+.photo-activity[hidden] {
+  display: none;
+}
+.photo-activity svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.photo-activity-trail {
+  stroke: #60a5fa;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.photo-activity-area {
+  fill: #60a5fa10;
+  stroke: #93c5fd;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  vector-effect: non-scaling-stroke;
+}
+.photo-activity-tip {
+  fill: #fff;
+  stroke: #3b82f6;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.photo-activity-label {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border: 1px solid #ffffff28;
+  border-radius: 8px;
+  background: #18181be8;
+  color: #e4e4e7;
+  font: inherit;
+  white-space: nowrap;
+}
+#photo-show-activity {
+  width: auto;
+}
+
+#photo-more label:has(#photo-show-activity) { justify-content: flex-start; gap: 8px; }

@@ -52,3 +52,5 @@ python3 scripts/package-preview.py
 预览端口可用 `RETOUCH_PREVIEW_PORT` 设置，预览数据根目录可用 `RETOUCH_DATA_DIR` 设置。普通浏览器没有宿主 Agent API，不会伪造 AI 回复。打包脚本生成运行 ZIP 和独立开发资料 ZIP；生成物不提交仓库。运行包不包含 npm 依赖目录、测试记录或原始重复图片。
 
 生成后，在社区仓库根目录运行 `npm run check`，再按官方说明在 MiniMax Code 中手动安装。不能用构建通过代替真实宿主 AI 验收。
+
+0.2.15 新增只读 `viewport` 桥接，用编辑器坐标映射显示 AI 操作轨迹。修改引擎后需重新编译 WASM，并同步 `docs/photocraft/miniapp.patch`。轨迹检查：`node scripts/check-activity.mjs`。

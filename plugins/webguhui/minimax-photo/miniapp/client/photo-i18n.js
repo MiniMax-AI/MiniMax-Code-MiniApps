@@ -514,3 +514,27 @@ export function t(key, args = {}) {
   const value = locale === 'zh-hans' ? key : (messages[locale]?.[key] ?? messages.en[key] ?? key);
   return value.replace(/\{(\w+)\}/g, (all, k) => args[k] ?? all);
 }
+
+Object.assign(messages["en"], {
+  "显示 AI 操作轨迹": "Show AI edit activity",
+  "已完成 · 画笔轨迹回放": "Done · Brush stroke replay",
+  "已完成 · 画布已更新": "Done · Canvas updated",
+  "AI 正在执行 {count} 步编辑…": "AI is applying {count} edits…",
+  "AI 正在编辑图片…": "AI is editing the image…",
+});
+
+Object.assign(messages["zh-hant"], {
+  "显示 AI 操作轨迹": "顯示 AI 操作軌跡",
+  "已完成 · 画笔轨迹回放": "已完成 · 畫筆軌跡回放",
+  "已完成 · 画布已更新": "已完成 · 畫布已更新",
+  "AI 正在执行 {count} 步编辑…": "AI 正在執行 {count} 步編輯…",
+  "AI 正在编辑图片…": "AI 正在編輯圖片…",
+});
+
+Object.assign(messages["ja"], {
+  "显示 AI 操作轨迹": "AI の編集動作を表示",
+  "已完成 · 画笔轨迹回放": "完了 · ブラシ軌跡の再生",
+  "已完成 · 画布已更新": "完了 · キャンバスを更新",
+  "AI 正在执行 {count} 步编辑…": "AI が {count} 件の編集を実行中…",
+  "AI 正在编辑图片…": "AI が画像を編集中…",
+});

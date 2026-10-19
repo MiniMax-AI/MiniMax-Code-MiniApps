@@ -1,6 +1,7 @@
 import init, { miniapp_call } from './photocraft.js';
 const allowed = new Set([
   'inspect',
+  'viewport',
   'language',
   'commands',
   'execute',

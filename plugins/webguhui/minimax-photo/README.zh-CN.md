@@ -33,3 +33,5 @@
 [用户手册](docs/user-guide.zh-CN.md) · [构建说明](docs/build.md) · [Agent 工具](docs/agent-tools.zh-CN.md)
 
 新增 MiniApp 代码采用 MIT；PhotoCraft、字体、图标和 QuickJS 的原许可证保留在 `licenses/`。展示图片由 Codex 生图工具制作，是单层示例图片。没有包含修图派的专有源码或素材。
+
+AI 编辑成功后会短暂回放画笔轨迹和范围框；其他修改显示画布高亮。可在“更多 → 显示 AI 操作轨迹”关闭。提示层不进入图片导出或撤销记录；这是操作完成后的回放，不是逐像素执行动画。

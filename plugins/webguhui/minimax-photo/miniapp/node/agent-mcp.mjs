@@ -67,7 +67,7 @@ export async function handleAgentMCP(req, res, service, json, editor) {
       return reply({
         protocolVersion: '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'minimax-photo', version: '0.2.14' },
+        serverInfo: { name: 'minimax-photo', version: '0.2.15' },
       });
     if (message.method === 'ping') return reply({});
     if (message.method === 'tools/list') return reply({ tools: [...tools, ...editorTools] });

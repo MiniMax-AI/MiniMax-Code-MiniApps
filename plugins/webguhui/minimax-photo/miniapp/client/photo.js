@@ -1,3 +1,4 @@
+import { createActivity } from './photo-activity.js';
 import { createRecovery } from './photo-recovery.js';
 import {
   t,
@@ -100,6 +101,7 @@ async function post(path, body) {
   if (!r.ok) throw Error(v.error);
   return v;
 }
+const activity = createActivity({ frame, call });
 const recovery = createRecovery({ call, status });
 document.querySelector('#photo-recover').onclick = () => recovery.show();
 document.querySelector('#photo-save').onclick = () => exportPhoto('pcraft');
@@ -130,7 +132,8 @@ const emptyPNG = () => {
 async function job(jobId) {
   let j,
     applied = false,
-    ownsLock = false;
+    ownsLock = false,
+    before;
   try {
     j = await post(`/api/editor/${editorId}/claim`, { jobId });
     if (running) throw Error(t('编辑器忙，请稍后重试'));
@@ -138,7 +141,13 @@ async function job(jobId) {
     ownsLock = true;
     frame.inert = true;
     document.activeElement?.blur();
-    status('Agent 正在处理图片…');
+    activity.clear();
+    before = await call('inspect');
+    status(
+      j.options.method === 'batch' ? 'AI 正在执行 {count} 步编辑…' : 'AI 正在编辑图片…',
+      { count: Array.isArray(j.options.args) ? j.options.args.length : 1 },
+      true,
+    );
     const value = await call(j.options.method, j.options.args, j.expectedVersion);
     applied = true;
     current = await call('inspect');
@@ -182,6 +191,7 @@ async function job(jobId) {
       frame.inert = false;
     }
     await report().catch(() => {});
+    if (ownsLock && applied) void activity.completed(j.options.method, j.options.args, before);
   }
 }
 window.addEventListener('message', async (e) => {
@@ -216,6 +226,7 @@ setInterval(() => {
 }, 3000);
 window.addEventListener('pagehide', () => events?.close(), { once: true });
 async function action(fn) {
+  activity.clear();
   if (running) return;
   running = true;
   try {

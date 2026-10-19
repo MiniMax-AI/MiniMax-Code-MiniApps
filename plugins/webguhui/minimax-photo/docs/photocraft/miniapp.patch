@@ -42,6 +42,146 @@ index 0802a02..dc38fbd 100644
  #[cfg(target_arch = "wasm32")]
  fn main() {
      web::start();
+diff --git a/apps/photocraft-web/src/miniapp.rs b/apps/photocraft-web/src/miniapp.rs
+new file mode 100644
+index 0000000..31c5154
+--- /dev/null
++++ b/apps/photocraft-web/src/miniapp.rs
+@@ -0,0 +1,134 @@
++//! MiniMax Photo browser adapter. JSON requests are processed on the UI thread.
++use std::cell::RefCell;
++use serde_json::{Value, json};
++use wasm_bindgen::prelude::*;
++use photocraft_ui_egui::PhotocraftApp;
++struct Request { input: Value, resolve: js_sys::Function, reject: js_sys::Function }
++thread_local! {
++    static QUEUE: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
++    static CONTEXT: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
++}
++pub fn init(ctx: egui::Context) { CONTEXT.with(|v| *v.borrow_mut() = Some(ctx)); }
++#[wasm_bindgen]
++pub fn miniapp_call(input: &str) -> Result<js_sys::Promise, JsValue> {
++    if input.len() > 96 * 1024 * 1024 { return Err(JsValue::from_str("request too large")); }
++    let value: Value = serde_json::from_str(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
++    if !CONTEXT.with(|v| v.borrow().is_some()) { return Err(JsValue::from_str("editor not ready")); }
++    if QUEUE.with(|q| q.borrow().len() >= 8) { return Err(JsValue::from_str("editor busy")); }
++    Ok(js_sys::Promise::new(&mut |resolve, reject| {
++        QUEUE.with(|q| q.borrow_mut().push(Request { input: value.clone(), resolve, reject }));
++        CONTEXT.with(|v| { if let Some(ctx) = v.borrow().as_ref() {ctx.request_repaint();} });
++    }))
++}
++fn inspect(app: &PhotocraftApp) -> Value {
++    let doc = app.session.active();
++    json!({"version": doc.map(|d| format!("{}:{}",d.doc.id.0,d.revision)).unwrap_or_else(|| "empty".into()),
++      "document":doc.map(photocraft_engine::inspect::document)})
++}
++fn dispatch(app: &mut PhotocraftApp, input: &Value) -> Result<Value,String> {
++    let method = input.get("method").and_then(Value::as_str).ok_or("missing method")?;
++    let args = input.get("args").cloned().unwrap_or(json!({}));
++    if let Some(expected) = input.get("expectedVersion").and_then(Value::as_str) {
++        if inspect(app).get("version").and_then(Value::as_str) != Some(expected) { return Err("document changed; inspect again".into()); }
++    }
++    match method {
++        "inspect" => Ok(inspect(app)),
++        "viewport" => {
++            let view=photocraft_ui_egui::canvas::ViewXform::active(app).ok_or("no canvas")?;
++            let origin=view.to_screen(0.0,0.0);
++            let x=view.map_vec(egui::vec2(1.0,0.0));
++            let y=view.map_vec(egui::vec2(0.0,1.0));
++            let size=CONTEXT.with(|v|v.borrow().as_ref().map(|ctx|ctx.content_rect().size())).ok_or("no viewport")?;
++            Ok(json!({"origin":[origin.x,origin.y],"xAxis":[x.x,x.y],"yAxis":[y.x,y.y],
++                "clip":[view.rect.min.x,view.rect.min.y,view.rect.width(),view.rect.height()],
++                "size":[size.x,size.y]}))
++        },
++        "font" => {
++            let data=args.get("data").and_then(Value::as_str).ok_or("missing font")?;
++            let bytes=photocraft_paint::tile::b64_decode(data).ok_or("invalid font")?;
++            if bytes.len()>8*1024*1024 {return Err("font too large".into());}
++            CONTEXT.with(|v| {
++                if let Some(ctx)=v.borrow().as_ref() {
++                    let families=ctx.fonts(|f|f.definitions().families.keys().cloned().map(|family|egui::epaint::text::InsertFontFamily{family,priority:egui::epaint::text::FontPriority::Lowest}).collect());
++                    ctx.add_font(egui::epaint::text::FontInsert{name:"MiniMax Photo CJK".into(),data:egui::FontData::from_owned(bytes),families});
++                    ctx.request_repaint();
++                }
++            });
++            Ok(json!({"loaded":true}))
++        },
++        "language" => {
++            let code=args.get("code").and_then(Value::as_str).ok_or("missing language")?;
++            if !["en","zh-hans","zh-hant","ja"].contains(&code) {return Err("unsupported language".into());}
++            app.run("prefs.set",json!({"path":"interface.language","value":code}))?;
++            Ok(json!({"language":code}))
++        },
++        "commands" => Ok(Value::Array(photocraft_engine::commands::command_specs().iter()
++            .filter(|c| args.get("filter").and_then(Value::as_str).map(|f| c.id.to_lowercase().contains(&f.to_lowercase())).unwrap_or(true))
++            .map(|c| photocraft_engine::commands::list_entry(&app.session,c,app.session.disabled_reason(c.id))).collect())),
++        "batch" => {
++            let steps=args.as_array().ok_or("batch requires an array")?;
++            if steps.is_empty() || steps.len()>64 {return Err("batch requires 1..64 commands".into());}
++            let original=app.session.active().ok_or("no document")?.clone();
++            let mut staged=photocraft_engine::Session::new();
++            staged.add_document((*original.doc).clone(),None);
++            *staged.active_mut().unwrap()=original.clone();
++            staged.tools=app.session.tools.clone();
++            // Batch commands may only modify this detached document; nested commands use the same gate.
++            staged.authorize=Some(|id,_| {
++                if ["layer.","select.","paint.","filter.","adjust.","image.","transform.","text.","shape.","path.","mask."].iter().any(|p|id.starts_with(p)) {
++                    Ok(())
++                } else {Err(photocraft_engine::EngineError::Other(format!("command {id} is not allowed in a document batch; use execute")))}
++            });
++            let mut values=Vec::new();
++            for step in steps {
++                let id=step.get("command").and_then(Value::as_str).ok_or("missing command")?;
++                values.push(staged.execute(id,step.get("params").cloned().unwrap_or(json!({}))).map_err(|e|e.to_string())?);
++                if staged.documents().len()!=1 || staged.active().map(|d|d.doc.id)!=Some(original.doc.id) {return Err("batch cannot switch documents".into());}
++            }
++            let final_doc=staged.active().ok_or("no staged document")?.clone();
++            app.session.edit("AI batch",|doc,active| { *doc=(*final_doc.doc).clone(); *active=final_doc.active_layer; Ok(()) }).map_err(|e|e.to_string())?;
++            Ok(json!({"value":values,"state":inspect(app)}))
++        },
++        "execute" => {
++            let id=args.get("command").and_then(Value::as_str).ok_or("missing command")?;
++            // Only engine commands, never browser file pickers or arbitrary UI script actions.
++            if photocraft_engine::commands::find(id).is_none() {return Err("unknown engine command".into());}
++            let result=app.session.execute(id,args.get("params").cloned().unwrap_or(json!({}))).map_err(|e|e.to_string())?;
++            Ok(json!({"value":result,"state":inspect(app)}))
++        },
++        "preview" | "export" => {
++            let d=app.session.active().ok_or("no document")?;
++            let max=args.get("maxEdge").and_then(Value::as_u64).unwrap_or(1280).clamp(64,2048) as u32;
++            let (bytes,warnings)=if method=="preview" {
++                let img=photocraft_compose::thumbnail(&d.doc,max);
++                let image=photocraft_codecs::Image::from_u8(img.width,img.height,photocraft_codecs::ChannelLayout::Rgba,img.pixels).map_err(|e|e.to_string())?;
++                (photocraft_codecs::encode(&image,photocraft_codecs::Format::Png,&Default::default()).map_err(|e|e.to_string())?,vec![])
++            } else {
++                let format=args.get("format").and_then(Value::as_str).unwrap_or("png");
++                if format=="pcraft" {(photocraft_format::save_to_bytes(&d.doc,&Default::default()).map_err(|e|e.to_string())?,vec![])}
++                else {let result=photocraft_io::export(&d.doc,format,&Default::default()).map_err(|e|e.to_string())?;(result.bytes,result.warnings)}
++            };
++            if bytes.len()>64*1024*1024 {return Err("export exceeds 64 MB".into());}
++            Ok(json!({"data":photocraft_paint::tile::b64_encode(&bytes),"warnings":warnings,"state":inspect(app)}))
++        },
++        "open" => {
++            let name=args.get("name").and_then(Value::as_str).ok_or("missing file name")?;
++            let data=args.get("data").and_then(Value::as_str).ok_or("missing file data")?;
++            let bytes=photocraft_paint::tile::b64_decode(data).ok_or("invalid base64")?;
++            let (doc,warnings)=if name.ends_with(".pcraft") {(photocraft_format::load_from_bytes(&bytes).map_err(|e|e.to_string())?,vec![])}
++            else {let imported=photocraft_io::import(name,&bytes).map_err(|e|e.to_string())?;(imported.document,imported.warnings)};
++            app.session.add_document(doc,None);
++            Ok(json!({"warnings":warnings,"state":inspect(app)}))
++        },
++        _ => Err("unsupported Mini App method".into()),
++    }
++}
++pub fn drain(app: &mut PhotocraftApp) {
++    let pending=QUEUE.with(|q|std::mem::take(&mut *q.borrow_mut()));
++    for request in pending {
++        match dispatch(app,&request.input) {
++            Ok(value)=>{let _=request.resolve.call1(&JsValue::NULL,&JsValue::from_str(&value.to_string()));},
++            Err(error)=>{let _=request.reject.call1(&JsValue::NULL,&JsValue::from_str(&error));},
++        }
++    }
++}
 diff --git a/apps/photocraft-web/src/web.rs b/apps/photocraft-web/src/web.rs
 index eb350d1..17481d7 100644
 --- a/apps/photocraft-web/src/web.rs
@@ -178,7 +318,7 @@ index 6fc8e2d..4a2424c 100644
          // Same document state again: the cached title stops a repeat command.
          super::sync_window_title(&mut app, &ctx);
          let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
-@@ -868,7 +868,7 @@ mod title_tests {
+@@ -868,6 +868,6 @@ mod title_tests {
          assert!(!cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(_))), "repeat Title: {cmds:?}");
          open_named(&mut app, "foo.psd");
          super::sync_window_title(&mut app, &ctx);
@@ -186,134 +326,3 @@ index 6fc8e2d..4a2424c 100644
 +        assert_eq!(app.last_window_title, "foo.psd \u{2014} MiniMax Photo");
      }
  }
- 
-diff --git a/apps/photocraft-web/src/miniapp.rs b/apps/photocraft-web/src/miniapp.rs
-new file mode 100644
-index 0000000..d6893ab
---- /dev/null
-+++ b/apps/photocraft-web/src/miniapp.rs
-@@ -0,0 +1,124 @@
-+//! MiniMax Photo browser adapter. JSON requests are processed on the UI thread.
-+use std::cell::RefCell;
-+use serde_json::{Value, json};
-+use wasm_bindgen::prelude::*;
-+use photocraft_ui_egui::PhotocraftApp;
-+struct Request { input: Value, resolve: js_sys::Function, reject: js_sys::Function }
-+thread_local! {
-+    static QUEUE: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
-+    static CONTEXT: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
-+}
-+pub fn init(ctx: egui::Context) { CONTEXT.with(|v| *v.borrow_mut() = Some(ctx)); }
-+#[wasm_bindgen]
-+pub fn miniapp_call(input: &str) -> Result<js_sys::Promise, JsValue> {
-+    if input.len() > 96 * 1024 * 1024 { return Err(JsValue::from_str("request too large")); }
-+    let value: Value = serde_json::from_str(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
-+    if !CONTEXT.with(|v| v.borrow().is_some()) { return Err(JsValue::from_str("editor not ready")); }
-+    if QUEUE.with(|q| q.borrow().len() >= 8) { return Err(JsValue::from_str("editor busy")); }
-+    Ok(js_sys::Promise::new(&mut |resolve, reject| {
-+        QUEUE.with(|q| q.borrow_mut().push(Request { input: value.clone(), resolve, reject }));
-+        CONTEXT.with(|v| { if let Some(ctx) = v.borrow().as_ref() {ctx.request_repaint();} });
-+    }))
-+}
-+fn inspect(app: &PhotocraftApp) -> Value {
-+    let doc = app.session.active();
-+    json!({"version": doc.map(|d| format!("{}:{}",d.doc.id.0,d.revision)).unwrap_or_else(|| "empty".into()),
-+      "document":doc.map(photocraft_engine::inspect::document)})
-+}
-+fn dispatch(app: &mut PhotocraftApp, input: &Value) -> Result<Value,String> {
-+    let method = input.get("method").and_then(Value::as_str).ok_or("missing method")?;
-+    let args = input.get("args").cloned().unwrap_or(json!({}));
-+    if let Some(expected) = input.get("expectedVersion").and_then(Value::as_str) {
-+        if inspect(app).get("version").and_then(Value::as_str) != Some(expected) { return Err("document changed; inspect again".into()); }
-+    }
-+    match method {
-+        "inspect" => Ok(inspect(app)),
-+        "font" => {
-+            let data=args.get("data").and_then(Value::as_str).ok_or("missing font")?;
-+            let bytes=photocraft_paint::tile::b64_decode(data).ok_or("invalid font")?;
-+            if bytes.len()>8*1024*1024 {return Err("font too large".into());}
-+            CONTEXT.with(|v| {
-+                if let Some(ctx)=v.borrow().as_ref() {
-+                    let families=ctx.fonts(|f|f.definitions().families.keys().cloned().map(|family|egui::epaint::text::InsertFontFamily{family,priority:egui::epaint::text::FontPriority::Lowest}).collect());
-+                    ctx.add_font(egui::epaint::text::FontInsert{name:"MiniMax Photo CJK".into(),data:egui::FontData::from_owned(bytes),families});
-+                    ctx.request_repaint();
-+                }
-+            });
-+            Ok(json!({"loaded":true}))
-+        },
-+        "language" => {
-+            let code=args.get("code").and_then(Value::as_str).ok_or("missing language")?;
-+            if !["en","zh-hans","zh-hant","ja"].contains(&code) {return Err("unsupported language".into());}
-+            app.run("prefs.set",json!({"path":"interface.language","value":code}))?;
-+            Ok(json!({"language":code}))
-+        },
-+        "commands" => Ok(Value::Array(photocraft_engine::commands::command_specs().iter()
-+            .filter(|c| args.get("filter").and_then(Value::as_str).map(|f| c.id.to_lowercase().contains(&f.to_lowercase())).unwrap_or(true))
-+            .map(|c| photocraft_engine::commands::list_entry(&app.session,c,app.session.disabled_reason(c.id))).collect())),
-+        "batch" => {
-+            let steps=args.as_array().ok_or("batch requires an array")?;
-+            if steps.is_empty() || steps.len()>64 {return Err("batch requires 1..64 commands".into());}
-+            let original=app.session.active().ok_or("no document")?.clone();
-+            let mut staged=photocraft_engine::Session::new();
-+            staged.add_document((*original.doc).clone(),None);
-+            *staged.active_mut().unwrap()=original.clone();
-+            staged.tools=app.session.tools.clone();
-+            // Batch commands may only modify this detached document; nested commands use the same gate.
-+            staged.authorize=Some(|id,_| {
-+                if ["layer.","select.","paint.","filter.","adjust.","image.","transform.","text.","shape.","path.","mask."].iter().any(|p|id.starts_with(p)) {
-+                    Ok(())
-+                } else {Err(photocraft_engine::EngineError::Other(format!("command {id} is not allowed in a document batch; use execute")))}
-+            });
-+            let mut values=Vec::new();
-+            for step in steps {
-+                let id=step.get("command").and_then(Value::as_str).ok_or("missing command")?;
-+                values.push(staged.execute(id,step.get("params").cloned().unwrap_or(json!({}))).map_err(|e|e.to_string())?);
-+                if staged.documents().len()!=1 || staged.active().map(|d|d.doc.id)!=Some(original.doc.id) {return Err("batch cannot switch documents".into());}
-+            }
-+            let final_doc=staged.active().ok_or("no staged document")?.clone();
-+            app.session.edit("AI batch",|doc,active| { *doc=(*final_doc.doc).clone(); *active=final_doc.active_layer; Ok(()) }).map_err(|e|e.to_string())?;
-+            Ok(json!({"value":values,"state":inspect(app)}))
-+        },
-+        "execute" => {
-+            let id=args.get("command").and_then(Value::as_str).ok_or("missing command")?;
-+            // Only engine commands, never browser file pickers or arbitrary UI script actions.
-+            if photocraft_engine::commands::find(id).is_none() {return Err("unknown engine command".into());}
-+            let result=app.session.execute(id,args.get("params").cloned().unwrap_or(json!({}))).map_err(|e|e.to_string())?;
-+            Ok(json!({"value":result,"state":inspect(app)}))
-+        },
-+        "preview" | "export" => {
-+            let d=app.session.active().ok_or("no document")?;
-+            let max=args.get("maxEdge").and_then(Value::as_u64).unwrap_or(1280).clamp(64,2048) as u32;
-+            let (bytes,warnings)=if method=="preview" {
-+                let img=photocraft_compose::thumbnail(&d.doc,max);
-+                let image=photocraft_codecs::Image::from_u8(img.width,img.height,photocraft_codecs::ChannelLayout::Rgba,img.pixels).map_err(|e|e.to_string())?;
-+                (photocraft_codecs::encode(&image,photocraft_codecs::Format::Png,&Default::default()).map_err(|e|e.to_string())?,vec![])
-+            } else {
-+                let format=args.get("format").and_then(Value::as_str).unwrap_or("png");
-+                if format=="pcraft" {(photocraft_format::save_to_bytes(&d.doc,&Default::default()).map_err(|e|e.to_string())?,vec![])}
-+                else {let result=photocraft_io::export(&d.doc,format,&Default::default()).map_err(|e|e.to_string())?;(result.bytes,result.warnings)}
-+            };
-+            if bytes.len()>64*1024*1024 {return Err("export exceeds 64 MB".into());}
-+            Ok(json!({"data":photocraft_paint::tile::b64_encode(&bytes),"warnings":warnings,"state":inspect(app)}))
-+        },
-+        "open" => {
-+            let name=args.get("name").and_then(Value::as_str).ok_or("missing file name")?;
-+            let data=args.get("data").and_then(Value::as_str).ok_or("missing file data")?;
-+            let bytes=photocraft_paint::tile::b64_decode(data).ok_or("invalid base64")?;
-+            let (doc,warnings)=if name.ends_with(".pcraft") {(photocraft_format::load_from_bytes(&bytes).map_err(|e|e.to_string())?,vec![])}
-+            else {let imported=photocraft_io::import(name,&bytes).map_err(|e|e.to_string())?;(imported.document,imported.warnings)};
-+            app.session.add_document(doc,None);
-+            Ok(json!({"warnings":warnings,"state":inspect(app)}))
-+        },
-+        _ => Err("unsupported Mini App method".into()),
-+    }
-+}
-+pub fn drain(app: &mut PhotocraftApp) {
-+    let pending=QUEUE.with(|q|std::mem::take(&mut *q.borrow_mut()));
-+    for request in pending {
-+        match dispatch(app,&request.input) {
-+            Ok(value)=>{let _=request.resolve.call1(&JsValue::NULL,&JsValue::from_str(&value.to_string()));},
-+            Err(error)=>{let _=request.reject.call1(&JsValue::NULL,&JsValue::from_str(&error));},
-+        }
-+    }
-+}
