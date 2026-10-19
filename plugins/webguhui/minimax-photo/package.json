@@ -1,6 +1,6 @@
 {
   "name": "minimax-photo",
-  "version": "0.2.29",
+  "version": "0.2.30",
   "private": true,
   "type": "module",
   "description": "MiniMax Code 本地图像工作台",
