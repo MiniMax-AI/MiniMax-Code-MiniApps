@@ -129,6 +129,26 @@ const content = {
     ]
   ]
 };
+content['zh-hans'].push(
+  ['附图绘画', '在 MiniMax Code 聊天中输入 @ 选择 MiniMax Photo，再添加图片附件。例如：“照这张图画简单的铅笔素描，逐笔画给我看。”无需填写文件路径或工具名。AI 会打开编辑器、绘制并检查结果；复杂任务可能需要几分钟。'],
+  ['查看逐笔过程', '要求逐笔展示时，每笔会真实更新画布，并可单独撤销。一条请求可以分阶段执行。完成后的短暂轨迹提示与逐笔绘制是两种不同效果。'],
+  ['录制与保存', '“更多 → 录制绘画过程”只录编辑器画布和工具栏，不含 MiniMax Code 聊天。停止后选择“保存录制视频”下载 WebM。要展示附图、聊天和回复，请在发送前用外部录屏工具录制整个应用窗口。取消保存后可重试；未保存的视频会在刷新或关闭页面后丢失。达到 60 分钟或 256 MiB 时自动结束，仍可保存。保存后清除录制缓存即可开始下一次录制。'],
+);
+content['zh-hant'].push(
+  ['附圖繪畫', '在 MiniMax Code 聊天中輸入 @ 選擇 MiniMax Photo，再加入圖片附件。例如：「照這張圖畫簡單的鉛筆素描，逐筆畫給我看。」不必提供檔案路徑或工具名稱。AI 會開啟編輯器、繪畫並檢查結果；複雜任務可能需要幾分鐘。'],
+  ['查看逐筆過程', '要求逐筆展示時，每筆會實際更新畫布，並可個別復原。一個請求可分階段執行。完成後的短暫軌跡提示與逐筆繪製是兩種不同效果。'],
+  ['錄製與儲存', '「更多 → 錄製繪畫過程」只錄編輯器畫布和工具列，不含 MiniMax Code 聊天。停止後選擇「儲存錄製影片」下載 WebM。若要展示附圖、聊天與回答，請在傳送前用外部錄影工具錄下整個應用視窗。取消儲存後可重試；未儲存影片會在重新整理或關閉頁面後遺失。達到 60 分鐘或 256 MiB 時自動結束，仍可儲存。儲存後清除錄製暫存即可開始下一次錄製。'],
+);
+content.en.push(
+  ['Draw from an attachment', 'In MiniMax Code chat, type @ and select MiniMax Photo, then attach your image. Try: “Draw a simple pencil sketch of this image and show each stroke.” No file paths or tool names are needed. AI opens the editor, draws and checks the result. Complex tasks may take several minutes.'],
+  ['Watch each stroke', 'Ask to see each stroke to update the real canvas step by step, with individual undo. One request may run in stages. The brief activity overlay shown after an edit is separate from incremental drawing.'],
+  ['Record and save', 'More → Record drawing process captures only the editor canvas and controls, not MiniMax Code chat. Stop, then choose Save recording to download WebM. To include attachments, chat and replies, use an external recorder for the whole app window before sending. A cancelled save can be retried; reload or close loses unsaved video. Recording stops at 60 minutes or 256 MiB and can still be saved. Clear the recording buffer after saving to start again.'],
+);
+content.ja.push(
+  ['添付画像をもとに描く', 'MiniMax Code のチャットで @ を入力して MiniMax Photo を選び、画像を添付します。例えば「この画像を簡単な鉛筆スケッチにして、一筆ずつ描く様子を見せて」。パスやツール名は不要です。AI がエディターを開き、描画して結果を確認します。複雑な作業には数分かかる場合があります。'],
+  ['一筆ずつ見る', '一筆ずつ描くよう依頼すると、実際のキャンバスが順次更新され、各筆を個別に取り消せます。一つの依頼を段階に分けて実行することがあります。編集後の短い軌跡表示とは別の機能です。'],
+  ['録画と保存', '描画録画はエディターのキャンバスと操作部のみを記録し、MiniMax Code のチャットは含みません。停止後、録画を保存して WebM をダウンロードします。添付画像、チャット、回答も含める場合は、送信前から外部の録画ツールでアプリ全体のウィンドウを記録してください。保存をキャンセルしても再試行できます。未保存の動画は再読み込みやページを閉じると失われます。60 分または 256 MiB で自動停止しますが、保存は可能です。保存後に録画キャッシュを消去すると次の録画を開始できます。'],
+);
 initLanguage();
 const select = document.querySelector('select');
 function render() {
