@@ -59,3 +59,8 @@ PhotoCraft 的批量操作在独立文档副本执行，成功后提交一次历
 Skill 附带通用参考图轮廓脚本，适合边界清楚的插画和标志，需要 Python 3 与 Pillow，由 Agent 按需调用。它不识别语义，不自带图片模型，也不适合直接提取照片的所有色块。参见 [参考图轮廓转笔触](../skills/minimax-photo/references/reference-tracing.md)。
 
 PTC 支持 `console.log/info/warn/error/debug`，结果中最多保留 50 条、总计 10000 字符的日志。日志不是任务成功证明；仍应查询运行结果并查看预览。
+
+
+### 压力笔刷参数（0.2.24 宿主实测）
+
+压力不一定改变笔宽，取决于笔刷设置。使用内置 `Hard Round Pressure Size` 或明确启用 `brush.shapeDynamics.enabled=true`、`brush.shapeDynamics.size.control="penPressure"`；线性 curve `[[0,0],[1,1]]`、minimum 为 0 时，30px 笔刷的压力 0.2 对应约 6px，压力 1 对应 30px。`transfer.opacity.control="penPressure"` 控制的是不透明度，不是笔宽。可通过 `brush.presets.list` 的 `full:true` 获取完整预设，在 PTC 内筛选所需预设再返回，避免整份结果被截断。
