@@ -16,7 +16,7 @@ description: 在 MiniMax Photo 中创建和编辑图片，包括参考图绘制�
 
 ## 连接和发现命令
 
-1. 先通过宿主的 Mini App 打开能力，在当前会话打开准确的插件 ID `minimax-photo`，再用 `editor_list` 和 `editor_inspect` 确认对应编辑器、当前作品及 `version`。显示名可能重复，旧插件 `retouch-lab` 不是本插件。列表里已有编辑器不代表它在当前会话可见；不能仅凭首项、最新更新时间或 `engine:photocraft` 选择其他会话的实例。必要时比较打开前后的编辑器列表，并核对当前页面与文档；无法确定归属时先解决连接，不开始修改。
+1. 先通过宿主的 Mini App 打开能力，在当前会话打开准确的插件 ID `minimax-photo`，再用 `editor_list` 和 `editor_inspect` 确认对应编辑器、当前作品及 `version`。显示名可能重复，旧插件 `retouch-lab` 不是本插件。列表里已有编辑器不代表它在当前会话可见；不能仅凭首项、最新更新时间或 `engine:photocraft` 选择其他会话的实例。多个实例时，用宿主浏览器检查当前 MiniApp 页面 `html` 元素的 `data-photo-editor-id` 属性，与列表中的 `editorId` 精确匹配；再核对文档。`page.visibility` 与 `page.focused` 仅反映浏览器状态，不证明会话归属。无法确定归属时先解决连接，不开始修改。
 2. 下面列出的基础用法可直接使用；其他命令用 `photo_call` 的 `commands` 方法按需查询命令，例如 `args: {filter: "paint"}`。参数以当前返回的 schema 为准。过滤查询可减少上下文，不必先读完整目录。
 3. 工具不可用时先确认插件已启用并打开；刚安装或更新后可能需要新会话刷新工具。不要通过搜索宿主源码、凭证或扫描端口绕过工具发现。
 

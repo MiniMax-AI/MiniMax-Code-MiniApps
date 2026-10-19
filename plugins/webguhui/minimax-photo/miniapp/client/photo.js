@@ -18,6 +18,10 @@ const frame = document.querySelector('#craft'),
 const token = crypto.randomUUID(),
   editorId = crypto.randomUUID(),
   pending = new Map();
+// Lets the host's page inspection identify this exact instance, even when
+// several conversations have an editor from the same plugin open.
+document.documentElement.dataset.photoEditorId = editorId;
+const pageState = () => ({ visibility: document.visibilityState, focused: document.hasFocus() });
 let current = { version: 'empty', document: null },
   running = false,
   events,
@@ -141,7 +145,7 @@ async function report() {
   reporting = true;
   try {
     current = await call('inspect');
-    await post('/api/editor/register', { editorId, engine: 'photocraft', ...current });
+    await post('/api/editor/register', { editorId, engine: 'photocraft', ...current, page: pageState() });
     if (!running) await recovery.snapshot(current);
     document.querySelector('#photo-save').hidden = !current.document;
     panel?.refresh();
@@ -255,9 +259,14 @@ setInterval(() => {
   if (running && current) {
     // Keep the connection alive during long, visibly paced drawing jobs.
     // register ignores document/version changes while a job owns this editor.
-    post('/api/editor/register', { editorId, engine: 'photocraft', ...current }).catch(() => {});
+    post('/api/editor/register', { editorId, engine: 'photocraft', ...current, page: pageState() }).catch(() => {});
   } else report().catch(() => {});
 }, 3000);
+document.addEventListener('visibilitychange', () => {
+  if (ready) post('/api/editor/register', {
+    editorId, engine: 'photocraft', ...current, page: pageState(),
+  }).catch(() => {});
+});
 window.addEventListener('pagehide', () => events?.close(), { once: true });
 async function action(fn) {
   activity.clear();

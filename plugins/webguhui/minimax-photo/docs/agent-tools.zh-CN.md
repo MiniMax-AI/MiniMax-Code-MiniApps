@@ -64,3 +64,8 @@ PTC 支持 `console.log/info/warn/error/debug`，结果中最多保留 50 条、
 ### 压力笔刷参数（0.2.24 宿主实测）
 
 压力不一定改变笔宽，取决于笔刷设置。使用内置 `Hard Round Pressure Size` 或明确启用 `brush.shapeDynamics.enabled=true`、`brush.shapeDynamics.size.control="penPressure"`；线性 curve `[[0,0],[1,1]]`、minimum 为 0 时，30px 笔刷的压力 0.2 对应约 6px，压力 1 对应 30px。`transfer.opacity.control="penPressure"` 控制的是不透明度，不是笔宽。可通过 `brush.presets.list` 的 `full:true` 获取完整预设，在 PTC 内筛选所需预设再返回，避免整份结果被截断。
+
+
+### 多会话编辑器识别
+
+先在当前会话打开插件 ID `minimax-photo`，再读取当前 MiniApp 页面 `html` 的 `data-photo-editor-id`，与 `editor_list` 的 ID 精确匹配。页面会报告 `page.visibility`（visible/hidden/unknown）和 `page.focused`（布尔或 null）；旧页面不报告时返回 unknown/null。这两个值只作提示，不是会话归属或访问权限证明。工具不会自动选择最新、首个或可见实例。任务运行中的可见状态更新不会覆盖任务持有的文档版本。

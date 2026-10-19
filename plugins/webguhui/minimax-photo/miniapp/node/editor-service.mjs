@@ -55,6 +55,7 @@ export async function createEditorService(dataDir) {
           editorId: e.id,
           version: e.version,
           engine: e.engine,
+          page: e.page,
           updatedAt: e.updatedAt,
           document: e.document,
           busy: !!e.jobId,
@@ -66,6 +67,7 @@ export async function createEditorService(dataDir) {
         editorId,
         version: e.version,
         engine: e.engine,
+        page: e.page,
         updatedAt: e.updatedAt,
         document: e.document,
         busy: !!e.jobId,
@@ -75,7 +77,12 @@ export async function createEditorService(dataDir) {
       if (!id(input.editorId) || typeof input.version !== 'string' || input.version.length > 100)
         throw Error('编辑器信息无效');
       const existing = editors.get(input.editorId);
+      const page = {
+        visibility: ['visible', 'hidden'].includes(input.page?.visibility) ? input.page.visibility : 'unknown',
+        focused: typeof input.page?.focused === 'boolean' ? input.page.focused : null,
+      };
       if (existing?.jobId) {
+        existing.page = page;
         existing.updatedAt = Date.now();
         return { editorId: existing.id };
       }
@@ -83,6 +90,7 @@ export async function createEditorService(dataDir) {
       Object.assign(e, {
         version: input.version,
         engine: input.engine === 'photocraft' ? 'photocraft' : 'canvas',
+        page,
         document: input.document,
         updatedAt: Date.now(),
       });

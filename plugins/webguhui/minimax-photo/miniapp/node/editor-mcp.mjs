@@ -48,7 +48,7 @@ export const editorTools = [
   },
   {
     name: 'editor_list',
-    description: '列出当前连接的工作台、文档和版本。操作前必须明确 editorId，不自动选择窗口。',
+    description: '列出连接的工作台、文档、版本和页面可见状态。先在当前聊天打开 minimax-photo；多个实例时，通过当前页面 html 的 data-photo-editor-id 属性匹配 editorId。page.visibility/focused 仅为浏览器状态提示，不证明聊天归属；不自动选择首项或最新窗口。',
     inputSchema: schema({}),
     annotations: { readOnlyHint: true },
   },

@@ -76,6 +76,7 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
   try {
     service.register({ editorId, version: 'v1', document: { id: documentId } });
     service.subscribe(editorId, request, response);
+    assert.deepEqual(service.inspect(editorId).page, { visibility: 'unknown', focused: null });
     const input = { editorId, expectedVersion: 'v1', requestId: randomUUID(), kind: 'preview' };
     await assert.rejects(
       service.submit({ ...input, requestId: randomUUID(), expectedVersion: 'stale' }),
@@ -88,6 +89,11 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
       /不同请求/,
     );
     const claimed = await service.claim(editorId, input.requestId);
+    service.register({ editorId, version: 'stale', document: null,
+      page: { visibility: 'hidden', focused: false, sessionId: 'untrusted' } });
+    assert.deepEqual(service.list()[0].page, { visibility: 'hidden', focused: false });
+    assert.equal(service.inspect(editorId).version, 'v1');
+    assert.deepEqual(service.inspect(editorId).document, { id: documentId });
     await assert.rejects(service.claim(editorId, input.requestId), /重复/);
     await assert.rejects(
       service.finish(editorId, input.requestId, { claim: randomUUID(), error: 'bad' }),
