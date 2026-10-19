@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "openchatcut",
+  "displayName": "OpenVideo",
+  "version": "1.0.0",
+  "description": "本地优先的视频编辑工作室：多轨剪辑、字幕、特效、Agent 与视频导出。基于 OpenChatCut（AGPL-3.0-or-later）移植。",
+  "author": "WebGuHui (OpenVideo adaptation); OpenChatCut contributors",
+  "icon": "icon.png",
+  "category": "Studio",
+  "exampleQueries": [
+    "打开视频工作室",
+    "读取当前视频工程并提出剪辑方案"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": []
+}

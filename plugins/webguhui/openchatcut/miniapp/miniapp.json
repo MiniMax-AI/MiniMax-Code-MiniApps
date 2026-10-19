@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/dashboard",
+    "window": { "width": 1440, "height": 940, "minWidth": 720, "minHeight": 560, "resizable": true }
+  },
+  "agentAccess": ["session.run"],
+  "agentConcurrency": 1,
+  "mcpEndpoints": [{ "server": "openchatcut", "path": "/mcp/openchatcut" }]
+}

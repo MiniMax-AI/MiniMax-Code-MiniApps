@@ -1,0 +1,1439 @@
+{
+  "version": 1,
+  "files": {
+    "/assets/ort-wasm-simd-threaded-DDx2apAW.wasm": {
+      "sha256": "ec8580a9d7b9476ceee52e10a7f94124e4dc71a019d666ed6d4726697c109a4d",
+      "size": 13961845,
+      "compressedSha256": "684a7dbbf9cb9048c867788ba683a9eed050bb6dcce76aa53ffbf27e27530a2b",
+      "compressedSize": 3613373,
+      "filename": "minimax-video-ec8580a9d7b9476ceee52e10a7f94124e4dc71a019d666ed6d4726697c109a4d.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/1c6093f5-acc6-424e-af67-00300b27a030.gz",
+        "global": "https://file.cdn.minimax.io/public/07e27d38-0bdf-4281-a483-4f173fa0ea4f.gz"
+      },
+      "targets": []
+    },
+    "/assets/ort-wasm-simd-threaded.asyncify-CsxMlmQ8.wasm": {
+      "sha256": "503d17cb7411b79781b9fad1cf0978f03cf06b050c7d399c730e914f473bf549",
+      "size": 25749873,
+      "compressedSha256": "0d66396f86c9a15e7195813b5e526bb682faa9f3a49628c6b4dc3202bfa6cc43",
+      "compressedSize": 6368495,
+      "filename": "minimax-video-503d17cb7411b79781b9fad1cf0978f03cf06b050c7d399c730e914f473bf549.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/a35abf81-86d7-41d8-8023-7ae774fe9f6d.gz",
+        "global": "https://file.cdn.minimax.io/public/dd4b57e2-0ebe-416b-89bd-1f4124fe92f7.gz"
+      },
+      "targets": []
+    },
+    "/assets/ort-wasm-simd-threaded.jsep-D-icqfN-.wasm": {
+      "sha256": "db816fadbab47a755170c08f933961e231412ac17f5981f9a62e519708a44dea",
+      "size": 27797172,
+      "compressedSha256": "9af9288f601927685fad267e92b1528bb1b2a6a070786704862f6518c8f0a0b4",
+      "compressedSize": 6576649,
+      "filename": "minimax-video-db816fadbab47a755170c08f933961e231412ac17f5981f9a62e519708a44dea.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/ba52895f-19a7-431f-8923-6f497f026f0b.gz",
+        "global": "https://file.cdn.minimax.io/public/d220cb37-08bd-4d61-8faf-5f4029d148e6.gz"
+      },
+      "targets": []
+    },
+    "/audio/track-1.mp3": {
+      "sha256": "9df00c368f97f9bba467e362b53c77004594e6148290afefa2a5ea9ac56b2a46",
+      "size": 321096,
+      "compressedSha256": "91a3bf3bd4fa31bb307440ac04cfd2451f22f16ddfb468fb1e4a1ba604e01074",
+      "compressedSize": 318767,
+      "filename": "minimax-video-9df00c368f97f9bba467e362b53c77004594e6148290afefa2a5ea9ac56b2a46.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/36b5321b-fde6-4685-a2bc-a441ce27fd41.gz",
+        "global": "https://file.cdn.minimax.io/public/0e6bcdb3-6e24-498e-85c3-c9c50c344069.gz"
+      },
+      "targets": [
+        "remotion-bundle/audio/track-1.mp3",
+        "remotion-bundle/public/audio/track-1.mp3"
+      ]
+    },
+    "/audio/track-2.mp3": {
+      "sha256": "65dea9f1fa2e3ac051d4ba04c6170cd3526b83ce2a71aa11261ab77520e05b07",
+      "size": 321096,
+      "compressedSha256": "dff07d84b615b4fa8d5a432d7d37ef6cf30682278e56266a3af225faf3f1bebd",
+      "compressedSize": 318495,
+      "filename": "minimax-video-65dea9f1fa2e3ac051d4ba04c6170cd3526b83ce2a71aa11261ab77520e05b07.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/7d13a233-735c-40fc-879a-a7e420c35368.gz",
+        "global": "https://file.cdn.minimax.io/public/a5a76384-8305-4a8b-9383-61c6aec3b768.gz"
+      },
+      "targets": [
+        "remotion-bundle/audio/track-2.mp3",
+        "remotion-bundle/public/audio/track-2.mp3"
+      ]
+    },
+    "/audio/track-3.mp3": {
+      "sha256": "3b845d8073ac1512ed77b5f807e9f9bd4ffdf740bd62b0e52357e7dab78039ff",
+      "size": 321114,
+      "compressedSha256": "baed3e97923a9b344e688708516d37a98ed6cf8439633357f4c40bbb32af52b9",
+      "compressedSize": 319093,
+      "filename": "minimax-video-3b845d8073ac1512ed77b5f807e9f9bd4ffdf740bd62b0e52357e7dab78039ff.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/7cb659c3-62b5-4ee6-a4c2-a2def83d4291.gz",
+        "global": "https://file.cdn.minimax.io/public/8c5d7307-dc74-4b7d-9808-815efa5d1859.gz"
+      },
+      "targets": [
+        "remotion-bundle/audio/track-3.mp3",
+        "remotion-bundle/public/audio/track-3.mp3"
+      ]
+    },
+    "/fonts/douyin-meihaoti/DouyinMeihaoti-Bold.woff2": {
+      "sha256": "171bce476733afe305d716db4dcfa5e95491be00031c567969159ae5c35d2f3d",
+      "size": 796352,
+      "compressedSha256": "5f585a43635d5faf3b4381d0022ea7cdc7bc0bd42fd070905ad5f67e087681a2",
+      "compressedSize": 796611,
+      "filename": "minimax-video-171bce476733afe305d716db4dcfa5e95491be00031c567969159ae5c35d2f3d.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/9cfce916-d6e4-4d0d-a104-e694cd747cfc.gz",
+        "global": "https://file.cdn.minimax.io/public/8b11596e-dc00-4be1-8feb-413aff6d691a.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/douyin-meihaoti/DouyinMeihaoti-Bold.woff2",
+        "remotion-bundle/fonts/douyin-meihaoti/DouyinMeihaoti-Bold.woff2"
+      ]
+    },
+    "/fonts/huxiaobo-nanshenti/HuxiaoboNanshenti-Regular.woff2": {
+      "sha256": "b154ab131780500231efef49795870cbbaa06a2ee9d771bf35f2ac683ca2d3ce",
+      "size": 1166204,
+      "compressedSha256": "ae9b8fa54cbe76481614ebbe05594750a5a876e61b0e742425daf40c9d479584",
+      "compressedSize": 1166575,
+      "filename": "minimax-video-b154ab131780500231efef49795870cbbaa06a2ee9d771bf35f2ac683ca2d3ce.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/2c6220bc-97f2-4d6b-aa74-4694953dd0f9.gz",
+        "global": "https://file.cdn.minimax.io/public/153010e0-ea95-4cc5-854f-043bb9b8275d.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/huxiaobo-nanshenti/HuxiaoboNanshenti-Regular.woff2",
+        "remotion-bundle/fonts/huxiaobo-nanshenti/HuxiaoboNanshenti-Regular.woff2"
+      ]
+    },
+    "/fonts/huxiaobo-saobaoti/HuxiaoboSaobaoti-Regular.woff2": {
+      "sha256": "bfca5532d66f8963b0b59395a7b8f2e9cfdbda585acf93704297d4edf0f53f6a",
+      "size": 3032776,
+      "compressedSha256": "270c343c1ccb386dfa9932574d3cc33175e4d03db46948b6f5b38afdf7d3bf7e",
+      "compressedSize": 3030886,
+      "filename": "minimax-video-bfca5532d66f8963b0b59395a7b8f2e9cfdbda585acf93704297d4edf0f53f6a.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/2b8f586e-e95e-4898-bbf8-8cfc63146cd1.gz",
+        "global": "https://file.cdn.minimax.io/public/70707ce6-4512-4457-a11e-92c5afa4dff7.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/huxiaobo-saobaoti/HuxiaoboSaobaoti-Regular.woff2",
+        "remotion-bundle/fonts/huxiaobo-saobaoti/HuxiaoboSaobaoti-Regular.woff2"
+      ]
+    },
+    "/fonts/huxiaobo-zhenshuaiti/HuxiaoboZhenshuaiti-Regular.woff2": {
+      "sha256": "4c79d0fe97172f48209c04b75159095331212fb84a9eeec9ad094ad2bf1186ac",
+      "size": 900476,
+      "compressedSha256": "e284c1c1ea6348512257b7223727df39c2d19d8ba6822ac65881973963c640fb",
+      "compressedSize": 900760,
+      "filename": "minimax-video-4c79d0fe97172f48209c04b75159095331212fb84a9eeec9ad094ad2bf1186ac.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/654cc9a4-c87c-4e39-adae-5e5959519680.gz",
+        "global": "https://file.cdn.minimax.io/public/5d47e17d-3b57-4068-bcfe-941534171a5b.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/huxiaobo-zhenshuaiti/HuxiaoboZhenshuaiti-Regular.woff2",
+        "remotion-bundle/fonts/huxiaobo-zhenshuaiti/HuxiaoboZhenshuaiti-Regular.woff2"
+      ]
+    },
+    "/fonts/pangmen-zhengdao-biaotiti/PangmenZhengdaoBiaotiti-Regular.woff2": {
+      "sha256": "220bc29fec99f69df822e0eeae3ccd88ce7b5926403dd89a6a6d5af02d3bab6e",
+      "size": 1027872,
+      "compressedSha256": "1fbd398cc37ccf9b0bb3ed50ef0648922cf88e30129b8eb4a8254d3a2c49326b",
+      "compressedSize": 1028134,
+      "filename": "minimax-video-220bc29fec99f69df822e0eeae3ccd88ce7b5926403dd89a6a6d5af02d3bab6e.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/fd28c890-bba6-4e4b-bd31-416528643265.gz",
+        "global": "https://file.cdn.minimax.io/public/f6887a12-b624-4aa3-8ca1-46f9918414ef.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/pangmen-zhengdao-biaotiti/PangmenZhengdaoBiaotiti-Regular.woff2",
+        "remotion-bundle/fonts/pangmen-zhengdao-biaotiti/PangmenZhengdaoBiaotiti-Regular.woff2"
+      ]
+    },
+    "/fonts/pangmen-zhengdao-qingsongti/PangmenZhengdaoQingsongti-Regular.woff2": {
+      "sha256": "8f29f6b685214b2381585befe8eb5712c841b91b56001051c71aac163411f7b2",
+      "size": 1166852,
+      "compressedSha256": "cd7dd97b60821a822cc11cb130a8f01fbe83bdaea101548816e615bffb2b7f01",
+      "compressedSize": 1167224,
+      "filename": "minimax-video-8f29f6b685214b2381585befe8eb5712c841b91b56001051c71aac163411f7b2.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/4a06910b-e9d4-43c9-9d10-b5db2c8d8f00.gz",
+        "global": "https://file.cdn.minimax.io/public/bf019b41-16c8-4e82-8862-e7692732778b.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/pangmen-zhengdao-qingsongti/PangmenZhengdaoQingsongti-Regular.woff2",
+        "remotion-bundle/fonts/pangmen-zhengdao-qingsongti/PangmenZhengdaoQingsongti-Regular.woff2"
+      ]
+    },
+    "/fonts/qingsong-shouxieti-san-p/QingsongShouxietiSanP-Regular.woff2": {
+      "sha256": "cdcce5e71bf760e44d5dbad266cff18855546280e2a3e92aba8d7ba1469b7aca",
+      "size": 3395864,
+      "compressedSha256": "214b876beeb855617a4a43f10306f4a5aedb7a2a61280882a421c28c46d9aed0",
+      "compressedSize": 3396907,
+      "filename": "minimax-video-cdcce5e71bf760e44d5dbad266cff18855546280e2a3e92aba8d7ba1469b7aca.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/b5f32563-0ee6-4c4d-8845-d5c36b85d750.gz",
+        "global": "https://file.cdn.minimax.io/public/58c0dd7a-d87b-47d3-a4a3-2fa66d39aabf.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/qingsong-shouxieti-san-p/QingsongShouxietiSanP-Regular.woff2",
+        "remotion-bundle/fonts/qingsong-shouxieti-san-p/QingsongShouxietiSanP-Regular.woff2"
+      ]
+    },
+    "/fonts/qingsong-shouxieti-yi/QingsongShouxietiYi-Regular.woff2": {
+      "sha256": "d84d8073eeb7151ff0a1da8731fdb8aa14ff63875067e7e3d36f96813665f67a",
+      "size": 4307032,
+      "compressedSha256": "fbe16b51f8235d61615e5b0159f2c195baf596af78cce47893a805a5cf304ddb",
+      "compressedSize": 4308365,
+      "filename": "minimax-video-d84d8073eeb7151ff0a1da8731fdb8aa14ff63875067e7e3d36f96813665f67a.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/002ca88b-0d46-4492-91d0-22aa1c047e40.gz",
+        "global": "https://file.cdn.minimax.io/public/ad758b44-4330-4caf-a774-985dcf8a82de.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/qingsong-shouxieti-yi/QingsongShouxietiYi-Regular.woff2",
+        "remotion-bundle/fonts/qingsong-shouxieti-yi/QingsongShouxietiYi-Regular.woff2"
+      ]
+    },
+    "/fonts/smiley-sans/SmileySans-Oblique.woff2": {
+      "sha256": "731f22973349404b15a88a99ef3b5dd4104c0965c23b7e485c1f11e84fea99e2",
+      "size": 1150924,
+      "compressedSha256": "bd8d07a570eee36556d21383ea087cc7ea3577e3ce5c53ef5bad2f751a73014a",
+      "compressedSize": 1146545,
+      "filename": "minimax-video-731f22973349404b15a88a99ef3b5dd4104c0965c23b7e485c1f11e84fea99e2.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/6b10d975-d45f-41f8-80cc-866641497df1.gz",
+        "global": "https://file.cdn.minimax.io/public/b9885cb6-ca0f-41ae-a08f-f379be9eacc7.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/fonts/smiley-sans/SmileySans-Oblique.woff2",
+        "remotion-bundle/fonts/smiley-sans/SmileySans-Oblique.woff2"
+      ]
+    },
+    "/mediapipe/blaze_face_short_range.tflite": {
+      "sha256": "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f",
+      "size": 229746,
+      "compressedSha256": "9199f7dd4aef38bd7d07f4a9c2b3c396e40ceee9d018d91bf22ab6cf290c51bf",
+      "compressedSize": 199218,
+      "filename": "minimax-video-b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/411adae7-7c06-4da5-bc6a-780832842c12.gz",
+        "global": "https://file.cdn.minimax.io/public/62ec8469-4142-4f52-abc1-56db3e324f40.gz"
+      },
+      "targets": []
+    },
+    "/mediapipe/selfie_segmenter.tflite": {
+      "sha256": "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b",
+      "size": 249537,
+      "compressedSha256": "a17919f03aa692366eef957d75c484676b7f0f75bbdf7058993abbbb5186bd76",
+      "compressedSize": 212100,
+      "filename": "minimax-video-191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/d7b371d0-22f3-419f-9927-6d78a8de4a98.gz",
+        "global": "https://file.cdn.minimax.io/public/217a2daf-194b-416a-8425-82e16ae30d7d.gz"
+      },
+      "targets": []
+    },
+    "/mediapipe/wasm/vision_wasm_internal.js": {
+      "sha256": "e170ee67dd4e16c1a6fcd8840a206687e5a59b22c20e4a902bc445b095454d73",
+      "size": 323377,
+      "compressedSha256": "293615f701b79eeecb809188f1905a0aa7f2237bbbc3e88fd03ac5627e7014d2",
+      "compressedSize": 78216,
+      "filename": "minimax-video-e170ee67dd4e16c1a6fcd8840a206687e5a59b22c20e4a902bc445b095454d73.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/73f36163-08c9-467f-8c2b-57a6978036bd.gz",
+        "global": "https://file.cdn.minimax.io/public/2ed8d28b-4d57-425f-97a0-16e63dab8864.gz"
+      },
+      "targets": []
+    },
+    "/mediapipe/wasm/vision_wasm_internal.wasm": {
+      "sha256": "8da277a733926eacd0474b8704b36742d6ec3231c57a860c5b889dff8f1df886",
+      "size": 11756954,
+      "compressedSha256": "c568697f2353ebb53ca9aa0042a6f6072adea4f8766bf2612f34ddc4c1bf1615",
+      "compressedSize": 3447733,
+      "filename": "minimax-video-8da277a733926eacd0474b8704b36742d6ec3231c57a860c5b889dff8f1df886.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5f511600-9e4a-44af-8359-6c01ec0036a3.gz",
+        "global": "https://file.cdn.minimax.io/public/9dea8cff-1129-4e4b-9532-17ffa9fde5b3.gz"
+      },
+      "targets": []
+    },
+    "/mediapipe/wasm/vision_wasm_nosimd_internal.js": {
+      "sha256": "e81d715a3d42cc3373602eb2f7aff795d164934db680e32496b65dab537f9658",
+      "size": 323180,
+      "compressedSha256": "df2cd2f2dcb5ddb33a9ed7cf214404c0b46bc384bbcf063ce905c7d548cab65a",
+      "compressedSize": 78150,
+      "filename": "minimax-video-e81d715a3d42cc3373602eb2f7aff795d164934db680e32496b65dab537f9658.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/1b2bb6f5-5cf7-492c-a1ca-a82b55f427a2.gz",
+        "global": "https://file.cdn.minimax.io/public/710e926c-caf4-438c-b42c-19bd4f8fc46d.gz"
+      },
+      "targets": []
+    },
+    "/mediapipe/wasm/vision_wasm_nosimd_internal.wasm": {
+      "sha256": "a28483cd42e74e855bf5ebdb6b40d9b66a5b49e35e95020bc97669e6822a3192",
+      "size": 10960242,
+      "compressedSha256": "209eca40a6c4781841746b51f08a0d286b40f1a3beb1fc5bd3df067065fe2ebb",
+      "compressedSize": 3341632,
+      "filename": "minimax-video-a28483cd42e74e855bf5ebdb6b40d9b66a5b49e35e95020bc97669e6822a3192.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/1f6e600a-a3bf-440c-be3d-dfbc4269c075.gz",
+        "global": "https://file.cdn.minimax.io/public/307ed7f0-7c85-4166-be4f-96a65cd5db32.gz"
+      },
+      "targets": []
+    },
+    "/models/silero-vad/ort-wasm-simd-threaded.mjs": {
+      "sha256": "00db814ddac2c156591628d9039e7b076d287dc40f21becd3e437b8e6ac9d85b",
+      "size": 20854,
+      "compressedSha256": "3cdd5a77543ac06a2121a86189c0545a1606e9c0bc3ef142dd1c0b6346befdbc",
+      "compressedSize": 8427,
+      "filename": "minimax-video-00db814ddac2c156591628d9039e7b076d287dc40f21becd3e437b8e6ac9d85b.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/3282d698-1506-496d-99d3-86398aa7bdfe.gz",
+        "global": "https://file.cdn.minimax.io/public/7b3df338-7882-4c21-9529-420754682bb5.gz"
+      },
+      "targets": []
+    },
+    "/models/silero-vad/ort-wasm-simd-threaded.wasm": {
+      "sha256": "f061472c6e77d6d50d079aacdc0ff9b63fee287ddd2cbf46cf62438d3891de2b",
+      "size": 11133407,
+      "compressedSha256": "35ce4e3bacb5663224287ec8f258a85609dbc19e05c9bda434041f509ebcfdf8",
+      "compressedSize": 2871548,
+      "filename": "minimax-video-f061472c6e77d6d50d079aacdc0ff9b63fee287ddd2cbf46cf62438d3891de2b.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/9c38bb23-cd37-472d-8dcc-bea3a502945c.gz",
+        "global": "https://file.cdn.minimax.io/public/cdcde97c-66a5-4d91-8365-23175421c8da.gz"
+      },
+      "targets": []
+    },
+    "/models/silero-vad/silero_vad.onnx": {
+      "sha256": "a4a068cd6cf1ea8355b84327595838ca748ec29a25bc91fc82e6c299ccdc5808",
+      "size": 2243022,
+      "compressedSha256": "9d81602bb8b07cd66eb10e41b4b8402d20925db5d75be2be8d5097a957515c11",
+      "compressedSize": 1937540,
+      "filename": "minimax-video-a4a068cd6cf1ea8355b84327595838ca748ec29a25bc91fc82e6c299ccdc5808.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/e755a174-920a-497d-b954-09f2e9921259.gz",
+        "global": "https://file.cdn.minimax.io/public/c0c34b0c-5ba6-4023-a807-2037cb23246e.gz"
+      },
+      "targets": []
+    },
+    "/sound-effects/airy-short-whoosh.mp3": {
+      "sha256": "ad00c275c00175ac3beb06b714ee77450e713c72974030ff4e787cc38e1cbdf8",
+      "size": 31680,
+      "compressedSha256": "4bc6bb975b7f6cd34450279bdb413f54379fe432c531ad92ea6b0af1a102f561",
+      "compressedSize": 30145,
+      "filename": "minimax-video-ad00c275c00175ac3beb06b714ee77450e713c72974030ff4e787cc38e1cbdf8.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/6499b4c6-9151-423f-8a21-5ef06f1a188c.gz",
+        "global": "https://file.cdn.minimax.io/public/115563e0-8b50-42df-bfb3-cac7b41b84b5.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/airy-short-whoosh.mp3",
+        "remotion-bundle/sound-effects/airy-short-whoosh.mp3"
+      ]
+    },
+    "/sound-effects/anime-wow-reaction.mp3": {
+      "sha256": "b1c2067761bb72570a41c01566f3febec7c887aeb5158b73ace960ff3f705177",
+      "size": 149760,
+      "compressedSha256": "c64cd6503e897609a396efb91e232a5bfd6ed7ce013198640215183af035f395",
+      "compressedSize": 140566,
+      "filename": "minimax-video-b1c2067761bb72570a41c01566f3febec7c887aeb5158b73ace960ff3f705177.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/fe672b1f-08ee-4d52-875c-60b5daabb60d.gz",
+        "global": "https://file.cdn.minimax.io/public/71fade6e-9fa8-4df2-b84f-4ad44189e735.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/anime-wow-reaction.mp3",
+        "remotion-bundle/sound-effects/anime-wow-reaction.mp3"
+      ]
+    },
+    "/sound-effects/awkward-crow-flyby.mp3": {
+      "sha256": "7f73019f13a1cca97995148ac5cf955daa0646e8f504e75493dc4ad32d08aad8",
+      "size": 70080,
+      "compressedSha256": "764337b0b64ce375c7387425c2a92293dcfabbc44dd3c968608fa9c453a09458",
+      "compressedSize": 66147,
+      "filename": "minimax-video-7f73019f13a1cca97995148ac5cf955daa0646e8f504e75493dc4ad32d08aad8.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5070872a-cc3c-454e-a93a-b5d7d50e26e4.gz",
+        "global": "https://file.cdn.minimax.io/public/42279be2-acf5-4123-b965-d2604ca380ad.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/awkward-crow-flyby.mp3",
+        "remotion-bundle/sound-effects/awkward-crow-flyby.mp3"
+      ]
+    },
+    "/sound-effects/camera-shutter.mp3": {
+      "sha256": "e5c99fd6901252ce289b5bad40f8991b96696766470c1e37ee1a0ef4b468f1b9",
+      "size": 18240,
+      "compressedSha256": "7a56014f21be6ae183171a68fa611fa11d9f87aa3753885f6f46c2dc65871bd7",
+      "compressedSize": 16875,
+      "filename": "minimax-video-e5c99fd6901252ce289b5bad40f8991b96696766470c1e37ee1a0ef4b468f1b9.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/856c2b76-0020-465b-a3d2-35b8e3cbbb0f.gz",
+        "global": "https://file.cdn.minimax.io/public/d9b05fb8-902d-460d-9b89-463e52265a4a.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/camera-shutter.mp3",
+        "remotion-bundle/sound-effects/camera-shutter.mp3"
+      ]
+    },
+    "/sound-effects/cash-register-success.mp3": {
+      "sha256": "7437920b1448d84ef9f3ae81e03abfbab09da6cd4f30d67d14f68759d0fdc7b9",
+      "size": 82560,
+      "compressedSha256": "e1ec992ce549daea44c438efbad281b6985ab8444fd3c40a3df0f23443e3134c",
+      "compressedSize": 78369,
+      "filename": "minimax-video-7437920b1448d84ef9f3ae81e03abfbab09da6cd4f30d67d14f68759d0fdc7b9.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/4846b69a-6636-4066-aa9f-de20315c8745.gz",
+        "global": "https://file.cdn.minimax.io/public/1ee55333-1a1e-46dd-995e-22b6eb857c88.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/cash-register-success.mp3",
+        "remotion-bundle/sound-effects/cash-register-success.mp3"
+      ]
+    },
+    "/sound-effects/censor-beep.mp3": {
+      "sha256": "7fb62644dab5f6399eba8cd73f156ebc639750949b97779ff265393af6b983da",
+      "size": 31680,
+      "compressedSha256": "5d3f8c95d4e93fe16d98d37560de6210620034e60285c2ccfa99cb82beaf4d47",
+      "compressedSize": 28741,
+      "filename": "minimax-video-7fb62644dab5f6399eba8cd73f156ebc639750949b97779ff265393af6b983da.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/caba214f-1c18-4691-bcfb-b3489634d5ce.gz",
+        "global": "https://file.cdn.minimax.io/public/689fbaef-c4ff-491b-86c5-3c45ea3ba665.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/censor-beep.mp3",
+        "remotion-bundle/sound-effects/censor-beep.mp3"
+      ]
+    },
+    "/sound-effects/clean-ding.mp3": {
+      "sha256": "f031a649116863986819aba86bf81506f0c35501c7d88b537a96150b629112f9",
+      "size": 67200,
+      "compressedSha256": "67aac5f6f6fdb8ca9a78f0dcdceb3bf14a2eaf40c773a3d489c8ba25718e910e",
+      "compressedSize": 62419,
+      "filename": "minimax-video-f031a649116863986819aba86bf81506f0c35501c7d88b537a96150b629112f9.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/42bb33ec-fe58-4a37-a292-ca4115bee7a0.gz",
+        "global": "https://file.cdn.minimax.io/public/fd84bbd7-347e-4add-ba85-ffdb8c0f2c2f.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/clean-ding.mp3",
+        "remotion-bundle/sound-effects/clean-ding.mp3"
+      ]
+    },
+    "/sound-effects/crisp-ui-click.mp3": {
+      "sha256": "237265c7cf7567109c802bf6ac0a0225e3c76f1721ee7e2550690dbf96c5a753",
+      "size": 1686,
+      "compressedSha256": "f7163e36f2524604851f4320a514182b9e44d5e90bdcc72cb421a9a33c926993",
+      "compressedSize": 1032,
+      "filename": "minimax-video-237265c7cf7567109c802bf6ac0a0225e3c76f1721ee7e2550690dbf96c5a753.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/3c9b87da-a6ca-4bab-ad66-18cc8635aabe.gz",
+        "global": "https://file.cdn.minimax.io/public/3cb54e92-1e1c-4caf-bf0f-305a9666f895.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/crisp-ui-click.mp3",
+        "remotion-bundle/sound-effects/crisp-ui-click.mp3"
+      ]
+    },
+    "/sound-effects/deep-impact-hit.mp3": {
+      "sha256": "51e3ef85d08155d6c741eeb9628b445a02cf34e1c1b37f4da21612aff6bda1cd",
+      "size": 11068,
+      "compressedSha256": "3ccb402d26cc39a34bef3a59009fbb483f419b41865302bd7637595a05bdccde",
+      "compressedSize": 10465,
+      "filename": "minimax-video-51e3ef85d08155d6c741eeb9628b445a02cf34e1c1b37f4da21612aff6bda1cd.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/71d0d009-8cd0-4ec8-881e-b7938f6bef78.gz",
+        "global": "https://file.cdn.minimax.io/public/51bf93a6-9bfd-4280-a1f0-79f3fc306d89.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/deep-impact-hit.mp3",
+        "remotion-bundle/sound-effects/deep-impact-hit.mp3"
+      ]
+    },
+    "/sound-effects/deep-short-whoosh.mp3": {
+      "sha256": "3ff8ad4d247345208fbc238f7ecf0f6cfb3237d9b74b8464e1f2482fd2db2f9b",
+      "size": 53760,
+      "compressedSha256": "9e591f9d20db5289fb7ec07095d18f89edfe7a9907f25c729bff32460fc72809",
+      "compressedSize": 51822,
+      "filename": "minimax-video-3ff8ad4d247345208fbc238f7ecf0f6cfb3237d9b74b8464e1f2482fd2db2f9b.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/4091daa3-d1cc-49cf-9ba2-cebb6dc9eaae.gz",
+        "global": "https://file.cdn.minimax.io/public/0984d164-3918-493b-9136-5fd5e56d7280.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/deep-short-whoosh.mp3",
+        "remotion-bundle/sound-effects/deep-short-whoosh.mp3"
+      ]
+    },
+    "/sound-effects/dramatic-thunder-roll.mp3": {
+      "sha256": "b35dc03f2dd5178d390931ad151fbb491de2b420881e7b3818ec44c8624f3973",
+      "size": 327360,
+      "compressedSha256": "5d0d367d2e46046f8e8e763d39e3123a2a1120d81a7efc8c04baac81fd928c54",
+      "compressedSize": 312418,
+      "filename": "minimax-video-b35dc03f2dd5178d390931ad151fbb491de2b420881e7b3818ec44c8624f3973.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/860b121b-764a-4c65-b5f4-bdb57676090b.gz",
+        "global": "https://file.cdn.minimax.io/public/e558a88e-c10c-43db-9099-f97e252e7c00.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/dramatic-thunder-roll.mp3",
+        "remotion-bundle/sound-effects/dramatic-thunder-roll.mp3"
+      ]
+    },
+    "/sound-effects/fast-suspense-riser.mp3": {
+      "sha256": "543fc9cc5eb72034b807229219fb970d3b2ef63d07ebd688bc6d721df00bdff9",
+      "size": 176640,
+      "compressedSha256": "9670e505393eb9ad705e2c3616cbac0376a28a4949a4bf31687a7ac722e363bc",
+      "compressedSize": 162015,
+      "filename": "minimax-video-543fc9cc5eb72034b807229219fb970d3b2ef63d07ebd688bc6d721df00bdff9.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/7f4d67f1-d46f-47c1-9a2f-435177faea67.gz",
+        "global": "https://file.cdn.minimax.io/public/d7cc87fa-2430-4364-a68e-527c1ad30381.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/fast-suspense-riser.mp3",
+        "remotion-bundle/sound-effects/fast-suspense-riser.mp3"
+      ]
+    },
+    "/sound-effects/gear-turn-click.mp3": {
+      "sha256": "6b9b1ec11a705ce49020fc257790fbb056946ebefa5f557a19993ffe7742d6ac",
+      "size": 26880,
+      "compressedSha256": "a65639c60241e1a138cf74519d21d4b2ee4c1347f743d97219f325c0dc119015",
+      "compressedSize": 25016,
+      "filename": "minimax-video-6b9b1ec11a705ce49020fc257790fbb056946ebefa5f557a19993ffe7742d6ac.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/2cbd0373-e338-4966-9744-1ae71becf5f5.gz",
+        "global": "https://file.cdn.minimax.io/public/deb9afd1-4ca8-449a-a6a4-fa04b0693f63.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/gear-turn-click.mp3",
+        "remotion-bundle/sound-effects/gear-turn-click.mp3"
+      ]
+    },
+    "/sound-effects/glitchy-tv-signal.mp3": {
+      "sha256": "d728f01e8dda01abbdb4ec1204926badaf5879d9e548961aa47095bccdc273a4",
+      "size": 39360,
+      "compressedSha256": "c46dd63a5ba4c1dcb1ae594131a2dac7865986edcbc8537f270aa8b03220aece",
+      "compressedSize": 38170,
+      "filename": "minimax-video-d728f01e8dda01abbdb4ec1204926badaf5879d9e548961aa47095bccdc273a4.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/b09e7281-1ed9-4e02-ab56-f55577461c52.gz",
+        "global": "https://file.cdn.minimax.io/public/3c8fcfe8-1987-4259-94f1-502d9a5a1c1b.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/glitchy-tv-signal.mp3",
+        "remotion-bundle/sound-effects/glitchy-tv-signal.mp3"
+      ]
+    },
+    "/sound-effects/keyboard-typing-loop.mp3": {
+      "sha256": "7da4de31c5679870a6c393b0c282095ee7b44c9e6ab3af5ce82198b6263793f5",
+      "size": 623040,
+      "compressedSha256": "8b4608b9de7043362441afc09bf942a863344ec80da25022b4c5e489703723e3",
+      "compressedSize": 596053,
+      "filename": "minimax-video-7da4de31c5679870a6c393b0c282095ee7b44c9e6ab3af5ce82198b6263793f5.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/f04d3e56-dda3-4333-be80-082f2a3ab7c7.gz",
+        "global": "https://file.cdn.minimax.io/public/a4aad641-fa2b-4bd0-8df3-e13f5e0dbd83.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/keyboard-typing-loop.mp3",
+        "remotion-bundle/sound-effects/keyboard-typing-loop.mp3"
+      ]
+    },
+    "/sound-effects/light-clock-tick.mp3": {
+      "sha256": "a2646449c887ef36c5cf8d1bdb418157b7f35e6241383ec0d77103297ed12374",
+      "size": 2012160,
+      "compressedSha256": "9bdffb2f5ac0ba0118f054c2d1bb0b5170f3422a86fa38fc2985ec56c769fd88",
+      "compressedSize": 1903881,
+      "filename": "minimax-video-a2646449c887ef36c5cf8d1bdb418157b7f35e6241383ec0d77103297ed12374.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/a4dc1aad-7457-4733-8c24-5f6af7683bd2.gz",
+        "global": "https://file.cdn.minimax.io/public/4dac505d-ed1d-4aa7-9669-072ad68239f3.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/light-clock-tick.mp3",
+        "remotion-bundle/sound-effects/light-clock-tick.mp3"
+      ]
+    },
+    "/sound-effects/long-suspense-riser.mp3": {
+      "sha256": "61cf5b25ddba3a7f12dfc1ec918f551bf55e71884a27509337c35c8179619645",
+      "size": 150720,
+      "compressedSha256": "cf17323b30139b050c19b05b622f1b1bdbe6d2df9a2cceefeb25d42c318f412c",
+      "compressedSize": 145823,
+      "filename": "minimax-video-61cf5b25ddba3a7f12dfc1ec918f551bf55e71884a27509337c35c8179619645.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/9b183ab3-4762-4eb7-bc5b-af6325690542.gz",
+        "global": "https://file.cdn.minimax.io/public/99066c18-937d-4737-8726-33cc90823b12.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/long-suspense-riser.mp3",
+        "remotion-bundle/sound-effects/long-suspense-riser.mp3"
+      ]
+    },
+    "/sound-effects/mechanical-clicking-loop.mp3": {
+      "sha256": "b6879a7767e0b6e953e805cc834a42b417bb511c4a5ece4887c45af5679da610",
+      "size": 117120,
+      "compressedSha256": "b9f698e98f04f39713a0df69168600430792aa9af102d3a2f80025f40b05f5b8",
+      "compressedSize": 114206,
+      "filename": "minimax-video-b6879a7767e0b6e953e805cc834a42b417bb511c4a5ece4887c45af5679da610.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/bcd03b8f-a2e2-488e-9c97-48cfa3b3c0c3.gz",
+        "global": "https://file.cdn.minimax.io/public/87abb600-2436-4209-8147-2237ba095da3.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/mechanical-clicking-loop.mp3",
+        "remotion-bundle/sound-effects/mechanical-clicking-loop.mp3"
+      ]
+    },
+    "/sound-effects/mouse-click.mp3": {
+      "sha256": "58a3edb35201d02e541f7c8fe3a43d4b02e8cec9c81f417a150fe21bfc3852be",
+      "size": 9600,
+      "compressedSha256": "a9e740c730fc71160bbf7433c2bd9a868881b1902222dccf0bb37c27b20c470c",
+      "compressedSize": 8875,
+      "filename": "minimax-video-58a3edb35201d02e541f7c8fe3a43d4b02e8cec9c81f417a150fe21bfc3852be.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/71cf9383-2e56-49aa-8f24-8f8180a5d1c3.gz",
+        "global": "https://file.cdn.minimax.io/public/fc1c8839-7ca3-4d68-ae20-bccc74fcde79.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/mouse-click.mp3",
+        "remotion-bundle/sound-effects/mouse-click.mp3"
+      ]
+    },
+    "/sound-effects/new-notification-ping.mp3": {
+      "sha256": "f00a41e93d25d38bfcb02a796da6f55da7244bb8324416677d7da4f75ae24894",
+      "size": 21120,
+      "compressedSha256": "87408323a20f8b30d8ddbee7c24f5368a2e4cc0ad6bb0cca298a12e0a3f35054",
+      "compressedSize": 20457,
+      "filename": "minimax-video-f00a41e93d25d38bfcb02a796da6f55da7244bb8324416677d7da4f75ae24894.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/e30c7f0c-c802-4774-8742-445d84887a49.gz",
+        "global": "https://file.cdn.minimax.io/public/6d9d9406-fddf-4ae6-a3d0-6842f65757c1.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/new-notification-ping.mp3",
+        "remotion-bundle/sound-effects/new-notification-ping.mp3"
+      ]
+    },
+    "/sound-effects/phone-notification-ping.mp3": {
+      "sha256": "cfabf0a6e59afc95a6295d930714a1eed56d2f712d7747a6785148bfaf598cfb",
+      "size": 32640,
+      "compressedSha256": "d4d29eb9ae86c9540edb9e5e56bcfa31c3cb2842c032c90240fda3108184533d",
+      "compressedSize": 28169,
+      "filename": "minimax-video-cfabf0a6e59afc95a6295d930714a1eed56d2f712d7747a6785148bfaf598cfb.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/009fda33-7de3-4c94-bec4-7e4cba8ffc54.gz",
+        "global": "https://file.cdn.minimax.io/public/fb8144b5-8180-462b-811b-3999ede2a7a7.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/phone-notification-ping.mp3",
+        "remotion-bundle/sound-effects/phone-notification-ping.mp3"
+      ]
+    },
+    "/sound-effects/record-scratch-rewind.mp3": {
+      "sha256": "4b2b645d87f970765359c57351122950ae4d48cc5e7de48088e6d65592828509",
+      "size": 59520,
+      "compressedSha256": "30366f06fb735fe0194b7f6fbc27ede4c36ffd46e00882bc06225a186aedd215",
+      "compressedSize": 56797,
+      "filename": "minimax-video-4b2b645d87f970765359c57351122950ae4d48cc5e7de48088e6d65592828509.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/fca3b917-fbf8-4e7d-8f50-784025c94f56.gz",
+        "global": "https://file.cdn.minimax.io/public/11b18d0b-8d7a-42ff-8021-07b0d3cf5eff.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/record-scratch-rewind.mp3",
+        "remotion-bundle/sound-effects/record-scratch-rewind.mp3"
+      ]
+    },
+    "/sound-effects/record-scratch-stop.mp3": {
+      "sha256": "02a9840babfe7774aaa9d780519ab14965043eb3748a828ba9306c26c88303c2",
+      "size": 26880,
+      "compressedSha256": "c09b9215216f84ec11198ad1306f78ceec514ab429aa75a015e0eb50fb204050",
+      "compressedSize": 25366,
+      "filename": "minimax-video-02a9840babfe7774aaa9d780519ab14965043eb3748a828ba9306c26c88303c2.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/f381ea6b-1b3b-4c6a-b887-228213064563.gz",
+        "global": "https://file.cdn.minimax.io/public/395a3e92-f32c-4de0-a807-5d0394c8e391.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/record-scratch-stop.mp3",
+        "remotion-bundle/sound-effects/record-scratch-stop.mp3"
+      ]
+    },
+    "/sound-effects/sent-message-ping.mp3": {
+      "sha256": "1392033e9d476896b2e7820058e2d569c300b8b859876ed3696983c4b03ae2f4",
+      "size": 15360,
+      "compressedSha256": "fcd4db7e2971a93c9026f0e4d68ef143d24e3a4eb31946b7745d67e9a612279c",
+      "compressedSize": 13981,
+      "filename": "minimax-video-1392033e9d476896b2e7820058e2d569c300b8b859876ed3696983c4b03ae2f4.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5c9308ce-fbf2-48f6-833a-9fd749411cf6.gz",
+        "global": "https://file.cdn.minimax.io/public/092e265a-0891-4882-a4e0-f0d64fe0884c.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/sent-message-ping.mp3",
+        "remotion-bundle/sound-effects/sent-message-ping.mp3"
+      ]
+    },
+    "/sound-effects/sharp-bass-riser.mp3": {
+      "sha256": "78535f0b3bd7242624fec9cbd8cb7e9a258f560ac44d8f5a40ac4a0e0478a32c",
+      "size": 37440,
+      "compressedSha256": "c0d873c61b4f790f3d6e6d2c2a42cdba7eedfcbe878967b68628308c76c25d74",
+      "compressedSize": 35888,
+      "filename": "minimax-video-78535f0b3bd7242624fec9cbd8cb7e9a258f560ac44d8f5a40ac4a0e0478a32c.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/155b0106-1188-4714-8eb9-121366369432.gz",
+        "global": "https://file.cdn.minimax.io/public/d76ee6ea-1a26-4bce-b0e2-8f5c5bd49c7f.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/sharp-bass-riser.mp3",
+        "remotion-bundle/sound-effects/sharp-bass-riser.mp3"
+      ]
+    },
+    "/sound-effects/short-drum-roll-sting.mp3": {
+      "sha256": "c43290bb7699de6e725281df0a3caeabaf0f34a3632c74707d65171438995415",
+      "size": 29760,
+      "compressedSha256": "0dc49ff0cb7dea666b52537d7ebaa7493cd9fb4c7b32bcabbd2d3a52abc7769f",
+      "compressedSize": 28088,
+      "filename": "minimax-video-c43290bb7699de6e725281df0a3caeabaf0f34a3632c74707d65171438995415.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/2e8f8970-c097-4292-847c-5e104af518dc.gz",
+        "global": "https://file.cdn.minimax.io/public/08d74511-1f59-4881-aa28-c8f7e9756849.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/short-drum-roll-sting.mp3",
+        "remotion-bundle/sound-effects/short-drum-roll-sting.mp3"
+      ]
+    },
+    "/sound-effects/short-shutter-click.mp3": {
+      "sha256": "44461adbcd561745d9bd6e51d480e8f45df9799716e60c7bc861d21b4a4eb0b0",
+      "size": 9600,
+      "compressedSha256": "19c494cef892370a0296ef931422f06aa964a3b788b2caafc55c798cc7c385c5",
+      "compressedSize": 8976,
+      "filename": "minimax-video-44461adbcd561745d9bd6e51d480e8f45df9799716e60c7bc861d21b4a4eb0b0.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/c9769bf5-02d3-4c86-8f43-099cb7ab99c3.gz",
+        "global": "https://file.cdn.minimax.io/public/2adbb1d6-c431-4119-a74d-caa308f639a5.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/short-shutter-click.mp3",
+        "remotion-bundle/sound-effects/short-shutter-click.mp3"
+      ]
+    },
+    "/sound-effects/simple-whoosh.mp3": {
+      "sha256": "ec5a6364fd90dd071f93f2950924b95105ba02efa5f9f1776a7b10631b99d6c0",
+      "size": 52800,
+      "compressedSha256": "f89c96bd1ba789e26990d4a07214f92f4c7d7cb54e6a9d4d6f068c89bbb96c21",
+      "compressedSize": 50651,
+      "filename": "minimax-video-ec5a6364fd90dd071f93f2950924b95105ba02efa5f9f1776a7b10631b99d6c0.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5eb7a3c4-64d2-4f9c-bb74-0b7c8b04c433.gz",
+        "global": "https://file.cdn.minimax.io/public/a543c442-a7cd-4542-b873-60ce919e299e.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/simple-whoosh.mp3",
+        "remotion-bundle/sound-effects/simple-whoosh.mp3"
+      ]
+    },
+    "/sound-effects/sitcom-laugh-track.mp3": {
+      "sha256": "758526695f2c2fc49e5c96834b6389a3f4ca0038f94491e41681d6d6a4ec42b2",
+      "size": 99840,
+      "compressedSha256": "b6e7f6185dbccfa67701affe0045d5dc2f2ee9a0a9a7cf08572a8b37ddcc01cd",
+      "compressedSize": 91849,
+      "filename": "minimax-video-758526695f2c2fc49e5c96834b6389a3f4ca0038f94491e41681d6d6a4ec42b2.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/4e41456f-b958-428f-b23f-95028f14801b.gz",
+        "global": "https://file.cdn.minimax.io/public/cff0d5c2-8530-4415-8ddf-2e79f5d741f5.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/sitcom-laugh-track.mp3",
+        "remotion-bundle/sound-effects/sitcom-laugh-track.mp3"
+      ]
+    },
+    "/sound-effects/slow-dell-keyboard-typing.mp3": {
+      "sha256": "bdff2d6a49274543157577647c221133c4c6f90cad279e052f110062d165ac30",
+      "size": 2734080,
+      "compressedSha256": "0c5864136d03003cca1b76a20df23002f71488b3461d6696e447b940c407f2e4",
+      "compressedSize": 2463365,
+      "filename": "minimax-video-bdff2d6a49274543157577647c221133c4c6f90cad279e052f110062d165ac30.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/063fd60b-a1a6-4818-9ae8-d34784c64c35.gz",
+        "global": "https://file.cdn.minimax.io/public/ff329233-d844-488c-bc2f-b0a3e833b43d.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/slow-dell-keyboard-typing.mp3",
+        "remotion-bundle/sound-effects/slow-dell-keyboard-typing.mp3"
+      ]
+    },
+    "/sound-effects/soft-air-whoosh.mp3": {
+      "sha256": "528dca71ccc3e4a5a3d36d9648fea416312fad17b386af35eca4c452f0e3c093",
+      "size": 7266,
+      "compressedSha256": "a2028d11c7bf0ce922ac6b847f23c39208cdb833fd203a8656ba5472b426dccd",
+      "compressedSize": 6776,
+      "filename": "minimax-video-528dca71ccc3e4a5a3d36d9648fea416312fad17b386af35eca4c452f0e3c093.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/ddea67ea-f4f0-458b-aa06-9ad753bc0062.gz",
+        "global": "https://file.cdn.minimax.io/public/6f507bd9-51d5-4b46-a6ae-36b076c43149.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/soft-air-whoosh.mp3",
+        "remotion-bundle/sound-effects/soft-air-whoosh.mp3"
+      ]
+    },
+    "/sound-effects/success-chime.mp3": {
+      "sha256": "ac0b2c1dda415ffd027662ade18017f56737ced3803a701df17556fd47d3dd06",
+      "size": 5197,
+      "compressedSha256": "f9d1ed0857c2152e8e33d5aee402bc410fa028406cb66004d199d98e71661b97",
+      "compressedSize": 4311,
+      "filename": "minimax-video-ac0b2c1dda415ffd027662ade18017f56737ced3803a701df17556fd47d3dd06.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/b87d4882-11b6-43be-9c71-295afd7eff67.gz",
+        "global": "https://file.cdn.minimax.io/public/cbcce953-9ffc-465e-9eb5-3646bad5bba5.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/success-chime.mp3",
+        "remotion-bundle/sound-effects/success-chime.mp3"
+      ]
+    },
+    "/sound-effects/synthetic-bubble-pop.mp3": {
+      "sha256": "1c40c7995c14d40c8ada1d86a813bbcaf608a930779c0ce32319bedb55ff5137",
+      "size": 14400,
+      "compressedSha256": "245cb10e56a6e7006be7137a62649cb9a674ac458cc6cf3358705b64b6e83c89",
+      "compressedSize": 13490,
+      "filename": "minimax-video-1c40c7995c14d40c8ada1d86a813bbcaf608a930779c0ce32319bedb55ff5137.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/bea899f2-af4b-4b9c-aa97-3a650ea50157.gz",
+        "global": "https://file.cdn.minimax.io/public/2e3e3ea8-d27b-44f2-b822-48bd8372e57f.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/synthetic-bubble-pop.mp3",
+        "remotion-bundle/sound-effects/synthetic-bubble-pop.mp3"
+      ]
+    },
+    "/sound-effects/tiny-bubble-pop.mp3": {
+      "sha256": "3506a0f9e402d96e322ee7992e0ff87ce8a11bf90f963b58d989999a0ab4fd81",
+      "size": 6720,
+      "compressedSha256": "ecd195d30efbed54a2297a395165ba3068c9aad7203baf99c8ee85c673bd7856",
+      "compressedSize": 6540,
+      "filename": "minimax-video-3506a0f9e402d96e322ee7992e0ff87ce8a11bf90f963b58d989999a0ab4fd81.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/14935a16-82c9-4452-a970-6c5baf08ecde.gz",
+        "global": "https://file.cdn.minimax.io/public/51c7f9ca-e0b5-4731-8844-d3c51330e9ba.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/tiny-bubble-pop.mp3",
+        "remotion-bundle/sound-effects/tiny-bubble-pop.mp3"
+      ]
+    },
+    "/sound-effects/tv-switch-off-noise.mp3": {
+      "sha256": "3e88048014b2959004c23790788dec06df80172abb98639a42d458999594423f",
+      "size": 9600,
+      "compressedSha256": "2213f0e8147d19cd8eae81f03cb077f12a86733443bb140776095d095f933126",
+      "compressedSize": 8069,
+      "filename": "minimax-video-3e88048014b2959004c23790788dec06df80172abb98639a42d458999594423f.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/0c307d90-a993-4541-9392-f281e49ed35e.gz",
+        "global": "https://file.cdn.minimax.io/public/259899e9-1d06-4f86-a945-d7455461dfc5.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/tv-switch-off-noise.mp3",
+        "remotion-bundle/sound-effects/tv-switch-off-noise.mp3"
+      ]
+    },
+    "/sound-effects/ui-pop-up-alert.mp3": {
+      "sha256": "4a52caed94d3fdeb0df37f2fa7d1af07a0010e2d9f305ce8338fdc165094bbac",
+      "size": 16320,
+      "compressedSha256": "15eaae9c235ad813a0381d1f8d2f3b00d83791f0bc66e6604a7bad6fe36b463e",
+      "compressedSize": 15783,
+      "filename": "minimax-video-4a52caed94d3fdeb0df37f2fa7d1af07a0010e2d9f305ce8338fdc165094bbac.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/6849832e-c1fe-4876-85c7-c08035927bd1.gz",
+        "global": "https://file.cdn.minimax.io/public/b6181690-b5f0-4883-8127-e8d07ff9ae1b.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/ui-pop-up-alert.mp3",
+        "remotion-bundle/sound-effects/ui-pop-up-alert.mp3"
+      ]
+    },
+    "/sound-effects/video-call-ringtone.mp3": {
+      "sha256": "197eda4baae9748eb9e8b6f4c7fd2998707dbeb4df92d94a19f4e89b8ffa6b13",
+      "size": 139200,
+      "compressedSha256": "e8980019b754f5928a02d6beda97469b7970137cfff4003322621485a8581449",
+      "compressedSize": 130114,
+      "filename": "minimax-video-197eda4baae9748eb9e8b6f4c7fd2998707dbeb4df92d94a19f4e89b8ffa6b13.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/51fc24bd-fee1-4079-919d-334929ec0429.gz",
+        "global": "https://file.cdn.minimax.io/public/b7b0b255-1f8c-4a31-aded-2be999db0c24.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/video-call-ringtone.mp3",
+        "remotion-bundle/sound-effects/video-call-ringtone.mp3"
+      ]
+    },
+    "/sound-effects/vine-boom-impact.mp3": {
+      "sha256": "97d167310bc3b1ceedb8282172adce0468afcfbe02ca17407d73d6588759ab8e",
+      "size": 116160,
+      "compressedSha256": "578e413689a808558f9bfe7304201a65860c35c7b254f624182021221fda618b",
+      "compressedSize": 101990,
+      "filename": "minimax-video-97d167310bc3b1ceedb8282172adce0468afcfbe02ca17407d73d6588759ab8e.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5ac8812e-1e35-44ba-bf3f-1e1293173499.gz",
+        "global": "https://file.cdn.minimax.io/public/e7f7a6db-9c2f-421e-afd1-86906268e6e9.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/vine-boom-impact.mp3",
+        "remotion-bundle/sound-effects/vine-boom-impact.mp3"
+      ]
+    },
+    "/sound-effects/vintage-camera-shutter.mp3": {
+      "sha256": "e41ee4f58ad7f4f8d5cba913a8e7c4b60cf3442e7184afa1aa888ea5e691de79",
+      "size": 14400,
+      "compressedSha256": "950b313f59c0518de6e9530aa52a8b45f0ce0a34c5055e13400da290f5385d1a",
+      "compressedSize": 13892,
+      "filename": "minimax-video-e41ee4f58ad7f4f8d5cba913a8e7c4b60cf3442e7184afa1aa888ea5e691de79.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/0b067dac-202a-4cd9-81df-fc09a4852b24.gz",
+        "global": "https://file.cdn.minimax.io/public/9815b96c-2dc9-42f9-82e7-4b0f1baec1b3.gz"
+      },
+      "targets": [
+        "remotion-bundle/public/sound-effects/vintage-camera-shutter.mp3",
+        "remotion-bundle/sound-effects/vintage-camera-shutter.mp3"
+      ]
+    },
+    "/voice-samples/doubao-baqiqingshu.mp3": {
+      "sha256": "0d9546050cf654f97ee5e653c89d1a9e8fd8054f898cba6a08153643b43cd82f",
+      "size": 35565,
+      "compressedSha256": "eddf05c7ab206b76866f657f4a10d5b909683bbe38bf564f44c41317538fe466",
+      "compressedSize": 35113,
+      "filename": "minimax-video-0d9546050cf654f97ee5e653c89d1a9e8fd8054f898cba6a08153643b43cd82f.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/20c4dc39-b47e-455c-983e-b1eb7039534b.gz",
+        "global": "https://file.cdn.minimax.io/public/5840ef1a-414b-4cad-bfe5-c2bda528138c.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-baqiqingshu.mp3",
+        "remotion-bundle/public/voice-samples/doubao-baqiqingshu.mp3"
+      ]
+    },
+    "/voice-samples/doubao-dayi.mp3": {
+      "sha256": "592d88f3e7499b28a3e208a158978b378677b6529d557bd89d31a2c67ff6d3af",
+      "size": 24621,
+      "compressedSha256": "8ce443a6b1bc356fa045aae0a8cc69562d26d83f219efac4ac6986c1fd855451",
+      "compressedSize": 24133,
+      "filename": "minimax-video-592d88f3e7499b28a3e208a158978b378677b6529d557bd89d31a2c67ff6d3af.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/1dc7b051-3f72-48e9-9322-976ea2c5bfab.gz",
+        "global": "https://file.cdn.minimax.io/public/434eef35-513a-4c0f-9cd4-467520c74cd1.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-dayi.mp3",
+        "remotion-bundle/public/voice-samples/doubao-dayi.mp3"
+      ]
+    },
+    "/voice-samples/doubao-huiben.mp3": {
+      "sha256": "d250ef843ae9b5279274737dad3ba6342409da13082fba21d592ac7d6136414e",
+      "size": 41901,
+      "compressedSha256": "37e1bcb5f8bba7110efa81dae14cc923833f038dce458cfa3a96b2d321525303",
+      "compressedSize": 41350,
+      "filename": "minimax-video-d250ef843ae9b5279274737dad3ba6342409da13082fba21d592ac7d6136414e.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5c286d9d-53de-46fc-9a42-f2c067921a3a.gz",
+        "global": "https://file.cdn.minimax.io/public/206c6223-fcb2-4008-ba4b-ae11ee9f3e9b.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-huiben.mp3",
+        "remotion-bundle/public/voice-samples/doubao-huiben.mp3"
+      ]
+    },
+    "/voice-samples/doubao-jitangnv.mp3": {
+      "sha256": "f71d6d9620b1f005cc41528ca1e29f54f29bcbf9e9aae3f3225d03008958bb18",
+      "size": 45357,
+      "compressedSha256": "310e46c343917f81c2ac057ef3e2b64659580da760e6f08fb8e1e1a79f34e0d8",
+      "compressedSize": 44484,
+      "filename": "minimax-video-f71d6d9620b1f005cc41528ca1e29f54f29bcbf9e9aae3f3225d03008958bb18.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/8c1e5d9b-b863-4b96-a64b-511ae8feb85b.gz",
+        "global": "https://file.cdn.minimax.io/public/8b085b19-c2f7-481b-9e8d-feb6ff322444.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-jitangnv.mp3",
+        "remotion-bundle/public/voice-samples/doubao-jitangnv.mp3"
+      ]
+    },
+    "/voice-samples/doubao-liuchang.mp3": {
+      "sha256": "da4f5f1253b4f9b4faf3655c27460eec39077dff528671c7e77a052a07fbb3f4",
+      "size": 37293,
+      "compressedSha256": "da4ebd3ac23f03643e971b9c48f576d3a4fc6018b30514d9b7c1a1b01dfba85d",
+      "compressedSize": 36672,
+      "filename": "minimax-video-da4f5f1253b4f9b4faf3655c27460eec39077dff528671c7e77a052a07fbb3f4.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/53c54646-ddc1-45f9-99d1-dc62515eb9ca.gz",
+        "global": "https://file.cdn.minimax.io/public/2002f495-f1ea-4896-a3b4-205a6f957c9a.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-liuchang.mp3",
+        "remotion-bundle/public/voice-samples/doubao-liuchang.mp3"
+      ]
+    },
+    "/voice-samples/doubao-morgan.mp3": {
+      "sha256": "e391c29f82a882ad3ceabd4739d4a3161b5219204da00206c95f81d959777140",
+      "size": 41901,
+      "compressedSha256": "3074ae02a85bee71b3a030805e8a15946c2e4208603225660a1387006c789897",
+      "compressedSize": 40986,
+      "filename": "minimax-video-e391c29f82a882ad3ceabd4739d4a3161b5219204da00206c95f81d959777140.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/cf38b554-6ab6-46dc-a49b-3fa665e8bec6.gz",
+        "global": "https://file.cdn.minimax.io/public/05cddc87-f288-40db-badf-3d2f1dc670d7.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-morgan.mp3",
+        "remotion-bundle/public/voice-samples/doubao-morgan.mp3"
+      ]
+    },
+    "/voice-samples/doubao-naiqimengwa.mp3": {
+      "sha256": "545ccb31d96b7057849a922c0e355a08663145e14e592e8dd3c8bd79a373a8be",
+      "size": 48237,
+      "compressedSha256": "84a3d1b4b1b4773c1fa660261638c24b0d3f2352337743fa712ab29ba1a19939",
+      "compressedSize": 47579,
+      "filename": "minimax-video-545ccb31d96b7057849a922c0e355a08663145e14e592e8dd3c8bd79a373a8be.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/d5704f74-754a-405d-a284-18602aca5c23.gz",
+        "global": "https://file.cdn.minimax.io/public/54c976a5-d1cf-4a73-9cc2-f2a3ccbe94b5.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-naiqimengwa.mp3",
+        "remotion-bundle/public/voice-samples/doubao-naiqimengwa.mp3"
+      ]
+    },
+    "/voice-samples/doubao-popo.mp3": {
+      "sha256": "20ec3c7222883faedfef17784e9f52a1b047af856f323694b8e5974898f73f8c",
+      "size": 47085,
+      "compressedSha256": "daef1acf8a5e6bf7c38408ea6af2f84bd411bc4e9d4a34d3e626848a9f69c0b6",
+      "compressedSize": 46242,
+      "filename": "minimax-video-20ec3c7222883faedfef17784e9f52a1b047af856f323694b8e5974898f73f8c.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/c6f87882-03bd-4319-b8d3-2cb24fd85703.gz",
+        "global": "https://file.cdn.minimax.io/public/6e950931-c9b0-407a-ba05-0664c8a6a93a.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-popo.mp3",
+        "remotion-bundle/public/voice-samples/doubao-popo.mp3"
+      ]
+    },
+    "/voice-samples/doubao-qingcang.mp3": {
+      "sha256": "72807aa40086201704efd554ef052eb3235fe8781b55238fca8a60748cd1e007",
+      "size": 35373,
+      "compressedSha256": "bbe802c146ea1824d5134bfe0dbe03bac923cc25a040c8705546810ef558fd10",
+      "compressedSize": 34974,
+      "filename": "minimax-video-72807aa40086201704efd554ef052eb3235fe8781b55238fca8a60748cd1e007.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/62123e70-a52f-40d6-9046-a21240fee583.gz",
+        "global": "https://file.cdn.minimax.io/public/202085b1-56fa-4307-80ac-3d7c4f39649b.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-qingcang.mp3",
+        "remotion-bundle/public/voice-samples/doubao-qingcang.mp3"
+      ]
+    },
+    "/voice-samples/doubao-ruyayichen.mp3": {
+      "sha256": "7ddba069f6250f3edfe7e9149274775fe1614fab27002f57aa4e1f5a84b0b2a4",
+      "size": 38829,
+      "compressedSha256": "75e57ef5d503810f967acec0fe12eb8f7085337f9628ded6585f01029b928d13",
+      "compressedSize": 38350,
+      "filename": "minimax-video-7ddba069f6250f3edfe7e9149274775fe1614fab27002f57aa4e1f5a84b0b2a4.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/59c975bb-138d-4681-b735-77eb366457c7.gz",
+        "global": "https://file.cdn.minimax.io/public/ce3c9cc2-e7d5-4607-b664-0a05a8677dfb.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-ruyayichen.mp3",
+        "remotion-bundle/public/voice-samples/doubao-ruyayichen.mp3"
+      ]
+    },
+    "/voice-samples/doubao-shuanglangshaonian.mp3": {
+      "sha256": "adf392a3d46976dc2bfdcbf089c59a06fd93ab8f65c60e08bd798b128e4b8fdf",
+      "size": 31533,
+      "compressedSha256": "99d3989832fdf994bf754e5dabbd728eb98e471dee6c0fec370f9967632965d7",
+      "compressedSize": 30964,
+      "filename": "minimax-video-adf392a3d46976dc2bfdcbf089c59a06fd93ab8f65c60e08bd798b128e4b8fdf.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/c1e38df5-7596-4463-8c81-6fe41b296b53.gz",
+        "global": "https://file.cdn.minimax.io/public/88ac6e8a-ad2e-4ca6-bd2d-28a0f6d71d6e.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-shuanglangshaonian.mp3",
+        "remotion-bundle/public/voice-samples/doubao-shuanglangshaonian.mp3"
+      ]
+    },
+    "/voice-samples/doubao-tangseng.mp3": {
+      "sha256": "9053a0cd1e7d6942bcad9b6f8f14c4f7ee4d5e9fc2bf440dbe03c201ae5cd158",
+      "size": 40557,
+      "compressedSha256": "85399404f1ab089ee1f41ab7aaccd0f3b69b7f261d57caa1e6a091c207e88761",
+      "compressedSize": 39906,
+      "filename": "minimax-video-9053a0cd1e7d6942bcad9b6f8f14c4f7ee4d5e9fc2bf440dbe03c201ae5cd158.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/82e4247a-aa84-4b0f-adc1-5ce0627bfca8.gz",
+        "global": "https://file.cdn.minimax.io/public/2250f3d0-16c9-489f-bc72-e531a18c3ed0.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-tangseng.mp3",
+        "remotion-bundle/public/voice-samples/doubao-tangseng.mp3"
+      ]
+    },
+    "/voice-samples/doubao-vivi.mp3": {
+      "sha256": "c2e554b7d955844ea63bd5d0bbcb130d6993e174ca20bc9d423d56c3f1a05f4a",
+      "size": 29037,
+      "compressedSha256": "f831e273caeff55bb0daa40d833d31da7520d45f45f9d5ba6ecec2bf73115891",
+      "compressedSize": 28547,
+      "filename": "minimax-video-c2e554b7d955844ea63bd5d0bbcb130d6993e174ca20bc9d423d56c3f1a05f4a.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/7a7c0d0b-13b9-47fc-b534-cc146143008c.gz",
+        "global": "https://file.cdn.minimax.io/public/d9040a22-820f-4786-986f-52d299810fa9.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-vivi.mp3",
+        "remotion-bundle/public/voice-samples/doubao-vivi.mp3"
+      ]
+    },
+    "/voice-samples/doubao-wenroumama.mp3": {
+      "sha256": "c2ced0ba9f7cd988c48c276394ad274f38849a58589101332565f551bf091e6d",
+      "size": 40557,
+      "compressedSha256": "9d5fe2139b24fb22034f72c87138e7842f3b8411f7b2bd6186543e3bfcc72b47",
+      "compressedSize": 39910,
+      "filename": "minimax-video-c2ced0ba9f7cd988c48c276394ad274f38849a58589101332565f551bf091e6d.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/88993863-02fc-462e-82dd-57f57dc70957.gz",
+        "global": "https://file.cdn.minimax.io/public/6d4690ff-3070-4801-9eb9-085310c4aeef.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-wenroumama.mp3",
+        "remotion-bundle/public/voice-samples/doubao-wenroumama.mp3"
+      ]
+    },
+    "/voice-samples/doubao-xiaohe.mp3": {
+      "sha256": "6e316d6d8fc2e6e450aac6598fe38156ed06c0cb072c430958fcd291f5c4e489",
+      "size": 30765,
+      "compressedSha256": "94dc85a59cf6618b2a180c06d9d33a0cfee8c6249e02542a346651efcbc6becc",
+      "compressedSize": 30186,
+      "filename": "minimax-video-6e316d6d8fc2e6e450aac6598fe38156ed06c0cb072c430958fcd291f5c4e489.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/1ec7a848-af9f-4c3e-807b-b94636982cc0.gz",
+        "global": "https://file.cdn.minimax.io/public/f930b8c5-a997-485a-8aac-92e0889015c8.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-xiaohe.mp3",
+        "remotion-bundle/public/voice-samples/doubao-xiaohe.mp3"
+      ]
+    },
+    "/voice-samples/doubao-xiaotian.mp3": {
+      "sha256": "1bed3dc4f43b41255d3390aa082a0694c1ab5c7b3e28c93afa8641db2de527ee",
+      "size": 25965,
+      "compressedSha256": "0a9f6680069e1b570fc250d674cf8c34ddc59e4d4730d4c417e5dccd01e4df8e",
+      "compressedSize": 25550,
+      "filename": "minimax-video-1bed3dc4f43b41255d3390aa082a0694c1ab5c7b3e28c93afa8641db2de527ee.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/c99926d3-6235-4de2-8b22-a2398337afd4.gz",
+        "global": "https://file.cdn.minimax.io/public/e1153e17-a09b-4a23-b14c-214dbb364db6.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-xiaotian.mp3",
+        "remotion-bundle/public/voice-samples/doubao-xiaotian.mp3"
+      ]
+    },
+    "/voice-samples/doubao-yingtaowanzi.mp3": {
+      "sha256": "784b1fc9ea9244942b8bbec4f6d64ad35d142ea212c3e727d0618f17ba457a06",
+      "size": 37293,
+      "compressedSha256": "cad8a01e4fff71f2264ca9bb5a357a97d94cfe5a9342c6cbd05e748d076352a2",
+      "compressedSize": 36776,
+      "filename": "minimax-video-784b1fc9ea9244942b8bbec4f6d64ad35d142ea212c3e727d0618f17ba457a06.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/15528123-f990-4d74-8819-0e20cf06596d.gz",
+        "global": "https://file.cdn.minimax.io/public/c9c80ef2-857b-4cc8-a412-a5c4c2e4ff98.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-yingtaowanzi.mp3",
+        "remotion-bundle/public/voice-samples/doubao-yingtaowanzi.mp3"
+      ]
+    },
+    "/voice-samples/doubao-yuanboxiaoshu.mp3": {
+      "sha256": "875a5a9ed37155a2ad786ff7465da371ec7bcd7ae55d1cf92d9cd2e6d800e410",
+      "size": 30765,
+      "compressedSha256": "6cee19288706d84ee1ab5dac8cc1268b3cb0dace38eabe90ff0081c2680b19d6",
+      "compressedSize": 30323,
+      "filename": "minimax-video-875a5a9ed37155a2ad786ff7465da371ec7bcd7ae55d1cf92d9cd2e6d800e410.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/31da391d-356e-4ce7-906b-b7577040bfda.gz",
+        "global": "https://file.cdn.minimax.io/public/fc68f718-cb9e-4d21-9801-7bfd813864ef.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-yuanboxiaoshu.mp3",
+        "remotion-bundle/public/voice-samples/doubao-yuanboxiaoshu.mp3"
+      ]
+    },
+    "/voice-samples/doubao-yunzhou.mp3": {
+      "sha256": "aeb76e803f2dff97b68191e1080f9ea5fa1a4632246c00342004a82aab57d25d",
+      "size": 32301,
+      "compressedSha256": "603ba058b4381edcc0e1f182e2e6a403e587e543c98ada60c9c39347546ae59a",
+      "compressedSize": 31852,
+      "filename": "minimax-video-aeb76e803f2dff97b68191e1080f9ea5fa1a4632246c00342004a82aab57d25d.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/ff5a7120-ce97-4cc1-a0a7-2bce4e99d4ec.gz",
+        "global": "https://file.cdn.minimax.io/public/fa7b20c0-953e-4f37-85b9-1587e9521534.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-yunzhou.mp3",
+        "remotion-bundle/public/voice-samples/doubao-yunzhou.mp3"
+      ]
+    },
+    "/voice-samples/doubao-zhixingnv.mp3": {
+      "sha256": "1ae18182423c75a6016c1f1788bdf118736117aa816898bec12fcc59dcc4ebc9",
+      "size": 34029,
+      "compressedSha256": "db9424c8b126f458f11c07e9153e44d15cc215592cf8e699abbb70f52c3faa28",
+      "compressedSize": 33443,
+      "filename": "minimax-video-1ae18182423c75a6016c1f1788bdf118736117aa816898bec12fcc59dcc4ebc9.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/31425c4a-fd91-4e01-b7c7-62f023e8018d.gz",
+        "global": "https://file.cdn.minimax.io/public/ec4d4430-ca88-4dbf-8478-9d949d05f3a1.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/doubao-zhixingnv.mp3",
+        "remotion-bundle/public/voice-samples/doubao-zhixingnv.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-alex.mp3": {
+      "sha256": "dc39899603dd88c90d8769d56e14ec653cd7f87f64fe7cfbfdc6b4e3b01cc7e1",
+      "size": 35988,
+      "compressedSha256": "ce8c25d4f4fe9b5d8840930faadc1e0e7bc90210e3f08879942d1b8690eb6604",
+      "compressedSize": 35103,
+      "filename": "minimax-video-dc39899603dd88c90d8769d56e14ec653cd7f87f64fe7cfbfdc6b4e3b01cc7e1.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/a690e882-48a9-4c8d-818f-fd8e4a4fd1b6.gz",
+        "global": "https://file.cdn.minimax.io/public/80379a94-bad9-4df2-99d4-ff84a7caa881.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-alex.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-alex.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-amelia.mp3": {
+      "sha256": "97a981b1c770ce0c0cbfa86e666c57c1a8511ca54f991ce1f80b41da456979bf",
+      "size": 42675,
+      "compressedSha256": "24cc67bf3973efb1449074f596a2cb5e15916c8c02af76c877b06daba314a71c",
+      "compressedSize": 41843,
+      "filename": "minimax-video-97a981b1c770ce0c0cbfa86e666c57c1a8511ca54f991ce1f80b41da456979bf.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/4ba8377e-25bd-4403-bff2-9f1d70660e27.gz",
+        "global": "https://file.cdn.minimax.io/public/51ae3234-a7b0-4e12-86c7-8a59077b11b2.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-amelia.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-amelia.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-arabella.mp3": {
+      "sha256": "2f3db2a8b39b89a6ece36023cd31714813a1117e5391ebca6399e606d61485f0",
+      "size": 47691,
+      "compressedSha256": "33bcdd4f819e26814e9af3d50d6d06dba798fb97b8536267282d9a28c7cc5d4c",
+      "compressedSize": 46787,
+      "filename": "minimax-video-2f3db2a8b39b89a6ece36023cd31714813a1117e5391ebca6399e606d61485f0.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/dc267c0e-bae6-4955-bf77-cb08faa8176c.gz",
+        "global": "https://file.cdn.minimax.io/public/394af2ec-28e4-4feb-9291-b13d069ad349.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-arabella.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-arabella.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-brittney.mp3": {
+      "sha256": "27a752fdab456be0944523e4860eeb25ffeb0906541a6bb2daa75da9a7c60387",
+      "size": 41839,
+      "compressedSha256": "ed13a2d993d33117c2499cc25c3659892213abd9162c6a07355018713c27fa0d",
+      "compressedSize": 41042,
+      "filename": "minimax-video-27a752fdab456be0944523e4860eeb25ffeb0906541a6bb2daa75da9a7c60387.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/48c28f03-a9c1-4cc2-81fa-bf4295bebb32.gz",
+        "global": "https://file.cdn.minimax.io/public/610b4a43-5a45-4715-9e4e-b19408a84049.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-brittney.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-brittney.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-david.mp3": {
+      "sha256": "41448579a0ada7b2c15c6833a48d0a57df77a265c81ab31e97a2f9186c2fe8e4",
+      "size": 33898,
+      "compressedSha256": "2172f111750cd73e6fe7b190c500bc2479c69dae20516290a0714435c753e752",
+      "compressedSize": 32853,
+      "filename": "minimax-video-41448579a0ada7b2c15c6833a48d0a57df77a265c81ab31e97a2f9186c2fe8e4.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/c0e15a09-6b10-4630-a168-7a85875fd825.gz",
+        "global": "https://file.cdn.minimax.io/public/208ac03f-9f68-4932-9a3e-39d7ddc58fc0.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-david.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-david.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-frederick.mp3": {
+      "sha256": "1a80cf0f2334b160b8446f4039b63b9643bb9f3bf9b28df965744d2f116557a5",
+      "size": 32226,
+      "compressedSha256": "dd81b9ef91d07a6178a1671c5be1bbaa89faa256004989177b07eef68e31c4cb",
+      "compressedSize": 31511,
+      "filename": "minimax-video-1a80cf0f2334b160b8446f4039b63b9643bb9f3bf9b28df965744d2f116557a5.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/3164d6a9-9c7c-4f2d-af2a-82595f89c228.gz",
+        "global": "https://file.cdn.minimax.io/public/fafbc89d-7ba8-4a8d-9a3d-4f80e040985b.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-frederick.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-frederick.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-hope.mp3": {
+      "sha256": "9576bad503ab84d2181ab6e16d6f33a037f605d4e314ba6e6e5cbe70c86cac81",
+      "size": 33898,
+      "compressedSha256": "af7ece6062c26519a1ff41652a1463c9788021ed2742771971eb7ae9a825f6c0",
+      "compressedSize": 33102,
+      "filename": "minimax-video-9576bad503ab84d2181ab6e16d6f33a037f605d4e314ba6e6e5cbe70c86cac81.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/55f59835-488e-48e9-a19e-0a4015da6986.gz",
+        "global": "https://file.cdn.minimax.io/public/2e2eba57-971c-452e-9f91-abb600ce406e.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-hope.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-hope.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-james.mp3": {
+      "sha256": "6454b38fd7e9953b906f0ebea09657a64d3bfa06adb3550ffbc05415202c4841",
+      "size": 40586,
+      "compressedSha256": "d3aaf233145e44de33e05c8ccb8009d93ae553f1c4a9b0833f12b67fd4ec879f",
+      "compressedSize": 39669,
+      "filename": "minimax-video-6454b38fd7e9953b906f0ebea09657a64d3bfa06adb3550ffbc05415202c4841.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/12db4fd0-7cac-4faa-8a35-bb489e5feeed.gz",
+        "global": "https://file.cdn.minimax.io/public/6b1c3579-8cad-49d3-8396-d17485c21098.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-james.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-james.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-jane.mp3": {
+      "sha256": "6eef3c8270f253f333222c9c91208d72b40ce4c20a37ad3279eef772da5dea7a",
+      "size": 43511,
+      "compressedSha256": "d88c92aff70e00a5f5e8478916861e5bb0472b8af73fb80aa0506f84221a2f6c",
+      "compressedSize": 42504,
+      "filename": "minimax-video-6eef3c8270f253f333222c9c91208d72b40ce4c20a37ad3279eef772da5dea7a.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/693efd30-1b5b-4bbe-962b-bb0415bc129b.gz",
+        "global": "https://file.cdn.minimax.io/public/7a318cdc-ee1f-48fa-83ff-5c92f189fe38.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-jane.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-jane.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-jessica.mp3": {
+      "sha256": "542b837381117257745d0fc44375974f0eb581f02ec6de661deaef8cda077b4a",
+      "size": 39750,
+      "compressedSha256": "4415f6076a595e57bd7210838d83ae3bbf8a845ea257a356c44aa0801f9fb4a2",
+      "compressedSize": 38617,
+      "filename": "minimax-video-542b837381117257745d0fc44375974f0eb581f02ec6de661deaef8cda077b4a.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/a1f17859-bb26-4f67-9785-795ccc56479d.gz",
+        "global": "https://file.cdn.minimax.io/public/163a318b-d0df-45ef-a186-f0203c11b85c.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-jessica.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-jessica.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-jon.mp3": {
+      "sha256": "98a1271cc8b30dfc5e69f6ddd7478ba3eda3905da4886c9e45b10211e02ea4f4",
+      "size": 33062,
+      "compressedSha256": "1ad5b53f68c8348a5ef196ea2d19fced2dd262ca2d3786f19d7aecae3a0d61aa",
+      "compressedSize": 32066,
+      "filename": "minimax-video-98a1271cc8b30dfc5e69f6ddd7478ba3eda3905da4886c9e45b10211e02ea4f4.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/c8dd70fb-0dd8-4500-8ee7-586dfdcdf224.gz",
+        "global": "https://file.cdn.minimax.io/public/5fa7b4e8-62d0-4142-92a9-b961a207f7d6.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-jon.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-jon.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-maria.mp3": {
+      "sha256": "3b822f93efccabb1e41f6543f5c8bff9bf5b49e46cea7d315fcdd38e84829574",
+      "size": 43511,
+      "compressedSha256": "e1e7bf54137c8d2a2ab65459ed8dfe232edab81aebb25580c5d83ca5e04167b7",
+      "compressedSize": 42524,
+      "filename": "minimax-video-3b822f93efccabb1e41f6543f5c8bff9bf5b49e46cea7d315fcdd38e84829574.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/43af2990-5725-4698-82fe-4a676c5c3004.gz",
+        "global": "https://file.cdn.minimax.io/public/d370e2f5-ba5a-4c53-9565-ac5252878f62.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-maria.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-maria.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-mark.mp3": {
+      "sha256": "096856f2e6696e28f603dbf5050f1ab95182a3601c0fe4a090eb04f8cdd7c918",
+      "size": 34316,
+      "compressedSha256": "3fda5b8bc63288b6980aed82a75c20690b063c995e13181035638d826d026f51",
+      "compressedSize": 33982,
+      "filename": "minimax-video-096856f2e6696e28f603dbf5050f1ab95182a3601c0fe4a090eb04f8cdd7c918.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/5a5768ad-1a6a-47a2-8586-555afcf6985e.gz",
+        "global": "https://file.cdn.minimax.io/public/53f8af8c-a9d1-4019-b777-e48879acbe04.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-mark.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-mark.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-peter.mp3": {
+      "sha256": "f4380e16559d3003654b0f079f6fab22eefaa9f991b1ff17ff7eda4270b84817",
+      "size": 48527,
+      "compressedSha256": "49481efd841a172efcb9102d317109b2749c281de3e63fb61cf50545f263a5e4",
+      "compressedSize": 47732,
+      "filename": "minimax-video-f4380e16559d3003654b0f079f6fab22eefaa9f991b1ff17ff7eda4270b84817.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/8df82677-69f0-41cc-b4b5-7e2434f83d41.gz",
+        "global": "https://file.cdn.minimax.io/public/321223d6-02b9-4e26-bf76-21ad5086a9af.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-peter.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-peter.mp3"
+      ]
+    },
+    "/voice-samples/elevenlabs-sully.mp3": {
+      "sha256": "d09c9b6ef29c210f9e32b7ecca14c097803659904063ce02faf2000456606beb",
+      "size": 42675,
+      "compressedSha256": "d6dbfc95bc03c9011a8a0ffcde16788d62b3c5cb723c613b74bcd3773d8076ba",
+      "compressedSize": 41770,
+      "filename": "minimax-video-d09c9b6ef29c210f9e32b7ecca14c097803659904063ce02faf2000456606beb.gz",
+      "urls": {
+        "cn": "https://filecdn.minimax.chat/public/fb9bf509-355e-41e3-88ee-d9d305db1ef9.gz",
+        "global": "https://file.cdn.minimax.io/public/a87b1c8c-2565-4121-ad90-d2ffc662a111.gz"
+      },
+      "targets": [
+        "remotion-bundle/voice-samples/elevenlabs-sully.mp3",
+        "remotion-bundle/public/voice-samples/elevenlabs-sully.mp3"
+      ]
+    }
+  }
+}

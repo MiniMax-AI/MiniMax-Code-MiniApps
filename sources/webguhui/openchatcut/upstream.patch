@@ -1,0 +1,3734 @@
+diff --git a/desktop/static-files.ts b/desktop/static-files.ts
+index a13a47b..ce117f7 100644
+--- a/desktop/static-files.ts
++++ b/desktop/static-files.ts
+@@ -23,7 +23,7 @@ export function staticMime(name: string): string {
+   return EXTRA_MIME[ext] ?? mimeFor(name);
+ }
+ 
+-async function sendFile(req: IncomingMessage, res: ServerResponse, file: string): Promise<boolean> {
++export async function sendFile(req: IncomingMessage, res: ServerResponse, file: string): Promise<boolean> {
+   let size: number;
+   try {
+     const info = await stat(file);
+diff --git a/index.html b/index.html
+index 4009a34..31d59b3 100644
+--- a/index.html
++++ b/index.html
+@@ -1,11 +1,11 @@
+ <!doctype html>
+-<html lang="en">
++<html lang="zh-CN">
+   <head>
+     <meta charset="UTF-8" />
+     <link rel="icon" type="image/png" href="/openchatcut-icon.png" />
+     <meta name="color-scheme" content="dark" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+-    <title>OpenChatCut</title>
++    <title>OpenVideo</title>
+   </head>
+   <body>
+     <div id="root"></div>
+diff --git a/package-lock.json b/package-lock.json
+index d487a12..b30aac3 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -32,6 +32,8 @@
+         "@huggingface/transformers": "^4.2.0",
+         "@mediapipe/tasks-vision": "^1.0.1",
+         "@modelcontextprotocol/sdk": "^1.29.0",
++        "@radix-ui/react-dialog": "^1.3.1",
++        "@radix-ui/react-slot": "^1.5.0",
+         "@remotion/bundler": "4.0.509",
+         "@remotion/google-fonts": "4.0.509",
+         "@remotion/media": "4.0.509",
+@@ -39,15 +41,19 @@
+         "@remotion/renderer": "4.0.509",
+         "@remotion/web-renderer": "4.0.509",
+         "@smithy/node-http-handler": "^4.9.7",
++        "@tailwindcss/vite": "^4.3.3",
+         "@xmldom/xmldom": "0.9.12",
+         "ai": "^7.0.31",
+         "ajv": "^8.20.0",
+         "ajv-formats": "^3.0.1",
++        "class-variance-authority": "^0.7.1",
++        "clsx": "^2.1.1",
+         "electron-updater": "^6.8.9",
+         "ffmpeg-static": "^5.3.0",
+         "heic-to": "^1.5.2",
+         "https-proxy-agent": "^9.1.0",
+         "jieba-wasm": "^2.4.0",
++        "lucide-react": "^1.58.0",
+         "mammoth": "^1.12.1",
+         "onnxruntime-node": "1.22.0-rev",
+         "onnxruntime-web": "1.29.0",
+@@ -58,7 +64,12 @@
+         "react-markdown": "^10.1.0",
+         "remark-gfm": "^4.0.1",
+         "remotion": "4.0.509",
+-        "sqlite-vec": "^0.1.9"
++        "sqlite-vec": "^0.1.9",
++        "tailwind-merge": "^3.7.0",
++        "tailwindcss": "^4.3.3"
++      },
++      "bin": {
++        "occ": "cli-dist/occ.mjs"
+       },
+       "devDependencies": {
+         "@types/babel__standalone": "^7.1.9",
+@@ -74,7 +85,8 @@
+         "tsx": "^4.23.1",
+         "typescript": "~6.0.2",
+         "typescript-language-server": "^5.3.0",
+-        "vite": "^8.1.1"
++        "vite": "^8.1.1",
++        "tar": "7.5.22"
+       },
+       "engines": {
+         "node": ">=24 <25"
+@@ -2106,9 +2118,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "SEE LICENSE IN LICENSE.md",
+       "optional": true,
+       "os": [
+@@ -2125,9 +2134,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "SEE LICENSE IN LICENSE.md",
+       "optional": true,
+       "os": [
+@@ -2144,9 +2150,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "SEE LICENSE IN LICENSE.md",
+       "optional": true,
+       "os": [
+@@ -2163,9 +2166,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "SEE LICENSE IN LICENSE.md",
+       "optional": true,
+       "os": [
+@@ -2396,9 +2396,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2415,9 +2412,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2434,9 +2428,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2453,9 +2444,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2472,9 +2460,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2491,9 +2476,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2510,9 +2492,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2529,9 +2508,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2548,9 +2524,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2573,9 +2546,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2598,9 +2568,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2623,9 +2590,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2648,9 +2612,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2673,9 +2634,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2698,9 +2656,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2723,9 +2678,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2864,6 +2816,16 @@
+         "@jridgewell/trace-mapping": "^0.3.24"
+       }
+     },
++    "node_modules/@jridgewell/remapping": {
++      "version": "2.3.5",
++      "resolved": "https://registry.npmjs.org/@jridgewell/remapping/-/remapping-2.3.5.tgz",
++      "integrity": "sha512-LI9u/+laYG4Ds1TDKSJW2YPrIlcVYOwi2fUC6xB43lueCjgxV4lffOCZCtYFiH6TNOX+tQKXx97T4IKHbhyHEQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/gen-mapping": "^0.3.5",
++        "@jridgewell/trace-mapping": "^0.3.24"
++      }
++    },
+     "node_modules/@jridgewell/resolve-uri": {
+       "version": "3.1.2",
+       "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
+@@ -3506,9 +3468,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3529,9 +3488,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3552,9 +3508,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3575,9 +3528,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3598,9 +3548,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3658,7 +3605,6 @@
+       "version": "1.1.6",
+       "resolved": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.1.6.tgz",
+       "integrity": "sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==",
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -3690,7 +3636,6 @@
+       "version": "0.139.0",
+       "resolved": "https://registry.npmjs.org/@oxc-project/types/-/types-0.139.0.tgz",
+       "integrity": "sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "url": "https://github.com/sponsors/Boshen"
+@@ -3823,9 +3768,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3843,9 +3785,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3863,9 +3802,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3883,9 +3819,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3903,9 +3836,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3923,9 +3853,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3943,9 +3870,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -3963,9 +3887,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4155,6 +4076,323 @@
+       "integrity": "sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug==",
+       "license": "BSD-3-Clause"
+     },
++    "node_modules/@radix-ui/primitive": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/primitive/-/primitive-1.2.0.tgz",
++      "integrity": "sha512-KABY+VMIRPJL+Vyzv/335FEhXXD/xDv8BMb1kl48/aXJZMH0LtHCTx5ga5RnxaEP3nZHtmTLf1P9vanmFX46bw==",
++      "license": "MIT"
++    },
++    "node_modules/@radix-ui/react-compose-refs": {
++      "version": "1.1.5",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-compose-refs/-/react-compose-refs-1.1.5.tgz",
++      "integrity": "sha512-+48PbAAbq3didjJxa+OaWY2ZwgAKsNiRGyeHKszblZMQ+kcpd9pAaT11cMkGEie0vsOi3QdeTE6d5Fe3Gn61kA==",
++      "license": "MIT",
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-context": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-context/-/react-context-1.3.0.tgz",
++      "integrity": "sha512-v5AYEocMISkbJ+1fTXzZpiFv7NRr3D2WiYbLIKf+FkmJ8VkP6d503eV2n34MFussHXY1pcoq3yfJiQH77dc4Mg==",
++      "license": "MIT",
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-dialog": {
++      "version": "1.3.1",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-dialog/-/react-dialog-1.3.1.tgz",
++      "integrity": "sha512-+0E4qvVTwjAWra9sEhJ+9BTsvHE00zkUuNw1VGh7S+Gc13dfYk+S1PVQdchWDj+XYHhAai7Z7IpzXVDCGsDplg==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/primitive": "1.2.0",
++        "@radix-ui/react-compose-refs": "1.1.5",
++        "@radix-ui/react-context": "1.3.0",
++        "@radix-ui/react-dismissable-layer": "1.2.1",
++        "@radix-ui/react-focus-guards": "1.2.0",
++        "@radix-ui/react-focus-scope": "1.3.1",
++        "@radix-ui/react-id": "1.1.4",
++        "@radix-ui/react-portal": "1.2.0",
++        "@radix-ui/react-presence": "1.1.11",
++        "@radix-ui/react-primitive": "2.2.0",
++        "@radix-ui/react-slot": "1.5.0",
++        "@radix-ui/react-use-controllable-state": "1.3.0",
++        "@radix-ui/react-use-layout-effect": "1.1.4",
++        "aria-hidden": "^1.2.4",
++        "react-remove-scroll": "^2.7.2"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "@types/react-dom": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
++        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        },
++        "@types/react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-dismissable-layer": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-dismissable-layer/-/react-dismissable-layer-1.2.1.tgz",
++      "integrity": "sha512-KIfDcAsx+oVylFZ4xryVKusJUrLLhTQmfnJW4kwk4Km5myvhHCrj04hnWWUC166+xD4DHdH8tQGylwYX1h6+Pg==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/primitive": "1.2.0",
++        "@radix-ui/react-compose-refs": "1.1.5",
++        "@radix-ui/react-primitive": "2.2.0",
++        "@radix-ui/react-use-callback-ref": "1.1.5",
++        "@radix-ui/react-use-effect-event": "0.0.5"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "@types/react-dom": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
++        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        },
++        "@types/react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-focus-guards": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-focus-guards/-/react-focus-guards-1.2.0.tgz",
++      "integrity": "sha512-MPm5R0iRGUDrDnPNxmLBkv+X7pN4XKzt+MbWJEuJQsH3NFH4omrbpXpucyYCCKTSt+na/ZxGhEWQrWTZ0285cA==",
++      "license": "MIT",
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-focus-scope": {
++      "version": "1.3.1",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-focus-scope/-/react-focus-scope-1.3.1.tgz",
++      "integrity": "sha512-ugeMhbXt4y5S2T1GnIqbWDKEN962PDwnX1fN0eKOOgf5f63Dh2mn8F1FUySlgW0iF6GiVsRF32DzuDIWTUyQJg==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-compose-refs": "1.1.5",
++        "@radix-ui/react-primitive": "2.2.0",
++        "@radix-ui/react-use-callback-ref": "1.1.5"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "@types/react-dom": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
++        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        },
++        "@types/react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-id": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-id/-/react-id-1.1.4.tgz",
++      "integrity": "sha512-TMQp2llA+RYn7JcjnrMnz7wN4pcVttPZnRZo52PLQsoLVKzNlVwUeHmfePgTgRluXFvlD3GD5g5MOVVTJCO0qA==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-use-layout-effect": "1.1.4"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-portal": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-portal/-/react-portal-1.2.0.tgz",
++      "integrity": "sha512-StX7xXnaRU41VvFtMm9zlhVGz8XF6GmWWTXftkQaY+tqVkbs/R9UmAp5mLzHHapk5hM9RMZQvO/3usyIP/g42g==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-primitive": "2.2.0",
++        "@radix-ui/react-use-layout-effect": "1.1.4"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "@types/react-dom": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
++        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        },
++        "@types/react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-presence": {
++      "version": "1.1.11",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-presence/-/react-presence-1.1.11.tgz",
++      "integrity": "sha512-Z7/atlkab36Z8hm+V8zYc79r0W+tiOB1o0tun1By94JyadkekLQmtEAnBSP9XKXBNQsStoStS4+gX10JpS5akA==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-use-layout-effect": "1.1.4"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "@types/react-dom": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
++        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        },
++        "@types/react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-primitive": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-primitive/-/react-primitive-2.2.0.tgz",
++      "integrity": "sha512-HCTSPMNqv55Qk0IX4geJbpyXazmqulcimwuyjxTkKi29v+QZbG2Zho9BnbBq4YS2PF+KlNb2CXoLz66uUmblkg==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-slot": "1.5.0"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "@types/react-dom": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
++        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        },
++        "@types/react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-slot": {
++      "version": "1.5.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.5.0.tgz",
++      "integrity": "sha512-tyYd9ddPXAysAbdbD9eYxgwpCSv6f3PncqVSNKQFSR5lcJVLz3cb/pANDoYrLiHBpXv7skortyUgGUWsYuPPFQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-compose-refs": "1.1.5"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-use-callback-ref": {
++      "version": "1.1.5",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-callback-ref/-/react-use-callback-ref-1.1.5.tgz",
++      "integrity": "sha512-Y5GBf4NKeADoXI1geiMlMuMoURT3k9MizzzKhGb/m55H94aGigZ01PIpkvsO6lML13BA6XYAXSJ6gza7vTn5nw==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-use-layout-effect": "1.1.4"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-use-controllable-state": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-controllable-state/-/react-use-controllable-state-1.3.0.tgz",
++      "integrity": "sha512-TAcBI7bw2ljYCbv4+zuTSd6zICu8pRt6SDN2vJ/Z06K2MXh6I9WYFe/A9ovlFDtR5HVHGm5iDxDoABm/++dbKg==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/primitive": "1.2.0",
++        "@radix-ui/react-use-effect-event": "0.0.5",
++        "@radix-ui/react-use-layout-effect": "1.1.4"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-use-effect-event": {
++      "version": "0.0.5",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-effect-event/-/react-use-effect-event-0.0.5.tgz",
++      "integrity": "sha512-7cshFL8HGS/7HEiHH+9kL9HBwp2sa9yX18Knwek6KYWmXwM7pegMgta2AXMQKI+rq3JnfSj9x8wYqFMTdG1Jgg==",
++      "license": "MIT",
++      "dependencies": {
++        "@radix-ui/react-use-layout-effect": "1.1.4"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@radix-ui/react-use-layout-effect": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-layout-effect/-/react-use-layout-effect-1.1.4.tgz",
++      "integrity": "sha512-K20DkRkUwDnxEYMBPcg3Y6voLkEy5p5QQmszZgLngKKiC7dzBR/aEuK3w1qlx2JWDUNH6FluahYdgR3BP+QbYw==",
++      "license": "MIT",
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/@remotion/bundler": {
+       "version": "4.0.509",
+       "resolved": "https://registry.npmjs.org/@remotion/bundler/-/bundler-4.0.509.tgz",
+@@ -4216,9 +4454,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "optional": true,
+       "os": [
+         "linux"
+@@ -4231,9 +4466,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "optional": true,
+       "os": [
+         "linux"
+@@ -4246,9 +4478,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "optional": true,
+       "os": [
+         "linux"
+@@ -4261,9 +4490,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "optional": true,
+       "os": [
+         "linux"
+@@ -4463,7 +4689,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4480,7 +4705,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4497,7 +4721,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4514,7 +4737,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4531,7 +4753,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4548,10 +4769,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4568,10 +4785,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4588,10 +4801,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4608,10 +4817,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4628,10 +4833,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4648,10 +4849,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4668,7 +4865,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4685,7 +4881,6 @@
+       "cpu": [
+         "wasm32"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -4704,7 +4899,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4721,7 +4915,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4735,7 +4928,6 @@
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz",
+       "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@rspack/binding": {
+@@ -4789,9 +4981,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4805,9 +4994,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4821,9 +5007,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4837,9 +5020,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -4994,80 +5174,337 @@
+         "tslib": "^2.6.2"
+       },
+       "engines": {
+-        "node": ">=18.0.0"
++        "node": ">=18.0.0"
++      }
++    },
++    "node_modules/@smithy/fetch-http-handler": {
++      "version": "5.6.7",
++      "resolved": "https://registry.npmmirror.com/@smithy/fetch-http-handler/-/fetch-http-handler-5.6.7.tgz",
++      "integrity": "sha512-3zpg8yqqyXzoK2TsRDdkqVOj2RDBFfLXwCczOZ5c7TWB4eiaebfSCsbMjDPYB3PJ9ihV62QaeadZ+wLadZtNGA==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "@smithy/core": "^3.29.5",
++        "@smithy/types": "^4.16.1",
++        "tslib": "^2.6.2"
++      },
++      "engines": {
++        "node": ">=18.0.0"
++      }
++    },
++    "node_modules/@smithy/node-http-handler": {
++      "version": "4.9.7",
++      "resolved": "https://registry.npmmirror.com/@smithy/node-http-handler/-/node-http-handler-4.9.7.tgz",
++      "integrity": "sha512-wCU8HCLjAtAVqxxe0j2xff9LcEPw3yjBbg5IdQDIYFnxnPxbxcSLc7rgex7kqm9L/WYOnJEgaWQlfDkZleozMA==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "@smithy/core": "^3.29.5",
++        "@smithy/types": "^4.16.1",
++        "tslib": "^2.6.2"
++      },
++      "engines": {
++        "node": ">=18.0.0"
++      }
++    },
++    "node_modules/@smithy/signature-v4": {
++      "version": "5.6.6",
++      "resolved": "https://registry.npmmirror.com/@smithy/signature-v4/-/signature-v4-5.6.6.tgz",
++      "integrity": "sha512-efP6DN3UTFrzIsGO42/xcabv8jU7+9nwEdphFUH7yL0k010ERyAWaO41KFQIDLcFZLZ8xzIQr4wplFxNzslSGQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "@smithy/core": "^3.29.5",
++        "@smithy/types": "^4.16.1",
++        "tslib": "^2.6.2"
++      },
++      "engines": {
++        "node": ">=18.0.0"
++      }
++    },
++    "node_modules/@smithy/types": {
++      "version": "4.16.1",
++      "resolved": "https://registry.npmmirror.com/@smithy/types/-/types-4.16.1.tgz",
++      "integrity": "sha512-0JFs3V2y2M9tKW5na/qxe69Zv+uxLMO7QBbhxF/FHu/Gp2NFZAAL9tWl9PU02xxo07pb3G9FTyjNc6D5uZrJIg==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "tslib": "^2.6.2"
++      },
++      "engines": {
++        "node": ">=18.0.0"
++      }
++    },
++    "node_modules/@standard-schema/spec": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
++      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
++      "license": "MIT"
++    },
++    "node_modules/@szmarczak/http-timer": {
++      "version": "4.0.6",
++      "resolved": "https://registry.npmjs.org/@szmarczak/http-timer/-/http-timer-4.0.6.tgz",
++      "integrity": "sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "defer-to-connect": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
++    "node_modules/@tailwindcss/node": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/node/-/node-4.3.3.tgz",
++      "integrity": "sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==",
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/remapping": "^2.3.5",
++        "enhanced-resolve": "^5.24.1",
++        "jiti": "^2.7.0",
++        "lightningcss": "1.32.0",
++        "magic-string": "^0.30.21",
++        "source-map-js": "^1.2.1",
++        "tailwindcss": "4.3.3"
++      }
++    },
++    "node_modules/@tailwindcss/oxide": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide/-/oxide-4.3.3.tgz",
++      "integrity": "sha512-krXjAikiaFSPaK/FkAQT5UTx3VormQaiZ5hBFlJZ9UFQGB/rwg1MZIhHAG9smMQRTdyJxP6Qt5MwMtdyU5FWrA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 20"
++      },
++      "optionalDependencies": {
++        "@tailwindcss/oxide-android-arm64": "4.3.3",
++        "@tailwindcss/oxide-darwin-arm64": "4.3.3",
++        "@tailwindcss/oxide-darwin-x64": "4.3.3",
++        "@tailwindcss/oxide-freebsd-x64": "4.3.3",
++        "@tailwindcss/oxide-linux-arm-gnueabihf": "4.3.3",
++        "@tailwindcss/oxide-linux-arm64-gnu": "4.3.3",
++        "@tailwindcss/oxide-linux-arm64-musl": "4.3.3",
++        "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
++        "@tailwindcss/oxide-linux-x64-musl": "4.3.3",
++        "@tailwindcss/oxide-wasm32-wasi": "4.3.3",
++        "@tailwindcss/oxide-win32-arm64-msvc": "4.3.3",
++        "@tailwindcss/oxide-win32-x64-msvc": "4.3.3"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-android-arm64": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-android-arm64/-/oxide-android-arm64-4.3.3.tgz",
++      "integrity": "sha512-Y85A2gmPSkl5Ve5qR86GL4HT509cFqQh1aes9p3sSkyTPwt0Pppf3GkwGe4JPACcRYjgJIEhQgM6dBClnr0NYw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-darwin-arm64": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-darwin-arm64/-/oxide-darwin-arm64-4.3.3.tgz",
++      "integrity": "sha512-BiaWatpBcERQFDlOjRDpIVXuFK5PJez5SA4JMg6VYZdBYU+qKfV/vqjcIs+IYmtitf1xYQZTwXvU/8y4lfZUGw==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-darwin-x64": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-darwin-x64/-/oxide-darwin-x64-4.3.3.tgz",
++      "integrity": "sha512-fAeUqfV5ndhxRwai8cXGzdLvul9utWOmeTkv69unv4ZXixjn61Z+p9lCWdwOwA3TYboG3BwdVuN/RDjhBRl0mw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-freebsd-x64": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-freebsd-x64/-/oxide-freebsd-x64-4.3.3.tgz",
++      "integrity": "sha512-iyf5bV6+wnAlflVeEy7R25dupxTNECZN5QMI0qNT6eT+EgaGdZcKhGkr5SdoaWiLJ3spLqIY9VCeSGrwmtg4kw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-linux-arm-gnueabihf": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-linux-arm-gnueabihf/-/oxide-linux-arm-gnueabihf-4.3.3.tgz",
++      "integrity": "sha512-aAYUprJAJQWWbRrPvtjdroZ56Md+JM8pMiopS6xGEwDfLhqj+2ver2p4nU4Mb3CRqcMmNBjo8KkUgcxhkzVQGQ==",
++      "cpu": [
++        "arm"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-linux-arm64-gnu": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-linux-arm64-gnu/-/oxide-linux-arm64-gnu-4.3.3.tgz",
++      "integrity": "sha512-nDxldcEENOxZRzC2uu9jrutZdAAQtb+8WWDCSnWL1zvBk1+FN+x6MtDViPB5AJMfttVCUhehGWus3XBPgatM/w==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-linux-arm64-musl": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-linux-arm64-musl/-/oxide-linux-arm64-musl-4.3.3.tgz",
++      "integrity": "sha512-Md44bD6veX/PC5iyF8cDVnw4HBIANZepRZZ7a8DQOvkfo5WUBwcp6iAuCUz23u+4SUkhJlD3eL7hNdW8ezd/kA==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 20"
+       }
+     },
+-    "node_modules/@smithy/fetch-http-handler": {
+-      "version": "5.6.7",
+-      "resolved": "https://registry.npmmirror.com/@smithy/fetch-http-handler/-/fetch-http-handler-5.6.7.tgz",
+-      "integrity": "sha512-3zpg8yqqyXzoK2TsRDdkqVOj2RDBFfLXwCczOZ5c7TWB4eiaebfSCsbMjDPYB3PJ9ihV62QaeadZ+wLadZtNGA==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "@smithy/core": "^3.29.5",
+-        "@smithy/types": "^4.16.1",
+-        "tslib": "^2.6.2"
+-      },
++    "node_modules/@tailwindcss/oxide-linux-x64-gnu": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-linux-x64-gnu/-/oxide-linux-x64-gnu-4.3.3.tgz",
++      "integrity": "sha512-tx7us1muwOKAKWao2v/GaafFeQboE6aj88vC6ziN2NCGcRm8gWUhwjzg+YdVB1e4boAtdtma4L43onunI6NS4w==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
+       "engines": {
+-        "node": ">=18.0.0"
++        "node": ">= 20"
+       }
+     },
+-    "node_modules/@smithy/node-http-handler": {
+-      "version": "4.9.7",
+-      "resolved": "https://registry.npmmirror.com/@smithy/node-http-handler/-/node-http-handler-4.9.7.tgz",
+-      "integrity": "sha512-wCU8HCLjAtAVqxxe0j2xff9LcEPw3yjBbg5IdQDIYFnxnPxbxcSLc7rgex7kqm9L/WYOnJEgaWQlfDkZleozMA==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "@smithy/core": "^3.29.5",
+-        "@smithy/types": "^4.16.1",
+-        "tslib": "^2.6.2"
+-      },
++    "node_modules/@tailwindcss/oxide-linux-x64-musl": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-linux-x64-musl/-/oxide-linux-x64-musl-4.3.3.tgz",
++      "integrity": "sha512-SJxX60smvHgasZoBy11dX6YRjXJFovwWBoedhbQPOBzgFWBHGB+TVPWB9BxzR7TTxU8FQZAI2AyiNCMzFm8Img==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
+       "engines": {
+-        "node": ">=18.0.0"
++        "node": ">= 20"
+       }
+     },
+-    "node_modules/@smithy/signature-v4": {
+-      "version": "5.6.6",
+-      "resolved": "https://registry.npmmirror.com/@smithy/signature-v4/-/signature-v4-5.6.6.tgz",
+-      "integrity": "sha512-efP6DN3UTFrzIsGO42/xcabv8jU7+9nwEdphFUH7yL0k010ERyAWaO41KFQIDLcFZLZ8xzIQr4wplFxNzslSGQ==",
+-      "license": "Apache-2.0",
++    "node_modules/@tailwindcss/oxide-wasm32-wasi": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-wasm32-wasi/-/oxide-wasm32-wasi-4.3.3.tgz",
++      "integrity": "sha512-jx1+rPhY/5Ympkktd656HBWEBLxP7dH06losBLjjf5vgCODXvi9KhtftWcMIwTFIDqBr7cRnQkdLnAG+IOlGvQ==",
++      "bundleDependencies": [
++        "@napi-rs/wasm-runtime",
++        "@emnapi/core",
++        "@emnapi/runtime",
++        "@tybys/wasm-util",
++        "@emnapi/wasi-threads",
++        "tslib"
++      ],
++      "cpu": [
++        "wasm32"
++      ],
++      "license": "MIT",
++      "optional": true,
+       "dependencies": {
+-        "@smithy/core": "^3.29.5",
+-        "@smithy/types": "^4.16.1",
+-        "tslib": "^2.6.2"
++        "@emnapi/core": "^1.11.1",
++        "@emnapi/runtime": "^1.11.1",
++        "@emnapi/wasi-threads": "^1.2.2",
++        "@napi-rs/wasm-runtime": "^1.1.4",
++        "@tybys/wasm-util": "^0.10.2",
++        "tslib": "^2.8.1"
+       },
+       "engines": {
+-        "node": ">=18.0.0"
++        "node": ">=14.0.0"
+       }
+     },
+-    "node_modules/@smithy/types": {
+-      "version": "4.16.1",
+-      "resolved": "https://registry.npmmirror.com/@smithy/types/-/types-4.16.1.tgz",
+-      "integrity": "sha512-0JFs3V2y2M9tKW5na/qxe69Zv+uxLMO7QBbhxF/FHu/Gp2NFZAAL9tWl9PU02xxo07pb3G9FTyjNc6D5uZrJIg==",
+-      "license": "Apache-2.0",
+-      "dependencies": {
+-        "tslib": "^2.6.2"
+-      },
++    "node_modules/@tailwindcss/oxide-win32-arm64-msvc": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-win32-arm64-msvc/-/oxide-win32-arm64-msvc-4.3.3.tgz",
++      "integrity": "sha512-3rc292Ca2ceK6Ulcc/bAVnTs/3nDtoPhyEKlgPv+yQJQi/JS/AMJlqzxvlDacL1nekbrcf6bTqp/jV4qgnPxNQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
+       "engines": {
+-        "node": ">=18.0.0"
++        "node": ">= 20"
+       }
+     },
+-    "node_modules/@standard-schema/spec": {
+-      "version": "1.1.0",
+-      "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+-      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+-      "license": "MIT"
++    "node_modules/@tailwindcss/oxide-win32-x64-msvc": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-win32-x64-msvc/-/oxide-win32-x64-msvc-4.3.3.tgz",
++      "integrity": "sha512-yJ0pwIVc/nYeGoV02WtsN8KYyLQv7kyI2wDnkezyJlGGjkd4QLwDGAwl47YpPJeuI0M0ObaXGSPjvWDPeTPggw==",
++      "cpu": [
++        "x64"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 20"
++      }
+     },
+-    "node_modules/@szmarczak/http-timer": {
+-      "version": "4.0.6",
+-      "resolved": "https://registry.npmjs.org/@szmarczak/http-timer/-/http-timer-4.0.6.tgz",
+-      "integrity": "sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==",
+-      "dev": true,
++    "node_modules/@tailwindcss/vite": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/@tailwindcss/vite/-/vite-4.3.3.tgz",
++      "integrity": "sha512-yYU8cogLeSh/ms2jh8Fj7jaba/EWa7Ja6GoUqYZaraEuCI5YS6ms6ObZgjjedm+jm6XZjdNRWBpPP6Z86oOxcw==",
+       "license": "MIT",
+       "dependencies": {
+-        "defer-to-connect": "^2.0.0"
++        "@tailwindcss/node": "4.3.3",
++        "@tailwindcss/oxide": "4.3.3",
++        "tailwindcss": "4.3.3"
+       },
+-      "engines": {
+-        "node": ">=10"
++      "peerDependencies": {
++        "vite": "^5.2.0 || ^6 || ^7 || ^8"
+       }
+     },
+     "node_modules/@tybys/wasm-util": {
+@@ -5301,7 +5738,7 @@
+       "version": "19.2.3",
+       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
+       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+-      "dev": true,
++      "devOptional": true,
+       "license": "MIT",
+       "peerDependencies": {
+         "@types/react": "^19.2.0"
+@@ -5939,6 +6376,18 @@
+       "integrity": "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+       "license": "Python-2.0"
+     },
++    "node_modules/aria-hidden": {
++      "version": "1.2.6",
++      "resolved": "https://registry.npmjs.org/aria-hidden/-/aria-hidden-1.2.6.tgz",
++      "integrity": "sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
+     "node_modules/asn1js": {
+       "version": "3.0.10",
+       "resolved": "https://registry.npmjs.org/asn1js/-/asn1js-3.0.10.tgz",
+@@ -6478,6 +6927,18 @@
+         "node": ">=8"
+       }
+     },
++    "node_modules/class-variance-authority": {
++      "version": "0.7.1",
++      "resolved": "https://registry.npmjs.org/class-variance-authority/-/class-variance-authority-0.7.1.tgz",
++      "integrity": "sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "clsx": "^2.1.1"
++      },
++      "funding": {
++        "url": "https://polar.sh/cva"
++      }
++    },
+     "node_modules/cliui": {
+       "version": "8.0.1",
+       "resolved": "https://registry.npmjs.org/cliui/-/cliui-8.0.1.tgz",
+@@ -6506,6 +6967,15 @@
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/clsx": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz",
++      "integrity": "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/color-convert": {
+       "version": "2.0.1",
+       "resolved": "https://registry.npmjs.org/color-convert/-/color-convert-2.0.1.tgz",
+@@ -6920,6 +7390,12 @@
+       "integrity": "sha512-T0NIuQpnTvFDATNuHN5roPwSBG83rFsuO+MXXH9/3N1eFbn4wcPjttvjMLEPWJ0RGUYgQE7cGgS3tNxbqCGM7g==",
+       "license": "MIT"
+     },
++    "node_modules/detect-node-es": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/detect-node-es/-/detect-node-es-1.1.0.tgz",
++      "integrity": "sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ==",
++      "license": "MIT"
++    },
+     "node_modules/devlop": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/devlop/-/devlop-1.1.0.tgz",
+@@ -7783,7 +8259,6 @@
+       "version": "6.5.0",
+       "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+       "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12.0.0"
+@@ -8021,7 +8496,6 @@
+       "version": "2.3.3",
+       "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+-      "dev": true,
+       "hasInstallScript": true,
+       "license": "MIT",
+       "optional": true,
+@@ -8074,6 +8548,15 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/get-nonce": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/get-nonce/-/get-nonce-1.0.1.tgz",
++      "integrity": "sha512-FJhYRoDaiatfEkUK8HKlicmu/3SGFD51q3itKDGoSTysQJBnfOcxU5GxnhE1E6soB76MbT0MBtnKJuXyAx+96Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/get-proto": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
+@@ -8738,7 +9221,6 @@
+       "version": "2.7.0",
+       "resolved": "https://registry.npmjs.org/jiti/-/jiti-2.7.0.tgz",
+       "integrity": "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==",
+-      "dev": true,
+       "license": "MIT",
+       "bin": {
+         "jiti": "lib/jiti-cli.mjs"
+@@ -8908,7 +9390,6 @@
+       "version": "1.32.0",
+       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
+       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+-      "dev": true,
+       "license": "MPL-2.0",
+       "dependencies": {
+         "detect-libc": "^2.0.3"
+@@ -8941,7 +9422,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -8962,7 +9442,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -8983,7 +9462,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9004,7 +9482,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9025,7 +9502,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9046,10 +9522,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9070,10 +9542,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9094,10 +9562,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9118,10 +9582,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9142,7 +9602,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9163,7 +9622,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -9271,6 +9729,30 @@
+         "node": ">=10"
+       }
+     },
++    "node_modules/lucide-react": {
++      "version": "1.58.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.58.0.tgz",
++      "integrity": "sha512-hXaFNm6mk6QVtBnDGBn1YAs8j2tGUk0A4s/CpclIcczfxeXiW1rdOLVo6zCsoIih9XXsGvDODQerl749a2n7bA==",
++      "license": "ISC",
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/magic-string": {
++      "version": "0.30.21",
++      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
++      "integrity": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/sourcemap-codec": "^1.5.5"
++      }
++    },
+     "node_modules/mammoth": {
+       "version": "1.12.1",
+       "resolved": "https://registry.npmjs.org/mammoth/-/mammoth-1.12.1.tgz",
+@@ -10991,7 +11473,6 @@
+       "version": "4.0.5",
+       "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz",
+       "integrity": "sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12"
+@@ -11558,6 +12039,75 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/react-remove-scroll": {
++      "version": "2.7.2",
++      "resolved": "https://registry.npmjs.org/react-remove-scroll/-/react-remove-scroll-2.7.2.tgz",
++      "integrity": "sha512-Iqb9NjCCTt6Hf+vOdNIZGdTiH1QSqr27H/Ek9sv/a97gfueI/5h1s3yRi1nngzMUaOOToin5dI1dXKdXiF+u0Q==",
++      "license": "MIT",
++      "dependencies": {
++        "react-remove-scroll-bar": "^2.3.7",
++        "react-style-singleton": "^2.2.3",
++        "tslib": "^2.1.0",
++        "use-callback-ref": "^1.3.3",
++        "use-sidecar": "^1.1.3"
++      },
++      "engines": {
++        "node": ">=10"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/react-remove-scroll-bar": {
++      "version": "2.3.8",
++      "resolved": "https://registry.npmjs.org/react-remove-scroll-bar/-/react-remove-scroll-bar-2.3.8.tgz",
++      "integrity": "sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q==",
++      "license": "MIT",
++      "dependencies": {
++        "react-style-singleton": "^2.2.2",
++        "tslib": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=10"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/react-style-singleton": {
++      "version": "2.2.3",
++      "resolved": "https://registry.npmjs.org/react-style-singleton/-/react-style-singleton-2.2.3.tgz",
++      "integrity": "sha512-b6jSvxvVnyptAiLjbkWLE/lOnR4lfTtDAl+eUC7RZy+QQWc6wRzIV2CE6xBuMmDxc2qIihtDCZD5NPOFl7fRBQ==",
++      "license": "MIT",
++      "dependencies": {
++        "get-nonce": "^1.0.0",
++        "tslib": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=10"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/read-binary-file-arch": {
+       "version": "1.0.6",
+       "resolved": "https://registry.npmjs.org/read-binary-file-arch/-/read-binary-file-arch-1.0.6.tgz",
+@@ -11833,7 +12383,6 @@
+       "version": "1.1.5",
+       "resolved": "https://registry.npmjs.org/rolldown/-/rolldown-1.1.5.tgz",
+       "integrity": "sha512-t9z29cJjXf/vxQ8dyhCSpt6H6aSwHTk8cT5I3iy6SMXuFpk5mB6PL6XfC8PCwrPTx93udwKUm9HRteAlTGBLiA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@oxc-project/types": "=0.139.0",
+@@ -12520,6 +13069,22 @@
+         "url": "https://github.com/chalk/supports-color?sponsor=1"
+       }
+     },
++    "node_modules/tailwind-merge": {
++      "version": "3.7.0",
++      "resolved": "https://registry.npmjs.org/tailwind-merge/-/tailwind-merge-3.7.0.tgz",
++      "integrity": "sha512-XPPUyAc+cvspz3lHTcR/QgPfW2A0lv/xQNIjX3HGhLR+Nq2lHaLq5MtTesHn8GUr3W3DguT2KT5x3NVgRtYwmA==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/dcastil"
++      }
++    },
++    "node_modules/tailwindcss": {
++      "version": "4.3.3",
++      "resolved": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.3.tgz",
++      "integrity": "sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==",
++      "license": "MIT"
++    },
+     "node_modules/tapable": {
+       "version": "2.3.3",
+       "resolved": "https://registry.npmjs.org/tapable/-/tapable-2.3.3.tgz",
+@@ -12692,7 +13257,6 @@
+       "version": "0.2.17",
+       "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+       "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "fdir": "^6.5.0",
+@@ -12774,7 +13338,7 @@
+       "version": "4.23.1",
+       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.23.1.tgz",
+       "integrity": "sha512-GQHnkIfxyx1wYCOS/wonik5MVRZU9hi1TEZmzGZSCJB1y9YgoZ8H6itNE/u4suE+yLmOzuE4E5S4TZ/ZX2wcWQ==",
+-      "dev": true,
++      "devOptional": true,
+       "license": "MIT",
+       "dependencies": {
+         "esbuild": "~0.28.0"
+@@ -13075,6 +13639,49 @@
+         "browserslist": ">= 4.21.0"
+       }
+     },
++    "node_modules/use-callback-ref": {
++      "version": "1.3.3",
++      "resolved": "https://registry.npmjs.org/use-callback-ref/-/use-callback-ref-1.3.3.tgz",
++      "integrity": "sha512-jQL3lRnocaFtu3V00JToYz/4QkNWswxijDaCVNZRiRTO3HQDLsdu1ZtmIUvV4yPp+rvWm5j0y0TG/S61cuijTg==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=10"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/use-sidecar": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/use-sidecar/-/use-sidecar-1.1.3.tgz",
++      "integrity": "sha512-Fedw0aZvkhynoPYlA5WXrMCAMm+nSWdZt6lzJQ7Ok8S6Q+VsHmHpRWndVRJ8Be0ZbkfPc5LRYH+5XrzXcEeLRQ==",
++      "license": "MIT",
++      "dependencies": {
++        "detect-node-es": "^1.1.0",
++        "tslib": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=10"
++      },
++      "peerDependencies": {
++        "@types/react": "*",
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc"
++      },
++      "peerDependenciesMeta": {
++        "@types/react": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/utf8-byte-length": {
+       "version": "1.0.5",
+       "resolved": "https://registry.npmjs.org/utf8-byte-length/-/utf8-byte-length-1.0.5.tgz",
+@@ -13129,7 +13736,6 @@
+       "version": "8.1.4",
+       "resolved": "https://registry.npmjs.org/vite/-/vite-8.1.4.tgz",
+       "integrity": "sha512-bTT9PsdWO+MQMNG9ZXIP/qM9wGh37DFxTV/sPq9cFpHr3w4jkgef032PkAL9jAqhk3Nz8NQw3O8n6/xFkqO4QQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "lightningcss": "^1.32.0",
+diff --git a/package.json b/package.json
+index 12239ea..ea88f4d 100644
+--- a/package.json
++++ b/package.json
+@@ -115,6 +115,8 @@
+     "@huggingface/transformers": "^4.2.0",
+     "@mediapipe/tasks-vision": "^1.0.1",
+     "@modelcontextprotocol/sdk": "^1.29.0",
++    "@radix-ui/react-dialog": "^1.3.1",
++    "@radix-ui/react-slot": "^1.5.0",
+     "@remotion/bundler": "4.0.509",
+     "@remotion/google-fonts": "4.0.509",
+     "@remotion/media": "4.0.509",
+@@ -122,15 +124,19 @@
+     "@remotion/renderer": "4.0.509",
+     "@remotion/web-renderer": "4.0.509",
+     "@smithy/node-http-handler": "^4.9.7",
++    "@tailwindcss/vite": "^4.3.3",
+     "@xmldom/xmldom": "0.9.12",
+     "ai": "^7.0.31",
+     "ajv": "^8.20.0",
+     "ajv-formats": "^3.0.1",
++    "class-variance-authority": "^0.7.1",
++    "clsx": "^2.1.1",
+     "electron-updater": "^6.8.9",
+     "ffmpeg-static": "^5.3.0",
+     "heic-to": "^1.5.2",
+     "https-proxy-agent": "^9.1.0",
+     "jieba-wasm": "^2.4.0",
++    "lucide-react": "^1.58.0",
+     "mammoth": "^1.12.1",
+     "onnxruntime-node": "1.22.0-rev",
+     "onnxruntime-web": "1.29.0",
+@@ -141,7 +147,9 @@
+     "react-markdown": "^10.1.0",
+     "remark-gfm": "^4.0.1",
+     "remotion": "4.0.509",
+-    "sqlite-vec": "^0.1.9"
++    "sqlite-vec": "^0.1.9",
++    "tailwind-merge": "^3.7.0",
++    "tailwindcss": "^4.3.3"
+   },
+   "devDependencies": {
+     "@types/babel__standalone": "^7.1.9",
+@@ -157,7 +165,8 @@
+     "tsx": "^4.23.1",
+     "typescript": "~6.0.2",
+     "typescript-language-server": "^5.3.0",
+-    "vite": "^8.1.1"
++    "vite": "^8.1.1",
++    "tar": "7.5.22"
+   },
+   "overrides": {
+     "onnxruntime-web": "1.29.0",
+diff --git a/server/agent-runs/routes.ts b/server/agent-runs/routes.ts
+index 181e4f4..65cede1 100644
+--- a/server/agent-runs/routes.ts
++++ b/server/agent-runs/routes.ts
+@@ -58,6 +58,18 @@ interface DeferredRun {
+ }
+ const deferredRuns = new Map<string, DeferredRun>();
+ const startedRuns = new Set<string>();
++const runningTasks = new Map<string, Promise<void>>();
++
++export async function disposeAgentRuns(): Promise<void> {
++  const ids = new Set([...deferredRuns.keys(), ...startedRuns]);
++  for (const deferred of deferredRuns.values()) clearTimeout(deferred.timeout);
++  deferredRuns.clear();
++  await Promise.all([...ids].map(async id => {
++    const run = getRun(id);
++    if (run) await cancelRun(run);
++  }));
++  await Promise.allSettled([...runningTasks.values()]);
++}
+ 
+ function deferRunExecution(run: ServerRun, input: ServerRunInput): void {
+   const timeout = setTimeout(() => {
+@@ -77,7 +89,12 @@ function startDeferredRun(run: ServerRun): 'started' | 'already_started' | 'unav
+   deferredRuns.delete(run.id);
+   clearTimeout(deferred.timeout);
+   startedRuns.add(run.id);
+-  void executeRun(run, deferred.input).finally(() => startedRuns.delete(run.id));
++  const task = executeRun(run, deferred.input).then(() => {}).finally(() => {
++    startedRuns.delete(run.id);
++    runningTasks.delete(run.id);
++  });
++  runningTasks.set(run.id, task);
++  void task.catch(() => {});
+   return 'started';
+ }
+ 
+diff --git a/server/codex/app-server.ts b/server/codex/app-server.ts
+index 6a7dcf7..482c5c8 100644
+--- a/server/codex/app-server.ts
++++ b/server/codex/app-server.ts
+@@ -9,7 +9,7 @@ import { codexCommand } from './command.ts';
+ const INITIALIZE_TIMEOUT_MS = 10_000;
+ const MAX_REQUEST_TIMEOUT_MS = 60_000;
+ const MAX_PROTOCOL_LINE_BYTES = 8 * 1024 * 1024;
+-const CODEX_HOME = join(homedir(), '.openchatcut', 'codex');
++const CODEX_HOME = join(process.env.OPENCHATCUT_DATA_DIR || join(homedir(), '.openchatcut'), 'codex');
+ /** System Codex home that OpenChatCut's isolated CODEX_HOME inherits credentials from. */
+ const SYSTEM_CODEX_HOME = join(homedir(), '.codex');
+ export const CODEX_DISABLED_FEATURES = [
+@@ -237,6 +237,8 @@ export class CodexAppServerClient {
+    * Copy-once (never overwrite a login created inside the isolated home).
+    */
+   private async seedCredentials(): Promise<void> {
++    // Mini App 使用自己的登录状态，不自动读取其他应用的凭据。
++    if (process.env.OPENCHATCUT_MINIAPP === '1') return;
+     const isolatedAuth = join(CODEX_HOME, 'auth.json');
+     const systemAuth = join(SYSTEM_CODEX_HOME, 'auth.json');
+     try {
+diff --git a/server/copilot/client.ts b/server/copilot/client.ts
+index d7e639f..67ca2bc 100644
+--- a/server/copilot/client.ts
++++ b/server/copilot/client.ts
+@@ -9,7 +9,7 @@ import { resolveCopilotCli } from './installation.ts';
+  * OpenChatCut's session state, config and logs out of the user's own
+  * `~/.copilot` so an in-app run can never disturb their terminal CLI.
+  */
+-const COPILOT_HOME = join(homedir(), '.openchatcut', 'copilot');
++const COPILOT_HOME = join(process.env.OPENCHATCUT_DATA_DIR || join(homedir(), '.openchatcut'), 'copilot');
+ const RUNTIME_REQUEST_TIMEOUT_MS = 15_000;
+ const MODEL_CACHE_TTL_MS = 5 * 60_000;
+ 
+diff --git a/server/export-media-sources.ts b/server/export-media-sources.ts
+index c9d482a..ceae748 100644
+--- a/server/export-media-sources.ts
++++ b/server/export-media-sources.ts
+@@ -1,16 +1,18 @@
++import { resolveProductAsset, ensureProductAssets } from './product-assets';
+ // Resolve timeline sources to the files an NLE should link, and where each
+ // file's own timeline starts, for one FCPXML export. `<mediaDir>/<name>` is
+ // only right for managed copies: an in-place reference (desktop file/folder/
+ // watched-folder/agent-path import) has no file there, just
+ // .references/<name>.json pointing at the user's original.
+-import { existsSync, readdirSync } from 'node:fs';
+-import { join } from 'node:path';
++import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
++import { createHash } from 'node:crypto';
++import { extname, join } from 'node:path';
+ import type {
+   ExportMediaSource,
+   ExportMediaSourceMap,
+   ExportMediaStart,
+ } from '../shared/export-media-sources.ts';
+-import { isSafeUploadName, uploadNameOfSource, uploadReadDirs } from './media-dir.ts';
++import { isSafeUploadName, uploadNameOfSource, uploadReadDirs, uploadDir } from './media-dir.ts';
+ import {
+   MEDIA_REFERENCE_DIRECTORY,
+   recordedMediaReferenceSource,
+@@ -79,7 +81,19 @@ export function resolveExportMediaSource(
+   listing: ReferenceListing = cachedReferenceListing(),
+ ): ExportMediaSource | null {
+   const name = uploadNameOfSource(source);
+-  if (!name) return null;
++  if (!name) {
++    const product = source.startsWith('/') && !source.startsWith('//') ? resolveProductAsset(source) : null;
++    if (!product) return null;
++    // MiniApp bundles run from a temporary directory. NLE links must survive
++    // stopping the app, so retain bundled media in the persistent media store.
++    const hash = createHash('sha256').update(readFileSync(product)).digest('hex');
++    const directory = uploadDir();
++    mkdirSync(directory, { recursive: true });
++    const retained = join(directory, `bundled-${hash}${extname(product)}`);
++    try { copyFileSync(product, retained, constants.COPYFILE_EXCL); }
++    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
++    return { path: retained };
++  }
+   for (const directory of directories) {
+     const local = join(directory, name);
+     if (existsSync(local)) {
+@@ -173,6 +187,7 @@ export async function resolveExportMediaSources(
+   probe: StartProbe,
+   directories: readonly string[] = uploadReadDirs(),
+ ): Promise<ExportMediaSourceMap> {
++  await ensureProductAssets(sources);
+   const listing = cachedReferenceListing();
+   const startOf = requestStartProbe(probe);
+   const located = [...new Set(sources)].flatMap((source) => {
+diff --git a/server/external-agent/broker.ts b/server/external-agent/broker.ts
+index a4590ca..1c6e90a 100644
+--- a/server/external-agent/broker.ts
++++ b/server/external-agent/broker.ts
+@@ -59,7 +59,7 @@ const MAX_TIMEOUT_MS = 600_000;
+ const queues = new Map<string, QueuedCall[]>();
+ const pending = new Map<string, QueuedCall>();
+ const waiters = new Map<string, Set<() => void>>();
+-const sessionOwnership = new EditSessionOwnershipRegistry();
++const sessionOwnership = new EditSessionOwnershipRegistry(process.env.OPENCHATCUT_MINIAPP === '1');
+ const cancellationQueues = new Map<string, ExternalEditorCancellation[]>();
+ const cancellationWaiters = new Map<string, Set<() => void>>();
+ 
+@@ -269,6 +269,10 @@ function requireCurrentBinding(
+ ): EditorBinding {
+   // Terminal status reads may use the original editor identity after apply
+   // advances the revision; every mutation remains pinned to the exact binding.
++  // MiniApp 连接持有工程引用；草稿版本由编辑器检查，素材导入后的版本变化不是连接失效。
++  const latest = editorBinding(binding.projectId);
++  if (process.env.OPENCHATCUT_MINIAPP === '1' && latest
++    && sameEditorIdentity(latest, binding) && editorBindingMatches(latest)) return latest;
+   const matches = allowRevisionDrift
+     ? editorBindingIdentityMatches(binding)
+     : editorBindingMatches(binding);
+diff --git a/server/external-agent/edit-session-ownership.ts b/server/external-agent/edit-session-ownership.ts
+index 2d5371c..5fa5598 100644
+--- a/server/external-agent/edit-session-ownership.ts
++++ b/server/external-agent/edit-session-ownership.ts
+@@ -36,6 +36,39 @@ function requestedSessionId(call: EditSessionOwnershipCall): string {
+ }
+ 
+ export class EditSessionOwnershipRegistry {
++  private readonly sharedProjectDrafts: boolean;
++  constructor(sharedProjectDrafts = false) { this.sharedProjectDrafts = sharedProjectDrafts; }
++  private readonly revisions = new Map<string, number>();
++  private readonly observed = new Map<string, Map<string, number>>();
++  private readonly activeCalls = new Map<string, string>();
++
++  private observe(ownerId: string, sessionId: string): void {
++    let seen = this.observed.get(ownerId);
++    if (!seen) { seen = new Map(); this.observed.set(ownerId, seen); }
++    seen.set(sessionId, this.revisions.get(sessionId) ?? 0);
++  }
++
++  private reserveSharedCall(call: EditSessionOwnershipCall): void {
++    const id = requestedSessionId(call);
++    if (!id) return;
++    if (this.activeCalls.has(id)) {
++      throw new ExternalEditorCallError('rejected', 'DRAFT_BUSY: another operation is in progress. Wait for it to finish, then read get_edit_session before editing.');
++    }
++    const reading = call.name === 'get_edit_session' || call.name === 'recover_edit_session';
++    if (!reading && this.observed.get(call.ownerId)?.get(id) !== (this.revisions.get(id) ?? 0)) {
++      throw new ExternalEditorCallError('stale', 'DRAFT_CHANGED: read get_edit_session to inspect the current operations and revision before continuing. No changes were applied.');
++    }
++    this.activeCalls.set(id, call.id);
++  }
++
++  private finishSharedCall(call: EditSessionOwnershipCall): void {
++    const id = requestedSessionId(call);
++    if (!id) return;
++    if (this.activeCalls.get(id) === call.id) this.activeCalls.delete(id);
++    if (call.name !== 'get_edit_session') this.revisions.set(id, (this.revisions.get(id) ?? 0) + 1);
++    this.observe(call.ownerId, id);
++  }
++
+   private readonly owners = new Map<string, EditSessionOwner>();
+   private readonly orphans = new Map<string, EditorBinding>();
+   private readonly recoveryClaims = new Map<string, RecoveryClaim>();
+@@ -45,7 +78,7 @@ export class EditSessionOwnershipRegistry {
+     const owner = this.owners.get(editSessionId.trim());
+     return Boolean(
+       owner
+-      && owner.ownerId === ownerId
++      && (this.sharedProjectDrafts || owner.ownerId === ownerId)
+       && sameEditorBinding(owner.binding, binding)
+     );
+   }
+@@ -59,20 +92,28 @@ export class EditSessionOwnershipRegistry {
+     const sessionId = typeof editSessionId === 'string' ? editSessionId.trim() : '';
+     const owner = this.owners.get(sessionId);
+     if (owner
+-      && owner.ownerId === ownerId
+-      && sameEditorIdentity(owner.binding, binding)
+-      && owner.binding.baseRevision === binding.baseRevision) {
++      && (this.sharedProjectDrafts || owner.ownerId === ownerId)
++      && (sameEditorIdentity(owner.binding, binding)
++        || (this.sharedProjectDrafts && owner.binding.projectId === binding.projectId))
++      && (this.sharedProjectDrafts || owner.binding.baseRevision === binding.baseRevision)) {
+       owner.binding = { ...binding };
+       return;
+     }
+     throw new ExternalEditorCallError(
+       'rejected',
+-      'The requested edit session does not belong to this MCP transport and editor binding.',
++      'The requested edit session does not belong to this MCP transport and editor binding. '
++      + (owner && owner.ownerId !== ownerId
++        ? 'EDIT_SESSION_OWNER_ACTIVE: another MCP transport still owns this draft. Do not take over, discard, or retry writes. Continue with the original transport or wait for its explicit disconnect, then call list_edit_sessions.'
++        : 'EDIT_SESSION_RECOVERY_REQUIRED: call target_project with the same project id, then list_edit_sessions. Resume only when orphaned=true and recoveryActions includes resume, using recover_edit_session with action=resume. If stale or resume is unavailable, stop and ask the user; do not discard the draft.')
++      + ' Rebinding the project does not transfer draft ownership. Preserve existing generated media; do not regenerate paid assets.',
+     );
+   }
+ 
+   reserveRecovery(call: EditSessionOwnershipCall): void {
+-    if (call.name !== 'recover_edit_session') return;
++    if (call.name !== 'recover_edit_session') {
++      if (this.sharedProjectDrafts) this.reserveSharedCall(call);
++      return;
++    }
+     const sessionId = requestedSessionId(call);
+     if (!sessionId || !this.orphans.has(sessionId)) {
+       throw new ExternalEditorCallError('rejected', 'Only an orphaned edit session can be recovered.');
+@@ -83,6 +124,7 @@ export class EditSessionOwnershipRegistry {
+         `Edit session ${sessionId} is already being recovered by another MCP transport.`,
+       );
+     }
++    if (this.sharedProjectDrafts) this.reserveSharedCall(call);
+     this.recoveryClaims.set(sessionId, {
+       callId: call.id,
+       ownerId: call.ownerId,
+@@ -91,6 +133,7 @@ export class EditSessionOwnershipRegistry {
+   }
+ 
+   finishApplied(call: EditSessionOwnershipCall, value: unknown): unknown {
++    if (this.sharedProjectDrafts) this.finishSharedCall(call);
+     if (call.name === 'list_edit_sessions') {
+       return this.projectSessionList(call.ownerId, call.binding, value);
+     }
+@@ -128,6 +171,8 @@ export class EditSessionOwnershipRegistry {
+   }
+ 
+   releaseRecovery(call: EditSessionOwnershipCall): void {
++    const activeId = requestedSessionId(call);
++    if (this.activeCalls.get(activeId) === call.id) this.activeCalls.delete(activeId);
+     if (call.name !== 'recover_edit_session') return;
+     const sessionId = requestedSessionId(call);
+     const claim = this.recoveryClaims.get(sessionId);
+@@ -135,6 +180,8 @@ export class EditSessionOwnershipRegistry {
+   }
+ 
+   disconnectOwner(ownerId: string): void {
++    this.observed.delete(ownerId);
++    if (this.sharedProjectDrafts) return;
+     for (const [sessionId, owner] of this.owners) {
+       if (owner.ownerId !== ownerId) continue;
+       this.owners.delete(sessionId);
+@@ -155,6 +202,9 @@ export class EditSessionOwnershipRegistry {
+   }
+ 
+   reset(): void {
++    this.revisions.clear();
++    this.observed.clear();
++    this.activeCalls.clear();
+     this.owners.clear();
+     this.orphans.clear();
+     this.recoveryClaims.clear();
+@@ -162,6 +212,7 @@ export class EditSessionOwnershipRegistry {
+ 
+   private recordOwner(sessionId: string, ownerId: string, binding: EditorBinding): void {
+     this.owners.set(sessionId, { ownerId, binding: { ...binding } });
++    this.observe(ownerId, sessionId);
+     this.orphans.delete(sessionId);
+   }
+ 
+@@ -173,18 +224,25 @@ export class EditSessionOwnershipRegistry {
+       const sessionId = typeof record.editSessionId === 'string' ? record.editSessionId : '';
+       const owner = this.owners.get(sessionId);
+       const active = record.status === 'drafting' || record.status === 'awaiting_review';
++      // 页面刷新会更换 editorInstanceId；当前编辑器已确认读到同一工程、同一版本的草稿。
++      if (this.sharedProjectDrafts && owner && active && record.stale !== true
++        && owner.binding.projectId === binding.projectId
++        && owner.binding.baseRevision === binding.baseRevision
++        && record.baseRevision === binding.baseRevision) owner.binding = { ...binding };
+       const orphaned = active && (this.orphans.has(sessionId) || !owner);
+       if (orphaned && !this.orphans.has(sessionId)) this.orphans.set(sessionId, { ...binding });
+       const recoveryPending = this.recoveryClaims.has(sessionId);
++      if (this.sharedProjectDrafts) this.observe(ownerId, sessionId);
+       return {
+         ...record,
++        ...(this.sharedProjectDrafts ? { access: 'shared-project', draftRevision: this.revisions.get(sessionId) ?? 0 } : {}),
+         ownerOnline: Boolean(owner),
+         orphaned,
+         recoveryPending,
+         recoveryActions: orphaned && !recoveryPending
+           ? (record.stale === true ? ['discard'] : ['resume', 'discard'])
+           : [],
+-        ownedByCurrentTransport: owner?.ownerId === ownerId
++        ownedByCurrentTransport: owner !== undefined && (this.sharedProjectDrafts || owner?.ownerId === ownerId)
+           && sameEditorBinding(owner.binding, binding),
+       };
+     });
+diff --git a/server/external-agent/jianying-export.ts b/server/external-agent/jianying-export.ts
+index fa9fe36..410b075 100644
+--- a/server/external-agent/jianying-export.ts
++++ b/server/external-agent/jianying-export.ts
+@@ -1,3 +1,4 @@
++import { resolveProductAsset, ensureProductAssets } from '../product-assets';
+ // JianYing / CapCut draft export via the open-source capcut-cli (npm, MIT).
+ // The browser-side agent tool collects the timeline (clip sources, timing,
+ // captions) and POSTs it here; this module resolves media URLs to local files
+@@ -137,6 +138,8 @@ export function resolveMediaPath(
+     }
+     return undefined;
+   }
++  const product = clean.startsWith('/') && !clean.startsWith('//') ? resolveProductAsset(clean) : null;
++  if (product) return product;
+   if (existsSync(clean)) return clean;
+   return undefined;
+ }
+@@ -346,6 +349,7 @@ export async function exportJianyingDraft(
+   raw: Partial<JianyingExportRequest>,
+   options: JianyingExportOptions = {},
+ ): Promise<JianyingExportResult> {
++  await ensureProductAssets(raw);
+   const run = options.run ?? runCapcut;
+   const probe = options.probeDuration ?? probeMediaMicros;
+   const { platform = process.platform, env = process.env, home = homedir() } = options;
+diff --git a/server/external-agent/mcp-instructions.ts b/server/external-agent/mcp-instructions.ts
+index 8f850cc..fe235ca 100644
+--- a/server/external-agent/mcp-instructions.ts
++++ b/server/external-agent/mcp-instructions.ts
+@@ -10,11 +10,13 @@ export function mcpServerInstructions(
+     'If a browser editor refresh makes the binding stale, keep this MCP transport and call target_project with the same project id. The old draft is not automatically adopted; recover it explicitly or start a new edit session.',
+     'The target response and openchatcut_status report bindingMode. Offline bindings expose only server-direct data tools and require approvalMode="auto".',
+     exposureMode === 'progressive'
+-      ? 'This client negotiated progressive tool exposure. Call ToolSearch for list_edit_sessions and recover_edit_session before browser session recovery; tools/list_changed is sent when the visible set grows.'
++      ? 'This client negotiated progressive tool exposure. list_edit_sessions and recover_edit_session are baseline recovery tools. Call the OpenChatCut ToolSearch for other tools; tools/list_changed is sent when the visible set grows.'
+       : 'This client uses the compatibility tool surface. All currently available tools are listed.',
+     'Call begin_edit_session first, pass editSessionId to every editor tool, then call review_edit_session. Do not claim success until status is applied.',
+     'Manual approval and visual/canvas inspection, generation, upload, network, preset, render, and export tools require opening the returned editorUrl.',
+     'Offline review atomically commits the complete draft. A browser takeover or stored-project change makes the session stale with no partial edit.',
+-    'If the original MCP owner disconnects, call list_edit_sessions and recover_edit_session. Terminal stale, cancelled, or failed sessions cannot be reused; start a new edit session.',
++    process.env.OPENCHATCUT_MINIAPP === '1'
++      ? 'Drafts belong to the project and can be continued by any conversation. After target_project, call list_edit_sessions and get_edit_session to inspect existing changes. Reuse the drafting editSessionId instead of discarding or regenerating. On DRAFT_CHANGED or DRAFT_BUSY, read the latest draft after the active operation finishes, compare its operations with your plan, and retry only if compatible. Project revision conflicts must be reviewed; never force overwrite or discard another change. Awaiting-review drafts remain frozen until user approval or rejection.'
++      : 'After a new turn, questionnaire continuation, or reconnect, never assume a remembered editSessionId belongs to this transport. Call list_edit_sessions after target_project. Continue an owned draft; resume an orphan only when recoveryActions includes resume, with recover_edit_session action=resume. If ownerOnline is true and ownedByCurrentTransport is false, stop writes and continue on the original transport or wait for its explicit disconnect. Rebinding cannot transfer ownership. If stale or resume is unavailable, report the blocker and ask the user before replacing or discarding any draft. Preserve already generated media and reuse its existing file or URL; never regenerate paid assets to work around a binding error.',
+   ].join(' ');
+ }
+diff --git a/server/external-agent/mcp-tool-catalog.ts b/server/external-agent/mcp-tool-catalog.ts
+index 050c5a6..7886e10 100644
+--- a/server/external-agent/mcp-tool-catalog.ts
++++ b/server/external-agent/mcp-tool-catalog.ts
+@@ -1,4 +1,8 @@
+ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
++import { EXTERNAL_SESSION_TOOLS, externalDraftSchemas, externalGlobalReadSchemas, externalRealSchemas } from '../../src/agent/external-tool-shape.js';
++import { isExternalDraftTool } from '../../src/agent/external-tool-policy.js';
++import type { AgentToolSchema } from '../../src/agent/tool-schema.js';
++import catalogData from '../../assets/agent/openchatcut-tool-schemas.json';
+ import { connectedProjectIds, editorStatuses, registeredTools } from './broker.ts';
+ import { bindingMode } from './mcp-binding.ts';
+ import { MCP_CONTROL_TOOL_NAMES, MCP_CONTROL_TOOLS } from './mcp-controls.ts';
+@@ -20,17 +24,43 @@ const PROJECT_SELECTOR = {
+   description: 'OpenChatCut project id. It must match the project bound to this MCP transport session.',
+ };
+ 
++// MiniMax Code 已提供网页工具。避免重复公布它们，使编辑工具目录保持在
++// 宿主每个 MCP server 的 128 项限制内，防止发现失败导致连接反复重建。
++const HOST_WEB_TOOLS = new Set([
++  'web_browser', 'web_search', 'web_map', 'web_crawl', 'web_batch_scrape',
++]);
++
++const miniAppSchemas = catalogData.edit as AgentToolSchema[];
++const MINIAPP_TOOLS = [
++  ...externalGlobalReadSchemas(miniAppSchemas), ...EXTERNAL_SESSION_TOOLS,
++  ...externalDraftSchemas(miniAppSchemas.filter(tool => isExternalDraftTool(tool.name))),
++  ...externalRealSchemas(miniAppSchemas),
++];
++
+ export function fullMcpTools(session?: McpSession): Tool[] {
+   const browserTools = registeredTools();
+   const hasConnectedBrowser = connectedProjectIds().length > 0;
+-  const catalog = session?.offline
++  const selectedCatalog = session?.offline
+     ? offlineExternalToolSchemas()
++    // 宿主会缓存首次发现的目录；MiniApp 打开工程前也必须公布浏览器能力。
++    // 这里只公布 schema，实际执行仍经过工程绑定、编辑器在线和草稿校验。
++    : process.env.OPENCHATCUT_MINIAPP === '1'
++      ? MINIAPP_TOOLS
+     : hasConnectedBrowser || session?.binding
+       ? browserTools
+       : offlineExternalToolSchemas();
+-  const editorTools = catalog.filter((tool) => MCP_CONTROL_TOOL_NAMES[tool.name] !== true).map((tool): Tool => ({
++  // 宿主可能在浏览器桥接注册前缓存 tools/list。未绑定时也公布恢复入口，
++  // 调用仍必须通过正常工程绑定与 orphan 校验；离线绑定不宣称支持恢复。
++  const catalog = session?.offline ? selectedCatalog : [...new Map([
++    ...selectedCatalog,
++    ...EXTERNAL_SESSION_TOOLS.filter(tool => tool.name === 'list_edit_sessions' || tool.name === 'recover_edit_session'),
++  ].map(tool => [tool.name, tool])).values()];
++  const editorTools = catalog.filter((tool) => MCP_CONTROL_TOOL_NAMES[tool.name] !== true
++    && !(process.env.OPENCHATCUT_MINIAPP === '1' && HOST_WEB_TOOLS.has(tool.name))).map((tool): Tool => ({
+     name: tool.name,
+-    description: tool.description,
++    description: process.env.OPENCHATCUT_MINIAPP === '1' && isExternalDraftTool(tool.name)
++      ? `${tool.description ?? tool.name} Only available while status=drafting. After review_edit_session, use get_edit_session for status and the editor review card for preview; do not call draft read/edit tools or replace the pending proposal.`
++      : tool.description,
+     annotations: tool.annotations,
+     inputSchema: {
+       ...tool.input_schema,
+diff --git a/server/external-agent/mcp-tool-exposure.ts b/server/external-agent/mcp-tool-exposure.ts
+index 092b11d..7524ca9 100644
+--- a/server/external-agent/mcp-tool-exposure.ts
++++ b/server/external-agent/mcp-tool-exposure.ts
+@@ -41,6 +41,8 @@ const PROGRESSIVE_BOOT_NAMES = [
+   'read_timeline',
+   'read_agent_artifact',
+   'begin_edit_session',
++  'list_edit_sessions',
++  'recover_edit_session',
+   'get_edit_session',
+   'review_edit_session',
+   'discard_edit_session',
+diff --git a/server/external-agent/mcp.ts b/server/external-agent/mcp.ts
+index 3df7a17..113c879 100644
+--- a/server/external-agent/mcp.ts
++++ b/server/external-agent/mcp.ts
+@@ -283,11 +283,12 @@ export function pruneMcpSessions(now = Date.now()): void {
+   }
+ }
+ 
+-setInterval(() => {
++const sessionGc = setInterval(() => {
+   try { pruneMcpSessions(); } catch { /* interval must not die */ }
+-}, 10 * 60 * 1000).unref?.();
++}, 10 * 60 * 1000);
++sessionGc.unref?.();
+ 
+-onRegisteredToolsChanged(() => {
++const unsubscribeTools = onRegisteredToolsChanged(() => {
+   for (const session of sessions.values()) {
+     if (session.server && !session.offline) {
+       void sendMcpToolListChangedIfChanged(session, mcpTools(session));
+@@ -398,6 +399,19 @@ export function setMcpSessionLastUsedForTest(id: string, lastUsed: number): void
+   if (session) session.lastUsed = lastUsed;
+ }
+ 
++export async function disposeMcpSessions(): Promise<void> {
++  clearInterval(sessionGc);
++  unsubscribeTools();
++  const pending = [...sessions.values()];
++  sessions.clear();
++  await Promise.all(pending.map(async session => {
++    if (session.id) cancelEditorCallsForOwner(session.id, 'cancelled', 'Editor is stopping');
++    await session.offline?.dispose();
++    if (session.server) await session.server.close();
++    else await session.transport.close();
++  }));
++}
++
+ export async function resetMcpSessionsForTest(): Promise<void> {
+   const disposals = [...sessions.values()].flatMap((session) =>
+     session.offline ? [session.offline.dispose()] : []);
+diff --git a/server/media-binaries.ts b/server/media-binaries.ts
+index 035433a..70a4a36 100644
+--- a/server/media-binaries.ts
++++ b/server/media-binaries.ts
+@@ -3,8 +3,8 @@ import { existsSync } from 'node:fs';
+ import { join, sep } from 'node:path';
+ 
+ const require = createRequire(import.meta.url);
+-const ffmpegStatic = require('ffmpeg-static') as string | null;
+-const ffprobeInstaller = require('@ffprobe-installer/ffprobe') as { path?: string };
++const ffmpegStatic = process.env.OPENCHATCUT_FFMPEG ? null : require('ffmpeg-static') as string | null;
++const ffprobeInstaller = process.env.OPENCHATCUT_FFPROBE ? {} : require('@ffprobe-installer/ffprobe') as { path?: string };
+ 
+ const ASAR_SEGMENT = `${sep}app.asar${sep}`;
+ const UNPACKED_SEGMENT = `${sep}app.asar.unpacked${sep}`;
+diff --git a/server/media-process.ts b/server/media-process.ts
+index 868587f..97ba477 100644
+--- a/server/media-process.ts
++++ b/server/media-process.ts
+@@ -10,6 +10,19 @@ import {
+ } from 'node:child_process';
+ import { availableParallelism, constants, setPriority } from 'node:os';
+ 
++const mediaChildren = new Set<ChildProcess>();
++let mediaStopping = false;
++export async function disposeMediaProcesses(): Promise<void> {
++  mediaStopping = true;
++  await Promise.all([...mediaChildren].map(child => new Promise<void>(resolve => {
++    if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
++    const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
++    child.once('close', () => { clearTimeout(timer); resolve(); });
++    child.once('error', () => { clearTimeout(timer); resolve(); });
++    child.kill('SIGTERM');
++  })));
++}
++
+ /** Cap ffmpeg worker threads so a single encode cannot saturate the whole
+  * machine and starve the editor or other Node/Electron applications. */
+ export function ffmpegThreadCount(cores: number = availableParallelism()): number {
+@@ -56,7 +69,11 @@ export function spawnMediaProcess(
+   args: string[],
+   options: SpawnOptions = {},
+ ): ChildProcess {
++  if (mediaStopping) throw new Error('Media service is stopping');
+   const child = spawn(command, args, options);
++  mediaChildren.add(child);
++  child.once('close', () => mediaChildren.delete(child));
++  child.once('error', () => mediaChildren.delete(child));
+   if (child.pid !== undefined) {
+     try {
+       setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL);
+diff --git a/server/plugins/export-media-plan.ts b/server/plugins/export-media-plan.ts
+index e83dd8a..2cd34f9 100644
+--- a/server/plugins/export-media-plan.ts
++++ b/server/plugins/export-media-plan.ts
+@@ -21,7 +21,7 @@ import {
+   uploadDir,
+   type ResolvedUploadFile,
+ } from '../media-dir.ts';
+-import { resolveProductAsset } from '../product-assets.ts';
++import { resolveProductAsset, ensureProductAssets } from '../product-assets.ts';
+ import { safePublicFetch } from '../safe-public-fetch.ts';
+ import { materializeExportReferences } from './export-reference-materialization.ts';
+ 
+@@ -386,6 +386,7 @@ export async function materializeServerExportMedia<Value>(
+   options: ServerExportMediaOptions = {},
+ ): Promise<MaterializedServerExportMedia<Value>> {
+   options.signal?.throwIfAborted();
++  await ensureProductAssets(snapshot);
+   const plan = collectExportMediaPlan(snapshot);
+   options.signal?.throwIfAborted();
+   if (plan.issues.length > 0) throw preflightFailure(plan.issues);
+diff --git a/server/plugins/export-runtime.ts b/server/plugins/export-runtime.ts
+index 5dd4820..ceeacaf 100644
+--- a/server/plugins/export-runtime.ts
++++ b/server/plugins/export-runtime.ts
+@@ -194,6 +194,15 @@ export function trackExportJobController(jobId: string, controller: AbortControl
+   exportJobControllers.set(jobId, controller);
+ }
+ 
++export async function disposeExportJobs(): Promise<void> {
++  for (const controller of exportJobControllers.values()) controller.abort();
++  const deadline = Date.now() + EXPORT_CANCEL_TIMEOUT_MS;
++  while (exportJobControllers.size && Date.now() < deadline) {
++    await new Promise(resolve => setTimeout(resolve, 50));
++  }
++  if (exportJobControllers.size) throw new Error('Export cancellation timed out');
++}
++
+ export function forgetExportJobController(jobId: string): void {
+   exportJobControllers.delete(jobId);
+ }
+diff --git a/server/plugins/extension-store.ts b/server/plugins/extension-store.ts
+index b11de1e..e98e6fb 100644
+--- a/server/plugins/extension-store.ts
++++ b/server/plugins/extension-store.ts
+@@ -5,7 +5,7 @@ import { join } from 'node:path';
+ import type { IncomingMessage, ServerResponse } from 'node:http';
+ import type { Plugin } from 'vite';
+ 
+-const DEFAULT_ROOT_DIR = join(homedir(), '.openchatcut', 'plugins');
++const DEFAULT_ROOT_DIR = join(process.env.OPENCHATCUT_DATA_DIR || join(homedir(), '.openchatcut'), 'plugins');
+ const FORMAT = 'openchatcut-plugin@1';
+ const ID_RE = /^[a-z0-9][a-z0-9-]{1,39}$/;
+ const MAX_BODY_BYTES = 64 * 1024 * 1024;
+diff --git a/server/plugins/generation-job-store.ts b/server/plugins/generation-job-store.ts
+index 80a87e0..39721f3 100644
+--- a/server/plugins/generation-job-store.ts
++++ b/server/plugins/generation-job-store.ts
+@@ -28,6 +28,11 @@ const retentionGuards = new Map<string, GenerationRetentionGuard>();
+ const MAX_JOB_AGE_MS = 60 * 60_000;
+ let persistenceQueue: Promise<void> = Promise.resolve();
+ 
++export async function disposeGenerationJobStore(): Promise<void> {
++  for (const job of jobs.values()) clearTimeout(job.expiryTimer);
++  await persistenceQueue;
++}
++
+ export function resumerKey(toolName?: string, provider?: string): string {
+   return `${toolName ?? ''}:${provider ?? ''}`;
+ }
+diff --git a/server/plugins/probe-media.ts b/server/plugins/probe-media.ts
+index 93cc105..446e53d 100644
+--- a/server/plugins/probe-media.ts
++++ b/server/plugins/probe-media.ts
+@@ -18,7 +18,7 @@ import type { Plugin } from 'vite';
+ import { ffprobeBin } from '../media-binaries.ts';
+ import { isSafeUploadName, resolveUploadFile } from '../media-dir.ts';
+ import { spawnMediaProcess } from '../media-process.ts';
+-import { resolveProductAsset } from '../product-assets.ts';
++import { resolveProductAsset, ensureProductAssets } from '../product-assets.ts';
+ import { safePublicFetch } from '../safe-public-fetch.ts';
+ import { readJsonBody, sendJson } from './export-http.ts';
+ 
+@@ -127,6 +127,7 @@ export function probeMediaPlugin(): Plugin {
+         }
+         try {
+           const body = (await readJsonBody(req)) as { source?: unknown };
++          await ensureProductAssets(body?.source);
+           const source = resolveProbeSource(String(body?.source ?? ''));
+           if ('error' in source) {
+             sendJson(res, 400, { error: source.error });
+diff --git a/server/product-assets.ts b/server/product-assets.ts
+index 266b375..550c1b7 100644
+--- a/server/product-assets.ts
++++ b/server/product-assets.ts
+@@ -1,6 +1,7 @@
+ // Product-bundled static files live under repo `assets/` (fonts, SFX, thumbs, …).
+ // User/runtime media stays under `public/media/uploads/` (or MEDIA_DIR).
+ // URL paths stay root-absolute (`/fonts/...`, `/thumbnails/...`) — only the disk layout changed.
++import { findLocalFont } from '../src/fonts/localFonts';
+ import { cpSync, createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
+ import type { IncomingMessage, ServerResponse } from 'node:http';
+ import { resolve, sep } from 'node:path';
+@@ -20,6 +21,30 @@ export function registerProductAssetRoot(dir: string): void {
+   if (root !== PRODUCT_ASSETS_DIR && !extraRoots.includes(root)) extraRoots.push(root);
+ }
+ 
++// MiniApp 可选资源服务；普通桌面/Web 构建维持原行为。
++let resourceLoader: ((path: string) => Promise<string | null>) | undefined;
++export function registerProductAssetLoader(loader: typeof resourceLoader): void { resourceLoader = loader; }
++export async function ensureProductAssets(value: unknown): Promise<void> {
++  if (!resourceLoader) return;
++  const paths = new Set<string>();
++  function visit(item: unknown): void {
++    if (typeof item === 'string') {
++      if (item.startsWith('/') && !item.startsWith('//')) paths.add(item);
++      for (const family of item.split(',')) {
++        const font = findLocalFont(family.trim().replace(/^['"]|['"]$/g, ''));
++        for (const path of Object.values(font?.files ?? {})) paths.add(path);
++      }
++    } else if (Array.isArray(item)) item.forEach(visit);
++    else if (item && typeof item === 'object') Object.values(item).forEach(visit);
++  }
++  visit(value);
++  // 限制并发，避免导出首次下载占满连接。
++  const pending = [...paths];
++  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
++    while (pending.length) await resourceLoader!(pending.shift()!);
++  }));
++}
++
+ export function productAssetRoots(): readonly string[] {
+   return [PRODUCT_ASSETS_DIR, ...extraRoots];
+ }
+@@ -112,8 +137,12 @@ export function copyProductAssetsTo(destRoot: string): void {
+  * `public/` only holds user runtime files (`media/uploads`).
+  */
+ export function productAssetsPlugin(): Plugin {
++  let outputDir: string | undefined;
+   return {
+     name: 'openchatcut-product-assets',
++    configResolved(config) {
++      outputDir = resolve(config.root, config.build.outDir);
++    },
+     configureServer(server) {
+       server.middlewares.use(async (req, res, next) => {
+         try {
+@@ -152,9 +181,8 @@ export function productAssetsPlugin(): Plugin {
+       });
+     },
+     closeBundle() {
+-      const dist = resolve(process.cwd(), 'dist');
+-      if (!existsSync(dist)) return;
+-      copyProductAssetsTo(dist);
++      if (!outputDir || !existsSync(outputDir)) return;
++      copyProductAssetsTo(outputDir);
+     },
+   };
+ }
+diff --git a/server/skills-files.ts b/server/skills-files.ts
+index 8310c9a..f0168ef 100644
+--- a/server/skills-files.ts
++++ b/server/skills-files.ts
+@@ -16,7 +16,7 @@ const SAFE_SLUG = /^[A-Za-z0-9_-]{1,120}$/;
+ 
+ /** Override for tests and unusual installs; defaults to ~/.openchatcut/skills. */
+ export function skillFilesRoot(): string {
+-  return getKey('OPENCHATCUT_SKILLS_DIR') || join(homedir(), '.openchatcut', 'skills');
++  return getKey('OPENCHATCUT_SKILLS_DIR') || join(process.env.OPENCHATCUT_DATA_DIR || join(homedir(), '.openchatcut'), 'skills');
+ }
+ 
+ export function skillDirFor(root: string, slug: string): string | null {
+diff --git a/server/storage/sqlite-store.ts b/server/storage/sqlite-store.ts
+index 5574603..3ecf2ee 100644
+--- a/server/storage/sqlite-store.ts
++++ b/server/storage/sqlite-store.ts
+@@ -84,8 +84,10 @@ function requireDatabase(): DatabaseSync {
+   return database;
+ }
+ 
+-/** Close the connection and reset process state (verifier/profile isolation). */
+-export function resetSqliteStoreForTests(): void {
++export function resetSqliteStoreForTests(): void { closeSqliteStore(); }
++
++/** 停止业务任务后关闭数据库连接。 */
++export function closeSqliteStore(): void {
+   database?.close();
+   database = null;
+   databaseHadKvTableAtOpen = false;
+diff --git a/src/agent/external-bridge-runtime.ts b/src/agent/external-bridge-runtime.ts
+index e421e6b..de88860 100644
+--- a/src/agent/external-bridge-runtime.ts
++++ b/src/agent/external-bridge-runtime.ts
+@@ -1,7 +1,7 @@
+ import type { AgentContext } from './context';
+ import type { ProjectDoc } from '../editor/types';
+ import {
+-  createExternalEditSession, ExternalEditSessionOutcomeError, finishExternalEditSession,
++  adoptImportedAssets, createExternalEditSession, ExternalEditSessionOutcomeError, finishExternalEditSession,
+   revisionOf, reviewExternalEditSession, type ExternalEditSession,
+   type ExternalEditSessionTerminalStatus,
+ } from './external-edit-session';
+@@ -169,6 +169,9 @@ export class ExternalBridgeRuntime {
+         `Edit session ${session.id} is ${session.status}; real-project tools require drafting status.`,
+       );
+     }
++    if (session.baseRevision !== revisionOf(this.getContext().getDoc())) {
++      throw new ExternalEditSessionOutcomeError('stale', 'The project changed since this draft began. Read the project and draft before continuing.');
++    }
+     const run = this.requireRun(session.id);
+     const operationId = typeof args.operationId === 'string' ? args.operationId : undefined;
+     const approved = await this.approvalGate.consume({
+@@ -179,16 +182,31 @@ export class ExternalBridgeRuntime {
+       // client explicitly opted into unapproved real-project execution.
+       if (session.approvalMode === 'auto') {
+         const invocation = await run.requested(name, args);
+-        return run.executeApprovedTool(invocation, args, this.getContext(), signal);
++        return this.executeRealTool(session, run, invocation, args, signal);
+       }
+       return this.requestRealToolApproval(session, run, name, args);
+     }
+-    return run.executeApprovedTool(
+-      invocationFromApproval(approved),
+-      args,
+-      this.getContext(),
+-      signal,
+-    );
++    return this.executeRealTool(session, run, invocationFromApproval(approved), args, signal);
++  }
++
++  private async executeRealTool(
++    session: ExternalEditSession,
++    run: ExternalSessionRunLedger,
++    invocation: Parameters<ExternalSessionRunLedger['executeApprovedTool']>[0],
++    args: Record<string, unknown>,
++    signal?: AbortSignal,
++  ): Promise<unknown> {
++    const wasCurrent = session.baseRevision === revisionOf(this.getContext().getDoc());
++    const result = await run.executeApprovedTool(invocation, args, this.getContext(), signal);
++    if (wasCurrent) {
++      const updated = adoptImportedAssets(session, this.getContext().getDoc());
++      if (updated !== session) {
++        await this.persistence.saveExternalProposal(this.projectId,
++          storedExternalSession(updated, 'drafting', undefined, run.runId));
++        this.sessions.set(session.id, updated);
++      }
++    }
++    return result;
+   }
+ 
+   private async requestRealToolApproval(
+diff --git a/src/agent/external-bridge-session.ts b/src/agent/external-bridge-session.ts
+index bfc2a4c..725d105 100644
+--- a/src/agent/external-bridge-session.ts
++++ b/src/agent/external-bridge-session.ts
+@@ -1,3 +1,4 @@
++import { projectChangeSummary } from './project-change-summary';
+ import {
+   checkpointExternalEditSession,
+   ExternalEditSessionOutcomeError,
+@@ -104,6 +105,9 @@ export function externalSessionInfo(input: {
+     approvalMode: session.approvalMode,
+     baseRevision: session.baseRevision,
+     operationCount: session.operationCount,
++    currentProjectRevision: revisionOf(input.currentDoc),
++    projectChanges: projectChangeSummary(session.baseDoc, input.currentDoc),
++    operations: session.operations.map(({ tool, action, target, impact }) => ({ tool, action, target, impact })),
+     agentRunId: input.runId ?? session.proposal?.agentRunId,
+     appliedOperationCount: session.appliedOperationCount,
+     warning: input.warning,
+diff --git a/src/agent/external-edit-session-core.verify.ts b/src/agent/external-edit-session-core.verify.ts
+index 09a93d1..fa8bebe 100644
+--- a/src/agent/external-edit-session-core.verify.ts
++++ b/src/agent/external-edit-session-core.verify.ts
+@@ -4,6 +4,7 @@ import { activeTimeline } from '../editor/types';
+ import { INITIAL } from '../editor/initial';
+ import { docFromTimeline } from '../persist/projectStore';
+ import {
++  adoptImportedAssets,
+   captureExternalToolActions,
+   createExternalEditSession,
+   finishExternalEditSession,
+@@ -62,6 +63,16 @@ assert.equal(activeTimeline(base).width, 1920, 'live/base project must remain un
+ assert.equal(staged.draft!.getState().width, 1080);
+ assert.equal(staged.operations.length, 1);
+ 
++const imported = { ...base, assets: [...base.assets, { id: 'new-import', kind: 'image', name: 'Generated', src: '/media/uploads/generated.jpg', durationInFrames: 90 } as typeof base.assets[number]] };
++const afterImport = adoptImportedAssets(staged, imported);
++assert.equal(isExternalEditSessionStale(afterImport, imported), false);
++assert.equal(afterImport.draft!.getState().width, 1080, 'keep staged edits after import');
++assert.equal(afterImport.operations.length, staged.operations.length);
++assert.ok(afterImport.draft!.getDoc().assets.some(asset => asset.id === 'new-import'));
++const externallyEdited = replayActions(imported, staged.operations.flatMap(operation => operation.actions));
++assert.equal(adoptImportedAssets(staged, externallyEdited), staged, 'do not hide external timeline edits');
++assert.equal(adoptImportedAssets(staged, { ...base, assets: [] }), staged, 'do not hide removed assets');
++
+ export const reviewed = reviewExternalEditSession(staged, 'Create a vertical cut');
+ assert.equal(reviewed.status, 'awaiting_review');
+ assert.equal(reviewed.draft, null);
+diff --git a/src/agent/external-edit-session.ts b/src/agent/external-edit-session.ts
+index 210fcb9..88bba06 100644
+--- a/src/agent/external-edit-session.ts
++++ b/src/agent/external-edit-session.ts
+@@ -1,6 +1,6 @@
+ import type { AgentContext } from './context';
+ import { buildOperation, buildProposal, type Operation, type Proposal } from './proposal';
+-import { makeDraft, type DraftEngine } from '../editor/store';
++import { makeDraft, replayActions, type DraftEngine } from '../editor/store';
+ import type { ProjectDoc } from '../editor/types';
+ 
+ export type ExternalEditSessionTerminalStatus =
+@@ -33,6 +33,7 @@ export interface ExternalEditSession {
+   appliedOperationCount?: number;
+ }
+ export interface ExternalDraftCheckpoint {
++  baseDoc?: ProjectDoc;
+   version: 1;
+   sessionId: string;
+   clientName: string;
+@@ -92,6 +93,20 @@ export function isExternalEditSessionStale(session: ExternalEditSession, liveDoc
+   return session.baseRevision !== revisionOf(liveDoc);
+ }
+ 
++/** 已确认的导入只增加素材时，保留草稿操作并更新基线；其他工程变化仍按冲突处理。 */
++export function adoptImportedAssets(session: ExternalEditSession, current: ProjectDoc): ExternalEditSession {
++  if (session.status !== 'drafting' || !session.draft) return session;
++  const before = session.baseDoc;
++  if (canonicalProjectJson({ ...current, assets: before.assets }) !== canonicalProjectJson(before)) return session;
++  if (current.assets.length <= before.assets.length) return session;
++  const oldIds = new Set(before.assets.map(asset => asset.id));
++  if (before.assets.some(asset => JSON.stringify(current.assets.find(item => item.id === asset.id)) !== JSON.stringify(asset))) return session;
++  const draftIds = new Set(session.draft.getDoc().assets.map(asset => asset.id));
++  if (current.assets.some(asset => !oldIds.has(asset.id) && draftIds.has(asset.id))) return session;
++  const draft = makeDraft(replayActions(current, session.operations.flatMap(operation => operation.actions)));
++  return { ...session, baseDoc: current, baseRevision: revisionOf(current), draft, updatedAt: Date.now() };
++}
++
+ export function createExternalEditSession(
+   baseDoc: ProjectDoc,
+   clientName?: unknown,
+@@ -125,6 +140,7 @@ export function checkpointExternalEditSession(
+     clientName: session.clientName,
+     approvalMode: session.approvalMode,
+     baseRevision: session.baseRevision,
++    baseDoc: session.baseDoc,
+     draftDoc: session.draft.getDoc(),
+     operations: session.operations,
+     createdAt: session.createdAt,
+@@ -142,7 +158,7 @@ export function restoreDraftingExternalEditSession(
+     approvalMode: normalizedApprovalMode(checkpoint.approvalMode),
+     status: 'drafting',
+     baseRevision: checkpoint.baseRevision,
+-    baseDoc,
++    baseDoc: checkpoint.baseDoc ?? baseDoc,
+     draft: makeDraft(checkpoint.draftDoc),
+     operations: checkpoint.operations,
+     operationCount: checkpoint.operations.length,
+diff --git a/src/agent/tools/frames-tool.ts b/src/agent/tools/frames-tool.ts
+index 1a6edc4..9e03012 100644
+--- a/src/agent/tools/frames-tool.ts
++++ b/src/agent/tools/frames-tool.ts
+@@ -235,6 +235,11 @@ async function renderStills(
+   let prepared: Awaited<ReturnType<typeof prepareBrowserRenderSnapshots>> | undefined;
+   try {
+     prepared = await prepareBrowserRenderSnapshots({ state, project, timelineId });
++    if (import.meta.env.VITE_MINIAPP_HOST_AGENT) {
++      const { renderMiniAppStills } = await import('./miniapp-stills');
++      const images = await renderMiniAppStills(prepared.state, frames, prepared.project, timelineId);
++      return packImages(images, undefined, note, { renderedBy: 'browser-remotion' });
++    }
+     const res = await fetch('/render-still', {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+diff --git a/src/app/appShell.ts b/src/app/appShell.ts
+index 04748a9..f6cf195 100644
+--- a/src/app/appShell.ts
++++ b/src/app/appShell.ts
+@@ -38,7 +38,9 @@ const emptyState = (): TimelineState => ({
+ 
+ export const emptyProjectDoc = (): ProjectDoc => docFromTimeline(emptyState());
+ // Keep the sample timeline out of established users' startup bundle; it is needed only on first run.
+-const seedDoc = async (): Promise<ProjectDoc> => docFromTimeline((await import('../editor/initial')).INITIAL);
++const seedDoc = async (): Promise<ProjectDoc> => import.meta.env.VITE_MINIAPP_HOST_AGENT
++  ? (await import('./miniAppSample')).miniAppSampleDoc()
++  : docFromTimeline((await import('../editor/initial')).INITIAL);
+ 
+ function parseHash(): AppRoute {
+   const match = window.location.hash.match(/^#\/editor\/(.+)$/);
+diff --git a/src/app/useDashboardActions.ts b/src/app/useDashboardActions.ts
+index f669ab0..1a1ef00 100644
+--- a/src/app/useDashboardActions.ts
++++ b/src/app/useDashboardActions.ts
+@@ -14,6 +14,7 @@ type Translate = (zh: string, params?: Record<string, string | number>) => strin
+ export interface DashboardActions {
+   onOpen: (id: string) => void;
+   onNew: () => Promise<void>;
++  onSampleCreated: (id: string) => Promise<void>;
+   onRename: (id: string, name: string) => Promise<void>;
+   onDuplicate: (id: string) => Promise<void>;
+   onDelete: (id: string) => Promise<void>;
+@@ -64,6 +65,7 @@ export function useDashboardActions(refresh: () => Promise<void>): DashboardActi
+   const t = useT();
+   return {
+     onOpen: (id) => navigateTo(`#/editor/${id}`),
++    onSampleCreated: async (id) => { await refresh(); navigateTo(`#/editor/${id}`); },
+     onNew: async () => {
+       const project = await createProject(randomProjectName(), emptyProjectDoc());
+       await refresh();
+diff --git a/src/captions/CaptionStyleMenu.tsx b/src/captions/CaptionStyleMenu.tsx
+index f01a9a3..ebab80e 100644
+--- a/src/captions/CaptionStyleMenu.tsx
++++ b/src/captions/CaptionStyleMenu.tsx
+@@ -178,7 +178,8 @@ export function CaptionStyleMenu({ state, commands, trackId, pos, error, onError
+           {t('＋ 保存当前样式...')}
+         </button>
+       )}
+-      <div className="cc-caption-translate-wrap">
++      {import.meta.env.VITE_MINIAPP_HOST_AGENT && <p role="note">自动翻译请使用 MiniMax 剪辑助手，或导入字幕文件。</p>}
++      <div className="cc-caption-translate-wrap" style={import.meta.env.VITE_MINIAPP_HOST_AGENT ? { display: 'none' } : undefined}>
+         <button type="button" className="cc-caption-translate" disabled={busy} onClick={() => setTranslateOpen(true)} aria-expanded={translateOpen}>
+           <span>{t('文A')}</span><span>{busy ? t('翻译中...') : t('翻译字幕')}</span><span>›</span>
+         </button>
+diff --git a/src/captions/CaptionTrackLane.tsx b/src/captions/CaptionTrackLane.tsx
+index 170926b..3e2c42b 100644
+--- a/src/captions/CaptionTrackLane.tsx
++++ b/src/captions/CaptionTrackLane.tsx
+@@ -339,7 +339,7 @@ export function CaptionTrackLane({
+         </> : <>
+           <button type="button" role="menuitem" onClick={() => void copyCue(menu.selection)}>{t('复制')}</button>
+           <button type="button" role="menuitem" onClick={pasteCue}>{t('粘贴')}</button>
+-          {onTranslateCue && <button type="button" role="menuitem" aria-haspopup="menu"
++          {onTranslateCue && !import.meta.env.VITE_MINIAPP_HOST_AGENT && <button type="button" role="menuitem" aria-haspopup="menu"
+             onClick={() => setTranslationOpen(true)}>{t('翻译')} ›</button>}
+           {(onAddSelectionToChat || onSeedChat) && <button type="button" role="menuitem" onClick={() => {
+             if (onAddSelectionToChat) {
+diff --git a/src/captions/CaptionsControls.tsx b/src/captions/CaptionsControls.tsx
+index d7bea81..7452154 100644
+--- a/src/captions/CaptionsControls.tsx
++++ b/src/captions/CaptionsControls.tsx
+@@ -216,7 +216,8 @@ Variants are generated by Agent's manage_transcript translate. Here you only sel
+                 <p className="cc-cap-hint">
+                   {t('第一行仍是原文（中文口播）。第二行是')}<strong>{t('翻译')}</strong>{t('，请选目标语言（不要选中文）。')}
+                 </p>
+-                <div className="cc-cap-translate-row">
++                {import.meta.env.VITE_MINIAPP_HOST_AGENT && <p role="note">自动翻译请在 MiniMax 剪辑助手中提出要求；也可导入翻译后的字幕文件。</p>}
++                <div className="cc-cap-translate-row" style={import.meta.env.VITE_MINIAPP_HOST_AGENT ? { display: 'none' } : undefined}>
+                   <select
+                     value={translateLang}
+                     disabled={translating}
+diff --git a/src/components/Dashboard.tsx b/src/components/Dashboard.tsx
+index deb20b2..fb4d697 100644
+--- a/src/components/Dashboard.tsx
++++ b/src/components/Dashboard.tsx
+@@ -12,8 +12,8 @@ export function Dashboard(props: DashboardProps) {
+   const model = useDashboardModel(props);
+   const isMacDesktop = window.openChatCutDesktop?.platform === 'darwin';
+   return (
+-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: theme.bg, color: theme.text, fontFamily: 'Geist, system-ui, -apple-system, sans-serif' }}>
+-      <UpstreamUpdateNotice />
++    <div className={import.meta.env.VITE_MINIAPP_HOST_AGENT ? 'miniapp-dashboard' : undefined} style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: theme.bg, color: theme.text, fontFamily: 'Geist, system-ui, -apple-system, sans-serif' }}>
++      {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <UpstreamUpdateNotice />}
+       <header className={`cc-window-titlebar${isMacDesktop ? ' cc-window-titlebar--mac' : ''}`} style={{ position: 'relative', height: 48, flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '0 24px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panel }}>
+         <DesktopWindowControls />
+         <DashboardTitlebarContent model={model} />
+diff --git a/src/components/TopBar.tsx b/src/components/TopBar.tsx
+index 6bc7e8c..1e5c23c 100644
+--- a/src/components/TopBar.tsx
++++ b/src/components/TopBar.tsx
+@@ -1,6 +1,6 @@
+ import { lazy, Suspense, useState, useEffect } from 'react';
+ import { theme } from '../theme';
+-import { Icon } from './icons';
++import { Icon, MiniMaxVideoWordmark } from './icons';
+ import { ExportHistory } from './ExportHistory';
+ import { GenerationActivity } from './GenerationActivity';
+ import { SkinPicker } from './settings/SkinPicker';
+@@ -66,10 +66,10 @@ export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, ex
+       <DesktopWindowControls />
+       {/* home in a rounded chip + a vertical divider */}
+       <button className="cc-tip" data-tip={t('返回工程列表')} aria-label={t('返回工程列表')} onClick={onHome}
+-        style={{ width: 28, height: 28, background: 'none', border: 'none', borderRadius: 4, cursor: onHome ? 'pointer' : 'default', padding: 0, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim }}
++        style={{ width: import.meta.env?.VITE_MINIAPP_HOST_AGENT ? 'auto' : 28, height: 28, background: 'none', border: 'none', borderRadius: 4, cursor: onHome ? 'pointer' : 'default', padding: 0, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim }}
+         onMouseEnter={(e) => { if (onHome) { e.currentTarget.style.color = theme.text; e.currentTarget.style.background = theme.panelAlt; } }}
+         onMouseLeave={(e) => { e.currentTarget.style.color = theme.textDim; e.currentTarget.style.background = 'none'; }}>
+-        <Icon name="home" size={16} />
++        {import.meta.env?.VITE_MINIAPP_HOST_AGENT ? <MiniMaxVideoWordmark /> : <Icon name="home" size={16} />}
+       </button>
+       <span style={{ width: 1, height: 20, background: theme.border, margin: '0 4px' }} />
+ 
+diff --git a/src/components/dashboard/DashboardViews.tsx b/src/components/dashboard/DashboardViews.tsx
+index f2c846a..6cfa0fe 100644
+--- a/src/components/dashboard/DashboardViews.tsx
++++ b/src/components/dashboard/DashboardViews.tsx
+@@ -1,4 +1,6 @@
++import { ProjectCover } from './ProjectCover';
+ import { Suspense, useEffect } from 'react';
++import { MiniAppWelcome } from './MiniAppWelcome';
+ import type { ProjectMeta } from '../../persist/projectStoreCoordinators';
+ import { theme } from '../../theme';
+ import { useT } from '../../i18n/locale';
+@@ -60,7 +62,7 @@ export function DashboardTitlebarContent({ model }: { model: DashboardModel }) {
+   const t = useT();
+   return (
+     <>
+-      <BrandMark size={20} />
++      {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <BrandMark size={20} />}
+       <OpenChatCutWordmark />
+       <span style={{ color: theme.textDim, fontSize: 13 }}>{t('· 我的工程')}</span>
+       <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+@@ -69,7 +71,7 @@ export function DashboardTitlebarContent({ model }: { model: DashboardModel }) {
+         <button onClick={() => model.setDialog('shortcuts', true)} data-tip={t('编辑快捷键')} aria-label={t('编辑快捷键')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="keyboard" size={16} /></button>
+         <LocaleToggle />
+         <SkinPicker />
+-        <button onClick={() => model.setDialog('settings', true)} data-tip={t('设置 · API 密钥')} aria-label={t('设置 · API 密钥')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="sliders" size={16} /></button>
++        <button onClick={() => model.setDialog('settings', true)} data-tip={import.meta.env?.VITE_MINIAPP_HOST_AGENT ? '设置与关于' : t('设置 · API 密钥')} aria-label={import.meta.env?.VITE_MINIAPP_HOST_AGENT ? '设置与关于' : t('设置 · API 密钥')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="sliders" size={16} /></button>
+       </span>
+     </>
+   );
+@@ -78,10 +80,10 @@ export function DashboardTitlebarContent({ model }: { model: DashboardModel }) {
+ function ProjectToolbar({ projects, model }: { projects: ProjectMeta[]; model: DashboardModel }) {
+   const t = useT();
+   return (
+-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
++    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+       <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>{t('工程')}</h1>
+       {model.transfer.note && <span style={{ color: theme.textDim, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.transfer.note}</span>}
+-      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
++      <span style={{ marginLeft: 'auto', display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+         <ProjectSearch value={model.query} onChange={model.setQuery} />
+         <button onClick={() => model.setDialog('cleanup', true)} style={importBtn} title={t('清理所有工程都不引用的上传素材(测试/已删工程残留)')}><Icon name="trash" size={13} /> {t('清理素材')}</button>
+         <button onClick={() => model.transfer.fileRef.current?.click()} disabled={model.transfer.busy} style={importBtn} title={t('导入 .ccproj 工程文件(兼容旧 .ccproj.json)')}><Icon name="upload" size={13} /> {t('导入工程')}</button>
+@@ -142,9 +144,7 @@ function ProjectCard({ project, props, model }: { project: ProjectMeta; props: D
+   return (
+     <div style={card}>
+       <button onClick={() => props.onOpen(project.id)} style={thumb} title={t('打开 {name}', { name: project.name })}>
+-        {model.thumbs[project.id]
+-          ? <img src={model.thumbs[project.id]} alt="" draggable={false} loading="lazy" decoding="async" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+-          : <span style={{ color: theme.borderLight, display: 'inline-flex' }}><Icon name="play" size={26} /></span>}
++        <ProjectCover src={model.thumbs[project.id]} name={project.name} />
+       </button>
+       <div style={{ padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+         <ProjectName project={project} model={model} />
+@@ -179,7 +179,8 @@ export function DashboardContent({ props, model }: { props: DashboardProps; mode
+   return (
+     <main style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+       <div style={{ maxWidth: 1120, margin: '0 auto', padding: '28px 24px 80px' }}>
+-        {model.modelSnapshot.loaded && model.modelSnapshot.choices.length === 0 && <ModelSetupCard onOpen={() => model.setDialog('settings', true)} />}
++        <MiniAppWelcome onSampleCreated={props.onSampleCreated} onNew={props.onNew} onSettings={() => model.setDialog('settings', true)} />
++        {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && model.modelSnapshot.loaded && model.modelSnapshot.choices.length === 0 && <ModelSetupCard onOpen={() => model.setDialog('settings', true)} />}
+         <ProjectToolbar projects={props.projects} model={model} />
+         <ProjectGrid props={props} model={model} />
+       </div>
+diff --git a/src/components/dashboard/useDashboardModel.ts b/src/components/dashboard/useDashboardModel.ts
+index d53aa3b..da01649 100644
+--- a/src/components/dashboard/useDashboardModel.ts
++++ b/src/components/dashboard/useDashboardModel.ts
+@@ -2,12 +2,15 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, ty
+ import { getAgentModelSnapshot, subscribeAgentModels, type AgentModelSnapshot } from '../../agent/model-selection';
+ import { useT } from '../../i18n/locale';
+ import { loadProject, loadProjectThumb, saveProjectThumb } from '../../persist/projectStore';
++import { mediaPosterUrl } from '../../media/previewMedia';
++import type { ProjectDoc } from '../../editor/types';
+ import type { ProjectMeta } from '../../persist/projectStoreCoordinators';
+ 
+ export interface DashboardProps {
+   projects: ProjectMeta[];
+   onOpen: (id: string) => void;
+   onNew: () => void;
++  onSampleCreated?: (id: string) => Promise<void>;
+   onRename: (id: string, name: string) => void;
+   onDuplicate: (id: string) => void;
+   onDelete: (id: string) => Promise<void>;
+@@ -52,7 +55,7 @@ export interface DashboardModel {
+ type Translate = (key: string, params?: Record<string, string | number>) => string;
+ 
+ const THUMB_RENDER_CONCURRENCY = 2;
+-const THUMB_RENDER_VERSION = 1;
++const THUMB_RENDER_VERSION = 2;
+ const thumbKey = (project: ProjectMeta) => project.updatedAt + THUMB_RENDER_VERSION;
+ 
+ export function relativeProjectTime(ms: number, translate: Translate): string {
+@@ -63,23 +66,51 @@ export function relativeProjectTime(ms: number, translate: Translate): string {
+   return translate('{n} 天前', { n: Math.floor(seconds / 86400) });
+ }
+ 
++async function assetPoster(doc: ProjectDoc): Promise<string | null> {
++  // Imported media can represent a project before the first timeline edit.
++  for (const asset of doc.assets.filter(asset => ['image', 'video', 'gif', 'svg'].includes(asset.kind)).slice(0, 4)) {
++    const src = asset.kind === 'video' ? mediaPosterUrl(asset.src) : asset.src;
++    if (!src) continue;
++    try {
++      const response = await fetch(src, { signal: AbortSignal.timeout(10_000) });
++      if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) continue;
++      const blob = await response.blob();
++      const image = await createImageBitmap(blob);
++      try {
++        const canvas = document.createElement('canvas');
++        canvas.width = 480; canvas.height = Math.max(1, Math.round(480 * image.height / image.width));
++        const context = canvas.getContext('2d');
++        if (!context) continue;
++        context.drawImage(image, 0, 0, canvas.width, canvas.height);
++        return canvas.toDataURL('image/jpeg', 0.8);
++      } finally { image.close(); }
++    } catch { /* Try the next usable asset. */ }
++  }
++  return null;
++}
++
+ async function renderProjectPoster(project: ProjectMeta): Promise<string | null> {
+   const doc = await loadProject(project.id);
+-  const timeline = doc?.timelines.find((entry) => entry.id === doc.activeTimelineId) ?? doc?.timelines[0];
+-  if (!timeline?.items?.length) return null;
+-  const posterItem = timeline.items.filter((item) => item.kind !== 'audio')
++  if (!doc) return null;
++  const timeline = doc.timelines.find((entry) => entry.id === doc.activeTimelineId) ?? doc.timelines[0];
++  const posterItem = timeline?.items.filter((item) => item.kind !== 'audio')
+     .sort((left, right) => right.durationInFrames - left.durationInFrames)[0];
+-  if (!posterItem) return null;
+-  const posterFrame = posterItem.startFrame + Math.floor(posterItem.durationInFrames / 2);
+-  const response = await fetch('/render-still', {
+-    method: 'POST',
+-    headers: { 'Content-Type': 'application/json' },
+-    body: JSON.stringify({ state: timeline, frames: [posterFrame], grid: false }),
+-  });
+-  if (!response.ok) return null;
+-  const json = (await response.json()) as { frames?: { base64?: string }[] };
+-  const base64 = json.frames?.[0]?.base64;
+-  return base64 ? `data:image/jpeg;base64,${base64}` : null;
++  if (posterItem) {
++    const posterFrame = posterItem.startFrame + Math.floor(posterItem.durationInFrames / 2);
++    try {
++      const response = await fetch('/render-still', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ project: doc, timelineId: timeline.id, frames: [posterFrame], grid: false }),
++        signal: AbortSignal.timeout(30_000),
++      });
++      if (response.ok) {
++        const json = (await response.json()) as { frames?: { base64?: string }[] };
++        const base64 = json.frames?.[0]?.base64;
++        if (base64) return `data:image/jpeg;base64,${base64}`;
++      }
++    } catch { /* Keep a useful asset cover when rendering is unavailable. */ }
++  }
++  return assetPoster(doc);
+ }
+ 
+ async function hydrateProjectPosters(
+@@ -91,7 +122,7 @@ async function hydrateProjectPosters(
+   const active = projects.filter((project) => !project.deletedAt);
+   const cached = await Promise.all(active.map(async (project) => ({ project, thumb: await loadProjectThumb(project.id) })));
+   if (!isAlive()) return;
+-  setThumbs(Object.fromEntries(cached.filter(({ project, thumb }) => thumb?.key === thumbKey(project))
++  setThumbs(Object.fromEntries(cached.filter(({ thumb }) => !!thumb?.dataUrl)
+     .map(({ project, thumb }) => [project.id, thumb!.dataUrl])));
+   const queue = cached.filter(({ project, thumb }) => thumb?.key !== thumbKey(project)
+     && !rendering.has(`${project.id}@${thumbKey(project)}`));
+@@ -118,10 +149,9 @@ async function hydrateProjectPosters(
+ 
+ function useProjectPosters(projects: ProjectMeta[]): Readonly<Record<string, string>> {
+   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+-  const renderingRef = useRef(new Set<string>());
+   useEffect(() => {
+     let alive = true;
+-    void hydrateProjectPosters(projects, renderingRef.current, setThumbs, () => alive);
++    void hydrateProjectPosters(projects, new Set<string>(), setThumbs, () => alive);
+     return () => { alive = false; };
+   }, [projects]);
+   return thumbs;
+diff --git a/src/components/icons.tsx b/src/components/icons.tsx
+index 0ea0733..8041a5c 100644
+--- a/src/components/icons.tsx
++++ b/src/components/icons.tsx
+@@ -139,8 +139,16 @@ export function BrandMark({ size = 16 }: { size?: number }) {
+   );
+ }
+ 
++/** Mini App product wordmark. */
++export function MiniMaxVideoWordmark() {
++  return <span className="miniapp-brand" role="img" aria-label="OpenVideo">
++    <span aria-hidden>OpenVideo</span>
++  </span>;
++}
++
+ /** OpenChatCut word mark: OPEN reverse white badge + Chat Cut solid word mark. */
+ export function OpenChatCutWordmark({ width = 126 }: { width?: number }) {
++  if (import.meta.env?.VITE_MINIAPP_HOST_AGENT) return <MiniMaxVideoWordmark />;
+   return (
+     <svg
+       aria-label="OpenChatCut"
+diff --git a/src/components/inspector/InspectorContent.tsx b/src/components/inspector/InspectorContent.tsx
+index 834703c..d20b3f3 100644
+--- a/src/components/inspector/InspectorContent.tsx
++++ b/src/components/inspector/InspectorContent.tsx
+@@ -207,7 +207,7 @@ function AudioTab({ panel, item, playheadLocal }: InspectorContentProps) {
+         remove: panel.onRemoveItemKeyframe,
+         seekLocal: (frame) => panel.onSeek(item.startFrame + frame),
+       }} />
+-      {panel.onIsolateVoice && panel.selectedItems.length === 1 && <><SectionLabel>{t('人声隔离')}</SectionLabel><IsolateVoiceControl item={item} onIsolate={panel.onIsolateVoice} /></>}
++      {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && panel.onIsolateVoice && panel.selectedItems.length === 1 && <><SectionLabel>{t('人声隔离')}</SectionLabel><IsolateVoiceControl item={item} onIsolate={panel.onIsolateVoice} /></>}
+     </>
+   );
+ }
+diff --git a/src/components/timeline/usePlayheadPaint.ts b/src/components/timeline/usePlayheadPaint.ts
+index ad897e9..db8e911 100644
+--- a/src/components/timeline/usePlayheadPaint.ts
++++ b/src/components/timeline/usePlayheadPaint.ts
+@@ -1,7 +1,7 @@
+ // Playhead drawing machine (translated verbatim from Timeline.tsx):frameupdate → rAF frame-drawn playhead line
+ // (GPU transform) timecode text with ~12fps throttling; Player instance watchdog (preview re-hang and re-subscribe monitoring,
+ // Repair the root cause of needle freezing); resume playback at breakpoint (throttle persistence + one-time recovery after project attachment).
+-import { useEffect, useRef, useState, type RefObject } from 'react';
++import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+ import type { CallbackListener, PlayerRef } from '@remotion/player';
+ import { loadTimelineView, saveTimelineView } from '../../persist/sessionPrefs';
+ import { HEADER_W, fmt, fmtClock } from './timelineUtil';
+@@ -331,7 +331,10 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
+       }
+     };
+   }, [playerRef, projectId, timelineId]);
+-  useEffect(() => { paintPlayheadRef.current(playheadRef.current, true); }, [px, fps, total]);
++  // React may restore a previously rendered label after an inspector/layout
++  // update while paused. Repaint from the live frame after every commit so
++  // the toolbar, ruler and playhead keep the same time without starting playback.
++  useLayoutEffect(() => { paintPlayheadRef.current(playheadRef.current, true); });
+ 
+   return {
+     playheadRef,
+diff --git a/src/editor/EditorWorkspaceView.tsx b/src/editor/EditorWorkspaceView.tsx
+index b01f8ca..8f90cfd 100644
+--- a/src/editor/EditorWorkspaceView.tsx
++++ b/src/editor/EditorWorkspaceView.tsx
+@@ -39,7 +39,7 @@ export interface EditorWorkspaceViewProps {
+ 
+ function renderLibrary(props: EditorWorkspaceViewProps) {
+   return (
+-    <div style={{ gridColumn: 3, gridRow: 2, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
++    <div className={import.meta.env.VITE_MINIAPP_HOST_AGENT ? 'miniapp-library-chrome' : undefined} style={{ gridColumn: 3, gridRow: 2, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+       <LibraryPanel {...props.libraryPanel} />
+     </div>
+   );
+@@ -56,7 +56,7 @@ function renderPreview(props: EditorWorkspaceViewProps) {
+ 
+ function renderTimeline(props: EditorWorkspaceViewProps) {
+   return (
+-    <div style={{ gridColumn: '3 / -1', gridRow: 4, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
++    <div className={import.meta.env.VITE_MINIAPP_HOST_AGENT ? 'miniapp-timeline-chrome' : undefined} style={{ gridColumn: '3 / -1', gridRow: 4, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+       <TimelineTabs {...props.timelineTabs} />
+       <Timeline {...props.timeline} />
+     </div>
+@@ -70,7 +70,7 @@ export function EditorWorkspaceView(props: EditorWorkspaceViewProps) {
+       className="cc-editor-shell"
+       style={{
+         display: 'grid',
+-        gridTemplateColumns: props.gridTemplateColumns,
++        gridTemplateColumns: import.meta.env.VITE_MINIAPP_HOST_AGENT ? props.gridTemplateColumns.replace(/^\S+/, '0') : props.gridTemplateColumns,
+         gridTemplateRows: props.gridTemplateRows,
+         height: '100vh',
+         overflow: 'hidden',
+@@ -91,14 +91,14 @@ export function EditorWorkspaceView(props: EditorWorkspaceViewProps) {
+       </Suspense>
+       <ChatPanel {...props.chatPanel} />
+       <div style={{ gridColumn: 2, gridRow: '2 / 5' }}>
+-        {!props.chatCollapsed && <Divider onResize={props.onResizeChat} />}
++        {!import.meta.env.VITE_MINIAPP_HOST_AGENT && !props.chatCollapsed && <Divider onResize={props.onResizeChat} />}
+       </div>
+       {renderLibrary(props)}
+       <div style={{ gridColumn: 4, gridRow: 2 }}>
+         <Divider onResize={props.onResizeLibrary} />
+       </div>
+       {renderPreview(props)}
+-      <div style={{ gridColumn: '3 / -1', gridRow: 3 }}>
++      <div className={import.meta.env.VITE_MINIAPP_HOST_AGENT ? 'miniapp-timeline-chrome' : undefined} style={{ gridColumn: '3 / -1', gridRow: 3 }}>
+         <Divider orientation="horizontal" onResize={props.onResizeTimeline} />
+       </div>
+       {renderTimeline(props)}
+diff --git a/src/editor/TimelineReadinessGate.tsx b/src/editor/TimelineReadinessGate.tsx
+index 486ad15..36413a8 100644
+--- a/src/editor/TimelineReadinessGate.tsx
++++ b/src/editor/TimelineReadinessGate.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useState } from 'react';
+ import type { ReactNode } from 'react';
+-import { AbsoluteFill, cancelRender, continueRender, delayRender } from 'remotion';
++import { AbsoluteFill, useDelayRender } from 'remotion';
+ import { loadTimelineFonts } from '../fonts/projectFonts';
+ import { prepareTemplate } from '../template-host';
+ import type { TimelineState } from './types';
+@@ -24,6 +24,8 @@ function prepareTimelineTemplates(state: TimelineState): Promise<void> {
+ }
+ 
+ export function TimelineReadinessGate({ state, dependencies = [], children }: TimelineReadinessGateProps) {
++  // Web renderer 每次渲染有独立的等待范围，不能使用全局 delayRender。
++  const { delayRender, continueRender, cancelRender } = useDelayRender();
+   const [readinessStates] = useState(() => [state, ...dependencies]);
+   const [handle] = useState(() => delayRender('Preparing project fonts and templates'));
+   const [ready, setReady] = useState(false);
+@@ -50,11 +52,16 @@ export function TimelineReadinessGate({ state, dependencies = [], children }: Ti
+     Promise.resolve()
+       .then(() => Promise.all(readinessStates.flatMap((entry) => [loadTimelineFonts(entry), prepareTimelineTemplates(entry)])))
+       .then(
+-      () => { if (active) setReady(true); release(); },
++      () => { if (active) setReady(true); },
+       (reason: unknown) => fail(reason),
+     );
+     return () => { active = false; release(); };
+-  }, [handle, readinessStates]);
++  }, [handle, readinessStates, continueRender, cancelRender]);
++
++  // 等 React 提交真实内容后再放行；Promise 回调里放行可能拍到 ready=false 的空树。
++  useEffect(() => {
++    if (ready) continueRender(handle);
++  }, [ready, handle, continueRender]);
+ 
+   if (error) return <AbsoluteFill style={{ color: '#f88', fontFamily: 'monospace', fontSize: 20, padding: 40, whiteSpace: 'pre-wrap' }}>{error}</AbsoluteFill>;
+   return ready ? children() : null;
+diff --git a/src/export/exportMediaSources.ts b/src/export/exportMediaSources.ts
+index 3753708..3372aa8 100644
+--- a/src/export/exportMediaSources.ts
++++ b/src/export/exportMediaSources.ts
+@@ -12,25 +12,24 @@ import {
+ import type { TimelineState } from '../editor/types';
+ import { exportMediaDir } from './mediaDir';
+ 
+-const UPLOAD_PREFIX = '/media/uploads/';
+ /** Above the server's worst case: a 20 s probe budget plus one in-flight 10 s probe. */
+ const REQUEST_TIMEOUT_MS = 45_000;
+ 
+-/** Server-resolved locations and starts for the upload-backed sources; {} when the server cannot say. */
++/** Server-resolved locations and starts for the local upload and bundled sources; {} when the server cannot say. */
+ export async function exportMediaSources(
+   sources: readonly string[],
+   fetcher: typeof fetch = fetch,
+   signal?: AbortSignal,
+ ): Promise<ExportMediaSourceMap> {
+-  const uploads = [...new Set(sources.filter((source) => source.startsWith(UPLOAD_PREFIX)))]
++  const localSources = [...new Set(sources.filter((source) => source.startsWith('/') && !source.startsWith('//')))]
+     .slice(0, MAX_EXPORT_MEDIA_SOURCES);
+-  if (uploads.length === 0) return {};
++  if (localSources.length === 0) return {};
+   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+   try {
+     const response = await fetcher(EXPORT_MEDIA_SOURCES_ROUTE, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ sources: uploads }),
++      body: JSON.stringify({ sources: localSources }),
+       // Cancelling the export stops the wait at once; the caller's own
+       // throwIfAborted() then ends the export.
+       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+diff --git a/src/export/fcpxml.verify.ts b/src/export/fcpxml.verify.ts
+index 7d11199..38370ca 100644
+--- a/src/export/fcpxml.verify.ts
++++ b/src/export/fcpxml.verify.ts
+@@ -550,10 +550,10 @@ function sourceFrameAt(xml: string, name: string, frame: number, fps: number): Q
+     return new Response(JSON.stringify(payload), { status });
+   }) as typeof fetch;
+   const located = { '/media/uploads/a.mp4': { path: '/Volumes/媒体/a.mov', originalPath: '/Volumes/媒体/a.mov' } };
+-  assert.deepEqual(await exportMediaSources(['/media/uploads/a.mp4', 'https://cdn/x.mp4', '/media/uploads/a.mp4'],
++  assert.deepEqual(await exportMediaSources(['/media/uploads/a.mp4', 'https://cdn/x.mp4', '//cdn/x.mp4', '/sound-effects/simple-whoosh.mp3', '/media/uploads/a.mp4'],
+     answer({ ok: true, sources: located })), located);
+-  assert.deepEqual(calls, [{ url: EXPORT_MEDIA_SOURCES_ROUTE, body: { sources: ['/media/uploads/a.mp4'] } }],
+-    'one POST with the distinct upload sources only');
++  assert.deepEqual(calls, [{ url: EXPORT_MEDIA_SOURCES_ROUTE, body: { sources: ['/media/uploads/a.mp4', '/sound-effects/simple-whoosh.mp3'] } }],
++    'one POST with distinct local upload and bundled sources');
+   assert.deepEqual(await exportMediaSources(['blob:x', 'https://cdn/y.mp4'], answer({})), {}, 'nothing to resolve');
+   assert.equal(calls.length, 1, 'no request without upload sources');
+   assert.deepEqual(await exportMediaSources(['/media/uploads/a.mp4'], answer({ error: 'boom' }, 500)), {});
+diff --git a/src/export/useExportWorkflow.ts b/src/export/useExportWorkflow.ts
+index 37e47ea..dc063b2 100644
+--- a/src/export/useExportWorkflow.ts
++++ b/src/export/useExportWorkflow.ts
+@@ -1,3 +1,4 @@
++import { exportMiniAppAudio } from './miniappAudioExport';
+ import { useRef, useState, useSyncExternalStore } from 'react';
+ import { useT } from '../i18n/locale';
+ import { loadExportAutoQaPreference, saveExportAutoQaPreference } from './autoQa';
+@@ -85,12 +86,25 @@ function createWorkflowOperations(
+     t,
+     ...setters,
+   });
++  const prepareResources = async (signal?: AbortSignal) => {
++    if (!import.meta.env.VITE_MINIAPP_HOST_AGENT) return;
++    const response = await fetch('/api/product-resources/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options.state), signal });
++    if (!response.ok) { const result = await response.json(); throw new Error(result.error || '导出资源准备失败，请重试'); }
++  };
+   return {
+-    exportAudio: async (signal) => { await exportServer('audio', signal); return COMMITTED_EXPORT; },
+-    exportMg: async (signal) => { await artifacts.exportMg(signal); return COMMITTED_EXPORT; },
++    exportAudio: async (signal) => {
++      await prepareResources(signal);
++      if (import.meta.env.VITE_MINIAPP_HOST_AGENT) await exportMiniAppAudio({
++        autoQaEnabled, browserAbortRef, destination, exportServerVideo: s => exportServer('video', s),
++        options, verifyCompletedExport, t, ...setters,
++      }, signal);
++      else await exportServer('audio', signal);
++      return COMMITTED_EXPORT;
++    },
++    exportMg: async (signal) => { await prepareResources(signal); await artifacts.exportMg(signal); return COMMITTED_EXPORT; },
+     exportSubtitles: async (signal) => { await artifacts.exportSubtitles(signal); return COMMITTED_EXPORT; },
+-    exportVideo: async (signal) => { await exportVideo(signal); return COMMITTED_EXPORT; },
+-    exportXml: async (signal) => { await artifacts.exportXml(signal); return COMMITTED_EXPORT; },
++    exportVideo: async (signal) => { await prepareResources(signal); await exportVideo(signal); return COMMITTED_EXPORT; },
++    exportXml: async (signal) => { await prepareResources(signal); await artifacts.exportXml(signal); return COMMITTED_EXPORT; },
+   };
+ }
+ 
+diff --git a/src/i18n/locale.ts b/src/i18n/locale.ts
+index e15e1f1..c1af71d 100644
+--- a/src/i18n/locale.ts
++++ b/src/i18n/locale.ts
+@@ -24,7 +24,7 @@ const DOCUMENT_LANG: Record<Locale, string> = {
+ 
+ function systemLocale(): Locale {
+   try {
+-    const tag = String(navigator.language ?? '').toLowerCase();
++    const tag = String(document.documentElement.lang || navigator.language || 'zh-CN').toLowerCase();
+     if (tag.startsWith('zh')) return 'zh';
+     if (tag.startsWith('it')) return 'it';
+     if (tag.startsWith('ru')) return 'ru';
+diff --git a/src/library/FxThumb.tsx b/src/library/FxThumb.tsx
+index 26b832a..71d7446 100644
+--- a/src/library/FxThumb.tsx
++++ b/src/library/FxThumb.tsx
+@@ -1,3 +1,4 @@
++import { ThumbnailImage } from '../components/ThumbnailImage';
+ import { useEffect, useRef, useState, type RefObject } from 'react';
+ import { ALL_FX, type FxDef } from '../gl/fx/effects';
+ import {
+@@ -102,7 +103,7 @@ export function FxThumb({ assetId, playing = false }: FxThumbProps) {
+   return (
+     <div className={`cc-live-thumb${liveReady ? ' is-playing' : ''}`}>
+       {staticUrl
+-        ? <img className="cc-live-thumb-still" src={staticUrl} alt="" draggable={false} loading="lazy" decoding="async" />
++        ? <ThumbnailImage className="cc-live-thumb-still" src={staticUrl} alt="" draggable={false} loading="lazy" decoding="async" />
+         : <span className="cc-resource-thumb-placeholder" />}
+       {playing ? (
+         <canvas
+diff --git a/src/library/PluginBrowser.tsx b/src/library/PluginBrowser.tsx
+index 9ffea5d..0fc7a22 100644
+--- a/src/library/PluginBrowser.tsx
++++ b/src/library/PluginBrowser.tsx
+@@ -1,3 +1,4 @@
++import { ThumbnailImage } from '../components/ThumbnailImage';
+ // Extended resource runtime preview; resource data conversion is in pluginResources.
+ import { useCallback, useEffect, useRef, useState } from 'react';
+ import { sampleEnvelope } from '../editor/zoom';
+@@ -92,7 +93,7 @@ export function EnvelopeThumb({
+ /** plugin item preview card (pack.thumb data URL / URL)*/
+ export function PluginImgThumb({ src, name }: { src: string; name: string }) {
+   // impeccable-disable-next-line broken-image -- src comes from the installed and verified plugin package (data:image/* or URL)
+-  return <img src={src} alt={name} draggable={false} style={{ width: '100%', height: '100%', minHeight: 56, objectFit: 'cover', borderRadius: 6, display: 'block' }} />;
++  return <ThumbnailImage src={src} alt={name} draggable={false} style={{ width: '100%', height: '100%', minHeight: 56, objectFit: 'cover', borderRadius: 6, display: 'block' }} />;
+ }
+ 
+ /** plugin transition thumbnail: the first letter of the name (built-in TransitionThumb only recognizes the registry GLSL type)*/
+diff --git a/src/library/ResourceBrowser.tsx b/src/library/ResourceBrowser.tsx
+index b683b7b..6d0064e 100644
+--- a/src/library/ResourceBrowser.tsx
++++ b/src/library/ResourceBrowser.tsx
+@@ -1,3 +1,4 @@
++import { ThumbnailImage } from '../components/ThumbnailImage';
+ import {
+   useCallback,
+   useEffect,
+@@ -113,7 +114,7 @@ const ResourceCard = memo(function ResourceCard(props: ResourceCardProps) {
+         {renderThumb
+           ? renderThumb(item.id, active)
+           : src
+-            ? <img src={src} alt="" draggable={false} loading="lazy" decoding="async" />
++            ? <ThumbnailImage src={src} alt="" draggable={false} loading="lazy" decoding="async" />
+             : <span className="cc-resource-thumb-placeholder" />}
+       </div>
+       <div className="cc-resource-name">{props.t(item.name)}</div>
+@@ -203,7 +204,7 @@ const ResourceListItem = memo(function ResourceListItem({ item, clickable, canDr
+         opacity: clickable || canDrag ? 1 : 0.55,
+       }}
+     >
+-      {src ? <img src={src} alt="" draggable={false} loading="lazy" decoding="async"
++      {src ? <ThumbnailImage src={src} alt="" draggable={false} loading="lazy" decoding="async"
+         style={{ width: '100%', height: 66, objectFit: 'cover', borderRadius: 5, marginBottom: 5, background: theme.inset }} /> : null}
+       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+         <span style={{ fontSize: 12.5, fontWeight: 500 }}>{t(item.name)}</span>
+diff --git a/src/library/TemplateCard.tsx b/src/library/TemplateCard.tsx
+index 73a13be..651ce6c 100644
+--- a/src/library/TemplateCard.tsx
++++ b/src/library/TemplateCard.tsx
+@@ -1,3 +1,4 @@
++import { ThumbnailImage } from '../components/ThumbnailImage';
+ import { memo } from 'react';
+ import { tData, useT } from '../i18n/locale';
+ import { ratioLabel } from '../editor/types';
+@@ -64,7 +65,7 @@ export const TemplateCard = memo(function TemplateCard({
+           {template.thumb ? (
+             <>
+               {portrait && (
+-                <img
++                <ThumbnailImage
+                   className="cc-template-thumb-backdrop"
+                   src={template.thumb}
+                   alt=""
+@@ -73,7 +74,7 @@ export const TemplateCard = memo(function TemplateCard({
+                   draggable={false}
+                 />
+               )}
+-              <img
++              <ThumbnailImage
+                 className={`cc-template-thumb-image${portrait ? ' portrait' : ''}`}
+                 src={template.thumb}
+                 alt={tData(template.name)}
+diff --git a/src/library/TransitionThumb.tsx b/src/library/TransitionThumb.tsx
+index 470acf3..8f794db 100644
+--- a/src/library/TransitionThumb.tsx
++++ b/src/library/TransitionThumb.tsx
+@@ -1,3 +1,4 @@
++import { ThumbnailImage } from '../components/ThumbnailImage';
+ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+ import type { GlslTransitionType } from '../editor/types';
+ import { ensureSampleFrame } from '../gl/sampleFrames';
+@@ -148,7 +149,7 @@ export function TransitionThumb({ type, playing = false }: TransitionThumbProps)
+   return (
+     <div className={`cc-live-thumb${liveReady ? ' is-playing' : ''}`}>
+       {staticUrl
+-        ? <img className="cc-live-thumb-still" src={staticUrl} alt="" draggable={false} loading="lazy" decoding="async" />
++        ? <ThumbnailImage className="cc-live-thumb-still" src={staticUrl} alt="" draggable={false} loading="lazy" decoding="async" />
+         : <span className="cc-resource-thumb-placeholder" />}
+       {playing ? (
+         <canvas
+diff --git a/src/main.tsx b/src/main.tsx
+index c6a0f30..e21f691 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -1,4 +1,6 @@
+ import './index.css';
++import './miniappTypography.css';
++if (import.meta.env.VITE_MINIAPP_HOST_AGENT) document.documentElement.classList.add('miniapp-host');
+ import { StrictMode } from 'react';
+ import { createRoot } from 'react-dom/client';
+ import App from './App';
+diff --git a/src/media/MediaPoolCard.tsx b/src/media/MediaPoolCard.tsx
+index f57a51c..7015fc5 100644
+--- a/src/media/MediaPoolCard.tsx
++++ b/src/media/MediaPoolCard.tsx
+@@ -188,7 +188,7 @@ export const MediaAssetCard = memo(function MediaAssetCard(props: MediaAssetCard
+     >
+       <AssetThumbArea {...props} />
+       <button className="cc-asset-name" title={asset.name} tabIndex={-1}>{asset.name}</button>
+-      {!missing && props.musicAnalysis && props.musicAnalysis.state !== 'unavailable' && <MusicAnalysisBadge asset={asset} state={props.musicAnalysis} />}
++      {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && !missing && props.musicAnalysis && props.musicAnalysis.state !== 'unavailable' && <MusicAnalysisBadge asset={asset} state={props.musicAnalysis} />}
+     </div>
+   );
+ });
+diff --git a/src/media/MediaPoolOverlays.tsx b/src/media/MediaPoolOverlays.tsx
+index f46bafc..0e86549 100644
+--- a/src/media/MediaPoolOverlays.tsx
++++ b/src/media/MediaPoolOverlays.tsx
+@@ -4,6 +4,7 @@ import type { MediaAsset, MediaFolder } from '../editor/types';
+ import type { MusicAnalysisCardState } from '../audio/intelligence/useMusicAnalysisCards';
+ import { useT } from '../i18n/locale';
+ import { theme } from '../theme';
++import { assetCanTranscribe } from '../transcript/transcribe-jobs';
+ import { AssetExportButton } from './AssetExportButton';
+ import { folderPath } from './mediaPoolFormat';
+ import { AssetMenuDestinations } from './AssetMenuDestinations';
+@@ -57,8 +58,8 @@ export function BlankMediaMenuActions(props: BlankMediaMenuActionsProps) {
+     <button type="button" disabled={!props.clipboardCount} onClick={props.onPaste}>{t('粘贴副本')}{props.clipboardCount > 1 ? ` (${props.clipboardCount})` : ''}</button>
+     <button type="button" disabled={!props.visibleCount} onClick={props.onSelectAll}>{t(props.allVisibleSelected ? '取消全选' : '全选')}</button>
+     <hr />
+-    <button type="button" onClick={props.onSemanticSearch}>{t('本地语义搜索')}</button>
+-    <button type="button" onClick={props.onMobileUpload}>{t('手机传素材')}</button>
++    {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <button type="button" onClick={props.onSemanticSearch}>{t('本地语义搜索')}</button>}
++    {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <button type="button" onClick={props.onMobileUpload}>{t('手机传素材')}</button>}
+     <button type="button" onClick={props.onUpload}>{t('上传素材')}</button>
+     <button type="button" onClick={props.onCreateFolder}>{t('新建文件夹')}</button>
+     <button type="button" onClick={props.onViewToggle}>{t(props.view === 'grid' ? '切换到列表视图' : '切换到网格视图')}</button>
+@@ -184,7 +185,7 @@ function AssetMenuActions(props: AssetMenuPortalProps & { asset: MediaAsset }) {
+   return (
+     <>
+       {!props.missing && <AssetExportButton asset={asset} fps={props.fps} onError={props.onError} onComplete={props.onClose} />}
+-      {props.onTranscribe && <button type="button" onClick={props.onTranscribe}>{asset.transcribeStatus === 'failed' ? t('重新转写') : t('转写')}</button>}
++      {props.onTranscribe && assetCanTranscribe(asset.kind, asset.transcribeStatus) && <button type="button" onClick={props.onTranscribe}>{asset.transcribeStatus === 'failed' ? t('重新转写') : t('转写')}</button>}
+       {props.onViewTranscript && <button type="button" onClick={props.onViewTranscript}>{t('查看文字稿')}</button>}
+       <button type="button" onClick={props.onFavorite}>{asset.favorite ? t('取消收藏') : t('收藏')}</button>
+       <button type="button" onClick={props.onRename}>{t('重命名')}</button>
+diff --git a/src/media/MediaPoolPanel.tsx b/src/media/MediaPoolPanel.tsx
+index 1cd2e7a..5220dd5 100644
+--- a/src/media/MediaPoolPanel.tsx
++++ b/src/media/MediaPoolPanel.tsx
+@@ -381,7 +381,7 @@ export function MediaPoolPanel({
+       />
+ 
+       <MissingMediaBanner count={missingList.length} onOpen={() => setShowRelinkAll(true)} onRemoveAll={onRemoveAsset || onRemoveAssets ? () => requestRemoveAssets(missingList) : undefined} />
+-      <MusicModelsNotice cards={musicAnalysis} />
++      {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <MusicModelsNotice cards={musicAnalysis} />}
+ 
+       {(currentFolder || favoritesOnly || childFolders.length > 0) && <div className="cc-media-breadcrumb">
+         <button aria-label={t('返回上级文件夹')} disabled={!currentFolder && !favoritesOnly} onClick={() => {
+diff --git a/src/media/MediaPoolToolbar.tsx b/src/media/MediaPoolToolbar.tsx
+index 35f5ffe..5771ed8 100644
+--- a/src/media/MediaPoolToolbar.tsx
++++ b/src/media/MediaPoolToolbar.tsx
+@@ -135,7 +135,7 @@ export function MediaPoolToolbar(props: MediaPoolToolbarProps) {
+         <Icon name="search" size={16} />
+         <input aria-label={t('搜索素材')} value={props.query} onChange={(event) => props.onQueryChange(event.target.value)} placeholder={t('搜索')} />
+       </label>
+-      <SemanticSearchControls scopeId={props.scopeId} assets={props.assets} onResultsChange={props.onSemanticResults} openRequest={props.semanticOpenRequest} />
++      {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <SemanticSearchControls scopeId={props.scopeId} assets={props.assets} onResultsChange={props.onSemanticResults} openRequest={props.semanticOpenRequest} />}
+       <button className="cc-media-icon cc-tip" aria-label={t('上传素材')} data-tip={t('上传素材')} disabled={props.busy} onClick={props.onUpload}><Icon name="upload" size={19} /></button>
+       {props.busy && props.uploadRatio != null && <span className="cc-media-upload-pct" title={t('上传中')}>{Math.round(props.uploadRatio * 100)}%</span>}
+       <button className="cc-media-icon cc-tip" aria-label={t(mediaViewToggleLabel(props.view))} data-tip={t(mediaViewToggleLabel(props.view))} onClick={props.onViewChange}><Icon name={props.view === 'grid' ? 'list' : 'grid'} size={19} /></button>
+@@ -205,7 +205,7 @@ function ActionsMenu(props: MenuProps) {
+     props.lifecycle.close();
+   };
+   const popover = open && <div ref={props.lifecycle.menuRef} role="dialog" aria-label={t('更多操作')} className="cc-media-popover cc-media-actions-menu cc-media-toolbar-menu-fixed" style={props.lifecycle.actionsStyle}>
+-    <button onClick={() => runModal(props.onMobileUpload)}><Icon name="qrCode" size={15} />{t('手机传素材')}</button>
++    {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <button onClick={() => runModal(props.onMobileUpload)}><Icon name="qrCode" size={15} />{t('手机传素材')}</button>}
+     {props.canAddSolid && <button onClick={() => run(props.onAddSolid, true)}><span className="cc-media-solid-icon">{t('色')}</span>{t('添加纯色')}</button>}
+     <button onClick={() => runModal(props.onCreateFolder)}><Icon name="folderPlus" size={16} />{t('新建文件夹')}</button>
+     <DirectoryImportActions
+@@ -216,7 +216,7 @@ function ActionsMenu(props: MenuProps) {
+       watchBusy={props.watchBusy}
+       run={(action) => run(action)}
+     />
+-    <MusicAutoAnalysisPreference />
++    {!import.meta.env?.VITE_MINIAPP_HOST_AGENT && <MusicAutoAnalysisPreference />}
+   </div>;
+   return (
+     <div className="cc-media-menu-anchor">
+diff --git a/src/media/MgThumb.tsx b/src/media/MgThumb.tsx
+index ab77f4d..3a30727 100644
+--- a/src/media/MgThumb.tsx
++++ b/src/media/MgThumb.tsx
+@@ -17,6 +17,7 @@ interface MgThumbProps {
+ }
+ 
+ export function MgThumb({ asset, fps, active, posterSrc }: MgThumbProps) {
++  const [failedPoster, setFailedPoster] = useState<string>();
+   const playerRef = useRef<PlayerRef | null>(null);
+   const [compiled, setCompiled] = useState<MgComponent | null>(null);
+   useEffect(() => {
+@@ -37,8 +38,8 @@ export function MgThumb({ asset, fps, active, posterSrc }: MgThumbProps) {
+   }, [active]);
+ 
+   if (!active) {
+-    return posterSrc
+-      ? <img src={posterSrc} alt={asset.name} draggable={false} />
++    return posterSrc && failedPoster !== posterSrc
++      ? <img src={posterSrc} alt={asset.name} draggable={false} onError={() => setFailedPoster(posterSrc)} />
+       : <Icon name="sparkles" size={30} strokeWidth={0.9} />;
+   }
+   if (!compiled) return <Icon name="sparkles" size={30} strokeWidth={0.9} />;
+diff --git a/src/persist/sessionPrefs.ts b/src/persist/sessionPrefs.ts
+index 012ad0f..b1ee11a 100644
+--- a/src/persist/sessionPrefs.ts
++++ b/src/persist/sessionPrefs.ts
+@@ -59,6 +59,17 @@ export function clearComposerDraft(projectId: string): void {
+   removeRaw(draftKey(projectId));
+ }
+ 
++// Mini App 的宿主对话按工程保存；不会复用上游独立 Agent 的会话。
++export function loadMiniAppSession(projectId: string): string | undefined {
++  return readRaw(`cc.miniappSession.${projectId}`) || undefined;
++}
++
++export function saveMiniAppSession(projectId: string, sessionId: string | undefined): void {
++  const key = `cc.miniappSession.${projectId}`;
++  if (sessionId) writeRaw(key, sessionId);
++  else removeRaw(key);
++}
++
+ // ── chat mode / auto-apply ──────────────────────────────────────────────────
+ 
+ export function loadChatMode(projectId: string): ChatModePref {
+@@ -126,6 +137,8 @@ export function saveTimelineView(projectId: string, timelineId: string, patch: P
+ export function clearProjectSessionPrefs(projectId: string): void {
+   for (const key of [
+     draftKey(projectId),
++    `cc.miniappHistory.${projectId}`,
++    `cc.miniappReferences.${projectId}`,
+     modeKey(projectId),
+     autoApplyKey(projectId),
+     playheadKey(projectId),
+@@ -153,3 +166,32 @@ export function pushRecentTemplateId(id: string, current = loadRecentTemplateIds
+   writeRaw(RECENT_TEMPLATES_KEY, JSON.stringify(next));
+   return next;
+ }
++
++export type MiniAppReference = { id: string; name: string; kind?: string };
++export function loadMiniAppReferences(projectId: string): MiniAppReference[] {
++  try {
++    const value: unknown = JSON.parse(readRaw(`cc.miniappReferences.${projectId}`) ?? '[]');
++    return Array.isArray(value) ? value.filter((item): item is MiniAppReference => !!item && typeof item.id === 'string' && typeof item.name === 'string' && (item.kind === undefined || typeof item.kind === 'string')).slice(0, 32) : [];
++  } catch { return []; }
++}
++export function saveMiniAppReferences(projectId: string, references: MiniAppReference[]): void {
++  if (references.length) writeRaw(`cc.miniappReferences.${projectId}`, JSON.stringify(references.slice(0, 32)));
++  else removeRaw(`cc.miniappReferences.${projectId}`);
++}
++
++// 引导可以从助手标题栏随时重新打开；不随新对话清空。
++export function loadMiniAppGuideSeen(): boolean { return readRaw('cc.miniappGuide.v1') === 'seen'; }
++export function saveMiniAppGuideSeen(): void { writeRaw('cc.miniappGuide.v1', 'seen'); }
++
++export type MiniAppChatEntry = { id: string; role: 'user' | 'assistant' | 'tool'; text: string; state?: 'running' | 'done' | 'error' | 'unknown' };
++export function loadMiniAppChatEntries(projectId: string): MiniAppChatEntry[] {
++  try {
++    const value: unknown = JSON.parse(readRaw(`cc.miniappHistory.${projectId}`) ?? '[]');
++    if (!Array.isArray(value)) return [];
++    return value.filter((e): e is MiniAppChatEntry => !!e && typeof e.id === 'string' && typeof e.text === 'string' && ['user', 'assistant', 'tool'].includes(e.role)).map(e => ({ ...e, state: e.state === 'running' ? 'unknown' : e.state }));
++  } catch { return []; }
++}
++export function saveMiniAppChatEntries(projectId: string, entries: MiniAppChatEntry[]): void {
++  if (!entries.length) removeRaw(`cc.miniappHistory.${projectId}`);
++  else writeRaw(`cc.miniappHistory.${projectId}`, JSON.stringify(entries.slice(-150).map(e => ({ ...e, text: e.text.slice(0, 40000) }))));
++}
+diff --git a/src/persist/sessionPrefs.verify.ts b/src/persist/sessionPrefs.verify.ts
+index 3bcac29..02f4897 100644
+--- a/src/persist/sessionPrefs.verify.ts
++++ b/src/persist/sessionPrefs.verify.ts
+@@ -1,7 +1,10 @@
++import { loadMiniAppChatEntries, saveMiniAppChatEntries, loadMiniAppReferences, saveMiniAppReferences } from './sessionPrefs';
+ // `npx tsx src/persist/sessionPrefs.check.ts`（已挂 verify:persist）
+ import assert from 'node:assert';
+ import {
+   clearComposerDraft,
++  loadMiniAppSession,
++  saveMiniAppSession,
+   loadChatAutoApply,
+   loadChatMode,
+   loadComposerDraft,
+@@ -57,4 +60,23 @@ pushRecentTemplateId('b');
+ pushRecentTemplateId('a');
+ assert.deepStrictEqual(loadRecentTemplateIds(), ['b', 'a'], 'recent ids dedupe with newest first, repeated push keeps order');
+ 
++saveMiniAppSession(pid, 'host-session-a');
++assert.strictEqual(loadMiniAppSession(pid), 'host-session-a');
++assert.strictEqual(loadMiniAppSession('other-project'), undefined);
++saveMiniAppSession(pid, undefined);
++assert.strictEqual(loadMiniAppSession(pid), undefined);
++assert.strictEqual(loadComposerDraft(pid), '', 'new session does not write composer content');
++saveMiniAppReferences(pid, [{ id: 'clip-1', name: 'Video' }]);
++assert.deepStrictEqual(loadMiniAppReferences(pid), [{ id: 'clip-1', name: 'Video' }]);
++assert.deepStrictEqual(loadMiniAppReferences('other-project'), []);
++saveMiniAppReferences(pid, []);
++assert.deepStrictEqual(loadMiniAppReferences(pid), []);
++saveMiniAppChatEntries(pid, [{ id: 'job', role: 'tool', text: 'generate_image', state: 'running' }, { id: 'result', role: 'assistant', text: '素材位置 /media/result.png' }]);
++assert.strictEqual(loadMiniAppChatEntries(pid)[0].state, 'unknown', 'reload must not claim a persisted task is still running');
++assert.strictEqual(loadMiniAppChatEntries(pid)[1].text, '素材位置 /media/result.png');
++assert.deepStrictEqual(loadMiniAppChatEntries('other-project'), [], 'history stays with its project');
++saveMiniAppChatEntries(pid, []);
++assert.deepStrictEqual(loadMiniAppChatEntries(pid), []);
++mem.set('cc.miniappHistory.' + pid, '{invalid');
++assert.deepStrictEqual(loadMiniAppChatEntries(pid), [], 'corrupt history must not break the editor');
+ console.log('sessionPrefs.check: ok');
+diff --git a/src/transcript/TranscriptPanel.tsx b/src/transcript/TranscriptPanel.tsx
+index 0a3c6e7..889cb89 100644
+--- a/src/transcript/TranscriptPanel.tsx
++++ b/src/transcript/TranscriptPanel.tsx
+@@ -42,6 +42,7 @@ export function TranscriptPanel({
+   const t = useT();
+   const { status, error, progressNote, runMany, reset } = useTranscript();
+   const localProvider = preferredTranscriptionProvider() === 'local';
++  const hostCloudOnly = !!import.meta.env.VITE_MINIAPP_HOST_AGENT && !localProvider;
+   const defaultId = useMemo(() => pickDefaultTrack(trackOptions, items), [trackOptions, items]);
+   const [track, setTrack] = useState<TrackId | null>(defaultId);
+   // Both views use ScriptView (speaker blocks + Gap rows). segment uses a lower
+@@ -149,6 +150,7 @@ export function TranscriptPanel({
+ 
+   return (
+     <div className="cc-transcript-panel">
++      {hostCloudOnly && <p role="note">云端转写请在 MiniMax 剪辑助手中提出要求，或直接导入 SRT 字幕；此版本不连接独立云字幕供应商。</p>}
+       <div className="cc-transcript-toolbar">
+         <button type="button" onClick={() => setPauseOpen((v) => !v)} className="cc-tx-btn" disabled={!editable}>
+           <Icon name="clock" size={13} />{t('停顿')}
+@@ -285,7 +287,7 @@ export function TranscriptPanel({
+                 {t('该轨只有背景音乐类素材。打开「包含疑似背景音乐」或换到配音轨。')}
+               </p>
+             ) : (
+-              <button type="button" onClick={() => void transcribeTrack()} disabled={busy} className="cc-tx-btn primary lg">
++              <button type="button" style={hostCloudOnly ? { display: 'none' } : undefined} onClick={() => void transcribeTrack()} disabled={busy} className="cc-tx-btn primary lg">
+                 {busy ? (progressNote ?? t('转写中…')) : t('转写 {alias}（{n} 段）', { alias: activeTrack?.alias ?? '', n: clips.length })}
+               </button>
+             )}
+@@ -335,7 +337,7 @@ export function TranscriptPanel({
+                       ›
+                     </button>
+                   </div>
+-                  <button type="button" className="cc-tx-btn sm" disabled={busy} onClick={() => void transcribeTrack()}>
++                  <button type="button" className="cc-tx-btn sm" disabled={busy} style={hostCloudOnly ? { display: 'none' } : undefined} onClick={() => void transcribeTrack()}>
+                     {busy ? '…' : t('重新转写')}
+                   </button>
+                 </div>
+diff --git a/src/transcript/transcribe-jobs.ts b/src/transcript/transcribe-jobs.ts
+index 6cab4dc..a825303 100644
+--- a/src/transcript/transcribe-jobs.ts
++++ b/src/transcript/transcribe-jobs.ts
+@@ -355,6 +355,7 @@ export function assetCanTranscribe(
+   kind: MediaAsset['kind'],
+   transcribeStatus: MediaAsset['transcribeStatus'],
+ ): boolean {
++  if (import.meta.env?.VITE_MINIAPP_HOST_AGENT && preferredTranscriptionProvider() !== 'local') return false;
+   return (kind === 'audio' || kind === 'video')
+     && transcribeStatus !== 'running'
+     && transcribeStatus !== 'done';
+diff --git a/tsconfig.node.json b/tsconfig.node.json
+index 05ad54f..0f41b8c 100644
+--- a/tsconfig.node.json
++++ b/tsconfig.node.json
+@@ -13,6 +13,7 @@
+     "verbatimModuleSyntax": true,
+     "moduleDetection": "force",
+     "noEmit": true,
++    "jsx": "react-jsx",
+ 
+     /* Linting */
+     "noUnusedLocals": true,

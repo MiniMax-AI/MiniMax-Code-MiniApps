@@ -1,0 +1,1 @@
+import{n as e}from"./projectTypes-CDJdefdq.js";function t(t,n){let r=t.getDoc();if(!n){let n=t.getState(),i=e(r);return{...n,id:i.id,name:i.name,order:i.order}}let i=n.trim(),a=r.timelines.find(e=>e.id===i||e.id.startsWith(i));if(!a)throw Error(`timeline not found: ${n}`);return a}export{t};

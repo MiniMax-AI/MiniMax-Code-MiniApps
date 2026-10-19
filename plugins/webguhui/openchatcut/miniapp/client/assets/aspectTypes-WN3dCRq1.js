@@ -1,0 +1,1 @@
+var e=[{label:`16:9`,width:1920,height:1080},{label:`9:16`,width:1080,height:1920},{label:`1:1`,width:1080,height:1080},{label:`4:3`,width:1440,height:1080},{label:`3:4`,width:1080,height:1440}];function t(e,t){let n=(e,t)=>t?n(t,e%t):e,r=n(e,t)||1;return`${e/r}:${t/r}`}export{t as n,e as t};

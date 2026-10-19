@@ -1,0 +1,52 @@
+/* Mini App chrome only. Video composition content keeps its authored typography.
+   Consume host variables where provided; defaults follow Desktop extraLarge roles (shared/src/desktop-typography.ts). */
+:root.miniapp-host {
+  --mini-type-title: var(--mavis-ui-large-size, 18px);
+  --mini-leading-title: var(--mavis-ui-large-line-height, 28px);
+  --mini-type-body: var(--mavis-ui-body-size, 16px);
+  --mini-leading-body: var(--mavis-ui-body-line-height, 24px);
+  --mini-type-control: var(--mavis-ui-small-size, 15px);
+  --mini-leading-control: var(--mavis-ui-small-line-height, 21.43px);
+  --mini-type-assist: var(--mavis-ui-assist-size, 14px);
+  --mini-leading-assist: var(--mavis-ui-assist-line-height, 18.67px);
+  font-family: var(--mcode-font-family-ui, ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif);
+}
+.miniapp-host :is(.cc-topbar, .miniapp-library-chrome, .cc-inspector, .cc-timeline-toolbar, .cc-preview-header, .miniapp-timeline-chrome, [role="dialog"]:not(.miniapp-chat), .miniapp-dashboard, .miniapp-chat) {
+  font-family: inherit !important;
+  font-size: var(--mini-type-body);
+  line-height: var(--mini-leading-body);
+}
+/* Old upstream controls set scattered inline pixel sizes. Normalize only UI surfaces. */
+.miniapp-host :is(.cc-topbar, .miniapp-library-chrome, .cc-inspector, .cc-timeline-toolbar, .cc-preview-header, .miniapp-timeline-chrome, [role="dialog"]:not(.miniapp-chat)) :is(button, input, select, label, span, strong, small, div) {
+  font-size: var(--mini-type-control) !important;
+  line-height: var(--mini-leading-control) !important;
+}
+.miniapp-host :is(.cc-asset-name, .cc-template-name, .cc-resource-name, .cc-insp-title, .cc-topbar-title) {
+  font-size: var(--mini-type-control) !important;
+  font-weight: 500 !important;
+}
+.miniapp-host :is(.cc-template-ratio, .cc-asset-duration, .cc-asset-ratio, .cc-insp-title-name) {
+  font-size: var(--mini-type-assist) !important;
+  line-height: var(--mini-leading-assist) !important;
+}
+.miniapp-host .miniapp-dashboard :is(button, input, p, div, span) { font-size: var(--mini-type-body) !important; line-height: var(--mini-leading-body) !important; }
+.miniapp-host .miniapp-dashboard :is(h1,h2,h3,[id='miniapp-welcome']) { font-size: var(--mini-type-title) !important; line-height: var(--mini-leading-title) !important; font-weight:600; }
+.miniapp-host .miniapp-dashboard small { font-size: var(--mini-type-assist) !important; line-height: var(--mini-leading-assist) !important; }
+.miniapp-host :is(.cc-topbar, .miniapp-library-chrome, .cc-inspector) button { min-height: 28px; }
+.miniapp-host .cc-inspector input { min-height:28px; box-sizing:border-box; }
+.miniapp-host .cc-template-name, .miniapp-host .cc-resource-name { padding-block:6px; }
+
+/* The canvas is deliberately excluded: authored titles/subtitles keep their size. */
+.miniapp-host .cc-editor-shell { font-family: inherit !important; }
+.miniapp-host :is(.cc-preview-header, .cc-timeline-toolbar) { min-height: 36px; }
+.miniapp-host [role="dialog"]:not(.miniapp-chat) :is(h1,h2,h3) { font-size: var(--mini-type-title) !important; line-height: var(--mini-leading-title) !important; }
+.miniapp-host [role="dialog"]:not(.miniapp-chat) :is(p,textarea) { font-size: var(--mini-type-body) !important; line-height: var(--mini-leading-body) !important; }
+.miniapp-host .cc-shadcn { font-family: inherit; }
+/* Larger labels need room beside the slider and keyframe controls. */
+.miniapp-host .cc-insp-row { grid-template-columns:60px minmax(32px,1fr) 76px; }
+.miniapp-host .cc-insp-label { white-space:normal; overflow:visible; }
+.miniapp-host .miniapp-chat :is(.cc-proposal,[role="alertdialog"]) :is(p,div,span,strong,label,button) { font-size:var(--mini-type-control) !important; line-height:var(--mini-leading-control) !important; }
+.miniapp-host .miniapp-chat .cc-proposal-title { font-size:var(--mini-type-title); line-height:var(--mini-leading-title); }
+
+.miniapp-host .miniapp-brand { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; white-space: nowrap; color: var(--cc-text); font-weight: 650; padding: 0 8px; }
+.miniapp-host .miniapp-brand__minimax { display: block; width: 92px; height: 19px; background: currentColor; mask: url('/minimax-wordmark.svg') center / contain no-repeat; -webkit-mask: url('/minimax-wordmark.svg') center / contain no-repeat; }

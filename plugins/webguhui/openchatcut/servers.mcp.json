@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "openchatcut": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/openchatcut",
+      "headers": {},
+      "description": "读取视频工程、创建编辑草稿、剪辑时间线并提交审阅。",
+      "timeout": 60000
+    }
+  }
+}
