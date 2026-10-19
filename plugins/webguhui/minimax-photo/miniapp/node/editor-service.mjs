@@ -140,6 +140,15 @@ export async function createEditorService(dataDir) {
           input.name.length > 200)
       )
         throw Error('新建工程参数无效');
+      if (input.kind === 'craft' && input.options?.method === 'export') {
+        const args = input.options.args ?? {};
+        if (typeof args !== 'object' || Array.isArray(args))
+          throw Error('export 参数必须为对象，例如 {format:"png"}');
+        if (Object.keys(args).some((key) => key !== 'format'))
+          throw Error('export 只接受 format，不支持自定义路径。请使用 {format:"png"}，从完成任务的 exportPath 获取文件；不要搜索本机目录。');
+        if (args.format !== undefined && !['png', 'jpg', 'webp', 'pcraft', 'psd', 'ora', 'tif'].includes(args.format))
+          throw Error('不支持的导出格式');
+      }
       const fingerprint = createHash('sha256')
         .update(JSON.stringify(canonical(input)))
         .digest('hex');

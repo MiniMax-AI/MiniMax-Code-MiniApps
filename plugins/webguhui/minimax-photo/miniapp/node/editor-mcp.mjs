@@ -10,7 +10,7 @@ export const editorTools = [
   {
     name: 'photo_call',
     description:
-      '首次编辑先加载 minimax-photo:minimax-photo Skill。调用 PhotoCraft WASM 编辑器。args/params 保持 JSON 对象与数字类型，不转字符串。先 commands({filter}) 查询真实命令与参数，再 execute({command,params})；batch 接受 [{command,params}]，在独立文档上执行并整体提交/撤销。draw({strokes:[paint.stroke参数],intervalMs:550}) 支持 points 或 SVG 风格绝对 path 命令数组 M/L/Q/C/Z（工具自动采样曲线）。实际逐笔绘制，每笔可见且单独撤销，1..96笔，间隔100..600ms；中断保留已画笔触。preview 返回画面；export 支持 png/jpg/webp/pcraft/psd/ora/tif。使用 editor_job 查询结果，禁止盲目重放。',
+      '首次编辑先加载 minimax-photo:minimax-photo Skill。调用 PhotoCraft WASM 编辑器。args/params 保持 JSON 对象与数字类型，不转字符串。先 commands({filter}) 查询真实命令与参数，再 execute({command,params})；batch 接受 [{command,params}]，在独立文档上执行并整体提交/撤销。draw({strokes:[paint.stroke参数],intervalMs:550}) 支持 points 或 SVG 风格绝对 path 命令数组 M/L/Q/C/Z（工具自动采样曲线）。实际逐笔绘制，每笔可见且单独撤销，1..96笔，间隔100..600ms；中断保留已画笔触。preview 返回画面；export 只接受 {format}，支持 png/jpg/webp/pcraft/psd/ora/tif；完成任务的 exportPath 是文件位置，不接受自定义路径。使用 editor_job 查询结果，禁止盲目重放。',
     inputSchema: schema({
       editorId: uuid,
       expectedVersion: { type: 'string' },

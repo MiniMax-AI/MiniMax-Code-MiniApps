@@ -82,6 +82,12 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
       service.submit({ ...input, requestId: randomUUID(), expectedVersion: 'stale' }),
       /版本/,
     );
+    // Invalid export options fail before creating a task or touching the canvas.
+    for (const args of [{format: 'png', path: '/tmp/ignored.png'}, {outputPath: '/tmp/ignored.png'}, {format: 'invalid'}]) {
+      const requestId = randomUUID();
+      await assert.rejects(service.submit({...input, requestId, kind: 'craft', options: {method: 'export', args}}), /export|导出格式/);
+      await assert.rejects(service.result(requestId), {code: 'ENOENT'});
+    }
     const jobs = await Promise.all([service.submit(input), service.submit(input)]);
     assert.equal(jobs[0].jobId, jobs[1].jobId);
     await assert.rejects(
@@ -125,6 +131,14 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
     request.emit('close');
     assert.equal((await service.result(pending.jobId)).status, 'interrupted');
     assert.equal(service.list().length, 0);
+    const craftEditorId = randomUUID();
+    service.register({editorId: craftEditorId, version: 'v3', engine: 'photocraft', document: {id: documentId}});
+    service.subscribe(craftEditorId, request, response);
+    const validExport = await service.submit({...input, editorId: craftEditorId, requestId: randomUUID(), expectedVersion: 'v3', kind: 'craft', options: {method: 'export', args: {format: 'png'}}});
+    assert.equal(validExport.status, 'queued');
+    assert.deepEqual(validExport.options.args, {format: 'png'});
+    request.emit('close');
+
   } finally {
     service.close();
     await rm(dir, { recursive: true, force: true });
