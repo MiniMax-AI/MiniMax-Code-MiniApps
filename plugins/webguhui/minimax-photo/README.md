@@ -64,3 +64,7 @@ AI edits show a short completion replay: brush paths and their bounding area, or
 PTC `await editor.draw({strokes, intervalMs:550})` draws an array of `paint.stroke` parameters in order (1–96 strokes, 100–600 ms between strokes). Every stroke updates the real canvas and has its own undo step. Failures preserve completed strokes. `editor.edit` continues to commit atomically. The bundled Skill covers reference composition and tonal drawing.
 
 Strokes also accept absolute SVG-style path command arrays (`M`, `L`, `Q`, `C`, `Z`), sampled by the tool. This avoids repeatedly implementing curve interpolation in Agent scripts.
+
+### Canvas recording
+
+More → Record drawing process records the editor's own canvas at up to 20 fps, including its editor controls, without desktop capture permissions or other windows. Stop recording, then use More → Save recording to download a WebM video. The recording stays in memory so a cancelled save can be retried; clear the buffer after saving to begin another recording. Closing/reloading the app loses unsaved video and prompts before leaving. Recording stops at 60 minutes or 256 MiB. Browser background throttling can reduce frame rate. It records actual rendered changes; it does not reconstruct missed strokes or turn atomic edits into animation.

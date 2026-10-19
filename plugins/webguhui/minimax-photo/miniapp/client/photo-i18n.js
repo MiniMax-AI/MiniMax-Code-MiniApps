@@ -538,3 +538,34 @@ Object.assign(messages["ja"], {
   "AI 正在执行 {count} 步编辑…": "AI が {count} 件の編集を実行中…",
   "AI 正在编辑图片…": "AI が画像を編集中…",
 });
+
+Object.assign(messages.en, {
+  '录制绘画过程': 'Record drawing process',
+  '停止录制': 'Stop recording',
+  '保存录制视频': 'Save recording',
+  '清除录制缓存': 'Clear recording buffer',
+  '清除尚未保存的录制视频？': 'Clear this recording? Save it first if you want to keep it.',
+  '录制已结束，可在更多菜单保存视频': 'Recording finished. Save the video from More.',
+  '正在录制编辑器画布，不会录到其他窗口': 'Recording the editor canvas only, not other windows.',
+  '录制失败': 'Recording failed',
+});
+Object.assign(messages['zh-hant'], {
+  '录制绘画过程': '錄製繪畫過程',
+  '停止录制': '停止錄製',
+  '保存录制视频': '儲存錄製影片',
+  '清除录制缓存': '清除錄製暫存',
+  '清除尚未保存的录制视频？': '清除尚未儲存的錄製影片？',
+  '录制已结束，可在更多菜单保存视频': '錄製已結束，可在更多選單儲存影片',
+  '正在录制编辑器画布，不会录到其他窗口': '正在錄製編輯器畫布，不會錄到其他視窗',
+  '录制失败': '錄製失敗',
+});
+Object.assign(messages.ja, {
+  '录制绘画过程': '描画の過程を録画',
+  '停止录制': '録画を停止',
+  '保存录制视频': '録画を保存',
+  '清除录制缓存': '録画データを消去',
+  '清除尚未保存的录制视频？': '未保存の録画を消去しますか？',
+  '录制已结束，可在更多菜单保存视频': '録画が終了しました。その他メニューから保存できます。',
+  '正在录制编辑器画布，不会录到其他窗口': 'エディターのキャンバスのみ録画中。他のウィンドウは含まれません。',
+  '录制失败': '録画に失敗しました',
+});

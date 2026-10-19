@@ -1,5 +1,6 @@
 import { createActivity } from './photo-activity.js';
 import { createRecovery } from './photo-recovery.js';
+import { createCanvasRecording } from './photo-recording.js';
 import {
   t,
   initLanguage,
@@ -103,10 +104,37 @@ async function post(path, body) {
 }
 const activity = createActivity({ frame, call });
 const recovery = createRecovery({ call, status });
+const recordStart = document.querySelector('#photo-record');
+const recordStop = document.querySelector('#photo-record-stop');
+const recordSave = document.querySelector('#photo-record-save');
+const recordDiscard = document.querySelector('#photo-record-discard');
+const recording = createCanvasRecording({
+  canvas: () => frame.contentDocument?.querySelector('#photocraft_canvas'),
+  changed: state => {
+    recordStart.hidden = state !== 'idle';
+    recordStop.hidden = !['recording', 'stopping'].includes(state);
+    recordStop.disabled = state === 'stopping';
+    recordSave.hidden = recordDiscard.hidden = state !== 'ready';
+    if (state === 'ready') status('录制已结束，可在更多菜单保存视频');
+  },
+  failed: error => status(t('录制失败') + ': ' + error.message),
+});
+recordStart.onclick = () => {
+  try {
+    recording.start();
+    document.querySelector('#photo-more').open = false;
+    status('正在录制编辑器画布，不会录到其他窗口');
+  } catch (error) { status(t('录制失败') + ': ' + error.message); }
+};
+recordStop.onclick = () => recording.stop();
+recordSave.onclick = () => recording.download();
+recordDiscard.onclick = () => {
+  if (confirm(t('清除尚未保存的录制视频？'))) recording.discard();
+};
 document.querySelector('#photo-recover').onclick = () => recovery.show();
 document.querySelector('#photo-save').onclick = () => exportPhoto('pcraft');
 window.addEventListener('beforeunload', (event) => {
-  if (recovery.pending || running) { event.preventDefault(); event.returnValue = ''; }
+  if (recovery.pending || running || recording.pending) { event.preventDefault(); event.returnValue = ''; }
 });
 async function report() {
   if (reporting) return;
@@ -119,6 +147,7 @@ async function report() {
     panel?.refresh();
     welcome.refresh({ ready, hasDocument: !!current.document });
     toolbar.refresh(!!current.document);
+    recordStart.disabled = !ready;
     frame.inert = running || !current.document;
   } finally {
     reporting = false;

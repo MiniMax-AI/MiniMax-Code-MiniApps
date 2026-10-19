@@ -12,6 +12,7 @@
     <header class="photo-header">
       <strong>MiniMax Photo</strong>
       <nav>
+        <button id="photo-record-stop" hidden data-i18n="停止录制">停止录制</button>
         <span id="photo-actions"></span>
         <details id="photo-more">
           <summary aria-label="更多" title="更多">•••</summary>
@@ -22,6 +23,9 @@
             ></label>
             <label><input id="photo-show-activity" type="checkbox" checked /><span data-i18n="显示 AI 操作轨迹">显示 AI 操作轨迹</span></label>
             <button id="photo-save" hidden data-i18n="保存工程">保存工程</button>
+            <button id="photo-record" disabled data-i18n="录制绘画过程">录制绘画过程</button>
+            <button id="photo-record-save" hidden data-i18n="保存录制视频">保存录制视频</button>
+            <button id="photo-record-discard" hidden data-i18n="清除录制缓存">清除录制缓存</button>
             <button id="photo-recover" data-i18n="恢复作品">恢复作品</button>
             <a href="/photo-help.html" target="_blank" data-i18n="使用说明">使用说明</a>
             <a href="/index.html" data-i18n="打开旧版工程">打开旧版工程</a>
