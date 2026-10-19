@@ -558,7 +558,10 @@ try {
         png.subarray(33),
       ]);
       await assert.rejects(validatePNG(unknownCritical), /PNG/);
-      assert.equal((await rpc('initialize')).body.result.protocolVersion, '2025-03-26');
+      const initialized = (await rpc('initialize')).body.result;
+      assert.equal(initialized.protocolVersion, '2025-03-26');
+      const manifest = JSON.parse(await readFile(join(root, '.minimax-plugin/plugin.json'), 'utf8'));
+      assert.deepEqual(initialized.serverInfo, { name: manifest.name, version: manifest.version });
       assert.deepEqual(
         (await rpc('tools/list')).body.result.tools.map((t) => t.name).sort(),
         [

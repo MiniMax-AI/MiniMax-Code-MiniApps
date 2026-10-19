@@ -14,10 +14,10 @@
 | `editor_inspect` | 读取页面最后报告的文档、图层和版本 |
 | `editor_capabilities` | 获取旧版轻量工作台的操作目录 |
 | `photo_call` | 查询 PhotoCraft 命令，执行单步或批次，预览和导出 |
-| `editor_preview` | 请求画面和像素取样；实际能力取决于编辑器 |
-| `editor_create` | 新建工程 |
+| `editor_preview` | 旧版轻量工作台预览；主编辑器用 photo_call preview |
+| `editor_create` | 旧版轻量工作台新建；主编辑器用 PTC editor.create |
 | `editor_batch` | 旧版轻量工作台的结构化批量编辑 |
-| `editor_export` | 请求工程与图片导出 |
+| `editor_export` | 旧版轻量工作台导出；主编辑器用 photo_call export |
 | `editor_job` | 查询任务状态与返回文件 |
 | `editor_run_code` | 提交 QuickJS 组合脚本 |
 | `editor_code_result` | 查询脚本结果和逐步记录 |
@@ -36,7 +36,7 @@ const commands = await editor.commands({filter: 'blackWhite'});
 return {before, commands};
 ```
 
-可调用 `editor.inspect()`、`capabilities()`、`commands({filter})`、`execute({command,params})`、`edit([{command,params}])`、`preview(options)`、`create({width,height,name})`、`export({format})`。PhotoCraft 使用其真实命令；旧版的 `edit` 使用 `{op,...}` 操作，示例见 `examples/ptc-script.js`。
+可调用 `editor.inspect()`、`capabilities()`、`commands({filter})`、`execute({command,params})`、`edit([{command,params}])`、`draw({strokes,intervalMs})`、`preview(options)`、`create({width,height,name})`、`export({format})`。PhotoCraft 使用其真实命令；旧版的 `edit` 使用 `{op,...}` 操作，示例见 `examples/ptc-script.js`。
 
 每次最多 32 KB 代码、32 MB VM 堆、64 次工具调用和 120 秒。没有 Node、文件或网络 API。QuickJS 位于 Node worker thread，库的 stdout/stderr 被单独接收，不写入宿主协议输出。语义识图由 Agent 查看 MCP 图片完成，脚本不会自己调用模型。
 
@@ -51,3 +51,11 @@ PhotoCraft 的批量操作在独立文档副本执行，成功后提交一次历
 `sdk/editor.mjs` 和 `examples/compose-edit.mjs` 提供传输无关的旧版组合调用示例；实际 MCP 传输由调用者提供，不假设宿主有某个全局 PTC 对象。
 
 工具存在不代表所有命令和模型理解都经过验证。编辑后查看预览；重要作品先保存工程。记录和结果暂不自动清理，长期运行会占用本地磁盘。
+
+## 逐笔绘制和参考图
+
+`await editor.draw({strokes, intervalMs:550})` 顺序执行 1–96 笔，每笔真实更新画布且可以单独撤销。每笔可以使用点数组或绝对路径命令 M/L/Q/C/Z；同段脚本内可循环分组，但总耗时仍须小于 120 秒。绘画展示建议间隔 500–600 ms。`editor.edit` 的批量提交不等于逐笔绘制。
+
+Skill 附带通用参考图轮廓脚本，适合边界清楚的插画和标志，需要 Python 3 与 Pillow，由 Agent 按需调用。它不识别语义，不自带图片模型，也不适合直接提取照片的所有色块。参见 [参考图轮廓转笔触](../skills/minimax-photo/references/reference-tracing.md)。
+
+PTC 支持 `console.log/info/warn/error/debug`，结果中最多保留 50 条、总计 10000 字符的日志。日志不是任务成功证明；仍应查询运行结果并查看预览。

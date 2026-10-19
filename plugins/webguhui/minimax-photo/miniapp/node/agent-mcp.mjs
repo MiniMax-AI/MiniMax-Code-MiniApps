@@ -34,7 +34,7 @@ const tools = [
   },
 ];
 // Stateless Streamable HTTP, JSON responses; no server-initiated RPC or session IDs.
-export async function handleAgentMCP(req, res, service, json, editor) {
+export async function handleAgentMCP(req, res, service, json, editor, serverInfo) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return json(res, 405, { error: 'Use POST' });
@@ -67,7 +67,7 @@ export async function handleAgentMCP(req, res, service, json, editor) {
       return reply({
         protocolVersion: '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'minimax-photo', version: '0.2.16' },
+        serverInfo,
       });
     if (message.method === 'ping') return reply({});
     if (message.method === 'tools/list') return reply({ tools: [...tools, ...editorTools] });

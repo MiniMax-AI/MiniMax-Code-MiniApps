@@ -21,6 +21,8 @@ const MIME = {
 };
 const MAX = 64 * 1024 * 1024;
 export async function start(context) {
+  const manifest = JSON.parse(await readFile(join(context.pluginRoot, '.minimax-plugin/plugin.json'), 'utf8'));
+  const serverInfo = { name: manifest.name, version: manifest.version };
   const client = resolve(context.pluginRoot, 'miniapp/client'),
     storage = join(context.dataDir, 'projects');
   await mkdir(storage, { recursive: true });
@@ -64,7 +66,7 @@ export async function start(context) {
       if (url.pathname === '/mcp/retouch-images') {
         if (req.headers.origin && req.headers.origin !== url.origin)
           return json(res, 403, { error: 'Origin rejected' });
-        return await handleAgentMCP(req, res, agent, json, editor);
+        return await handleAgentMCP(req, res, agent, json, editor, serverInfo);
       }
       if (!['GET', 'HEAD'].includes(req.method) && req.headers.origin !== url.origin)
         return json(res, 403, { error: '仅允许本页面保存工程' });
