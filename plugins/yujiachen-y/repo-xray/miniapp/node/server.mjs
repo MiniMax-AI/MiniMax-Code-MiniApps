@@ -8,9 +8,9 @@ import { delimiter, join } from 'node:path';
 
 import { ALGO_VERSION, buildModel, buildReport, diffReports, fileDetail, personDetail, search } from './analyze.mjs';
 import { buildDescs, mapView, pickDescFiles } from './codemap.mjs';
-import { GitError, HOST_RE, children, git, netEnv, parseTarget, prefetchBlobs, readBlobs, syncRemote } from './git.mjs';
+import { GitError, HOST_RE, children, git, killTree, netEnv, parseTarget, prefetchBlobs, readBlobs, syncRemote } from './git.mjs';
 import { buildTechStack, pickManifests } from './techstack.mjs';
-import { readJson, writeJsonAtomic } from './util.mjs';
+import { readJson, sleep, writeJsonAtomic } from './util.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
@@ -530,12 +530,13 @@ export async function start(context) {
       const repo = findRepo(m[1]);
       config.repos = config.repos.filter((r) => r.id !== repo.id);
       models.delete(repo.id);
-      // Let a running job's git exit and the job write its last file before deleting them.
+      await saveConfig();
+      // Stop a running job before deleting its files. The abort kills git and its helpers at once;
+      // the cap only bounds steps that do not take the signal (the gh / glab / scutil lookups).
       const job = jobs.get(repo.id);
       job?.ac.abort();
-      await job?.done;
+      if (job?.done) await Promise.race([job.done, sleep(5000)]);
       jobs.delete(repo.id);
-      await saveConfig();
       // Only Mini App-owned caches are removed; local repositories are never touched.
       await rm(reportFile(repo.id), { force: true });
       if (repo.target.kind === 'remote') await rm(repoDir(repo.id), { recursive: true, force: true });
@@ -639,7 +640,7 @@ export async function start(context) {
     context.signal.removeEventListener('abort', onAbort);
     clearInterval(heartbeat);
     for (const j of jobs.values()) j.ac?.abort();
-    for (const c of children) c.kill('SIGKILL');
+    for (const c of children) killTree(c);
     for (const s of streams) {
       try {
         s.end();

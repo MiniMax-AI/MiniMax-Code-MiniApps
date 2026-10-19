@@ -35,6 +35,22 @@ function inheritedEnv() {
 }
 
 /**
+ * SIGKILL a child together with the helpers it started (git-remote-https, ssh). They share its
+ * pipes, so killing git alone leaves them running and 'close' waits on the network. On POSIX a
+ * child from git() leads its own process group; anything else (or Windows) gets a plain kill.
+ * @param {import('node:child_process').ChildProcess} child
+ */
+export function killTree(child) {
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+      return;
+    } catch {}
+  }
+  child.kill('SIGKILL');
+}
+
+/**
  * Run git with an argument array (never a shell).
  * @param {string[]} args
  * @param {{ cwd?: string, env?: Record<string,string>, timeout?: number, signal?: AbortSignal, input?: string, onStderr?: (chunk: string) => void, onStdout?: (chunk: Buffer) => void, maxBuffer?: number }} [opts]
@@ -42,6 +58,7 @@ function inheritedEnv() {
  */
 export function git(args, opts = {}) {
   return new Promise((resolvePromise, reject) => {
+    if (opts.signal?.aborted) return reject(new GitError('aborted', '已取消'));
     const env = {
       ...inheritedEnv(),
       GIT_TERMINAL_PROMPT: '0',
@@ -51,7 +68,7 @@ export function git(args, opts = {}) {
       LC_ALL: 'C',
       ...opts.env,
     };
-    const child = spawn('git', args, { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn('git', args, { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
     children.add(child);
     const out = [];
     let outLen = 0;
@@ -60,11 +77,11 @@ export function git(args, opts = {}) {
     const max = opts.maxBuffer ?? 256 * 1024 * 1024;
     const timer = setTimeout(() => {
       killedFor = 'timeout';
-      child.kill('SIGKILL');
+      killTree(child);
     }, opts.timeout ?? 120_000);
     const onAbort = () => {
       killedFor = 'aborted';
-      child.kill('SIGKILL');
+      killTree(child);
     };
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout.on('data', (c) => {
@@ -72,7 +89,7 @@ export function git(args, opts = {}) {
       outLen += c.length;
       if (outLen > max) {
         killedFor = 'overflow';
-        child.kill('SIGKILL');
+        killTree(child);
         return;
       }
       out.push(c);
