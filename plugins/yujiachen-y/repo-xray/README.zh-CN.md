@@ -41,19 +41,20 @@
 - 读取的文件：
   - 你添加的仓库。本机仓库只用下文列出的只读 git 命令原地读取：只看 `HEAD` 的历史，不 fetch，也不写入任何内容。
   - 本机仓库推荐：在扫描目录下列出子目录（默认 `~/Workspace`、`~/workspace`、`~/code`、`~/Code`、`~/src`、`~/Projects`、`~/projects`、`~/Developer`、`~/dev`、`~/repos`、`~/GitHub`、`~/git`；可在设置里改成最多 10 个自定义目录），最深 4 层、最多 4000 个目录和 300 个仓库，跳过隐藏目录和 `node_modules` 等目录。每个目录只检查有没有 `.git`，以及 `.git/FETCH_HEAD`、`.git/index`、`.git/HEAD` 的修改时间。
-  - `glab` 配置文件（`$GLAB_CONFIG_DIR/config.yml`、`~/.config/glab-cli/config.yml` 或 `~/Library/Application Support/glab-cli/config.yml`）里的主机名，用来判断 `glab` 登录了哪些主机；不从这个文件读取令牌。
+  - `glab` 配置文件（`$GLAB_CONFIG_DIR/config.yml`、`~/.config/glab-cli/config.yml` 或 `~/Library/Application Support/glab-cli/config.yml`）和 `gh` 的 `hosts.yml`（`$GH_CONFIG_DIR`、`$XDG_CONFIG_HOME/gh` 或 `~/.config/gh`）里的主机名，用来判断这两个 CLI 登录了哪些主机；不从这些文件读取令牌。
   - 在 `PATH`、`/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin`、`~/.local/bin`、`~/.local/share/mise/shims` 里查找 `gh` 和 `glab` 是否存在。
-- 写入的文件，全部位于宿主提供的 `context.dataDir` 内（先写临时文件再原子替换）：
+- 写入的文件，全部位于宿主提供的 `context.dataDir` 内（先写临时文件再原子替换；JSON 文件的权限是仅本人可读写的 `0600`）：
   - `config.json`：仓库列表和设置（扫描目录、代理，以及你在设置里填写的访问令牌；令牌以明文保存在这个文件里）。
   - `reports/<id>.json`：每个仓库的分析结果。
   - `repos/<id>.git`：远程仓库的 bare、blob-less 克隆，只包含提交和目录树，外加技术栈识别和目录说明用到的少量清单文件与 README 类文件。
   - 移除仓库时删除它的报告；如果是远程仓库，同时删除它的克隆。本机仓库从不改动。
-- 网络：只有 `git` 会联网，通过 HTTPS 访问你添加的远程仓库所在的主机：clone 和 fetch、用 `ls-remote` 跟进默认分支改名、拉取上面提到的少量清单与 README 文件。`git@host:path` 和 `ssh://` 形式的地址会转换成 HTTPS 地址。设置了代理时 git 经代理连接，代理依次取自设置、`HTTPS_PROXY` / `https_proxy` / `HTTP_PROXY` / `http_proxy` 环境变量、macOS 系统 HTTPS 代理。页面只加载本应用同源的文件和 `/api/` 路由。指向 GitHub / GitLab 页面的链接只有在你点击时才会在浏览器里打开。没有任何统计上报。
+- 网络：只有 `git` 会联网，通过 HTTPS 访问你添加的远程仓库所在的主机：clone 和 fetch、用 `ls-remote` 跟进默认分支改名、拉取上面提到的少量清单与 README 文件。`git@host:path` 和 `ssh://` 形式的地址会先校验主机名，再转换成 HTTPS 地址。设置了代理时 git 经代理连接，代理依次取自设置、`HTTPS_PROXY` / `https_proxy` / `HTTP_PROXY` / `http_proxy` 环境变量、macOS 系统 HTTPS 代理。页面只加载本应用同源的文件和 `/api/` 路由。指向 GitHub / GitLab 页面的链接只有在你点击时才会在浏览器里打开。没有任何统计上报。
+- 本地服务：只响应 `Host` 是回环地址、并且 `Origin`（如果带了）就是本页面的请求，其余一律返回 `403`。
 - 进程：全部用参数数组启动，从不经过 shell。你输入的地址和路径都会先校验，并作为独立参数传入，不会出现在选项位置：
-  - `git`：`clone --bare --filter=blob:none`、`fetch`、`ls-remote`、`log`、`ls-tree`、`cat-file`、`rev-parse`、`for-each-ref`、`symbolic-ref`，以及 `config`（读取本机仓库的 `remote.origin.url` 来生成网页链接；只在应用自己的克隆里设置 `remote.origin.fetch` 和 `HEAD`）。
-  - `gh auth token --hostname <host>`（GitHub 主机）和 `glab config get token --host <host>`（`glab` 配置里的主机），仅在装了这两个 CLI 时调用，用来复用已有登录。
+  - `git`：`clone --bare --filter=blob:none`、`fetch`、`ls-remote`、`log`、`ls-tree`、`cat-file`、`rev-parse`、`for-each-ref`、`symbolic-ref`，以及 `config`（读取本机仓库的 `remote.origin.url` 来生成网页链接；只在应用自己的克隆里设置 `remote.origin.fetch` 和 `HEAD`）。继承来的、会把 git 指向别的仓库的环境变量（`GIT_DIR` 以及 `git rev-parse --local-env-vars` 列出的其余变量）和会打印请求的 `GIT_TRACE*` 都会被去掉。
+  - `gh auth token --hostname <host>`（`github.com` 和 `gh` 的 `hosts.yml` 里的主机）和 `glab config get token --host <host>`（`glab` 配置里的主机），仅在装了这两个 CLI 时调用，用来复用已有登录。
   - macOS 上的 `/usr/sbin/scutil --proxy`，仅在设置和环境变量里都没有代理时调用。
-- 凭据：来自 `gh`、`glab` 或设置的令牌只留在 Node 进程里，通过 `GIT_CONFIG_*` 环境变量以 `http.extraHeader` 的形式交给 git，不会出现在命令行参数、仓库配置、页面、日志或事件流里。来自 `gh` 和 `glab` 的令牌只缓存在内存中。这些 git 命令会关闭凭据助手和交互式提示。
+- 凭据：来自 `gh`、`glab` 或设置的令牌只留在 Node 进程里，通过 `GIT_CONFIG_*` 环境变量以 `http.extraHeader` 的形式交给 git，不会出现在命令行参数、仓库配置、页面、日志或事件流里。带着令牌时 git 不跟随 HTTP 跳转（`http.followRedirects=false`），令牌只会发给你添加的那台主机；会跳转的仓库（改名或迁移过）需要用新地址重新添加。来自 `gh` 和 `glab` 的令牌只缓存在内存中。这些 git 命令会关闭凭据助手和交互式提示。
 - Agent：不运行 Agent，没有声明 `agentAccess`，也没有 MCP 端点。“发到对话…”“让 Agent 讲解…”“让 Agent 读高风险文件…”会调用 `window.mcode.miniapp.message.append`，在宿主弹窗确认后把一段准备好的提示词（报告摘要和部分文件路径）放进对话输入框，由你决定是否发送。环境不支持这个接口时，改为复制到剪贴板。
 - 剪贴板：只在你点击复制类操作（SHA、路径、Markdown 报告）时写入。
 - 浏览器存储：`localStorage` 只保存主题、上次打开的仓库和身份合并偏好。

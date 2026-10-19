@@ -16,6 +16,24 @@ export class GitError extends Error {
 /** Child processes owned by this runtime (killed on dispose). */
 export const children = new Set();
 
+/** Host names the app accepts, for repository addresses and Settings alike. */
+export const HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/;
+
+// Inherited variables that would point git at another repository or inject config (git's own
+// list, `git rev-parse --local-env-vars`, plus the numbered GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n
+// pairs), and GIT_TRACE*, which can print requests. Everything else (PATH, HOME, proxies, CA
+// settings) is passed through.
+const LOCAL_ENV = new Set(['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_OBJECT_DIRECTORY', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE', 'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR']);
+function inheritedEnv() {
+  /** @type {Record<string, string>} */
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined || LOCAL_ENV.has(k) || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(k) || k.startsWith('GIT_TRACE')) continue;
+    env[k] = v;
+  }
+  return env;
+}
+
 /**
  * Run git with an argument array (never a shell).
  * @param {string[]} args
@@ -25,7 +43,7 @@ export const children = new Set();
 export function git(args, opts = {}) {
   return new Promise((resolvePromise, reject) => {
     const env = {
-      ...process.env,
+      ...inheritedEnv(),
       GIT_TERMINAL_PROMPT: '0',
       GIT_ASKPASS: '',
       SSH_ASKPASS: '',
@@ -85,6 +103,8 @@ export function git(args, opts = {}) {
 }
 
 function classify(stderr) {
+  // Before 'network': the message also says "unable to access".
+  if (/returned error: 30[1-8]\b/.test(stderr)) return 'redirect';
   if (/Authentication failed|could not read Username|403|401|HTTP Basic: Access denied|terminal prompts disabled/i.test(stderr)) return 'auth';
   if (/not found|does not exist|Repository not found|404/i.test(stderr)) return 'not_found';
   if (/Could not resolve host|Failed to connect|Connection (reset|refused|timed out)|SSL|TLS|gnutls|unable to access/i.test(stderr)) return 'network';
@@ -95,6 +115,7 @@ function classify(stderr) {
 
 function friendly(stderr) {
   const code = classify(stderr);
+  if (code === 'redirect') return '服务器要求跳转到另一个地址（仓库可能改名或迁移了）。带着访问令牌时不会跟随跳转，以免令牌发到别处：请在网页上确认仓库的新地址，用新地址重新添加';
   if (code === 'auth') return '没有权限访问这个仓库：请确认已用 gh / glab 登录，或在设置里为这个主机填写访问令牌';
   if (code === 'not_found') return '仓库不存在，或当前账号看不到它';
   if (code === 'network') return '网络连接失败：内网地址可能需要在设置里配置代理';
@@ -172,6 +193,8 @@ export async function parseTarget(raw) {
     throw new GitError('invalid', '无法识别：请输入 https 地址、owner/repo，或本地仓库的绝对路径');
   }
   host = host.toLowerCase();
+  // One rule for every form: rejects "git@github.com@evil.example:…" and similar.
+  if (!HOST_RE.test(host)) throw new GitError('invalid', '主机名不合法');
   path = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
   // Strip web UI suffixes.
   path = path.split('/-/')[0];
@@ -207,6 +230,10 @@ export function netEnv(target, token, proxy) {
   if (token) {
     const user = target.provider === 'github' ? 'x-access-token' : 'oauth2';
     pairs.push(['http.extraHeader', `Authorization: Basic ${Buffer.from(`${user}:${token}`).toString('base64')}`]);
+    // The header goes with every request this git process makes, and after following a redirect
+    // git keeps talking to the new address (a URL-scoped http.<url>.extraHeader is matched against
+    // the original URL, so it does not help). With a token attached, never follow redirects.
+    pairs.push(['http.followRedirects', 'false']);
   }
   if (proxy) pairs.push(['http.proxy', proxy]);
   pairs.push(['credential.helper', '']);
@@ -278,9 +305,18 @@ export async function prefetchBlobs(dir, oids, { env, signal }) {
 export async function readBlobs(dir, oids, { signal }) {
   const result = new Map();
   if (!oids.length) return result;
+  const MAX = 512 * 1024;
+  // Sizes first, so a huge blob is never read into memory.
+  const sizes = await git(['-C', dir, 'cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], { input: oids.join('\n') + '\n', env: { GIT_NO_LAZY_FETCH: '1' }, signal, timeout: 60_000 });
+  const small = sizes
+    .split('\n')
+    .map((l) => l.split(' '))
+    .filter(([, type, size]) => type === 'blob' && Number(size) < MAX)
+    .map(([oid]) => oid);
+  if (!small.length) return result;
   const chunks = [];
   await git(['-C', dir, 'cat-file', '--batch'], {
-    input: oids.join('\n') + '\n',
+    input: small.join('\n') + '\n',
     env: { GIT_NO_LAZY_FETCH: '1' },
     signal,
     timeout: 120_000,
@@ -296,7 +332,7 @@ export async function readBlobs(dir, oids, { signal }) {
     const [oid, type, sizeStr] = header.split(' ');
     if (type === 'missing' || !sizeStr) continue;
     const size = Number(sizeStr);
-    if (type === 'blob' && size < 512 * 1024) result.set(oid, buf.subarray(pos, pos + size).toString('utf8'));
+    if (type === 'blob' && size < MAX) result.set(oid, buf.subarray(pos, pos + size).toString('utf8'));
     pos += size + 1;
   }
   return result;

@@ -44,10 +44,11 @@ export async function readJson(file, fallback) {
   }
 }
 
+/** Owner-only (0600): config.json can hold access tokens. rename() keeps the temp file's mode. */
 export async function writeJsonAtomic(file, value) {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(tmp, JSON.stringify(value));
+  await writeFile(tmp, JSON.stringify(value), { mode: 0o600 });
   await rename(tmp, file);
 }
 

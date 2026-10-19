@@ -1,14 +1,14 @@
 // @ts-check
 import { execFile } from 'node:child_process';
 import { constants as fsc } from 'node:fs';
-import { access, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { access, chmod, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 import { ALGO_VERSION, buildModel, buildReport, diffReports, fileDetail, personDetail, search } from './analyze.mjs';
 import { buildDescs, mapView, pickDescFiles } from './codemap.mjs';
-import { GitError, children, git, netEnv, parseTarget, prefetchBlobs, readBlobs, syncRemote } from './git.mjs';
+import { GitError, HOST_RE, children, git, netEnv, parseTarget, prefetchBlobs, readBlobs, syncRemote } from './git.mjs';
 import { buildTechStack, pickManifests } from './techstack.mjs';
 import { readJson, writeJsonAtomic } from './util.mjs';
 
@@ -22,6 +22,37 @@ const CLIENT_FILES = {
   '/assets/icon.svg': ['icon.svg', 'image/svg+xml'],
 };
 const ID_RE = /^[rl]-[0-9a-f]{12}$/;
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
+/**
+ * The Host header must name this machine (a DNS-rebound name is refused), and a browser Origin,
+ * when sent, must be this listener: http, a loopback host, and our port. The page is same-origin.
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} port
+ */
+function isLoopbackRequest(req, port) {
+  const host = req.headers.host;
+  if (host !== undefined && !LOOPBACK_HOSTS.has(hostnameOf(host))) return false;
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  let url;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false; // includes "null" (sandboxed iframes, file://)
+  }
+  const originPort = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(hostnameOf(url.host)) && originPort === port;
+}
+
+/** @param {string} hostHeader */
+function hostnameOf(hostHeader) {
+  const h = hostHeader.trim().toLowerCase();
+  const bracketed = /^\[([^\]]*)\]/.exec(h);
+  if (bracketed) return bracketed[1];
+  const colon = h.lastIndexOf(':');
+  return colon === -1 ? h : h.slice(0, colon);
+}
 
 /**
  * @param {MiniAppContext} context
@@ -35,6 +66,8 @@ export async function start(context) {
   const config = { repos: [], ...(await readJson(configFile, {})) };
   config.repos ??= [];
   config.settings = { proxy: '', tokens: {}, scanRoots: null, ...(config.settings || {}) };
+  // Files written by earlier versions used the default mode; tighten an existing config now.
+  await chmod(configFile, 0o600).catch(() => {});
   const saveConfig = () => writeJsonAtomic(configFile, config);
   const repoDir = (id) => join(dataDir, 'repos', `${id}.git`);
   const reportFile = (id) => join(dataDir, 'reports', `${id}.json`);
@@ -110,6 +143,23 @@ export async function start(context) {
     }
     return new Set();
   }
+  // Hosts gh is logged in to: the top-level keys of its hosts.yml (tokens are not read here).
+  async function ghHosts() {
+    const env = process.env;
+    const dir = env.GH_CONFIG_DIR || (env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, 'gh') : join(homedir(), '.config', 'gh'));
+    let text = '';
+    try {
+      text = await readFile(join(dir, 'hosts.yml'), 'utf8');
+    } catch {
+      return new Set();
+    }
+    const hosts = new Set();
+    for (const line of text.split('\n')) {
+      const m = line.match(/^([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+):\s*$/i);
+      if (m) hosts.add(m[1].toLowerCase());
+    }
+    return hosts;
+  }
   const tokenCache = new Map();
   /** @returns {Promise<{ token: string, source: string }>} */
   async function credentialFor(host) {
@@ -118,7 +168,9 @@ export async function start(context) {
     if (hit && Date.now() - hit.at < 10 * 60_000) return hit.value;
     let value = { token: '', source: 'none' };
     const gh = await findBin('gh');
-    if (gh && (host === 'github.com' || host.startsWith('github.'))) {
+    // Only github.com and hosts gh is logged in to: for any other host gh would hand out
+    // GH_ENTERPRISE_TOKEN if that is set.
+    if (gh && (host === 'github.com' || (await ghHosts()).has(host))) {
       const t = await runOut(gh, ['auth', 'token', '--hostname', host]).catch(() => '');
       if (t) value = { token: t, source: 'gh' };
     }
@@ -212,7 +264,7 @@ export async function start(context) {
     const ac = new AbortController();
     const onAbort = () => ac.abort();
     context.signal.addEventListener('abort', onAbort, { once: true });
-    const job = { repoId: repo.id, running: true, stage: 'queued', pct: 0, detail: '', error: null, startedAt: Date.now(), stageStartedAt: Date.now(), steps: [], reportHead: null, ac };
+    const job = { repoId: repo.id, running: true, stage: 'queued', pct: 0, detail: '', error: null, startedAt: Date.now(), stageStartedAt: Date.now(), steps: [], reportHead: null, ac, done: /** @type {Promise<void> | null} */ (null) };
     const enter = (stage) => {
       if (job.stage !== 'queued') job.steps.push({ stage: job.stage, ms: Date.now() - job.stageStartedAt });
       job.stage = stage;
@@ -223,7 +275,7 @@ export async function start(context) {
     };
     jobs.set(repo.id, job);
     tick(job, true);
-    (async () => {
+    job.done = (async () => {
       const dir = workDirOf(repo);
       let env = {};
       if (repo.target.kind === 'remote') {
@@ -431,6 +483,8 @@ export async function start(context) {
   }
 
   async function handle(req, res) {
+    // Every route: the Host names this machine and a browser Origin, if any, is this page.
+    if (!isLoopbackRequest(req, context.listen.port)) return send(res, 403, { error: { code: 'forbidden', message: '只接受本机页面的请求' } });
     const url = new URL(req.url ?? '/', 'http://miniapp.local');
     const p = url.pathname;
     const method = req.method || 'GET';
@@ -474,9 +528,13 @@ export async function start(context) {
     }
     if ((m = p.match(/^\/api\/repos\/([^/]+)$/)) && method === 'DELETE') {
       const repo = findRepo(m[1]);
-      jobs.get(repo.id)?.ac.abort();
       config.repos = config.repos.filter((r) => r.id !== repo.id);
       models.delete(repo.id);
+      // Let a running job's git exit and the job write its last file before deleting them.
+      const job = jobs.get(repo.id);
+      job?.ac.abort();
+      await job?.done;
+      jobs.delete(repo.id);
       await saveConfig();
       // Only Mini App-owned caches are removed; local repositories are never touched.
       await rm(reportFile(repo.id), { force: true });
@@ -549,7 +607,7 @@ export async function start(context) {
       }
       if (b.token && typeof b.token.host === 'string') {
         const host = b.token.host.trim().toLowerCase();
-        if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/.test(host)) throw new GitError('invalid', '主机名不合法');
+        if (!HOST_RE.test(host)) throw new GitError('invalid', '主机名不合法');
         const t = String(b.token.value || '').trim();
         if (t) config.settings.tokens[host] = t;
         else delete config.settings.tokens[host];

@@ -77,12 +77,13 @@ the Agent to "打开仓库透视".
     `node_modules`. For each directory it only checks for a `.git` entry and the modification times
     of `.git/FETCH_HEAD`, `.git/index`, and `.git/HEAD`.
   - The host names in `glab`'s config file (`$GLAB_CONFIG_DIR/config.yml`,
-    `~/.config/glab-cli/config.yml`, or `~/Library/Application Support/glab-cli/config.yml`), to know
-    which hosts `glab` is logged in to. Tokens are not read from this file.
+    `~/.config/glab-cli/config.yml`, or `~/Library/Application Support/glab-cli/config.yml`) and in
+    `gh`'s `hosts.yml` (`$GH_CONFIG_DIR`, `$XDG_CONFIG_HOME/gh`, or `~/.config/gh`), to know which
+    hosts these CLIs are logged in to. Tokens are not read from these files.
   - Whether `gh` and `glab` exist on `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`,
     `~/.local/bin`, or `~/.local/share/mise/shims`.
 - Files written, all inside the Host-provided `context.dataDir` (atomic write through a temporary
-  file):
+  file; JSON files are owner-only, mode `0600`):
   - `config.json`: the repository list and settings (scan roots, proxy, and any access tokens you
     paste in Settings, stored in plain text in this file).
   - `reports/<id>.json`: the analysis result for each repository.
@@ -92,24 +93,31 @@ the Agent to "打开仓库透视".
     repositories are never modified.
 - Network: only `git` goes online, over HTTPS, to the host of each remote repository you add: clone
   and fetch, `ls-remote` to follow a renamed default branch, and fetching the few manifest and README
-  files above. `git@host:path` and `ssh://` addresses are converted to HTTPS URLs. If a proxy is set,
-  git connects through it; the proxy comes from Settings, then `HTTPS_PROXY` / `https_proxy` /
-  `HTTP_PROXY` / `http_proxy`, then the macOS system HTTPS proxy. The page loads only the app's own
-  same-origin files and `/api/` routes. Links to repository pages on GitHub or GitLab open in your
-  browser only when you click them. No telemetry.
+  files above. `git@host:path` and `ssh://` addresses are converted to HTTPS URLs; host names are
+  validated first. If a proxy is set, git connects through it; the proxy comes from Settings, then
+  `HTTPS_PROXY` / `https_proxy` / `HTTP_PROXY` / `http_proxy`, then the macOS system HTTPS proxy.
+  The page loads only the app's own same-origin files and `/api/` routes. Links to repository pages
+  on GitHub or GitLab open in your browser only when you click them. No telemetry.
+- Local server: it answers only requests whose `Host` is a loopback name and whose `Origin`, when
+  sent, is the page itself; anything else gets `403`.
 - Processes, all started with an argument array and never through a shell. Addresses and paths you
   enter are validated and passed as separate arguments, never in an option position:
   - `git`: `clone --bare --filter=blob:none`, `fetch`, `ls-remote`, `log`, `ls-tree`, `cat-file`,
     `rev-parse`, `for-each-ref`, `symbolic-ref`, and `config` (reads `remote.origin.url` of a local
     repository to build web links; sets `remote.origin.fetch` and `HEAD` only inside the app's own
-    clones).
-  - `gh auth token --hostname <host>` for GitHub hosts and `glab config get token --host <host>` for
-    hosts in `glab`'s config, only when those CLIs are installed, to reuse your existing login.
+    clones). Inherited variables that would point git at another repository (`GIT_DIR` and the rest
+    of `git rev-parse --local-env-vars`) or trace requests (`GIT_TRACE*`) are removed.
+  - `gh auth token --hostname <host>` for `github.com` and hosts in `gh`'s `hosts.yml`, and
+    `glab config get token --host <host>` for hosts in `glab`'s config, only when those CLIs are
+    installed, to reuse your existing login.
   - `/usr/sbin/scutil --proxy` on macOS, only when no proxy is set in Settings or the environment.
 - Credentials: tokens from `gh`, `glab`, or Settings stay in the Node process. They reach git as an
   `http.extraHeader` through `GIT_CONFIG_*` environment variables, never in command-line arguments,
-  repository config, the page, logs, or the event stream. Tokens from `gh` and `glab` are cached in
-  memory only. Git credential helpers and interactive prompts are turned off for these commands.
+  repository config, the page, logs, or the event stream. While a token is attached, git does not
+  follow HTTP redirects (`http.followRedirects=false`), so the token is only ever sent to the host
+  you added; a repository that redirects (renamed or moved) has to be added again with its new
+  address. Tokens from `gh` and `glab` are cached in memory only. Git credential helpers and
+  interactive prompts are turned off for these commands.
 - Agent turns: none. No `agentAccess` and no MCP endpoints. "发到对话…", "让 Agent 讲解…", and
   "让 Agent 读高风险文件…" call `window.mcode.miniapp.message.append` to place a prepared prompt (a
   summary of the report and some file paths) in the conversation input after the Host asks you to
