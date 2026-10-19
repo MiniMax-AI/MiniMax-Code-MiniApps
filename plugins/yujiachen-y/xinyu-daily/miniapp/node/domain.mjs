@@ -94,6 +94,21 @@ function emptyState() {
   };
 }
 
+const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+/** 读回存档：缺的字段补默认值；顶层集合类型不对的换成空值，免得一个字段坏了整个应用打不开。 */
+function restoreState(raw) {
+  const base = emptyState();
+  const state = { ...base, ...raw, profile: { ...base.profile, ...(isPlainObject(raw.profile) ? raw.profile : {}) } };
+  for (const [key, value] of Object.entries(base)) {
+    if (Array.isArray(value) ? !Array.isArray(state[key]) : isPlainObject(value) && !isPlainObject(state[key])) {
+      state[key] = value;
+    }
+  }
+  state.companion = normalizeCompanion(raw.companion);
+  return state;
+}
+
 /** 本机本地日期 YYYY-MM-DD */
 export function localDate(d = new Date()) {
   const y = d.getFullYear();
@@ -211,37 +226,59 @@ function str(v, field, max, { required = true } = {}) {
 }
 
 /**
- * @param {{dataDir:string, onChange:(version:number)=>void}} opts
+ * @param {{dataDir:string, onChange:(version:number)=>void, onWarn?:(message:string)=>void}} opts
  */
-export async function createDomain({ dataDir, onChange }) {
+export async function createDomain({ dataDir, onChange, onWarn = () => {} }) {
   const file = join(dataDir, 'xinyu-state.json');
   await mkdir(dataDir, { recursive: true });
   let state = emptyState();
+  /** @type {unknown} */
+  let raw;
+  let broken = '';
   try {
-    const raw = JSON.parse(await readFile(file, 'utf8'));
-    state = { ...emptyState(), ...raw, profile: { ...emptyState().profile, ...(raw.profile ?? {}) } };
-    if (!state.about || typeof state.about !== 'object') state.about = {};
-    if (!state.secrets || typeof state.secrets !== 'object') state.secrets = {};
-    if (!state.flags || typeof state.flags !== 'object') state.flags = {};
-    state.companion = normalizeCompanion(raw.companion);
+    raw = JSON.parse(await readFile(file, 'utf8'));
+    if (!isPlainObject(raw)) broken = 'shape';
   } catch (error) {
-    if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error;
+    if (error instanceof SyntaxError) broken = 'syntax';
+    else if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error;
+  }
+  if (broken) {
+    // 文件写坏了（截断的 JSON、null 之类）：原样改名留底，从空状态启动，免得应用再也打不开
+    const backup = `xinyu-state.broken-${new Date().toISOString().replace(/[-:.]/g, '')}.json`;
+    await rename(file, join(dataDir, backup));
+    onWarn(`xinyu.state.recovered reason=${broken} backup=${backup}`);
+  } else if (raw) {
+    state = restoreState(/** @type {Record<string, any>} */ (raw));
   }
   let version = 0;
   let epoch = 0;
   let queue = Promise.resolve();
 
-  async function persist() {
+  /** @param {object} data */
+  async function persist(data) {
     const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, JSON.stringify(state), 'utf8');
+    await writeFile(tmp, JSON.stringify(data), 'utf8');
     await rename(tmp, file);
   }
 
-  /** 串行化所有写操作：修改 → 落盘 → 广播 */
+  /**
+   * 串行化所有写操作：在副本上修改 → 落盘 → 换上副本 → 广播。
+   * 落盘失败（或 fn 抛错）时内存保持原样，和磁盘一致。fn 必须是同步的，里面通过 state 读写。
+   */
   function mutate(fn) {
     const run = queue.then(async () => {
-      const result = fn();
-      await persist();
+      const current = state;
+      state = structuredClone(current);
+      let result;
+      let next;
+      try {
+        result = fn();
+        next = state;
+      } finally {
+        state = current; // 落盘成功之前，别处读到的都还是旧状态
+      }
+      await persist(next);
+      state = next;
       version++;
       try { onChange(version); } catch { /* 广播失败不回滚 */ }
       return result;

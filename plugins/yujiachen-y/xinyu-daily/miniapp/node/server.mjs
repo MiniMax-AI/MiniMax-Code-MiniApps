@@ -41,6 +41,7 @@ const failure = (code) => Object.assign(new Error(code), { code });
 const codeOf = (error) => (error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN');
 /** logger 的 fields 只有键名会离开进程，诊断值要写进消息；只放枚举形态的短标识，不带任何文本。 */
 const logToken = (v) => (typeof v === 'string' && /^[A-Za-z0-9_.-]{1,40}$/.test(v) ? v : 'OTHER');
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
 /**
  * @param {MiniAppContext} context
@@ -62,6 +63,7 @@ export async function start(context) {
       const payload = `event: changed\ndata: ${JSON.stringify({ version })}\n\n`;
       for (const res of sseClients) res.write(payload);
     },
+    onWarn: (message) => context.logger.warn(message),
   });
 
   const heartbeat = setInterval(() => {
@@ -302,9 +304,20 @@ export async function start(context) {
    * @param {import('node:http').ServerResponse} response
    */
   async function handle(request, response) {
+    // 每个路由都只接受本机心屿页面的请求：Host 必须是回环地址（挡住 DNS rebinding），浏览器带了 Origin
+    // 就必须是这个监听地址本身。3.1.2 起宿主会给端口加凭据；更早的客户端没有那层保护，靠这里兜住。
+    if (!isLoopbackRequest(request, context.listen.port)) {
+      request.resume();
+      return sendJson(response, 403, { error: 'forbidden', message: '只接受本机心屿页面的请求' });
+    }
     const url = new URL(request.url ?? '/', 'http://miniapp.local');
     const path = url.pathname;
     const method = request.method ?? 'GET';
+    // 写请求只收 JSON：跨站表单和 text/plain 这类不经预检的请求进不了处理函数
+    if (method !== 'GET' && method !== 'HEAD' && !String(request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+      request.resume();
+      return sendJson(response, 415, { error: 'json_required', message: '请求格式不正确' });
+    }
 
     if (method === 'GET' && path in STATIC) {
       const [name, type] = STATIC[/** @type {keyof typeof STATIC} */ (path)];
@@ -434,6 +447,34 @@ function sendJson(res, status, body) {
   if (res.headersSent) return;
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
+}
+
+/**
+ * Host 必须是本机；浏览器带了 Origin 时，必须是 http://<回环地址>:<本应用端口>。
+ * 不带 Origin 的请求（同源 GET、本机的非浏览器客户端）只看 Host。
+ * @param {import('node:http').IncomingMessage} request @param {number} port
+ */
+function isLoopbackRequest(request, port) {
+  const host = request.headers.host;
+  if (host !== undefined && !LOOPBACK_HOSTS.has(hostnameOf(host))) return false;
+  const origin = request.headers.origin;
+  if (origin === undefined) return true;
+  let url;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false; // 包括 "null"（沙箱 iframe、file://）
+  }
+  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(hostnameOf(url.host)) && Number(url.port || 80) === port;
+}
+
+/** 去掉端口，IPv6 去掉方括号：'[::1]:8080' -> '::1'。 @param {string} hostHeader */
+function hostnameOf(hostHeader) {
+  const h = hostHeader.trim().toLowerCase();
+  const bracketed = /^\[([^\]]*)\]/.exec(h);
+  if (bracketed) return bracketed[1];
+  const colon = h.lastIndexOf(':');
+  return colon === -1 ? h : h.slice(0, colon);
 }
 
 /** @param {import('node:http').IncomingMessage} req */

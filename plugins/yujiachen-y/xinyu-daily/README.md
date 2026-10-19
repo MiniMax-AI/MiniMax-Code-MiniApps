@@ -77,13 +77,23 @@ ask the Agent to "打开心屿".
   device. Shooting stars and hot-air balloons appear at random times, the birthday cake only on the
   user's birthday, and holographic cards only by chance. Sound output was not checked by ear.
   Narrow layouts and reduced motion were checked by reading the CSS, not on a device.
+- The loopback checks and state recovery were exercised with a Node 22 script: requests with a
+  forged `Host` or a cross-site `Origin` get `403`, a `text/plain` write gets `415`, and no data
+  changes; a truncated, `null`, or array state file is renamed aside and the app starts empty, and
+  fields of the wrong type fall back to defaults; when a disk write fails, the in-memory state
+  stays as it was. The page's own writes, including those without a body, pass these checks in
+  headless Chrome.
 
 ## Data & access
 
 - Files: reads its own files under `miniapp/client/`. Writes one file, `xinyu-state.json`, inside
-  the Host-provided `context.dataDir` (atomic write through a temporary file). Nothing else.
+  the Host-provided `context.dataDir` (atomic write through a temporary file). If that file is
+  corrupt and cannot be read, it is renamed to `xinyu-state.broken-<time>.json` in the same
+  directory and the app starts with empty state. Nothing else.
 - Network: none from the app itself. The page only calls the app's own same-origin routes under
-  `/api/`.
+  `/api/`. The server answers only requests from the local page: `Host` must be `127.0.0.1`,
+  `localhost`, or `[::1]`, and a browser `Origin`, when sent, must be this app's own address;
+  anything else gets `403`. Writes accept only `application/json`.
 - Processes: none.
 - Agent turns: declares `agentAccess: ["session.run"]` with `agentConcurrency: 1`, and runs turns
   from the Node entry (`context.agent`) only after you turn on 小屿陪伴, in the mailbox invitation or

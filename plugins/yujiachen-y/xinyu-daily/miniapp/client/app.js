@@ -534,7 +534,8 @@ const isShiny = (c) => c.energy >= 90 || hashStr(`${c.date}|${c.keyword}`) % 8 =
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : {},
+    // 写请求一律带 JSON 头（服务端只收 JSON），不带正文的也一样
+    headers: method === 'GET' ? {} : { 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = null;
