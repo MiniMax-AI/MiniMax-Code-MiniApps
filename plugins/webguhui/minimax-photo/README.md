@@ -31,11 +31,14 @@ The bundled [editing skill](skills/minimax-photo/SKILL.md) guides command discov
 
 ## Tested environment
 
-- MiniMax Code **3.1.3-preview.4675** on macOS (Apple Silicon), tested on 2026-10-19 under the development package name.
-- Host installation/open, recovery after refresh/update, in-app conversation, new conversation, stop with draft retained, minimize/reopen, project saving and PNG export were exercised.
-- A real Agent added a reversible black-and-white adjustment layer and preserved the original. A real Host image-editing tool returned a new PNG and it opened on the canvas. Image generation depends on the user's available models, tools and permissions.
-- Existing package checks, PTC checks and recovery-store checks pass. The public rebrand is checked separately as described in [validation notes](docs/validation.md).
-- Windows, stable-client compatibility, large images and complex PSD fidelity have not been fully tested. This is not a claim of Photoshop feature parity or exhaustive validation of every engine command.
+Tested on macOS Apple Silicon in MiniMax Code, initially with client **3.1.3-preview.4675**. Package **0.2.31** was installed on 2026-10-20; all 97 installed files matched the release. The runtime ZIP is **14,260,491 bytes**, without Electron or model weights.
+
+- A single in-app request generated an image, returned it automatically and opened it as a new artwork. Semantic image editing also has a successful native Host test.
+- Layered project reopening, recovery, four-language help, examples, draft retention and assistant collapse were exercised. Version-specific evidence is in [validation notes](docs/validation.md).
+- A 4000×3000 canvas completed 100 strokes, one-stroke undo and PNG export. One export took about 1.33 seconds; drawing included display delays, so this is not a rendering benchmark or competitor comparison.
+- In 0.2.31, unsupported export paths fail before a job is queued; valid exports return usable PNG paths. Package, PTC, drawing and all 69 community checks pass.
+
+One historical open failure required a restart; its cause is unresolved. Natural-language tasks can still misuse tools and are not guaranteed to finish autonomously. A single-request reference sketch took 27 minutes 25 seconds. Windows, stable-client compatibility, complex PSD fidelity and every editor command have not been fully tested. This is not a claim of Photoshop parity or better performance than PhotoCraft.
 
 ## Data & access
 
