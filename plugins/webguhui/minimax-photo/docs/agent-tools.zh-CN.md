@@ -54,7 +54,7 @@ PhotoCraft 的批量操作在独立文档副本执行，成功后提交一次历
 
 ## 逐笔绘制和参考图
 
-`await editor.draw({strokes, intervalMs:550})` 顺序执行 1–96 笔，每笔真实更新画布且可以单独撤销。每笔可以使用点数组或绝对路径命令 M/L/Q/C/Z；同段脚本内可循环分组，但总耗时仍须小于 120 秒。绘画展示建议间隔 500–600 ms。`editor.edit` 的批量提交不等于逐笔绘制。
+`await editor.draw({strokes, intervalMs:550})` 顺序执行 1–96 笔，每笔真实更新画布且可以单独撤销。每笔可以使用点数组或绝对路径命令 M/L/Q/C/Z；同段脚本内可循环分组，但总耗时仍须小于 120 秒。整笔 `pressure:0..1` 对路径和点数组均生效；逐点压力优先，未指定时保留引擎默认值，不改变倾角、旋转等扩展采样字段。绘画展示建议间隔 500–600 ms。`editor.edit` 的批量提交不等于逐笔绘制。
 
 Skill 附带通用参考图轮廓脚本，适合边界清楚的插画和标志，需要 Python 3 与 Pillow，由 Agent 按需调用。它不识别语义，不自带图片模型，也不适合直接提取照片的所有色块。参见 [参考图轮廓转笔触](../skills/minimax-photo/references/reference-tracing.md)。
 

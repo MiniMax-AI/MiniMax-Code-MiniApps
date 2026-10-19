@@ -46,8 +46,22 @@ export function brushParameters(stroke) {
   if (stroke.path !== undefined && stroke.points !== undefined)
     throw Error('Choose path or points, not both');
   const { path, pressure, ...params } = stroke;
+  if (pressure !== undefined && (!Number.isFinite(pressure) || pressure < 0 || pressure > 1))
+    throw Error('pressure must be between 0 and 1');
   if (path !== undefined) params.points = pathPoints(path, pressure);
   if (!Array.isArray(params.points) || !params.points.length)
     throw Error('Each stroke requires points or a path');
+  if (path === undefined && pressure !== undefined) {
+    params.points = params.points.map(point => {
+      if (Array.isArray(point)) {
+        const sample = [...point];
+        if (sample[2] == null) sample[2] = pressure;
+        return sample;
+      }
+      if (point && typeof point === 'object')
+        return { ...point, pressure: point.pressure ?? pressure };
+      return point;
+    });
+  }
   return params;
 }

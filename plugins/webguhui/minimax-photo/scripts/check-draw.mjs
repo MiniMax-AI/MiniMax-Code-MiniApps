@@ -24,7 +24,16 @@ await assert.rejects(drawStrokes({ strokes: [stroke, stroke] }, version, async (
 assert.equal(count, 3);
 console.log('PASS draw: visible sequential edits, version tracking, validation and partial failure');
 
-const { pathPoints } = await import('../miniapp/client/photocraft/draw-path.js');
+const { pathPoints, brushParameters } = await import('../miniapp/client/photocraft/draw-path.js');
+const samples = [[1,2], [3,4,0,12,13,14,15,16], {x:5,y:6}, {x:7,y:8,pressure:.8}];
+const originalSamples = structuredClone(samples);
+assert.deepEqual(brushParameters({points:samples,pressure:.5}).points,
+  [[1,2,.5], [3,4,0,12,13,14,15,16], {x:5,y:6,pressure:.5}, {x:7,y:8,pressure:.8}]);
+assert.deepEqual(samples, originalSamples);
+assert.equal(brushParameters({points:samples}).points, samples);
+await assert.rejects(drawStrokes({strokes:[stroke,{points:[[0,0]],pressure:2}]}, version,
+  async () => { throw Error('must validate before editing'); }), /pressure must/);
+console.log('PASS pressure: stroke defaults, per-point override, extended samples and pre-edit validation');
 const curve = pathPoints([['M',0,0],['C',0,100,100,100,100,0]], .5);
 assert.deepEqual(curve[0], [0,0,.5]);
 assert.deepEqual(curve.at(-1), [100,0,.5]);
