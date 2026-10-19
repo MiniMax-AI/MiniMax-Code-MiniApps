@@ -138,15 +138,20 @@ def main():
     if not loops: parser.error("no matching region; inspect the mask/color selection")
     if len(loops) > 64: parser.error("more than 64 regions; use a cleaner mask or increase --min-area")
     scale = args.width / width
-    output = []
+    output, contours = [], []
     for loop in loops:
         points = [(round(x * scale, 2), round(y * scale, 2))
                   for x, y in simplify(smooth(loop, args.smooth), args.epsilon)]
+        first = len(output)
         output.extend({"points": part} for part in strokes(points, args.stroke_length))
+        contours.append({"firstStroke": first, "strokeCount": len(output) - first,
+            "signedArea": round(area(loop) * scale * scale, 2),
+            "bounds": [min(p[0] for p in points), min(p[1] for p in points),
+                       max(p[0] for p in points), max(p[1] for p in points)]})
     if len(output) > 512: parser.error("more than 512 strokes; simplify the mask or increase --stroke-length")
     print(json.dumps({"sourceSize": original, "analysisSize": [width, height],
         "canvasSize": [args.width, round(height * scale)], "regions": len(loops),
-        "strokes": output}, separators=(",", ":")))
+        "contours": contours, "strokes": output}, indent=2))
 
 
 if __name__ == "__main__":

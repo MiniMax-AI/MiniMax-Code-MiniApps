@@ -71,6 +71,8 @@ description: 在 MiniMax Photo 中创建和编辑图片，包括参考图绘制�
 - 缩小预览检查构图和明暗，放大检查交接处、眼睛等视觉重点。比例歪、轮廓交叉、擦除残影或阴影像装饰条纹时先修正，再加细节；工具成功不等于作品完成。
 - 同一区域反复修改却没有改善时，先比较修改前后的预览，区分形体、遮挡、笔刷参数或图层状态问题，再更换方法；不要继续盲目加深或加密。完成时隐藏辅助线与试笔，确认画面没有意外穿插、溢出和未收尾的区域。
 
+压力只在对应笔刷动态开启时影响笔宽：可取内置 `Hard Round Pressure Size`，或设 `brush.shapeDynamics.enabled=true`、`brush.shapeDynamics.size.control="penPressure"`。`brush.presets.list` 用 `full:true` 可取完整设置，在 PTC 内筛选所需预设再返回，避免完整列表截断。
+
 `paint.stroke` 的 `opacity` 是 0–1，填充命令的 `opacity` 通常是百分比，以各自 schema 为准。排线只用于补充质感，先用低硬度、低透明度的宽笔触建立连续灰面。
 
 ### 曲线笔触
