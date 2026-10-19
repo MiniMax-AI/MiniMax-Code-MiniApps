@@ -345,7 +345,7 @@ function analyzeBar(value = '') {
   return `<form class="analyze-bar" id="analyze-form" role="search" aria-label="分析仓库" novalidate>
     <span class="prompt" aria-hidden="true">❯</span>
     <div style="flex:1;min-width:0"><label class="sr-only" for="target-input">仓库地址或本地路径</label>
-    <input id="target-input" name="repo" class="input mono" autocomplete="off" spellcheck="false" placeholder="GitHub / GitLab 地址、owner/repo，或本地仓库路径…" value="${esc(value)}"></div>
+    <input id="target-input" name="repo" class="input mono" autocomplete="off" spellcheck="false" placeholder="GitHub / GitLab 地址，或本地仓库路径…" value="${esc(value)}"></div>
     <button class="btn btn-primary" type="submit">${ICON.search}<span>分析</span><kbd style="background:transparent;border-color:currentColor;color:inherit;opacity:.6">↵</kbd></button>
   </form>
   <div class="parse-hint" id="parse-hint" aria-live="polite"></div>`;
@@ -361,7 +361,7 @@ function renderWelcome() {
   const s = state.suggest;
   main.innerHTML = `<section class="welcome anim-in" aria-labelledby="wl-title" style="max-width:880px">
     <div class="welcome-hero">
-      <span class="brand-mark" style="width:44px;height:44px" aria-hidden="true"><img src="/assets/icon.svg" alt="" width="44" height="44"><span class="scan" style="opacity:1"></span></span>
+      <span class="brand-mark hero-mark" aria-hidden="true"><img src="/assets/icon.svg" alt="" width="56" height="56"><span class="scan"></span></span>
       <h1 id="wl-title">读代码之前，<span class="grad">先看一遍它的 git 历史</span></h1>
       <p class="muted">找出最常被改、最常出 bug 的文件，谁在维护它们，项目节奏是升是降，以及它用了哪些技术。指标定义和 <a href="https://github.com/yujiachen-y/codebase-recon-skill" target="_blank" rel="noopener" class="text-link">codebase-recon</a> skill 保持一致，全部在本机计算。</p>
     </div>
