@@ -150,7 +150,7 @@ export async function createEditorService(dataDir) {
           throw Error('需要 PhotoCraft 工作台');
         if (
           input.kind === 'craft' &&
-          !['commands', 'execute', 'batch', 'preview', 'export', 'open'].includes(
+          !['commands', 'execute', 'batch', 'draw', 'preview', 'export', 'open'].includes(
             input.options?.method,
           )
         )

@@ -91,6 +91,7 @@ export async function createCodeService(dataDir, editor) {
               'export',
               'commands',
               'execute',
+              'draw',
             ].includes(message.method)
           )
             throw Error('未知脚本工具');
@@ -199,8 +200,9 @@ export async function createCodeService(dataDir, editor) {
           )
             throw Error('已有脚本正在执行，请等待并查询结果');
           const current = editor.inspect(input.editorId);
-          if (current.version !== input.expectedVersion || current.busy)
-            throw Error('工程已变化或正在执行任务，请重新 inspect');
+          if (current.busy) throw Error('编辑任务尚未完成，请查询原任务结果后继续');
+          if (current.version !== input.expectedVersion)
+            throw Error('画布版本已变化，请重新 editor_inspect 后使用最新 version');
           const run = {
             runId: input.requestId,
             editorId: input.editorId,

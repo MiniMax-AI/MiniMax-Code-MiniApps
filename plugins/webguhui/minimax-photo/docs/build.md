@@ -54,3 +54,5 @@ python3 scripts/package-preview.py
 生成后，在社区仓库根目录运行 `npm run check`，再按官方说明在 MiniMax Code 中手动安装。不能用构建通过代替真实宿主 AI 验收。
 
 0.2.15 新增只读 `viewport` 桥接，用编辑器坐标映射显示 AI 操作轨迹。修改引擎后需重新编译 WASM，并同步 `docs/photocraft/miniapp.patch`。轨迹检查：`node scripts/check-activity.mjs`。
+
+逐笔显示验证：`node scripts/check-draw.mjs`。`miniapp/client/photocraft/draw.js` 顺序提交真实笔触并让出渲染时间；不修改原有原子批量命令。

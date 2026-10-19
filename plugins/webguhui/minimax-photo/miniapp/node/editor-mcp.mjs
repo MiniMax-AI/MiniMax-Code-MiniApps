@@ -10,12 +10,12 @@ export const editorTools = [
   {
     name: 'photo_call',
     description:
-      '调用 PhotoCraft WASM 编辑器。先 commands({filter}) 查询真实命令与参数，再 execute({command,params})；batch 接受 [{command,params}]，在独立文档上执行并整体提交/撤销。preview 返回画面；export 支持 png/jpg/webp/pcraft/psd/ora/tif。使用 editor_job 查询结果，禁止盲目重放。',
+      '调用 PhotoCraft WASM 编辑器。先 commands({filter}) 查询真实命令与参数，再 execute({command,params})；batch 接受 [{command,params}]，在独立文档上执行并整体提交/撤销。draw({strokes:[paint.stroke参数],intervalMs:550}) 支持 points 或 SVG 风格绝对 path 命令数组 M/L/Q/C/Z（工具自动采样曲线）。实际逐笔绘制，每笔可见且单独撤销，1..96笔，间隔100..600ms；中断保留已画笔触。preview 返回画面；export 支持 png/jpg/webp/pcraft/psd/ora/tif。使用 editor_job 查询结果，禁止盲目重放。',
     inputSchema: schema({
       editorId: uuid,
       expectedVersion: { type: 'string' },
       requestId: uuid,
-      method: { type: 'string', enum: ['commands', 'execute', 'batch', 'preview', 'export'] },
+      method: { type: 'string', enum: ['commands', 'execute', 'batch', 'draw', 'preview', 'export'] },
       args: {},
     }),
     annotations: { destructiveHint: false, idempotentHint: true },
@@ -23,7 +23,7 @@ export const editorTools = [
   {
     name: 'editor_run_code',
     description:
-      '执行 JavaScript PTC 脚本。PhotoCraft 支持 commands({filter})、execute({command,params})、edit([{command,params}])、preview()、create()、export({format})，参数以 commands 查询为准。支持变量、循环、条件和 await。提供 editor.inspect()、capabilities()、preview(options)、edit(operations)、create({width,height,name})、export()，均须逐个 await；返回真实任务结果。preview 返回 result.pixels 及 previewPath，可按像素分支。32KB代码、32MB内存、120秒、64次调用。无文件、网络或 Node API。每批 edit 原子执行；脚本整体不回滚。返回 runId，用 editor_code_result 查询；相同 requestId 不重放。',
+      '执行 JavaScript PTC 脚本。PhotoCraft 支持 draw({strokes:[paint.stroke参数],intervalMs:550}) 逐笔显示绘画过程（1..96笔，100..600ms），commands({filter})、execute({command,params})、edit([{command,params}])、preview()、create()、export({format})，参数以 commands 查询为准。支持变量、循环、条件和 await。提供 editor.inspect()、capabilities()、preview(options)、edit(operations)、create({width,height,name})、export()，均须逐个 await；返回真实任务结果。preview 返回 result.pixels 及 previewPath，可按像素分支。32KB代码、32MB内存、120秒、64次调用。无文件、网络或 Node API。每批 edit 原子执行；脚本整体不回滚。返回 runId，用 editor_code_result 查询；相同 requestId 不重放。',
     inputSchema: schema({
       editorId: uuid,
       expectedVersion: { type: 'string' },

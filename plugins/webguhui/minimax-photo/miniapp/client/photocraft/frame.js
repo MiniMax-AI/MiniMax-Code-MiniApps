@@ -1,3 +1,4 @@
+import { drawStrokes } from './draw.js';
 import init, { miniapp_call } from './photocraft.js';
 const allowed = new Set([
   'inspect',
@@ -6,6 +7,7 @@ const allowed = new Set([
   'commands',
   'execute',
   'batch',
+  'draw',
   'preview',
   'export',
   'open',
@@ -17,7 +19,11 @@ window.addEventListener('message', async (event) => {
   const { id, token, method, args, expectedVersion } = event.data;
   if (!ready || !allowed.has(method)) return;
   try {
-    const value = JSON.parse(await miniapp_call(JSON.stringify({ method, args, expectedVersion })));
+    const invoke = async (method, args, expectedVersion) =>
+      JSON.parse(await miniapp_call(JSON.stringify({ method, args, expectedVersion })));
+    const value = method === 'draw'
+      ? await drawStrokes(args, expectedVersion, invoke)
+      : await invoke(method, args, expectedVersion);
     if (method === 'language' && fontData)
       await miniapp_call(JSON.stringify({ method: 'font', args: { data: fontData } }));
     parent.postMessage({ type: 'photo-response', id, token, value }, '*');

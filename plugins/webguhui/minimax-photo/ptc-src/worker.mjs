@@ -68,7 +68,7 @@ parentPort.on('message', (message) => {
 });
 const source = `
 const editor = Object.freeze(Object.fromEntries(
-  ['inspect','capabilities','preview','edit','create','export','commands','execute'].map(name =>
+  ['inspect','capabilities','preview','edit','create','export','commands','execute','draw'].map(name =>
     [name, async (args) => JSON.parse(await __call(name, JSON.stringify(args ?? null)))])
 ));
 (async () => { ${workerData.code}\n })()

@@ -58,3 +58,9 @@ See [build instructions](docs/build.md), [user guide](docs/user-guide.zh-CN.md) 
 Original MiniApp code is MIT licensed; see [LICENSE](LICENSE). PhotoCraft is MIT OR Apache-2.0 and retains its own credits. Its pinned source and our patch are documented in [build instructions](docs/build.md). Third-party fonts, icons, UI dependencies and QuickJS retain their licenses in [licenses/](licenses/). The example images were generated with Codex's image-generation tool, not supplied by PhotoCraft or Adobe. They are illustrative single-layer images, not editable design templates. No proprietary RetouchPi source or assets are included.
 
 AI edits show a short completion replay: brush paths and their bounding area, or a canvas highlight for other edits. Toggle it in More → Show AI edit activity. This is a visual overlay after an edit succeeds, not an animated mouse or incremental pixel execution; it does not enter exports or undo history.
+
+### Visible drawing
+
+PTC `await editor.draw({strokes, intervalMs:550})` draws an array of `paint.stroke` parameters in order (1–96 strokes, 100–600 ms between strokes). Every stroke updates the real canvas and has its own undo step. Failures preserve completed strokes. `editor.edit` continues to commit atomically. The bundled Skill covers reference composition and tonal drawing.
+
+Strokes also accept absolute SVG-style path command arrays (`M`, `L`, `Q`, `C`, `Z`), sampled by the tool. This avoids repeatedly implementing curve interpolation in Agent scripts.

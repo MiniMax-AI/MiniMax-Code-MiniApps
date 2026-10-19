@@ -222,7 +222,12 @@ window.addEventListener('message', async (e) => {
   }
 });
 setInterval(() => {
-  if (!running && document.querySelector('#loading').hidden) report().catch(() => {});
+  if (!document.querySelector('#loading').hidden) return;
+  if (running && current) {
+    // Keep the connection alive during long, visibly paced drawing jobs.
+    // register ignores document/version changes while a job owns this editor.
+    post('/api/editor/register', { editorId, engine: 'photocraft', ...current }).catch(() => {});
+  } else report().catch(() => {});
 }, 3000);
 window.addEventListener('pagehide', () => events?.close(), { once: true });
 async function action(fn) {
