@@ -217,8 +217,16 @@ assert('the workspace row is mapped, and an empty value is no workspace',
 assert('the descriptor carries the parent onto the row the page receives',
   /descriptor\.sessionParentId = meta\.parent;/.test(server));
 
-assert('the descriptor carries the kind badge onto the row the page receives',
-  /descriptor\.sessionTag = sessionTagFor\(meta\.kind, meta\.purpose\);/.test(server));
+// The tag is written on EVERY row, not only on the rows that have a database entry. The
+// descriptor comes out of a cache, so a row that loses its entry keeps the tag it was given
+// last time, while the validator — which reads the same rows — reports none for it. A body and
+// an ETag that disagree about one row is how a badge outlives the fact it was derived from,
+// and the page only ever sees the body.
+//
+// The shape is what makes it unconditional: a `? :` with the tag on one side and null on the
+// other cannot be inside a `if (meta)` block without becoming a second statement.
+assert('the descriptor carries the kind badge onto the row the page receives, on every row',
+  /descriptor\.sessionTag = meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null;/.test(server));
 
 // `?? null` rather than a bare copy: the page decides by whether this field is SET, so a missing
 // key and a present-but-undefined one have to land in the same place as a row that has no parent.

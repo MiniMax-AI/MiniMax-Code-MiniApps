@@ -72,9 +72,17 @@ const MAX_RAW_BYTES = 65536;
  * This has to stay at or above the page's poll interval, and that relationship — not this
  * number — is the invariant tests/verify-list-cache.mjs holds. Below the interval the cache
  * cannot survive a single poll: every tick expires it, so the list re-walks the session tree
- * and reopens the runtime database on every tick. Measured on this machine, that was most of
- * the 16 GB this process read in 68 minutes, and the allocation behind it held the process at
- * a 1.2-2.5 GB high-water mark for as long as the page stayed open.
+ * on every tick. Measured on this machine, that walk was most of the 16 GB this process read
+ * in 68 minutes, and the allocation behind it held the process at a 1.2-2.5 GB high-water mark
+ * for as long as the page stayed open.
+ *
+ * The runtime database is a separate matter and this TTL does not govern it. The titles read
+ * rides the same interval, but the current conversation is re-read on every poll and is not
+ * cached at all: it is the one fact here that must not be stale, because a cached "current
+ * conversation" is the very defect the picker was built to remove. That read costs a few
+ * milliseconds — measured at 4.00 ms per call against a 2.5 s poll, so 0.16% of the interval —
+ * which is why it is left uncached rather than paid for with a TTL that could hide a switch
+ * from one conversation to another.
  */
 const LIST_CACHE_TTL_MS = 3000;
 const SESSION_CACHE_TTL_MS = 5000;
@@ -918,13 +926,18 @@ function toNumber(value) {
 }
 
 /**
- * Resolve the conversation the user is actually in.
+ * Resolve the conversation the runtime database reports as current.
  *
  * The Host never tells the page which session opened it, so we ask the runtime database
  * instead. Ranking, strongest signal first:
  *   1. holds a live turn lease      — an agent turn is running right now
  *   2. status = 'started'           — open and not finished
  *   3. most recently updated        — the fallback for a long-idle conversation
+ *
+ * This is what the runtime database says, and the app infers from it: a ranking is a best
+ * answer, not a certainty, and two conversations holding a lease at once are reported as
+ * ambiguous rather than resolved here. Nothing in this file can see which conversation the
+ * reader is actually looking at.
  *
  * Only real user conversations qualify. `session_kind = 'conversation'` with a NULL
  * `purpose` excludes cron runs (`purpose = 'cron:...'`) and background worker/explore
@@ -1164,17 +1177,33 @@ function workspaceOfSession(titles, sessionId) {
  * the sessions root is refused, not clamped. The picker and the 'latest' resolver share this one
  * function, so a second copy of the check cannot drift away from the first.
  *
+ * The containment check alone is not enough, and the gap is the same shape as the one it closes:
+ * a path can sit INSIDE the sessions root and still belong to a different session than the one
+ * that recorded it. Then the caller holds one session's directory under another session's id —
+ * the picker would show the current conversation's id twice and drop the conversation itself, and
+ * the 'latest' resolver would bind one session's id to another session's directory. So the
+ * session the path is supposed to be is named here, and a path that turns out to be a different
+ * session's is refused exactly the way an outside path is.
+ *
  * @param {string} sessionsRoot
  * @param {string | null | undefined} relativeDir
+ * @param {string | null | undefined} [expectedSessionId]
  * @returns {Promise<{ entry: { dir: string, sizeBytes: number, lastActiveAt: number } | null, rejected: boolean }>}
  */
-export async function entryFromRelativeDir(sessionsRoot, relativeDir) {
+export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSessionId) {
   if (typeof relativeDir !== 'string' || !relativeDir.trim()) return { entry: null, rejected: false };
   const root = resolve(sessionsRoot);
   const dir = resolve(root, relativeDir.trim().replace(/\\/g, '/'));
   if (dir !== root && !dir.startsWith(root + sep)) return { entry: null, rejected: true };
   try {
     const fileStat = await stat(join(dir, 'messages.jsonl'));
+    if (expectedSessionId) {
+      // The directory name is the only place the session id is written down, so it is also the
+      // only place the claim "this path is that session" can be checked.
+      if (decodeSessionIdFromDirName(basename(dir)) !== expectedSessionId) {
+        return { entry: null, rejected: true };
+      }
+    }
     return {
       entry: { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) },
       rejected: false,
@@ -1192,10 +1221,16 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir) {
  * runtime database is unavailable -- so nothing in here reorders it. The visible set is what the
  * READER may pick from, and it is allowed to differ.
  *
- * The order is: the conversation the reader is in, then the sessions of that conversation's
- * workspace, then everything else -- each group mtime-descending. "The current workspace" means
- * the `workspace_dir` the runtime database records for the current conversation, and only that;
- * the path itself never leaves this function.
+ * The order is: the conversation the runtime database reports as current, then the sessions of
+ * that conversation's workspace, then everything else -- each group mtime-descending. "The
+ * current workspace" means the `workspace_dir` the runtime database records for that
+ * conversation, and only that; the path itself never leaves this function.
+ *
+ * "The current conversation" is what the runtime database reports, not what the reader is in:
+ * the runtime knows which session it last updated, and this app cannot see any more than that.
+ * The database's answer is a ranking (a live lease, then an open turn, then the most recently
+ * updated), and `resolveCurrentConversation` reports the ambiguity when two conversations hold
+ * a lease at once rather than picking one silently.
  *
  * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
  * @param {{ sessionId: string, relativeDir?: string | null } | null} current
@@ -1215,8 +1250,10 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
   const currentId = current.sessionId;
   let currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;
   if (!currentEntry && current.relativeDir) {
-    // Not in the recent window -- build the entry straight from the recorded path.
-    const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir);
+    // Not in the recent window -- build the entry straight from the recorded path. The session it
+    // is supposed to be is named, so a path that turns out to be a different session's directory
+    // is refused instead of being shown under this id.
+    const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir, currentId);
     if (built.rejected && typeof onReject === 'function') onReject();
     currentEntry = built.entry;
   }
@@ -3299,8 +3336,10 @@ export async function start(context) {
       return;
     }
 
-    // The conversation the reader is IN, asked of the runtime database rather than guessed from
-    // mtime: the conversation being read is not necessarily the one whose file was written last.
+    // The conversation the runtime database reports as current, asked of the database rather than
+    // guessed from mtime: the conversation being read is not necessarily the one whose file was
+    // written last. What the database reports is a ranking, not a certainty -- see
+    // `resolveCurrentConversation`, which says so where it happens.
     const current = await resolveCurrentConversation(location.root);
 
     // Real titles from the runtime database, for every candidate in the window and for the current
@@ -3340,11 +3379,18 @@ export async function start(context) {
             if (meta.title) descriptor.label = meta.title;
             descriptor.sessionKind = meta.kind;
             descriptor.sessionParentId = meta.parent;
-            // What this session IS, as a token the page can render: a lightweight exchange, a
-            // scheduled run, a background task. The raw purpose stays on this side of the wire --
-            // it is free text, and free text is not something to hand a reader's browser.
-            descriptor.sessionTag = sessionTagFor(meta.kind, meta.purpose);
           }
+          // What this session IS, as a token the page can render: a lightweight exchange, a
+          // scheduled run, a background task. The raw purpose stays on this side of the wire --
+          // it is free text, and free text is not something to hand a reader's browser.
+          //
+          // Assigned unconditionally, and that is the point. The descriptor comes out of a cache,
+          // so a session whose row is missing from the runtime database keeps the tag it was
+          // given last time -- while the validator, which reads the same rows, reports no tag for
+          // it. A body and an ETag that disagree about the same row is how a badge outlives the
+          // fact it was derived from, so the field is written on every pass, not only when there
+          // is something to write.
+          descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;
           described.push(descriptor);
         } catch (error) {
           context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
@@ -3390,7 +3436,11 @@ export async function start(context) {
           // is a database column rather than a name this app chose, so it earns the same
           // containment check `resolveArtifactPath` gives catalog file names. The picker builds the
           // same kind of entry from the same column, so both go through one function.
-          const built = await entryFromRelativeDir(location.sessionsRoot, current.relativeDir);
+          //
+          // The session it is supposed to be is named too: a path that points at a different
+          // session's directory is refused, and 'latest' falls back to the walk's answer rather
+          // than binding this session's id to somebody else's transcript.
+          const built = await entryFromRelativeDir(location.sessionsRoot, current.relativeDir, current.sessionId);
           if (built.rejected) {
             context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
           }

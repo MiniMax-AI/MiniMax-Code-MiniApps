@@ -7,24 +7,31 @@ which is a different question, and the gap between them is invisible: a conversa
 opened and then read without writing to keeps its old mtime and ages out of the window while the
 page is displaying it. The window's length was therefore decided by the reader's behaviour.
 
-So the visible set now has three rules -- the current conversation is in it and first, the sessions
-of its workspace come before the sessions of other workspaces, and each group keeps the recency
-order -- and the mutations below are the ways back to the one number. Each one is a single edit,
-and each is the way the defect would come back: a rule dropped, a rule moved, a rule inverted.
+So the visible set now has three rules -- the conversation the runtime database reports as
+current is in it and first, the sessions of its workspace come before the sessions of other
+workspaces, and each group keeps the recency order -- and the mutations below are the ways back
+to the one number. Each one is a single edit, and each is the way the defect would come back: a
+rule dropped, a rule moved, a rule inverted.
 
-Two of them are the interesting ones. The first is the injection: the current conversation is
+Three of them are the interesting ones. The first is the injection: the current conversation is
 built from the path the runtime recorded for it, under the same containment check the 'latest'
 resolver gives it, and a version that skips the containment check builds an entry from a path
-outside the session store. The second is the read of the workspace column: a runtime database
-written before that column existed has none, and a version that reads it without asking whether
-it is there takes the whole list down with it.
+outside the session store. The second reads the workspace column: a runtime database written
+before that column existed has none, and a version that reads it without asking whether it is
+there takes the whole list down with it. The third is the identity of that path: it can sit
+inside the sessions root and still belong to a different session, and a version that does not
+check would list that other session twice and lose the conversation the page is about.
 
-The last two are the badge, and they are the same pair the branch marker had: applied to every
-row, and applied to none. Both still contain the right characters, which is why the guards check
-the rendered label rather than the string.
+Three more are on the page. The badge is applied to every row, the badge is applied to none,
+and the badge is placed after the branch mark -- the third of those still contains the right
+characters in the right places, which is why the guards check the rendered label rather than
+the string. The last one is the row the reader pinned by hand, which the page adds itself: it
+belongs above the rows the service sent, and a version that appends it to the end still
+selects it, still shows it, and still looks right -- as long as nobody counts the rows.
 
 Two probes, because the rules live on two sides of the wire: the visible set is the service's,
-and the badge is the page's. A mutation has to be caught by one of them, by name.
+and the badge and the pinned row are the page's. A mutation has to be caught by one of them, by
+name.
 
 Anchors are multi-line and both shipped files are LF, so they are written with bare \\n and read
 and written with newline='' -- matching on normalised text while preserving the file's own endings.
@@ -48,8 +55,9 @@ PROBES = [
 # Each entry is (title, edits, expect) and optionally a fourth element naming the file to mutate,
 # defaulting to the server.
 MUTATIONS = [
-    # The defect itself: the conversation the reader is in is not in the list at all. The visible
-    # set falls back to the window, and the window is the thing that was wrong.
+    # The defect itself: the conversation the runtime database reports as current is not in the
+    # list at all. The visible set falls back to the window, and the window is the thing that was
+    # wrong.
     ("the current conversation is not injected into the visible list",
      [("    currentEntry = built.entry;\n", "    currentEntry = null;\n")],
      "the current conversation is in the visible list even though its file is the oldest"),
@@ -61,6 +69,15 @@ MUTATIONS = [
      [("  const ordered = currentEntry ? [currentEntry, ...same, ...other] : [...same, ...other];",
        "  const ordered = currentEntry ? [...same, ...other, currentEntry] : [...same, ...other];")],
      "and the current conversation is first"),
+
+    # The identity of the recorded path. Containment is not enough: a path can sit inside the
+    # sessions root and still belong to a different session, and then the row that gets injected
+    # is that other session's transcript -- listed twice, while the conversation the page is
+    # about is nowhere in the list.
+    ("the injected row is not checked against the session it is supposed to be",
+     [("      if (decodeSessionIdFromDirName(basename(dir)) !== expectedSessionId) {",
+       "      if (false) {")],
+     "a recorded path that belongs to another session is refused, so no session is listed twice"),
 
     # The partition, dropped. Every session comes back in one group, which is the plain recency
     # order -- the order the picker had before the current conversation was pinned.
@@ -92,10 +109,16 @@ MUTATIONS = [
 
     # The workspace column, the same way. It is the newest of the columns and the one that
     # orders the list, so a database without it is the case that has to degrade rather than fail.
+    #
+    # This one dies of an exception, and the guard has to say so BY THAT NAME. The rule it
+    # breaks is "a database that lacks a column still lists every session", and the way it is
+    # broken is by taking the read down with it -- so the name that has to appear is the one the
+    # section reports when it could not answer, not the name of an assertion in it.
     ("the workspace is read as if every database had the column",
      [("  if (!meta || typeof meta.workspace !== 'string' || !meta.workspace.trim()) return null;",
        "  if (!meta) return null;\n  return meta.workspace.trim();")],
-     "a database without the workspace column still lists every session"),
+     "a database without the workspace column still lists every session; "
+     "the section threw before it could answer"),
 
     # The containment check. The recorded path is a database column rather than a name this app
     # chose, so it gets the same check a catalog file name gets -- and a version that skips it
@@ -104,6 +127,15 @@ MUTATIONS = [
      [("  if (dir !== root && !dir.startsWith(root + sep)) return { entry: null, rejected: true };",
        "  if (false) return { entry: null, rejected: true };")],
      "a recorded path that escapes the sessions root is refused"),
+
+    # The badge, written only on the rows that have one. The descriptor comes out of a cache,
+    # so a row that loses its database entry keeps the tag it was given last time, while the
+    # validator -- which reads the same rows -- reports none. The body and the ETag then
+    # disagree about the same row, and only the body reaches the page.
+    ("the kind tag is only written on the rows that have one",
+     [("          descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;",
+       "          if (meta) descriptor.sessionTag = sessionTagFor(meta.kind, meta.purpose);")],
+     "the kind tag is written on every row, not only on the rows that have one"),
 
     # ---- the badge, on the page ----
     #
@@ -122,6 +154,27 @@ MUTATIONS = [
      [("        var tag = session ? sessionTagBadge(session.sessionTag) : '';",
        "        var tag = '';")],
      "a lightweight session is badged in the picker",
+     CLIENT),
+
+    # Placed after the branch mark. Both markers are still there, both are still the right
+    # characters, and the row still says everything it said -- only the order between them has
+    # changed. A guard that asks "does the row contain 轻量" cannot see this at all; one that
+    # asks which of the two comes first can.
+    ("the kind badge is placed after the branch mark",
+     [("        if (!label) return '未命名会话 ' + tail + tag + branch;\n"
+       "        return label + ' ' + tail + tag + branch;",
+       "        if (!label) return '未命名会话 ' + tail + branch + tag;\n"
+       "        return label + ' ' + tail + branch + tag;")],
+     "a row with both a kind and a parent shows the kind before the branch mark",
+     CLIENT),
+
+    # The row the reader pinned by hand, which the page adds itself because the service did not
+    # send it. Appended to the end it is still there, still selected, still readable -- and it
+    # is no longer the first session row, which is the only promise that was made about it.
+    ("the row the reader pinned is appended to the end of the list",
+     [("            select.insertBefore(pinned, select.options[1] || null);",
+       "            select.appendChild(pinned);")],
+     "the row the reader pinned is the first session row, above the rows the service sent",
      CLIENT),
 ]
 

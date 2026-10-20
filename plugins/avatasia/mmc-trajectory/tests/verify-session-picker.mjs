@@ -1,5 +1,5 @@
 /**
- * The picker shows the conversation the reader is in.
+ * The picker shows the conversation the runtime database reports as current.
  *
  * The list was built from one number: the mtime of `messages.jsonl`. That number answers "when
  * did this session last write a message", and the picker needs to answer "is this session still
@@ -10,25 +10,36 @@
  *
  * So the visible set is no longer the window and nothing else. Three rules, each with a reason:
  *
- *   1. The current conversation is always in the list, and first. It is asked of the runtime
- *      database rather than guessed from mtime, because the conversation being read is not
- *      necessarily the one whose file was written last. When it is outside the window it is
- *      built from the path the runtime recorded for it, under the same containment check the
- *      'latest' resolver gives it.
- *   2. The sessions of the current conversation's workspace come before the sessions of other
+ *   1. The conversation the runtime database reports as current is always in the list, and
+ *      first. It is asked of the runtime database rather than guessed from mtime, because the
+ *      conversation being read is not necessarily the one whose file was written last. When it
+ *      is outside the window it is built from the path the runtime recorded for it, under the
+ *      same containment check the 'latest' resolver gives it.
+ *   2. The sessions of that conversation's workspace come before the sessions of other
  *      workspaces. The workspace is the one the runtime database records for the current
  *      conversation — and it is compared here, on the server, because it is an absolute path on
  *      the reader's machine and has no business in a browser.
  *   3. Each group keeps the walk's recency order.
  *
+ * What the runtime database reports is a ranking, not a certainty: a live lease, then an open
+ * turn, then the most recently updated. This app cannot see which conversation the reader is
+ * looking at, so nothing here claims to know — it pins the database's answer and says so.
+ *
  * Two sets, and they are not the same set: the walk's own list is untouched, because it is what
  * 'latest' falls back to when the runtime database is unavailable, and reordering it would
  * change what 'latest' means. Only the visible set is reordered.
  *
- * The eight invariants below are checked against real stores and real runtime databases built
- * here, not against a copy of the logic: the interesting cases are the ones a regex cannot see —
- * a database whose columns are older than the code, a recorded path that escapes the store, a
- * conversation whose file is the oldest of all.
+ * The sections below are checked against real stores and real runtime databases built here,
+ * not against a copy of the logic: the interesting cases are the ones a regex cannot see — a
+ * database whose columns are older than the code, a recorded path that escapes the store, a
+ * recorded path that points at a different session's directory, a conversation whose file is the
+ * oldest of all.
+ *
+ * Each section runs inside its own try, and a section that throws reports ITSELF rather than
+ * borrowing the name of the first assertion in it. That is not a detail: a section that threw
+ * has not judged anything, and a mutation that dies of an exception has to say which rule it
+ * broke. A catch-all that reuses an assertion's name makes every crash look like that
+ * assertion, which is how a mutation comes to "pass" by crashing the file it was applied to.
  *
  * `tests/mutate-session-picker.py` breaks each of them in the shipped source and requires this
  * guard to report it by name.
@@ -187,7 +198,7 @@ try {
     one.visible[1]?.dir === made[0].dir && one.visible[19]?.dir === made[18].dir,
     dirsOf(one.visible).slice(0, 3).join('|'));
 } catch (error) {
-  failures.push('the current conversation is in the visible list even though its file is the oldest -- '
+  failures.push('the current conversation is in the visible list; the section threw before it could answer -- '
     + String(error && error.message ? error.message : error));
 }
 
@@ -222,7 +233,8 @@ try {
       < two.visible.findIndex((entry) => entry.dir === made[3].dir),
     dirsOf(two.visible).join('|'));
 } catch (error) {
-  failures.push('the sessions of the current workspace come before the sessions of other workspaces -- '
+  failures.push('the sessions of the current workspace come before the sessions of other workspaces; '
+    + 'the section threw before it could answer -- '
     + String(error && error.message ? error.message : error));
 }
 
@@ -237,7 +249,8 @@ try {
   assert('and without a runtime database there is no current conversation to pin',
     three.current === null);
 } catch (error) {
-  failures.push('without a runtime database the list is the plain recency order -- '
+  failures.push('without a runtime database the list is the plain recency order; '
+    + 'the section threw before it could answer -- '
     + String(error && error.message ? error.message : error));
 }
 
@@ -264,7 +277,8 @@ try {
       return sessionTagFor(meta ? meta.kind : null, meta ? meta.purpose : null) === null;
     }));
 } catch (error) {
-  failures.push('a database without the purpose column still lists every session -- '
+  failures.push('a database without the purpose column still lists every session; '
+    + 'the section threw before it could answer -- '
     + String(error && error.message ? error.message : error));
 }
 
@@ -294,7 +308,8 @@ try {
       return Boolean(meta && meta.title);
     }));
 } catch (error) {
-  failures.push('a database without the workspace column still lists every session -- '
+  failures.push('a database without the workspace column still lists every session; '
+    + 'the section threw before it could answer -- '
     + String(error && error.message ? error.message : error));
 }
 
@@ -305,16 +320,24 @@ try {
   // The path the runtime recorded points out of the sessions root. It is a database column
   // rather than a name this app chose, so it gets the same containment check a catalog file
   // name gets — and the conversation is not injected from it.
-  const outside = join(home, 'v2', 'outside');
-  await mkdir(outside, { recursive: true });
-  await writeFile(join(outside, 'messages.jsonl'),
+  //
+  // The directory is named for the current session, on purpose. The two checks that can refuse
+  // a recorded path are the containment check and the identity check, and a fixture that could
+  // be caught by either one cannot say which of them is doing the work. This one passes the
+  // identity check — the name really does encode the session it claims to be — so the only
+  // thing left to refuse it is the containment check, which is the rule this section is about.
+  const outsideName = '99-00-00-session_'
+    + Buffer.from(ID(30), 'utf8').toString('base64url');
+  const outsideSession = join(home, 'v2', outsideName);
+  await mkdir(outsideSession, { recursive: true });
+  await writeFile(join(outsideSession, 'messages.jsonl'),
     JSON.stringify({ role: 'user', content: 'x' }) + '\n', 'utf8');
   runtimeDb(home, ['parent_session_id', 'purpose', 'workspace_dir'], [
-    { sessionId: ID(30), relative: '../outside', workspace: 'workspace-one' },
+    { sessionId: ID(30), relative: '../' + outsideName, workspace: 'workspace-one' },
   ]);
   const six = await visibleFor(sessionsRoot, home, 20);
   assert('a recorded path that escapes the sessions root is refused',
-    !six.visible.some((entry) => entry.dir === outside),
+    !six.visible.some((entry) => entry.dir === outsideSession),
     dirsOf(six.visible).join('|'));
   assert('and the current conversation is not injected from it',
     !six.visible.some((entry) => entry.dir === made[30].dir),
@@ -323,11 +346,39 @@ try {
     sameOrder(six.visible, made.slice(0, 20)),
     dirsOf(six.visible).join('|'));
 } catch (error) {
-  failures.push('a recorded path that escapes the sessions root is refused -- '
+  failures.push('a recorded path that escapes the sessions root is refused; '
+    + 'the section threw before it could answer -- '
     + String(error && error.message ? error.message : error));
 }
 
-/* ---------- 9: what a workspace path is, compared ---------- */
+/* ---------- 9: a recorded path that belongs to another session ---------- */
+
+try {
+  const { home, sessionsRoot, made } = await store(31);
+  // The path the runtime recorded points at a directory that is INSIDE the sessions root and
+  // belongs to a different session. The containment check passes — the path is exactly where
+  // that check says a recorded path may be — and the row that comes back is another session's
+  // transcript. Injected as the current conversation it would be listed twice, once as the
+  // injected row and once as the walk's own row for the same directory, while the conversation
+  // the page is about is nowhere in the list. So the recorded path is checked against the
+  // session it is supposed to be, and a mismatch is refused the way an outside path is.
+  runtimeDb(home, ['parent_session_id', 'purpose', 'workspace_dir'], [
+    { sessionId: ID(30), relative: made[0].relative, workspace: 'workspace-one' },
+  ]);
+  const seven = await visibleFor(sessionsRoot, home, 20);
+  assert('a recorded path that belongs to another session is refused, so no session is listed twice',
+    new Set(dirsOf(seven.visible)).size === seven.visible.length,
+    dirsOf(seven.visible).join('|'));
+  assert('and the list is still the plain recency order',
+    sameOrder(seven.visible, made.slice(0, 20)),
+    dirsOf(seven.visible).join('|'));
+} catch (error) {
+  failures.push('a recorded path that belongs to another session is refused; '
+    + 'the section threw before it could answer -- '
+    + String(error && error.message ? error.message : error));
+}
+
+/* ---------- 10: what a workspace path is, compared ---------- */
 
 assert('two spellings of one Windows path are the same workspace',
   sameWorkspacePath('D:\\work\\project', 'd:/work/project/'));
@@ -341,7 +392,35 @@ assert('a workspace that is not there is not a workspace',
 assert('a POSIX path is compared as it stands, because two spellings there are two directories',
   !sameWorkspacePath('/work/Project', '/work/project'));
 
-/* ---------- 10: what may leave the service ---------- */
+/* ---------- 11: what a kind may be ---------- */
+//
+// The page draws the token, so the set of tokens is a closed contract between the two sides of
+// the wire. A value outside it would have to be drawn as a badge the page invented, and the
+// page refuses to invent one — so the effect of a stray token is a marker that silently
+// disappears, and a reader is left with a row that looks like an ordinary conversation.
+const KNOWN_TAGS = ['lightweight', 'scheduled', 'task'];
+assert('a kind tag is one of the three the page knows, or no tag at all',
+  [null, undefined, '', 'conversation', 'cron', 'task', 'unknown'].every((kind) =>
+    [null, undefined, '', 'context-mode:lightweight', 'cron:mavis:daily',
+      'local-background-task:bg_1', 'local-task:x'].every((purpose) => {
+      const tag = sessionTagFor(kind, purpose);
+      return tag === null || KNOWN_TAGS.indexOf(tag) >= 0;
+    })));
+assert('a lightweight exchange is tagged as one',
+  sessionTagFor('conversation', 'context-mode:lightweight') === 'lightweight'
+  && sessionTagFor('conversation', '  context-mode:lightweight  ') === 'lightweight');
+assert('a scheduled run is tagged as one',
+  sessionTagFor('cron', null) === 'scheduled'
+  && sessionTagFor('conversation', 'cron:mavis:daily') === 'scheduled');
+assert('a background task is tagged as one',
+  sessionTagFor('task', null) === 'task'
+  && sessionTagFor('conversation', 'local-background-task:bg_1') === 'task');
+assert('an ordinary conversation carries no kind tag',
+  sessionTagFor('conversation', null) === null
+  && sessionTagFor('conversation', '') === null
+  && sessionTagFor('unknown', null) === null);
+
+/* ---------- 12: what may leave the service ---------- */
 //
 // The workspace is an absolute path on the reader's machine, and the purpose is free text that
 // can carry anything a person typed into it. Neither may reach the browser: the page gets an
@@ -354,6 +433,19 @@ assert('the field list the page receives names neither the workspace nor the raw
   strip === null ? 'no strip function found' : strip[0].slice(0, 120));
 assert('the kind badge is the one field that says what kind of session this is',
   strip !== null && /sessionTag: value\.sessionTag \?\? null,/.test(strip[0]));
+
+// The tag in the body and the tag in the ETag have to come from the same derivation, and the
+// body has to write it on EVERY row. The descriptor comes out of a cache, so a row that loses
+// its database entry keeps the tag it was given last time, while the validator -- which reads
+// the same rows -- reports none. A body and an ETag that disagree about one row is how a badge
+// outlives the fact it was derived from, and the page cannot see the disagreement: it only
+// has the body.
+const tagWrite = /descriptor\.sessionTag = meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null;/
+  .exec(serverText);
+const tagInsideMeta = /if \(meta\) \{[^}]*descriptor\.sessionTag/.exec(serverText);
+assert('the kind tag is written on every row, not only on the rows that have one',
+  tagWrite !== null && tagInsideMeta === null,
+  tagWrite === null ? 'no unconditional tag write found' : String(tagInsideMeta && tagInsideMeta[0]));
 
 for (const home of homes) rmSync(home, { recursive: true, force: true });
 

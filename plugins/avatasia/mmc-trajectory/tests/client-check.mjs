@@ -1212,6 +1212,98 @@ for (const [name, ok] of checks) {
   else failures.push('policy: ' + name);
 }
 
+/* ------------------------------------------------------------------ session picker: where the pinned row goes */
+// The picker can hold a row the server did not send: the session the reader pinned by hand, which
+// aged out of the twenty the service returns. The page adds that row itself, and where it puts it
+// is a promise about what the reader sees — the service's first row is the conversation the
+// runtime database reports as current, and the pinned row is a different thing, so "the current
+// conversation is first" does not by itself say where the pinned row lands.
+//
+// It is checked by RUNNING `renderSessionSelect` against a stub select, not by reading its
+// source. A regex over the source would pass for a version that inserted the row in the right
+// place for the wrong reason, and would not notice a version that inserted it in the right place
+// only when the list happened to be empty. What the reader gets is the order of the options, so
+// that is what is read back.
+const renderSelectSrc = fnSource('function renderSessionSelect()');
+if (!renderSelectSrc) {
+  failures.push('session picker: could not lift renderSessionSelect');
+} else {
+  // A select, as far as this function touches it: the options it holds, the one that is
+  // selected, and the two ways a row can be added to it. The browser picks the first option
+  // when the list is built and picks by value afterwards, and `insertBefore` puts a row at a
+  // position rather than at the end — which is the whole point of the row in question.
+  const stubSelect = () => {
+    const options = [];
+    return {
+      options,
+      selectedIndex: -1,
+      _value: '',
+      get value() { return this._value; },
+      set value(next) {
+        this._value = next;
+        this.selectedIndex = options.findIndex((option) => option.value === next);
+      },
+      appendChild(node) {
+        options.push(node);
+        if (this.selectedIndex < 0) this.selectedIndex = options.length - 1;
+        return node;
+      },
+      insertBefore(node, reference) {
+        const at = reference ? options.indexOf(reference) : -1;
+        options.splice(at < 0 ? options.length : at, 0, node);
+        return node;
+      },
+    };
+  };
+  sandbox.el = (tag, className, text) => {
+    const node = stubNode(tag, text);
+    if (className) node.className = className;
+    node.value = '';
+    return node;
+  };
+  sandbox.clear = (node) => { if (node && node.options) node.options.length = 0; };
+  if (!sandbox.state) sandbox.state = {};
+  sandbox.state.sessions = [
+    { id: 'mvs_server_first', label: '服务端第一行', lastActiveAt: 1_800_000_000_000, messageCount: 3 },
+    { id: 'mvs_server_second', label: '服务端第二行', lastActiveAt: 1_799_999_000_000, messageCount: 4 },
+  ];
+  sandbox.state.followLatest = false;
+  sandbox.state.sessionId = 'mvs_the_pinned_one';
+  vm.runInContext(renderSelectSrc, sandbox);
+
+  const select = stubSelect();
+  sandbox.dom = { sessionSelect: select };
+  sandbox.renderSessionSelect();
+
+  const texts = select.options.map((option) => option.textContent);
+  // The row the reader pinned is the one the service did not send, so it is on its own: the
+  // first row is 「跟随最新」 and the pinned row is the first of the session rows.
+  assert('the row the reader pinned is the first session row, above the rows the service sent',
+    texts.length === 4
+    && texts[0].indexOf('跟随最新') >= 0
+    && texts[1].indexOf('当前会话（不在最近列表）') >= 0
+    && select.options[1].value === 'mvs_the_pinned_one',
+    texts.join(' | '));
+  assert('and the service\'s own first row is still the one right after it',
+    select.options[2] && select.options[2].value === 'mvs_server_first',
+    texts.join(' | '));
+  assert('and the pinned row is the one that ends up selected',
+    select.value === 'mvs_the_pinned_one' && select.selectedIndex === 1,
+    String(select.value) + ' @ ' + String(select.selectedIndex));
+
+  // And the other direction: a pinned session the service DID send needs no row of its own, or
+  // the reader would see the same conversation twice.
+  sandbox.state.sessionId = 'mvs_server_second';
+  const second = stubSelect();
+  sandbox.dom = { sessionSelect: second };
+  sandbox.renderSessionSelect();
+  assert('a pinned session the service sent is not added a second time',
+    second.options.length === 3
+    && second.options.every((option, index) => option.value !== 'mvs_the_pinned_one')
+    && second.value === 'mvs_server_second',
+    second.options.map((option) => option.value).join(' | '));
+}
+
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));
