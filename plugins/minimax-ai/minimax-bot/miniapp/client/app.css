@@ -59,6 +59,8 @@ html,
 body {
   margin: 0;
   height: 100%;
+  /* The chat shell scrolls inside its panes. A document scrollport would carry the sidebar with it. */
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink);
   font-family: ui-sans-serif, -apple-system, system-ui, 'PingFang SC', 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -100,7 +102,10 @@ button {
 .app {
   display: flex;
   height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* ================================================================ octopus marks */
@@ -368,7 +373,14 @@ button {
   flex-direction: column;
   background: var(--sidebar);
   border-right: 0.5px solid var(--line);
+  /* Pin the chat list to the viewport. align-self keeps it from stretching with an overflowing column. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100%;
+  max-height: 100dvh;
   min-height: 0;
+  overflow: hidden;
   --ring: var(--sidebar);
 }
 
@@ -382,11 +394,20 @@ button {
   padding: 14px 0;
   background: color-mix(in srgb, var(--ink) 3%, var(--sidebar));
   border-right: 0.5px solid var(--line);
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100%;
+  max-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   --rail-bg: color-mix(in srgb, var(--ink) 3%, var(--sidebar));
 }
 
 .rail-filters {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -508,6 +529,7 @@ button {
 
 .side-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 10px 12px;
   display: flex;
@@ -670,6 +692,7 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg);
   --ring: var(--bg);
 }
@@ -734,6 +757,8 @@ button {
 
 .feed {
   flex: 1;
+  /* Padding alone is 84px. Without a real floor, task rows (min-height: auto) shrink the transcript to that sliver. */
+  min-height: min(220px, 48%);
   overflow-y: auto;
   padding: 72px 24px 12px;
   scroll-behavior: auto;
@@ -1178,6 +1203,11 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(240px, 36%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .approval {
@@ -1238,6 +1268,7 @@ button {
 
 /* composer */
 .composer {
+  flex: none;
   padding: 4px 24px 18px;
 }
 
@@ -2680,6 +2711,12 @@ fieldset.field {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* A few rows stay fully visible. More than the cap scrolls here instead of pushing the transcript off screen. */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(280px, 40%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .helpers:empty {
