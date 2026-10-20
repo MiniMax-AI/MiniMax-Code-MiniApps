@@ -53,16 +53,16 @@ MUTATIONS = [
     # representation with no ambiguity in it survives both, so there are two cases and each owns the
     # assertion that names it.
     ("the fields are concatenated with no separator at all",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
+     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
        "    parts.push(\"\" + entry.dir + entry.sizeBytes + entry.lastActiveAt"
-       " + title + kind + parent);")],
+       " + title + kind + parent + tag);")],
      "a title/kind split cannot be hidden inside the separator", SERVER),
 
     # mtime is one of the three facts the descriptor cache keys on, and the only one that moves
     # when a session is rewritten in place without growing.
     ("a newer mtime stops moving the tag",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
-       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, title, kind, parent]));\n")],
+     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, title, kind, parent, tag]));\n")],
      "a newer mtime moves the tag", SERVER),
 
     # ---- the 304 that is not earned, because it is decided too late ----
@@ -158,11 +158,20 @@ MUTATIONS = [
     # `String.fromCharCode(0)` rather than an escape in the replacement, because the point of the
     # mutation is the character, not how it is spelled.
     ("the fields go back to being joined on a bare NUL",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
+     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
        "    parts.push(entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt"
        " + \"|\" + title + String.fromCharCode(0) + kind"
-       " + String.fromCharCode(0) + parent);")],
+       " + String.fromCharCode(0) + parent + tag);")],
      "a separator-like character inside a value cannot merge two readable rows into one tag", SERVER),
+
+    # The kind badge, which is the same shape of rule as the parent: it is on the page, it is
+    # derived from a column the runtime database holds, and a change in that column changes what
+    # the row says. Leaving it out of the material makes the tag constant across a change the
+    # reader can see, and the 304 that follows is a statement about bytes nobody re-computed.
+    ("the validator stops covering the kind badge the body sends",
+     [("    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? \"\") : \"\";\n",
+       "    const tag = \"\";\n")],
+     "a changed session purpose moves the tag, even with the title and kind held constant", SERVER),
 ]
 
 ORIGINALS = {

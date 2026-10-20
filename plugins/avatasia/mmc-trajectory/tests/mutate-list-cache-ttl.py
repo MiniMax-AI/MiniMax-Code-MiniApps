@@ -153,18 +153,33 @@ MUTATIONS = [
     # above still passes and the page is simply broken on every database written before child
     # sessions existed. The assertion that catches it is the one that builds such a database here.
     ("a database without the parent column loses every title and kind, not just the parent",
-     [("""    let stmt;
-    try {
-      stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
-    } catch {
+     [("""    let stmt = null;
+    for (const sql of SESSION_TITLE_SELECTS) {
       try {
-        stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+        stmt = db.prepare(sql);
+        break;
       } catch {
-        return result;
+        // This database does not have that column yet; ask for less.
       }
     }
-""", "    const stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');")],
+    if (!stmt) return result;
+""", "    const stmt = db.prepare(SESSION_TITLE_SELECTS[0]);")],
      "a database WITHOUT the column keeps the title and the kind, and only loses the parent"),
+
+    # ---- the ladder: one rung at a time ----
+    #
+    # The read asks for the columns a current runtime writes and falls back, one column at a time,
+    # to the ones an older database has. A rung that is missing is not a rung that asks for less:
+    # the database above it lands on the empty catch instead, and the page shows no titles and no
+    # kinds at all. Both of these remove one rung, and each is caught by the assertion about the
+    # database shape that rung was there for.
+    ("the rung that reads the parent without the purpose is dropped",
+     [("  'select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?',\n", "")],
+     "a database WITHOUT the purpose column still reports the title, the kind and the parent"),
+
+    ("the rung that reads the purpose without the workspace is dropped",
+     [("  'select session_id, title, session_kind, parent_session_id, purpose from local_runtime_sessions where session_id = ?',\n", "")],
+     "a database WITHOUT the workspace column still reports the title, the kind, the parent and the purpose"),
 
     ("the parent row is read but never mapped",
      [("        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''\n"
@@ -188,6 +203,15 @@ MUTATIONS = [
      [("        var branch = session && session.sessionParentId ? BRANCH_MARK : '';",
        "        var branch = BRANCH_MARK;")],
      "the page decides the marker by the field and not unconditionally",
+     CLIENT),
+
+    # The same pair, for the kind badge: applied to every row, and applied to none. The first one
+    # still contains 轻量 on every line, so every check that asks "does the row say 轻量" passes —
+    # and every ordinary conversation now claims to be a lightweight exchange.
+    ("the kind badge is applied to every session",
+     [("        var tag = session ? sessionTagBadge(session.sessionTag) : '';",
+       "        var tag = sessionTagBadge('lightweight');")],
+     "the page decides the kind badge by the field and not unconditionally",
      CLIENT),
 ]
 

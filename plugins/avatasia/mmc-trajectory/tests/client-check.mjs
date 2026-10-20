@@ -533,6 +533,10 @@ const codeOnly = html
 // and was never read, and the one field that did reach the page (`sessionKind`) had no reader in
 // it at all. A reader comparing two entries could not tell a sub-agent run from a conversation.
 //
+// The observation still stands: `sessionKind` is sent and still has no reader. What the reader now
+// gets instead is `sessionTag` — the token the service derives from the row's purpose and kind —
+// and it is the one the page draws. The raw kind column is still on the wire and still unread.
+//
 // The marker is checked here by RUNNING it rather than by matching its text, because the failure
 // worth catching is not a typo in the string — it is the marker being applied to everything, or to
 // nothing, and both of those still contain the right characters. The decisive case is the third
@@ -568,6 +572,64 @@ if (!branchMarkSrc || !branchLabelSrc) {
   assert('an unnamed branch is still marked',
     sandbox.sessionOptionLabel({ lastActiveAt: NOW - 60_000, messageCount: 42,
       sessionParentId: 'mvs_parent' }, NOW).indexOf('子会话') >= 0);
+}
+
+/* ------------------------------------------------------------------ session picker: kind badge */
+// The other half of the same defect: a cron run, a background task and a lightweight exchange were
+// listed exactly like the reader's own conversations, because the service read the runtime
+// database's `purpose` column not at all — so it had no way to tell them apart, and a row that
+// looked like a conversation was presented as one.
+//
+// The badge is driven by a token the service derived, never by the raw purpose: that value is free
+// text and can carry anything a person typed into it, so publishing it would hand the reader's
+// browser somebody else's words. The token set is closed, and a token this page does not know
+// about produces no badge rather than one this page invented.
+//
+// Same discipline as the branch marker above, and for the same reason: the failure worth catching
+// is not a typo in the string, it is the badge being applied to everything or to nothing, and both
+// of those still contain the right characters.
+const tagBadge = sandbox.sessionTagBadge;
+assert('the badge helper is in the pure block, so a label can be built without a DOM',
+  typeof tagBadge === 'function');
+if (typeof tagBadge === 'function') {
+  check('a lightweight session is badged 轻量', tagBadge('lightweight'), ' · 轻量');
+  check('a scheduled session is badged 定时', tagBadge('scheduled'), ' · 定时');
+  check('a background task is badged 任务', tagBadge('task'), ' · 任务');
+  check('no kind at all is no badge', tagBadge(null), '');
+  check('an empty token is no badge', tagBadge(''), '');
+  check('a token this page does not know is no badge', tagBadge('something-else'), '');
+
+  const NOW = 1_800_000_000_000;
+  const base = { label: '一个会话', lastActiveAt: NOW - 60_000, messageCount: 42 };
+  const plain = sandbox.sessionOptionLabel({ ...base }, NOW);
+  const light = sandbox.sessionOptionLabel({ ...base, sessionTag: 'lightweight' }, NOW);
+
+  assert('a lightweight session is badged in the picker', light.indexOf('轻量') >= 0);
+  assert('a scheduled session is badged in the picker',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: 'scheduled' }, NOW).indexOf('定时') >= 0);
+  assert('a background task is badged in the picker',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: 'task' }, NOW).indexOf('任务') >= 0);
+  // The three "no badge" cases, which are three different ways of saying the same thing.
+  assert('a session with no kind of its own carries no badge',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: null }, NOW) === plain);
+  assert('an empty token carries no badge',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: '' }, NOW) === plain);
+  assert('a row with no kind field at all carries no badge',
+    sandbox.sessionOptionLabel({ ...base }, NOW) === plain);
+  // Identity, not shape: the only thing that differs between these two inputs is the field, so
+  // the only thing allowed to differ between the two labels is the badge.
+  assert('the badge is driven by the field, not by where the row sits in the list',
+    light.replace(' · 轻量', '') === plain);
+  assert('and nothing else about the label changes with it',
+    light.length === plain.length + ' · 轻量'.length);
+  // Both markers at once: the kind says what the session IS, the branch says where it came from,
+  // and the order between them is fixed — the kind first, because it is the fact about the row
+  // itself and the branch is a fact about its history.
+  const both = sandbox.sessionOptionLabel({ ...base, sessionTag: 'lightweight', sessionParentId: 'mvs_parent' }, NOW);
+  assert('a row with both a kind and a parent shows the kind before the branch mark',
+    both.indexOf(' · 轻量') >= 0
+    && both.indexOf(' · 子会话') >= 0
+    && both.indexOf(' · 轻量') < both.indexOf(' · 子会话'));
 }
 
 const checks = [

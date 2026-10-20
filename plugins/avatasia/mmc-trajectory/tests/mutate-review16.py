@@ -209,14 +209,14 @@ MUTATIONS = [
      "the non-anomaly hint is still the one that names types and search"),
 
     # ---- 7. the version goes back ----
-    # Re-anchored at the 1.2.0 bump: the three below were written against the literal `1.1.0` in the
+    # Re-anchored at the 1.3.0 bump: the three below were written against the literal `1.2.0` in the
     # manifest and in both READMEs, so leaving them would have made four mutations stop resolving —
     # and one of them, the last, would have become an edit that changes nothing, which the runner
     # rejects. The properties are the reviewer's complaint and are unchanged; only the text they are
-    # written against moved. The numbers are now `1.2.0` and `1.3.0` for the same reason the old pair
-    # was `1.1.0` and `1.2.0`: the replacement has to be a version the tree does not already carry.
+    # written against moved. The numbers are now `1.3.0` and `1.4.0` for the same reason the old pair
+    # was `1.2.0` and `1.3.0`: the replacement has to be a version the tree does not already carry.
     ("the version is put back to 1.0.0",
-     '"version": "1.2.0",',
+     '"version": "1.3.0",',
      '"version": "1.0.0",',
      "the plugin version was bumped off 1.0.0"),
 
@@ -225,12 +225,12 @@ MUTATIONS = [
     # announcing 1.0.0 to every reader who opens the plugin's front page. A rule that checks the
     # field nobody complained about is not the rule that was asked for.
     ("the English README goes back to announcing the old version",
-     'Version: `1.2.0`',
+     'Version: `1.3.0`',
      'Version: `1.0.0`',
      "the English README carries the shipped version"),
 
     ("the Chinese README goes back to announcing the old version",
-     '版本：`1.2.0`',
+     '版本：`1.3.0`',
      '版本：`1.0.0`',
      "the Chinese README carries the shipped version"),
 
@@ -238,8 +238,8 @@ MUTATIONS = [
     # on and the READMEs stay behind. Asserted as equality with plugin.json rather than as "not
     # 1.0.0", so this is the case the rule is actually for.
     ("the manifest moves on and the READMEs do not follow",
-     '"version": "1.2.0",',
      '"version": "1.3.0",',
+     '"version": "1.4.0",',
      "the English README carries the shipped version"),
 
     # ---- the snapshot the last run left, and the run that never looked at it ----

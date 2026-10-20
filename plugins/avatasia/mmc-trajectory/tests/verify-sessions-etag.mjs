@@ -109,6 +109,27 @@ const parentEmpty = new Map([[A, { title: '第一段会话', kind: 'conversation
 assert('an empty parent and a null one agree — they render the same row',
   sessionsValidator(visible, parentBefore, 20) === sessionsValidator(visible, parentEmpty, 20));
 
+// The kind badge. It is derived from the row's purpose, and it is on the page, so a runtime
+// database that changes a session's purpose changes what the row says — and the tag has to move
+// with it. The title AND the kind are held constant here, so this cannot pass on either of them.
+const tagBefore = new Map([[A, { title: '第一段会话', kind: 'conversation', purpose: null }]]);
+const tagAfter = new Map([[A, { title: '第一段会话', kind: 'conversation', purpose: 'context-mode:lightweight' }]]);
+assert('a changed session purpose moves the tag, even with the title and kind held constant',
+  sessionsValidator(visible, tagBefore, 20) !== sessionsValidator(visible, tagAfter, 20));
+
+// And the null case again: a row with no purpose and a row whose purpose is the empty string
+// render identically, so they must not read as a change either.
+const tagEmpty = new Map([[A, { title: '第一段会话', kind: 'conversation', purpose: '' }]]);
+assert('an empty purpose and a null one agree — they render the same row',
+  sessionsValidator(visible, tagBefore, 20) === sessionsValidator(visible, tagEmpty, 20));
+
+// The ORDER. Two rows a reader can tell apart, in two orders, are two payloads — and the picker
+// reorders the visible set (the current conversation first, then its workspace, then the rest),
+// so an order change is a change the caller has to be told about.
+const swapped = [visible[1], visible[0]];
+assert('a changed order of the visible rows moves the tag',
+  sessionsValidator(visible, noTitles, 20) !== sessionsValidator(swapped, noTitles, 20));
+
 // A null title and an absent one are the same payload — the picker falls back to 「会话 <id>」 — so
 // they have to be the same tag, or every poll would look like a change.
 const nullTitle = new Map([[A, { title: null, kind: 'conversation' }]]);
