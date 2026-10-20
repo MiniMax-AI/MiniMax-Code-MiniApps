@@ -31,7 +31,7 @@ The bundled [editing skill](skills/minimax-photo/SKILL.md) guides command discov
 
 ## Tested environment
 
-Tested on macOS Apple Silicon in MiniMax Code, initially with client **3.1.3-preview.4675**. Package **0.2.34** was installed on 2026-10-20; all 98 installed files matched the release. The runtime ZIP is **14,262,978 bytes**, without Electron or model weights.
+Tested on macOS Apple Silicon in MiniMax Code, initially with client **3.1.3-preview.4675**. Package **0.2.35** was installed on 2026-10-20; all 98 installed files matched the release. The runtime ZIP is **14,263,623 bytes**, without Electron or model weights.
 
 - A single in-app request generated an image, returned it automatically and opened it as a new artwork. Semantic image editing also has a successful native Host test.
 - Layered project reopening, recovery, four-language help, examples, draft retention and assistant collapse were exercised. Version-specific evidence is in [validation notes](docs/validation.md).

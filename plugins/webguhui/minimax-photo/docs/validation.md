@@ -138,3 +138,6 @@ MCP 初始化原先固定返回 0.2.16，现读取当前安装包的插件声明
 
 
 AI 文件导入扩展名修复（未打包）：readEditorFile 校验时忽略大小写，但 PhotoCraft 的 open 分支用 ends_with(".pcraft") 识别工程，导致 .PCRAFT 被交给普通图片导入。现在只把传给编辑器的扩展名改为小写，保留文件名主体、文件内容和原始路径。现有检查新增大写工程后缀的名称和字节不变验证；使用最小文件头验证转换，不将其描述为真实工程打开测试。当前已安装 0.2.34 尚不含修复。
+
+
+0.2.35 原生安装及大写工程导入通过：ZIP 14,263,623 字节，SHA-256 `0a2c243449c0f65a4a2c64d3b2509d023164b7110e92c98b29588d7b12f95f66`，98 个安装文件逐字节一致。M3.1-Flash 使用 editor_open_file 导入真实 `Import-Check.PCRAFT`，任务 `07c0473e-66dc-40fc-aac9-a515e88860b7` succeeded，1000×840，Detail/Shading/Wash/Outline/Background 五层保留；inspect 为 1:1，history 仅 Open。预览任务也成功，原工程与测试副本 SHA-256 均为 `c109c3b2c18517323b1ced0c1cc03100632e05e64658fdc3cce0209a058598e9`。没有重画或改写原文件。包、PTC、逐笔和社区 69 项检查通过。新 Skill 已随安装交付，其对绘画准备速度的影响尚未验证。
