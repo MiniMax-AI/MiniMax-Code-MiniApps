@@ -527,7 +527,7 @@ const codeOnly = html
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^[ \t]*\/\/.*$/gm, '');
 
-/* ------------------------------------------------------------------ session picker: branch marker */
+/* ------------------------------------------------------------------ session picker: the two picks */
 // A session that the runtime spawned from another one used to be listed exactly like a top-level
 // conversation, because nothing in the list said otherwise: the parent column existed in the store
 // and was never read, and the one field that did reach the page (`sessionKind`) had no reader in
@@ -537,41 +537,29 @@ const codeOnly = html
 // gets instead is `sessionTag` — the token the service derives from the row's purpose and kind —
 // and it is the one the page draws. The raw kind column is still on the wire and still unread.
 //
-// The marker is checked here by RUNNING it rather than by matching its text, because the failure
-// worth catching is not a typo in the string — it is the marker being applied to everything, or to
-// nothing, and both of those still contain the right characters. The decisive case is the third
-// one: two sessions identical except for `sessionParentId`, whose labels must differ by exactly
-// the marker and nothing else. A version that appended the marker unconditionally passes every
-// "does it contain 子会话" check and fails this one.
-const branchMarkSrc = /var BRANCH_MARK = '[^']*';/.exec(html);
-const branchLabelSrc = fnSource('function sessionOptionLabel(session, now)');
-if (!branchMarkSrc || !branchLabelSrc) {
-  failures.push('session picker: could not lift sessionOptionLabel / BRANCH_MARK');
+// How a run is told apart is now WHICH CONTROL it is in, not what its label says: the conversation
+// pick holds conversations, and the run pick holds the runs of the conversation that was picked.
+// The label says nothing about it — one fact, one signal — and the signal is the control itself.
+const labelSrc = fnSource('function sessionOptionLabel(session, now)');
+if (!labelSrc) {
+  failures.push('session picker: could not lift sessionOptionLabel');
 } else {
-  vm.runInContext(branchMarkSrc[0] + '\n' + branchLabelSrc, sandbox);
+  vm.runInContext(labelSrc, sandbox);
   const NOW = 1_800_000_000_000;
   const base = { label: '一个会话', lastActiveAt: NOW - 60_000, messageCount: 42 };
   const plain = sandbox.sessionOptionLabel({ ...base }, NOW);
-  const branch = sandbox.sessionOptionLabel({ ...base, sessionParentId: 'mvs_parent' }, NOW);
+  const run = sandbox.sessionOptionLabel({ ...base, sessionParentId: 'mvs_parent' }, NOW);
 
-  assert('a top-level session is not marked as a branch',
+  // The label does not say it — the control does. A version that put the mark back into the
+  // label would say it twice, and a version that dropped it without moving the row would say it
+  // not at all.
+  assert('a run is not marked in its label',
+    run === plain);
+  assert('and a conversation is not marked either',
     plain.indexOf('子会话') < 0);
-  assert('a session the runtime spawned is marked as one',
-    branch.indexOf('子会话') >= 0);
-  // Identity, not shape: the only thing that differs between these two inputs is the field, so
-  // the only thing allowed to differ between the two labels is the marker.
-  assert('the marker is driven by the field, not by where the row sits in the list',
-    branch.replace(' · 子会话', '') === plain);
-  assert('and nothing else about the label changes with it',
-    branch.length === plain.length + ' · 子会话'.length);
-  // An empty parent string is "no parent", not "a parent named the empty string".
+  // An empty parent id is "no parent", not "a parent named the empty string".
   assert('an empty parent id is not a parent',
     sandbox.sessionOptionLabel({ ...base, sessionParentId: '' }, NOW) === plain);
-  // The unnamed branch takes the marker too — otherwise the one case with no title to read is
-  // the one case a reader cannot place.
-  assert('an unnamed branch is still marked',
-    sandbox.sessionOptionLabel({ lastActiveAt: NOW - 60_000, messageCount: 42,
-      sessionParentId: 'mvs_parent' }, NOW).indexOf('子会话') >= 0);
 }
 
 /* ------------------------------------------------------------------ session picker: kind badge */
@@ -585,7 +573,7 @@ if (!branchMarkSrc || !branchLabelSrc) {
 // browser somebody else's words. The token set is closed, and a token this page does not know
 // about produces no badge rather than one this page invented.
 //
-// Same discipline as the branch marker above, and for the same reason: the failure worth catching
+// Same discipline as the layer check above, and for the same reason: the failure worth catching
 // is not a typo in the string, it is the badge being applied to everything or to nothing, and both
 // of those still contain the right characters.
 const tagBadge = sandbox.sessionTagBadge;
@@ -622,14 +610,22 @@ if (typeof tagBadge === 'function') {
     light.replace(' · 轻量', '') === plain);
   assert('and nothing else about the label changes with it',
     light.length === plain.length + ' · 轻量'.length);
-  // Both markers at once: the kind says what the session IS, the branch says where it came from,
-  // and the order between them is fixed — the kind first, because it is the fact about the row
-  // itself and the branch is a fact about its history.
+  // Where the badge sits inside the label: the name first, then the times and the count, then
+  // what the session IS. Moved to the front, the row still carries the right characters in the
+  // right places — every check that asks 「does the row say 轻量」 passes — and the row now reads
+  // as a category with a name attached to it.
+  assert('the badge comes after the name, not in front of it',
+    light.indexOf(' · 轻量') > light.indexOf(base.label),
+    JSON.stringify(light));
+  // Both facts at once: the kind says what the session IS, and the parent says where it came
+  // from. The kind is in the label; the parent is in the position, so the label carries the kind
+  // and no longer says 「子会话」 in words — one fact, one signal.
   const both = sandbox.sessionOptionLabel({ ...base, sessionTag: 'lightweight', sessionParentId: 'mvs_parent' }, NOW);
-  assert('a row with both a kind and a parent shows the kind before the branch mark',
-    both.indexOf(' · 轻量') >= 0
-    && both.indexOf(' · 子会话') >= 0
-    && both.indexOf(' · 轻量') < both.indexOf(' · 子会话'));
+  assert('a row with both a kind and a parent still shows the kind',
+    both.indexOf(' · 轻量') >= 0);
+  assert('and no longer claims to be a branch in words — where it sits says that',
+    both.indexOf('子会话') < 0,
+    both);
 }
 
 const checks = [
@@ -1212,6 +1208,72 @@ for (const [name, ok] of checks) {
   else failures.push('policy: ' + name);
 }
 
+/* ------------------------------------------------------------------ session picks: the cascade */
+// Two controls now. The conversation pick names the conversation; the run pick names the run
+// inside it, and holds the runs of the conversation the first pick named. A run used to sit in
+// the conversation pick as a peer of the conversations — thirteen of twenty rows on this machine
+// were runs of the one conversation being read — and it used to sit there indented under its
+// conversation, which made the dropdown forty rows long.
+//
+// The failures worth catching are not strings that survived an edit: they are a run sitting in
+// the conversation pick, a run pick that is empty when it should not be, a run pick that lists
+// the runs of the wrong conversation, and a pick that does not switch. So everything below is
+// read back out of a rendered picker, not out of its source.
+//
+// The functions are lifted HERE, before the picker section below, because that section runs
+// `renderSessionSelect` too and the picker now asks the same question this section asks: which
+// rows are runs, and which control holds them.
+const layerFns = [
+  'function sessionOptionLabel(session, now)',
+  'function childrenByParent()',
+  'function ownerSessionId()',
+  'function renderSessionSelect()',
+  'function renderChildSelect()',
+  'function selectSession(id)',
+  'function setFollow(enabled)',
+  'function onSessionSelectChange()',
+  'function onChildSelectChange()'
+];
+const layerSrc = layerFns.map((name) => fnSource(name));
+if (layerSrc.some((src) => !src)) {
+  failures.push('session layers: could not lift ' + layerFns.filter((_, i) => !layerSrc[i]).join(', '));
+} else {
+  vm.runInContext(layerSrc.join('\n'), sandbox);
+}
+
+// A declaration rather than a const, because the picker section below uses it and this section
+// is written after it: a `const` would be in its temporal dead zone there, and the failure would
+// read as a broken stub rather than as an ordering mistake.
+function stubSelect() {
+  const options = [];
+  return {
+    options,
+    selectedIndex: -1,
+    _value: '',
+    get value() { return this._value; },
+    set value(next) {
+      this._value = next;
+      this.selectedIndex = options.findIndex((option) => option.value === next);
+    },
+    get firstChild() { return options[0] || null; },
+    removeChild(child) {
+      const at = options.indexOf(child);
+      if (at >= 0) options.splice(at, 1);
+      return child;
+    },
+    appendChild(node) {
+      options.push(node);
+      if (this.selectedIndex < 0) this.selectedIndex = options.length - 1;
+      return node;
+    },
+    insertBefore(node, reference) {
+      const at = reference ? options.indexOf(reference) : -1;
+      options.splice(at < 0 ? options.length : at, 0, node);
+      return node;
+    },
+  };
+}
+
 /* ------------------------------------------------------------------ session picker: where the pinned row goes */
 // The picker can hold a row the server did not send: the session the reader pinned by hand, which
 // aged out of the twenty the service returns. The page adds that row itself, and where it puts it
@@ -1232,36 +1294,13 @@ if (!renderSelectSrc) {
   // selected, and the two ways a row can be added to it. The browser picks the first option
   // when the list is built and picks by value afterwards, and `insertBefore` puts a row at a
   // position rather than at the end — which is the whole point of the row in question.
-  const stubSelect = () => {
-    const options = [];
-    return {
-      options,
-      selectedIndex: -1,
-      _value: '',
-      get value() { return this._value; },
-      set value(next) {
-        this._value = next;
-        this.selectedIndex = options.findIndex((option) => option.value === next);
-      },
-      appendChild(node) {
-        options.push(node);
-        if (this.selectedIndex < 0) this.selectedIndex = options.length - 1;
-        return node;
-      },
-      insertBefore(node, reference) {
-        const at = reference ? options.indexOf(reference) : -1;
-        options.splice(at < 0 ? options.length : at, 0, node);
-        return node;
-      },
-    };
-  };
   sandbox.el = (tag, className, text) => {
     const node = stubNode(tag, text);
     if (className) node.className = className;
     node.value = '';
     return node;
   };
-  sandbox.clear = (node) => { if (node && node.options) node.options.length = 0; };
+  sandbox.clear = (node) => { while (node && node.firstChild) node.removeChild(node.firstChild); };
   if (!sandbox.state) sandbox.state = {};
   sandbox.state.sessions = [
     { id: 'mvs_server_first', label: '服务端第一行', lastActiveAt: 1_800_000_000_000, messageCount: 3 },
@@ -1302,6 +1341,137 @@ if (!renderSelectSrc) {
     && second.options.every((option, index) => option.value !== 'mvs_the_pinned_one')
     && second.value === 'mvs_server_second',
     second.options.map((option) => option.value).join(' | '));
+}
+
+/* ------------------------------------------------------------------ session picks: the cascade */
+// The functions were lifted above, before the picker section: the picker asks the same question
+// this section asks, so it needs them too.
+if (layerSrc.every((src) => src)) {
+  const NOW = 1_800_000_000_000;
+  const MAIN_A = 'mvs_main_a';
+  const MAIN_B = 'mvs_main_b';
+  // Thirteen of them, because that is the number this machine actually has: the list is not a
+  // window, and a fixture with three rows would not notice one that quietly dropped the tenth.
+  const childrenOfA = Array.from({ length: 13 }, (_, i) => ({
+    id: 'mvs_child_a' + i,
+    sessionParentId: MAIN_A,
+    label: '子代理甲 ' + i,
+    lastActiveAt: NOW - (i + 1) * 1000,
+    messageCount: i + 1
+  }));
+  const childrenOfB = [{
+    id: 'mvs_child_b0', sessionParentId: MAIN_B, label: '子代理乙',
+    lastActiveAt: NOW - 3000, messageCount: 5
+  }];
+  const layerState = {
+    sessions: [
+      { id: MAIN_A, label: '主会话甲', lastActiveAt: NOW, messageCount: 10 },
+      { id: MAIN_B, label: '主会话乙', lastActiveAt: NOW - 60_000, messageCount: 20 }
+    ],
+    children: childrenOfA.concat(childrenOfB),
+    followLatest: true,
+    sessionId: MAIN_A,
+    hostSessionId: null
+  };
+  sandbox.state = layerState;
+  // The two picks, as two stub selects: the conversation one and the run one.
+  const convo = stubSelect();
+  const runs = stubSelect();
+  sandbox.el = (tag, className, text) => {
+    const node = stubNode(tag, text);
+    if (className) node.className = className;
+    node.value = '';
+    return node;
+  };
+  sandbox.clear = (node) => { while (node && node.firstChild) node.removeChild(node.firstChild); };
+  sandbox.dom = {
+    sessionSelect: convo,
+    childSelect: runs,
+    followBtn: { setAttribute: () => {} },
+    followState: { textContent: '' }
+  };
+  sandbox.fetchSessions = () => {};
+  sandbox.fetchTrajectory = () => {};
+  sandbox.announce = () => {};
+
+  sandbox.renderSessionSelect();
+  sandbox.renderChildSelect();
+
+  // 1. While the page follows the newest conversation there is nothing to offer: that list
+  //    changes under the reader, and a run picked out of it belongs to a conversation that is no
+  //    longer on screen.
+  assert('the run pick is empty while the page follows the newest conversation',
+    runs.options.length === 1 && runs.options[0].value === '' && runs.value === '',
+    runs.options.map((option) => option.value).join(' | '));
+  assert('and it is disabled, so there is nothing to pick',
+    runs.disabled === true, String(runs.disabled));
+
+  // 2. The conversation pick holds conversations and nothing else. This is the rule the whole
+  //    feature exists for: a run must never sit where a conversation sits.
+  const convoValues = convo.options.map((option) => option.value);
+  assert('the conversation pick holds no run at all',
+    !convoValues.some((value) => /^mvs_child_/.test(value)),
+    convoValues.join(' | '));
+  assert('and it holds every conversation',
+    convoValues.length === 3
+    && convoValues.indexOf(MAIN_A) === 1
+    && convoValues.indexOf(MAIN_B) === 2,
+    convoValues.join(' | '));
+
+  // 3. With a conversation picked, the run pick holds its runs — all of them, in the order the
+  //    service sent them.
+  layerState.followLatest = false;
+  layerState.sessionId = MAIN_A;
+  sandbox.renderSessionSelect();
+  sandbox.renderChildSelect();
+  const aIds = childrenOfA.map((child) => child.id);
+  const runValues = runs.options.map((option) => option.value);
+  assert('the run pick holds every run of the conversation on screen',
+    runValues.length === 14, runValues.join(' | '));
+  assert('and they keep the order the service sent',
+    runValues.slice(1).join(',') === aIds.join(','), runValues.join(' | '));
+  assert('and the first option is the conversation itself',
+    runValues[0] === '' && (runs.options[0].textContent || '').indexOf('主会话本身') >= 0,
+    JSON.stringify(runs.options[0] && runs.options[0].textContent));
+  assert('and nothing is picked while no run is picked',
+    runs.value === '', String(runs.value));
+
+  // 4. The two picks agree about what is on screen: a run belongs to a conversation, and the
+  //    conversation pick says which one. Asked while a RUN is on screen -- asked while a
+  //    conversation is on screen it would have the same answer either way, and a guard that
+  //    cannot tell the two apart is not a guard.
+  layerState.sessionId = 'mvs_child_a5';
+  assert('the owner of a run is the conversation it hangs off',
+    sandbox.ownerSessionId() === MAIN_A, sandbox.ownerSessionId());
+  layerState.sessionId = MAIN_A;
+
+  // 5. Picking a run switches the page to it — that run's own trajectory, since a run is a
+  //    session with its own transcript — and leaves the conversation pick on its parent.
+  runs.value = 'mvs_child_a5';
+  sandbox.onChildSelectChange();
+  assert('picking a run switches the page to that run',
+    layerState.sessionId === 'mvs_child_a5' && layerState.followLatest === false,
+    layerState.sessionId + ' / follow=' + layerState.followLatest);
+  sandbox.renderSessionSelect();
+  assert('and the conversation pick stays on its parent',
+    convo.value === MAIN_A, String(convo.value));
+
+  // 6. And picking the conversation itself returns to the conversation.
+  sandbox.renderChildSelect();
+  runs.value = '';
+  sandbox.onChildSelectChange();
+  assert('picking the conversation itself returns to the conversation',
+    layerState.sessionId === MAIN_A, String(layerState.sessionId));
+
+  // 7. And picking another conversation moves the run pick with it, and clears the run.
+  convo.value = MAIN_B;
+  sandbox.onSessionSelectChange();
+  sandbox.renderChildSelect();
+  assert('picking another conversation moves the run pick with it',
+    runs.options.length === 2 && runs.options[1].value === 'mvs_child_b0',
+    runs.options.map((option) => option.value).join(' | '));
+  assert('and clears the run that was picked',
+    runs.value === '', String(runs.value));
 }
 
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');

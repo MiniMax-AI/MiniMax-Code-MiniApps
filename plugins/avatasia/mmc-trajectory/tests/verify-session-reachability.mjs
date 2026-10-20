@@ -204,11 +204,20 @@ assert('a full directory basename can still name a session',
   /basename\(candidate\.dir\) === requested/.test(SERVER));
 
 /* =====================================================================
- * 9 — the picker route reads the recent list, not the index
+ * 9 — the picker route walks the store, not the id index
  * ===================================================================== */
 
-assert('the list route builds from recentEntries',
-  /\(await listEntries\(\)\)\.recentEntries/.test(SERVER));
+// The list route builds from the WALK and not from the id index: the index is a reachability
+// fix, and building the picker from it would mean a descriptor per candidate on every poll.
+//
+// The walk's own list is now the WHOLE of it rather than the thirty most recent sessions, and
+// that is the second layer's requirement rather than a widening for its own sake: a sub-agent is
+// always newer than the session that spawned it, so a window of thirty is mostly sub-agents, and
+// drawing the picker from it would push main sessions out of their own list. The walk has already
+// stat'ed every candidate, so the deeper pool costs no extra disk work.
+assert('the list route builds from the whole walk',
+  /const allEntries = candidates\.allEntries;/.test(SERVER)
+  && /const layers = splitSessionLayers\(allEntries, titles\);/.test(SERVER));
 assert('the trajectory route keeps the recent list for the latest branch',
   /const entries = candidates\.recentEntries;/.test(SERVER));
 

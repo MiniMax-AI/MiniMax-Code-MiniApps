@@ -2456,6 +2456,14 @@
             <label class="field-label" for="session-select">会话</label>
             <select id="session-select" aria-describedby="window-count"></select>
           </div>
+          <!-- The second half of a cascade: which conversation, and which run inside it. Empty
+               until a conversation is picked, and disabled while the page follows the newest one
+               -- that list changes under the reader, so a run picked out of it would belong to a
+               conversation that is no longer on screen. -->
+          <div class="field">
+            <label class="field-label" for="child-select">子代理</label>
+            <select id="child-select"></select>
+          </div>
           <div class="field field-grow" data-filter-scope>
             <label class="field-label" for="search-input">搜索</label>
             <input type="search" id="search-input" placeholder="搜索摘要、正文、结果与思考" autocomplete="off" />
@@ -3254,6 +3262,33 @@
         return '';
       }
 
+      /**
+       * The three parts of a session's label, in the order they are printed.
+       *
+       * One function, because two places print a session's label — the picker's option and the
+       * sub-agent row under it — and two copies of a format is two places for the format to
+       * drift. It returns the parts rather than the whole string because the two callers put
+       * them in different shapes: the picker appends 「子会话」 after them, and the sub-agent row
+       * would only be repeating itself.
+       *
+       * DOM-free on purpose: it lives in this block so the offline probe can run it without a
+       * page, and so a change to the format is one edit rather than two.
+       *
+       * @param {any} session
+       * @param {number} now
+       * @returns {{ label: string, tail: string, tag: string }}
+       */
+      function sessionLabelParts(session, now) {
+        var label = truncateText(session && session.label ? session.label : '', 42);
+        var when = formatAgo(session ? session.lastActiveAt : null, now);
+        var count = session ? session.messageCount : null;
+        var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
+        // What kind of session this is, when the service said. It is a marker and not a filter:
+        // the row is still selectable, and a row with no kind of its own gets no marker.
+        var tag = session ? sessionTagBadge(session.sessionTag) : '';
+        return { label: label, tail: tail, tag: tag };
+      }
+
       function safeText(value) {
         if (value === null || value === undefined) return '';
         if (typeof value === 'string') return value;
@@ -3648,6 +3683,10 @@
 
       var state = {
         sessions: [],
+        // The sub-agents of the main sessions in `sessions`, flat: every row names the main it
+        // hangs off. One list and one join key, rather than a second hierarchy — the page groups
+        // them by parent, and the service decides who the parent is.
+        children: [],
         sessionsLoaded: false,
         followLatest: true,
         // Seeded from the host id so the picker and the content agree. `sessionParam()` already
@@ -3902,6 +3941,7 @@
         dom.kindControls = document.getElementById('kind-controls');
         dom.filterSticky = document.getElementById('filter-sticky');
         dom.sessionSelect = document.getElementById('session-select');
+        dom.childSelect = document.getElementById('child-select');
         dom.generationField = document.getElementById('generation-field');
         dom.generationSelect = document.getElementById('generation-select');
         dom.generationHint = document.getElementById('generation-hint');
@@ -4057,8 +4097,13 @@
               return false;
             }
             state.sessions = Array.isArray(result.body.sessions) ? result.body.sessions : [];
+            // The two lists are two views of one set: the service sends the main sessions and the
+            // runs of every conversation in the pool, and every run row names the main it hangs
+            // off. The page groups them by that name instead of keeping a hierarchy of its own.
+            state.children = Array.isArray(result.body.children) ? result.body.children : [];
             state.sessionsLoaded = true;
             renderSessionSelect();
+            renderChildSelect();
             if (cleared) renderBars();
             return true;
           })
@@ -4478,34 +4523,84 @@
        * absence of a number in the shape of a number. Omitting the segment is the honest rendering
        * of 「这个数不存在」: the reader still has the label and the recency, which is what the picker
        * is for. tests/verify-list-cache.mjs pins the gate that produces the absence. */
-      /* 「子会话」 says the structural fact and stops there.
+      /* The two picks, and what each one answers.
        *
-       * The parent is named by nobody, on purpose. A branch is always newer than the session that
-       * spawned it, so its parent has usually aged out of the most-recent-N window this list is
-       * built from — naming it would mean a lookup that fails exactly when a reader wants the
-       * answer most, and a lookup that fails quietly is how a picker ends up asserting something
-       * it cannot see.
+       * A run the runtime spawned from another session is a session like any other, and the runtime
+       * hangs it off its parent with one column. The page used to draw both in one dropdown, flat:
+       * thirteen of twenty rows were runs of the one conversation being read, and nothing on the row
+       * said so.
        *
-       * It is a marker and not a filter: nothing here writes state, so there is no second opinion
-       * about which records are on screen that could disagree with the table. */
-      var BRANCH_MARK = ' · 子会话';
-
+       * It then drew them inside the same dropdown, indented under their conversation. That made the
+       * hierarchy visible, and made the dropdown long — forty rows on this machine, nineteen of them
+       * runs — so picking one conversation meant scrolling a list of titles to find it.
+       *
+       * It is two controls now, and the second is a cascade of the first:
+       *
+       *   - 「会话」 answers 「which conversation」. It holds conversations and nothing else.
+       *   - 「子代理」 answers 「which run inside it」. It holds the runs of the conversation the first
+       *     pick names, and stays empty until there is one to name.
+       *
+       * Two controls is not two answers to one question: the questions are nested, and each has one.
+       * The layer is the container now, which says more than an indent or a word did — a row under
+       * 「子代理」 says what it is without saying it in words.
+       *
+       * A run is a session with its own transcript, and the parent transcript does not contain its
+       * turns. So picking a run shows that run's own trajectory, and the conversation pick moves to
+       * its parent: the two controls always agree about what is on screen. */
       function sessionOptionLabel(session, now) {
-        var label = truncateText(session && session.label ? session.label : '', 42);
-        var when = formatAgo(session ? session.lastActiveAt : null, now);
-        var count = session ? session.messageCount : null;
-        var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
-        // What kind of session this is, when the service said. It is a marker and not a filter:
-        // the row is still selectable, and a row with no kind of its own gets no marker.
-        var tag = session ? sessionTagBadge(session.sessionTag) : '';
-        var branch = session && session.sessionParentId ? BRANCH_MARK : '';
-        if (!label) return '未命名会话 ' + tail + tag + branch;
-        return label + ' ' + tail + tag + branch;
+        var parts = sessionLabelParts(session, now);
+        if (!parts.label) return '未命名会话 ' + parts.tail + parts.tag;
+        return parts.label + ' ' + parts.tail + parts.tag;
+      }
+
+      /**
+       * The sub-agents of each conversation, grouped by the parent the service named.
+       *
+       * One pass over the flat list the service sends, and the order inside each group is the
+       * order it arrived in — most recently active first, which is the service's ordering and the
+       * only one the picker promises.
+       *
+       * @returns {Object<string, any[]>}
+       */
+      function childrenByParent() {
+        var grouped = {};
+        var all = state.children || [];
+        for (var i = 0; i < all.length; i += 1) {
+          var child = all[i];
+          if (!child || !child.id || !child.sessionParentId) continue;
+          var bucket = grouped[child.sessionParentId];
+          if (bucket) bucket.push(child);
+          else grouped[child.sessionParentId] = [child];
+        }
+        return grouped;
+      }
+
+      /**
+       * The conversation the session on screen belongs to.
+       *
+       * A run belongs to the conversation that spawned it; a conversation belongs to itself. That
+       * is the only thing the two picks have to agree about, and it is derived rather than stored:
+       * the parent id comes down with the row, so there is no second copy of the mapping to keep
+       * in step with the service.
+       *
+       * @returns {string}
+       */
+      function ownerSessionId() {
+        var id = state.sessionId || '';
+        if (!id) return '';
+        var all = state.children || [];
+        for (var i = 0; i < all.length; i += 1) {
+          var child = all[i];
+          if (child && child.id === id && child.sessionParentId) return child.sessionParentId;
+        }
+        return id;
       }
 
       function renderSessionSelect() {
         var select = dom.sessionSelect;
-        var previous = state.followLatest ? 'latest' : state.sessionId || '';
+        // The conversation pick names the conversation, not the run: picking a run leaves this
+        // control on the run's parent, so the two controls never disagree about what is on screen.
+        var previous = state.followLatest ? 'latest' : ownerSessionId();
         clear(select);
 
         var followOption = el('option', null, '跟随最新（自动切换）');
@@ -4533,6 +4628,50 @@
           select.value = 'latest';
         }
         if (select.selectedIndex < 0) select.value = 'latest';
+      }
+
+      /**
+       * The run pick: the runs of the conversation on screen, and nothing else.
+       *
+       * Empty while the page follows the newest conversation — that list changes under the reader,
+       * and a run picked out of it would be a run of a conversation that is no longer on screen.
+       * Empty with a conversation picked and no run picked, which is the default; the first option
+       * says so in words.
+       */
+      function renderChildSelect() {
+        var select = dom.childSelect;
+        clear(select);
+        var owner = state.followLatest ? '' : ownerSessionId();
+
+        if (!owner) {
+          var idle = el('option', null, '（跟随最新）');
+          idle.value = '';
+          select.appendChild(idle);
+          select.disabled = true;
+          select.value = '';
+          return;
+        }
+
+        select.disabled = false;
+        var self = el('option', null, '（主会话本身）');
+        self.value = '';
+        select.appendChild(self);
+
+        var now = Date.now();
+        var kids = childrenByParent()[owner] || [];
+        for (var j = 0; j < kids.length; j += 1) {
+          var option = el('option', null, sessionOptionLabel(kids[j], now));
+          option.value = kids[j].id;
+          select.appendChild(option);
+        }
+        // The run on screen, when it is a run of this conversation; otherwise the default, which
+        // is the conversation itself.
+        var current = state.sessionId || '';
+        var isRun = false;
+        for (var k = 0; k < kids.length; k += 1) {
+          if (kids[k].id === current) isRun = true;
+        }
+        select.value = isRun ? current : '';
       }
 
       /* ---------------- rendering: KPI ---------------- */
@@ -9045,18 +9184,79 @@
         }
       }
 
+      /**
+       * The reader picked a conversation.
+       *
+       * A conversation and a run are both sessions, and both go through the one writer that says
+       * which session is on screen. Picking a conversation leaves the run pick empty, so the page
+       * shows the conversation's own trajectory.
+       */
+      function onSessionSelectChange() {
+        var value = dom.sessionSelect.value;
+        // A different session has a different generation chain; keeping the old pin would
+        // ask that session for a generation number it may never have had.
+        state.generation = null;
+        if (value === 'latest') {
+          setFollow(true);
+          return;
+        }
+        selectSession(value);
+      }
+
+      /**
+       * The reader picked a run, or the conversation itself.
+       *
+       * A run is a session with its own transcript, and the conversation's transcript does not
+       * contain its turns — so this switches the page to that run's own trajectory. The
+       * conversation pick stays on the run's parent, which is where it already was.
+       *
+       * The first option is the conversation itself: picking it returns to the conversation's
+       * trajectory, and it is where the pick sits until a run is chosen.
+       */
+      function onChildSelectChange() {
+        var value = dom.childSelect.value;
+        state.generation = null;
+        if (!value) {
+          var owner = ownerSessionId();
+          if (!owner) return;
+          selectSession(owner);
+          return;
+        }
+        selectSession(value);
+      }
+
       /* ---------------- wiring ---------------- */
 
       function setFollow(enabled) {
         state.followLatest = enabled;
         dom.followBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
         dom.followState.textContent = enabled ? '开' : '关';
-        dom.sessionSelect.value = enabled ? 'latest' : state.sessionId || 'latest';
+        // The conversation pick names the conversation, not the run: with a run on screen it
+        // stays on the run's parent.
+        dom.sessionSelect.value = enabled ? 'latest' : (ownerSessionId() || 'latest');
+        renderChildSelect();
         state.signature = '';
         state.loading = true;
         fetchSessions();
         fetchTrajectory(false);
         announce(enabled ? '已开启跟随最新，正在跟踪最近的会话。' : '已关闭跟随最新，固定在所选会话。');
+      }
+
+      /**
+       * The one place a session is chosen.
+       *
+       * A conversation and a sub-agent are both sessions, so both come through here and
+       * 「which session is on screen」 has one writer and one meaning. A different session has a
+       * different generation chain, so the pin is dropped here rather than at each call site — a
+       * generation number the new session may never have had would ask it for a slice it does not
+       * have.
+       *
+       * @param {string} id
+       */
+      function selectSession(id) {
+        state.generation = null;
+        state.sessionId = id;
+        setFollow(false);
       }
 
       /**
@@ -9465,18 +9665,8 @@
           fetchTrajectory(true);
         });
 
-        dom.sessionSelect.addEventListener('change', function () {
-          var value = dom.sessionSelect.value;
-          // A different session has a different generation chain; keeping the old pin would
-          // ask that session for a generation number it may never have had.
-          state.generation = null;
-          if (value === 'latest') {
-            setFollow(true);
-            return;
-          }
-          state.sessionId = value;
-          setFollow(false);
-        });
+        dom.sessionSelect.addEventListener('change', onSessionSelectChange);
+        dom.childSelect.addEventListener('change', onChildSelectChange);
 
         dom.generationSelect.addEventListener('change', function () {
           var raw = dom.generationSelect.value;

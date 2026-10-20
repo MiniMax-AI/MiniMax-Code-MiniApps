@@ -183,7 +183,7 @@ assert('the same collision in the parent cannot merge two readable rows either',
 
 // The material is still built in server.mjs, which is what the three assertions above are testing
 // rather than a copy of it.
-const material = /export function sessionsValidator\(visible, titles, limit\) \{[\s\S]*?\n\}/.exec(server);
+const material = /export function sessionsValidator\(visible, titles, limit, children\) \{[\s\S]*?\n\}/.exec(server);
 assert('the material is still built in server.mjs', material !== null);
 
 // Empty input, because the route calls this before it knows the walk found anything.
@@ -198,7 +198,13 @@ assert('the list route is still in the shipped source', route !== null);
 if (route) {
   const code = route[0];
   assert('the route derives its tag from sessionsValidator',
-    /weakETag\(sessionsValidator\(visible, titles, limit\)\)/.test(code));
+    /weakETag\(sessionsValidator\(visible, titles, limit, childEntries\)\)/.test(code));
+  // The sub-agents are on the page, so they are in the material. A tag that did not move when a
+  // sub-agent started would answer 304 for a body the caller never held — and the body it never
+  // held is the one with the sub-agent in it.
+  assert('and the sub-agents it sends are in the tag',
+    /sessionsValidator\(visible, titles, limit, childEntries\)/.test(code)
+    && /childEntries\.push\(child\)/.test(code));
 
   // The same three values on both sides. A validator computed from anything the payload does not
   // use is a validator about a different payload. The pairing itself is settled by the call above

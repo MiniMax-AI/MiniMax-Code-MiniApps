@@ -23,7 +23,7 @@ inside the sessions root and still belong to a different session, and a version 
 check would list that other session twice and lose the conversation the page is about.
 
 Three more are on the page. The badge is applied to every row, the badge is applied to none,
-and the badge is placed after the branch mark -- the third of those still contains the right
+and the badge is placed in front of the name -- the third of those still contains the right
 characters in the right places, which is why the guards check the rendered label rather than
 the string. The last one is the row the reader pinned by hand, which the page adds itself: it
 belongs above the rows the service sent, and a version that appends it to the end still
@@ -133,8 +133,8 @@ MUTATIONS = [
     # validator -- which reads the same rows -- reports none. The body and the ETag then
     # disagree about the same row, and only the body reaches the page.
     ("the kind tag is only written on the rows that have one",
-     [("          descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;",
-       "          if (meta) descriptor.sessionTag = sessionTagFor(meta.kind, meta.purpose);")],
+     [("        descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;",
+       "        if (meta) descriptor.sessionTag = sessionTagFor(meta.kind, meta.purpose);")],
      "the kind tag is written on every row, not only on the rows that have one"),
 
     # ---- the badge, on the page ----
@@ -156,16 +156,17 @@ MUTATIONS = [
      "a lightweight session is badged in the picker",
      CLIENT),
 
-    # Placed after the branch mark. Both markers are still there, both are still the right
-    # characters, and the row still says everything it said -- only the order between them has
-    # changed. A guard that asks "does the row contain 轻量" cannot see this at all; one that
-    # asks which of the two comes first can.
-    ("the kind badge is placed after the branch mark",
-     [("        if (!label) return '未命名会话 ' + tail + tag + branch;\n"
-       "        return label + ' ' + tail + tag + branch;",
-       "        if (!label) return '未命名会话 ' + tail + branch + tag;\n"
-       "        return label + ' ' + tail + branch + tag;")],
-     "a row with both a kind and a parent shows the kind before the branch mark",
+    # The badge's place inside the label. The label carries no marker for the layer any more --
+    # the run pick says which rows are runs by being the control they are in -- so the badge is
+    # judged against the name alone. Moved to the front, the row still contains the right
+    # characters in the right places -- every check that asks "does the row contain 轻量" passes --
+    # and the row now reads as a category with a name attached to it.
+    ("the kind badge is placed in front of the name",
+     [("        if (!parts.label) return '未命名会话 ' + parts.tail + parts.tag;\n"
+       "        return parts.label + ' ' + parts.tail + parts.tag;",
+       "        if (!parts.label) return parts.tag + '未命名会话 ' + parts.tail;\n"
+       "        return parts.tag + parts.label + ' ' + parts.tail;")],
+     "the badge comes after the name, not in front of it",
      CLIENT),
 
     # The row the reader pinned by hand, which the page adds itself because the service did not

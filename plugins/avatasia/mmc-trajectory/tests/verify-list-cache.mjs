@@ -239,8 +239,14 @@ assert('the kind badge survives the strip, with null as the floor',
 // The reader-facing half, off the comment-stripped client for the reason given in section 6: the
 // comment above `sessionOptionLabel` names the marker, so an assertion made against the raw file
 // would be satisfied by prose describing the very thing it exists to require.
-assert('the page decides the marker by the field and not unconditionally',
-  /var branch = session && session\.sessionParentId \? BRANCH_MARK : '';/.test(clientJs));
+//
+// The page does not mark a row in its label any more — it decides which rows are sub-agents by
+// the parent the service named, and puts them in the run pick of that parent. So the field's
+// reader is the grouping, and the rule is that the grouping consults the field rather than
+// anything else.
+assert('the page decides which rows are sub-agents by the parent field and not unconditionally',
+  /if \(!child \|\| !child\.id \|\| !child\.sessionParentId\) continue;/.test(clientJs)
+  && /var bucket = grouped\[child\.sessionParentId\];/.test(clientJs));
 
 assert('the page decides the kind badge by the field and not unconditionally',
   /var tag = session \? sessionTagBadge\(session\.sessionTag\) : '';/.test(clientJs));

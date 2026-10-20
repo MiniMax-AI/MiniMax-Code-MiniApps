@@ -827,6 +827,7 @@ export async function readSessionIdentity(dir) {
  *
  * @param {string} sessionsRoot
  * @returns {Promise<{ recentEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>,
+ *   allEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>,
  *   byDecodedId: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>,
  *   truncated: boolean }>}
  */
@@ -875,7 +876,11 @@ export async function collectSessionCandidates(sessionsRoot) {
     else byDecodedId.set(id, [entry]);
   }
 
-  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };
+  // `allEntries` is the same walk, uncut. The 30-entry window is what 'latest' falls back to and
+  // what the picker used to draw from; the list of MAIN sessions needs a deeper pool than that,
+  // because a sub-agent sits in that window and would otherwise take a main session' place.
+  // The walk already stat'ed every one of these, so the deeper pool costs no extra disk work.
+  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries, byDecodedId, truncated };
 }
 
 /**
@@ -1273,6 +1278,46 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
   other.sort(byRecency);
   const ordered = currentEntry ? [currentEntry, ...same, ...other] : [...same, ...other];
   return ordered.slice(0, limit);
+}
+
+/**
+ * The two layers of the picker: the main sessions, and the sub-agents hanging off each of them.
+ *
+ * A sub-agent is a session like any other on disk — its own directory, its own `messages.jsonl` —
+ * and the runtime hangs it off its parent with one column. So the layer is a fact about a row,
+ * not about a directory, and it is read from that column and nowhere else. `purpose` is not the
+ * judge here: it says what a session IS (a scheduled run, a background task), which is a different
+ * question from what it hangs off, and the two are orthogonal — a sub-agent is a task AND somebody's
+ * child.
+ *
+ * The parent's id and the child's id are the same kind of id. Measured on this machine: all 208
+ * session directories carry a `manifest.json` whose `sessionId` equals the id decoded from the
+ * directory name, and that is the id the runtime database stores. So the parent's id here is the
+ * id the page will see on the parent's row, and the client can join the two layers on it.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
+ * @param {Map<string, { parent?: string | null }>} titles
+ * @returns {{ mains: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>, childrenByParent: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>> }}
+ */
+export function splitSessionLayers(entries, titles) {
+  const mains = [];
+  const childrenByParent = new Map();
+  for (const entry of entries) {
+    const id = decodeSessionIdFromDirName(basename(entry.dir));
+    const meta = id ? titles.get(id) : null;
+    const parent = meta && typeof meta.parent === 'string' && meta.parent ? meta.parent : null;
+    if (!parent) {
+      mains.push(entry);
+      continue;
+    }
+    const bucket = childrenByParent.get(parent);
+    if (bucket) bucket.push(entry);
+    else childrenByParent.set(parent, [entry]);
+  }
+  // Most recently active first, inside every bucket. The list says so in the one place that
+  // orders it, so the order cannot be one thing on the server and another on the page.
+  for (const bucket of childrenByParent.values()) bucket.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  return { mains, childrenByParent };
 }
 
 /**
@@ -2641,12 +2686,18 @@ export function etagMatches(header, etag) {
  * SESSION_CACHE_TTL_MS to the descriptor cache this reuses, so the bound is that cache's and not
  * a new one. tests/verify-list-cache.mjs pins the TTL relationship that says so.
  *
+ * The sub-agents are in it for the same reason the kind badge is: they are on the page, and a
+ * sub-agent that starts, ends, or is renamed changes what the page says. A material that did not
+ * move would answer 304 for a body the caller never held — and the body it never held is the one
+ * with the new sub-agent in it.
+ *
  * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} visible
  * @param {Map<string, { title: string | null, kind: string | null }>} titles
  * @param {number} limit
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} [children]
  * @returns {string}
  */
-export function sessionsValidator(visible, titles, limit) {
+export function sessionsValidator(visible, titles, limit, children) {
   const parts = ['limit=' + limit];
   for (const entry of visible) {
     const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
@@ -2666,6 +2717,17 @@ export function sessionsValidator(visible, titles, limit) {
     // JSON escapes the ambiguous characters, so the tuple's boundaries survive anything the store
     // can return, and no field needs a second representation to be safe.
     parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));
+  }
+  // The sub-agents, in the order the payload carries them: most recently active first inside
+  // each group. The parent id is in the tuple because the grouping is part of what the page
+  // shows — the same sub-agent under a different main is a different page.
+  for (const entry of children || []) {
+    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+    const title = meta ? String(meta.title ?? "") : "";
+    const kind = meta ? String(meta.kind ?? "") : "";
+    const parent = meta ? String(meta.parent ?? "") : "";
+    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? "") : "";
+    parts.push(JSON.stringify([parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));
   }
   return parts.join("\n");
 }
@@ -3316,22 +3378,24 @@ export async function start(context) {
 
   const handleSessions = async (response, url) => {
     const limit = normalizeLimit(url.searchParams.get('limit'), 20, 1, 50);
-    let entries;
+    let candidates;
     try {
       // The picker is built from the walk's own list: the most recent sessions, mtime-descending.
       // That list is also what 'latest' falls back to when the runtime database is unavailable,
-      // and nothing here reorders it. The VISIBLE set below is a different set — it widens this
-      // one by at most one entry, the current conversation, and the rule for picking twenty of
-      // the thirty is no longer pure mtime: the current conversation comes first, then the
-      // sessions of its workspace. The id index beside the list is what `handleTrajectory`
-      // resolves explicit ids against, and it is deliberately not what the picker is built from.
-      entries = (await listEntries()).recentEntries;
+      // and nothing here reorders it. The VISIBLE set below is a different set — it draws from
+      // the MAIN sessions only, and the rule for picking twenty of them is no longer pure mtime:
+      // the current conversation comes first, then the sessions of its workspace. The 30-entry
+      // window is deliberately NOT the pool: a sub-agent sits in that window and would take a
+      // main session' place, and the walk has already stat'ed every candidate besides, so the
+      // deeper pool costs no extra disk work.
+      candidates = await listEntries();
     } catch (error) {
       context.logger.error('miniapp.trajectory.read_error', { reason: 'root_unreadable', code: errorCode(error) });
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
       return;
     }
-    if (entries.length === 0) {
+    const allEntries = candidates.allEntries;
+    if (allEntries.length === 0) {
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
       return;
     }
@@ -3342,23 +3406,43 @@ export async function start(context) {
     // `resolveCurrentConversation`, which says so where it happens.
     const current = await resolveCurrentConversation(location.root);
 
-    // Real titles from the runtime database, for every candidate in the window and for the current
-    // conversation, which may be outside it. The workspace column rides along because the visible
-    // set is ordered by it.
-    const ids = entries.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean);
+    // Real titles from the runtime database, for every candidate and for the current conversation,
+    // which may be outside the walk. The workspace column rides along because the visible set is
+    // ordered by it, and the parent column rides along because the layer is decided by it.
+    const ids = allEntries.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean);
     if (current && current.sessionId && ids.indexOf(current.sessionId) < 0) ids.push(current.sessionId);
     const titles = await sessionTitles(ids);
+
+    // The two layers. A sub-agent is a session like any other on disk, and the runtime hangs it
+    // off its parent with one column; so the layer is a fact about a row, and the page gets the
+    // main sessions in the picker and the sub-agents of whichever main is in hand below it.
+    const layers = splitSessionLayers(allEntries, titles);
 
     // The visible set: the current conversation first, then the sessions of its workspace, then
     // the rest -- each group mtime-descending. At most one session joins the window this way, and
     // it is always the current conversation. The number of visible sessions is unchanged.
-    const visible = await buildVisibleSessionList(entries, current, titles, location.sessionsRoot, limit, () => {
+    const visible = await buildVisibleSessionList(layers.mains, current, titles, location.sessionsRoot, limit, () => {
       context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
     });
 
-    // Built from the same two values the payload below is built from, and computed before any
-    // descriptor work — which is what lets an unchanged list answer without building it.
-    const etag = weakETag(sessionsValidator(visible, titles, limit));
+    // Every run in the pool, and not only the runs of the mains that are on the page.
+    //
+    // The picker is two controls now: the conversation, and the runs inside it. The second one
+    // lists the runs of the conversation the reader picked -- which may be a conversation that
+    // has aged out of the twenty, the one the page keeps alive with a row of its own. Dropping
+    // those runs would break the promise the main list already keeps: the session you are
+    // reading does not disappear because it stopped being new. The order inside each group is
+    // the one `splitSessionLayers` set -- most recently active first.
+    const childEntries = [];
+    for (const bucket of layers.childrenByParent.values()) {
+      for (const child of bucket) childEntries.push(child);
+    }
+
+    // Built from the same values the payload below is built from, and computed before any
+    // descriptor work -- which is what lets an unchanged list answer without building it. The
+    // sub-agents are in it: a new one changes what the page shows, and a validator that did not
+    // move would let the caller keep a body that never had it.
+    const etag = weakETag(sessionsValidator(visible, titles, limit, childEntries));
     const requestEtag = response.req && response.req.headers ? response.req.headers['if-none-match'] : null;
     if (etagMatches(requestEtag, etag)) {
       sendJsonBody(response, 304, '', { etag, revalidate: true });
@@ -3370,33 +3454,52 @@ export async function start(context) {
     // to produce.
     let body = sessionsBody.material === etag ? sessionsBody.body : null;
     if (body === null) {
+      // One writer for a row, so the main sessions and the sub-agents cannot drift apart in the
+      // fields they carry: the same title, the same kind, the same tag, the same floor.
+      const describeRow = async (entry) => {
+        const descriptor = await describeSession(entry);
+        const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+        if (meta) {
+          if (meta.title) descriptor.label = meta.title;
+          descriptor.sessionKind = meta.kind;
+          descriptor.sessionParentId = meta.parent;
+        }
+        // What this session IS, as a token the page can render: a lightweight exchange, a
+        // scheduled run, a background task. The raw purpose stays on this side of the wire --
+        // it is free text, and free text is not something to hand a reader's browser.
+        //
+        // Assigned unconditionally, and that is the point. The descriptor comes out of a cache,
+        // so a session whose row is missing from the runtime database keeps the tag it was
+        // given last time -- while the validator, which reads the same rows, reports no tag for
+        // it. A body and an ETag that disagree about the same row is how a badge outlives the
+        // fact it was derived from, so the field is written on every pass, not only when there
+        // is something to write.
+        descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;
+        return descriptor;
+      };
       const described = [];
       for (const entry of visible) {
         try {
-          const descriptor = await describeSession(entry);
-          const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
-          if (meta) {
-            if (meta.title) descriptor.label = meta.title;
-            descriptor.sessionKind = meta.kind;
-            descriptor.sessionParentId = meta.parent;
-          }
-          // What this session IS, as a token the page can render: a lightweight exchange, a
-          // scheduled run, a background task. The raw purpose stays on this side of the wire --
-          // it is free text, and free text is not something to hand a reader's browser.
-          //
-          // Assigned unconditionally, and that is the point. The descriptor comes out of a cache,
-          // so a session whose row is missing from the runtime database keeps the tag it was
-          // given last time -- while the validator, which reads the same rows, reports no tag for
-          // it. A body and an ETag that disagree about the same row is how a badge outlives the
-          // fact it was derived from, so the field is written on every pass, not only when there
-          // is something to write.
-          descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;
-          described.push(descriptor);
+          described.push(await describeRow(entry));
         } catch (error) {
           context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
         }
       }
-      body = JSON.stringify({ sessions: described.map(stripInternalFields) });
+      // The sub-agents, as a flat list: each row names the main it hangs off, and the page groups
+      // them. A flat list is what lets the two layers join on ONE id -- the id the main row
+      // already carries -- without a second naming scheme to keep in step with it.
+      const children = [];
+      for (const entry of childEntries) {
+        try {
+          children.push(await describeRow(entry));
+        } catch (error) {
+          context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
+        }
+      }
+      body = JSON.stringify({
+        sessions: described.map(stripInternalFields),
+        children: children.map(stripInternalFields),
+      });
       sessionsBody = { material: etag, body };
     }
     sendJsonBody(response, 200, body, { etag, revalidate: true });

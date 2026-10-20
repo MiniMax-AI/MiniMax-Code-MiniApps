@@ -188,7 +188,7 @@ MUTATIONS = [
      'the parent row is mapped, and an empty id is no parent rather than a parent named ""'),
 
     ("the descriptor is built without the parent",
-     [("            descriptor.sessionParentId = meta.parent;", "")],
+     [("          descriptor.sessionParentId = meta.parent;", "")],
      "the descriptor carries the parent onto the row the page receives"),
 
     # This one is the most likely to be reintroduced by accident: it is a whole-field removal in
@@ -197,12 +197,14 @@ MUTATIONS = [
      [("    sessionParentId: value.sessionParentId ?? null,", "")],
      "the field survives the strip, with null as the floor"),
 
-    # The direction that looks right and is not: marking every row. Every string the guard looks
-    # for is still present, and the list reads as though every conversation were a sub-agent run.
-    ("the mark is applied to every session rather than the branches",
-     [("        var branch = session && session.sessionParentId ? BRANCH_MARK : '';",
-       "        var branch = BRANCH_MARK;")],
-     "the page decides the marker by the field and not unconditionally",
+    # The direction that looks right and is not: the parent field is read, but not as the key
+    # the rows are grouped under. Every conversation then hangs the same sub-agents, and the run
+    # pick of every conversation lists the same thirteen of them -- so a reader picks a run that
+    # belongs to somebody else's conversation, and the page shows it as their own.
+    ("the parent field is read, but not as the key the rows are grouped under",
+     [("          var bucket = grouped[child.sessionParentId];",
+       "          var bucket = grouped['mvs_one_parent_for_everything'];")],
+     "the page decides which rows are sub-agents by the parent field and not unconditionally",
      CLIENT),
 
     # The same pair, for the kind badge: applied to every row, and applied to none. The first one

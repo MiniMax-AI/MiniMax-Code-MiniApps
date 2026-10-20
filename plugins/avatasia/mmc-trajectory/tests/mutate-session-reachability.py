@@ -37,14 +37,19 @@ MUTATIONS = [
     # The original shape. Everything else in the suite still passes: the list is unchanged, the
     # trajectory route still finds every session in the window, and no assertion anywhere else
     # had a session outside it.
+    #
+    # The walk now hands out THREE products -- the thirty most recent sessions, the whole walk,
+    # and the id index -- so "one truncated list again" is the whole walk truncated as well as the
+    # index dropped. The second layer's pool is the whole walk, and the reachability fix's
+    # product is the index: losing either one is the shape this mutation puts back.
     ("the walk returns one truncated list again",
-     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };",
-       "  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId: new Map(), truncated };")],
+     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries, byDecodedId, truncated };",
+       "  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId: new Map(), truncated };")],
      "the id index is not the recent list", SERVER),
 
     ("the recent list is no longer capped",
-     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };",
-       "  return { recentEntries: entries, byDecodedId, truncated };")],
+     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries, byDecodedId, truncated };",
+       "  return { recentEntries: entries, allEntries: entries, byDecodedId, truncated };")],
      "the recent list is still capped at MAX_SESSION_LIST", SERVER),
 
     # ---- the index stops being built from the walk ----
@@ -52,13 +57,17 @@ MUTATIONS = [
     # Correct-looking, and now the picker pays for the reachability fix: the index is derived
     # from the slice, so a session outside the window has no fast path again.
     ("the index is derived from the recent list instead of the walk",
-     [("  for (const entry of entries) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));",
-       "  for (const entry of entries.slice(0, MAX_SESSION_LIST)) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));")],
+     [("  for (const entry of entries) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
+       "    // A name that does not decode is still a real session;",
+       "  for (const entry of entries.slice(0, MAX_SESSION_LIST)) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
+       "    // A name that does not decode is still a real session;")],
      "the id index is not the recent list", SERVER),
 
     ("the index is no longer built at all",
-     [("    const id = decodeSessionIdFromDirName(basename(entry.dir));",
-       "    const id = null;")],
+     [("  for (const entry of entries) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
+       "    // A name that does not decode is still a real session;",
+       "  for (const entry of entries) {\n    const id = null;\n"
+       "    // A name that does not decode is still a real session;")],
      "the index is built from the decoded directory name", SERVER),
 
     # ---- duplicates silently resolved by directory order ----
@@ -133,10 +142,22 @@ MUTATIONS = [
     #
     # Widening the picker is a UI decision that was explicitly not taken here. Taking it by
     # accident, inside a reachability fix, is how a 9x descriptor cost arrives unannounced.
+    #
+    # The picker's pool is now the whole walk rather than the thirty most recent sessions, so
+    # this is the line that says so. It is the second layer's requirement: a sub-agent in a
+    # thirty-row window would take a main session' place.
     ("the list route starts building from the id index",
-     [("      entries = (await listEntries()).recentEntries;",
-       "      entries = [...(await listEntries()).byDecodedId.values()].flat();")],
-     "the list route builds from recentEntries", SERVER),
+     [("    const allEntries = candidates.allEntries;\n",
+       "    const allEntries = [...candidates.byDecodedId.values()].flat();\n")],
+     "the list route builds from the whole walk", SERVER),
+
+    # The trajectory route keeps the thirty most recent sessions for its 'latest' branch, and it
+    # must not start building from the index either: the index is a reachability fix, and the
+    # trajectory route is the one that pays for a descriptor per candidate.
+    ("the trajectory route starts building from the id index",
+     [("    const entries = candidates.recentEntries;\n",
+       "    const entries = [...candidates.byDecodedId.values()].flat();\n")],
+     "the trajectory route keeps the recent list for the latest branch", SERVER),
 
     # ---- the page names a session it is not showing ----
     #

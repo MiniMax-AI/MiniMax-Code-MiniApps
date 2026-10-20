@@ -31,14 +31,30 @@ PROBE = os.path.join(HERE, "verify-sessions-etag.mjs")
 MUTATIONS = [
     # ---- the material forgets something the payload uses ----
 
+    # The anchors below name the loop they sit in, because the material now has two loops -- the
+    # main sessions and the sub-agents -- and the two read the same columns in the same order. An
+    # anchor that did not name its loop would match both, and the control would refuse to run
+    # rather than guess which one it meant.
     ("a rename stops moving the tag",
-     [("    const title = meta ? String(meta.title ?? \"\") : \"\";\n", "    const title = \"\";\n")],
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = \"\";\n")],
      "a renamed session moves the tag", SERVER),
 
     # `kind` is what puts the sub-agent and cron badges on the rows, so a page that keeps a stale
     # tag is offering the reader a worker's session as if it were their conversation.
     ("a changed session kind stops moving the tag",
-     [("    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n", "    const kind = \"\";\n")],
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = \"\";\n")],
      "a changed session kind moves the tag, even with no title", SERVER),
 
     # The one that looks like a simplification. Two different requests, one tag.
@@ -148,7 +164,16 @@ MUTATIONS = [
     # review, not by a failing test: the guard was passing because every map it built varied only
     # the title and the kind, so nothing ever asked the question.
     ("the validator stops covering the parent the body sends",
-     [("    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n", "    const parent = \"\";\n")],
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = \"\";\n")],
      "a changed parent moves the tag, even with the title and kind held constant", SERVER),
 
     # The one this round's independent pass found. The material joined its fields on a bare NUL, and
@@ -169,7 +194,25 @@ MUTATIONS = [
     # the row says. Leaving it out of the material makes the tag constant across a change the
     # reader can see, and the 304 that follows is a statement about bytes nobody re-computed.
     ("the validator stops covering the kind badge the body sends",
-     [("    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? \"\") : \"\";\n",
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n"
+       "    // The kind badge the page draws is derived from the row's kind and purpose, so it is\n"
+       "    // reader-visible on its own and belongs in the material for the same reason `kind` does. A\n"
+       "    // runtime database that changes a session's purpose changes what the row says, and a tag that\n"
+       "    // did not move would answer 304 for a body the caller never held.\n"
+       "    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n"
+       "    // The kind badge the page draws is derived from the row's kind and purpose, so it is\n"
+       "    // reader-visible on its own and belongs in the material for the same reason `kind` does. A\n"
+       "    // runtime database that changes a session's purpose changes what the row says, and a tag that\n"
+       "    // did not move would answer 304 for a body the caller never held.\n"
        "    const tag = \"\";\n")],
      "a changed session purpose moves the tag, even with the title and kind held constant", SERVER),
 ]
