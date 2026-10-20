@@ -30,5 +30,7 @@ export async function readEditorFile(filePath) {
     : extension === '.psd' ? data.toString('ascii', 0, 4) === '8BPS' && data.readUInt16BE(4) === 1
     : data.subarray(0, 4).equals(Buffer.from([80,75,3,4]));
   if (!valid) throw Error('文件内容与扩展名不符');
-  return { name: basename(filePath), data: data.toString('base64') };
+  // The editor dispatches project files by a case-sensitive extension.
+  const name = basename(filePath);
+  return { name: name.slice(0, -extname(name).length) + extension, data: data.toString('base64') };
 }

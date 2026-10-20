@@ -158,6 +158,14 @@ await check('Agent 编辑事务：归属、并发、重复、持久化与中断'
     const filePath = join(root, 'icon.png');
     const file = await readEditorFile(filePath);
     assert.equal(file.data, (await readFile(filePath)).toString('base64'));
+    const uppercaseProject = join(dir, 'Keep-My-Title.PCRAFT');
+    const projectHeader = Buffer.concat([Buffer.from([80,75,3,4]), Buffer.alloc(12)]);
+    await writeFile(uppercaseProject, projectHeader);
+    const normalizedProject = await readEditorFile(uppercaseProject);
+    assert.equal(normalizedProject.name, 'Keep-My-Title.pcraft');
+    assert.equal(normalizedProject.data, projectHeader.toString('base64'));
+    assert.deepEqual(await readFile(uppercaseProject), projectHeader);
+
     await assert.rejects(readEditorFile('relative.png'), /绝对路径/);
     await assert.rejects(readEditorFile(join(root, 'package.json')), /支持/);
     const fake = join(dir, 'fake.png');
