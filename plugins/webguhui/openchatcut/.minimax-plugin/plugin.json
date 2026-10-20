@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "openchatcut",
   "displayName": "OpenVideo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "本地优先的视频编辑工作室：多轨剪辑、字幕、特效、Agent 与视频导出。基于 OpenChatCut（AGPL-3.0-or-later）移植。",
   "author": "WebGuHui (OpenVideo adaptation); OpenChatCut contributors",
   "icon": "icon.png",
