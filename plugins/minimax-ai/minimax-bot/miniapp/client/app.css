@@ -2093,6 +2093,8 @@ fieldset.field {
 .set-main {
   flex: 1;
   min-width: 0;
+  /* Let the body scroll when narrow settings stack below the navigation. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
