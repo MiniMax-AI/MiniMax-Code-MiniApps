@@ -677,3 +677,40 @@ test('group execution records keep each reply linked to its own session and part
     await reset();
   }
 });
+
+test('the background task strip leads with the task, separates its state and folds a long queue', async () => {
+  await reset();
+  const chat = 'bot:bot_a';
+  const queued = Array.from({ length: 5 }, (_, index) => ({
+    id: `hlp_q${index}`, botId: 'bot_a', chatId: chat, title: `Queued task ${index + 1}`, task: `Queued task ${index + 1}`,
+    status: 'queued', createdAt: Date.now(),
+  }));
+  emit({
+    type: 'helpers.changed',
+    helpers: [
+      { id: 'hlp_run', botId: 'bot_a', chatId: chat, title: 'Rebuild the truth table', task: 'Rebuild the truth table in the verifier', status: 'running', startedAt: Date.now() - 60000 },
+      { id: 'hlp_wait', botId: 'bot_b', chatId: chat, title: 'Collect the samples', task: 'Collect the samples', status: 'waiting_for_tasks', createdAt: Date.now() - 120000 },
+      ...queued,
+    ],
+  });
+  await settle();
+  const strip = document.querySelector('.helpers');
+  const rows = strip.querySelectorAll('.helper-row');
+  // What runs comes first, then what waits, then the queue.
+  assert.deepEqual([...rows].map((row) => row.className), [
+    'helper-row is-running', 'helper-row is-waiting', 'helper-row is-queued', 'helper-row is-queued', 'helper-row is-queued',
+  ]);
+  // The task leads the row; its owner, state and elapsed time sit below it.
+  const running = rows[0];
+  assert.equal(running.querySelector('.helper-title').textContent, 'Rebuild the truth table');
+  assert.equal(running.querySelector('.helper-who').textContent, 'Rob');
+  assert.equal(running.querySelector('.helper-state').textContent, 'Running');
+  assert.ok(running.querySelector('.helper-time').textContent);
+  // A long queue folds into one line instead of filling the strip.
+  const more = strip.querySelector('.helper-more');
+  assert.match(more.textContent, /2 more tasks queued/);
+  more.click();
+  await settle();
+  assert.equal(strip.querySelectorAll('.helper-row').length, 7);
+  assert.equal(strip.querySelector('.helper-more').textContent, 'Collapse queue');
+});

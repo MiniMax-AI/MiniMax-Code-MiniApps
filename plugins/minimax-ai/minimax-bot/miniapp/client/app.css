@@ -2730,23 +2730,27 @@ fieldset.field {
 
 .helper-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 12px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px 8px 12px;
   border-radius: 12px;
   border: 0.5px solid var(--line);
   background: var(--surface);
   font-size: 13px;
 }
 
+/* The dot carries the state: quiet while queued, amber while it waits, accent while it runs. */
 .helper-dot {
   width: 7px;
   height: 7px;
+  margin-top: 6px;
   border-radius: 50%;
   background: var(--accent);
   flex: none;
-  animation: helper-pulse 1.6s ease-in-out infinite;
 }
+.helper-row.is-queued .helper-dot { background: var(--subtle); }
+.helper-row.is-waiting .helper-dot { background: var(--warning); }
+.helper-row.is-running .helper-dot { animation: helper-pulse 1.6s ease-in-out infinite; }
 
 @keyframes helper-pulse {
   50% {
@@ -2754,22 +2758,67 @@ fieldset.field {
   }
 }
 
-[data-motion='quiet'] .helper-dot {
+[data-motion='quiet'] .helper-row.is-running .helper-dot {
   animation: none;
 }
 
-.helper-text {
+.helper-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The task is what the row is about, so it gets the space and up to two lines. */
+.helper-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.helper-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.helper-who {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.helper-time {
-  color: var(--muted);
-  font-size: 12px;
+.helper-state, .helper-time {
   flex: none;
+  white-space: nowrap;
+}
+
+/* The stop action stays reachable, but out of the way until the row is looked at. */
+.helper-stop {
+  flex: none;
+  align-self: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--subtle);
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.helper-stop:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.helper-more {
+  align-self: flex-start;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* attachments waiting to be sent, above the input */
