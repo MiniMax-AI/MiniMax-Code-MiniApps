@@ -3237,6 +3237,23 @@
         return flat.slice(0, Math.max(0, limit - 1)) + '…';
       }
 
+      /* The badge that says what KIND of session a row is.
+       *
+       * The service sends a token, never the raw `purpose` it read from the runtime database:
+       * that value is free text and can carry anything a person typed into it, so what travels
+       * is a closed set of three words and nothing else. An unknown token is not a badge — a
+       * token this page does not know about must not become a label it invented.
+       *
+       * It is a marker, not a filter: a scheduled run is still selectable, the reader is just
+       * told what it is instead of being handed something that looks like their own
+       * conversation. */
+      function sessionTagBadge(tag) {
+        if (tag === 'lightweight') return ' · 轻量';
+        if (tag === 'scheduled') return ' · 定时';
+        if (tag === 'task') return ' · 任务';
+        return '';
+      }
+
       function safeText(value) {
         if (value === null || value === undefined) return '';
         if (typeof value === 'string') return value;
@@ -4478,9 +4495,12 @@
         var when = formatAgo(session ? session.lastActiveAt : null, now);
         var count = session ? session.messageCount : null;
         var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
+        // What kind of session this is, when the service said. It is a marker and not a filter:
+        // the row is still selectable, and a row with no kind of its own gets no marker.
+        var tag = session ? sessionTagBadge(session.sessionTag) : '';
         var branch = session && session.sessionParentId ? BRANCH_MARK : '';
-        if (!label) return '未命名会话 ' + tail + branch;
-        return label + ' ' + tail + branch;
+        if (!label) return '未命名会话 ' + tail + tag + branch;
+        return label + ' ' + tail + tag + branch;
       }
 
       function renderSessionSelect() {

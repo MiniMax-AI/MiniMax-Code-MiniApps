@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 Browse the model trajectory of a MiniMax Code conversation: messages, reasoning, tool calls and their results, Token usage, and per-turn timing.
 
-Author: [avatasia](https://github.com/avatasia) · Version: `1.2.0`
+Author: [avatasia](https://github.com/avatasia) · Version: `1.3.0`
 
 ### Before you change this page
 
@@ -132,6 +132,7 @@ The runtime database is opened in read-only mode. If it is missing, unreadable, 
 - The ledger does not use virtual scrolling; every rendered row is a real element. The page therefore opens on the newest 200 records, and the window bar button switches to the whole session. The button names what pressing it will do, not the current state: 「显示全部」 at the default and 「显示最新 200 条」 once everything is showing, while the count beside it reports what is on screen. That full view is opt-in for a reason: on a 9,900-record session it is roughly 57,000 elements rebuilt every 2.5s poll, which was measured to freeze the page rather than be read. 「向上加载更早的 N 条」 widens the window in steps and a poll does not undo it. A sticky window bar under the overview strip offers that choice behind four explicit controls: switch the strip between equal width and a real time axis, load 200 earlier records, jump back to the latest 200, and show everything. "Show everything" builds every record in the session into the DOM at once and gets noticeably slower on large sessions; incoming records do not knock it back down to 200.
 - `messageCount` and `turnCount` in the session picker are estimates derived from a bounded prefix of the file; exact values come from the selected session.
 - A session the runtime spawned from another one is marked 「子会话」 in the picker. The parent is deliberately not named: a branch is always newer than the session that spawned it, so its parent has usually aged out of the most-recent-N window this list is built from, and a lookup that fails quietly is how a picker ends up asserting something it cannot see.
+- The picker also says what a session **is**, not only what it is called: a scheduled run carries 「定时」, a background task 「任务」, and a tool-less lightweight conversation 「轻量」, so none of them can be mistaken for a conversation you wrote. They stay in the list and stay selectable — a marker is a marker, not a filter. The conversation you are in comes first, then the sessions of its own workspace, then the rest; the workspace path and the raw purpose string are compared on the server and never reach the page.
 - Light theme token coverage is verified — every `--mcode-*` token the page consumes is defined for both themes — but its rendered appearance was not visually checked; the page was exercised under a dark system preference.
 
 ## Tested environment

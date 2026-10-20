@@ -995,11 +995,51 @@ export async function resolveCurrentConversation(home) {
 }
 
 /**
+ * The columns the picker reads, widest first.
+ *
+ * A runtime database written before one of these columns existed does not have it, and preparing a
+ * statement over a column that is not there throws before a single row has been read. So the read
+ * walks down this list until one statement prepares: each rung drops the newest column and keeps
+ * every older one, which is what lets an old database still yield titles, kinds and parents
+ * instead of nothing at all.
+ */
+const SESSION_TITLE_SELECTS = [
+  'select session_id, title, session_kind, parent_session_id, purpose, workspace_dir from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind, parent_session_id, purpose from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind from local_runtime_sessions where session_id = ?',
+];
+
+/**
  * Titles for the session picker. Missing database simply means the caller keeps its
  * filesystem-derived label.
+ *
+ * Five facts come back per session, and the last three are what the picker needs to stop
+ * presenting every session as if it were the reader's own conversation:
+ *
+ *   `title`     what the session is called
+ *   `kind`      the shape the runtime gave it
+ *   `parent`    the session it was spawned from, when it was spawned from one
+ *   `purpose`   what the session is FOR -- a cron run, a background task, a lightweight exchange
+ *   `workspace` the project directory it belongs to
+ *
+ * The parent id is the fact that a branch exists, and it is the ONLY part of that
+ * relationship that is always available: the list is the most recent N sessions, and a child
+ * is always newer than the parent that spawned it, so the parent's title is routinely outside
+ * the window. Carrying the id and looking the title up would therefore be a lookup that fails
+ * exactly when a reader is most likely to want it.
+ *
+ * Asking for a column is the optional part, and it has to be optional: a runtime database
+ * written before child sessions existed has no `parent_session_id`, and preparing a statement
+ * over a column that is not there throws before a single row has been read. Under the empty
+ * catch below that is not a degraded list -- it is every title and every kind in the page
+ * silently reverting to the first sentence of the transcript, which is what a reader would see
+ * as "the titles broke and nothing says why". The mapping below already answers `null` for a
+ * row that carries no parent, so the rows the lower rungs return need no change at all.
+ *
  * @param {string} home
  * @param {readonly string[]} sessionIds
- * @returns {Promise<Map<string, { title: string | null, kind: string | null }>>}
+ * @returns {Promise<Map<string, { title: string | null, kind: string | null, parent: string | null, purpose: string | null, workspace: string | null }>>}
  */
 export async function readSessionTitles(home, sessionIds) {
   const result = new Map();
@@ -1007,29 +1047,16 @@ export async function readSessionTitles(home, sessionIds) {
   if (!db) return result;
   try {
     if (sessionIds.length === 0) return result;
-    // The parent id is the fact that a branch exists, and it is the ONLY part of that
-    // relationship that is always available: the list is the most recent N sessions, and a child
-    // is always newer than the parent that spawned it, so the parent's title is routinely outside
-    // the window. Carrying the id and looking the title up would therefore be a lookup that fails
-    // exactly when a reader is most likely to want it.
-    //
-    // Asking for the column is the optional part, and it has to be optional: a runtime database
-    // written before child sessions existed has no `parent_session_id`, and preparing a statement
-    // over a column that is not there throws before a single row has been read. Under the empty
-    // catch below that is not a degraded list -- it is every title and every kind in the page
-    // silently reverting to the first sentence of the transcript, which is what a reader would see
-    // as "the titles broke and nothing says why". The mapping below already answers `null` for a
-    // row that carries no parent, so the row this fallback returns needs no change at all.
-    let stmt;
-    try {
-      stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
-    } catch {
+    let stmt = null;
+    for (const sql of SESSION_TITLE_SELECTS) {
       try {
-        stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+        stmt = db.prepare(sql);
+        break;
       } catch {
-        return result;
+        // This database does not have that column yet; ask for less.
       }
     }
+    if (!stmt) return result;
     for (const id of sessionIds) {
       const row = stmt.get(id);
       if (!row) continue;
@@ -1039,6 +1066,8 @@ export async function readSessionTitles(home, sessionIds) {
         parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''
           ? row.parent_session_id
           : null,
+        purpose: typeof row.purpose === 'string' && row.purpose.trim() ? row.purpose.trim() : null,
+        workspace: typeof row.workspace_dir === 'string' && row.workspace_dir.trim() ? row.workspace_dir.trim() : null,
       });
     }
   } catch {
@@ -1047,6 +1076,166 @@ export async function readSessionTitles(home, sessionIds) {
     closeQuietly(db);
   }
   return result;
+}
+
+/**
+ * What kind of session this is, as a closed set of tokens the page can render.
+ *
+ * This is the only place that knows what a runtime `purpose` means. The raw value is free text --
+ * it carries whatever a person wrote into it -- so it is never published; what travels is the token
+ * derived from it.
+ *
+ * `purpose` answers first because it is the more specific fact: a session can be a cron run and
+ * still be recorded with the kind of a conversation. `kind` is the fallback, for a database whose
+ * `purpose` column does not exist yet.
+ *
+ * @param {string | null | undefined} kind
+ * @param {string | null | undefined} purpose
+ * @returns {'lightweight' | 'scheduled' | 'task' | null}
+ */
+export function sessionTagFor(kind, purpose) {
+  const p = typeof purpose === 'string' ? purpose.trim() : '';
+  const k = typeof kind === 'string' ? kind.trim().toLowerCase() : '';
+  if (p === 'context-mode:lightweight') return 'lightweight';
+  if (p.startsWith('cron:') || k === 'cron') return 'scheduled';
+  if (p.startsWith('local-background-task:') || p.startsWith('local-task:') || k === 'task') return 'task';
+  return null;
+}
+
+/**
+ * @param {string | null | undefined} value
+ * @returns {{ value: string, windows: boolean } | null}
+ */
+function normaliseWorkspacePath(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const slashed = trimmed.replace(/\\/g, '/');
+  const withoutTail = slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed;
+  // A drive letter or a UNC root is what makes a path a Windows path, wherever the comparison runs.
+  const windows = /^[A-Za-z]:\//.test(withoutTail) || withoutTail.startsWith('//');
+  return { value: withoutTail, windows };
+}
+
+/**
+ * Whether two workspace paths name the same directory.
+ *
+ * The value is an absolute path on the reader's machine, so it is compared here and never sent
+ * anywhere: the page receives an ordered list, and a path in it would be a location on somebody's
+ * disk. Two spellings of one path have to compare equal, because the same workspace is written
+ * with backslashes in one row and with forward slashes in another, and a Windows path does not
+ * distinguish `D:\work` from `D:\WORK`.
+ *
+ * Case is folded only for Windows-shaped paths. A POSIX path is compared as it stands, because
+ * `/work/Project` and `/work/project` really are two directories there.
+ *
+ * @param {string | null | undefined} left
+ * @param {string | null | undefined} right
+ * @returns {boolean}
+ */
+export function sameWorkspacePath(left, right) {
+  const a = normaliseWorkspacePath(left);
+  const b = normaliseWorkspacePath(right);
+  if (!a || !b) return false;
+  if (a.windows || b.windows) return a.value.toLowerCase() === b.value.toLowerCase();
+  return a.value === b.value;
+}
+
+/**
+ * The workspace a session belongs to, as the picker reads it: null when the database has no such
+ * column, no such row, or no value in it.
+ *
+ * @param {Map<string, { workspace?: string | null }>} titles
+ * @param {string | null | undefined} sessionId
+ * @returns {string | null}
+ */
+function workspaceOfSession(titles, sessionId) {
+  if (!sessionId || !(titles instanceof Map)) return null;
+  const meta = titles.get(sessionId);
+  if (!meta || typeof meta.workspace !== 'string' || !meta.workspace.trim()) return null;
+  return meta.workspace.trim();
+}
+
+/**
+ * Build a session entry from a recorded relative directory.
+ *
+ * The value is a column the runtime wrote rather than a name this app chose, so it earns the same
+ * containment check `resolveArtifactPath` gives catalog file names: a path that resolves outside
+ * the sessions root is refused, not clamped. The picker and the 'latest' resolver share this one
+ * function, so a second copy of the check cannot drift away from the first.
+ *
+ * @param {string} sessionsRoot
+ * @param {string | null | undefined} relativeDir
+ * @returns {Promise<{ entry: { dir: string, sizeBytes: number, lastActiveAt: number } | null, rejected: boolean }>}
+ */
+export async function entryFromRelativeDir(sessionsRoot, relativeDir) {
+  if (typeof relativeDir !== 'string' || !relativeDir.trim()) return { entry: null, rejected: false };
+  const root = resolve(sessionsRoot);
+  const dir = resolve(root, relativeDir.trim().replace(/\\/g, '/'));
+  if (dir !== root && !dir.startsWith(root + sep)) return { entry: null, rejected: true };
+  try {
+    const fileStat = await stat(join(dir, 'messages.jsonl'));
+    return {
+      entry: { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) },
+      rejected: false,
+    };
+  } catch {
+    return { entry: null, rejected: false };
+  }
+}
+
+/**
+ * The visible set the picker shows, and the order it is shown in.
+ *
+ * Two sets live here and they are not the same set. `entries` is what the walk found: the most
+ * recent sessions, mtime-descending, and it is also the answer 'latest' falls back to when the
+ * runtime database is unavailable -- so nothing in here reorders it. The visible set is what the
+ * READER may pick from, and it is allowed to differ.
+ *
+ * The order is: the conversation the reader is in, then the sessions of that conversation's
+ * workspace, then everything else -- each group mtime-descending. "The current workspace" means
+ * the `workspace_dir` the runtime database records for the current conversation, and only that;
+ * the path itself never leaves this function.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
+ * @param {{ sessionId: string, relativeDir?: string | null } | null} current
+ * @param {Map<string, { workspace?: string | null }>} titles
+ * @param {string} sessionsRoot
+ * @param {number} limit
+ * @param {() => void} [onReject]
+ * @returns {Promise<Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>}
+ */
+export async function buildVisibleSessionList(entries, current, titles, sessionsRoot, limit, onReject) {
+  if (!current || typeof current.sessionId !== 'string' || !current.sessionId) {
+    // No runtime database, or no current conversation: the visible set is exactly what the walk
+    // found, in the walk's order. This is what the picker did before the current conversation was
+    // pinned into it, and it is still what it does when there is nothing to pin.
+    return entries.slice(0, limit);
+  }
+  const currentId = current.sessionId;
+  let currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;
+  if (!currentEntry && current.relativeDir) {
+    // Not in the recent window -- build the entry straight from the recorded path.
+    const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir);
+    if (built.rejected && typeof onReject === 'function') onReject();
+    currentEntry = built.entry;
+  }
+  const currentWorkspace = workspaceOfSession(titles, currentId);
+  const rest = entries.filter((entry) => entry !== currentEntry);
+  const same = [];
+  const other = [];
+  for (const entry of rest) {
+    const workspace = workspaceOfSession(titles, decodeSessionIdFromDirName(basename(entry.dir)));
+    if (currentWorkspace !== null && sameWorkspacePath(workspace, currentWorkspace)) same.push(entry);
+    else other.push(entry);
+  }
+  // Both groups keep the walk's order, which is mtime-descending. Stated rather than inherited:
+  // the walk's order is an implementation detail of the traversal, and the picker promises one.
+  const byRecency = (a, b) => b.lastActiveAt - a.lastActiveAt;
+  same.sort(byRecency);
+  other.sort(byRecency);
+  const ordered = currentEntry ? [currentEntry, ...same, ...other] : [...same, ...other];
+  return ordered.slice(0, limit);
 }
 
 /**
@@ -2427,6 +2616,11 @@ export function sessionsValidator(visible, titles, limit) {
     const title = meta ? String(meta.title ?? "") : "";
     const kind = meta ? String(meta.kind ?? "") : "";
     const parent = meta ? String(meta.parent ?? "") : "";
+    // The kind badge the page draws is derived from the row's kind and purpose, so it is
+    // reader-visible on its own and belongs in the material for the same reason `kind` does. A
+    // runtime database that changes a session's purpose changes what the row says, and a tag that
+    // did not move would answer 304 for a body the caller never held.
+    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? "") : "";
     // Injective by construction, which no delimiter is. Any character can occur inside a SQLite TEXT
     // column — including the NUL this used to join on — so a title of "a\0b" beside a kind of "c" and
     // a title of "a" beside a kind of "b\0c" produced byte-identical material: one ETag for two rows
@@ -2434,7 +2628,7 @@ export function sessionsValidator(visible, titles, limit) {
     // different separator cannot fix that, because no character is excluded from a TEXT value.
     // JSON escapes the ambiguous characters, so the tuple's boundaries survive anything the store
     // can return, and no field needs a second representation to be safe.
-    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));
+    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));
   }
   return parts.join("\n");
 }
@@ -2946,7 +3140,7 @@ export async function start(context) {
    * per poll for rows that only change when somebody renames a session. Raising the walk's TTL
    * without this would still reopen a 700 MB store every 2.5 s forever, so the two caches answer
    * the same poll or neither does.
-   * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null }> }}
+   * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null, parent: string | null, purpose: string | null, workspace: string | null }> }}
    */
   let titleCache = { at: 0, key: '', map: new Map() };
   /**
@@ -3087,9 +3281,13 @@ export async function start(context) {
     const limit = normalizeLimit(url.searchParams.get('limit'), 20, 1, 50);
     let entries;
     try {
-      // The picker still sees only the most recent sessions. The id index beside it is what
-      // `handleTrajectory` resolves explicit ids against, and it is deliberately not what the
-      // picker is built from — widening the list is a separate decision about the UI.
+      // The picker is built from the walk's own list: the most recent sessions, mtime-descending.
+      // That list is also what 'latest' falls back to when the runtime database is unavailable,
+      // and nothing here reorders it. The VISIBLE set below is a different set — it widens this
+      // one by at most one entry, the current conversation, and the rule for picking twenty of
+      // the thirty is no longer pure mtime: the current conversation comes first, then the
+      // sessions of its workspace. The id index beside the list is what `handleTrajectory`
+      // resolves explicit ids against, and it is deliberately not what the picker is built from.
       entries = (await listEntries()).recentEntries;
     } catch (error) {
       context.logger.error('miniapp.trajectory.read_error', { reason: 'root_unreadable', code: errorCode(error) });
@@ -3100,12 +3298,24 @@ export async function start(context) {
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
       return;
     }
-    const visible = entries.slice(0, limit);
-    // Real titles from the runtime database; sub-agent and cron sessions get a kind badge so
-    // the picker never presents them as if they were the user's conversation.
-    const titles = await sessionTitles(
-      visible.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean),
-    );
+
+    // The conversation the reader is IN, asked of the runtime database rather than guessed from
+    // mtime: the conversation being read is not necessarily the one whose file was written last.
+    const current = await resolveCurrentConversation(location.root);
+
+    // Real titles from the runtime database, for every candidate in the window and for the current
+    // conversation, which may be outside it. The workspace column rides along because the visible
+    // set is ordered by it.
+    const ids = entries.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean);
+    if (current && current.sessionId && ids.indexOf(current.sessionId) < 0) ids.push(current.sessionId);
+    const titles = await sessionTitles(ids);
+
+    // The visible set: the current conversation first, then the sessions of its workspace, then
+    // the rest -- each group mtime-descending. At most one session joins the window this way, and
+    // it is always the current conversation. The number of visible sessions is unchanged.
+    const visible = await buildVisibleSessionList(entries, current, titles, location.sessionsRoot, limit, () => {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
+    });
 
     // Built from the same two values the payload below is built from, and computed before any
     // descriptor work — which is what lets an unchanged list answer without building it.
@@ -3130,6 +3340,10 @@ export async function start(context) {
             if (meta.title) descriptor.label = meta.title;
             descriptor.sessionKind = meta.kind;
             descriptor.sessionParentId = meta.parent;
+            // What this session IS, as a token the page can render: a lightweight exchange, a
+            // scheduled run, a background task. The raw purpose stays on this side of the wire --
+            // it is free text, and free text is not something to hand a reader's browser.
+            descriptor.sessionTag = sessionTagFor(meta.kind, meta.purpose);
           }
           described.push(descriptor);
         } catch (error) {
@@ -3174,20 +3388,13 @@ export async function start(context) {
         if (!entry && current.relativeDir) {
           // Not in the recent window — build the entry straight from the recorded path. That value
           // is a database column rather than a name this app chose, so it earns the same
-          // containment check `resolveArtifactPath` gives catalog file names.
-          const root = resolve(location.sessionsRoot);
-          const dir = resolve(root, current.relativeDir.replace(/\\/g, '/'));
-          if (dir !== root && !dir.startsWith(root + sep)) {
+          // containment check `resolveArtifactPath` gives catalog file names. The picker builds the
+          // same kind of entry from the same column, so both go through one function.
+          const built = await entryFromRelativeDir(location.sessionsRoot, current.relativeDir);
+          if (built.rejected) {
             context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
-            entry = null;
-          } else {
-            try {
-              const fileStat = await stat(join(dir, 'messages.jsonl'));
-              entry = { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) };
-            } catch {
-              entry = null;
-            }
           }
+          entry = built.entry;
         }
         if (entry) binding = current;
       }
@@ -4137,6 +4344,9 @@ function stripInternalFields(value) {
     // decides by whether this field is set, so a missing key and a present key both reading
     // "not set" is what keeps one row from being a branch and the next from merely lacking it.
     sessionParentId: value.sessionParentId ?? null,
+    // The same floor, for the same reason: this is the token the page turns into 「轻量」/「定时」/
+    // 「任务」, and a row with no kind of its own has to be able to say so.
+    sessionTag: value.sessionTag ?? null,
   };
 }
 
