@@ -229,6 +229,46 @@ test('reactions stay on the final bubble while message parts change, preserving 
   assert.equal(document.activeElement, document.querySelector('.reaction-trigger'));
 });
 
+test('a multi-line reply keeps its actions below the text and its reaction indicator above them', async () => {
+  const text = 'First line\nSecond line\n\nThird paragraph\nFourth line';
+  const item = message('m-multiline', text, {
+    parts: [{ type: 'text', text }],
+    userReactions: ['👍'], reactionsRevision: 1,
+  });
+  await reset([item]);
+  const wrap = document.querySelector('article.msg .bubble-wrap');
+  const bubble = wrap.querySelector('.bubble');
+  const tools = wrap.querySelector('.msg-tools');
+  // The action row is a sibling below the bubble, never a child of it: a reply that runs
+  // over several lines must not push the buttons back to the top of the message.
+  assert.equal(bubble.querySelector('.msg-tools'), null);
+  assert.equal(tools.parentElement, wrap);
+  assert.equal(wrap.lastElementChild, tools);
+  assert.deepEqual([...wrap.children].map((child) => child.className), ['bubble', 'msg-tools']);
+  // Every line of the reply belongs to that one bubble.
+  assert.match(bubble.textContent, /First line/);
+  assert.match(bubble.textContent, /Fourth line/);
+  // The reaction indicator stays with the bubble it belongs to, so it renders above the row.
+  assert.equal(bubble.querySelector('.reaction-chip').dataset.emoji, '👍');
+  // The quote action still carries the whole reply, however many lines it has.
+  tools.querySelector('[aria-label="Quote"]').click();
+  await settle();
+  assert.match(document.querySelector('.quoting').textContent, /First line/);
+});
+
+test('the reaction indicator is painted from the theme instead of a fixed brand colour', async () => {
+  const css = await readFile(new URL('../miniapp/client/app.css', import.meta.url), 'utf8');
+  const rule = css.match(/\n\.reaction-bar \{[^}]*\}/)?.[0] ?? '';
+  assert.ok(rule, 'the reaction indicator needs a rule of its own');
+  // The indicator sits on the bubble, so it follows the app's tag language: a themed
+  // surface, a hairline border and muted ink. Both themes then read the same way.
+  assert.match(rule, /background: var\(--tag\)/);
+  assert.match(rule, /border: 1px solid var\(--line-strong\)/);
+  assert.match(rule, /color: var\(--muted\)/);
+  assert.doesNotMatch(rule, /var\(--accent\)/);
+  assert.doesNotMatch(css, /--reaction-ink/);
+});
+
 test('history paging prepends in order, retains scroll position and exports every page separately', async () => {
   await reset();
   // Several messages can share the same millisecond; page order remains authoritative.

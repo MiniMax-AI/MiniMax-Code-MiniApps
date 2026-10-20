@@ -53,8 +53,14 @@ function replaceBar(bar, m) {
 /** Keep the badge on the final text bubble without replacing its text or media. */
 export function updateBubbleReactions(bubble, m, isLast) {
   const bar = bubble.querySelector(':scope > .reaction-bar');
-  if (!isLast) bar?.remove();
-  else if (bar) replaceBar(bar, m);
+  if (!isLast) {
+    // The reply gained a new final part, so the badge moves to it. The picker opened from
+    // this bubble's action row would otherwise stay open over a reply that was replaced.
+    if (bar) {
+      bar.remove();
+      closeReactionPicker();
+    }
+  } else if (bar) replaceBar(bar, m);
   else bubble.append(reactionBar(m));
 }
 

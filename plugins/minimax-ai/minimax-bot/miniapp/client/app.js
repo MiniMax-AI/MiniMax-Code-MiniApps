@@ -971,22 +971,9 @@ function partViews(m, inGroup) {
   return views;
 }
 
+/** The bubble carries the reply text and the reaction badge; the action row lives below it. */
 function updateBubbleControls(bubble, m, isLast) {
   updateBubbleReactions(bubble, m, isLast);
-  const old = bubble.querySelector(':scope > .msg-tools');
-  if (!isLast || m.status === 'streaming') {
-    old?.remove();
-    bubble.style.removeProperty('--message-tools-width');
-  } else {
-    const signature = JSON.stringify([displayText(m), m.sessionId, botById(m.botId)?.name, locale()]);
-    if (old?.dataset.signature !== signature) {
-      const tools = msgTools(displayText(m), m);
-      tools.dataset.signature = signature;
-      if (old) old.replaceWith(tools);
-      else bubble.append(tools);
-      bubble.style.setProperty('--message-tools-width', `${tools.children.length * 28 + 8}px`);
-    }
-  }
   return bubble;
 }
 
@@ -1103,7 +1090,9 @@ function botMessage(m, existing) {
   notes.forEach((node, index) => views.push({ key: `note:${index}`, signature: node.outerHTML, create: () => node }));
   if (m.question) views.push({ key: 'question', signature: JSON.stringify([m.question, m.answering, locale()]), create: () => questionCard(m) });
   if (m.answerSummary?.length) views.push({ key: 'answers', signature: JSON.stringify(m.answerSummary), create: () => h('dl', { class: 'answered' }, m.answerSummary.map((a) => [h('dt', null, a.question), h('dd', null, a.answer)])) });
-  if (m.status !== 'streaming' && views.some((view) => view.key === 'reactions')) views.push({ key: 'tools', signature: JSON.stringify([displayText(m), m.sessionId, name, locale()]), create: () => msgTools(displayText(m), m) });
+  // The action row hangs below the reply, at its bottom-left. Anchoring it to the bubble's
+  // top pushed the buttons off-screen as soon as the reply grew past the viewport.
+  if (m.status !== 'streaming') views.push({ key: 'tools', signature: JSON.stringify([displayText(m), m.sessionId, name, locale()]), create: () => msgTools(displayText(m), m) });
   const compatible = existing?.matches(inGroup ? 'article.gmsg' : 'article.msg');
   const article = compatible ? existing : h('article', { class: inGroup ? 'gmsg' : 'msg' });
   article.setAttribute('aria-label', t('a11y.reply', { name }));
