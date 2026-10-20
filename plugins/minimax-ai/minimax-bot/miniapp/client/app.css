@@ -373,7 +373,7 @@ button {
   flex-direction: column;
   background: var(--sidebar);
   border-right: 0.5px solid var(--line);
-  /* Pin the chat list to the viewport. align-self keeps it from stretching with an overflowing column. */
+  /* Pinned by height: 100% + overflow: hidden inside the non-scrolling .app; sticky is only a fallback if .app ever scrolls. */
   position: sticky;
   top: 0;
   align-self: flex-start;
