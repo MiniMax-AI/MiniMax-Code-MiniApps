@@ -83,12 +83,16 @@ and their space is counted as "未扫描或无权限".
 - Ask the Agent: run three times with a real Agent, the last one with the current prompt layout
   (the data section described under Data & access); the answer kept the three-part format.
 - The list of folders without permission was checked before and after granting Full Disk Access.
-  Quick Look and Reveal in Finder were tried. The system folder dialog opens (only cancelling it was
-  tried).
+  Quick Look and Reveal in Finder were tried. In the system folder dialog, both cancelling and
+  choosing a folder were tried; the chosen folder was added to the scope.
+- The dark theme was checked in the real desktop app with MiniMax Code's appearance set to dark:
+  space map, junk cleanup, code repositories and the clean history dialog. The page follows MiniMax
+  Code's appearance setting, not the macOS one.
 - 53 unit tests, all passing (`npm test` in this directory).
-- Not yet verified: everything on Windows; the dark theme in the real desktop app (checked only in
-  a mock environment); choosing a folder in the system folder dialog; how long deleting a very large
-  `node_modules` takes; permission requests during a real Agent run.
+- Not yet verified: everything on Windows; how long deleting a very large `node_modules` takes;
+  permission requests during a real Agent run (with the permission mode set to ask, the Agent only
+  ran read-only commands and no request appeared, so the permission cards are checked only against
+  a mock Agent).
 
 ## Data & access
 
