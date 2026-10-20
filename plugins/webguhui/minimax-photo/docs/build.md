@@ -38,6 +38,29 @@ gzip -n -9 -f "$PHOTO_PACKAGE/miniapp/client/photocraft/photocraft_bg.wasm"
 
 服务端以 `Content-Encoding: gzip` 提供压缩 WASM，避免超过社区单文件 16 MiB 限制。不要把未压缩 WASM 一起提交。无需 Electron、Trunk 或模型权重。此构建未开启 HEIF feature。
 
+### WASM 文件校验
+
+0.2.35 提交的编辑器文件 SHA-256 如下。压缩文件用于核对分发内容，解压后的哈希用于排除 gzip 元数据差异：
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `photocraft_bg.wasm.gz` | `89574eab535dc34de02e3eb007fb88b41f63dcf89f57f619b4631d934e1fb8a4` |
+| 解压后的 `photocraft_bg.wasm` | `9993bdb94fe0ad397d858a40703a17d835cb145586deb27530d85ae919501d4d` |
+
+在插件目录运行以下命令核对（需要 Python 3）：
+
+```sh
+python3 - <<'PYTHON'
+import gzip, hashlib
+from pathlib import Path
+payload = Path("miniapp/client/photocraft/photocraft_bg.wasm.gz").read_bytes()
+print("gzip:", hashlib.sha256(payload).hexdigest())
+print("wasm:", hashlib.sha256(gzip.decompress(payload)).hexdigest())
+PYTHON
+```
+
+以上是仓库现有产物的校验值，不是跨工具链可重复构建的保证。上面的构建步骤尚未验证在不同 Rust/LLVM 版本下产生逐字节一致的 WASM；哈希不同时，先核对上游提交、补丁和工具链。更新引擎产物时同步更新此表。
+
 `frame.js`、`frame.css` 和 `index.html` 是本包维护的页面适配文件，不由 wasm-bindgen 生成。iframe 使用同源资源以支持宿主的本机认证，通过固定方法集合、来源窗口检查和请求标识传递编辑操作；不要将其当作不可信代码的安全隔离边界。PTC 则在单独 QuickJS VM 中执行。
 
 `cjk-ui.otf` 是 Noto Sans CJK JP Regular 的 UI 字符子集（SIL OFL 1.1），原字体来自 [noto-cjk](https://github.com/notofonts/noto-cjk)。该文件作为可分发字体资源直接提交；新增 UI 字符时需要用 fonttools `pyftsubset` 重新生成，保留三份 CJK 翻译目录使用的字符、假名和标点。它不是完整的中文排版字体，作品的特殊字形需另行导入对应字体。

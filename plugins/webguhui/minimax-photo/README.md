@@ -31,6 +31,8 @@ The bundled [editing skill](skills/minimax-photo/SKILL.md) guides command discov
 
 ## Tested environment
 
+Requires MiniMax Code **3.1.2 or later**. This is the minimum API requirement, not a claim that every supported client version has been tested.
+
 Tested on macOS Apple Silicon in MiniMax Code, initially with client **3.1.3-preview.4675**. Package **0.2.35** was installed on 2026-10-20; all 98 installed files matched the release. The runtime ZIP is **14,263,623 bytes**, without Electron or model weights.
 
 - A single in-app request generated an image, returned it automatically and opened it as a new artwork. Semantic image editing also has a successful native Host test.
@@ -46,7 +48,8 @@ One historical open failure required a restart; its cause is unresolved. Natural
 The editor_open_file tool reads an explicitly supplied local PNG/JPEG/WebP/PSD/pcraft file (up to 32 MB), checks its header, and sends a private copy to the connected editor as a new document. It does not scan directories or modify the original file. The task payload is stored under the plugin data directory; tool replies omit the file bytes.
 
 - The Node service binds only to the Host-provided loopback address. It reads bundled assets from the plugin directory and stores projects, recovery snapshots, assistant drafts/replies/session IDs, image requests/results, editor jobs and exports under opaque `context.dataDir` paths. It does not read Host configuration, credentials or conversation databases.
-- Images selected through file inputs are read in the page. Save/export uses the browser download dialog. The backend can read a PNG path supplied to `submit_image_result`; this is a privileged Agent tool, not an arbitrary-file HTTP endpoint. The Agent may write generated files into its working directory before returning them.
+- Images selected through file inputs are read in the page. Save/export uses the browser download dialog.
+- `submit_image_result` can read any local PNG path supplied by the Agent that the plugin process has OS permission to read (up to 16 MB). It is not restricted to the session working directory or `context.dataDir`; it checks the file and PNG contents, then saves a copy in plugin data without changing the source. `editor_open_file` likewise has no directory allowlist for its supported formats. Neither tool asks for a separate file-picker confirmation. These are privileged Agent tools, not arbitrary-file HTTP download endpoints. Only enable this plugin for Agents you trust with that local file access. The Agent may write generated files into its working directory before returning them.
 - This package declares `agentAccess: ["session.run"]`. Sending a request runs a Host Agent that can access files, shell and MCP tools under Host permissions. Requests include the user's instructions and current artwork context; image tasks may include a reference image. Model/provider traffic is handled by the Host and its selected tools, not by an embedded API key.
 - The MiniApp backend makes no direct external service requests. Provider destinations depend on the Host's enabled services; there is no fixed provider-host list in this package. The app does not automatically approve permission requests.
 - PTC uses a Node worker thread with a QuickJS VM and a bounded editing API. It has no direct filesystem or network API. The MiniApp itself starts no shell subprocess; Host Agent tools may do so after a user request.
