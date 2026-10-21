@@ -28,11 +28,14 @@
  *      not on screen is a run the reader cannot open.
  *   3. They are ordered by when each one last ran, most recent first — the one that ran last is
  *      the one a reader is most likely to want, and it is the one the other order buries.
- *   4. The layer is decided by `parent_session_id` and by nothing else. `purpose` says what a
- *      session IS (a scheduled run, a background task), which is a different question from what
- *      it hangs off, and the two are orthogonal: a sub-agent is a task AND somebody's child.
- *      A judge that used `purpose` would call a scheduled run a sub-agent, and a sub-agent
- *      spawned by something other than a task a main session.
+ *   4. The layer is decided by `parent_session_id` and by the chain it forms, and by nothing
+ *      else. `purpose` says what a session IS (a scheduled run, a background task), which is a
+ *      different question from what it hangs off, and the two are orthogonal: a sub-agent is a
+ *      task AND somebody's child. A judge that used `purpose` would call a scheduled run a
+ *      sub-agent, and a sub-agent spawned by something other than a task a main session.
+ *      The chain is what says whether a parent is a conversation: a run's parent is one, and a
+ *      cycle has no conversation at the end of it, so the two sessions that name each other are
+ *      two conversations rather than two runs of each other that the reader cannot reach.
  *
  * The fourth rule is the one that decides the other three, so the fixture below contains a row
  * that is a child with no purpose, and a row that is a main session whose purpose says 「task」.
@@ -336,6 +339,14 @@ try {
   assert('a sub-agent with no purpose at all is still a sub-agent',
     kidsOfMain0.includes(purposeLess) && !mainIds.includes(purposeLess),
     kidsOfMain0.includes(purposeLess) ? 'in the sub-agent list' : 'missing');
+  // The sub-agent whose purpose says what it is. It has a parent AND a purpose, and a judge
+  // that read the purpose column instead of the parent column would move it into the wrong
+  // layer -- so the two columns are read against each other here, and not only against the
+  // row that has just one of them.
+  const purposeSaying = KID(1);
+  assert('a sub-agent whose purpose says 「sub-agent」 is still a sub-agent',
+    kidsOfMain0.includes(purposeSaying) && !mainIds.includes(purposeSaying),
+    kidsOfMain0.includes(purposeSaying) ? 'in the sub-agent list' : 'missing');
   // And the sub-agents hang off the main session they name — the join key is one id, the same
   // id the main row carries.
   assert('and each sub-agent hangs off the main session it names',
@@ -672,12 +683,235 @@ try {
     !raw.includes('D:\\private\\workspace-one') && !raw.includes('D:/private/workspace-one'),
     raw.slice(0, 200));
 
+  // The map itself, before the layer decision has anything to say about it: a parent that names
+  // no session is not a parent. The route clears the parent of every session it puts in the
+  // conversation layer, so the wire would look the same whether this check is here or not --
+  // which is exactly why it is read off the map the read produces, and not off the wire.
+  const rawTitles = await readSessionTitles(home, ['mvs_phantom_child', 'mvs_hostile_child']);
+  assert('and the map itself carries no parent that names no session',
+    rawTitles.get('mvs_phantom_child')?.parent === null
+    && rawTitles.get('mvs_hostile_child')?.parent === null,
+    JSON.stringify([rawTitles.get('mvs_phantom_child')?.parent, rawTitles.get('mvs_hostile_child')?.parent]));
+
   if (instance) await instance.dispose();
   controller.abort();
   if (previousRoot === undefined) delete process.env.MMC_TRAJECTORY_ROOT;
   else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
 } catch (error) {
   failures.push('a parent that names no session -- ' + (error && error.message));
+}
+
+/* ---------- 9: two sessions that name each other as parent ---------- */
+//
+// The parent column is a foreign key into the runtime database's own session table, and a
+// foreign key can point back: A's parent is B, B's parent is A, and both have a row, so both
+// are real parents of a real session. The column alone cannot tell a run from a conversation
+// there. Read it straight, both of them are runs -- of each other -- so neither is a
+// conversation, the conversation list comes back with neither in it, and the two are in
+// neither control: the reader cannot reach either one.
+//
+// The layer is decided by the chain, and a chain ends at a conversation. A cycle ends at no
+// conversation, so it is dissolved: both sessions are conversations, and their parent columns
+// are dropped, because a conversation that names a parent names a run.
+//
+// The fixture holds three sessions: the two that name each other, and one run of the first of
+// them -- a run of a conversation that sits on a cycle is still a run of it.
+
+const CYCLE_ALPHA = 'mvs_cycle_alpha';
+const CYCLE_BRAVO = 'mvs_cycle_bravo';
+const CYCLE_RUN = 'mvs_cycle_run';
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-cycle-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const alpha = await makeSession(sessionsRoot, 0, CYCLE_ALPHA, BASE_TIME - 10 * 60_000);
+  const bravo = await makeSession(sessionsRoot, 1, CYCLE_BRAVO, BASE_TIME - 20 * 60_000);
+  const run = await makeSession(sessionsRoot, 2, CYCLE_RUN, BASE_TIME - 30 * 60_000);
+  runtimeDb(home, [
+    {
+      sessionId: CYCLE_ALPHA,
+      relative: alpha.relative,
+      parent: CYCLE_BRAVO,
+      kind: 'task',
+      purpose: 'local-background-task:alpha',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 10 * 60_000
+    },
+    {
+      sessionId: CYCLE_BRAVO,
+      relative: bravo.relative,
+      parent: CYCLE_ALPHA,
+      kind: 'task',
+      purpose: 'local-background-task:bravo',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 20 * 60_000
+    },
+    {
+      sessionId: CYCLE_RUN,
+      relative: run.relative,
+      parent: CYCLE_ALPHA,
+      kind: 'task',
+      purpose: 'local-background-task:run',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 30 * 60_000
+    }
+  ]);
+
+  const { start } = await import(pathToFileURL(SERVER).href);
+  const previousRoot = process.env.MMC_TRAJECTORY_ROOT;
+  process.env.MMC_TRAJECTORY_ROOT = home;
+  const controller = new AbortController();
+  const noop = () => {};
+  let base = null;
+  let instance = null;
+  for (let attempt = 0; attempt < 12 && !base; attempt += 1) {
+    const port = 19900 + Math.floor(Math.random() * 300) + attempt;
+    try {
+      instance = await start({
+        pluginId: 'mmc-trajectory',
+        pluginRoot: PLUGIN_ROOT,
+        dataDir: PLUGIN_ROOT,
+        generationId: 'guard',
+        listen: { host: '127.0.0.1', port },
+        signal: controller.signal,
+        logger: { debug: noop, info: noop, warn: noop, error: noop }
+      });
+      base = 'http://127.0.0.1:' + port;
+    } catch (error) {
+      // The port was taken. Another one is tried.
+    }
+  }
+  if (!base) throw new Error('could not bind a port for the cycle route');
+  const response = await fetch(base + '/api/sessions?limit=20');
+  const body = await response.json();
+  const sessionIds = (body.sessions || []).map((row) => row.id);
+  const childIds = (body.children || []).map((row) => row.id);
+
+  assert('a session whose parent names it back is a conversation, not a run',
+    sessionIds.includes(CYCLE_ALPHA) && sessionIds.includes(CYCLE_BRAVO),
+    sessionIds.join('|'));
+  assert('and it is in neither run list',
+    !childIds.includes(CYCLE_ALPHA) && !childIds.includes(CYCLE_BRAVO),
+    childIds.join('|'));
+  // The run of the cycle member still names it -- that is what a run names -- so this is about
+  // the two rows of the cycle themselves: a conversation that names a parent names a run, and
+  // these two are conversations.
+  const parentNamedBy = (id) => {
+    const row = (body.sessions || []).concat(body.children || []).find((entry) => entry.id === id);
+    return row ? row.sessionParentId : null;
+  };
+  assert('and neither of them names a parent on the wire',
+    !parentNamedBy(CYCLE_ALPHA) && !parentNamedBy(CYCLE_BRAVO),
+    String(parentNamedBy(CYCLE_ALPHA)) + ' / ' + String(parentNamedBy(CYCLE_BRAVO)));
+  assert('and a run of a session that sits on a cycle is still a run of it',
+    childIds.includes(CYCLE_RUN)
+    && (body.children || []).some((row) => row.id === CYCLE_RUN && row.sessionParentId === CYCLE_ALPHA),
+    childIds.join('|'));
+  assert('and the two of them are in the conversation list only once each',
+    sessionIds.filter((id) => id === CYCLE_ALPHA).length === 1
+    && sessionIds.filter((id) => id === CYCLE_BRAVO).length === 1,
+    sessionIds.join('|'));
+
+  if (instance) await instance.dispose();
+  controller.abort();
+  if (previousRoot === undefined) delete process.env.MMC_TRAJECTORY_ROOT;
+  else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
+} catch (error) {
+  failures.push('two sessions that name each other as parent -- ' + (error && error.message));
+}
+
+/* ---------- 10: a parent the payload does not know, and a run of a run ---------- */
+//
+// Two more shapes of the chain, and the same rule answers both.
+//
+//   - The parent has a row in the runtime database but no directory in the pool. It is a real
+//     session and a real conversation, but the reader cannot pick it -- and the run pick only
+//     ever shows the runs of the conversation that was picked. A run of it would therefore be a
+//     run of a conversation that is not in the list, which is a run nobody can reach. It is a
+//     conversation itself, so that it is somewhere the reader can reach.
+//   - The parent is itself a run. The two controls are one conversation and the runs of THAT
+//     one, so a run of a run goes in the conversation layer as well.
+//
+// Both are read off the function that decides the layer, and off the map it corrects: the
+// parent column of a conversation is cleared, because a conversation that names a parent names
+// a run.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-unknown-parent-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const root = await makeSession(sessionsRoot, 0, 'mvs_chain_root', BASE_TIME - 10 * 60_000);
+  const run = await makeSession(sessionsRoot, 1, 'mvs_chain_run', BASE_TIME - 20 * 60_000);
+  const deeper = await makeSession(sessionsRoot, 2, 'mvs_chain_deeper', BASE_TIME - 30 * 60_000);
+  const unknown = await makeSession(sessionsRoot, 3, 'mvs_chain_unknown', BASE_TIME - 40 * 60_000);
+  runtimeDb(home, [
+    {
+      sessionId: 'mvs_chain_root',
+      relative: root.relative,
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 10 * 60_000
+    },
+    {
+      sessionId: 'mvs_chain_run',
+      relative: run.relative,
+      parent: 'mvs_chain_root',
+      kind: 'task',
+      purpose: 'local-background-task:run',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 20 * 60_000
+    },
+    {
+      sessionId: 'mvs_chain_deeper',
+      relative: deeper.relative,
+      parent: 'mvs_chain_run',
+      kind: 'task',
+      purpose: 'local-background-task:deeper',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 30 * 60_000
+    },
+    {
+      sessionId: 'mvs_chain_unknown',
+      relative: unknown.relative,
+      parent: 'mvs_chain_absent',
+      kind: 'task',
+      purpose: 'local-background-task:unknown',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 40 * 60_000
+    },
+    {
+      // The parent of the last one. It has a row in the runtime database, so the parent column
+      // is a parent by the foreign key -- and it has no directory in the pool, so the walk never
+      // asked about it and the map does not have it.
+      sessionId: 'mvs_chain_absent',
+      relative: '2026/10/20/99-00-00-session_absent',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 50 * 60_000
+    }
+  ]);
+
+  const candidates = await collectSessionCandidates(sessionsRoot);
+  const ids = candidates.allEntries
+    .map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean);
+  const titles = await readSessionTitles(home, ids);
+  const layers = splitSessionLayers(candidates.allEntries, titles);
+  const mainIds = idsOf(layers.mains);
+  const kidIds = [...layers.childrenByParent.keys()]
+    .flatMap((parent) => idsOfBucket(layers.childrenByParent.get(parent)));
+
+  assert('a run whose parent is not in the list is a conversation, so that the reader can reach it',
+    mainIds.includes('mvs_chain_unknown') && !kidIds.includes('mvs_chain_unknown'),
+    mainIds.join('|') + ' / ' + kidIds.join('|'));
+  assert('and it names no parent, because a conversation that names a parent names a run',
+    titles.get('mvs_chain_unknown')?.parent === null,
+    String(titles.get('mvs_chain_unknown')?.parent));
+  assert('a run of a run is a conversation too, because the run pick shows the runs of ONE conversation',
+    mainIds.includes('mvs_chain_deeper') && !kidIds.includes('mvs_chain_deeper'),
+    mainIds.join('|') + ' / ' + kidIds.join('|'));
+  assert('and the run it hangs off is still a run of the conversation above it',
+    kidIds.includes('mvs_chain_run')
+    && [...layers.childrenByParent.keys()].every((parent) => parent === 'mvs_chain_root'),
+    [...layers.childrenByParent.keys()].join('|'));
+} catch (error) {
+  failures.push('a parent the payload does not know, and a run of a run -- ' + (error && error.message));
 }
 
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');

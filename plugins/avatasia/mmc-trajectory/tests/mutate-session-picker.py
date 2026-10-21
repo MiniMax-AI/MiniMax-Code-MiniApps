@@ -18,9 +18,12 @@ built from the path the runtime recorded for it, under the same containment chec
 resolver gives it, and a version that skips the containment check builds an entry from a path
 outside the session store. The second reads the workspace column: a runtime database written
 before that column existed has none, and a version that reads it without asking whether it is
-there takes the whole list down with it. The third is the identity of that path: it can sit
-inside the sessions root and still belong to a different session, and a version that does not
-check would list that other session twice and lose the conversation the page is about.
+there takes the whole list down with it. The third is the identity of that path, and it has two
+parts now: the directory name can sit inside the sessions root and still belong to a different
+session, and so can the manifest the runtime wrote beside the transcript -- a directory whose
+name says one session and whose manifest says another is the other session's directory, and a
+version that does not check would list that other session twice and lose the conversation the
+page is about.
 
 Three more are on the page. The badge is applied to every row, the badge is applied to none,
 and the badge is placed in front of the name -- the third of those still contains the right
@@ -70,14 +73,23 @@ MUTATIONS = [
        "  const ordered = currentEntry ? [...same, ...other, currentEntry] : [...same, ...other];")],
      "and the current conversation is first"),
 
-    # The identity of the recorded path. Containment is not enough: a path can sit inside the
-    # sessions root and still belong to a different session, and then the row that gets injected
-    # is that other session's transcript -- listed twice, while the conversation the page is
-    # about is nowhere in the list.
-    ("the injected row is not checked against the session it is supposed to be",
+    # The identity of the recorded path, in two parts now. The directory name is one of them:
+    # a path that points at another session's directory is refused, and this is the check that
+    # keeps one directory from being listed twice. The manifest is the other, and it is below.
+    ("the recorded path is not checked against the session its directory name encodes",
      [("      if (decodeSessionIdFromDirName(basename(dir)) !== expectedSessionId) {",
        "      if (false) {")],
-     "a recorded path that belongs to another session is refused, so no session is listed twice"),
+     "a recorded path whose directory name names another session is refused even when its manifest agrees"),
+
+    # The other part: the manifest the runtime wrote beside the transcript. It is the authority
+    # on which session a directory holds -- the service reads a session's identity from it -- so
+    # a directory whose name says one session and whose manifest says another is the OTHER
+    # session's directory, and accepting it puts the current conversation's id on somebody
+    # else's messages.
+    ("the recorded path is not checked against the session its manifest names",
+     [("      const identity = await readSessionIdentity(dir);\n      if (identity.id !== expectedSessionId) {",
+       "      const identity = { id: expectedSessionId };\n      if (identity.id !== expectedSessionId) {")],
+     "a recorded path whose manifest names another session is refused"),
 
     # The partition, dropped. Every session comes back in one group, which is the plain recency
     # order -- the order the picker had before the current conversation was pinned.

@@ -447,6 +447,89 @@ assert('the kind tag is written on every row, not only on the rows that have one
   tagWrite !== null && tagInsideMeta === null,
   tagWrite === null ? 'no unconditional tag write found' : String(tagInsideMeta && tagInsideMeta[0]));
 
+/* ---------- 13: a recorded path whose own manifest names another session ---------- */
+//
+// The directory name is where a session id is written down, and for a long time it was the only
+// place the recorded path was checked against. But the service reads a session's identity from
+// the manifest the runtime wrote beside its transcript, and the manifest is the authority: a
+// directory whose name encodes one session and whose manifest names another is the OTHER
+// session's directory, whatever the folder is called.
+//
+// So the two can disagree, and both directions are refused here:
+//
+//   - the manifest names another session -- the name is right and the manifest is wrong, which
+//     is the case the identity function itself is there for;
+//   - the name names another session -- the manifest is right and the name is wrong, and the
+//     directory the walk already lists under its own name would be injected a second time
+//     under the id the manifest gives it.
+//
+// The third case is the one that has to keep working: a manifest that agrees with the name is
+// accepted, because a refusal there would take the current conversation out of the list.
+
+try {
+  // The manifest names another session. The directory's NAME encodes the current session, so
+  // the name check passes and the manifest is the one that has to catch it.
+  const a = await store(31);
+  await writeFile(join(a.made[30].dir, 'manifest.json'),
+    JSON.stringify({ sessionId: ID(0), createdAtMs: 1 }), 'utf8');
+  runtimeDb(a.home, ['parent_session_id', 'purpose', 'workspace_dir'], [
+    { sessionId: ID(30), relative: a.made[30].relative, workspace: 'workspace-one' },
+  ]);
+  const wrongManifest = await visibleFor(a.sessionsRoot, a.home, 20);
+  assert('a recorded path whose manifest names another session is refused',
+    !wrongManifest.visible.some((entry) => entry.dir === a.made[30].dir),
+    dirsOf(wrongManifest.visible).join('|'));
+  assert('and the list is still the plain recency order',
+    sameOrder(wrongManifest.visible, a.made.slice(0, 20)),
+    dirsOf(wrongManifest.visible).join('|'));
+} catch (error) {
+  failures.push('a recorded path whose manifest names another session is refused; '
+    + 'the section threw before it could answer -- '
+    + String(error && error.message ? error.message : error));
+}
+
+try {
+  // The name names another session and the manifest agrees with the CURRENT one. The
+  // directory is the walk's own row for a different session, so accepting it would list that
+  // one directory twice: once as the injected row and once as the walk's row.
+  const b = await store(31);
+  await writeFile(join(b.made[0].dir, 'manifest.json'),
+    JSON.stringify({ sessionId: ID(30), createdAtMs: 1 }), 'utf8');
+  runtimeDb(b.home, ['parent_session_id', 'purpose', 'workspace_dir'], [
+    { sessionId: ID(30), relative: b.made[0].relative, workspace: 'workspace-one' },
+  ]);
+  const wrongName = await visibleFor(b.sessionsRoot, b.home, 20);
+  assert('a recorded path whose directory name names another session is refused even when its manifest agrees',
+    new Set(dirsOf(wrongName.visible)).size === wrongName.visible.length,
+    dirsOf(wrongName.visible).join('|'));
+  assert('and the list is still the plain recency order',
+    sameOrder(wrongName.visible, b.made.slice(0, 20)),
+    dirsOf(wrongName.visible).join('|'));
+} catch (error) {
+  failures.push('a recorded path whose directory name names another session is refused; '
+    + 'the section threw before it could answer -- '
+    + String(error && error.message ? error.message : error));
+}
+
+try {
+  // The manifest agrees with the name. This is the ordinary case, and it is here so that a
+  // refusal cannot be bought by a check that refuses everything.
+  const c = await store(31);
+  await writeFile(join(c.made[30].dir, 'manifest.json'),
+    JSON.stringify({ sessionId: ID(30), createdAtMs: 1 }), 'utf8');
+  runtimeDb(c.home, ['parent_session_id', 'purpose', 'workspace_dir'], [
+    { sessionId: ID(30), relative: c.made[30].relative, workspace: 'workspace-one' },
+  ]);
+  const rightManifest = await visibleFor(c.sessionsRoot, c.home, 20);
+  assert('a recorded path whose manifest agrees with its name is accepted, and the current conversation is first',
+    rightManifest.visible[0]?.dir === c.made[30].dir,
+    dirsOf(rightManifest.visible).slice(0, 3).join('|'));
+} catch (error) {
+  failures.push('a recorded path whose manifest agrees with its name is accepted; '
+    + 'the section threw before it could answer -- '
+    + String(error && error.message ? error.message : error));
+}
+
 for (const home of homes) rmSync(home, { recursive: true, force: true });
 
 console.log('[session-picker] ' + pass + ' passed, ' + failures.length + ' failed');

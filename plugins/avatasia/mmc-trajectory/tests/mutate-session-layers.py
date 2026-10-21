@@ -16,7 +16,10 @@ The rules the mutations below take back, one at a time:
   * the main list holds main sessions and nothing else;
   * a main session's runs are all of them -- the list is not a window;
   * they are ordered by when each one last ran, most recently first;
-  * the layer is decided by `parent_session_id` and by nothing else;
+  * the layer is decided by `parent_session_id` and by the chain it forms, and by nothing else;
+  * a run's parent is a CONVERSATION, so a cycle is dissolved into two conversations, a run of a
+    run is a conversation, and a run whose parent is not in the list is a conversation -- all
+    three because a run the reader cannot reach is a run that is gone;
   * a parent that names no session is not a parent, so it is not published and the run it was
     on is a conversation;
   * the page groups its runs into a map with no prototype, so a parent id that names an
@@ -113,9 +116,9 @@ MUTATIONS = [
     # orthogonal. This mutation gets a sub-agent with no purpose and a main session whose purpose
     # says 「task」 exactly backwards, which is why the parent column is the one that decides.
     ("the layer is judged by the purpose column instead of the parent column",
-     [("    const parent = meta && typeof meta.parent === 'string' && meta.parent ? meta.parent : null;",
-       "    const parent = meta && typeof meta.purpose === 'string' && meta.purpose ? 'mvs_purpose_guessed_parent' : null;")],
-     "a main session whose purpose says 「task」 is still a main session"),
+     [("    const declared = typeof meta.parent === 'string' && meta.parent ? meta.parent : null;",
+       "    const declared = typeof meta.purpose === 'string' && meta.purpose ? 'mvs_purpose_guessed_parent' : null;")],
+     "a sub-agent whose purpose says 「sub-agent」 is still a sub-agent"),
 
     # The promotion step forgot the layer. The split puts a run in the run layer, and the
     # route then promotes whatever the runtime database reports as current -- so a run that
@@ -135,7 +138,36 @@ MUTATIONS = [
     ("a parent that names no session is published as a parent anyway",
      [("      const parentNames = parent ? Boolean(stmt.get(parent)) : false;",
        "      const parentNames = Boolean(parent);")],
-     "a run whose parent names no session is not published as a run"),
+     "and the map itself carries no parent that names no session"),
+
+    # ---- the chain ----
+    #
+    # The parent column says a session HAS a parent. The chain says whether that parent is a
+    # CONVERSATION, and a run's parent has to be one: a run of a run, or a run of a session that
+    # is not in the list, is a run the reader cannot reach from either control.
+    #
+    # The cycle is the shape where both sessions lose. Read the column alone, each is a run of
+    # the other, so neither is a conversation, the conversation list comes back with neither in
+    # it, and they are in neither control.
+    ("a session on a cycle is taken for a run of the session it names",
+     [("      if (onCycle.has(cur)) { base = CONVERSATION; break; }",
+       "      if (onCycle.has(cur)) { base = RUN; break; }")],
+     "a session whose parent names it back is a conversation, not a run"),
+
+    # A parent with a row in the runtime database and no directory in the pool. The walk never
+    # asked about it, so the map does not have it, and the run of it is a run of a
+    # conversation the reader cannot pick.
+    ("a run whose parent is not in the list is taken for a run of it",
+     [("      if (!parent || !map.has(parent)) { base = CONVERSATION; break; }",
+       "      if (!parent) { base = CONVERSATION; break; }\n      if (!map.has(parent)) { base = RUN; break; }")],
+     "a run whose parent is not in the list is a conversation, so that the reader can reach it"),
+
+    # A run of a run. The two controls are one conversation and the runs of THAT one, so the
+    # run of a run is a conversation the reader can pick.
+    ("a run of a run is taken for a run of it",
+     [("  const flip = (layer) => (layer === CONVERSATION ? RUN : CONVERSATION);",
+       "  const flip = (layer) => RUN;")],
+     "a run of a run is a conversation too, because the run pick shows the runs of ONE conversation"),
 
     # ---- the page ----
     #
