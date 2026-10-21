@@ -780,15 +780,28 @@ test('the background task strip keeps the official one line rows and folds a lon
   assert.match(visible[2], /Awaiting dependencies/, 'the waiting job comes after the running ones');
   assert.ok(!visible.some((text) => /Queued task/.test(text)), 'a queued job gives way to the running one');
 
-  // A strip that fits in the open rows has nothing to fold and keeps the order the official
-  // build draws.
+  // Two jobs and no fold: the strip still orders them by how far along they are, so a queued
+  // job never sits above a job that is already working.
   emit({ type: 'tasks.changed', tasks: [] });
   emit({ type: 'helpers.changed', helpers: [queued[0], helpers[0]] });
   await settle();
   const plain = [...strip.querySelectorAll('.helper-row')].map((row) => row.textContent);
   assert.equal(plain.length, 2);
-  assert.match(plain[0], /Queued task 1/, 'the official order stays when nothing folds');
-  assert.match(plain[1], /Rebuild the truth table/);
+  assert.match(plain[0], /Rebuild the truth table/, 'the running job comes first even without a fold');
+  assert.match(plain[1], /Queued task 1/);
+
+  // Jobs of the same kind keep the order they arrived in, whichever list they came from.
+  emit({
+    type: 'helpers.changed',
+    helpers: [
+      { id: 'hlp_new', botId: 'bot_a', chatId: chat, title: 'Queued task 9', task: 'Queued task 9', status: 'queued', createdAt: Date.now() },
+      { id: 'hlp_old', botId: 'bot_a', chatId: chat, title: 'Queued task 8', task: 'Queued task 8', status: 'queued', createdAt: Date.now() - 60000 },
+    ],
+  });
+  await settle();
+  const sameKind = [...strip.querySelectorAll('.helper-row')].map((row) => row.textContent);
+  assert.match(sameKind[0], /Queued task 8/, 'the job that arrived first comes first');
+  assert.match(sameKind[1], /Queued task 9/);
 
   // The open queue ends with the queue: when it shrinks to three jobs the fold button goes,
   // and the next busy chat starts folded again.

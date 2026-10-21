@@ -1237,15 +1237,24 @@ let helpersExpanded = false;
 /** A job that is already working comes first; one that still waits can wait a little longer. */
 const HELPER_STATUS_ORDER = { running: 0, waiting_for_tasks: 1, queued: 2 };
 
+/** How far along a job is. A status the strip does not know yet comes last. */
+function helperRank(item) {
+  return HELPER_STATUS_ORDER[item.status] ?? Number.MAX_SAFE_INTEGER;
+}
+
+/** When the job arrived: when it started, or when it was queued. */
+function helperArrival(item) {
+  return item.startedAt ?? item.createdAt ?? 0;
+}
+
 /**
  * The rows of the strip, ordered by how far along the job is: the ones already working first,
  * the ones waiting for another job next, the queued ones last. The fold keeps the first rows,
- * so this order is what decides which jobs stay in the open. A strip that fits in the open
- * rows has nothing to fold and stays the official one, in the order the official build draws.
+ * so the order decides which jobs stay in the open. Jobs of the same kind keep the order they
+ * arrived in.
  */
-function orderedHelperRows(items, foldable) {
-  if (!foldable) return items;
-  return [...items].sort((a, b) => HELPER_STATUS_ORDER[a.status] - HELPER_STATUS_ORDER[b.status]);
+function orderedHelperRows(items) {
+  return [...items].sort((a, b) => helperRank(a) - helperRank(b) || helperArrival(a) - helperArrival(b));
 }
 
 /** Background helpers working for this chat: one line each, with a stop button. */
@@ -1262,7 +1271,7 @@ function renderHelpers() {
   // the next busy chat starts folded again.
   if (items.length <= HELPER_ROWS_PREVIEW) helpersExpanded = false;
   const foldable = items.length > HELPER_ROWS_PREVIEW;
-  const ordered = orderedHelperRows(items, foldable);
+  const ordered = orderedHelperRows(items);
   const preview = helpersExpanded ? ordered : ordered.slice(0, HELPER_ROWS_PREVIEW);
   const hidden = items.length - preview.length;
   // The rows keep the scroll area they had, and the fold button sits below it, so the button
