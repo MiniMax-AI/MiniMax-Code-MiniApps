@@ -296,6 +296,40 @@ MUTATIONS = [
        "          const holds = true;")],
      "a cached candidate whose manifest now disagrees with its name is not served under either id"),
 
+    # ---- the published id, after the walk has published it ----
+    #
+    # The id is not only carried by the row: two caches are keyed by it, and a cache that does
+    # not know the id keeps answering with the answer it built for the id before. Three places,
+    # three shapes of the same question -- and each of them is a transition, so each one is
+    # caught by a fixture that waits for the caches to expire before it asks.
+
+    # The list's validator. It carries the directory, the transcript's size and mtime, and the
+    # runtime's facts -- and the published id is the one thing it left out. A manifest that
+    # changes from one id to another moves the id and nothing else, so the tag stays put, the
+    # body the service reuses goes on publishing the old id, and the route serves that same id
+    # as a 404.
+    ("the list validator stops covering the published id",
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n")],
+     "a changed published session id moves the list validator and replaces its body"),
+
+    # The `latest` fallback. The explicit-id routes ask again whether a candidate still holds
+    # the session it was published under, because the manifest can change under the walk; the
+    # fallback used to take the first entry of the window as it stood, so the one candidate
+    # that both explicit ids refuse was the one `latest` served.
+    ("the latest fallback stops asking whether the candidate still holds its session",
+     [("        entry = await firstHoldingEntry(entries);", "        entry = entries[0];")],
+     "latest never serves a cached candidate whose manifest now disagrees with its name"),
+
+    # The trajectory's cache key. It carries the directory, the lineage, the size, the mtime and
+    # the binding -- and the identity is the one thing it left out. Two ids for the same
+    # directory therefore share one entry, and the body built for the first is served for the
+    # second, with the first one's validator.
+    ("the trajectory cache key stops covering the identity",
+     [("`${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|",
+       "`${trajectoryCacheFamily(entry.dir, filter)}${lineage}|")],
+     "an identity-only manifest change cannot reuse another session identity's trajectory body"),
+
     # ---- the page ----
     #
     # The two picks. The conversation pick holds conversations; the run pick holds the runs of

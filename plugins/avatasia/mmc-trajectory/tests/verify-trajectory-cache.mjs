@@ -71,6 +71,16 @@ const rotatedIdentity = {
 assert('rotating the lineage changes the key',
   trajectoryCacheKey(entry(1000, 5000), rotatedIdentity, null, null) !== keyFresh);
 
+// The identity the directory holds is part of the key, because the body says which session it is
+// about. A manifest that changes from one id to another leaves the directory, the transcript and
+// the mtime exactly as they were, so a key made of those would still match — and the cached body
+// of the OLD id would be served for the NEW one.
+const keyIdentityA = trajectoryCacheKey(entry(1000, 5000), { ...identity, id: 'sess-a' }, null, null);
+const keyIdentityB = trajectoryCacheKey(entry(1000, 5000), { ...identity, id: 'sess-b' }, null, null);
+assert('two identities are two keys, so one identity cannot reuse the other body',
+  keyIdentityA !== keyIdentityB);
+assert('an identity is not the same key as no identity at all', keyIdentityA !== keyFresh);
+
 /* =====================================================================
  * 2 — growth replaces its predecessor instead of stacking beside it
  * ===================================================================== */
@@ -157,8 +167,19 @@ assert('the route no longer evicts by insertion order itself',
   !/while \(trajectoryCache\.size > TRAJECTORY_CACHE_ENTRIES\)/.test(startBody));
 assert('the family helper is exported so the key and the cache cannot drift apart',
   SERVER.includes('export function trajectoryCacheFamily(dir, filter)'));
-assert('the key is built from the same helper, so the prefix is one expression',
-  SERVER.includes('`${trajectoryCacheFamily(entry.dir, filter)}${lineage}|'));
+// The key is read as the set of components it is made of, not as one frozen line of source. A key
+// that grew a field is still the same key, and an assertion that pinned two neighbouring fields
+// together would have called that growth a regression — the shape is an accident of how the
+// template was written, the components are the contract.
+const keyFnAt = SERVER.indexOf('export function trajectoryCacheKey(');
+const keyFnEnd = keyFnAt >= 0 ? SERVER.indexOf('\n}', keyFnAt) : -1;
+const keyFnBody = keyFnAt >= 0 && keyFnEnd > keyFnAt ? SERVER.slice(keyFnAt, keyFnEnd) : '';
+assert('the key is built from the same helper, so the prefix cannot drift from the cache',
+  keyFnBody.includes('${trajectoryCacheFamily(entry.dir, filter)}'));
+assert('the key names the identity the body carries, so one identity cannot reuse another body',
+  keyFnBody.includes("${identity.id ?? ''}"));
+assert('the key names the lineage it stitches, so a rotated snapshot cannot reuse an old body',
+  keyFnBody.includes('${lineage}'));
 assert('the route still releases both caches on dispose',
   /trajectoryCache\.clear\(\);/.test(startBody) && /parsedRows\.clear\(\);/.test(startBody));
 

@@ -82,6 +82,19 @@ assert('a newer mtime moves the tag',
   sessionsValidator([{ ...visible[0], lastActiveAt: 1700000002 }, visible[1]], noTitles, 20)
   !== sessionsValidator(visible, noTitles, 20));
 
+// The published id. It is in the row the page receives -- a row's id IS the id the walk
+// published that directory under -- and a manifest that changes from one id to another moves
+// that id and nothing else: the directory, the transcript's size and mtime, and the runtime
+// row are all the same. The two maps here differ in the published id and in nothing else, so
+// this cannot pass on the directory or on the mtime: a tag that did not move with the id
+// would answer 304 for a body that names a session the reader is no longer looking at.
+const reid = [
+  { dir: dirFor(A), sizeBytes: 1024, lastActiveAt: 1700000000, sessionId: A },
+  { dir: dirFor(B), sizeBytes: 2048, lastActiveAt: 1700000001, sessionId: 'mvs_0000000000000000000000000000dddd' },
+];
+assert('a changed published session id moves the tag',
+  sessionsValidator(visible, noTitles, 20) !== sessionsValidator(reid, noTitles, 20));
+
 // The rename. Both halves of a row's metadata, because the picker renders both — and each has to
 // be isolated, or the assertion passes on the other field and the one it names is untested. These
 // two maps differ in the title and in nothing else.

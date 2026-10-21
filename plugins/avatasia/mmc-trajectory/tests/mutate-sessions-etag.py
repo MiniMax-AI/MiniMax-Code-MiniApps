@@ -69,17 +69,28 @@ MUTATIONS = [
     # representation with no ambiguity in it survives both, so there are two cases and each owns the
     # assertion that names it.
     ("the fields are concatenated with no separator at all",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
-       "    parts.push(\"\" + entry.dir + entry.sizeBytes + entry.lastActiveAt"
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(\"\" + entry.sessionId + entry.dir + entry.sizeBytes + entry.lastActiveAt"
        " + title + kind + parent + tag);")],
      "a title/kind split cannot be hidden inside the separator", SERVER),
 
     # mtime is one of the three facts the descriptor cache keys on, and the only one that moves
     # when a session is rewritten in place without growing.
     ("a newer mtime stops moving the tag",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
-       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, title, kind, parent, tag]));\n")],
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, title, kind, parent, tag]));\n")],
      "a newer mtime moves the tag", SERVER),
+
+    # The published id. It is in the row the page receives -- a row's id IS the id the walk
+    # published that directory under -- and a manifest that changes from one id to another moves
+    # that id and nothing else: the directory, the transcript's size and mtime, and the runtime
+    # row are all the same. A material without the id therefore answers 304 for a body that names
+    # a session the reader is no longer looking at, and the body the service reuses keeps
+    # publishing the old one until some other fact happens to move.
+    ("the published id stops being part of the material",
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n")],
+     "a changed published session id moves the tag", SERVER),
 
     # ---- the 304 that is not earned, because it is decided too late ----
     #
@@ -178,8 +189,8 @@ MUTATIONS = [
     # `String.fromCharCode(0)` rather than an escape in the replacement, because the point of the
     # mutation is the character, not how it is spelled.
     ("the fields go back to being joined on a bare NUL",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
-       "    parts.push(entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt"
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(entry.sessionId + \"|\" + entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt"
        " + \"|\" + title + String.fromCharCode(0) + kind"
        " + String.fromCharCode(0) + parent + tag);")],
      "a separator-like character inside a value cannot merge two readable rows into one tag", SERVER),

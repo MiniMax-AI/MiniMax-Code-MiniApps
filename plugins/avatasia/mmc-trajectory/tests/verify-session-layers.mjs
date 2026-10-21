@@ -1287,6 +1287,9 @@ try {
     assert('and the parent keeps the title the runtime database has for it',
       Boolean(parentRow) && parentRow.label === '会话 rent',
       JSON.stringify(parentRow));
+    assert('and the kind the runtime database has for it',
+      Boolean(parentRow) && parentRow.sessionKind === 'conversation',
+      JSON.stringify(parentRow));
     const served = await fetch(service.base + '/api/trajectory?session=mvs_identified_parent');
     assert('and the id the list shows is the id the route resolves',
       served.status === 200,
@@ -1326,6 +1329,164 @@ try {
   }
 } catch (error) {
   failures.push('a manifest that changes under a cached walk -- ' + (error && error.message));
+}
+
+/* ---------- 16: the published id, after the walk has published it ---------- */
+//
+// The walk decides the id a directory is published under, and everything downstream reads that
+// one id. But the id is not only carried by the row: it is also what two CACHES are keyed by,
+// and a cache that does not know the id will keep answering with the answer it built for the
+// id before.
+//
+// Three places, three shapes of the same question:
+//
+//   - the list's validator. It carries the directory, the transcript's size and mtime, and the
+//     runtime's facts -- but not the published id. So a manifest that changes from one id to
+//     another moves the id and nothing else, the validator does not move, and the body the
+//     service reuses goes on publishing the old id while the route serves that same id as
+//     404.
+//   - the `latest` fallback. The explicit-id routes ask again whether a candidate still holds
+//     the session it was published under, because the manifest can change under the walk. The
+//     fallback used to take the first entry of the window as it stood, so the one candidate
+//     both explicit ids refuse was the one `latest` served.
+//   - the trajectory's cache key. It carries the directory, the lineage, the size, the mtime
+//     and the binding -- but not the identity. So two ids for the same directory share one
+//     entry, and the body built for the first is served for the second.
+//
+// Each of them is a transition, so each is asked over HTTP and after the caches have had their
+// time: the walk is held for three seconds, and the first wait is the one that decides when a
+// new id is seen.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-reid-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  // The name does not decode, so the manifest beside the transcript is the only identity this
+  // directory has -- and the published id is therefore the only thing that can change when
+  // the manifest changes. Nothing else about the directory does: same transcript, same size,
+  // same mtime, and no runtime row for it at all.
+  const legacy = join(sessionsRoot, '2026', '10', '20', '00-00-00-session_legacy');
+  await mkdir(legacy, { recursive: true });
+  await writeFile(join(legacy, 'messages.jsonl'),
+    JSON.stringify({ role: 'user', content: 'x' }) + '\n', 'utf8');
+  await writeFile(join(legacy, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_reid_one', createdAtMs: 1 }), 'utf8');
+  const stamp = new Date(BASE_TIME);
+  await utimes(join(legacy, 'messages.jsonl'), stamp, stamp);
+
+  const service = await startService(home);
+  try {
+    const first = await fetch(service.base + '/api/sessions?limit=20');
+    const firstEtag = first.headers.get('etag');
+    const firstBody = await first.json();
+    assert('the list publishes the id the manifest names',
+      (firstBody.sessions || []).some((row) => row.id === 'mvs_reid_one'),
+      JSON.stringify((firstBody.sessions || []).map((row) => row.id)));
+
+    // The manifest now names another session.
+    await writeFile(join(legacy, 'manifest.json'),
+      JSON.stringify({ sessionId: 'mvs_reid_two', createdAtMs: 1 }), 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 3200));
+
+    const conditional = await fetch(service.base + '/api/sessions?limit=20', {
+      headers: { 'If-None-Match': firstEtag }
+    });
+    const conditionalEtag = conditional.headers.get('etag');
+    const conditionalText = await conditional.text();
+    let conditionalBody = null;
+    try { conditionalBody = JSON.parse(conditionalText); } catch { conditionalBody = null; }
+    const conditionalIds = (conditionalBody && conditionalBody.sessions || []).map((row) => row.id);
+    assert('a changed published session id moves the list validator and replaces its body',
+      conditional.status !== 304
+      && conditionalEtag !== firstEtag
+      && conditionalIds.includes('mvs_reid_two')
+      && !conditionalIds.includes('mvs_reid_one'),
+      JSON.stringify([conditional.status, conditionalEtag, firstEtag, conditionalIds]));
+
+    // And the body the service reuses for the next request says the same thing.
+    const unconditional = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const unconditionalIds = (unconditional.sessions || []).map((row) => row.id);
+    assert('and the body the service reuses for the next request says the same thing',
+      unconditionalIds.includes('mvs_reid_two') && !unconditionalIds.includes('mvs_reid_one'),
+      JSON.stringify(unconditionalIds));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a published id that changes -- ' + (error && error.message));
+}
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-latest-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  // The newest session, and the one the fallback would take without asking. The healthy one
+  // is older, so the fallback has to skip past the broken one to reach it.
+  const broken = await makeSession(sessionsRoot, 0, 'mvs_latest_broken', BASE_TIME);
+  await makeSession(sessionsRoot, 1, 'mvs_latest_healthy', BASE_TIME - 60_000);
+  await writeFile(join(broken.dir, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_latest_broken', createdAtMs: 1 }), 'utf8');
+
+  const service = await startService(home);
+  try {
+    // The walk is primed while the manifest still agrees with the name.
+    await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    // Now the manifest beside the same transcript names another session. The walk is still
+    // cached, so the route is holding the directory it admitted a moment ago.
+    await writeFile(join(broken.dir, 'manifest.json'),
+      JSON.stringify({ sessionId: 'mvs_latest_other', createdAtMs: 1 }), 'utf8');
+    const underOld = await fetch(service.base + '/api/trajectory?session=mvs_latest_broken');
+    const underNew = await fetch(service.base + '/api/trajectory?session=mvs_latest_other');
+    const latest = await fetch(service.base + '/api/trajectory?session=latest');
+    const latestBody = latest.status === 200 ? await latest.json() : null;
+    const explicitRefused = underOld.status === 404 && underNew.status === 404;
+    const latestServedAnother = Boolean(latestBody) && Boolean(latestBody.session)
+      && latestBody.session.id === 'mvs_latest_healthy';
+    assert('latest never serves a cached candidate whose manifest now disagrees with its name',
+      explicitRefused && (latest.status !== 200 || latestServedAnother),
+      JSON.stringify([underOld.status, underNew.status, latest.status,
+        latestBody && latestBody.session && latestBody.session.id]));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('the latest fallback -- ' + (error && error.message));
+}
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-trajcache-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const legacy = join(sessionsRoot, '2026', '10', '20', '00-00-00-session_legacy');
+  await mkdir(legacy, { recursive: true });
+  await writeFile(join(legacy, 'messages.jsonl'),
+    JSON.stringify({ role: 'user', content: 'x' }) + '\n', 'utf8');
+  await writeFile(join(legacy, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_traj_one', createdAtMs: 1 }), 'utf8');
+  const stamp = new Date(BASE_TIME);
+  await utimes(join(legacy, 'messages.jsonl'), stamp, stamp);
+
+  const service = await startService(home);
+  try {
+    const first = await fetch(service.base + '/api/trajectory?session=mvs_traj_one');
+    const firstEtag = first.headers.get('etag');
+    const firstBody = await first.json();
+    // Only the manifest changes. The directory, the transcript, the lineage and the mtime are
+    // all the same, so a cache key made of those would match and the body built for the first
+    // id would be served for the second.
+    await writeFile(join(legacy, 'manifest.json'),
+      JSON.stringify({ sessionId: 'mvs_traj_two', createdAtMs: 1 }), 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 3200));
+    const second = await fetch(service.base + '/api/trajectory?session=mvs_traj_two');
+    const secondEtag = second.headers.get('etag');
+    const secondBody = second.status === 200 ? await second.json() : null;
+    assert('an identity-only manifest change cannot reuse another session identity\'s trajectory body',
+      Boolean(firstBody.session) && firstBody.session.id === 'mvs_traj_one'
+      && Boolean(secondBody && secondBody.session) && secondBody.session.id === 'mvs_traj_two'
+      && secondEtag !== firstEtag,
+      JSON.stringify([firstBody.session, secondBody && secondBody.session, firstEtag, secondEtag]));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a trajectory body that belongs to another identity -- ' + (error && error.message));
 }
 
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');

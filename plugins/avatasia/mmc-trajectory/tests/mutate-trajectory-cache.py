@@ -91,14 +91,20 @@ MUTATIONS = [
     (
         "the key stops carrying the active file's size, so a grown session serves a stale body",
         SERVER,
-        "  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
-        "  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
+        "  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
+        "  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
     ),
     (
         "the key stops carrying the lineage, so a compaction that only rotated snapshots serves a stale body",
         SERVER,
+        "  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
+        "  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
+    ),
+    (
+        "the key stops naming the identity, so one session's body can be served for another",
+        SERVER,
+        "  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
         "  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
-        "  return `${trajectoryCacheFamily(entry.dir, filter)}${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
     ),
 ]
 
