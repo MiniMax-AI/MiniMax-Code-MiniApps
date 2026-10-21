@@ -144,7 +144,7 @@ test('插件服务目录存在时，内置引擎不会被插件服务挤掉', as
     /* 指向一个没人监听的端口：这个插件服务是离线的，但它仍应出现在列表里。 */
     await writeFile(
       join(registry, 'address.json'),
-      JSON.stringify({ url: 'http://127.0.0.1:9335/', workspace: box.project }),
+      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: box.project }),
       'utf8',
     );
     await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {

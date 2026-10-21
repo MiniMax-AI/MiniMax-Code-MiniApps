@@ -64,7 +64,7 @@ await mkdir(registry, { recursive: true });
 if (process.env.WC_REGISTRY_WORKSPACE) {
   await writeFile(
     join(registry, 'address.json'),
-    JSON.stringify({ url: 'http://127.0.0.1:9335/', workspace: process.env.WC_REGISTRY_WORKSPACE }),
+    JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: process.env.WC_REGISTRY_WORKSPACE }),
     'utf8',
   );
 }

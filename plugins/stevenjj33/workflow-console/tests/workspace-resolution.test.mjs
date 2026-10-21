@@ -213,7 +213,7 @@ test('引擎项目登记簿里的真实项目会被自动选中', async () => {
     await mkdir(registry, { recursive: true });
     await writeFile(
       join(registry, 'address.json'),
-      JSON.stringify({ url: 'http://127.0.0.1:9335/', workspace: box.project }),
+      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: box.project }),
       'utf8',
     );
     await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
@@ -233,7 +233,7 @@ test('登记簿里指向已删除项目的条目会被跳过', async () => {
     await mkdir(registry, { recursive: true });
     await writeFile(
       join(registry, 'address.json'),
-      JSON.stringify({ url: 'http://127.0.0.1:9335/', workspace: gone }),
+      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: gone }),
       'utf8',
     );
     await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
