@@ -701,6 +701,8 @@ test('group execution records keep each reply linked to its own session and part
 
 test('the background task strip leads with the task, separates its state and folds a long queue', async () => {
   await reset();
+  // Nothing is running: the strip stays empty instead of printing a stray "null".
+  assert.equal(document.querySelector('.helpers').textContent, '');
   const chat = 'bot:bot_a';
   const queued = Array.from({ length: 5 }, (_, index) => ({
     id: `hlp_q${index}`, botId: 'bot_a', chatId: chat, title: `Queued task ${index + 1}`, task: `Queued task ${index + 1}`,

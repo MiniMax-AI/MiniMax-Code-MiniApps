@@ -1294,22 +1294,26 @@ function renderHelpers() {
         ),
       );
     }),
-    hidden > 0 || (helpersExpanded && queued.length > HELPER_QUEUE_PREVIEW)
-      ? h(
-          'button',
-          {
-            type: 'button',
-            class: 'helper-more soft',
-            'aria-expanded': String(helpersExpanded),
-            onclick: () => {
-              helpersExpanded = !helpersExpanded;
-              renderHelpers();
-            },
-          },
-          hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse'),
-        )
-      : null,
   );
+  // `replaceChildren` turns a null argument into the text "null", so the fold button is
+  // appended on its own and only when there is something to fold.
+  if (hidden > 0 || (helpersExpanded && queued.length > HELPER_QUEUE_PREVIEW)) {
+    ui.helpers.append(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'helper-more soft',
+          'aria-expanded': String(helpersExpanded),
+          onclick: () => {
+            helpersExpanded = !helpersExpanded;
+            renderHelpers();
+          },
+        },
+        hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse'),
+      ),
+    );
+  }
 }
 setInterval(() => {
   if (mounted && state.helpers.some((x) => x.chatId === mounted && x.status === 'running')) renderHelpers();
