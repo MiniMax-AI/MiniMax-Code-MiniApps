@@ -99,6 +99,38 @@ MUTATIONS = [
         "            state.searchError = null;\n            resetWindowMode();",
         "            resetWindowMode();",
     ),
+    # ---- the search is about the body on screen ---------------------------------------
+    #
+    # The hits the server sends are INDEXES into one body's records, so they only mean
+    # anything against that body. The search used to ask for `latest` -- "whichever session is
+    # current now" -- and the runtime can make another conversation current while the page
+    # still shows this one. The answer then described another conversation's records, and the
+    # indexes filtered this body's rows against another body's matches: a row that matches
+    # read as a miss and a row that does not read as a hit. The count alone never showed it.
+    #
+    # Three controls, because the promise has two halves and one of them has two names. The
+    # request has to ask about the displayed session, and the ANSWER has to be checked against
+    # it -- by id and by the slice -- before its indexes may filter that body. A control that
+    # dropped both halves at once would leave the id half and the slice half never asked
+    # whether they could fail.
+    (
+        "the search asks about the current session instead of the one on screen",
+        "        var session = displayedSessionParam();",
+        "        var session = sessionParam();",
+    ),
+    (
+        "the search stops checking which session the answer is about",
+        "            if (!answered || !displayed || answered.id !== displayed.id\n"
+        "              || answered.generation !== state.generation) {",
+        "            if (!answered || !displayed\n"
+        "              || answered.generation !== state.generation) {",
+    ),
+    (
+        "the search stops checking which slice of the session the answer is about",
+        "            if (!answered || !displayed || answered.id !== displayed.id\n"
+        "              || answered.generation !== state.generation) {",
+        "            if (!answered || !displayed || answered.id !== displayed.id) {",
+    ),
 ]
 
 

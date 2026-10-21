@@ -106,6 +106,70 @@ MUTATIONS = [
         "  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
         "  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;",
     ),
+    # ---- the family as the way back to the body ---------------------------------------
+    #
+    # The key names the version and the family names the question. A poll that asked for
+    # `latest` and a read that asked for that session by its id are the same reader of the
+    # same body, but the two computed different keys -- the poll's key carries the binding it
+    # resolved and the read's does not -- so the read missed a body the service was holding
+    # and answered 「会话数据已释放，请重新加载」 for a conversation on screen.
+    #
+    # Five controls, because the promise is carried by five separate pieces and a control
+    # that broke two of them would leave the others never asked whether they could fail:
+    # the request has to resolve the family, the cache has to be able to look one up, the
+    # lookup has to refresh recency, and EACH of the two readers has to use it.
+    (
+        "the request stops resolving the family, so neither reader can look one up",
+        SERVER,
+        "      family: trajectoryCacheFamily(entry.dir, filter),\n",
+        "",
+    ),
+    (
+        "the raw read stops falling back to the family, so a record of the conversation on screen is unreachable",
+        SERVER,
+        "    // The key names the version and the family names the question — see `handleRaw` for why the\n"
+        "    // family is the fallback.\n"
+        "    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);",
+        "    // The key names the version and the family names the question — see `handleRaw` for why the\n"
+        "    // family is the fallback.\n"
+        "    const cached = trajectoryCache.get(ctx.cacheKey);",
+    ),
+    (
+        "the record read stops falling back to the family, so the four fields of a record are unreachable",
+        SERVER,
+        "    // binding it resolved and the other did not, and that has nothing to do with the body.\n"
+        "    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);",
+        "    // binding it resolved and the other did not, and that has nothing to do with the body.\n"
+        "    const cached = trajectoryCache.get(ctx.cacheKey);",
+    ),
+    (
+        "the cache stops finding an entry by its family, so the fallback finds nothing",
+        SERVER,
+        "    getByFamily(family) {\n"
+        "      for (const [key, hit] of entries) {\n"
+        "        if (hit.family !== family) continue;\n"
+        "        // Re-reading is the only signal that an entry is still hot, so it refreshes recency.\n"
+        "        entries.delete(key);\n"
+        "        entries.set(key, hit);\n"
+        "        return hit.value;\n"
+        "      }\n"
+        "      return null;\n"
+        "    },",
+        "    getByFamily(family) {\n"
+        "      return null;\n"
+        "    },",
+    ),
+    (
+        "reading by family stops refreshing recency, so the family being read is the first evicted",
+        SERVER,
+        "        if (hit.family !== family) continue;\n"
+        "        // Re-reading is the only signal that an entry is still hot, so it refreshes recency.\n"
+        "        entries.delete(key);\n"
+        "        entries.set(key, hit);\n"
+        "        return hit.value;",
+        "        if (hit.family !== family) continue;\n"
+        "        return hit.value;",
+    ),
 ]
 
 

@@ -227,7 +227,8 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   const netCtx = { console, AbortController, setTimeout, clearTimeout, encodeURIComponent };
   vm.createContext(netCtx);
   const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
-    'function sessionParam()', 'function searchStatusLabel(searchState)', 'function runSearch(needle)'];
+    'function sessionParam()', 'function displayedSessionParam()', 'function searchStatusLabel(searchState)',
+    'function runSearch(needle)'];
   const sources = needed.map((sig) => fnSource(sig));
   check('the shipped search functions are all still findable by signature',
     needed.filter((sig, i) => !sources[i]), []);
@@ -237,7 +238,10 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     // page's state is, because nothing else about the page's state is what is under test.
     'var state = { query: "retry me", sessionId: null, hostSessionId: null, followLatest: true,',
     '  generation: null, searchHits: null, searchTotal: 0, searchTruncated: false,',
-    '  searchPending: false, searchError: null };',
+    '  searchPending: false, searchError: null,',
+    // The body on screen. `displayedSessionParam()` reads it and the answer is checked against
+    // it, so a harness with no body on screen cannot ask either question.
+    '  payload: { session: { id: "mvs_displayed" } } };',
     'var searchSeq = 0;',
     'var searchController = null;',
     // The two renderers paint the page; neither is what is being tested and neither has a DOM here.
@@ -255,13 +259,25 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     for (let i = 0; i < 3; i += 1) await new Promise((done) => setImmediate(done));
   };
 
-  netCtx.fetch = () => Promise.reject(Object.assign(new Error('api'), { code: 'search_failed' }));
+  // Every URL the search asked for, so the question it asked can be read off the requests
+  // rather than out of the source.
+  const asked = [];
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.reject(Object.assign(new Error('api'), { code: 'search_failed' }));
+  };
   netCtx.runSearch('retry me');
   await settle();
   const afterFailure = netCtx.searchStatusLabel(netCtx.state);
 
-  netCtx.fetch = () => Promise.resolve({ ok: true, status: 200,
-    json: () => Promise.resolve({ hits: [{ index: 7 }], total: 1, truncated: false }) });
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 7 }], total: 1, truncated: false,
+        // The server names the session it answered for. That name is what the page checks the
+        // answer against before it lets the hits filter the body on screen.
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
   netCtx.runSearch('retry me');
   await settle();
 
@@ -271,6 +287,93 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   check('so the label reports the answer instead of the stale failure',
     netCtx.searchStatusLabel(netCtx.state), '命中 1 条');
   check('and the hit set it describes is the new one', [...netCtx.state.searchHits], [7]);
+
+  /* The search has to be about the body on screen, and the answer has to say so.
+   *
+   * The search used to ask for `latest`, which is a different question from 「what is on
+   * screen」: the runtime can make another conversation current while the page still shows
+   * this one, and the answer then describes another session's records. The hits are indexes,
+   * so they FILTER this body's rows against another body's matches — a row that matches
+   * reads as a miss, and a row that does not read as a hit. Both are wrong in opposite
+   * directions, which is why the number of hits alone never showed the defect.
+   *
+   * Two things have to hold and neither one is enough:
+   *
+   *   - the request names the displayed session, and
+   *   - the answer is checked against it.
+   *
+   * A request that names the displayed session can still be answered about another one if
+   * the runtime moved in between, and an answer that is checked can still be about another
+   * session if the wrong question was asked. Both halves are asserted below.
+   */
+  check('the search asks about the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(asked[1]), true);
+  check('and it does not ask about whatever is current now',
+    /[?&]session=latest(&|$)/.test(asked[1]), false);
+
+  // The answer comes back about another session. The hits must not be installed: they are
+  // indexes into another body's records, and installing them would report this body's rows
+  // against another body's matches.
+  const installed = [...netCtx.state.searchHits];
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 99 }], total: 1, truncated: false,
+        session: { id: 'mvs_other', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('an answer about another session does not install its hit set',
+    [...netCtx.state.searchHits], installed);
+  check('and it does not report the other session\'s count either',
+    netCtx.state.searchTotal, 1);
+  check('it says the search failed, so the reader is told there is no answer',
+    netCtx.state.searchError, 'session_mismatch');
+  check('and the label shows the failure rather than the hit count',
+    netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
+  check('and the request it made still named the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(asked[0]), true);
+
+  // The same session, but another slice of it. A slice is a different body, so an answer
+  // about the whole lineage is not an answer about the slice on screen.
+  netCtx.state.generation = 3;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 98 }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('an answer about another slice of the same session does not install its hit set',
+    [...netCtx.state.searchHits], installed);
+  check('and the request named the slice that is on screen',
+    /[?&]generation=3(&|$)/.test(asked[0]), true);
+  check('and it failed for the same reason',
+    netCtx.state.searchError, 'session_mismatch');
+
+  // The other direction, because a check that rejects every answer is not a check. The page
+  // follows the runtime to another conversation, and the answer about THAT conversation is
+  // the one that belongs to the body on screen now.
+  netCtx.state.payload = { session: { id: 'mvs_displayed_b' } };
+  netCtx.state.generation = null;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 5 }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed_b', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('the answer about the conversation the page moved to is installed',
+    [...netCtx.state.searchHits], [5]);
+  check('and there is no failure, because this time there is an answer',
+    netCtx.state.searchError, null);
+  check('and the request asked about the conversation on screen at that moment',
+    /[?&]session=mvs_displayed_b(&|$)/.test(asked[0]), true);
 }
 
 /* flatten + signature */
