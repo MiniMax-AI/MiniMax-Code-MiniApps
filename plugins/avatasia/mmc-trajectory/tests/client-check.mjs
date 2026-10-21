@@ -227,8 +227,8 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   const netCtx = { console, AbortController, setTimeout, clearTimeout, encodeURIComponent };
   vm.createContext(netCtx);
   const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
-    'function sessionParam()', 'function displayedSessionParam()', 'function searchStatusLabel(searchState)',
-    'function runSearch(needle)'];
+    'function sessionParam()', 'function displayedSessionParam()', 'function displayedGeneration()',
+    'function searchStatusLabel(searchState)', 'function runSearch(needle)'];
   const sources = needed.map((sig) => fnSource(sig));
   check('the shipped search functions are all still findable by signature',
     needed.filter((sig, i) => !sources[i]), []);
@@ -240,8 +240,9 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     '  generation: null, searchHits: null, searchTotal: 0, searchTruncated: false,',
     '  searchPending: false, searchError: null,',
     // The body on screen. `displayedSessionParam()` reads it and the answer is checked against
-    // it, so a harness with no body on screen cannot ask either question.
-    '  payload: { session: { id: "mvs_displayed" } } };',
+    // it, so a harness with no body on screen cannot ask either question. Its `generation` is
+    // the slice the body IS: null is the whole lineage, a number is that one generation.
+    '  payload: { session: { id: "mvs_displayed", generation: null } } };',
     'var searchSeq = 0;',
     'var searchController = null;',
     // The two renderers paint the page; neither is what is being tested and neither has a DOM here.
@@ -336,14 +337,20 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     /[?&]session=mvs_displayed(&|$)/.test(asked[0]), true);
 
   // The same session, but another slice of it. A slice is a different body, so an answer
-  // about the whole lineage is not an answer about the slice on screen.
+  // about one slice is not an answer about another.
+  //
+  // The slice on screen is the body the page is SHOWING, not the generation the reader picked.
+  // The two come apart when the load of a picked generation fails: the selection says one thing
+  // and the body on screen says another, and only the body's own slice is the question the
+  // search may ask and answer.
+  netCtx.state.payload = { session: { id: 'mvs_displayed', generation: 3 } };
   netCtx.state.generation = 3;
   asked.length = 0;
   netCtx.fetch = (url) => {
     asked.push(String(url));
     return Promise.resolve({ ok: true, status: 200,
       json: () => Promise.resolve({ hits: [{ index: 98 }], total: 1, truncated: false,
-        session: { id: 'mvs_displayed', generation: null } }) });
+        session: { id: 'mvs_displayed', generation: 2 } }) });
   };
   netCtx.runSearch('retry me');
   await settle();
@@ -354,10 +361,51 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   check('and it failed for the same reason',
     netCtx.state.searchError, 'session_mismatch');
 
+  // The reader picks another generation and the load of it FAILS. The body on screen is still
+  // the old one; the selection is the new one. A search that asked about the selection would be
+  // asking about a body that is not there, and the answer it got back would carry indexes of
+  // THAT body — which then filtered the rows the reader is actually looking at.
+  netCtx.state.payload = { session: { id: 'mvs_displayed', generation: 0 } };
+  netCtx.state.generation = 1;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 1 }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: 0 } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('the search asks about the slice on screen, not the one the reader picked',
+    /[?&]generation=0(&|$)/.test(asked[0]), true);
+  check('and it does not ask about the selection',
+    /[?&]generation=1(&|$)/.test(asked[0]), false);
+  check('so the answer about the body on screen is installed',
+    [...netCtx.state.searchHits], [1]);
+  check('and there is no failure, because the answer and the body agree',
+    netCtx.state.searchError, null);
+
+  // The other direction, because a check that accepts every answer is not a check either. An
+  // answer about the SELECTED slice is not an answer about the body on screen, and its indexes
+  // must not filter that body.
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 42 }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: 1 } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('an answer about the selected slice does not install its hit set',
+    [...netCtx.state.searchHits], [1]);
+  check('and it says the answer was about another body',
+    netCtx.state.searchError, 'session_mismatch');
+
   // The other direction, because a check that rejects every answer is not a check. The page
   // follows the runtime to another conversation, and the answer about THAT conversation is
   // the one that belongs to the body on screen now.
-  netCtx.state.payload = { session: { id: 'mvs_displayed_b' } };
+  netCtx.state.payload = { session: { id: 'mvs_displayed_b', generation: null } };
   netCtx.state.generation = null;
   asked.length = 0;
   netCtx.fetch = (url) => {
@@ -374,6 +422,67 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     netCtx.state.searchError, null);
   check('and the request asked about the conversation on screen at that moment',
     /[?&]session=mvs_displayed_b(&|$)/.test(asked[0]), true);
+}
+
+/* handoff: the session the record came from, across a navigation.
+ *
+ * The handoff reads two things asynchronously — the record's raw message and its four bulk
+ * fields — and the page can be showing another conversation by the time they answer. The text
+ * that goes to the Host NAMES the session, so a session read at the END of the reads would put
+ * one conversation's name on another conversation's message: the reader would be told which
+ * conversation they are looking at, and told wrong.
+ *
+ * This runs the shipped `handoffSelected` over a deferred raw read and moves the page while
+ * that read is in flight, which is the only moment the two can differ. */
+{
+  const handoffSources = {
+    handoff: fnSource('function handoffSelected()'),
+    selected: fnSource('function selectedRecord()'),
+    bridge: fnSource('function hostBridge()'),
+  };
+  check('the shipped handoff functions are all still findable by signature',
+    Object.keys(handoffSources).filter((key) => !handoffSources[key]), []);
+
+  if (handoffSources.handoff && handoffSources.selected && handoffSources.bridge) {
+    const handoffCtx = { console, setTimeout, clearTimeout };
+    vm.createContext(handoffCtx);
+    // The page's own pure helpers, so the markdown is the shipped one and not a copy of it.
+    vm.runInContext(block, handoffCtx);
+    const appended = [];
+    // The Host bridge, so `hostBridge()` finds a message sink without being stubbed away.
+    handoffCtx.window = { mcode: { miniapp: { message: { append: (text) => { appended.push(text); } } } } };
+    handoffCtx.dom = { handoffBtn: { disabled: false }, inspectorStatus: { textContent: '' } };
+    handoffCtx.state = {
+      selectedId: 'rec-1',
+      flat: [{
+        id: 'rec-1',
+        record: { id: 'rec-1', index: 1, kind: 'user', role: 'user', timestamp: 1791600000000 },
+        turn: { id: 't1', index: 3 },
+      }],
+      // The conversation the selected record belongs to.
+      payload: { session: { id: 'mvs_a', label: 'A 会话' } },
+    };
+    let releaseRaw = null;
+    handoffCtx.rawSourceFor = () => new Promise((resolve) => { releaseRaw = resolve; });
+    handoffCtx.fetchDetail = () => Promise.resolve(null);
+    handoffCtx.inspectorSay = () => {};
+    handoffCtx.stripVolatile = (record) => record;
+    vm.runInContext(
+      handoffSources.handoff + '\n' + handoffSources.selected + '\n' + handoffSources.bridge,
+      handoffCtx,
+    );
+
+    handoffCtx.handoffSelected();
+    // The page moves to another conversation while the record's raw read is still in flight.
+    handoffCtx.state.payload = { session: { id: 'mvs_b', label: 'B 会话' } };
+    if (releaseRaw) releaseRaw({ raw: '{"kind":"user"}', omitted: false });
+    for (let i = 0; i < 5; i += 1) await new Promise((done) => setImmediate(done));
+
+    check('the handoff names the session the selected record came from',
+      appended.length === 1 && appended[0].includes('mvs_a'), true);
+    check('and not the conversation the page moved to while the read was pending',
+      appended.length === 1 && appended[0].includes('mvs_b'), false);
+  }
 }
 
 /* flatten + signature */
@@ -1140,11 +1249,14 @@ const checks = [
     if (!src) return false;
     return /state\.searchHits = null;/.test(src) && /state\.searchError = null;/.test(src);
   })()],
-  ['a search is asked about the slice the reader is looking at', (() => {
+  ['a search is asked about the slice the body on screen is', (() => {
     const src = fnSource('function runSearch(needle)');
     if (!src) return false;
     return /'\/api\/trajectory\/search\?session='/.test(src)
-      && /&generation=' \+ encodeURIComponent\(String\(state\.generation\)\)/.test(src);
+      && /&generation=' \+ encodeURIComponent\(String\(generation\)\)/.test(src)
+      // The slice the reader PICKED is a different question, and the page has to ask the one
+      // that belongs to the body it is showing.
+      && !/String\(state\.generation\)/.test(src);
   })()],
   // Clicking the window button must not move the page. It scrolled to the document tail
   // whenever it narrowed the window, on the theory that "back to the tail" should land on the
@@ -1841,10 +1953,14 @@ if (!fetchTrajectorySrc || !sessionParamSrc || !trajInflightDecl || !trajSeqDecl
 const requestRawSrc = fnSource('function requestRaw(index)');
 const requestDetailSrc = fnSource('function requestDetail(index)');
 const displayedSessionSrc = fnSource('function displayedSessionParam()');
-if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc) {
+const displayedGenerationSrc = fnSource('function displayedGeneration()');
+const rawCacheKeySrc = fnSource('function rawCacheKey(index)');
+if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGenerationSrc
+  || !rawCacheKeySrc) {
   failures.push('secondary reads: could not lift requestRaw, requestDetail and the session they ask for');
 } else {
-  vm.runInContext(displayedSessionSrc + '\n' + requestRawSrc + '\n' + requestDetailSrc, sandbox);
+  vm.runInContext(displayedSessionSrc + '\n' + displayedGenerationSrc + '\n'
+    + requestRawSrc + '\n' + requestDetailSrc + '\n' + rawCacheKeySrc, sandbox);
 
   const secondary = [];
   sandbox.fetch = function (url) {
@@ -1858,7 +1974,7 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc) {
   // The page is following the newest conversation, and it is showing A. The runtime may already
   // have made B current — the page does not know that, and it must not care: A is on screen.
   sandbox.state = {
-    payload: { session: { id: 'mvs_displayed' } },
+    payload: { session: { id: 'mvs_displayed', generation: null } },
     generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
   };
   await sandbox.requestRaw(1);
@@ -1872,12 +1988,41 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc) {
   check('and it does not ask for whatever is current now',
     /[?&]session=latest(&|$)/.test(secondary[1]), false);
 
+  // The slice on screen is not the generation the reader picked. A selection whose load failed
+  // leaves the previous body up, and a read that asks about the selection asks about a body
+  // that is not there — its answer is about records the reader cannot see.
+  sandbox.state = {
+    payload: { session: { id: 'mvs_displayed', generation: 2 } },
+    generation: 7, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
+  };
+  await sandbox.requestRaw(1);
+  await sandbox.requestDetail(1);
+  check('a raw read asks for the slice on screen',
+    /[?&]generation=2(&|$)/.test(secondary[2]), true);
+  check('and not for the one the reader picked',
+    /[?&]generation=7(&|$)/.test(secondary[2]), false);
+  check('a detail read asks for the slice on screen too',
+    /[?&]generation=2(&|$)/.test(secondary[3]), true);
+  check('and not for the one the reader picked',
+    /[?&]generation=7(&|$)/.test(secondary[3]), false);
+
+  // The browser's own raw cache is keyed the same way, and for the same reason: a record index
+  // is a position inside one body, and the body on screen is not always the body the reader last
+  // selected. A key built from the selection would serve the previous slice's message under the
+  // current slice's record — and the reader would be reading another generation's words.
+  check('the raw cache key names the slice on screen',
+    sandbox.rawCacheKey(1).includes('#2#'), true);
+  check('and not the one the reader picked',
+    sandbox.rawCacheKey(1).includes('#7#'), false);
+  check('and it still names the session on screen',
+    sandbox.rawCacheKey(1).startsWith('mvs_displayed#'), true);
+
   // With nothing on screen there is no session to name, and the read falls back to the session
   // parameter rather than sending an empty one.
   sandbox.state = { payload: null, generation: null, etag: '', followLatest: true, sessionId: '', hostSessionId: '' };
   await sandbox.requestRaw(1);
   check('with no body on screen the read falls back to the current session',
-    /[?&]session=latest(&|$)/.test(secondary[2]), true);
+    /[?&]session=latest(&|$)/.test(secondary[4]), true);
 }
 
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');

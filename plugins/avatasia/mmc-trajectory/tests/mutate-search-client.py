@@ -74,7 +74,7 @@ MUTATIONS = [
     ),
     (
         "the needle is sent without the generation, so a slice search answers about the whole lineage",
-        "          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));",
+        "          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)));",
         "          + '';",
     ),
     (
@@ -121,15 +121,51 @@ MUTATIONS = [
     (
         "the search stops checking which session the answer is about",
         "            if (!answered || !displayed || answered.id !== displayed.id\n"
-        "              || answered.generation !== state.generation) {",
+        "              || answeredSlice !== displayedSlice) {",
         "            if (!answered || !displayed\n"
-        "              || answered.generation !== state.generation) {",
+        "              || answeredSlice !== displayedSlice) {",
     ),
     (
         "the search stops checking which slice of the session the answer is about",
         "            if (!answered || !displayed || answered.id !== displayed.id\n"
-        "              || answered.generation !== state.generation) {",
+        "              || answeredSlice !== displayedSlice) {",
         "            if (!answered || !displayed || answered.id !== displayed.id) {",
+    ),
+    # ---- the slice is the one the BODY is, not the one the reader picked ---------------
+    #
+    # The reader's selection and the body on screen are two different things, and they come
+    # apart when the load of a picked generation FAILS: the selection says one thing and the
+    # body says another. Every read that asks the server about "a record inside this body" has
+    # to ask about the BODY's own slice — the search, the raw read, the record read, and the
+    # browser's own cache key. A request built from the selection asks about a body that is not
+    # there, and the answer it gets back carries indexes of THAT body.
+    (
+        "the search asks about the generation the reader picked, not the slice on screen",
+        "        var session = displayedSessionParam();\n        var generation = displayedGeneration();",
+        "        var session = displayedSessionParam();\n        var generation = state.generation;",
+    ),
+    (
+        "the raw read asks about the generation the reader picked, not the slice on screen",
+        "        var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))\n"
+        "          + '&session=' + displayedSessionParam();\n"
+        "        var generation = displayedGeneration();",
+        "        var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))\n"
+        "          + '&session=' + displayedSessionParam();\n"
+        "        var generation = state.generation;",
+    ),
+    (
+        "the record read asks about the generation the reader picked, not the slice on screen",
+        "        var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))\n"
+        "          + '&session=' + displayedSessionParam();\n"
+        "        var generation = displayedGeneration();",
+        "        var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))\n"
+        "          + '&session=' + displayedSessionParam();\n"
+        "        var generation = state.generation;",
+    ),
+    (
+        "the raw cache key names the generation the reader picked, not the slice on screen",
+        "        var gen = displayedGeneration() === null ? 'all' : String(displayedGeneration());",
+        "        var gen = state.generation === null ? 'all' : String(state.generation);",
     ),
 ]
 

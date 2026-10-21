@@ -275,7 +275,13 @@ assert('the decode cache is per entry, so a new body starts empty',
 
 const rawCacheKeyAt = CLIENT.indexOf('function rawCacheKey(index)');
 assert('rawCacheKey exists', rawCacheKeyAt > 0);
-const keyBody = CLIENT.slice(rawCacheKeyAt, rawCacheKeyAt + 900);
+// The whole function, not a fixed number of characters. A window of N characters stops being
+// the function the moment a comment grows, and the assertion then fails on the edit rather
+// than on the defect it is about — which is how a guard starts reporting somebody else's work.
+const keyEnd = rawCacheKeyAt >= 0 ? CLIENT.indexOf('\n      }', rawCacheKeyAt) : -1;
+const keyBody = rawCacheKeyAt >= 0 && keyEnd > rawCacheKeyAt
+  ? CLIENT.slice(rawCacheKeyAt, keyEnd)
+  : '';
 assert("the page's raw cache key includes the validator", /state\.etag/.test(keyBody));
 assert('and still the session and the index', keyBody.includes("sid + '#' + gen + '#'"));
 // A raw the server refuses is a hint, not a broken tab, so there is deliberately no second chance

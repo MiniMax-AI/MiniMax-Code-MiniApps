@@ -54,6 +54,8 @@ function assert(name, cond) {
 
 const LIMIT = 4;
 const DIR = '/store/session-a';
+/** The session the entries in the unit section below are about. */
+const SID = 'sess-unit';
 const entry = (size, mtime) => ({ dir: DIR, sizeBytes: size, lastActiveAt: mtime });
 const identity = { catalogBytes: 1234, generations: [{ generation: 0, fileName: 'g0', byteLength: 10 }] };
 
@@ -103,10 +105,10 @@ assert('an identity is not the same key as no identity at all', keyIdentityA !==
  * ===================================================================== */
 
 const cache = createTrajectoryCache(LIMIT);
-cache.set(keyFresh, familyAll, { body: 'v1' });
+cache.set(keyFresh, familyAll, SID, { body: 'v1' });
 check('one store makes one entry', cache.size, 1);
 for (let size = 2000; size <= 9000; size += 1000) {
-  cache.set(trajectoryCacheKey(entry(size, size), identity, null, null), familyAll, { body: `v${size}` });
+  cache.set(trajectoryCacheKey(entry(size, size), identity, null, null), familyAll, SID, { body: `v${size}` });
 }
 assert('nine versions of one question leave one entry', cache.size === 1);
 assert('the survivor is the newest, not the oldest',
@@ -123,11 +125,11 @@ const keyA1 = trajectoryCacheKey(entry(1000, 5000), identity, null, null);
 const keyA2 = trajectoryCacheKey(entry(2000, 6000), identity, null, null);
 const keySlice = trajectoryCacheKey(entry(1000, 5000), identity, null, 3);
 const keyOther = trajectoryCacheKey({ ...entry(1000, 5000), dir: '/store/session-b' }, identity, null, null);
-mixed.set(keyA1, familyAll, { body: 'a1' });
-mixed.set(keyA2, familyAll, { body: 'a2' });
+mixed.set(keyA1, familyAll, SID, { body: 'a1' });
+mixed.set(keyA2, familyAll, SID, { body: 'a2' });
 check('growth in one family did not disturb the other family', mixed.size, 1);
-mixed.set(keySlice, familySlice, { body: 's3' });
-mixed.set(keyOther, trajectoryCacheFamily('/store/session-b', null), { body: 'b1' });
+mixed.set(keySlice, familySlice, SID, { body: 's3' });
+mixed.set(keyOther, trajectoryCacheFamily('/store/session-b', null), SID, { body: 'b1' });
 check('two sessions and two slices coexist', mixed.size, 3);
 assert('the unfiltered session kept its newest body', mixed.get(keyA2)?.body === 'a2');
 assert('the slice kept its own body', mixed.get(keySlice)?.body === 's3');
@@ -143,7 +145,7 @@ for (let i = 0; i < LIMIT + 3; i += 1) {
   const dir = `/store/session-${i}`;
   const fam = trajectoryCacheFamily(dir, null);
   families.push(fam);
-  bounded.set(trajectoryCacheKey({ dir, sizeBytes: 100, lastActiveAt: 1 }, identity, null, null), fam, { body: `b${i}` });
+  bounded.set(trajectoryCacheKey({ dir, sizeBytes: 100, lastActiveAt: 1 }, identity, null, null), fam, SID, { body: `b${i}` });
 }
 assert('more sessions than the bound still respect it', bounded.size === LIMIT);
 assert('the oldest session was the one evicted', bounded.get(trajectoryCacheKey(
@@ -160,11 +162,11 @@ const hot = createTrajectoryCache(2);
 const keyOf = (name) => trajectoryCacheKey(
   { dir: `/store/${name}`, sizeBytes: 1, lastActiveAt: 1 }, identity, null, null,
 );
-hot.set(keyOf('wanted'), trajectoryCacheFamily('/store/wanted', null), { body: 'wanted' });
-hot.set(keyOf('other'), trajectoryCacheFamily('/store/other', null), { body: 'other' });
+hot.set(keyOf('wanted'), trajectoryCacheFamily('/store/wanted', null), SID, { body: 'wanted' });
+hot.set(keyOf('other'), trajectoryCacheFamily('/store/other', null), SID, { body: 'other' });
 // Touched, so recency order becomes [other, wanted] rather than [wanted, other].
 hot.get(keyOf('wanted'));
-hot.set(keyOf('newcomer'), trajectoryCacheFamily('/store/newcomer', null), { body: 'newcomer' });
+hot.set(keyOf('newcomer'), trajectoryCacheFamily('/store/newcomer', null), SID, { body: 'newcomer' });
 assert('a family that was read again survives the next eviction', hot.get(keyOf('wanted'))?.body === 'wanted');
 assert('the family that was NOT touched is the one evicted', hot.get(keyOf('other')) === null);
 
@@ -176,15 +178,15 @@ const hotFamily = createTrajectoryCache(2);
 const familyKeyOf = (name) => trajectoryCacheKey(
   { dir: `/store/${name}`, sizeBytes: 1, lastActiveAt: 1 }, identity, null, null,
 );
-hotFamily.set(familyKeyOf('wanted'), trajectoryCacheFamily('/store/wanted', null), { body: 'wanted' });
-hotFamily.set(familyKeyOf('other'), trajectoryCacheFamily('/store/other', null), { body: 'other' });
+hotFamily.set(familyKeyOf('wanted'), trajectoryCacheFamily('/store/wanted', null), SID, { body: 'wanted' });
+hotFamily.set(familyKeyOf('other'), trajectoryCacheFamily('/store/other', null), SID, { body: 'other' });
 // Touched by family, not by key: the reader asked the family and never computed this key.
-hotFamily.getByFamily(trajectoryCacheFamily('/store/wanted', null));
-hotFamily.set(familyKeyOf('newcomer'), trajectoryCacheFamily('/store/newcomer', null), { body: 'newcomer' });
+hotFamily.getByFamily(trajectoryCacheFamily('/store/wanted', null), SID);
+hotFamily.set(familyKeyOf('newcomer'), trajectoryCacheFamily('/store/newcomer', null), SID, { body: 'newcomer' });
 assert('a family that was read by family survives the next eviction',
-  hotFamily.getByFamily(trajectoryCacheFamily('/store/wanted', null))?.body === 'wanted');
+  hotFamily.getByFamily(trajectoryCacheFamily('/store/wanted', null), SID)?.body === 'wanted');
 assert('and the family that was not read is the one evicted',
-  hotFamily.getByFamily(trajectoryCacheFamily('/store/other', null)) === null);
+  hotFamily.getByFamily(trajectoryCacheFamily('/store/other', null), SID) === null);
 
 /* =====================================================================
  * 5 — structure: the cache is per-runtime, and the route names the family
@@ -232,7 +234,7 @@ assert('the cache can be asked for the family it answers for',
 assert('the request resolves the family it will look up',
   startBody.includes('family: trajectoryCacheFamily(entry.dir, filter)'));
 assert('both readers fall back to the family when the exact key misses',
-  (startBody.match(/trajectoryCache\.get\(ctx\.cacheKey\) \?\? trajectoryCache\.getByFamily\(ctx\.family\)/g) || []).length === 2);
+  (startBody.match(/trajectoryCache\.get\(ctx\.cacheKey\) \?\? trajectoryCache\.getByFamily\(ctx\.family, ctx\.identityId\)/g) || []).length === 2);
 
 // The family is what the two keys share, so it has to be looked up by the family and not by
 // the key: an entry stored under one key is found under another whose family is the same.
@@ -241,14 +243,50 @@ const boundKey = trajectoryCacheKey(entry(1000, 5000), identity, { sessionId: 's
 const unboundKey = trajectoryCacheKey(entry(1000, 5000), identity, null, null);
 assert('the same body under two bindings is two keys',
   boundKey !== unboundKey);
-shared.set(boundKey, familyAll, { body: 'shared' });
+shared.set(boundKey, familyAll, SID, { body: 'shared' });
 assert('and the exact key still finds it', shared.get(boundKey)?.body === 'shared');
 assert('the other key does not',
   shared.get(unboundKey) === null);
 assert('but the family finds it, which is what the readers do',
-  shared.getByFamily(familyAll)?.body === 'shared');
+  shared.getByFamily(familyAll, SID)?.body === 'shared');
 assert('and a different family does not',
-  shared.getByFamily(familySlice) === null);
+  shared.getByFamily(familySlice, SID) === null);
+
+/* =====================================================================
+ * 5b — the family names the QUESTION; the session names the ANSWER
+ * ===================================================================== */
+
+// A family holds exactly one entry, and that entry is about one session. A directory can stop
+// holding one session and start holding another: the manifest beside the transcript is the
+// authority on that, and it can change under a cached walk. An entry built for the old session
+// is therefore not an answer about the new one, however well the directory and the slice match
+// — and its decoded messages are the OLD session's messages.
+//
+// The family cannot carry the session, because one family is one question and the question is
+// asked by many readers of many sessions: the poll that asks for `latest` and the read that
+// asks for one session by its id are the same reader of the same body. So the entry remembers
+// which session it is about, and the lookup names the session it wants.
+
+const identityAware = createTrajectoryCache(LIMIT);
+identityAware.set('key-for-a', familyAll, 'sess-a', { body: 'a' });
+assert('an entry is found for the session it is about',
+  identityAware.getByFamily(familyAll, 'sess-a')?.body === 'a');
+assert('and it is NOT found for another session',
+  identityAware.getByFamily(familyAll, 'sess-b') === null);
+assert('the exact key still finds it, because the key names the session too',
+  identityAware.get('key-for-a')?.body === 'a');
+assert('and a family that was never asked for is still empty',
+  identityAware.getByFamily(familySlice, 'sess-a') === null);
+
+// The other direction, because a check that rejects everything is not a check: the SAME session
+// has to be reachable by the family, which is what the readers rely on.
+const sameSession = createTrajectoryCache(LIMIT);
+sameSession.set('key-one', familyAll, 'sess-a', { body: 'one' });
+sameSession.set('key-two', familyAll, 'sess-a', { body: 'two' });
+assert('a newer version of the same family replaces its predecessor',
+  sameSession.size === 1);
+assert('and the survivor is the newer one',
+  sameSession.getByFamily(familyAll, 'sess-a')?.body === 'two');
 
 /* =====================================================================
  * 6 — over HTTP: the body of the session on screen is reachable by its id
@@ -299,6 +337,26 @@ try {
 
   const alpha = await makeConversation(REACH_ALPHA, 'ALPHA BODY', 1791600000000);
   const bravo = await makeConversation(REACH_BRAVO, 'BRAVO BODY', 1791500000000);
+
+  // A directory whose name does not decode names no session, so the manifest beside it is the
+  // only identity it has — and that identity can change under a cached walk. This is the shape
+  // the family fallback has to be careful about: the directory and the slice still match, and
+  // the session underneath is a different one.
+  const LEGACY_A = 'mvs_legacy_alpha';
+  const LEGACY_B = 'mvs_legacy_bravo';
+  const legacyDir = join(sessionsRoot, '2026', '10', '22', '00-00-00-session_legacy');
+  const writeLegacy = async (id, body, mtimeMs) => {
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(join(legacyDir, 'messages.jsonl'), JSON.stringify({
+      message_id: 'm1',
+      turn_id: 't1',
+      message: { role: 'user', content: body, timestamp: 1791600000000 },
+    }) + '\n', 'utf8');
+    await writeFile(join(legacyDir, 'manifest.json'), JSON.stringify({ sessionId: id }), 'utf8');
+    const stamp = new Date(mtimeMs);
+    await utimes(join(legacyDir, 'messages.jsonl'), stamp, stamp);
+  };
+  await writeLegacy(LEGACY_A, 'ALPHA LEGACY', 1791600000000);
 
   // The runtime database, which is the only place on this machine that knows which
   // conversation is live. ALPHA is live first; BRAVO becomes live later in this section.
@@ -398,6 +456,52 @@ try {
     const detailRetry = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA);
     assert('and so does the record read',
       detailRetry.status === 200, why(detailRetry));
+
+    // 4 — the session under a directory can change, and the fallback has to notice.
+    //
+    // The family names the directory and the slice. The session is a different thing: a
+    // directory can stop holding one session and start holding another, and the manifest
+    // beside the transcript is the authority on that. The family lookup then finds the OLD
+    // session's entry, and that entry's decoded messages are the old session's messages — so
+    // a read for the new session answers with the old one's words.
+    const legacyLoad = await get('/api/trajectory?session=' + LEGACY_A);
+    assert('the conversation whose name does not decode loads by the id its manifest gives',
+      legacyLoad.status === 200 && Boolean(legacyLoad.body && legacyLoad.body.session)
+      && legacyLoad.body.session.id === LEGACY_A, why(legacyLoad));
+
+    const legacyRaw = await get('/api/trajectory/raw?index=1&session=' + LEGACY_A);
+    assert('and its record reads back',
+      legacyRaw.status === 200, why(legacyRaw));
+    assert('with its own message',
+      JSON.stringify(legacyRaw.body && legacyRaw.body.raw ? legacyRaw.body.raw : '')
+        .includes('ALPHA LEGACY'), why(legacyRaw));
+
+    // The directory keeps its name and its place; the manifest and the transcript change.
+    await writeLegacy(LEGACY_B, 'BRAVO LEGACY', 1791700000000);
+
+    const staleRaw = await get('/api/trajectory/raw?index=1&session=' + LEGACY_B);
+    assert('the read for the new session does not answer with the old session\'s message',
+      !(staleRaw.status === 200
+        && JSON.stringify(staleRaw.body && staleRaw.body.raw ? staleRaw.body.raw : '')
+          .includes('ALPHA LEGACY')), why(staleRaw));
+    assert('and it says the body is not held, rather than serving another session\'s',
+      staleRaw.status === 503, why(staleRaw));
+
+    const legacyDetail = await get('/api/trajectory/record?index=1&session=' + LEGACY_B);
+    assert('and the record read refuses it the same way',
+      legacyDetail.status === 503, why(legacyDetail));
+
+    // After a reload the new session is held, and then it reads back.
+    const legacyReload = await get('/api/trajectory?session=' + LEGACY_B);
+    assert('the new session loads after the swap',
+      legacyReload.status === 200 && Boolean(legacyReload.body && legacyReload.body.session)
+      && legacyReload.body.session.id === LEGACY_B, why(legacyReload));
+    const legacyRawAfter = await get('/api/trajectory/raw?index=1&session=' + LEGACY_B);
+    assert('and then its own record reads back',
+      legacyRawAfter.status === 200, why(legacyRawAfter));
+    assert('with the new message, not the old one',
+      JSON.stringify(legacyRawAfter.body && legacyRawAfter.body.raw ? legacyRawAfter.body.raw : '')
+        .includes('BRAVO LEGACY'), why(legacyRawAfter));
   } finally {
     // The server is released here and not at the end of the happy path: an assertion that
     // throws would otherwise leave it listening, and the guard would hang instead of
@@ -411,6 +515,21 @@ try {
   failures.push('the body of the session on screen is reachable by its id -- '
     + (error && error.message));
 }
+
+/* =====================================================================
+ * 7 — shape: the route records and resolves the session, too
+ * ===================================================================== */
+
+// These two are read out of the source rather than run, and they are HERE rather than in
+// section 5 on purpose: the behavioural section above is the owner of the promise they check,
+// so a mutation that breaks the route must be caught by the reader's observable behaviour and
+// only then by the shape. A shape check that fires first would report a mutation as caught
+// while the behaviour it is about was never asked.
+
+assert('the request resolves the session the family lookup is about, because a family is not a session',
+  startBody.includes("identityId: identity.id ?? ''"));
+assert('and the route records that session on the entry it stores',
+  (startBody.match(/trajectoryCache\.set\(cacheKey, trajectoryCacheFamily\(entry\.dir, filter\), identity\.id \?\? ''/g) || []).length === 1);
 
 if (failures.length) {
   console.error(`\n[trajectory-cache] ${failures.length} FAILED, ${pass} passed`);

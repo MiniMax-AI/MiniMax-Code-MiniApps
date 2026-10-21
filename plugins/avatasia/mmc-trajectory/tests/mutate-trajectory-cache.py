@@ -47,8 +47,8 @@ MUTATIONS = [
     (
         "the route names the whole key as the family, so every version is its own family",
         SERVER,
-        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
-        "trajectoryCache.set(cacheKey, cacheKey, { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
+        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), identity.id ?? '', { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
+        "trajectoryCache.set(cacheKey, cacheKey, identity.id ?? '', { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
     ),
     (
         "the family stops naming the slice, so one session's generations evict each other",
@@ -128,26 +128,29 @@ MUTATIONS = [
         "the raw read stops falling back to the family, so a record of the conversation on screen is unreachable",
         SERVER,
         "    // The key names the version and the family names the question — see `handleRaw` for why the\n"
-        "    // family is the fallback.\n"
-        "    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);",
+        "    // family is the fallback, and why the session is part of it.\n"
+        "    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family, ctx.identityId);",
         "    // The key names the version and the family names the question — see `handleRaw` for why the\n"
-        "    // family is the fallback.\n"
+        "    // family is the fallback, and why the session is part of it.\n"
         "    const cached = trajectoryCache.get(ctx.cacheKey);",
     ),
     (
         "the record read stops falling back to the family, so the four fields of a record are unreachable",
         SERVER,
-        "    // binding it resolved and the other did not, and that has nothing to do with the body.\n"
-        "    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);",
-        "    // binding it resolved and the other did not, and that has nothing to do with the body.\n"
+        "    // The session is part of the question: a directory can stop holding one session and start\n"
+        "    // holding another, and the old session's body is not an answer about the new one.\n"
+        "    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family, ctx.identityId);",
+        "    // The session is part of the question: a directory can stop holding one session and start\n"
+        "    // holding another, and the old session's body is not an answer about the new one.\n"
         "    const cached = trajectoryCache.get(ctx.cacheKey);",
     ),
     (
         "the cache stops finding an entry by its family, so the fallback finds nothing",
         SERVER,
-        "    getByFamily(family) {\n"
+        "    getByFamily(family, identityId) {\n"
         "      for (const [key, hit] of entries) {\n"
         "        if (hit.family !== family) continue;\n"
+        "        if (hit.identityId !== identityId) continue;\n"
         "        // Re-reading is the only signal that an entry is still hot, so it refreshes recency.\n"
         "        entries.delete(key);\n"
         "        entries.set(key, hit);\n"
@@ -163,12 +166,46 @@ MUTATIONS = [
         "reading by family stops refreshing recency, so the family being read is the first evicted",
         SERVER,
         "        if (hit.family !== family) continue;\n"
+        "        if (hit.identityId !== identityId) continue;\n"
         "        // Re-reading is the only signal that an entry is still hot, so it refreshes recency.\n"
         "        entries.delete(key);\n"
         "        entries.set(key, hit);\n"
         "        return hit.value;",
         "        if (hit.family !== family) continue;\n"
+        "        if (hit.identityId !== identityId) continue;\n"
         "        return hit.value;",
+    ),
+    # ---- the session the entry is about ------------------------------------------------
+    #
+    # The family names the QUESTION — the directory and the slice — and one family is asked by
+    # many readers, so the family cannot also carry the session. The entry remembers which
+    # session it is about, and the lookup names the session it wants.
+    #
+    # Three controls, because the promise has three pieces and a control that broke two of them
+    # would leave the third never asked whether it could fail: the lookup has to CHECK the
+    # session, the route has to RECORD it, and the request has to RESOLVE it.
+    #
+    # This is the defect the acceptance review found: a directory can stop holding one session
+    # and start holding another, and the family then finds the OLD session's entry — whose
+    # decoded messages are the old session's messages. A read for the new session answered with
+    # the old one's words.
+    (
+        "the family lookup stops checking the session the entry is about",
+        SERVER,
+        "        if (hit.identityId !== identityId) continue;\n",
+        "",
+    ),
+    (
+        "the route stops recording the session the entry is about",
+        SERVER,
+        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), identity.id ?? '', { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
+        "trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), '', { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });",
+    ),
+    (
+        "the request stops resolving the session it will look up",
+        SERVER,
+        "      identityId: identity.id ?? '',\n",
+        "      identityId: '',\n",
     ),
 ]
 
@@ -208,6 +245,7 @@ def main():
 
     originals = {path: path.read_bytes() for path in {m[1] for m in MUTATIONS}}
     missed = []
+    unnamed = []
     for label, path, old, new in MUTATIONS:
         text, newline = read_exact(path)
         if old not in text:
@@ -222,11 +260,18 @@ def main():
         if code == 0:
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
+            continue
+        # A probe that failed without naming a rule has not said WHICH rule broke, so it has not
+        # shown that the guard owns this mutation. It is weaker than "caught", and it is reported
+        # as its own thing rather than folded into the count of survivors.
+        first = next(
+            (line.strip() for line in output.splitlines() if line.strip().startswith("- ")),
+            None,
+        )
+        if first is None:
+            print(f"UNNAMED {label}: the probe failed without naming a rule")
+            unnamed.append(label)
         else:
-            first = next(
-                (line.strip() for line in output.splitlines() if line.strip().startswith("- ")),
-                "(no detail)",
-            )
             print(f"caught {label}\n         -> {first}")
 
     for path, data in originals.items():
@@ -235,10 +280,13 @@ def main():
             return 1
     print("all files restored byte-for-byte")
 
-    if missed:
-        print(f"\n{len(missed)} mutation(s) got through")
+    if missed or unnamed:
+        if missed:
+            print(f"\n{len(missed)} mutation(s) got through")
+        if unnamed:
+            print(f"{len(unnamed)} mutation(s) failed without naming a rule")
         return 1
-    print(f"\nall {len(MUTATIONS)} mutations caught")
+    print(f"\nall {len(MUTATIONS)} mutations caught, each by name")
     return 0
 
 
