@@ -3330,7 +3330,7 @@ export function createParsedRowsCache(budget) {
  * @param {number} limit
  */
 export function createTrajectoryCache(limit) {
-  /** @type {Map<string, { at: number, family: string, value: any }>} */
+  /** @type {Map<string, { at: number, family: string, identityId: string, value: any }>} */
   const entries = new Map();
   return {
     get size() { return entries.size; },
@@ -3347,7 +3347,7 @@ export function createTrajectoryCache(limit) {
       return hit.value;
     },
     /**
-     * The entry that answers for this family, if there is one.
+     * The entry that answers for this family AND for this session, if there is one.
      *
      * The key names a VERSION; the family names the QUESTION. Two requests that name the same
      * directory and the same slice ask the same question, and the answer to it is the entry this
@@ -3361,12 +3361,21 @@ export function createTrajectoryCache(limit) {
      * A family holds exactly one entry -- storing a newer one drops its predecessor -- so what is
      * found here is the current answer to that question.
      *
+     * The session is asked for as well, and that is not a second question: the family names the
+     * DIRECTORY and the slice, and a directory can stop holding one session and start holding
+     * another. The manifest beside the transcript is the authority on that, it can change under a
+     * cached walk, and the walk's own decision is not the last word. An entry built for the old
+     * session is therefore not an answer about the new one, however well the directory and the
+     * slice match -- and its decoded messages are the old session's messages.
+     *
      * @param {string} family
+     * @param {string} identityId the session the entry has to be about
      * @returns {any | null}
      */
-    getByFamily(family) {
+    getByFamily(family, identityId) {
       for (const [key, hit] of entries) {
         if (hit.family !== family) continue;
+        if (hit.identityId !== identityId) continue;
         // Re-reading is the only signal that an entry is still hot, so it refreshes recency.
         entries.delete(key);
         entries.set(key, hit);
@@ -3378,12 +3387,13 @@ export function createTrajectoryCache(limit) {
      * @param {string} key
      * @param {string} family the (session, slice) this answers for; a newer version of the same
      *   family replaces the older one instead of stacking beside it
+     * @param {string} identityId the session this body is about
      * @param {any} value
      */
-    set(key, family, value) {
+    set(key, family, identityId, value) {
       const previous = entries.get(key);
       if (previous !== undefined) entries.delete(key);
-      entries.set(key, { at: Date.now(), family, value });
+      entries.set(key, { at: Date.now(), family, identityId, value });
       for (const [existingKey, existing] of entries) {
         if (existingKey !== key && existing.family === family) entries.delete(existingKey);
       }
@@ -4024,6 +4034,9 @@ export async function start(context) {
       entry,
       binding,
       identity,
+      // The session this request is about, for the reader that has to tell one session's cached
+      // body from another's.
+      identityId: identity.id ?? '',
       generations,
       filter,
       cacheKey: trajectoryCacheKey(entry, identity, binding, filter),
@@ -4260,7 +4273,12 @@ export async function start(context) {
       truncated,
       redact,
       generations,
-      generation: shown.length === 1 ? shown[0].generation : null,
+      // The slice this body IS, which is the slice that was asked for. It used to be "the one
+      // generation the body happens to show", and that is a different question: a body built for
+      // the whole lineage and a body built for one generation have to be told apart, because the
+      // page compares a search answer against the body on screen before it lets that answer's
+      // indexes filter it.
+      generation: filter,
       orphans: lineage.orphans,
       identity: identityTable,
       openerByTurn: view.openerByTurn,
@@ -4319,7 +4337,7 @@ export async function start(context) {
     // same while it goes stale. Everything that decides whether the answer changed stays in the
     // key, so a newer version of one family replaces its predecessor instead of stacking beside it.
     // `decoded` is filled in by /raw, at most RAW_DECODE_CACHE_ENTRIES lines' worth.
-    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });
+    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), identity.id ?? '', { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });
     // Nothing below reads `rows` or `rowLocators`, and `payload` holds its own projections rather
     // than the rows, so this is where the object graph stops being reachable. A sealed generation's
     // rows are still held by the parsed-rows cache — that is the point of that cache — but the
@@ -4623,7 +4641,9 @@ export async function start(context) {
     // body, so the second one falls back to the family's entry instead of reporting that
     // nothing is cached: the two computed different keys because one of them carried the
     // binding it resolved and the other did not, and that has nothing to do with the body.
-    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);
+    // The session is part of the question: a directory can stop holding one session and start
+    // holding another, and the old session's body is not an answer about the new one.
+    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family, ctx.identityId);
     if (!cached) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;
@@ -4724,8 +4744,8 @@ export async function start(context) {
       return;
     }
     // The key names the version and the family names the question — see `handleRaw` for why the
-    // family is the fallback.
-    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);
+    // family is the fallback, and why the session is part of it.
+    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family, ctx.identityId);
     if (!cached) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;

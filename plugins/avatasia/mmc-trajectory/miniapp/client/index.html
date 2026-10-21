@@ -4056,6 +4056,28 @@
       }
 
       /**
+       * The slice of history the body on screen is, for a request that addresses a position
+       * inside it.
+       *
+       * A record index is a position within one body, and a body is one slice of one session's
+       * history. The reader's SELECTION and the body on screen are two different things: the
+       * reader can pick a generation, and the load of that generation can fail and leave the
+       * previous body on screen. A request built from the selection would then ask about a slice
+       * the page is not showing, and the answer's indexes would filter rows that are not there.
+       *
+       * So this reads the slice the payload says, which is the slice it was built for. The
+       * service sends it as the payload's own generation, and it means the same thing there as
+       * it does in a search answer: `null` is the whole lineage.
+       *
+       * @returns {number | null}
+       */
+      function displayedGeneration() {
+        var payload = state.payload;
+        var session = payload && payload.session ? payload.session : null;
+        return session && typeof session.generation === 'number' ? session.generation : null;
+      }
+
+      /**
        * The session list, on its own validator.
        *
        * `manual` is the refresh button asking for the truth, and it drops the validator the way
@@ -4302,10 +4324,13 @@
         // The search is about the body on screen, so it asks about THAT session — the same
         // question the raw and detail reads ask. Asking for the current session instead would
         // answer with another session's records, and their indexes would then filter these rows.
+        // The slice is asked about the same way: the reader's selection and the body on screen
+        // are two different things, and a selection whose load failed leaves the old body up.
         var session = displayedSessionParam();
+        var generation = displayedGeneration();
         var url = '/api/trajectory/search?session=' + session
           + '&q=' + encodeURIComponent(asked)
-          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));
+          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)));
 
         fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
           .then(function (response) {
@@ -4327,13 +4352,26 @@
             searchController = null;
             state.searchPending = false;
             // The answer has to be about the body on screen BEFORE its indexes may filter that
-            // body. The server names the session it answered for, so the two can be compared:
-            // if they differ, the hits describe another session's records, and installing them
-            // would report a miss for a row that matches and a hit for one that does not.
+            // body. The server names the session and the slice it answered for, so the two can
+            // be compared: if they differ, the hits describe another body's records, and
+            // installing them would report a miss for a row that matches and a hit for one that
+            // does not.
+            //
+            // The slice is compared against the body's own, not against the reader's selection:
+            // a selection whose load failed leaves the previous body on screen, and an answer
+            // about the selected slice would then filter rows that are not the ones on screen.
             var answered = body && body.session ? body.session : null;
             var displayed = state.payload && state.payload.session ? state.payload.session : null;
+            // The two slices are compared as the page reads them: a number names one generation and
+            // nothing names the whole lineage. So a body that does not carry the field at all and a
+            // body that carries the whole lineage are the same question, and only a real difference
+            // between two real generations is a mismatch.
+            var answeredSlice = answered && typeof answered.generation === 'number'
+              ? answered.generation : null;
+            var displayedSlice = displayed && typeof displayed.generation === 'number'
+              ? displayed.generation : null;
             if (!answered || !displayed || answered.id !== displayed.id
-              || answered.generation !== state.generation) {
+              || answeredSlice !== displayedSlice) {
               var mismatch = new Error('session_mismatch');
               mismatch.code = 'session_mismatch';
               throw mismatch;
@@ -8663,7 +8701,10 @@
         var payload = state.payload;
         var session = payload && payload.session ? payload.session : null;
         var sid = session && typeof session.id === 'string' ? session.id : '';
-        var gen = state.generation === null ? 'all' : String(state.generation);
+        // The slice the value belongs to is the slice the body on screen is, for the same
+        // reason the session is: a record index is a position inside one body, and the body on
+        // screen is not always the body the reader last selected.
+        var gen = displayedGeneration() === null ? 'all' : String(displayedGeneration());
         // The validator belongs in this key. A record index is only a position within one version
         // of one body: the same index in the next version of the session is a different message.
         // Without the tag, a body that changed since the raw was read kept being served from here
@@ -8674,8 +8715,9 @@
       function requestRaw(index) {
         var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))
           + '&session=' + displayedSessionParam();
-        if (state.generation !== null) {
-          url += '&generation=' + encodeURIComponent(String(state.generation));
+        var generation = displayedGeneration();
+        if (generation !== null) {
+          url += '&generation=' + encodeURIComponent(String(generation));
         }
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
@@ -8765,8 +8807,9 @@
       function requestDetail(index) {
         var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))
           + '&session=' + displayedSessionParam();
-        if (state.generation !== null) {
-          url += '&generation=' + encodeURIComponent(String(state.generation));
+        var generation = displayedGeneration();
+        if (generation !== null) {
+          url += '&generation=' + encodeURIComponent(String(generation));
         }
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
@@ -8986,6 +9029,11 @@
           updateHandoffButton();
           return;
         }
+        // The session is captured with the record, because the two reads below are asynchronous
+        // and the page can be showing another conversation by the time they answer. A label that
+        // names the session on screen at that moment would put one conversation's name on
+        // another conversation's message.
+        var session = state.payload ? state.payload.session : null;
         var record = entry.record;
         dom.handoffBtn.disabled = true;
         inspectorSay('正在读取原文…');
@@ -9006,7 +9054,7 @@
             : fetched.raw;
           var raw = truncateJson(rawSource, HANDOFF_RAW_LIMIT);
           var text = buildHandoffMarkdown(
-            state.payload ? state.payload.session : null,
+            session,
             entry.turn,
             record,
             raw.text,
