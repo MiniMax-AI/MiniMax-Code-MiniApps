@@ -229,7 +229,7 @@ test('reactions stay on the final bubble while message parts change, preserving 
   assert.equal(document.activeElement, document.querySelector('.reaction-trigger'));
 });
 
-test('a long reply folds its earlier bubbles away and keeps the newest three in the open', async () => {
+test('a long reply keeps every bubble in the open, one per recorded part', async () => {
   const parts = [];
   for (let index = 0; index < 12; index += 1) {
     parts.push({ type: 'text', text: `Step ${index}` }, { type: 'tool', name: 'read', state: 'done' });
@@ -237,62 +237,23 @@ test('a long reply folds its earlier bubbles away and keeps the newest three in 
   parts.push({ type: 'text', text: 'The answer' });
   const item = message('m-long-reply', 'The answer', { parts, userReactions: ['👍'], reactionsRevision: 1 });
   await reset([item]);
-  // The earlier bubbles keep their own shape; they move into the folded area.
-  const fold = document.querySelector('.bubble-fold');
-  assert.ok(fold, 'a reply with many parts must fold its earlier bubbles');
-  assert.equal(fold.open, false, 'the fold starts closed');
-  assert.match(fold.querySelector('.bubble-fold-closed').textContent, /10/);
-  assert.equal(fold.querySelectorAll('.bubble').length, 10);
-  // The newest three stay in the open, the answer last, with the reaction indicator on it.
+  // The bubbles stay the ones the official build draws, in the order it draws them.
+  assert.equal(document.querySelector('.bubble-fold'), null);
   const wrap = document.querySelector('article.msg .bubble-wrap');
   const open = [...wrap.children].filter((child) => child.classList.contains('bubble'));
-  assert.equal(open.length, 3);
-  assert.match(open[0].textContent, /Step 10/);
-  assert.match(open[1].textContent, /Step 11/);
-  assert.match(open[2].textContent, /The answer/);
-  assert.equal(open[2].querySelector('.reaction-chip').dataset.emoji, '👍');
-  // Opening the fold shows the same bubbles again; the reply around it does not move.
-  fold.open = true;
-  assert.equal(fold.querySelectorAll('.bubble').length, 10);
-  assert.equal(wrap.querySelectorAll('.bubble').length, 13);
+  assert.equal(open.length, 13);
+  assert.match(open[0].textContent, /Step 0/);
+  assert.match(open[12].textContent, /The answer/);
+  // The answer is the last bubble, so the reaction indicator sits on it.
+  assert.equal(open[12].querySelector('.reaction-chip').dataset.emoji, '👍');
 });
 
-test('a folded reply tells on hover what every bubble said, a short one stays as it was', async () => {
-  const parts = [];
-  for (let index = 0; index < 6; index += 1) parts.push({ type: 'text', text: `Step ${index}` });
-  await reset([message('m-hint-reply', 'Step 5', { parts })]);
-  // A title is the official way of telling more on hover: the task rows and the
-  // attachments use it too.
-  const fold = document.querySelector('.bubble-fold');
-  assert.ok(fold, 'six text parts must fold');
-  assert.equal(fold.querySelectorAll('.bubble').length, 3);
-  assert.equal(fold.querySelector('.bubble').title, 'Step 0');
-  assert.match(fold.querySelector('.bubble-fold-summary').title, /3/);
-  const open = [...document.querySelectorAll('article.msg .bubble-wrap > .bubble')];
-  assert.equal(open.length, 3);
-  assert.equal(open[0].title, 'Step 3');
-  // A short reply keeps the official markup: no title added to its bubbles.
-  await reset([message('m-no-hint', 'Second', { parts: [{ type: 'text', text: 'First' }, { type: 'text', text: 'Second' }] })]);
-  assert.equal(document.querySelector('.bubble-fold'), null);
-  assert.equal(document.querySelector('article.msg .bubble-wrap > .bubble').title, '');
-});
-
-test('a short reply keeps its bubbles in the open, without a fold', async () => {
-  const item = message('m-short-reply', 'Second', {
-    parts: [{ type: 'text', text: 'First' }, { type: 'text', text: 'Second' }],
-  });
-  await reset([item]);
-  assert.equal(document.querySelector('.bubble-fold'), null);
-  assert.equal(document.querySelectorAll('article.msg .bubble').length, 2);
-});
-
-test('the folded area keeps a fixed height and scrolls inside itself', async () => {
+test('the bubbles of one reply keep a small gap between them', async () => {
   const css = await readFile(new URL('../miniapp/client/app.css', import.meta.url), 'utf8');
-  const rule = css.match(/\n\.bubble-fold-body \{[^}]*\}/)?.[0] ?? '';
-  assert.ok(rule, 'the folded area needs a rule of its own');
-  // The point of the fold: the bubbles inside it scroll, the feed around it does not grow.
-  assert.match(rule, /max-height: min\(320px, 40vh\)/);
-  assert.match(rule, /overflow-y: auto/);
+  const rule = css.match(/\n\.bubble-wrap \{[^}]*\}/)?.[0] ?? '';
+  assert.ok(rule, 'the column of bubbles needs a rule of its own');
+  // Without a gap the bubbles of one reply read as one block of text.
+  assert.match(rule, /gap: 4px/);
 });
 
 test('a multi-line reply keeps its actions below the text and its reaction indicator above them', async () => {
