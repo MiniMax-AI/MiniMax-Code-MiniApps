@@ -4065,10 +4065,14 @@
             // Nothing moved since the copy already on screen. Keep every piece of state and
             // re-render nothing: the picker, its 「刚刚」 labels and its counts are all still true.
             if (response.status === 304) {
+              // The validator is written by the one writer below, and that runs after the
+              // sequence gate. A request that has been replaced must write nothing at all: a
+              // 304 that arrived late used to put its own older tag over the newer one, and
+              // the list on screen and the tag that describes it were then two different
+              // things -- so the next poll asked the server about the old list and kept the
+              // new one.
               var fresh = response.headers.get('etag');
-              if (fresh) state.sessionsEtag = fresh;
-              state.sessionsEtagFor = key;
-              return { changed: false, body: null, etag: state.sessionsEtag };
+              return { changed: false, body: null, etag: fresh || state.sessionsEtag };
             }
             if (!response.ok) {
               // The status is what tells a dropped connection apart from a server that answered

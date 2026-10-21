@@ -1078,37 +1078,31 @@ export async function readSessionTitles(home, sessionIds) {
     for (const id of sessionIds) {
       const row = stmt.get(id);
       if (!row) continue;
+      const parent = typeof row.parent_session_id === 'string' && row.parent_session_id !== ''
+        ? row.parent_session_id
+        : null;
+      // The parent column is a foreign key into this very table: it names the session that
+      // spawned this one. A value that names no session here is not a parent, and publishing it
+      // would put a dangling link on the wire -- and the page groups its runs by that value, so
+      // a name that is not a session's id is a name the page has no business keying a group by.
+      //
+      // The lookup is the statement that read this very row, so there is no second query that
+      // could fail to prepare, and therefore no path on which a parent is published without
+      // having been looked up: a database written before child sessions existed has no
+      // `parent_session_id` column, so every parent above is null and there is nothing to
+      // look up at all.
+      //
+      // A lookup that throws takes this row out of the map along with everything else, and a
+      // row that is not in the map has no parent either. So the promise holds on every path:
+      // a parent that is published names a session.
+      const parentNames = parent ? Boolean(stmt.get(parent)) : false;
       result.set(id, {
         title: typeof row.title === 'string' && row.title.trim() ? row.title.trim() : null,
         kind: typeof row.session_kind === 'string' ? row.session_kind : null,
-        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''
-          ? row.parent_session_id
-          : null,
+        parent: parentNames ? parent : null,
         purpose: typeof row.purpose === 'string' && row.purpose.trim() ? row.purpose.trim() : null,
         workspace: typeof row.workspace_dir === 'string' && row.workspace_dir.trim() ? row.workspace_dir.trim() : null,
       });
-    }
-    // The parent column is a foreign key into this very table: it names the session that
-    // spawned this one. A value that names no session here is not a parent, and publishing it
-    // would put a dangling link on the wire -- and the page groups its runs by that value, so
-    // a name that is not a session's id is a name the page has no business keying a group by.
-    //
-    // One indexed lookup per distinct parent, on a table that is already open. A database
-    // written before child sessions existed has no `parent_session_id` column and so no parent
-    // to check: every value above is null and this is skipped.
-    const parentIds = new Set();
-    for (const meta of result.values()) if (meta.parent) parentIds.add(meta.parent);
-    if (parentIds.size > 0) {
-      try {
-        const lookup = db.prepare('select session_id from local_runtime_sessions where session_id = ?');
-        for (const parentId of parentIds) {
-          if (lookup.get(parentId)) continue;
-          for (const meta of result.values()) if (meta.parent === parentId) meta.parent = null;
-        }
-      } catch {
-        // The check could not be made. Publishing the parents as they are is what this did
-        // before, and the page is written to survive a parent it does not recognise.
-      }
     }
   } catch {
     // A title is a nicety; never let it fail the list.
@@ -1243,10 +1237,10 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
 /**
  * The visible set the picker shows, and the order it is shown in.
  *
- * Two sets live here and they are not the same set. `entries` is what the walk found: the most
- * recent sessions, mtime-descending, and it is also the answer 'latest' falls back to when the
- * runtime database is unavailable -- so nothing in here reorders it. The visible set is what the
- * READER may pick from, and it is allowed to differ.
+ * Two sets live here and they are not the same set. `entries` is what the caller handed over:
+ * the sessions the visible set is drawn from, mtime-descending. The list route hands over the
+ * walk's conversations -- the runs were split off before this was called, so a run is never in
+ * here. The visible set is what the READER may pick from, and it is allowed to differ.
  *
  * The order is: the conversation the runtime database reports as current, then the sessions of
  * that conversation's workspace, then everything else -- each group mtime-descending. "The
