@@ -18,13 +18,9 @@ We believe the Agent is evolving into the next-generation operating system (OS).
 
 At the same time, real productivity in every industry remains rooted in highly specialized work environments. A conversational interface (Chat UI) alone cannot replace the precise control and rich views of professional tools. Professional workflows of the future should not ask users to leave their workbench to accommodate AI. Instead, professional environments and AI should evolve in deep symbiosis, with AI internalized as a foundational, atomic capability available on demand—like power and water, compute, and storage. By building professional-grade MiniApps that grow on top of the Agent OS, we aim to connect the specialized interfaces of vertical domains with the AI-native compute beneath them, and to reshape how every industry works.
 
-> *Self-drive Route Planner case: an Agent-assisted weekend trip around Shanghai, with the final itinerary and synchronized route workspace visible together.* This case shows the kind of professional workspace a MiniApp can provide: the Agent conversation and complete itinerary are on the left, while the route summary, interactive map, and editable trip workspace are on the right.
+> *CadQuery Viewer case: one prompt asks the Agent for a 3D model of the MiniMax octopus, and you point at what to change right on the model.* The Agent looks up the official mascot for reference, writes a parametric CadQuery script, runs and fixes it, and the build appears in the Viewer on the right. To change something, click the spot on the model (here, the mouth), type "make the mouth red", and send it to the conversation—the Agent gets the exact part and coordinates, and the Viewer switches to the new version once it is done.
 
-![Self-drive Route Planner case study showing Agent collaboration and the MiniApp workspace](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
-
-> *CadQuery Viewer case: one prompt asks the Agent to design a 3D-printable MiniMax octopus figure, and the model takes shape live beside the conversation.* The Agent looks up the official mascot for reference, writes a parametric CadQuery script, runs and fixes it, and pushes each build to the Viewer on the right. You can orbit, switch views, and section the model at any point, then get print settings and a table of tunable parameters—pick what to change and let the Agent rebuild.
-
-![CadQuery Viewer case study: the Agent designs a MiniMax octopus figure while the model previews live in the Viewer](plugins/hanzijie/cq-viewer/docs/case-study.gif)
+![CadQuery Viewer case study: the Agent builds a MiniMax octopus model, then recolours the mouth the user marked on the model](plugins/hanzijie/cq-viewer/docs/case-study.gif)
 
 **MiniApp's product stance: keep people involved in collaboration and decisions (Human-in-the-Loop).**
 

@@ -18,14 +18,9 @@
 
 与此同时，各行各业的真实生产力依然扎根于高度专业化的工作环境中。单纯的“对话式交互（Chat UI）”无法替代专业工具的精准控制与复杂视图。未来的专业工作流，不应是让用户离开工作台去迁就 AI，而是让专业工作环境与 AI 深度共生——将 AI 内化为像水电、计算、存储一样可随时调用的底层原子能力。通过构建生长在 Agent OS 之上的专业级 MiniApps，我们致力于连接垂直领域的专业交互界面与底层的 AI 原生算力，重塑各行各业的工作方式。
 
-> *自驾规划案例：在 Agent 协助下规划上海周边周末自驾，并同时查看最终行程和同步后的路线工作台。* 这个案例展示了 MiniApp 可以提供的专业工作界面：左侧是 Agent 对话与完整行程，右侧是路线摘要、交互式地图和可编辑的行程工作台。
+> *CadQuery Viewer 案例：一句话让 Agent 生成 MiniMax 小章鱼的 3D 模型，想改哪里就直接在模型上指出来。* Agent 先查官方形象作参考，再编写 CadQuery 参数化脚本、自己运行并修正问题，构建结果直接显示在右侧的 Viewer 里。要改的时候，在模型上点一下标出位置（比如嘴巴），写一句“嘴巴染成红色”发回对话——Agent 拿到准确的零件和坐标，改完后 Viewer 自动换成新版本。
 
-![自驾规划案例：Agent 协作与 MiniApp 工作台](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
-
-> *CadQuery Viewer 案例：一句话让 Agent 设计一个可 3D 打印的 MiniMax 小章鱼玩偶，模型在对话旁实时成形。* Agent 先查官方形象作参考，再编写 CadQuery 参数化脚本、自己运行并修正问题，每次构建都推送到右侧的 Viewer。你可以随时旋转、切换视角、剖切检查模型，最后拿到打印建议和一张可调参数表——决定改哪一项，再让 Agent 重新出图。
-
-![CadQuery Viewer 案例：Agent 设计 MiniMax 小章鱼玩偶，模型在 Viewer 中实时预览](plugins/hanzijie/cq-viewer/docs/case-study.gif)
-
+![CadQuery Viewer 案例：Agent 生成 MiniMax 小章鱼模型，用户在模型上标注嘴巴并让 Agent 改成红色](plugins/hanzijie/cq-viewer/docs/case-study.gif)
 
 **MiniApp 的产品立场：让人始终参与协作与决策（Human-in-the-Loop）。**
 
