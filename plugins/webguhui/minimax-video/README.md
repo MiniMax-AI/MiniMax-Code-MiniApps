@@ -6,7 +6,7 @@ A local video editing workspace for MiniMax Code, adapted from [OpenChatCut](htt
 
 ## Install and use
 
-Requires MiniMax Code **3.1.2 or later**. Copy this entire `openchatcut` directory, including `.minimax-plugin`, into `<dataDir>/plugins/openchatcut/`, then restart the client and ask it to open **MiniMax Video**. The ID remains `openchatcut` to preserve existing installations and project data. Do not install a second copy under another name.
+Requires MiniMax Code **3.1.2 or later**. Copy this entire `minimax-video` directory, including `.minimax-plugin`, into `<dataDir>/plugins/minimax-video/`, then restart the client and ask it to open **MiniMax Video**. The plugin ID is `minimax-video`. This is a new installation identity; existing `openchatcut` projects are not automatically migrated. Keep the previous installation and its data until your projects have been transferred and verified.
 
 On first launch, choose China mainland or global download sources. Media dependencies are downloaded for the current platform and verified against pinned checksums. You do not need to install Node, FFmpeg, or npm yourself. Open **Settings & About** to change download sources later. Cached downloads are reused; missing resources need network access.
 

@@ -6,7 +6,7 @@
 
 ## 安装与上手
 
-需要 MiniMax Code 3.1.2 或更新版本。把本目录连同隐藏的 `.minimax-plugin` 复制到 `<dataDir>/plugins/openchatcut/`，重启客户端后让 Agent 打开 MiniMax Video。插件 ID 保留为 `openchatcut`，便于继续使用旧工程；不要同时安装另一份。
+需要 MiniMax Code 3.1.2 或更新版本。把本目录连同隐藏的 `.minimax-plugin` 复制到 `<dataDir>/plugins/minimax-video/`，重启客户端后让 Agent 打开 MiniMax Video。插件 ID 为 `minimax-video`。宿主将其视为新插件，旧 `openchatcut` 工程不会自动迁移。请保留旧插件和数据，完成工程转移并确认可用后再处理旧安装。
 
 首次启动选择中国大陆或海外下载源，自动安装经过摘要校验的媒体依赖，无需手动安装 Node、npm 或 FFmpeg。后续可在“设置与关于”切换来源。已有缓存可复用，未下载的资源需要联网。
 
