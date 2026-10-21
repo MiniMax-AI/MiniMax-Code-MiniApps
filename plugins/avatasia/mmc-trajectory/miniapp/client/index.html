@@ -3917,6 +3917,9 @@
       var dom = {};
       var inflight = null;
       var sessionsInflight = null;
+      // The sequence that decides which of several list requests is allowed to answer. The
+      // controller above says which request to stop; this says which answer may write.
+      var sessionsSeq = 0;
       var sessionPollTimer = null;
       var trajectoryPollTimer = null;
       var searchTimer = null;
@@ -4047,6 +4050,7 @@
         if (sessionsInflight) sessionsInflight.abort();
         var controller = new AbortController();
         sessionsInflight = controller;
+        var seq = (sessionsSeq += 1);
         var key = 'limit=20';
         var query = '?' + key;
         var headers = { Accept: 'application/json' };
@@ -4076,14 +4080,26 @@
 
             return response
               .json()
-              .catch(function () { return null; })
+              .catch(function (error) {
+                // An aborted request is not a broken answer. Swallowing it here reported a list
+                // that failed for a request that was simply replaced by a newer one.
+                if (error && error.name === 'AbortError') throw error;
+                return null;
+              })
               .then(function (body) {
                 if (!body || typeof body !== 'object') throw new Error('api');
                 return { changed: true, body: body, etag: response.headers.get('etag') || '' };
               });
           })
           .then(function (result) {
-            sessionsInflight = null;
+            // The controller this request installed is the only one it may clear. A request that
+            // has been replaced must not take the next request's controller with it: that is how
+            // the next request stopped being able to abort this one, and an older answer ended
+            // up replacing a newer list.
+            if (sessionsInflight === controller) sessionsInflight = null;
+            // A late answer must not win. Every request carries a sequence number, and only the
+            // newest one may write -- the same rule the trajectory poll follows.
+            if (seq !== sessionsSeq) return false;
             // One writer for the list's validator, on the one path that carried a body.
             state.sessionsEtag = result.etag;
             state.sessionsEtagFor = key;
@@ -4108,7 +4124,10 @@
             return true;
           })
           .catch(function (error) {
-            sessionsInflight = null;
+            if (sessionsInflight === controller) sessionsInflight = null;
+            // A request that has been replaced says nothing about the list on screen: the
+            // request that replaced it is the one that gets to report a failure.
+            if (seq !== sessionsSeq) return false;
             if (error && error.name === 'AbortError') return false;
             noteFresh('sessions', false, freshnessReason(error));
             renderBars();

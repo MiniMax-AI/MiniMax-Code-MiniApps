@@ -1237,9 +1237,16 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
  * updated), and `resolveCurrentConversation` reports the ambiguity when two conversations hold
  * a lease at once rather than picking one silently.
  *
+ * The current conversation is promoted only when it IS a conversation. A session with a
+ * parent is a run, and the layer is decided by that column and by nothing else -- so a run
+ * that wins the current-conversation resolution is not promoted back into the conversation
+ * layer. It is already in the run layer, where it belongs, and promoting it here would put
+ * one session in both controls at once: the conversation pick would offer a run, and the
+ * run pick would offer the same run again.
+ *
  * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
  * @param {{ sessionId: string, relativeDir?: string | null } | null} current
- * @param {Map<string, { workspace?: string | null }>} titles
+ * @param {Map<string, { workspace?: string | null, parent?: string | null }>} titles
  * @param {string} sessionsRoot
  * @param {number} limit
  * @param {() => void} [onReject]
@@ -1253,14 +1260,25 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
     return entries.slice(0, limit);
   }
   const currentId = current.sessionId;
-  let currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;
-  if (!currentEntry && current.relativeDir) {
-    // Not in the recent window -- build the entry straight from the recorded path. The session it
-    // is supposed to be is named, so a path that turns out to be a different session's directory
-    // is refused instead of being shown under this id.
-    const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir, currentId);
-    if (built.rejected && typeof onReject === 'function') onReject();
-    currentEntry = built.entry;
+  // The layer is decided by the parent column and by nothing else, and the picker has two of
+  // them. A session that has a parent is a run, so a run that wins the current-conversation
+  // resolution is not promoted into the conversation layer. Promoting it would put one
+  // session in both controls at once.
+  const currentMeta = titles instanceof Map ? titles.get(currentId) : null;
+  const currentParent = currentMeta && typeof currentMeta.parent === 'string' && currentMeta.parent
+    ? currentMeta.parent
+    : null;
+  let currentEntry = null;
+  if (!currentParent) {
+    currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;
+    if (!currentEntry && current.relativeDir) {
+      // Not in the recent window -- build the entry straight from the recorded path. The session it
+      // is supposed to be is named, so a path that turns out to be a different session's directory
+      // is refused instead of being shown under this id.
+      const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir, currentId);
+      if (built.rejected && typeof onReject === 'function') onReject();
+      currentEntry = built.entry;
+    }
   }
   const currentWorkspace = workspaceOfSession(titles, currentId);
   const rest = entries.filter((entry) => entry !== currentEntry);
