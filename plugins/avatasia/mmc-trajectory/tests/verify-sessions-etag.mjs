@@ -95,6 +95,26 @@ const reid = [
 assert('a changed published session id moves the tag',
   sessionsValidator(visible, noTitles, 20) !== sessionsValidator(reid, noTitles, 20));
 
+// The published id of a SUB-AGENT. The main session's id has its own assertion above, and the
+// sub-agent's tuple is a different tuple: a rule that holds for one of them does not hold for
+// the other unless it is asked of both. Removing the sub-agent's id from its tuple left every
+// verifier green -- the tag then answered 304 for a body that named a session the reader was no
+// longer looking at, and no assertion noticed.
+//
+// The two child lists below differ in the published id and in nothing else: the same directory,
+// the same size, the same mtime, and no runtime facts for either id.
+const childIdA = 'mvs_0000000000000000000000000000eeee';
+const childIdB = 'mvs_0000000000000000000000000000ffff';
+const childWithIdA = [
+  { dir: dirFor(childIdA), sizeBytes: 512, lastActiveAt: 1700000002, sessionId: childIdA },
+];
+const childWithIdB = [
+  { dir: dirFor(childIdA), sizeBytes: 512, lastActiveAt: 1700000002, sessionId: childIdB },
+];
+assert('a changed published sub-agent id moves the tag',
+  sessionsValidator(visible, noTitles, 20, childWithIdA)
+  !== sessionsValidator(visible, noTitles, 20, childWithIdB));
+
 // The rename. Both halves of a row's metadata, because the picker renders both — and each has to
 // be isolated, or the assertion passes on the other field and the one it names is untested. These
 // two maps differ in the title and in nothing else.

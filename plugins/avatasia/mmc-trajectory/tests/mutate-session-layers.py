@@ -518,6 +518,50 @@ MUTATIONS = [
        "    sessionParentId: value.sessionParentId ?? null,\n"
        "    sessionWorkspace: value.sessionWorkspace ?? null,")],
      "and neither does the workspace path"),
+
+    # ---- the trajectory poll: the same rule the list follows, in a second implementation ----
+    #
+    # The list's validator is written by one writer, after the sequence gate. The trajectory poll
+    # is a second implementation of that promise and it wrote its validator before the gate, so a
+    # 304 that arrived late put its own older tag over the newer one: the body on screen and the
+    # tag that described it were two different things, and the next poll asked the server about
+    # the old body and kept the new one on screen.
+    ("a late 304 writes the trajectory's own validator over the newer one",
+     [("              var fresh = response.headers.get('etag');\n"
+       "              return { changed: false, body: null, etag: fresh || state.etag };",
+       "              var fresh = response.headers.get('etag');\n"
+       "              if (fresh) state.etag = fresh;\n"
+       "              state.etagFor = cacheKey;\n"
+       "              return { changed: false, body: null, etag: state.etag };")],
+     "a replaced trajectory request writes no validator",
+     CLIENT),
+
+    # ---- the secondary reads: a record index is a position inside ONE body ----
+    #
+    # The raw read and the detail read both address a position inside the body on screen, so they
+    # have to ask about the session that body was built for. The client's own cache key already
+    # says so -- `rawCacheKey` names the displayed session -- but the request used to ask for
+    # `latest`, which is "whichever session is current now". The runtime can make another session
+    # current while the page still shows this one, and the page then showed that other session's
+    # words under this session's record.
+    #
+    # They are TWO controls, not one: the raw read and the detail read are two requests, and a
+    # control that changed both would leave the detail assertion never asked whether it could fail.
+    ("a raw read stops asking for the session on screen",
+     [("        var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))\n"
+       "          + '&session=' + displayedSessionParam();",
+       "        var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))\n"
+       "          + '&session=' + sessionParam();")],
+     "a raw read asks for the session on screen",
+     CLIENT),
+
+    ("a detail read stops asking for the session on screen",
+     [("        var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))\n"
+       "          + '&session=' + displayedSessionParam();",
+       "        var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))\n"
+       "          + '&session=' + sessionParam();")],
+     "a detail read asks for the session on screen",
+     CLIENT),
 ]
 
 ORIGINALS = {

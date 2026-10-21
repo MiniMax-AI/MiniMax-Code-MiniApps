@@ -92,6 +92,15 @@ MUTATIONS = [
        "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n")],
      "a changed published session id moves the tag", SERVER),
 
+    # The sub-agent's tuple is a different tuple, so the rule has to be asked of it separately.
+    # A material without the sub-agent's published id answers 304 for a body that names a session
+    # the reader is no longer looking at, and the body the service reuses keeps publishing the old
+    # one until some other fact happens to move.
+    ("the published sub-agent id stops being part of the material",
+     [("    parts.push(JSON.stringify([entry.sessionId, parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));\n",
+       "    parts.push(JSON.stringify([parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));\n")],
+     "a changed published sub-agent id moves the tag", SERVER),
+
     # ---- the 304 that is not earned, because it is decided too late ----
     #
     # Correct answer, wrong bill: every descriptor is built and then thrown away. The validator

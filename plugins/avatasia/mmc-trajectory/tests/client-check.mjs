@@ -1641,6 +1641,142 @@ if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
     requests[6].headers['If-None-Match'], undefined);
 }
 
+// The trajectory poll is the second implementation of the same rule the session list follows,
+// and it used to write the validator BEFORE its sequence gate. A 304 that arrived late then
+// put its own older tag over the newer one, so the body on screen and the tag that described
+// it were two different things: the next poll asked the server about the old body and kept the
+// new one on screen.
+//
+// The counterexample, driven against the shipped function: the page holds A, two polls are in
+// flight, the newer one answers first with B and B's tag, and the older one answers with a 304
+// carrying A's tag. The old tag must not survive that.
+const fetchTrajectorySrc = fnSource('function fetchTrajectory(manual)');
+const sessionParamSrc = fnSource('function sessionParam()');
+const trajInflightDecl = /var inflight = null;/.exec(html);
+const trajSeqDecl = /var refreshSeq = 0;/.exec(html);
+if (!fetchTrajectorySrc || !sessionParamSrc || !trajInflightDecl || !trajSeqDecl) {
+  failures.push('trajectory poll: could not lift fetchTrajectory and the state it keeps');
+} else {
+  vm.runInContext(
+    trajInflightDecl[0] + '\n' + trajSeqDecl[0] + '\n' + sessionParamSrc + '\n' + fetchTrajectorySrc,
+    sandbox
+  );
+
+  const trajRequests = [];
+  sandbox.fetch = function (url, options) {
+    const entry = {
+      url: url,
+      signal: options && options.signal,
+      headers: (options && options.headers) || {},
+      settle: null
+    };
+    entry.promise = new Promise((resolve) => { entry.settle = resolve; });
+    trajRequests.push(entry);
+    return entry.promise;
+  };
+  sandbox.AbortController = AbortController;
+  sandbox.state = {
+    payload: null, generation: null, etag: '', etagFor: '', since: 0, sinceFor: '',
+    loading: false, followLatest: true, sessionId: '', hostSessionId: ''
+  };
+  sandbox.renderLoading = () => {};
+  sandbox.noteFresh = () => false;
+  sandbox.render = () => {};
+  const applied = [];
+  sandbox.applyPayload = function (body) { applied.push(body); };
+
+  const trajAnswer = (entry, body, etag) => entry.settle({
+    status: 200,
+    ok: true,
+    headers: { get: (name) => (name === 'etag' ? (etag || '') : '') },
+    json: () => Promise.resolve(body)
+  });
+  const trajNotModified = (entry, etag) => entry.settle({
+    status: 304,
+    ok: false,
+    headers: { get: (name) => (name === 'etag' ? (etag || '') : '') }
+  });
+
+  const older = sandbox.fetchTrajectory(false);
+  const newer = sandbox.fetchTrajectory(false);
+  check('the second poll stops the first', trajRequests[0].signal.aborted, true);
+  trajAnswer(trajRequests[1], { session: { id: 'mvs_b' } }, '"tag-b"');
+  await newer;
+  check('the newer body is the one on screen', applied.map((b) => b.session.id), ['mvs_b']);
+  check('and the validator describes it', sandbox.state.etag, '"tag-b"');
+
+  // The older answer arrives late and carries the older tag.
+  trajNotModified(trajRequests[0], '"tag-a"');
+  await older;
+  check('a replaced trajectory request writes no validator', sandbox.state.etag, '"tag-b"');
+  check('and it leaves the body on screen alone',
+    applied.map((b) => b.session.id), ['mvs_b']);
+
+  // And the poll after it asks the server about the body that is on screen.
+  sandbox.fetchTrajectory(false);
+  check('the next poll carries the validator of the body on screen',
+    trajRequests[2].headers['If-None-Match'], '"tag-b"');
+
+  // The same rule for a late 200: a replaced request must not put its body on screen either.
+  const lateOld = sandbox.fetchTrajectory(false);
+  const lateNew = sandbox.fetchTrajectory(false);
+  trajAnswer(trajRequests[4], { session: { id: 'mvs_c' } }, '"tag-c"');
+  await lateNew;
+  trajAnswer(trajRequests[3], { session: { id: 'mvs_a' } }, '"tag-a"');
+  await lateOld;
+  check('a replaced trajectory request writes no body either',
+    applied.map((b) => b.session.id), ['mvs_b', 'mvs_c']);
+  check('and the validator is still the newer one', sandbox.state.etag, '"tag-c"');
+}
+
+// A record index is a position within ONE body, so a read that carries that index has to ask
+// about the session that body was built for. The client already says so in its own cache key —
+// `rawCacheKey` names the displayed session — but the request used to ask for `latest`, which
+// is "whichever session is current now" and not necessarily the one on screen. The runtime can
+// make another session current while the page still shows this one, and the page then showed
+// that other session's words under this session's record.
+const requestRawSrc = fnSource('function requestRaw(index)');
+const requestDetailSrc = fnSource('function requestDetail(index)');
+const displayedSessionSrc = fnSource('function displayedSessionParam()');
+if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc) {
+  failures.push('secondary reads: could not lift requestRaw, requestDetail and the session they ask for');
+} else {
+  vm.runInContext(displayedSessionSrc + '\n' + requestRawSrc + '\n' + requestDetailSrc, sandbox);
+
+  const secondary = [];
+  sandbox.fetch = function (url) {
+    secondary.push(url);
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ raw: 'ALPHA BODY', index: 1, text: 'ALPHA BODY' })
+    });
+  };
+  // The page is following the newest conversation, and it is showing A. The runtime may already
+  // have made B current — the page does not know that, and it must not care: A is on screen.
+  sandbox.state = {
+    payload: { session: { id: 'mvs_displayed' } },
+    generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
+  };
+  await sandbox.requestRaw(1);
+  await sandbox.requestDetail(1);
+  check('a raw read asks for the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(secondary[0]), true);
+  check('and it does not ask for whatever is current now',
+    /[?&]session=latest(&|$)/.test(secondary[0]), false);
+  check('a detail read asks for the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(secondary[1]), true);
+  check('and it does not ask for whatever is current now',
+    /[?&]session=latest(&|$)/.test(secondary[1]), false);
+
+  // With nothing on screen there is no session to name, and the read falls back to the session
+  // parameter rather than sending an empty one.
+  sandbox.state = { payload: null, generation: null, etag: '', followLatest: true, sessionId: '', hostSessionId: '' };
+  await sandbox.requestRaw(1);
+  check('with no body on screen the read falls back to the current session',
+    /[?&]session=latest(&|$)/.test(secondary[2]), true);
+}
+
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));
