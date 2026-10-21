@@ -17,6 +17,10 @@ The rules the mutations below take back, one at a time:
   * a main session's runs are all of them -- the list is not a window;
   * they are ordered by when each one last ran, most recently first;
   * the layer is decided by `parent_session_id` and by nothing else;
+  * a parent that names no session is not a parent, so it is not published and the run it was
+    on is a conversation;
+  * the page groups its runs into a map with no prototype, so a parent id that names an
+    inherited object property cannot break the grouping;
   * the pool is the whole walk, not the thirty most recent sessions;
   * the runs of a conversation that is NOT on the page travel too, because the pool is the whole
     walk and a conversation that has aged out of the twenty still has runs to offer;
@@ -124,6 +128,16 @@ MUTATIONS = [
        "  const currentParent = null;")],
      "a run that wins the current-conversation resolution is not in the conversation list"),
 
+    # The parent that names nothing. `parent_session_id` is a foreign key into the runtime
+    # database's own session table; a value that names no session there is not a parent, and
+    # the page groups its runs by that value -- so publishing it puts a name on the wire that
+    # no conversation in the list can answer to.
+    ("a parent that names no session is published as a parent anyway",
+     [("          if (lookup.get(parentId)) continue;\n"
+       "          for (const meta of result.values()) if (meta.parent === parentId) meta.parent = null;\n",
+       "          if (lookup.get(parentId)) continue;\n")],
+     "a run whose parent names no session is not published as a run"),
+
     # ---- the page ----
     #
     # The two picks. The conversation pick holds conversations; the run pick holds the runs of
@@ -199,6 +213,16 @@ MUTATIONS = [
      [("          if (child && child.id === id && child.sessionParentId) return child.sessionParentId;",
        "          if (child && child.id === id && child.sessionParentId) return id;")],
      "the owner of a run is the conversation it hangs off",
+     CLIENT),
+
+    # The map the runs are grouped into. A plain object inherits names like '__proto__' and
+    # 'constructor': they are truthy and they are not arrays, so a plain object reads one of
+    # them as a group and then throws on it -- and the picker stops updating after a list
+    # response that was perfectly fine.
+    ("the runs are grouped into a plain object",
+     [("        var grouped = Object.create(null);",
+       "        var grouped = {};")],
+     "a parent id that names an inherited object property does not break the grouping",
      CLIENT),
 
     # The press. A promise about a press is not kept by a row that merely carries the right id:

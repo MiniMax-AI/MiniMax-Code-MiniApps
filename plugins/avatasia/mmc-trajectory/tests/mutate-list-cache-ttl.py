@@ -197,6 +197,16 @@ MUTATIONS = [
      [("    sessionParentId: value.sessionParentId ?? null,", "")],
      "the field survives the strip, with null as the floor"),
 
+    # The parent column is a foreign key into the runtime database's own session table, and the
+    # page groups its runs by that name -- so a value that names no session there is a name the
+    # list must not publish. No regex over the source can catch this one: the query ran, it
+    # found nothing, and the only thing that shows it is a database built to have that hole.
+    ("a parent that names no session is published as a parent anyway",
+     [("          if (lookup.get(parentId)) continue;\n"
+       "          for (const meta of result.values()) if (meta.parent === parentId) meta.parent = null;\n",
+       "          if (lookup.get(parentId)) continue;\n")],
+     "a parent that names no session is not published as a parent"),
+
     # The direction that looks right and is not: the parent field is read, but not as the key
     # the rows are grouped under. Every conversation then hangs the same sub-agents, and the run
     # pick of every conversation lists the same thirteen of them -- so a reader picks a run that

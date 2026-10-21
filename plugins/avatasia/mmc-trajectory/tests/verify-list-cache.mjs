@@ -284,11 +284,23 @@ const { DatabaseSync } = await import('node:sqlite');
 // with an unsupported scheme. The module has to be asked for by its file: URL.
 const { readSessionTitles, sessionTagFor } = await import(pathToFileURL(SERVER).href);
 
+const CHILD_ID = 'mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const PARENT_ID = 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
 /**
  * One runtime database, with the optional columns the caller asks for.
+ *
+ * Two rows, and the order they are written in is the point. A run names the conversation it was
+ * spawned from, and the runtime writes that conversation first -- so a database in which a run
+ * names a session that is not there is a database the runtime cannot write. It is a separate
+ * fixture below, because it is the one case where the parent column says something the service
+ * has to refuse.
+ *
  * @param {readonly string[]} extraColumns
+ * @param {{ parentExists?: boolean }} [options]
  */
-const runtimeDb = (extraColumns) => {
+const runtimeDb = (extraColumns, options) => {
+  const opts = options || {};
   const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-runtimedb-'));
   mkdirSync(join(home, 'v2', 'sqlite'), { recursive: true });
   const db = new DatabaseSync(join(home, 'v2', 'sqlite', 'runtime-state.sqlite'));
@@ -296,36 +308,50 @@ const runtimeDb = (extraColumns) => {
   const placeholders = extraColumns.length ? ', ' + extraColumns.map(() => '?').join(', ') : '';
   db.exec('create table local_runtime_sessions (session_id text primary key, title text,'
     + ' session_kind text' + extra + ')');
-  const values = ['mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '一条真实的标题', 'conversation'];
-  for (const column of extraColumns) {
-    if (column === 'parent_session_id') values.push('mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-    else if (column === 'purpose') values.push('context-mode:lightweight');
-    else if (column === 'workspace_dir') values.push('workspace-of-the-session');
-    else throw new Error('unknown column ' + column);
+  const insert = db.prepare('insert into local_runtime_sessions (session_id, title, session_kind'
+    + extra + ') values (?, ?, ?' + placeholders + ')');
+  const row = (id, title, parent, purpose, workspace) => {
+    const values = [id, title, 'conversation'];
+    for (const column of extraColumns) {
+      if (column === 'parent_session_id') values.push(parent);
+      else if (column === 'purpose') values.push(purpose);
+      else if (column === 'workspace_dir') values.push(workspace);
+      else throw new Error('unknown column ' + column);
+    }
+    return values;
+  };
+  // The conversation the run hangs off, written before the run -- the order the runtime writes
+  // them in, and the reason the parent column can be read as a foreign key.
+  if (opts.parentExists !== false) {
+    insert.run(...row(PARENT_ID, '父会话的标题', null, null, null));
   }
-  db.prepare('insert into local_runtime_sessions (session_id, title, session_kind'
-    + extra + ') values (?, ?, ?' + placeholders + ')').run(...values);
+  insert.run(...row(CHILD_ID, '一条真实的标题', PARENT_ID, 'context-mode:lightweight', 'workspace-of-the-session'));
   db.close();
   return home;
 };
 
-const ids = ['mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+const ids = [CHILD_ID];
 const homes = [];
 let parentOnly = null;
 let baseOnly = null;
 let noWorkspace = null;
 let everything = null;
+let dangling = null;
 try {
   homes.push(
     runtimeDb(['parent_session_id']),
     runtimeDb([]),
     runtimeDb(['parent_session_id', 'purpose']),
-    runtimeDb(['parent_session_id', 'purpose', 'workspace_dir'])
+    runtimeDb(['parent_session_id', 'purpose', 'workspace_dir']),
+    // A run whose parent names a session that is not there: the only database here that the
+    // runtime cannot write, and the only one where the parent column has something to refuse.
+    runtimeDb(['parent_session_id'], { parentExists: false })
   );
   parentOnly = await readSessionTitles(homes[0], ids);
   baseOnly = await readSessionTitles(homes[1], ids);
   noWorkspace = await readSessionTitles(homes[2], ids);
   everything = await readSessionTitles(homes[3], ids);
+  dangling = await readSessionTitles(homes[4], ids);
 } finally {
   // The homes are `mkdtemp` directories this call created, so they are cleaned up in the same
   // breath rather than left behind for the OS to find.
@@ -361,6 +387,19 @@ assert('a database with every column reports the workspace as well',
   && everything.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   && everything.get(ids[0])?.purpose === 'context-mode:lightweight'
   && everything.get(ids[0])?.workspace === 'workspace-of-the-session');
+
+// A run whose parent names a session that is not there names nothing. The parent column is a
+// foreign key into this very table, so a value with no row behind it is not a conversation --
+// and the page groups its runs by that name, so publishing it puts a name on the wire that no
+// conversation in the list can answer to.
+//
+// The run itself is still a session. It is a real one, with a real title, and dropping it from
+// the list would hide a session the reader could otherwise open.
+assert('a parent that names no session is not published as a parent',
+  dangling.get(ids[0])?.parent === null);
+assert('a run whose parent names no session is still a session',
+  dangling.get(ids[0])?.title === '一条真实的标题'
+  && dangling.get(ids[0])?.kind === 'conversation');
 
 /* ---------- 9. what a purpose means, in one place and nowhere else ---------- */
 //

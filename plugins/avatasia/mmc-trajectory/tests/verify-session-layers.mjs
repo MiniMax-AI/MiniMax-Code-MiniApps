@@ -38,6 +38,10 @@
  * that is a child with no purpose, and a row that is a main session whose purpose says 「task」.
  * The two columns disagree, and the layer follows the parent.
  *
+ * A parent is a foreign key into the runtime database's own session table: a value that names
+ * no session there is not a parent, and the page groups its runs by that value, so the service
+ * publishes a parent only when it names one. The eighth section is about that.
+ *
  * The pool is the whole walk, not the thirty most recent sessions. That is not a detail: a
  * sub-agent is always newer than the session that spawned it, so the thirty-entry window is
  * mostly sub-agents, and drawing the conversation list from it would push conversations out of
@@ -559,6 +563,106 @@ try {
   else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
 } catch (error) {
   failures.push('a run that wins the current-conversation resolution -- ' + (error && error.message));
+}
+
+/* ---------- 8: a parent that names no session ---------- */
+
+// The parent id crosses the wire from the runtime database, and the page groups its runs by
+// it. `parent_session_id` is a foreign key into the runtime database's own session table, so a
+// value that names no session there is not a parent at all -- and publishing it would put a
+// name on the wire that no conversation in the list can answer to.
+//
+// The fixture holds two such rows: one whose parent id is a plausible session id that does
+// not exist, and one whose parent id is a name a plain object inherits. The second is the one
+// that broke the picker, and the first is the ordinary shape of the same mistake.
+
+const PHANTOM_PARENT = 'mvs_phantom_parent';
+const HOSTILE_PARENT = '__proto__';
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-phantom-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const main = await makeSession(sessionsRoot, 0, 'mvs_phantom_main', BASE_TIME - 10 * 60_000);
+  const orphan = await makeSession(sessionsRoot, 1, 'mvs_phantom_child', BASE_TIME - 20 * 60_000);
+  const hostile = await makeSession(sessionsRoot, 2, 'mvs_hostile_child', BASE_TIME - 30 * 60_000);
+  runtimeDb(home, [
+    {
+      sessionId: 'mvs_phantom_main',
+      relative: main.relative,
+      workspace: 'workspace-one',
+      updatedAtMs: BASE_TIME - 10 * 60_000
+    },
+    {
+      sessionId: 'mvs_phantom_child',
+      relative: orphan.relative,
+      parent: PHANTOM_PARENT,
+      kind: 'task',
+      purpose: 'local-background-task:orphan',
+      workspace: 'workspace-one',
+      updatedAtMs: BASE_TIME - 20 * 60_000
+    },
+    {
+      sessionId: 'mvs_hostile_child',
+      relative: hostile.relative,
+      parent: HOSTILE_PARENT,
+      kind: 'task',
+      purpose: 'local-background-task:hostile',
+      workspace: 'workspace-one',
+      updatedAtMs: BASE_TIME - 30 * 60_000
+    }
+  ]);
+
+  const { start } = await import(pathToFileURL(SERVER).href);
+  const previousRoot = process.env.MMC_TRAJECTORY_ROOT;
+  process.env.MMC_TRAJECTORY_ROOT = home;
+  const controller = new AbortController();
+  const noop = () => {};
+  let base = null;
+  let instance = null;
+  for (let attempt = 0; attempt < 12 && !base; attempt += 1) {
+    const port = 19800 + Math.floor(Math.random() * 300) + attempt;
+    try {
+      instance = await start({
+        pluginId: 'mmc-trajectory',
+        pluginRoot: PLUGIN_ROOT,
+        dataDir: PLUGIN_ROOT,
+        generationId: 'guard',
+        listen: { host: '127.0.0.1', port },
+        signal: controller.signal,
+        logger: { debug: noop, info: noop, warn: noop, error: noop }
+      });
+      base = 'http://127.0.0.1:' + port;
+    } catch (error) {
+      // The port was taken. Another one is tried.
+    }
+  }
+  if (!base) throw new Error('could not bind a port for the phantom-parent route');
+  const response = await fetch(base + '/api/sessions?limit=20');
+  const body = await response.json();
+  const sessionIds = (body.sessions || []).map((row) => row.id);
+  const childIds = (body.children || []).map((row) => row.id);
+  const parentsOnTheWire = (body.sessions || []).concat(body.children || [])
+    .map((row) => row.sessionParentId).filter(Boolean);
+
+  assert('a run whose parent names no session is not published as a run',
+    !childIds.includes('mvs_phantom_child'),
+    childIds.join('|'));
+  assert('and it is a conversation instead',
+    sessionIds.includes('mvs_phantom_child'),
+    sessionIds.join('|'));
+  assert('and no row on the wire names a parent that does not exist',
+    !parentsOnTheWire.includes(PHANTOM_PARENT),
+    parentsOnTheWire.join('|'));
+  assert('and the same holds for a parent id that names an inherited object property',
+    !childIds.includes('mvs_hostile_child') && !parentsOnTheWire.includes(HOSTILE_PARENT),
+    childIds.join('|') + ' / ' + parentsOnTheWire.join('|'));
+
+  if (instance) await instance.dispose();
+  controller.abort();
+  if (previousRoot === undefined) delete process.env.MMC_TRAJECTORY_ROOT;
+  else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
+} catch (error) {
+  failures.push('a parent that names no session -- ' + (error && error.message));
 }
 
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');

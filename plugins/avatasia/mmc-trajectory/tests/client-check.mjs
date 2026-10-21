@@ -1472,6 +1472,48 @@ if (layerSrc.every((src) => src)) {
     runs.options.map((option) => option.value).join(' | '));
   assert('and clears the run that was picked',
     runs.value === '', String(runs.value));
+
+  // 8. A parent id is data, not a key the page may assume. The runtime database's parent
+  //    column crosses the wire unchanged, and the page groups its runs by that value. The
+  //    names a plain object inherits -- '__proto__', 'constructor' -- are truthy and are not
+  //    arrays, so a version that groups into a plain object reads one of them as a group and
+  //    throws on it, and the picker stops updating after an otherwise successful list.
+  const hostile = ['__proto__', 'constructor', 'toString', 'valueOf'];
+  const realState = sandbox.state;
+  sandbox.state = {
+    sessions: [{ id: MAIN_A, label: '主会话甲', lastActiveAt: NOW, messageCount: 10 }],
+    children: hostile.map((parentId, index) => ({
+      id: 'mvs_hostile_' + index,
+      sessionParentId: parentId,
+      label: '异常父 ' + index,
+      lastActiveAt: NOW - index,
+      messageCount: 1
+    })),
+    followLatest: false,
+    sessionId: MAIN_A,
+    hostSessionId: null
+  };
+  let grouped = null;
+  let groupingError = null;
+  try {
+    grouped = sandbox.childrenByParent();
+  } catch (error) {
+    groupingError = error;
+  }
+  check('a parent id that names an inherited object property does not break the grouping',
+    groupingError === null && grouped !== null, true);
+  check('and those runs are not folded into a conversation that owns them',
+    grouped !== null
+    && Object.keys(grouped).every((key) => hostile.indexOf(key) >= 0)
+    && hostile.every((key) => !grouped[key] || grouped[key].length === 1), true);
+  let renderError = null;
+  try {
+    sandbox.renderChildSelect();
+  } catch (error) {
+    renderError = error;
+  }
+  check('and the run pick still draws with such a parent on the page', renderError === null, true);
+  sandbox.state = realState;
 }
 
 /* ------------------------------------------------------------------ session list: overlapping polls */
