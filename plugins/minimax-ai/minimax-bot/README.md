@@ -79,6 +79,7 @@ Avatars are stored in the Mini App's `dataDir/avatars/`. `GET /api/avatars` list
 ## How it runs
 
 - The Node service (`miniapp/node/server.mjs`) uses only Node built-in modules, runs Bot turns through `context.agent`, and stores data in the host-assigned `dataDir`.
+- A new Bot session binds to the host's primary Agent. When the host cannot bind that Agent, the Agents the host offers are tried in turn, primary first, and the one that works is used for the sessions that follow. A continued session keeps the Agent it was created with, and the host's own failure is reported unchanged when no Agent can be bound.
 - The page (`miniapp/client/`) is build-free native ES modules and loads no remote resources.
 - The same Node process serves Streamable HTTP MCP at `/mcp/minimax-bot`, exposing `list_team`, `message_bot`, `dispatch_tasks`, `get_tasks`, `cancel_tasks`, `post_group`, `start_helper`, `list_helpers`, `stop_helper`, `remember`, `forget`, `recall`, `create_bot`, `update_bot`, `delete_bot`, `create_group`, `update_group`, `delete_group`, `create_schedule`, `list_schedules` and `delete_schedule` to Bots.
 - `miniapp.json` declares `agentAccess: ["session.run"]`. Tool approvals and questionnaires from Bots are rendered in the page, and the full session can be opened in the MiniMax Code sidebar.
@@ -89,7 +90,7 @@ Avatars are stored in the Mini App's `dataDir/avatars/`. `GET /api/avatars` list
 
 ## Data & access
 
-- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically.
+- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically. A new session runs as the host's primary Agent unless the host cannot bind it, in which case one of the other Agents the host offers is used.
 - **Files written**: only inside the Mini App's `dataDir`: `state.json`, `messages/`, `usage.jsonl`, `memory/` (including its journal, archive and backups), `uploads/` (your attachments) and `avatars/`.
 - **Files read outside `dataDir`**:
   - `/api/media` serves a local file (up to 1 GiB) only when its absolute path appears in a Bot message of that same chat.
