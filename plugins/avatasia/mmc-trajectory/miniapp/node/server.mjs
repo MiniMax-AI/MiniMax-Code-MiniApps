@@ -1088,6 +1088,28 @@ export async function readSessionTitles(home, sessionIds) {
         workspace: typeof row.workspace_dir === 'string' && row.workspace_dir.trim() ? row.workspace_dir.trim() : null,
       });
     }
+    // The parent column is a foreign key into this very table: it names the session that
+    // spawned this one. A value that names no session here is not a parent, and publishing it
+    // would put a dangling link on the wire -- and the page groups its runs by that value, so
+    // a name that is not a session's id is a name the page has no business keying a group by.
+    //
+    // One indexed lookup per distinct parent, on a table that is already open. A database
+    // written before child sessions existed has no `parent_session_id` column and so no parent
+    // to check: every value above is null and this is skipped.
+    const parentIds = new Set();
+    for (const meta of result.values()) if (meta.parent) parentIds.add(meta.parent);
+    if (parentIds.size > 0) {
+      try {
+        const lookup = db.prepare('select session_id from local_runtime_sessions where session_id = ?');
+        for (const parentId of parentIds) {
+          if (lookup.get(parentId)) continue;
+          for (const meta of result.values()) if (meta.parent === parentId) meta.parent = null;
+        }
+      } catch {
+        // The check could not be made. Publishing the parents as they are is what this did
+        // before, and the page is written to survive a parent it does not recognise.
+      }
+    }
   } catch {
     // A title is a nicety; never let it fail the list.
   } finally {

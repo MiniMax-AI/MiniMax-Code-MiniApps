@@ -4582,7 +4582,12 @@
        * @returns {Object<string, any[]>}
        */
       function childrenByParent() {
-        var grouped = {};
+        // A map with no prototype. The parent id is data that crossed the wire from the
+        // runtime database, and the names a plain object inherits -- '__proto__',
+        // 'constructor' -- are truthy and are not arrays, so a plain object reads one of them
+        // as a group and then throws on it, and the picker stops updating after an otherwise
+        // successful list.
+        var grouped = Object.create(null);
         var all = state.children || [];
         for (var i = 0; i < all.length; i += 1) {
           var child = all[i];
