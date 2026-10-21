@@ -1219,9 +1219,28 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
   try {
     const fileStat = await stat(join(dir, 'messages.jsonl'));
     if (expectedSessionId) {
-      // The directory name is the only place the session id is written down, so it is also the
-      // only place the claim "this path is that session" can be checked.
+      // The directory name is not the only place the session id is written down, and it is not
+      // the authority either. The service reads a session's identity from the manifest the
+      // runtime wrote beside its transcript (`readSessionIdentity`), and the manifest is what
+      // says which session this directory holds. A directory whose name encodes one session and
+      // whose manifest names another is the OTHER session's directory, whatever the folder is
+      // called.
+      //
+      // So both have to be the session this path is supposed to be, and they are checked one at
+      // a time because they can disagree in both directions. The name has to be it: that is the
+      // check that keeps one directory from being listed twice under two ids. And the manifest
+      // has to be it too: a manifest naming another session is a recorded path pointing at
+      // somebody else's transcript, and accepting it would put the current conversation's id on
+      // another session's messages -- the same defect the name check exists for, one column
+      // further in.
+      //
+      // A directory with no manifest is judged by its name alone, which is the case that was
+      // always here.
       if (decodeSessionIdFromDirName(basename(dir)) !== expectedSessionId) {
+        return { entry: null, rejected: true };
+      }
+      const identity = await readSessionIdentity(dir);
+      if (identity.id !== expectedSessionId) {
         return { entry: null, rejected: true };
       }
     }
@@ -1253,12 +1272,13 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
  * updated), and `resolveCurrentConversation` reports the ambiguity when two conversations hold
  * a lease at once rather than picking one silently.
  *
- * The current conversation is promoted only when it IS a conversation. A session with a
- * parent is a run, and the layer is decided by that column and by nothing else -- so a run
- * that wins the current-conversation resolution is not promoted back into the conversation
- * layer. It is already in the run layer, where it belongs, and promoting it here would put
- * one session in both controls at once: the conversation pick would offer a run, and the
- * run pick would offer the same run again.
+ * The current conversation is promoted only when it IS a conversation. The layer is decided by
+ * the parent column and the chain it forms, and `splitSessionLayers` has already cleared the
+ * parent of every session it put in the conversation layer -- so a session that still has a
+ * parent here is a run, and a run that wins the current-conversation resolution is not
+ * promoted back into the conversation layer. It is already in the run layer, where it belongs,
+ * and promoting it here would put one session in both controls at once: the conversation pick
+ * would offer a run, and the run pick would offer the same run again.
  *
  * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
  * @param {{ sessionId: string, relativeDir?: string | null } | null} current
@@ -1276,10 +1296,11 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
     return entries.slice(0, limit);
   }
   const currentId = current.sessionId;
-  // The layer is decided by the parent column and by nothing else, and the picker has two of
-  // them. A session that has a parent is a run, so a run that wins the current-conversation
-  // resolution is not promoted into the conversation layer. Promoting it would put one
-  // session in both controls at once.
+  // The layer is decided by the parent column and the chain it forms, and the picker has two
+  // of them. The split has already cleared the parent of every session it put in the
+  // conversation layer, so a session that still has a parent is a run -- and a run that wins
+  // the current-conversation resolution is not promoted into the conversation layer. Promoting
+  // it would put one session in both controls at once.
   const currentMeta = titles instanceof Map ? titles.get(currentId) : null;
   const currentParent = currentMeta && typeof currentMeta.parent === 'string' && currentMeta.parent
     ? currentMeta.parent
@@ -1319,7 +1340,7 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
  *
  * A sub-agent is a session like any other on disk — its own directory, its own `messages.jsonl` —
  * and the runtime hangs it off its parent with one column. So the layer is a fact about a row,
- * not about a directory, and it is read from that column and nowhere else. `purpose` is not the
+ * and it is read from that column and from the chain that column forms. `purpose` is not the
  * judge here: it says what a session IS (a scheduled run, a background task), which is a different
  * question from what it hangs off, and the two are orthogonal — a sub-agent is a task AND somebody's
  * child.
@@ -1329,6 +1350,33 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
  * directory name, and that is the id the runtime database stores. So the parent's id here is the
  * id the page will see on the parent's row, and the client can join the two layers on it.
  *
+ * The column alone is not enough to decide the layer, though, and the cases where it is not
+ * enough are the ones where a session disappears from the picker. The column answers "does this
+ * session have a parent". The layer is "is that parent a CONVERSATION", and that is a question
+ * about the chain:
+ *
+ *   - A cycle — A's parent is B, B's parent is A — has no conversation at the end of it. Read the
+ *     column alone, both of them are runs, of each other, so neither is a conversation, and the
+ *     conversation list comes back with neither in it: they are in neither control, and the
+ *     reader cannot reach either one. A cycle is dissolved instead. Both are conversations, and
+ *     their parent columns are dropped, because a conversation that names a parent names a run.
+ *   - A chain that leaves the sessions this payload knows about — the parent has a row in the
+ *     runtime database but no directory in the pool — has no conversation to point at either: the
+ *     conversation a reader would pick to see this run is not in the list. The run is a
+ *     conversation itself, so that it is somewhere the reader can reach.
+ *   - A chain longer than one step — the parent is itself a run — puts the run in the
+ *     conversation layer, because the two controls are one conversation and the runs of THAT one.
+ *
+ * So the rule is one sentence: a session is a run iff its parent is a conversation, and a
+ * conversation is a session with no parent, or one whose parent is not a conversation. The two
+ * halves are given together on purpose. One half alone has no answer for a cycle, and the answer
+ * "the column says so" is the one that loses both sessions.
+ *
+ * The map is corrected in place: a session this puts in the conversation layer has its parent
+ * cleared, so the payload, the validator and the current-conversation promotion all read the same
+ * value. A copy would leave one of the three reading the uncorrected one, and the body and the
+ * ETag would then describe two different lists.
+ *
  * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
  * @param {Map<string, { parent?: string | null }>} titles
  * @returns {{ mains: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>, childrenByParent: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>> }}
@@ -1336,10 +1384,89 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
 export function splitSessionLayers(entries, titles) {
   const mains = [];
   const childrenByParent = new Map();
+  const map = titles instanceof Map ? titles : new Map();
+
+  /**
+   * The session a session hangs off, or null when it hangs off nothing.
+   * @param {string} id
+   * @returns {string | null}
+   */
+  const parentOf = (id) => {
+    const meta = map.get(id);
+    if (!meta) return null;
+    const declared = typeof meta.parent === 'string' && meta.parent ? meta.parent : null;
+    return declared;
+  };
+
+  // The sessions that sit on a cycle: following the parent links from one of them comes back to
+  // it. Every link is followed through the same map the layer is decided by, so a session on a
+  // cycle is one this pass reaches -- and the walk below cannot run forever, because it stops at
+  // the first of these.
+  const onCycle = new Set();
+  for (const id of map.keys()) {
+    const path = [];
+    const at = new Map();
+    let cur = id;
+    while (cur && !at.has(cur)) {
+      at.set(cur, path.length);
+      path.push(cur);
+      cur = parentOf(cur);
+    }
+    if (cur && at.has(cur)) {
+      for (let i = at.get(cur); i < path.length; i += 1) onCycle.add(path[i]);
+    }
+  }
+
+  // The layer of every session: a conversation, or a run of one. Walking up the chain flips the
+  // layer at every step, because a run's parent is a conversation and a conversation's parent is
+  // not one. The walk ends where the chain stops making sense: at a session with no parent, at a
+  // parent this payload does not know, or at a cycle.
+  const CONVERSATION = 'conversation';
+  const RUN = 'run';
+  const layerOf = new Map();
+  const flip = (layer) => (layer === CONVERSATION ? RUN : CONVERSATION);
+
+  /**
+   * @param {string} start
+   * @returns {string}
+   */
+  const classify = (start) => {
+    if (layerOf.has(start)) return /** @type {string} */ (layerOf.get(start));
+    const chain = [];
+    let cur = start;
+    let base;
+    while (true) {
+      if (layerOf.has(cur)) { base = flip(/** @type {string} */ (layerOf.get(cur))); break; }
+      chain.push(cur);
+      if (onCycle.has(cur)) { base = CONVERSATION; break; }
+      const parent = parentOf(cur);
+      if (!parent || !map.has(parent)) { base = CONVERSATION; break; }
+      cur = parent;
+    }
+    let layer = base;
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      layerOf.set(chain[i], layer);
+      layer = flip(layer);
+    }
+    return /** @type {string} */ (layerOf.get(start));
+  };
+
+  for (const id of map.keys()) classify(id);
+
+  // The correction, and the reason the layer can be read off the parent column again: a session
+  // in the conversation layer has no parent to name, so its parent column is cleared here, once,
+  // for everything that reads it afterwards. The body, the validator and the current-conversation
+  // promotion all read this same map, so all three say the same thing about the same row.
+  for (const [id, meta] of map) {
+    if (!meta) continue;
+    if (layerOf.get(id) === CONVERSATION && typeof meta.parent === 'string' && meta.parent) {
+      meta.parent = null;
+    }
+  }
+
   for (const entry of entries) {
     const id = decodeSessionIdFromDirName(basename(entry.dir));
-    const meta = id ? titles.get(id) : null;
-    const parent = meta && typeof meta.parent === 'string' && meta.parent ? meta.parent : null;
+    const parent = id ? parentOf(id) : null;
     if (!parent) {
       mains.push(entry);
       continue;
