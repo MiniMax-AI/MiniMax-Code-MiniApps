@@ -229,7 +229,7 @@ test('reactions stay on the final bubble while message parts change, preserving 
   assert.equal(document.activeElement, document.querySelector('.reaction-trigger'));
 });
 
-test('a long reply folds its earlier bubbles away and keeps the answer in the open', async () => {
+test('a long reply folds its earlier bubbles away and keeps the newest three in the open', async () => {
   const parts = [];
   for (let index = 0; index < 12; index += 1) {
     parts.push({ type: 'text', text: `Step ${index}` }, { type: 'tool', name: 'read', state: 'done' });
@@ -241,18 +241,40 @@ test('a long reply folds its earlier bubbles away and keeps the answer in the op
   const fold = document.querySelector('.bubble-fold');
   assert.ok(fold, 'a reply with many parts must fold its earlier bubbles');
   assert.equal(fold.open, false, 'the fold starts closed');
-  assert.match(fold.querySelector('.bubble-fold-closed').textContent, /12/);
-  assert.equal(fold.querySelectorAll('.bubble').length, 12);
-  // The answer stays in the open, with the reaction indicator on it.
+  assert.match(fold.querySelector('.bubble-fold-closed').textContent, /10/);
+  assert.equal(fold.querySelectorAll('.bubble').length, 10);
+  // The newest three stay in the open, the answer last, with the reaction indicator on it.
   const wrap = document.querySelector('article.msg .bubble-wrap');
   const open = [...wrap.children].filter((child) => child.classList.contains('bubble'));
-  assert.equal(open.length, 1);
-  assert.match(open[0].textContent, /The answer/);
-  assert.equal(open[0].querySelector('.reaction-chip').dataset.emoji, '👍');
+  assert.equal(open.length, 3);
+  assert.match(open[0].textContent, /Step 10/);
+  assert.match(open[1].textContent, /Step 11/);
+  assert.match(open[2].textContent, /The answer/);
+  assert.equal(open[2].querySelector('.reaction-chip').dataset.emoji, '👍');
   // Opening the fold shows the same bubbles again; the reply around it does not move.
   fold.open = true;
-  assert.equal(fold.querySelectorAll('.bubble').length, 12);
+  assert.equal(fold.querySelectorAll('.bubble').length, 10);
   assert.equal(wrap.querySelectorAll('.bubble').length, 13);
+});
+
+test('a folded reply tells on hover what every bubble said, a short one stays as it was', async () => {
+  const parts = [];
+  for (let index = 0; index < 6; index += 1) parts.push({ type: 'text', text: `Step ${index}` });
+  await reset([message('m-hint-reply', 'Step 5', { parts })]);
+  // A title is the official way of telling more on hover: the task rows and the
+  // attachments use it too.
+  const fold = document.querySelector('.bubble-fold');
+  assert.ok(fold, 'six text parts must fold');
+  assert.equal(fold.querySelectorAll('.bubble').length, 3);
+  assert.equal(fold.querySelector('.bubble').title, 'Step 0');
+  assert.match(fold.querySelector('.bubble-fold-summary').title, /3/);
+  const open = [...document.querySelectorAll('article.msg .bubble-wrap > .bubble')];
+  assert.equal(open.length, 3);
+  assert.equal(open[0].title, 'Step 3');
+  // A short reply keeps the official markup: no title added to its bubbles.
+  await reset([message('m-no-hint', 'Second', { parts: [{ type: 'text', text: 'First' }, { type: 'text', text: 'Second' }] })]);
+  assert.equal(document.querySelector('.bubble-fold'), null);
+  assert.equal(document.querySelector('article.msg .bubble-wrap > .bubble').title, '');
 });
 
 test('a short reply keeps its bubbles in the open, without a fold', async () => {

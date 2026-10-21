@@ -940,11 +940,18 @@ function legacyParts(m) {
 }
 
 /**
- * More text parts than this and the earlier bubbles are folded away. The Host opens a text part
- * for every assistant turn between two tool calls, so a reply that worked for a while arrives
- * with dozens of them, and one bubble per part filled the screen.
+ * The Host opens a text part for every assistant turn between two tool calls, so a reply that
+ * worked for a while arrives with dozens of them, and one bubble per part filled the screen.
+ * The newest bubbles stay in the open, exactly where the flat layout put them; the earlier ones
+ * fold away behind a one line summary.
  */
 const FOLD_AFTER_PARTS = 3;
+
+/** The bubble's own text, short enough to be a hover hint. */
+function hintOf(text) {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat;
+}
 
 /**
  * The earlier bubbles of a long reply: folded behind a one line summary, and the area that
@@ -955,9 +962,10 @@ function foldView(m, parts, presentation) {
     parts.map((part, index) => ({
       key: `text:${index}`,
       signature: JSON.stringify([part.text, presentation]),
-      create: () => h('div', { class: 'bubble' }, markdownNode(part.text, m.chatId)),
+      create: () => h('div', { class: 'bubble', title: hintOf(part.text) }, markdownNode(part.text, m.chatId)),
       update: (bubble) => {
         markdownNode(part.text, m.chatId, bubble.firstElementChild);
+        bubble.title = hintOf(part.text);
         return bubble;
       },
     }));
@@ -972,7 +980,7 @@ function foldView(m, parts, presentation) {
         { class: 'bubble-fold' },
         h(
           'summary',
-          { class: 'bubble-fold-summary' },
+          { class: 'bubble-fold-summary', title: t('fold.hint', { n: parts.length }) },
           icon('down', 12),
           h('span', { class: 'bubble-fold-closed' }, t('fold.show', { n: parts.length })),
           h('span', { class: 'bubble-fold-open' }, t('fold.hide')),
@@ -981,6 +989,8 @@ function foldView(m, parts, presentation) {
       ),
     update: (node) => {
       reconcileChildren(node.querySelector('.bubble-fold-body'), inner());
+      const summary = node.querySelector('.bubble-fold-summary');
+      if (summary) summary.title = t('fold.hint', { n: parts.length });
       const closed = node.querySelector('.bubble-fold-closed');
       if (closed) closed.textContent = t('fold.show', { n: parts.length });
       return node;
@@ -998,8 +1008,8 @@ function partViews(m, inGroup) {
   parts.forEach((part, index) => {
     if (part.type === 'text' && part.text?.trim()) textParts.push(index);
   });
-  // The earlier bubbles go into the folded area; the last one, the answer, stays in the open.
-  const folded = textParts.length > FOLD_AFTER_PARTS ? textParts.slice(0, -1) : [];
+  // The newest bubbles stay in the open, where the flat layout had them; the earlier ones fold.
+  const folded = textParts.length > FOLD_AFTER_PARTS ? textParts.slice(0, -FOLD_AFTER_PARTS) : [];
   const foldedSet = new Set(folded);
   if (folded.length) views.push(foldView(m, folded.map((index) => parts[index]), presentation));
   parts.forEach((part, index) => {
@@ -1009,9 +1019,10 @@ function partViews(m, inGroup) {
       views.push({
         key,
         signature: JSON.stringify([part.text, presentation, index === lastText ? [m.status, m.userReactions, m.reactionsRevision, displayText(m), m.sessionId, botById(m.botId)?.name] : null]),
-        create: () => updateBubbleControls(h('div', { class: 'bubble' }, markdownNode(part.text, m.chatId)), m, index === lastText),
+        create: () => updateBubbleControls(h('div', { class: 'bubble', title: folded.length ? hintOf(part.text) : undefined }, markdownNode(part.text, m.chatId)), m, index === lastText),
         update: (bubble) => {
           markdownNode(part.text, m.chatId, bubble.firstElementChild);
+          if (folded.length) bubble.title = hintOf(part.text);
           return updateBubbleControls(bubble, m, index === lastText);
         },
       });
