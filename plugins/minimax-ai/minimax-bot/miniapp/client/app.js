@@ -447,7 +447,6 @@ async function mountChat(chatId) {
   const revision = ++mountRevision;
   closeReactionPicker();
   mounted = chatId;
-  helpersExpanded = false;
   const target = targetOf(chatId);
   ui.pillBar = h('div', { class: 'pill-bar' });
   ui.feedInner = h('div', { class: 'feed-inner' });
@@ -1299,54 +1298,28 @@ function helperElapsed(helper) {
   return minutes < 1 ? t('helper.justStarted') : t('helper.minutes', { n: minutes });
 }
 
-/** The phase a helper is in. The rows are ordered by it: what runs, then what waits, then the queue. */
-function helperPhase(helper) {
-  if (helper.status === 'waiting_for_tasks') return 'waiting';
-  if (helper.status === 'queued') return 'queued';
-  return 'running';
-}
-
-const HELPER_PHASE_ORDER = { running: 0, waiting: 1, queued: 2 };
-/** How many queued tasks stay visible before the queue folds into one line. */
-const HELPER_QUEUE_PREVIEW = 3;
-let helpersExpanded = false;
-
-/** Background helpers working for this chat: the task on top, its owner and state below. */
+/** Background helpers working for this chat: one line each, with a stop button. */
 function renderHelpers() {
   if (!ui.helpers) return;
-  const items = [...state.helpers, ...state.tasks]
-    .filter((x) => [x.chatId, x.originChatId, x.resultChatId].includes(mounted) && ['queued', 'running', 'waiting_for_tasks'].includes(x.status))
-    .sort((a, b) => HELPER_PHASE_ORDER[helperPhase(a)] - HELPER_PHASE_ORDER[helperPhase(b)]);
-  const queued = items.filter((x) => x.status === 'queued');
-  const shown = helpersExpanded ? queued : queued.slice(0, HELPER_QUEUE_PREVIEW);
-  const hidden = queued.length - shown.length;
+  const items = [...state.helpers, ...state.tasks].filter((x) => [x.chatId, x.originChatId, x.resultChatId].includes(mounted) && ['queued', 'running', 'waiting_for_tasks'].includes(x.status));
   ui.helpers.replaceChildren(
-    ...[...items.filter((x) => x.status !== 'queued'), ...shown].map((helper) => {
+    ...items.map((helper) => {
       const bot = botById(helper.botId);
-      const phase = helperPhase(helper);
       return h(
         'div',
-        { class: `helper-row is-${phase}`, title: helper.task },
+        { class: 'helper-row', title: helper.task },
         h('span', { class: 'helper-dot', 'aria-hidden': 'true' }),
         h(
           'span',
-          { class: 'helper-main' },
-          h('span', { class: 'helper-title' }, helper.title || helper.task || ''),
-          h(
-            'span',
-            { class: 'helper-meta' },
-            h('span', { class: 'helper-who' }, bot?.name ?? 'Bot'),
-            h('span', { class: 'helper-state' }, t(`helper.state.${phase}`)),
-            helper.status === 'queued' ? null : h('span', { class: 'helper-time' }, helperElapsed(helper)),
-          ),
+          { class: 'helper-text' },
+          t(helper.status === 'waiting_for_tasks' ? 'helper.waitingForTasks' : helper.status === 'queued' ? 'helper.queued' : 'helper.running', { name: bot?.name ?? 'Bot', title: helper.title }),
         ),
+        h('span', { class: 'helper-time' }, helper.status === 'queued' ? '' : helperElapsed(helper)),
         h(
           'button',
           {
             type: 'button',
-            class: 'helper-stop',
-            title: t('helper.stop'),
-            'aria-label': t('helper.stop'),
+            class: 'btn sm',
             onclick: guard(async () => {
               await api('POST', `/api/${helper.batchId ? 'tasks' : 'helpers'}/${helper.id}/stop`);
             }),
@@ -1356,25 +1329,6 @@ function renderHelpers() {
       );
     }),
   );
-  // `replaceChildren` turns a null argument into the text "null", so the queue button is
-  // appended on its own and only when there is something to fold.
-  if (hidden > 0 || (helpersExpanded && queued.length > HELPER_QUEUE_PREVIEW)) {
-    ui.helpers.append(
-      h(
-        'button',
-        {
-          type: 'button',
-          class: 'helper-more soft',
-          'aria-expanded': String(helpersExpanded),
-          onclick: () => {
-            helpersExpanded = !helpersExpanded;
-            renderHelpers();
-          },
-        },
-        hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse'),
-      ),
-    );
-  }
 }
 setInterval(() => {
   if (mounted && state.helpers.some((x) => x.chatId === mounted && x.status === 'running')) renderHelpers();

@@ -744,7 +744,7 @@ test('group execution records keep each reply linked to its own session and part
   }
 });
 
-test('the background task strip leads with the task, separates its state and folds a long queue', async () => {
+test('the background task strip keeps the official one line rows and their stop button', async () => {
   await reset();
   // Nothing is running: the strip stays empty instead of printing a stray "null".
   assert.equal(document.querySelector('.helpers').textContent, '');
@@ -764,21 +764,19 @@ test('the background task strip leads with the task, separates its state and fol
   await settle();
   const strip = document.querySelector('.helpers');
   const rows = strip.querySelectorAll('.helper-row');
-  // What runs comes first, then what waits, then the queue.
-  assert.deepEqual([...rows].map((row) => row.className), [
-    'helper-row is-running', 'helper-row is-waiting', 'helper-row is-queued', 'helper-row is-queued', 'helper-row is-queued',
-  ]);
-  // The task leads the row; its owner, state and elapsed time sit below it.
+  // Every job keeps a row of its own, in the order the Host sent them.
+  assert.equal(rows.length, 7);
+  // A row is one line: who is doing what, then the elapsed time, then the stop button.
   const running = rows[0];
-  assert.equal(running.querySelector('.helper-title').textContent, 'Rebuild the truth table');
-  assert.equal(running.querySelector('.helper-who').textContent, 'Rob');
-  assert.equal(running.querySelector('.helper-state').textContent, 'Running');
+  assert.equal(running.className, 'helper-row');
+  assert.match(running.querySelector('.helper-text').textContent, /Rob is working on "Rebuild the truth table"/);
   assert.ok(running.querySelector('.helper-time').textContent);
-  // A long queue folds into one line instead of filling the strip.
-  const more = strip.querySelector('.helper-more');
-  assert.match(more.textContent, /2 more tasks queued/);
-  more.click();
-  await settle();
-  assert.equal(strip.querySelectorAll('.helper-row').length, 7);
-  assert.equal(strip.querySelector('.helper-more').textContent, 'Collapse queue');
+  assert.equal(running.querySelector('button').className, 'btn sm');
+  assert.equal(running.querySelector('button').textContent, 'Stop');
+  // The row carries the whole task as its hover hint.
+  assert.equal(running.title, 'Rebuild the truth table in the verifier');
+  // A queued job says so, and has no elapsed time yet.
+  const queuedRow = rows[2];
+  assert.match(queuedRow.querySelector('.helper-text').textContent, /Rob has this queued: "Queued task 1"/);
+  assert.equal(queuedRow.querySelector('.helper-time').textContent, '');
 });
