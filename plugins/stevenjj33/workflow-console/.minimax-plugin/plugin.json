@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "workflow-console",
+  "displayName": "动态工作流控制台",
+  "version": "1.0.0",
+  "description": "自带的动态工作流监控与控制台：内置 Workflow Studio 引擎，无需安装插件即可运行。提供按项目切换的运行列表、实时日志、拓扑与节点结果、审核后开始执行、暂停取消恢复、模板保存与复用、报告导出。",
+  "author": "书先生",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "打开动态工作流控制台，看一下当前项目的运行进度。",
+    "控制台里那个待审核的工作流，核对拓扑后开始执行。"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
