@@ -27,7 +27,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void; initialVendor
   };
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
     <DialogContent>
-      <DialogHeader><DialogTitle>设置与关于</DialogTitle><DialogDescription>OpenVideo · 下载设置与使用说明</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>设置与关于</DialogTitle><DialogDescription>MiniMax Video · 下载设置与使用说明</DialogDescription></DialogHeader>
       <div className="miniapp-about__body">
         
         <p><strong>直接开始对话</strong><br />模型、账号和工具由 MiniMax Code 提供，无需重复配置。</p>

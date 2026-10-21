@@ -1,4 +1,4 @@
-# OpenVideo
+# MiniMax Video
 
 [简体中文](README.zh-CN.md)
 
@@ -6,13 +6,13 @@ A local video editing workspace for MiniMax Code, adapted from [OpenChatCut](htt
 
 ## Install and use
 
-Requires MiniMax Code **3.1.2 or later**. Copy this entire `openchatcut` directory, including `.minimax-plugin`, into `<dataDir>/plugins/openchatcut/`, then restart the client and ask it to open **OpenVideo**. The ID remains `openchatcut` to preserve existing installations and project data. Do not install a second copy under another name.
+Requires MiniMax Code **3.1.2 or later**. Copy this entire `openchatcut` directory, including `.minimax-plugin`, into `<dataDir>/plugins/openchatcut/`, then restart the client and ask it to open **MiniMax Video**. The ID remains `openchatcut` to preserve existing installations and project data. Do not install a second copy under another name.
 
 On first launch, choose China mainland or global download sources. Media dependencies are downloaded for the current platform and verified against pinned checksums. You do not need to install Node, FFmpeg, or npm yourself. Open **Settings & About** to change download sources later. Cached downloads are reused; missing resources need network access.
 
 1. Click **打开示例** (Open sample). It creates a separate 12-second project with three original title cards, captions, and music; existing projects remain intact.
 2. Play it, or upload your own video, image, and audio files.
-3. Open **剪辑助手** and request an edit, for example: “Change the final caption to Hello, OpenVideo; leave everything else unchanged and submit a preview.”
+3. Open **剪辑助手** and request an edit, for example: “Change the final caption to Hello, MiniMax Video; leave everything else unchanged and submit a preview.”
 4. Preview the proposal, select the changes you want, then apply them.
 5. Export MP4, or select **音轨 MP3** for audio only. Other advanced export formats are inherited but are not all verified in this adaptation.
 
@@ -39,10 +39,10 @@ For generated media, configure a suitable tool in MiniMax Code first. Ask for on
 
 ## Updating, source and license
 
-Close OpenVideo and exit MiniMax Code before replacing this complete plugin directory. Keep backups outside `plugins/` and preserve its separate data directory. Uninstalling the plugin does not necessarily remove project data.
+Close MiniMax Video and exit MiniMax Code before replacing this complete plugin directory. Keep backups outside `plugins/` and preserve its separate data directory. Uninstalling the plugin does not necessarily remove project data.
 
 The runtime is prebuilt: do not install npm dependencies inside this directory. Corresponding modifications, the pinned upstream revision and reconstruction instructions are in [source/README.md](source/README.md).
 
-OpenVideo is an adaptation, not an official OpenChatCut release. OpenChatCut code and this derivative are distributed under **AGPL-3.0-or-later**; see [LICENSE](LICENSE). Preserve the upstream copyright notices. Bundled dependencies retain their own licenses, including [third-party notices](miniapp/node/THIRD-PARTY-NOTICES.txt), font licenses and [shadcn notices](SHADCN-LICENSE.md). Remotion has its own licensing terms included in those notices; inclusion here does not replace them.
+MiniMax Video is an adaptation, not an official OpenChatCut release. OpenChatCut code and this derivative are distributed under **AGPL-3.0-or-later**; see [LICENSE](LICENSE). Preserve the upstream copyright notices. Bundled dependencies retain their own licenses, including [third-party notices](miniapp/node/THIRD-PARTY-NOTICES.txt), font licenses and [shadcn notices](SHADCN-LICENSE.md). Remotion has its own licensing terms included in those notices; inclusion here does not replace them.
 
 For reliable saving inside the embedded Mini App, use **Choose…** in the export dialog to select a destination before exporting. The browser-download fallback depends on the Host download behavior.

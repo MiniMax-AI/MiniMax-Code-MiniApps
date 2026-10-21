@@ -1,4 +1,4 @@
-# OpenVideo 安装与下载源
+# MiniMax Video 安装与下载源
 
 从社区仓库复制完整的 `plugins/webguhui/openchatcut/` 目录。应用主体共用一个包，首次打开自动识别系统和芯片，再安装对应的媒体处理组件，不需要用户安装 Node、npm、FFmpeg 或编译工具。
 

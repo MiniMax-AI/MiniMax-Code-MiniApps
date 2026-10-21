@@ -60,7 +60,7 @@ export async function restoreFiles(payload, cache) {
 export async function start(context) {
   // Dependency diagnostics must not write to the Host-owned stdout stream.
   globalThis.__openVideoDependencyLog = (...args) => {
-    context.logger.debug('OpenVideo dependency diagnostic', { argumentCount: args.length });
+    context.logger.debug('MiniMax Video dependency diagnostic', { argumentCount: args.length });
     return true;
   };
   return startSetup(context, (server, nativeRoot) => startReady(context, server, nativeRoot));

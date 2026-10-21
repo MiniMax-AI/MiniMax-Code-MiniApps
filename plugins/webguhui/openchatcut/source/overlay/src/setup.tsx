@@ -33,7 +33,7 @@ function Setup() {
   };
   const busy=!status || status.state==='installing';
   return <main className="miniapp-setup"><section className="cc-shadcn miniapp-setup__card">
-    <h1>OpenVideo</h1><h2>准备视频编辑环境</h2>
+    <h1>MiniMax Video</h1><h2>准备视频编辑环境</h2>
     <p>首次使用需要下载视频处理组件。完成后保存在这台电脑，后续打开无需重复下载。</p>
     <p>系统：{status?.platform ?? '正在识别'}</p>
     <div className="miniapp-setup__choices">

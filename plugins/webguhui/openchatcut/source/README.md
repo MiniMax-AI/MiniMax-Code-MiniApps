@@ -1,6 +1,6 @@
-# OpenVideo 构建源码
+# MiniMax Video 构建源码
 
-OpenVideo 基于 [OpenChatCut](https://github.com/0xsline/OpenChatCut) v0.2.16，固定提交 `2e6f4a29b784200cfb32b859b16f2561592bc3e8`，遵循 AGPL-3.0-or-later。上游完整源码由该提交提供；`upstream.patch` 是已跟踪文件的全部修改，`overlay/` 是新增源码，`adapter/` 是 Mini App 构建与验证脚本。运行入口和安装脚本以 `plugins/webguhui/openchatcut/miniapp/node/` 为源文件。对应许可证位于插件的 `LICENSE`。
+MiniMax Video 基于 [OpenChatCut](https://github.com/0xsline/OpenChatCut) v0.2.16，固定提交 `2e6f4a29b784200cfb32b859b16f2561592bc3e8`，遵循 AGPL-3.0-or-later。上游完整源码由该提交提供；`upstream.patch` 是已跟踪文件的全部修改，`overlay/` 是新增源码，`adapter/` 是 Mini App 构建与验证脚本。运行入口和安装脚本以 `plugins/webguhui/openchatcut/miniapp/node/` 为源文件。对应许可证位于插件的 `LICENSE`。
 
 构建源码位于插件包内的 `source/` 目录，可安装运行时位于 `../miniapp/`。插件可以直接复制安装，不需要用户编译。
 

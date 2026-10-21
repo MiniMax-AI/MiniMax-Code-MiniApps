@@ -1,4 +1,4 @@
-# OpenVideo
+# MiniMax Video
 
 [English](README.md)
 
@@ -6,13 +6,13 @@
 
 ## 安装与上手
 
-需要 MiniMax Code 3.1.2 或更新版本。把本目录连同隐藏的 `.minimax-plugin` 复制到 `<dataDir>/plugins/openchatcut/`，重启客户端后让 Agent 打开 OpenVideo。插件 ID 保留为 `openchatcut`，便于继续使用旧工程；不要同时安装另一份。
+需要 MiniMax Code 3.1.2 或更新版本。把本目录连同隐藏的 `.minimax-plugin` 复制到 `<dataDir>/plugins/openchatcut/`，重启客户端后让 Agent 打开 MiniMax Video。插件 ID 保留为 `openchatcut`，便于继续使用旧工程；不要同时安装另一份。
 
 首次启动选择中国大陆或海外下载源，自动安装经过摘要校验的媒体依赖，无需手动安装 Node、npm 或 FFmpeg。后续可在“设置与关于”切换来源。已有缓存可复用，未下载的资源需要联网。
 
 1. 点击“打开示例”，新建包含三段画面、字幕和原创配乐的 12 秒工程，不覆盖旧工程。
 2. 播放示例，或上传自己的素材。
-3. 打开“剪辑助手”，输入“把最后一句字幕改成你好，OpenVideo，其他内容不变，提交修改预览”。
+3. 打开“剪辑助手”，输入“把最后一句字幕改成你好，MiniMax Video，其他内容不变，提交修改预览”。
 4. 点击“预览结果”，确认后应用。
 5. 从右上角导出 MP4；只需音频时选择“音轨 MP3”。
 
