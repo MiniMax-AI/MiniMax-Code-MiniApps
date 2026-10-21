@@ -1254,6 +1254,35 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
 }
 
 /**
+ * The entry that holds a session: found by the id its directory name decodes to, and confirmed by
+ * the manifest beside its transcript.
+ *
+ * The directory name is a claim; the manifest is the authority. `readSessionIdentity` prefers
+ * `manifest.sessionId`, so a directory whose name encodes one session and whose manifest names
+ * another is the OTHER session's directory, whatever the folder is called. Two shortcuts used to
+ * take the name's word for it -- the picker promoting the current conversation into the list, and
+ * the 'latest' resolver choosing which transcript to serve -- and both could put one session's id
+ * on another session's messages.
+ *
+ * So the name is used to FIND the candidate and the manifest is used to CONFIRM it. A candidate
+ * whose manifest names another session is not this session's entry, and the search goes on: another
+ * directory may carry this id honestly.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
+ * @param {string} sessionId
+ * @returns {Promise<{ dir: string, sizeBytes: number, lastActiveAt: number } | null>}
+ */
+export async function verifiedEntryForSessionId(entries, sessionId) {
+  if (!sessionId) return null;
+  for (const candidate of entries) {
+    if (decodeSessionIdFromDirName(basename(candidate.dir)) !== sessionId) continue;
+    const identity = await readSessionIdentity(candidate.dir);
+    if (identity.id === sessionId) return candidate;
+  }
+  return null;
+}
+
+/**
  * The visible set the picker shows, and the order it is shown in.
  *
  * Two sets live here and they are not the same set. `entries` is what the caller handed over:
@@ -1307,9 +1336,13 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
     : null;
   let currentEntry = null;
   if (!currentParent) {
-    currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;
+    // The current conversation's own row, found among the walk's rows and CONFIRMED by the
+    // manifest beside the transcript: the directory name is only a claim. A directory whose name
+    // says this session and whose manifest says another one is that other session's directory,
+    // and promoting it would put this session's id on somebody else's messages.
+    currentEntry = await verifiedEntryForSessionId(entries, currentId);
     if (!currentEntry && current.relativeDir) {
-      // Not in the recent window -- build the entry straight from the recorded path. The session it
+      // Not in the walk -- build the entry straight from the recorded path. The session it
       // is supposed to be is named, so a path that turns out to be a different session's directory
       // is refused instead of being shown under this id.
       const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir, currentId);
@@ -1385,6 +1418,16 @@ export function splitSessionLayers(entries, titles) {
   const mains = [];
   const childrenByParent = new Map();
   const map = titles instanceof Map ? titles : new Map();
+  // The sessions this payload knows about: the ones with a directory in the walk. NOT the ones
+  // with a row in the runtime database -- the map holds sessions that have no transcript here,
+  // the current conversation among them, and a parent that is only a row is not something the
+  // reader can pick, so a run hanging off it would be a run the reader cannot reach. The rule is
+  // about what the reader can reach, so the membership test is about the walk.
+  const known = new Set();
+  for (const entry of entries) {
+    const id = decodeSessionIdFromDirName(basename(entry.dir));
+    if (id) known.add(id);
+  }
 
   /**
    * The session a session hangs off, or null when it hangs off nothing.
@@ -1440,7 +1483,7 @@ export function splitSessionLayers(entries, titles) {
       chain.push(cur);
       if (onCycle.has(cur)) { base = CONVERSATION; break; }
       const parent = parentOf(cur);
-      if (!parent || !map.has(parent)) { base = CONVERSATION; break; }
+      if (!parent || !known.has(parent)) { base = CONVERSATION; break; }
       cur = parent;
     }
     let layer = base;
@@ -3620,23 +3663,26 @@ export async function start(context) {
       const describeRow = async (entry) => {
         const descriptor = await describeSession(entry);
         const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
-        if (meta) {
-          if (meta.title) descriptor.label = meta.title;
-          descriptor.sessionKind = meta.kind;
-          descriptor.sessionParentId = meta.parent;
-        }
-        // What this session IS, as a token the page can render: a lightweight exchange, a
-        // scheduled run, a background task. The raw purpose stays on this side of the wire --
-        // it is free text, and free text is not something to hand a reader's browser.
+        // The row is BUILT, not patched. The descriptor comes out of a cache and is shared, so
+        // writing the runtime's facts onto it leaves the last writer's facts on it for the next
+        // reader -- and a session whose row has left the runtime database goes on publishing the
+        // title, the kind and the parent it had last time, while the validator, which reads the
+        // same rows, reports none of them. A body and an ETag that disagree about the same row is
+        // how a badge outlives the fact it was derived from.
         //
-        // Assigned unconditionally, and that is the point. The descriptor comes out of a cache,
-        // so a session whose row is missing from the runtime database keeps the tag it was
-        // given last time -- while the validator, which reads the same rows, reports no tag for
-        // it. A body and an ETag that disagree about the same row is how a badge outlives the
-        // fact it was derived from, so the field is written on every pass, not only when there
-        // is something to write.
-        descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;
-        return descriptor;
+        // So every runtime fact is written on every pass, and a row with no runtime facts carries
+        // none of them: the label falls back to the one the filesystem gives, and the kind, the
+        // parent and the tag are null.
+        return {
+          ...descriptor,
+          label: meta && meta.title ? meta.title : descriptor.label,
+          sessionKind: meta ? meta.kind : null,
+          sessionParentId: meta ? meta.parent : null,
+          // What this session IS, as a token the page can render: a lightweight exchange, a
+          // scheduled run, a background task. The raw purpose stays on this side of the wire --
+          // it is free text, and free text is not something to hand a reader's browser.
+          sessionTag: meta ? sessionTagFor(meta.kind, meta.purpose) : null,
+        };
       };
       const described = [];
       for (const entry of visible) {
@@ -3693,8 +3739,12 @@ export async function start(context) {
       // a worker or cron session often has the newest file even while the user reads another one.
       const current = await resolveCurrentConversation(location.root);
       if (current) {
-        entry = entries.find((candidate) => basename(candidate.dir).includes('session_')
-          && decodeSessionIdFromDirName(basename(candidate.dir)) === current.sessionId) ?? null;
+        // The current session's own row, found by the id its directory name decodes to and
+        // CONFIRMED by the manifest beside the transcript: the name is a claim, the manifest is
+        // the authority. A directory whose name says this session and whose manifest says another
+        // one is that other session's directory, and binding this session's id to it would serve
+        // somebody else's messages under this session's name.
+        entry = await verifiedEntryForSessionId(entries, current.sessionId);
         if (!entry && current.relativeDir) {
           // Not in the recent window — build the entry straight from the recorded path. That value
           // is a database column rather than a name this app chose, so it earns the same
