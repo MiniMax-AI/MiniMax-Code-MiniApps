@@ -939,30 +939,38 @@ function legacyParts(m) {
   return parts;
 }
 
-/** Keep part order exactly as recorded; matching prefixes are not evidence of duplication. */
+/**
+ * One reply is one bubble. The Host opens a new text part for every assistant turn between two
+ * tool calls, so a reply that ran a dozen tools used to paint a bubble per part and pushed the
+ * conversation above it off the screen. The parts are joined the way the server joins them when
+ * it stores the text of a message; the event lines keep their place in the order.
+ */
 function partViews(m, inGroup) {
   const parts = m.key ? [{ type: 'text', text: displayText(m) }] : m.parts ?? legacyParts(m);
-  const lastText = parts.findLastIndex((part) => part.type === 'text' && part.text?.trim());
+  const texts = parts.filter((part) => part.type === 'text' && part.text?.trim());
+  const joined = texts.map((part) => part.text).join('\n\n');
   const views = [];
   const presentation = presentationKey();
+  let bubblePlaced = false;
   parts.forEach((part, index) => {
-    const key = `part:${index}`;
     if (part.type === 'text' && part.text?.trim()) {
+      if (bubblePlaced) return;
+      bubblePlaced = true;
       views.push({
-        key,
-        signature: JSON.stringify([part.text, presentation, index === lastText ? [m.status, m.userReactions, m.reactionsRevision, displayText(m), m.sessionId, botById(m.botId)?.name] : null]),
-        create: () => updateBubbleControls(h('div', { class: 'bubble' }, markdownNode(part.text, m.chatId)), m, index === lastText),
+        key: 'bubble',
+        signature: JSON.stringify([joined, presentation, [m.status, m.userReactions, m.reactionsRevision, displayText(m), m.sessionId, botById(m.botId)?.name]]),
+        create: () => updateBubbleControls(h('div', { class: 'bubble' }, markdownNode(joined, m.chatId)), m),
         update: (bubble) => {
-          markdownNode(part.text, m.chatId, bubble.firstElementChild);
-          return updateBubbleControls(bubble, m, index === lastText);
+          markdownNode(joined, m.chatId, bubble.firstElementChild);
+          return updateBubbleControls(bubble, m);
         },
       });
     } else if (part.type === 'event') {
       const node = eventLine(part, m);
-      if (node) views.push({ key, signature: JSON.stringify([part, presentation]), create: () => node });
+      if (node) views.push({ key: `event:${index}`, signature: JSON.stringify([part, presentation]), create: () => node });
     }
   });
-  if (lastText < 0) views.push({ key: 'reactions', signature: JSON.stringify([m.status, m.userReactions, m.reactionsRevision, locale()]), create: () => reactionBar(m) });
+  if (!texts.length) views.push({ key: 'reactions', signature: JSON.stringify([m.status, m.userReactions, m.reactionsRevision, locale()]), create: () => reactionBar(m) });
   if (m.status === 'streaming') {
     const running = [...parts].reverse().find((p) => p.type === 'tool' && p.state === 'running');
     const lastText = parts.at(-1)?.type === 'text' && parts.at(-1)?.live;
@@ -973,8 +981,8 @@ function partViews(m, inGroup) {
 }
 
 /** The bubble carries the reply text and the reaction badge; the action row lives below it. */
-function updateBubbleControls(bubble, m, isLast) {
-  updateBubbleReactions(bubble, m, isLast);
+function updateBubbleControls(bubble, m) {
+  updateBubbleReactions(bubble, m);
   return bubble;
 }
 

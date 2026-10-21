@@ -205,28 +205,48 @@ test('reconnect and unloaded older-page reactions are retained, while a chat res
   assert.equal(document.querySelector('.reaction-chip'), null);
 });
 
-test('reactions stay on the final bubble while message parts change, preserving media and removal focus', async () => {
+test('the badge stays on the bubble of the reply while its parts change, preserving media and removal focus', async () => {
   let item = message('reaction-bubbles', 'First\nSecond', {
     parts: [{ type: 'text', text: '<media src="/tmp/demo.mp4" />\nFirst' }, { type: 'text', text: 'Second' }],
     userReactions: ['👍'], reactionsRevision: 1,
   });
   await reset([item]);
   const video = document.querySelector('video');
+  // One reply is one bubble, however many parts the Host recorded for it.
   const bubbles = document.querySelectorAll('.bubble');
-  assert.equal(bubbles[0].querySelector('.reaction-bar'), null);
-  assert.equal(bubbles[1].querySelector('.reaction-chip').dataset.emoji, '👍');
+  assert.equal(bubbles.length, 1);
+  assert.equal(bubbles[0].querySelector('.reaction-chip').dataset.emoji, '👍');
+  assert.match(bubbles[0].textContent, /First/);
+  assert.match(bubbles[0].textContent, /Second/);
   document.querySelector('.reaction-trigger').click();
   document.querySelector('[aria-label="More emoji"]').click();
   item = { ...item, parts: [...item.parts, { type: 'text', text: 'Final' }] };
   emit({ type: 'message.upsert', chatId: item.chatId, message: item });
+  // The reply grows inside the same bubble: one badge, and the player keeps running.
+  assert.equal(document.querySelectorAll('.bubble').length, 1);
   assert.equal(document.querySelectorAll('.reaction-bar').length, 1);
   assert.match(document.querySelector('.reaction-bar').parentElement.textContent, /Final/);
   assert.equal(document.querySelector('video'), video);
-  assert.equal(document.querySelector('.reaction-picker'), null);
-  assert.equal(document.activeElement, document.querySelector('.reaction-trigger'));
   document.querySelector('.reaction-chip').focus();
   emit({ type: 'message.reactions', chatId: item.chatId, messageId: item.id, userReactions: [], reactionsRevision: 2 });
   assert.equal(document.activeElement, document.querySelector('.reaction-trigger'));
+});
+
+test('a reply that ran many tools is one bubble, not a bubble per recorded part', async () => {
+  const parts = [];
+  for (let index = 0; index < 40; index += 1) {
+    parts.push({ type: 'text', text: `Step ${index}` }, { type: 'tool', name: 'read', state: 'done' });
+  }
+  const item = message('m-many-parts', 'Step 39', { parts, userReactions: ['👍'], reactionsRevision: 1 });
+  await reset([item]);
+  // The Host opens a text part per assistant turn; the reply still reads as one message.
+  assert.equal(document.querySelectorAll('.bubble').length, 1);
+  const bubble = document.querySelector('.bubble');
+  assert.match(bubble.textContent, /Step 0/);
+  assert.match(bubble.textContent, /Step 39/);
+  // Every part keeps its own paragraph, so the reply stays readable.
+  assert.equal(bubble.querySelectorAll('.md p').length, 40);
+  assert.equal(bubble.querySelector('.reaction-chip').dataset.emoji, '👍');
 });
 
 test('a multi-line reply keeps its actions below the text and its reaction indicator above them', async () => {
@@ -320,9 +340,10 @@ test('successive stream frames update existing paragraphs and finish rendering t
     item = { ...item, text, parts: [{ type: 'text', text, live: true }, { type: 'text', text: `After: ${text.split('\n')[0]}` }] };
     emit({ type: 'message.upsert', chatId: item.chatId, message: item });
     const bubbles = [...document.querySelectorAll('.bubble')];
-    assert.equal(bubbles.length, 2);
-    assert.equal(bubbles[0].querySelector('p').textContent, text.split('\n')[0]);
-    assert.equal(bubbles[1].textContent.trim(), `After: ${text.split('\n')[0]}`);
+    assert.equal(bubbles.length, 1);
+    const paragraphs = [...bubbles[0].querySelectorAll('p')];
+    assert.equal(paragraphs[0].textContent, text.split('\n')[0]);
+    assert.equal(paragraphs.at(-1).textContent, `After: ${text.split('\n')[0]}`);
   }
   item = { ...item, status: 'done' };
   emit({ type: 'message.upsert', chatId: item.chatId, message: item });
@@ -359,9 +380,9 @@ test('stream updates preserve media, questionnaire input and expanded failure de
   emit({ type: 'message.upsert', chatId: item.chatId, message: item });
   assert.equal(document.querySelector('video'), video);
   const bubbles = [...document.querySelectorAll('.bubble')].map((node) => node.textContent);
-  assert.equal(bubbles.length, 2);
+  assert.equal(bubbles.length, 1);
   assert.match(bubbles[0], /The shared prefix starts here/);
-  assert.match(bubbles[1], /later message with more tokens/);
+  assert.match(bubbles[0], /later message with more tokens/);
   details.querySelector('summary').focus();
   item = { ...item, parts: [...item.parts, { type: 'tool', name: 'remember', state: 'ok' }] };
   emit({ type: 'message.upsert', chatId: item.chatId, message: item });
