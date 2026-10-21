@@ -1358,6 +1358,33 @@ export async function verifiedEntryForSessionId(entries, sessionId) {
 }
 
 /**
+ * The newest candidate that still holds the session it was published under.
+ *
+ * The walk's admission is a decision made when the walk ran, and the manifest beside a
+ * transcript can change under it. The explicit-id routes ask again before they serve a
+ * candidate -- the fast path re-reads the identity, the slow path asks the same question the
+ * walk asks -- so a directory whose manifest no longer agrees with its name is refused by
+ * both. The `latest` fallback used to take the first entry of the window as it stood, which
+ * served exactly that directory: the same transcript, under the id its manifest now claims,
+ * while every explicit id for it was refused. One rule, one question, three places.
+ *
+ * The question is the one the id itself answers: the id the directory holds now -- the
+ * manifest's, or the name's when the manifest is gone -- has to be the id it was published
+ * under. A manifest that changes from one id to another moves that answer and nothing else,
+ * which is exactly why it has to be asked again rather than read off the walk.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
+ * @returns {Promise<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string } | null>}
+ */
+export async function firstHoldingEntry(entries) {
+  for (const candidate of entries) {
+    const identity = await readSessionIdentity(candidate.dir);
+    if (identity.id === candidate.sessionId) return candidate;
+  }
+  return null;
+}
+
+/**
  * The visible set the picker shows, and the order it is shown in.
  *
  * Two sets live here and they are not the same set. `entries` is what the caller handed over:
@@ -2999,7 +3026,14 @@ export function sessionsValidator(visible, titles, limit, children) {
     // different separator cannot fix that, because no character is excluded from a TEXT value.
     // JSON escapes the ambiguous characters, so the tuple's boundaries survive anything the store
     // can return, and no field needs a second representation to be safe.
-    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));
+    //
+    // The published id is in the tuple because it is in the payload: the row's id IS the id the
+    // walk published this directory under, and the body the reader receives says it. A manifest
+    // that changes from one id to another moves the published id and moves nothing else here --
+    // the directory, the transcript, the runtime row and the mtime are all the same -- so without
+    // this field the validator would answer 304 for a body that names a session the reader is no
+    // longer looking at, and the reused body would keep publishing the old id indefinitely.
+    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));
   }
   // The sub-agents, in the order the payload carries them: most recently active first inside
   // each group. The parent id is in the tuple because the grouping is part of what the page
@@ -3010,7 +3044,7 @@ export function sessionsValidator(visible, titles, limit, children) {
     const kind = meta ? String(meta.kind ?? "") : "";
     const parent = meta ? String(meta.parent ?? "") : "";
     const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? "") : "";
-    parts.push(JSON.stringify([parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));
+    parts.push(JSON.stringify([entry.sessionId, parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));
   }
   return parts.join("\n");
 }
@@ -3037,8 +3071,15 @@ export function trajectoryCacheFamily(dir, filter) {
  * The cache key for one rendered trajectory. Every component comes from a `stat`, a small
  * manifest/catalog file, or the already-resolved session binding — never from reading
  * `messages.jsonl`, which is the whole point: a matching key proves the file did not grow.
+ *
+ * The identity the directory holds is in it, because the body says which session it is about.
+ * A manifest that changes from one id to another leaves the directory, the transcript, the
+ * lineage and the mtime exactly as they were, so a key made of those would match and the
+ * cached body of the OLD id would be served for the NEW one — a body whose `session.id` names
+ * a session nobody asked for. The key has to cover the same facts the body carries.
+ *
  * @param {{ dir: string, sizeBytes: number, lastActiveAt: number }} entry
- * @param {{ catalogBytes?: number | null }} identity
+ * @param {{ id?: string | null, catalogBytes?: number | null }} identity
  * @param {any} binding
  * @returns {string}
  */
@@ -3060,7 +3101,7 @@ export function trajectoryCacheKey(entry, identity, binding, filter) {
     .join(',');
   // The requested slice is part of the answer too: the same session stitched and unfiltered is
   // two different bodies and must never share an entry.
-  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
+  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
 }
 /**
  * The `?since=` cursor, or null when there is not a usable one.
@@ -3850,7 +3891,18 @@ export async function start(context) {
         }
         if (entry) binding = current;
       }
-      if (!entry) entry = entries[0];
+      if (!entry) {
+        // The window's first entry -- but only while it still holds the session it was
+        // published under. The explicit-id routes ask that again before they serve a
+        // candidate, and the manifest can change under the walk, so the fallback has to ask
+        // it too: a directory whose manifest no longer agrees with its name is nobody's
+        // directory, and serving it here while both explicit ids refuse it would be the
+        // same transcript under an id the reader cannot ask for.
+        entry = await firstHoldingEntry(entries);
+        if (!entry) {
+          return { ok: false, status: 404, code: 'session_not_found', message: '找不到可用的会话' };
+        }
+      }
     } else {
       // Two ways in, and the order matters.
       //
