@@ -764,9 +764,9 @@ test('the background task strip keeps the official one line rows and folds a lon
   await settle();
   const strip = document.querySelector('.helpers');
   const rows = strip.querySelectorAll('.helper-row');
-  // The rows are the ones the official build draws, in its order: what runs, what waits, then
-  // the first of the queue.
-  assert.equal(rows.length, 5);
+  // The rows are the ones the official build draws, in its order. The first three stay in the
+  // open, the rest fold into one line.
+  assert.equal(rows.length, 3);
   // A row is one line: who is doing what, then the elapsed time, then the stop button.
   const running = rows[0];
   assert.equal(running.className, 'helper-row');
@@ -780,9 +780,9 @@ test('the background task strip keeps the official one line rows and folds a lon
   const queuedRow = rows[2];
   assert.match(queuedRow.querySelector('.helper-text').textContent, /Rob has this queued: "Queued task 1"/);
   assert.equal(queuedRow.querySelector('.helper-time').textContent, '');
-  // The queue behind the third waiting job folds into one line.
+  // The queue behind the third row folds into one line.
   const more = strip.querySelector('.helper-more');
-  assert.match(more.textContent, /2 more tasks/);
+  assert.match(more.textContent, /4 more tasks/);
   more.click();
   await settle();
   assert.equal(strip.querySelectorAll('.helper-row').length, 7);

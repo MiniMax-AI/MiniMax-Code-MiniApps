@@ -1300,7 +1300,7 @@ function helperElapsed(helper) {
 }
 
 /** How many job rows stay in the open before the rest folds into one line. */
-const HELPER_ROWS_PREVIEW = 5;
+const HELPER_ROWS_PREVIEW = 3;
 let helpersExpanded = false;
 
 /** Background helpers working for this chat: one line each, with a stop button. */
