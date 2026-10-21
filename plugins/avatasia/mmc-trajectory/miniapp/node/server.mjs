@@ -3347,6 +3347,34 @@ export function createTrajectoryCache(limit) {
       return hit.value;
     },
     /**
+     * The entry that answers for this family, if there is one.
+     *
+     * The key names a VERSION; the family names the QUESTION. Two requests that name the same
+     * directory and the same slice ask the same question, and the answer to it is the entry this
+     * cache holds -- but the key it was stored under can name a different version of it, because
+     * the key also carries the requester's context. A poll that asked for `latest` and a read that
+     * asked for that session by its id are the same reader of the same body, and they have to
+     * reach the same entry: the first stores the body under a key that carries the binding it
+     * resolved, the second looks it up under a key that does not, and the two keys differ for
+     * reasons that have nothing to do with the body.
+     *
+     * A family holds exactly one entry -- storing a newer one drops its predecessor -- so what is
+     * found here is the current answer to that question.
+     *
+     * @param {string} family
+     * @returns {any | null}
+     */
+    getByFamily(family) {
+      for (const [key, hit] of entries) {
+        if (hit.family !== family) continue;
+        // Re-reading is the only signal that an entry is still hot, so it refreshes recency.
+        entries.delete(key);
+        entries.set(key, hit);
+        return hit.value;
+      }
+      return null;
+    },
+    /**
      * @param {string} key
      * @param {string} family the (session, slice) this answers for; a newer version of the same
      *   family replaces the older one instead of stacking beside it
@@ -3987,7 +4015,20 @@ export async function start(context) {
 
     // Everything needed to decide "did this change?" is already in hand. Building the key
     // before the read is what lets an unchanged session skip the read entirely.
-    return { ok: true, entry, binding, identity, generations, filter, cacheKey: trajectoryCacheKey(entry, identity, binding, filter) };
+    //
+    // The family travels with it: the key names the version and the family names the question,
+    // and a read that asks for this session by its id has to be able to reach the entry a poll
+    // stored for it even though the two computed different keys.
+    return {
+      ok: true,
+      entry,
+      binding,
+      identity,
+      generations,
+      filter,
+      cacheKey: trajectoryCacheKey(entry, identity, binding, filter),
+      family: trajectoryCacheFamily(entry.dir, filter),
+    };
   };
 
   /**
@@ -4577,7 +4618,12 @@ export async function start(context) {
       sendError(response, 400, 'record_index_required', '缺少记录序号');
       return;
     }
-    const cached = trajectoryCache.get(ctx.cacheKey);
+    // The key names the version and the family names the question. A read that names the
+    // session by its id and a poll that asked for `latest` are the same reader of the same
+    // body, so the second one falls back to the family's entry instead of reporting that
+    // nothing is cached: the two computed different keys because one of them carried the
+    // binding it resolved and the other did not, and that has nothing to do with the body.
+    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);
     if (!cached) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;
@@ -4677,7 +4723,9 @@ export async function start(context) {
       sendError(response, 400, 'record_index_required', '缺少记录序号');
       return;
     }
-    const cached = trajectoryCache.get(ctx.cacheKey);
+    // The key names the version and the family names the question — see `handleRaw` for why the
+    // family is the fallback.
+    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family);
     if (!cached) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;

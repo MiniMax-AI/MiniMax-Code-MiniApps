@@ -4299,7 +4299,10 @@
         searchController = controller;
         var seq = (searchSeq += 1);
         state.searchPending = true;
-        var session = sessionParam();
+        // The search is about the body on screen, so it asks about THAT session — the same
+        // question the raw and detail reads ask. Asking for the current session instead would
+        // answer with another session's records, and their indexes would then filter these rows.
+        var session = displayedSessionParam();
         var url = '/api/trajectory/search?session=' + session
           + '&q=' + encodeURIComponent(asked)
           + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));
@@ -4323,6 +4326,18 @@
             if (seq !== searchSeq) return;
             searchController = null;
             state.searchPending = false;
+            // The answer has to be about the body on screen BEFORE its indexes may filter that
+            // body. The server names the session it answered for, so the two can be compared:
+            // if they differ, the hits describe another session's records, and installing them
+            // would report a miss for a row that matches and a hit for one that does not.
+            var answered = body && body.session ? body.session : null;
+            var displayed = state.payload && state.payload.session ? state.payload.session : null;
+            if (!answered || !displayed || answered.id !== displayed.id
+              || answered.generation !== state.generation) {
+              var mismatch = new Error('session_mismatch');
+              mismatch.code = 'session_mismatch';
+              throw mismatch;
+            }
             state.searchHits = searchHitSet(body.hits);
             state.searchTotal = Number.isInteger(body.total) ? body.total : 0;
             state.searchTruncated = body.truncated === true;
