@@ -794,6 +794,23 @@ export async function readSessionIdentity(dir) {
 }
 
 /**
+ * The session id the manifest beside the transcript names, or null when there is no manifest.
+ *
+ * A directory's name and the manifest beside its transcript are two copies of the same id. This
+ * reads only the manifest -- the catalogue beside it says nothing about who the directory holds
+ * -- and it says nothing when the manifest is absent, because a directory with no manifest is
+ * judged by its name alone.
+ *
+ * @param {string} dir
+ * @returns {Promise<string | null>}
+ */
+async function readManifestSessionId(dir) {
+  const manifest = await readJsonIfPresent(dir, 'manifest.json');
+  const id = manifest && typeof manifest.sessionId === 'string' ? manifest.sessionId.trim() : '';
+  return id || null;
+}
+
+/**
  * The whole candidate set from one walk, as two products of the same traversal.
  *
  * These used to be one thing, and that is the defect. `slice(0, MAX_SESSION_LIST)` ran last,
@@ -862,11 +879,33 @@ export async function collectSessionCandidates(sessionsRoot) {
     }
   };
   await walk(sessionsRoot, 0);
-  entries.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+
+  // A directory is a session's directory only when its name and the manifest beside its
+  // transcript name that session: they are two copies of the same id, and the rule the recorded
+  // path and the 'latest' binding already follow -- the name AND the manifest -- is the one that
+  // belongs here too.
+  //
+  // A directory where the two disagree is nobody's. Publishing it would put one session's id on
+  // another session's transcript, and the row would mix the manifest's id with the name's
+  // metadata -- two sources in one row. So it does not enter the walk: the list does not publish
+  // it, the validator does not see it, and the trajectory route does not serve it.
+  //
+  // And the id it claims is not among the published ones, so it is not a parent the reader can
+  // pick -- a run hanging off it becomes a conversation of its own, by the rule that a parent the
+  // reader cannot reach is not a parent.
+  const verdicts = await Promise.all(entries.map(async (entry) => {
+    const claimed = decodeSessionIdFromDirName(basename(entry.dir));
+    // A name that does not decode is still a real session; it is judged by its name alone.
+    if (!claimed) return true;
+    const manifestId = await readManifestSessionId(entry.dir);
+    return !(manifestId && manifestId !== claimed);
+  }));
+  const publishable = entries.filter((_entry, index) => verdicts[index]);
+  publishable.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 
   /** @type {Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>} */
   const byDecodedId = new Map();
-  for (const entry of entries) {
+  for (const entry of publishable) {
     const id = decodeSessionIdFromDirName(basename(entry.dir));
     // A name that does not decode is still a real session; it just has no fast path and is
     // found the slow way. Dropping it here would turn "no fast path" into "does not exist".
@@ -880,7 +919,7 @@ export async function collectSessionCandidates(sessionsRoot) {
   // what the picker used to draw from; the list of MAIN sessions needs a deeper pool than that,
   // because a sub-agent sits in that window and would otherwise take a main session' place.
   // The walk already stat'ed every one of these, so the deeper pool costs no extra disk work.
-  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries, byDecodedId, truncated };
+  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, byDecodedId, truncated };
 }
 
 /**
