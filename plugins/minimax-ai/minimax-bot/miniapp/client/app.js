@@ -447,6 +447,7 @@ async function mountChat(chatId) {
   const revision = ++mountRevision;
   closeReactionPicker();
   mounted = chatId;
+  helpersExpanded = false;
   const target = targetOf(chatId);
   ui.pillBar = h('div', { class: 'pill-bar' });
   ui.feedInner = h('div', { class: 'feed-inner' });
@@ -1298,12 +1299,33 @@ function helperElapsed(helper) {
   return minutes < 1 ? t('helper.justStarted') : t('helper.minutes', { n: minutes });
 }
 
+/** How many job rows stay in the open before the rest folds into one line. */
+const HELPER_ROWS_PREVIEW = 5;
+let helpersExpanded = false;
+
 /** Background helpers working for this chat: one line each, with a stop button. */
 function renderHelpers() {
   if (!ui.helpers) return;
   const items = [...state.helpers, ...state.tasks].filter((x) => [x.chatId, x.originChatId, x.resultChatId].includes(mounted) && ['queued', 'running', 'waiting_for_tasks'].includes(x.status));
-  ui.helpers.replaceChildren(
-    ...items.map((helper) => {
+  if (!items.length) {
+    ui.helpers.replaceChildren();
+    ui.helpers.classList.remove('has-fold');
+    return;
+  }
+  // The rows are the ones the official build draws, in the order it draws them. A busy chat
+  // keeps the first few in the open and folds the rest into one line, so the strip never
+  // grows into a wall of rows.
+  const preview = helpersExpanded ? items : items.slice(0, HELPER_ROWS_PREVIEW);
+  const hidden = items.length - preview.length;
+  // The rows keep the scroll area they had, and the fold button sits below it, so the button
+  // stays reachable however long the queue is.
+  let rows = ui.helpers.querySelector('.helper-rows');
+  if (!rows) {
+    rows = h('div', { class: 'helper-rows' });
+    ui.helpers.replaceChildren(rows);
+  }
+  rows.replaceChildren(
+    ...preview.map((helper) => {
       const bot = botById(helper.botId);
       return h(
         'div',
@@ -1329,6 +1351,27 @@ function renderHelpers() {
       );
     }),
   );
+  ui.helpers.classList.toggle('has-fold', hidden > 0 || (helpersExpanded && items.length > HELPER_ROWS_PREVIEW));
+  // `replaceChildren` renders a null argument as the text "null", so the fold button is appended
+  // on its own, and only when there is something to fold.
+  ui.helpers.querySelector('.helper-more')?.remove();
+  if (hidden > 0 || (helpersExpanded && items.length > HELPER_ROWS_PREVIEW)) {
+    ui.helpers.append(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn sm helper-more',
+          'aria-expanded': String(helpersExpanded),
+          onclick: () => {
+            helpersExpanded = !helpersExpanded;
+            renderHelpers();
+          },
+        },
+        hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse'),
+      ),
+    );
+  }
 }
 setInterval(() => {
   if (mounted && state.helpers.some((x) => x.chatId === mounted && x.status === 'running')) renderHelpers();
