@@ -781,7 +781,7 @@ export async function readSessionIdentity(dir) {
   const manifest = await readJsonIfPresent(dir, 'manifest.json');
   const catalog = await readJsonIfPresent(dir, 'history-catalog.json');
   const manifestId = manifest && typeof manifest.sessionId === 'string' ? manifest.sessionId.trim() : '';
-  const id = manifestId || decodeSessionIdFromDirName(basename(dir)) || basename(dir);
+  const id = publishedSessionId(manifestId, dir);
   const createdAtMs = manifest && Number.isFinite(Number(manifest.createdAtMs)) ? Number(manifest.createdAtMs) : null;
   const generations = parseCatalogGenerations(catalog);
   return {
@@ -791,6 +791,26 @@ export async function readSessionIdentity(dir) {
     generations,
     activeGeneration: activeCatalogGeneration(catalog, generations),
   };
+}
+
+/**
+ * The id a directory is published under.
+ *
+ * One writer, and the same answer everywhere. The manifest beside the transcript names the
+ * session when it is there, and the manifest is the authority: a directory's name is a claim,
+ * not a fact. The name names the session when it decodes, and the folder's own name is the
+ * last resort -- a directory whose name does not decode and that has no manifest has no id of
+ * its own, and its folder name is what it can be reached by.
+ *
+ * A name that does not decode names NO session, which is not the same as disagreeing with one:
+ * such a directory is identified by its manifest alone, and it is still a real session.
+ *
+ * @param {string | null | undefined} manifestId
+ * @param {string} dir
+ * @returns {string}
+ */
+export function publishedSessionId(manifestId, dir) {
+  return manifestId || decodeSessionIdFromDirName(basename(dir)) || basename(dir);
 }
 
 /**
@@ -824,18 +844,20 @@ async function readManifestSessionId(dir) {
  *
  *  - `recentEntries` — sorted by mtime, capped at `MAX_SESSION_LIST`. This is what the picker
  *    shows, and it stays exactly as small as it was.
- *  - `byDecodedId` — every candidate directory, keyed by the id decoded from its own name.
- *    Decoding reads no file: the walk already stat'ed `messages.jsonl` for every candidate, so
- *    the index costs no I/O the walk was not doing anyway.
+ *  - `bySessionId` — every candidate directory, keyed by the id that directory is published
+ *    under. The walk decides that id once, when it reads the manifest it already reads to decide
+ *    whether the directory is publishable at all, so the index costs no I/O the walk was not
+ *    doing anyway -- and every id the list shows is an id this index can resolve.
  *
  * Two properties this must not lose:
  *
- *  - A decoded name is a *claim*, not a fact. `readSessionIdentity` prefers `manifest.sessionId`
- *    over the directory name, so every caller of this index still reads the identity of the one
- *    directory it picked and checks the id before serving it.
- *  - Two directories can decode to the same id. `Map.set` would silently keep whichever came
- *    last, which makes the answer depend on `readdir` order. Duplicates are therefore kept as a
- *    list and resolved against the manifests, not discarded and not guessed.
+ *  - The id is a *decision*, not a guess. The walk refuses a directory whose name and manifest
+ *    disagree, so a directory in this index is one session's directory; and every caller still
+ *    reads the identity of the one directory it picked and checks the id before serving it,
+ *    because the manifest can change under the walk.
+ *  - Two directories can hold the same id. `Map.set` would silently keep whichever came last,
+ *    which makes the answer depend on `readdir` order. Duplicates are therefore kept as a list
+ *    and resolved against the manifests, not discarded and not guessed.
  *
  * `truncated` says the walk hit `MAX_SESSION_CANDIDATES` and stopped early. That budget is a
  * resource guard, and it must not be allowed to masquerade as "this session does not exist" —
@@ -843,9 +865,9 @@ async function readManifestSessionId(dir) {
  * truthful one.
  *
  * @param {string} sessionsRoot
- * @returns {Promise<{ recentEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>,
- *   allEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>,
- *   byDecodedId: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>,
+ * @returns {Promise<{ recentEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>,
+ *   allEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>,
+ *   bySessionId: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>>,
  *   truncated: boolean }>}
  */
 export async function collectSessionCandidates(sessionsRoot) {
@@ -893,33 +915,42 @@ export async function collectSessionCandidates(sessionsRoot) {
   // And the id it claims is not among the published ones, so it is not a parent the reader can
   // pick -- a run hanging off it becomes a conversation of its own, by the rule that a parent the
   // reader cannot reach is not a parent.
-  const verdicts = await Promise.all(entries.map(async (entry) => {
+  //
+  // The id every directory is PUBLISHED under is decided here, once. Everything downstream --
+  // the title lookup, the layer, the row, the index the route resolves an id through -- reads it
+  // off the entry instead of decoding the name again, because a name that does not decode names
+  // no session at all: the manifest is then the only identity that directory has, and a parent
+  // identified that way still holds its runs, still has its title, and is still openable by the
+  // id the list shows.
+  const judged = await Promise.all(entries.map(async (entry) => {
     const claimed = decodeSessionIdFromDirName(basename(entry.dir));
-    // A name that does not decode is still a real session; it is judged by its name alone.
-    if (!claimed) return true;
     const manifestId = await readManifestSessionId(entry.dir);
-    return !(manifestId && manifestId !== claimed);
+    // A name that does not decode names no session, so there is nothing for the manifest to
+    // disagree with: the manifest is the only identity there is.
+    const holds = !claimed || !manifestId || manifestId === claimed;
+    return { entry, holds, sessionId: publishedSessionId(manifestId, entry.dir) };
   }));
-  const publishable = entries.filter((_entry, index) => verdicts[index]);
+  const publishable = judged.filter((one) => one.holds)
+    .map((one) => ({ ...one.entry, sessionId: one.sessionId }));
   publishable.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 
-  /** @type {Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>} */
-  const byDecodedId = new Map();
+  /** @type {Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>>} */
+  const bySessionId = new Map();
   for (const entry of publishable) {
-    const id = decodeSessionIdFromDirName(basename(entry.dir));
-    // A name that does not decode is still a real session; it just has no fast path and is
-    // found the slow way. Dropping it here would turn "no fast path" into "does not exist".
-    if (!id) continue;
-    const bucket = byDecodedId.get(id);
+    // The key is the id the entry is published under, so every id the list shows is an id this
+    // index can resolve. A name that does not decode names no session, and the folder name is
+    // what that directory can be reached by -- so it is in here under that name rather than
+    // missing, which would turn "no fast path" into "does not exist".
+    const bucket = bySessionId.get(entry.sessionId);
     if (bucket) bucket.push(entry);
-    else byDecodedId.set(id, [entry]);
+    else bySessionId.set(entry.sessionId, [entry]);
   }
 
   // `allEntries` is the same walk, uncut. The 30-entry window is what 'latest' falls back to and
   // what the picker used to draw from; the list of MAIN sessions needs a deeper pool than that,
   // because a sub-agent sits in that window and would otherwise take a main session' place.
   // The walk already stat'ed every one of these, so the deeper pool costs no extra disk work.
-  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, byDecodedId, truncated };
+  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, bySessionId, truncated };
 }
 
 /**
@@ -1257,6 +1288,10 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
   if (dir !== root && !dir.startsWith(root + sep)) return { entry: null, rejected: true };
   try {
     const fileStat = await stat(join(dir, 'messages.jsonl'));
+    // The id of the session this directory holds. It travels with the entry, like it does for
+    // the walk's own rows: a row built from a recorded path is published under an id too, and a
+    // row with no id is a row the page cannot group, label or select.
+    const identity = await readSessionIdentity(dir);
     if (expectedSessionId) {
       // The directory name is not the only place the session id is written down, and it is not
       // the authority either. The service reads a session's identity from the manifest the
@@ -1273,18 +1308,25 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
       // another session's messages -- the same defect the name check exists for, one column
       // further in.
       //
-      // A directory with no manifest is judged by its name alone, which is the case that was
-      // always here.
-      if (decodeSessionIdFromDirName(basename(dir)) !== expectedSessionId) {
+      // A name that does not decode names NO session, and that is not the same as disagreeing
+      // with one: there is nothing for the manifest to disagree with, so the manifest decides
+      // alone. A directory with no manifest is judged by its name alone, which is the case that
+      // was always here.
+      const claimed = decodeSessionIdFromDirName(basename(dir));
+      if (claimed && claimed !== expectedSessionId) {
         return { entry: null, rejected: true };
       }
-      const identity = await readSessionIdentity(dir);
       if (identity.id !== expectedSessionId) {
         return { entry: null, rejected: true };
       }
     }
     return {
-      entry: { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) },
+      entry: {
+        dir,
+        sizeBytes: fileStat.size,
+        lastActiveAt: Math.floor(fileStat.mtimeMs),
+        sessionId: identity.id,
+      },
       rejected: false,
     };
   } catch {
@@ -1293,28 +1335,22 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
 }
 
 /**
- * The entry that holds a session: found by the id its directory name decodes to, and confirmed by
+ * The entry that holds a session: found by the id the walk published it under, and confirmed by
  * the manifest beside its transcript.
  *
- * The directory name is a claim; the manifest is the authority. `readSessionIdentity` prefers
- * `manifest.sessionId`, so a directory whose name encodes one session and whose manifest names
- * another is the OTHER session's directory, whatever the folder is called. Two shortcuts used to
- * take the name's word for it -- the picker promoting the current conversation into the list, and
- * the 'latest' resolver choosing which transcript to serve -- and both could put one session's id
- * on another session's messages.
+ * The id is the walk's decision, and the walk refuses a directory whose name and manifest
+ * disagree -- so a candidate in the index holds the session it is indexed under. The manifest is
+ * read again anyway, because it can change under the walk, and a directory that has stopped
+ * holding that session must not be served as it.
  *
- * So the name is used to FIND the candidate and the manifest is used to CONFIRM it. A candidate
- * whose manifest names another session is not this session's entry, and the search goes on: another
- * directory may carry this id honestly.
- *
- * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
  * @param {string} sessionId
- * @returns {Promise<{ dir: string, sizeBytes: number, lastActiveAt: number } | null>}
+ * @returns {Promise<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string } | null>}
  */
 export async function verifiedEntryForSessionId(entries, sessionId) {
   if (!sessionId) return null;
   for (const candidate of entries) {
-    if (decodeSessionIdFromDirName(basename(candidate.dir)) !== sessionId) continue;
+    if (candidate.sessionId !== sessionId) continue;
     const identity = await readSessionIdentity(candidate.dir);
     if (identity.id === sessionId) return candidate;
   }
@@ -1348,7 +1384,7 @@ export async function verifiedEntryForSessionId(entries, sessionId) {
  * and promoting it here would put one session in both controls at once: the conversation pick
  * would offer a run, and the run pick would offer the same run again.
  *
- * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
  * @param {{ sessionId: string, relativeDir?: string | null } | null} current
  * @param {Map<string, { workspace?: string | null, parent?: string | null }>} titles
  * @param {string} sessionsRoot
@@ -1394,7 +1430,7 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
   const same = [];
   const other = [];
   for (const entry of rest) {
-    const workspace = workspaceOfSession(titles, decodeSessionIdFromDirName(basename(entry.dir)));
+    const workspace = workspaceOfSession(titles, entry.sessionId);
     if (currentWorkspace !== null && sameWorkspacePath(workspace, currentWorkspace)) same.push(entry);
     else other.push(entry);
   }
@@ -1449,9 +1485,9 @@ export async function buildVisibleSessionList(entries, current, titles, sessions
  * value. A copy would leave one of the three reading the uncorrected one, and the body and the
  * ETag would then describe two different lists.
  *
- * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} entries
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
  * @param {Map<string, { parent?: string | null }>} titles
- * @returns {{ mains: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>, childrenByParent: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>> }}
+ * @returns {{ mains: Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>, childrenByParent: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>> }}
  */
 export function splitSessionLayers(entries, titles) {
   const mains = [];
@@ -1462,10 +1498,14 @@ export function splitSessionLayers(entries, titles) {
   // the current conversation among them, and a parent that is only a row is not something the
   // reader can pick, so a run hanging off it would be a run the reader cannot reach. The rule is
   // about what the reader can reach, so the membership test is about the walk.
+  //
+  // The membership is the id each directory is PUBLISHED under, which is not always the id its
+  // name decodes to: a name that does not decode names no session, and the manifest beside the
+  // transcript is then the only identity that directory has. A parent identified that way is in
+  // the list the reader can pick, so the runs hanging off it are its runs.
   const known = new Set();
   for (const entry of entries) {
-    const id = decodeSessionIdFromDirName(basename(entry.dir));
-    if (id) known.add(id);
+    if (entry.sessionId) known.add(entry.sessionId);
   }
 
   /**
@@ -1547,7 +1587,7 @@ export function splitSessionLayers(entries, titles) {
   }
 
   for (const entry of entries) {
-    const id = decodeSessionIdFromDirName(basename(entry.dir));
+    const id = entry.sessionId;
     const parent = id ? parentOf(id) : null;
     if (!parent) {
       mains.push(entry);
@@ -2934,16 +2974,16 @@ export function etagMatches(header, etag) {
  * move would answer 304 for a body the caller never held — and the body it never held is the one
  * with the new sub-agent in it.
  *
- * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} visible
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} visible
  * @param {Map<string, { title: string | null, kind: string | null }>} titles
  * @param {number} limit
- * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} [children]
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} [children]
  * @returns {string}
  */
 export function sessionsValidator(visible, titles, limit, children) {
   const parts = ['limit=' + limit];
   for (const entry of visible) {
-    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+    const meta = titles.get(entry.sessionId);
     const title = meta ? String(meta.title ?? "") : "";
     const kind = meta ? String(meta.kind ?? "") : "";
     const parent = meta ? String(meta.parent ?? "") : "";
@@ -2965,7 +3005,7 @@ export function sessionsValidator(visible, titles, limit, children) {
   // each group. The parent id is in the tuple because the grouping is part of what the page
   // shows — the same sub-agent under a different main is a different page.
   for (const entry of children || []) {
-    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+    const meta = titles.get(entry.sessionId);
     const title = meta ? String(meta.title ?? "") : "";
     const kind = meta ? String(meta.kind ?? "") : "";
     const parent = meta ? String(meta.parent ?? "") : "";
@@ -3504,11 +3544,14 @@ export async function start(context) {
   };
 
   const describeSession = async (entry) => {
-    const cacheKey = `${entry.dir}|${entry.sizeBytes}|${entry.lastActiveAt}`;
+    // The id is the walk's decision, and the walk read the manifest to make it, so the row says
+    // the same thing about the session whether it is read here or by the layer or by the
+    // validator. The id is in the cache key: a manifest that changes changes the id, and a
+    // descriptor cached under the old one would publish the old session's id.
+    const cacheKey = `${entry.dir}|${entry.sizeBytes}|${entry.lastActiveAt}|${entry.sessionId}`;
     const cached = descriptorCache.get(cacheKey);
     if (cached && Date.now() - cached.at < SESSION_CACHE_TTL_MS) return cached.value;
     const identity = await readSessionIdentity(entry.dir);
-    const cacheId = `${entry.dir}|${identity.id}`;
     let peek = { messages: 0, userMessages: 0, assistantMessages: 0, toolResults: 0, toolCalls: 0, thinkingBlocks: 0, turns: 0 };
     let label = null;
     let startedAt = identity.createdAtMs;
@@ -3527,8 +3570,8 @@ export async function start(context) {
       context.logger.warn('miniapp.trajectory.read_error', { reason: 'peek_failed', code: errorCode(error) });
     }
     const value = {
-      id: identity.id,
-      label: label ?? `会话 ${String(identity.id).slice(4, 12)}`,
+      id: entry.sessionId,
+      label: label ?? `会话 ${String(entry.sessionId).slice(4, 12)}`,
       // A prefix count is a prefix count. Reported as the session's message count it is simply
       // untrue, so when the prefix was not the whole file these are absent rather than approximate —
       // and the page's job is to print nothing rather than to print a number it cannot stand behind.
@@ -3539,7 +3582,7 @@ export async function start(context) {
       // here, and /api/trajectory's is. Same name, different scope. Pinned by tests/verify-list-cache.mjs.
       sizeBytes: entry.sizeBytes,
       turnCount: peekIsWhole ? peek.turns : null,
-      cacheId,
+      cacheId: `${entry.dir}|${entry.sessionId}`,
     };
     descriptorCache.set(cacheKey, { at: Date.now(), value });
     if (descriptorCache.size > SESSION_CACHE_ENTRIES) {
@@ -3652,7 +3695,11 @@ export async function start(context) {
     // Real titles from the runtime database, for every candidate and for the current conversation,
     // which may be outside the walk. The workspace column rides along because the visible set is
     // ordered by it, and the parent column rides along because the layer is decided by it.
-    const ids = allEntries.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean);
+    //
+    // The ids are the ones the walk published those directories under -- not the ids their names
+    // happen to decode to. A directory whose name does not decode is identified by its manifest,
+    // and the runtime database knows it under that id.
+    const ids = allEntries.map((entry) => entry.sessionId).filter(Boolean);
     if (current && current.sessionId && ids.indexOf(current.sessionId) < 0) ids.push(current.sessionId);
     const titles = await sessionTitles(ids);
 
@@ -3701,7 +3748,9 @@ export async function start(context) {
       // fields they carry: the same title, the same kind, the same tag, the same floor.
       const describeRow = async (entry) => {
         const descriptor = await describeSession(entry);
-        const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+        // The runtime facts are looked up under the id the row is published under, so the row's
+        // id and the row's facts are the same session by construction rather than by agreement.
+        const meta = titles.get(entry.sessionId);
         // The row is BUILT, not patched. The descriptor comes out of a cache and is shared, so
         // writing the runtime's facts onto it leaves the last writer's facts on it for the next
         // reader -- and a session whose row has left the runtime database goes on publishing the
@@ -3767,7 +3816,7 @@ export async function start(context) {
       return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     const entries = candidates.recentEntries;
-    if (entries.length === 0 && candidates.byDecodedId.size === 0) {
+    if (entries.length === 0 && candidates.bySessionId.size === 0) {
       return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     const requested = url.searchParams.get('session');
@@ -3805,15 +3854,16 @@ export async function start(context) {
     } else {
       // Two ways in, and the order matters.
       //
-      // Fast path: the id was decoded from a directory name during the walk, so the directory is
+      // Fast path: the id is the one the walk published that directory under, so the directory is
       // already known and no scanning is needed. This is what makes a session outside the recent
       // 30 reachable at all — before this, the only directories this branch could see were the 30
       // the picker shows, so 116 of 146 sessions on this machine answered 404 to their own id.
       //
-      // The decoded name is still only a claim. `readSessionIdentity` prefers `manifest.sessionId`,
-      // so a directory whose name disagrees with its manifest must not be served under the
-      // requested id; it falls through to the slow path instead, which re-checks every candidate.
-      const fastPath = candidates.byDecodedId.get(requested);
+      // The walk's decision is not the last word. The manifest can change under the walk, so the
+      // identity of the directory is read again and compared: a directory that has stopped
+      // holding this session is not served under it, and the request falls through to the slow
+      // path, which re-checks every candidate.
+      const fastPath = candidates.bySessionId.get(requested);
       let picked = null;
       if (fastPath) {
         // Duplicates are kept as a list rather than collapsed, because collapsing them with
@@ -3835,7 +3885,14 @@ export async function start(context) {
         const matched = [];
         for (const candidate of entries) {
           const candidateIdentity = await readSessionIdentity(candidate.dir);
-          if (candidateIdentity.id === requested || basename(candidate.dir) === requested) {
+          // The same rule the walk applies, asked again of the directory that is in hand: a
+          // directory whose name decodes to one session and whose manifest names another is
+          // nobody's directory, and it is not served under either id. The walk decided this
+          // before the manifest changed, so the manifest is read again here and the answer
+          // follows the manifest that is on disk now.
+          const claimed = decodeSessionIdFromDirName(basename(candidate.dir));
+          const holds = !claimed || claimed === candidateIdentity.id;
+          if (holds && (candidateIdentity.id === requested || basename(candidate.dir) === requested)) {
             matched.push({ entry: candidate, identity: candidateIdentity });
             break;
           }
