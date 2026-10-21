@@ -55,9 +55,11 @@ function dirFor(id) {
 
 const A = 'mvs_0000000000000000000000000000aaaa';
 const B = 'mvs_0000000000000000000000000000bbbb';
+// Shaped like the entries the walk returns: the id the directory is published under travels with
+// it, because that is the id the runtime facts are looked up under.
 const visible = [
-  { dir: dirFor(A), sizeBytes: 1024, lastActiveAt: 1700000000 },
-  { dir: dirFor(B), sizeBytes: 2048, lastActiveAt: 1700000001 },
+  { dir: dirFor(A), sizeBytes: 1024, lastActiveAt: 1700000000, sessionId: A },
+  { dir: dirFor(B), sizeBytes: 2048, lastActiveAt: 1700000001, sessionId: B },
 ];
 const noTitles = new Map();
 const titled = new Map([
@@ -139,7 +141,12 @@ assert('a null title and an absent one agree — they render the same row',
 
 // A session entering or leaving the visible slice.
 assert('one more session in view moves the tag',
-  sessionsValidator([...visible, { dir: dirFor('mvs_0000000000000000000000000000cccc'), sizeBytes: 1, lastActiveAt: 1 }], noTitles, 20)
+  sessionsValidator([...visible, {
+    dir: dirFor('mvs_0000000000000000000000000000cccc'),
+    sizeBytes: 1,
+    lastActiveAt: 1,
+    sessionId: 'mvs_0000000000000000000000000000cccc',
+  }], noTitles, 20)
   !== sessionsValidator(visible, noTitles, 20));
 
 /* ---------- 2: the request itself is part of the identity ---------- */

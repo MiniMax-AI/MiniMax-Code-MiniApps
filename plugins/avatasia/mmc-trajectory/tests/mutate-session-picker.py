@@ -76,10 +76,19 @@ MUTATIONS = [
     # The identity of the recorded path, in two parts now. The directory name is one of them:
     # a path that points at another session's directory is refused, and this is the check that
     # keeps one directory from being listed twice. The manifest is the other, and it is below.
+    #
+    # A name that does not decode is not a contradiction -- it says nothing at all -- so the
+    # check is "the name has to be this session IF it names one", and the manifest decides the
+    # rest.
     ("the recorded path is not checked against the session its directory name encodes",
-     [("      if (decodeSessionIdFromDirName(basename(dir)) !== expectedSessionId) {",
+     [("      if (claimed && claimed !== expectedSessionId) {",
        "      if (false) {")],
      "a recorded path whose directory name names another session is refused even when its manifest agrees"),
+
+    ("the recorded path refuses a directory whose name does not decode",
+     [("      if (claimed && claimed !== expectedSessionId) {",
+       "      if (claimed !== expectedSessionId) {")],
+     "a recorded path to a directory whose name does not decode is accepted when its manifest names the session"),
 
     # The other part: the manifest the runtime wrote beside the transcript. It is the authority
     # on which session a directory holds -- the service reads a session's identity from it -- so
@@ -87,9 +96,28 @@ MUTATIONS = [
     # session's directory, and accepting it puts the current conversation's id on somebody
     # else's messages.
     ("the recorded path is not checked against the session its manifest names",
-     [("      const identity = await readSessionIdentity(dir);\n      if (identity.id !== expectedSessionId) {",
-       "      const identity = { id: expectedSessionId };\n      if (identity.id !== expectedSessionId) {")],
+     [("      if (identity.id !== expectedSessionId) {\n"
+       "        return { entry: null, rejected: true };\n"
+       "      }",
+       "      // the manifest is not checked here")],
      "a recorded path whose manifest names another session is refused"),
+
+    # The id travels with the entry. The recorded path is the ONLY way the current conversation can
+    # be in the list at all when its directory is outside the window the picker draws from, so an
+    # entry built from it that carries no id is a row the page cannot group, label or select. And
+    # the entry is the only holder of the id: the directory's name does not decode, so the
+    # manifest is the identity, and nothing else in the path says which session this is.
+    #
+    # This one is here, in the picker's control, because this is where the recorded path is
+    # reachable: the visible set is built from the window of thirty, and a session outside it is
+    # reached by its recorded path or not at all. It was in the layers' control before, where the
+    # visible set is built from the WHOLE walk -- so the recorded path is only consulted there for
+    # a directory the walk never reached, and the mutation changed nothing that any assertion
+    # could see. A mutation that cannot fail is worse than one that survives: it reports a rule
+    # nobody is checking.
+    ("the entry built from a recorded path carries no id",
+     [("        sessionId: identity.id,", "        sessionId: null,")],
+     "the entry it builds carries the session id, not just the directory"),
 
     # The partition, dropped. Every session comes back in one group, which is the plain recency
     # order -- the order the picker had before the current conversation was pinned.

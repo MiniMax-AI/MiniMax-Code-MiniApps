@@ -1166,6 +1166,10 @@ try {
     assert('the current conversation is not promoted on a directory that holds another session',
       Boolean(firstRow) && firstRow.id !== 'mvs_mismatch_stranger',
       JSON.stringify(firstRow));
+    assert('every row the list publishes carries an id',
+      (list.sessions || []).every((row) => typeof row.id === 'string' && row.id !== '')
+      && (list.children || []).every((row) => typeof row.id === 'string' && row.id !== ''),
+      JSON.stringify((list.sessions || []).map((row) => row.id)));
     const trajectory = await (await fetch(service.base + '/api/trajectory?session=latest')).json();
     assert('the latest route does not serve a directory that holds another session as the current one',
       Boolean(trajectory.session) && trajectory.session.id !== 'mvs_mismatch_stranger',
@@ -1235,6 +1239,93 @@ try {
   }
 } catch (error) {
   failures.push('a directory whose name and manifest disagree -- ' + (error && error.message));
+}
+
+/* ---------- 15: the identity a directory is published under ---------- */
+//
+// A directory's name may not decode at all. The runtime writes the id into the folder name, but
+// the manifest beside the transcript is the authority, and a name that decodes to nothing names
+// no session -- so the manifest is the only identity such a directory has, and that identity is
+// the id it is published under.
+//
+// Two things break when the service reads the id off the name instead: the parent is not among
+// the sessions the reader can pick, so the runs hanging off it are demoted into the conversation
+// list, and the row loses the title and the kind the runtime database has for it.
+//
+// And the rule has to hold when the manifest changes under a walk that is already cached: a
+// directory whose manifest no longer agrees with its name is nobody's directory, and the route
+// must not serve it under the id it now claims -- nor under the one it used to claim.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-identified-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  // The parent's folder name does not decode. The manifest beside its transcript is the only
+  // identity it has.
+  const legacy = join(sessionsRoot, '2026', '10', '20', '00-00-00-session_legacy');
+  await mkdir(legacy, { recursive: true });
+  await writeFile(join(legacy, 'messages.jsonl'),
+    JSON.stringify({ role: 'user', content: 'p' }) + '\n', 'utf8');
+  await writeFile(join(legacy, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_identified_parent', createdAtMs: 1 }), 'utf8');
+  const legacyStamp = new Date(BASE_TIME);
+  await utimes(join(legacy, 'messages.jsonl'), legacyStamp, legacyStamp);
+  const child = await makeSession(sessionsRoot, 1, 'mvs_identified_child', BASE_TIME - 60_000);
+  runtimeDb(home, [
+    { sessionId: 'mvs_identified_parent', relative: '2026/10/20/00-00-00-session_legacy', workspace: 'D:\\private\\workspace-one', updatedAtMs: BASE_TIME },
+    { sessionId: 'mvs_identified_child', relative: child.relative, parent: 'mvs_identified_parent', kind: 'task', updatedAtMs: BASE_TIME - 60_000 }
+  ]);
+
+  const service = await startService(home);
+  try {
+    const list = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const rows = list.sessions || [];
+    const parentRow = rows.find((row) => row.id === 'mvs_identified_parent');
+    const childRow = (list.children || []).find((row) => row.id === 'mvs_identified_child');
+    assert('a published manifest-identified parent keeps its runs when its directory name does not decode',
+      Boolean(parentRow) && Boolean(childRow) && childRow.sessionParentId === 'mvs_identified_parent',
+      JSON.stringify([parentRow, childRow]));
+    assert('and the parent keeps the title the runtime database has for it',
+      Boolean(parentRow) && parentRow.label === '会话 rent',
+      JSON.stringify(parentRow));
+    const served = await fetch(service.base + '/api/trajectory?session=mvs_identified_parent');
+    assert('and the id the list shows is the id the route resolves',
+      served.status === 200,
+      'status ' + served.status);
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a parent identified by its manifest -- ' + (error && error.message));
+}
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-swapped-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const one = await makeSession(sessionsRoot, 0, 'mvs_swapped_one', BASE_TIME);
+  await writeFile(join(one.dir, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_swapped_one', createdAtMs: 1 }), 'utf8');
+  runtimeDb(home, [
+    { sessionId: 'mvs_swapped_one', relative: one.relative, updatedAtMs: BASE_TIME }
+  ]);
+
+  const service = await startService(home);
+  try {
+    // The walk is primed while the manifest still agrees with the name.
+    await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    // Now the manifest beside the same transcript names another session. The walk is still
+    // cached, so the route is holding the directory it admitted a moment ago.
+    await writeFile(join(one.dir, 'manifest.json'),
+      JSON.stringify({ sessionId: 'mvs_swapped_other', createdAtMs: 1 }), 'utf8');
+    const underNew = await fetch(service.base + '/api/trajectory?session=mvs_swapped_other');
+    const underOld = await fetch(service.base + '/api/trajectory?session=mvs_swapped_one');
+    assert('a cached candidate whose manifest now disagrees with its name is not served under either id',
+      underNew.status === 404 && underOld.status === 404,
+      JSON.stringify([underNew.status, underOld.status]));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a manifest that changes under a cached walk -- ' + (error && error.message));
 }
 
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');

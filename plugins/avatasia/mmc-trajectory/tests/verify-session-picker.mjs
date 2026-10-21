@@ -538,6 +538,46 @@ try {
     + String(error && error.message ? error.message : error));
 }
 
+/* ---------- 14: a recorded path to a directory the name does not identify ---------- */
+//
+// The recorded path is consulted when the current conversation is not among the sessions the
+// picker draws from, and then it is the only way that conversation can be shown at all. A
+// directory's name may not decode -- the manifest beside its transcript names the session, and
+// the name says nothing. The name is a claim, and an empty claim is not a contradiction: refusing
+// the path because of it would take the current conversation out of the list.
+
+try {
+  const d = await store(31);
+  // One directory older than every other, so it is outside the window of thirty the picker
+  // draws from, and its name does not decode: the manifest beside its transcript is the only
+  // identity it has.
+  const legacy = join(d.sessionsRoot, '2026', '10', '20', '00-00-00-session_legacy');
+  await mkdir(legacy, { recursive: true });
+  await writeFile(join(legacy, 'messages.jsonl'),
+    JSON.stringify({ role: 'user', content: 'x' }) + '\n', 'utf8');
+  await writeFile(join(legacy, 'manifest.json'),
+    JSON.stringify({ sessionId: ID(30), createdAtMs: 1 }), 'utf8');
+  const stamp = new Date(BASE_TIME - 31 * 60_000);
+  await utimes(join(legacy, 'messages.jsonl'), stamp, stamp);
+  runtimeDb(d.home, ['parent_session_id', 'purpose', 'workspace_dir'], [
+    { sessionId: ID(30), relative: '2026/10/20/00-00-00-session_legacy', workspace: 'workspace-one' },
+  ]);
+  const legacyPath = await visibleFor(d.sessionsRoot, d.home, 20);
+  assert('a recorded path to a directory whose name does not decode is accepted when its manifest names the session',
+    legacyPath.visible[0]?.dir === legacy,
+    dirsOf(legacyPath.visible).slice(0, 3).join('|'));
+  // The directory is only half of it. The name of that directory says nothing, so the manifest is
+  // the only identity it has -- and the entry has to CARRY that identity, or the row the page
+  // draws has no id to group, label or select it by. The entry is built here and nowhere else, so
+  // this is the only place that can see whether it kept the id.
+  assert('the entry it builds carries the session id, not just the directory',
+    legacyPath.visible[0]?.sessionId === ID(30),
+    String(legacyPath.visible[0]?.sessionId));
+} catch (error) {
+  failures.push('a recorded path to a directory whose name does not decode -- '
+    + String(error && error.message ? error.message : error));
+}
+
 for (const home of homes) rmSync(home, { recursive: true, force: true });
 
 console.log('[session-picker] ' + pass + ' passed, ' + failures.length + ' failed');

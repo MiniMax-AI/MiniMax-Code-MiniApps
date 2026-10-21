@@ -37,10 +37,10 @@ MUTATIONS = [
     # rather than guess which one it meant.
     ("a rename stops moving the tag",
      [("  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n",
        "  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = \"\";\n")],
      "a renamed session moves the tag", SERVER),
 
@@ -48,11 +48,11 @@ MUTATIONS = [
     # tag is offering the reader a worker's session as if it were their conversation.
     ("a changed session kind stops moving the tag",
      [("  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
        "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n",
        "  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
        "    const kind = \"\";\n")],
      "a changed session kind moves the tag, even with no title", SERVER),
@@ -160,12 +160,12 @@ MUTATIONS = [
     # the title and the kind, so nothing ever asked the question.
     ("the validator stops covering the parent the body sends",
      [("  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
        "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
        "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n",
        "  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
        "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
        "    const parent = \"\";\n")],
@@ -190,7 +190,7 @@ MUTATIONS = [
     # reader can see, and the 304 that follows is a statement about bytes nobody re-computed.
     ("the validator stops covering the kind badge the body sends",
      [("  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
        "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
        "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n"
@@ -200,7 +200,7 @@ MUTATIONS = [
        "    // did not move would answer 304 for a body the caller never held.\n"
        "    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? \"\") : \"\";\n",
        "  for (const entry of visible) {\n"
-       "    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));\n"
+       "    const meta = titles.get(entry.sessionId);\n"
        "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
        "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
        "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n"

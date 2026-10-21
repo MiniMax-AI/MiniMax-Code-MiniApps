@@ -20,19 +20,20 @@
  *   2. The index is not the list. `recentEntries` stays at `MAX_SESSION_LIST`, so widening id
  *      resolution costs the picker nothing.
  *   3. The index is complete relative to the walk. A directory outside the recent 30 is still in
- *      `byDecodedId`, which is the 116-session case measured above.
+ *      `bySessionId`, which is the 116-session case measured above.
  *   4. Building the index costs no I/O. The walk already stat'ed `messages.jsonl` for every
- *      candidate, so the id comes from the name — this asserts no new file read was introduced
- *      by the index itself. The walk does read each candidate's manifest now, to decide whether
- *      that directory is publishable at all; that read belongs to the admission step, and the
- *      index still reads nothing.
- *   5. A decoded name is a claim, not a fact. `readSessionIdentity` prefers `manifest.sessionId`,
- *      so the route re-reads the identity of the directory it picked and compares before serving.
- *      Without this, a directory renamed on disk would be served under the wrong id.
+ *      candidate, so the id comes from the walk's own decision — this asserts no new file read was
+ *      introduced by the index itself. The walk does read each candidate's manifest now, to decide
+ *      whether that directory is publishable at all; that read belongs to the admission step, and
+ *      the index still reads nothing.
+ *   5. The published id is a decision, not a guess. The manifest can change under the walk, so
+ *      the route re-reads the identity of the directory it picked and compares before serving.
+ *      Without this, a directory whose manifest changed would be served under the wrong id.
  *   6. Duplicate ids are not collapsed. `Map.set` would keep whichever came last and make the
  *      answer depend on `readdir` order; the index keeps a list so the manifests can decide.
- *   7. A name that does not decode is still a real session. Dropping it from the index would turn
- *      "no fast path" into "does not exist".
+ *   7. A name that does not decode is still a real session. It names no session, so the manifest
+ *      beside it is the only identity it has, and the folder name is what it is reached by.
+ *      Dropping it from the index would turn "reached the slow way" into "does not exist".
  *   8. The scan budget is a resource guard, not a correctness boundary. When the walk stops early
  *      the route must say so, because "the budget ran out" and "no such session" are different
  *      answers and only one of them is true.
@@ -106,39 +107,39 @@ assert('the recent list does not reach the 31st session',
  * ===================================================================== */
 
 assert('the id index is not the recent list',
-  candidates.byDecodedId instanceof Map && candidates.byDecodedId.size === NAME_COUNT);
+  candidates.bySessionId instanceof Map && candidates.bySessionId.size === NAME_COUNT);
 assert('a session outside the recent list is still resolvable by id',
-  candidates.byDecodedId.has(made[35].id));
+  candidates.bySessionId.has(made[35].id));
 assert('the newest session is resolvable by id too',
-  candidates.byDecodedId.has(made[0].id));
+  candidates.bySessionId.has(made[0].id));
 assert('the index maps an id to a directory that exists on disk',
-  (candidates.byDecodedId.get(made[35].id) || [])[0]?.dir === made[35].dir);
+  (candidates.bySessionId.get(made[35].id) || [])[0]?.dir === made[35].dir);
 
 /* =====================================================================
- * 4 — the index is built from names, not from new reads
+ * 4 — the index is keyed by the id the walk published, not by new reads
  * ===================================================================== */
 
 const walkBody = /export async function collectSessionCandidates\([\s\S]*?\n\}/.exec(SERVER);
 assert('collectSessionCandidates is the exported traversal', walkBody !== null);
 if (walkBody) {
   // Scoped to the index construction rather than to the whole function: the walk reads each
-  // candidate's manifest to decide whether that directory is publishable at all, so the decoded
-  // name appears in the function more than once, and a check that only asks "does this function
-  // mention the decoded name" is satisfied by the admission step instead of the index.
-  assert('the index is built from the decoded directory name',
-    /const byDecodedId = new Map\(\);[\s\S]{0,300}?const id = decodeSessionIdFromDirName\(basename\(entry\.dir\)\);/.test(walkBody[0]));
+  // candidate's manifest to decide whether that directory is publishable at all, so a check that
+  // only asks "does this function mention the id" is satisfied by the admission step instead of
+  // the index.
+  assert('the index is keyed by the id the walk published the entry under',
+    /const bySessionId = new Map\(\);[\s\S]{0,600}?bySessionId\.get\(entry\.sessionId\)/.test(walkBody[0]));
   assert('building the index opens no file of its own',
-    !/byDecodedId[\s\S]{0,400}?\b(readFile|readJsonIfPresent|stat)\s*\(/.test(walkBody[0]));
+    !/bySessionId[\s\S]{0,400}?\b(readFile|readJsonIfPresent|stat)\s*\(/.test(walkBody[0]));
   assert('the walk stats messages.jsonl exactly once per candidate',
     (walkBody[0].match(/stat\(join\(child, 'messages\.jsonl'\)\)/g) || []).length === 1);
 }
 
 /* =====================================================================
- * 5 — a decoded name is a claim; the manifest gets the last word
+ * 5 — the published id is a decision; the manifest gets the last word
  * ===================================================================== */
 
-assert('the explicit-id branch consults the decoded-id index',
-  /const fastPath = candidates\.byDecodedId\.get\(requested\);/.test(SERVER));
+assert('the explicit-id branch consults the id index',
+  /const fastPath = candidates\.bySessionId\.get\(requested\);/.test(SERVER));
 assert('an index hit still reads the directory identity',
   /for \(const candidate of fastPath\) \{\s*\n\s*const candidateIdentity = await readSessionIdentity\(candidate\.dir\);/.test(SERVER));
 assert('a directory whose manifest disagrees is not served under the requested id',
@@ -147,7 +148,7 @@ assert('an ambiguous id is not resolved by directory order',
   /if \(verified\.length === 1\) picked = verified\[0\];\s*\n\s*else if \(verified\.length > 1\)/.test(SERVER)
   && /reason: 'ambiguous_session_id'/.test(SERVER));
 assert('duplicate ids are kept as a list rather than collapsed',
-  /const bucket = byDecodedId\.get\(id\);\s*\n\s*if \(bucket\) bucket\.push\(entry\);\s*\n\s*else byDecodedId\.set\(id, \[entry\]\);/.test(SERVER));
+  /const bucket = bySessionId\.get\(entry\.sessionId\);\s*\n\s*if \(bucket\) bucket\.push\(entry\);\s*\n\s*else bySessionId\.set\(entry\.sessionId, \[entry\]\);/.test(SERVER));
 
 /* =====================================================================
  * 6 — a name that does not decode is still a session
@@ -163,9 +164,26 @@ await utimes(join(odd, 'messages.jsonl'), oddStamp, oddStamp);
 const withOdd = await collectSessionCandidates(root);
 assert('a session whose name does not decode is still a candidate',
   withOdd.recentEntries.some((e) => e.dir === odd));
-assert('a non-decoding name simply gets no fast path, and is not treated as absent',
+assert('a non-decoding name is published under the folder name it is reached by, and is not treated as absent',
   decodeSessionIdFromDirName('00-00-99-000-session_!!!not-base64!!!') === null
-  && withOdd.byDecodedId.size === NAME_COUNT);
+  && withOdd.bySessionId.size === NAME_COUNT + 1
+  && (withOdd.bySessionId.get('00-00-99-000-session_!!!not-base64!!!') || [])[0]?.dir === odd);
+
+// A directory the manifest identifies and the name does not. The manifest is the only identity
+// such a directory has, so that identity is the id it is published under -- and an id the list
+// shows is an id the route has to be able to resolve.
+const named = join(root, '2026', '01', '03', '00-00-98-000-session_legacy');
+await mkdir(named, { recursive: true });
+await writeFile(join(named, 'messages.jsonl'), JSON.stringify({ role: 'user', content: 'named' }) + '\n', 'utf8');
+await writeFile(join(named, 'manifest.json'), JSON.stringify({ sessionId: 'sess_manifest_only' }), 'utf8');
+const namedStamp = new Date(Date.UTC(2026, 0, 3));
+await utimes(join(named, 'messages.jsonl'), namedStamp, namedStamp);
+const withNamed = await collectSessionCandidates(root);
+assert('a directory the manifest identifies is published under that id',
+  (withNamed.bySessionId.get('sess_manifest_only') || [])[0]?.dir === named
+  && decodeSessionIdFromDirName('00-00-98-000-session_legacy') === null);
+assert('and the id the walk published it under is the id the entry carries',
+  (withNamed.allEntries.find((e) => e.dir === named) || {}).sessionId === 'sess_manifest_only');
 
 /* =====================================================================
  * 7 — the scan budget is a guard, and it says so
@@ -200,7 +218,7 @@ assert('a walk that runs out of candidate budget reports itself as truncated',
 assert('the budget still bounds the recent list',
   exhausted.recentEntries.length === 30 && exhausted.recentEntries.length <= budget);
 assert('an over-budget store indexes no more than the budget allows',
-  exhausted.byDecodedId.size <= budget && exhausted.byDecodedId.size > 0);
+  exhausted.bySessionId.size <= budget && exhausted.bySessionId.size > 0);
 await rm(budgetRoot, { recursive: true, force: true });
 
 /* =====================================================================

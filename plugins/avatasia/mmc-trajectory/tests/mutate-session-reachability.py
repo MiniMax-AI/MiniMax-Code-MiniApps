@@ -48,13 +48,13 @@ MUTATIONS = [
     # index dropped. The second layer's pool is the whole walk, and the reachability fix's
     # product is the index: losing either one is the shape this mutation puts back.
     ("the walk returns one truncated list again",
-     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, byDecodedId, truncated };",
-       "  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable.slice(0, MAX_SESSION_LIST), byDecodedId: new Map(), truncated };")],
+     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, bySessionId, truncated };",
+       "  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable.slice(0, MAX_SESSION_LIST), bySessionId: new Map(), truncated };")],
      "the id index is not the recent list", SERVER),
 
     ("the recent list is no longer capped",
-     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, byDecodedId, truncated };",
-       "  return { recentEntries: publishable, allEntries: publishable, byDecodedId, truncated };")],
+     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, bySessionId, truncated };",
+       "  return { recentEntries: publishable, allEntries: publishable, bySessionId, truncated };")],
      "the recent list is still capped at MAX_SESSION_LIST", SERVER),
 
     # ---- the index stops being built from the walk ----
@@ -62,26 +62,31 @@ MUTATIONS = [
     # Correct-looking, and now the picker pays for the reachability fix: the index is derived
     # from the slice, so a session outside the window has no fast path again.
     ("the index is derived from the recent list instead of the walk",
-     [("  for (const entry of publishable) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
-       "    // A name that does not decode is still a real session;",
-       "  for (const entry of publishable.slice(0, MAX_SESSION_LIST)) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
-       "    // A name that does not decode is still a real session;")],
+     [("  for (const entry of publishable) {\n    // The key is the id the entry is published under,",
+       "  for (const entry of publishable.slice(0, MAX_SESSION_LIST)) {\n    // The key is the id the entry is published under,")],
      "the id index is not the recent list", SERVER),
 
-    ("the index is no longer built at all",
-     [("  for (const entry of publishable) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
-       "    // A name that does not decode is still a real session;",
-       "  for (const entry of publishable) {\n    const id = null;\n"
-       "    // A name that does not decode is still a real session;")],
-     "the index is built from the decoded directory name", SERVER),
+    # The index keyed by nothing: every directory lands under one key, and the id the list shows
+    # is not an id the index can resolve.
+    ("the index is keyed by nothing",
+     [("    const bucket = bySessionId.get(entry.sessionId);",
+       "    const bucket = bySessionId.get(null);")],
+     "the index is keyed by the id the walk published the entry under", SERVER),
+
+    # The index keyed by the name again. A directory the manifest identifies is not in it under
+    # that id any more, so the id the list shows cannot be resolved.
+    ("the index is keyed by the decoded name again",
+     [("    else bySessionId.set(entry.sessionId, [entry]);",
+       "    else bySessionId.set(decodeSessionIdFromDirName(basename(entry.dir)), [entry]);")],
+     "a directory the manifest identifies is published under that id", SERVER),
 
     # ---- duplicates silently resolved by directory order ----
     #
     # `Map.set` keeps the last writer. `readdir` order is not sorted and is not stable across
     # platforms, so this is a Map that answers differently on two machines with the same store.
     ("duplicate ids are collapsed by directory order",
-     [("    const bucket = byDecodedId.get(id);\n    if (bucket) bucket.push(entry);\n    else byDecodedId.set(id, [entry]);",
-       "    byDecodedId.set(id, [entry]);")],
+     [("    const bucket = bySessionId.get(entry.sessionId);\n    if (bucket) bucket.push(entry);\n    else bySessionId.set(entry.sessionId, [entry]);",
+       "    bySessionId.set(entry.sessionId, [entry]);")],
      "duplicate ids are kept as a list rather than collapsed", SERVER),
 
     # ---- a decoded name promoted to an identity ----
@@ -139,8 +144,8 @@ MUTATIONS = [
     # A second way to name a session, and the only one that covers a directory whose name does
     # not decode at all.
     ("a full directory basename can no longer name a session",
-     [("          if (candidateIdentity.id === requested || basename(candidate.dir) === requested) {",
-       "          if (candidateIdentity.id === requested) {")],
+     [("          if (holds && (candidateIdentity.id === requested || basename(candidate.dir) === requested)) {",
+       "          if (holds && candidateIdentity.id === requested) {")],
      "a full directory basename can still name a session", SERVER),
 
     # ---- the picker starts paying for the fix ----
@@ -153,7 +158,7 @@ MUTATIONS = [
     # thirty-row window would take a main session' place.
     ("the list route starts building from the id index",
      [("    const allEntries = candidates.allEntries;\n",
-       "    const allEntries = [...candidates.byDecodedId.values()].flat();\n")],
+       "    const allEntries = [...candidates.bySessionId.values()].flat();\n")],
      "the list route builds from the whole walk", SERVER),
 
     # The trajectory route keeps the thirty most recent sessions for its 'latest' branch, and it
@@ -161,7 +166,7 @@ MUTATIONS = [
     # trajectory route is the one that pays for a descriptor per candidate.
     ("the trajectory route starts building from the id index",
      [("    const entries = candidates.recentEntries;\n",
-       "    const entries = [...candidates.byDecodedId.values()].flat();\n")],
+       "    const entries = [...candidates.bySessionId.values()].flat();\n")],
      "the trajectory route keeps the recent list for the latest branch", SERVER),
 
     # ---- the page names a session it is not showing ----

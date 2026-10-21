@@ -224,35 +224,77 @@ MUTATIONS = [
     # The first one takes the recorded path's manifest check away: the picker then promotes the
     # current conversation onto a directory that holds another session, and the guard says so.
     ("the picker promotes the current conversation on a directory that holds another session",
-     [("      const identity = await readSessionIdentity(dir);\n"
-       "      if (identity.id !== expectedSessionId) {\n"
+     [("      if (identity.id !== expectedSessionId) {\n"
        "        return { entry: null, rejected: true };\n"
        "      }",
-       "      const identity = await readSessionIdentity(dir);")],
+       "      // the manifest is not checked here")],
      "the current conversation is not promoted on a directory that holds another session"),
+
+    # The row every page reads carries the id it is published under. Without it the row cannot be
+    # grouped, labelled or selected -- and the id is the only handle the page has on a session.
+    #
+    # The id has one writer on this path. The walk decided WHICH id a directory is published
+    # under, and the row takes it here; a version that leaves it out hands the page rows it
+    # cannot act on, and every promise the two controls make -- group a run under its
+    # conversation, label a row, select it -- is a promise about that id.
+    #
+    # The recorded path builds rows too, and it has its own mutation in the picker's control: the
+    # visible set there is built from the window of thirty, so the recorded path is reachable and
+    # a rule about it can be asked. Here the visible set is built from the WHOLE walk, so the
+    # recorded path is only consulted for a directory the walk never reached -- and a mutation
+    # there changed nothing any assertion could see.
+    ("the published row carries no id",
+     [("      id: entry.sessionId,", "      id: null,")],
+     "every row the list publishes carries an id"),
 
     # The second one takes the walk's refusal away AND makes the 'latest' route take the
     # directory's name for its word -- which is what the route did before it confirmed the
     # manifest. Both together put the current session's id on somebody else's transcript.
     ("the latest route binds the current session to a directory that holds another session",
-     [("    return !(manifestId && manifestId !== claimed);",
-       "    return true;"),
+     [("    const holds = !claimed || !manifestId || manifestId === claimed;",
+       "    const holds = true;"),
       ("        entry = await verifiedEntryForSessionId(entries, current.sessionId);",
        "        entry = entries.find((candidate) => decodeSessionIdFromDirName(basename(candidate.dir)) === current.sessionId) ?? null;")],
      "the latest route does not serve a directory that holds another session as the current one"),
 
     # The same rule asked of EVERY directory, not only of the two shortcuts. The walk drops a
-    # directory whose name and manifest disagree, because a row published from it would carry the
-    # manifest's id and the name's metadata -- two sources in one row -- and because the id it
-    # claims is not among the published ones, so a run hanging off it would be a run of a
-    # conversation the reader cannot select.
+    # directory whose name and manifest disagree, because the id it claims is not among the
+    # published ones, so a run hanging off it would be a run of a conversation the reader cannot
+    # select -- and because a route holding a cached walk could serve it under either id.
     #
-    # Taking the walk's refusal away brings all of it back at once: the row with the mixed
-    # sources, and the run that hangs off a conversation nobody can pick.
+    # Taking the walk's refusal away brings all of it back at once.
     ("a directory whose name and manifest disagree is published anyway",
-     [("    return !(manifestId && manifestId !== claimed);",
-       "    return true;")],
+     [("    const holds = !claimed || !manifestId || manifestId === claimed;",
+       "    const holds = true;")],
      "a directory whose name and manifest disagree is not published"),
+
+    # The id a directory is published under, asked of the layer. A parent whose folder name does
+    # not decode is identified by its manifest, and that is the id it is published under -- so it
+    # is among the sessions the reader can pick, and the runs hanging off it stay its runs.
+    #
+    # Reading the id off the name again puts it out of that set: the parent is not in the list,
+    # so the runs hanging off it are demoted into the conversation list, where the reader has to
+    # go looking for them.
+    ("the layer decides the parent from the directory name instead of the published id",
+     [("  for (const entry of entries) {\n    if (entry.sessionId) known.add(entry.sessionId);\n  }",
+       "  for (const entry of entries) {\n    const claimed = decodeSessionIdFromDirName(basename(entry.dir));\n    if (claimed) known.add(claimed);\n  }")],
+     "a published manifest-identified parent keeps its runs when its directory name does not decode"),
+
+    # The same id, asked of the runtime facts. The row is looked up under the id the row is
+    # published under, so a parent identified by its manifest keeps the title and the kind the
+    # runtime database has for it.
+    ("the runtime facts are looked up by the directory name instead of the published id",
+     [("        const meta = titles.get(entry.sessionId);",
+       "        const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));")],
+     "and the parent keeps the title the runtime database has for it"),
+
+    # And the same rule, asked of the route. The walk's refusal is a decision made when the walk
+    # ran; the manifest can change under a cached walk, and then the directory is nobody's
+    # directory and the route must not serve it under the id it now claims.
+    ("the route serves a candidate whose manifest disagrees with its name",
+     [("          const holds = !claimed || claimed === candidateIdentity.id;",
+       "          const holds = true;")],
+     "a cached candidate whose manifest now disagrees with its name is not served under either id"),
 
     # ---- the page ----
     #
