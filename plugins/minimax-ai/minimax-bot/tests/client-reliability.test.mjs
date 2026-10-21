@@ -744,7 +744,7 @@ test('group execution records keep each reply linked to its own session and part
   }
 });
 
-test('the background task strip keeps the official one line rows and their stop button', async () => {
+test('the background task strip keeps the official one line rows and folds a long queue', async () => {
   await reset();
   // Nothing is running: the strip stays empty instead of printing a stray "null".
   assert.equal(document.querySelector('.helpers').textContent, '');
@@ -764,8 +764,9 @@ test('the background task strip keeps the official one line rows and their stop 
   await settle();
   const strip = document.querySelector('.helpers');
   const rows = strip.querySelectorAll('.helper-row');
-  // Every job keeps a row of its own, in the order the Host sent them.
-  assert.equal(rows.length, 7);
+  // The rows are the ones the official build draws, in its order: what runs, what waits, then
+  // the first of the queue.
+  assert.equal(rows.length, 5);
   // A row is one line: who is doing what, then the elapsed time, then the stop button.
   const running = rows[0];
   assert.equal(running.className, 'helper-row');
@@ -779,4 +780,11 @@ test('the background task strip keeps the official one line rows and their stop 
   const queuedRow = rows[2];
   assert.match(queuedRow.querySelector('.helper-text').textContent, /Rob has this queued: "Queued task 1"/);
   assert.equal(queuedRow.querySelector('.helper-time').textContent, '');
+  // The queue behind the third waiting job folds into one line.
+  const more = strip.querySelector('.helper-more');
+  assert.match(more.textContent, /2 more tasks/);
+  more.click();
+  await settle();
+  assert.equal(strip.querySelectorAll('.helper-row').length, 7);
+  assert.equal(strip.querySelector('.helper-more').textContent, 'Collapse queue');
 });

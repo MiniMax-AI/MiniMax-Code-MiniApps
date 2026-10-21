@@ -2765,12 +2765,28 @@ fieldset.field {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* A few rows stay fully visible. More than the cap scrolls here instead of pushing the transcript off screen. */
   flex: 0 1 auto;
   min-height: 0;
-  max-height: min(280px, 40%);
+}
+
+/* The rows keep the scroll area the official strip had: a few of them stay fully visible, the
+   rest scroll here instead of pushing the transcript off screen. The cap is a viewport share
+   because the strip sits inside a box that has no height of its own. */
+.helper-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(280px, 40vh);
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* The fold button sits below the scroll area and takes a row of its own, so the strip keeps
+   the height budget the official one had. */
+.helpers.has-fold .helper-rows {
+  max-height: min(248px, calc(40vh - 32px));
 }
 
 .helpers:empty {
@@ -2819,6 +2835,11 @@ fieldset.field {
   color: var(--muted);
   font-size: 12px;
   flex: none;
+}
+
+/* The fold of a long queue: the same small button as the stop action, under the rows it folds. */
+.helper-more {
+  align-self: flex-start;
 }
 
 /* attachments waiting to be sent, above the input */
