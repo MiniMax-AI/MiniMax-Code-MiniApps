@@ -11,11 +11,16 @@ back into one, trusting a decoded name as if it were an identity, or letting a r
 answer a question it has no standing to answer.
 
 The two that look like harmless simplifications are the dangerous ones. Dropping the manifest
-re-check on the index hit is faster and passes every existing guard, because nothing else in
-the suite has a directory whose name disagrees with its manifest — it just serves the wrong
-conversation under an id the reader typed. And replacing the `session_scan_budget_exhausted`
-branch with a plain 404 is a one-line change that turns "we stopped looking" back into "it does
-not exist", which is the same lie the original slice told, just further from its cause.
+re-check on the index hit is faster, and since the walk started refusing a directory whose name
+and its manifest disagree, no fixture in the suite can see it any more: such a directory is not
+in the index to be served in the first place. What the re-check still holds is the row that is
+about to be served -- a manifest rewritten under the walk is caught there instead of in the
+reader's face -- and it is pinned by the shape of that line rather than by a fixture, because
+no fixture rewrites a manifest between the walk and the route. The judgment that a disagreeing
+directory never reaches the index at all is pinned behaviourally, in `mutate-session-layers.py`,
+where the walk itself is broken. And replacing the `session_scan_budget_exhausted` branch with
+a plain 404 is a one-line change that turns "we stopped looking" back into "it does not
+exist", which is the same lie the original slice told, just further from its cause.
 
 Anchors are multi-line and the tree is LF, so they carry bare \\n and the files are read and
 written with newline=''. No anchor may contain a line ending of its own.
@@ -43,13 +48,13 @@ MUTATIONS = [
     # index dropped. The second layer's pool is the whole walk, and the reachability fix's
     # product is the index: losing either one is the shape this mutation puts back.
     ("the walk returns one truncated list again",
-     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries, byDecodedId, truncated };",
-       "  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId: new Map(), truncated };")],
+     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, byDecodedId, truncated };",
+       "  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable.slice(0, MAX_SESSION_LIST), byDecodedId: new Map(), truncated };")],
      "the id index is not the recent list", SERVER),
 
     ("the recent list is no longer capped",
-     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), allEntries: entries, byDecodedId, truncated };",
-       "  return { recentEntries: entries, allEntries: entries, byDecodedId, truncated };")],
+     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, byDecodedId, truncated };",
+       "  return { recentEntries: publishable, allEntries: publishable, byDecodedId, truncated };")],
      "the recent list is still capped at MAX_SESSION_LIST", SERVER),
 
     # ---- the index stops being built from the walk ----
@@ -57,16 +62,16 @@ MUTATIONS = [
     # Correct-looking, and now the picker pays for the reachability fix: the index is derived
     # from the slice, so a session outside the window has no fast path again.
     ("the index is derived from the recent list instead of the walk",
-     [("  for (const entry of entries) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
+     [("  for (const entry of publishable) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
        "    // A name that does not decode is still a real session;",
-       "  for (const entry of entries.slice(0, MAX_SESSION_LIST)) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
+       "  for (const entry of publishable.slice(0, MAX_SESSION_LIST)) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
        "    // A name that does not decode is still a real session;")],
      "the id index is not the recent list", SERVER),
 
     ("the index is no longer built at all",
-     [("  for (const entry of entries) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
+     [("  for (const entry of publishable) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));\n"
        "    // A name that does not decode is still a real session;",
-       "  for (const entry of entries) {\n    const id = null;\n"
+       "  for (const entry of publishable) {\n    const id = null;\n"
        "    // A name that does not decode is still a real session;")],
      "the index is built from the decoded directory name", SERVER),
 

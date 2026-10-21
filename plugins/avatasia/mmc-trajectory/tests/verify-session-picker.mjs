@@ -463,9 +463,9 @@ assert('the kind tag is written on every row, not only on the rows that have one
 //
 //   - the manifest names another session -- the name is right and the manifest is wrong, which
 //     is the case the identity function itself is there for;
-//   - the name names another session -- the manifest is right and the name is wrong, and the
-//     directory the walk already lists under its own name would be injected a second time
-//     under the id the manifest gives it.
+//   - the name names another session -- the manifest is right and the name is wrong. The walk
+//     does not list that directory at all any more (its two ids disagree), but the recorded path
+//     can still point at it, and the check that refuses it is the one on the name.
 //
 // The third case is the one that has to keep working: a manifest that agrees with the name is
 // accepted, because a refusal there would take the current conversation out of the list.
@@ -493,10 +493,14 @@ try {
 }
 
 try {
-  // The name names another session and the manifest agrees with the CURRENT one. The
-  // directory is the walk's own row for a different session, so accepting it would list that
-  // one directory twice: once as the injected row and once as the walk's row.
-  const b = await store(31);
+  // The name names another session and the manifest agrees with the CURRENT one.
+  //
+  // The current conversation has no directory of its own in this store, so the path the runtime
+  // recorded for it is the only way it could be shown at all -- and that path points at a
+  // directory that belongs to somebody else. The manifest agrees, so the manifest check passes
+  // it; the NAME is the check that refuses it, and without that check this conversation would
+  // be listed with another session's transcript under it.
+  const b = await store(30);
   await writeFile(join(b.made[0].dir, 'manifest.json'),
     JSON.stringify({ sessionId: ID(30), createdAtMs: 1 }), 'utf8');
   runtimeDb(b.home, ['parent_session_id', 'purpose', 'workspace_dir'], [
@@ -504,10 +508,10 @@ try {
   ]);
   const wrongName = await visibleFor(b.sessionsRoot, b.home, 20);
   assert('a recorded path whose directory name names another session is refused even when its manifest agrees',
-    new Set(dirsOf(wrongName.visible)).size === wrongName.visible.length,
+    !wrongName.visible.some((entry) => entry.dir === b.made[0].dir),
     dirsOf(wrongName.visible).join('|'));
   assert('and the list is still the plain recency order',
-    sameOrder(wrongName.visible, b.made.slice(0, 20)),
+    sameOrder(wrongName.visible, b.made.slice(1, 21)),
     dirsOf(wrongName.visible).join('|'));
 } catch (error) {
   failures.push('a recorded path whose directory name names another session is refused; '

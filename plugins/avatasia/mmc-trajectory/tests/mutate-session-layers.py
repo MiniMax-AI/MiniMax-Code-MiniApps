@@ -215,19 +215,44 @@ MUTATIONS = [
 
     # ---- whose directory this is ----
     #
-    # The directory name is a claim; the manifest beside the transcript is the authority. Two
-    # shortcuts took the name's word for it -- the picker promoting the current conversation, and
-    # the 'latest' resolver choosing the transcript to serve -- and both could put one session's
-    # id on another session's messages.
+    # The directory name is a claim; the manifest beside the transcript is the authority. A
+    # directory where the two disagree is nobody's, and the walk now refuses it outright -- so
+    # the route never sees one, and the only way it can still reach such a directory is the
+    # recorded path, which is outside the walk. That is where the check below still has work to
+    # do, and these two controls now turn THAT off.
+    #
+    # The first one takes the recorded path's manifest check away: the picker then promotes the
+    # current conversation onto a directory that holds another session, and the guard says so.
     ("the picker promotes the current conversation on a directory that holds another session",
-     [("    currentEntry = await verifiedEntryForSessionId(entries, currentId);",
-       "    currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;")],
+     [("      const identity = await readSessionIdentity(dir);\n"
+       "      if (identity.id !== expectedSessionId) {\n"
+       "        return { entry: null, rejected: true };\n"
+       "      }",
+       "      const identity = await readSessionIdentity(dir);")],
      "the current conversation is not promoted on a directory that holds another session"),
 
+    # The second one takes the walk's refusal away AND makes the 'latest' route take the
+    # directory's name for its word -- which is what the route did before it confirmed the
+    # manifest. Both together put the current session's id on somebody else's transcript.
     ("the latest route binds the current session to a directory that holds another session",
-     [("        entry = await verifiedEntryForSessionId(entries, current.sessionId);",
+     [("    return !(manifestId && manifestId !== claimed);",
+       "    return true;"),
+      ("        entry = await verifiedEntryForSessionId(entries, current.sessionId);",
        "        entry = entries.find((candidate) => decodeSessionIdFromDirName(basename(candidate.dir)) === current.sessionId) ?? null;")],
      "the latest route does not serve a directory that holds another session as the current one"),
+
+    # The same rule asked of EVERY directory, not only of the two shortcuts. The walk drops a
+    # directory whose name and manifest disagree, because a row published from it would carry the
+    # manifest's id and the name's metadata -- two sources in one row -- and because the id it
+    # claims is not among the published ones, so a run hanging off it would be a run of a
+    # conversation the reader cannot select.
+    #
+    # Taking the walk's refusal away brings all of it back at once: the row with the mixed
+    # sources, and the run that hangs off a conversation nobody can pick.
+    ("a directory whose name and manifest disagree is published anyway",
+     [("    return !(manifestId && manifestId !== claimed);",
+       "    return true;")],
+     "a directory whose name and manifest disagree is not published"),
 
     # ---- the page ----
     #

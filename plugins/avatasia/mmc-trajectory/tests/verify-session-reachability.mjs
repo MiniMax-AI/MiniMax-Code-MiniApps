@@ -22,7 +22,10 @@
  *   3. The index is complete relative to the walk. A directory outside the recent 30 is still in
  *      `byDecodedId`, which is the 116-session case measured above.
  *   4. Building the index costs no I/O. The walk already stat'ed `messages.jsonl` for every
- *      candidate, so the id comes from the name — this asserts no new file read was introduced.
+ *      candidate, so the id comes from the name — this asserts no new file read was introduced
+ *      by the index itself. The walk does read each candidate's manifest now, to decide whether
+ *      that directory is publishable at all; that read belongs to the admission step, and the
+ *      index still reads nothing.
  *   5. A decoded name is a claim, not a fact. `readSessionIdentity` prefers `manifest.sessionId`,
  *      so the route re-reads the identity of the directory it picked and compares before serving.
  *      Without this, a directory renamed on disk would be served under the wrong id.
@@ -118,8 +121,12 @@ assert('the index maps an id to a directory that exists on disk',
 const walkBody = /export async function collectSessionCandidates\([\s\S]*?\n\}/.exec(SERVER);
 assert('collectSessionCandidates is the exported traversal', walkBody !== null);
 if (walkBody) {
+  // Scoped to the index construction rather than to the whole function: the walk reads each
+  // candidate's manifest to decide whether that directory is publishable at all, so the decoded
+  // name appears in the function more than once, and a check that only asks "does this function
+  // mention the decoded name" is satisfied by the admission step instead of the index.
   assert('the index is built from the decoded directory name',
-    walkBody[0].includes('decodeSessionIdFromDirName(basename(entry.dir))'));
+    /const byDecodedId = new Map\(\);[\s\S]{0,300}?const id = decodeSessionIdFromDirName\(basename\(entry\.dir\)\);/.test(walkBody[0]));
   assert('building the index opens no file of its own',
     !/byDecodedId[\s\S]{0,400}?\b(readFile|readJsonIfPresent|stat)\s*\(/.test(walkBody[0]));
   assert('the walk stats messages.jsonl exactly once per candidate',

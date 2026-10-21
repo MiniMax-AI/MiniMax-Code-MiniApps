@@ -1180,6 +1180,63 @@ try {
   failures.push('a directory that holds another session -- ' + (error && error.message));
 }
 
+/* ---------- 14: a directory whose name and manifest disagree ---------- */
+//
+// A directory's name and the manifest beside its transcript are two copies of the same id. When
+// they disagree, the directory is nobody's: publishing it puts one session's id on another
+// session's transcript, and the row mixes the manifest's id with the name's metadata -- two
+// sources in one row.
+//
+// And the id it claims is not among the published ones, so it is not a parent the reader can
+// pick. A run hanging off it is a run of a conversation that is not in the list, and neither
+// control can reach it -- the conversation pick has no row to select, and the run pick asks for
+// the bucket of a conversation that is not there.
+//
+// The rule under test is the one the recorded path and the 'latest' binding already follow: the
+// name AND the manifest have to name that session. Here it is asked of every directory.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-join-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const ambiguous = await makeSession(sessionsRoot, 0, 'mvs_join_name', BASE_TIME);
+  const child = await makeSession(sessionsRoot, 1, 'mvs_join_child', BASE_TIME - 60_000);
+  // The directory says one session; the manifest beside its transcript says another.
+  await writeFile(join(ambiguous.dir, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_join_manifest', createdAtMs: 1 }), 'utf8');
+  runtimeDb(home, [
+    { sessionId: 'mvs_join_name', relative: ambiguous.relative, workspace: 'D:\\private\\workspace-one', updatedAtMs: BASE_TIME },
+    { sessionId: 'mvs_join_child', relative: child.relative, parent: 'mvs_join_name', kind: 'task', updatedAtMs: BASE_TIME - 60_000 }
+  ]);
+
+  const service = await startService(home);
+  try {
+    const list = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const rows = list.sessions || [];
+    const ids = rows.map((row) => row.id);
+    assert('a directory whose name and manifest disagree is not published',
+      !ids.includes('mvs_join_name') && !ids.includes('mvs_join_manifest'),
+      JSON.stringify(ids));
+    assert('and its database row is not published under any id',
+      !rows.some((row) => row.label === '会话 name'),
+      JSON.stringify(rows.map((row) => row.label)));
+    const childRow = rows.find((row) => row.id === 'mvs_join_child');
+    assert('a run of a directory that is not published becomes a conversation the reader can pick',
+      Boolean(childRow) && childRow.sessionParentId === null,
+      JSON.stringify(childRow));
+    assert('and it is not left in the run list either',
+      !(list.children || []).some((row) => row.id === 'mvs_join_child'),
+      JSON.stringify(list.children || []));
+    const served = await fetch(service.base + '/api/trajectory?session=mvs_join_name');
+    assert('and the trajectory route does not serve that directory either',
+      served.status === 404,
+      'status ' + served.status);
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a directory whose name and manifest disagree -- ' + (error && error.message));
+}
+
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));
