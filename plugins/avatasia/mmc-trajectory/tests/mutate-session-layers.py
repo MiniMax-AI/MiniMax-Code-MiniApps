@@ -113,6 +113,17 @@ MUTATIONS = [
        "    const parent = meta && typeof meta.purpose === 'string' && meta.purpose ? 'mvs_purpose_guessed_parent' : null;")],
      "a main session whose purpose says 「task」 is still a main session"),
 
+    # The promotion step forgot the layer. The split puts a run in the run layer, and the
+    # route then promotes whatever the runtime database reports as current -- so a run that
+    # won that resolution was put back into the conversation list, and the same session sat
+    # in both controls at once.
+    ("a run that wins the current-conversation resolution is promoted into the conversation list",
+     [("  const currentParent = currentMeta && typeof currentMeta.parent === 'string' && currentMeta.parent\n"
+       "    ? currentMeta.parent\n"
+       "    : null;",
+       "  const currentParent = null;")],
+     "a run that wins the current-conversation resolution is not in the conversation list"),
+
     # ---- the page ----
     #
     # The two picks. The conversation pick holds conversations; the run pick holds the runs of
@@ -196,6 +207,36 @@ MUTATIONS = [
      [("        selectSession(value);\n      }\n\n      /* ---------------- wiring ---------------- */",
        "        selectSession(ownerSessionId() || '');\n      }\n\n      /* ---------------- wiring ---------------- */")],
      "picking a run switches the page to that run",
+     CLIENT),
+
+    # The replaced request takes the controller with it. The controller says which request
+    # to stop, and a request that has been replaced has no business stopping the one that
+    # replaced it -- so the next request had nothing to abort, and the request before it
+    # answered last and won.
+    ("a replaced request takes the controller of the request that replaced it",
+     [("            if (sessionsInflight === controller) sessionsInflight = null;\n"
+       "            // A late answer must not win. Every request carries a sequence number, and only the\n",
+       "            sessionsInflight = null;\n"
+       "            // A late answer must not win. Every request carries a sequence number, and only the\n"),
+      ("            if (sessionsInflight === controller) sessionsInflight = null;\n"
+       "            // A request that has been replaced says nothing about the list on screen: the\n",
+       "            sessionsInflight = null;\n"
+       "            // A request that has been replaced says nothing about the list on screen: the\n")],
+     "a replaced request does not take the controller of the request that replaced it",
+     CLIENT),
+
+    # The late answer is allowed to write. The sequence number is the rule that says which
+    # answer may write, and a version that carries the number and ignores it is the version
+    # where the older list replaces the newer one -- a picker that moves backwards under
+    # the reader.
+    ("a late answer is allowed to replace a newer list",
+     [("            if (seq !== sessionsSeq) return false;\n"
+       "            // One writer for the list's validator, on the one path that carried a body.\n",
+       "            // One writer for the list's validator, on the one path that carried a body.\n"),
+      ("            if (seq !== sessionsSeq) return false;\n"
+       "            if (error && error.name === 'AbortError') return false;\n",
+       "            if (error && error.name === 'AbortError') return false;\n")],
+     "a late answer does not replace the newer list on screen",
      CLIENT),
 
     # The conversation pick that does not move. The run pick keeps its run, the conversation

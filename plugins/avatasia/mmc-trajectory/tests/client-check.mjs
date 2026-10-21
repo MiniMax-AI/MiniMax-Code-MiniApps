@@ -1474,6 +1474,86 @@ if (layerSrc.every((src) => src)) {
     runs.value === '', String(runs.value));
 }
 
+/* ------------------------------------------------------------------ session list: overlapping polls */
+// The list is polled, and every poll replaces the one before it. Two things have to hold
+// while that happens, and both used to be false:
+//
+//   * a request that has been replaced must not take the next request's controller with it;
+//   * an answer that arrives late must not replace a newer list.
+//
+// The first is what made the second possible: the replaced request cleared the shared
+// controller on its way out, so the request that replaced it had nothing to abort, and the
+// request before that answered last and won.
+//
+// So this section drives three overlapping requests against a controllable fetch, and
+// reads back what the page ends up showing. It is the transition, not the shape of the
+// source: a regex would pass for a version that carries the sequence number and ignores it.
+
+const fetchSessionsSrc = fnSource('function fetchSessions(manual)');
+const inflightDecl = /var sessionsInflight = null;/.exec(html);
+const seqDecl = /var sessionsSeq = 0;/.exec(html);
+if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
+  failures.push('session list: could not lift fetchSessions and the state it keeps');
+} else {
+  vm.runInContext(inflightDecl[0] + '\n' + seqDecl[0] + '\n' + fetchSessionsSrc, sandbox);
+
+  // A fetch the section drives: every request gets a promise the section settles, and the
+  // signal is the real one, so an abort is an abort.
+  const requests = [];
+  sandbox.fetch = function (url, options) {
+    const entry = { url: url, signal: options && options.signal, settle: null, fail: null };
+    entry.promise = new Promise((resolve, reject) => {
+      entry.settle = resolve;
+      entry.fail = reject;
+    });
+    requests.push(entry);
+    return entry.promise;
+  };
+  sandbox.AbortController = AbortController;
+  sandbox.state = {
+    sessions: [], children: [], sessionsEtag: '', sessionsEtagFor: '', sessionsLoaded: false
+  };
+  sandbox.noteFresh = () => false;
+  sandbox.renderBars = () => {};
+  sandbox.freshnessReason = () => 'unknown';
+  sandbox.renderSessionSelect = () => {};
+  sandbox.renderChildSelect = () => {};
+
+  const abortError = () => {
+    const error = new Error('The operation was aborted.');
+    error.name = 'AbortError';
+    return error;
+  };
+  const answer = (entry, body) => entry.settle({
+    status: 200,
+    ok: true,
+    headers: { get: () => '' },
+    json: () => Promise.resolve(body)
+  });
+
+  // Three requests: the first is replaced by the second, the second is replaced by the
+  // third. The second's answer arrives last, and it is the older one.
+  const first = sandbox.fetchSessions(false);
+  const second = sandbox.fetchSessions(false);
+  check('the second request stops the first', requests[0].signal.aborted, true);
+  // The browser delivers an abort as a rejection, and that rejection is handled while the
+  // second request is already in flight -- which is exactly when the controller used to be
+  // cleared.
+  requests[0].fail(abortError());
+  await first;
+  const third = sandbox.fetchSessions(false);
+  check('a replaced request does not take the controller of the request that replaced it',
+    requests[1].signal.aborted, true);
+  answer(requests[2], { sessions: [{ id: 'mvs_new_main' }], children: [{ id: 'mvs_new_run' }] });
+  await third;
+  answer(requests[1], { sessions: [{ id: 'mvs_old_main' }], children: [{ id: 'mvs_old_run' }] });
+  await second;
+  check('a late answer does not replace the newer list on screen',
+    sandbox.state.sessions.map((row) => row.id), ['mvs_new_main']);
+  check('and the run list is the newer one too',
+    sandbox.state.children.map((row) => row.id), ['mvs_new_run']);
+}
+
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
   console.log('FAILURES:\n - ' + failures.join('\n - '));

@@ -137,8 +137,9 @@ async function makeSession(sessionsRoot, index, id, mtimeMs) {
  *
  * @param {string} home
  * @param {readonly { sessionId: string, kind?: string, purpose?: string | null, parent?: string | null, relative?: string | null, workspace?: string | null, updatedAtMs?: number }[]} rows
+ * @param {readonly string[]} [leases] sessions holding a live lease
  */
-function runtimeDb(home, rows) {
+function runtimeDb(home, rows, leases) {
   mkdirSync(join(home, 'v2', 'sqlite'), { recursive: true });
   const db = new DatabaseSync(join(home, 'v2', 'sqlite', 'runtime-state.sqlite'));
   db.exec('create table local_runtime_sessions (session_id text, title text, status text, '
@@ -152,6 +153,13 @@ function runtimeDb(home, rows) {
     insert.run(row.sessionId, '会话 ' + row.sessionId.slice(-4), 'idle', row.relative ?? null,
       row.kind ?? 'conversation', 0, row.updatedAtMs ?? 1, row.parent ?? null, row.purpose ?? null,
       row.workspace ?? null);
+  }
+  // A live lease is the strongest signal the current-conversation resolver has: it says an
+  // agent turn is running in that session right now. The fixture in section seven needs
+  // one, because the defect that section covers is a session that WINS that resolution.
+  if (leases) {
+    const lock = db.prepare('insert into local_runtime_session_locks (session_id, expires_at_ms) values (?, ?)');
+    for (const id of leases) lock.run(id, Date.now() + 600_000);
   }
   db.close();
 }
@@ -459,6 +467,98 @@ try {
   else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
 } catch (error) {
   failures.push('the payload the page receives -- ' + (error && error.message));
+}
+
+/* ---------- 7: a run that wins the current-conversation resolution ---------- */
+
+// The rule the sections above state is about a function: `splitSessionLayers` puts a run
+// in the run layer. The route does not call it and stop -- it splits, and then it promotes
+// the conversation the runtime database reports as current into the list the page draws.
+// A run that won that resolution was therefore promoted back into the conversation list,
+// and the same session sat in both controls at once.
+//
+// So this section is driven over HTTP, against a store built for exactly that case: one
+// conversation, and one run that has a parent, no purpose at all, and a live lease -- the
+// strongest signal the resolver has, so it wins the resolution outright.
+
+const PROMOTE_PARENT = 'mvs_promote_parent';
+const PROMOTE_RUN = 'mvs_promote_run';
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-promotion-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const parent = await makeSession(sessionsRoot, 0, PROMOTE_PARENT, BASE_TIME - 10 * 60_000);
+  const run = await makeSession(sessionsRoot, 1, PROMOTE_RUN, BASE_TIME);
+  runtimeDb(home, [
+    {
+      sessionId: PROMOTE_PARENT,
+      relative: parent.relative,
+      workspace: 'workspace-one',
+      updatedAtMs: BASE_TIME - 10 * 60_000
+    },
+    {
+      sessionId: PROMOTE_RUN,
+      relative: run.relative,
+      parent: PROMOTE_PARENT,
+      // A conversation by kind, with no purpose at all: nothing but the parent column says
+      // this is a run, which is the whole point of the rule.
+      kind: 'conversation',
+      purpose: null,
+      workspace: 'workspace-one',
+      updatedAtMs: BASE_TIME
+    }
+  ], [PROMOTE_RUN]);
+
+  const { start } = await import(pathToFileURL(SERVER).href);
+  const previousRoot = process.env.MMC_TRAJECTORY_ROOT;
+  process.env.MMC_TRAJECTORY_ROOT = home;
+  const controller = new AbortController();
+  const noop = () => {};
+  let base = null;
+  let instance = null;
+  for (let attempt = 0; attempt < 12 && !base; attempt += 1) {
+    const port = 19700 + Math.floor(Math.random() * 300) + attempt;
+    try {
+      instance = await start({
+        pluginId: 'mmc-trajectory',
+        pluginRoot: PLUGIN_ROOT,
+        dataDir: PLUGIN_ROOT,
+        generationId: 'guard',
+        listen: { host: '127.0.0.1', port },
+        signal: controller.signal,
+        logger: { debug: noop, info: noop, warn: noop, error: noop }
+      });
+      base = 'http://127.0.0.1:' + port;
+    } catch (error) {
+      // The port was taken. Another one is tried; a guard that gave up here would be a
+      // guard that sometimes checks nothing.
+    }
+  }
+  if (!base) throw new Error('could not bind a port for the promotion route');
+  const response = await fetch(base + '/api/sessions?limit=20');
+  const body = await response.json();
+  const sessionIds = (body.sessions || []).map((row) => row.id);
+  const childIds = (body.children || []).map((row) => row.id);
+
+  assert('a run that wins the current-conversation resolution is not in the conversation list',
+    !sessionIds.includes(PROMOTE_RUN),
+    sessionIds.join('|'));
+  assert('and it is in the run list, where it belongs',
+    childIds.includes(PROMOTE_RUN),
+    childIds.join('|'));
+  assert('and the conversation it hangs off is still in the conversation list',
+    sessionIds.includes(PROMOTE_PARENT),
+    sessionIds.join('|'));
+  assert('and no session is in both lists at once',
+    !sessionIds.some((id) => childIds.includes(id)),
+    sessionIds.filter((id) => childIds.includes(id)).join('|'));
+
+  if (instance) await instance.dispose();
+  controller.abort();
+  if (previousRoot === undefined) delete process.env.MMC_TRAJECTORY_ROOT;
+  else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
+} catch (error) {
+  failures.push('a run that wins the current-conversation resolution -- ' + (error && error.message));
 }
 
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');
