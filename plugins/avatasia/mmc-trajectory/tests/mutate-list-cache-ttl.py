@@ -185,9 +185,9 @@ MUTATIONS = [
      [("        parent: parentNames ? parent : null,\n", "")],
      'the parent row is mapped, and an empty id is no parent rather than a parent named ""'),
 
-    ("the descriptor is built without the parent",
-     [("          descriptor.sessionParentId = meta.parent;", "")],
-     "the descriptor carries the parent onto the row the page receives"),
+    ("the row is built without the parent",
+     [("          sessionParentId: meta ? meta.parent : null,", "")],
+     "the row the page receives carries the parent, on every row"),
 
     # This one is the most likely to be reintroduced by accident: it is a whole-field removal in
     # a function whose job is to decide what may leave the service, and nothing else in it fails.

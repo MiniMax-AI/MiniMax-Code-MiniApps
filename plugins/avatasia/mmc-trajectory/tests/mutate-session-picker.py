@@ -145,8 +145,8 @@ MUTATIONS = [
     # validator -- which reads the same rows -- reports none. The body and the ETag then
     # disagree about the same row, and only the body reaches the page.
     ("the kind tag is only written on the rows that have one",
-     [("        descriptor.sessionTag = meta ? sessionTagFor(meta.kind, meta.purpose) : null;",
-       "        if (meta) descriptor.sessionTag = sessionTagFor(meta.kind, meta.purpose);")],
+     [("          sessionTag: meta ? sessionTagFor(meta.kind, meta.purpose) : null,",
+       "          sessionTag: meta ? sessionTagFor(meta.kind, meta.purpose) : (descriptor.sessionTag ?? null),")],
      "the kind tag is written on every row, not only on the rows that have one"),
 
     # ---- the badge, on the page ----

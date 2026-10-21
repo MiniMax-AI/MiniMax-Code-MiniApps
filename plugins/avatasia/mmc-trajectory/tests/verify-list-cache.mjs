@@ -222,19 +222,25 @@ assert('the purpose row is mapped, and an empty value is no purpose',
 assert('the workspace row is mapped, and an empty value is no workspace',
   /workspace: typeof row\.workspace_dir === 'string' && row\.workspace_dir\.trim\(\) \? row\.workspace_dir\.trim\(\) : null,/.test(server));
 
-assert('the descriptor carries the parent onto the row the page receives',
-  /descriptor\.sessionParentId = meta\.parent;/.test(server));
+// The parent the page groups a session's runs under is the one the runtime database holds, and
+// the row that carries it is BUILT rather than patched: the descriptor comes out of a cache and
+// is shared, so a runtime fact written onto it outlives the fact it was derived from. The parent
+// is therefore a field of the row that is built, written on every pass, and null when the
+// runtime database holds no row for that session.
+assert('the row the page receives carries the parent, on every row',
+  /sessionParentId: meta \? meta\.parent : null,/.test(server));
 
-// The tag is written on EVERY row, not only on the rows that have a database entry. The
-// descriptor comes out of a cache, so a row that loses its entry keeps the tag it was given
-// last time, while the validator — which reads the same rows — reports none for it. A body and
-// an ETag that disagree about one row is how a badge outlives the fact it was derived from,
-// and the page only ever sees the body.
+// The tag is written on EVERY row, not only on the rows that have a database entry -- the same
+// shape as the parent above, and for the same reason. A body and an ETag that disagree about
+// one row is how a badge outlives the fact it was derived from, and the page only ever sees the
+// body.
 //
-// The shape is what makes it unconditional: a `? :` with the tag on one side and null on the
-// other cannot be inside a `if (meta)` block without becoming a second statement.
-assert('the descriptor carries the kind badge onto the row the page receives, on every row',
-  /descriptor\.sessionTag = meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null;/.test(server));
+// The shape is what makes it unconditional: the tag is a FIELD of the row that is built, and its
+// else-branch is null -- "no row to derive one from" -- rather than a statement that only runs
+// when there is a row. An object property is not a statement, so it cannot be conditional in the
+// way the old spelling could.
+assert('the row the page receives carries the kind badge, on every row',
+  /sessionTag: meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null,/.test(server));
 
 // `?? null` rather than a bare copy: the page decides by whether this field is SET, so a missing
 // key and a present-but-undefined one have to land in the same place as a row that has no parent.

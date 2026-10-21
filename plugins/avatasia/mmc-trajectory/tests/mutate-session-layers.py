@@ -20,8 +20,18 @@ The rules the mutations below take back, one at a time:
   * a run's parent is a CONVERSATION, so a cycle is dissolved into two conversations, a run of a
     run is a conversation, and a run whose parent is not in the list is a conversation -- all
     three because a run the reader cannot reach is a run that is gone;
+  * "not in the list" means not in the WALK: the runtime database remembering a parent the reader
+    cannot pick does not make that parent pickable;
+  * a row is built, not patched, so a session whose row leaves the runtime database stops
+    publishing the title, the kind and the parent it had;
+  * a directory is a session's directory only when its name AND its manifest say so, so the
+    picker does not promote the current conversation on somebody else's directory and the
+    'latest' route does not bind it to one;
   * a parent that names no session is not a parent, so it is not published and the run it was
     on is a conversation;
+  * the raw purpose and the workspace each have to be caught by their own assertion, because
+    one control that leaked both was caught by the purpose one and never asked the workspace
+    one;
   * the page groups its runs into a map with no prototype, so a parent id that names an
     inherited object property cannot break the grouping;
   * the pool is the whole walk, not the thirty most recent sessions;
@@ -158,9 +168,20 @@ MUTATIONS = [
     # asked about it, so the map does not have it, and the run of it is a run of a
     # conversation the reader cannot pick.
     ("a run whose parent is not in the list is taken for a run of it",
-     [("      if (!parent || !map.has(parent)) { base = CONVERSATION; break; }",
-       "      if (!parent) { base = CONVERSATION; break; }\n      if (!map.has(parent)) { base = RUN; break; }")],
+     [("      if (!parent || !known.has(parent)) { base = CONVERSATION; break; }",
+       "      if (!parent) { base = CONVERSATION; break; }\n      if (!known.has(parent)) { base = RUN; break; }")],
      "a run whose parent is not in the list is a conversation, so that the reader can reach it"),
+
+    # The same rule, one step further: a parent the walk does not hold is a parent the reader
+    # cannot pick, WHETHER or not the runtime database still has a row for it. The route asks
+    # about the current conversation even when that conversation has no transcript in the store,
+    # so the map holds parents the reader can never reach -- and a run hanging off one of them is
+    # a run of nothing. The membership test is about the WALK, not about what the database
+    # remembers.
+    ("the layer is decided by what the database remembers rather than by what the walk holds",
+     [("      if (!parent || !known.has(parent)) { base = CONVERSATION; break; }",
+       "      if (!parent || !map.has(parent)) { base = CONVERSATION; break; }")],
+     "a run whose parent is the current conversation but has no transcript of its own is a conversation"),
 
     # A run of a run. The two controls are one conversation and the runs of THAT one, so the
     # run of a run is a conversation the reader can pick.
@@ -168,6 +189,45 @@ MUTATIONS = [
      [("  const flip = (layer) => (layer === CONVERSATION ? RUN : CONVERSATION);",
        "  const flip = (layer) => RUN;")],
      "a run of a run is a conversation too, because the run pick shows the runs of ONE conversation"),
+
+    # ---- what a row is made of ----
+    #
+    # The descriptor behind a row comes out of a cache, so the runtime's facts must be written
+    # onto a row that is BUILT, not onto the cached object: a session whose row leaves the
+    # runtime database has to stop publishing the title, the kind and the parent it had.
+    ("a row that lost its runtime facts goes on publishing them",
+     [("        return {\n"
+       "          ...descriptor,\n"
+       "          label: meta && meta.title ? meta.title : descriptor.label,\n"
+       "          sessionKind: meta ? meta.kind : null,\n"
+       "          sessionParentId: meta ? meta.parent : null,",
+       "        if (meta) {\n"
+       "          if (meta.title) descriptor.label = meta.title;\n"
+       "          descriptor.sessionKind = meta.kind;\n"
+       "          descriptor.sessionParentId = meta.parent;\n"
+       "        }\n"
+       "        return {\n"
+       "          ...descriptor,\n"
+       "          label: meta && meta.title ? meta.title : descriptor.label,\n"
+       "          sessionKind: meta ? meta.kind : (descriptor.sessionKind ?? null),\n"
+       "          sessionParentId: meta ? meta.parent : (descriptor.sessionParentId ?? null),")],
+     "a row whose runtime metadata disappears loses its title kind and parent across cache expiry"),
+
+    # ---- whose directory this is ----
+    #
+    # The directory name is a claim; the manifest beside the transcript is the authority. Two
+    # shortcuts took the name's word for it -- the picker promoting the current conversation, and
+    # the 'latest' resolver choosing the transcript to serve -- and both could put one session's
+    # id on another session's messages.
+    ("the picker promotes the current conversation on a directory that holds another session",
+     [("    currentEntry = await verifiedEntryForSessionId(entries, currentId);",
+       "    currentEntry = entries.find((entry) => decodeSessionIdFromDirName(basename(entry.dir)) === currentId) || null;")],
+     "the current conversation is not promoted on a directory that holds another session"),
+
+    ("the latest route binds the current session to a directory that holds another session",
+     [("        entry = await verifiedEntryForSessionId(entries, current.sessionId);",
+       "        entry = entries.find((candidate) => decodeSessionIdFromDirName(basename(candidate.dir)) === current.sessionId) ?? null;")],
+     "the latest route does not serve a directory that holds another session as the current one"),
 
     # ---- the page ----
     #
@@ -334,16 +394,29 @@ MUTATIONS = [
     # The raw purpose and the workspace. Both are in the runtime database and neither may cross
     # the wire: the purpose is free text a person wrote, and the workspace is a location on the
     # reader's own disk. The page gets a token for the first and nothing for the second.
-    ("the raw purpose and the workspace cross the wire",
-     [("          descriptor.sessionParentId = meta.parent;",
-       "          descriptor.sessionParentId = meta.parent;\n"
-       "          descriptor.sessionPurpose = meta.purpose;\n"
-       "          descriptor.sessionWorkspace = meta.workspace;"),
+    #
+    # They are TWO mutations, not one. A single control that leaked both was caught by the
+    # purpose assertion, so the workspace assertion was never asked whether it could fail -- and
+    # it could not: it looked for the path in the raw bytes, where JSON has escaped every
+    # backslash, so the literal it searched for was not in the response at all. The workspace
+    # alone has to be caught by the workspace assertion, by name.
+    ("the raw purpose crosses the wire",
+     [("          sessionParentId: meta ? meta.parent : null,",
+       "          sessionParentId: meta ? meta.parent : null,\n"
+       "          sessionPurpose: meta ? meta.purpose : null,"),
       ("    sessionParentId: value.sessionParentId ?? null,",
        "    sessionParentId: value.sessionParentId ?? null,\n"
-       "    sessionPurpose: value.sessionPurpose ?? null,\n"
-       "    sessionWorkspace: value.sessionWorkspace ?? null,")],
+       "    sessionPurpose: value.sessionPurpose ?? null,")],
      "the raw purpose does not cross the wire"),
+
+    ("the workspace crosses the wire",
+     [("          sessionParentId: meta ? meta.parent : null,",
+       "          sessionParentId: meta ? meta.parent : null,\n"
+       "          sessionWorkspace: meta ? meta.workspace : null,"),
+      ("    sessionParentId: value.sessionParentId ?? null,",
+       "    sessionParentId: value.sessionParentId ?? null,\n"
+       "    sessionWorkspace: value.sessionWorkspace ?? null,")],
+     "and neither does the workspace path"),
 ]
 
 ORIGINALS = {

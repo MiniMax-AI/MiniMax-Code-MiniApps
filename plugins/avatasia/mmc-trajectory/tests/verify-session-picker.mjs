@@ -435,14 +435,18 @@ assert('the kind badge is the one field that says what kind of session this is',
   strip !== null && /sessionTag: value\.sessionTag \?\? null,/.test(strip[0]));
 
 // The tag in the body and the tag in the ETag have to come from the same derivation, and the
-// body has to write it on EVERY row. The descriptor comes out of a cache, so a row that loses
-// its database entry keeps the tag it was given last time, while the validator -- which reads
-// the same rows -- reports none. A body and an ETag that disagree about one row is how a badge
-// outlives the fact it was derived from, and the page cannot see the disagreement: it only
-// has the body.
-const tagWrite = /descriptor\.sessionTag = meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null;/
+// body has to write it on EVERY row. A body and an ETag that disagree about one row is how a
+// badge outlives the fact it was derived from, and the page cannot see the disagreement: it
+// only has the body.
+//
+// The row is BUILT, not patched, so the tag is one of the fields the built row carries, and it
+// is carried whether or not there is a row to derive it from. A descriptor that were written
+// onto would keep the tag it was given last time -- it comes out of a cache and is shared -- and
+// a row that loses its database entry would go on publishing it, while the validator, which
+// reads the same rows, reports none.
+const tagWrite = /sessionTag: meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null,/
   .exec(serverText);
-const tagInsideMeta = /if \(meta\) \{[^}]*descriptor\.sessionTag/.exec(serverText);
+const tagInsideMeta = /if \(meta\) \{[^}]*sessionTag/.exec(serverText);
 assert('the kind tag is written on every row, not only on the rows that have one',
   tagWrite !== null && tagInsideMeta === null,
   tagWrite === null ? 'no unconditional tag write found' : String(tagInsideMeta && tagInsideMeta[0]));

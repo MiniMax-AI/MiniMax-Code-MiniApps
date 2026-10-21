@@ -172,6 +172,53 @@ function runtimeDb(home, rows, leases) {
 }
 
 /**
+ * The service, started against a store, and stopped again.
+ *
+ * The port is picked from this guard's own band and a taken one is simply tried again. The store
+ * is named through the environment, because that is how the service finds it -- the same way the
+ * runtime finds it.
+ *
+ * @param {string} home
+ * @returns {Promise<{ base: string, dispose: () => Promise<void> }>}
+ */
+async function startService(home) {
+  const { start } = await import(pathToFileURL(SERVER).href);
+  const previousRoot = process.env.MMC_TRAJECTORY_ROOT;
+  process.env.MMC_TRAJECTORY_ROOT = home;
+  const controller = new AbortController();
+  const noop = () => {};
+  let instance = null;
+  let base = null;
+  for (let attempt = 0; attempt < 12 && !base; attempt += 1) {
+    const port = 19900 + Math.floor(Math.random() * 300) + attempt;
+    try {
+      instance = await start({
+        pluginId: 'mmc-trajectory',
+        pluginRoot: PLUGIN_ROOT,
+        dataDir: PLUGIN_ROOT,
+        generationId: 'guard',
+        listen: { host: '127.0.0.1', port },
+        signal: controller.signal,
+        logger: { debug: noop, info: noop, warn: noop, error: noop }
+      });
+      base = 'http://127.0.0.1:' + port;
+    } catch (error) {
+      // The port was taken. Another one is tried.
+    }
+  }
+  if (!base) throw new Error('could not bind a port for the route');
+  return {
+    base,
+    dispose: async () => {
+      if (instance) await instance.dispose();
+      controller.abort();
+      if (previousRoot === undefined) delete process.env.MMC_TRAJECTORY_ROOT;
+      else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
+    }
+  };
+}
+
+/**
  * The store, the database and the layers the service builds from them.
  *
  * @returns {Promise<{ home: string, sessionsRoot: string, made: any[], rows: any[], candidates: any, titles: Map<string, any>, layers: any }>}
@@ -672,16 +719,32 @@ try {
     !childIds.includes('mvs_hostile_child') && !parentsOnTheWire.includes(HOSTILE_PARENT),
     childIds.join('|') + ' / ' + parentsOnTheWire.join('|'));
 
-  // The two values that must never cross the wire at all, checked on the bytes rather than on
-  // the parsed body. The purpose is free text the runtime wrote, and the workspace is a
-  // location on the reader's own disk; the page gets a token for the first and nothing for the
-  // second. Both are in this fixture, so both are absent here.
+  // The two values that must never cross the wire at all. The purpose is free text the runtime
+  // wrote, and the workspace is a location on the reader's own disk; the page gets a token for
+  // the first and nothing for the second. Both are in this fixture, so both are absent here.
   assert('the raw purpose does not cross the wire',
     !raw.includes('local-background-task:orphan'),
     raw.slice(0, 200));
+  // The workspace is looked for in the PARSED body, not in the raw bytes, and that is the whole
+  // point of the check. JSON escapes a backslash, so a path that is spelled
+  // `D:\private\workspace-one` on disk is spelled `D:\\private\\workspace-one` in the response, and
+  // a search for the path as it is on disk finds nothing in it. A guard that looks in the wrong
+  // spelling passes forever, which is what happened here: the workspace could cross the wire and
+  // this assertion stayed green, because the only mutation that leaked it also leaked the purpose
+  // and was caught by the assertion above. So every string in the body is searched instead, which
+  // is the spelling the value actually has once it is parsed.
+  const everyString = (value, out) => {
+    if (typeof value === 'string') { out.push(value); return out; }
+    if (Array.isArray(value)) { for (const item of value) everyString(item, out); return out; }
+    if (value && typeof value === 'object') {
+      for (const key of Object.keys(value)) { out.push(key); everyString(value[key], out); }
+    }
+    return out;
+  };
+  const wireStrings = everyString(body, []).join('\n');
   assert('and neither does the workspace path',
-    !raw.includes('D:\\private\\workspace-one') && !raw.includes('D:/private/workspace-one'),
-    raw.slice(0, 200));
+    !wireStrings.includes('D:\\private\\workspace-one') && !wireStrings.includes('D:/private/workspace-one'),
+    wireStrings.slice(0, 200));
 
   // The map itself, before the layer decision has anything to say about it: a parent that names
   // no session is not a parent. The route clears the parent of every session it puts in the
@@ -912,6 +975,209 @@ try {
     [...layers.childrenByParent.keys()].join('|'));
 } catch (error) {
   failures.push('a parent the payload does not know, and a run of a run -- ' + (error && error.message));
+}
+
+/* ---------- 11: the current conversation that has no transcript of its own ---------- */
+//
+// The map the layer is decided from holds the sessions with a ROW in the runtime database, and the
+// route asks about the current conversation even when that conversation has no transcript in the
+// store -- it wants the title and the workspace of it. So the map can name a parent the reader
+// cannot pick: a row, not a directory.
+//
+// A run hanging off such a parent is a run of a conversation that is not in the list, and the run
+// pick only ever shows the runs of the conversation that was picked. So the run is a conversation
+// itself, exactly like a run whose parent has no row at all. The rule is about what the reader can
+// reach, and a parent that is not in the list is a parent the reader cannot reach -- whether it is
+// missing from the map or missing from the walk.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-current-parent-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const child = await makeSession(sessionsRoot, 0, 'mvs_current_child', BASE_TIME - 20 * 60_000);
+  // The parent has a row in the runtime database and NO directory in the store. It is the current
+  // conversation -- the newest row, and a plain conversation -- so the route asks the database
+  // about it even though there is nothing on disk to read.
+  runtimeDb(home, [
+    {
+      sessionId: 'mvs_current_parent',
+      relative: '2026/10/20/99-00-00-session_absent',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME
+    },
+    {
+      sessionId: 'mvs_current_child',
+      relative: child.relative,
+      parent: 'mvs_current_parent',
+      kind: 'task',
+      purpose: 'local-background-task:child',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 20 * 60_000
+    }
+  ]);
+
+  const service = await startService(home);
+  try {
+    const body = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const sessionIds = (body.sessions || []).map((row) => row.id);
+    const childIds = (body.children || []).map((row) => row.id);
+    const parentsOnTheWire = (body.sessions || []).concat(body.children || [])
+      .map((row) => row.sessionParentId).filter(Boolean);
+    assert('a run whose parent is the current conversation but has no transcript of its own is a conversation',
+      sessionIds.includes('mvs_current_child') && !childIds.includes('mvs_current_child'),
+      sessionIds.join('|') + ' / ' + childIds.join('|'));
+    assert('and it names no parent, because the conversation it would hang off is not one the reader can pick',
+      !parentsOnTheWire.includes('mvs_current_parent'),
+      parentsOnTheWire.join('|'));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('the current conversation that has no transcript of its own -- ' + (error && error.message));
+}
+
+/* ---------- 12: a row whose runtime metadata disappears ---------- */
+//
+// The descriptor behind a row comes out of a cache, and the runtime's facts -- the title, the
+// kind, the parent -- used to be written ONTO that cached object. So a session whose row left the
+// runtime database went on publishing the facts it had last time, while the validator, which
+// reads the same rows, reported none of them: the body and the ETag disagreed about the same
+// row, and the reader saw a parent and a kind for a session that no longer had either.
+//
+// The row is built, not patched, so the cached descriptor keeps the facts the filesystem gives.
+// And the check is on the wire, after the caches have had their time, because the point is what
+// the reader is shown.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-vanished-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  const parent = await makeSession(sessionsRoot, 0, 'mvs_vanish_parent', BASE_TIME - 10 * 60_000);
+  const child = await makeSession(sessionsRoot, 1, 'mvs_vanish_child', BASE_TIME - 20 * 60_000);
+  runtimeDb(home, [
+    {
+      sessionId: 'mvs_vanish_parent',
+      relative: parent.relative,
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 10 * 60_000
+    },
+    {
+      sessionId: 'mvs_vanish_child',
+      relative: child.relative,
+      parent: 'mvs_vanish_parent',
+      kind: 'task',
+      purpose: 'local-background-task:child',
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 20 * 60_000
+    }
+  ]);
+
+  const service = await startService(home);
+  try {
+    const first = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const firstChild = (first.children || []).find((row) => row.id === 'mvs_vanish_child');
+    assert('and the row carried the runtime facts while the runtime database still had them',
+      Boolean(firstChild)
+      && firstChild.sessionKind === 'task'
+      && firstChild.sessionParentId === 'mvs_vanish_parent',
+      JSON.stringify(firstChild));
+
+    // The runtime database forgets the run. Its transcript is still on disk, so the walk still
+    // finds it and the reader must still be able to reach it -- as a plain conversation, with
+    // nothing left over from the row that is gone.
+    const db = new DatabaseSync(join(home, 'v2', 'sqlite', 'runtime-state.sqlite'));
+    db.exec("delete from local_runtime_sessions where session_id = 'mvs_vanish_child'");
+    db.close();
+    // The map is held for three seconds and the descriptor for five, so the first wait is the one
+    // that decides when the row is seen to be gone.
+    await new Promise((resolve) => setTimeout(resolve, 3200));
+    const second = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const secondChild = (second.sessions || []).find((row) => row.id === 'mvs_vanish_child');
+    assert('a row whose runtime metadata disappears loses its title kind and parent across cache expiry',
+      Boolean(firstChild)
+      && Boolean(secondChild)
+      && secondChild.sessionKind === null
+      && secondChild.sessionParentId === null
+      && secondChild.sessionTag === null
+      && secondChild.label !== firstChild.label,
+      JSON.stringify([firstChild, secondChild]));
+
+    // And the body the service reuses for the next request says the same thing: a body that is
+    // kept under its tag must not be able to keep publishing facts the map has already dropped.
+    const third = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const thirdChild = (third.sessions || []).find((row) => row.id === 'mvs_vanish_child');
+    assert('and the body the service reuses for the next request says the same thing',
+      Boolean(secondChild)
+      && Boolean(thirdChild)
+      && thirdChild.sessionKind === null
+      && thirdChild.sessionParentId === null
+      && thirdChild.sessionTag === null
+      && thirdChild.label === secondChild.label,
+      JSON.stringify([secondChild, thirdChild]));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a row whose runtime metadata disappears -- ' + (error && error.message));
+}
+
+/* ---------- 13: a directory that holds another session ---------- */
+//
+// The directory name is where a session id is written down, and the manifest beside the
+// transcript is where the runtime writes it too. The service reads a session's identity from the
+// manifest, so a directory whose name says one session and whose manifest says another is the
+// OTHER session's directory, whatever the folder is called.
+//
+// Two shortcuts took the name's word for it: the picker promoting the current conversation, and
+// the 'latest' resolver choosing which transcript to serve. The recorded path was checked -- but
+// it is only consulted when the directory is NOT in the window, so the window's own shortcut was
+// never checked at all, and both of them could put one session's id on another session's
+// messages. The route has to be asked over HTTP here, because the function is not the route.
+
+try {
+  const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-mismatch-'));
+  const sessionsRoot = join(home, 'v2', 'sessions');
+  // The other session is the newest FILE, so the walk's own order starts with it, and the current
+  // conversation is the newest ROW. The two orders are independent, and the fixture needs them
+  // apart: the promotion has to be visible as a change of the first row.
+  const other = await makeSession(sessionsRoot, 0, 'mvs_mismatch_other', BASE_TIME);
+  const current = await makeSession(sessionsRoot, 1, 'mvs_mismatch_current', BASE_TIME - 60_000);
+  // The current conversation's own directory says it is the current conversation, and the manifest
+  // beside its transcript says it is somebody else.
+  await writeFile(join(current.dir, 'manifest.json'),
+    JSON.stringify({ sessionId: 'mvs_mismatch_stranger', createdAtMs: 1 }), 'utf8');
+  runtimeDb(home, [
+    {
+      sessionId: 'mvs_mismatch_other',
+      relative: other.relative,
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME - 60_000
+    },
+    {
+      sessionId: 'mvs_mismatch_current',
+      relative: current.relative,
+      workspace: 'D:\\private\\workspace-one',
+      updatedAtMs: BASE_TIME
+    }
+  ]);
+
+  const service = await startService(home);
+  try {
+    const list = await (await fetch(service.base + '/api/sessions?limit=20')).json();
+    const firstRow = (list.sessions || [])[0];
+    assert('the current conversation is not promoted on a directory that holds another session',
+      Boolean(firstRow) && firstRow.id !== 'mvs_mismatch_stranger',
+      JSON.stringify(firstRow));
+    const trajectory = await (await fetch(service.base + '/api/trajectory?session=latest')).json();
+    assert('the latest route does not serve a directory that holds another session as the current one',
+      Boolean(trajectory.session) && trajectory.session.id !== 'mvs_mismatch_stranger',
+      JSON.stringify(trajectory.session));
+    assert('and it does not claim the runtime binding for it either',
+      Boolean(trajectory.session) && trajectory.session.binding !== 'runtime-db',
+      String(trajectory.session && trajectory.session.binding));
+  } finally {
+    await service.dispose();
+  }
+} catch (error) {
+  failures.push('a directory that holds another session -- ' + (error && error.message));
 }
 
 console.log(pass + ' assertions passed, ' + failures.length + ' failed');
