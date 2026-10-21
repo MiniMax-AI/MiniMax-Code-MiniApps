@@ -940,37 +940,87 @@ function legacyParts(m) {
 }
 
 /**
- * One reply is one bubble. The Host opens a new text part for every assistant turn between two
- * tool calls, so a reply that ran a dozen tools used to paint a bubble per part and pushed the
- * conversation above it off the screen. The parts are joined the way the server joins them when
- * it stores the text of a message; the event lines keep their place in the order.
+ * More text parts than this and the earlier bubbles are folded away. The Host opens a text part
+ * for every assistant turn between two tool calls, so a reply that worked for a while arrives
+ * with dozens of them, and one bubble per part filled the screen.
  */
+const FOLD_AFTER_PARTS = 3;
+
+/**
+ * The earlier bubbles of a long reply: folded behind a one line summary, and the area that
+ * opens has a fixed height with its own scrollbar, so the feed keeps its length.
+ */
+function foldView(m, parts, presentation) {
+  const inner = () =>
+    parts.map((part, index) => ({
+      key: `text:${index}`,
+      signature: JSON.stringify([part.text, presentation]),
+      create: () => h('div', { class: 'bubble' }, markdownNode(part.text, m.chatId)),
+      update: (bubble) => {
+        markdownNode(part.text, m.chatId, bubble.firstElementChild);
+        return bubble;
+      },
+    }));
+  const body = h('div', { class: 'bubble-fold-body' });
+  reconcileChildren(body, inner());
+  return {
+    key: 'fold',
+    signature: JSON.stringify([parts.map((part) => part.text), presentation, locale()]),
+    create: () =>
+      h(
+        'details',
+        { class: 'bubble-fold' },
+        h(
+          'summary',
+          { class: 'bubble-fold-summary' },
+          icon('down', 12),
+          h('span', { class: 'bubble-fold-closed' }, t('fold.show', { n: parts.length })),
+          h('span', { class: 'bubble-fold-open' }, t('fold.hide')),
+        ),
+        body,
+      ),
+    update: (node) => {
+      reconcileChildren(node.querySelector('.bubble-fold-body'), inner());
+      const closed = node.querySelector('.bubble-fold-closed');
+      if (closed) closed.textContent = t('fold.show', { n: parts.length });
+      return node;
+    },
+  };
+}
+
+/** Keep part order exactly as recorded; matching prefixes are not evidence of duplication. */
 function partViews(m, inGroup) {
   const parts = m.key ? [{ type: 'text', text: displayText(m) }] : m.parts ?? legacyParts(m);
-  const texts = parts.filter((part) => part.type === 'text' && part.text?.trim());
-  const joined = texts.map((part) => part.text).join('\n\n');
+  const lastText = parts.findLastIndex((part) => part.type === 'text' && part.text?.trim());
   const views = [];
   const presentation = presentationKey();
-  let bubblePlaced = false;
+  const textParts = [];
   parts.forEach((part, index) => {
+    if (part.type === 'text' && part.text?.trim()) textParts.push(index);
+  });
+  // The earlier bubbles go into the folded area; the last one, the answer, stays in the open.
+  const folded = textParts.length > FOLD_AFTER_PARTS ? textParts.slice(0, -1) : [];
+  const foldedSet = new Set(folded);
+  if (folded.length) views.push(foldView(m, folded.map((index) => parts[index]), presentation));
+  parts.forEach((part, index) => {
+    const key = `part:${index}`;
     if (part.type === 'text' && part.text?.trim()) {
-      if (bubblePlaced) return;
-      bubblePlaced = true;
+      if (foldedSet.has(index)) return;
       views.push({
-        key: 'bubble',
-        signature: JSON.stringify([joined, presentation, [m.status, m.userReactions, m.reactionsRevision, displayText(m), m.sessionId, botById(m.botId)?.name]]),
-        create: () => updateBubbleControls(h('div', { class: 'bubble' }, markdownNode(joined, m.chatId)), m),
+        key,
+        signature: JSON.stringify([part.text, presentation, index === lastText ? [m.status, m.userReactions, m.reactionsRevision, displayText(m), m.sessionId, botById(m.botId)?.name] : null]),
+        create: () => updateBubbleControls(h('div', { class: 'bubble' }, markdownNode(part.text, m.chatId)), m, index === lastText),
         update: (bubble) => {
-          markdownNode(joined, m.chatId, bubble.firstElementChild);
-          return updateBubbleControls(bubble, m);
+          markdownNode(part.text, m.chatId, bubble.firstElementChild);
+          return updateBubbleControls(bubble, m, index === lastText);
         },
       });
     } else if (part.type === 'event') {
       const node = eventLine(part, m);
-      if (node) views.push({ key: `event:${index}`, signature: JSON.stringify([part, presentation]), create: () => node });
+      if (node) views.push({ key, signature: JSON.stringify([part, presentation]), create: () => node });
     }
   });
-  if (!texts.length) views.push({ key: 'reactions', signature: JSON.stringify([m.status, m.userReactions, m.reactionsRevision, locale()]), create: () => reactionBar(m) });
+  if (lastText < 0) views.push({ key: 'reactions', signature: JSON.stringify([m.status, m.userReactions, m.reactionsRevision, locale()]), create: () => reactionBar(m) });
   if (m.status === 'streaming') {
     const running = [...parts].reverse().find((p) => p.type === 'tool' && p.state === 'running');
     const lastText = parts.at(-1)?.type === 'text' && parts.at(-1)?.live;
@@ -981,8 +1031,8 @@ function partViews(m, inGroup) {
 }
 
 /** The bubble carries the reply text and the reaction badge; the action row lives below it. */
-function updateBubbleControls(bubble, m) {
-  updateBubbleReactions(bubble, m);
+function updateBubbleControls(bubble, m, isLast) {
+  updateBubbleReactions(bubble, m, isLast);
   return bubble;
 }
 
@@ -1295,7 +1345,7 @@ function renderHelpers() {
       );
     }),
   );
-  // `replaceChildren` turns a null argument into the text "null", so the fold button is
+  // `replaceChildren` turns a null argument into the text "null", so the queue button is
   // appended on its own and only when there is something to fold.
   if (hidden > 0 || (helpersExpanded && queued.length > HELPER_QUEUE_PREVIEW)) {
     ui.helpers.append(
