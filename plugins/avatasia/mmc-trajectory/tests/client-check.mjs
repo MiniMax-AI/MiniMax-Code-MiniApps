@@ -1543,7 +1543,16 @@ if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
   // signal is the real one, so an abort is an abort.
   const requests = [];
   sandbox.fetch = function (url, options) {
-    const entry = { url: url, signal: options && options.signal, settle: null, fail: null };
+    const entry = {
+      url: url,
+      signal: options && options.signal,
+      // The headers the page sent, so a section can ask what the request claimed about the
+      // list it already had. A validator is only ever read by the server, so the only way to
+      // see whether the page still holds the right one is to look at what it asked with.
+      headers: (options && options.headers) || {},
+      settle: null,
+      fail: null
+    };
     entry.promise = new Promise((resolve, reject) => {
       entry.settle = resolve;
       entry.fail = reject;
@@ -1566,10 +1575,10 @@ if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
     error.name = 'AbortError';
     return error;
   };
-  const answer = (entry, body) => entry.settle({
+  const answer = (entry, body, etag) => entry.settle({
     status: 200,
     ok: true,
-    headers: { get: () => '' },
+    headers: { get: (name) => (name === 'etag' ? (etag || '') : '') },
     json: () => Promise.resolve(body)
   });
 
@@ -1586,7 +1595,7 @@ if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
   const third = sandbox.fetchSessions(false);
   check('a replaced request does not take the controller of the request that replaced it',
     requests[1].signal.aborted, true);
-  answer(requests[2], { sessions: [{ id: 'mvs_new_main' }], children: [{ id: 'mvs_new_run' }] });
+  answer(requests[2], { sessions: [{ id: 'mvs_new_main' }], children: [{ id: 'mvs_new_run' }] }, '"older"');
   await third;
   answer(requests[1], { sessions: [{ id: 'mvs_old_main' }], children: [{ id: 'mvs_old_run' }] });
   await second;
@@ -1594,6 +1603,42 @@ if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
     sandbox.state.sessions.map((row) => row.id), ['mvs_new_main']);
   check('and the run list is the newer one too',
     sandbox.state.children.map((row) => row.id), ['mvs_new_run']);
+
+  // A 304 that arrives late. This is the second case of the same rule, and it is a different
+  // case: a 200 carries a body, so a stale one has something visible to overwrite. A 304
+  // carries a VALIDATOR instead, so a stale one has nothing to overwrite but the tag that
+  // describes the list on screen -- and that tag is what the next poll asks the server with.
+  //
+  // It used to write that tag before the sequence gate, so the list on screen and the tag that
+  // described it were two different things: the next poll asked the server about the old list,
+  // the server said "not modified", and the page kept the new one.
+  const late = sandbox.fetchSessions(false);
+  const lateReplacement = sandbox.fetchSessions(false);
+  answer(requests[4], { sessions: [{ id: 'mvs_newest_main' }], children: [] }, '"newest"');
+  await lateReplacement;
+  check('the newer list is on screen',
+    sandbox.state.sessions.map((row) => row.id), ['mvs_newest_main']);
+  requests[3].settle({
+    status: 304,
+    ok: false,
+    headers: { get: (name) => (name === 'etag' ? '"older"' : '') }
+  });
+  await late;
+  check('a late 304 does not overwrite the validator the newer answer installed',
+    sandbox.state.sessionsEtag, '"newest"');
+  check('and the list on screen is still the newer one',
+    sandbox.state.sessions.map((row) => row.id), ['mvs_newest_main']);
+
+  // And the poll after it asks the server about the list that is on screen.
+  const next = sandbox.fetchSessions(false);
+  check('the next request carries the validator of the list on screen',
+    requests[5].headers['If-None-Match'], '"newest"');
+
+  // A manual refresh drops the validator on purpose: the reader asked for the list again, so
+  // the request must not claim to already have it.
+  sandbox.fetchSessions(true);
+  check('a manual refresh sends no validator',
+    requests[6].headers['If-None-Match'], undefined);
 }
 
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');

@@ -189,7 +189,7 @@ async function fixture() {
     rows.push({
       sessionId: id,
       relative: dir.relative,
-      workspace: 'workspace-one',
+      workspace: 'D:\\private\\workspace-one',
       updatedAtMs: BASE_TIME - i * 60_000,
       // The main session that LOOKS like a task. It is not one: it has no parent, so it is a
       // conversation, and a judge that read the purpose column would have moved it.
@@ -497,7 +497,7 @@ try {
     {
       sessionId: PROMOTE_PARENT,
       relative: parent.relative,
-      workspace: 'workspace-one',
+      workspace: 'D:\\private\\workspace-one',
       updatedAtMs: BASE_TIME - 10 * 60_000
     },
     {
@@ -508,7 +508,7 @@ try {
       // this is a run, which is the whole point of the rule.
       kind: 'conversation',
       purpose: null,
-      workspace: 'workspace-one',
+      workspace: 'D:\\private\\workspace-one',
       updatedAtMs: BASE_TIME
     }
   ], [PROMOTE_RUN]);
@@ -589,7 +589,7 @@ try {
     {
       sessionId: 'mvs_phantom_main',
       relative: main.relative,
-      workspace: 'workspace-one',
+      workspace: 'D:\\private\\workspace-one',
       updatedAtMs: BASE_TIME - 10 * 60_000
     },
     {
@@ -598,7 +598,7 @@ try {
       parent: PHANTOM_PARENT,
       kind: 'task',
       purpose: 'local-background-task:orphan',
-      workspace: 'workspace-one',
+      workspace: 'D:\\private\\workspace-one',
       updatedAtMs: BASE_TIME - 20 * 60_000
     },
     {
@@ -607,7 +607,7 @@ try {
       parent: HOSTILE_PARENT,
       kind: 'task',
       purpose: 'local-background-task:hostile',
-      workspace: 'workspace-one',
+      workspace: 'D:\\private\\workspace-one',
       updatedAtMs: BASE_TIME - 30 * 60_000
     }
   ]);
@@ -638,7 +638,11 @@ try {
   }
   if (!base) throw new Error('could not bind a port for the phantom-parent route');
   const response = await fetch(base + '/api/sessions?limit=20');
-  const body = await response.json();
+  // The raw bytes, because what this section is about is what CROSSES the wire. A value that is
+  // not in the parsed body could still be in the bytes, and a field that is absent from the
+  // body could still be in a header.
+  const raw = await response.text();
+  const body = JSON.parse(raw);
   const sessionIds = (body.sessions || []).map((row) => row.id);
   const childIds = (body.children || []).map((row) => row.id);
   const parentsOnTheWire = (body.sessions || []).concat(body.children || [])
@@ -656,6 +660,17 @@ try {
   assert('and the same holds for a parent id that names an inherited object property',
     !childIds.includes('mvs_hostile_child') && !parentsOnTheWire.includes(HOSTILE_PARENT),
     childIds.join('|') + ' / ' + parentsOnTheWire.join('|'));
+
+  // The two values that must never cross the wire at all, checked on the bytes rather than on
+  // the parsed body. The purpose is free text the runtime wrote, and the workspace is a
+  // location on the reader's own disk; the page gets a token for the first and nothing for the
+  // second. Both are in this fixture, so both are absent here.
+  assert('the raw purpose does not cross the wire',
+    !raw.includes('local-background-task:orphan'),
+    raw.slice(0, 200));
+  assert('and neither does the workspace path',
+    !raw.includes('D:\\private\\workspace-one') && !raw.includes('D:/private/workspace-one'),
+    raw.slice(0, 200));
 
   if (instance) await instance.dispose();
   controller.abort();

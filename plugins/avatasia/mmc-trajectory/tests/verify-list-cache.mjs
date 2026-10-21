@@ -203,7 +203,15 @@ assert('the titles query reads the parent column',
   /select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = \?/.test(server));
 
 assert('the parent row is mapped, and an empty id is no parent rather than a parent named ""',
-  /parent:\s*typeof row\.parent_session_id === 'string' && row\.parent_session_id !== ''\s*\n\s*\?\s*row\.parent_session_id\s*\n\s*:\s*null,/.test(server));
+  /const parent = typeof row\.parent_session_id === 'string' && row\.parent_session_id !== ''\s*\n\s*\? row\.parent_session_id\s*\n\s*: null;/.test(server)
+  && /parent: parentNames \? parent : null,/.test(server));
+
+// The parent is a foreign key into the same table, so it is looked up with the statement that
+// read the row. There is no second query that could fail to prepare, and therefore no path on
+// which a parent is published without having been looked up -- which is what the two database
+// fixtures below pin down from the other side.
+assert('the parent is published only when the statement that read the row finds one for it',
+  /const parentNames = parent \? Boolean\(stmt\.get\(parent\)\) : false;/.test(server));
 
 // The same two links for the two newer columns. The purpose is what says a session is a cron
 // run, a background task or a lightweight exchange, and the workspace is what orders the list —

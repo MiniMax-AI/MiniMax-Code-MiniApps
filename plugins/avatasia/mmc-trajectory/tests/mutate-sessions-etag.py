@@ -123,16 +123,11 @@ MUTATIONS = [
     # A 304 that re-renders is correct and pointless: the re-render is the cost the 304 exists to
     # avoid, and on a big list it is the larger half.
     ("a 304 re-renders the picker anyway",
-     [("            if (response.status === 304) {\n"
+     [("              var fresh = response.headers.get('etag');\n"
+       "              return { changed: false, body: null, etag: fresh || state.sessionsEtag };",
        "              var fresh = response.headers.get('etag');\n"
-       "              if (fresh) state.sessionsEtag = fresh;\n"
-       "              state.sessionsEtagFor = key;\n"
-       "              return { changed: false, body: null, etag: state.sessionsEtag };\n"
-       "            }",
-       "            if (response.status === 304) {\n"
        "              renderSessionSelect();\n"
-       "              return { changed: false, body: null, etag: state.sessionsEtag };\n"
-       "            }")],
+       "              return { changed: false, body: null, etag: fresh || state.sessionsEtag };")],
      "a 304 does not re-render the picker", CLIENT),
 
     # Half a validator: kept, never sent. Every poll then carries no header and gets a full body.

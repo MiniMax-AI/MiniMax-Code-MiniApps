@@ -133,9 +133,8 @@ MUTATIONS = [
     # the page groups its runs by that value -- so publishing it puts a name on the wire that
     # no conversation in the list can answer to.
     ("a parent that names no session is published as a parent anyway",
-     [("          if (lookup.get(parentId)) continue;\n"
-       "          for (const meta of result.values()) if (meta.parent === parentId) meta.parent = null;\n",
-       "          if (lookup.get(parentId)) continue;\n")],
+     [("      const parentNames = parent ? Boolean(stmt.get(parent)) : false;",
+       "      const parentNames = Boolean(parent);")],
      "a run whose parent names no session is not published as a run"),
 
     # ---- the page ----
@@ -270,6 +269,49 @@ MUTATIONS = [
        "        selectSession(state.sessionId || value);\n      }\n\n      /**\n       * The reader picked a run, or the conversation itself.")],
      "picking another conversation moves the run pick with it",
      CLIENT),
+
+    # A 304 that arrives late. The 200 case is above: a late 200 carries a body, so a stale one
+    # has something visible to overwrite. A 304 carries a VALIDATOR instead, and a stale one
+    # used to write that validator before the sequence gate -- so the list on screen and the tag
+    # that described it were two different things, and the next poll asked the server about the
+    # old list, was told the list had not changed, and kept the new one.
+    ("a late 304 writes its own validator over the newer one",
+     [("              var fresh = response.headers.get('etag');\n"
+       "              return { changed: false, body: null, etag: fresh || state.sessionsEtag };",
+       "              var fresh = response.headers.get('etag');\n"
+       "              if (fresh) state.sessionsEtag = fresh;\n"
+       "              state.sessionsEtagFor = key;\n"
+       "              return { changed: false, body: null, etag: state.sessionsEtag };")],
+     "a late 304 does not overwrite the validator the newer answer installed",
+     CLIENT),
+
+    # The manual refresh. The reader asked for the list again, so the request must not claim to
+    # already have it -- otherwise the server answers 304 and the reader watches nothing change.
+    ("a manual refresh keeps the validator it was asked to drop",
+     [("        if (manual) {\n"
+       "          state.sessionsEtag = '';\n"
+       "          state.sessionsEtagFor = '';\n"
+       "        } else if (state.sessionsEtag && state.sessionsEtagFor === key) {",
+       "        if (false) {\n"
+       "          state.sessionsEtag = '';\n"
+       "          state.sessionsEtagFor = '';\n"
+       "        } else if (state.sessionsEtag && state.sessionsEtagFor === key) {")],
+     "a manual refresh sends no validator",
+     CLIENT),
+
+    # The raw purpose and the workspace. Both are in the runtime database and neither may cross
+    # the wire: the purpose is free text a person wrote, and the workspace is a location on the
+    # reader's own disk. The page gets a token for the first and nothing for the second.
+    ("the raw purpose and the workspace cross the wire",
+     [("          descriptor.sessionParentId = meta.parent;",
+       "          descriptor.sessionParentId = meta.parent;\n"
+       "          descriptor.sessionPurpose = meta.purpose;\n"
+       "          descriptor.sessionWorkspace = meta.workspace;"),
+      ("    sessionParentId: value.sessionParentId ?? null,",
+       "    sessionParentId: value.sessionParentId ?? null,\n"
+       "    sessionPurpose: value.sessionPurpose ?? null,\n"
+       "    sessionWorkspace: value.sessionWorkspace ?? null,")],
+     "the raw purpose does not cross the wire"),
 ]
 
 ORIGINALS = {

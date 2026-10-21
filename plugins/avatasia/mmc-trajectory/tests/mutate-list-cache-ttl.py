@@ -182,9 +182,7 @@ MUTATIONS = [
      "a database WITHOUT the workspace column still reports the title, the kind, the parent and the purpose"),
 
     ("the parent row is read but never mapped",
-     [("        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''\n"
-       "          ? row.parent_session_id\n"
-       "          : null,\n", "")],
+     [("        parent: parentNames ? parent : null,\n", "")],
      'the parent row is mapped, and an empty id is no parent rather than a parent named ""'),
 
     ("the descriptor is built without the parent",
@@ -202,9 +200,8 @@ MUTATIONS = [
     # list must not publish. No regex over the source can catch this one: the query ran, it
     # found nothing, and the only thing that shows it is a database built to have that hole.
     ("a parent that names no session is published as a parent anyway",
-     [("          if (lookup.get(parentId)) continue;\n"
-       "          for (const meta of result.values()) if (meta.parent === parentId) meta.parent = null;\n",
-       "          if (lookup.get(parentId)) continue;\n")],
+     [("      const parentNames = parent ? Boolean(stmt.get(parent)) : false;",
+       "      const parentNames = Boolean(parent);")],
      "a parent that names no session is not published as a parent"),
 
     # The direction that looks right and is not: the parent field is read, but not as the key
