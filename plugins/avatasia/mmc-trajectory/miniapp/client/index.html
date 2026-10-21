@@ -4033,6 +4033,29 @@
       }
 
       /**
+       * The session the body on screen is about, for a read that addresses a position inside it.
+       *
+       * A record index is a position within one body, so a request carrying that index has to ask
+       * about the session that body was built for. `sessionParam()` answers a different question
+       * — which session is current — and while the page follows the newest conversation that is
+       * `latest`, which is not necessarily the body on screen: the runtime can have made another
+       * session current while the page still shows this one.
+       *
+       * The client's own cache key already says which body a value belongs to — `rawCacheKey`
+       * names the displayed session — so asking the server for `latest` stored one session's
+       * record under another session's key, and the page showed the other session's words.
+       *
+       * @returns {string}
+       */
+      function displayedSessionParam() {
+        var payload = state.payload;
+        var session = payload && payload.session ? payload.session : null;
+        var sid = session && typeof session.id === 'string' ? session.id : '';
+        if (sid) return encodeURIComponent(sid);
+        return sessionParam();
+      }
+
+      /**
        * The session list, on its own validator.
        *
        * `manual` is the refresh button asking for the truth, and it drops the validator the way
@@ -4177,10 +4200,13 @@
             // Nothing changed since the copy already on screen. Keep every piece of state
             // — no re-flatten, no re-render — and let the next poll do the same cheaply.
             if (response.status === 304) {
+              // The validator is written by the one writer below, and that runs after the
+              // sequence gate. A request that has been replaced must write nothing at all: a
+              // 304 that arrived late used to put its own older tag over the newer one, so the
+              // body on screen and the tag that described it were two different things — and
+              // the next poll asked the server about the old one and kept the new one.
               var fresh = response.headers.get('etag');
-              if (fresh) state.etag = fresh;
-              state.etagFor = cacheKey;
-              return null;
+              return { changed: false, body: null, etag: fresh || state.etag };
             }
             return response
               .json()
@@ -4197,15 +4223,21 @@
                 }
                 if (!body || typeof body !== 'object') throw new Error('api');
                 var tag = response.headers.get('etag');
-                state.etag = tag || '';
-                state.etagFor = cacheKey;
-                return body;
+                return { changed: true, body: body, etag: tag || '' };
               });
           })
-          .then(function (payload) {
+          .then(function (result) {
+            // A late answer must not win. Every request carries a sequence number, and only
+            // the newest one may write — the same rule the session list follows.
             if (seq !== refreshSeq) return;
             inflight = null;
-            if (payload === null) {
+            // One writer for the trajectory's validator, on the one path that carried an
+            // answer. A request that has been replaced writes neither a body nor a tag: the
+            // tag is what the next poll asks the server with, so a stale one leaves the page
+            // describing a body it is no longer showing.
+            state.etag = result.etag;
+            state.etagFor = cacheKey;
+            if (!result.changed) {
               // 304: the previous render is still accurate. Only clear a pending loading
               // state, because nothing on screen should have been replaced.
               //
@@ -4223,7 +4255,7 @@
               if (cleared) render();
               return;
             }
-            applyPayload(payload, manual);
+            applyPayload(result.body, manual);
           })
           .catch(function (error) {
             if (seq !== refreshSeq) return;
@@ -8626,7 +8658,7 @@
 
       function requestRaw(index) {
         var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))
-          + '&session=' + sessionParam();
+          + '&session=' + displayedSessionParam();
         if (state.generation !== null) {
           url += '&generation=' + encodeURIComponent(String(state.generation));
         }
@@ -8717,7 +8749,7 @@
 
       function requestDetail(index) {
         var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))
-          + '&session=' + sessionParam();
+          + '&session=' + displayedSessionParam();
         if (state.generation !== null) {
           url += '&generation=' + encodeURIComponent(String(state.generation));
         }
