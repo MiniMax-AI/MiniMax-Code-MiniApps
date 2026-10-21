@@ -1234,6 +1234,20 @@ function helperElapsed(helper) {
 const HELPER_ROWS_PREVIEW = 3;
 let helpersExpanded = false;
 
+/** A job that is already working comes first; one that still waits can wait a little longer. */
+const HELPER_STATUS_ORDER = { running: 0, waiting_for_tasks: 1, queued: 2 };
+
+/**
+ * The rows that stay in the open. Which rows those are is our choice, the order they appear in
+ * is not: a job that is already working comes first, so the row the reader cares about is never
+ * the one that folds away, and the rows keep the order the official build gives them.
+ */
+function visibleHelperRows(items) {
+  const ranked = [...items].sort((a, b) => HELPER_STATUS_ORDER[a.status] - HELPER_STATUS_ORDER[b.status]);
+  const keep = new Set(ranked.slice(0, HELPER_ROWS_PREVIEW));
+  return items.filter((item) => keep.has(item));
+}
+
 /** Background helpers working for this chat: one line each, with a stop button. */
 function renderHelpers() {
   if (!ui.helpers) return;
@@ -1241,13 +1255,15 @@ function renderHelpers() {
   if (!items.length) {
     ui.helpers.replaceChildren();
     ui.helpers.classList.remove('has-fold');
+    helpersExpanded = false;
     return;
   }
-  // The rows are the ones the official build draws, in the order it draws them. A busy chat
-  // keeps the first few in the open and folds the rest into one line, so the strip never
-  // grows into a wall of rows.
-  const preview = helpersExpanded ? items : items.slice(0, HELPER_ROWS_PREVIEW);
+  // A queue that fits in the open rows has nothing to fold, so an open queue ends with it and
+  // the next busy chat starts folded again.
+  if (items.length <= HELPER_ROWS_PREVIEW) helpersExpanded = false;
+  const preview = helpersExpanded ? items : visibleHelperRows(items);
   const hidden = items.length - preview.length;
+  const foldable = items.length > HELPER_ROWS_PREVIEW;
   // The rows keep the scroll area they had, and the fold button sits below it, so the button
   // stays reachable however long the queue is.
   let rows = ui.helpers.querySelector('.helper-rows');
@@ -1282,27 +1298,31 @@ function renderHelpers() {
       );
     }),
   );
-  ui.helpers.classList.toggle('has-fold', hidden > 0 || (helpersExpanded && items.length > HELPER_ROWS_PREVIEW));
-  // `replaceChildren` renders a null argument as the text "null", so the fold button is appended
-  // on its own, and only when there is something to fold.
-  ui.helpers.querySelector('.helper-more')?.remove();
-  if (hidden > 0 || (helpersExpanded && items.length > HELPER_ROWS_PREVIEW)) {
-    ui.helpers.append(
-      h(
-        'button',
-        {
-          type: 'button',
-          class: 'btn sm helper-more',
-          'aria-expanded': String(helpersExpanded),
-          onclick: () => {
-            helpersExpanded = !helpersExpanded;
-            renderHelpers();
-          },
-        },
-        hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse'),
-      ),
-    );
+  ui.helpers.classList.toggle('has-fold', foldable);
+  // The fold button is the same node from one render to the next, so the keyboard focus stays
+  // on it when a new job arrives, when the clock ticks or when the button itself is pressed.
+  let more = ui.helpers.querySelector('.helper-more');
+  if (!foldable) {
+    more?.remove();
+    return;
   }
+  if (!more) {
+    more = h(
+      'button',
+      {
+        type: 'button',
+        class: 'btn sm helper-more',
+        'aria-expanded': String(helpersExpanded),
+        onclick: () => {
+          helpersExpanded = !helpersExpanded;
+          renderHelpers();
+        },
+      },
+    );
+    ui.helpers.append(more);
+  }
+  more.textContent = hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse');
+  more.setAttribute('aria-expanded', String(helpersExpanded));
 }
 setInterval(() => {
   if (mounted && state.helpers.some((x) => x.chatId === mounted && x.status === 'running')) renderHelpers();

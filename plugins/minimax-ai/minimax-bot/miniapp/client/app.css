@@ -816,10 +816,15 @@ button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  /* One reply can carry many bubbles, one per recorded part. Without a gap between them they
-     read as one block of text; a small one tells them apart, the way the task rows do. */
-  gap: 4px;
   max-width: 100%;
+}
+
+/* One reply can carry many bubbles, one per recorded part. When they touch they read as one
+   block of text, so the bubbles that follow each other get a small gap, the way the task rows
+   do. The rule names the bubbles alone: the notes, the event lines and the action row keep the
+   spacing the official build gave them. */
+.bubble-wrap > .bubble + .bubble {
+  margin-top: 4px;
 }
 
 .msg.user .bubble-wrap {
@@ -2721,6 +2726,10 @@ fieldset.field {
   gap: 4px;
   flex: 0 1 auto;
   min-height: 0;
+  /* The height budget the official strip had, and the row the fold button takes from it: the
+     button itself (28px) plus the gap above it. */
+  --helper-rows-max: 280px;
+  --helper-fold-row: 32px;
 }
 
 /* The rows keep the scroll area the official strip had: a few of them stay fully visible, the
@@ -2732,7 +2741,7 @@ fieldset.field {
   gap: 4px;
   flex: 0 1 auto;
   min-height: 0;
-  max-height: min(280px, 40vh);
+  max-height: min(var(--helper-rows-max), 40vh);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2740,7 +2749,7 @@ fieldset.field {
 /* The fold button sits below the scroll area and takes a row of its own, so the strip keeps
    the height budget the official one had. */
 .helpers.has-fold .helper-rows {
-  max-height: min(248px, calc(40vh - 32px));
+  max-height: min(calc(var(--helper-rows-max) - var(--helper-fold-row)), calc(40vh - var(--helper-fold-row)));
 }
 
 .helpers:empty {
