@@ -7156,6 +7156,21 @@
       var ledgerContent = new Map();
 
       /**
+       * The row heights the last build calibrated: the head, a row and a band.
+       *
+       * The build measures them off the first batch, which is the only part of the table that
+       * has been laid out for real. The visit path needs them as well: it has to bring the
+       * height a released group keeps up to date with what the group holds now, and a group
+       * that has gained a row since it was measured is taller by a row's worth of height.
+       *
+       * One writer: the build, right after it has measured the batch. The visit path reads it
+       * and never writes it.
+       *
+       * @type {{head: number, row: number, band: number}|null}
+       */
+      var ledgerCalibration = null;
+
+      /**
        * The observer that fills a group when the reader reaches it.
        *
        * One observer for the whole table: the sections are rebuilt on every poll, so an observer
@@ -7207,36 +7222,55 @@
        *
        * Three rules, and the order matters. A group the reader has left goes when the idle
        * timeout has passed; when more groups are live than the cap allows, the oldest goes
-       * first; and the group the caller is holding on to is none of the reader's visits at
-       * all, so it is counted rather than timed.
+       * first; and the groups the caller is holding on to are none of the reader's visits at
+       * all, so they are counted rather than timed.
        *
-       * That last one is what keeps the bound about the rows on screen. The anchored group
-       * holds its rows whatever the reader is doing — it is where the reader arrives, and every
-       * other group's height is predicted from it — so a bound on the reader's groups alone
-       * would leave one group holding its rows outside the count. Counting it here makes the
-       * two sets the same set: the groups that are live are the groups that hold their rows.
+       * That last one is what keeps the bound about the rows on screen. The groups the caller
+       * holds on to hold their rows whatever the reader is doing — the window's first group is
+       * where the reader arrives and every other group's height is predicted from it — so a
+       * bound on the reader's groups alone would leave one group holding its rows outside the
+       * count. Counting them here makes the two sets the same set: the groups that are live
+       * are the groups that hold their rows.
        *
        * One decision and two callers, and that is the point of it. The bound is about what the
        * reader is holding at this moment, not only about what a rebuild leaves behind: a reader
        * who walks through more groups than the cap allows between two rebuilds is holding all
        * of them until the next poll comes round. So the rebuild and the visit both come through
-       * here, and they cannot disagree about which groups go — the same order, the same count,
-       * the same group held back.
+       * here, and they cannot disagree about which groups go — the same order, the same count.
+       *
+       * They do not hold on to the same groups, and the difference is the point. The rebuild
+       * holds on to the window's first group. The visit holds on to that group as well, and to
+       * the group the reader has just reached: a visit that protected only the group the
+       * reader had just reached would let the window's first group go — the idle timeout
+       * would take it, or the cap would reach for it as the oldest one there is — and the
+       * group every height is predicted from would lose its rows while the reader was on the
+       * page.
        *
        * This decides. The rows are taken away by the build, which writes the released groups
        * as it writes the table, and by the visit, which takes the rows out of a table that is
        * already on screen.
        *
-       * @param {string} keepKey the group that holds its rows whatever else happens: the
-       * window's first group on a rebuild, the group the reader has just reached on a visit
+       * @param {string[]} keepKeys the groups that hold their rows whatever else happens: the
+       * window's first group, and on a visit the group the reader has just reached as well.
+       * The group the reader has just reached is the last of them, so that a visit in the same
+       * millisecond as another one cannot be put at the head of the queue.
        * @returns {string[]} the groups that have to give up their rows
        */
-      function releaseStaleGroups(keepKey) {
+      function releaseStaleGroups(keepKeys) {
         var now = Date.now();
         var live = [];
         var doomed = [];
+        var kept = [];
+        var keptIndex = Object.create(null);
+        var keys = Array.isArray(keepKeys) ? keepKeys : [keepKeys];
+        for (var k = 0; k < keys.length; k += 1) {
+          if (keys[k] === null || keys[k] === undefined) continue;
+          if (keptIndex[keys[k]]) continue;
+          keptIndex[keys[k]] = true;
+          kept.push(keys[k]);
+        }
         ledgerState.forEach(function (state, key) {
-          if (key === keepKey) return;
+          if (keptIndex[key]) return;
           if (!state.live) return;
           if (now - state.lastSeen >= LEDGER_IDLE_MS) {
             state.live = false;
@@ -7245,15 +7279,18 @@
           }
           live.push({ key: key, at: state.lastSeen });
         });
-        // The group the caller is holding on to is counted with the current time, so it is
-        // never the oldest one the cap reaches for. Its lease is not consulted: it does not
-        // have one.
+        // The groups the caller is holding on to are counted with the current time, so they are
+        // never the oldest ones the cap reaches for. Their leases are not consulted: they do
+        // not have one.
         //
-        // It is counted after the others, so that a visit in the same millisecond as another
-        // one — a tie the clock cannot break — cannot put it at the head of the queue. The
-        // group the reader has just reached is the one the cap must not take.
-        ledgerStateOf(keepKey).live = true;
-        live.push({ key: keepKey, at: now });
+        // They are counted after the others, so that a visit in the same millisecond as another
+        // one — a tie the clock cannot break — cannot put the group the reader has just reached
+        // at the head of the queue. The group the reader has just reached is the last of them,
+        // and the cap must not take it.
+        for (var j = 0; j < kept.length; j += 1) {
+          ledgerStateOf(kept[j]).live = true;
+          live.push({ key: kept[j], at: now });
+        }
         if (live.length <= LEDGER_LIVE_GROUPS) return doomed;
         live.sort(function (a, b) { return a.at - b.at; });
         for (var i = 0; i < live.length - LEDGER_LIVE_GROUPS; i += 1) {
@@ -7263,6 +7300,42 @@
           doomed.push(live[i].key);
         }
         return doomed;
+      }
+
+      /**
+       * The key of the window's first group.
+       *
+       * The window's first group is the first section of the table: the build writes the groups
+       * in the order of the window, so the first section is the group the reader arrives at and
+       * the one every other group's height is predicted from.
+       *
+       * It is read out of the table rather than remembered in a variable of its own. A variable
+       * would be a second copy of the same fact, and the two copies would have to be kept in
+       * step; the table has one writer — the build — and its first section is the window's
+       * first group by construction.
+       *
+       * @returns {string|null} null when the table has no group in it
+       */
+      function ledgerFirstGroupKey() {
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        if (!sections.length) return null;
+        var content = ledgerContent.get(sections[0]);
+        return content ? content.key : null;
+      }
+
+      /**
+       * The groups that have to give up their rows before a rebuild writes the table.
+       *
+       * The rebuild and the visit make the same decision, so they come through the same
+       * function; this is the rebuild's half of it, and it is a function of its own so that the
+       * two halves cannot drift apart: the rebuild holds on to the window's first group, and
+       * the visit holds on to that group and to the group the reader has just reached.
+       *
+       * @param {Array<{turn: any}>} groups the window's groups, in order
+       */
+      function releaseStaleGroupsBeforeRebuild(groups) {
+        if (!groups.length) return;
+        releaseStaleGroups([turnKey(groups[0].turn)]);
       }
 
       /**
@@ -7298,7 +7371,13 @@
         if (!alreadyLive || !state.height) measureLedgerGroup(section, group);
         // The cap, on the visit path as well as on the rebuild: the number of groups holding
         // their rows is bounded at any moment, not only right after a rebuild.
-        releaseLedgerRows(releaseStaleGroups(group.key));
+        //
+        // Two groups are held on to: the group the reader has just reached, and the window's
+        // first group, which holds its rows whatever the reader is doing — it is where the
+        // reader arrives and the one every other group's height is predicted from. The group
+        // the reader has just reached is the last of the two, so that a tie the clock cannot
+        // break cannot put it at the head of the queue.
+        releaseLedgerRows(releaseStaleGroups([ledgerFirstGroupKey(), group.key]));
       }
 
       /**
@@ -7373,10 +7452,15 @@
           section.setAttribute('data-rows', 'released');
           section.classList.add('is-released');
           // The measured height, brought up to date with what the group holds now; the height
-          // read above otherwise. There is no calibration here to price a difference with —
-          // the calibration belongs to the build that is running — so the height the group
-          // was measured at is kept as it is, and the next rebuild brings it up to date.
-          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));
+          // read above otherwise. The difference is priced at the row heights the last build
+          // calibrated, which is the same arithmetic the build uses.
+          //
+          // The height read above cannot be used on its own: a group the browser has skipped
+          // measures by its own contain-intrinsic-size, so for the groups that are off screen
+          // it is the prediction and not a measurement — and writing it would replace the
+          // height the group was really measured at with a guess. The calibration is what
+          // prices the difference, and it is what the build prices it with.
+          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));
         }
       }
 
@@ -7789,7 +7873,7 @@
         // up oldest first. The same decision the visit path makes, so the two cannot disagree
         // about which groups go; applied by this build, which writes the released groups as it
         // writes the table.
-        if (groups.length) releaseStaleGroups(turnKey(groups[0].turn));
+        releaseStaleGroupsBeforeRebuild(groups);
 
         function buildStep() {
           // A newer renderLedger() owns the ledger now. Stop without touching it: the rows half
@@ -7878,6 +7962,9 @@
           // viewport and get measured for real.
           if (!build.heights) {
             build.heights = calibrateRowHeights(ledger);
+            // The visit path prices the difference a released group has with the same
+            // calibration, so the last one is kept where the visit path can reach it.
+            ledgerCalibration = build.heights;
             // The groups that were built without their rows have nothing to be sized from, and a
             // group left unsized collapses to nothing the moment the class goes on. They are
             // sized now, from the calibration, with the same arithmetic every other group is
