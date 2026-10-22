@@ -3,24 +3,23 @@
  *
  * 它模拟同事在 macOS 上第一次打开控制台的现场：
  *   - 运行时 cwd = 宿主的临时投放目录（含 mavis-miniapp 片段）
- *   - 主目录是干净的空目录（没有任何项目登记簿）
+ *   - 主目录是干净的空目录
  *   - 数据目录是全新的
  *
- * 预期结果：顶栏与工作目录栏里**不会**出现那串临时路径，
- * 而是回退到主目录，并提示「内置引擎还没绑定到真实项目」。
+ * 预期结果：**工作目录是空的，引擎不启动**，页面提示「请先选择项目目录」。
+ * 早先的实现会退回用户主目录——那等于允许一次运行改写整个家目录；
+ * 现在它只认宿主声明的当前项目，和用户自己填的绝对路径。
  *
  * 用法：
  *   node tests/manual-mac-scenario.mjs            # 端口 65500
  *   WC_PORT=65510 node tests/manual-mac-scenario.mjs
  *   WC_PACKAGE_ROOT=<活的包目录> node tests/manual-mac-scenario.mjs
- *   WC_REGISTRY_WORKSPACE=<真实项目路径> node tests/manual-mac-scenario.mjs
- *       # 额外验证「登记簿里的真实项目会被自动选中」这一路
  *
- * 起来之后用内置 Browser 打开 http://127.0.0.1:<端口>/ 验收；
+ * 起来之后用内置 Browser 打开 http://127.0.0.1:<端口>/dashboard 验收；
  * Ctrl+C 结束。脚本只在系统临时目录里造数据，退出时自动清理。
  */
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -57,18 +56,6 @@ await mkdir(home, { recursive: true });
 await mkdir(dataDir, { recursive: true });
 await mkdir(deploy, { recursive: true });
 
-/* 造一个已注册的真实项目，用来验证「登记簿里的项目会被自动选中」这一路。
-   设置 WC_REGISTRY_WORKSPACE=<真实项目绝对路径> 即可启用。 */
-const registry = join(home, '.mcode-dynamic-workflows', 'projects', 'c'.repeat(64));
-await mkdir(registry, { recursive: true });
-if (process.env.WC_REGISTRY_WORKSPACE) {
-  await writeFile(
-    join(registry, 'address.json'),
-    JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: process.env.WC_REGISTRY_WORKSPACE }),
-    'utf8',
-  );
-}
-
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 for (const key of ['MCODE_WORKSPACE', 'MCODE_PROJECT_DIR', 'PROJECT_DIR', 'WORKSPACE']) delete process.env[key];
@@ -85,15 +72,24 @@ const lifecycle = await start({
   dataDir,
   listen: { host: '127.0.0.1', port },
   signal: controller.signal,
-  logger: { debug() {}, info() {}, warn() {}, error() {} },
+  /* 出错时打出来：手工验收时最常见的问题就是某个请求被拒了却看不到原因。 */
+  logger: {
+    debug() {},
+    info() {},
+    warn: (event, detail) => console.log('[warn]', event, JSON.stringify(detail ?? {})),
+    error: (event, detail) => console.log('[error]', event, JSON.stringify(detail ?? {})),
+  },
 });
 
-const response = await fetch(`http://127.0.0.1:${port}/api/workspace`);
-const resolved = await response.json();
+const resolved = await (await fetch(`http://127.0.0.1:${port}/api/workspace`)).json();
+const boot = await (await fetch(`http://127.0.0.1:${port}/api/bootstrap`)).json();
 console.log('工作目录解析结果：', JSON.stringify(resolved));
 console.log('宿主投放目录    ：', deploy);
 console.log('是否仍指向投放目录：', resolved.workspace === deploy ? '是（有问题）' : '否（符合预期）');
-console.log(`浏览器打开： http://127.0.0.1:${port}/`);
+console.log('是否退回了主目录  ：', resolved.workspace === home ? '是（有问题）' : '否（符合预期）');
+console.log('引擎是否已启动    ：', boot.services[0]?.live ? '是（有问题）' : '否（符合预期）');
+console.log('引擎数据目录      ：', existsSync(join(dataDir, 'engine')) ? '已创建（有问题）' : '未创建（符合预期）');
+console.log(`浏览器打开： http://127.0.0.1:${port}/dashboard`);
 
 async function shutdown() {
   await lifecycle.dispose();

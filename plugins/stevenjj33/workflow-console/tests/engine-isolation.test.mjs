@@ -1,14 +1,16 @@
 /**
- * 服务发现的回归测试。
+ * 后端隔离的回归测试。
  *
- * 背景：`discoverOnce()` 扫插件服务注册表 `~/.mcode-dynamic-workflows/projects`，
- * 该目录只有在上游插件跑过一次之后才会存在。全新机器上 `readdir` 直接抛错，
- * 旧实现在 catch 里提前 `return`——而注册内置引擎的代码在这行之后，被整段跳过，
- * 于是 `/api/bootstrap` 返回 `services: []`，控制台一直显示
- * 「未发现任何 Workflow Studio 项目服务」，即使内置引擎已经正常起来。
+ * 控制台过去会去扫 `~/.mcode-dynamic-workflows/projects/<hash>/address.json`，
+ * 把另一个插件（mcode-dynamic-workflows）登记的服务地址和访问令牌拿出来用。
+ * 那是那个插件的数据和凭证，不该被本应用碰；控制台自带引擎，本来也不需要它。
  *
- * 这个 bug 只在「没装过上游插件」的机器上出现：
- * 写这版代码的机器上恰好有那个目录，catch 分支从没被执行过。
+ * 这个测试用两个手段钉住现状：
+ *   1. 在假主目录里造一份别的插件的登记簿，指向一个**真的会记账的**本地服务；
+ *   2. 断言那个服务一次请求都没收到——令牌既没被读走，也没被用上。
+ *
+ * 另外保留一条老回归：全新机器上没有那个插件目录时，
+ * 控制台的服务列表不能是空的（早先在这里提前 return，内置引擎整个没进列表）。
  *
  * 运行：
  *   node --test tests/
@@ -17,7 +19,8 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createServer } from 'node:http';
+import { createServer as createSocket } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -47,7 +50,7 @@ const { start } = await import(pathToFileURL(join(packageRoot, 'miniapp', 'node'
 const realHome = homedir();
 
 async function freePort() {
-  const probe = createServer();
+  const probe = createSocket();
   await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const { port } = probe.address();
   await new Promise((resolve) => probe.close(resolve));
@@ -112,47 +115,67 @@ async function makeSandbox(tag) {
   };
 }
 
-test('插件服务目录不存在时，内置引擎仍然会进服务列表', async () => {
+test('没有上游插件目录时，服务列表里仍有内置引擎', async () => {
   const box = await makeSandbox('no-registry');
   try {
     /* 故意不建 ~/.mcode-dynamic-workflows/projects：模拟从没装过上游插件的新机器。 */
     await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
       const ids = Array.isArray(body.services) ? body.services.map((service) => service.id) : [];
       assert.ok(ids.includes('embedded'), `服务列表里必须有内置引擎，实际是 ${JSON.stringify(ids)}`);
+      assert.equal(body.activeServiceId, 'embedded', '默认后端应该是内置引擎');
     });
   } finally {
     await box.cleanup();
   }
 });
 
-test('插件服务目录不存在时，默认选中的仍然是内置引擎', async () => {
-  const box = await makeSandbox('no-registry-active');
-  try {
-    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
-      assert.equal(body.activeServiceId, 'embedded', '默认服务应该是内置引擎');
-    });
-  } finally {
-    await box.cleanup();
-  }
-});
+test('不会去连别的插件登记的服务，也不会用它的令牌', async () => {
+  const box = await makeSandbox('foreign-service');
+  /** 记账用的假服务：只要它收到一次请求，测试就失败。 */
+  const hits = [];
+  const foreign = createServer((req, res) => {
+    hits.push(`${req.method} ${req.url} auth=${req.headers.authorization ?? '-'}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ workspace: box.project, pid: 1 }));
+  });
+  await new Promise((resolve) => foreign.listen(0, '127.0.0.1', resolve));
+  const foreignPort = foreign.address().port;
 
-test('插件服务目录存在时，内置引擎不会被插件服务挤掉', async () => {
-  const box = await makeSandbox('with-registry');
   try {
-    const registry = join(box.home, '.mcode-dynamic-workflows', 'projects', 'c'.repeat(64));
+    /* 造一份别的插件的登记簿：地址里带着它的访问令牌。 */
+    const registry = join(box.home, '.mcode-dynamic-workflows', 'projects', 'd'.repeat(64));
     await mkdir(registry, { recursive: true });
-    /* 指向一个没人监听的端口：这个插件服务是离线的，但它仍应出现在列表里。 */
     await writeFile(
       join(registry, 'address.json'),
-      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: box.project }),
+      JSON.stringify({
+        url: `http://127.0.0.1:${foreignPort}/#foreign-token`,
+        workspace: box.project,
+      }),
       'utf8',
     );
+    await writeFile(
+      join(registry, 'endpoint.json'),
+      JSON.stringify({
+        url: `http://127.0.0.1:${foreignPort}/#foreign-token`,
+        workspace: box.project,
+        pid: 4242,
+      }),
+      'utf8',
+    );
+
     await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
       const ids = Array.isArray(body.services) ? body.services.map((service) => service.id) : [];
-      assert.ok(ids.includes('embedded'), `服务列表里必须有内置引擎，实际是 ${JSON.stringify(ids)}`);
-      assert.ok(ids.includes('cccccccccccc'), `离线插件服务也应在列表里，实际是 ${JSON.stringify(ids)}`);
+      assert.deepEqual(ids, ['embedded'], '别的插件的服务不该出现在服务列表里');
+      assert.equal(body.activeServiceId, 'embedded');
     });
+
+    assert.deepEqual(
+      hits,
+      [],
+      `不该向别的插件的服务发请求，实际收到了 ${JSON.stringify(hits)}`,
+    );
   } finally {
+    await new Promise((resolve) => foreign.close(resolve));
     await box.cleanup();
   }
 });

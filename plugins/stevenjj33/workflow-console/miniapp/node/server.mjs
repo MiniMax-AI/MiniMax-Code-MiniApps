@@ -8,10 +8,10 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, readdir, mkdir, rm, rename, stat, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, rm, rename, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 /* 上游自己的图模型：把静态拓扑和运行步骤合并成一张有向图。
    直接复用它而不是自己重写一份，图语义才不会和 Workflow Studio 漂移。
    该文件是纯逻辑、零依赖的 ESM。升级 vendor 时要一并检查这个引用。 */
@@ -40,15 +40,14 @@ function sleep(ms, signal) {
   });
 }
 
-/** Plugin run identifiers are UUIDs; service identifiers are truncated workspace hashes. */
-const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;const TEMPLATE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SERVICE_ID = /^(embedded|[0-9a-f]{12})$/;
+/** Plugin run identifiers are UUIDs. */
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TEMPLATE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 控制台只有内置引擎一个后端；服务 id 恒为它。 */
 const ENGINE_ID = 'embedded';
 const ENGINE_TIMEOUT_MS = 30_000;
 /** 宿主可能用这些环境变量表达当前项目目录。 */
 const WORKSPACE_ENV_KEYS = ['MCODE_WORKSPACE', 'MCODE_PROJECT_DIR', 'PROJECT_DIR', 'WORKSPACE'];
-/** 登记簿探测结果的缓存时长（毫秒）。 */
-const REGISTERED_PROBE_TTL_MS = 30_000;
 const LANGUAGE = /^(zh|en)$/;
 const REPORT_FORMAT = /^(md|html)$/;
 const MAX_BODY = 8 * 1024;
@@ -79,7 +78,7 @@ const IDLE_POLL_MS = 2_000;
  * @property {string} [token] Legacy credential fragment, if that service still requires one.
  * @property {boolean} live
  * @property {string | null} workspace
- * @property {string} [workspaceSource] 工作目录来源：env / learned / service / projects / cwd / home。
+ * @property {string} [workspaceSource] 工作目录来源：env / learned / unset。
  * @property {number | null} pid
  * @property {string | null} executor
  * @property {boolean} mcodeAvailable
@@ -112,9 +111,7 @@ export async function start(context) {
   /** @type {Promise<void> | null} */
   let discoverInFlight = null;
   let activeId = null;
-  let preferredId = null;
   let closing = false;
-  let userSelected = false;
   /** @type {import('node:child_process').ChildProcessWithoutNullStreams | null} */
   let engineChild = null;
   /** @type {Promise<ServiceRecord | null> | null} */
@@ -130,12 +127,9 @@ export async function start(context) {
   /** 已解析出的引擎工作目录；解析完成前为 null。 */
   /** @type {string | null} */
   let engineWorkspace = null;
-  /** 工作目录来源，供前端区分「用户指定的」与「猜出来的」。 */
+  /** 工作目录来源，供前端区分「用户指定的」与「宿主声明的」。 */
   /** @type {string} */
-  let engineWorkspaceSource = 'home';
-  /** 登记簿探测的缓存。 */
-  /** @type {{at: number, value: string | null} | null} */
-  let registeredProbe = null;
+  let engineWorkspaceSource = 'unset';
   /** @type {Promise<void>} */
   let engineExit = Promise.resolve();
   /** 隐藏记录的写队列：串行化「读-改-写」，避免并发互相覆盖。 */
@@ -143,23 +137,19 @@ export async function start(context) {
   let hiddenQueue = Promise.resolve();
 
   try {
-    const stored = JSON.parse(await readFile(join(context.dataDir, 'selection.json'), 'utf8'));
-    if (typeof stored?.serviceId === 'string') preferredId = stored.serviceId;
-  } catch {
-    preferredId = null;
-  }
-  try {
     const stored = JSON.parse(await readFile(join(context.dataDir, 'workspace.json'), 'utf8'));
-    /* 存过的路径可能是旧版本留下的临时投放目录，读取时就要挡住，
-       否则它会被当成「用户指定的项目」一直用下去。 */
-    if (typeof stored?.workspace === 'string' && isAbsolute(stored.workspace) && !isImplausibleWorkspace(stored.workspace)) {
+    /* 存过的路径是用户上次自己填的，但里面可能混着宿主投放目录或家目录，
+       读取时就要挡住，否则它会被当成「用户指定的项目」一直用下去。 */
+    if (
+      typeof stored?.workspace === 'string' &&
+      isAbsolute(stored.workspace) &&
+      !rejectedWorkspaceReason(stored.workspace)
+    ) {
       learnedWorkspace = stored.workspace;
     }
   } catch {
     learnedWorkspace = null;
   }
-
-  const projectsRoot = () => join(homedir(), '.mcode-dynamic-workflows', 'projects');
 
   /** @param {string} path */
   async function readJson(path) {
@@ -244,116 +234,39 @@ export async function start(context) {
   /**
    * 解析内置引擎绑定的工作目录。
    *
-   * Mini App 运行时的 cwd 是宿主投放出来的临时目录（macOS 上形如
-   * /private/var/folders/xx/yyyy/T/mavis-miniapp-xxxx/package），不是用户项目。
-   * 所以每一层候选都必须先过 isImplausibleWorkspace()：识别出它只是第一步，
-   * 真正要避免的是「识别了却照样拿它去跑 Agent」。
+   * 这里只认两个来源：
+   *   1. 宿主用环境变量声明的当前项目（MCODE_WORKSPACE 等）；
+   *   2. 用户在控制台顶栏里指定的绝对路径（记在 context.dataDir/workspace.json）。
    *
-   * 顺序：环境变量 → 用户上次指定的 → 正在运行的插件服务 → 引擎项目登记簿 → cwd → 用户主目录。
-   * @returns {Promise<string>} 解析出的工作目录绝对路径
+   * 两条都不成立时返回 null——不猜、不兜底。
+   * 早先的实现会退到用户主目录，那等于允许一次运行改写整个 home 目录；
+   * 宿主投放出来的临时目录也不是项目。现在引擎在拿到可信目录之前根本不会启动，
+   * 控制台会一直停在「请选择项目目录」，直到用户填写为止。
+   * @returns {Promise<string | null>} 解析出的工作目录绝对路径；没有可信来源时为 null
    */
   async function resolveEngineWorkspace() {
     for (const key of WORKSPACE_ENV_KEYS) {
       const value = process.env[key];
-      if (value && isAbsolute(value) && !isImplausibleWorkspace(value)) {
+      /* 环境变量是宿主「自动」表达出来的，不是用户逐字挑的，
+         所以按更严的标准过滤：投放目录、系统临时目录、家目录一律不认。 */
+      if (
+        value &&
+        isAbsolute(value) &&
+        !isImplausibleWorkspace(value) &&
+        !isHomeDirectory(value)
+      ) {
         engineWorkspace = value;
         engineWorkspaceSource = 'env';
         return value;
       }
     }
-    if (learnedWorkspace && !isImplausibleWorkspace(learnedWorkspace)) {
+    if (learnedWorkspace && !rejectedWorkspaceReason(learnedWorkspace)) {
       engineWorkspace = learnedWorkspace;
       engineWorkspaceSource = 'learned';
       return learnedWorkspace;
     }
-    const pluginService = [...services.values()].find(
-      (record) => !record.embedded && record.live && record.workspace,
-    );
-    if (pluginService?.workspace && !isImplausibleWorkspace(pluginService.workspace)) {
-      learnedWorkspace = pluginService.workspace;
-      void persistLearnedWorkspace();
-      engineWorkspace = learnedWorkspace;
-      engineWorkspaceSource = 'service';
-      return learnedWorkspace;
-    }
-    /* 登记簿里存着每个跑过的项目的绝对路径，取最近改动、且目录仍然存在的那一个。 */
-    const registered = await findRegisteredWorkspace();
-    if (registered) {
-      engineWorkspace = registered;
-      engineWorkspaceSource = 'projects';
-      return registered;
-    }
-    const cwd = process.cwd();
-    if (cwd && isAbsolute(cwd) && !isImplausibleWorkspace(cwd)) {
-      engineWorkspace = cwd;
-      engineWorkspaceSource = 'cwd';
-      return cwd;
-    }
-    /* 兜底只能落在用户主目录，同时告诉前端「还没绑定到真实项目」。 */
-    engineWorkspace = homedir();
-    engineWorkspaceSource = 'home';
-    return engineWorkspace;
-  }
-
-  /**
-   * 从引擎的项目登记簿里找一个真实项目目录。
-   *
-   * 登记簿每个目录下的 endpoint.json / address.json 都记着该项目的绝对路径，
-   * 这是宿主不告诉当前项目时（macOS 上尤其明显）最可靠的自动回退源。
-   * @returns {Promise<string | null>} 找不到时返回 null
-   */
-  async function findRegisteredWorkspace() {
-    /* 登记簿很少变，短时间内重复扫盘没有意义。 */
-    const now = Date.now();
-    if (registeredProbe && now - registeredProbe.at < REGISTERED_PROBE_TTL_MS) {
-      return registeredProbe.value;
-    }
-    const value = await probeRegisteredWorkspace();
-    registeredProbe = { at: now, value };
-    return value;
-  }
-
-  /**
-   * @returns {Promise<string | null>} 找不到时返回 null
-   */
-  async function probeRegisteredWorkspace() {
-    /** @type {string[]} */
-    let names = [];
-    try {
-      names = (await readdir(projectsRoot(), { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory() && /^[0-9a-f]{64}$/.test(entry.name))
-        .map((entry) => entry.name);
-    } catch {
-      return null;
-    }
-    /** @type {{workspace: string, mtime: number}[]} */
-    const candidates = [];
-    for (const name of names) {
-      for (const file of ['endpoint.json', 'address.json']) {
-        const path = join(projectsRoot(), name, file);
-        const data = await readJson(path);
-        const workspace = data?.workspace;
-        if (typeof workspace !== 'string' || !isAbsolute(workspace)) continue;
-        if (isImplausibleWorkspace(workspace)) continue;
-        let mtime = 0;
-        try {
-          mtime = (await stat(path)).mtimeMs;
-        } catch {
-          /* 读不到就按最旧处理 */
-        }
-        candidates.push({ workspace, mtime });
-        break;
-      }
-    }
-    candidates.sort((a, b) => b.mtime - a.mtime);
-    for (const candidate of candidates) {
-      try {
-        const info = await stat(candidate.workspace);
-        if (info.isDirectory()) return candidate.workspace;
-      } catch {
-        /* 目录已被删掉，换下一个 */
-      }
-    }
+    engineWorkspace = null;
+    engineWorkspaceSource = 'unset';
     return null;
   }
 
@@ -379,7 +292,44 @@ export async function start(context) {
        不要把 D:\tmp\myproj 这类真实项目误判成临时目录。
        mavis-miniapp 是宿主投放目录的固定片段；
        /var/folders 与 /tmp 是 macOS 的系统临时目录，Windows 走 AppData\Local\Temp。 */
-    return /mavis-miniapp|[\\/]AppData[\\/]Local[\\/]Temp[\\/]|[\\/]var[\\/]folders[\\/]|[\\/]private[\\/]tmp[\\/]|[\\/]var[\\/]tmp[\\/]/i.test(value);
+    return (
+      isDeploymentDirectory(value) ||
+      /[\\/]AppData[\\/]Local[\\/]Temp[\\/]|[\\/]var[\\/]folders[\\/]|[\\/]private[\\/]tmp[\\/]|[\\/]var[\\/]tmp[\\/]/i.test(value)
+    );
+  }
+
+  /** 宿主把插件投放出来的临时目录：路径里带 mavis-miniapp 标记。 */
+  function isDeploymentDirectory(value) {
+    return typeof value === 'string' && /mavis-miniapp/i.test(value);
+  }
+
+  /**
+   * 用户主目录不是项目目录。在里面跑一次工作流，Agent 能改写的是整个家目录，
+   * 所以它既不能作为兜底，也不能作为用户填进来的值。
+   */
+  function isHomeDirectory(value) {
+    if (typeof value !== 'string' || !value) return false;
+    try {
+      return resolve(value) === resolve(homedir());
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 明确不能作为项目目录的路径。用于**用户明确指定**的场景：
+   * 用户填的、以及上次填完存下来的。
+   * @param {string} value
+   * @returns {string | null} 拒绝原因；可以接受时返回 null
+   */
+  function rejectedWorkspaceReason(value) {
+    if (isDeploymentDirectory(value)) {
+      return '这是宿主投放插件的临时目录，不是项目目录，请填写项目的绝对路径';
+    }
+    if (isHomeDirectory(value)) {
+      return '用户主目录不是项目目录：在这里运行会改写整个家目录，请填写具体项目的绝对路径';
+    }
+    return null;
   }
 
   /**
@@ -414,13 +364,21 @@ export async function start(context) {
     const chain = (async () => {
       /* 上一实例可能还占着端口，等它真正退出再拉起。 */
       await engineExit;
-      /* 先扫一遍服务列表：宿主不告诉当前项目时，正在运行的项目服务是最好的线索。
-         engineStarting 已在链外同步置位，所以这次扫描里内置引擎是以「启动中」入列的，
-         activeService() 不会临时落到别的项目上。 */
+      /* 先扫一遍服务列表：内置引擎是以「启动中」入列的，
+         activeService() 不会临时落到别的地方。 */
       await discover();
       const entry = join(context.pluginRoot, 'miniapp', 'node', 'vendor', 'dynamic-workflows', 'dist', 'main.mjs');
       const engineDir = join(context.dataDir, 'engine');
       const workspace = await resolveEngineWorkspace();
+      /* 没有可信的项目目录就不启动引擎：跑起来的 Agent 需要一个明确的
+         项目根目录，用户主目录和宿主投放目录都不是。 */
+      if (!workspace) {
+        const pending = enginePlaceholder({ starting: false });
+        pending.error = '尚未选择项目目录：请在顶部填写项目的绝对路径';
+        engineRecord = pending;
+        context.logger.info('miniapp.console.engine_awaiting_workspace');
+        return pending;
+      }
       await mkdir(engineDir, { recursive: true });
 
       for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -607,9 +565,12 @@ export async function start(context) {
   }
 
   /**
-   * Re-scan every project service directory and probe each candidate address.
-   * 并发调用会合并成同一次扫描：每个候选目录都要探一次 /api/config，
-   * 不合并的话每次轮询都会把所有已退出的项目重探一遍。
+   * 刷新服务列表。
+   *
+   * 控制台只有内置引擎一个后端：它由本进程托管，数据写在 context.dataDir/engine 下。
+   * 这里**不扫描** `~/.mcode-dynamic-workflows`——那属于另一个插件（mcode-dynamic-workflows），
+   * 里面的 address.json / endpoint.json 存着那个插件的服务地址和访问令牌，
+   * 既是它的数据，也不该被本应用拿去用。
    * @returns {Promise<void>}
    */
   function discover() {
@@ -621,105 +582,51 @@ export async function start(context) {
   }
 
   async function discoverOnce() {
-    /** @type {string[]} */
-    let names = [];
-    try {
-      names = (await readdir(projectsRoot(), { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory() && /^[0-9a-f]{64}$/.test(entry.name))
-        .map((entry) => entry.name);
-    } catch {
-      /* 插件服务目录不存在不等于出错，只是「本机没有任何项目服务」。
-         这里不能提前 return：下面注册内置引擎的逻辑会被跳过，
-         服务列表永远是空的，控制台会一直显示「未发现任何 Workflow Studio 项目服务」，
-         即使内置引擎已经正常起来。 */
-      names = [];
-    }
-    /** @type {ServiceRecord[]} */
-    const found = [];
-    await Promise.all(
-      names.map(async (name) => {
-        const address = await readJson(join(projectsRoot(), name, 'address.json'));
-        const endpoint = await readJson(join(projectsRoot(), name, 'endpoint.json'));
-        const target = loopbackOrigin(address?.url) ?? loopbackOrigin(endpoint?.url);
-        if (!target) return;
-        /** @type {ServiceRecord} */
-        const record = {
-          id: name.slice(0, 12),
-          origin: target.origin,
-          token: target.token,
-          live: false,
-          workspace: typeof address?.workspace === 'string' ? address.workspace : null,
-          pid: typeof endpoint?.pid === 'number' ? endpoint.pid : null,
-          executor: null,
-          mcodeAvailable: false,
-          scheduler: null,
-          defaults: null,
-          error: null,
-        };
-        try {
-          const { parsed } = await upstream(record, '/api/config', { timeoutMs: 3_000 });
-          const config =
-            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-              ? /** @type {Record<string, JsonValue>} */ (parsed)
-              : {};
-          record.live = true;
-          if (typeof config.workspace === 'string') record.workspace = config.workspace;
-          if (typeof config.pid === 'number') record.pid = config.pid;
-          if (typeof config.executor === 'string') record.executor = config.executor;
-          record.mcodeAvailable = config.mcodeAvailable === true;
-          record.scheduler = config.scheduler && typeof config.scheduler === 'object' ? config.scheduler : null;
-          record.defaults = config.defaults && typeof config.defaults === 'object' ? config.defaults : null;
-        } catch (error) {
-          record.error = error instanceof Error ? error.message : '服务不可用';
-        }
-        found.push(record);
-      }),
-    );
-    found.sort((a, b) => Number(b.live) - Number(a.live) || String(a.workspace).localeCompare(String(b.workspace)));
     services.clear();
     /* 内置引擎必须始终占位：即便正在启动、就绪记录尚未产出，也不能从列表里消失。
        否则客户端会失去「启动中」信号而不再拉 bootstrap，内置引擎就再也回不来了。 */
     if (engineRecord) services.set(ENGINE_ID, engineRecord);
     else services.set(ENGINE_ID, enginePlaceholder({ starting: engineStarting }));
-    for (const record of found) services.set(record.id, record);
+    /* 已就绪的引擎顺带重读一次配置，让顶栏的工作目录、执行器和并发数保持最新。 */
+    await refreshEmbedded();
     discoveredAt = Date.now();
   }
 
   /**
-   * Resolve the service the console points at. An explicit user selection wins even when the
-   * service is stopped, so the page can report that project's state instead of silently
-   * snapping back to another project.
-   * 默认使用内置引擎——控制台自带引擎，不需要插件在场。
-   * 只有本次会话里用户主动切换过的项目才优先；否则历史里保存的选择不覆盖内置引擎。
-   * @param {{maxAgeMs?: number}} [options]
+   * 重新读取内置引擎的运行配置。引擎不在跑时只更新存活标记，不抛错。
+   * @returns {Promise<void>}
+   */
+  async function refreshEmbedded() {
+    const record = engineRecord;
+    if (!record || !record.live || !record.origin) return;
+    try {
+      const { parsed } = await upstream(record, '/api/config', { timeoutMs: 3_000 });
+      const config =
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? /** @type {Record<string, JsonValue>} */ (parsed)
+          : {};
+      if (typeof config.workspace === 'string') record.workspace = config.workspace;
+      if (typeof config.pid === 'number') record.pid = config.pid;
+      if (typeof config.executor === 'string') record.executor = config.executor;
+      record.mcodeAvailable = config.mcodeAvailable === true;
+      record.scheduler =
+        config.scheduler && typeof config.scheduler === 'object' ? config.scheduler : null;
+      record.defaults = config.defaults && typeof config.defaults === 'object' ? config.defaults : null;
+    } catch (error) {
+      record.live = false;
+      record.error = error instanceof Error ? error.message : '内置引擎已失联';
+    }
+  }
+
+  /**
+   * 控制台唯一的后端：内置引擎。
    * @returns {Promise<ServiceRecord | null>}
    */
-  async function activeService(options = {}) {
-    const maxAgeMs = options.maxAgeMs ?? 0;
-    if (!discoveredAt || Date.now() - discoveredAt > maxAgeMs || !services.size) await discover();
-    const current = activeId ? services.get(activeId) : undefined;
-    const preferred = preferredId ? services.get(preferredId) : undefined;
-    /* 本次会话里用户主动切换过的项目优先。 */
-    if (current && userSelected) return current;
-    const embedded = services.get(ENGINE_ID);
-    /* 内置引擎就绪 → 默认用它；还在启动 → 保持在它上面，不要临时跳到别的项目，
-       否则控制台会在启动窗口里闪出另一个项目的运行记录。 */
-    if (embedded?.live) {
-      activeId = ENGINE_ID;
-      return embedded;
-    }
-    if (embedded?.starting) {
-      activeId = ENGINE_ID;
-      return embedded;
-    }
-    if (preferred?.live) {
-      activeId = preferred.id;
-      return preferred;
-    }
-    if (current?.live) return current;
-    const fallback = [...services.values()].find((record) => record.live) ?? null;
-    activeId = fallback?.id ?? null;
-    return fallback;
+  async function activeService() {
+    if (!discoveredAt || !services.size) await discover();
+    const embedded = services.get(ENGINE_ID) ?? null;
+    activeId = embedded?.id ?? null;
+    return embedded;
   }
 
   /**
@@ -727,14 +634,14 @@ export async function start(context) {
    * @param {{maxAgeMs?: number}} [options]
    */
   async function liveService(options = {}) {
-    const service = await activeService(options);
+    const maxAgeMs = options.maxAgeMs ?? 0;
+    if (!discoveredAt || Date.now() - discoveredAt > maxAgeMs || !services.size) await discover();
+    const service = services.get(ENGINE_ID) ?? null;
     if (!service) return null;
-    if (service.id === ENGINE_ID) {
-      /* 首次访问时顺带把内置引擎拉起来，不让用户先去跑一次工作流。 */
-      const ready = service.live ? service : await startEmbedded();
-      return ready?.live ? ready : null;
-    }
-    return service.live ? service : null;
+    if (service.live) return service;
+    /* 首次访问时顺带把内置引擎拉起来，不让用户先去跑一次工作流。 */
+    const ready = await startEmbedded();
+    return ready?.live ? ready : null;
   }
 
   /** @param {ServiceRecord} record */
@@ -752,11 +659,22 @@ export async function start(context) {
       embedded: record.embedded === true,
       starting: record.starting === true,
       /* 两种情况都不该直接拿去跑真实 Agent：
-         目录本身不可信（宿主的临时投放目录），或者只是兜底猜出来的（用户主目录）。 */
+         根本没绑定项目目录，或者目录本身不可信（宿主投放目录、用户主目录）。 */
       needsWorkspace:
         record.embedded === true &&
-        (isImplausibleWorkspace(record.workspace) || record.workspaceSource === 'home'),
+        (!record.workspace || Boolean(rejectedWorkspaceReason(record.workspace))),
     };
+  }
+
+  /**
+   * 没有可用后端时给用户的说法。
+   * 没选项目目录和引擎没起来是两回事，提示必须分开说。
+   * @returns {string}
+   */
+  function noServiceMessage() {
+    return engineWorkspace
+      ? '内置引擎没有在运行，请稍候重试，或点击「重新扫描」查看日志'
+      : '请先在顶部填写项目目录的绝对路径，内置引擎需要绑定到一个项目才能运行';
   }
 
   /**
@@ -911,13 +829,13 @@ export async function start(context) {
   }
 
   /**
-   * Read one bound business record; throws when no live project service is reachable.
+   * Read one bound business record; throws when the bundled engine is not reachable.
    * @param {string | null} runId
    */
   async function requireRun(runId) {
     if (!runId || !RUN_ID.test(runId)) throw new Error('运行标识无效');
     const service = await liveService({ maxAgeMs: 30_000 });
-    if (!service) throw new Error('本机没有正在运行的 Workflow Studio 服务，请先在对话中运行一次动态工作流');
+    if (!service) throw new Error(noServiceMessage());
     const { parsed } = await upstream(service, `/api/runs/${runId}`);
     const run =
       parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -954,7 +872,7 @@ export async function start(context) {
   async function streamEvents(request, response, runId, after) {
     const service = await liveService({ maxAgeMs: 30_000 });
     if (!service) {
-      sendJson(response, 503, { error: '本机没有正在运行的 Workflow Studio 服务' });
+      sendJson(response, 503, { error: noServiceMessage() });
       return;
     }
     response.writeHead(200, {
@@ -1064,11 +982,11 @@ export async function start(context) {
         // Read-only views.
         if (pathname === '/api/bootstrap' && method === 'GET') {
           /* 打开控制台就把内置引擎带起来，用户不必先去跑一次工作流。
-             必须排在 discover() 之前：否则第一次扫描时内置引擎还没进入启动态，
-             activeService() 会临时落到别的项目上，首屏显示的就是别人的运行记录。 */
+             没有项目目录时 startEmbedded() 不会拉起进程，只会记下「待选择目录」，
+             页面据此提示用户填一个绝对路径。 */
           if (!engineReady && !engineRecord?.live) void startEmbedded();
           await discover();
-          const service = await activeService({ maxAgeMs: 5_000 });
+          const service = await activeService();
           const hidden = await hiddenRunIds();
           /** @type {JsonValue[]} */
           let runs = [];
@@ -1132,7 +1050,7 @@ export async function start(context) {
           }
           const service = await liveService({ maxAgeMs: 30_000 });
           if (!service) {
-            sendJson(response, 503, { error: '当前没有可用的 Workflow Studio 服务' });
+            sendJson(response, 503, { error: noServiceMessage() });
             return;
           }
           const { parsed } = await upstream(service, `/api/templates/${templateMatch[1]}`);
@@ -1200,7 +1118,7 @@ export async function start(context) {
           }
           const service = await liveService({ maxAgeMs: 30_000 });
           if (!service) {
-            sendJson(response, 503, { error: '本机没有正在运行的 Workflow Studio 服务' });
+            sendJson(response, 503, { error: noServiceMessage() });
             return;
           }
           const result = await upstream(service, `/api/runs/${reportMatch[1]}/report?format=${format}&language=${language}`, {
@@ -1220,9 +1138,9 @@ export async function start(context) {
 
         // Studio hand-off: the page never learns the studio address, it only navigates here.
         if (pathname === '/api/studio' && method === 'GET') {
-          const service = await activeService({ maxAgeMs: 30_000 });
+          const service = await activeService();
           if (!service) {
-            sendJson(response, 503, { error: '本机没有正在运行的 Workflow Studio 服务' });
+            sendJson(response, 503, { error: noServiceMessage() });
             return;
           }
           const run = url.searchParams.get('run');
@@ -1235,25 +1153,8 @@ export async function start(context) {
 
         // Mutations.
         if (method === 'POST') {
-          /* 服务切换与重新扫描必须在「必须有可用服务」之前处理：否则指向已停服务的项目
-             将无法切走，用户会被锁在离线状态里。 */
-          if (pathname === '/api/service/select') {
-            const body = /** @type {Record<string, JsonValue>} */ (await readJsonBody(request));
-            const id = typeof body.serviceId === 'string' ? body.serviceId : '';
-            if (!SERVICE_ID.test(id) || !services.has(id)) {
-              sendJson(response, 400, { error: '未知的项目服务' });
-              return;
-            }
-            preferredId = id;
-            activeId = id;
-            userSelected = true;
-            await mkdir(context.dataDir, { recursive: true });
-            await writeFile(join(context.dataDir, 'selection.json'), JSON.stringify({ serviceId: id }), 'utf8');
-            broadcast({ type: 'service-changed', serviceId: id });
-            sendJson(response, 200, { activeServiceId: id });
-            return;
-          }
-
+          /* 工作目录与引擎刷新必须在「必须有可用服务」之前处理：
+             否则用户还没选目录、或引擎还没起来时，这些入口会被 503 挡住。 */
           if (pathname === '/api/workspace') {
             const body = /** @type {Record<string, JsonValue>} */ (await readJsonBody(request));
             const value = typeof body.workspace === 'string' ? body.workspace.trim() : '';
@@ -1269,6 +1170,11 @@ export async function start(context) {
             }
             if (!info?.isDirectory()) {
               sendJson(response, 400, { error: '该目录不存在' });
+              return;
+            }
+            const rejected = rejectedWorkspaceReason(value);
+            if (rejected) {
+              sendJson(response, 400, { error: rejected });
               return;
             }
             learnedWorkspace = value;
@@ -1310,7 +1216,7 @@ export async function start(context) {
 
           const service = await liveService({ maxAgeMs: 30_000 });
           if (!service) {
-            sendJson(response, 503, { error: '本机没有正在运行的 Workflow Studio 服务' });
+            sendJson(response, 503, { error: noServiceMessage() });
             return;
           }
 
@@ -1441,10 +1347,10 @@ export async function start(context) {
       } catch (error) {
         const message = error instanceof Error ? error.message : '请求失败';
         context.logger.warn('miniapp.console.request_failed', { path: pathname, message });
-        /* 按错误性质分级，不要一律 400：前端要能区分「运行不存在」和「本机没服务」。 */
+        /* 按错误性质分级，不要一律 400：前端要能区分「运行不存在」和「后端没起来」。 */
         const status = /不存在|无效|not_found/i.test(message)
           ? 404
-          : /正在关闭|没有正在运行/.test(message)
+          : /正在关闭|没有在运行|项目目录/.test(message)
             ? 503
             : /版本已更新|已过期|冲突/.test(message)
               ? 409

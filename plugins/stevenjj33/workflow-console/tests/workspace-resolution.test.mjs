@@ -1,15 +1,17 @@
 /**
  * 内置引擎工作目录解析的回归测试。
  *
- * 背景：宿主把 Mini App 投放成临时目录（macOS 上形如
- * /private/var/folders/xx/yyyy/T/mavis-miniapp-xxxx/package），
- * 旧实现无条件采用 process.cwd()，于是内置引擎被绑到了这个临时目录，
- * 同事在 macOS 上第一次运行控制台时，顶栏就显示了一串临时路径。
+ * 这里锁住两条硬规则：
  *
- * 这里逐层验证 resolveEngineWorkspace() 的「选谁 / 拒谁」：
- *   - 临时投放目录一律拒绝；
- *   - 真实项目按 环境变量 → 用户指定 → 运行中的服务 → 引擎登记簿 的顺序优先；
- *   - 兜底落回用户主目录，并把来源标记成 home，让前端提示「还没绑定真实项目」。
+ *   1. **不猜、不兜底。** 没有任何可信来源时，工作目录是 `null`，
+ *      引擎根本不启动。早先的实现会退到用户主目录——那等于允许一次运行
+ *      改写整个家目录；也会采用宿主投放出来的临时目录，那不是项目。
+ *      现在唯一的两个来源是：宿主用环境变量声明的当前项目，
+ *      以及用户在控制台顶栏里填的绝对路径。
+ *
+ *   2. **不碰另一个插件的数据。** `~/.mcode-dynamic-workflows/projects`
+ *      属于 `mcode-dynamic-workflows` 插件，登记簿里还存着它的服务令牌。
+ *      控制台既不读它的工作目录，也不把它当成服务来源。
  *
  * 运行：
  *   node --test tests/
@@ -59,9 +61,9 @@ async function freePort() {
 }
 
 /**
- * 起一个控制台实例，读一次工作目录，然后把环境还原。
+ * 起一个控制台实例，读一次工作目录和一次 bootstrap，然后把环境还原。
  * @param {{home: string, dataDir: string, cwd?: string, env?: Record<string, string>}} options
- * @param {(body: {workspace: string, source: string}) => void} check
+ * @param {(result: {workspace: {workspace: string | null, source: string}, bootstrap: any}) => void} check
  */
 async function withConsole(options, check) {
   const saved = {
@@ -87,8 +89,9 @@ async function withConsole(options, check) {
       logger: { debug() {}, info() {}, warn() {}, error() {} },
     });
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/workspace`);
-      check(await response.json());
+      const workspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`)).json();
+      const bootstrap = await (await fetch(`http://127.0.0.1:${port}/api/bootstrap`)).json();
+      check({ workspace, bootstrap });
     } finally {
       await lifecycle.dispose();
     }
@@ -122,16 +125,53 @@ async function makeSandbox(tag) {
   };
 }
 
+test('没有任何线索时不猜目录，工作目录为空', async () => {
+  const box = await makeSandbox('unset');
+  try {
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, ({ workspace }) => {
+      assert.equal(workspace.workspace, null, '没有可信来源时不应返回任何目录');
+      assert.equal(workspace.source, 'unset');
+    });
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test('没有项目目录时内置引擎不启动', async () => {
+  const box = await makeSandbox('no-engine');
+  try {
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, ({ bootstrap }) => {
+      const services = Array.isArray(bootstrap.services) ? bootstrap.services : [];
+      assert.equal(services.length, 1, '服务列表里只有内置引擎');
+      assert.equal(services[0].id, 'embedded');
+      assert.equal(services[0].live, false, '没有项目目录时引擎不该被拉起来');
+      assert.equal(services[0].needsWorkspace, true, '前端需要知道在等用户填目录');
+      assert.ok(
+        services[0].workspace === null || services[0].workspace === undefined,
+        '引擎不能被绑到任何目录上',
+      );
+    });
+    /* 引擎目录都没建，说明进程压根没起来。 */
+    assert.equal(
+      existsSync(join(box.dataDir, 'engine')),
+      false,
+      '没有项目目录时不应创建引擎数据目录',
+    );
+  } finally {
+    await box.cleanup();
+  }
+});
+
 test('宿主投放的临时目录不会被选成工作目录', async () => {
   const box = await makeSandbox('deploy');
   try {
     /* 模拟宿主投放目录：路径里带 mavis-miniapp，父目录是系统临时目录。 */
     const deploy = join(box.home, 'mavis-miniapp-2yKnCf', 'package');
     await mkdir(deploy, { recursive: true });
-    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: deploy }, (body) => {
-      assert.notEqual(body.workspace, deploy, '不能把投放目录当成工作目录');
-      assert.equal(body.source, 'home', '没有真实项目线索时应回退到主目录');
-      assert.equal(body.workspace, box.home);
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: deploy }, ({ workspace }) => {
+      assert.notEqual(workspace.workspace, deploy, '不能把投放目录当成工作目录');
+      assert.equal(workspace.workspace, null, '投放目录不可信时不应有工作目录');
+      assert.equal(workspace.source, 'unset');
     });
   } finally {
     await box.cleanup();
@@ -144,9 +184,9 @@ test('macOS 形态的临时绝对路径会被拒掉，不会被当成项目', as
     const macPath = '/private/var/folders/xx/yyyy/T/mavis-miniapp-2yKnCf/package';
     await withConsole(
       { home: box.home, dataDir: box.dataDir, cwd: box.project, env: { MCODE_WORKSPACE: macPath } },
-      (body) => {
-        assert.notEqual(body.workspace, macPath, '环境变量里的临时目录不能被采用');
-        assert.notEqual(body.source, 'env', '环境变量里的临时目录不能算作有效来源');
+      ({ workspace }) => {
+        assert.notEqual(workspace.workspace, macPath, '环境变量里的临时目录不能被采用');
+        assert.equal(workspace.source, 'unset', '环境变量里的临时目录不能算作有效来源');
       },
     );
   } finally {
@@ -164,9 +204,9 @@ test('持久化的临时目录会被拒掉（早期版本把它当用户指定�
       JSON.stringify({ workspace: stale }),
       'utf8',
     );
-    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
-      assert.notEqual(body.workspace, stale, '持久化的临时目录不能被采用');
-      assert.notEqual(body.source, 'learned', '持久化的临时目录不能算作用户指定的项目');
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, ({ workspace }) => {
+      assert.notEqual(workspace.workspace, stale, '持久化的临时目录不能被采用');
+      assert.equal(workspace.source, 'unset', '持久化的临时目录不能算作用户指定的项目');
     });
   } finally {
     await box.cleanup();
@@ -181,9 +221,9 @@ test('用户指定过的真实项目会被沿用', async () => {
       JSON.stringify({ workspace: box.project }),
       'utf8',
     );
-    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
-      assert.equal(body.workspace, box.project);
-      assert.equal(body.source, 'learned');
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, ({ workspace }) => {
+      assert.equal(workspace.workspace, box.project);
+      assert.equal(workspace.source, 'learned');
     });
   } finally {
     await box.cleanup();
@@ -195,9 +235,9 @@ test('环境变量优先于其它线索', async () => {
   try {
     await withConsole(
       { home: box.home, dataDir: box.dataDir, cwd: box.project, env: { MCODE_WORKSPACE: box.project } },
-      (body) => {
-        assert.equal(body.workspace, box.project);
-        assert.equal(body.source, 'env');
+      ({ workspace }) => {
+        assert.equal(workspace.workspace, box.project);
+        assert.equal(workspace.source, 'env');
       },
     );
   } finally {
@@ -205,40 +245,52 @@ test('环境变量优先于其它线索', async () => {
   }
 });
 
-test('引擎项目登记簿里的真实项目会被自动选中', async () => {
+test('另一个插件的登记簿不会被当成工作目录来源', async () => {
   const box = await makeSandbox('registry');
   try {
-    /* 登记簿的每个目录里都有一份 endpoint.json / address.json，里面记着项目绝对路径。 */
+    /* `~/.mcode-dynamic-workflows` 是 mcode-dynamic-workflows 插件的数据目录。
+       它的登记簿里记着项目绝对路径——控制台不该去读，更不该顺手把那个
+       插件的服务令牌也用上。 */
     const registry = join(box.home, '.mcode-dynamic-workflows', 'projects', 'a'.repeat(64));
     await mkdir(registry, { recursive: true });
     await writeFile(
       join(registry, 'address.json'),
-      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: box.project }),
+      JSON.stringify({ url: 'http://127.0.0.1:9/#secret-token', workspace: box.project }),
       'utf8',
     );
-    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
-      assert.equal(body.workspace, box.project);
-      assert.equal(body.source, 'projects');
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, ({ workspace, bootstrap }) => {
+      assert.equal(workspace.workspace, null, '不应从别的插件的登记簿里取工作目录');
+      assert.equal(workspace.source, 'unset');
+      const services = Array.isArray(bootstrap.services) ? bootstrap.services : [];
+      assert.deepEqual(
+        services.map((service) => service.id),
+        ['embedded'],
+        '别的插件的服务不该出现在控制台的服务列表里',
+      );
     });
   } finally {
     await box.cleanup();
   }
 });
 
-test('登记簿里指向已删除项目的条目会被跳过', async () => {
-  const box = await makeSandbox('stale-registry');
+test('另一个插件的登记簿存在时，内置引擎依然是唯一的后端', async () => {
+  const box = await makeSandbox('registry-services');
   try {
-    const gone = join(box.home, 'gone', 'project');
-    const registry = join(box.home, '.mcode-dynamic-workflows', 'projects', 'b'.repeat(64));
+    const registry = join(box.home, '.mcode-dynamic-workflows', 'projects', 'c'.repeat(64));
     await mkdir(registry, { recursive: true });
     await writeFile(
       join(registry, 'address.json'),
-      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: gone }),
+      JSON.stringify({ url: 'http://127.0.0.1:9/', workspace: box.project }),
       'utf8',
     );
-    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, (body) => {
-      assert.notEqual(body.workspace, gone, '目录已不存在时不能采用登记簿里的路径');
-      assert.notEqual(body.source, 'projects', '目录已不存在时不能算作登记簿来源');
+    await withConsole({ home: box.home, dataDir: box.dataDir, cwd: box.project }, ({ bootstrap }) => {
+      const services = Array.isArray(bootstrap.services) ? bootstrap.services : [];
+      assert.deepEqual(
+        services.map((service) => service.id),
+        ['embedded'],
+        '控制台只应使用自己内置的引擎',
+      );
+      assert.equal(bootstrap.activeServiceId, 'embedded');
     });
   } finally {
     await box.cleanup();

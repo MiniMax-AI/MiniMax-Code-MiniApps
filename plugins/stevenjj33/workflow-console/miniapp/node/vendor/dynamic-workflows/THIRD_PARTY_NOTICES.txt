@@ -1,4 +1,4 @@
-运行时依赖许可
+Bundled runtime dependency licenses
 
 
 --- @jitl/quickjs-ffi-types ---

@@ -62,7 +62,6 @@ const RESUMABLE_STATUSES = new Set([
 
 const dom = {
   serviceSummary: document.getElementById('service-summary'),
-  serviceSelect: document.getElementById('service-select'),
   serviceBanner: document.getElementById('service-banner'),
   refreshServices: document.getElementById('refresh-services'),
   openTemplates: document.getElementById('open-templates'),
@@ -119,7 +118,8 @@ dom.workspaceSave.addEventListener('click', async () => {
 
 /* 用户一旦动过输入框，轮询就不要再回写覆盖——否则点「保存」前的那一下会被改回旧值。 */
 dom.workspaceInput.addEventListener('input', () => {
-  state.workspaceDirty = true;
+  /* 内容又和服务器一致时，「用户正在改」这件事就不成立了。 */
+  state.workspaceDirty = dom.workspaceInput.value.trim() !== state.workspaceServerValue;
 });
 
 const state = {
@@ -146,6 +146,8 @@ const state = {
   pendingConfirm: null,
   nodeTab: 'output',
   workspaceDirty: false,
+  /* 上一次从服务器读到的目录，用来判断输入框里的内容是不是用户自己改的。 */
+  workspaceServerValue: '',
 };
 
 const node = (tag, props = {}, children = []) => {
@@ -276,142 +278,108 @@ dom.themeToggle.addEventListener('click', () => {
   applyTheme(next);
 });
 
-/* ---------------- service selection ---------------- */
+/* ---------------- engine status ---------------- */
 
-let lastServicesSignature = '';
+/* 控制台只有一个后端：它自己内置的 Workflow Studio 引擎。
+   早期版本还会去扫本机上的插件服务并在多个服务之间切换，
+   那样会读到另一个插件的地址和令牌；现在这条路径整个删掉了。 */
 
-function renderServices() {
-  const signature = state.services
-    .map((service) =>
-      [
-        service.id,
-        service.live,
-        service.starting,
-        service.workspace,
-        service.workspaceSource,
-        service.mcodeAvailable,
-        JSON.stringify(service.scheduler),
-      ].join('|'),
-    )
-    .join('\n') + `::${state.activeServiceId}`;
-  if (signature === lastServicesSignature) return;
-  lastServicesSignature = signature;
-  const select = dom.serviceSelect;
-  select.textContent = '';
-  if (!state.services.length) {
-    select.append(node('option', { value: '', text: '未发现项目服务' }));
-    select.disabled = true;
-  } else {
-    select.disabled = false;
-    for (const service of state.services) {
-      const label = service.embedded ? '内置引擎（本控制台）' : service.workspace || service.id;
-      const suffix = service.starting ? '（启动中…）' : service.live ? '' : '（未运行）';
-      select.append(
-        node('option', {
-          value: service.id,
-          text: `${label}${suffix}`,
-          selected: service.id === state.activeServiceId,
-        }),
-      );
-    }
-  }
+let lastEngineSignature = '';
 
+function renderEngine() {
   const active = state.services.find((service) => service.id === state.activeServiceId) || null;
+  const signature = active
+    ? [
+        active.id,
+        active.live,
+        active.starting,
+        active.workspace,
+        active.workspaceSource,
+        active.needsWorkspace,
+        active.mcodeAvailable,
+        JSON.stringify(active.scheduler),
+      ].join('|')
+    : 'none';
+  if (signature === lastEngineSignature) return;
+  lastEngineSignature = signature;
+
   const live = Boolean(active?.live);
-  if (!state.services.length) {
-    dom.serviceSummary.textContent = '未发现任何 Workflow Studio 项目服务。';
-  } else if (!active) {
-    dom.serviceSummary.textContent = `发现 ${state.services.length} 个项目服务，但没有选中任何一个。`;
+  const needsWorkspace = Boolean(active?.needsWorkspace);
+
+  if (!active) {
+    dom.serviceSummary.textContent = '内置引擎未就绪。';
+  } else if (needsWorkspace) {
+    dom.serviceSummary.textContent = '内置引擎未绑定项目目录';
   } else if (active.starting) {
-    dom.serviceSummary.textContent = `${active.embedded ? '内置引擎' : active.workspace || active.id} · 正在启动…`;
+    dom.serviceSummary.textContent = '内置引擎 · 正在启动…';
   } else if (!live) {
-    dom.serviceSummary.textContent = `${active.workspace || active.id} · 服务未在运行（记录与面板地址均保留）`;
+    dom.serviceSummary.textContent = `${active.workspace || '内置引擎'} · 引擎未在运行`;
   } else {
     const scheduler = active.scheduler || {};
     dom.serviceSummary.textContent =
-      `${active.embedded ? `内置引擎 · ${active.workspace || ''}` : active.workspace || active.id}` +
+      `内置引擎 · ${active.workspace || ''}` +
       ` · MCode CLI ${active.mcodeAvailable ? '可用' : '不可用'}` +
       ` · 执行器 ${active.executor || '未知'}` +
       ` · 并发 ${scheduler.active ?? 0}/${scheduler.limit ?? '—'}`;
   }
 
-  if (!live) {
+  if (live) {
+    dom.serviceBanner.hidden = true;
+  } else {
     dom.serviceBanner.hidden = false;
     dom.serviceBanner.textContent = '';
     dom.serviceBanner.append(
       node('strong', {
-        text: active?.embedded
-          ? '内置引擎未能启动。'
-          : state.services.length
-            ? '所选项目的 Workflow Studio 服务未在运行。'
-            : '本机没有 Workflow Studio 服务。',
+        text: needsWorkspace ? '还没有选择项目目录。' : '内置引擎未能启动。',
       }),
       node('span', {
-        text: active?.embedded
-          ? ' 控制台会自动重试；若持续失败，请确认 MCode CLI 可用（需要登录且模型可调用），或改用下方已发现的插件服务。'
-          : state.services.length
-            ? ' 该项目的历史记录与面板地址都保留着。请在对话中让 Agent 对该项目运行一次动态工作流，服务恢复后这里会自动显示。'
-            : ' 动态工作流的后台服务按项目独立常驻。请在对话中让 Agent 使用 dynamic-workflow 运行一次工作流，服务启动后本控制台会自动接管。',
+        text: needsWorkspace
+          ? ' 内置引擎不会在用户主目录或系统临时目录里运行——那样一次运行就能改写整个家目录。' +
+            '请在下方填写项目的绝对路径，保存后引擎会自动启动。'
+          : ' 控制台会自动重试；若持续失败，请确认 MCode CLI 可用（需要登录且模型可调用），' +
+            '并查看 dataDir/engine/service.log 里的引擎日志。',
       }),
     );
-  } else {
-    dom.serviceBanner.hidden = true;
   }
 
-  /* 内置引擎始终暴露工作目录入口：换项目时如果它不可见，用户会误以为当前项目生效。
-     目录不可信时升级为告警措辞，并把「自动猜出来的」和「用户指定的」分开说。 */
-  if (active?.embedded) {
-    dom.workspaceRow.hidden = false;
-    const needs = Boolean(active.needsWorkspace);
-    const source = active.workspaceSource || 'home';
-    dom.workspaceRow.classList.toggle('banner-warn', needs);
-    if (needs && source === 'home') {
-      dom.workspaceTitle.textContent = '内置引擎还没绑定到真实项目';
-      dom.workspaceHint.textContent =
-        ` 当前只能落在用户主目录（${active.workspace || '未知'}），不能直接拿来跑真实 Agent。` +
-        '请把下面的输入框填成项目的绝对路径，保存后内置引擎会自动重启。';
-    } else if (needs) {
-      dom.workspaceTitle.textContent = '内置引擎的工作目录不是真实项目';
-      dom.workspaceHint.textContent =
-        ' 临时投放目录不能用来跑真实 Agent，请指定项目绝对路径（修改后内置引擎会自动重启）。';
-    } else {
-      dom.workspaceTitle.textContent = '内置引擎工作目录';
-      dom.workspaceHint.textContent =
-        ` 内置引擎当前在 ${active.workspace || '未确定'} 里运行。换项目时把这里改成新项目的绝对路径，保存后引擎自动重启，运行记录不会丢。` +
-        '注意：改目录后，属于旧目录的运行将无法开始或恢复（上游要求运行与引擎在同一工作区）。';
-    }
-    if (!state.workspaceDirty && document.activeElement !== dom.workspaceInput) {
-      dom.workspaceInput.value = active.workspace || '';
-    }
+  /* 工作目录入口始终可见：它是控制台唯一的项目入口，
+     隐藏它会让用户以为当前项目已经生效。 */
+  dom.workspaceRow.hidden = false;
+  const source = active?.workspaceSource || 'unset';
+  dom.workspaceRow.classList.toggle('banner-warn', needsWorkspace);
+  if (needsWorkspace) {
+    dom.workspaceTitle.textContent = '请先选择项目目录';
+    dom.workspaceHint.textContent =
+      ' 内置引擎需要绑定到一个真实项目才能启动。它不会退回到用户主目录或宿主投放的临时目录，' +
+      '所以在下面填入项目的绝对路径并保存之前，控制台不会运行任何工作流。';
   } else {
-    dom.workspaceRow.hidden = true;
+    dom.workspaceTitle.textContent = '内置引擎工作目录';
+    dom.workspaceHint.textContent =
+      ` 内置引擎当前在 ${active?.workspace || '未确定'} 里运行${source === 'env' ? '（由宿主声明的当前项目决定）' : ''}。` +
+      '换项目时把这里改成新项目的绝对路径，保存后引擎自动重启，运行记录不会丢。' +
+      '注意：改目录后，属于旧目录的运行将无法开始或恢复（上游要求运行与引擎在同一工作区）。';
   }
+  /* 只在用户没在改这个字段时，才把服务器上的目录回写进输入框。
+     判断依据有两个：dirty 标记（用户敲过键盘），以及字段里的内容是不是
+     上一次服务器给的值。后者能兜住「值是从别处写进去的、没触发 input 事件」
+     的情况——否则一次轮询就会把用户正在填的路径悄悄抹掉。 */
+  const serverWorkspace = active?.workspace || '';
+  const fieldValue = dom.workspaceInput.value;
+  if (
+    !state.workspaceDirty &&
+    document.activeElement !== dom.workspaceInput &&
+    fieldValue === state.workspaceServerValue
+  ) {
+    dom.workspaceInput.value = serverWorkspace;
+  }
+  state.workspaceServerValue = serverWorkspace;
   dom.studioLink.setAttribute('aria-disabled', live ? 'false' : 'true');
 }
-
-dom.serviceSelect.addEventListener('change', async (event) => {
-  const serviceId = event.target.value;
-  if (!serviceId) return;
-  try {
-    await api('/api/service/select', { method: 'POST', body: { serviceId } });
-    await loadBootstrap();
-    closeStream();
-    if (state.selectedRunId) await loadSnapshot(state.selectedRunId, { resetEvents: true });
-  } catch (error) {
-    toast(error.message, 'danger');
-    /* 切换失败时把下拉框回写成后端实际指向的服务，
-       否则界面显示的和实际后端会长期不一致。 */
-    dom.serviceSelect.value = state.activeServiceId || '';
-    lastServicesSignature = '';
-    renderServices();
-  }
-});
-
 dom.refreshServices.addEventListener('click', async () => {
   dom.refreshServices.disabled = true;
   try {
     await loadBootstrap();
-    toast('已重新扫描本机项目服务');
+    toast('已刷新内置引擎状态');
   } catch (error) {
     toast(error.message, 'danger');
   } finally {
@@ -576,14 +544,24 @@ function renderRuns() {
     list.textContent = '';
     runItems.clear();
     if (!runs.length) {
+      const engine = state.services.find((service) => service.id === state.activeServiceId);
+      const needsWorkspace = Boolean(engine?.needsWorkspace);
       list.append(
         node('li', {}, [
           node('div', { class: 'empty' }, [
-            node('h3', { text: state.activeServiceId ? '没有符合条件的运行' : '还没有运行记录' }),
+            node('h3', {
+              text: needsWorkspace
+                ? '还没有选择项目目录'
+                : state.activeServiceId
+                  ? '还没有运行记录'
+                  : '内置引擎未就绪',
+            }),
             node('p', {
-              text: state.activeServiceId
-                ? '换一个筛选条件，或在对话中让 Agent 创建动态工作流。'
-                : '连接上项目服务后，这里会显示该项目的全部历史与进行中的运行。',
+              text: needsWorkspace
+                ? '在顶部填写项目的绝对路径并保存，内置引擎会随即启动，这里会显示该项目的运行记录。'
+                : state.activeServiceId
+                  ? '换一个筛选条件，或在对话中让 Agent 创建动态工作流。'
+                  : '内置引擎没有在运行，请点击顶部的「刷新引擎」查看状态。',
             }),
           ]),
         ]),
@@ -1581,6 +1559,12 @@ function liveRun(runId) {
 async function confirmStart(runId) {
   const run = liveRun(runId);
   if (!run) return;
+  /* 没有项目目录时不允许开始：内置引擎此刻根本没在跑，
+     审核通过也不会有任何执行发生。 */
+  if (!activeWorkspace()) {
+    toast('请先在顶部选择项目目录，再开始执行', 'danger');
+    return;
+  }
   const nodeCount = Array.isArray(run.topology?.nodes) ? run.topology.nodes.length : 0;
   const real = run.executor !== 'demo';
   const answer = await askConfirm({
@@ -1588,7 +1572,9 @@ async function confirmStart(runId) {
     note:
       `运行「${run.name}」，静态拓扑共 ${nodeCount} 个节点。` +
       (real
-        ? '执行器为真实 MCode Agent，开始后会实际调用模型并产生用量。'
+        ? '执行器为真实 MCode Agent，开始后会实际调用模型并产生用量。' +
+          '内置运行时以 smart 权限调用 CLI：部分文件写入与命令会自动放行，' +
+          '需要你确认的步骤会让该节点直接失败，而不是停下来等你。'
         : '执行器为演示模式，不会调用模型，只返回占位结果。'),
     acceptLabel: '开始执行',
   });
@@ -1985,7 +1971,7 @@ async function loadBootstrap() {
   state.activeServiceId = payload.activeServiceId ?? null;
   state.runs = Array.isArray(payload.runs) ? payload.runs : [];
   if (Array.isArray(payload.hidden)) state.hidden = new Set(payload.hidden);
-  renderServices();
+  renderEngine();
   renderRuns();
   const hasSelected = state.selectedRunId && state.runs.some((run) => run.id === state.selectedRunId);
   if (!hasSelected && state.runs.length) {
@@ -2010,15 +1996,15 @@ async function boot() {
   try {
     await loadBootstrap();
   } catch (error) {
-    renderServices();
+    renderEngine();
     dom.detail.setAttribute('aria-busy', 'false');
     renderDetailError(error.message);
   }
 
   window.setInterval(() => {
     if (document.hidden) return;
-    /* 始终拉 bootstrap：它是唯一会重新扫描服务、把内置引擎放回列表的入口。
-       只在「有服务处于启动中」时才拉，会在后端重启窗口里彻底失去内置引擎。 */
+    /* 始终拉 bootstrap：它是唯一会重新探测内置引擎、把引擎放回列表的入口。
+       只在「引擎正在启动」时才拉，会在后端重启窗口里彻底失去内置引擎。 */
     loadBootstrap().catch(() => {
       /* 轮询失败不弹 toast：离线时不该反复打扰用户，页面上的离线横幅已经说明情况。 */
     });

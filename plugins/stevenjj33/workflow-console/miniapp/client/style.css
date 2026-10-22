@@ -130,18 +130,6 @@ a {
   align-items: center;
 }
 
-.control {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.control-label {
-  color: var(--mcode-text-muted);
-  font-size: 12px;
-}
-
-select,
 input[type='text'] {
   height: 34px;
   padding: 0 10px;
@@ -154,7 +142,6 @@ input[type='text'] {
   max-width: 320px;
 }
 
-select:focus-visible,
 input:focus-visible,
 button:focus-visible,
 a:focus-visible,
@@ -1122,7 +1109,6 @@ details.raw > summary {
     display: none;
   }
 
-  select,
   input[type='text'] {
     max-width: 100%;
   }
