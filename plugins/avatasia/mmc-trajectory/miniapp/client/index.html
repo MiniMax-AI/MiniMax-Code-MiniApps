@@ -7749,7 +7749,11 @@
             // how a scrollbar ends up shorter than the table it is supposed to describe. On the
             // first batch build.heights is still null, so this is a no-op and sizeBuiltGroup()
             // below is what covers those groups.
-            var predicted = applyIntrinsicSize(section, group.entries.length, bands, build.heights);
+            //
+            // The rows are counted apart from the bands. A band is an entry as well as a row, so
+            // a count of entries would price every band twice — once at the row height and once
+            // at the band's own — and the box would stand taller than what it is holding.
+            var predicted = applyIntrinsicSize(section, group.entries.length - bands, bands, build.heights);
             if (!holds) {
               // The height the group had while it was holding its rows, brought up to date
               // with the content it holds now; the prediction otherwise. A group that has
@@ -7788,8 +7792,21 @@
             for (var d = 0; d < dormant.length; d += 1) {
               var content = ledgerContent.get(dormant[d]);
               if (!content) continue;
-              var height = applyIntrinsicSize(dormant[d], content.entries.length, content.bands, build.heights);
-              holdLedgerHeight(dormant[d], height);
+              // The rows are counted apart from the bands, for the same reason as above: a band
+              // is an entry as well as a row, and the prediction prices it once, at its own
+              // height.
+              var dormantRows = content.entries.length - content.bands;
+              var dormantPredicted = applyIntrinsicSize(dormant[d], dormantRows, content.bands, build.heights);
+              // And the height that is held is the measured one, brought up to date with what
+              // the group holds now — the same rule the build applies to the groups it writes
+              // above. A group that was never measured has nothing to bring up to date, and the
+              // prediction is the answer there.
+              //
+              // Writing the prediction here instead would undo the rule on every group of the
+              // first batch, and in the default view the first batch is the whole window: the
+              // page opens on the newest 200 records, and 200 records span fewer turns than
+              // LEDGER_BATCH_GROUPS.
+              holdLedgerHeight(dormant[d], heldLedgerHeight(content.key, dormantRows, content.bands, dormantPredicted, build.heights));
             }
             // The groups that were holding their rows are the ones that can be measured. A group
             // without rows measures as its header, and writing that down would collapse it.
@@ -8427,6 +8444,12 @@
 
       /**
        * A group's predicted height from its own shape: one head, then rows and bands.
+       *
+       * The rows and the bands are two counts: `rows` is the number of rows ALONE, and the
+       * compaction bands are counted in `bands`. A band is an entry as well as a row, so
+       * passing the entry count as the row count would price every band twice — once at the
+       * row height and once at the band's own — and the box would stand taller than what it
+       * is holding.
        *
        * `auto` on the left is what lets the browser prefer the size it has already rendered once
        * the reader has scrolled past — so scrolling down and back does not accumulate drift.
