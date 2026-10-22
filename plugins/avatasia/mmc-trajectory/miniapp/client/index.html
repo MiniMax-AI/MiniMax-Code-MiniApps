@@ -7207,8 +7207,8 @@
        *
        * Three rules, and the order matters. A group the reader has left goes when the idle
        * timeout has passed; when more groups are live than the cap allows, the oldest goes
-       * first; and the group the window is anchored on is none of the reader's visits at all,
-       * so it is counted rather than timed.
+       * first; and the group the caller is holding on to is none of the reader's visits at
+       * all, so it is counted rather than timed.
        *
        * That last one is what keeps the bound about the rows on screen. The anchored group
        * holds its rows whatever the reader is doing — it is where the reader arrives, and every
@@ -7216,34 +7216,53 @@
        * would leave one group holding its rows outside the count. Counting it here makes the
        * two sets the same set: the groups that are live are the groups that hold their rows.
        *
-       * This only decides. The rows themselves are taken away by the next build, which is the
-       * one place that writes them, so there is no second writer of the rows and nothing to keep
-       * in step.
+       * One decision and two callers, and that is the point of it. The bound is about what the
+       * reader is holding at this moment, not only about what a rebuild leaves behind: a reader
+       * who walks through more groups than the cap allows between two rebuilds is holding all
+       * of them until the next poll comes round. So the rebuild and the visit both come through
+       * here, and they cannot disagree about which groups go — the same order, the same count,
+       * the same group held back.
        *
-       * @param {string} keepKey the group the window is anchored on, which is never released
+       * This decides. The rows are taken away by the build, which writes the released groups
+       * as it writes the table, and by the visit, which takes the rows out of a table that is
+       * already on screen.
+       *
+       * @param {string} keepKey the group that holds its rows whatever else happens: the
+       * window's first group on a rebuild, the group the reader has just reached on a visit
+       * @returns {string[]} the groups that have to give up their rows
        */
       function releaseStaleGroups(keepKey) {
         var now = Date.now();
         var live = [];
-        // The anchored group is counted first and with the current time, so it is never the
-        // oldest one the cap reaches for. Its lease is not consulted: it does not have one.
-        ledgerStateOf(keepKey).live = true;
-        live.push({ key: keepKey, at: now });
+        var doomed = [];
         ledgerState.forEach(function (state, key) {
           if (key === keepKey) return;
           if (!state.live) return;
           if (now - state.lastSeen >= LEDGER_IDLE_MS) {
             state.live = false;
+            doomed.push(key);
             return;
           }
           live.push({ key: key, at: state.lastSeen });
         });
-        if (live.length <= LEDGER_LIVE_GROUPS) return;
+        // The group the caller is holding on to is counted with the current time, so it is
+        // never the oldest one the cap reaches for. Its lease is not consulted: it does not
+        // have one.
+        //
+        // It is counted after the others, so that a visit in the same millisecond as another
+        // one — a tie the clock cannot break — cannot put it at the head of the queue. The
+        // group the reader has just reached is the one the cap must not take.
+        ledgerStateOf(keepKey).live = true;
+        live.push({ key: keepKey, at: now });
+        if (live.length <= LEDGER_LIVE_GROUPS) return doomed;
         live.sort(function (a, b) { return a.at - b.at; });
         for (var i = 0; i < live.length - LEDGER_LIVE_GROUPS; i += 1) {
           var state = ledgerState.get(live[i].key);
-          if (state) state.live = false;
+          if (!state) continue;
+          state.live = false;
+          doomed.push(live[i].key);
         }
+        return doomed;
       }
 
       /**
@@ -7251,6 +7270,9 @@
        *
        * The group is in view, so this is what the reader is about to read, and the rows go in
        * before the next paint — so there is no frame in which the group is empty.
+       *
+       * The rows go in once. A group that is already holding them is not built a second time,
+       * and the second copy of every row is the whole cost of getting it wrong.
        *
        * @param {HTMLElement} section
        */
@@ -7260,31 +7282,102 @@
         var state = ledgerStateOf(group.key);
         state.live = true;
         state.lastSeen = Date.now();
-        if (section.getAttribute('data-rows') === 'live') return;
-        var list = section.querySelector('ul.row-list');
-        if (!list) return;
-        fillGroupRows(list, group);
-        section.setAttribute('data-rows', 'live');
-        section.classList.remove('is-released');
-        section.style.minHeight = '';
+        var alreadyLive = section.getAttribute('data-rows') === 'live';
+        if (!alreadyLive) {
+          var list = section.querySelector('ul.row-list');
+          if (!list) return;
+          fillGroupRows(list, group);
+          section.setAttribute('data-rows', 'live');
+          section.classList.remove('is-released');
+          section.style.minHeight = '';
+        }
+        // The height the group really has, taken on both paths — see measureLedgerGroup().
+        // A group that is already holding its rows and has a height of its own has nothing
+        // new to say: nothing about its content has changed, so the height it was measured
+        // at is the height it has.
+        if (!alreadyLive || !state.height) measureLedgerGroup(section, group);
+        // The cap, on the visit path as well as on the rebuild: the number of groups holding
+        // their rows is bounded at any moment, not only right after a rebuild.
+        releaseLedgerRows(releaseStaleGroups(group.key));
+      }
+
+      /**
+       * Record how tall a group really is, and what it was holding when it was measured.
+       *
+       * The measurement belongs to the observer, because the observer is what sees the group
+       * laid out for real. The build never measures: a group it holds has no height of its own
+       * until somebody looks at it, and a build that stamped one would be writing down a
+       * height it never measured.
+       *
+       * Both paths record it. The group the build made live — the first group of the window is
+       * always live — is visited by the observer like any other, and it is laid out for real at
+       * that moment. Without a measurement here it keeps no height of its own, and when the
+       * window widens and the group is released it falls back on the prediction: the document
+       * under the reader loses the height the group really had, over a group whose rows and
+       * bands did not change by one.
+       *
+       * The counts go with the height, because a height is a measurement OF something. The group
+       * is keyed by its turn, and the turn keeps its key while its content changes — a late
+       * reply, a band from a compaction — so a height that is not read together with its counts
+       * describes a content that is no longer there.
+       *
+       * The two counts are rows and bands, and they are counted apart. A band is an entry as
+       * well as a row, so a count of entries would charge every band once as a row and once as
+       * a band — the band at 36 px and 38 px would be charged 74 px, and the box would stand
+       * taller than the content it is holding.
+       *
+       * @param {HTMLElement} section
+       * @param {{key: string, entries: any[], bands?: number}} group
+       */
+      function measureLedgerGroup(section, group) {
+        var state = ledgerStateOf(group.key);
         // The height it really has, now that it is laid out for real. A group the browser has
         // skipped measures by its own contain-intrinsic-size, so this reads the prediction back
         // rather than the truth — which is why it is the remembered height and not the only one.
         sizeBuiltGroup(section);
         state.height = Math.round(section.getBoundingClientRect().height);
-        // What it was holding when it was measured, so that the height can be brought up to
-        // date with the content the group holds now. The group is keyed by the turn, and the
-        // turn keeps its key while its content changes — a late reply, a band from a
-        // compaction — so a height that is not read together with its counts describes a
-        // content that is no longer there.
-        //
-        // The two counts are rows and bands, and they are counted apart. A band is an entry
-        // as well as a row, so a count of entries would charge every band once as a row and
-        // once as a band — the band at 36 px and 38 px would be charged 74 px, and the box
-        // would stand taller than the content it is holding.
         var measuredBands = group.bands || 0;
         state.heightRows = group.entries.length - measuredBands;
         state.heightBands = measuredBands;
+      }
+
+      /**
+       * Take the rows out of the groups that have to give up their rows.
+       *
+       * The rebuild writes the released groups as it builds the table, so there is nothing to do
+       * there. A visit happens between two rebuilds, and the groups it releases are in a table
+       * that is already on screen: their rows have to go now, or the reader is holding more
+       * rows than the cap allows until the next poll comes round.
+       *
+       * The height is kept. The rows are the DOM; the height is the reader's place in a session
+       * they have scrolled through, and a group that has given up its rows has to keep it or
+       * the document shrinks under them.
+       *
+       * @param {string[]} keys the groups that have to give up their rows
+       */
+      function releaseLedgerRows(keys) {
+        if (!keys.length) return;
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        for (var i = 0; i < sections.length; i += 1) {
+          var section = sections[i];
+          var content = ledgerContent.get(section);
+          if (!content) continue;
+          if (keys.indexOf(content.key) < 0) continue;
+          var bands = content.bands || 0;
+          var rows = content.entries.length - bands;
+          // The height the group keeps is the one it was measured at. It is read before the
+          // rows go, because after them the box is the group's own head and nothing else.
+          var measured = Math.round(section.getBoundingClientRect().height);
+          var list = section.querySelector('ul.row-list');
+          if (list) clear(list);
+          section.setAttribute('data-rows', 'released');
+          section.classList.add('is-released');
+          // The measured height, brought up to date with what the group holds now; the height
+          // read above otherwise. There is no calibration here to price a difference with —
+          // the calibration belongs to the build that is running — so the height the group
+          // was measured at is kept as it is, and the next rebuild brings it up to date.
+          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));
+        }
       }
 
       /**
@@ -7693,8 +7786,9 @@
         for (var b = 0; b < groups.length; b += 1) buildTotal += groups[b].entries.length;
 
         // The groups the reader has left give up their rows, and the ones past the cap give them
-        // up oldest first. Decided here and applied by this build — the one place that writes
-        // rows — so there is no second writer to keep in step with this one.
+        // up oldest first. The same decision the visit path makes, so the two cannot disagree
+        // about which groups go; applied by this build, which writes the released groups as it
+        // writes the table.
         if (groups.length) releaseStaleGroups(turnKey(groups[0].turn));
 
         function buildStep() {
