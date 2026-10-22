@@ -16,7 +16,13 @@ The second mutation is the blunter half: no session at all.
 
 Both have to be caught by the same named assertion in client-check.mjs, which runs the shipped
 `handoffSelected` over a deferred raw read and moves the page while that read is in flight.
+
+Every case names the rule it is about in its `expect` field, and a case counts as caught only
+when the probe reported THAT rule: a probe that went red on some other assertion has not shown
+that this guard owns this mutation.
 """
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,11 +37,13 @@ MUTATIONS = [
         "the handoff reads the session off the page after its reads, so a navigation names the wrong conversation",
         "        var session = state.payload ? state.payload.session : null;",
         "        var session = { get id() { return state.payload.session.id; }, get label() { return state.payload.session.label; } };",
+        'the handoff names the session the selected record came from',
     ),
     (
         "the handoff names no conversation at all",
         "        var session = state.payload ? state.payload.session : null;",
         "        var session = null;",
+        'the handoff names the session the selected record came from',
     ),
 ]
 
@@ -65,6 +73,45 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def rule_name(text):
+    """The name of a rule a probe reported, without the evidence a comparison carries.
+
+    A probe reports an assertion as `<name>` and a comparison as
+    `<name>: got <value>, want <value>`. The values are the evidence, not the rule, so they are
+    cut off — and the cut is made at a `: got ` whose tail really is `<json>, want <json>`, so a
+    name that itself contains those words is not truncated.
+    """
+    for match in reversed(list(re.finditer(re.escape(": got "), text))):
+        head = text[:match.start()].strip()
+        tail = text[match.end():]
+        cut = tail.rfind(", want ")
+        if cut < 0:
+            continue
+        try:
+            json.loads(tail[:cut])
+            json.loads(tail[cut + len(", want "):])
+        except ValueError:
+            continue
+        return head
+    return text
+
+
+def reported_rules(output):
+    """The rules a probe named as broken.
+
+    The probe prints `FAILURES:` and one ` - <name>` line per failure, so a case is only caught
+    when the rule it names is among them.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(rule_name(text[2:].strip()))
+        elif text.startswith("FAIL "):
+            names.append(rule_name(text[5:].strip()))
+    return names
+
+
 def main():
     code, output = run_probe()
     if code != 0:
@@ -76,7 +123,7 @@ def main():
     original = CLIENT.read_bytes()
     missed = []
     unnamed = []
-    for label, old, new in MUTATIONS:
+    for label, old, new, expect in MUTATIONS:
         text, newline = read_exact(CLIENT)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
@@ -95,12 +142,19 @@ def main():
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
             continue
-        first = next((line.strip() for line in output.splitlines() if line.strip().startswith("- ")), None)
-        if first is None:
+        names = reported_rules(output)
+        if not names:
             print(f"UNNAMED {label}: the probe failed without naming a rule")
             unnamed.append(label)
-        else:
-            print(f"caught {label}\n         -> {first}")
+            continue
+        # The case names the rule it is about, so the probe has to name THAT rule and not some
+        # other one that happened to go red in the same run: a probe that went red elsewhere has
+        # not shown that this guard owns this mutation.
+        if expect not in names:
+            print(f"MISSED {label}: the probe named {names} instead of {expect}")
+            missed.append(label)
+            continue
+        print(f"caught {label}\n         -> {expect}")
 
     if CLIENT.read_bytes() != original:
         print(f"NOT RESTORED {CLIENT}")

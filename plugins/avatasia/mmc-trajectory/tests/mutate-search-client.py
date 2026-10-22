@@ -2,7 +2,7 @@
 
 The filter used to be `recordSearchText(record).indexOf(needle) >= 0` — a scan of five fields the
 page happened to be holding. It is now a set of record indexes the server sent, and every mutation
-here undoes one of the four things that move required and the page now owns:
+here undoes one of the six things that move required and the page now owns:
 
   - asking a set at all, instead of scanning text;
   - telling 「no answer yet」 apart from 「matched nothing」;
@@ -15,7 +15,13 @@ here undoes one of the four things that move required and the page now owns:
     the pending answer of the record that took its place.
 
 Each is a change the page renders differently and none of them throws.
+
+Every case names the rule it is about in its `expect` field, and a case counts as caught only
+when the probe reported THAT rule: a probe that went red on some other assertion has not shown
+that this guard owns this mutation.
 """
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,31 +36,37 @@ MUTATIONS = [
         "the filter scans the record's own text again, ignoring the server's answer",
         "        if (hitSet === null || hitSet === undefined) return true;\n        return !!(record && hitSet.has(record.index));",
         "        if (hitSet === null || hitSet === undefined) return true;\n        return String((record && record.summary) || '').toLowerCase().indexOf(String(needle).toLowerCase()) >= 0;",
+        "a record whose text contains the needle but which the server did not name fails",
     ),
     (
         "an unanswered search is rendered as matched nothing, so the table empties while it loads",
         "        if (hitSet === null || hitSet === undefined) return true;",
         "        if (hitSet === null || hitSet === undefined) return false;",
+        "an unanswered needle filters nothing, and says so elsewhere",
     ),
     (
         "no answer in force is turned into an empty set, so it reads as 「matched nothing」",
         "        if (!Array.isArray(hits)) return null;",
         "        if (!Array.isArray(hits)) return new Set();",
+        "an unanswered needle is not an empty result",
     ),
     (
         "a hit with no usable index is filed under a key that matches every record",
         "          if (Number.isInteger(index)) set.add(index);",
         "          set.add(Number.isInteger(index) ? index : NaN);",
+        "a hit without an index is dropped rather than becoming one",
     ),
     (
         "a late answer is allowed to overwrite a newer one",
         "            if (seq !== searchSeq) return;\n            searchController = null;",
         "            searchController = null;",
+        "policy: only the newest search answer is allowed to write",
     ),
     (
         "a search in flight is not aborted, so every keystroke's request still runs to the end",
         "        if (searchController) searchController.abort();",
         "",
+        "policy: the search request in flight is aborted when a newer one starts",
     ),
     (
         "a changed payload keeps the old hit set, so the new table is filtered by the old answer",
@@ -64,41 +76,49 @@ MUTATIONS = [
         "        if (state.query && (state.searchSet && displayedRecordSet() !== state.searchSet)) {\n"
         "          runSearch(state.query);\n"
         "        }",
+        "a payload that changed re-runs the search rather than filtering by the old answer",
     ),
     (
         "a content-only payload change does not retire the previous search answer",
         "        if (state.query && (changed || (state.searchSet && displayedRecordSet() !== state.searchSet))) {",
         "        if (state.query && changed) {",
+        "a content-only payload change retires the previous search answer",
     ),
     (
         "a read joins a newer record's pending read after reload, because the key does not carry the record's version",
         "        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index + '#' + (version || '');",
         "        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;",
+        "a retried read cannot join a newer record's pending read after reload",
     ),
     (
         "clearing the filters leaves the hit set behind, so the next query filters by a stale answer",
         "        state.searchHits = null;\n        state.searchPending = false;\n        state.searchTotal = 0;\n        state.searchTruncated = false;\n        state.searchError = null;\n        dropOverviewSelection();",
         "        dropOverviewSelection();",
+        "policy: clearing the filters drops the answer with them",
     ),
     (
         "the count line cannot tell 「searching」 from 「searched and found none」",
         "        if (searchState.searchHits !== null && searchState.searchTotal === 0) return '未找到';",
         "        if (searchState.searchHits !== null) return '命中 ' + formatInt(searchState.searchTotal) + ' 条';",
+        "a needle answered with nothing",
     ),
     (
         "a search that failed is rendered as an empty table, which reads as an answer",
         "        if (searchState.searchError) return '搜索失败，以下为上次结果';",
         "",
+        "a needle that failed says so rather than showing an empty table",
     ),
     (
         "the needle is sent without the generation, so a slice search answers about the whole lineage",
         "          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)))",
         "          + ''",
+        "policy: a search is asked about the slice the body on screen is",
     ),
     (
         "the hit set is built from the summaries rather than the indexes, so it can never match a row",
         "          var index = entry && typeof entry.index === 'number' ? entry.index : NaN;",
         "          var index = entry && typeof entry.summary === 'string' ? entry.summary.length : NaN;",
+        "the hit set holds the server's indexes",
     ),
     # The one an acceptance review caught, and the reason the mutation list above is not the end of
     # the story. Every entry there changes what the page COMPUTES. This one changes what it REMEMBERS
@@ -116,6 +136,7 @@ MUTATIONS = [
         "an answer that arrives leaves the failure that preceded it standing",
         "            state.searchError = null;\n            state.searchRefresh = 0;\n            resetWindowMode();",
         "            state.searchRefresh = 0;\n            resetWindowMode();",
+        "and the retry that answers it clears the failure, not just the pending flag",
     ),
     # ---- the search is about the body on screen ---------------------------------------
     #
@@ -135,6 +156,7 @@ MUTATIONS = [
         "the search asks about the current session instead of the one on screen",
         "        var session = displayedSessionParam();",
         "        var session = sessionParam();",
+        "the search asks about the session on screen",
     ),
     (
         "the search stops checking which session the answer is about",
@@ -142,12 +164,14 @@ MUTATIONS = [
         "              || answeredSlice !== displayedSlice) {",
         "            if (!answered || !displayed\n"
         "              || answeredSlice !== displayedSlice) {",
+        "an answer about another session does not install its hit set",
     ),
     (
         "the search stops checking which slice of the session the answer is about",
         "            if (!answered || !displayed || answered.id !== displayed.id\n"
         "              || answeredSlice !== displayedSlice) {",
         "            if (!answered || !displayed || answered.id !== displayed.id) {",
+        "an answer about another slice of the same session does not install its hit set",
     ),
     # ---- the slice is the one the BODY is, not the one the reader picked ---------------
     #
@@ -161,6 +185,7 @@ MUTATIONS = [
         "the search asks about the generation the reader picked, not the slice on screen",
         "        var session = displayedSessionParam();\n        var generation = displayedGeneration();",
         "        var session = displayedSessionParam();\n        var generation = state.generation;",
+        "the search asks about the slice on screen, not the one the reader picked",
     ),
     (
         "the raw read asks about the generation the reader picked, not the slice on screen",
@@ -170,6 +195,7 @@ MUTATIONS = [
         "        var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))\n"
         "          + '&session=' + displayedSessionParam();\n"
         "        var generation = state.generation;",
+        "a raw read asks for the slice on screen",
     ),
     (
         "the record read asks about the generation the reader picked, not the slice on screen",
@@ -179,11 +205,13 @@ MUTATIONS = [
         "        var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))\n"
         "          + '&session=' + displayedSessionParam();\n"
         "        var generation = state.generation;",
+        "a detail read asks for the slice on screen too",
     ),
     (
         "the raw cache key names the generation the reader picked, not the slice on screen",
         "        var gen = displayedGeneration() === null ? 'all' : String(displayedGeneration());",
         "        var gen = state.generation === null ? 'all' : String(state.generation);",
+        "the raw cache key names the slice on screen",
     ),
     # ---- the version of the record a position names ------------------------------------
     #
@@ -196,12 +224,14 @@ MUTATIONS = [
         "the search stops checking which version of the record a hit names",
         "              if (typeof shown.v === 'string' && shown.v !== '' && shown.v !== hit.v) {",
         "              if (false) {",
+        "a search answer for a newer body cannot filter the displayed older body",
     ),
     (
         "the raw read stops naming the version of the record it asks for",
         "        // the retry is a different question wearing the same question's clothes.\n"
         "        if (version) url += '&v=' + encodeURIComponent(version);",
         "        // the retry is a different question wearing the same question's clothes.",
+        "a raw read names the version of the record it is asking for",
     ),
     (
         "the record read stops naming the version of the record it asks for",
@@ -212,6 +242,7 @@ MUTATIONS = [
         "        // The same record, the same way: the version travels with the request so the service can\n"
         "        // refuse when the position it would answer is a different record than the one opened — and\n"
         "        // it is the record's own version, so a retry after a reload asks about the same record.",
+        "and a detail read names it too",
     ),
     # ---- the version travels with the RECORD, not with the screen ------------------------
     #
@@ -240,6 +271,7 @@ MUTATIONS = [
         "        }\n"
         "        return '';\n"
         "      }",
+        "and not about the record that happens to be at that index after the reload",
     ),
     # ---- the answer has to be about the SET the page is showing --------------------------
     #
@@ -254,12 +286,14 @@ MUTATIONS = [
         "          + '&n=' + versions.length\n"
         "          + '&fp=' + encodeURIComponent(recordSetFingerprint(versions));",
         "          + '';",
+        "the search names how many records the body on screen has",
     ),
     (
         "the search says how many records it is about, but not which ones",
         "          + '&n=' + versions.length\n"
         "          + '&fp=' + encodeURIComponent(recordSetFingerprint(versions));",
         "          + '&n=' + versions.length;",
+        "and a fingerprint of their versions",
     ),
     (
         "a refusal from the service is treated as an ordinary failure instead of asking again",
@@ -268,6 +302,7 @@ MUTATIONS = [
         "              return;\n"
         "            }",
         "",
+        "and the page asks again against a body it fetches, a bounded number of times",
     ),
 ]
 
@@ -297,6 +332,44 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def rule_name(text):
+    """The name of a rule the probe reported, without the evidence a comparison carries.
+
+    The probe reports a comparison as `<name>: got <value>, want <value>`. The values are the
+    evidence, not the rule, so they are cut off — and the cut is made at a `: got ` whose tail
+    really is `<json>, want <json>`, so a name that itself contains those words is not truncated.
+    """
+    for match in reversed(list(re.finditer(re.escape(": got "), text))):
+        head = text[:match.start()].strip()
+        tail = text[match.end():]
+        cut = tail.rfind(", want ")
+        if cut < 0:
+            continue
+        try:
+            json.loads(tail[:cut])
+            json.loads(tail[cut + len(", want "):])
+        except ValueError:
+            continue
+        return head
+    return text
+
+
+def reported_rules(output):
+    """The rules the probe named as broken.
+
+    Two formats, as in `mutate-search-endpoint.py`: `  - <name>` and `FAIL <name>`. A case is
+    only caught when the rule it names is among them.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(rule_name(text[2:].strip()))
+        elif text.startswith("FAIL "):
+            names.append(rule_name(text[5:].strip()))
+    return names
+
+
 def main():
     code, output = run_probe()
     if code != 0:
@@ -308,7 +381,7 @@ def main():
     original = CLIENT.read_bytes()
     missed = []
     unnamed = []
-    for label, old, new in MUTATIONS:
+    for label, old, new, expect in MUTATIONS:
         text, newline = read_exact(CLIENT)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
@@ -327,12 +400,19 @@ def main():
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
             continue
-        first = next((line.strip() for line in output.splitlines() if line.strip().startswith("- ")), None)
-        if first is None:
+        names = reported_rules(output)
+        if not names:
             print(f"UNNAMED {label}: the probe failed without naming a rule")
             unnamed.append(label)
-        else:
-            print(f"caught {label}\n         -> {first}")
+            continue
+        # The case names the rule it is about, so the probe has to name THAT rule and not some
+        # other one that happened to go red in the same run: a probe that went red elsewhere has
+        # not shown that this guard owns this mutation.
+        if expect not in names:
+            print(f"MISSED {label}: the probe named {names} instead of {expect}")
+            missed.append(label)
+            continue
+        print(f"caught {label}\n         -> {expect}")
 
     if CLIENT.read_bytes() != original:
         print(f"NOT RESTORED {CLIENT}")
