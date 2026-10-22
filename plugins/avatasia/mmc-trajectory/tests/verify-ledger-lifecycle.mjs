@@ -69,6 +69,7 @@ const LIFECYCLE_FNS = [
   'releaseStaleGroups',
   'fillLedgerGroup',
   'holdLedgerHeight',
+  'heldLedgerHeight',
   'fillGroupRows',
   'firstVisibleRow',
   // The build itself, because the rule this file has to prove is about what the build
@@ -205,6 +206,7 @@ function buildHarness() {
   const s = h.sandbox;
   s.ledgerBuildToken = 1;
   s.build = { token: 1, at: 0, rows: 0, bands: 0, heights: null };
+  s.buildTotal = 0;
   s.groups = [];
   s.anchor = null;
   s.scrollY = 0;
@@ -214,7 +216,10 @@ function buildHarness() {
   s.turnKey = (turn) => 'k' + turn.index;
   s.buildTurnHead = () => makeEl('div');
   s.applyIntrinsicSize = () => 240;
-  s.calibrateRowHeights = () => ({ rows: 240 });
+  // The real calibration answers with the three heights it measured — the head, a row and a
+  // band — and the build prices a difference in rows with them. A stub that answers with any
+  // other shape is a stub of a different function.
+  s.calibrateRowHeights = () => ({ head: 40, row: 36, band: 60 });
   s.setLedgerProgress = () => {};
   s.restoreRowAnchor = () => {};
   s.flushDeferredPoll = () => {};
@@ -240,6 +245,9 @@ function rebuild(h, groups) {
   s.build.rows = 0;
   s.build.bands = 0;
   s.build.heights = null;
+  // The total the build reports while it is running. It lives in renderLedger() beside the
+  // build, and a window longer than one batch is the case that reads it.
+  s.buildTotal = groups.reduce((n, g) => n + g.entries.length, 0);
   s.buildStep();
 }
 
@@ -284,14 +292,14 @@ function sectionOf(h, index) {
     list.children.filter(isBand).length === 1 && list.children.filter(isRow).length === 2);
 }
 
-/* ---------- 2. a released group keeps the height it had ---------- */
+/* ---------- 2. a released group keeps the height it is given ---------- */
 
 {
   const h = harness();
   const s = h.sandbox;
   const section = makeEl('section');
   s.holdLedgerHeight(section, 3643);
-  assert('a released group keeps the height it had', section.style.minHeight === '3643px');
+  assert('a released group keeps the height it is given', section.style.minHeight === '3643px');
 }
 
 {
@@ -301,6 +309,74 @@ function sectionOf(h, index) {
   s.holdLedgerHeight(section, 0);
   assert('a group with no height to keep is not given one',
     section.style.minHeight === undefined);
+}
+
+/* ---------- 2b. the height a released group keeps is brought up to date with what it holds ---------- */
+
+/**
+ * Measure a group the way the observer does: fill it, and take the height it really has.
+ *
+ * The counts the height was measured at are recorded by the same call that records the height,
+ * so a test that sets them by hand is testing a state the shipped code never produces.
+ */
+function measureGroup(h, key, entries, bands, height) {
+  const s = h.sandbox;
+  const section = makeEl('section');
+  const list = makeEl('ul');
+  list.classes.add('row-list');
+  section.appendChild(list);
+  section.setAttribute('data-rows', 'released');
+  section.getBoundingClientRect = () => ({ height, width: 900, top: 0, bottom: height });
+  s.ledgerContent.set(section, { key, turn: { index: 1 }, entries, bands });
+  s.fillLedgerGroup(section);
+  return section;
+}
+
+/*
+ * The measured height is a measurement of a past. A group is keyed by its turn, and the turn
+ * keeps its key while its content changes — a late reply, a band from a compaction — so the
+ * height taken when the group was last on screen describes content that is no longer there.
+ * A group that keeps it unchanged is shorter than the content it is holding, and the
+ * document under the reader loses the rows that were added.
+ *
+ * The difference is priced locally: the measured height is kept, and only the rows that
+ * changed are charged at the calibrated row height. The three cases below are the three ways
+ * the content can differ — a row added, nothing changed, a band added — and the first two
+ * carry the same measured height, so a rule that cannot tell them apart is visible.
+ *
+ * The window has to be longer than one batch, because the first batch is priced from the
+ * prediction and the groups after it from the measurement. Twenty-five groups is one batch.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const groups = [];
+  for (let i = 0; i < 30; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
+  }
+  // Three groups measured for real, on three different contents: rows and no band, the same
+  // again, and rows with a band.
+  measureGroup(h, 'k26', entriesOf(3, 0, 'm26'), 0, 1000);
+  measureGroup(h, 'k27', entriesOf(3, 0, 'm27'), 0, 1000);
+  measureGroup(h, 'k28', entriesOf(2, 1, 'm28'), 1, 1000);
+  // And the content they hold now: a row added, nothing changed, a band added.
+  groups[25].entries = entriesOf(4, 0, 'g25');
+  groups[26].entries = entriesOf(3, 0, 'g26');
+  groups[27].entries = entriesOf(1, 2, 'g27');
+  // The reader walked away from all three a long time ago, so they do not hold their rows.
+  h.clock = 100000;
+
+  rebuild(h, groups);
+  s.buildStep();
+
+  assert('a released group brings the height it keeps up to date with the rows it gained',
+    sectionOf(h, 25).style.minHeight === '1036px');
+  assert('a released group whose content has not changed keeps the height it was measured at',
+    sectionOf(h, 26).style.minHeight === '1000px');
+  assert('a released group is charged for the band it gained',
+    sectionOf(h, 27).style.minHeight === '1060px');
+  assert('a rebuild does not change the height a group was measured at',
+    s.ledgerState.get('k26').height === 1000);
 }
 
 /* ---------- 3. a group the reader left gives its rows up, and the count is bounded ---------- */
@@ -443,8 +519,10 @@ function sectionOf(h, index) {
   section.classList.add('is-released');
   section.style.minHeight = '3643px';
 
-  const entries = entriesOf(4, 0, 'r');
-  s.ledgerContent.set(section, { key: 'g1', turn: { index: 1 }, entries, bands: 0 });
+  // Three rows and a band: four rows on screen, and a band that is priced as a band rather
+  // than as a row — so the counts the height was measured at are not the same number twice.
+  const entries = entriesOf(3, 1, 'r');
+  s.ledgerContent.set(section, { key: 'g1', turn: { index: 1 }, entries, bands: 1 });
   s.fillLedgerGroup(section);
 
   assert('a group the reader reaches puts its rows back', list.children.length === 4);
@@ -455,6 +533,8 @@ function sectionOf(h, index) {
     section.style.minHeight === '');
   assert('a group that has its rows back is remembered as live',
     s.ledgerState.get('g1').live === true);
+  assert('the height a group was measured at records what it was holding',
+    s.ledgerState.get('g1').heightRows === 4 && s.ledgerState.get('g1').heightBands === 1);
 }
 
 {
@@ -547,6 +627,11 @@ assert('the build asks for no rows for a group it is not holding',
   /fillGroupRows\(holds \? list : null, group\)/.test(buildStepSrc));
 assert('the build does not write the reader-idle lease',
   !/lastSeen\s*=/.test(buildStepCode) && !/\.live\s*=/.test(buildStepCode));
+// The measured height belongs to the observer, for the same reason the lease does: it is
+// taken when the group is really laid out. A build that stamped one would be writing down a
+// height it never measured, and the next rebuild would read its own guess back as one.
+assert('the build does not write a measured height',
+  !/\.height\s*=/.test(buildStepCode));
 assert('a group the build is not holding is given a height to keep',
   /if \(!holds\) \{[\s\S]{0,400}?holdLedgerHeight\(section,/.test(buildStepSrc));
 assert('a group the build is holding says so',

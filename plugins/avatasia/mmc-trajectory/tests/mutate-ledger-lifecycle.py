@@ -89,10 +89,10 @@ MUTATIONS = [
     # the browser has skipped, and a group near the viewport is rendered — so without an
     # explicit height the box collapses to its 39 px header and the document shrinks under
     # the reader.
-    ("a released group loses the height it had",
+    ("a released group loses the height it is given",
      [("        section.style.minHeight = Math.round(height) + 'px';\n",
        "        section.style.minHeight = '';\n")],
-     "a released group keeps the height it had"),
+     "a released group keeps the height it is given"),
 
     # A group with no measured height gets no reserved height either. Writing 0px would be
     # worse than writing nothing: a group sized 0px can never come back into the viewport, so
@@ -150,7 +150,7 @@ MUTATIONS = [
 
     # A group the build is not holding is given a height to keep.
     ("a group the build is not holding is given no height to keep",
-     [("              holdLedgerHeight(section, known > 0 ? known : predicted);\n", "")],
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n", "")],
      "a group the build is not holding is given a height to keep"),
 
     # The two states are what the rest of the page reads: the build says which, and the
@@ -199,6 +199,49 @@ MUTATIONS = [
      [("        ledgerState.clear();\n        ledgerContent.clear();\n",
        "        ledgerContent.clear();\n")],
      "the groups of the session being left are forgotten with it"),
+
+    # The height a released group keeps has to describe the content it holds now. A group is
+    # keyed by its turn, and the turn keeps its key while its content changes — a late reply, a
+    # band from a compaction — so the height taken when the group was last on screen describes
+    # content that is no longer there. Without the difference being charged, the group keeps
+    # the height of a content it no longer holds, and the document under the reader comes up
+    # short by exactly the rows that were added.
+    ("a released group does not bring the height it keeps up to date",
+     [("        var held = state.height + addedRows * heights.row + addedBands * heights.band;\n",
+       "        var held = state.height;\n")],
+     "a released group brings the height it keeps up to date with the rows it gained"),
+
+    # A height that does not say what it was a measurement of cannot be brought up to date:
+    # there is no difference to charge, and the group keeps a height that describes nothing.
+    ("the height a group was measured at stops recording what it was holding",
+     [("        state.heightRows = group.entries.length;\n"
+       "        state.heightBands = group.bands || 0;\n",
+       "")],
+     "the height a group was measured at records what it was holding"),
+
+    # A band is not a row. It has its own height, and a group that gained one is taller by a
+    # band and not by a row — so a band that is not counted is a band that is not charged.
+    ("the band a group was measured at stops being recorded",
+     [("        state.heightBands = group.bands || 0;\n", "        state.heightBands = 0;\n")],
+     "a released group is charged for the band it gained"),
+
+    # The measured height belongs to the observer: it is taken when the group is really laid
+    # out. A build that stamped one would be writing down a height it never measured, and the
+    # next rebuild would read its own guess back as if it were a measurement.
+    ("the build writes the height it computed",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n",
+       "              ledgerStateOf(key).height = predicted;\n"
+       "              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n")],
+     ["a rebuild does not change the height a group was measured at",
+      "the build does not write a measured height"]),
+
+    # A group that has been on screen keeps the height it was measured at. The prediction is
+    # priced from medians, and a group's real height runs to several times the median one, so
+    # falling back on the prediction trades a real height for an average one.
+    ("a released group is given the prediction instead of the height it was measured at",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n",
+       "              holdLedgerHeight(section, predicted);\n")],
+     "a released group whose content has not changed keeps the height it was measured at"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
