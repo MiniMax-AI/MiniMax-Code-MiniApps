@@ -18,6 +18,7 @@ import {
   normaliseWhitespace,
   readSegmentHits,
   scanSegment,
+  segmentVersions,
   searchSurfaceOf,
 } from './search-segments.mjs';
 
@@ -401,6 +402,85 @@ export function stampRecordVersions(payload, locators) {
     }
   }
   return payload;
+}
+
+/**
+ * The identity of a SET of records: a fold over their version tokens, in the order they are shown.
+ *
+ * A version token says 「this one record is this one version」. It does not say anything about a
+ * set of them, and a set is what a search answer is about: an answer says 「these records match and
+ * the rest do not」, and the part that matters to the reader is the part it does NOT name.
+ *
+ * Two properties, and both of them are the point:
+ *
+ *  - **It is stable under APPEND.** A session that grows does not change the records it already
+ *    has, so the fold over the first N records is the same before and after an append. This is
+ *    the same reason the version token is built from the line's digest rather than from the body:
+ *    a body-level identity (an ETag, a digest of the whole body) changes every time the session
+ *    is written to, and then every answer stops applying every few seconds — the common case
+ *    would be the broken one.
+ *  - **It changes when a record is rewritten.** The token is a digest of that record's own bytes,
+ *    so a record whose text was replaced under the page has a different token, and the fold over
+ *    the same positions has a different answer.
+ *
+ * The fold is ordered, so a set that was reordered is a different set. Two lanes of 32 bits each:
+ * a collision is not a thing a reader can notice, and one lane of 32 is one thing a reader could
+ * notice.
+ *
+ * @param {Array<string | null | undefined>} versions the records' version tokens, in order
+ * @returns {string} 16 hex characters
+ */
+export function recordSetFingerprint(versions) {
+  let h1 = 0x811c9dc5 >>> 0;
+  let h2 = 0x9e3779b9 >>> 0;
+  const list = Array.isArray(versions) ? versions : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const text = typeof list[i] === 'string' ? list[i] : '';
+    for (let j = 0; j < text.length; j += 1) {
+      const code = text.charCodeAt(j);
+      h1 = Math.imul(h1 ^ code, 16777619) >>> 0;
+      h2 = Math.imul(h2 ^ code, 2246822519) >>> 0;
+    }
+    // A separator, so that ["ab", "c"] and ["a", "bc"] are two different sets.
+    h1 = Math.imul(h1 ^ 0x1f, 16777619) >>> 0;
+    h2 = Math.imul(h2 ^ 0x1f, 2246822519) >>> 0;
+  }
+  return hex8(h1) + hex8(h2);
+}
+
+/**
+ * Eight hex characters, most significant first.
+ * @param {number} value
+ * @returns {string}
+ */
+function hex8(value) {
+  return (value >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * The version tokens of a payload's records, in the order the ledger shows them.
+ *
+ * The order is the payload's, not the index order: the ledger draws turn by turn, and a fold over
+ * a different order is a different answer to 「这批记录是哪一批」.
+ *
+ * @param {{ turns?: Array<any> }} payload
+ * @param {number} [limit] stop after this many records
+ * @returns {Array<string>}
+ */
+export function payloadRecordVersions(payload, limit) {
+  /** @type {Array<string>} */
+  const out = [];
+  const cap = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const records = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      out.push(typeof record.v === 'string' ? record.v : '');
+      if (out.length >= cap) return out;
+    }
+  }
+  return out;
 }
 
 /**
@@ -4505,6 +4585,25 @@ export async function start(context) {
     const needle = foldNeedle(asked);
     const { entry, filter } = ctx;
 
+    // WHICH BODY THE ANSWER IS ABOUT. The page says which body that is: the records it has, in
+    // order, as a fingerprint. The service folds its own records the same way and compares, and
+    // refuses to answer when the two are not the same set.
+    //
+    // Without this the service can only answer about the body on disk, and the page then filters
+    // its own body with an answer about another one. What hurts is the part the answer does NOT
+    // name: a record this body has and that body does not match gets dimmed as if it did not
+    // contain the needle, with no error anywhere, and the reader is told the record is not there.
+    //
+    // The count matters as much as the fingerprint. The fold is over the FIRST N records, because
+    // the page is behind whenever the session grew since its last poll — and a session that grew
+    // has MORE records, not different ones, so the first N are still the same N.
+    const count = Number.parseInt(url.searchParams.get('n') ?? '', 10);
+    const askedFingerprint = (url.searchParams.get('fp') ?? '').trim();
+    if (!Number.isInteger(count) || count < 0 || !/^[0-9a-f]{16}$/.test(askedFingerprint)) {
+      sendError(response, 400, 'search_fingerprint_required', '会话已更新，请重新加载后再搜索');
+      return;
+    }
+
     let walked;
     try {
       walked = await collectLineage(entry, ctx.generations);
@@ -4538,8 +4637,15 @@ export async function start(context) {
     // Before anything expensive. The lineage walk above is stat-driven and cheap; everything after
     // this line is the rebuild, and on the largest session measured here it was 3.7 seconds for a
     // search that returns at most 500 rows.
-    const onDisk = await searchFromArtifacts({ sessionKey, viewKey, files, needle });
+    const onDisk = await searchFromArtifacts({ sessionKey, viewKey, files, needle, count });
     if (onDisk !== null) {
+      // The segments ARE the body this answer is about, so their records decide whether it is
+      // about the body the page is showing. The fold is over the first N, for the reason given
+      // above: a page that is behind has fewer records, not different ones.
+      if (onDisk.fingerprint !== askedFingerprint) {
+        sendError(response, 409, 'search_version_mismatch', '该记录所在的版本已变化，请重新加载会话');
+        return;
+      }
       sendAnswer(onDisk.hits, onDisk.total);
       return;
     }
@@ -4570,6 +4676,13 @@ export async function start(context) {
       if (locator !== undefined) locatorsByRecord.set(recordIndex, locator);
     }
     stampRecordVersions(payload, locatorsByRecord);
+
+    // The same check, on the same records, on the path that rebuilt them. The fold is over the
+    // first N records of THIS body, which is what the page folded over the first N of its own.
+    if (recordSetFingerprint(payloadRecordVersions(payload, count)) !== askedFingerprint) {
+      sendError(response, 409, 'search_version_mismatch', '该记录所在的版本已变化，请重新加载会话');
+      return;
+    }
 
     /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>} */
     const hits = [];
@@ -4617,12 +4730,17 @@ export async function start(context) {
    * The session's record index is NOT read. Each segment line carries its own answer, so a needle
    * matching 14 records out of 36,525 reads those 14 lines rather than parsing 34.2 MB of index.
    *
-   * @param {{ sessionKey: string, viewKey: string, files: Array<any>, needle: string }} input
+   * @param {{ sessionKey: string, viewKey: string, files: Array<any>, needle: string, count: number }} input
    */
-  const searchFromArtifacts = async ({ sessionKey, viewKey, files, needle }) => {
+  const searchFromArtifacts = async ({ sessionKey, viewKey, files, needle, count }) => {
     /** @type {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null }>} */
     const hits = [];
     let total = 0;
+    // The version tokens of the records these segments cover, in the order the ledger shows them.
+    // They are what the fingerprint is folded over, and the fingerprint is what says whether this
+    // answer is about the body the page is showing.
+    /** @type {Array<string>} */
+    const versions = [];
     // `files` is the lineage walk's own output, so a generation that is no longer in the lineage
     // has no entry here and no segment is read — a leftover on disk cannot keep it searchable.
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
@@ -4638,12 +4756,20 @@ export async function start(context) {
         total += 1;
         if (hits.length < MAX_SEARCH_HITS) hits.push(hit);
       }
+      // The versions of this generation's records, up to the number the page asked about. Read
+      // from the surface the segment already holds rather than from a second copy of it: the
+      // version is on every line, and a second copy would be a second thing to keep in step.
+      if (versions.length < count) {
+        for (const version of segmentVersions(segment.surface, count - versions.length)) {
+          versions.push(version);
+        }
+      }
     }
     // Ascending ledger order, because the segments were read oldest generation first and a hit's
     // place in that list is what the page scrolls to. Sorting by the index itself is the order the
     // rebuild produces, and two answers that differ only in order are two answers.
     hits.sort((a, b) => a.index - b.index);
-    return { hits, total };
+    return { hits, total, fingerprint: recordSetFingerprint(versions) };
   };
 
   /**

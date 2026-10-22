@@ -61,7 +61,7 @@ export const SEGMENT_SCHEMA_VERSION = 4;
  */
 export const SEARCH_FIELDS = ['summary', 'text', 'result', 'thinking', 'toolName'];
 
-/** @typedef {{ fileName: string, generation: number | null, size: number, revision: string | null, truncated?: boolean }} SegmentSource */
+/** @typedef {{ fileName: string, generation: number | null, size: number, mtimeMs?: number | null, revision: string | null, truncated?: boolean }} SegmentSource */
 
 /** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, surfaceDigest: string, source: SegmentSource[] }} SegmentManifest */
 
@@ -452,6 +452,61 @@ export function createSegmentStore(root) {
 }
 
 /**
+ * The version tokens of a segment's records, in order, up to a limit.
+ *
+ * Every line of a segment carries the version of the record it is, so the versions are already
+ * there — this reads them out rather than keeping a second copy of them. The reading is by hand
+ * instead of by parsing each line's whole answer, because a search over a big segment would then
+ * parse every line it does not need; `tests/verify-search-segments.mjs` pins that this and the
+ * parsed answer agree.
+ *
+ * @param {string} surface
+ * @param {number} [limit] stop after this many records
+ * @returns {Array<string>}
+ */
+export function segmentVersions(surface, limit) {
+  /** @type {Array<string>} */
+  const out = [];
+  if (typeof surface !== 'string' || surface === '') return out;
+  const wanted = Number.isInteger(limit) && limit > 0 ? limit : Infinity;
+  let start = 0;
+  while (start <= surface.length && out.length < wanted) {
+    const nl = surface.indexOf('\n', start);
+    const end = nl === -1 ? surface.length : nl;
+    const tab = surface.indexOf('\t', start);
+    if (tab >= 0 && tab <= end) out.push(versionInAnswer(surface.slice(start, tab)));
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  return out;
+}
+
+/**
+ * The version token inside one line's answer.
+ *
+ * The answer is JSON and the version is one of its fields. Reading that one field by name is
+ * what keeps a search from parsing every line of a segment; `buildSegment` writes the field, and
+ * the guard pins that the two readings agree.
+ *
+ * @param {string} answer the JSON prefix of one segment line
+ * @returns {string}
+ */
+function versionInAnswer(answer) {
+  const at = answer.indexOf('"v":"');
+  if (at < 0) return '';
+  const from = at + 5;
+  let end = from;
+  while (end < answer.length) {
+    const ch = answer.charAt(end);
+    // A backslash escapes the next character, so it cannot be the end of the value.
+    if (ch === '\\') { end += 2; continue; }
+    if (ch === '"') break;
+    end += 1;
+  }
+  return answer.slice(from, end);
+}
+
+/**
  * Whether the generation a segment was built from is still the generation on disk.
  *
  * Identity, not mtime: a sealed file is not written to, and a reader that treated a touch as a
@@ -470,6 +525,15 @@ export function sameSource(stored, live) {
     if (a.fileName !== b.fileName) return false;
     if (a.generation !== b.generation) return false;
     if (a.size !== b.size) return false;
+    // The mtime is this process's idea of a file's identity: the parsed-rows cache and the
+    // trajectory entry both key on (size, mtime), so a file that was rewritten IN PLACE — the same
+    // length, different bytes — is a different file to everything else in here. Leaving the mtime
+    // out of this comparison is what let a same-size rewrite keep a segment built from the old
+    // bytes, and the search then answered from those bytes as if they were the current ones.
+    //
+    // A sealed file is not written to, so its mtime does not move on its own; comparing it costs
+    // a rebuild only when something touched a file it had no reason to touch.
+    if (a.mtimeMs !== b.mtimeMs) return false;
     // Same reason as in the index: a generation read short by our own cap produces a segment that
     // covers a prefix, while `size` is the whole file. Trusting it would answer with a smaller
     // `total` and say nothing about being wrong.

@@ -1409,6 +1409,47 @@
         content-visibility: auto;
       }
 
+      /* A group that is holding its height but not its rows.
+
+         The rows are gone, so the box is empty — and an empty box is a box of no height, which is
+         how the document under the reader loses the height of everything they have scrolled past.
+         The height is written onto the group from JavaScript, from the height it had while it was
+         holding its rows, and it is the only thing that holds the box while the browser is
+         RENDERING the group rather than skipping it: `contain-intrinsic-size` sizes an element
+         the browser has skipped, and a group near the viewport is rendered.
+
+         Measured, on a real session of 47,937 records: releasing the rows of the groups around
+         the viewport took the scroll height down by 79,288 px, and releasing the viewport's own
+         group took another 257,378 px. Pinned by tests/verify-ledger-lifecycle.mjs. */
+      .turn-group.is-released .row-list {
+        min-height: 2px;
+      }
+
+      /* The group is on its way back. The bar stands where the rows are coming, so the reader
+         sees a line rather than a hole; the group's own height is held by its min-height, so the
+         bar costs the document nothing. */
+      .turn-group.is-released .row-list::after {
+        content: '';
+        display: block;
+        height: 2px;
+        margin: 10px 0;
+        border-radius: 1px;
+        background: var(--mcode-accent, currentColor);
+        opacity: .3;
+        animation: ledger-release 1.2s ease-in-out infinite;
+      }
+
+      @keyframes ledger-release {
+        0%, 100% { opacity: .1; transform: scaleX(.3); }
+        50% { opacity: .55; transform: scaleX(1); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .turn-group.is-released .row-list::after {
+          animation: none;
+        }
+      }
+
       .turn-head {
         position: sticky;
         /* Below every band above it, measured. It used to pin at 0 with z-index 2 and simply got
@@ -4105,27 +4146,86 @@
       }
 
       /**
-       * The version of one record of the body on screen.
+       * The identity of a SET of records: a fold over their version tokens, in the order they are
+       * shown.
        *
-       * The version is what makes index N in this body the same record as index N in another one.
-       * A transcript rewritten under a running page leaves the indexes alone and changes the
-       * records behind them, so the version is the only thing that tells the two apart — and a
-       * request that names an index has to carry it, or the service cannot tell which of the two
-       * records it is being asked about.
+       * A version token says 「this one record is this one version」. A search answer is about a SET
+       * of them — it says 「these match and the rest do not」 — and the part that matters to the
+       * reader is the part it does NOT name. So the set needs an identity of its own, and it has to
+       * be one the service can compute over ITS records and compare.
        *
-       * @param {number} index
-       * @returns {string} the version, or '' when this body carries none
+       * Two properties, and both of them are the point:
+       *
+       *  - **Stable under APPEND.** A session that grows does not change the records it already
+       *    has, so the fold over the first N records is the same before and after an append. A
+       *    body-level identity (an ETag, a digest of the whole body) changes every time the session
+       *    is written to, and then every answer stops applying every few seconds — the common case
+       *    would be the broken one.
+       *  - **Different when a record is rewritten.** The token is a digest of that record's own
+       *    bytes, so a record whose text was replaced under the page has a different token, and the
+       *    fold over the same positions has a different answer.
+       *
+       * The fold is ordered, so a set that was reordered is a different set. Two lanes of 32 bits
+       * each. This is the same function as `recordSetFingerprint` in the service, and
+       * `tests/client-check.mjs` pins that the two agree — two implementations of one question is
+       * two answers, and the difference between them is nobody's to explain.
+       *
+       * @param {Array<string>} versions
+       * @returns {string} 16 hex characters
        */
-      function displayedRecordVersion(index) {
+      function recordSetFingerprint(versions) {
+        var h1 = 0x811c9dc5 >>> 0;
+        var h2 = 0x9e3779b9 >>> 0;
+        var list = Array.isArray(versions) ? versions : [];
+        for (var i = 0; i < list.length; i += 1) {
+          var text = typeof list[i] === 'string' ? list[i] : '';
+          for (var j = 0; j < text.length; j += 1) {
+            var code = text.charCodeAt(j);
+            h1 = Math.imul(h1 ^ code, 16777619) >>> 0;
+            h2 = Math.imul(h2 ^ code, 2246822519) >>> 0;
+          }
+          // A separator, so that ["ab", "c"] and ["a", "bc"] are two different sets.
+          h1 = Math.imul(h1 ^ 0x1f, 16777619) >>> 0;
+          h2 = Math.imul(h2 ^ 0x1f, 2246822519) >>> 0;
+        }
+        return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+      }
+
+      /**
+       * The version tokens of the records on screen, in the order they are shown.
+       *
+       * The COUNT comes with them, because the service folds over ITS first N records and N is
+       * what says which of its records the fold is about. A page that is behind because the
+       * session grew has FEWER records, not different ones, so its first N are still the same N.
+       *
+       * @returns {Array<string>}
+       */
+      function displayedRecordVersions() {
+        var out = [];
         var flat = Array.isArray(state.flat) ? state.flat : [];
         for (var i = 0; i < flat.length; i++) {
           var entry = flat[i];
           var record = entry && entry.record ? entry.record : entry;
-          if (record && record.index === index) {
-            return typeof record.v === 'string' ? record.v : '';
-          }
+          out.push(record && typeof record.v === 'string' ? record.v : '');
         }
-        return '';
+        return out;
+      }
+
+      /**
+       * The version of one record, as the record itself carries it.
+       *
+       * The record, and NOT the body on screen. A read that comes back 「this session is not
+       * cached」 reloads the body and asks again — and the body it reloads is a DIFFERENT one, so a
+       * version read off the screen at that moment belongs to the new body's record, and the retry
+       * would be asking about a different record than the one the reader opened. The record the
+       * reader opened is the one that carries the answer to 「which record is this」, so it is the
+       * one that carries the version.
+       *
+       * @param {Record<string, any>} record
+       * @returns {string} the version, or '' when the record carries none
+       */
+      function recordVersionOf(record) {
+        return record && typeof record.v === 'string' ? record.v : '';
       }
 
       /**
@@ -4357,6 +4457,45 @@
        *
        * @param {string} needle
        */
+      /**
+       * An answer that is not about the body on screen.
+       *
+       * One place, because there are two ways to find that out, and they mean the same thing: a
+       * hit whose position holds a different record, and a service that says the body it searched
+       * is not this one. Both mean the answer cannot be installed, and both are answered the same
+       * way — the body is fetched once more and the same question is put again against it.
+       *
+       * Bounded, because a session that is being written to keeps moving: after a couple of tries
+       * the page stops chasing it, says that the answer does not apply, and the next poll's own
+       * re-run takes over.
+       *
+       * @returns {boolean} whether the page is going to ask again
+       */
+      function searchAnswerDoesNotApply() {
+        if (state.searchRefresh < 2) {
+          state.searchRefresh += 1;
+          state.searchError = null;
+          state.searchPending = true;
+          // The whole body, not a tail: a delta carries the records after the cursor, and the
+          // record that moved is not one of them.
+          state.since = 0;
+          state.sinceFor = '';
+          state.etag = '';
+          state.etagFor = '';
+          fetchTrajectory(false).then(function () {
+            runSearch(state.query);
+          }, function () {
+            state.searchPending = false;
+            state.searchError = 'search_version_mismatch';
+            renderLedger();
+          });
+          return true;
+        }
+        state.searchError = 'search_version_mismatch';
+        renderLedger();
+        return false;
+      }
+
       function runSearch(needle) {
         if (searchController) searchController.abort();
         var asked = String(needle == null ? '' : needle).trim();
@@ -4387,9 +4526,17 @@
         // are two different things, and a selection whose load failed leaves the old body up.
         var session = displayedSessionParam();
         var generation = displayedGeneration();
+        // WHICH BODY. The answer is about a SET of records, and the part of it that matters to
+        // the reader is the part it does not name: a record this body has and the other body does
+        // not match would be dimmed as if it did not contain the needle, with no error anywhere.
+        // So the request says which set it is about — how many records the page has, and a
+        // fingerprint of their versions — and the service answers only if it searched THAT set.
+        var versions = displayedRecordVersions();
         var url = '/api/trajectory/search?session=' + session
           + '&q=' + encodeURIComponent(asked)
-          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)));
+          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)))
+          + '&n=' + versions.length
+          + '&fp=' + encodeURIComponent(recordSetFingerprint(versions));
 
         fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
           .then(function (response) {
@@ -4467,30 +4614,10 @@
               applicable.push(hit);
             }
             if (wrongVersion) {
-              // Bounded, because a session that is being written to keeps moving: after a couple
-              // of tries the page stops chasing it, says that the answer does not apply, and the
-              // next poll's own re-run takes over.
-              if (state.searchRefresh < 2) {
-                state.searchRefresh += 1;
-                state.searchError = null;
-                state.searchPending = true;
-                // The whole body, not a tail: a delta carries the records after the cursor, and
-                // the record that moved is not one of them.
-                state.since = 0;
-                state.sinceFor = '';
-                state.etag = '';
-                state.etagFor = '';
-                fetchTrajectory(false).then(function () {
-                  runSearch(state.query);
-                }, function () {
-                  state.searchPending = false;
-                  state.searchError = 'search_version_mismatch';
-                  renderLedger();
-                });
-                return;
-              }
-              state.searchError = 'search_version_mismatch';
-              renderLedger();
+              // The whole answer is refused rather than partly installed, because the answer is
+              // about one body and the page is showing another. The body is then fetched once
+              // more and the same question is put again against the current body.
+              searchAnswerDoesNotApply();
               return;
             }
             state.searchHits = searchHitSet(applicable);
@@ -4519,6 +4646,13 @@
             searchController = null;
             state.searchPending = false;
             if (error && error.name === 'AbortError') return;
+            // The service refused because the body it searched is not the one on screen. That is
+            // the same thing a hit with the wrong version says, and it is answered the same way:
+            // fetch the body again and ask the question against it.
+            if (error && error.code === 'search_version_mismatch') {
+              searchAnswerDoesNotApply();
+              return;
+            }
             // A search that could not be answered leaves the previous answer standing rather than
             // emptying the table: 「没搜到」 and 「没搜成」 are different, and only one of them is
             // true. The count line carries the reason.
@@ -6850,6 +6984,231 @@
         return state.limit;
       }
 
+      /* ---------------- ledger group lifecycle ---------------- */
+
+      /**
+       * How long a group may keep its rows after the reader has left it.
+       *
+       * Long enough that scrolling back and forth over the same stretch does not rebuild it
+       * every time, short enough that the rows of a session the reader has moved past are not
+       * held for the rest of the session.
+       */
+      var LEDGER_IDLE_MS = 15000;
+
+      /**
+       * How many groups may hold their rows at once.
+       *
+       * The cap is what makes the memory bounded rather than merely reduced. A reader who
+       * scrolls through three hundred groups in a minute has been on all of them, and the idle
+       * timeout alone would not release them fast enough to stop it. Past the cap the oldest one
+       * goes, which is the order the reader would choose.
+       */
+      var LEDGER_LIVE_GROUPS = 6;
+
+      /**
+       * What is known about each turn group: whether it is holding its rows, when the reader was
+       * last on it, and how tall it was.
+       *
+       * Keyed by the turn's key, so it survives the poll that rebuilds the table. The DOM is
+       * thrown away and rebuilt every two and a half seconds; this is what carries the reader's
+       * place in it across that, and it is why the reader does not have to start again at the top
+       * of the session on every tick.
+       *
+       * @type {Map<string, {live: boolean, lastSeen: number, height: number}>}
+       */
+      var ledgerState = new Map();
+
+      /**
+       * The group each section was built from.
+       *
+       * A section that scrolls into view has to be filled, and filling it needs the records it
+       * stands for. The table is rebuilt on every poll, so this is rebuilt with it — a section
+       * from the previous table is not in here any more, and filling it would put rows into a
+       * table that no longer exists.
+       *
+       * @type {Map<HTMLElement, {key: string, turn: any, entries: any[]}>}
+       */
+      var ledgerContent = new Map();
+
+      /**
+       * The observer that fills a group when the reader reaches it.
+       *
+       * One observer for the whole table: the sections are rebuilt on every poll, so an observer
+       * per section would have to be rebuilt with them.
+       */
+      var ledgerObserver = null;
+
+      /**
+       * The state of one group, created on first sight.
+       *
+       * @param {string} key
+       * @returns {{live: boolean, lastSeen: number, height: number}}
+       */
+      function ledgerStateOf(key) {
+        var state = ledgerState.get(key);
+        if (!state) {
+          state = { live: false, lastSeen: 0, height: 0 };
+          ledgerState.set(key, state);
+        }
+        return state;
+      }
+
+      /**
+       * Whether a group should be holding its rows right now.
+       *
+       * Three things make a group live: the reader is on it, the reader was on it recently and
+       * the idle timeout has not passed, and it is the first group of the window — which is where
+       * the reader arrives, and the only source of the heights every other group is predicted
+       * from.
+       *
+       * @param {string} key
+       * @param {boolean} isFirst
+       * @returns {boolean}
+       */
+      function ledgerHoldsRows(key, isFirst) {
+        if (isFirst) return true;
+        var state = ledgerState.get(key);
+        if (!state || !state.live) return false;
+        return Date.now() - state.lastSeen < LEDGER_IDLE_MS;
+      }
+
+      /**
+       * Decide which groups give up their rows.
+       *
+       * Two rules, and the order matters: a group the reader has left goes when the idle
+       * timeout has passed, and when more groups are live than the cap allows, the oldest goes
+       * first. The second is what bounds the memory.
+       *
+       * This only decides. The rows themselves are taken away by the next build, which is the
+       * one place that writes them, so there is no second writer of the rows and nothing to keep
+       * in step.
+       *
+       * @param {string} keepKey the group the reader is on, which is never released
+       */
+      function releaseStaleGroups(keepKey) {
+        var now = Date.now();
+        var live = [];
+        ledgerState.forEach(function (state, key) {
+          if (!state.live) return;
+          if (key === keepKey) {
+            live.push({ key: key, at: state.lastSeen });
+            return;
+          }
+          if (now - state.lastSeen >= LEDGER_IDLE_MS) {
+            state.live = false;
+            return;
+          }
+          live.push({ key: key, at: state.lastSeen });
+        });
+        if (live.length <= LEDGER_LIVE_GROUPS) return;
+        live.sort(function (a, b) { return a.at - b.at; });
+        for (var i = 0; i < live.length - LEDGER_LIVE_GROUPS; i += 1) {
+          var state = ledgerState.get(live[i].key);
+          if (state) state.live = false;
+        }
+      }
+
+      /**
+       * Put a group's rows back into it.
+       *
+       * The group is in view, so this is what the reader is about to read, and the rows go in
+       * before the next paint — so there is no frame in which the group is empty.
+       *
+       * @param {HTMLElement} section
+       */
+      function fillLedgerGroup(section) {
+        var group = ledgerContent.get(section);
+        if (!group) return;
+        var state = ledgerStateOf(group.key);
+        state.live = true;
+        state.lastSeen = Date.now();
+        if (section.getAttribute('data-rows') === 'live') return;
+        var list = section.querySelector('ul.row-list');
+        if (!list) return;
+        fillGroupRows(list, group);
+        section.setAttribute('data-rows', 'live');
+        section.classList.remove('is-released');
+        section.style.minHeight = '';
+        // The height it really has, now that it is laid out for real. A group the browser has
+        // skipped measures by its own contain-intrinsic-size, so this reads the prediction back
+        // rather than the truth — which is why it is the remembered height and not the only one.
+        sizeBuiltGroup(section);
+        state.height = Math.round(section.getBoundingClientRect().height);
+      }
+
+      /**
+       * Watch the groups, so a group the reader scrolls to gets its rows.
+       *
+       * The observer is disconnected and rebuilt on every poll, because the sections are: a
+       * section from the previous table is not in `ledgerContent` any more.
+       */
+      function watchLedgerGroups() {
+        if (!ledgerObserver) {
+          ledgerObserver = new IntersectionObserver(function (entries) {
+            for (var i = 0; i < entries.length; i += 1) {
+              if (!entries[i].isIntersecting) continue;
+              fillLedgerGroup(entries[i].target);
+            }
+          });
+        } else {
+          ledgerObserver.disconnect();
+        }
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        for (var i = 0; i < sections.length; i += 1) ledgerObserver.observe(sections[i]);
+      }
+
+      /**
+       * Hold a group's height while it is not holding its rows.
+       *
+       * `contain-intrinsic-size` sizes a group the browser has skipped, and `min-height` sizes
+       * one it is rendering. A group near the viewport is rendered, so it needs the second, and
+       * without it the document under the reader loses the height of everything they have
+       * scrolled past — measured at 79,288 px for the groups around the viewport, and 257,378 px
+       * more for the viewport's own group.
+       *
+       * @param {HTMLElement} section
+       * @param {number} height
+       */
+      function holdLedgerHeight(section, height) {
+        if (!(height > 0)) return;
+        section.style.minHeight = Math.round(height) + 'px';
+      }
+
+      /**
+       * Build a group's rows into its list.
+       *
+       * The rows of a group are built in one place, and the table has two writers for them: the
+       * build, which makes the groups the reader is on, and the observer, which fills a group the
+       * reader has just scrolled to. A second copy of this loop would be two definitions of what
+       * a row is, and the page has already paid for that once.
+       *
+       * A `null` list counts the compaction bands without building anything, which is what a
+       * group that is not holding its rows needs: its height is predicted from how many bands it
+       * has, and a prediction that ignored them would be short by every band in it.
+       *
+       * @param {HTMLElement|null} list
+       * @param {{turn: any, entries: any[]}} group
+       * @returns {number} how many of the entries are compaction bands
+       */
+      function fillGroupRows(list, group) {
+        var rails = list ? railStates(group.entries) : null;
+        var bands = 0;
+        for (var j = 0; j < group.entries.length; j += 1) {
+          var isBand = group.entries[j].record.kind === 'compaction';
+          if (isBand) bands += 1;
+          if (!list) continue;
+          var item = el('li');
+          if (isBand) {
+            item.className = 'compaction-cell';
+            item.appendChild(buildCompactionBand(group.entries[j]));
+          } else {
+            item.appendChild(buildRow(group.entries[j], rails[j]));
+          }
+          list.appendChild(item);
+        }
+        return bands;
+      }
+
       /* ---------------- batched row build ---------------- */
 
       /**
@@ -6974,6 +7333,10 @@
            only fixes the first build after a page load. This line is what fixes the rest. */
         ledger.classList.remove('is-skipping-offscreen');
         clear(ledger);
+        // The sections the last build made are gone with them, and the map that says which group
+        // each one stands for has to go with them: a section that is no longer in the table must
+        // not be filled when the observer reports it as in view.
+        ledgerContent.clear();
 
         if (state.loading) {
           ledger.appendChild(buildSkeleton());
@@ -7119,6 +7482,11 @@
         var buildTotal = 0;
         for (var b = 0; b < groups.length; b += 1) buildTotal += groups[b].entries.length;
 
+        // The groups the reader has left give up their rows, and the ones past the cap give them
+        // up oldest first. Decided here and applied by this build — the one place that writes
+        // rows — so there is no second writer to keep in step with this one.
+        if (groups.length) releaseStaleGroups(turnKey(groups[0].turn));
+
         function buildStep() {
           // A newer renderLedger() owns the ledger now. Stop without touching it: the rows half
           // built here belong to a table that no longer exists, and the exit that replaced it has
@@ -7134,18 +7502,24 @@
             var list = el('ul', 'row-list');
             // Every entry that survived the filters becomes a row. There is no second pass
             // that hides anything, so what is on screen is exactly what was selected.
-            var rails = railStates(group.entries);
-            var bands = 0;
-            for (var j = 0; j < group.entries.length; j += 1) {
-              var item = el('li');
-              if (group.entries[j].record.kind === 'compaction') {
-                item.className = 'compaction-cell';
-                item.appendChild(buildCompactionBand(group.entries[j]));
-                bands += 1;
-              } else {
-                item.appendChild(buildRow(group.entries[j], rails[j]));
-              }
-              list.appendChild(item);
+            //
+            // The rows are built for the groups the reader is on and released for the rest. What
+            // the reader gives up is the DOM, which is the whole cost: measured on a session of
+            // 47,937 records, the rows of 「显示全部」 are 438,986 nodes and about 470 MB of the
+            // renderer's private memory. What the reader does not give up is the height — a
+            // released group keeps the box it had, so the document under them does not change
+            // size when they scroll.
+            var key = turnKey(group.turn);
+            var holds = ledgerHoldsRows(key, build.at === 1);
+            var bands = fillGroupRows(holds ? list : null, group);
+            if (holds) {
+              section.setAttribute('data-rows', 'live');
+              var held = ledgerStateOf(key);
+              held.live = true;
+              held.lastSeen = Date.now();
+            } else {
+              section.setAttribute('data-rows', 'released');
+              section.classList.add('is-released');
             }
             section.appendChild(list);
             build.rows += group.entries.length;
@@ -7155,8 +7529,17 @@
             // how a scrollbar ends up shorter than the table it is supposed to describe. On the
             // first batch build.heights is still null, so this is a no-op and sizeBuiltGroup()
             // below is what covers those groups.
-            applyIntrinsicSize(section, group.entries.length, bands, build.heights);
+            var predicted = applyIntrinsicSize(section, group.entries.length, bands, build.heights);
+            if (!holds) {
+              // The height the group had while it was holding its rows, if it ever was; the
+              // prediction otherwise. A group that has never been on screen has no measured
+              // height, and the prediction is the best answer there is — the same answer the
+              // scrollbar is already giving.
+              var known = ledgerStateOf(key).height;
+              holdLedgerHeight(section, known > 0 ? known : predicted);
+            }
             ledger.appendChild(section);
+            ledgerContent.set(section, { key: key, turn: group.turn, entries: group.entries, bands: bands });
             built += 1;
           }
 
@@ -7178,7 +7561,20 @@
           // viewport and get measured for real.
           if (!build.heights) {
             build.heights = calibrateRowHeights(ledger);
-            var firstBatch = ledger.querySelectorAll('.turn-group');
+            // The groups that were built without their rows have nothing to be sized from, and a
+            // group left unsized collapses to nothing the moment the class goes on. They are
+            // sized now, from the calibration, with the same arithmetic every other group is
+            // sized with.
+            var dormant = ledger.querySelectorAll('.turn-group[data-rows="released"]');
+            for (var d = 0; d < dormant.length; d += 1) {
+              var content = ledgerContent.get(dormant[d]);
+              if (!content) continue;
+              var height = applyIntrinsicSize(dormant[d], content.entries.length, content.bands, build.heights);
+              holdLedgerHeight(dormant[d], height);
+            }
+            // The groups that were holding their rows are the ones that can be measured. A group
+            // without rows measures as its header, and writing that down would collapse it.
+            var firstBatch = ledger.querySelectorAll('.turn-group[data-rows="live"]');
             for (var f = 0; f < firstBatch.length && f < LEDGER_BATCH_GROUPS; f += 1) {
               sizeBuiltGroup(firstBatch[f]);
             }
@@ -7198,6 +7594,10 @@
           // measuring has to stay the last word, and a trailing statement is the one place where
           // a future synchronous call would quietly measure an empty page.
           flushDeferredPoll();
+          // The groups are watched from here, so a group the reader scrolls to gets its rows back
+          // before the next paint. Before this the sections do not exist — the table was empty a
+          // moment ago — and an observer pointed at nothing sees nothing.
+          watchLedgerGroups();
           // Measured here rather than at the end of render(): this is the one exit every path that
           // changes what the table shows goes through — the filters that call render() and the nine
           // that call renderLedger() directly. A filter that grows the band therefore cannot leave
@@ -7712,6 +8112,16 @@
 
       /** The topmost row that intersects the viewport, as {id, top}, or null. */
       function firstVisibleRow() {
+        // The group the reader is on has to be holding its rows before the anchor can be read out
+        // of it. A released group has no rows, and an anchor read from the next live group down
+        // is an anchor to the wrong place — the reader would be moved to wherever the first group
+        // that still has rows happens to start.
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        for (var s = 0; s < sections.length; s += 1) {
+          if (sections[s].getBoundingClientRect().bottom <= 0) continue;
+          if (sections[s].getAttribute('data-rows') !== 'live') fillLedgerGroup(sections[s]);
+          break;
+        }
         var nodes = dom.ledger.querySelectorAll('[data-row-id]');
         for (var i = 0; i < nodes.length; i += 1) {
           var rect = nodes[i].getBoundingClientRect();
@@ -7801,11 +8211,16 @@
        *
        * `auto` on the left is what lets the browser prefer the size it has already rendered once
        * the reader has scrolled past — so scrolling down and back does not accumulate drift.
+       *
+       * The height is returned as well as written, because a group that is not holding its rows
+       * needs the same number on its `min-height`: `contain-intrinsic-size` sizes a group the
+       * browser has skipped, and a group near the viewport is rendered rather than skipped.
        */
       function applyIntrinsicSize(section, rows, bands, heights) {
-        if (!heights) return;
+        if (!heights) return 0;
         var h = heights.head + rows * heights.row + bands * heights.band;
         section.style.containIntrinsicSize = 'auto ' + Math.round(h) + 'px';
+        return h;
       }
 
       /**
@@ -8836,7 +9251,7 @@
         return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;
       }
 
-      function requestRaw(index) {
+      function requestRaw(index, version) {
         var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))
           + '&session=' + displayedSessionParam();
         var generation = displayedGeneration();
@@ -8847,7 +9262,10 @@
         // holding a newer body in which that position is another record — so the version of the
         // record the reader opened travels with the request, and the service can tell the two
         // apart instead of serving the newer record under the older one's number.
-        var version = displayedRecordVersion(index);
+        //
+        // The version is the one the RECORD carries, and that is the whole point: a read that is
+        // retried after a reload must ask about the same record it asked about the first time, or
+        // the retry is a different question wearing the same question's clothes.
         if (version) url += '&v=' + encodeURIComponent(version);
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
@@ -8879,7 +9297,7 @@
         var key = rawCacheKey(index);
         if (Object.prototype.hasOwnProperty.call(rawCache, key)) return Promise.resolve(rawCache[key]);
         if (rawPending[key]) return rawPending[key];
-        var attempt = requestRaw(index).then(function (result) {
+        var attempt = requestRaw(index, recordVersionOf(record)).then(function (result) {
           delete rawPending[key];
           if (result.ok && result.body && Object.prototype.hasOwnProperty.call(result.body, 'raw')) {
             var entry = { raw: result.body.raw, omitted: result.body.omitted === true };
@@ -8934,7 +9352,7 @@
       var detailCache = {};
       var detailPending = {};
 
-      function requestDetail(index) {
+      function requestDetail(index, version) {
         var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))
           + '&session=' + displayedSessionParam();
         var generation = displayedGeneration();
@@ -8942,8 +9360,8 @@
           url += '&generation=' + encodeURIComponent(String(generation));
         }
         // The same record, the same way: the version travels with the request so the service can
-        // refuse when the position it would answer is a different record than the one opened.
-        var version = displayedRecordVersion(index);
+        // refuse when the position it would answer is a different record than the one opened — and
+        // it is the record's own version, so a retry after a reload asks about the same record.
         if (version) url += '&v=' + encodeURIComponent(version);
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
@@ -8969,7 +9387,7 @@
         var key = rawCacheKey(index);
         if (Object.prototype.hasOwnProperty.call(detailCache, key)) return Promise.resolve(detailCache[key]);
         if (detailPending[key]) return detailPending[key];
-        var attempt = requestDetail(index).then(function (result) {
+        var attempt = requestDetail(index, recordVersionOf(record)).then(function (result) {
           delete detailPending[key];
           if (result.ok && result.body && typeof result.body.index === 'number') {
             var entry = {
@@ -9513,6 +9931,12 @@
       function selectSession(id) {
         state.generation = null;
         state.sessionId = id;
+        // The groups of the last session are not the groups of this one, and a turn key means
+        // nothing across two sessions. What is known about them goes with them, so the first
+        // build of the new session starts from nothing rather than from another session's
+        // heights.
+        ledgerState.clear();
+        ledgerContent.clear();
         setFollow(false);
       }
 
