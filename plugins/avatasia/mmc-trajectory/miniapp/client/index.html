@@ -7365,10 +7365,19 @@
           section.style.minHeight = '';
         }
         // The height the group really has, taken on both paths — see measureLedgerGroup().
-        // A group that is already holding its rows and has a height of its own has nothing
-        // new to say: nothing about its content has changed, so the height it was measured
-        // at is the height it has.
-        if (!alreadyLive || !state.height) measureLedgerGroup(section, group);
+        // A group that is already holding its rows is measured again when its LAYOUT has
+        // changed, and the test for that is the layout and not the content: the rows and the
+        // bands can be exactly the same and the height a different one — the window resized,
+        // the text scale turned up, the group's own chrome taller. The height that was
+        // measured then describes a layout that is no longer there, and the height a released
+        // group keeps is that height unchanged, because the counts it was measured at have
+        // not changed either — so the group stands shorter than the content it is holding,
+        // and the document under the reader comes up short by exactly that much.
+        //
+        // The group the reader is on is rendered, so the height it has now is its layout and
+        // not the prediction an off-screen group is sized by; the off-screen groups are the
+        // calibration-priced path's business, and this does not touch them.
+        if (!alreadyLive || !state.height || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);
         // The cap, on the visit path as well as on the rebuild: the number of groups holding
         // their rows is bounded at any moment, not only right after a rebuild.
         //
@@ -7418,6 +7427,84 @@
         var measuredBands = group.bands || 0;
         state.heightRows = group.entries.length - measuredBands;
         state.heightBands = measuredBands;
+      }
+
+      /**
+       * Whether a group's layout is not the one its remembered height was measured at.
+       *
+       * The remembered height is a measurement of a layout that was there then, and a layout
+       * can change without the content changing: the window is resized, the text scale is
+       * turned up, the group's own chrome becomes taller. The rows and the bands can be
+       * exactly the same and the height a different one — and the height a released group
+       * keeps is the remembered one unchanged, because the counts it was measured at have not
+       * changed either. So the group stands shorter than the content it is holding, and the
+       * document under the reader comes up short by exactly that much.
+       *
+       * So the test is the height itself: the group has a height of its own now, and it is
+       * not the one that was remembered.
+       *
+       * A group with no remembered height has no layout to compare against, and this says
+       * nothing about it: the caller has a rule of its own for that case, and it is the one
+       * that has to stay — the group the build made live has to record the height it was
+       * measured at, because the build never measures.
+       *
+       * @param {HTMLElement} section
+       * @param {{height: number}} state
+       * @returns {boolean}
+       */
+      function ledgerLayoutChanged(section, state) {
+        if (!state.height) return false;
+        return Math.round(section.getBoundingClientRect().height) !== state.height;
+      }
+
+      var ledgerMeasureFrame = null;
+
+      /**
+       * Measure the groups that are on screen again, after the window has changed shape.
+       *
+       * WHY: a height is a measurement of a layout, and a resize changes the layout of every
+       * group that is rendered without changing a row or a band in it. The measurement is the
+       * observer's, and the observer is not told that the window changed shape — so a group
+       * the reader is looking at keeps the height it was measured at, and that height
+       * describes the layout before the resize, until the reader scrolls away from it and
+       * back. And when the cap releases it, the height it reserves is that stale number, so
+       * the document under the reader comes up short by exactly the difference.
+       *
+       * The measurement is deferred to the next frame, because the layout a resize brought
+       * about is not there yet when the event arrives.
+       *
+       * What it does not claim: a group that was off screen when the layout changed, and is
+       * never visited again, keeps the height it was last really measured at. Off screen the
+       * browser answers with the group's own `contain-intrinsic-size`, and that number is a
+       * prediction — a prediction written down as a measurement is a guess the next rebuild
+       * reads back as a fact. So a group whose height is the size it was given is left alone,
+       * and this is the same limit the build path has.
+       */
+      function refreshLedgerMeasurements() {
+        if (ledgerMeasureFrame !== null) return;
+        ledgerMeasureFrame = window.requestAnimationFrame(function () {
+          ledgerMeasureFrame = null;
+          var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+          for (var i = 0; i < sections.length; i += 1) {
+            var section = sections[i];
+            // Only the groups that are holding their rows. A group that has given them up is
+            // sized by the prediction, and the height it keeps is the one it was measured at.
+            if (section.getAttribute('data-rows') !== 'live') continue;
+            var group = ledgerContent.get(section);
+            if (!group) continue;
+            // The size the browser answers with while a group is off screen is the size
+            // written on it, so a group that reads back exactly the number it was given is
+            // being sized rather than laid out — and what it reads is a prediction.
+            var sizes = String(section.style.containIntrinsicSize || '').match(/(-?[0-9.]+)px/g);
+            if (sizes) {
+              var predicted = Math.round(parseFloat(sizes[sizes.length - 1]));
+              if (Math.round(section.getBoundingClientRect().height) === predicted) continue;
+            }
+            // The rows are not built here: a group that is holding them is holding them, and
+            // the second copy of every row is the whole cost of getting it wrong.
+            measureLedgerGroup(section, group);
+          }
+        });
       }
 
       /**
@@ -10750,6 +10837,14 @@
         // from this same callback and is the only place a read of scroll becomes a write of it.
         window.addEventListener('scroll', scheduleInspectorDock, { passive: true });
         window.addEventListener('resize', scheduleInspectorDock);
+
+        // The ledger's groups keep the height they were measured at, and a resize changes the
+        // layout of every group on screen without changing a row or a band in it. The
+        // measurement is the observer's, and the observer is not told that the window changed
+        // shape — so the groups the reader is looking at would keep a height of the layout
+        // before the resize, and the height a released group reserves would be that stale
+        // number.
+        window.addEventListener('resize', refreshLedgerMeasurements);
 
         // Two buttons, one job each, and neither writes the field itself — each names the state its
         // click goes to and hands it to the one writer. The single button this replaced cycled
