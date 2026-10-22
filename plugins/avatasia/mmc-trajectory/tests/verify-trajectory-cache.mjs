@@ -429,6 +429,53 @@ try {
   await utimes(join(ledgerDir, 'messages.jsonl'), ledgerStamp, ledgerStamp);
   await utimes(join(ledgerDir, 'snapshots', 'gen0.jsonl'), ledgerStamp, ledgerStamp);
 
+  // A conversation with more matches than the answer may carry, and shaped so that the two orders
+  // disagree about which records come first.
+  //
+  // The hits are capped, and the cap is about WHICH records the answer is about. The rebuilt path
+  // walks the body turn by turn, so it keeps the first N in the LEDGER's order; a path that keeps
+  // the first N while it walks the GENERATIONS keeps the first N in the order the generations
+  // happened to be in. Those are different sets of records when a turn spans a rotation — and the
+  // difference is invisible: the count is the same, and the fingerprint is folded over the first N
+  // RECORDS, not over the hits.
+  //
+  // So this one is big enough for the cap to bite (901 records, all of them matching) and shaped so
+  // that the first turn's records mostly arrive in the LATER generation: the sealed generation holds
+  // the first turn's first record and the second turn's 300 records, and the active generation holds
+  // 600 more records of the first turn.
+  //
+  // The ledger draws the first turn first — [m1, then the 600 that arrived after the rotation] —
+  // and then the second turn's 300. The files hold the records by number: 1..301 in the sealed one,
+  // 302..901 in the active one. The first 500 in the ledger's order are therefore the first turn's
+  // 500, and the first 500 in file order are the first 500 by number: two different sets.
+  const CAP = 'mvs_ledger_cap';
+  const capDir = join(sessionsRoot, '2026', '10', '22', '00-00-00-session_'
+    + Buffer.from(CAP, 'utf8').toString('base64url'));
+  await mkdir(join(capDir, 'snapshots'), { recursive: true });
+  const capRow = (id, turn) => JSON.stringify({
+    message_id: id,
+    turn_id: turn,
+    message: { role: 'user', content: 'CAP ORDER ' + id, timestamp: 1791600000000 },
+  }) + '\n';
+  const capSealed = [{ id: 'm1', turn: 't1' }];
+  for (let i = 0; i < 300; i += 1) capSealed.push({ id: 'm' + (i + 2), turn: 't2' });
+  const capActive = [];
+  for (let i = 0; i < 600; i += 1) capActive.push({ id: 'm' + (i + 302), turn: 't1' });
+  await writeFile(join(capDir, 'snapshots', 'gen0.jsonl'),
+    capSealed.map((one) => capRow(one.id, one.turn)).join(''), 'utf8');
+  await writeFile(join(capDir, 'messages.jsonl'),
+    capActive.map((one) => capRow(one.id, one.turn)).join(''), 'utf8');
+  await writeFile(join(capDir, 'manifest.json'), JSON.stringify({ sessionId: CAP }), 'utf8');
+  await writeFile(join(capDir, 'history-catalog.json'), JSON.stringify({
+    artifacts: [
+      { generation: 0, kind: 'snapshot', fileName: 'gen0.jsonl' },
+      { generation: 1, kind: 'active', fileName: 'messages.jsonl' },
+    ],
+  }), 'utf8');
+  const capStamp = new Date(1791600000000);
+  await utimes(join(capDir, 'messages.jsonl'), capStamp, capStamp);
+  await utimes(join(capDir, 'snapshots', 'gen0.jsonl'), capStamp, capStamp);
+
   // A conversation whose segment will not cover the whole body.
   //
   // A record with no locator names no file, so it belongs to no generation's segment — and the
@@ -480,9 +527,19 @@ try {
   // it cached (the walk holds the session list for three seconds, so a rewritten transcript is
   // invisible to it until that expires). Restarting drops that cache in one step instead of
   // waiting it out.
+  // The ports this run has already used, and why they are not used twice.
+  //
+  // A service that is disposed and a new one that binds the SAME port is the same ORIGIN to the
+  // client, and the client pools its connections per origin: the next request reuses the socket
+  // the disposed service closed, and the answer is `fetch failed` — a transport artifact that
+  // reads exactly like a broken service. It is not rare here, because the port window is shared
+  // with every other guard that starts a service, so a crowded window pushes consecutive starts
+  // onto the same few ports. Each port is used once per run.
+  const usedPorts = new Set();
   const startService = async () => {
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      const port = 19900 + Math.floor(Math.random() * 300) + attempt;
+      const port = 19900 + Math.floor(Math.random() * 900) + attempt;
+      if (usedPorts.has(port)) continue;
       try {
         const started = await start({
           pluginId: 'mmc-trajectory',
@@ -496,7 +553,21 @@ try {
           signal: controller.signal,
           logger: { debug: noop, info: noop, warn: noop, error: noop },
         });
-        return { instance: started, base: 'http://127.0.0.1:' + port };
+        usedPorts.add(port);
+        const startedBase = 'http://127.0.0.1:' + port;
+        // The service is asked once before the section starts using it. A service that is not
+        // answering is not a failure of the rule under test; it is a port that is not usable, and
+        // the next one is tried. Without this probe, "the service never came up" is reported as
+        // a failed assertion, which is the one thing a guard must not do.
+        try {
+          const probe = await fetch(startedBase + '/api/runtime');
+          await probe.arrayBuffer();
+        } catch (probeError) {
+          await started.dispose();
+          usedPorts.delete(port);
+          continue;
+        }
+        return { instance: started, base: startedBase };
       } catch (error) {
         // The port was taken. Another one is tried; a guard that gave up here would be a
         // guard that sometimes checks nothing.
@@ -511,7 +582,21 @@ try {
   }
 
   const get = async (path) => {
-    const response = await fetch(base + path);
+    // One retry, and only for a TRANSPORT failure: the client reuses a pooled connection that
+    // the service has closed, and the retry is answered on a fresh one. A service that is broken
+    // answers with a status and a body, and that is what every assertion below reads — so the
+    // retry cannot hide a defect; it only stops a dead socket from being read as one.
+    let response = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await fetch(base + path);
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (response === null) throw lastError;
     let body = null;
     try { body = await response.json(); } catch { body = null; }
     return { status: response.status, body };
@@ -1131,6 +1216,86 @@ try {
           (uncoveredAnswer.body && uncoveredAnswer.body.hits ? uncoveredAnswer.body.hits : [])
             .map((hit) => hit.index), [1, 2, 3]);
       }
+    // 6d — the cap, and the order the cap is taken in.
+    //
+    // The hits are capped, and the cap is about WHICH records the answer is about: the rebuilt path
+    // walks the body turn by turn and keeps the first N matches it meets, so it keeps the first N in
+    // the LEDGER's order. A path that keeps the first N while it walks the generations keeps the
+    // first N in the order the generations happened to be in — and when the two orders disagree, that
+    // is a different SET of records, with the same count and the same fingerprint. Nothing
+    // downstream can notice that: the page turns the hits into a set of record numbers and lights up
+    // the rows in that set.
+    const capBody = await get('/api/trajectory?session=' + CAP);
+    assert('the conversation with more matches than the cap holds has 901 records',
+      capBody.status === 200 && versionsOf(capBody.body).length === 901,
+      'records: ' + (capBody.body ? versionsOf(capBody.body).length : 'no body'));
+    // The first three records of the body in the ledger's order: the first turn's first record, then
+    // the two that arrived after the rotation. The ORDER is written out by hand and the versions come
+    // from the body's own records, so the expectation cannot move together with the answer it checks.
+    const capVersionByIndex = new Map(
+      (capBody.body && capBody.body.turns ? capBody.body.turns : []).flatMap((turn) => (turn.records || []))
+        .map((record) => [record.index, record.v]));
+    const capFirstThree = [1, 302, 303];
+    const capFingerprint = recordSetFingerprint(
+      capFirstThree.map((index) => capVersionByIndex.get(index) ?? ''));
+    const capRebuilt = await get('/api/trajectory/search?session=' + CAP
+      + '&q=CAP ORDER&n=3&fp=' + capFingerprint);
+    assert('the search answers the set the page holds', capRebuilt.status === 200, why(capRebuilt));
+    const capRebuiltHits = (capRebuilt.body && capRebuilt.body.hits ? capRebuilt.body.hits : []);
+    // The cap bites here: more records match than the answer may carry, and the count says so.
+    assert('and the answer carries the cap while the count is the whole number of matches',
+      capRebuiltHits.length === 500 && Boolean(capRebuilt.body) && capRebuilt.body.total === 901,
+      'hits: ' + capRebuiltHits.length + ' total: ' + (capRebuilt.body ? capRebuilt.body.total : '?'));
+    // The first 500 in the ledger's order are the first turn's 500: its first record, and the 499
+    // that arrived after the rotation. The first 500 in FILE order are the first 500 by number.
+    const capLedgerFirst500 = [1];
+    for (let i = 302; i <= 800; i += 1) capLedgerFirst500.push(i);
+    const capFileFirst500 = [];
+    for (let i = 1; i <= 500; i += 1) capFileFirst500.push(i);
+    check('and they are the first turn\'s records, in the ledger\'s order',
+      capRebuiltHits.map((hit) => hit.index), capLedgerFirst500);
+    assert('and the fixture is one where the two orders disagree about the first records',
+      JSON.stringify(capLedgerFirst500) !== JSON.stringify(capFileFirst500));
+    const capSurfaces = await waitForSegmentsWith(home, 'cap order', 2);
+    assert('and it published a segment for each of the two generations',
+      capSurfaces.length === 2, 'surfaces holding the marker: ' + capSurfaces.length);
+
+    // THE REBUILD IS TAKEN OUT OF THE PICTURE, the same way as in 6b: every line of the active file
+    // stops parsing while the file keeps its length and its timestamp, so the segments still match
+    // their source — and a rebuild would see only the 301 records of the sealed generation, which
+    // cannot answer with 500 hits over 901 records.
+    const capActiveFile = join(capDir, 'messages.jsonl');
+    const capStat = await stat(capActiveFile);
+    const capText = await readFile(capActiveFile, 'utf8');
+    await writeFile(capActiveFile, capText.replace(/"message_id":/g, '"message_id"X'), 'utf8');
+    await utimes(capActiveFile, capStat.mtimeMs / 1000, capStat.mtimeMs / 1000);
+    await instance.dispose();
+    {
+      const restarted = await startService();
+      instance = restarted.instance;
+      base = restarted.base;
+    }
+    const capCached = await get('/api/trajectory/search?session=' + CAP
+      + '&q=CAP ORDER&n=3&fp=' + capFingerprint);
+    assert('a capped search accepts the unchanged displayed set',
+      capCached.status === 200, why(capCached));
+    const capCachedHits = (capCached.body && capCached.body.hits ? capCached.body.hits : []);
+    const capCachedIds = capCachedHits.map((hit) => hit.index);
+    const capRebuiltIds = capRebuiltHits.map((hit) => hit.index);
+    // The SET, not the order: two answers that differ only in which records they are about are two
+    // answers, and the page lights up the rows of the set the answer names.
+    //
+    // The two comparisons are `assert` rather than `check` on purpose: a control names the rule it
+    // broke, and the name a control reads is the whole line after the `- `, so a rule that carries
+    // its values with it can never be named. The values are in the two checks below.
+    const capCachedSet = digestOf(JSON.stringify(capCachedIds.slice().sort((a, b) => a - b)));
+    const capRebuiltSet = digestOf(JSON.stringify(capRebuiltIds.slice().sort((a, b) => a - b)));
+    assert('and it answers with the same records as the rebuild', capCachedSet === capRebuiltSet);
+    check('and the records it names are the first turn\'s, in the ledger\'s order',
+      capCachedIds.slice(0, 8), capRebuiltIds.slice(0, 8));
+    assert('and in the same order as the rebuild',
+      digestOf(JSON.stringify(capCachedIds)) === digestOf(JSON.stringify(capRebuiltIds)));
+    check('and the count is the count', capCached.body && capCached.body.total, 901);
     }
   } finally {
     // The server is released here and not at the end of the happy path: an assertion that
@@ -1142,8 +1307,13 @@ try {
     else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
   }
 } catch (error) {
+  // The cause is named: a transport failure and a broken service look the same from here, and a
+  // reader who cannot tell them apart has to guess. `ECONNRESET` is the client's pooled
+  // connection being reused after the service closed it; `ECONNREFUSED` is a service that is not
+  // listening at all.
   failures.push('the body of the session on screen is reachable by its id -- '
-    + (error && error.message));
+    + (error && error.message)
+    + (error && error.cause && error.cause.code ? ' (' + error.cause.code + ')' : ''));
 }
 
 /* =====================================================================

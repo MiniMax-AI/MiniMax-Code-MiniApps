@@ -531,14 +531,22 @@ assert('one missing segment makes the whole search fall back rather than answer 
 
 // The cap assertions above run against a copy of the loop written here, so they say the rule holds
 // and not that the shipped route holds it. These read the shipped function: `total` is incremented
-// for every match, the push is the thing that is bounded, and the return hands back the count.
+// for every match, the hits are put back in the ledger's order, the cap is taken AFTER that, and
+// the return hands back the count.
+//
+// The cap used to be taken while the generations were being walked, which kept the first N in the
+// order the generations happened to be in — a different SET of records, with the same count and the
+// same fingerprint. This assertion pins the order of the two steps instead of the shape of one of
+// them: the sort has to come before the slice, and the old early push must be gone.
 const artifactsSrc = SERVER.slice(
   SERVER.indexOf('const searchFromArtifacts = async'),
   SERVER.indexOf('const publishSearchArtifacts = async'));
 assert('and the shipped artifact path counts every match rather than what it sent',
   /total \+= 1;/.test(artifactsSrc)
-  && /if \(hits\.length < MAX_SEARCH_HITS\) hits\.push\(hit\);/.test(artifactsSrc)
-  && /return \{ hits, total, fingerprint: recordSetFingerprint\(versions\) \};/.test(artifactsSrc));
+  && /return \{ hits: capped, total, fingerprint: recordSetFingerprint\(versions\) \};/.test(artifactsSrc));
+assert('and it takes the cap after it puts the hits back in the ledger\'s order, so the two paths answer with the same records',
+  /hits\.sort\(byLedgerOrder\);[\s\S]*hits\.slice\(0, MAX_SEARCH_HITS\)/.test(artifactsSrc)
+  && !/if \(hits\.length < MAX_SEARCH_HITS\) hits\.push\(hit\);/.test(artifactsSrc));
 
 // The answer is about a SET of records, and the part of it that matters to the reader is the part
 // it does NOT name. So the service has to be able to say which set it searched, and the page has

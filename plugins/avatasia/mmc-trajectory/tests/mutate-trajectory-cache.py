@@ -396,6 +396,29 @@ MUTATIONS = [
         "    hits.sort((a, b) => a.index - b.index);",
         "a cached search returns its hits in the same order the rebuild returns them",
     ),
+    (
+        # The cap on the hits is about WHICH records the answer is about. The rebuilt path keeps the
+        # first N it meets while it walks the body turn by turn, so it keeps the first N in the
+        # ledger's order. A path that caps while it walks the GENERATIONS keeps the first N in the
+        # order the generations happened to be in — and when the two orders disagree, that is a
+        # different SET of records, with the same count and the same fingerprint. Nothing downstream
+        # can notice: the page turns the hits into a set of record numbers and lights up those rows.
+        "the cached path caps the hits while it walks the generations, so it answers with a different set of records",
+        SERVER,
+        "        hits.push(hit);",
+        "        if (hits.length < MAX_SEARCH_HITS) hits.push(hit);",
+        "and it answers with the same records as the rebuild",
+    ),
+    (
+        # The order itself, not the calls that use it. The two controls above change what the
+        # comparator is called with; this one changes what it does, so a comparator that had been
+        # quietly wrong would be caught even if every call site still said `byLedgerOrder`.
+        "the ledger's order compares the turns the wrong way round",
+        SERVER,
+        "  if (turnA !== turnB) return turnA - turnB;",
+        "  if (turnA !== turnB) return turnB - turnA;",
+        "a cached search accepts the unchanged displayed set when an earlier turn gains a record in a later generation",
+    ),
     # ---- a set of segments that does not cover the whole body -------------------------------
     #
     # A record with no locator names no file, so it belongs to no generation's segment: the

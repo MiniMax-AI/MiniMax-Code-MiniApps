@@ -118,9 +118,12 @@ MUTATIONS = [
         "      if (segment === null) continue;",
     ),
     (
+        # The rule is that `total` counts every match, so the cap cannot bound it: the answer
+        # carries the first N records of the ledger's order and says how many matched. The cap is
+        # applied to the HITS, after the order is restored, and `total` is counted on the walk.
         "the artifact path reports how many it sent instead of how many matched",
-        "    return { hits, total, fingerprint: recordSetFingerprint(versions) };",
-        "    return { hits, total: hits.length, fingerprint: recordSetFingerprint(versions) };",
+        "    return { hits: capped, total, fingerprint: recordSetFingerprint(versions) };",
+        "    return { hits: capped, total: capped.length, fingerprint: recordSetFingerprint(versions) };",
     ),
     (
         # The two readings of "the versions of the first N records" have to agree, and the limit
