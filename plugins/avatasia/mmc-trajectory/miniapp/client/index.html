@@ -7277,8 +7277,14 @@
         // turn keeps its key while its content changes — a late reply, a band from a
         // compaction — so a height that is not read together with its counts describes a
         // content that is no longer there.
-        state.heightRows = group.entries.length;
-        state.heightBands = group.bands || 0;
+        //
+        // The two counts are rows and bands, and they are counted apart. A band is an entry
+        // as well as a row, so a count of entries would charge every band once as a row and
+        // once as a band — the band at 36 px and 38 px would be charged 74 px, and the box
+        // would stand taller than the content it is holding.
+        var measuredBands = group.bands || 0;
+        state.heightRows = group.entries.length - measuredBands;
+        state.heightBands = measuredBands;
       }
 
       /**
@@ -7331,7 +7337,10 @@
        *
        * So the difference between what the group holds now and what it held when it was
        * measured is charged at the rates the prediction uses: a row's worth of height for
-       * every row added, a band's worth for every band. What is left of the measurement is
+       * every row added, a band's worth for every band. The two counts are kept apart, so a
+       * band is charged as a band and not as a row as well — the two heights are close (36 px
+       * and 38 px, measured on a real session), and a band charged twice would leave the box
+       * a whole row taller than the content it is holding. What is left of the measurement is
        * the part that belongs to the group rather than to its content — its own header, its
        * borders — and that is the part the prediction cannot know, because the prediction is
        * priced from medians and this group's chrome is its own.
@@ -7351,8 +7360,9 @@
        * what the group holds now.
        *
        * @param {string} key
-       * @param {number} rows how many rows the group holds now
-       * @param {number} bands how many of them are compaction bands
+       * @param {number} rows how many rows the group holds now; the compaction bands are
+       * counted apart and are not rows
+       * @param {number} bands how many compaction bands the group holds now
        * @param {number} predicted the height the shape of the group predicts
        * @param {{head: number, row: number, band: number}|null} heights the calibrated heights
        * @returns {number}
@@ -7745,7 +7755,7 @@
               // with the content it holds now; the prediction otherwise. A group that has
               // never been on screen has no measured height, and the prediction is the best
               // answer there is — the same answer the scrollbar is already giving.
-              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));
+              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));
             }
             ledger.appendChild(section);
             ledgerContent.set(section, { key: key, turn: group.turn, entries: group.entries, bands: bands });
