@@ -347,6 +347,63 @@ export function lineDigest(bytes) {
 }
 
 /**
+ * The version of ONE record: what makes index N in one body the same record as index N in another.
+ *
+ * A record index is a POSITION, and a position means nothing without the body it was counted in.
+ * Two bodies of the same session at the same slice can hold different records at the same index —
+ * a transcript rewritten under a running page is the ordinary way that happens — and a reader who
+ * is shown 「命中 1 条」 pointing at a row whose text does not contain the needle has been told
+ * something false.
+ *
+ * So a version belongs to a position read the same way the session and the slice do: a request
+ * that names an index names the record it means, and the service can tell the two outcomes apart
+ * instead of serving the newer body under the older body's number.
+ *
+ * It is built from the LINE's digest and the record's position inside that line, and from nothing
+ * else. That matters twice over:
+ *
+ *  - The line digest is already computed for every locator, so this costs no extra reading.
+ *  - It is stable under APPEND. A session that grows does not rewrite the lines it already has, so
+ *    the records a reader is looking at keep their version. Otherwise every poll would expire every
+ *    row on screen, and the page would spend its life refusing its own answers — the common case
+ *    would be the broken one.
+ *
+ * @param {string | null | undefined} digest the line's digest
+ * @param {number | null | undefined} rowPos the record's position inside that line
+ * @returns {string}
+ */
+export function recordVersionToken(digest, rowPos) {
+  const line = typeof digest === 'string' ? digest : '';
+  const pos = Number.isInteger(rowPos) ? rowPos : 0;
+  return createHash('sha256').update(`${line}:${pos}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * Stamps every record of a built payload with its version.
+ *
+ * One place, because there are two callers that must agree: the body the page reads, and the
+ * search answer that filters it. A body whose records carry one version and an answer whose hits
+ * carry another is two answers to 「这条记录是哪一版」, and the page is then the only place that
+ * could notice — which is exactly where the check must not live.
+ *
+ * @param {{ turns?: Array<any> }} payload
+ * @param {Map<number, { digest?: string }>} locators record index -> its line's locator
+ * @returns {typeof payload}
+ */
+export function stampRecordVersions(payload, locators) {
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const records = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      const locator = locators && typeof locators.get === 'function' ? locators.get(record.index) : undefined;
+      record.v = recordVersionToken(locator ? locator.digest : null, record.rowPos);
+    }
+  }
+  return payload;
+}
+
+/**
  * Cheap single-pass counters used by the session list; values are approximate by design.
  *
  * Allocation-free apart from the turn-id set, which has to hold the ids to count them
@@ -1863,10 +1920,10 @@ export function slimPayloadForWire(payload) {
  * @param {{ turns: Array<any> }} payload
  * @param {string} needle already normalised and folded
  * @param {number} limit
- * @returns {{ hits: Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>, total: number }}
+ * @returns {{ hits: Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>, total: number }}
  */
 export function collectSearchHits(payload, needle, limit) {
-  /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>} */
+  /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>} */
   const hits = [];
   let total = 0;
   const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
@@ -1884,6 +1941,10 @@ export function collectSearchHits(payload, needle, limit) {
         // without opening every row the needle found.
         summary: typeof record.summary === 'string' ? record.summary : '',
         generation: typeof record.generation === 'number' ? record.generation : null,
+        // The version of the record this hit names. The index alone is a position, and the position
+        // is only the same record in another body if the version says so — the page checks it
+        // against the body it is showing before it lets the hit filter anything.
+        v: typeof record.v === 'string' ? record.v : '',
       });
     }
   }
@@ -4317,6 +4378,11 @@ export async function start(context) {
       const locator = rowLocators[rowIndex];
       if (locator !== undefined) raws.set(recordIndex, locator);
     }
+    // The version of every record, stamped before the body is serialized. A record index is a
+    // position inside ONE body, and the same position in a newer body can be a different record:
+    // the page asks about positions all the time (the search answer, `/raw`, `/record`), so the
+    // position carries the version of the record it means. See `recordVersionToken`.
+    stampRecordVersions(payload, raws);
 
     // Last thing before serializing, and the only place the bulk fields are ever taken off a
     // record. It happens here rather than at `push()` because the search, which runs in this
@@ -4402,20 +4468,31 @@ export async function start(context) {
     const sessionKey = searchSessionKey(entry.dir, ctx.identity.id);
     const viewKey = searchViewKey(filter);
 
+    // ONE answer, sent by whichever path found the hits.
+    //
+    // Two paths answering the same request with two different response shapes is not a faster
+    // version of the endpoint, it is a second endpoint — and the second one is where the slice
+    // the answer is about would have gone stale. The slice travels with every answer, in the
+    // same word the body uses, so the page can compare the two.
+    //
+    // @param {Array<any>} found the hits
+    // @param {number} foundTotal every match, which is not every hit
+    const sendAnswer = (found, foundTotal) => {
+      sendJson(response, 200, {
+        query: asked,
+        hits: found,
+        total: foundTotal,
+        truncated: foundTotal > found.length,
+        session: { id: ctx.identity.id, generation: filter },
+      });
+    };
+
     // Before anything expensive. The lineage walk above is stat-driven and cheap; everything after
     // this line is the rebuild, and on the largest session measured here it was 3.7 seconds for a
     // search that returns at most 500 rows.
     const onDisk = await searchFromArtifacts({ sessionKey, viewKey, files, needle });
     if (onDisk !== null) {
-      sendJson(response, 200, {
-        query: asked,
-        hits: onDisk.hits,
-        total: onDisk.total,
-        truncated: onDisk.total > onDisk.hits.length,
-        // The same field the rebuild sends. Two paths answering the same request with two different
-        // response shapes is not a faster version of the endpoint, it is a second endpoint.
-        session: { id: ctx.identity.id, generation: filter },
-      });
+      sendAnswer(onDisk.hits, onDisk.total);
       return;
     }
 
@@ -4435,8 +4512,18 @@ export async function start(context) {
     });
     const rowLocators = view.occurrences.map((occurrence) => occurrence.locator);
     const rowIndexByRecord = splitRawRecords(payload.turns);
+    // The record -> its line's locator, so every record can be stamped with its version before it
+    // is serialized or written into a segment. The search answer and the body the page filters with
+    // have to carry the SAME version for the same record, or the page is comparing two answers.
+    /** @type {Map<number, any>} */
+    const locatorsByRecord = new Map();
+    for (const [recordIndex, rowIndex] of rowIndexByRecord) {
+      const locator = rowLocators[rowIndex];
+      if (locator !== undefined) locatorsByRecord.set(recordIndex, locator);
+    }
+    stampRecordVersions(payload, locatorsByRecord);
 
-    /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>} */
+    /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>} */
     const hits = [];
     let total = 0;
     const searched = collectSearchHits(payload, needle, MAX_SEARCH_HITS);
@@ -4456,13 +4543,7 @@ export async function start(context) {
       activeFileName: walked.activeFileName,
     }).catch(() => undefined);
 
-    sendJson(response, 200, {
-      query: asked,
-      hits,
-      total,
-      truncated: total > hits.length,
-      session: { id: ctx.identity.id, generation: filter },
-    });
+    sendAnswer(hits, total);
     // Nothing below reads the view, and the payload holds projections rather than rows, so this is
     // where the object graph stops being reachable.
     view.rows.length = 0;
@@ -4625,6 +4706,43 @@ export async function start(context) {
    * that moved under the cache answers 「该记录所在的文件已变化」 here too, instead of projecting a
    * line that is no longer the one the page is looking at.
    */
+  /**
+   * The refusal a position read gets when it does not name the record it means.
+   *
+   * A position read names an INDEX, and an index is a position inside ONE body. The body the page
+   * is showing and the body the service would serve can be two different bodies — a transcript
+   * rewritten under a running page is the ordinary way that happens — and then the same index
+   * names two different records. The page says which one it means by sending the record's
+   * version; the service compares it with the version of the record it would serve, so the two
+   * outcomes are told apart instead of the newer body being served under the older body's number.
+   *
+   * TWO REFUSALS, not one: a read that does not say is a read the service cannot judge, and a
+   * read that says the wrong thing is a read about a record that is not there. They are different
+   * answers, so they are asked separately — and the page's retry can tell them apart.
+   *
+   * @param {URL} url
+   * @returns {{ status: number, code: string, message: string } | null} the refusal, or null
+   */
+  const missingRecordVersion = (url) => {
+    const asked = url.searchParams.get('v');
+    if (typeof asked === 'string' && asked !== '') return null;
+    return { status: 400, code: 'record_version_required', message: '缺少记录版本，请重新加载会话' };
+  };
+
+  /**
+   * The refusal a position read gets when it names a record the service would not serve.
+   *
+   * @param {URL} url
+   * @param {{ digest?: string } | undefined} locator the record's line locator
+   * @param {number} rowPos the record's position inside that line
+   * @returns {{ status: number, code: string, message: string } | null} the refusal, or null
+   */
+  const mismatchedRecordVersion = (url, locator, rowPos) => {
+    const asked = url.searchParams.get('v');
+    if (asked === recordVersionToken(locator ? locator.digest : null, rowPos)) return null;
+    return { status: 409, code: 'record_version_mismatch', message: '该记录所在的版本已变化，请重新加载会话' };
+  };
+
   const handleRecord = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
     if (!ctx.ok) {
@@ -4652,6 +4770,14 @@ export async function start(context) {
     const rowPos = cached.rowPos.get(wanted);
     if (locator === undefined || typeof locator.filePath !== 'string' || typeof rowPos !== 'number') {
       sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    // Which record of which version the page is asking about. The entry in the cache may be a
+    // newer body than the one the page is showing, and then the index names another record.
+    const refused = missingRecordVersion(url) ?? mismatchedRecordVersion(url, locator, rowPos);
+    if (refused) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: refused.code });
+      sendError(response, refused.status, refused.code, refused.message);
       return;
     }
     const found = await readRecordRow(locator);
@@ -4683,6 +4809,10 @@ export async function start(context) {
     }
     sendJson(response, 200, {
       index: wanted,
+      // No version here. The version's job was to make the REQUEST unambiguous, and the service
+      // above either served the record that was asked for or refused: an answer that repeated the
+      // version would be a field the page never reads, and a field nobody reads is a promise with
+      // no owner. The body carries the version of every record, and the page sends it back.
       // No `kind`. Measured over 6568 records of this machine's store: re-projecting one row
       // returns the same four values every time, but it disagrees about `kind` for an opener —
       // a `steer` row projected alone has no earlier turn to have been interrupted by, so it
@@ -4750,16 +4880,26 @@ export async function start(context) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;
     }
+    const locator = cached.raws.get(wanted);
+    const rowPos = cached.rowPos.get(wanted);
+    if (locator === undefined || typeof locator.filePath !== 'string' || typeof rowPos !== 'number') {
+      sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    // Which record of which version the page is asking about. The entry in the cache may be a
+    // newer body than the one the page is showing, and then the index names another record — and
+    // the decoded message kept below would be that other record's message.
+    const refused = missingRecordVersion(url) ?? mismatchedRecordVersion(url, locator, rowPos);
+    if (refused) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: refused.code });
+      sendError(response, refused.status, refused.code, refused.message);
+      return;
+    }
     // Re-reading a record the reader has already opened is the common case, and a decoded message
     // is far smaller than a session, so the entry keeps the ones it has already paid for.
     const alreadyDecoded = cached.decoded.get(wanted);
     if (alreadyDecoded !== undefined) {
       sendJson(response, 200, { index: wanted, raw: alreadyDecoded.value, omitted: alreadyDecoded.omitted });
-      return;
-    }
-    const locator = cached.raws.get(wanted);
-    if (locator === undefined || typeof locator.filePath !== 'string') {
-      sendError(response, 404, 'record_not_found', '找不到该记录');
       return;
     }
     const found = await readRecordRow(locator);

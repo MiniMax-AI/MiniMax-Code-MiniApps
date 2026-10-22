@@ -43,8 +43,14 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** Bumped when the on-disk shape changes in a way an older reader cannot survive. */
-export const SEGMENT_SCHEMA_VERSION = 3;
+/**
+ * Bumped when the on-disk shape changes in a way an older reader cannot survive.
+ *
+ * 4: every line carries the record's version (`v`). A hit is a POSITION, and a position is only the
+ * same record in another body if the version says so — so a segment written before this would hand
+ * the page hits it cannot check, and the page would have to take them on faith.
+ */
+export const SEGMENT_SCHEMA_VERSION = 4;
 
 /**
  * The fields a search reads, in the page's order.
@@ -206,6 +212,10 @@ export function buildSegment(input) {
       kind: typeof record.kind === 'string' ? record.kind : '',
       generation: typeof record.generation === 'number' ? record.generation : null,
       summary: typeof record.summary === 'string' ? record.summary : '',
+      // The version of the record this line is. It travels with the hit because a hit is a position
+      // and the page has to be able to tell whether that position still names the same record in the
+      // body it is showing.
+      v: typeof record.v === 'string' ? record.v : '',
       fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,
     }) + '\t' + searchSurfaceOf(record));
   }
@@ -256,11 +266,11 @@ export function scanSegment(surface, needle) {
  *
  * @param {string} surface the whole segment text
  * @param {number[]} ordinals as returned by {@link scanSegment}
- * @returns {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null } | null>}
+ * @returns {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null, v: string } | null>}
  */
 export function readSegmentHits(surface, ordinals) {
   const wanted = new Set(ordinals);
-  /** @type {Map<number, { index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null } | null>} */
+  /** @type {Map<number, { index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null, v: string } | null>} */
   const found = new Map();
   if (wanted.size === 0) return [];
   let start = 0;
@@ -286,6 +296,7 @@ export function readSegmentHits(surface, ordinals) {
           kind: typeof parsed.kind === 'string' ? parsed.kind : '',
           summary: typeof parsed.summary === 'string' ? parsed.summary : '',
           generation: typeof parsed.generation === 'number' ? parsed.generation : null,
+          v: typeof parsed.v === 'string' ? parsed.v : '',
         });
       }
     }

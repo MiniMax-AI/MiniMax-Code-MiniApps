@@ -3772,6 +3772,13 @@
         // Why the last search could not be answered, or null. 「没搜到」 and 「没搜成」 are
         // different states and the count line has to be able to tell them apart.
         searchError: null,
+        // How many times this needle has been re-asked against a freshly fetched body because the
+        // answer turned out to be about a different version of the records. Bounded, because a
+        // session that is being written to keeps moving — the counter is what stops the page from
+        // chasing it forever, and it is reset by the next answer that does apply.
+        searchRefresh: 0,
+        // The needle `searchRefresh` belongs to. A new needle is a new question and starts over.
+        searchRefreshFor: '',
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
         // and both null is the default: no range, whole session.
@@ -4078,6 +4085,50 @@
       }
 
       /**
+       * The records of the body on screen, by their index.
+       *
+       * A record index is a position inside ONE body, so anything that names an index has to be
+       * able to say which record of that body it means. This is the same set the ledger draws —
+       * the flattened body, not a second copy of it.
+       *
+       * @returns {Map<number, any>}
+       */
+      function displayedRecordsByIndex() {
+        var map = new Map();
+        var flat = Array.isArray(state.flat) ? state.flat : [];
+        for (var i = 0; i < flat.length; i++) {
+          var entry = flat[i];
+          var record = entry && entry.record ? entry.record : entry;
+          if (record && typeof record.index === 'number') map.set(record.index, record);
+        }
+        return map;
+      }
+
+      /**
+       * The version of one record of the body on screen.
+       *
+       * The version is what makes index N in this body the same record as index N in another one.
+       * A transcript rewritten under a running page leaves the indexes alone and changes the
+       * records behind them, so the version is the only thing that tells the two apart — and a
+       * request that names an index has to carry it, or the service cannot tell which of the two
+       * records it is being asked about.
+       *
+       * @param {number} index
+       * @returns {string} the version, or '' when this body carries none
+       */
+      function displayedRecordVersion(index) {
+        var flat = Array.isArray(state.flat) ? state.flat : [];
+        for (var i = 0; i < flat.length; i++) {
+          var entry = flat[i];
+          var record = entry && entry.record ? entry.record : entry;
+          if (record && record.index === index) {
+            return typeof record.v === 'string' ? record.v : '';
+          }
+        }
+        return '';
+      }
+
+      /**
        * The session list, on its own validator.
        *
        * `manual` is the refresh button asking for the truth, and it drops the validator the way
@@ -4314,8 +4365,16 @@
           state.searchPending = false;
           state.searchTotal = 0;
           state.searchTruncated = false;
+          state.searchRefresh = 0;
+          state.searchRefreshFor = '';
           searchSeq += 1;
           return;
+        }
+        // A new needle is a new question, and the counter that bounds the re-asking belongs to
+        // the question that started it.
+        if (state.searchRefreshFor !== asked) {
+          state.searchRefreshFor = asked;
+          state.searchRefresh = 0;
         }
         var controller = new AbortController();
         searchController = controller;
@@ -4352,14 +4411,19 @@
             searchController = null;
             state.searchPending = false;
             // The answer has to be about the body on screen BEFORE its indexes may filter that
-            // body. The server names the session and the slice it answered for, so the two can
-            // be compared: if they differ, the hits describe another body's records, and
-            // installing them would report a miss for a row that matches and a hit for one that
-            // does not.
+            // body. Three things have to agree, and each of them answers a different question:
             //
-            // The slice is compared against the body's own, not against the reader's selection:
-            // a selection whose load failed leaves the previous body on screen, and an answer
-            // about the selected slice would then filter rows that are not the ones on screen.
+            //  - WHICH SESSION. The server names the session it answered for, and a body of
+            //    another session's records would report a miss for a row that matches.
+            //  - WHICH SLICE. The slice is compared against the body's own, not against the
+            //    reader's selection: a selection whose load failed leaves the previous body on
+            //    screen, and an answer about the selected slice would then filter rows that are
+            //    not the ones on screen.
+            //  - WHICH VERSION. The session and the slice say WHICH BODY; they say nothing about
+            //    whether the record at a given index is still the same record. A transcript
+            //    rewritten under a running page leaves the indexes alone and changes the records
+            //    behind them, and an answer about the rewritten body would then light up a row
+            //    whose text does not contain the needle at all.
             var answered = body && body.session ? body.session : null;
             var displayed = state.payload && state.payload.session ? state.payload.session : null;
             // The two slices are compared as the page reads them: a number names one generation and
@@ -4376,9 +4440,68 @@
               mismatch.code = 'session_mismatch';
               throw mismatch;
             }
-            state.searchHits = searchHitSet(body.hits);
-            state.searchTotal = Number.isInteger(body.total) ? body.total : 0;
+            // Every hit is checked against the body on screen, one by one, because a hit is a
+            // POSITION and a position only names a record when the version agrees.
+            //
+            // A hit whose position is on screen and whose version differs is about another version
+            // of that record: the whole answer is refused rather than partly installed, because
+            // the answer is about one body and the page is showing another. The body is then
+            // fetched once more and the same question is put again against the current body.
+            //
+            // A hit whose position is NOT on screen is about a record this body does not have — the
+            // session grew after the body was built. It cannot be shown, so it is not counted
+            // either: the number the reader sees has to be the number of rows that are lit up.
+            var byIndex = displayedRecordsByIndex();
+            var hits = Array.isArray(body.hits) ? body.hits : [];
+            var applicable = [];
+            var wrongVersion = false;
+            for (var h = 0; h < hits.length; h += 1) {
+              var hit = hits[h];
+              if (!hit || typeof hit.index !== 'number') continue;
+              var shown = byIndex.get(hit.index);
+              if (!shown) continue;
+              if (typeof shown.v === 'string' && shown.v !== '' && shown.v !== hit.v) {
+                wrongVersion = true;
+                break;
+              }
+              applicable.push(hit);
+            }
+            if (wrongVersion) {
+              // Bounded, because a session that is being written to keeps moving: after a couple
+              // of tries the page stops chasing it, says that the answer does not apply, and the
+              // next poll's own re-run takes over.
+              if (state.searchRefresh < 2) {
+                state.searchRefresh += 1;
+                state.searchError = null;
+                state.searchPending = true;
+                // The whole body, not a tail: a delta carries the records after the cursor, and
+                // the record that moved is not one of them.
+                state.since = 0;
+                state.sinceFor = '';
+                state.etag = '';
+                state.etagFor = '';
+                fetchTrajectory(false).then(function () {
+                  runSearch(state.query);
+                }, function () {
+                  state.searchPending = false;
+                  state.searchError = 'search_version_mismatch';
+                  renderLedger();
+                });
+                return;
+              }
+              state.searchError = 'search_version_mismatch';
+              renderLedger();
+              return;
+            }
+            state.searchHits = searchHitSet(applicable);
             state.searchTruncated = body.truncated === true;
+            // The count is the number of matches IN THE BODY ON SCREEN, so it is the number of rows
+            // the reader can see lit up. A truncated answer is the one exception: there the server's
+            // total is the real count and the rows on screen are only the first N of them, which
+            // the 「已截断」 mark says.
+            state.searchTotal = state.searchTruncated
+              ? (Number.isInteger(body.total) ? body.total : 0)
+              : applicable.length;
             // An answer that arrived retires the failure that preceded it. This line is here
             // because the two other places that clear the field are the two a READER triggers —
             // typing in the box and pressing clear — so nothing else could. A poll that re-runs the
@@ -4387,6 +4510,7 @@
             // session: the label reads the error first, so the stale one outranked the fresh hit
             // set it was describing.
             state.searchError = null;
+            state.searchRefresh = 0;
             resetWindowMode();
             renderLedger();
           })
@@ -8719,6 +8843,12 @@
         if (generation !== null) {
           url += '&generation=' + encodeURIComponent(String(generation));
         }
+        // WHICH RECORD. The index is a position inside the body on screen, and the service may be
+        // holding a newer body in which that position is another record — so the version of the
+        // record the reader opened travels with the request, and the service can tell the two
+        // apart instead of serving the newer record under the older one's number.
+        var version = displayedRecordVersion(index);
+        if (version) url += '&v=' + encodeURIComponent(version);
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
             function (body) { return { ok: response.ok, body: body }; },
@@ -8811,6 +8941,10 @@
         if (generation !== null) {
           url += '&generation=' + encodeURIComponent(String(generation));
         }
+        // The same record, the same way: the version travels with the request so the service can
+        // refuse when the position it would answer is a different record than the one opened.
+        var version = displayedRecordVersion(index);
+        if (version) url += '&v=' + encodeURIComponent(version);
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
             function (body) { return { ok: response.ok, body: body }; },
