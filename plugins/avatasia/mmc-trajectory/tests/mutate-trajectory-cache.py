@@ -17,6 +17,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 SERVER = ROOT / "miniapp" / "node" / "server.mjs"
 PROBE = HERE / "verify-trajectory-cache.mjs"
+# A case may name its own probe, and this is the other one: the cap on the fold over the first
+# N records is owned by `verify-incremental.mjs`, which is where the assertion about it lives. A
+# case that ran this file's probe instead would be asking a guard that never heard of the rule,
+# and would report the mutation as survived.
+INCREMENTAL_PROBE = HERE / "verify-incremental.mjs"
 
 FAMILY_EVICT = """      for (const [existingKey, existing] of entries) {
         if (existingKey !== key && existing.family === family) entries.delete(existingKey);
@@ -359,6 +364,25 @@ MUTATIONS = [
         "      sendJsonBody(response, 200, cached.body, { etag, revalidate: true });\n      return;\n",
         "      // the body is rebuilt below\n",
     ),
+    # ---- the cap on the fold over the first N records ---------------------------------
+    #
+    # The cap is checked BEFORE the push, so a limit of zero is zero records. Checked after the
+    # push it is one, and the fold over the page's empty set then never matches the service's fold
+    # over its empty set -- so a request for a tail over no records is refused for ever.
+    #
+    # The two readings of "the versions of the first N records" are in two files -- this one in
+    # `server.mjs`, the other in `search-segments.mjs` -- and they have to agree, which is why the
+    # case below names the guard that owns the rule rather than this file's own probe.
+    (
+        "the cap on the fold is checked after the push, so a limit of zero still yields one version",
+        SERVER,
+        "      if (out.length >= cap) return out;\n"
+        "      out.push(typeof record.v === 'string' ? record.v : '');\n",
+        "      out.push(typeof record.v === 'string' ? record.v : '');\n"
+        "      if (out.length >= cap) return out;\n",
+        "a limit of zero records is a limit of zero, not of one",
+        INCREMENTAL_PROBE,
+    ),
 ]
 
 
@@ -375,9 +399,9 @@ def write_exact(path, text, newline):
     path.write_bytes(text.encode("utf-8"))
 
 
-def run_probe():
+def run_probe(probe=PROBE):
     proc = subprocess.run(
-        ["node", str(PROBE)],
+        ["node", str(probe)],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -387,18 +411,61 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def reported_rules(output):
+    """The rules a probe named as broken.
+
+    Two guards, two formats: `verify-trajectory-cache.mjs` prints `  - <name>` and
+    `verify-incremental.mjs` prints `FAIL <name>`. Both name the rule, so a control that could
+    only read one of them would read the other's output as a failure that named nothing.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(text[2:].strip())
+        elif text.startswith("FAIL "):
+            names.append(text[5:].strip())
+    return names
+
+
+def probes_used():
+    """The probes the cases ask for, in the order they first appear."""
+    used = []
+    for case in MUTATIONS:
+        probe = case[5] if len(case) > 5 else PROBE
+        if probe not in used:
+            used.append(probe)
+    return used
+
+
 def main():
-    code, output = run_probe()
+    code, output = run_probe(PROBE)
     if code != 0:
         print("baseline probe does not pass; fix that first")
         print(output)
         return 1
     print("baseline clean")
 
+    # Every probe a case names is baselined before any mutation is applied: a probe that is
+    # already red cannot be read as a catch, and a control that ran one would report a mutation
+    # as survived for a reason that has nothing to do with it.
+    for probe in probes_used():
+        if probe == PROBE:
+            continue
+        code, output = run_probe(probe)
+        if code != 0:
+            print(f"baseline {probe.name} does not pass; fix that first")
+            print(output)
+            return 1
+        print(f"baseline {probe.name} clean")
+
     originals = {path: path.read_bytes() for path in {m[1] for m in MUTATIONS}}
     missed = []
     unnamed = []
-    for label, path, old, new in MUTATIONS:
+    for case in MUTATIONS:
+        label, path, old, new = case[:4]
+        expect = case[4] if len(case) > 4 else None
+        probe = case[5] if len(case) > 5 else PROBE
         text, newline = read_exact(path)
         if old not in text:
             print(f"SKIP  {label}: anchor not found in {path.name}")
@@ -406,12 +473,22 @@ def main():
             continue
         write_exact(path, text.replace(old, new, 1), newline)
         try:
-            code, output = run_probe()
+            code, output = run_probe(probe)
         finally:
             path.write_bytes(originals[path])
         if code == 0:
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
+            continue
+        if expect is not None:
+            # The case names the rule it is about, so the probe has to name that rule and not
+            # some other one that happened to go red in the same run.
+            names = reported_rules(output)
+            if expect not in names:
+                print(f"MISSED {label}: the probe named {names} instead of {expect}")
+                missed.append(label)
+                continue
+            print(f"caught {label}\n         -> {expect}")
             continue
         # A probe that failed without naming a rule has not said WHICH rule broke, so it has not
         # shown that the guard owns this mutation. It is weaker than "caught", and it is reported

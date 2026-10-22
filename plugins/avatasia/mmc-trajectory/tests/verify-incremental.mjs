@@ -390,7 +390,27 @@ const F7_BODY = {
   ],
 };
 const F7_COUNT = 3;
-const F7_FINGERPRINT = recordSetFingerprint(payloadRecordVersions(F7_BODY, F7_COUNT));
+// The expectation is written out by hand, not folded from the function it polices. A guard that
+// computes its expected fingerprint with `payloadRecordVersions` cannot see an off-by-one inside
+// that function: the mistake would move the expectation and the answer together, and the guard
+// would stay green. So the versions are listed here, and the fingerprint is their literal.
+const F7_VERSIONS = ['1111111111111111', '2222222222222222', '3333333333333333'];
+const F7_FINGERPRINT = 'c6f81774c9d5df24';
+
+{
+  assert('the fingerprint of the hand-written list is the one the page is asked for',
+    recordSetFingerprint(F7_VERSIONS) === F7_FINGERPRINT);
+  assert('the first N records are the ones the service folds over',
+    JSON.stringify(payloadRecordVersions(F7_BODY, F7_COUNT)) === JSON.stringify(F7_VERSIONS));
+  // A limit of zero is zero records. The cap used to be checked after the push, so a limit of
+  // zero yielded one version — and the fold over the page's empty set then never matched the
+  // service's fold over its empty set, and the request was refused for ever.
+  assert('a limit of zero records is a limit of zero, not of one',
+    payloadRecordVersions(F7_BODY, 0).length === 0);
+  assert('and a limit of one record is the first record\'s version',
+    payloadRecordVersions(F7_BODY, 1).length === 1
+    && payloadRecordVersions(F7_BODY, 1)[0] === F7_VERSIONS[0]);
+}
 
 {
   assert('a tail is answered to a page holding the records the service has',

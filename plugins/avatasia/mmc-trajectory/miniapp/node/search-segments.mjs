@@ -461,14 +461,18 @@ export function createSegmentStore(root) {
  * parsed answer agree.
  *
  * @param {string} surface
- * @param {number} [limit] stop after this many records
+ * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
+ *   negative or fractional limit is every record
  * @returns {Array<string>}
  */
 export function segmentVersions(surface, limit) {
   /** @type {Array<string>} */
   const out = [];
   if (typeof surface !== 'string' || surface === '') return out;
-  const wanted = Number.isInteger(limit) && limit > 0 ? limit : Infinity;
+  // The same rule as the payload's own fold over the first N records: an explicit limit of zero
+  // is zero records, and a missing, negative or fractional limit is every record. The two are two
+  // readings of one fact — the versions of the first N records — so they have to agree.
+  const wanted = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;
   let start = 0;
   while (start <= surface.length && out.length < wanted) {
     const nl = surface.indexOf('\n', start);
@@ -509,8 +513,13 @@ function versionInAnswer(answer) {
 /**
  * Whether the generation a segment was built from is still the generation on disk.
  *
- * Identity, not mtime: a sealed file is not written to, and a reader that treated a touch as a
- * change would rebuild correct bytes on every poll.
+ * Identity is the file name, the generation, the size, the mtime, whether the read was cut short,
+ * and the revision when both sides carry one: all of them have to agree for the segment to still
+ * be about the same bytes.
+ *
+ * The mtime IS part of that, deliberately. The parsed-rows cache and the trajectory entry both
+ * key on (size, mtime), so a file rewritten in place — the same length, different bytes — is a
+ * different file to everything else in here, and a touch is a change here as much as it is there.
  *
  * @param {SegmentManifest['source']} stored
  * @param {SegmentManifest['source']} live

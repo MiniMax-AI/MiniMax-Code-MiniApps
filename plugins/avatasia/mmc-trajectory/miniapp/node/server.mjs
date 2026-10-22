@@ -464,7 +464,8 @@ function hex8(value) {
  * a different order is a different answer to 「这批记录是哪一批」.
  *
  * @param {{ turns?: Array<any> }} payload
- * @param {number} [limit] stop after this many records
+ * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
+ *   negative or fractional limit is every record
  * @returns {Array<string>}
  */
 export function payloadRecordVersions(payload, limit) {
@@ -476,8 +477,11 @@ export function payloadRecordVersions(payload, limit) {
     const records = turn && Array.isArray(turn.records) ? turn.records : [];
     for (const record of records) {
       if (!record || typeof record !== 'object') continue;
-      out.push(typeof record.v === 'string' ? record.v : '');
+      // The cap is checked BEFORE the push, so a limit of zero is zero records. Checked after the
+      // push it would yield one version, and the fold over the page's empty set would then never
+      // match the service's own fold over its empty set — the request would be refused for ever.
       if (out.length >= cap) return out;
+      out.push(typeof record.v === 'string' ? record.v : '');
     }
   }
   return out;
