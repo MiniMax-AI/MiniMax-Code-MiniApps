@@ -54,6 +54,17 @@ RULE_MEMBERSHIP = "a mutation control decides a case by membership, not by one r
 RULE_ANCHOR = "the two reviewed mutation controls decide their cases by membership"
 RULE_DERIVED = "the set of mutation controls is derived from the package and is not empty"
 RULE_PARSE = "every mutation control in the package parses"
+RULE_CLAIM = "a control that claims it caught cases by name judges them by membership"
+
+# The claim itself. A control that PRINTS this is saying that it caught its cases by name, and
+# that has to be true of it.
+#
+# It is looked for in the strings a control prints, not anywhere in its source: a comment or a
+# docstring that mentions the phrase is prose, not a claim, and a rule that scanned the whole
+# file would fire on the documentation of the very controls that do honour it. This is a rule
+# about text, and the text it is about is the claim the control makes to whoever reads its
+# output.
+CLAIM_PHRASE = "each by name"
 
 # How a control decides.
 BY_MEMBERSHIP = "membership"
@@ -448,6 +459,27 @@ def describes_unmarked(tree, values):
 # one control
 # --------------------------------------------------------------------------------------
 
+def claims_by_name(tree):
+    """Whether the control PRINTS a claim that it caught its cases by name.
+
+    Only the strings the control prints count. A comment or a docstring that mentions the
+    phrase is prose about the control, not a claim the control makes to whoever reads its
+    output, and the difference matters: a control that documents the phrase must not be
+    reported as claiming it.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id == "print"):
+            continue
+        for argument in node.args:
+            for inner in ast.walk(argument):
+                if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                    if CLAIM_PHRASE in inner.value:
+                        return True
+    return False
+
+
 def analyse(path):
     """Read one control and say how it decides a case."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -459,6 +491,7 @@ def analyse(path):
     # name. Testing one of those against the file the control is editing is anchor work.
     judged = values - source
     tests = name_tests(tree, judged, bindings)
+    claims = claims_by_name(tree)
 
     single = []
     membership = []
@@ -475,6 +508,7 @@ def analyse(path):
             "detail": ("the case's own expected name is compared for equality with one "
                        "reported name: " + show(single[0]["operand"])),
             "members": sorted(judged),
+            "claims": claims,
         }
     if membership:
         return {
@@ -482,12 +516,14 @@ def analyse(path):
             "how": BY_MEMBERSHIP,
             "detail": "",
             "members": sorted(judged),
+            "claims": claims,
         }
     return {
         "file": path.name,
         "how": BY_NO_NAME,
         "detail": describes_unmarked(tree, judged),
         "members": sorted(judged),
+        "claims": claims,
     }
 
 
@@ -561,6 +597,17 @@ def main():
           else "; ".join("%s: the control does not decide its cases by membership" % name
                          for name in missing))
 
+    # 4. The claim. A control that prints that it caught its cases by name has to judge them by
+    #    membership, or the sentence it prints is false. This is the rule the previous run's
+    #    finding was the same shape as, applied to every control rather than to two of them.
+    claimers = sorted(r["file"] for r in results if r["claims"])
+    unfounded = [r for r in results if r["claims"] and r["how"] != BY_MEMBERSHIP]
+    check(RULE_CLAIM, not unfounded,
+          "%d control(s) claim it caught cases by name" % len(claimers)
+          if not unfounded
+          else "; ".join("%s: the control claims it caught cases by name but does not decide "
+                         "them by membership" % r["file"] for r in unfounded))
+
     # The classification, which is the report this guard owes the reader.
     members = [r for r in results if r["how"] == BY_MEMBERSHIP]
     others = [r for r in results if r["how"] != BY_MEMBERSHIP]
@@ -571,6 +618,9 @@ def main():
     print("  not by membership (%d):" % len(others))
     for record in others:
         print("    " + record["file"] + "  " + record["detail"])
+    print("  claiming to catch cases by name (%d):" % len(claimers))
+    for name in claimers:
+        print("    " + name)
 
     if failures:
         print("")

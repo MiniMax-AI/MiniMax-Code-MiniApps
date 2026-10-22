@@ -39,6 +39,15 @@ TARGET = HERE / "mutate-search-endpoint.py"
 RULE_MEMBERSHIP = "a mutation control decides a case by membership, not by one reported name"
 RULE_ANCHOR = "the two reviewed mutation controls decide their cases by membership"
 RULE_DERIVED = "the set of mutation controls is derived from the package and is not empty"
+RULE_CLAIM = "a control that claims it caught cases by name judges them by membership"
+
+# The two controls the guard anchors on. They are copied into the shorter trees below so that the
+# anchor holds there and the rule under test is the only one that can fail.
+ANCHOR = ("mutate-search-endpoint.py", "mutate-search-segments.py")
+
+# The claim, as a control that does not honour it would print it. It goes at the END of a control's
+# source, so it is a print of its own and nothing else in the file changes.
+CLAIM_PRINT = 'print("all mutations caught, each by name")'
 
 # The decision that is correct, and the two that are not. The case table is not touched by the
 # first two: every case keeps its expected rule name, and only the decision changes.
@@ -212,6 +221,88 @@ def run_in_a_shorter_tree(label, expect, keep):
         shutil.rmtree(workspace, ignore_errors=True)
 
 
+def non_claiming_control(output):
+    """The first control the guard reports as not judging by membership AND not claiming to.
+
+    Both lists come out of the guard's own report, so nothing here is written out by hand: a
+    control added tomorrow is picked up without this file being edited. A control that claims to
+    catch its cases by name and does not judge them by membership is already reported by the
+    rule under test, so it cannot serve as the subject of this case.
+    """
+    not_members = []
+    claimers = []
+    section = None
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("by membership ("):
+            section = "members"
+            continue
+        if text.startswith("not by membership ("):
+            section = "not"
+            continue
+        if text.startswith("claiming to catch cases by name ("):
+            section = "claim"
+            continue
+        if not text:
+            continue
+        if not text.startswith("mutate-"):
+            section = None
+            continue
+        name = text.split()[0]
+        if section == "not":
+            not_members.append(name)
+        elif section == "claim":
+            claimers.append(name)
+    for name in not_members:
+        if name not in claimers:
+            return name
+    return None
+
+
+def run_with_a_claim_in_a_shorter_tree():
+    """Run a COPY of the guard against a control that claims to catch cases by name.
+
+    The control is one the guard itself reports as not judging by membership, and the claim is
+    put back into it -- in the copy, never in the package. The guard has to fail, and it has to
+    name the rule: a guard that went red for another reason has not shown that this one bites.
+    """
+    code, output = run_guard()
+    if code != 0:
+        print("the guard does not pass on the package as it stands; fix that first")
+        return False
+    target = non_claiming_control(output)
+    if target is None:
+        print("no control that does not judge by membership and does not claim to: "
+              "nothing for this case to prove")
+        return False
+
+    workspace = tempfile.mkdtemp(prefix="mutation-contracts-claim-")
+    try:
+        shutil.copy(GUARD, Path(workspace) / GUARD.name)
+        for name in list(ANCHOR) + [target]:
+            shutil.copy(HERE / name, Path(workspace) / name)
+        path = Path(workspace) / target
+        text = path.read_text(encoding="utf-8")
+        path.write_bytes((text + "\n\n" + CLAIM_PRINT + "\n").encode("utf-8"))
+        code, output = run_guard(Path(workspace) / GUARD.name, cwd=workspace)
+        names = reported_rules(output)
+        if code == 0:
+            print(f"MISSED the claim that the cases were caught by name is put back into a "
+                  f"control that does not judge by membership: the guard passed with "
+                  f"{target} claiming to catch cases by name")
+            return False
+        if RULE_CLAIM not in names:
+            print(f"MISSED the claim that the cases were caught by name is put back into a "
+                  f"control that does not judge by membership: the guard named {names} "
+                  f"instead of {RULE_CLAIM}")
+            return False
+        print(f"caught the claim that the cases were caught by name is put back into a "
+              f"control that does not judge by membership\n         -> {RULE_CLAIM}")
+        return True
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 def main():
     original_bytes = TARGET.read_bytes()
     original_digest = digest(TARGET)
@@ -269,6 +360,11 @@ def main():
             RULE_ANCHOR, ["mutate-search-endpoint.py"]):
         missed.append("the set of controls the guard derives has been shrunk to one")
 
+    # Nor by a control claiming to catch its cases by name while judging them by something else.
+    if not run_with_a_claim_in_a_shorter_tree():
+        missed.append("the claim that the cases were caught by name is put back into a "
+                      "control that does not judge by membership")
+
     if TARGET.read_bytes() != original_bytes:
         print(f"NOT RESTORED {TARGET}")
         return 1
@@ -283,7 +379,7 @@ def main():
         if unnamed:
             print(f"{len(unnamed)} mutation(s) failed without naming a rule")
         return 1
-    print(f"\nall {len(RELAXATIONS) + 2} relaxations caught, each by name")
+    print(f"\nall {len(RELAXATIONS) + 3} relaxations caught, each by name")
     return 0
 
 
