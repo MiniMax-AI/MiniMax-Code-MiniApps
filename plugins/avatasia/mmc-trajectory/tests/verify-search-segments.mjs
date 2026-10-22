@@ -88,7 +88,11 @@ function pageRecordSearchText(record) {
 }
 
 const RECORDS = [
-  { summary: 'the first answer', text: 'a longer Body of the reply', result: null, thinking: null, toolName: null },
+  // The first record carries a KIND. The kind is part of a record's ANSWER and not one of the five
+  // searched fields, and the rule about a needle that is only in the answer needs one to point at —
+  // a needle taken from a record that has no kind is `undefined`, which folds to the empty string
+  // and answers nothing. That rule says the whole of it; this line is the other half.
+  { kind: 'assistant', summary: 'the first answer', text: 'a longer Body of the reply', result: null, thinking: null, toolName: null },
   { summary: 'Reading a file', text: null, result: 'file contents here', thinking: null, toolName: 'read' },
   { summary: 'Thinking it over', text: null, result: null, thinking: { text: 'weighing the options' }, toolName: null },
   { summary: '', text: null, result: null, thinking: null, toolName: 'grep' },
@@ -292,10 +296,25 @@ assert('and there is no per-ordinal reader exported for a caller to reach for by
 
 // The JSON prefix holds the answer, so a needle must not be able to match it. Otherwise a search
 // for a record's kind would return every record of that kind whether its text says so or not.
+//
+// The needle has to be a REAL string, and it is one now. The first draft took it from a fixture
+// record that carried no `kind`, so the needle was `undefined`, it folded to `''`, and `scanSegment`
+// answers an empty needle with nothing — the rule then passed whatever the module did, which is the
+// one thing a rule must never do. The fixture record carries a kind, so the needle is that kind: it
+// is on the line, in the answer part, and it is NOT in the searchable text, because the kind is not
+// one of the five searched fields. The first two thirds of the check say that out loud, so the last
+// third cannot go back to being an empty assertion.
 const kindNeedle = RECORDS[0].kind;
+const kindSurface = buildSegment({
+  records: [{ kind: kindNeedle, summary: 'zzz nothing alike', text: null, result: null, thinking: null, toolName: null }],
+}).surface;
+const kindLine = kindSurface.split('\n')[0];
+const kindTab = kindLine.indexOf('\t');
+const kindAnswer = kindLine.slice(0, kindTab);
+const kindText = kindLine.slice(kindTab + 1);
 check('a needle that is only in the answer, not in the text, finds nothing',
-  scanSegment(buildSegment({ records: [{ kind: kindNeedle, summary: 'zzz nothing alike', text: null, result: null, thinking: null, toolName: null }] }).surface,
-    foldNeedle(kindNeedle)), []);
+  [kindAnswer.includes(kindNeedle), kindText.includes(kindNeedle), scanSegment(kindSurface, foldNeedle(kindNeedle))],
+  [true, false, []]);
 
 // The direct statement of the line-number bug, as an assertion: for every record, that record's own
 // surface finds that record, AT THAT RECORD'S ORDINAL. A surface that kept the page's newline
