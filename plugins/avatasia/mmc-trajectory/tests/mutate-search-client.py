@@ -8,7 +8,11 @@ here undoes one of the four things that move required and the page now owns:
   - telling 「no answer yet」 apart from 「matched nothing」;
   - letting only the newest request write, since the answer now arrives out of order;
   - re-asking when the payload changed, since the answer names indexes of the payload that was
-    there before.
+    there before;
+  - re-asking when the RECORDS changed but the shape did not, since the answer names a set of
+    records and not only a set of indexes — a record rewritten in place keeps every counter;
+  - keying a secondary read by the record's own version, so a retry after a reload cannot take
+    the pending answer of the record that took its place.
 
 Each is a change the page renders differently and none of them throws.
 """
@@ -54,8 +58,22 @@ MUTATIONS = [
     ),
     (
         "a changed payload keeps the old hit set, so the new table is filtered by the old answer",
-        "        if (changed && state.query) runSearch(state.query);",
-        "",
+        "        if (state.query && (changed || (state.searchSet && displayedRecordSet() !== state.searchSet))) {\n"
+        "          runSearch(state.query);\n"
+        "        }",
+        "        if (state.query && (state.searchSet && displayedRecordSet() !== state.searchSet)) {\n"
+        "          runSearch(state.query);\n"
+        "        }",
+    ),
+    (
+        "a content-only payload change does not retire the previous search answer",
+        "        if (state.query && (changed || (state.searchSet && displayedRecordSet() !== state.searchSet))) {",
+        "        if (state.query && changed) {",
+    ),
+    (
+        "a read joins a newer record's pending read after reload, because the key does not carry the record's version",
+        "        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index + '#' + (version || '');",
+        "        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;",
     ),
     (
         "clearing the filters leaves the hit set behind, so the next query filters by a stale answer",

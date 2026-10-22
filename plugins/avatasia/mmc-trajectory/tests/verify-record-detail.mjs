@@ -432,9 +432,13 @@ assert('and the page never asks for the duplicate field any more',
   !/record\.error\b/.test(CLIENT));
 // The detail read is a second source of the answer, so it has to be per record and invalidated
 // with the same key the raw read uses — a cached value from a previous version of the body is the
-// exact failure `/raw` already had one guard for.
+// exact failure `/raw` already had one guard for. The key carries the record's own version, so
+// the two paths have to build it the same way; the assertion compares the two calls instead of
+// naming one of them, so a change to the key's arguments cannot pass on one path alone.
+const keyCalls = CLIENT.match(/var key = rawCacheKey\([^)]*\);/g) || [];
 assert('the detail cache is keyed like the raw one',
-  CLIENT.includes('var key = rawCacheKey(index);') && CLIENT.includes('var detailCache = {};'));
+  keyCalls.length >= 2 && keyCalls.every((call) => call === keyCalls[0])
+  && CLIENT.includes('var detailCache = {};'));
 assert('and a failed detail read is reported rather than drawn as empty',
   CLIENT.includes('读取失败，这条记录的详细内容暂时取不到。'));
 

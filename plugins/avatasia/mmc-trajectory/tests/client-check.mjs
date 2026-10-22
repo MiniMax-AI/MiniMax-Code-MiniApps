@@ -233,7 +233,8 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
     'function sessionParam()', 'function displayedSessionParam()', 'function displayedGeneration()',
     'function displayedRecordsByIndex()', 'function displayedRecordVersions()',
-    'function recordSetFingerprint(versions)', 'function searchStatusLabel(searchState)',
+    'function displayedRecordSet(versions)', 'function recordSetFingerprint(versions)',
+    'function searchStatusLabel(searchState)',
     'function searchAnswerDoesNotApply()', 'function runSearch(needle)'];
   const sources = needed.map((sig) => fnSource(sig));
   check('the shipped search functions are all still findable by signature',
@@ -245,6 +246,7 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     'var state = { query: "retry me", sessionId: null, hostSessionId: null, followLatest: true,',
     '  generation: null, searchHits: null, searchTotal: 0, searchTruncated: false,',
     '  searchPending: false, searchError: null, searchRefresh: 0, searchRefreshFor: "",',
+    '  searchSet: "",',
     // The body on screen. `displayedSessionParam()` reads it and the answer is checked against
     // it, so a harness with no body on screen cannot ask either question. Its `generation` is
     // the slice the body IS: null is the whole lineage, a number is that one generation.
@@ -546,6 +548,96 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     netCtx.state.searchError, 'search_version_mismatch');
   check('and the label shows the failure rather than a count it cannot stand behind',
     netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
+}
+
+/* The answer has to be about the records that are ON SCREEN — and a body can change without
+ * changing its shape.
+ *
+ * The change detector is a cheap one, on purpose: it compares structural counters, because
+ * rebuilding 200+ rows every 2.5s is wasteful when nothing changed. But a record's TEXT can be
+ * rewritten under the page while every one of those counters stays the same — the same message
+ * count, the same turn count, the same timestamps, the same usage. The body on screen is then a
+ * different SET of records, and the answer standing on screen is about the old ones: the reader
+ * is told 「命中 1 条」 about a row that does not contain the needle, and nothing anywhere says
+ * so.
+ *
+ * The request side already knows this — it names the set it is asking about, and the service
+ * refuses a search about another set. But a refusal only happens if a REQUEST is made, and here
+ * none is: the answer is not re-asked, it is simply left standing.
+ *
+ * So this runs the real `applyPayload` with a body that was rewritten in place, and asks what
+ * the page does about it. */
+{
+  const applyCtx = { console, AbortController, setTimeout, clearTimeout, encodeURIComponent };
+  vm.createContext(applyCtx);
+  const needed = ['function isCount(value)', 'function signatureOf(payload)', 'function flattenTurns(turns)',
+    'function payloadCursor(payload)', 'function deltaMatchesNumbering(previous, delta)',
+    'function recordSetFingerprint(versions)', 'function displayedRecordVersions()',
+    'function displayedRecordSet(versions)', 'function displayedSessionParam()',
+    'function displayedGeneration()', 'function applyPayload(body, manual)'];
+  const sources = needed.map((sig) => fnSource(sig));
+  check('the shipped functions the answer-set rule needs are all still findable by signature',
+    needed.filter((sig, i) => !sources[i]), []);
+  vm.runInContext([
+    'var turnById = new Map();',
+    'var state = { payload: null, flat: [], signature: "", loading: false, hardError: null,',
+    '  since: null, sinceFor: null, etag: "", etagFor: "", query: "", searchSet: "" };',
+    // The re-ask is what is under test, so it is recorded rather than performed — and the set is
+    // recorded the way the shipped `runSearch` records it, because the page keeps answering
+    // about the set it last asked about.
+    'var asked = [];',
+    'function runSearch(needle) { asked.push(String(needle)); state.searchSet = displayedRecordSet(); }',
+    // The page paints itself; none of that is what is under test and none of it has a DOM here.
+    'function render() {}',
+    'function announce() {}',
+    'function noteFresh() {}',
+    'function rePinWindow() {}',
+    ...sources.map((src, i) => src || (needed[i] + ' { throw new Error(' + JSON.stringify(needed[i])
+      + ' is not in index.html any more); }')),
+  ].join('\n'), applyCtx);
+
+  // One record, and the body that holds it. The SHAPE is the same in every one of these bodies:
+  // the same session, the same counters, the same turn, the same one record. Only the record's own
+  // version token moves — and that is exactly what a rewrite in place looks like from here.
+  const bodyWith = (version, stats) => ({
+    session: { id: 'mvs_displayed', generation: null },
+    stats: Object.assign({ messages: 1, toolCalls: 0, errors: 0, durationMs: 1000,
+      tokens: { totalTokens: 10 } }, stats || {}),
+    turns: [{ id: 'turn-1', records: [{ index: 1, v: version, summary: 'ALPHA BODY' }] }]
+  });
+
+  // The body on screen, and a question that was answered for it.
+  const alpha = bodyWith('the-version-of-alpha');
+  applyCtx.state.payload = alpha;
+  applyCtx.state.flat = applyCtx.flattenTurns(alpha.turns);
+  applyCtx.state.signature = applyCtx.signatureOf(alpha);
+  applyCtx.state.query = 'alpha';
+  applyCtx.state.searchSet = applyCtx.displayedRecordSet();
+  applyCtx.asked.length = 0;
+
+  // The same body again: nothing moved, so the question is not put again.
+  applyCtx.applyPayload(bodyWith('the-version-of-alpha'), false);
+  check('a body that did not change does not put the question again', applyCtx.asked, []);
+
+  // The record's text is rewritten in place. Every counter is the same; only the record's own
+  // version token is different, so the body on screen is a different SET of records.
+  applyCtx.applyPayload(bodyWith('the-version-of-charlie'), false);
+  check('a content-only payload change retires the previous search answer',
+    applyCtx.asked, ['alpha']);
+
+  // And it is retired once, not on every poll afterwards.
+  applyCtx.asked.length = 0;
+  applyCtx.applyPayload(bodyWith('the-version-of-charlie'), false);
+  check('and the question is not put again on every poll after that',
+    applyCtx.asked, []);
+
+  // The rule that was already there: a body whose SHAPE changed puts the question again, even
+  // when its records are the same ones. A change of counters is a change of body, and the answer
+  // on screen was computed against the old one.
+  applyCtx.asked.length = 0;
+  applyCtx.applyPayload(bodyWith('the-version-of-charlie', { durationMs: 2000 }), false);
+  check('a payload that changed re-runs the search rather than filtering by the old answer',
+    applyCtx.asked, ['alpha']);
 }
 
 /* handoff: the session the record came from, across a navigation.
@@ -1363,11 +1455,6 @@ const checks = [
     const gates = src.match(/if \(seq !== searchSeq\) return;/g) || [];
     return gates.length === 2 && /var seq = \(searchSeq \+= 1\);/.test(src);
   })()],
-  ['a payload that changed re-runs the search rather than filtering by the old answer', (() => {
-    const src = fnSource('function applyPayload(body, manual)');
-    if (!src) return false;
-    return /if \(changed && state\.query\) runSearch\(state\.query\);/.test(src);
-  })()],
   ['clearing the filters drops the answer with them', (() => {
     const src = fnSource('function resetBaseFilters()');
     if (!src) return false;
@@ -2104,7 +2191,7 @@ const requestDetailSrc = fnSource('function requestDetail(index, version)');
 const displayedSessionSrc = fnSource('function displayedSessionParam()');
 const displayedGenerationSrc = fnSource('function displayedGeneration()');
 const recordVersionOfSrc = fnSource('function recordVersionOf(record)');
-const rawCacheKeySrc = fnSource('function rawCacheKey(index)');
+const rawCacheKeySrc = fnSource('function rawCacheKey(index, version)');
 if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGenerationSrc
   || !recordVersionOfSrc || !rawCacheKeySrc) {
   failures.push('secondary reads: could not lift requestRaw, requestDetail and the session they ask for');
@@ -2248,6 +2335,67 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
       /[?&]v=the-version-of-record-one(&|$)/.test(retried[3] || ''), true);
     check('and not about the record that happens to be at that index after the reload',
       /[?&]v=a-newer-version(&|$)/.test(retried[3] || ''), false);
+
+    /* The retry must not JOIN another read.
+     *
+     * The reload brings a body in which the record at that position is a DIFFERENT one, and the
+     * panel that rebuilds on it asks for the record now on screen. The read of the record the
+     * reader opened is still in flight, and it has to ask about ITS OWN record: the two reads are
+     * at the same position, and the key that decides whose answer a caller gets is the only
+     * thing that can tell them apart.
+     *
+     * The key used to be built out of what is on screen — the validator, the slice, the position —
+     * so after the reload the retry of the old record and the new record's own read had the SAME
+     * key. The retry was then answered with the new record's body without asking anything: the
+     * reader opened ALPHA and the page handed back CHARLIE. The version belongs in the key, and
+     * it is the caller's version, not the screen's. */
+    for (const [readName, what] of [['fetchRaw', 'a retried read'],
+      ['fetchDetail', 'a retried field read']]) {
+      vm.runInContext('rawCache = {}; rawPending = {}; detailCache = {}; detailPending = {};', sandbox);
+      const joined = [];
+      sandbox.state = {
+        payload: { session: { id: 'mvs_displayed', generation: null } },
+        flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
+        generation: null, etag: '"tag-old"', followLatest: true, sessionId: '', hostSessionId: ''
+      };
+      sandbox.fetch = function (url) {
+        joined.push(String(url));
+        // The first attempt is refused because the service let go of the session.
+        if (joined.length === 1) {
+          return Promise.resolve({ ok: false, status: 503,
+            json: () => Promise.resolve({ error: 'trajectory_not_cached' }) });
+        }
+        // The old record's own request: the service refuses it, because the record at that
+        // position is not the one that was asked for.
+        if (/[?&]v=the-version-of-record-one(&|$)/.test(joined[joined.length - 1])) {
+          return Promise.resolve({ ok: false, status: 409,
+            json: () => Promise.resolve({ error: 'raw_stale' }) });
+        }
+        // The record now on screen, which the rebuild of the panel asks for.
+        return Promise.resolve({ ok: true, status: 200,
+          json: () => Promise.resolve({ raw: 'CHARLIE BODY longer', index: 1, text: 'CHARLIE BODY longer' }) });
+      };
+      sandbox.fetchTrajectory = function () {
+        // The new body is on screen, with its own validator, and the panel rebuilds on it: that
+        // starts a read of the record now at that position.
+        sandbox.state.etag = '"tag-new"';
+        sandbox.state.flat = [{ turn: {}, record: { index: 1, v: 'the-version-of-record-two' } }];
+        sandbox.fetchRaw({ index: 1, v: 'the-version-of-record-two' });
+        return Promise.resolve();
+      };
+      let refused = null;
+      let handed = null;
+      try {
+        handed = await sandbox[readName]({ index: 1, v: 'the-version-of-record-one' });
+      } catch (err) {
+        refused = err && err.code ? err.code : String(err);
+      }
+      check(what + ' cannot join a newer record\'s pending read after reload',
+        refused, 'raw_stale');
+      check(what + ' is not answered with the other record\'s body', handed, null);
+      check(what + ' asked about the record the reader opened, on a request of its own',
+        joined.filter((u) => /[?&]v=the-version-of-record-one(&|$)/.test(u)).length, 2);
+    }
   }
 }
 
