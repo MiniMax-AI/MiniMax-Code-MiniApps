@@ -8,7 +8,13 @@ wrong, and none of them throws.
     showing, and hands back an index no row occupies;
   - dropping one of the five searched fields narrows what a reader can find with no error at all;
   - counting only what fits under the cap turns "how many matched" into "how many did we send".
+
+Every case names the rule it is about in its `expect` field, and a case counts as caught only
+when the probe reported THAT rule: a probe that went red on some other assertion has not shown
+that this guard owns this mutation.
 """
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,27 +37,32 @@ MUTATIONS = [
         "the endpoint is wired to a scan of the stored rows rather than the projected view",
         "    const searched = collectSearchHits(payload, needle, MAX_SEARCH_HITS);",
         "    const searched = collectSearchHits({ turns: [{ index: 1, records: rows.map((row) => ({ index: 0, kind: 'reply', summary: String(row.message_id) })) }] }, needle, MAX_SEARCH_HITS);",
+        'the endpoint answers through the one search helper',
     ),
     (
         "a hit reports the record's stored id instead of the index the ledger gives it",
         "        index: record.index,\n        turnIndex: turn.index,",
         "        index: record.id === null || record.id === undefined ? 0 : 1,\n        turnIndex: turn.index,",
+        '"needle" finds the records the page found',
     ),
     (
         "the endpoint projects the whole lineage instead of the slice that was asked for",
         "    const view = selectIdentityView(identityTable, filter);\n    const payload = buildTrajectoryPayload({\n      session: { id: ctx.identity.id, createdAtMs: entry.lastActiveAt },",
         "    const view = selectIdentityView(identityTable, null);\n    const payload = buildTrajectoryPayload({\n      session: { id: ctx.identity.id, createdAtMs: entry.lastActiveAt },",
+        'both readers project the requested slice, not the whole lineage',
     ),
     # ---- the surface has to be the page's ---------------------------------------------------
     (
         "the endpoint searches only the summary",
         "      if (!searchSurfaceOf(record).includes(needle)) continue;",
         "      if (!String(record.summary ?? '').includes(needle)) continue;",
+        '"read" finds the records the page found',
     ),
     (
         "the endpoint folds the surface away, so a case-sensitive needle matches everything",
         "      if (!searchSurfaceOf(record).includes(needle)) continue;",
         "      if (!String(record.summary ?? '').toLowerCase().includes(needle) || true) continue;",
+        '"needle" finds the records the page found',
     ),
     # ---- how many ---------------------------------------------------------------------------
     (
@@ -63,43 +74,51 @@ MUTATIONS = [
       if (!searchSurfaceOf(record).includes(needle)) continue;
       if (hits.length >= limit) break;
       total += 1;""",
+        'and not what is counted',
     ),
     (
         "the cap is applied before the count, so an unlimited search reports nothing",
         "      total += 1;\n      if (hits.length >= limit) continue;",
         "      if (hits.length < limit) total += 1;\n      if (hits.length >= limit) continue;",
+        'and not what is counted',
     ),
     # ---- a needle never crosses a record ------------------------------------------------------
     (
         "records are joined into one blob before the scan, so a needle can cross a boundary",
         "  for (const turn of turns) {\n    const records = Array.isArray(turn.records) ? turn.records : [];\n    for (const record of records) {\n      if (!searchSurfaceOf(record).includes(needle)) continue;\n      total += 1;",
         "  const blob = turns.flatMap((t) => (Array.isArray(t.records) ? t.records : [])).map((r) => searchSurfaceOf(r)).join(' ');\n  if (blob.includes(needle)) { hits.push({ index: 0, turnIndex: 1, kind: 'reply', summary: '', generation: null }); total += 1; }\n  for (const turn of []) {\n    const records = [];\n    for (const record of records) {\n      if (!searchSurfaceOf(record).includes(needle)) continue;\n      total += 1;",
+        'a needle spanning two records finds nothing',
     ),
     # ---- the route ---------------------------------------------------------------------------
     (
         "the route is not registered, so a search answers 404",
         "    if (url.pathname === '/api/trajectory/search') {",
         "    if (url.pathname === '/api/trajectory/searchX') {",
+        'the route exists and is not the trajectory route',
     ),
     (
         "a needle too short is answered with everything instead of refused",
         "    if (!needleIsUsable(asked)) {",
         "    if (false) {",
+        'a needle too short is refused with a status, not answered with everything',
     ),
     (
         "the lineage is walked a second time, so the two readers can disagree about it",
         "      walked = await collectLineage(entry, ctx.generations);\n    } catch (error) {\n      sendError(response, 500, 'trajectory_unreadable', lineageFailure(error));\n      return;\n    }\n    const { occurrences, files } = walked;",
         "      walked = await collectLineage(entry, ctx.generations);\n      walked = await collectLineage(entry, ctx.generations);\n    } catch (error) {\n      sendError(response, 500, 'trajectory_unreadable', lineageFailure(error));\n      return;\n    }\n    const { occurrences, files } = walked;",
+        'the lineage is walked in one place, and both readers use it',
     ),
     (
         "the session key becomes the session id, so an id becomes a directory name",
         "    createHash('sha256').update(`${dir}\\n${sessionId}`).digest('hex').slice(0, 32);",
         "    String(sessionId);",
+        'the session key is a hash, so no session id becomes a directory name',
     ),
     (
         "the artifacts are written beside the session history instead of under the data dir",
         "  const artifactRoot = join(context.dataDir, 'trajectory-artifacts');",
         "  const artifactRoot = join(process.cwd(), 'trajectory-artifacts');",
+        'the artifacts are written under the runtime data dir',
     ),
     (
         # Used to be the other way round: §8.8.1 rule 5 kept the active generation out of the store,
@@ -109,6 +128,7 @@ MUTATIONS = [
         "the active generation is skipped again, so a session still being written has nothing to scan",
         "    for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {\n      const records = [];",
         "    for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {\n      if (fileIdx === 0) continue;\n      const records = [];",
+        'every generation ends up with a segment: the only outer early exit is "already on disk", and it comes after the read',
     ),
     (
         # The rule is that `total` counts every match, so a missing generation cannot be tolerated:
@@ -116,6 +136,7 @@ MUTATIONS = [
         "one missing segment no longer makes the search fall back",
         "      if (segment === null) return null;",
         "      if (segment === null) continue;",
+        'one missing segment makes the whole search fall back rather than answer from the rest',
     ),
     (
         # The rule is that `total` counts every match, so the cap cannot bound it: the answer
@@ -124,6 +145,7 @@ MUTATIONS = [
         "the artifact path reports how many it sent instead of how many matched",
         "    return { hits: capped, total, fingerprint: recordSetFingerprint(versions) };",
         "    return { hits: capped, total: capped.length, fingerprint: recordSetFingerprint(versions) };",
+        'and the shipped artifact path counts every match rather than what it sent',
     ),
     (
         # The two readings of "the versions of the first N records" have to agree, and the limit
@@ -133,6 +155,7 @@ MUTATIONS = [
         "the limit on the fold over the first N records is read as something else",
         "  const wanted = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;",
         "  const wanted = Number.isInteger(limit) && limit > 0 ? limit : Infinity;",
+        'and a limit of zero is zero records',
     ),
     (
         # The summary a hit answers with now lives on the segment line, so the mutation that swaps it
@@ -140,6 +163,7 @@ MUTATIONS = [
         "writing the artifacts can fail the search that asked for them",
         "    }).catch(() => undefined);",
         "    });",
+        'a failed artifact write cannot fail the search that asked for it',
     ),
     # ---- the scan is resolved in one batch ---------------------------------------------------
     (
@@ -164,6 +188,7 @@ MUTATIONS = [
         "        }\n"
         "        return null;\n"
         "      });",
+        'the shipped artifact path resolves a whole scan in one batch call',
     ),
     (
         # A hit that cannot be resolved is a segment written by something this reader disagrees
@@ -171,6 +196,7 @@ MUTATIONS = [
         "a hit the reader could not resolve is skipped instead of falling back",
         "        if (hit === null) return null;",
         "        if (hit === null) continue;",
+        'a hit the scan named but the reader could not resolve falls back rather than being skipped',
     ),
     (
         # The shape that was removed: a second store under the artifact root, filled on every
@@ -181,6 +207,7 @@ MUTATIONS = [
         "a second artifact store is written beside the segments, and nothing reads it",
         "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        uncovered,\n        source: [files[fileIdx]],\n      });",
         "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        uncovered,\n        source: [files[fileIdx]],\n      });\n      const indexStore = createSegmentStore(join(artifactRoot, 'index'));\n      await indexStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        uncovered,\n        source: [files[fileIdx]],\n      });",
+        'and the artifact root holds segments and nothing else',
     ),
 ]
 
@@ -210,6 +237,45 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def rule_name(text):
+    """The name of a rule a probe reported, without the evidence a comparison carries.
+
+    A probe reports an assertion as `<name>` and a comparison as
+    `<name>: got <value>, want <value>`. The values are the evidence, not the rule, so they are
+    cut off — and the cut is made at a `: got ` whose tail really is `<json>, want <json>`, so a
+    name that itself contains those words is not truncated.
+    """
+    for match in reversed(list(re.finditer(re.escape(": got "), text))):
+        head = text[:match.start()].strip()
+        tail = text[match.end():]
+        cut = tail.rfind(", want ")
+        if cut < 0:
+            continue
+        try:
+            json.loads(tail[:cut])
+            json.loads(tail[cut + len(", want "):])
+        except ValueError:
+            continue
+        return head
+    return text
+
+
+def reported_rules(output):
+    """The rules a probe named as broken.
+
+    Two formats, as in `mutate-trajectory-cache.py`: `  - <name>` and `FAIL <name>`. A case is
+    only caught when the rule it names is among them.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(rule_name(text[2:].strip()))
+        elif text.startswith("FAIL "):
+            names.append(rule_name(text[5:].strip()))
+    return names
+
+
 def main():
     code, output = run_probe()
     if code != 0:
@@ -221,7 +287,7 @@ def main():
     original = SERVER.read_bytes()
     missed = []
     unnamed = []
-    for label, old, new in MUTATIONS:
+    for label, old, new, expect in MUTATIONS:
         text, newline = read_exact(SERVER)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
@@ -240,12 +306,19 @@ def main():
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
             continue
-        first = next((line.strip() for line in output.splitlines() if line.strip().startswith("- ")), None)
-        if first is None:
+        names = reported_rules(output)
+        if not names:
             print(f"UNNAMED {label}: the probe failed without naming a rule")
             unnamed.append(label)
-        else:
-            print(f"caught {label}\n         -> {first}")
+            continue
+        # The case names the rule it is about, so the probe has to name THAT rule and not some
+        # other one that happened to go red in the same run: a probe that went red elsewhere has
+        # not shown that this guard owns this mutation.
+        if expect not in names:
+            print(f"MISSED {label}: the probe named {names} instead of {expect}")
+            missed.append(label)
+            continue
+        print(f"caught {label}\n         -> {expect}")
 
     if SERVER.read_bytes() != original:
         print(f"NOT RESTORED {SERVER}")
