@@ -254,6 +254,34 @@ MUTATIONS = [
      [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n",
        "              holdLedgerHeight(section, predicted);\n")],
      "a released group whose content has not changed keeps the height it was measured at"),
+
+    # The prediction prices the bands on their own height. A band is an entry as well as a row,
+    # so a prediction that takes the entry count as the row count prices every band twice: once
+    # at the row's height and once at the band's own. The two are close — 36 px and 38 px on a
+    # real session — so the box stands a whole row taller than the content it is holding, which
+    # is the document lying about its own height in the other direction.
+    #
+    # The two call sites are separate breaks: the one the pass after the calibration makes, and
+    # the one the build makes for every group it writes.
+    ("the prediction charges a band as a row as well",
+     [("var dormantPredicted = applyIntrinsicSize(dormant[d], dormantRows, content.bands, build.heights);",
+       "var dormantPredicted = applyIntrinsicSize(dormant[d], content.entries.length, content.bands, build.heights);")],
+     "a band is priced once in the predicted height"),
+
+    ("the build charges a band as a row as well",
+     [("var predicted = applyIntrinsicSize(section, group.entries.length - bands, bands, build.heights);",
+       "var predicted = applyIntrinsicSize(section, group.entries.length, bands, build.heights);")],
+     "the prediction of a group with a band does not charge the band as a row"),
+
+    # The pass that follows the calibration sizes the groups the build released, and what it
+    # writes is the height that is HELD — the measured one, brought up to date with what the
+    # group holds now. Writing the prediction there undoes the rule on every group of the first
+    # batch, and in the default view the first batch is the whole window: the page opens on the
+    # newest 200 records, and 200 records span fewer turns than LEDGER_BATCH_GROUPS.
+    ("the calibration overwrites the height a released group keeps",
+     [("holdLedgerHeight(dormant[d], heldLedgerHeight(content.key, dormantRows, content.bands, dormantPredicted, build.heights));",
+       "holdLedgerHeight(dormant[d], dormantPredicted);")],
+     "a released group keeps the height it was measured at in the first batch"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

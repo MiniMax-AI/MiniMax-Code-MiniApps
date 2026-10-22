@@ -72,6 +72,10 @@ const LIFECYCLE_FNS = [
   'heldLedgerHeight',
   'fillGroupRows',
   'firstVisibleRow',
+  // The prediction itself, because the arithmetic of the prediction is half of what this file
+  // has to prove: a band is an entry as well as a row, and a prediction that counts it as both
+  // prices it twice.
+  'applyIntrinsicSize',
   // The build itself, because the rule this file has to prove is about what the build
   // writes. A group the reader has left must not be kept alive by the rebuild — and the
   // source of a function cannot say whether it stamps the reader's lease or not.
@@ -201,7 +205,7 @@ function harness() {
  * the measurement) are stubs, because the rule under test is about the lease and the lease is
  * decided before any of them run.
  */
-function buildHarness() {
+function buildHarness(options) {
   const h = harness();
   const s = h.sandbox;
   s.ledgerBuildToken = 1;
@@ -215,7 +219,11 @@ function buildHarness() {
   s.DASH = '—';
   s.turnKey = (turn) => 'k' + turn.index;
   s.buildTurnHead = () => makeEl('div');
-  s.applyIntrinsicSize = () => 240;
+  // The prediction is stubbed by default, so a case that does not care about its arithmetic does
+  // not have to know the calibrated heights. A case that does care asks for the real one: the
+  // arithmetic of the prediction is half of what this file has to prove — a band is an entry as
+  // well as a row, and a prediction that counts it as both prices it twice.
+  if (!(options && options.realPrediction)) s.applyIntrinsicSize = () => 240;
   // The real calibration answers with the three heights it measured — the head, a row and a
   // band — and the build prices a difference in rows with them. A stub that answers with any
   // other shape is a stub of a different function.
@@ -392,6 +400,67 @@ function measureGroup(h, key, entries, bands, height) {
     sectionOf(h, 29).style.minHeight === '1024px');
   assert('a rebuild does not change the height a group was measured at',
     s.ledgerState.get('k26').height === 1000);
+}
+
+/* ---------- 2c. the first batch is the whole window in the default view ---------- */
+
+/*
+ * The page opens on the newest 200 records, and 200 records span fewer turns than a batch is
+ * long — so in the default view the whole ledger IS the first batch. The first batch is the
+ * one whose groups are measured against the prediction: the calibration does not exist until
+ * the batch is built, and the pass that follows the calibration is the one that sizes the
+ * groups the build released.
+ *
+ * So the rule "a released group keeps the height it had, brought up to date with what it holds
+ * now" has to hold THERE as well — otherwise it holds only in the full view, which is the
+ * opt-in one, and the page nobody opted in is the one with the rule missing.
+ *
+ * These cases run the build path with the real prediction in it, and read what the released
+ * group ends up holding. The prediction is priced from the calibrated heights (40, 36 and 60 in
+ * the stub above), so the numbers below are the ones that stub produces: a group of four rows
+ * is predicted at 40 + 4*36 = 184, and a group of two rows and two bands at 40 + 2*36 + 2*60
+ * = 232 — a band priced once, at its own height, and not at the row's height as well.
+ */
+{
+  const h = buildHarness({ realPrediction: true });
+  const s = h.sandbox;
+  // The ledger's own query, so the pass that follows the calibration finds the groups the
+  // build released. The fake DOM answers every query with an empty list, and a build whose
+  // calibration pass finds nothing never sizes the groups it released — so the case would
+  // pass for the wrong reason.
+  s.ledger.querySelectorAll = (selector) => {
+    if (!/data-rows\s*=\s*"released"/.test(selector)) return [];
+    return s.ledger.children.filter((c) => c.getAttribute('data-rows') === 'released');
+  };
+  const groups = [];
+  for (let i = 0; i < 26; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
+  }
+  // Two groups measured for real, each on the content it is compared against: one with three
+  // rows and no band, one with two rows and a band.
+  measureGroup(h, 'k2', entriesOf(3, 0, 'm2'), 0, 1000);
+  measureGroup(h, 'k3', entriesOf(2, 1, 'm3'), 1, 1000);
+  // And what they hold now: the first gained a row, the second gained a band.
+  groups[1].entries = entriesOf(4, 0, 'g1');
+  groups[2].entries = entriesOf(2, 2, 'g2');
+  // The group of the second batch, which has a band in it and was never measured.
+  groups[25].entries = entriesOf(3, 1, 'g25');
+  // The reader walked away a long time ago, so they do not hold their rows.
+  h.clock = 100000;
+
+  rebuild(h, groups);
+  s.buildStep();
+
+  assert('a released group keeps the height it was measured at in the first batch',
+    sectionOf(h, 1).style.minHeight === '1036px');
+  assert('a released group is charged for the band it gained in the first batch',
+    sectionOf(h, 2).style.minHeight === '1060px');
+  assert('the height a released group keeps is not the prediction',
+    sectionOf(h, 1).style.minHeight !== '184px');
+  assert('a band is priced once in the predicted height',
+    sectionOf(h, 2).style.containIntrinsicSize === 'auto 232px');
+  assert('the prediction of a group with a band does not charge the band as a row',
+    sectionOf(h, 25).style.containIntrinsicSize === 'auto 208px');
 }
 
 /* ---------- 3. a group the reader left gives its rows up, and the count is bounded ---------- */

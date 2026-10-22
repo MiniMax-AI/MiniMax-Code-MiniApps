@@ -79,7 +79,7 @@ MUTATIONS = [
     # Every group after the calibration stops being sized, which is the same collapse applied to
     # 127 of 152 groups instead of 25 — and the count of sized groups is what the measurement reads.
     ("later groups are left unsized",
-     [("            var predicted = applyIntrinsicSize(section, group.entries.length, bands, build.heights);\n", "")],
+     [("            var predicted = applyIntrinsicSize(section, group.entries.length - bands, bands, build.heights);\n", "")],
      "a group is sized before it is appended, in the row loop"),
 
     # Predicting before there is anything to predict from. Dropping the guard does not write a
