@@ -3820,6 +3820,17 @@
         searchRefresh: 0,
         // The needle `searchRefresh` belongs to. A new needle is a new question and starts over.
         searchRefreshFor: '',
+        // WHICH SET the search answer on screen is about: the session and the slice of the body it
+        // was computed against, and a fingerprint of that body's records.
+        //
+        // A body can change without changing its shape — a record's text rewritten under the page
+        // keeps every counter the same — so the shape of the body cannot say whether the answer
+        // still covers the records on screen. This does: it is the same set the request names, so
+        // the standing answer and the request cannot disagree about which records it is about.
+        //
+        // Written in exactly one place: `runSearch`, when the question is put. Read in exactly one
+        // place: `applyPayload`, which is the only writer of the body on screen.
+        searchSet: '',
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
         // and both null is the default: no range, whole session.
@@ -4212,6 +4223,25 @@
       }
 
       /**
+       * WHICH SET the page's search answer is about.
+       *
+       * The session and the slice say WHICH BODY; the fingerprint says WHICH RECORDS of it. A body
+       * can change without changing its shape — a record's text rewritten under the page keeps every
+       * counter the same — so a comparison of counters cannot see that the records behind an answer
+       * are not the ones it was computed about. This is the same set the search request names, so
+       * the standing answer and the request cannot disagree about which records it covers.
+       *
+       * @param {Array<string>} [versions] the versions to fold, when the caller already has them
+       * @returns {string}
+       */
+      function displayedRecordSet(versions) {
+        var list = Array.isArray(versions) ? versions : displayedRecordVersions();
+        return displayedSessionParam() + '#'
+          + (displayedGeneration() === null ? 'all' : String(displayedGeneration()))
+          + '#' + recordSetFingerprint(list);
+      }
+
+      /**
        * The version of one record, as the record itself carries it.
        *
        * The record, and NOT the body on screen. A read that comes back 「this session is not
@@ -4506,6 +4536,9 @@
           state.searchTruncated = false;
           state.searchRefresh = 0;
           state.searchRefreshFor = '';
+          // No question, no set. An answer about a set that is no longer on screen would filter
+          // rows by a question nobody is asking.
+          state.searchSet = '';
           searchSeq += 1;
           return;
         }
@@ -4532,6 +4565,10 @@
         // So the request says which set it is about — how many records the page has, and a
         // fingerprint of their versions — and the service answers only if it searched THAT set.
         var versions = displayedRecordVersions();
+        // The set this question is about, recorded before it is asked. The body on screen can be
+        // replaced while the answer is in flight, and a poll that finds the set has moved has to
+        // know that the answer it is waiting for is about the old one.
+        state.searchSet = displayedRecordSet(versions);
         var url = '/api/trajectory/search?session=' + session
           + '&q=' + encodeURIComponent(asked)
           + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)))
@@ -4857,7 +4894,20 @@
         // the old answer would show the reader rows that never matched. Re-running it here is the
         // whole of the rule; doing it at the reader would leave the poll path stale, which is the
         // same mistake the window pinning above used to make.
-        if (changed && state.query) runSearch(state.query);
+        //
+        // WHICH SET, and not only which shape. A body can change without changing its shape: a
+        // record's text rewritten under the page keeps every counter the same, so `changed` is
+        // false and the answer standing on screen is still about the old text — it would light up
+        // a row whose text does not contain the needle, and nothing anywhere would say so. The
+        // set the answer is about is the set of record versions it was computed against, which is
+        // the same set the request names; so the standing answer and the request cannot disagree
+        // about which records it covers.
+        //
+        // The set is only compared once a question has been asked (`state.searchSet` is empty
+        // until then), and a question that was never put has no answer to retire.
+        if (state.query && (changed || (state.searchSet && displayedRecordSet() !== state.searchSet))) {
+          runSearch(state.query);
+        }
         render();
         if (manual) announce('已刷新，正在显示最新数据。');
       }
@@ -9236,7 +9286,7 @@
       var rawCache = {};
       var rawPending = {};
 
-      function rawCacheKey(index) {
+      function rawCacheKey(index, version) {
         var payload = state.payload;
         var session = payload && payload.session ? payload.session : null;
         var sid = session && typeof session.id === 'string' ? session.id : '';
@@ -9248,7 +9298,15 @@
         // of one body: the same index in the next version of the session is a different message.
         // Without the tag, a body that changed since the raw was read kept being served from here
         // forever, and the page had no way to notice. Pinned by tests/verify-raw-lazy.mjs.
-        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;
+        //
+        // And the RECORD's own version belongs in it too. This key is what decides whose answer a
+        // caller gets, and it used to be built out of what is on screen — the validator, the slice,
+        // the position — and none of those say which RECORD is being read. So a read that is
+        // retried after a reload found the pending read of the record that had taken its place
+        // (the rebuild of the panel starts one) and took its answer for its own: the reader
+        // opened ALPHA and the page handed back CHARLIE. The version is the caller's, not the
+        // screen's — the same rule the request itself follows.
+        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index + '#' + (version || '');
       }
 
       function requestRaw(index, version) {
@@ -9294,10 +9352,15 @@
       function fetchRaw(record, retried) {
         var index = record && record.index;
         if (!isCount(index) || index < 1) return Promise.reject(new Error('record_index_missing'));
-        var key = rawCacheKey(index);
+        // The version of the record the READER opened, read off that record and not off the
+        // screen — and it decides the key, because the key is what says whose answer a caller
+        // gets. A version read off the screen at this moment would belong to the record that has
+        // taken this one's place, and the retry would be answered with it.
+        var version = recordVersionOf(record);
+        var key = rawCacheKey(index, version);
         if (Object.prototype.hasOwnProperty.call(rawCache, key)) return Promise.resolve(rawCache[key]);
         if (rawPending[key]) return rawPending[key];
-        var attempt = requestRaw(index, recordVersionOf(record)).then(function (result) {
+        var attempt = requestRaw(index, version).then(function (result) {
           delete rawPending[key];
           if (result.ok && result.body && Object.prototype.hasOwnProperty.call(result.body, 'raw')) {
             var entry = { raw: result.body.raw, omitted: result.body.omitted === true };
@@ -9384,10 +9447,13 @@
       function fetchDetail(record, retried) {
         var index = record && record.index;
         if (!isCount(index) || index < 1) return Promise.reject(new Error('record_index_missing'));
-        var key = rawCacheKey(index);
+        // The same version, and for the same reason: the key is the same key, and it decides
+        // whose answer a caller gets.
+        var version = recordVersionOf(record);
+        var key = rawCacheKey(index, version);
         if (Object.prototype.hasOwnProperty.call(detailCache, key)) return Promise.resolve(detailCache[key]);
         if (detailPending[key]) return detailPending[key];
-        var attempt = requestDetail(index, recordVersionOf(record)).then(function (result) {
+        var attempt = requestDetail(index, version).then(function (result) {
           delete detailPending[key];
           if (result.ok && result.body && typeof result.body.index === 'number') {
             var entry = {
