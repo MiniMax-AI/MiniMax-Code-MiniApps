@@ -150,7 +150,7 @@ MUTATIONS = [
 
     # A group the build is not holding is given a height to keep.
     ("a group the build is not holding is given no height to keep",
-     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n", "")],
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n", "")],
      "a group the build is not holding is given a height to keep"),
 
     # The two states are what the rest of the page reads: the build says which, and the
@@ -214,24 +214,36 @@ MUTATIONS = [
     # A height that does not say what it was a measurement of cannot be brought up to date:
     # there is no difference to charge, and the group keeps a height that describes nothing.
     ("the height a group was measured at stops recording what it was holding",
-     [("        state.heightRows = group.entries.length;\n"
-       "        state.heightBands = group.bands || 0;\n",
+     [("        var measuredBands = group.bands || 0;\n"
+       "        state.heightRows = group.entries.length - measuredBands;\n"
+       "        state.heightBands = measuredBands;\n",
        "")],
      "the height a group was measured at records what it was holding"),
 
     # A band is not a row. It has its own height, and a group that gained one is taller by a
     # band and not by a row — so a band that is not counted is a band that is not charged.
     ("the band a group was measured at stops being recorded",
-     [("        state.heightBands = group.bands || 0;\n", "        state.heightBands = 0;\n")],
+     [("        state.heightBands = measuredBands;\n", "        state.heightBands = 0;\n")],
      "a released group is charged for the band it gained"),
+
+    # The measurement has to record rows and bands as two counts. A band is an entry as well as
+    # a row, so recording the entry count charges every band once as a row and once as a band:
+    # a band would be charged 36 px and 38 px, and the box would stand a whole row taller than
+    # the content it is holding — the document lying about its own height in the other
+    # direction. The guard's band cases add a band without removing a row, so this shows up.
+    ("the measurement records the entry count instead of the row count",
+     [("        state.heightRows = group.entries.length - measuredBands;\n",
+       "        state.heightRows = group.entries.length;\n")],
+     ["a released group is charged for the band it gained",
+      "a released group that lost a row and gained a band is charged for both"]),
 
     # The measured height belongs to the observer: it is taken when the group is really laid
     # out. A build that stamped one would be writing down a height it never measured, and the
     # next rebuild would read its own guess back as if it were a measurement.
     ("the build writes the height it computed",
-     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n",
        "              ledgerStateOf(key).height = predicted;\n"
-       "              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n")],
+       "              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n")],
      ["a rebuild does not change the height a group was measured at",
       "the build does not write a measured height"]),
 
@@ -239,7 +251,7 @@ MUTATIONS = [
     # priced from medians, and a group's real height runs to several times the median one, so
     # falling back on the prediction trades a real height for an average one.
     ("a released group is given the prediction instead of the height it was measured at",
-     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));\n",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n",
        "              holdLedgerHeight(section, predicted);\n")],
      "a released group whose content has not changed keeps the height it was measured at"),
 ]

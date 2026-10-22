@@ -340,9 +340,17 @@ function measureGroup(h, key, entries, bands, height) {
  * document under the reader loses the rows that were added.
  *
  * The difference is priced locally: the measured height is kept, and only the rows that
- * changed are charged at the calibrated row height. The three cases below are the three ways
- * the content can differ — a row added, nothing changed, a band added — and the first two
- * carry the same measured height, so a rule that cannot tell them apart is visible.
+ * changed are charged at the calibrated row height. The cases below are the ways the content
+ * can differ — a row added, nothing changed, a band added, a first band gained, a row gone
+ * and a band gained.
+ *
+ * The rows and the bands are two counts, not one. A band is an entry as well as a row, so a
+ * count of entries charges every band once as a row and once as a band; the row and band
+ * heights are close (36 px and 38 px on a real session), so a band charged twice leaves the
+ * box a whole row taller than the content it holds — the document lying about its own height
+ * in the other direction. The cases are built so that this shows up: the band cases add a
+ * band without removing a row, and the last one removes a row and adds a band at the same
+ * time, which is the one a single count cannot tell.
  *
  * The window has to be longer than one batch, because the first batch is priced from the
  * prediction and the groups after it from the measurement. Twenty-five groups is one batch.
@@ -351,19 +359,22 @@ function measureGroup(h, key, entries, bands, height) {
   const h = buildHarness();
   const s = h.sandbox;
   const groups = [];
-  for (let i = 0; i < 30; i += 1) {
+  for (let i = 0; i < 31; i += 1) {
     groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
   }
-  // Three groups measured for real, on three different contents: rows and no band, the same
-  // again, and rows with a band.
+  // Five groups measured for real, each on the content it is compared against.
   measureGroup(h, 'k26', entriesOf(3, 0, 'm26'), 0, 1000);
   measureGroup(h, 'k27', entriesOf(3, 0, 'm27'), 0, 1000);
   measureGroup(h, 'k28', entriesOf(2, 1, 'm28'), 1, 1000);
-  // And the content they hold now: a row added, nothing changed, a band added.
+  measureGroup(h, 'k29', entriesOf(3, 0, 'm29'), 0, 1000);
+  measureGroup(h, 'k30', entriesOf(2, 1, 'm30'), 1, 1000);
+  // And the content they hold now.
   groups[25].entries = entriesOf(4, 0, 'g25');
   groups[26].entries = entriesOf(3, 0, 'g26');
-  groups[27].entries = entriesOf(1, 2, 'g27');
-  // The reader walked away from all three a long time ago, so they do not hold their rows.
+  groups[27].entries = entriesOf(2, 2, 'g27');
+  groups[28].entries = entriesOf(3, 1, 'g28');
+  groups[29].entries = entriesOf(1, 2, 'g29');
+  // The reader walked away from all of them a long time ago, so they do not hold their rows.
   h.clock = 100000;
 
   rebuild(h, groups);
@@ -375,6 +386,10 @@ function measureGroup(h, key, entries, bands, height) {
     sectionOf(h, 26).style.minHeight === '1000px');
   assert('a released group is charged for the band it gained',
     sectionOf(h, 27).style.minHeight === '1060px');
+  assert('a released group that gained its first band is charged for the band',
+    sectionOf(h, 28).style.minHeight === '1060px');
+  assert('a released group that lost a row and gained a band is charged for both',
+    sectionOf(h, 29).style.minHeight === '1024px');
   assert('a rebuild does not change the height a group was measured at',
     s.ledgerState.get('k26').height === 1000);
 }
@@ -519,8 +534,8 @@ function measureGroup(h, key, entries, bands, height) {
   section.classList.add('is-released');
   section.style.minHeight = '3643px';
 
-  // Three rows and a band: four rows on screen, and a band that is priced as a band rather
-  // than as a row — so the counts the height was measured at are not the same number twice.
+  // Three rows and a band: four items on screen — and the band is a band rather than a row,
+  // so the two counts the height was measured at are different numbers.
   const entries = entriesOf(3, 1, 'r');
   s.ledgerContent.set(section, { key: 'g1', turn: { index: 1 }, entries, bands: 1 });
   s.fillLedgerGroup(section);
@@ -534,7 +549,7 @@ function measureGroup(h, key, entries, bands, height) {
   assert('a group that has its rows back is remembered as live',
     s.ledgerState.get('g1').live === true);
   assert('the height a group was measured at records what it was holding',
-    s.ledgerState.get('g1').heightRows === 4 && s.ledgerState.get('g1').heightBands === 1);
+    s.ledgerState.get('g1').heightRows === 3 && s.ledgerState.get('g1').heightBands === 1);
 }
 
 {
