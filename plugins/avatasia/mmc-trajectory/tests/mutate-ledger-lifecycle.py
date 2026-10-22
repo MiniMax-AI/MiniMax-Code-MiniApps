@@ -291,9 +291,44 @@ MUTATIONS = [
     # prediction when it was released: three rows and a band laid out at 1,000 px reserved
     # 208 px, with not one row or band changed.
     ("a group the build made live never records the height it was measured at",
-     [("        if (!alreadyLive || !state.height) measureLedgerGroup(section, group);\n",
-       "        if (!alreadyLive) measureLedgerGroup(section, group);\n")],
+     [("        if (!alreadyLive || !state.height || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);\n",
+       "        if (!alreadyLive || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);\n")],
      "a group built live keeps its measured height when a wider window releases it"),
+
+    # A height is a measurement of a layout, and a layout can change without the content
+    # changing: the window is resized, the text scale is turned up, the group's own chrome
+    # becomes taller. The rows and the bands stay exactly the same and the height is a
+    # different one — and the height a released group keeps is the remembered one unchanged,
+    # because the counts it was measured at have not changed either. So a group laid out at
+    # 1,500 px kept the 1,000 px it was measured at, and the document under the reader came
+    # up 500 px short of the group it stood for.
+    #
+    # The break takes away the refresh and nothing else: the group is still measured when it
+    # has no height of its own, and the rows are still built once.
+    ("a live group never refreshes its measurement after its layout changes",
+     [("        if (!alreadyLive || !state.height || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);\n",
+       "        if (!alreadyLive || !state.height) measureLedgerGroup(section, group);\n")],
+     "a live group refreshes its measurement after its layout changes"),
+
+    # The window is resized and the client is told: the groups that are on screen have to be
+    # measured again, because a resize changes their layout without changing a row or a band
+    # in them. A client that does not re-measure them keeps the height it measured them at —
+    # a height of the layout before the resize — and when the cap releases the group, the
+    # height it reserves is that stale number, so the document under the reader comes up short
+    # by the difference.
+    #
+    # The break takes away the measurement the resize drives and nothing else: the rows are
+    # still built once, the cap still releases the same groups, and the measurement the visit
+    # path takes is untouched.
+    #
+    # The boundary, which this break does not touch either: a group that was off screen when
+    # the layout changed, and is never visited again, keeps the height it was last really
+    # measured at. Off screen the browser answers with the group's own contain-intrinsic-size,
+    # and that number is a prediction — a prediction written down as a measurement is a guess
+    # the next rebuild reads back as a fact.
+    ("a live group never refreshes its measurement when the window is resized",
+     [("            measureLedgerGroup(section, group);\n", "")],
+     "a live group refreshes its measurement when the window is resized"),
 
     # The bound is about what the reader is holding at this moment, not only about what a
     # rebuild leaves behind. Without the cap on the visit path, a reader who walks through
@@ -334,10 +369,15 @@ MUTATIONS = [
     # three rows in it and holding four rows by the time it is released on the visit path keeps
     # 1,000 px instead of 1,036 px, and the document under the reader comes up short by the row
     # that was added.
+    #
+    # The group that witnesses it is one the reader has left: it is off screen, so the browser
+    # skips it and what it reads is the prediction, and the measured height brought up to date
+    # with the row that was added is the only answer that is not a guess. A group the reader
+    # is on is measured again when its layout changes, and its measurement is the current one.
     ("the visit path writes back the height the group was measured at",
      [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));\n",
        "          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));\n")],
-     "a group the cap released keeps the height it has now"),
+     "a group released off screen keeps the height it was measured at, brought up to date"),
 
     # The rebuild is one of the two places that decides the bound, and the fixture's rebuild()
     # calls the shipped function that does it. A rebuild that stopped releasing the groups the

@@ -45,6 +45,14 @@ function assert(name, cond) {
   if (cond) pass += 1;
   else failures.push(name);
 }
+// The values of an assertion, kept apart from its name. A control catches a rule by name,
+// and a name that carries a number cannot be matched — so the name says which rule, and the
+// numbers go here, where they say how far off it was.
+function check(name, got, want) {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (ok) pass += 1;
+  else failures.push(`${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+}
 
 function functionSource(name) {
   const at = html.indexOf('function ' + name + '(');
@@ -106,9 +114,36 @@ if (missing.length) {
  * because the proof that the new assertions fail is a run of this guard against the broken
  * code. A client without them is a client whose visited groups are never measured and never
  * released, and the assertions below say so by failing.
+ *
+ * The layout comparison is in here for the same reason: it is the half of the measurement
+ * that says a group whose layout has changed is measured again, and a client without it
+ * keeps the height it was measured at — which is what the assertion below catches.
  */
-const OPTIONAL_FNS = ['measureLedgerGroup', 'releaseLedgerRows'];
+const OPTIONAL_FNS = ['measureLedgerGroup', 'releaseLedgerRows', 'ledgerLayoutChanged',
+  // The refresh the window's resize drives. It is optional for the same reason the other two
+  // are: a client without it never measures a group again, and the assertion below says so by
+  // failing.
+  'refreshLedgerMeasurements'];
 const optionalSrc = OPTIONAL_FNS.map((name) => functionSource(name)).filter(Boolean);
+
+/*
+ * The client's own registration of the resize handler, run in the sandbox.
+ *
+ * The case has to deliver a real 'resize' event, and an event only arrives if the client
+ * registered a handler for it. So the line the client ships is the line that runs here: the
+ * sandbox's window records the handlers, the case fires the event, and the shipped handler is
+ * what answers it. A client that does not register one has nothing to answer with, and the
+ * measurement stays the one it was taken at — which is the failure the new assertion is there
+ * to catch.
+ */
+const refreshSrc = functionSource('refreshLedgerMeasurements');
+const resizeRegistration = refreshSrc
+  ? /window\.addEventListener\(\s*'resize'\s*,\s*refreshLedgerMeasurements\s*\)\s*;/.exec(html)
+  : null;
+
+// The frame the deferred measurement is waiting in, lifted on its own — it is a declaration
+// and not a function, and it is read by the shipped handler.
+const measureFrameDecl = html.match(/^[ \t]*var ledgerMeasureFrame = [^;]+;/m);
 
 // The two limits are declarations, not functions, so they are lifted on their own. They are
 // numbers the shipped code reads, and the guard below uses the shipped values rather than
@@ -195,7 +230,21 @@ function entriesOf(count, bands, prefix) {
  * time and a test that has to wait fifteen seconds to check it is a test nobody runs.
  */
 function harness() {
-  const box = { clock: 1000, built: [], sized: [] };
+  const box = { clock: 1000, built: [], sized: [], frames: [], listeners: {} };
+  // The window the shipped code talks to. It records the handlers it is given and the frames
+  // it is asked for, so a case can deliver a real event and then run the frame the handler
+  // deferred its work to.
+  const win = {
+    addEventListener(type, handler) {
+      if (!box.listeners[type]) box.listeners[type] = [];
+      box.listeners[type].push(handler);
+    },
+    requestAnimationFrame(fn) {
+      box.frames.push(fn);
+      return box.frames.length;
+    }
+  };
+  box.window = win;
   const sandbox = {
     console,
     Math,
@@ -209,6 +258,7 @@ function harness() {
     // The ledger the table is in. The shipped code reads it when it has to take the rows out
     // of a group the reader is no longer on.
     dom: { ledger: makeEl('div') },
+    window: win,
     // The shipped el(tag, className), class and all: the class is what a section is found
     // by, and a list without one is a list the shipped code cannot find.
     el: (tag, className) => {
@@ -230,11 +280,23 @@ function harness() {
       e.setAttribute('data-row-id', entry.record.id);
       return e;
     },
-    sizeBuiltGroup: (section) => { box.sized.push(section); }
+    // The shipped sizeBuiltGroup() writes the group's own height on it, and that number is
+    // what the browser answers with while the group is off screen — so the fake DOM has to
+    // answer with it too, or the rule under test would be read against a DOM that does not
+    // behave like the browser's.
+    sizeBuiltGroup: (section) => {
+      box.sized.push(section);
+      section.style.containIntrinsicSize =
+        Math.round(section.getBoundingClientRect().height) + 'px';
+    }
   };
   vm.createContext(sandbox);
+  const registration = resizeRegistration ? resizeRegistration[0] + '\n' : '';
+  const frameDecl = measureFrameDecl ? measureFrameDecl[0] + '\n'
+    : (refreshSrc ? 'var ledgerMeasureFrame = null;\n' : '');
   vm.runInContext(
-    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + fnSrc.join('\n') + '\n' + optionalSrc.join('\n'),
+    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + frameDecl
+    + fnSrc.join('\n') + '\n' + optionalSrc.join('\n') + '\n' + registration,
     sandbox
   );
   box.sandbox = sandbox;
@@ -282,7 +344,9 @@ function buildHarness(options) {
   s.flushDeferredPoll = () => {};
   s.watchLedgerGroups = () => {};
   s.syncStickyOffsets = () => {};
-  s.window = { requestAnimationFrame: () => {} };
+  // The same window the harness made, so a case that delivers a resize event reaches the
+  // handler the client registered for it.
+  s.window = h.window;
   return h;
 }
 
@@ -887,6 +951,172 @@ function measureGroup(h, key, entries, bands, height) {
   assert('the window\'s first group keeps its rows when the clock cannot break the tie',
     first.getAttribute('data-rows') === 'live'
     && first.querySelector('ul.row-list').children.length > 0);
+}
+
+/* ---------- 3i. a live group refreshes its measurement after its layout changes ---------- */
+
+/*
+ * A height is a measurement of a layout, and a layout can change without the content
+ * changing: the window is resized, the text scale is turned up, the group's own chrome
+ * becomes taller. The rows and the bands can be exactly the same and the height a different
+ * one.
+ *
+ * The remembered height was refreshed only when the content had changed, because the counts
+ * of rows and bands are what the difference was charged at. So a group whose layout changed
+ * and whose content did not kept the height it was measured at — and `heldLedgerHeight`
+ * handed that height back unchanged, because the counts it was measured at had not changed
+ * either. A group laid out at 1,500 px kept 1,000 px, and the document under the reader came
+ * up 500 px short of the group it stood for.
+ *
+ * The case is the reviewer's: eight groups of three rows, the second one laid out at
+ * 1,000 px and visited, then laid out at 1,500 px and visited again — the same three rows,
+ * the same number of bands — and then the reader walks through the rest of the window, so
+ * the cap takes the group away and the group has to keep the height it has now.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const n = 8;
+  const groups = [];
+  for (let i = 0; i < n; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader is on the second group, and it is laid out for real at 1,000 px.
+  const second = sectionOf(h, 1);
+  let laidOut = 1000;
+  second.getBoundingClientRect = () => ({ height: laidOut, width: 900, top: 0, bottom: laidOut });
+  s.fillLedgerGroup(second);
+  // The layout changes and nothing about the content does: the same three rows and the same
+  // number of bands, in a box that is 500 px taller.
+  laidOut = 1500;
+  s.fillLedgerGroup(second);
+  // The reader walks through the rest of the window, so the cap releases the group.
+  for (let i = 2; i < n; i += 1) {
+    h.clock += 10;
+    s.fillLedgerGroup(sectionOf(h, i));
+  }
+  const released = sectionOf(h, 1);
+  // The rule, by name: the group was measured again, so the height it remembers is the one
+  // its layout has now. No numbers in the name — a control catches a rule by name.
+  assert('a live group refreshes its measurement after its layout changes',
+    s.ledgerState.get('k2').height === 1500);
+  // And the number the reader is owed: the height the released group keeps is the height it
+  // has now, and not the one it was measured at.
+  check('the height a released group keeps is the height its layout has now',
+    released.style.minHeight, '1500px');
+}
+
+/* ---------- 3j. a group released off screen keeps the height it was measured at ---------- */
+
+/*
+ * The refresh above is the visitor's, and the visitor is on a group that is rendered: the
+ * height it has now is its layout and not the prediction an off-screen group is sized by.
+ *
+ * A group the reader has left is a different thing, and it is the calibration-priced path's
+ * business: it is off screen, the browser skips it, and what it reads is the prediction. The
+ * height it keeps is the one it was measured at, brought up to date with the rows it gained
+ * since — priced at the calibrated row height, because the difference between what it holds
+ * now and what it held when it was measured is a number of rows, and the prediction cannot
+ * know it.
+ *
+ * The case: the reader is on the second group and it is measured at 1,000 px with three rows
+ * in it; a late reply makes it four rows; the rebuild that brings the reply writes the group
+ * with the four rows in it and does not measure it; the reader walks away from it, so the
+ * browser skips it and it reads by its own contain-intrinsic-size; and the cap takes it on
+ * the visit path. The height it keeps has to be 1,036 px — the measured height and the row
+ * that was added — and not the prediction it is sized by off screen.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const n = s.LEDGER_LIVE_GROUPS + 2;
+  const groups = [];
+  for (let i = 0; i < n; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader is on the second group, and it is laid out for real at 1,000 px.
+  const second = sectionOf(h, 1);
+  second.getBoundingClientRect = () => ({ height: 1000, width: 900, top: 0, bottom: 1000 });
+  s.fillLedgerGroup(second);
+  // A late reply: the turn keeps its key and gains a row, and the rebuild that brings it
+  // writes the group with the four rows in it. The build never measures, so the height the
+  // group remembers is still the one of three rows.
+  const grown = [];
+  for (let i = 0; i < n; i += 1) {
+    grown.push({ turn: { index: i + 1 }, entries: entriesOf(4, 0, 'g' + i) });
+  }
+  h.clock += 10;
+  rebuild(h, grown);
+  // The reader has walked away from it and the browser has skipped it: an off-screen group
+  // measures by its own contain-intrinsic-size, so what it reads now is the prediction.
+  const off = sectionOf(h, 1);
+  off.getBoundingClientRect = () => ({ height: 184, width: 900, top: 0, bottom: 184 });
+  // The reader walks through the rest of the window — and not through that group, which is
+  // the one the reader has left — so the cap reaches the group the reader has left.
+  for (let i = 2; i < n; i += 1) {
+    h.clock += 10;
+    s.fillLedgerGroup(sectionOf(h, i));
+  }
+  check('a group released off screen keeps the height it was measured at, brought up to date',
+    sectionOf(h, 1).style.minHeight, '1036px');
+}
+
+/* ---------- 3k. a live group refreshes its measurement when the window is resized ---------- */
+
+/*
+ * The window is resized, and the layout of every group on screen changes with it: the rows
+ * and the bands stay exactly the same and the height is a different one.
+ *
+ * The visit path refreshes a group's measurement when the reader reaches it, and the reader
+ * does not reach the groups they are already looking at. So a group that was on screen before
+ * the resize kept the height it was measured at — a height of the layout before the resize —
+ * until the reader scrolled away from it and back. And when the cap released it, the height
+ * it reserved was that stale number, so the document under the reader came up short by
+ * exactly the difference.
+ *
+ * The case: eight groups of three rows, the second one laid out at 1,000 px and visited, the
+ * window resized so that it is laid out at 1,500 px, and the resize delivered to the client
+ * the way the browser delivers it — to the handler the client registered for it, with the
+ * measurement deferred to the next frame, because the layout a resize brought about is not
+ * there yet when the event arrives. The group is still rendered — the reader has not moved —
+ * so the height it has now is its layout and not the prediction.
+ *
+ * The boundary: a group that was OFF SCREEN when the layout changed, and is never visited
+ * again, keeps the height it was last really measured at. Off screen the browser answers with
+ * the group's own `contain-intrinsic-size`, and that number is a prediction — a prediction
+ * written down as a measurement is a guess the next rebuild reads back as a fact. This case
+ * claims nothing about that group; it is the same limit the build path has.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const n = 8;
+  const groups = [];
+  for (let i = 0; i < n; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader is on the second group, and it is laid out for real at 1,000 px.
+  const second = sectionOf(h, 1);
+  let laidOut = 1000;
+  second.getBoundingClientRect = () => ({ height: laidOut, width: 900, top: 0, bottom: laidOut });
+  s.fillLedgerGroup(second);
+  // The layout changes and nothing about the content does: the same three rows and the same
+  // number of bands, in a box that is 500 px taller.
+  laidOut = 1500;
+  // The window is resized.
+  for (const handler of (h.listeners.resize || [])) handler();
+  const frames = h.frames.splice(0, h.frames.length);
+  for (const frame of frames) frame();
+  // The rule, by name: the group was measured again, so the height it remembers is the one
+  // its layout has now. No numbers in the name — a control catches a rule by name.
+  assert('a live group refreshes its measurement when the window is resized',
+    s.ledgerState.get('k2').height === 1500);
 }
 
 /* ---------- 4. the rows come back when the reader reaches the group ---------- */
