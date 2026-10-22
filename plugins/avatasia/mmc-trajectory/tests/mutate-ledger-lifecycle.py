@@ -4,8 +4,8 @@ to report each break by name.
 The lifecycle has two halves that pull in opposite directions, and a version of this that keeps
 one and loses the other is worse than not doing it at all:
 
-  - a group the reader is not on must not be holding its rows, or 47,937 records are 438,986
-    nodes and about 470 MB of the renderer's private memory;
+  - a group the reader is not on must not be holding its rows, or one session of about 50,600
+    records is 463,122 DOM nodes and 785 to 820 MB of the renderer's private memory;
   - a group that has given up its rows must still be the height it was, or the document under
     the reader loses everything they have scrolled past — measured at 79,288 px for the groups
     around the viewport and 257,378 px more for the viewport's own group.
@@ -35,12 +35,40 @@ PROBE = os.path.join(HERE, "verify-ledger-lifecycle.mjs")
 # owns more than one rule: removing the class removal breaks both the state the reader sees
 # and the rule that says the state is turned off.
 MUTATIONS = [
+    # The build is not a visit. The poll runs every eight seconds whether the reader is there
+    # or not, so a build that stamps the reader-idle lease renews it forever: the fifteen
+    # second idle timeout can never pass, and the group the reader left keeps its row DOM for
+    # the rest of the session.
+    ("a rebuild renews the reader-idle lease of a group the reader has left",
+     [("            var holds = ledgerHoldsRows(key, build.at === 1);\n",
+       "            var holds = ledgerHoldsRows(key, build.at === 1);\n"
+       "            ledgerStateOf(key).lastSeen = Date.now();\n")],
+     ["rebuilding an offscreen group does not renew its reader-idle lease",
+      "the build does not write the reader-idle lease"]),
+
+    # The window is anchored on one group, and that group holds its rows whatever the reader
+    # is doing — so it has to be counted among the groups that hold their rows. Counted with
+    # its own lease instead of the current time, a group the reader left long ago is the
+    # oldest one there is, and the cap reaches for it first.
+    ("the window's first group is released with the others",
+     [("        live.push({ key: keepKey, at: now });\n",
+       "        live.push({ key: keepKey, at: ledgerStateOf(keepKey).lastSeen });\n")],
+     "the window's first group is one of the groups that hold their rows"),
+
+    # The same group left out of the count altogether: it goes on holding its rows past the
+    # bound, so the bound is about one set of groups while the rows on screen are another.
+    ("the window's first group is not counted among the groups that hold their rows",
+     [("        ledgerStateOf(keepKey).live = true;\n"
+       "        live.push({ key: keepKey, at: now });\n",
+       "")],
+     "the window's first group is one of the groups that hold their rows"),
+
     # The idle timeout is what releases a group the reader has walked away from. Without it a
     # group stays live for as long as the session is open, and the bound below becomes the only
-    # thing standing between the reader and 470 MB.
+    # thing standing between the reader and 785 MB.
     ("a group the reader has left never gives its rows up",
-     [("      if (now - state.lastSeen >= LEDGER_IDLE_MS) {\n",
-       "      if (false) {\n")],
+     [("          if (now - state.lastSeen >= LEDGER_IDLE_MS) {\n",
+       "          if (false) {\n")],
      "a group the reader has left gives its rows up once the idle time has passed"),
 
     # The bound is what makes the memory bounded rather than merely reduced: a reader who

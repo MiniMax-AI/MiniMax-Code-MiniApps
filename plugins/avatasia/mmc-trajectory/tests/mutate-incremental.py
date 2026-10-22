@@ -60,6 +60,22 @@ CLIENT_CASES = [
      "the cursor after a delta is the server upTo, not a second walk",
      "state.since = mergeable ? body.delta.upTo : payloadCursor(payload);",
      "state.since = payloadCursor(payload);"),
+    # The set the tail is about, from the page's side. A record rewritten in place keeps its index
+    # and its id, so nothing else in the protocol can see that the page's copy is not the
+    # service's — the tail comes back empty and the page keeps the old text under the new body's
+    # validator. The service's half of this is in SERVER_CASES, because it edits server.mjs; a
+    # case that edits one file and sits in the other's list is a case whose anchor never resolves.
+    ("a tail is asked for without saying which set the page holds",
+     "a tail is asked for with the cursor and the set the page holds",
+     "          + '&n=' + held.count\n", ""),
+    ("the page treats every failure as a refusal about its copy",
+     "a refusal about the page's copy is recognised as one, and only as one",
+     "        return error.code === 'trajectory_version_mismatch'\n"
+     "          || error.code === 'trajectory_fingerprint_required';\n",
+     "        return Boolean(error);\n"),
+    ("the page asks for the whole body for something that is not a refusal",
+     "a tail the service will not answer leaves the page asking for the whole body",
+     "            if (isStaleCopyRefusal(error)) {\n", "            if (false) {\n"),
 ]
 
 SERVER_CASES = [
@@ -115,6 +131,17 @@ SERVER_CASES = [
     ("a whole turn ships and the count inherits the whole turn instead of the additions",
      "while still counting only what is new",
      "    records += fresh;", "    records += all.length;"),
+
+    # The set the tail is about. A record rewritten in place keeps its index and its id, so
+    # nothing else in the protocol can see that the page's copy is not the service's: the tail
+    # comes back empty, and the page keeps the old text under the new body's validator.
+    ("a tail is answered to a page whose copy is not the one the service has",
+     "a content-only rewrite at the cursor cannot be acknowledged without replacing the displayed record",
+     "export function deltaRefusal(payload, count, askedFingerprint) {\n",
+     "export function deltaRefusal(payload, count, askedFingerprint) {\n  if (payload) return null;\n"),
+    ("the refusal is computed and then ignored",
+     "the service refuses a tail whose set the page did not state, and says so",
+     "      if (refusal) {\n", "      if (false) {\n"),
 ]
 
 # The page side. A delta replayed against a copy that already has a record must be allowed to
@@ -133,20 +160,31 @@ def run_probe():
         ["node", str(PROBE)], cwd=str(ROOT), capture_output=True, text=True,
         encoding="utf-8", errors="replace",
     )
+    lines = proc.stdout.splitlines()
     fired = []
-    for line in proc.stdout.splitlines():
+    for line in lines:
         if line.startswith("FAIL "):
             fired.append(line[5:].strip())
-    # A crash is the probe failing to run, which the exit code says. It is *not* "no assertion
-    # fired" — this guard prints its FAIL lines only when there are any, so a passing probe
-    # prints none, and conflating the two turns every surviving mutation into a fake crash.
-    return proc.returncode == 0, fired, proc.stdout + proc.stderr
+    # Two facts, and they are not the same one.
+    #
+    # The exit code says whether the guard PASSED — and a guard that fails an assertion on purpose
+    # exits non-zero, so a non-zero code is what a CATCH looks like. Reading it as "the probe
+    # crashed" turns every catch into a crash, which is a control that reports nothing but crashes.
+    #
+    # Whether the probe REPORTED is the other fact. This guard prints its summary line whether it
+    # passed or failed, and a probe that died before its reporting block printed neither the
+    # summary nor any FAIL line. A run that produced no output contains no name, so a crash cannot
+    # be read as a catch.
+    #
+    # The verdict is the name. The exit code only says whether the baseline was clean.
+    reported = any("checks passed" in line for line in lines)
+    return proc.returncode, reported, fired, proc.stdout + proc.stderr
 
 
 def main():
     originals = {CLIENT: CLIENT.read_bytes(), SERVER: SERVER.read_bytes()}
-    ok, fired, output = run_probe()
-    if not ok or fired:
+    code, reported, fired, output = run_probe()
+    if code != 0 or not reported or fired:
         print("baseline verify-incremental.mjs did not pass; refusing to run mutations")
         print(output)
         return 1
@@ -165,15 +203,18 @@ def main():
 
         target.write_bytes(text.replace(old, new, 1).encode("utf-8"))
         try:
-            passed, fired, _ = run_probe()
+            code, reported, fired, _ = run_probe()
         finally:
             target.write_bytes(originals[target])
 
-        if not ok:
-            failures.append("%s: CRASHED — the probe could not run; that is not a catch" % name)
+        # A probe that did not report died before it could name anything, and a run that produced
+        # no output contains no name — so neither of those is a catch. A probe that reported and
+        # named nothing failed nothing, which is a different thing: the rule still holds.
+        if not reported:
+            failures.append("%s: CRASHED — the probe did not report; that is not a catch" % name)
             continue
         if not fired:
-            failures.append("%s: NOT CAUGHT — probe still passed" % name)
+            failures.append("%s: NOT CAUGHT — the probe reported and passed anyway" % name)
             continue
         if expected not in fired:
             failures.append("%s: caught by %s, expected %r" % (name, fired, expected))

@@ -2378,9 +2378,14 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
       sandbox.fetchTrajectory = function () {
         // The new body is on screen, with its own validator, and the panel rebuilds on it: that
         // starts a read of the record now at that position.
+        //
+        // THE SAME KIND OF READ as the one under test. A field read that is retried has to be
+        // tested against a COMPETING FIELD READ: the two live in different pending maps, so a
+        // raw read competing with a field read would leave the field's own map empty, and the
+        // rule — a retry must not join another read — would never have been asked of it.
         sandbox.state.etag = '"tag-new"';
         sandbox.state.flat = [{ turn: {}, record: { index: 1, v: 'the-version-of-record-two' } }];
-        sandbox.fetchRaw({ index: 1, v: 'the-version-of-record-two' });
+        sandbox[readName]({ index: 1, v: 'the-version-of-record-two' });
         return Promise.resolve();
       };
       let refused = null;

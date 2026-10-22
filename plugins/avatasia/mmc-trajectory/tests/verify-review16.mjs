@@ -48,17 +48,57 @@ const plugin = JSON.parse(read('.minimax-plugin/plugin.json'));
 
 // Every shipped text file, once. Two checks below read this same map, which is the point: the first
 // version of the dangling check hard-coded two paths, and the second one invented its own list, so
-// the two could not disagree about what ships. If a file is added to the package it belongs here.
-const SHIPPED_TEXT = {
-  'README.md': readme,
-  'README.zh-CN.md': readmeZh,
-  'miniapp/client/index.html': clientHtml,
-  'miniapp/node/server.mjs': serverJs,
-  'miniapp/node/search-segments.mjs': read('miniapp/node/search-segments.mjs'),
-  'tests/make-fixtures.mjs': read('tests/make-fixtures.mjs'),
-  'tests/client-check.mjs': read('tests/client-check.mjs'),
-  '.minimax-plugin/plugin.json': read('.minimax-plugin/plugin.json'),
-};
+// the two could not disagree about what ships.
+//
+// The table this replaces was itself such a list, and it was half the package: eight entries that
+// reached six of the twelve text files that ship. `.gitattributes`, `.gitignore`, `LICENSE`,
+// `package.json`, `miniapp/miniapp.json` and `miniapp/node/miniapp-api.ts` were read by nothing,
+// so all three checks below passed over them without saying so. A list that omits half its members
+// cannot be told apart from a complete one by its own result, because the omitted half is exactly
+// the unchecked half -- which is the shape this file was written about, one level up.
+//
+// So the set is derived now: walk the package and keep what decodes as strict UTF-8.
+//
+// Strict UTF-8, and NOT "does it contain a NUL": NUL is a legal code point (U+0000), so a file
+// carrying one still decodes and still counts as text -- which is exactly what lets the NUL check
+// below still see it. Judging text-ness by NUL would make that check an empty one. icon.png does
+// not decode, so it drops out, which is the same verdict the class table reaches.
+//
+// The boundary is unchanged and deliberate: `tests/` is a DEV tree, and the guard and mutation
+// files inside it carry private numbers as provenance rather than as labels (the reasoning sits
+// above the private-number check). Two files under tests/ are added back by hand below, because
+// those two are part of what installs onto a reader's machine.
+const DEV_TREES = new Set(['tests', '__pycache__', 'fixtures', 'node_modules']);
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+function isTextFile(abs) {
+  let buf;
+  try { buf = readFileSync(abs); } catch { return false; }
+  try { strictUtf8.decode(buf); } catch { return false; }
+  return true;
+}
+function shippedTextPaths(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (DEV_TREES.has(entry.name)) continue;
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...shippedTextPaths(p));
+    else if (isTextFile(p)) out.push(p);
+  }
+  return out;
+}
+const derivedRel = shippedTextPaths(PKG).map((p) => relative(PKG, p).split(/[\\/]/).join('/'));
+const SHIPPED_TEXT = {};
+for (const rel of derivedRel) SHIPPED_TEXT[rel] = read(rel);
+SHIPPED_TEXT['tests/make-fixtures.mjs'] = read('tests/make-fixtures.mjs');
+SHIPPED_TEXT['tests/client-check.mjs'] = read('tests/client-check.mjs');
+
+// The deriver is what the three checks below now stand on, so it gets a check of its own. If the
+// walk ever returns nothing -- a skip list that grew a name, a directory that moved -- all three
+// read an empty set and none of them fires, and a guard that cannot fail is not a guard that
+// passed. Twelve is the number of text files that ship today: adding one to the package must not
+// trip this, losing one must.
+assert('the shipped text set is derived from the package, and covers the twelve text files that ship',
+  derivedRel.length >= 12, 'derived ' + derivedRel.length);
 
 // This assertion was written over the two READMEs, because those are what a reader opens first, and
 // the two shipped source files were never added to it. They carried 19 of these pointers between

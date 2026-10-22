@@ -364,21 +364,31 @@ try {
   // The session identity does not move: the same directory, the same manifest, the same id — only
   // the line behind record 1 is a different line. That is what makes this the hard case: the
   // index still says 1, and the position is still a position, but it names a different record.
+  //
+  // TWO records in TWO turns, because the rule has two cases and one record can only ever be
+  // one of them: a record rewritten AT the cursor, and a record rewritten in a turn BEFORE it.
+  // The writer takes the lines one at a time, so a case can rewrite one of them and leave the
+  // other exactly as it was.
   const VERSIONED = 'mvs_versioned';
   const versionedDir = join(sessionsRoot, '2026', '10', '22', '00-00-00-session_'
     + Buffer.from(VERSIONED, 'utf8').toString('base64url'));
-  const writeVersioned = async (body, mtimeMs) => {
+  const writeVersioned = async (lines, mtimeMs) => {
     await mkdir(versionedDir, { recursive: true });
-    await writeFile(join(versionedDir, 'messages.jsonl'), JSON.stringify({
-      message_id: 'm1',
-      turn_id: 't1',
-      message: { role: 'user', content: body, timestamp: 1791600000000 },
-    }) + '\n', 'utf8');
+    const text = lines.map((one) => JSON.stringify({
+      message_id: one.id,
+      turn_id: one.turn,
+      message: { role: 'user', content: one.body, timestamp: 1791600000000 },
+    }) + '\n').join('');
+    await writeFile(join(versionedDir, 'messages.jsonl'), text, 'utf8');
     await writeFile(join(versionedDir, 'manifest.json'), JSON.stringify({ sessionId: VERSIONED }), 'utf8');
     const stamp = new Date(mtimeMs);
     await utimes(join(versionedDir, 'messages.jsonl'), stamp, stamp);
   };
-  await writeVersioned('ALPHA BODY', 1791600000000);
+  const ALPHA_LINES = [
+    { id: 'm1', turn: 't1', body: 'ALPHA BODY' },
+    { id: 'm2', turn: 't2', body: 'ALPHA SECOND' },
+  ];
+  await writeVersioned(ALPHA_LINES, 1791600000000);
 
   // The runtime database, which is the only place on this machine that knows which
   // conversation is live. ALPHA is live first; BRAVO becomes live later in this section.
@@ -474,6 +484,20 @@ try {
       }
     }
     return out;
+  };
+  // The cursor a page would ask a tail from: the last record it holds. The same word the server
+  // uses for it, and the same number — a tail cut at the wrong one is a tail about the wrong
+  // records, and the point of this section is that the wrong one is refused rather than served.
+  const lastIndexOf = (body) => {
+    const turns = body && Array.isArray(body.turns) ? body.turns : [];
+    let last = 0;
+    for (const turn of turns) {
+      const records = Array.isArray(turn && turn.records) ? turn.records : [];
+      for (const record of records) {
+        if (record && typeof record.index === 'number' && record.index > last) last = record.index;
+      }
+    }
+    return last;
   };
 
   // The segments a search published, found by walking the data dir. Publishing them is a side
@@ -711,8 +735,18 @@ try {
     const oldVersion = versionOf(versionLoad.body, 1);
     assert('and its record carries a version',
       oldVersion !== '', 'version: ' + JSON.stringify(oldVersion));
+    // The set the page holds, and the cursor it would ask a tail from: the records it has, in
+    // order, and the last of them.
+    const oldVersions = versionsOf(versionLoad.body);
+    const oldCursor = lastIndexOf(versionLoad.body);
+    assert('the conversation has the two records the two cases need',
+      oldVersions.length === 2 && oldCursor === 2,
+      'versions: ' + oldVersions.length + ' cursor: ' + oldCursor);
 
-    await writeVersioned('BRAVO BODY', 1791800000000);
+    await writeVersioned([
+      { id: 'm1', turn: 't1', body: 'BRAVO BODY' },
+      { id: 'm2', turn: 't2', body: 'ALPHA SECOND' },
+    ], 1791800000000);
     // The service now has to be holding the NEWER body, or the read below is not the read the
     // reader would make. A fresh service instance is how it stops believing the walk it cached:
     // the walk holds the session list for three seconds, so a rewritten transcript is invisible
@@ -723,6 +757,35 @@ try {
       instance = restarted.instance;
       base = restarted.base;
     }
+
+    // THE TAIL A PAGE ASKS FOR WHEN THE RECORD UNDER IT HAS CHANGED.
+    //
+    // The tail carries the records AFTER the page's cursor; the ones before it stay as the page
+    // has them. So the tail is only about the page's copy if that copy is still the service's —
+    // and a record rewritten in place keeps its index and its id, so the cursor still points at
+    // the same record and the tail looks empty. The page would merge nothing, keep the old text,
+    // and install the new body's validator, and nothing else in the protocol could see it.
+    //
+    // So the request says which set the page holds, and the service refuses a tail it cannot tie
+    // to that set. THIS IS THE FIRST REQUEST AFTER THE RESTART ON PURPOSE: the refusal belongs
+    // to the path that REBUILDS the body, and the path that finds the body already held answers
+    // with the whole body — which is safe, because a whole body replaces everything.
+    //
+    // The set the page holds is the one it had before the rewrite: record 1 was rewritten in
+    // place, in the turn BEFORE the cursor's turn.
+    const staleTail = await get('/api/trajectory?session=' + VERSIONED + '&since=' + oldCursor
+      + '&n=' + oldVersions.length + '&fp=' + recordSetFingerprint(oldVersions));
+    assert('a tail asked for by a page whose record was rewritten in place is refused',
+      staleTail.status === 409 && Boolean(staleTail.body)
+      && staleTail.body.error === 'trajectory_version_mismatch', why(staleTail));
+    // And the tail it is NOT given: the next request finds the body the service already holds,
+    // and is answered with the whole body. That is safe — a whole body replaces everything — and
+    // it is why the refusal belongs to the path that rebuilds: the cached path answers with a
+    // whole body, not with a tail, so there is no set for it to check.
+    const wholeBody = await get('/api/trajectory?session=' + VERSIONED + '&since=' + oldCursor);
+    assert('a tail asked for against a body the service already holds is answered with the whole body',
+      wholeBody.status === 200 && Boolean(wholeBody.body) && !wholeBody.body.delta, why(wholeBody));
+
     const versionReload = await get('/api/trajectory?session=' + VERSIONED);
     assert('the rewritten conversation loads again',
       versionReload.status === 200, why(versionReload));
@@ -770,6 +833,48 @@ try {
     assert('and the record read refuses it the same way',
       detailNoVersion.status === 400 && detailNoVersion.body && detailNoVersion.body.error === 'record_version_required',
       why(detailNoVersion));
+
+    // The other case of the same rule: the record AT THE CURSOR, rewritten in place.
+    //
+    // The page's set is the one it would hold now — the body after the first rewrite, whose
+    // record 2 is still the old one — and the record that changed under it is the one the cursor
+    // points at. The tail would be empty here too, and the id it names would still agree.
+    await writeVersioned([
+      { id: 'm1', turn: 't1', body: 'BRAVO BODY' },
+      { id: 'm2', turn: 't2', body: 'BRAVO SECOND' },
+    ], 1791900000000);
+    await instance.dispose();
+    {
+      const restarted = await startService();
+      instance = restarted.instance;
+      base = restarted.base;
+    }
+    const cursorSet = versionsOf(versionReload.body);
+    const staleCursorTail = await get('/api/trajectory?session=' + VERSIONED + '&since=' + oldCursor
+      + '&n=' + cursorSet.length + '&fp=' + recordSetFingerprint(cursorSet));
+    assert('a tail asked for by a page whose record AT THE CURSOR was rewritten in place is refused',
+      staleCursorTail.status === 409 && Boolean(staleCursorTail.body)
+      && staleCursorTail.body.error === 'trajectory_version_mismatch', why(staleCursorTail));
+
+    // And the request that names no set at all. The service cannot tell which records the page
+    // has, so it cannot answer with a tail: the records before the cursor are not in the tail,
+    // and the page would keep the copies it has without knowing whether they are still the
+    // service's. A whole body would be safe, but the body has to be rebuilt for it — and the
+    // rule is that a tail is only ever answered to a page that says which set it holds.
+    await writeVersioned([
+      { id: 'm1', turn: 't1', body: 'CHARLIE BODY' },
+      { id: 'm2', turn: 't2', body: 'BRAVO SECOND' },
+    ], 1792000000000);
+    await instance.dispose();
+    {
+      const restarted = await startService();
+      instance = restarted.instance;
+      base = restarted.base;
+    }
+    const unnamedTail = await get('/api/trajectory?session=' + VERSIONED + '&since=' + oldCursor);
+    assert('a tail asked for without saying which set the page holds is refused rather than guessed at',
+      unnamedTail.status === 400 && Boolean(unnamedTail.body)
+      && unnamedTail.body.error === 'trajectory_fingerprint_required', why(unnamedTail));
   } finally {
     // The server is released here and not at the end of the happy path: an assertion that
     // throws would otherwise leave it listening, and the guard would hang instead of

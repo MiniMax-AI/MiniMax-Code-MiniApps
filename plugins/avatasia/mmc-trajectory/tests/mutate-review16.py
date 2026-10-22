@@ -172,6 +172,65 @@ MUTATIONS = [
      "       * read rather than re-measured here: band is L2 and overview is L3, and",
      "no shipped file carries a private defect or layer number"),
 
+    # ---- the same three checks, over the six files the hand-written table had left out ----
+    #
+    # The guard derives its shipped-text set from the package now, and this block is what makes that
+    # derivation a claim rather than a hope. Each of the six files the old table missed gets a
+    # defect planted in it and the guard has to name it -- otherwise "the set is derived" is a
+    # sentence, and the hole is the same hole one level down: the three checks above could have
+    # gone green with the defect fully back in any of these six files.
+    #
+    # The defects are spread across all three checks on purpose. Proving coverage with one check
+    # would leave the other two free to have quietly stopped reading the new files, which is the
+    # same failure the old table had.
+    #
+    # The anchor of each one is a string that occurs exactly once in its own file and in none of the
+    # others this control searches, so the mutation cannot land somewhere it was not aimed at.
+    ("the package manifest points at the document that left the package",
+     '"miniApp": "./miniapp/miniapp.json"',
+     '"miniApp": "./miniapp/miniapp.json",\n    "docs": "docs/LAYERS.md"',
+     "nothing still points at a docs/ file that does not ship"),
+
+    # chr(0) rather than an escape, so the byte is written literally instead of being re-read as
+    # text -- the same reason the server-source mutation above does it.
+    ("a NUL byte ships inside the mini app manifest",
+     '"lifecycle": "on-demand"',
+     '"lifecycle": "on-' + chr(0) + 'demand"',
+     "no shipped source file carries a NUL byte"),
+
+    ("a private defect number comes back into the shipped type declarations",
+     "export type HostConnectorErrorDisposition =",
+     "export type HostConnectorErrorDisposition = // D8",
+     "no shipped file carries a private defect or layer number"),
+
+    # The three configuration files that ship. The defect planted in each is a pointer to a
+    # document that does not ship -- the class the check exists for -- and the point of the three
+    # is coverage rather than plausibility: the licence and the two dotfiles were the three
+    # shipped text files no check had ever read.
+    ("the licence points at the document that left the package",
+     "Copyright (c) 2026 avatasia",
+     "Copyright (c) 2026 avatasia\n\nAdditional warranty terms: docs/STAGE1-SPEC.md",
+     "nothing still points at a docs/ file that does not ship"),
+
+    ("the line-ending rules point at the document that left the package",
+     "*.png binary",
+     "*.png binary\n\n# the reasoning is in docs/LAYERS.md",
+     "nothing still points at a docs/ file that does not ship"),
+
+    ("the ignore rules point at the document that left the package",
+     "trajectory-artifacts/",
+     "trajectory-artifacts/\n\n# see docs/LAYERS.md",
+     "nothing still points at a docs/ file that does not ship"),
+
+    # And the deriver itself. If the walk stops returning anything -- a skip list that grew a
+    # name, a directory that moved -- all three checks read an empty set and none of them fires,
+    # which is a guard that cannot fail rather than a guard that passed. The self-check is what
+    # catches that, so it needs a mutation of its own or it is an assertion nobody can break.
+    ("the deriver stops deriving anything, so the three checks read nothing",
+     "if (DEV_TREES.has(entry.name)) continue;",
+     "if (true) continue;",
+     "the shipped text set is derived from the package, and covers the twelve text files that ship"),
+
     # ---- 5. the cache stops being released ----
     # Anchored without any line ending on purpose. The first version of these two used \r\n because
     # server.mjs is CRLF in the working tree — and that is exactly the trap: it only matched because
@@ -526,14 +585,20 @@ for entry in MUTATIONS:
         if replace_all:
             for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
-                        ".minimax-plugin/plugin.json", "tests/verify-review16.mjs"):
+                        ".minimax-plugin/plugin.json",
+                        ".gitattributes", ".gitignore", "LICENSE", "package.json",
+                        "miniapp/miniapp.json", "miniapp/node/miniapp-api.ts",
+                        "tests/verify-review16.mjs"):
                 if old in read(rel):
                     target = rel
                     break
         else:
             for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
-                        ".minimax-plugin/plugin.json", "tests/verify-review16.mjs"):
+                        ".minimax-plugin/plugin.json",
+                        ".gitattributes", ".gitignore", "LICENSE", "package.json",
+                        "miniapp/miniapp.json", "miniapp/node/miniapp-api.ts",
+                        "tests/verify-review16.mjs"):
                 if read(rel).count(old) == 1:
                     target = rel
                     break

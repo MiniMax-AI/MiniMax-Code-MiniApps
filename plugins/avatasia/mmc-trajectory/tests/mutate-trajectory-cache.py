@@ -329,6 +329,36 @@ MUTATIONS = [
         "    }\n",
         "",
     ),
+    # ---- the tail, which is about the set the page holds -------------------------------
+    #
+    # A tail carries the records AFTER the page's cursor; the ones before it stay as the page
+    # has them. So the tail is only about the page's copy if that copy is still the service's —
+    # and a record rewritten IN PLACE keeps its index and its id, so the cursor still points at
+    # the same record, the tail looks empty, and the page merges nothing: it keeps the old text
+    # and installs the new body's validator. Nothing else in the protocol could see it.
+    #
+    # Three controls, because the promise has three pieces: a tail to a page whose copy has
+    # changed has to be refused, a tail asked for without the set has to be refused rather than
+    # guessed at, and the path that finds the body already held has to answer with the WHOLE
+    # body — a tail from there would be a tail nobody checked.
+    (
+        "a tail is answered to a page whose copy is not the one the service has",
+        SERVER,
+        "  if (recordSetFingerprint(payloadRecordVersions(payload, count)) !== fingerprint) {\n",
+        "  if (false) {\n",
+    ),
+    (
+        "a tail asked for without saying which set the page holds is answered anyway",
+        SERVER,
+        "  if (!Number.isInteger(count) || count < 0 || !/^[0-9a-f]{16}$/.test(fingerprint)) {\n",
+        "  if (false) {\n",
+    ),
+    (
+        "the cached path stops answering with the body it holds, so a tail is cut from it unchecked",
+        SERVER,
+        "      sendJsonBody(response, 200, cached.body, { etag, revalidate: true });\n      return;\n",
+        "      // the body is rebuilt below\n",
+    ),
 ]
 
 

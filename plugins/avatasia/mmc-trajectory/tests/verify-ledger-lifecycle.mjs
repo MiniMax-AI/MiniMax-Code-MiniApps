@@ -3,8 +3,9 @@
  * promise that comes with giving them up is two-sided.
  *
  * The one side everybody can see: a group the reader is not on must not be holding its rows.
- * Measured on a real session of 47,937 records, the rows of 「显示全部」 are 438,986 nodes and
- * about 470 MB of the renderer's private memory, so "hold everything" is the whole cost.
+ * Measured on one session of about 50,600 records (2026-10-22), the rows of 「显示全部」 were
+ * 463,122 DOM nodes and the renderer's private memory read 785 to 820 MB, so "hold everything"
+ * is the whole cost.
  *
  * The other side is the one that is easy to lose: a group that has given up its rows must still
  * be *there*. The rows are the DOM; the height is the reader's place in a session they have
@@ -69,7 +70,11 @@ const LIFECYCLE_FNS = [
   'fillLedgerGroup',
   'holdLedgerHeight',
   'fillGroupRows',
-  'firstVisibleRow'
+  'firstVisibleRow',
+  // The build itself, because the rule this file has to prove is about what the build
+  // writes. A group the reader has left must not be kept alive by the rebuild — and the
+  // source of a function cannot say whether it stamps the reader's lease or not.
+  'buildStep'
 ];
 
 const fnSrc = LIFECYCLE_FNS.map((name) => functionSource(name));
@@ -86,9 +91,11 @@ if (missing.length) {
 // one changed.
 const idleDecl = html.match(/^[ \t]*var LEDGER_IDLE_MS = [^;]+;/m);
 const capDecl = html.match(/^[ \t]*var LEDGER_LIVE_GROUPS = [^;]+;/m);
+const batchDecl = html.match(/^[ \t]*var LEDGER_BATCH_GROUPS = [^;]+;/m);
 assert('the shipped script declares the idle timeout', !!idleDecl);
 assert('the shipped script declares the cap on groups holding their rows', !!capDecl);
-if (!idleDecl || !capDecl) {
+assert('the shipped script declares how many groups a build does at a time', !!batchDecl);
+if (!idleDecl || !capDecl || !batchDecl) {
   console.error(`[ledger-lifecycle] ${pass} passed, ${failures.length} failed`);
   for (const f of failures) console.error('  FAIL  ' + f);
   process.exit(1);
@@ -107,6 +114,7 @@ function makeEl(tag) {
     setAttribute(name, value) { el.attrs[name] = String(value); },
     getAttribute(name) { return name in el.attrs ? el.attrs[name] : null; },
     querySelector(selector) { return queryOne(el, selector); },
+    querySelectorAll() { return []; },
     getBoundingClientRect() { return { height: 240, width: 900, top: 0, bottom: 240 }; }
   };
   el.classList = {
@@ -175,11 +183,69 @@ function harness() {
   };
   vm.createContext(sandbox);
   vm.runInContext(
-    idleDecl[0] + '\n' + capDecl[0] + '\n' + fnSrc.join('\n'),
+    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + fnSrc.join('\n'),
     sandbox
   );
   box.sandbox = sandbox;
   return box;
+}
+
+/**
+ * The sandbox the build runs in.
+ *
+ * The build is a nested function inside renderLedger, so lifting it leaves everything it
+ * closes over undefined — and it is lifted here to be *run*, not to be read. The collaborators
+ * it needs are the ones a build touches: the ledger it appends to, the groups it is told to
+ * build, and the clock. The ones that would need a real browser (the observer, the anchor,
+ * the measurement) are stubs, because the rule under test is about the lease and the lease is
+ * decided before any of them run.
+ */
+function buildHarness() {
+  const h = harness();
+  const s = h.sandbox;
+  s.ledgerBuildToken = 1;
+  s.build = { token: 1, at: 0, rows: 0, bands: 0, heights: null };
+  s.groups = [];
+  s.anchor = null;
+  s.scrollY = 0;
+  s.ledger = makeEl('div');
+  s.isCount = (n) => typeof n === 'number';
+  s.DASH = '—';
+  s.turnKey = (turn) => 'k' + turn.index;
+  s.buildTurnHead = () => makeEl('div');
+  s.applyIntrinsicSize = () => 240;
+  s.calibrateRowHeights = () => ({ rows: 240 });
+  s.setLedgerProgress = () => {};
+  s.restoreRowAnchor = () => {};
+  s.flushDeferredPoll = () => {};
+  s.watchLedgerGroups = () => {};
+  s.syncStickyOffsets = () => {};
+  s.window = { requestAnimationFrame: () => {} };
+  return h;
+}
+
+/**
+ * One rebuild of the ledger, the way renderLedger does it.
+ *
+ * The groups are the window's, the first one is the group the window is anchored on, and the
+ * state carries over — a rebuild does not reset the reader's lease, and proving that it does
+ * not is the whole point of the rule below.
+ */
+function rebuild(h, groups) {
+  const s = h.sandbox;
+  s.ledger.children.length = 0;
+  s.ledgerContent.clear();
+  s.groups = groups;
+  s.build.at = 0;
+  s.build.rows = 0;
+  s.build.bands = 0;
+  s.build.heights = null;
+  s.buildStep();
+}
+
+/** The section the build made for a group, by its order in the window. */
+function sectionOf(h, index) {
+  return h.sandbox.ledger.children[index];
 }
 
 /* ---------- 1. the rows of a group the reader is not on are not built ---------- */
@@ -262,6 +328,10 @@ function harness() {
   for (let i = 0; i < n; i += 1) {
     s.ledgerState.set('g' + i, { live: true, lastSeen: 1000 + i, height: 0 });
   }
+  // The clock is past every lease above. The anchored group is counted with the current time
+  // — it has no visit of its own to be dated by — so a clock that sat behind the leases would
+  // make the anchored group look like the oldest one, which is the one thing it never is.
+  h.clock = 2000;
   s.releaseStaleGroups('g' + (n - 1));
   const live = [...s.ledgerState.values()].filter((v) => v.live).length;
   assert('the number of groups holding their rows is bounded',
@@ -270,6 +340,85 @@ function harness() {
     s.ledgerState.get('g0').live === false
     && s.ledgerState.get('g1').live === false
     && s.ledgerState.get('g' + (n - 1)).live === true);
+}
+
+/* ---------- 3b. the group the window is anchored on is counted among them ---------- */
+
+/*
+ * Two sets, and they have to be the same set.
+ *
+ * The bound is about the groups that hold their rows: that is the memory. The groups that are
+ * live are the groups the reader is keeping alive, and the group the window is anchored on is
+ * not one of them — the reader arrives there and every other group's height is predicted from
+ * it, so it holds its rows whatever the reader is doing. It has no visit of its own to be
+ * dated by, so it is counted rather than timed.
+ *
+ * Left out of the count, it would go on holding its rows past the bound: the bound would be
+ * about one set while the rows on screen were another. That is what the assertion below is
+ * for, and it is a separate assertion because it is a separate rule.
+ */
+
+{
+  const h = harness();
+  const s = h.sandbox;
+  h.clock = 5000;
+  // The anchored group: not live, and its last visit was long enough ago that the idle
+  // timeout would have taken it, if the idle timeout were about it. It is not.
+  s.ledgerState.set('anchor', { live: false, lastSeen: 1000, height: 0 });
+  for (let i = 0; i < s.LEDGER_LIVE_GROUPS + 1; i += 1) {
+    s.ledgerState.set('g' + i, { live: true, lastSeen: 4000 + i, height: 0 });
+  }
+  s.releaseStaleGroups('anchor');
+  const live = [...s.ledgerState.values()].filter((v) => v.live).length;
+  assert('the window\'s first group is one of the groups that hold their rows',
+    s.ledgerState.get('anchor').live === true);
+  assert('the bound is about the groups holding their rows, and the anchored group is one of them',
+    live === s.LEDGER_LIVE_GROUPS);
+}
+
+/* ---------- 3c. a rebuild is not a visit ---------- */
+
+/*
+ * The poll runs every eight seconds whether the reader is there or not. A build that stamped
+ * the reader-idle lease would renew it every time — so the lease could never run out, the
+ * group the reader had left would keep its row DOM for the rest of the session, and the
+ * fifteen-second idle timeout would be a rule about nothing.
+ *
+ * The build is run here rather than read: what it writes is the rule, and the source of a
+ * function does not say whether it writes it.
+ */
+
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const groups = [
+    { turn: { index: 1 }, entries: entriesOf(2, 0, 'a') },
+    { turn: { index: 2 }, entries: entriesOf(2, 0, 'b') }
+  ];
+  // The second group is the one the reader left: live, last seen at 1000, and nobody has
+  // been at it since.
+  s.ledgerState.set('k2', { live: true, lastSeen: 1000, height: 0 });
+
+  h.clock = 9000;
+  rebuild(h, groups);
+  assert('rebuilding an offscreen group does not renew its reader-idle lease',
+    s.ledgerState.get('k2').lastSeen === 1000);
+  assert('a group the reader has just left still holds its rows, because the idle time has not passed',
+    s.ledgerState.get('k2').live === true
+    && sectionOf(h, 1).getAttribute('data-rows') === 'live');
+
+  h.clock = 17000;
+  s.releaseStaleGroups('k1');
+  rebuild(h, groups);
+  assert('a group the reader has left gives its rows up while the ledger keeps being rebuilt',
+    s.ledgerState.get('k2').live === false
+    && sectionOf(h, 1).getAttribute('data-rows') === 'released');
+
+  h.clock = 25000;
+  rebuild(h, groups);
+  assert('a group that has given its rows up does not get them back by being rebuilt',
+    s.ledgerState.get('k2').live === false
+    && sectionOf(h, 1).getAttribute('data-rows') === 'released');
 }
 
 {
@@ -389,8 +538,15 @@ function harness() {
 /* ---------- 6. the shipped build asks for exactly this ---------- */
 
 const buildStepSrc = functionSource('buildStep') || '';
+// The comments are stripped before the shape checks, so a comment that talks about the lease
+// is not a lease write. A rule that only holds while nobody writes about it is not a rule.
+const buildStepCode = buildStepSrc
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/\/\/[^\n]*/g, '');
 assert('the build asks for no rows for a group it is not holding',
   /fillGroupRows\(holds \? list : null, group\)/.test(buildStepSrc));
+assert('the build does not write the reader-idle lease',
+  !/lastSeen\s*=/.test(buildStepCode) && !/\.live\s*=/.test(buildStepCode));
 assert('a group the build is not holding is given a height to keep',
   /if \(!holds\) \{[\s\S]{0,400}?holdLedgerHeight\(section,/.test(buildStepSrc));
 assert('a group the build is holding says so',
