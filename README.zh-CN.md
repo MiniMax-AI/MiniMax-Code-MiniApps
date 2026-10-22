@@ -62,6 +62,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [AI 事务所](plugins/cristinamadureira353-svg/ai-office/README.zh-CN.md) | 五位真实模型员工的像素事务所：接单、聊天、休息和开会，额度耗尽时角色暂停；使用玩家自己的 API Key | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
 | [Token 用量看板](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md) | 近实时查看本机 Token 用量、输出速度与缓存命中率，可按时间范围、模型和会话筛选 | [yanhy2000](https://github.com/yanhy2000) |
+| [Token 仪表盘](plugins/hanewari/token-meter-board/README.zh-CN.md) | 本机 Token 用量实时看板：逐次调用台账、对话明细（turn 级）、与客户端界面同口径的输出速率；直读运行时用量表与观测日志，无需 Python | [HaneWari](https://github.com/HaneWari) |
 | [模型管理器](plugins/ocoomber/openrouter-model-manager/README.zh-CN.md) | 浏览、搜索并启用/停用 `~/.minimax/config.yaml` 中的模型，支持即时保存、批量操作、一键撤销和自动备份 | [ocoomber](https://github.com/ocoomber) |
 | [自驾规划](plugins/hanzijie/self-drive-route-planner/README.zh-CN.md) | 【官方插件】规划自驾路线、地点搜索、候选算路与小红书 3:4 行程图；支持演示模式 | [HanZijie](https://github.com/HanZijie) |
 | [Git 提交树](plugins/microbiosis/git-tree/README.zh-CN.md) | 查看本机 Git 仓库的提交历史：泳道提交图、分支/标签、提交详情与文件改动统计，支持筛选偏好持久化与可选自动刷新 | [Microbiosis](https://github.com/Microbiosis) |
@@ -91,6 +92,15 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 ![Token 用量看板，使用合成数据展示用量趋势](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
 
 预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md)。
+
+</details>
+
+<details>
+<summary>预览：Token 仪表盘</summary>
+
+![Token 仪表盘，使用合成数据展示用量趋势](plugins/hanewari/token-meter-board/docs/preview.png)
+
+预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/hanewari/token-meter-board/README.zh-CN.md)。
 
 </details>
 

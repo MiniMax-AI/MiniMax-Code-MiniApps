@@ -62,6 +62,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [AI Office](plugins/cristinamadureira353-svg/ai-office/) | Manage five model-powered employees in a pixel office: client tasks, chats, breaks, meetings and quota-aware offline states; uses your own API keys | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
 | [Token Usage Board](plugins/yanhy2000/mcode-usage-monitor/) | Watch local Token usage, output speed, and cache hit rate in near real time; filter by time range, model, and session | [yanhy2000](https://github.com/yanhy2000) |
+| [Token Meter Board](plugins/hanewari/token-meter-board/) | Live local Token usage with a per-call ledger, turn-level conversations, and output speed on the same basis as the client UI; reads the runtime's own usage table and logs, no Python | [HaneWari](https://github.com/HaneWari) |
 | [Model Manager](plugins/ocoomber/openrouter-model-manager/) | Browse, search, and enable/disable models in your `~/.minimax/config.yaml` with instant save, bulk actions, one-click undo, and automatic backups | [ocoomber](https://github.com/ocoomber) |
 | [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | **Official plugin** for planning driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
 | [Git Commit Tree](plugins/microbiosis/git-tree/) | Inspect a local Git repo's commit history with a swim-lane graph, branches/tags, commit detail, and per-file change stats; persisted filter preferences and optional auto-refresh | [Microbiosis](https://github.com/Microbiosis) |
@@ -91,6 +92,15 @@ The preview uses synthetic data. The app interface is currently in Chinese. See 
 ![Token Usage Board showing usage trends with synthetic data](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
 
 The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/yanhy2000/mcode-usage-monitor/README.md) for data access, counting rules, and compatibility notes.
+
+</details>
+
+<details>
+<summary>Preview: Token Meter Board</summary>
+
+![Token Meter Board showing usage trends with synthetic data](plugins/hanewari/token-meter-board/docs/preview.png)
+
+The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/hanewari/token-meter-board/README.md) for data access, counting rules, and compatibility notes.
 
 </details>
 

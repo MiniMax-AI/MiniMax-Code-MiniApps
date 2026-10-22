@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token 仪表盘</title>
+<link rel="icon" href="data:,">
+<script src="/vendor/chart.umd.min.js"></script>
+<style>
+/* ---- tokens (MiniMax Code Mini App baseline + token-meter chart ramp) ---- */
+:root,
+[data-theme='light'] {
+  --mcode-bg:#f5f5f5; --mcode-bg-secondary:#f5f5f5; --mcode-surface:#ffffff;
+  --mcode-surface-muted:#fafafa; --mcode-text:#171717; --mcode-text-muted:#666666;
+  --mcode-text-subtle:#adadad; --mcode-border:#0a0a0a14; --mcode-border-strong:#0a0a0af2;
+  --mcode-accent:#0094fc; --mcode-success:#04b54b; --mcode-warning:#f56811; --mcode-danger:#f73646;
+  --mcode-primary-action-bg:#171717; --mcode-primary-action-text:#ffffff;
+  --mcode-chart-1:#0094fc; --mcode-chart-2:#2ea6a4; --mcode-chart-3:#e0932f;
+  --mcode-chart-4:#d0567a; --mcode-chart-5:#6c5ce7; --mcode-chart-6:#8a9a5b;
+  --mcode-chart-grid:#ececf1; --mcode-chart-axis:#9a9aa3;
+  --tmb-line-hit:#059669; --tmb-line-rate:#c026d3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mcode-bg:#171717; --mcode-bg-secondary:#1c1c1c; --mcode-surface:#262626;
+    --mcode-surface-muted:#262626; --mcode-text:#ededed; --mcode-text-muted:#949494;
+    --mcode-text-subtle:#666666; --mcode-border:#ffffff14; --mcode-border-strong:#fffffff2;
+    --mcode-accent:#3ea6ff; --mcode-success:#009c3d; --mcode-warning:#e25507; --mcode-danger:#e31937;
+    --mcode-primary-action-bg:#ffffff; --mcode-primary-action-text:#171717;
+    --mcode-chart-1:#3ea6ff; --mcode-chart-2:#45c0bd; --mcode-chart-3:#e5a84d;
+    --mcode-chart-4:#e0709a; --mcode-chart-5:#8b7cf0; --mcode-chart-6:#a3b877;
+    --mcode-chart-grid:#2a2a31; --mcode-chart-axis:#6e6e77;
+    --tmb-line-hit:#34d399; --tmb-line-rate:#e879f9;
+  }
+}
+[data-theme='light'] {
+  --mcode-bg:#f5f5f5; --mcode-bg-secondary:#f5f5f5; --mcode-surface:#ffffff;
+  --mcode-surface-muted:#fafafa; --mcode-text:#171717; --mcode-text-muted:#666666;
+  --mcode-text-subtle:#adadad; --mcode-border:#0a0a0a14; --mcode-border-strong:#0a0a0af2;
+  --mcode-accent:#0094fc; --mcode-success:#04b54b; --mcode-warning:#f56811; --mcode-danger:#f73646;
+  --mcode-primary-action-bg:#171717; --mcode-primary-action-text:#ffffff;
+  --mcode-chart-1:#0094fc; --mcode-chart-2:#2ea6a4; --mcode-chart-3:#e0932f;
+  --mcode-chart-4:#d0567a; --mcode-chart-5:#6c5ce7; --mcode-chart-6:#8a9a5b;
+  --mcode-chart-grid:#ececf1; --mcode-chart-axis:#9a9aa3;
+  --tmb-line-hit:#059669; --tmb-line-rate:#c026d3;
+}
+[data-theme='dark'] {
+  --mcode-bg:#171717; --mcode-bg-secondary:#1c1c1c; --mcode-surface:#262626;
+  --mcode-surface-muted:#262626; --mcode-text:#ededed; --mcode-text-muted:#949494;
+  --mcode-text-subtle:#666666; --mcode-border:#ffffff14; --mcode-border-strong:#fffffff2;
+  --mcode-accent:#3ea6ff; --mcode-success:#009c3d; --mcode-warning:#e25507; --mcode-danger:#e31937;
+  --mcode-primary-action-bg:#ffffff; --mcode-primary-action-text:#171717;
+  --mcode-chart-1:#3ea6ff; --mcode-chart-2:#45c0bd; --mcode-chart-3:#e5a84d;
+  --mcode-chart-4:#e0709a; --mcode-chart-5:#8b7cf0; --mcode-chart-6:#a3b877;
+  --mcode-chart-grid:#2a2a31; --mcode-chart-axis:#6e6e77;
+  --tmb-line-hit:#34d399; --tmb-line-rate:#e879f9;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 20px 24px 32px;
+  background: var(--mcode-bg); color: var(--mcode-text);
+  font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 14px; line-height: 1.55;
+}
+.stage { max-width: 1080px; margin: 0 auto; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* header */
+.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.top h1 { font-size: 18px; line-height: 28px; font-weight: 600; margin: 0; }
+.top .meta { font-size: 12px; color: var(--mcode-text-subtle); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* buttons */
+button { font: inherit; }
+.btn-primary {
+  font-size: 12.5px; font-weight: 500; padding: 7px 16px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--mcode-primary-action-bg);
+  background: var(--mcode-primary-action-bg); color: var(--mcode-primary-action-text);
+}
+.btn-ghost {
+  font-size: 12px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--mcode-border); background: var(--mcode-surface); color: var(--mcode-text-muted);
+}
+.btn-ghost:hover { background: var(--mcode-surface-muted); color: var(--mcode-text); }
+.btn-primary:disabled { opacity: .5; cursor: default; }
+.btn-primary:focus-visible, .btn-ghost:focus-visible, .seg button:focus-visible, .chip:focus-visible,
+select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--mcode-accent); outline-offset: 1px;
+}
+
+/* window bar
+   两行布局是刻意的：datetime-local 的原生选择器由浏览器画在 top layer，
+   z-index 压不住，而它总是向下弹出。若「应用」按钮排在时间输入框下方（窄窗口
+   时 flex 换行就会这样），选择器会正好盖住它，用户选完时间根本点不到「应用」。
+   所以时间行固定放在最后一行，选择器往下弹只会盖住下方的内容卡片。 */
+.win-bar {
+  background: var(--mcode-surface); border: 1px solid var(--mcode-border); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 16px;
+}
+.win-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.win-row + .win-row { margin-top: 8px; }
+.win-row-presets .btn-primary { margin-left: auto; }
+.win-field { display: flex; align-items: center; gap: 6px; }
+.win-field span { font-size: 12px; color: var(--mcode-text-muted); }
+.win-arrow { font-size: 12px; color: var(--mcode-text-subtle); }
+.win-bar input[type='datetime-local'] {
+  font: inherit; font-size: 13px; color: var(--mcode-text);
+  background: var(--mcode-surface-muted); border: 1px solid var(--mcode-border); border-radius: 8px;
+  padding: 5px 8px; font-variant-numeric: tabular-nums;
+}
+.win-bar input[type='datetime-local']:disabled { opacity: .45; cursor: not-allowed; }
+.seg { display: inline-flex; border: 1px solid var(--mcode-border); border-radius: 8px; overflow: hidden; }
+.seg button { font-size: 12px; padding: 6px 12px; border: none; background: var(--mcode-surface); color: var(--mcode-text-muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--mcode-border); }
+.seg button:hover { background: var(--mcode-surface-muted); color: var(--mcode-text); }
+.seg button.on { background: var(--mcode-surface-muted); color: var(--mcode-text); font-weight: 500; }
+.autor { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--mcode-text-muted); cursor: pointer; user-select: none; }
+.autor input { accent-color: var(--mcode-accent); }
+.err-line { width: 100%; font-size: 12px; color: var(--mcode-danger); display: none; margin-top: 8px; }
+
+/* KPI strip */
+.kpi-strip {
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  background: var(--mcode-surface); border: 1px solid var(--mcode-border); border-radius: 12px;
+  margin-bottom: 16px; overflow: hidden;
+}
+.cell { padding: 14px 16px; min-width: 0; }
+.cell + .cell { border-left: 1px solid var(--mcode-border); }
+.cell .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.cell .v .unit { font-size: 12px; font-weight: 400; color: var(--mcode-text-subtle); margin-left: 3px; }
+.cell .l { font-size: 12px; color: var(--mcode-text-muted); margin-top: 2px; }
+.cell .s { font-size: 12px; color: var(--mcode-text-subtle); margin-top: 1px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* composition + share bars */
+.bar-block { margin-bottom: 16px; }
+.bar-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--mcode-text-muted); margin-bottom: 6px; }
+.bar-track { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--mcode-surface-muted); }
+.bar-track div { height: 100%; }
+.bar-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--mcode-text-muted); font-variant-numeric: tabular-nums; }
+.bar-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+/* cards */
+.card {
+  background: var(--mcode-surface); border: 1px solid var(--mcode-border); border-radius: 12px;
+  padding: 16px; margin-bottom: 16px;
+}
+.card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.card-title { font-size: 14px; font-weight: 500; }
+.card-tools { display: flex; gap: 8px; align-items: center; }
+.card-tools select {
+  font: inherit; font-size: 12px; color: var(--mcode-text);
+  background: var(--mcode-surface-muted); border: 1px solid var(--mcode-border); border-radius: 8px; padding: 5px 8px;
+}
+
+/* filter chips */
+.chip-group { display: flex; gap: 6px; align-items: center; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 4px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--mcode-border); background: var(--mcode-surface-muted); color: var(--mcode-text);
+  font-variant-numeric: tabular-nums;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 2px; }
+.chip.off { opacity: .4; }
+.chip:hover { border-color: var(--mcode-border-strong); }
+.filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+
+.tag { font-size: 10px; border: 1px solid var(--mcode-accent); color: var(--mcode-accent); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+td.name .tag { display: inline-block; margin-left: 0; margin-top: 2px; }
+/* conversation status pills */
+.tag.ok { color: var(--mcode-success); border-color: var(--mcode-success); }
+.tag.warn { color: var(--mcode-warning); border-color: var(--mcode-warning); }
+.tag.live { color: var(--mcode-accent); border-color: var(--mcode-accent); }
+.turn-summary { margin-left: auto; padding-left: 14px; font-size: 12px; color: var(--mcode-text-subtle); white-space: nowrap; }
+.chart-wrap { position: relative; width: 100%; height: 300px; }
+.chart-state {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: var(--mcode-text-subtle); background: var(--mcode-surface);
+}
+.foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--mcode-border); }
+.foot .src { font-size: 12px; color: var(--mcode-text-subtle); line-height: 1.6; }
+
+/* tables */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--mcode-border); white-space: nowrap; }
+th { font-weight: 500; color: var(--mcode-text-muted); font-size: 12px; background: var(--mcode-surface-muted); position: sticky; top: 0; }
+td { font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--mcode-surface-muted); }
+td.name, th.name { white-space: normal; min-width: 140px; max-width: 260px; }
+td.name span { display: block; overflow: hidden; text-overflow: ellipsis; }
+td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
+.empty-row td { text-align: center; color: var(--mcode-text-subtle); padding: 20px 10px; }
+.sec-err { font-size: 12px; color: var(--mcode-danger); display: none; margin-top: 8px; }
+.hit { color: var(--mcode-success); }
+.hit.mid { color: var(--mcode-warning); }
+.hit.low { color: var(--mcode-danger); }
+.rate-warn { color: var(--mcode-warning); }
+
+/* footer + toast */
+.page-foot { font-size: 12px; color: var(--mcode-text-subtle); line-height: 1.7; margin-top: 4px; }
+.toast {
+  position: fixed; right: 20px; bottom: 20px; max-width: 340px;
+  background: var(--mcode-surface); border: 1px solid var(--mcode-border); border-radius: 12px;
+  box-shadow: 0 0 20px rgb(10 10 10 / 8%); padding: 10px 14px; font-size: 12.5px;
+  display: none; z-index: 30;
+}
+
+@media (max-width: 860px) {
+  .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+  .cell + .cell { border-left: none; }
+  .cell:nth-child(n+3) { border-top: 1px solid var(--mcode-border); }
+  .cell:nth-child(even) { border-left: 1px solid var(--mcode-border); }
+  .seg { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="stage">
+  <header class="top">
+    <div>
+      <h1>Token 仪表盘</h1>
+      <div class="meta" id="top-meta">连接中…</div>
+    </div>
+    <div class="actions">
+      <button class="btn-ghost" id="ask-agent" hidden>让 Agent 分析此窗口</button>
+      <label class="autor" title="所有数据每 5 秒自动刷新，也可手动刷新"><input type="checkbox" id="autor" checked>5s 自动刷新</label>
+      <button class="btn-ghost" id="theme-toggle">深色</button>
+      <button class="btn-primary" id="refresh-all">刷新</button>
+    </div>
+  </header>
+
+  <section class="win-bar" aria-label="趋势时间窗口">
+    <div class="win-row win-row-presets">
+      <div class="seg" role="group" aria-label="预设窗口">
+        <button data-preset="1h">近 1 小时</button><button data-preset="today">今天</button><button data-preset="7d">近 7 天</button><button data-preset="30d">近 30 天</button>
+      </div>
+      <button class="btn-primary" id="win-apply">应用</button>
+    </div>
+    <div class="win-row win-row-time">
+      <div class="win-field"><span>开始</span><input type="datetime-local" id="win-start" step="60"></div>
+      <div class="win-arrow">→</div>
+      <div class="win-field"><span>结束</span><input type="datetime-local" id="win-end" step="60"></div>
+      <label class="autor" title="选中后结束时间始终跟随当前时刻，选择器不可编辑"><input type="checkbox" id="win-follow" checked>跟随现在</label>
+    </div>
+    <div class="err-line" id="win-err" role="alert"></div>
+  </section>
+
+  <section class="kpi-strip" aria-label="关键指标">
+    <div class="cell"><div class="v" id="kpi-total">--</div><div class="l">总 tokens</div><div class="s" id="kpi-total-sub"></div></div>
+    <div class="cell"><div class="v" id="kpi-calls">--</div><div class="l">调用次数</div><div class="s" id="kpi-calls-sub"></div></div>
+    <div class="cell"><div class="v" id="kpi-hit">--</div><div class="l">缓存命中率</div><div class="s">cacheRead / (cacheRead + input)</div></div>
+    <div class="cell"><div class="v"><span id="kpi-rate">--</span><span class="unit">tok/s</span></div><div class="l">token 输出速率</div><div class="s" id="kpi-rate-sub">中位数</div></div>
+    <div class="cell"><div class="v" id="kpi-models">--</div><div class="l">活跃模型</div><div class="s" id="kpi-models-sub"></div></div>
+  </section>
+
+  <div class="bar-block" id="compose" aria-label="token 构成"></div>
+  <div class="bar-block" id="share" aria-label="模型占比"></div>
+
+  <section class="card" aria-label="用量趋势">
+    <div class="card-head">
+      <div class="card-title">用量构成</div>
+      <div class="chip-group" role="group" aria-label="折线开关">
+        <button class="chip" id="flt-hit" aria-pressed="true">缓存命中率</button>
+        <button class="chip" id="flt-rate" aria-pressed="true">输出速率</button>
+      </div>
+    </div>
+    <div class="filter-bar" id="model-chips" aria-label="模型筛选"></div>
+    <div class="chart-wrap">
+      <canvas id="trend-chart"></canvas>
+      <div class="chart-state" id="chart-state">加载中…</div>
+    </div>
+    <div class="foot">
+      <div class="src" id="trend-foot"></div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="模型明细">
+    <div class="card-head">
+      <div class="card-title">模型明细（当前窗口）</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="name">提供商 / 模型</th><th>调用</th><th>输入</th><th>输出</th>
+          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th>
+        </tr></thead>
+        <tbody id="models-body"><tr class="empty-row"><td colspan="9">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sec-err" id="models-err" role="alert"></div>
+  </section>
+
+  <section class="card" aria-label="每日统计">
+    <div class="card-head">
+      <div class="card-title">每日统计</div>
+      <div class="card-tools">
+        <select id="daily-days" aria-label="每日统计范围">
+          <option value="7">近 7 天</option><option value="14" selected>近 14 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>日期</th><th>调用</th><th>输入</th><th>输出</th><th>推理</th>
+          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th><th class="name">主要模型</th>
+        </tr></thead>
+        <tbody id="daily-body"><tr class="empty-row"><td colspan="11">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sec-err" id="daily-err" role="alert"></div>
+  </section>
+
+  <section class="card" aria-label="调用日志">
+    <div class="card-head">
+      <div class="card-title">调用日志（当前窗口）</div>
+      <div class="card-tools">
+        <select id="calls-limit" aria-label="调用日志条数上限">
+          <option value="100" selected>最近 100 条</option><option value="300">最近 300 条</option><option value="500">最近 500 条</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>时间</th><th class="name">模型</th><th>输入</th><th>输出</th><th>推理</th>
+          <th>缓存读</th><th>缓存写</th><th>速率 (tok/s)</th><th>全程速率</th><th>decode</th><th>请求全程</th><th>状态码</th>
+        </tr></thead>
+        <tbody id="calls-body"><tr class="empty-row"><td colspan="12">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sec-err" id="calls-err" role="alert"></div>
+  </section>
+
+  <section class="card" aria-label="对话明细">
+    <div class="card-head">
+      <div class="card-title">对话明细（每次提问）</div>
+      <div class="card-tools">
+        <select id="turn-limit" aria-label="对话数量上限">
+          <option value="50" selected>最近 50 次</option><option value="100">最近 100 次</option><option value="200">最近 200 次</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>开始时间</th><th class="name">用户消息</th><th>状态</th><th>时长</th><th>调用</th><th>输出</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th><th class="name">会话</th><th class="name">主要模型</th>
+        </tr></thead>
+        <tbody id="turn-body"><tr class="empty-row"><td colspan="11">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sec-err" id="turn-err" role="alert"></div>
+  </section>
+
+  <section class="card" aria-label="会话用量排行">
+    <div class="card-head">
+      <div class="card-title">会话用量排行</div>
+      <div class="card-tools">
+        <select id="sess-days" aria-label="会话统计范围">
+          <option value="7">近 7 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option>
+        </select>
+        <select id="sess-limit" aria-label="会话数量上限">
+          <option value="10" selected>前 10</option><option value="20">前 20</option><option value="50">前 50</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="name">会话</th><th>Agent</th><th>调用</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th><th class="name">主要模型</th><th>最后活动</th>
+        </tr></thead>
+        <tbody id="sess-body"><tr class="empty-row"><td colspan="8">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sec-err" id="sess-err" role="alert"></div>
+  </section>
+
+  <footer class="page-foot" id="page-foot">
+    口径：总 tokens = 输入 + 输出 + 推理 + 缓存读 + 缓存写；命中率 = 缓存读 / (缓存读 + 输入)；输出速率 = 输出 tokens ÷ decode 时长（首 token 到流结束），与 MiniMax Code 界面显示完全一致，窗口内按耗时加权；调用日志另列请求全程速率（发起请求→流结束，含首字等待）；对话明细以一次提问（turn）为单位，用户发出消息后模型经若干次调用直至给出最终回答即为一次，实时读取、无需关闭会话，其时长为挂钟跨度、不参与速率计算。数据来自本机 runtime 用量记录（sqlite + 日志按 turn 补全 + config.yaml 显示名），只读。
+  </footer>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+'use strict';
+/* ---------- helpers ---------- */
+var $ = function (id) { return document.getElementById(id); };
+var fmt = new Intl.NumberFormat('zh-CN');
+function compact(v) { return v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : String(v); }
+function pad(n) { return String(n).padStart(2, '0'); }
+function toInput(ms) { var x = new Date(ms); return x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()) + 'T' + pad(x.getHours()) + ':' + pad(x.getMinutes()); }
+function fmtLocal(iso) { var x = new Date(iso); return x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()) + ' ' + pad(x.getHours()) + ':' + pad(x.getMinutes()); }
+function fmtTime(iso) { var x = new Date(iso); return pad(x.getMonth() + 1) + '-' + pad(x.getDate()) + ' ' + pad(x.getHours()) + ':' + pad(x.getMinutes()); }
+function fmtTimeSec(ms) { var x = new Date(ms); return pad(x.getHours()) + ':' + pad(x.getMinutes()) + ':' + pad(x.getSeconds()); }
+function fmtDur(ms) {
+  if (ms < 0) ms = 0;
+  var m = Math.round(ms / 60000);
+  if (m < 60) return m + 'm';
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + 'h' + pad(m % 60) + 'm';
+  return Math.floor(h / 24) + 'd' + (h % 24) + 'h';
+}
+function pct(v) { return v == null ? '--' : (v * 100).toFixed(1) + '%'; }
+function rateFmt(v) {
+  if (v == null) return '--';
+  if (v >= 100) return String(Math.round(v));
+  return (Math.round(v * 10) / 10).toFixed(1);
+}
+function hitClass(v) { return v == null ? '' : v >= 0.8 ? 'hit' : v >= 0.5 ? 'hit mid' : 'hit low'; }
+function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function palette() {
+  return [cssVar('--mcode-chart-1'), cssVar('--mcode-chart-2'), cssVar('--mcode-chart-3'), cssVar('--mcode-chart-4'), cssVar('--mcode-chart-5'), cssVar('--mcode-chart-6')];
+}
+async function api(path) {
+  var resp = await fetch(path);
+  var body = await resp.json();
+  if (!resp.ok) throw new Error(body.error || ('HTTP ' + resp.status));
+  return body;
+}
+function toast(text) {
+  var t = $('toast');
+  t.textContent = text;
+  t.style.display = 'block';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function () { t.style.display = 'none'; }, 4500);
+}
+
+/* ---------- theme ---------- */
+var mediaDark = window.matchMedia('(prefers-color-scheme: dark)');
+function storedTheme() { try { return localStorage.getItem('tmb-theme'); } catch (e) { return null; } }
+function effectiveDark() {
+  var s = storedTheme();
+  if (s === 'dark') return true;
+  if (s === 'light') return false;
+  return mediaDark.matches;
+}
+function applyTheme() {
+  var s = storedTheme();
+  if (s === 'dark' || s === 'light') document.documentElement.dataset.theme = s;
+  else delete document.documentElement.dataset.theme;
+  $('theme-toggle').textContent = effectiveDark() ? '浅色' : '深色';
+  if (trendData) { renderModelChips(trendData); rebuildChart(trendData); }
+}
+$('theme-toggle').addEventListener('click', function () {
+  var next = effectiveDark() ? 'light' : 'dark';
+  try { localStorage.setItem('tmb-theme', next); } catch (e) { /* ignore */ }
+  applyTheme();
+});
+mediaDark.addEventListener('change', function () { if (!storedTheme()) applyTheme(); });
+
+/* ---------- window state ---------- */
+var trendData = null;
+var chart = null;
+var activePreset = 'today';
+var followNow = true;
+var hiddenModels = new Set();
+var showHit = true;
+var showRate = true;
+
+function windowMs() {
+  var start = new Date($('win-start').value).getTime();
+  var end = followNow ? Date.now() : new Date($('win-end').value).getTime();
+  return { start: start, end: end };
+}
+function showWinError(text) {
+  var err = $('win-err');
+  if (!text) { err.style.display = 'none'; return; }
+  err.textContent = text;
+  err.style.display = 'block';
+}
+function sectionError(id, text) {
+  var e = $(id);
+  if (!text) { e.style.display = 'none'; return; }
+  e.textContent = text;
+  e.style.display = 'block';
+}
+function syncFollowUI() {
+  $('win-follow').checked = followNow;
+  $('win-end').disabled = followNow;
+  if (followNow) $('win-end').value = toInput(Date.now());
+}
+
+/* ---------- trend + KPI + compose + share + chart ---------- */
+function setChartState(text) {
+  var elm = $('chart-state');
+  if (text == null) { elm.style.display = 'none'; return; }
+  elm.textContent = text;
+  elm.style.display = 'flex';
+}
+
+function renderCompose(kpis) {
+  var box = $('compose');
+  box.innerHTML = '';
+  var parts = [
+    { label: '输入', value: kpis.inputTokens, color: cssVar('--mcode-chart-1') },
+    { label: '输出', value: kpis.outputTokens, color: cssVar('--mcode-chart-2') },
+    { label: '推理', value: kpis.reasoningTokens, color: cssVar('--mcode-chart-5') },
+    { label: '缓存读', value: kpis.cacheReadTokens, color: cssVar('--mcode-chart-3') },
+    { label: '缓存写', value: kpis.cacheWriteTokens, color: cssVar('--mcode-chart-6') }
+  ];
+  var grand = parts.reduce(function (s, p) { return s + p.value; }, 0);
+  if (grand <= 0) return;
+  var label = el('div', 'bar-label');
+  label.appendChild(el('span', null, 'token 构成'));
+  label.appendChild(el('span', 'num', fmt.format(grand) + ' total'));
+  var track = el('div', 'bar-track');
+  var legend = el('div', 'bar-legend');
+  parts.forEach(function (p) {
+    if (p.value <= 0) return;
+    var seg = el('div');
+    seg.style.width = (p.value / grand * 100).toFixed(2) + '%';
+    seg.style.background = p.color;
+    track.appendChild(seg);
+    var item = el('span', 'num');
+    var dot = el('span', 'dot');
+    dot.style.background = p.color;
+    item.appendChild(dot);
+    item.appendChild(document.createTextNode(p.label + ' ' + compact(p.value) + '（' + (p.value / grand * 100).toFixed(1) + '%）'));
+    legend.appendChild(item);
+  });
+  box.appendChild(label);
+  box.appendChild(track);
+  box.appendChild(legend);
+}
+
+function renderShare(models) {
+  var box = $('share');
+  box.innerHTML = '';
+  var pal = palette();
+  var grand = models.reduce(function (s, m) { return s + m.totalTokens; }, 0);
+  if (grand <= 0) return;
+  var label = el('div', 'bar-label');
+  label.appendChild(el('span', null, '模型占比'));
+  var track = el('div', 'bar-track');
+  var legend = el('div', 'bar-legend');
+  models.forEach(function (m, i) {
+    if (m.totalTokens <= 0) return;
+    var color = pal[i % 6];
+    var seg = el('div');
+    seg.style.width = (m.totalTokens / grand * 100).toFixed(2) + '%';
+    seg.style.background = color;
+    track.appendChild(seg);
+    var item = el('span', 'num');
+    var dot = el('span', 'dot');
+    dot.style.background = color;
+    item.appendChild(dot);
+    item.appendChild(document.createTextNode(m.modelName + ' ' + (m.totalTokens / grand * 100).toFixed(1) + '%'));
+    legend.appendChild(item);
+  });
+  box.appendChild(label);
+  box.appendChild(track);
+  box.appendChild(legend);
+}
+
+/* model filter chips (click to show/hide a model series) */
+function renderModelChips(d) {
+  var bar = $('model-chips');
+  bar.innerHTML = '';
+  if (!d || !d.models || !d.models.length) return;
+  var pal = palette();
+  d.models.forEach(function (m, i) {
+    var chip = el('button', 'chip' + (hiddenModels.has(m.key) ? ' off' : ''));
+    chip.type = 'button';
+    chip.setAttribute('aria-pressed', hiddenModels.has(m.key) ? 'false' : 'true');
+    chip.title = '点击 ' + (hiddenModels.has(m.key) ? '显示' : '隐藏') + '该模型';
+    var dot = el('span', 'dot');
+    dot.style.background = pal[i % 6];
+    chip.appendChild(dot);
+    chip.appendChild(document.createTextNode(m.modelName + ' ' + compact(m.totalTokens)));
+    if (m.custom) chip.appendChild(el('span', 'tag', '自定义'));
+    chip.addEventListener('click', function () {
+      if (hiddenModels.has(m.key)) hiddenModels.delete(m.key);
+      else hiddenModels.add(m.key);
+      renderModelChips(trendData);
+      rebuildChart(trendData);
+    });
+    bar.appendChild(chip);
+  });
+}
+
+/* line toggles */
+function bindLineToggle(id, getter, setter) {
+  var chip = $(id);
+  chip.classList.toggle('off', !getter());
+  chip.setAttribute('aria-pressed', getter() ? 'true' : 'false');
+  chip.addEventListener('click', function () {
+    setter(!getter());
+    chip.classList.toggle('off', !getter());
+    chip.setAttribute('aria-pressed', getter() ? 'true' : 'false');
+    rebuildChart(trendData);
+  });
+}
+
+function rebuildChart(d) {
+  if (!d) return;
+  if (d.meta.rows === 0) {
+    if (chart) { chart.destroy(); chart = null; }
+    setChartState('该时间窗口内没有用量记录');
+    return;
+  }
+  var pal = palette();
+  var visible = d.models.filter(function (m) { return !hiddenModels.has(m.key); });
+  var datasets = visible.map(function (m) {
+    var i = d.models.indexOf(m);
+    return {
+      type: 'bar', label: m.modelName, data: d.series.tokensByModel[m.key] || [],
+      backgroundColor: pal[i % 6] + 'b3', borderColor: pal[i % 6], borderWidth: 1,
+      borderSkipped: false, borderRadius: 5, stack: 'tokens', yAxisID: 'y', order: 2
+    };
+  });
+  // 曲线专用配色：与模型柱色系（chart-1..6）完全错开
+  var hitColor = cssVar('--tmb-line-hit');
+  var rateColor = cssVar('--tmb-line-rate');
+  if (showHit) {
+    datasets.push({
+      type: 'line', label: '缓存命中率', data: d.series.cacheHitRate,
+      borderColor: hitColor, backgroundColor: hitColor, borderWidth: 2,
+      pointRadius: 2.5, spanGaps: false, tension: 0.35, yAxisID: 'y1', order: 1
+    });
+  }
+  if (showRate) {
+    datasets.push({
+      type: 'line', label: '输出速率', data: d.series.outputRate,
+      borderColor: rateColor, backgroundColor: rateColor, borderWidth: 2,
+      borderDash: [5, 3], pointRadius: 2, spanGaps: false, tension: 0.35, yAxisID: 'y2', order: 1
+    });
+  }
+  if (!datasets.length) {
+    if (chart) { chart.destroy(); chart = null; }
+    setChartState('已隐藏所有展示元素，点击上方筛选恢复');
+    return;
+  }
+  setChartState(null);
+  var axisColor = cssVar('--mcode-chart-axis');
+  var gridColor = cssVar('--mcode-chart-grid');
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (chart) chart.destroy();
+  chart = new Chart($('trend-chart'), {
+    data: { labels: d.series.labels, datasets: datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: reduced ? 0 : 400, easing: 'easeOutQuart' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cssVar('--mcode-surface'), titleColor: cssVar('--mcode-text'),
+          bodyColor: cssVar('--mcode-text-muted'), borderColor: cssVar('--mcode-border'), borderWidth: 1, padding: 10,
+          callbacks: {
+            label: function (ctx) {
+              if (ctx.dataset.yAxisID === 'y1') {
+                return ' 缓存命中率: ' + (ctx.parsed.y == null ? '--' : (ctx.parsed.y * 100).toFixed(1) + '%');
+              }
+              if (ctx.dataset.yAxisID === 'y2') {
+                return ' 输出速率: ' + rateFmt(ctx.parsed.y) + ' tok/s';
+              }
+              return ' ' + ctx.dataset.label + ': ' + fmt.format(ctx.parsed.y) + ' tokens';
+            },
+            footer: function (items) { var i = items[0].dataIndex; return '调用 ' + d.series.calls[i] + ' 次 · 合计 ' + fmt.format(d.series.totalTokens[i]); }
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: axisColor, maxTicksLimit: 20 } },
+        y: { stacked: true, grid: { color: gridColor }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return compact(v); } } },
+        // grace 给命中率轴顶部留出余量，避免接近 100% 的曲线贴到绘图区顶边；
+        // 超出 100% 的刻度不标注文字
+        y1: { display: showHit, position: 'right', min: 0, grace: '8%', grid: { display: false }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return v <= 1.0001 ? (v * 100).toFixed(0) + '%' : ''; } } },
+        y2: { display: showRate, position: 'right', min: 0, offset: true, grid: { display: false }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return compact(v) + '/s'; } } }
+      }
+    }
+  });
+}
+
+function renderTrend(d) {
+  trendData = d;
+  var bucketName = { minute: '分钟', hour: '小时', day: '天' }[d.window.bucket] || d.window.bucket;
+  $('top-meta').textContent =
+    fmtLocal(d.window.start) + ' → ' + fmtLocal(d.window.end) +
+    ' · ' + bucketName + '桶 · ' + fmt.format(d.meta.rows) + ' 条记录 · 更新于 ' +
+    new Date(d.meta.generatedAt).toLocaleTimeString('zh-CN', { hour12: false });
+  $('kpi-total').textContent = compact(d.kpis.totalTokens);
+  $('kpi-total-sub').textContent = fmt.format(d.kpis.totalTokens) + ' tokens';
+  $('kpi-calls').textContent = fmt.format(d.kpis.calls);
+  $('kpi-calls-sub').textContent = d.series.totalTokens.length ? '峰值 ' + compact(Math.max.apply(null, d.series.totalTokens.concat([0]))) + ' / 桶' : '';
+  $('kpi-hit').textContent = pct(d.kpis.cacheHitRate);
+  var rs = d.kpis.rate || {};
+  var qs = d.kpis.requestRate || {};
+  $('kpi-rate').textContent = rateFmt(rs.weighted != null ? rs.weighted : d.kpis.outputRate);
+  $('kpi-rate-sub').textContent = 'Σ输出÷Σdecode · P50 ' + rateFmt(rs.p50) + ' · N=' + fmt.format(rs.n || 0);
+  $('kpi-rate-sub').title = '口径与 MiniMax Code 界面一致：输出 tokens ÷ decode 时长（首 token 到流结束），窗口内按耗时加权（Σ输出 ÷ Σ耗时）。\n' +
+    (rs.n || 0) + '/' + fmt.format(d.kpis.calls) + ' 次可测，加权 ' + rateFmt(rs.weighted) +
+    '、P50 ' + rateFmt(rs.p50) + '、P90 ' + rateFmt(rs.p90) + '、峰值 ' + rateFmt(rs.max) + ' tok/s。\n' +
+    '对照：请求全程速率（发起请求→流结束，含首字等待）加权 ' + rateFmt(qs.weighted) + ' tok/s。';
+  $('kpi-models').textContent = d.kpis.activeModels;
+  $('kpi-models-sub').textContent = d.models.map(function (m) { return m.modelName; }).join(' · ');
+
+  renderCompose(d.kpis);
+  renderShare(d.models);
+  renderModelChips(d);
+
+  $('trend-foot').textContent =
+    '来源：本机 runtime 用量记录（sqlite + 日志补全）' +
+    (d.unknownRows > 0 ? ' · ' + d.unknownRows + ' 条未识别模型（早于日志保留期）' : '') +
+    ' · 命中率 = cacheRead / (cacheRead + input) · 速率 = 桶内成功调用的加权速率（Σ输出 ÷ Σdecode），无调用的桶不绘制';
+
+  rebuildChart(d);
+}
+
+/* ---------- tables ---------- */
+function fillTable(tbodyId, colCount, rows, rowBuilder, emptyText) {
+  var body = $(tbodyId);
+  body.innerHTML = '';
+  if (!rows.length) {
+    var tr = el('tr', 'empty-row');
+    var td = el('td', null, emptyText);
+    td.colSpan = colCount;
+    tr.appendChild(td);
+    body.appendChild(tr);
+    return;
+  }
+  rows.forEach(function (r) { body.appendChild(rowBuilder(r)); });
+}
+
+function tdNum(v) { return el('td', null, fmt.format(v)); }
+function tdRate(v) { return el('td', null, rateFmt(v)); }
+function tdHit(v) { return el('td', hitClass(v), pct(v)); }
+
+function renderModels(d) {
+  sectionError('models-err', null);
+  fillTable('models-body', 9, d.byModel, function (g) {
+    var tr = el('tr');
+    var name = el('td', 'name');
+    var title = el('span', null, g.modelName);
+    title.title = g.provider + ' / ' + g.model;
+    name.appendChild(title);
+    name.appendChild(el('span', 'sub', g.providerName + (g.custom ? ' · 自定义接入' : '')));
+    tr.appendChild(name);
+    tr.appendChild(tdNum(g.calls));
+    tr.appendChild(tdNum(g.inputTokens));
+    tr.appendChild(tdNum(g.outputTokens));
+    tr.appendChild(tdNum(g.cacheReadTokens));
+    tr.appendChild(tdNum(g.cacheWriteTokens));
+    tr.appendChild(tdNum(g.totalTokens));
+    tr.appendChild(tdRate(g.outputRate));
+    tr.appendChild(tdHit(g.cacheHitRate));
+    return tr;
+  }, '该窗口内没有用量记录');
+}
+
+function topModelNames(byModel, n) {
+  return byModel.slice(0, n).map(function (m) { return m.modelName; }).join('、');
+}
+
+/* 调用日志：逐次调用明细（当前窗口，新的在前） */
+function renderCalls(d) {
+  sectionError('calls-err', null);
+  fillTable('calls-body', 12, d.calls, function (c) {
+    var tr = el('tr');
+    var time = el('td', null, fmtTimeSec(c.ts));
+    time.title = c.time + ' · turn ' + (c.turnId || '--');
+    tr.appendChild(time);
+    var name = el('td', 'name');
+    var title = el('span', null, c.modelName);
+    title.title = c.provider + ' / ' + c.model;
+    name.appendChild(title);
+    if (c.custom) name.appendChild(el('span', 'tag', '自定义'));
+    tr.appendChild(name);
+    tr.appendChild(tdNum(c.inputTokens));
+    tr.appendChild(tdNum(c.outputTokens));
+    tr.appendChild(tdNum(c.reasoningTokens));
+    tr.appendChild(tdNum(c.cacheReadTokens));
+    tr.appendChild(tdNum(c.cacheWriteTokens));
+    var rateCell = tdRate(c.outputRate);
+    rateCell.title = c.decodeMs != null
+      ? '输出 ' + fmt.format(c.outputTokens) + ' tokens ÷ decode ' + fmt.format(c.decodeMs) + 'ms（首 token → 流结束）——与 MiniMax Code 界面同口径'
+      : '该调用无 decode 计时（老数据），不参与速率统计';
+    if (c.decodeMs != null && c.requestMs != null && c.decodeMs > c.requestMs) {
+      // decode > request 等价于首 token 早于请求发起：时间戳来自不同尝试，不计入速率聚合
+      rateCell.classList.add('rate-warn');
+      rateCell.title =
+        '该调用的两个时间戳不自洽（decode ' + fmt.format(c.decodeMs) + 'ms > request ' + fmt.format(c.requestMs) +
+        'ms，等价于首 token 早于请求发起），通常出现在工具调用续传；不计入速率聚合，逐次值仅供核查。';
+    }
+    tr.appendChild(rateCell);
+    var reqCell = tdRate(c.requestRate);
+    reqCell.title = c.requestMs != null
+      ? '输出 tokens ÷ 请求全程 ' + fmt.format(c.requestMs) + 'ms（含首字等待与排队）'
+      : '';
+    tr.appendChild(reqCell);
+    var decCell = el('td', null, c.decodeMs != null ? (c.decodeMs / 1000).toFixed(1) + 's' : '--');
+    decCell.title = c.decodeMs != null ? '模型实际输出耗时 ' + fmt.format(c.decodeMs) + 'ms' : '';
+    tr.appendChild(decCell);
+    var durCell = el('td', null, c.requestMs != null ? (c.requestMs / 1000).toFixed(1) + 's' : '--');
+    durCell.title = c.requestMs != null
+      ? '请求全程 ' + fmt.format(c.requestMs) + 'ms' + (c.decodeMs != null ? '，其中 decode ' + fmt.format(c.decodeMs) + 'ms' : '')
+      : '';
+    tr.appendChild(durCell);
+    var st = el('td', c.status == null ? null : c.status === 200 ? 'hit' : 'hit low', c.status == null ? '—' : String(c.status));
+    tr.appendChild(st);
+    return tr;
+  }, '该窗口内没有调用记录');
+}
+
+function renderSessions(d) {
+  sectionError('sess-err', null);
+  fillTable('sess-body', 8, d.sessions, function (s) {
+    var tr = el('tr');
+    var name = el('td', 'name');
+    var title = el('span', null, s.title || s.sessionId);
+    title.title = s.sessionId + (s.workspaceDir ? '\n' + s.workspaceDir : '');
+    name.appendChild(title);
+    if (s.title) name.appendChild(el('span', 'sub', s.sessionId.slice(0, 12) + '…'));
+    tr.appendChild(name);
+    tr.appendChild(el('td', null, s.agentName || '--'));
+    tr.appendChild(tdNum(s.calls));
+    tr.appendChild(tdNum(s.totalTokens));
+    var rateCell = tdRate(s.outputRate);
+    rateCell.title = '该会话成功调用的加权速率（Σ输出 ÷ Σdecode）';
+    if (s.rate && s.rate.n) {
+      rateCell.appendChild(el('span', 'sub', 'Σ ' + rateFmt(s.rate.weighted) + ' · P50 ' + rateFmt(s.rate.p50)));
+    }
+    tr.appendChild(rateCell);
+    tr.appendChild(tdHit(s.cacheHitRate));
+    var models = el('td', 'name');
+    models.appendChild(el('span', null, topModelNames(s.byModel, 2) || '--'));
+    tr.appendChild(models);
+    tr.appendChild(el('td', null, fmtTime(s.lastActivity)));
+    return tr;
+  }, '该范围内没有会话用量');
+}
+
+function renderDaily(d) {
+  sectionError('daily-err', null);
+  var rows = d.days.slice().reverse(); // newest day first
+  fillTable('daily-body', 11, rows, function (day) {
+    var tr = el('tr');
+    tr.appendChild(el('td', null, day.day));
+    tr.appendChild(tdNum(day.total.calls));
+    tr.appendChild(tdNum(day.total.inputTokens));
+    tr.appendChild(tdNum(day.total.outputTokens));
+    tr.appendChild(tdNum(day.total.reasoningTokens));
+    tr.appendChild(tdNum(day.total.cacheReadTokens));
+    tr.appendChild(tdNum(day.total.cacheWriteTokens));
+    tr.appendChild(tdNum(day.total.totalTokens));
+    var rateCell = tdRate(day.total.outputRate);
+    rateCell.title = '当天成功调用的加权速率（Σ输出 ÷ Σdecode）';
+    if (day.total.rate && day.total.rate.n) {
+      rateCell.appendChild(el('span', 'sub', 'Σ ' + rateFmt(day.total.rate.weighted) + ' · P50 ' + rateFmt(day.total.rate.p50)));
+    }
+    tr.appendChild(rateCell);
+    tr.appendChild(tdHit(day.total.cacheHitRate));
+    var models = el('td', 'name');
+    models.appendChild(el('span', null, topModelNames(day.byModel, 2) || '--'));
+    tr.appendChild(models);
+    return tr;
+  }, '该范围内没有用量记录');
+}
+
+var TURN_STATUS = {
+  completed: { text: '已完成', cls: 'ok' },
+  unfinished: { text: '未收尾', cls: 'warn' },
+  pending: { text: '进行中', cls: 'live' },
+};
+
+function renderTurns(d) {
+  sectionError('turn-err', null);
+  var counts = d.counts || {};
+  var summary =
+    '本次窗口共 ' + d.totalTurns + ' 次对话（已完成 ' + (counts.completed || 0) +
+    ' · 未收尾 ' + (counts.unfinished || 0) + ' · 进行中 ' + (counts.pending || 0) + '）';
+  fillTable('turn-body', 11, d.turns, function (t) {
+    var tr = el('tr');
+    tr.appendChild(el('td', null, fmtTime(t.startedAt)));
+
+    // the user's own words — this is the point of the table
+    var msg = el('td', 'name');
+    var text = (t.userPreview || '').replace(/\s+/g, ' ').trim();
+    msg.appendChild(el('span', null, text || '（无用户消息记录）'));
+    if (text.length > 60) msg.firstChild.title = text;
+    tr.appendChild(msg);
+
+    var st = TURN_STATUS[t.status] || { text: t.status, cls: '' };
+    var stCell = el('td');
+    stCell.appendChild(el('span', 'tag ' + st.cls, st.text));
+    if (t.finishReason) stCell.title = '末条 finish_reason = ' + t.finishReason;
+    tr.appendChild(stCell);
+
+    tr.appendChild(el('td', null, t.durationMs == null ? '--' : fmtDur(t.durationMs)));
+    tr.appendChild(tdNum(t.calls));
+    tr.appendChild(tdNum(t.outputTokens));
+    tr.appendChild(tdNum(t.totalTokens));
+
+    var rateCell = tdRate(t.outputRate);
+    rateCell.title = '与界面同口径：该次对话内 Σ输出 tokens ÷ Σdecode 时长（不含等待与工具执行）';
+    tr.appendChild(rateCell);
+    if (t.rate && t.rate.n) {
+      var sub = el('div', 'sub', 'P50 ' + t.rate.p50 + ' · ' + t.rate.n + ' 次');
+      rateCell.appendChild(sub);
+    }
+
+    tr.appendChild(tdHit(t.cacheHitRate));
+
+    var sess = el('td', 'name');
+    sess.appendChild(el('span', null, t.sessionTitle || t.sessionId.slice(0, 12) + '…'));
+    sess.firstChild.title = t.sessionId;
+    tr.appendChild(sess);
+
+    var models = el('td', 'name');
+    models.appendChild(el('span', null, topModelNames(t.byModel || [], 2) || '--'));
+    tr.appendChild(models);
+    return tr;
+  }, '暂无对话记录');
+  sectionError('turn-err', null);
+  var card = $('turn-body') && $('turn-body').closest ? $('turn-body').closest('.card') : null;
+  if (card && !card.querySelector('.turn-summary')) {
+    var note = el('div', 'turn-summary', summary);
+    card.querySelector('.card-head').appendChild(note);
+  } else if (card) {
+    card.querySelector('.turn-summary').textContent = summary;
+  }
+}
+
+/* ---------- data loading ---------- */
+function windowQuery() {
+  var w = windowMs();
+  return '?startAt=' + encodeURIComponent(toInput(w.start)) + '&endAt=' + encodeURIComponent(toInput(w.end));
+}
+
+/* ---------- refresh plumbing ----------
+   A slow answer for an old window must never overwrite a newer one, so every
+   section keeps a ticket number and drops responses that are no longer the
+   latest request. The data already on screen stays visible while the new
+   values are fetched — no spinner, no blanking. */
+var reqTicket = { window: 0, turns: 0, calls: 0, sessions: 0, daily: 0 };
+
+function nextTicket(name) { reqTicket[name] += 1; return reqTicket[name]; }
+function isCurrent(name, ticket) { return reqTicket[name] === ticket; }
+
+async function refreshWindowSections() {
+  if (followNow) $('win-end').value = toInput(Date.now());
+  var w = windowMs();
+  if (!Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end <= w.start) {
+    showWinError('请检查时间：开始与结束都不能为空，且结束必须晚于开始。');
+    return;
+  }
+  showWinError(null);
+  $('win-apply').disabled = true;
+  if (!trendData) setChartState('加载中…');
+  var ticket = nextTicket('window');
+  try {
+    var d = await api('/api/window' + windowQuery() + '&bucket=auto');
+    if (!isCurrent('window', ticket)) return; // a newer window already won
+    renderTrend(d.trend);
+    renderModels(d.summary);
+  } catch (e) {
+    if (!isCurrent('window', ticket)) return;
+    if (!trendData) setChartState('加载失败');
+    showWinError('数据加载失败：' + e.message);
+    sectionError('models-err', '模型明细加载失败：' + e.message);
+  } finally {
+    if (isCurrent('window', ticket)) $('win-apply').disabled = false;
+  }
+}
+
+async function refreshSessions() {
+  var ticket = nextTicket('sessions');
+  try {
+    var d = await api('/api/sessions?days=' + $('sess-days').value + '&limit=' + $('sess-limit').value);
+    if (!isCurrent('sessions', ticket)) return;
+    renderSessions(d);
+  } catch (e) {
+    if (!isCurrent('sessions', ticket)) return;
+    sectionError('sess-err', '会话排行加载失败：' + e.message);
+    fillTable('sess-body', 8, [], null, '加载失败');
+  }
+}
+async function refreshDaily() {
+  var ticket = nextTicket('daily');
+  try {
+    var d = await api('/api/daily?days=' + $('daily-days').value);
+    if (!isCurrent('daily', ticket)) return;
+    renderDaily(d);
+  } catch (e) {
+    if (!isCurrent('daily', ticket)) return;
+    sectionError('daily-err', '每日统计加载失败：' + e.message);
+    fillTable('daily-body', 11, [], null, '加载失败');
+  }
+}
+async function refreshTurns() {
+  var w = windowMs();
+  if (!Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end <= w.start) return; // 窗口非法时由趋势区报错
+  var ticket = nextTicket('turns');
+  try {
+    var d = await api('/api/turns' + windowQuery() + '&limit=' + $('turn-limit').value);
+    if (!isCurrent('turns', ticket)) return;
+    renderTurns(d);
+  } catch (e) {
+    if (!isCurrent('turns', ticket)) return;
+    sectionError('turn-err', '对话明细加载失败：' + e.message);
+    fillTable('turn-body', 11, [], null, '加载失败');
+  }
+}
+async function refreshCalls() {
+  var w = windowMs();
+  if (!Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end <= w.start) return; // 窗口非法时由趋势区报错
+  var ticket = nextTicket('calls');
+  try {
+    var d = await api('/api/calls' + windowQuery() + '&limit=' + $('calls-limit').value);
+    if (!isCurrent('calls', ticket)) return;
+    renderCalls(d);
+  } catch (e) {
+    if (!isCurrent('calls', ticket)) return;
+    sectionError('calls-err', '调用日志加载失败：' + e.message);
+    fillTable('calls-body', 12, [], null, '加载失败');
+  }
+}
+
+// The two tables that follow the main query window. The session ranking and
+// the daily table have their own window pickers, so they are not re-fetched
+// when only the main window changes.
+function refreshWindowTables() {
+  refreshTurns();
+  refreshCalls();
+}
+
+async function refreshHealth() {
+  try {
+    var h = await api('/api/health');
+    if (!h.dbExists) {
+      showWinError('未找到本机 runtime 用量数据库（该 Mini App 需要在记录过用量的 MiniMax Code 数据目录上运行）。');
+      return;
+    }
+    $('page-foot').textContent =
+      '口径：总 tokens = 输入 + 输出 + 推理 + 缓存读 + 缓存写；命中率 = 缓存读 / (缓存读 + 输入)；输出速率 = 输出 tokens ÷ decode 时长（首 token 到流结束，MiniMax Code 同口径）；对话明细以一次提问（turn）为单位，实时读取、无需关闭会话。' +
+      '数据源：runtime sqlite（' + fmt.format(h.usageRows == null ? 0 : h.usageRows) + ' 行，只读）· Node ' + h.runtime.node +
+      (h.runtime.queryMode === 'child' ? ' · 子进程查询' : '') + '。';
+  } catch (e) {
+    // health is advisory only
+  }
+}
+
+function refreshAll() {
+  return Promise.all([
+    refreshWindowSections(),
+    refreshSessions(),
+    refreshDaily(),
+    refreshTurns(),
+    refreshCalls(),
+  ]);
+}
+
+/* ---------- presets + follow-now + 5s auto refresh ---------- */
+var autoTimer = null;
+var autoBusy = false;
+function armAutoRefresh() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null;
+  if ($('autor').checked) {
+    autoTimer = setInterval(function () {
+      // 上一轮还没跑完就跳过这一拍，避免请求叠加
+      if (autoBusy) return;
+      autoBusy = true;
+      if (activePreset) anchorPreset(activePreset); // rolling window re-anchor
+      refreshAll().finally(function () { autoBusy = false; });
+    }, 5000);
+  }
+}
+$('autor').addEventListener('change', armAutoRefresh);
+
+function presetStart(name, now) {
+  if (name === '1h') return now - 3600000;
+  if (name === '7d') return now - 7 * 86400000;
+  if (name === '30d') return now - 30 * 86400000;
+  var x = new Date(now); x.setHours(0, 0, 0, 0); return x.getTime();
+}
+function anchorPreset(name) {
+  var now = Date.now();
+  $('win-start').value = toInput(presetStart(name, now));
+  $('win-end').value = toInput(now);
+}
+function applyPreset(name) {
+  followNow = true;
+  syncFollowUI();
+  anchorPreset(name);
+  refreshWindowSections();
+  refreshWindowTables();
+}
+
+document.querySelectorAll('.seg button').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.seg button').forEach(function (b) { b.classList.remove('on'); });
+    btn.classList.add('on');
+    activePreset = btn.dataset.preset;
+    applyPreset(activePreset);
+  });
+});
+function applyWindow() {
+  activePreset = null;
+  document.querySelectorAll('.seg button').forEach(function (b) { b.classList.remove('on'); });
+  refreshWindowSections();
+  refreshWindowTables();
+}
+$('win-apply').addEventListener('click', applyWindow);
+// Enter in a time field applies the window too — the native picker can cover
+// the 应用 button in edge cases, and this keeps the keyboard path open.
+['win-start', 'win-end'].forEach(function (id) {
+  $(id).addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    applyWindow();
+  });
+});
+$('win-follow').addEventListener('change', function () {
+  followNow = $('win-follow').checked;
+  if (!followNow) {
+    // freezing the end time turns the window into a custom static one
+    activePreset = null;
+    document.querySelectorAll('.seg button').forEach(function (b) { b.classList.remove('on'); });
+  }
+  syncFollowUI();
+  if (followNow) { refreshWindowSections(); refreshWindowTables(); }
+});
+$('refresh-all').addEventListener('click', refreshAll);
+$('sess-days').addEventListener('change', refreshSessions);
+$('sess-limit').addEventListener('change', refreshSessions);
+$('daily-days').addEventListener('change', refreshDaily);
+$('turn-limit').addEventListener('change', refreshTurns);
+$('calls-limit').addEventListener('change', refreshCalls);
+
+/* line toggle chips */
+bindLineToggle('flt-hit', function () { return showHit; }, function (v) { showHit = v; });
+bindLineToggle('flt-rate', function () { return showRate; }, function (v) { showRate = v; });
+
+/* ---------- ask agent ---------- */
+(function setupAskAgent() {
+  var bridge = window.mcode && window.mcode.miniapp && window.mcode.miniapp.message;
+  if (!bridge || typeof bridge.append !== 'function') return;
+  var btn = $('ask-agent');
+  btn.hidden = false;
+  btn.addEventListener('click', async function () {
+    var w = windowMs();
+    var label = Number.isFinite(w.start) && Number.isFinite(w.end)
+      ? fmtLocal(new Date(w.start).toISOString()) + ' 到 ' + fmtLocal(new Date(w.end).toISOString())
+      : '当前时间窗口';
+    var kpis = trendData ? trendData.kpis : null;
+    var text = '请分析我在 ' + label + ' 的 token 用量（token-meter 数据）' +
+      (kpis
+        ? '：总 tokens ' + fmt.format(kpis.totalTokens) + '、调用 ' + fmt.format(kpis.calls) + ' 次、缓存命中率 ' + pct(kpis.cacheHitRate) +
+          '、输出速率 ' + rateFmt(kpis.outputRate) + ' tok/s。重点看看缓存命中率是否还有优化空间，以及哪个模型消耗最多。'
+        : '。');
+    btn.disabled = true;
+    try {
+      await bridge.append(text);
+      toast('已加入聊天输入框，请检查后按发送。');
+    } catch (e) {
+      var code = e && e.message;
+      if (code === 'user_cancelled') toast('已取消，未加入任何内容。');
+      else if (code === 'result_unknown') toast('结果未知：请检查聊天输入框，文本可能已加入。');
+      else toast('无法加入聊天输入框，请检查会话后重试。');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+
+/* ---------- init ---------- */
+applyTheme();
+syncFollowUI();
+document.querySelector('.seg button[data-preset="today"]').classList.add('on');
+refreshHealth();
+applyPreset('today');   // 趋势 + 模型明细 + 对话明细 + 调用日志
+refreshSessions();      // 会话排行与每日统计有各自的窗口选择器
+refreshDaily();
+armAutoRefresh();
+</script>
+</body>
+</html>
