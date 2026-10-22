@@ -49,8 +49,13 @@ import { join } from 'node:path';
  * 4: every line carries the record's version (`v`). A hit is a POSITION, and a position is only the
  * same record in another body if the version says so — so a segment written before this would hand
  * the page hits it cannot check, and the page would have to take them on faith.
+ *
+ * 5: every manifest states how many of the body's records the segments do NOT cover. A record with
+ * no locator names no file, so it belongs to no generation's segment — and a set that covers fewer
+ * records than the body stands for a DIFFERENT set, whose fingerprint the page is not holding. A
+ * manifest written before this does not say, and a set that does not say cannot be used.
  */
-export const SEGMENT_SCHEMA_VERSION = 4;
+export const SEGMENT_SCHEMA_VERSION = 5;
 
 /**
  * The fields a search reads, in the page's order.
@@ -63,7 +68,7 @@ export const SEARCH_FIELDS = ['summary', 'text', 'result', 'thinking', 'toolName
 
 /** @typedef {{ fileName: string, generation: number | null, size: number, mtimeMs?: number | null, revision: string | null, truncated?: boolean }} SegmentSource */
 
-/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, surfaceDigest: string, source: SegmentSource[] }} SegmentManifest */
+/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, surfaceDigest: string, uncovered: number, source: SegmentSource[] }} SegmentManifest */
 
 /**
  * One record's searchable text.
@@ -173,6 +178,37 @@ export function fileIdxRowsFromPayload(payload, raws, files) {
     }
   }
   return out;
+}
+
+/**
+ * How many of the body's records no segment covers.
+ *
+ * A record is filed under the generation its locator names, and a record with no locator names no
+ * file — so it is filed under no generation, and no segment holds it. The segments then cover fewer
+ * records than the body, and a shorter set is a DIFFERENT set: its fingerprint is the fingerprint
+ * of the records it does cover, and the page is holding the ones it does not. So the count is what
+ * the manifest states, and a reader that sees it knows the set cannot answer for the body.
+ *
+ * A row that is not a placement at all counts as uncovered. The count is read as 「how much is
+ * missing」, so the safe direction is the one that says something IS missing.
+ *
+ * @param {Array<{ fileIdx: number }>} rows one entry per record, from
+ *   {@link fileIdxRowsFromPayload}
+ * @returns {number}
+ */
+export function uncoveredRecordCount(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  let uncovered = 0;
+  for (const row of list) {
+    if (!row || typeof row !== 'object') {
+      uncovered += 1;
+      continue;
+    }
+    if (typeof row.fileIdx !== 'number' || !Number.isFinite(row.fileIdx) || row.fileIdx < 0) {
+      uncovered += 1;
+    }
+  }
+  return uncovered;
 }
 
 /**
@@ -387,7 +423,7 @@ export function createSegmentStore(root) {
      * @param {string} view
      * @param {string} generationKey
      * @param {{ surface: string }} segment
-     * @param {{ generation: number | null, source: SegmentManifest['source'] }} meta
+     * @param {{ generation: number | null, source: SegmentManifest['source'], uncovered: number }} meta
      */
     async write(sessionKey, view, generationKey, segment, meta) {
       const dir = dirOf(sessionKey, view, generationKey);
@@ -402,6 +438,11 @@ export function createSegmentStore(root) {
         recordCount: segment.surface === '' ? 0 : segment.surface.split('\n').length,
         surfaceBytes: Buffer.byteLength(segment.surface),
         surfaceDigest: digestOf(segment.surface),
+        // How many of the body's records these segments do NOT cover. Written here so that a reader
+        // can tell a set that stands for the whole body from one that stands for part of it — see
+        // `uncoveredRecordCount` for what the count is, and the schema version above for what
+        // happens to a manifest that does not say.
+        uncovered: meta.uncovered,
         source: meta.source,
       };
       await writeFile(`${join(dir, 'manifest.json')}.tmp`, `${JSON.stringify(manifest)}\n`, 'utf8');
@@ -431,6 +472,11 @@ export function createSegmentStore(root) {
       if (!manifest || typeof manifest !== 'object') return null;
       if (manifest.schemaVersion !== SEGMENT_SCHEMA_VERSION) return null;
       if (manifest.view !== view) return null;
+      // The manifest has to say how many of the body's records these segments do not cover. A
+      // manifest that does not say cannot be told apart from one that says 「none」, and a set that
+      // covers part of the body is not the set the page is holding — so a manifest that does not
+      // say is a manifest this reader cannot use.
+      if (!Number.isInteger(manifest.uncovered) || manifest.uncovered < 0) return null;
       if (!sameSource(manifest.source, source)) return null;
       let surface;
       try {
@@ -460,6 +506,9 @@ export function createSegmentStore(root) {
  * parse every line it does not need; `tests/verify-search-segments.mjs` pins that this and the
  * parsed answer agree.
  *
+ * The route does not read the versions this way: it needs each record's LEDGER position as well,
+ * so it reads the two in one walk — see {@link segmentLedgerPositions}.
+ *
  * @param {string} surface
  * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
  *   negative or fractional limit is every record
@@ -483,6 +532,84 @@ export function segmentVersions(surface, limit) {
     start = nl + 1;
   }
   return out;
+}
+
+/**
+ * The ledger position of every record a segment holds, and the version of each.
+ *
+ * A line carries the record's TURN and the record's own number in the body, and those two are
+ * what the ledger's order is made of: the ledger draws turn by turn, and inside a turn the
+ * records in the order they were emitted. So the two numbers on a line are enough to put that
+ * record back where the body has it.
+ *
+ * Why that matters: the segments are one file per generation and the body is not in file order.
+ * A record that belongs to an EARLIER turn and arrived after that turn was written lives in a
+ * LATER file, so the first N records of the body and the first N records of the files are two
+ * different sets. Reading the versions out of the files alone therefore answers about the wrong
+ * set, and the answer is refused for a body that did not change.
+ *
+ * The version comes along because the same walk has to hand it over: a second walk over the
+ * same surface would cost the same again, and the answer that needs them is the answer about
+ * THIS set of records.
+ *
+ * The numbers are read by hand, like the version: a search over a big segment would then parse
+ * every line it does not need. `index` and `turnIndex` are written before the summary, so the
+ * first one in a line's answer is the field and not something the summary says.
+ *
+ * @param {string} surface
+ * @returns {Array<{ turnIndex: number | null, index: number | null, v: string }>} one entry per
+ *   record, in the order the lines sit in this surface
+ */
+export function segmentLedgerPositions(surface) {
+  /** @type {Array<{ turnIndex: number | null, index: number | null, v: string }>} */
+  const out = [];
+  if (typeof surface !== 'string' || surface === '') return out;
+  let start = 0;
+  while (start <= surface.length) {
+    const nl = surface.indexOf('\n', start);
+    const end = nl === -1 ? surface.length : nl;
+    const tab = surface.indexOf('\t', start);
+    if (tab >= 0 && tab <= end) {
+      const answer = surface.slice(start, tab);
+      out.push({
+        turnIndex: numberInAnswer(answer, '"turnIndex":'),
+        index: numberInAnswer(answer, '"index":'),
+        v: versionInAnswer(answer),
+      });
+    }
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  return out;
+}
+
+/**
+ * One number out of a line's answer.
+ *
+ * Read by hand for the same reason the version is: parsing the whole answer of every line of a
+ * big segment is the cost the hand-reading exists to avoid. The number ends at the first
+ * separator after it, which is where the field ends.
+ *
+ * An empty field is nothing, not a number: `Number('')` is zero, and a record that carries no
+ * number of its own must not come back as the record numbered zero.
+ *
+ * @param {string} answer the JSON prefix of one segment line
+ * @param {string} key the field to read, with its quotes and its colon
+ * @returns {number | null} the number, or nothing when the field is not there
+ */
+function numberInAnswer(answer, key) {
+  const at = answer.indexOf(key);
+  if (at < 0) return null;
+  let end = at + key.length;
+  let value = '';
+  while (end < answer.length) {
+    const ch = answer.charAt(end);
+    if (ch === ',' || ch === '}') break;
+    value += ch;
+    end += 1;
+  }
+  const parsed = value.trim() === '' ? NaN : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**

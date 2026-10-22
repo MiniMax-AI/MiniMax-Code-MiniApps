@@ -18,8 +18,9 @@ import {
   normaliseWhitespace,
   readSegmentHits,
   scanSegment,
-  segmentVersions,
+  segmentLedgerPositions,
   searchSurfaceOf,
+  uncoveredRecordCount,
 } from './search-segments.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
@@ -485,6 +486,92 @@ export function payloadRecordVersions(payload, limit) {
     }
   }
   return out;
+}
+
+/**
+ * The ledger's order: the turns in the order the body numbers them, and inside a turn the
+ * records in the order they were emitted.
+ *
+ * ONE definition, because two answers have to agree on it. The fold over the first N records
+ * says which SET of records an answer is about, and the order the hits are reported in says how
+ * that answer reads. Both are the body's order — the ledger draws turn by turn — so both are
+ * this comparison.
+ *
+ * The record's own number is not the order. It is the order the records were EMITTED in, and a
+ * record that belongs to an earlier turn and arrived after that turn was written is emitted
+ * later than a record of a later turn: its number is larger, and it still comes first. That is
+ * why the turn comes first here, and why sorting by the number alone is the wrong order.
+ *
+ * @param {{ turnIndex?: number | null, index?: number | null }} a
+ * @param {{ turnIndex?: number | null, index?: number | null }} b
+ * @returns {number}
+ */
+export function byLedgerOrder(a, b) {
+  // A record with no turn of its own cannot be placed, and the callers that read these fields
+  // have already refused such a record. The fallback is here so that a comparison can never
+  // read `null` as a number.
+  const turnA = typeof a.turnIndex === 'number' ? a.turnIndex : Number.MAX_SAFE_INTEGER;
+  const turnB = typeof b.turnIndex === 'number' ? b.turnIndex : Number.MAX_SAFE_INTEGER;
+  if (turnA !== turnB) return turnA - turnB;
+  const indexA = typeof a.index === 'number' ? a.index : 0;
+  const indexB = typeof b.index === 'number' ? b.index : 0;
+  return indexA - indexB;
+}
+
+/**
+ * The version tokens of the first N records, in the order the ledger shows them, read from the
+ * stored segments rather than from a rebuilt body.
+ *
+ * THE SAME FACT AS {@link payloadRecordVersions}, read the other way round. The body is in
+ * ledger order — turn by turn, and inside a turn the records in the order they were emitted —
+ * and the segments are not: they are one file per generation, read oldest first. A record that
+ * belongs to an EARLIER turn and arrived after that turn was written lives in a LATER file, so
+ * the first N records of the body and the first N records of the files are two different sets.
+ *
+ * That is not a detail of the fixture: a turn that spans a compaction is written like that, and
+ * a fold over the files answers about a set the page is not holding. The fingerprint then does
+ * not match the one the page asked for, and the service refuses a body that did not change.
+ *
+ * The positions on the lines are what puts the records back: the turn a record is in, and the
+ * record's own number in the body. Both are on the line, so nothing has to be rebuilt to know
+ * them — and the order is the body's, because the body numbers its turns in the order it draws
+ * them and its records in the order it emits them.
+ *
+ * `null` is the answer for a record that cannot be placed: a line that carries no turn or no
+ * record number cannot be put back into the ledger's order, and an answer about a set we cannot
+ * name is not an answer about the set the page holds. The caller falls back to the rebuild,
+ * which is the same answer it would have given before.
+ *
+ * @param {Array<{ turnIndex: number | null, index: number | null, v: string }>} positions the
+ *   ledger position of every record the segments cover
+ * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
+ *   negative or fractional limit is every record
+ * @returns {Array<string> | null}
+ */
+export function segmentRecordVersions(positions, limit) {
+  const list = Array.isArray(positions) ? positions : [];
+  /** @type {Array<{ turnIndex: number, index: number, v: string }>} */
+  const placed = [];
+  for (const one of list) {
+    if (!one || typeof one !== 'object') return null;
+    const turnIndex = one.turnIndex;
+    const index = one.index;
+    if (typeof turnIndex !== 'number' || !Number.isFinite(turnIndex)) return null;
+    // A negative number is how the segment says 「this record has no number of its own」, the
+    // same way it says a record belongs to no file. Such a record cannot be placed inside its
+    // turn, and a fold that put it somewhere would be folding over a set nobody can name.
+    if (typeof index !== 'number' || !Number.isFinite(index) || index < 0) return null;
+    placed.push({ turnIndex, index, v: typeof one.v === 'string' ? one.v : '' });
+  }
+  // The ledger's order: the turns in the order the body numbers them, and inside a turn the
+  // records in the order they were emitted. The record's own number is what says which is
+  // which inside a turn — the segments hold one turn's records in more than one file.
+  placed.sort(byLedgerOrder);
+  // The same rule as the payload's own fold over the first N records: an explicit limit of zero
+  // is zero records, and a missing, negative or fractional limit is every record. The two are two
+  // readings of one fact — the versions of the first N records — so they have to agree.
+  const wanted = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;
+  return placed.slice(0, wanted).map((one) => one.v);
 }
 
 /**
@@ -4801,17 +4888,24 @@ export async function start(context) {
     /** @type {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null }>} */
     const hits = [];
     let total = 0;
-    // The version tokens of the records these segments cover, in the order the ledger shows them.
-    // They are what the fingerprint is folded over, and the fingerprint is what says whether this
-    // answer is about the body the page is showing.
-    /** @type {Array<string>} */
-    const versions = [];
+    // The ledger position of every record these segments cover: the turn it is in and its own
+    // number in the body. They are what the version tokens are folded over IN THE ORDER THE LEDGER
+    // SHOWS THEM — the segments are one file per generation, and the body is not in file order,
+    // so the first N records of the files are not the first N records of the body.
+    /** @type {Array<{ turnIndex: number | null, index: number | null, v: string }>} */
+    const positions = [];
     // `files` is the lineage walk's own output, so a generation that is no longer in the lineage
     // has no entry here and no segment is read — a leftover on disk cannot keep it searchable.
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
       const file = files[fileIdx];
       const segment = await segmentStore.read(sessionKey, viewKey, generationKey(file.generation), [file]);
       if (segment === null) return null;
+      // A set that does not cover the whole body is not the set the page is holding: the records
+      // no segment covers are missing from the fold, so the fingerprint is the fingerprint of a
+      // DIFFERENT set of records, and the answer would be refused for a body that did not change.
+      // The rebuild answers instead — it has the body, and the body is the authority on which
+      // records exist.
+      if (segment.manifest.uncovered > 0) return null;
       const ordinals = scanSegment(segment.surface, needle);
       const answers = readSegmentHits(segment.surface, ordinals);
       for (const hit of answers) {
@@ -4821,19 +4915,27 @@ export async function start(context) {
         total += 1;
         if (hits.length < MAX_SEARCH_HITS) hits.push(hit);
       }
-      // The versions of this generation's records, up to the number the page asked about. Read
-      // from the surface the segment already holds rather than from a second copy of it: the
-      // version is on every line, and a second copy would be a second thing to keep in step.
-      if (versions.length < count) {
-        for (const version of segmentVersions(segment.surface, count - versions.length)) {
-          versions.push(version);
-        }
-      }
+      // The position and the version of every record this generation holds, read from the surface
+      // the segment already holds rather than from a second copy of it: both are on every line,
+      // and a second copy would be a second thing to keep in step.
+      for (const one of segmentLedgerPositions(segment.surface)) positions.push(one);
     }
-    // Ascending ledger order, because the segments were read oldest generation first and a hit's
-    // place in that list is what the page scrolls to. Sorting by the index itself is the order the
-    // rebuild produces, and two answers that differ only in order are two answers.
-    hits.sort((a, b) => a.index - b.index);
+    // The version tokens of the first N records, in the order the ledger shows them. This is the
+    // same fact the rebuild folds over the payload's own records, and the two have to agree: the
+    // fingerprint is what says whether this answer is about the body the page is showing.
+    const versions = segmentRecordVersions(positions, count);
+    // A record that cannot be placed in the ledger's order cannot be counted into a set, so the
+    // answer would be about a set nobody can name. The rebuild answers instead.
+    if (versions === null) return null;
+    // The ledger's order, which is the order the rebuild returns its hits in: the turns in the
+    // order the body numbers them, and inside a turn the records in the order they were
+    // emitted. The segments were read oldest generation first, so that is NOT the order they
+    // arrive in, and the record's own number is not it either — a record that belongs to an
+    // earlier turn and arrived after that turn was written is emitted later than a record of a
+    // later turn, and the ledger still draws it first. Two answers to one question that differ
+    // only in order are two answers, so the cached path reports its hits in the same order the
+    // rebuild does.
+    hits.sort(byLedgerOrder);
     return { hits, total, fingerprint: recordSetFingerprint(versions) };
   };
 
@@ -4855,6 +4957,11 @@ export async function start(context) {
       if (locator !== undefined) locators.set(recordIndex, locator);
     }
     const fileIdxRows = fileIdxRowsFromPayload(payload, locators, files);
+    // How many of the body's records no segment will hold. A record with no locator names no
+    // file, so it belongs to no generation's segment — and the segments then cover fewer records
+    // than the body, which is a different set with a different fingerprint. The count goes into
+    // every manifest, so a reader can SEE that the set is short instead of answering from it.
+    const uncovered = uncoveredRecordCount(fileIdxRows);
 
     // One segment per generation, the active one included. §8.8.1 rule 5 excluded the active
     // generation on the grounds that a segment for it would be stale before it was written — true,
@@ -4899,13 +5006,16 @@ export async function start(context) {
       // rebuild forever, for a generation that could never match anything.
       const generation = files[fileIdx].generation;
       const generationKeyValue = generationKey(generation);
-      // Already there and still matching its source: nothing to do, which is the common case on a
-      // session that is not being compacted right now.
       const existing = await segmentStore.read(sessionKey, viewKey, generationKeyValue, [files[fileIdx]]);
-      if (existing !== null) continue;
+      // Already there and still matching its source: nothing to do, which is the common case on a
+      // session that is not being compacted right now. The count has to agree as well: it is
+      // written into every manifest, and a set whose manifests say different things about what
+      // they cover is not a set a reader can take on faith.
+      if (existing !== null && existing.manifest.uncovered === uncovered) continue;
       const segment = buildSegment({ records });
       await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {
         generation,
+        uncovered,
         source: [files[fileIdx]],
       });
     }
