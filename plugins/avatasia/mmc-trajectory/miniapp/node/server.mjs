@@ -3,7 +3,7 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
@@ -699,6 +699,31 @@ export function activeCatalogGeneration(catalog, generations) {
 }
 
 /**
+ * Whether `candidate` is `root` itself, or something under it.
+ *
+ * One definition, for every place that has to answer "is this path inside that one": the artifact
+ * file a catalog may name, the session directory a relative path may point at, and the data dir a
+ * caller may hand over.
+ *
+ * It compares the two paths rather than testing one string against the other, because a prefix test
+ * on the strings also matches a sibling whose name merely starts with the root's name (`D:\pkg-extra`
+ * against `D:\pkg`), and because it does not depend on the two paths having been spelled with the
+ * same letter case.
+ *
+ * @param {string} root
+ * @param {string} candidate
+ * @returns {boolean}
+ */
+export function isUnderDirectory(root, candidate) {
+  const base = resolve(root);
+  const target = resolve(candidate);
+  if (target === base) return true;
+  const inside = relative(base, target);
+  if (isAbsolute(inside)) return false;
+  return inside !== '..' && !inside.startsWith(`..${sep}`);
+}
+
+/**
  * Resolves a catalog artifact to a readable file inside the session directory.
  *
  * Two independent checks stand between the catalog and `open()`: the name must match the
@@ -715,7 +740,7 @@ export function resolveArtifactPath(dir, artifact) {
   if (!SAFE_ARTIFACT_NAME.test(artifact.fileName) || artifact.fileName.includes('..')) return null;
   const root = resolve(dir);
   const candidate = resolve(root, artifact.active ? artifact.fileName : join('snapshots', artifact.fileName));
-  if (candidate !== root && !candidate.startsWith(root + sep)) return null;
+  if (!isUnderDirectory(root, candidate)) return null;
   return candidate;
 }
 
@@ -1342,7 +1367,7 @@ export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSe
   if (typeof relativeDir !== 'string' || !relativeDir.trim()) return { entry: null, rejected: false };
   const root = resolve(sessionsRoot);
   const dir = resolve(root, relativeDir.trim().replace(/\\/g, '/'));
-  if (dir !== root && !dir.startsWith(root + sep)) return { entry: null, rejected: true };
+  if (!isUnderDirectory(root, dir)) return { entry: null, rejected: true };
   try {
     const fileStat = await stat(join(dir, 'messages.jsonl'));
     // The id of the session this directory holds. It travels with the entry, like it does for
@@ -3576,9 +3601,32 @@ function sendError(response, status, code, message) {
 }
 
 /**
+ * The plugin package installs onto every reader's machine, so nothing derived may be written inside
+ * it. `context.dataDir` is the runtime's own data directory; a caller that points it at the
+ * package, or at anything under it, has the search segments land in a directory that ships to
+ * readers.
+ *
+ * The refusal names the path it refused, because the caller is the one that has to change it, and a
+ * refusal that does not say which path was refused is a refusal nobody can act on.
+ *
+ * @param {MiniAppContext} context
+ */
+function assertDataDirOutsidePlugin(context) {
+  const dataDir = typeof context.dataDir === 'string' ? context.dataDir : '';
+  if (!dataDir) throw new Error('the runtime did not give this plugin a data dir to write into');
+  const pluginRoot = typeof context.pluginRoot === 'string' ? context.pluginRoot : '';
+  if (isUnderDirectory(pluginRoot, dataDir)) {
+    throw new Error(
+      `the data dir must not be inside the plugin package: ${resolve(dataDir)} is under ${resolve(pluginRoot)}`
+    );
+  }
+}
+
+/**
  * @param {MiniAppContext} context
  */
 export async function start(context) {
+  assertDataDirOutsidePlugin(context);
   const location = resolveSessionsRoot();
   const secrets = [location.sessionsRoot, location.root, join(homedir(), '.minimax')];
   const redact = createRedactor(secrets);
@@ -4674,39 +4722,6 @@ export async function start(context) {
   };
 
   /**
-   * One record's untouched message, fetched only when something actually reads it.
-   *
-   * The body no longer has the parsed rows behind it, so the line is read back out of the file it
-   * came from. That is a seek and a digest over one line, against the alternative of holding every
-   * session's object graph in memory for the life of the page — measured at 233 MB of the 378 MB
-   * this process held while one session was open.
-   *
-   * The digest is what makes that safe to do. Between building the body and answering this request
-   * the file can be rewritten; the trajectory entry is keyed on the file's size and mtime, so a
-   * rewrite that preserved both would otherwise be served the wrong message under the right
-   * record's name. Answering `raw_stale` says the session moved instead.
-   *
-   * A missing entry means this process restarted between the two calls; saying so is more honest
-   * than silently showing the normalized record in a panel labelled 原文.
-   */
-  /**
-   * One record's four bulk fields, read on request.
-   *
-   * The page used to receive all four on every row of every poll — measured over this machine's
-   * whole store, 59.1% of the body: `result` 26.6%, `thinking` 13.2%, `arguments` 9.3%, `text`
-   * 8.9% — and used them to draw a ledger row and, when the reader opened one record, four tabs.
-   * It now receives four presence flags and asks for the values when it is going to show them.
-   *
-   * It re-projects the ONE stored line that record came from, rather than rebuilding the session.
-   * A line can expand into several records (its text, each thinking block, each tool call), so the
-   * answer has to name which of them — `rowPos`, stamped at `push()` — and rebuilding the whole
-   * session to return one field would cost exactly what this change exists to stop paying.
-   *
-   * The bytes come through the same locator `/raw` uses and carry the same digest check, so a file
-   * that moved under the cache answers 「该记录所在的文件已变化」 here too, instead of projecting a
-   * line that is no longer the one the page is looking at.
-   */
-  /**
    * The refusal a position read gets when it does not name the record it means.
    *
    * A position read names an INDEX, and an index is a position inside ONE body. The body the page
@@ -4743,6 +4758,23 @@ export async function start(context) {
     return { status: 409, code: 'record_version_mismatch', message: '该记录所在的版本已变化，请重新加载会话' };
   };
 
+  /**
+   * One record's four bulk fields, read on request.
+   *
+   * The page used to receive all four on every row of every poll — measured over this machine's
+   * whole store, 59.1% of the body: `result` 26.6%, `thinking` 13.2%, `arguments` 9.3%, `text`
+   * 8.9% — and used them to draw a ledger row and, when the reader opened one record, four tabs.
+   * It now receives four presence flags and asks for the values when it is going to show them.
+   *
+   * It re-projects the ONE stored line that record came from, rather than rebuilding the session.
+   * A line can expand into several records (its text, each thinking block, each tool call), so the
+   * answer has to name which of them — `rowPos`, stamped at `push()` — and rebuilding the whole
+   * session to return one field would cost exactly what this change exists to stop paying.
+   *
+   * The bytes come through the same locator `/raw` uses and carry the same digest check, so a file
+   * that moved under the cache answers 「该记录所在的文件已变化」 here too, instead of projecting a
+   * line that is no longer the one the page is looking at.
+   */
   const handleRecord = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
     if (!ctx.ok) {
@@ -4862,6 +4894,22 @@ export async function start(context) {
     return { row, sizeBytes: bytes.length };
   };
 
+  /**
+   * One record's untouched message, fetched only when something actually reads it.
+   *
+   * The body no longer has the parsed rows behind it, so the line is read back out of the file it
+   * came from. That is a seek and a digest over one line, against the alternative of holding every
+   * session's object graph in memory for the life of the page — measured at 233 MB of the 378 MB
+   * this process held while one session was open.
+   *
+   * The digest is what makes that safe to do. Between building the body and answering this request
+   * the file can be rewritten; the trajectory entry is keyed on the file's size and mtime, so a
+   * rewrite that preserved both would otherwise be served the wrong message under the right
+   * record's name. Answering `raw_stale` says the session moved instead.
+   *
+   * A missing entry means this process restarted between the two calls; saying so is more honest
+   * than silently showing the normalized record in a panel labelled 原文.
+   */
   const handleRaw = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
     if (!ctx.ok) {

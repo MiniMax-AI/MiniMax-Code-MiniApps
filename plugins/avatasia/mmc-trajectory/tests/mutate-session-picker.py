@@ -164,7 +164,7 @@ MUTATIONS = [
     # chose, so it gets the same check a catalog file name gets -- and a version that skips it
     # builds an entry from a directory outside the session store.
     ("a recorded path that escapes the sessions root is used anyway",
-     [("  if (dir !== root && !dir.startsWith(root + sep)) return { entry: null, rejected: true };",
+     [("  if (!isUnderDirectory(root, dir)) return { entry: null, rejected: true };",
        "  if (false) return { entry: null, rejected: true };")],
      "a recorded path that escapes the sessions root is refused"),
 

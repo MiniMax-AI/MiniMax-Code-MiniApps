@@ -72,6 +72,15 @@ const SERVER = fileURLToPath(new URL('../miniapp/node/server.mjs', import.meta.u
 const CLIENT = fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url));
 /** The package root, so the route serves the same page the reader gets. */
 const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url));
+/**
+ * Where the runtime is allowed to write what it derives.
+ *
+ * Not the package: the runtime refuses a data dir inside the package, and the reason it refuses is
+ * that anything written there ships to every reader. A harness that handed it the package would
+ * write the search segments into the directory that is published, so the data dir here is a
+ * temporary directory outside the package.
+ */
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'mmc-trajectory-datadir-'));
 
 // `node:sqlite` is still flagged experimental, and the flag goes to stderr the moment the module
 // is first loaded. The runner reads `stdout + stderr` and prints the LAST non-empty line, so the
@@ -195,7 +204,7 @@ async function startService(home) {
       instance = await start({
         pluginId: 'mmc-trajectory',
         pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
+        dataDir: DATA_DIR,
         generationId: 'guard',
         listen: { host: '127.0.0.1', port },
         signal: controller.signal,
@@ -454,7 +463,7 @@ try {
       instance = await start({
         pluginId: 'mmc-trajectory',
         pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
+        dataDir: DATA_DIR,
         generationId: 'guard',
         listen: { host: '127.0.0.1', port },
         signal: controller.signal,
@@ -584,7 +593,7 @@ try {
       instance = await start({
         pluginId: 'mmc-trajectory',
         pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
+        dataDir: DATA_DIR,
         generationId: 'guard',
         listen: { host: '127.0.0.1', port },
         signal: controller.signal,
@@ -683,7 +692,7 @@ try {
       instance = await start({
         pluginId: 'mmc-trajectory',
         pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
+        dataDir: DATA_DIR,
         generationId: 'guard',
         listen: { host: '127.0.0.1', port },
         signal: controller.signal,
@@ -833,7 +842,7 @@ try {
       instance = await start({
         pluginId: 'mmc-trajectory',
         pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
+        dataDir: DATA_DIR,
         generationId: 'guard',
         listen: { host: '127.0.0.1', port },
         signal: controller.signal,

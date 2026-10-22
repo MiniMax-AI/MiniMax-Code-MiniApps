@@ -64,6 +64,14 @@ function assert(name, cond, detail) {
 }
 
 const home = mkdtempSync(join(mkdtempSync(join(tmpdir(), 'mmc-trajectory-diag-')), '.minimax'));
+/**
+ * Where the runtime may write what it derives.
+ *
+ * Not the package: the runtime refuses a data dir inside the package, because anything written
+ * there is part of what ships to every reader. A harness that handed it the package would put the
+ * search segments in the published directory, so the data dir here is a temporary one outside it.
+ */
+const dataHome = mkdtempSync(join(tmpdir(), 'mmc-trajectory-datadir-'));
 try {
   const where = resolveSessionsRoot({ MMC_TRAJECTORY_ROOT: home });
   const redact = createRedactor([where.sessionsRoot, where.root, join(homedir(), '.minimax')]);
@@ -223,7 +231,7 @@ try {
       instance = await start({
         pluginId: 'mmc-trajectory',
         pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
+        dataDir: dataHome,
         generationId: 'guard',
         listen: { host: '127.0.0.1', port },
         signal: controller.signal,
@@ -255,6 +263,7 @@ try {
   }
 } finally {
   rmSync(home, { recursive: true, force: true });
+  rmSync(dataHome, { recursive: true, force: true });
 }
 
 console.log('[runtime-diag] ' + pass + ' passed, ' + failures.length + ' failed');
