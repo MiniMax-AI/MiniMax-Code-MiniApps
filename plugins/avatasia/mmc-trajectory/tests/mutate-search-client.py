@@ -96,8 +96,8 @@ MUTATIONS = [
     # it was describing. The page showed the right rows under the wrong sentence.
     (
         "an answer that arrives leaves the failure that preceded it standing",
-        "            state.searchError = null;\n            resetWindowMode();",
-        "            resetWindowMode();",
+        "            state.searchError = null;\n            state.searchRefresh = 0;\n            resetWindowMode();",
+        "            state.searchRefresh = 0;\n            resetWindowMode();",
     ),
     # ---- the search is about the body on screen ---------------------------------------
     #
@@ -166,6 +166,32 @@ MUTATIONS = [
         "the raw cache key names the generation the reader picked, not the slice on screen",
         "        var gen = displayedGeneration() === null ? 'all' : String(displayedGeneration());",
         "        var gen = state.generation === null ? 'all' : String(state.generation);",
+    ),
+    # ---- the version of the record a position names ------------------------------------
+    #
+    # The session and the slice say WHICH BODY an answer is about. They say nothing about
+    # whether the record at a given index is still the same record: a transcript rewritten under
+    # the page leaves the indexes alone and changes the records behind them. So the version is
+    # checked before a hit may filter anything, and it travels with every read that names a
+    # position.
+    (
+        "the search stops checking which version of the record a hit names",
+        "              if (typeof shown.v === 'string' && shown.v !== '' && shown.v !== hit.v) {",
+        "              if (false) {",
+    ),
+    (
+        "the raw read stops naming the version of the record it asks for",
+        "        // apart instead of serving the newer record under the older one's number.\n"
+        "        var version = displayedRecordVersion(index);\n"
+        "        if (version) url += '&v=' + encodeURIComponent(version);",
+        "        // apart instead of serving the newer record under the older one's number.",
+    ),
+    (
+        "the record read stops naming the version of the record it asks for",
+        "        // refuse when the position it would answer is a different record than the one opened.\n"
+        "        var version = displayedRecordVersion(index);\n"
+        "        if (version) url += '&v=' + encodeURIComponent(version);",
+        "        // refuse when the position it would answer is a different record than the one opened.",
     ),
 ]
 

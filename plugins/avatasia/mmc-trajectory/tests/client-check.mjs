@@ -228,6 +228,7 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   vm.createContext(netCtx);
   const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
     'function sessionParam()', 'function displayedSessionParam()', 'function displayedGeneration()',
+    'function displayedRecordsByIndex()', 'function displayedRecordVersion(index)',
     'function searchStatusLabel(searchState)', 'function runSearch(needle)'];
   const sources = needed.map((sig) => fnSource(sig));
   check('the shipped search functions are all still findable by signature',
@@ -238,10 +239,16 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     // page's state is, because nothing else about the page's state is what is under test.
     'var state = { query: "retry me", sessionId: null, hostSessionId: null, followLatest: true,',
     '  generation: null, searchHits: null, searchTotal: 0, searchTruncated: false,',
-    '  searchPending: false, searchError: null,',
+    '  searchPending: false, searchError: null, searchRefresh: 0, searchRefreshFor: "",',
     // The body on screen. `displayedSessionParam()` reads it and the answer is checked against
     // it, so a harness with no body on screen cannot ask either question. Its `generation` is
     // the slice the body IS: null is the whole lineage, a number is that one generation.
+    //
+    // `flat` is the same body's records, which is what a hit is checked against: a hit names a
+    // POSITION, and the position only names a record if the version on both sides agrees.
+    '  flat: [ { turn: {}, record: { index: 1, v: "version-one" } },',
+    '          { turn: {}, record: { index: 5, v: "version-five" } },',
+    '          { turn: {}, record: { index: 7, v: "version-seven" } } ],',
     '  payload: { session: { id: "mvs_displayed", generation: null } } };',
     'var searchSeq = 0;',
     'var searchController = null;',
@@ -254,10 +261,19 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
       + ' is not in index.html any more); }')),
   ].join('\n'), netCtx);
 
-  const settle = async () => {
+  const settle = async (turns = 3) => {
     // fetch -> response.json() -> then -> then -> then is all microtasks plus the json() promise.
     // Three macrotask turns drain all of them, so the count does not have to be right.
-    for (let i = 0; i < 3; i += 1) await new Promise((done) => setImmediate(done));
+    for (let i = 0; i < turns; i += 1) await new Promise((done) => setImmediate(done));
+  };
+
+  // The page re-asks against the body it fetches when an answer turns out to be about another
+  // version of the records. The fetch itself is not what is under test here, so it is a stub that
+  // counts the calls: how many times the page was willing to chase the answer IS the behaviour.
+  netCtx.refreshes = 0;
+  netCtx.fetchTrajectory = function () {
+    netCtx.refreshes += 1;
+    return Promise.resolve();
   };
 
   // Every URL the search asked for, so the question it asked can be read off the requests
@@ -274,7 +290,7 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   netCtx.fetch = (url) => {
     asked.push(String(url));
     return Promise.resolve({ ok: true, status: 200,
-      json: () => Promise.resolve({ hits: [{ index: 7 }], total: 1, truncated: false,
+      json: () => Promise.resolve({ hits: [{ index: 7, v: 'version-seven' }], total: 1, truncated: false,
         // The server names the session it answered for. That name is what the page checks the
         // answer against before it lets the hits filter the body on screen.
         session: { id: 'mvs_displayed', generation: null } }) });
@@ -371,7 +387,7 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   netCtx.fetch = (url) => {
     asked.push(String(url));
     return Promise.resolve({ ok: true, status: 200,
-      json: () => Promise.resolve({ hits: [{ index: 1 }], total: 1, truncated: false,
+      json: () => Promise.resolve({ hits: [{ index: 1, v: 'version-one' }], total: 1, truncated: false,
         session: { id: 'mvs_displayed', generation: 0 } }) });
   };
   netCtx.runSearch('retry me');
@@ -411,7 +427,7 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   netCtx.fetch = (url) => {
     asked.push(String(url));
     return Promise.resolve({ ok: true, status: 200,
-      json: () => Promise.resolve({ hits: [{ index: 5 }], total: 1, truncated: false,
+      json: () => Promise.resolve({ hits: [{ index: 5, v: 'version-five' }], total: 1, truncated: false,
         session: { id: 'mvs_displayed_b', generation: null } }) });
   };
   netCtx.runSearch('retry me');
@@ -422,6 +438,64 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     netCtx.state.searchError, null);
   check('and the request asked about the conversation on screen at that moment',
     /[?&]session=mvs_displayed_b(&|$)/.test(asked[0]), true);
+
+  /* The version. A hit is a POSITION, and the same position in two bodies can be two different
+   * records: a transcript rewritten under the page leaves the indexes alone and changes the
+   * records behind them. The session and the slice say WHICH BODY the answer is about; they say
+   * nothing about whether the record at a given index is still the same record.
+   *
+   * So an answer about the rewritten body would light up a row whose text does not contain the
+   * needle at all — the page would be saying 「命中 1 条」 about a row that does not match. The
+   * version on the hit and the version on the body have to agree before a hit may filter
+   * anything. */
+  const beforeVersion = [...netCtx.state.searchHits];
+  netCtx.state.payload = { session: { id: 'mvs_displayed', generation: null } };
+  netCtx.state.generation = null;
+  netCtx.state.searchRefresh = 0;
+  netCtx.state.searchRefreshFor = '';
+  netCtx.refreshes = 0;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 7, v: 'a-newer-version' }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle(24);
+  check('a search answer for a newer body cannot filter the displayed older body',
+    [...netCtx.state.searchHits], beforeVersion);
+  check('and the page asks again against the body it fetches, a bounded number of times',
+    netCtx.refreshes, 2);
+  check('and then it says the answer does not apply to what is on screen',
+    netCtx.state.searchError, 'search_version_mismatch');
+  check('and the label shows the failure rather than a count it cannot stand behind',
+    netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
+
+  // A hit about a record this body does not have — the session grew after the body was built.
+  // It cannot be shown, so it is not counted either: the number the reader sees has to be the
+  // number of rows that are lit up.
+  netCtx.state.searchRefresh = 0;
+  netCtx.state.searchRefreshFor = '';
+  netCtx.refreshes = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({
+        hits: [{ index: 7, v: 'version-seven' }, { index: 4242, v: 'a-record-not-on-screen' }],
+        total: 2, truncated: false,
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('a hit about a record that is not on screen is not installed',
+    [...netCtx.state.searchHits], [7]);
+  check('and the count is the number of rows that are lit up',
+    netCtx.state.searchTotal, 1);
+  check('and no failure is reported, because that answer did apply',
+    netCtx.state.searchError, null);
+  check('and the page did not go chasing a body it did not need to',
+    netCtx.refreshes, 0);
 }
 
 /* handoff: the session the record came from, across a navigation.
@@ -1954,12 +2028,14 @@ const requestRawSrc = fnSource('function requestRaw(index)');
 const requestDetailSrc = fnSource('function requestDetail(index)');
 const displayedSessionSrc = fnSource('function displayedSessionParam()');
 const displayedGenerationSrc = fnSource('function displayedGeneration()');
+const displayedRecordVersionSrc = fnSource('function displayedRecordVersion(index)');
 const rawCacheKeySrc = fnSource('function rawCacheKey(index)');
 if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGenerationSrc
-  || !rawCacheKeySrc) {
+  || !displayedRecordVersionSrc || !rawCacheKeySrc) {
   failures.push('secondary reads: could not lift requestRaw, requestDetail and the session they ask for');
 } else {
   vm.runInContext(displayedSessionSrc + '\n' + displayedGenerationSrc + '\n'
+    + displayedRecordVersionSrc + '\n'
     + requestRawSrc + '\n' + requestDetailSrc + '\n' + rawCacheKeySrc, sandbox);
 
   const secondary = [];
@@ -1973,8 +2049,13 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
   };
   // The page is following the newest conversation, and it is showing A. The runtime may already
   // have made B current — the page does not know that, and it must not care: A is on screen.
+  //
+  // `flat` is the body on screen's records. A read that names an index has to name the RECORD
+  // behind that index, and the record's version is what says which one it is: the same position
+  // in a newer body can be a different record entirely.
   sandbox.state = {
     payload: { session: { id: 'mvs_displayed', generation: null } },
+    flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
     generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
   };
   await sandbox.requestRaw(1);
@@ -1987,12 +2068,17 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
     /[?&]session=mvs_displayed(&|$)/.test(secondary[1]), true);
   check('and it does not ask for whatever is current now',
     /[?&]session=latest(&|$)/.test(secondary[1]), false);
+  check('a raw read names the version of the record it is asking for',
+    /[?&]v=the-version-of-record-one(&|$)/.test(secondary[0]), true);
+  check('and a detail read names it too',
+    /[?&]v=the-version-of-record-one(&|$)/.test(secondary[1]), true);
 
   // The slice on screen is not the generation the reader picked. A selection whose load failed
   // leaves the previous body up, and a read that asks about the selection asks about a body
   // that is not there — its answer is about records the reader cannot see.
   sandbox.state = {
     payload: { session: { id: 'mvs_displayed', generation: 2 } },
+    flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
     generation: 7, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
   };
   await sandbox.requestRaw(1);

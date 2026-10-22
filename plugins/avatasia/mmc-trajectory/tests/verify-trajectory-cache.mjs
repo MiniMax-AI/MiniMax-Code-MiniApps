@@ -358,6 +358,26 @@ try {
   };
   await writeLegacy(LEGACY_A, 'ALPHA LEGACY', 1791600000000);
 
+  // A conversation whose transcript is rewritten under a page that is still showing the old one.
+  // The session identity does not move: the same directory, the same manifest, the same id — only
+  // the line behind record 1 is a different line. That is what makes this the hard case: the
+  // index still says 1, and the position is still a position, but it names a different record.
+  const VERSIONED = 'mvs_versioned';
+  const versionedDir = join(sessionsRoot, '2026', '10', '22', '00-00-00-session_'
+    + Buffer.from(VERSIONED, 'utf8').toString('base64url'));
+  const writeVersioned = async (body, mtimeMs) => {
+    await mkdir(versionedDir, { recursive: true });
+    await writeFile(join(versionedDir, 'messages.jsonl'), JSON.stringify({
+      message_id: 'm1',
+      turn_id: 't1',
+      message: { role: 'user', content: body, timestamp: 1791600000000 },
+    }) + '\n', 'utf8');
+    await writeFile(join(versionedDir, 'manifest.json'), JSON.stringify({ sessionId: VERSIONED }), 'utf8');
+    const stamp = new Date(mtimeMs);
+    await utimes(join(versionedDir, 'messages.jsonl'), stamp, stamp);
+  };
+  await writeVersioned('ALPHA BODY', 1791600000000);
+
   // The runtime database, which is the only place on this machine that knows which
   // conversation is live. ALPHA is live first; BRAVO becomes live later in this section.
   mkdirSync(join(home, 'v2', 'sqlite'), { recursive: true });
@@ -379,25 +399,40 @@ try {
   const noop = () => {};
   let instance = null;
   let base = null;
-  for (let attempt = 0; attempt < 12 && !base; attempt += 1) {
-    const port = 19900 + Math.floor(Math.random() * 300) + attempt;
-    try {
-      instance = await start({
-        pluginId: 'mmc-trajectory',
-        pluginRoot: PLUGIN_ROOT,
-        dataDir: PLUGIN_ROOT,
-        generationId: 'guard',
-        listen: { host: '127.0.0.1', port },
-        signal: controller.signal,
-        logger: { debug: noop, info: noop, warn: noop, error: noop },
-      });
-      base = 'http://127.0.0.1:' + port;
-    } catch (error) {
-      // The port was taken. Another one is tried; a guard that gave up here would be a
-      // guard that sometimes checks nothing.
+  // Starting the service is one thing that happens twice in this section, so it is one function.
+  // The second start is not a repeat of the first: it is how the service stops believing the walk
+  // it cached (the walk holds the session list for three seconds, so a rewritten transcript is
+  // invisible to it until that expires). Restarting drops that cache in one step instead of
+  // waiting it out.
+  const startService = async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const port = 19900 + Math.floor(Math.random() * 300) + attempt;
+      try {
+        const started = await start({
+          pluginId: 'mmc-trajectory',
+          pluginRoot: PLUGIN_ROOT,
+          // The temporary store, not the plugin directory. A search writes its segment cache
+          // under the data dir, and the plugin directory installs onto every reader's machine —
+          // a guard that leaves a cache in there is a guard that ships a cache.
+          dataDir: home,
+          generationId: 'guard',
+          listen: { host: '127.0.0.1', port },
+          signal: controller.signal,
+          logger: { debug: noop, info: noop, warn: noop, error: noop },
+        });
+        return { instance: started, base: 'http://127.0.0.1:' + port };
+      } catch (error) {
+        // The port was taken. Another one is tried; a guard that gave up here would be a
+        // guard that sometimes checks nothing.
+      }
     }
+    throw new Error('could not bind a port for the reachability route');
+  };
+  {
+    const started = await startService();
+    instance = started.instance;
+    base = started.base;
   }
-  if (!base) throw new Error('could not bind a port for the reachability route');
 
   const get = async (path) => {
     const response = await fetch(base + path);
@@ -407,6 +442,21 @@ try {
   };
   const why = (answer) => 'status ' + answer.status + ' ' + JSON.stringify(answer.body);
 
+  // The version of one record of a body. A position read names an INDEX, and an index is a
+  // position inside ONE body — so a read has to say which record of that body it means, and this
+  // is what it says. The page takes it from the body it is showing, which is the only body it
+  // has.
+  const versionOf = (body, index) => {
+    const turns = body && Array.isArray(body.turns) ? body.turns : [];
+    for (const turn of turns) {
+      const records = Array.isArray(turn && turn.records) ? turn.records : [];
+      for (const record of records) {
+        if (record && record.index === index) return typeof record.v === 'string' ? record.v : '';
+      }
+    }
+    return '';
+  };
+
   try {
     // 1 — the poll the page makes, and the read it makes right after it.
     const poll = await get('/api/trajectory?session=latest');
@@ -414,16 +464,52 @@ try {
       Boolean(poll.body && poll.body.session) && poll.body.session.id === REACH_ALPHA,
       why(poll));
 
-    const rawById = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA);
+    // The slice the body IS. The service publishes it, and the page compares every answer it
+    // gets against it, so it has to be the slice the body was BUILT FOR — the one that was asked
+    // for, and the whole lineage when none was. The old wording answered a different question
+    // (「how many generations does this body happen to show」) and gave a single-generation
+    // session's default view the number 0 — so the same body published two different slices
+    // depending on which of its generations happened to be in it, and an answer about the whole
+    // lineage could not be compared with the body it was supposed to filter.
+    assert('the body names the slice it is for: the whole lineage when no slice was asked for',
+      Boolean(poll.body && poll.body.session) && poll.body.session.generation === null, why(poll));
+
+    // Every record of the body carries its version, and the search answer's hits carry the SAME
+    // one for the same record. Two answers to 「which record is at this index」 that disagree are
+    // what let a newer body's hits filter an older body's rows.
+    const alphaVersion = versionOf(poll.body, 1);
+    assert('every record of the body carries a version',
+      alphaVersion !== '', 'version of record 1: ' + JSON.stringify(alphaVersion));
+    const alphaSearch = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA');
+    assert('the search answers with hits',
+      alphaSearch.status === 200 && Array.isArray(alphaSearch.body && alphaSearch.body.hits)
+      && alphaSearch.body.hits.length > 0, why(alphaSearch));
+    const alphaHit = alphaSearch.body.hits.find((hit) => hit.index === 1);
+    assert('and a hit names the same version of the record it points at',
+      Boolean(alphaHit) && alphaHit.v === alphaVersion,
+      'hit: ' + JSON.stringify(alphaHit) + ' body: ' + alphaVersion);
+    assert('and the search answer names the same slice as the body it is about',
+      Boolean(alphaSearch.body && alphaSearch.body.session)
+      && alphaSearch.body.session.generation === poll.body.session.generation,
+      'search: ' + JSON.stringify(alphaSearch.body && alphaSearch.body.session)
+      + ' body: ' + JSON.stringify(poll.body && poll.body.session));
+
+    const rawById = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('a record of the conversation on screen is readable by that conversation\'s id',
       rawById.status === 200, why(rawById));
     assert('and it is that conversation\'s own message',
       JSON.stringify(rawById.body && rawById.body.raw ? rawById.body.raw : '').includes('ALPHA BODY'),
       why(rawById));
 
-    const detailById = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA);
+    const detailById = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('the four fields of a record are readable by that conversation\'s id',
       detailById.status === 200, why(detailById));
+
+    // A read that does not say which record it means is not answered: the service cannot tell
+    // 「the record you meant」 from 「whatever is at that index now」, and guessing is the defect.
+    // (These two sit after the version scenario on purpose: the two refusals are two rules, and a
+    // control that takes the whole check away breaks both of them — so the one that is about the
+    // VERSION has to be asked first, or the control would be attributed to the wrong rule.)
 
     // 2 — the runtime moves on while the page is still showing the first conversation.
     const moved = new DatabaseSync(dbPath);
@@ -435,14 +521,14 @@ try {
       Boolean(poll2.body && poll2.body.session) && poll2.body.session.id === REACH_BRAVO,
       why(poll2));
 
-    const rawAfter = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA);
+    const rawAfter = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('the conversation still on screen is still readable by its id',
       rawAfter.status === 200, why(rawAfter));
     assert('and it is still its own message, not the other conversation\'s',
       JSON.stringify(rawAfter.body && rawAfter.body.raw ? rawAfter.body.raw : '').includes('ALPHA BODY'),
       why(rawAfter));
 
-    const detailAfter = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA);
+    const detailAfter = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('and its records\' fields are still readable by its id',
       detailAfter.status === 200, why(detailAfter));
 
@@ -450,10 +536,10 @@ try {
     // so the read after a reload is the read a reader would make.
     const reload = await get('/api/trajectory?session=latest');
     assert('the reload answers', reload.status === 200, why(reload));
-    const rawRetry = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA);
+    const rawRetry = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('the read after a reload still finds the conversation on screen',
       rawRetry.status === 200, why(rawRetry));
-    const detailRetry = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA);
+    const detailRetry = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('and so does the record read',
       detailRetry.status === 200, why(detailRetry));
 
@@ -469,7 +555,8 @@ try {
       legacyLoad.status === 200 && Boolean(legacyLoad.body && legacyLoad.body.session)
       && legacyLoad.body.session.id === LEGACY_A, why(legacyLoad));
 
-    const legacyRaw = await get('/api/trajectory/raw?index=1&session=' + LEGACY_A);
+    const legacyVersion = versionOf(legacyLoad.body, 1);
+    const legacyRaw = await get('/api/trajectory/raw?index=1&session=' + LEGACY_A + '&v=' + legacyVersion);
     assert('and its record reads back',
       legacyRaw.status === 200, why(legacyRaw));
     assert('with its own message',
@@ -496,12 +583,90 @@ try {
     assert('the new session loads after the swap',
       legacyReload.status === 200 && Boolean(legacyReload.body && legacyReload.body.session)
       && legacyReload.body.session.id === LEGACY_B, why(legacyReload));
-    const legacyRawAfter = await get('/api/trajectory/raw?index=1&session=' + LEGACY_B);
+    const legacyRawAfter = await get('/api/trajectory/raw?index=1&session=' + LEGACY_B + '&v=' + versionOf(legacyReload.body, 1));
     assert('and then its own record reads back',
       legacyRawAfter.status === 200, why(legacyRawAfter));
     assert('with the new message, not the old one',
       JSON.stringify(legacyRawAfter.body && legacyRawAfter.body.raw ? legacyRawAfter.body.raw : '')
         .includes('BRAVO LEGACY'), why(legacyRawAfter));
+
+    // 5 — the transcript is rewritten under a page that is still showing the old one.
+    //
+    // The session does not change: the same directory, the same manifest, the same id. Only the
+    // line behind record 1 is a different line now. The index still says 1 and the position is
+    // still a position — but it names a DIFFERENT record, and the old one is what the reader is
+    // looking at.
+    //
+    // The service is holding the newer body by the time the read arrives (the page's next poll
+    // loaded it), so the line it would read is the new one and its own digest check passes. What
+    // stops it from answering is the version the request carries: the reader says which record it
+    // meant, and the service compares that with the record it would serve.
+    const versionLoad = await get('/api/trajectory?session=' + VERSIONED);
+    assert('the conversation whose transcript will be rewritten loads',
+      versionLoad.status === 200 && Boolean(versionLoad.body && versionLoad.body.session)
+      && versionLoad.body.session.id === VERSIONED, why(versionLoad));
+    const oldVersion = versionOf(versionLoad.body, 1);
+    assert('and its record carries a version',
+      oldVersion !== '', 'version: ' + JSON.stringify(oldVersion));
+
+    await writeVersioned('BRAVO BODY', 1791800000000);
+    // The service now has to be holding the NEWER body, or the read below is not the read the
+    // reader would make. A fresh service instance is how it stops believing the walk it cached:
+    // the walk holds the session list for three seconds, so a rewritten transcript is invisible
+    // to it until that expires, and restarting drops that cache in one step.
+    await instance.dispose();
+    {
+      const restarted = await startService();
+      instance = restarted.instance;
+      base = restarted.base;
+    }
+    const versionReload = await get('/api/trajectory?session=' + VERSIONED);
+    assert('the rewritten conversation loads again',
+      versionReload.status === 200, why(versionReload));
+    assert('and the body it serves is the rewritten one',
+      JSON.stringify(versionReload.body).includes('BRAVO BODY'), why(versionReload));
+    const newVersion = versionOf(versionReload.body, 1);
+    assert('and the record behind the same index is a different version of itself',
+      newVersion !== '' && newVersion !== oldVersion,
+      'old: ' + oldVersion + ' new: ' + newVersion);
+
+    const staleVersionRaw = await get('/api/trajectory/raw?index=1&session=' + VERSIONED + '&v=' + oldVersion);
+    assert('a secondary read from an older body never serves a newer body\'s record',
+      !(staleVersionRaw.status === 200
+        && JSON.stringify(staleVersionRaw.body && staleVersionRaw.body.raw ? staleVersionRaw.body.raw : '')
+          .includes('BRAVO BODY')), why(staleVersionRaw));
+    assert('and it says the version moved, rather than answering with the other record',
+      staleVersionRaw.status === 409 && staleVersionRaw.body
+      && staleVersionRaw.body.error === 'record_version_mismatch', why(staleVersionRaw));
+
+    const staleVersionDetail = await get('/api/trajectory/record?index=1&session=' + VERSIONED + '&v=' + oldVersion);
+    assert('and the record read refuses it the same way',
+      staleVersionDetail.status === 409 && staleVersionDetail.body
+      && staleVersionDetail.body.error === 'record_version_mismatch', why(staleVersionDetail));
+
+    const currentVersionRaw = await get('/api/trajectory/raw?index=1&session=' + VERSIONED + '&v=' + newVersion);
+    assert('while the read that names the current version still answers',
+      currentVersionRaw.status === 200
+      && JSON.stringify(currentVersionRaw.body && currentVersionRaw.body.raw ? currentVersionRaw.body.raw : '')
+        .includes('BRAVO BODY'), why(currentVersionRaw));
+
+    // And the other refusal: a read that does not say which record it means is not answered
+    // either. The service cannot tell 「the record you meant」 from 「whatever is at that index
+    // now」, and guessing is the defect.
+    //
+    // The body is loaded again first: a restarted service holds no body until one is asked for,
+    // and a read against an empty cache is refused for that reason rather than this one.
+    const alphaReload = await get('/api/trajectory?session=' + REACH_ALPHA);
+    assert('and the service still answers for the conversation on screen',
+      alphaReload.status === 200, why(alphaReload));
+    const rawNoVersion = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA);
+    assert('a read that does not name the record it means is refused',
+      rawNoVersion.status === 400 && rawNoVersion.body && rawNoVersion.body.error === 'record_version_required',
+      why(rawNoVersion));
+    const detailNoVersion = await get('/api/trajectory/record?index=1&session=' + REACH_ALPHA);
+    assert('and the record read refuses it the same way',
+      detailNoVersion.status === 400 && detailNoVersion.body && detailNoVersion.body.error === 'record_version_required',
+      why(detailNoVersion));
   } finally {
     // The server is released here and not at the end of the happy path: an assertion that
     // throws would otherwise leave it listening, and the guard would hang instead of

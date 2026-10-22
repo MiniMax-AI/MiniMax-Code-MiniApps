@@ -541,8 +541,14 @@ assert('and the artifact root holds segments and nothing else',
   artifactDirs.length === 1 && artifactDirs[0] === 'search');
 // Two paths answering one request is only a performance change if they answer it identically,
 // and the response body is part of the answer the page reads.
-check('both paths send the same session field',
-  (SERVER.match(/session: \{ id: ctx\.identity\.id, generation: filter \}/g) || []).length, 2);
+//
+// The two paths do not answer separately any more: they build the answer in ONE place and send
+// it. So the question is not "do they agree" — it is "is there only one place for them to
+// disagree in". A second copy of the answer is a second answer, and the copy nobody thinks
+// about is the one that eventually stops answering.
+const searchAnswerShape = (SERVER.match(/session: \{ id: ctx\.identity\.id, generation: filter \}/g) || []).length;
+check('the search answer is built in one place, so the two paths cannot answer differently',
+  searchAnswerShape, 1);
 // Scoped to handleSearch's own text: the same two lines also appear in the trajectory route, and
 // a whole-file indexOf would compare a search against an unrelated request's body.
 const handleSearchSrc = SERVER.slice(
