@@ -67,6 +67,12 @@ const LIFECYCLE_FNS = [
   'ledgerStateOf',
   'ledgerHoldsRows',
   'releaseStaleGroups',
+  // The window's first group, read out of the table: the visit path holds it on to as well as
+  // the group the reader has just reached.
+  'ledgerFirstGroupKey',
+  // The rebuild's half of the release decision, so that a rebuild here is the rebuild the
+  // client makes rather than an approximation of it.
+  'releaseStaleGroupsBeforeRebuild',
   'fillLedgerGroup',
   'holdLedgerHeight',
   'heldLedgerHeight',
@@ -197,6 +203,9 @@ function harness() {
     Date: { now: () => box.clock },
     ledgerState: new Map(),
     ledgerContent: new Map(),
+    // The row heights the last build calibrated. The visit path prices the difference a
+    // released group has with them, so the build writes them and the visit path reads them.
+    ledgerCalibration: null,
     // The ledger the table is in. The shipped code reads it when it has to take the rows out
     // of a group the reader is no longer on.
     dom: { ledger: makeEl('div') },
@@ -283,6 +292,12 @@ function buildHarness(options) {
  * The groups are the window's, the first one is the group the window is anchored on, and the
  * state carries over — a rebuild does not reset the reader's lease, and proving that it does
  * not is the whole point of the rule below.
+ *
+ * The release step is part of it, and it is the shipped one: the fixture calls the function
+ * the client calls, so a rebuild here is a rebuild of the client rather than an approximation
+ * of it. Leaving it out is what made this file blind to the rebuild's half of the bound — a
+ * build that stopped releasing the groups the reader had left came out with more groups
+ * holding their rows than the cap allows, and every assertion here still passed.
  */
 function rebuild(h, groups) {
   const s = h.sandbox;
@@ -296,6 +311,7 @@ function rebuild(h, groups) {
   // The total the build reports while it is running. It lives in renderLedger() beside the
   // build, and a window longer than one batch is the case that reads it.
   s.buildTotal = groups.reduce((n, g) => n + g.entries.length, 0);
+  s.releaseStaleGroupsBeforeRebuild(groups);
   s.buildStep();
 }
 
@@ -511,12 +527,12 @@ function measureGroup(h, key, entries, bands, height) {
   s.ledgerState.set('a', { live: true, lastSeen: 1000, height: 0 });
 
   h.clock = 1000 + s.LEDGER_IDLE_MS - 1;
-  s.releaseStaleGroups('somewhere-else');
+  s.releaseStaleGroups(['somewhere-else']);
   assert('a group the reader is still within reach of keeps its rows',
     s.ledgerState.get('a').live === true);
 
   h.clock = 1000 + s.LEDGER_IDLE_MS;
-  s.releaseStaleGroups('somewhere-else');
+  s.releaseStaleGroups(['somewhere-else']);
   assert('a group the reader has left gives its rows up once the idle time has passed',
     s.ledgerState.get('a').live === false);
 }
@@ -532,7 +548,7 @@ function measureGroup(h, key, entries, bands, height) {
   // — it has no visit of its own to be dated by — so a clock that sat behind the leases would
   // make the anchored group look like the oldest one, which is the one thing it never is.
   h.clock = 2000;
-  s.releaseStaleGroups('g' + (n - 1));
+  s.releaseStaleGroups(['g' + (n - 1)]);
   const live = [...s.ledgerState.values()].filter((v) => v.live).length;
   assert('the number of groups holding their rows is bounded',
     live === s.LEDGER_LIVE_GROUPS);
@@ -568,7 +584,7 @@ function measureGroup(h, key, entries, bands, height) {
   for (let i = 0; i < s.LEDGER_LIVE_GROUPS + 1; i += 1) {
     s.ledgerState.set('g' + i, { live: true, lastSeen: 4000 + i, height: 0 });
   }
-  s.releaseStaleGroups('anchor');
+  s.releaseStaleGroups(['anchor']);
   const live = [...s.ledgerState.values()].filter((v) => v.live).length;
   assert('the window\'s first group is one of the groups that hold their rows',
     s.ledgerState.get('anchor').live === true);
@@ -608,7 +624,7 @@ function measureGroup(h, key, entries, bands, height) {
     && sectionOf(h, 1).getAttribute('data-rows') === 'live');
 
   h.clock = 17000;
-  s.releaseStaleGroups('k1');
+  s.releaseStaleGroups(['k1']);
   rebuild(h, groups);
   assert('a group the reader has left gives its rows up while the ledger keeps being rebuilt',
     s.ledgerState.get('k2').live === false
@@ -692,6 +708,16 @@ function measureGroup(h, key, entries, bands, height) {
  * The visits below are one after another, and each is within the idle timeout of the one
  * before it, so the idle rule is not what releases the groups — the cap is. And the groups
  * that are counted are the sections that really hold their rows, not the flags in the state.
+ *
+ * The second group is the one the cap releases, and it carries the height rule with it. It is
+ * measured at 1,000 px with three rows in it; a late reply makes it four rows, and the rebuild
+ * that brings the reply writes the group with the four rows in it. The rebuild does not
+ * measure, so the group still carries the height it was measured at — 1,000 px for three rows —
+ * while the height it really has is 1,036 px. When the cap takes it on the visit path, the
+ * height it keeps has to be the height it has now: 1,036 px, the measured height and the row
+ * that was added, priced at the calibrated row height. The visit path used to write the old
+ * measurement back unchanged, so the group came up 36 px short of the content it was holding,
+ * and the document under the reader came up short by that much until the next rebuild.
  */
 {
   const h = buildHarness();
@@ -699,10 +725,27 @@ function measureGroup(h, key, entries, bands, height) {
   const n = s.LEDGER_LIVE_GROUPS + 2;
   const groups = [];
   for (let i = 0; i < n; i += 1) {
-    groups.push({ turn: { index: i + 1 }, entries: entriesOf(2, 0, 'g' + i) });
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
   }
   h.clock = 1000;
   rebuild(h, groups);
+  // The reader is on the second group, and it is laid out for real at 1,000 px.
+  const second = sectionOf(h, 1);
+  second.getBoundingClientRect = () => ({ height: 1000, width: 900, top: 0, bottom: 1000 });
+  s.fillLedgerGroup(second);
+  h.clock += 10;
+  s.fillLedgerGroup(sectionOf(h, 0));
+  // A late reply: every group has a fourth row now, and the rebuild that brings it writes the
+  // groups with the four rows in it.
+  const grown = [];
+  for (let i = 0; i < n; i += 1) {
+    grown.push({ turn: { index: i + 1 }, entries: entriesOf(4, 0, 'g' + i) });
+  }
+  h.clock += 10;
+  rebuild(h, grown);
+  // The second group is laid out at the height it really has now.
+  const secondGrown = sectionOf(h, 1);
+  secondGrown.getBoundingClientRect = () => ({ height: 1036, width: 900, top: 0, bottom: 1036 });
   // The reader walks through the window, one group at a time.
   for (let i = 0; i < n; i += 1) {
     h.clock += 10;
@@ -714,13 +757,136 @@ function measureGroup(h, key, entries, bands, height) {
   });
   assert('reader visits cannot increase the held row groups past the ceiling between rebuilds',
     holding.length <= s.LEDGER_LIVE_GROUPS);
-  // And the group the cap released gives up its rows at once, and keeps the height it had.
-  const released = sectionOf(h, 0);
+  // The window's first group is where the reader arrives, and every other group's height is
+  // predicted from it, so it holds its rows whatever the reader is doing — including after a
+  // round of visits that fills more groups than the cap allows. A visit that held on to the
+  // group the reader had just reached and nothing else would let this one go: the idle
+  // timeout would take it, or the cap would reach for it as the oldest one there is, and the
+  // group the heights are predicted from would lose its rows while the reader was on the page.
+  const first = sectionOf(h, 0);
+  assert('the window\'s first group keeps its rows after a round of visits',
+    first.getAttribute('data-rows') === 'live'
+    && first.querySelector('ul.row-list').children.length > 0);
+  // And the group the cap released gives up its rows at once, and keeps the height it has now.
+  const released = sectionOf(h, 1);
   assert('a group the cap released holds no rows',
     released.getAttribute('data-rows') === 'released'
     && released.querySelector('ul.row-list').children.length === 0);
-  assert('a group the cap released keeps its reserved height',
-    typeof released.style.minHeight === 'string' && released.style.minHeight !== '');
+  // The height is the number the group really has, not merely a non-empty string: 1,036 px,
+  // the 1,000 px it was measured at and the row that was added, priced at the calibrated row
+  // height. A shape check would pass on a height of 1 px, which is the opposite of what the
+  // reader is owed.
+  assert('a group the cap released keeps the height it has now',
+    released.style.minHeight === '1036px');
+}
+
+/* ---------- 3f. the window's first group survives the idle timeout ---------- */
+
+/*
+ * The window's first group holds its rows whatever the reader is doing, and the visit path
+ * has to hold it on to as well as the group the reader has just reached.
+ *
+ * The case: the reader is on the first group, the observer gives it a lease, and the reader is
+ * away long enough for the idle timeout to pass. The reader comes back on the second group,
+ * and that one visit is enough to take the first group's rows away — the idle timeout reaches
+ * for it, because it is the oldest lease there is — and the group every height is predicted
+ * from loses its rows while the reader is on the page.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const groups = [
+    { turn: { index: 1 }, entries: entriesOf(3, 0, 'g0') },
+    { turn: { index: 2 }, entries: entriesOf(3, 0, 'g1') },
+    { turn: { index: 3 }, entries: entriesOf(3, 0, 'g2') }
+  ];
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader is on the first group, and the observer gives it a lease.
+  s.fillLedgerGroup(sectionOf(h, 0));
+  // The reader is away long enough for the idle timeout to pass, and comes back on the second
+  // group. One visit is enough to release the first one.
+  h.clock = 1000 + s.LEDGER_IDLE_MS;
+  s.fillLedgerGroup(sectionOf(h, 1));
+  const first = sectionOf(h, 0);
+  assert('the window\'s first group keeps its rows when the reader comes back to another group',
+    first.getAttribute('data-rows') === 'live'
+    && first.querySelector('ul.row-list').children.length > 0);
+}
+
+/* ---------- 3g. the rebuild applies the bound too ---------- */
+
+/*
+ * The bound is about the groups that hold their rows, and the rebuild is one of the two
+ * places that decides it.
+ *
+ * The fixture's rebuild() used to leave that step out — it called the build and nothing else —
+ * so a build that stopped releasing the groups the reader had left was a build this file
+ * could not see: the table came out with more groups holding their rows than the cap allows,
+ * and every assertion in this file still passed.
+ *
+ * The case: the reader has been on six groups, which is the cap, and then the window widens —
+ * a group comes in above — so the rebuild's first group is a new one. The rebuild counts it,
+ * the count is one over the cap, and the oldest of the reader's groups goes. Without that step
+ * the new group is simply added and the table holds seven groups' rows.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const groups = [];
+  for (let i = 0; i < s.LEDGER_LIVE_GROUPS; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(2, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader walks through the window: six groups, which is the cap.
+  for (let i = 0; i < s.LEDGER_LIVE_GROUPS; i += 1) {
+    h.clock += 10;
+    s.fillLedgerGroup(sectionOf(h, i));
+  }
+  // The window widens: a group comes in above, so the rebuild's first group is a new one.
+  const wider = [{ turn: { index: 0 }, entries: entriesOf(2, 0, 'w0') }].concat(groups);
+  h.clock += 10;
+  rebuild(h, wider);
+  const holding = s.ledger.children.filter((c) => {
+    const list = c.querySelector('ul.row-list');
+    return c.getAttribute('data-rows') === 'live' && !!list && list.children.length > 0;
+  });
+  assert('after a rebuild, the number of groups holding their rows is at most the cap',
+    holding.length <= s.LEDGER_LIVE_GROUPS);
+}
+
+/* ---------- 3h. a tie the clock cannot break ---------- */
+
+/*
+ * The cap reaches for the oldest group, and when several groups share a millisecond the order
+ * the cap sees is the order the groups were counted in. The groups the caller holds on to are
+ * counted after the ones the reader has visited, so a tie cannot put them at the head of the
+ * queue — and the group the reader has just reached is the last of them, so the cap cannot
+ * reach for the group the reader is on.
+ *
+ * The case: the reader walks through the window without the clock moving, so every lease is
+ * the same age, and the count goes one over the cap on the last visit. Counted before the
+ * groups the reader has visited, the window's first group would be the head of that queue and
+ * the cap would take it.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const groups = [];
+  for (let i = 0; i < s.LEDGER_LIVE_GROUPS + 1; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(2, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader walks through the window without the clock moving: every lease is the same age.
+  for (let i = 1; i < s.LEDGER_LIVE_GROUPS + 1; i += 1) {
+    s.fillLedgerGroup(sectionOf(h, i));
+  }
+  const first = sectionOf(h, 0);
+  assert('the window\'s first group keeps its rows when the clock cannot break the tie',
+    first.getAttribute('data-rows') === 'live'
+    && first.querySelector('ul.row-list').children.length > 0);
 }
 
 /* ---------- 4. the rows come back when the reader reaches the group ---------- */
@@ -859,6 +1025,12 @@ assert('a group the build is not holding says so too',
 const renderSrc = functionSource('renderLedger') || '';
 assert('the ledger drops what it knew about the groups it just emptied',
   /clear\(ledger\);/.test(renderSrc) && /ledgerContent\.clear\(\);/.test(renderSrc));
+// The rebuild asks for the release before it writes the table. The behavioural half of this
+// rule is the assertion about the number of groups holding their rows after a rebuild; this
+// one is the call site, which no behavioural check can reach: renderLedger() is too big to
+// run here, so the fixture calls the shipped release function itself.
+assert('the rebuild releases the groups that have to give up their rows before it writes the table',
+  /releaseStaleGroupsBeforeRebuild\(groups\);/.test(renderSrc));
 
 const selectSrc = functionSource('selectSession') || '';
 assert('the groups of the session being left are forgotten with it',

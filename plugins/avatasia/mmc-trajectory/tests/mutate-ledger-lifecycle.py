@@ -51,15 +51,15 @@ MUTATIONS = [
     # its own lease instead of the current time, a group the reader left long ago is the
     # oldest one there is, and the cap reaches for it first.
     ("the window's first group is released with the others",
-     [("        live.push({ key: keepKey, at: now });\n",
-       "        live.push({ key: keepKey, at: ledgerStateOf(keepKey).lastSeen });\n")],
+     [("          live.push({ key: kept[j], at: now });\n",
+       "          live.push({ key: kept[j], at: ledgerStateOf(kept[j]).lastSeen });\n")],
      "the window's first group is one of the groups that hold their rows"),
 
     # The same group left out of the count altogether: it goes on holding its rows past the
     # bound, so the bound is about one set of groups while the rows on screen are another.
     ("the window's first group is not counted among the groups that hold their rows",
-     [("        ledgerStateOf(keepKey).live = true;\n"
-       "        live.push({ key: keepKey, at: now });\n",
+     [("          ledgerStateOf(kept[j]).live = true;\n"
+       "          live.push({ key: kept[j], at: now });\n",
        "")],
      "the window's first group is one of the groups that hold their rows"),
 
@@ -299,8 +299,21 @@ MUTATIONS = [
     # rebuild leaves behind. Without the cap on the visit path, a reader who walks through
     # more groups than the cap allows between two rebuilds is holding all of them.
     ("reader visits do not enforce the cap on the groups holding their rows",
-     [("        releaseLedgerRows(releaseStaleGroups(group.key));\n", "")],
+     [("        releaseLedgerRows(releaseStaleGroups([ledgerFirstGroupKey(), group.key]));\n", "")],
      "reader visits cannot increase the held row groups past the ceiling between rebuilds"),
+
+    # The visit path holds on to the group the reader has just reached. It has to hold on to
+    # the window's first group as well: that group holds its rows whatever the reader is
+    # doing, it is where the reader arrives, and every other group's height is predicted from
+    # it. A visit that protected only the group the reader had just reached let the window's
+    # first group go — the idle timeout took it, or the cap reached for it as the oldest one —
+    # and the group the heights are predicted from lost its rows while the reader was on the
+    # page.
+    ("the visit path does not protect the window's first group",
+     [("        releaseLedgerRows(releaseStaleGroups([ledgerFirstGroupKey(), group.key]));\n",
+       "        releaseLedgerRows(releaseStaleGroups([group.key]));\n")],
+     ["the window's first group keeps its rows after a round of visits",
+      "the window's first group keeps its rows when the reader comes back to another group"]),
 
     # A group the cap released gives up its rows at once. The rows are the DOM, and a group
     # that has given them up must not still be holding them.
@@ -308,12 +321,54 @@ MUTATIONS = [
      [("          if (list) clear(list);\n", "")],
      "a group the cap released holds no rows"),
 
-    # And it keeps the height it had. The height is the reader's place in a session they have
-    # scrolled through, and a group that has given up its rows without keeping it takes the
-    # document down under them.
+    # And it keeps the height it has now. The height is the reader's place in a session they
+    # have scrolled through, and a group that has given up its rows without keeping it takes
+    # the document down under them.
     ("a group the cap released keeps no reserved height",
-     [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));\n", "")],
-     "a group the cap released keeps its reserved height"),
+     [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));\n", "")],
+     "a group the cap released keeps the height it has now"),
+
+    # The height a released group keeps has to describe the content it holds now, and the
+    # visit path has no calibration of its own to price the difference with. Passing no
+    # calibration writes the old measurement back unchanged: a group measured at 1,000 px with
+    # three rows in it and holding four rows by the time it is released on the visit path keeps
+    # 1,000 px instead of 1,036 px, and the document under the reader comes up short by the row
+    # that was added.
+    ("the visit path writes back the height the group was measured at",
+     [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));\n",
+       "          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));\n")],
+     "a group the cap released keeps the height it has now"),
+
+    # The rebuild is one of the two places that decides the bound, and the fixture's rebuild()
+    # calls the shipped function that does it. A rebuild that stopped releasing the groups the
+    # reader had left came out with more groups holding their rows than the cap allows, and
+    # every assertion in the guard still passed.
+    ("the rebuild does not release the groups that have to give up their rows",
+     [("        releaseStaleGroups([turnKey(groups[0].turn)]);\n", "")],
+     "after a rebuild, the number of groups holding their rows is at most the cap"),
+
+    # And the call site itself: the rebuild asks for the release before it writes the table.
+    ("the rebuild does not ask for the release before it writes the table",
+     [("        releaseStaleGroupsBeforeRebuild(groups);\n", "")],
+     "the rebuild releases the groups that have to give up their rows before it writes the table"),
+
+    # The groups the caller holds on to are counted after the ones the reader has visited, so
+    # that a tie the clock cannot break cannot put them at the head of the queue. The cap
+    # reaches for the oldest, and the group the reader has just reached must not be the one it
+    # reaches for. Counted first, the window's first group is the head of the queue and the
+    # cap takes it.
+    ("the groups the caller holds on to are counted before the ones the reader has visited",
+     [("        for (var j = 0; j < kept.length; j += 1) {\n"
+       "          ledgerStateOf(kept[j]).live = true;\n"
+       "          live.push({ key: kept[j], at: now });\n"
+       "        }\n", ""),
+      ("        ledgerState.forEach(function (state, key) {\n",
+       "        for (var j = 0; j < kept.length; j += 1) {\n"
+       "          ledgerStateOf(kept[j]).live = true;\n"
+       "          live.push({ key: kept[j], at: now });\n"
+       "        }\n"
+       "        ledgerState.forEach(function (state, key) {\n")],
+     "the window's first group keeps its rows when the clock cannot break the tie"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
