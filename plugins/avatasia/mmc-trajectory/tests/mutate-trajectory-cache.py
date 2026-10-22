@@ -291,6 +291,44 @@ MUTATIONS = [
         "        session: { id: ctx.identity.id, generation: filter },\n",
         "        session: { id: ctx.identity.id, generation: filter === null ? 0 : filter },\n",
     ),
+    # ---- the answer has to be about the SET the page is showing --------------------------
+    #
+    # A search answer says 「these records match and the rest do not」, and the part of it that
+    # matters to the reader is the part it does NOT name: a record this body has and that body
+    # does not match gets dimmed as if it did not contain the needle, with nothing saying so.
+    #
+    # So the request says which set it is about — how many records the page has, and a fingerprint
+    # of their versions — and the service answers only if it searched THAT set. Three controls,
+    # because the promise has three halves: the set the page names has to be checked, the set the
+    # SEGMENTS stand for has to be checked too (the fast path is a different body by another
+    # route), and a request that names no set at all has to be refused rather than guessed at.
+    (
+        "the search answers about a set the page did not name",
+        SERVER,
+        "    if (recordSetFingerprint(payloadRecordVersions(payload, count)) !== askedFingerprint) {\n"
+        "      sendError(response, 409, 'search_version_mismatch', '该记录所在的版本已变化，请重新加载会话');\n"
+        "      return;\n"
+        "    }\n",
+        "",
+    ),
+    (
+        "the search never checks the set the stored segments stand for",
+        SERVER,
+        "      if (onDisk.fingerprint !== askedFingerprint) {\n"
+        "        sendError(response, 409, 'search_version_mismatch', '该记录所在的版本已变化，请重新加载会话');\n"
+        "        return;\n"
+        "      }\n",
+        "",
+    ),
+    (
+        "a search that does not say which set it is about is answered anyway",
+        SERVER,
+        "    if (!Number.isInteger(count) || count < 0 || !/^[0-9a-f]{16}$/.test(askedFingerprint)) {\n"
+        "      sendError(response, 400, 'search_fingerprint_required', '会话已更新，请重新加载后再搜索');\n"
+        "      return;\n"
+        "    }\n",
+        "",
+    ),
 ]
 
 

@@ -17,16 +17,18 @@
  * mutate-trajectory-cache.py breaks each of these in the shipped file.
  */
 import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile, utimes } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createTrajectoryCache,
+  recordSetFingerprint,
   start,
   trajectoryCacheFamily,
   trajectoryCacheKey,
 } from '../miniapp/node/server.mjs';
+import { digestOf } from '../miniapp/node/search-segments.mjs';
 
 const SERVER = readFileSync(new URL('../miniapp/node/server.mjs', import.meta.url), 'utf8');
 /** The package root, so the route serves the same page the reader gets. */
@@ -444,8 +446,9 @@ try {
 
   // The version of one record of a body. A position read names an INDEX, and an index is a
   // position inside ONE body — so a read has to say which record of that body it means, and this
-  // is what it says. The page takes it from the body it is showing, which is the only body it
-  // has.
+  // is what it says. The page takes it from the RECORD the reader opened, which came from the body
+  // it is showing: the record is the one that survives a reload, so a read that is retried after
+  // one still asks about the same record.
   const versionOf = (body, index) => {
     const turns = body && Array.isArray(body.turns) ? body.turns : [];
     for (const turn of turns) {
@@ -455,6 +458,47 @@ try {
       }
     }
     return '';
+  };
+
+  // The SET of records a body is, as the page names it: the records' own versions, in the order
+  // the ledger shows them. The service folds its own records the same way, and an answer it
+  // cannot tie to this set is refused — an answer about another body says nothing about this
+  // body's omissions, and the rows it does not name are the ones the reader cannot see dimmed.
+  const versionsOf = (body) => {
+    const out = [];
+    const turns = body && Array.isArray(body.turns) ? body.turns : [];
+    for (const turn of turns) {
+      const records = Array.isArray(turn && turn.records) ? turn.records : [];
+      for (const record of records) {
+        out.push(record && typeof record.v === 'string' ? record.v : '');
+      }
+    }
+    return out;
+  };
+
+  // The segments a search published, found by walking the data dir. Publishing them is a side
+  // effect that nobody awaits, so the test waits for the file rather than for a promise.
+  const waitForSegments = async (dir) => {
+    const walk = async (current, found) => {
+      let entries = [];
+      try {
+        entries = await readdir(current, { withFileTypes: true });
+      } catch {
+        return found;
+      }
+      for (const entry of entries) {
+        const full = join(current, entry.name);
+        if (entry.isDirectory()) await walk(full, found);
+        else if (entry.name === 'surface.txt') found.push(full);
+      }
+      return found;
+    };
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const found = await walk(dir, []);
+      if (found.length > 0) return found;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    return [];
   };
 
   try {
@@ -480,7 +524,9 @@ try {
     const alphaVersion = versionOf(poll.body, 1);
     assert('every record of the body carries a version',
       alphaVersion !== '', 'version of record 1: ' + JSON.stringify(alphaVersion));
-    const alphaSearch = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA');
+    const alphaVersions = versionsOf(poll.body);
+    const alphaSearch = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA'
+      + '&n=' + alphaVersions.length + '&fp=' + recordSetFingerprint(alphaVersions));
     assert('the search answers with hits',
       alphaSearch.status === 200 && Array.isArray(alphaSearch.body && alphaSearch.body.hits)
       && alphaSearch.body.hits.length > 0, why(alphaSearch));
@@ -493,6 +539,63 @@ try {
       && alphaSearch.body.session.generation === poll.body.session.generation,
       'search: ' + JSON.stringify(alphaSearch.body && alphaSearch.body.session)
       + ' body: ' + JSON.stringify(poll.body && poll.body.session));
+
+    // WHICH SET the answer is about. An answer says 「these match and the rest do not」, and the
+    // part that matters to the reader is the part it does NOT name: a record this body has and
+    // that body does not match would be dimmed as if it did not contain the needle, with nothing
+    // anywhere saying so. So the request names the set, and a set that is not this one is refused.
+    const otherSet = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA'
+      + '&n=' + alphaVersions.length + '&fp=' + recordSetFingerprint(['a-different-record']));
+    assert('a search about a set the body on screen is not is refused',
+      otherSet.status === 409 && Boolean(otherSet.body)
+      && otherSet.body.error === 'search_version_mismatch', why(otherSet));
+    const unnamedSet = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA');
+    assert('and a search that does not say which set it is about is refused rather than guessed at',
+      unnamedSet.status === 400 && Boolean(unnamedSet.body)
+      && unnamedSet.body.error === 'search_fingerprint_required', why(unnamedSet));
+    // The fold is over the FIRST N records, so a page that is behind — the session grew since its
+    // last poll — is still answered: its first N records are the same N, and the answer applies
+    // to them. A body-level identity would have refused this, and the refusal would have been the
+    // common case rather than the rare one.
+    const behind = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA'
+      + '&n=1&fp=' + recordSetFingerprint(alphaVersions.slice(0, 1)));
+    assert('a page that is behind is still answered, because its first records are the same ones',
+      behind.status === 200, why(behind));
+
+    // The same refusal, on the path that answers from the stored segments — and the PROOF that
+    // this path was the one taken.
+    //
+    // The segments are the cache the next search is answered from, and the answer is about the set
+    // THEY stand for. So the test edits the version on one of their lines and fixes the digest:
+    // the segment still matches its manifest, so it is still usable, and now the set it stands for
+    // is not the set the page is showing. A rebuild would have answered 200 — the records on disk
+    // are the ones the page has — so a 409 can only have come from the segments. And the other way
+    // round: naming the EDITED set is accepted, which a rebuild would have refused. Between the
+    // two, the path is not a guess.
+    const segments = await waitForSegments(home);
+    assert('the first search published its segments, so the next one is answered from them',
+      segments.length > 0, 'segments under ' + home);
+    if (segments.length > 0) {
+      const surfacePath = segments[0];
+      const manifestPath = join(dirname(surfacePath), 'manifest.json');
+      const surface = await readFile(surfacePath, 'utf8');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      const edited = surface.replace(/"v":"[0-9a-f]{16}"/, '"v":"ffffffffffffffff"');
+      await writeFile(surfacePath, edited);
+      manifest.surfaceDigest = digestOf(edited);
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const editedVersions = alphaVersions.slice();
+      editedVersions[0] = 'ffffffffffffffff';
+      const viaSegments = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA'
+        + '&n=' + editedVersions.length + '&fp=' + recordSetFingerprint(editedVersions));
+      assert('a search answered from the segments is accepted when the page names the set they stand for',
+        viaSegments.status === 200, why(viaSegments));
+      const aboutTheOtherSet = await get('/api/trajectory/search?session=' + REACH_ALPHA + '&q=ALPHA'
+        + '&n=' + alphaVersions.length + '&fp=' + recordSetFingerprint(alphaVersions));
+      assert('and refused when the page names a set they do not stand for',
+        aboutTheOtherSet.status === 409 && Boolean(aboutTheOtherSet.body)
+        && aboutTheOtherSet.body.error === 'search_version_mismatch', why(aboutTheOtherSet));
+    }
 
     const rawById = await get('/api/trajectory/raw?index=1&session=' + REACH_ALPHA + '&v=' + alphaVersion);
     assert('a record of the conversation on screen is readable by that conversation\'s id',

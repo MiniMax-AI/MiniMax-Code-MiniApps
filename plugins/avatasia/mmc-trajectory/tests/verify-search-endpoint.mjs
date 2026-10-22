@@ -499,7 +499,25 @@ const artifactsSrc = SERVER.slice(
 assert('and the shipped artifact path counts every match rather than what it sent',
   /total \+= 1;/.test(artifactsSrc)
   && /if \(hits\.length < MAX_SEARCH_HITS\) hits\.push\(hit\);/.test(artifactsSrc)
-  && /return \{ hits, total \};/.test(artifactsSrc));
+  && /return \{ hits, total, fingerprint: recordSetFingerprint\(versions\) \};/.test(artifactsSrc));
+
+// The answer is about a SET of records, and the part of it that matters to the reader is the part
+// it does NOT name. So the service has to be able to say which set it searched, and the page has
+// to be able to check it: the fingerprint is folded over the records' own version tokens, over as
+// many of them as the page asked about.
+//
+// The fold is over the FIRST N, and that is not a detail. A page that is behind because the
+// session grew has fewer records, not different ones, so its first N are still the same N — and a
+// body-level identity (an ETag, a digest of the whole body) would change on every append and
+// make every answer stop applying every few seconds.
+assert('the artifact path folds the versions of the records it covers',
+  /segmentVersions\(segment\.surface, count - versions\.length\)/.test(artifactsSrc)
+  && /const versions = \[\];/.test(artifactsSrc));
+assert('and the route refuses an answer that is not about the set the page asked about',
+  /search_version_mismatch/.test(SERVER)
+  && /recordSetFingerprint\(payloadRecordVersions\(payload, count\)\)/.test(SERVER));
+assert('and a request that does not say which set it is about is refused rather than guessed at',
+  /search_fingerprint_required/.test(SERVER));
 
 // The route resolves a whole scan in ONE call, because resolving one ordinal at a time walks the
 // segment once per hit. That version is not a slower version of this one, it is the version that

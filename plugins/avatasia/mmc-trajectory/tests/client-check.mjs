@@ -7,6 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
+// The service's own fold over a set of records. The page has a copy of it — two copies of one
+// question is two answers, and the difference between them is nobody's to explain — so the two are
+// compared here rather than trusted.
+import { recordSetFingerprint } from '../miniapp/node/server.mjs';
 
 const HTML = fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url));
 const SERVER = fileURLToPath(new URL('../miniapp/node/server.mjs', import.meta.url));
@@ -228,8 +232,9 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   vm.createContext(netCtx);
   const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
     'function sessionParam()', 'function displayedSessionParam()', 'function displayedGeneration()',
-    'function displayedRecordsByIndex()', 'function displayedRecordVersion(index)',
-    'function searchStatusLabel(searchState)', 'function runSearch(needle)'];
+    'function displayedRecordsByIndex()', 'function displayedRecordVersions()',
+    'function recordSetFingerprint(versions)', 'function searchStatusLabel(searchState)',
+    'function searchAnswerDoesNotApply()', 'function runSearch(needle)'];
   const sources = needed.map((sig) => fnSource(sig));
   check('the shipped search functions are all still findable by signature',
     needed.filter((sig, i) => !sources[i]), []);
@@ -496,6 +501,51 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     netCtx.state.searchError, null);
   check('and the page did not go chasing a body it did not need to',
     netCtx.refreshes, 0);
+
+  /* WHICH SET the answer is about.
+   *
+   * A search answer is about a SET of records: it says 「these match and the rest do not」, and
+   * the part that matters to the reader is the part it does NOT name. So the request has to say
+   * which set — how many records the page has, and a fingerprint of their versions — and the
+   * service has to answer only if it searched THAT set. Without it, an answer about another body
+   * dims a record the reader can see, and says nothing about it.
+   */
+  check('the search names how many records the body on screen has',
+    /[?&]n=3(&|$)/.test(asked[0]), true);
+  check('and a fingerprint of their versions',
+    /[?&]fp=[0-9a-f]{16}(&|$)/.test(asked[0]), true);
+  check('and the page folds a set of records into the same answer the service does',
+    netCtx.recordSetFingerprint(['version-one', 'version-five', 'version-seven']),
+    recordSetFingerprint(['version-one', 'version-five', 'version-seven']));
+  check('and a set that is not the same is not the same answer',
+    netCtx.recordSetFingerprint(['version-one', 'version-five'])
+      === netCtx.recordSetFingerprint(['version-one', 'version-seven']), false);
+  check('and the count is appended, so the request still names the session first',
+    /[?&]session=mvs_displayed(&|$)/.test(asked[0]), true);
+
+  // The service refuses: the body it searched is not the body on screen. That is the same thing a
+  // hit with the wrong version says, and it has to be answered the same way — the answer is not
+  // installed, the body is fetched once more, and the same question is put again against it.
+  const beforeRefusal = [...netCtx.state.searchHits];
+  netCtx.state.searchRefresh = 0;
+  netCtx.state.searchRefreshFor = '';
+  netCtx.refreshes = 0;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: false, status: 409,
+      json: () => Promise.resolve({ error: 'search_version_mismatch', message: 'x' }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle(24);
+  check('an answer the service refuses is not installed',
+    [...netCtx.state.searchHits], beforeRefusal);
+  check('and the page asks again against a body it fetches, a bounded number of times',
+    netCtx.refreshes, 2);
+  check('and then it says the answer does not apply to what is on screen',
+    netCtx.state.searchError, 'search_version_mismatch');
+  check('and the label shows the failure rather than a count it cannot stand behind',
+    netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
 }
 
 /* handoff: the session the record came from, across a navigation.
@@ -1386,15 +1436,35 @@ const checks = [
   // A checkpoint is drawn as a band, not as a row. It has to be routed there in the one place
   // the ledger builds its list — routing it anywhere else would leave the row grid laying it out
   // like ordinary work while the CSS sits unused.
+  //
+  // That place is fillGroupRows(), which the build calls: the rows of a group are built by the
+  // build and by the observer that fills a group the reader scrolls to, and a second copy of the
+  // loop would be two definitions of what a row is. Both halves are checked — a routing rule in a
+  // function the ledger does not call is a rule about nothing.
   ['a compaction record renders as a band, not as a row', (() => {
   if (!/function buildCompactionBand\(entry\)/.test(html)) return false;
+  const fill = fnSource('function fillGroupRows(list, group)');
+  if (!fill) return false;
   const render = fnSource('function renderLedger()');
   if (!render) return false;
-  const loop = render.slice(render.indexOf('var rails = railStates('));
-  if (!loop) return false;
-  return /group\.entries\[j\]\.record\.kind === 'compaction'/.test(loop)
-    && /item\.className = 'compaction-cell'/.test(loop)
-    && /item\.appendChild\(buildCompactionBand\(group\.entries\[j\]\)\)/.test(loop);
+  // The test and the branch it decides have to be one thing.
+  //
+  // Checking that the word 'compaction' appears in the function is not the same as checking
+  // that a compaction record is rendered as a band: a version that computes the test and then
+  // ignores it says the same word and renders the record as a row. That is not a hypothetical
+  // — the two were once the same line, and splitting them (the test into a variable, the
+  // branch into an `if`) left the old assertion checking a word rather than a decision.
+  //
+  // So the band branch is taken out of the function and read on its own, and the branch has to
+  // be the one the test opens. The row branch is checked too: a version that renders EVERY
+  // record as a band has the band branch right and is wrong in the other direction.
+  const band = fill.match(/if \(isBand\) \{([\s\S]*?)\n {10}\} else \{/);
+  return /var isBand = group\.entries\[j\]\.record\.kind === 'compaction';/.test(fill)
+    && !!band
+    && /item\.className = 'compaction-cell'/.test(band[1])
+    && /item\.appendChild\(buildCompactionBand\(group\.entries\[j\]\)\)/.test(band[1])
+    && /item\.appendChild\(buildRow\(group\.entries\[j\], rails\[j\]\)\)/.test(fill)
+    && /fillGroupRows\(holds \? list : null, group\)/.test(render);
 })()],
   // The band is a real control: it carries the same data-row-id the inspector looks up, so
   // clicking it opens the checkpoint's details rather than doing nothing. The two halves are
@@ -1527,6 +1597,11 @@ const layerSrc = layerFns.map((name) => fnSource(name));
 if (layerSrc.some((src) => !src)) {
   failures.push('session layers: could not lift ' + layerFns.filter((_, i) => !layerSrc[i]).join(', '));
 } else {
+  // selectSession() drops what the ledger knows about the groups of the session it is leaving, so
+  // the two maps it uses have to exist here. They are the page's own, lifted as empty ones: what
+  // is under test is which session is chosen, not what the ledger remembers about it.
+  sandbox.ledgerState = new Map();
+  sandbox.ledgerContent = new Map();
   vm.runInContext(layerSrc.join('\n'), sandbox);
 }
 
@@ -2024,18 +2099,18 @@ if (!fetchTrajectorySrc || !sessionParamSrc || !trajInflightDecl || !trajSeqDecl
 // is "whichever session is current now" and not necessarily the one on screen. The runtime can
 // make another session current while the page still shows this one, and the page then showed
 // that other session's words under this session's record.
-const requestRawSrc = fnSource('function requestRaw(index)');
-const requestDetailSrc = fnSource('function requestDetail(index)');
+const requestRawSrc = fnSource('function requestRaw(index, version)');
+const requestDetailSrc = fnSource('function requestDetail(index, version)');
 const displayedSessionSrc = fnSource('function displayedSessionParam()');
 const displayedGenerationSrc = fnSource('function displayedGeneration()');
-const displayedRecordVersionSrc = fnSource('function displayedRecordVersion(index)');
+const recordVersionOfSrc = fnSource('function recordVersionOf(record)');
 const rawCacheKeySrc = fnSource('function rawCacheKey(index)');
 if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGenerationSrc
-  || !displayedRecordVersionSrc || !rawCacheKeySrc) {
+  || !recordVersionOfSrc || !rawCacheKeySrc) {
   failures.push('secondary reads: could not lift requestRaw, requestDetail and the session they ask for');
 } else {
   vm.runInContext(displayedSessionSrc + '\n' + displayedGenerationSrc + '\n'
-    + displayedRecordVersionSrc + '\n'
+    + recordVersionOfSrc + '\n'
     + requestRawSrc + '\n' + requestDetailSrc + '\n' + rawCacheKeySrc, sandbox);
 
   const secondary = [];
@@ -2058,8 +2133,8 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
     flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
     generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
   };
-  await sandbox.requestRaw(1);
-  await sandbox.requestDetail(1);
+  await sandbox.requestRaw(1, 'the-version-of-record-one');
+  await sandbox.requestDetail(1, 'the-version-of-record-one');
   check('a raw read asks for the session on screen',
     /[?&]session=mvs_displayed(&|$)/.test(secondary[0]), true);
   check('and it does not ask for whatever is current now',
@@ -2081,8 +2156,8 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
     flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
     generation: 7, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
   };
-  await sandbox.requestRaw(1);
-  await sandbox.requestDetail(1);
+  await sandbox.requestRaw(1, 'the-version-of-record-one');
+  await sandbox.requestDetail(1, 'the-version-of-record-one');
   check('a raw read asks for the slice on screen',
     /[?&]generation=2(&|$)/.test(secondary[2]), true);
   check('and not for the one the reader picked',
@@ -2106,9 +2181,74 @@ if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGen
   // With nothing on screen there is no session to name, and the read falls back to the session
   // parameter rather than sending an empty one.
   sandbox.state = { payload: null, generation: null, etag: '', followLatest: true, sessionId: '', hostSessionId: '' };
-  await sandbox.requestRaw(1);
+  await sandbox.requestRaw(1, 'the-version-of-record-one');
   check('with no body on screen the read falls back to the current session',
     /[?&]session=latest(&|$)/.test(secondary[4]), true);
+}
+
+/* A read that is retried must ask about the SAME record.
+ *
+ * The retry exists because the service let go of the session: it reloads the body and asks again.
+ * The body it reloads is a DIFFERENT one — the transcript moved while the tab was open — so a
+ * version read off the screen at that moment belongs to the NEW body's record at that index, and
+ * the retry is a different question wearing the same question's clothes. The service would answer
+ * it, because it is a perfectly good question about a perfectly good record: the wrong one.
+ *
+ * So the version travels with the RECORD the reader opened, and the reload does not change it. */
+{
+  const fetchRawSrc = fnSource('function fetchRaw(record, retried)');
+  const fetchDetailSrc = fnSource('function fetchDetail(record, retried)');
+  const requestDetailSrc2 = fnSource('function requestDetail(index, version)');
+  const isCountSrc = fnSource('function isCount(value)');
+  if (!fetchRawSrc || !fetchDetailSrc || !requestRawSrc || !requestDetailSrc2 || !isCountSrc
+    || !recordVersionOfSrc) {
+    failures.push('secondary read retry: could not lift fetchRaw, fetchDetail and the requests they make');
+  } else {
+    vm.runInContext('var rawCache = {};\nvar rawPending = {};\nvar detailCache = {};\nvar detailPending = {};\n'
+      + isCountSrc + '\n' + recordVersionOfSrc + '\n'
+      + requestRawSrc + '\n' + requestDetailSrc2 + '\n'
+      + fetchRawSrc + '\n' + fetchDetailSrc, sandbox);
+
+    const retried = [];
+    let attempts = 0;
+    sandbox.fetch = function (url) {
+      retried.push(String(url));
+      attempts += 1;
+      if (attempts === 1 || attempts === 3) {
+        return Promise.resolve({ ok: false, status: 503,
+          json: () => Promise.resolve({ error: 'trajectory_not_cached' }) });
+      }
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve({ raw: 'ALPHA BODY', index: 1, text: 'ALPHA BODY', omitted: false }) });
+    };
+    // The reload is what brings the NEW body: the same index, another record. A version read off
+    // the screen after this point is the new record's version, and the retry would be asking
+    // about it.
+    sandbox.fetchTrajectory = function () {
+      sandbox.state.flat = [{ turn: {}, record: { index: 1, v: 'a-newer-version' } }];
+      return Promise.resolve();
+    };
+    sandbox.state = {
+      payload: { session: { id: 'mvs_displayed', generation: null } },
+      flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
+      generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
+    };
+    const opened = { index: 1, v: 'the-version-of-record-one' };
+    await sandbox.fetchRaw(opened);
+    await sandbox.fetchDetail(opened);
+    check('the first read names the version of the record the reader opened',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[0] || ''), true);
+    check('a read that is retried asks about that same record',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[1] || ''), true);
+    check('and not about the record that happens to be at that index after the reload',
+      /[?&]v=a-newer-version(&|$)/.test(retried[1] || ''), false);
+    check('and the same for the record\'s fields',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[2] || ''), true);
+    check('a field read that is retried asks about that same record too',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[3] || ''), true);
+    check('and not about the record that happens to be at that index after the reload',
+      /[?&]v=a-newer-version(&|$)/.test(retried[3] || ''), false);
+  }
 }
 
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');

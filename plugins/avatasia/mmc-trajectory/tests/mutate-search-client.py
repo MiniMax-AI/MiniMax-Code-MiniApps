@@ -74,8 +74,8 @@ MUTATIONS = [
     ),
     (
         "the needle is sent without the generation, so a slice search answers about the whole lineage",
-        "          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)));",
-        "          + '';",
+        "          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)))",
+        "          + ''",
     ),
     (
         "the hit set is built from the summaries rather than the indexes, so it can never match a row",
@@ -181,17 +181,75 @@ MUTATIONS = [
     ),
     (
         "the raw read stops naming the version of the record it asks for",
-        "        // apart instead of serving the newer record under the older one's number.\n"
-        "        var version = displayedRecordVersion(index);\n"
+        "        // the retry is a different question wearing the same question's clothes.\n"
         "        if (version) url += '&v=' + encodeURIComponent(version);",
-        "        // apart instead of serving the newer record under the older one's number.",
+        "        // the retry is a different question wearing the same question's clothes.",
     ),
     (
         "the record read stops naming the version of the record it asks for",
-        "        // refuse when the position it would answer is a different record than the one opened.\n"
-        "        var version = displayedRecordVersion(index);\n"
+        "        // The same record, the same way: the version travels with the request so the service can\n"
+        "        // refuse when the position it would answer is a different record than the one opened — and\n"
+        "        // it is the record's own version, so a retry after a reload asks about the same record.\n"
         "        if (version) url += '&v=' + encodeURIComponent(version);",
-        "        // refuse when the position it would answer is a different record than the one opened.",
+        "        // The same record, the same way: the version travels with the request so the service can\n"
+        "        // refuse when the position it would answer is a different record than the one opened — and\n"
+        "        // it is the record's own version, so a retry after a reload asks about the same record.",
+    ),
+    # ---- the version travels with the RECORD, not with the screen ------------------------
+    #
+    # A read that comes back 「this session is not cached」 reloads the body and asks again. The
+    # body it reloads is a DIFFERENT one — the transcript moved while the tab was open — so a
+    # version read off the screen at that moment belongs to the NEW body's record at that index,
+    # and the retry is a different question wearing the same question's clothes. The service
+    # answers it, because it is a perfectly good question about a perfectly good record: the
+    # wrong one.
+    #
+    # So the version comes from the record the reader opened, and this control is the old way
+    # round: the version of whatever is at that index NOW.
+    (
+        "a read takes the version of the record now on screen instead of the one the reader opened",
+        "      function recordVersionOf(record) {\n"
+        "        return record && typeof record.v === 'string' ? record.v : '';\n"
+        "      }",
+        "      function recordVersionOf(record) {\n"
+        "        var flat = Array.isArray(state.flat) ? state.flat : [];\n"
+        "        for (var i = 0; i < flat.length; i += 1) {\n"
+        "          var entry = flat[i];\n"
+        "          var shown = entry && entry.record ? entry.record : entry;\n"
+        "          if (shown && shown.index === (record && record.index)) {\n"
+        "            return typeof shown.v === 'string' ? shown.v : '';\n"
+        "          }\n"
+        "        }\n"
+        "        return '';\n"
+        "      }",
+    ),
+    # ---- the answer has to be about the SET the page is showing --------------------------
+    #
+    # A search answer says 「these records match and the rest do not」, and the part of it that
+    # matters to the reader is the part it does NOT name: a record this body has and that body
+    # does not match gets dimmed as if it did not contain the needle, with nothing saying so.
+    #
+    # So the request says which set it is about — how many records the page has, and a
+    # fingerprint of their versions — and the service answers only if it searched THAT set.
+    (
+        "the search stops saying which set of records it is about",
+        "          + '&n=' + versions.length\n"
+        "          + '&fp=' + encodeURIComponent(recordSetFingerprint(versions));",
+        "          + '';",
+    ),
+    (
+        "the search says how many records it is about, but not which ones",
+        "          + '&n=' + versions.length\n"
+        "          + '&fp=' + encodeURIComponent(recordSetFingerprint(versions));",
+        "          + '&n=' + versions.length;",
+    ),
+    (
+        "a refusal from the service is treated as an ordinary failure instead of asking again",
+        "            if (error && error.code === 'search_version_mismatch') {\n"
+        "              searchAnswerDoesNotApply();\n"
+        "              return;\n"
+        "            }",
+        "",
     ),
 ]
 

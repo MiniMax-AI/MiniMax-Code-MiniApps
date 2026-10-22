@@ -42,6 +42,7 @@ import {
   readSegmentHits,
   sameSource,
   scanSegment,
+  segmentVersions,
   searchSurfaceOf,
 } from '../miniapp/node/search-segments.mjs';
 
@@ -478,6 +479,8 @@ try {
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], size: 101 }])) === null);
   assert('a source whose revision changed refuses the segment',
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], revision: 'sha256:' + 'f'.repeat(64) }])) === null);
+  assert('a source whose mtime changed refuses the segment, so a rewrite that kept the length is not reused',
+    (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], mtimeMs: 999 }])) === null);
   assert('a renamed source refuses the segment',
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], fileName: 'x.jsonl' }])) === null);
   assert('a source that went away refuses the segment',
@@ -560,6 +563,53 @@ assert('an older artifact that predates the field is rebuilt rather than trusted
 assert('the comparison is in this module and not only in the caller',
   /if \(\(a\.truncated === true\) !== \(b\.truncated === true\)\) return false;/.test(
     source.split('export function sameSource')[1] || ''));
+
+/* ---------------------------------------------------------------------
+ * The source identity has to see a rewrite that kept the LENGTH.
+ *
+ * `size` is the whole file whether or not the read covered it, and a transcript rewritten in
+ * place keeps its length: "ALPHA BODY" becomes "BRAVO BODY" and the file is the same size. Every
+ * other part of this process treats (size, mtime) as a file's identity — the parsed-rows cache
+ * keys on it and the trajectory entry keys on it — so a file that was rewritten in place is a
+ * DIFFERENT file to everything else in here, and a segment built from the old bytes must not be
+ * served as if it were built from the new ones.
+ *
+ * The old wording of this rule said "identity, not mtime", because a sealed file is not written
+ * to and a reader that treated a touch as a change would rebuild correct bytes. That was true and
+ * it was the wrong question: the file that is written to is the active one, and it is exactly the
+ * one whose bytes can change under a size that did not.
+ * --------------------------------------------------------------------- */
+const ACTIVE_SOURCE = { fileName: 'messages.jsonl', generation: null, size: 500, mtimeMs: 1000, revision: null };
+check('an active file rewritten in place is not the same source',
+  sameSource([{ ...ACTIVE_SOURCE }], [{ ...ACTIVE_SOURCE, mtimeMs: 2000 }]), false);
+check('and the same file untouched is',
+  sameSource([{ ...ACTIVE_SOURCE }], [{ ...ACTIVE_SOURCE }]), true);
+check('and a rewrite that also changed the length is not either',
+  sameSource([{ ...ACTIVE_SOURCE }], [{ ...ACTIVE_SOURCE, size: 501, mtimeMs: 2000 }]), false);
+check('and a sealed file is judged the same way, because a sealed file can be rewritten too',
+  sameSource([{ fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 1000, revision: 'r1' }],
+    [{ fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 2000, revision: 'r1' }]), false);
+
+/* ---------------------------------------------------------------------
+ * The versions of the records a segment covers, read back out of the lines themselves.
+ *
+ * The service folds them into the fingerprint that says whether an answer is about the body the
+ * page is showing, and the answer it compares against carries the same versions. Two readings of
+ * one thing would be two answers, so the reading that is done by hand is pinned against the one
+ * that parses the line.
+ * --------------------------------------------------------------------- */
+const versionedRecords = RECORDS.map((r, i) => ({ ...r, index: i, v: 'version-' + i }));
+const versionedSurface = buildSegment({ records: versionedRecords }).surface;
+check('the versions of a segment can be read back in order',
+  segmentVersions(versionedSurface, versionedRecords.length),
+  versionedRecords.map((r) => r.v));
+check('and only as many as were asked for',
+  segmentVersions(versionedSurface, 2), ['version-0', 'version-1']);
+check('and the reading agrees with the answer the line carries',
+  segmentVersions(versionedSurface, versionedRecords.length),
+  readSegmentHits(versionedSurface, versionedRecords.map((_, i) => i)).map((h) => (h === null ? '' : h.v)));
+check('and an empty surface has no versions',
+  segmentVersions('', 10), []);
 
 /* --------------------------------------------------------------------- */
 

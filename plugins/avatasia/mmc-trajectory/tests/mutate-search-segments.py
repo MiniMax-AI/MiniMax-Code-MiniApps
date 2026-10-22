@@ -97,6 +97,26 @@ MUTATIONS = [
         "    if (typeof a.revision === 'string' && a.revision.length > 0\n      && typeof b.revision === 'string' && b.revision.length > 0 && a.revision !== b.revision) {\n      return false;\n    }\n",
         "",
     ),
+    (
+        # The one that was still wrong after the revision comparison was fixed: the ACTIVE file has
+        # no catalog entry, so it has no revision to compare, and a transcript rewritten in place
+        # keeps its length — so "ALPHA BODY" became "BRAVO BODY" and every comparison in the file
+        # said the same file. The mtime is the other half of this process's idea of a file's
+        # identity (the parsed-rows cache and the trajectory entry both key on (size, mtime)), so
+        # leaving it out is what let a segment built from the old bytes answer for the new ones.
+        "the mtime stops being compared, so a rewrite that kept the length is reused",
+        "    if (a.mtimeMs !== b.mtimeMs) return false;\n",
+        "",
+    ),
+    (
+        # The versions are read out of the lines by hand, so that a search over a big segment does
+        # not parse every line it does not need. A hand-reading is a second way to answer 「which
+        # version is this record」, and the two have to agree — the service folds them into the
+        # fingerprint that says whether an answer is about the body the page is showing.
+        "the versions of a segment's records are read as something else",
+        "    if (tab >= 0 && tab <= end) out.push(versionInAnswer(surface.slice(start, tab)));",
+        "    if (tab >= 0 && tab <= end) out.push(String(out.length));",
+    ),
     # ---- the rest of the contract ---------------------------------------------------------
     (
         "the needle floor is dropped, so one character is a search",

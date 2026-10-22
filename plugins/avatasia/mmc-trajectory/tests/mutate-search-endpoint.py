@@ -119,8 +119,8 @@ MUTATIONS = [
     ),
     (
         "the artifact path reports how many it sent instead of how many matched",
-        "    return { hits, total };",
-        "    return { hits, total: hits.length };",
+        "    return { hits, total, fingerprint: recordSetFingerprint(versions) };",
+        "    return { hits, total: hits.length, fingerprint: recordSetFingerprint(versions) };",
     ),
     (
         # The summary a hit answers with now lives on the segment line, so the mutation that swaps it
