@@ -75,6 +75,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [Anatomy 画廊](plugins/zch0227/anatomy-gallery/README.zh-CN.md) | 集中展示 anatomy 技能做出的交互式等距图解：按自建展区挂墙，全屏查看明暗两版，保留全部历史版本；在画廊里让 Agent 新建或修改作品，每次运行都有过程记录。自带 anatomy 技能。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
 | [仓库透视](plugins/yujiachen-y/repo-xray/README.zh-CN.md) | 从 Git 历史看懂一个代码仓库：可逐层下钻的代码地图、热点与 Bug 磁铁、高风险文件、负责人与知识流失、提交节奏与救火记录、技术栈；支持 GitHub、GitLab 和本机仓库，全部在本机分析 | [yujiachen-y](https://github.com/yujiachen-y) |
 | [磁盘透视](plugins/zch0227/disk-insight/README.zh-CN.md) | 查看 macOS 和 Windows 的磁盘空间去向：旭日图空间地图，按三档风险分类的垃圾文件，大文件和重复文件，代码仓库和 Git worktree 的占用；任何条目都可以问 Agent，选中的条目在确认框里逐一列出，确认后直接永久删除。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
+| [Regex Lab](plugins/lym308758/regex-lab/) | 实时正则工作台：用样例文本测试正则，逐条查看匹配与捕获组 / 命名组，并预览替换结果；计算全部在 Mini App 内完成，数据不出本机 | [lym308758](https://github.com/lym308758) |
 
 <details>
 <summary>预览：Token 用量看板</summary>

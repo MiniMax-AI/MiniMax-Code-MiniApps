@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "regex-lab",
+  "displayName": "Regex Lab · 正则实验室",
+  "version": "1.0.0",
+  "description": "A live regular-expression workbench inside MiniMax Code: test patterns against sample text, inspect every match with capture groups and named groups, and preview replacements. Runs entirely in the Mini App — no data leaves your machine.",
+  "author": "lym308758",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": [
+    "打开 Regex Lab 正则测试器",
+    "Open Regex Lab"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
