@@ -484,6 +484,50 @@ export function payloadRecordVersions(payload, limit) {
 }
 
 /**
+ * Whether a tail may be answered to a page that holds a particular set of records.
+ *
+ * A tail carries the records AFTER the page's cursor. The records before it are not in the tail
+ * at all — the page keeps the copies it has — so the tail is only about the page's copy if that
+ * copy is still the service's.
+ *
+ * A record rewritten in place keeps its index and its id, so the cursor still points at the same
+ * record, the tail looks empty, and the page merges nothing: it keeps the old text and installs
+ * the new body's validator. Nothing else in the protocol can see it, which is why the tail names
+ * the set it is about.
+ *
+ * So the page says which set it holds — how many records, and a fingerprint of their versions —
+ * and the service folds its own first N the same way. The two have to agree before a tail is
+ * answered with a tail. The count is the FIRST N for the reason the search has it: a page that is
+ * behind because the session grew has fewer records, not different ones.
+ *
+ * `null` means the tail may be answered. Otherwise the refusal, with the status and the code the
+ * page answers it by.
+ *
+ * @param {{ turns?: Array<any> }} payload the body the tail would be cut from
+ * @param {number} count how many records the page holds
+ * @param {string} askedFingerprint the fingerprint of those records' versions
+ * @returns {{ status: number, code: string, message: string } | null}
+ */
+export function deltaRefusal(payload, count, askedFingerprint) {
+  const fingerprint = typeof askedFingerprint === 'string' ? askedFingerprint.trim() : '';
+  if (!Number.isInteger(count) || count < 0 || !/^[0-9a-f]{16}$/.test(fingerprint)) {
+    return {
+      status: 400,
+      code: 'trajectory_fingerprint_required',
+      message: '会话已更新，请重新加载后再继续',
+    };
+  }
+  if (recordSetFingerprint(payloadRecordVersions(payload, count)) !== fingerprint) {
+    return {
+      status: 409,
+      code: 'trajectory_version_mismatch',
+      message: '该记录所在的版本已变化，请重新加载会话',
+    };
+  }
+  return null;
+}
+
+/**
  * Cheap single-pass counters used by the session list; values are approximate by design.
  *
  * Allocation-free apart from the turn-id set, which has to hold the ids to count them
@@ -4543,6 +4587,23 @@ export async function start(context) {
     // and not the server's work. Any reading of "41 MB → a few KB, so polling got faster"
     // has to carry that with it. Pinned by tests/verify-incremental.mjs.
     const since = parseSince(url.searchParams.get('since'));
+    if (since !== null) {
+      // WHICH SET the tail is about. The tail carries the records after the cursor; the ones
+      // before it stay as the page has them, so the tail is only about the page's copy if that
+      // copy is still this body's. A record rewritten in place keeps its index and its id, so
+      // the cursor still points at the same record and the tail looks empty — the page would
+      // keep the old text under the new body's validator, and nothing else in the protocol
+      // could see that it had changed.
+      const refusal = deltaRefusal(
+        payload,
+        Number.parseInt(url.searchParams.get('n') ?? '', 10),
+        url.searchParams.get('fp') ?? ''
+      );
+      if (refusal) {
+        sendError(response, refusal.status, refusal.code, refusal.message);
+        return;
+      }
+    }
     const delta = since === null ? null : buildDeltaPayload(payload, since);
     sendJsonBody(response, 200, delta === null ? body : JSON.stringify(delta), { etag, revalidate: true });
   };

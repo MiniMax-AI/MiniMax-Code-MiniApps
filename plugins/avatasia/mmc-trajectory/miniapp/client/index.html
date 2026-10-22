@@ -4242,6 +4242,39 @@
       }
 
       /**
+       * The set of records the page holds, as a request states it.
+       *
+       * The same question the search request asks, and for the same reason: the answer is about a
+       * SET of records, and a body can change without changing its shape — a record rewritten in
+       * place keeps every counter the same, so how many records the page has says nothing about
+       * whether its copies are still the service's. The versions do.
+       *
+       * @returns {{ count: number, fingerprint: string }}
+       */
+      function heldRecordSet() {
+        var versions = displayedRecordVersions();
+        return { count: versions.length, fingerprint: recordSetFingerprint(versions) };
+      }
+
+      /**
+       * The query a tail is asked with: the cursor, and the set the page holds.
+       *
+       * The cursor says how far the page got; the set says which records that is. A tail asked
+       * for without the set is a tail the service cannot answer without guessing: the records
+       * before the cursor are not in the tail, so the service would have no way of knowing
+       * whether the page's copies of them are still its own — and a record rewritten in place
+       * keeps its index and its id, so nothing else would say so either.
+       *
+       * @returns {string}
+       */
+      function tailQuery() {
+        var held = heldRecordSet();
+        return '&since=' + encodeURIComponent(String(state.since))
+          + '&n=' + held.count
+          + '&fp=' + encodeURIComponent(held.fingerprint);
+      }
+
+      /**
        * The version of one record, as the record itself carries it.
        *
        * The record, and NOT the body on screen. A read that comes back 「this session is not
@@ -4383,8 +4416,12 @@
           // and the delta only ever arrives when the session really did grow. A manual refresh
           // drops the cursor as well as the validator: it is asking for the truth from the
           // server, and a tail is not that.
+          //
+          // The tail says which set the page holds as well, because the records before the
+          // cursor are not in the tail: the service can only answer one if it knows that the
+          // page's copies of those records are still its own.
           + (!manual && state.sinceFor === cacheKey && state.since > 0
-            ? '&since=' + encodeURIComponent(String(state.since)) : '');
+            ? tailQuery() : '');
         var headers = { Accept: 'application/json' };
         // A manual refresh must always reach the server: drop the validator so the
         // response cannot be revalidated into a 304 the user did not ask for.
@@ -4464,6 +4501,15 @@
             if (seq !== refreshSeq) return;
             inflight = null;
             if (error && error.name === 'AbortError') return;
+            // The service will not answer a tail to a page whose copy is not the one it has, and
+            // it will not answer a tail asked for without saying which set the page holds.
+            // Either way the page's copy cannot be laid on top of what comes back, so the only
+            // answer left is the whole body — asked for again, without the cursor and without
+            // the validator that belonged to the copy that is gone.
+            if (isStaleCopyRefusal(error)) {
+              reloadWholeBody();
+              return;
+            }
             handleTrajectoryError(error);
           });
       }
@@ -4846,6 +4892,38 @@
         return false;
       }
 
+      /**
+       * The copy on screen is not the one the service has: the whole body is asked for again.
+       *
+       * The cursor goes with it — a cursor into a copy that no longer exists — and so does the
+       * validator, which described that copy. What comes back is the whole body, which is the
+       * one answer that cannot be laid on top of a stale copy.
+       */
+      function reloadWholeBody() {
+        state.since = null;
+        state.sinceFor = null;
+        state.loading = true;
+        render();
+        fetchTrajectory(true);
+      }
+
+      /**
+       * Whether the service's answer is a refusal to answer a tail to this page's copy.
+       *
+       * Two refusals, and both of them mean the same thing: the records the page holds are not
+       * the ones the service has — either because they have changed under it, or because the
+       * request never said which set it was holding. Neither is a failed poll: the request was
+       * answered, and the answer is that it cannot be answered with a tail.
+       *
+       * @param {any} error
+       * @returns {boolean}
+       */
+      function isStaleCopyRefusal(error) {
+        if (!error || typeof error.code !== 'string') return false;
+        return error.code === 'trajectory_version_mismatch'
+          || error.code === 'trajectory_fingerprint_required';
+      }
+
       function applyPayload(body, manual) {
         // A delta is only ever laid onto a payload this page actually has. Without one —
         // first load, a session switch, a manual refresh — the whole payload is the answer.
@@ -4854,11 +4932,7 @@
         // BEFORE the merge and returns early, because the alternative — merging it and noticing
         // afterwards — leaves records in the wrong turn with nothing to undo them.
         if (hasDelta && !deltaMatchesNumbering(state.payload, body)) {
-          state.since = null;
-          state.sinceFor = null;
-          state.loading = true;
-          render();
-          fetchTrajectory(true);
+          reloadWholeBody();
           return;
         }
         var mergeable = hasDelta;
@@ -7125,25 +7199,33 @@
       /**
        * Decide which groups give up their rows.
        *
-       * Two rules, and the order matters: a group the reader has left goes when the idle
-       * timeout has passed, and when more groups are live than the cap allows, the oldest goes
-       * first. The second is what bounds the memory.
+       * Three rules, and the order matters. A group the reader has left goes when the idle
+       * timeout has passed; when more groups are live than the cap allows, the oldest goes
+       * first; and the group the window is anchored on is none of the reader's visits at all,
+       * so it is counted rather than timed.
+       *
+       * That last one is what keeps the bound about the rows on screen. The anchored group
+       * holds its rows whatever the reader is doing — it is where the reader arrives, and every
+       * other group's height is predicted from it — so a bound on the reader's groups alone
+       * would leave one group holding its rows outside the count. Counting it here makes the
+       * two sets the same set: the groups that are live are the groups that hold their rows.
        *
        * This only decides. The rows themselves are taken away by the next build, which is the
        * one place that writes them, so there is no second writer of the rows and nothing to keep
        * in step.
        *
-       * @param {string} keepKey the group the reader is on, which is never released
+       * @param {string} keepKey the group the window is anchored on, which is never released
        */
       function releaseStaleGroups(keepKey) {
         var now = Date.now();
         var live = [];
+        // The anchored group is counted first and with the current time, so it is never the
+        // oldest one the cap reaches for. Its lease is not consulted: it does not have one.
+        ledgerStateOf(keepKey).live = true;
+        live.push({ key: keepKey, at: now });
         ledgerState.forEach(function (state, key) {
+          if (key === keepKey) return;
           if (!state.live) return;
-          if (key === keepKey) {
-            live.push({ key: key, at: state.lastSeen });
-            return;
-          }
           if (now - state.lastSeen >= LEDGER_IDLE_MS) {
             state.live = false;
             return;
@@ -7554,19 +7636,23 @@
             // that hides anything, so what is on screen is exactly what was selected.
             //
             // The rows are built for the groups the reader is on and released for the rest. What
-            // the reader gives up is the DOM, which is the whole cost: measured on a session of
-            // 47,937 records, the rows of 「显示全部」 are 438,986 nodes and about 470 MB of the
-            // renderer's private memory. What the reader does not give up is the height — a
-            // released group keeps the box it had, so the document under them does not change
-            // size when they scroll.
+            // the reader gives up is the DOM, which is the whole cost: measured on one session of
+            // about 50,600 records (2026-10-22), the rows of 「显示全部」 were 463,122 DOM nodes and
+            // the renderer's private memory read 785 to 820 MB; with only the groups the reader is
+            // on holding their rows, the same session measured 14,801 nodes and 199 to 268 MB.
+            // Those are measurements of one session, not bounds. What the reader does not give up
+            // is the height — a released group keeps the box it had, so the document under them
+            // does not change size when they scroll.
             var key = turnKey(group.turn);
+            // The rebuild is not a visit. The poll runs every eight seconds whether the reader
+            // is there or not, so a build that stamped the lease would renew it forever: the
+            // idle timeout could never pass, and the group the reader had left would keep its
+            // row DOM for the rest of the session. The lease belongs to the observer, which
+            // only speaks when the reader is actually at the group.
             var holds = ledgerHoldsRows(key, build.at === 1);
             var bands = fillGroupRows(holds ? list : null, group);
             if (holds) {
               section.setAttribute('data-rows', 'live');
-              var held = ledgerStateOf(key);
-              held.live = true;
-              held.lastSeen = Date.now();
             } else {
               section.setAttribute('data-rows', 'released');
               section.classList.add('is-released');
