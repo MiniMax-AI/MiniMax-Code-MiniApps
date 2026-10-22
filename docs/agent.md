@@ -19,6 +19,12 @@ at runtime; a page that only prepares text for the user to send should use
 
 - `agentAccess` in `miniapp/miniapp.json` is the only grant. Absent or `[]` means no access:
   `context.agent` is absent and page calls reject with `not_permitted`.
+- `"session.read"` (MiniMax Code 3.1.4 or later, observed on 3.1.4-preview) adds read access to
+  sessions: on the page, `agent.session()` with no argument returns the chat the Mini App is open in
+  (`sessionId`, `title`, `agent`, `status`, `workspaceDir`, `isDefaultWorkspace`, `createdAtMs`,
+  `updatedAtMs`, `model`, `lastAssistantText`) and rejects with `not_permitted` when it is not open
+  in a chat; `agent.session(sessionId)` reads one session and `agent.sessions()` lists the user's
+  sessions with their titles and folders. Read only what you need and say so in the README.
 - `agentConcurrency` (1–32, default 4) caps how many turns of this Mini App run at once. Each session
   runs one turn at a time. Further `run` / `answer` calls wait in order, up to four times
   `agentConcurrency`; beyond that they fail with `busy`.

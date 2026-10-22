@@ -115,9 +115,10 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
 - `hostConnectorAccess` is optional: `{ "providers": string[] }`, each matching
   `^[a-z0-9_-]{1,64}$` and unique. Declared providers are granted by the Host at install time; this
   repository does not document their use.
-- `agentAccess` is optional. The only allowed value is `["session.run"]`, which lets the Mini App
-  run Agent turns; absent or `[]` means no Agent access. See `docs/agent.md` before declaring it.
-  Requires MiniMax Code 3.1.2 or later.
+- `agentAccess` is optional: an array of `"session.run"` (run Agent turns) and `"session.read"`
+  (read sessions: the page's `agent.session()` returns the chat it is open in, see `docs/agent.md`).
+  Absent or `[]` means no Agent access. See `docs/agent.md` before declaring it. Requires MiniMax
+  Code 3.1.2 or later; `"session.read"` requires 3.1.4 or later.
 - `agentConcurrency` is optional: an integer from 1 to 32, default 4. It caps how many Agent turns
   of this Mini App run at once; it has no effect without `agentAccess`. Requires MiniMax Code 3.1.2
   or later.
@@ -172,6 +173,7 @@ the package cannot be installed there at all.
 | --- | --- | --- |
 | `agents` | `plugin.json` | 3.1.2 |
 | `agentAccess` | `miniapp/miniapp.json` | 3.1.2 |
+| `agentAccess` with `"session.read"` | `miniapp/miniapp.json` | 3.1.4 |
 | `agentConcurrency` | `miniapp/miniapp.json` | 3.1.2 |
 | `surface.window` | `miniapp/miniapp.json` | 3.1.2 |
 

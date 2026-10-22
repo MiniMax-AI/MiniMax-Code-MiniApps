@@ -7,6 +7,8 @@ export const HOST_VERSION = '3.1.2';
 export const FEATURE_MIN_HOST_VERSION = Object.freeze({
   agents: '3.1.2',
   agentAccess: '3.1.2',
+  // agentAccess "session.read": page agent.session() / agent.sessions(); observed on 3.1.4
+  'agentAccess.session.read': '3.1.4',
   agentConcurrency: '3.1.2',
   'surface.window': '3.1.2',
 });
@@ -82,7 +84,7 @@ export const SURFACE_WINDOW_DIMENSION_FIELDS = ['width', 'height', 'minWidth', '
 export const SURFACE_WINDOW_BOOLEAN_FIELDS = ['resizable', 'frame', 'transparent', 'alwaysOnTop', 'skipTaskbar', 'clickThrough'];
 export const SURFACE_WINDOW_DIMENSION_MIN = 200;
 export const SURFACE_WINDOW_DIMENSION_MAX = 10_000;
-export const AGENT_ACCESS_CAPABILITIES = new Set(['session.run']);
+export const AGENT_ACCESS_CAPABILITIES = new Set(['session.run', 'session.read']);
 export const AGENT_CONCURRENCY_MAX = 32;
 // The Host answers requests under this prefix itself; plugin routes there never work.
 export const RESERVED_ROUTE_PREFIX = '/__mavis';

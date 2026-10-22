@@ -21,5 +21,10 @@
       "server": "cq-viewer",
       "path": "/mcp/cq-viewer"
     }
-  ]
+  ],
+  "agentAccess": [
+    "session.run",
+    "session.read"
+  ],
+  "agentConcurrency": 2
 }
