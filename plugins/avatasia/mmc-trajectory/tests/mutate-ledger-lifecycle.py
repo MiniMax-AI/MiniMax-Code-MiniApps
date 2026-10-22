@@ -74,8 +74,8 @@ MUTATIONS = [
     # The bound is what makes the memory bounded rather than merely reduced: a reader who
     # scrolls through three hundred groups in a minute has been on all of them.
     ("the number of groups holding their rows is never bounded",
-     [("      if (live.length <= LEDGER_LIVE_GROUPS) return;\n",
-       "      if (true) return;\n")],
+     [("        if (live.length <= LEDGER_LIVE_GROUPS) return doomed;\n",
+       "        if (true) return doomed;\n")],
      "the number of groups holding their rows is bounded"),
 
     # The oldest goes first, which is the order the reader would choose. Sorting the other way
@@ -123,7 +123,8 @@ MUTATIONS = [
     # A group that is already holding its rows is filled by the build and then again by the
     # observer, and the second pass appends every row a second time.
     ("a group that is already holding its rows is filled a second time",
-     [("        if (section.getAttribute('data-rows') === 'live') return;\n", "")],
+     [("        var alreadyLive = section.getAttribute('data-rows') === 'live';\n",
+       "        var alreadyLive = false;\n")],
      "a group that is already holding its rows is not filled a second time"),
 
     # The first group of a window is where the reader arrives, and every other group's height
@@ -282,6 +283,37 @@ MUTATIONS = [
      [("holdLedgerHeight(dormant[d], heldLedgerHeight(content.key, dormantRows, content.bands, dormantPredicted, build.heights));",
        "holdLedgerHeight(dormant[d], dormantPredicted);")],
      "a released group keeps the height it was measured at in the first batch"),
+
+    # The build makes the first group of a window live, and it is laid out for real, but the
+    # build never measures — the measurement is the observer's. So the group the build made
+    # live has no height of its own until the observer looks at it, and the visit used to
+    # return early because the rows were already there. The group then fell back on the
+    # prediction when it was released: three rows and a band laid out at 1,000 px reserved
+    # 208 px, with not one row or band changed.
+    ("a group the build made live never records the height it was measured at",
+     [("        if (!alreadyLive || !state.height) measureLedgerGroup(section, group);\n",
+       "        if (!alreadyLive) measureLedgerGroup(section, group);\n")],
+     "a group built live keeps its measured height when a wider window releases it"),
+
+    # The bound is about what the reader is holding at this moment, not only about what a
+    # rebuild leaves behind. Without the cap on the visit path, a reader who walks through
+    # more groups than the cap allows between two rebuilds is holding all of them.
+    ("reader visits do not enforce the cap on the groups holding their rows",
+     [("        releaseLedgerRows(releaseStaleGroups(group.key));\n", "")],
+     "reader visits cannot increase the held row groups past the ceiling between rebuilds"),
+
+    # A group the cap released gives up its rows at once. The rows are the DOM, and a group
+    # that has given them up must not still be holding them.
+    ("a group the cap released keeps its rows",
+     [("          if (list) clear(list);\n", "")],
+     "a group the cap released holds no rows"),
+
+    # And it keeps the height it had. The height is the reader's place in a session they have
+    # scrolled through, and a group that has given up its rows without keeping it takes the
+    # document down under them.
+    ("a group the cap released keeps no reserved height",
+     [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));\n", "")],
+     "a group the cap released keeps its reserved height"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()

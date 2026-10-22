@@ -72,6 +72,8 @@ const LIFECYCLE_FNS = [
   'heldLedgerHeight',
   'fillGroupRows',
   'firstVisibleRow',
+  // The emptying of a list, which is how a group gives up its rows.
+  'clear',
   // The prediction itself, because the arithmetic of the prediction is half of what this file
   // has to prove: a band is an entry as well as a row, and a prediction that counts it as both
   // prices it twice.
@@ -89,6 +91,18 @@ if (missing.length) {
   for (const m of missing) console.error('  FAIL  the shipped script has no ' + m + '()');
   process.exit(1);
 }
+
+/*
+ * The two helpers the live-group measurement and the release of a visited group live in.
+ *
+ * They are lifted when the client has them and left out when it does not, and that is on
+ * purpose: this guard has to be runnable against the client as it was before the fix,
+ * because the proof that the new assertions fail is a run of this guard against the broken
+ * code. A client without them is a client whose visited groups are never measured and never
+ * released, and the assertions below say so by failing.
+ */
+const OPTIONAL_FNS = ['measureLedgerGroup', 'releaseLedgerRows'];
+const optionalSrc = OPTIONAL_FNS.map((name) => functionSource(name)).filter(Boolean);
 
 // The two limits are declarations, not functions, so they are lifted on their own. They are
 // numbers the shipped code reads, and the guard below uses the shipped values rather than
@@ -116,10 +130,23 @@ function makeEl(tag) {
     style: {},
     classes: new Set(),
     appendChild(child) { el.children.push(child); return child; },
+    removeChild(child) {
+      const at = el.children.indexOf(child);
+      if (at >= 0) el.children.splice(at, 1);
+      return child;
+    },
+    get firstChild() { return el.children.length ? el.children[0] : null; },
     setAttribute(name, value) { el.attrs[name] = String(value); },
     getAttribute(name) { return name in el.attrs ? el.attrs[name] : null; },
     querySelector(selector) { return queryOne(el, selector); },
-    querySelectorAll() { return []; },
+    // The one query the shipped code makes on the ledger: the sections of the table, in the
+    // order they were built. Every other query answers with an empty list.
+    querySelectorAll(selector) {
+      if (selector === ':scope > section.turn-group') {
+        return el.children.filter((c) => c && c.tagName === 'SECTION' && c.classes.has('turn-group'));
+      }
+      return [];
+    },
     getBoundingClientRect() { return { height: 240, width: 900, top: 0, bottom: 240 }; }
   };
   el.classList = {
@@ -170,7 +197,17 @@ function harness() {
     Date: { now: () => box.clock },
     ledgerState: new Map(),
     ledgerContent: new Map(),
-    el: (tag) => { const e = makeEl(tag); box.built.push(e); return e; },
+    // The ledger the table is in. The shipped code reads it when it has to take the rows out
+    // of a group the reader is no longer on.
+    dom: { ledger: makeEl('div') },
+    // The shipped el(tag, className), class and all: the class is what a section is found
+    // by, and a list without one is a list the shipped code cannot find.
+    el: (tag, className) => {
+      const e = makeEl(tag);
+      if (className) String(className).split(/\s+/).forEach((c) => { if (c) e.classes.add(c); });
+      box.built.push(e);
+      return e;
+    },
     railStates: (entries) => entries.map(() => null),
     buildRow: (entry) => {
       const e = makeEl('div');
@@ -188,7 +225,7 @@ function harness() {
   };
   vm.createContext(sandbox);
   vm.runInContext(
-    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + fnSrc.join('\n'),
+    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + fnSrc.join('\n') + '\n' + optionalSrc.join('\n'),
     sandbox
   );
   box.sandbox = sandbox;
@@ -215,6 +252,9 @@ function buildHarness(options) {
   s.anchor = null;
   s.scrollY = 0;
   s.ledger = makeEl('div');
+  // The ledger the table is in, which is where the shipped code looks for the groups it has
+  // to take the rows out of.
+  s.dom = { ledger: s.ledger };
   s.isCount = (n) => typeof n === 'number';
   s.DASH = '—';
   s.turnKey = (turn) => 'k' + turn.index;
@@ -588,6 +628,99 @@ function measureGroup(h, key, entries, bands, height) {
     s.ledgerHoldsRows('never-seen', true) === true);
   assert('a group nobody has been on does not hold its rows',
     s.ledgerHoldsRows('never-seen', false) === false);
+}
+
+/* ---------- 3d. a group the build made live keeps the height it was measured at ---------- */
+
+/*
+ * The build makes the first group of a window live, and that group is laid out for real:
+ * every other group's height is predicted from it. But the build never measures — the
+ * measurement is the observer's — so the group the build made live has no height of its own
+ * until somebody looks at it.
+ *
+ * The observer does look at it: it is in view, so it is visited. And the visit used to return
+ * early, because the rows were already there. So the group never recorded its height, and
+ * when the window widened and the group was released it fell back on the prediction: a group
+ * of three rows and a band, predicted at 208 px, standing in for a group laid out at 1,000 px,
+ * with not one row or band changed.
+ *
+ * The case below is that one: a window whose first group is live, a real height on it, a
+ * visit, a wider window, the idle time, a rebuild — and the height the group reserves.
+ */
+{
+  const h = buildHarness({ realPrediction: true });
+  const s = h.sandbox;
+  // The ledger's own query, so the pass that follows the calibration finds the groups the
+  // build released. The fake DOM answers every query with an empty list, and a build whose
+  // calibration pass finds nothing never sizes the groups it released.
+  s.ledger.querySelectorAll = (selector) => {
+    if (!/data-rows\s*=\s*"released"/.test(selector)) return [];
+    return s.ledger.children.filter((c) => c.getAttribute('data-rows') === 'released');
+  };
+  const groups = [
+    { turn: { index: 1 }, entries: entriesOf(3, 1, 'g0') },
+    { turn: { index: 2 }, entries: entriesOf(2, 0, 'g1') }
+  ];
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The first group is live, and it is really laid out at 1,000 px.
+  const first = sectionOf(h, 0);
+  first.getBoundingClientRect = () => ({ height: 1000, width: 900, top: 0, bottom: 1000 });
+  // The observer visits it: it is in view, and the rows are already there.
+  s.fillLedgerGroup(first);
+  // The window widens — a group comes in above it, so it is no longer the first one — and
+  // the reader walks away from it, so the idle time passes.
+  const wider = [
+    { turn: { index: 0 }, entries: entriesOf(2, 0, 'w0') },
+    { turn: { index: 1 }, entries: entriesOf(3, 1, 'g0') },
+    { turn: { index: 2 }, entries: entriesOf(2, 0, 'g1') }
+  ];
+  h.clock = 1000 + s.LEDGER_IDLE_MS + 1;
+  rebuild(h, wider);
+  assert('a group built live keeps its measured height when a wider window releases it',
+    sectionOf(h, 1).style.minHeight === '1000px');
+}
+
+/* ---------- 3e. the cap holds between the rebuilds too ---------- */
+
+/*
+ * The bound is about what the reader is holding at this moment. The rebuild enforces it, and
+ * so does the visit: a reader who walks through more groups than the cap allows between two
+ * rebuilds would otherwise be holding all of them, and the promise the cap makes would hold
+ * only right after a poll.
+ *
+ * The visits below are one after another, and each is within the idle timeout of the one
+ * before it, so the idle rule is not what releases the groups — the cap is. And the groups
+ * that are counted are the sections that really hold their rows, not the flags in the state.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const n = s.LEDGER_LIVE_GROUPS + 2;
+  const groups = [];
+  for (let i = 0; i < n; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(2, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  rebuild(h, groups);
+  // The reader walks through the window, one group at a time.
+  for (let i = 0; i < n; i += 1) {
+    h.clock += 10;
+    s.fillLedgerGroup(sectionOf(h, i));
+  }
+  const holding = s.ledger.children.filter((c) => {
+    const list = c.querySelector('ul.row-list');
+    return c.getAttribute('data-rows') === 'live' && !!list && list.children.length > 0;
+  });
+  assert('reader visits cannot increase the held row groups past the ceiling between rebuilds',
+    holding.length <= s.LEDGER_LIVE_GROUPS);
+  // And the group the cap released gives up its rows at once, and keeps the height it had.
+  const released = sectionOf(h, 0);
+  assert('a group the cap released holds no rows',
+    released.getAttribute('data-rows') === 'released'
+    && released.querySelector('ul.row-list').children.length === 0);
+  assert('a group the cap released keeps its reserved height',
+    typeof released.style.minHeight === 'string' && released.style.minHeight !== '');
 }
 
 /* ---------- 4. the rows come back when the reader reaches the group ---------- */
