@@ -1414,9 +1414,10 @@
          The rows are gone, so the box is empty — and an empty box is a box of no height, which is
          how the document under the reader loses the height of everything they have scrolled past.
          The height is written onto the group from JavaScript, from the height it had while it was
-         holding its rows, and it is the only thing that holds the box while the browser is
-         RENDERING the group rather than skipping it: `contain-intrinsic-size` sizes an element
-         the browser has skipped, and a group near the viewport is rendered.
+         holding its rows — brought up to date with what the group holds now, since the turn keeps
+         its key while its content changes — and it is the only thing that holds the box while the
+         browser is RENDERING the group rather than skipping it: `contain-intrinsic-size` sizes an
+         element the browser has skipped, and a group near the viewport is rendered.
 
          Measured, on a real session of 47,937 records: releasing the rows of the groups around
          the viewport took the scroll height down by 79,288 px, and releasing the viewport's own
@@ -7138,7 +7139,7 @@
        * place in it across that, and it is why the reader does not have to start again at the top
        * of the session on every tick.
        *
-       * @type {Map<string, {live: boolean, lastSeen: number, height: number}>}
+       * @type {Map<string, {live: boolean, lastSeen: number, height: number, heightRows: number, heightBands: number}>}
        */
       var ledgerState = new Map();
 
@@ -7165,13 +7166,18 @@
       /**
        * The state of one group, created on first sight.
        *
+       * `heightRows` and `heightBands` say what the measured height was a measurement OF. A
+       * height on its own describes a past: the group can hold a different number of rows by
+       * the time the height is read again, and without the two counts the difference cannot be
+       * charged to anything.
+       *
        * @param {string} key
-       * @returns {{live: boolean, lastSeen: number, height: number}}
+       * @returns {{live: boolean, lastSeen: number, height: number, heightRows: number, heightBands: number}}
        */
       function ledgerStateOf(key) {
         var state = ledgerState.get(key);
         if (!state) {
-          state = { live: false, lastSeen: 0, height: 0 };
+          state = { live: false, lastSeen: 0, height: 0, heightRows: 0, heightBands: 0 };
           ledgerState.set(key, state);
         }
         return state;
@@ -7266,6 +7272,13 @@
         // rather than the truth — which is why it is the remembered height and not the only one.
         sizeBuiltGroup(section);
         state.height = Math.round(section.getBoundingClientRect().height);
+        // What it was holding when it was measured, so that the height can be brought up to
+        // date with the content the group holds now. The group is keyed by the turn, and the
+        // turn keeps its key while its content changes — a late reply, a band from a
+        // compaction — so a height that is not read together with its counts describes a
+        // content that is no longer there.
+        state.heightRows = group.entries.length;
+        state.heightBands = group.bands || 0;
       }
 
       /**
@@ -7304,6 +7317,61 @@
       function holdLedgerHeight(section, height) {
         if (!(height > 0)) return;
         section.style.minHeight = Math.round(height) + 'px';
+      }
+
+      /**
+       * The height a released group should keep, brought up to date with what it holds now.
+       *
+       * The remembered height is a measurement of a past. It was taken when the group was
+       * holding a particular number of rows and bands, and the group can gain one of each
+       * after the reader has walked away from it — a late reply, a band from a compaction —
+       * because a group is keyed by its turn, and the turn keeps its key while its content
+       * changes. A height kept unchanged then describes content that is no longer there, and
+       * the document under the reader comes up short by exactly the rows that were added.
+       *
+       * So the difference between what the group holds now and what it held when it was
+       * measured is charged at the rates the prediction uses: a row's worth of height for
+       * every row added, a band's worth for every band. What is left of the measurement is
+       * the part that belongs to the group rather than to its content — its own header, its
+       * borders — and that is the part the prediction cannot know, because the prediction is
+       * priced from medians and this group's chrome is its own.
+       *
+       * The difference is local: the measured height is kept as it was, and only the rows
+       * that changed are priced. That is the whole difference between this and falling back
+       * on the prediction, which would price the whole group again — and a group's real
+       * height runs to several times the median one.
+       *
+       * The measurement is the observer's: it is taken when the group is really laid out.
+       * This reads it and never writes it, because a build that stamped one would be writing
+       * down a height it never measured.
+       *
+       * What this does not claim: the difference is priced at the calibrated heights, which
+       * are medians, so a group whose own rows are taller than the median one has its
+       * difference undercounted. The height is brought up to date; it is not a measurement of
+       * what the group holds now.
+       *
+       * @param {string} key
+       * @param {number} rows how many rows the group holds now
+       * @param {number} bands how many of them are compaction bands
+       * @param {number} predicted the height the shape of the group predicts
+       * @param {{head: number, row: number, band: number}|null} heights the calibrated heights
+       * @returns {number}
+       */
+      function heldLedgerHeight(key, rows, bands, predicted, heights) {
+        var state = ledgerState.get(key);
+        if (!state || !(state.height > 0)) return predicted;
+        // A height measured without knowing what was in the group cannot be brought up to
+        // date: there is no difference to charge.
+        if (typeof state.heightRows !== 'number') return predicted;
+        // No calibration yet, so a difference in rows cannot be turned into pixels. The
+        // measured height is stale rather than right, and a stale height is better than none:
+        // the first batch is re-sized from the calibration as soon as there is one.
+        if (!heights) return state.height;
+        var addedRows = rows - state.heightRows;
+        var addedBands = bands - state.heightBands;
+        if (!addedRows && !addedBands) return state.height;
+        var held = state.height + addedRows * heights.row + addedBands * heights.band;
+        return held > 0 ? held : predicted;
       }
 
       /**
@@ -7640,9 +7708,15 @@
             // about 50,600 records (2026-10-22), the rows of 「显示全部」 were 463,122 DOM nodes and
             // the renderer's private memory read 785 to 820 MB; with only the groups the reader is
             // on holding their rows, the same session measured 14,801 nodes and 199 to 268 MB.
-            // Those are measurements of one session, not bounds. What the reader does not give up
-            // is the height — a released group keeps the box it had, so the document under them
-            // does not change size when they scroll.
+            // Those are measurements of one session, not bounds: each run reads three positions
+            // and the figure above is the middle-of-session one, and the same build read 194.1 MB
+            // at the first position of one run and 269.8 MB at the last position of the other — a
+            // spread of 39% for the same code on the same afternoon. The service's own memory was
+            // not measured in these runs at all.
+            //
+            // What the reader does not give up is the height — a released group keeps the box it
+            // had, brought up to date with what it holds now, so the document under them does not
+            // change size when they scroll.
             var key = turnKey(group.turn);
             // The rebuild is not a visit. The poll runs every eight seconds whether the reader
             // is there or not, so a build that stamped the lease would renew it forever: the
@@ -7667,12 +7741,11 @@
             // below is what covers those groups.
             var predicted = applyIntrinsicSize(section, group.entries.length, bands, build.heights);
             if (!holds) {
-              // The height the group had while it was holding its rows, if it ever was; the
-              // prediction otherwise. A group that has never been on screen has no measured
-              // height, and the prediction is the best answer there is — the same answer the
-              // scrollbar is already giving.
-              var known = ledgerStateOf(key).height;
-              holdLedgerHeight(section, known > 0 ? known : predicted);
+              // The height the group had while it was holding its rows, brought up to date
+              // with the content it holds now; the prediction otherwise. A group that has
+              // never been on screen has no measured height, and the prediction is the best
+              // answer there is — the same answer the scrollbar is already giving.
+              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length, bands, predicted, build.heights));
             }
             ledger.appendChild(section);
             ledgerContent.set(section, { key: key, turn: group.turn, entries: group.entries, bands: bands });
