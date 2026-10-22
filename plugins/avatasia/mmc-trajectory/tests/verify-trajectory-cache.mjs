@@ -17,7 +17,7 @@
  * mutate-trajectory-cache.py breaks each of these in the shipped file.
  */
 import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile, utimes } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -390,6 +390,70 @@ try {
   ];
   await writeVersioned(ALPHA_LINES, 1791600000000);
 
+  // A conversation whose turn grouping is not its file order.
+  //
+  // The ledger draws turn by turn, and inside a turn the records in the order they were
+  // emitted — so the body of this one is [m1, m3, m2]: the first turn's two records together,
+  // then the second turn's one. The generation files hold [m1, m2] and then [m3], because the
+  // record that belongs to the FIRST turn arrived after the rotation.
+  //
+  // The two orders read one fact two ways, and they are not the same order: the first N records
+  // of the body and the first N records of the files are two different sets. A search that
+  // folds the files answers about the wrong one, and refuses a body that did not change.
+  const LEDGER = 'mvs_ledger_order';
+  const ledgerDir = join(sessionsRoot, '2026', '10', '22', '00-00-00-session_'
+    + Buffer.from(LEDGER, 'utf8').toString('base64url'));
+  const ledgerRow = (one) => JSON.stringify({
+    message_id: one.id,
+    turn_id: one.turn,
+    message: { role: 'user', content: one.body, timestamp: 1791600000000 },
+  }) + '\n';
+  await mkdir(join(ledgerDir, 'snapshots'), { recursive: true });
+  await writeFile(join(ledgerDir, 'snapshots', 'gen0.jsonl'), [
+    { id: 'm1', turn: 't1', body: 'LEDGER ORDER FIRST QUESTION' },
+    { id: 'm2', turn: 't2', body: 'LEDGER ORDER SECOND QUESTION' },
+  ].map(ledgerRow).join(''), 'utf8');
+  await writeFile(join(ledgerDir, 'messages.jsonl'), [
+    { id: 'm3', turn: 't1', body: 'LEDGER ORDER LATE ANSWER' },
+  ].map(ledgerRow).join(''), 'utf8');
+  await writeFile(join(ledgerDir, 'manifest.json'), JSON.stringify({ sessionId: LEDGER }), 'utf8');
+  // The catalog is what names the sealed generation. Without it the lineage is the active file
+  // alone, and there is no second generation for the turn grouping to disagree with.
+  await writeFile(join(ledgerDir, 'history-catalog.json'), JSON.stringify({
+    artifacts: [
+      { generation: 0, kind: 'snapshot', fileName: 'gen0.jsonl' },
+      { generation: 1, kind: 'active', fileName: 'messages.jsonl' },
+    ],
+  }), 'utf8');
+  const ledgerStamp = new Date(1791600000000);
+  await utimes(join(ledgerDir, 'messages.jsonl'), ledgerStamp, ledgerStamp);
+  await utimes(join(ledgerDir, 'snapshots', 'gen0.jsonl'), ledgerStamp, ledgerStamp);
+
+  // A conversation whose segment will not cover the whole body.
+  //
+  // A record with no locator names no file, so it belongs to no generation's segment — and the
+  // segments then cover fewer records than the body, which is a DIFFERENT set of records. The
+  // fold over that set is a fold over the wrong one, its fingerprint is not the one the page is
+  // holding, and the service refuses a body that did not change at all.
+  //
+  // Three records, so that a segment which covers two of them is visibly short.
+  const UNCOVERED = 'mvs_uncovered';
+  const uncoveredDir = join(sessionsRoot, '2026', '10', '22', '00-00-00-session_'
+    + Buffer.from(UNCOVERED, 'utf8').toString('base64url'));
+  await mkdir(uncoveredDir, { recursive: true });
+  await writeFile(join(uncoveredDir, 'messages.jsonl'), [
+    { id: 'm1', turn: 't1', body: 'UNCOVERED SET FIRST' },
+    { id: 'm2', turn: 't2', body: 'UNCOVERED SET SECOND' },
+    { id: 'm3', turn: 't3', body: 'UNCOVERED SET THIRD' },
+  ].map((one) => JSON.stringify({
+    message_id: one.id,
+    turn_id: one.turn,
+    message: { role: 'user', content: one.body, timestamp: 1791600000000 },
+  }) + '\n').join(''), 'utf8');
+  await writeFile(join(uncoveredDir, 'manifest.json'), JSON.stringify({ sessionId: UNCOVERED }), 'utf8');
+  const uncoveredStamp = new Date(1791600000000);
+  await utimes(join(uncoveredDir, 'messages.jsonl'), uncoveredStamp, uncoveredStamp);
+
   // The runtime database, which is the only place on this machine that knows which
   // conversation is live. ALPHA is live first; BRAVO becomes live later in this section.
   mkdirSync(join(home, 'v2', 'sqlite'), { recursive: true });
@@ -502,27 +566,60 @@ try {
 
   // The segments a search published, found by walking the data dir. Publishing them is a side
   // effect that nobody awaits, so the test waits for the file rather than for a promise.
-  const waitForSegments = async (dir) => {
-    const walk = async (current, found) => {
+  const surfacePaths = async (dir) => {
+    const found = [];
+    const walk = async (current) => {
       let entries = [];
       try {
         entries = await readdir(current, { withFileTypes: true });
       } catch {
-        return found;
+        return;
       }
       for (const entry of entries) {
         const full = join(current, entry.name);
-        if (entry.isDirectory()) await walk(full, found);
+        if (entry.isDirectory()) await walk(full);
         else if (entry.name === 'surface.txt') found.push(full);
       }
-      return found;
     };
+    await walk(dir);
+    return found;
+  };
+  const waitForSegments = async (dir) => {
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      const found = await walk(dir, []);
+      const found = await surfacePaths(dir);
       if (found.length > 0) return found;
       await new Promise((done) => setTimeout(done, 50));
     }
     return [];
+  };
+
+  // The surfaces that hold a given text. Every session's segments live under the same root, so
+  // they are told apart by what is IN them: the searchable text of the records they cover.
+  const waitForSegmentsWith = async (dir, marker, wanted) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const found = [];
+      for (const path of await surfacePaths(dir)) {
+        const text = await readFile(path, 'utf8');
+        if (text.includes(marker)) found.push(path);
+      }
+      if (found.length >= wanted) return found;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    return [];
+  };
+
+  // The manifest lands after the surface, so a segment that has just been published can be found
+  // before it can be read. Wait for the pair, not for the surface.
+  const waitForManifest = async (surfacePath) => {
+    const manifestPath = join(dirname(surfacePath), 'manifest.json');
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      try {
+        return { manifestPath, manifest: JSON.parse(await readFile(manifestPath, 'utf8')) };
+      } catch {
+        await new Promise((done) => setTimeout(done, 50));
+      }
+    }
+    return null;
   };
 
   try {
@@ -875,6 +972,166 @@ try {
     assert('a tail asked for without saying which set the page holds is refused rather than guessed at',
       unnamedTail.status === 400 && Boolean(unnamedTail.body)
       && unnamedTail.body.error === 'trajectory_fingerprint_required', why(unnamedTail));
+
+    // 6b — the set the segments stand for, when the ledger's order is not the files' order.
+    //
+    // The search answers about a SET of records, and the set is the first N of the body — the
+    // body in LEDGER order, which is turn by turn. The segments are one file per generation,
+    // read oldest first, and those are two different orders whenever a record that belongs to an
+    // EARLIER turn lives in a LATER file. That is what a turn that spans a rotation looks like,
+    // and it is the conversation the fixture above holds.
+    //
+    // So the fold has to be over the body's order, reconstructed from the segments. A fold over
+    // the files answers about a different set, the fingerprint of the first N does not match the
+    // one the page asked for, and the service refuses a body that did not change at all.
+    const ledgerBody = await get('/api/trajectory?session=' + LEDGER);
+    assert('the conversation whose turn grouping differs from its file order loads',
+      ledgerBody.status === 200 && Boolean(ledgerBody.body && ledgerBody.body.turns), why(ledgerBody));
+    // The order, written out by hand: the first turn holds the records 1 and 3, the second holds
+    // the record 2. The generation files hold 1 and 2, then 3.
+    const LEDGER_ORDER = [1, 3, 2];
+    const FILE_ORDER = [1, 2, 3];
+    check('the ledger draws the first turn with the record that arrived after the rotation',
+      (ledgerBody.body.turns || []).map((turn) => (turn.records || []).map((record) => record.index)),
+      [[1, 3], [2]]);
+    const ledgerVersionByIndex = new Map(
+      (ledgerBody.body.turns || []).flatMap((turn) => (turn.records || []))
+        .map((record) => [record.index, record.v]));
+    // The set the page holds: the versions of its records, in the order the ledger draws them.
+    // The ORDER is the one written out above and the versions are the page's own, so the
+    // expectation cannot move together with the answer it is checking — a fold computed with the
+    // function under test would.
+    const ledgerVersions = LEDGER_ORDER.map((index) => ledgerVersionByIndex.get(index) ?? '');
+    const fileVersions = FILE_ORDER.map((index) => ledgerVersionByIndex.get(index) ?? '');
+    const ledgerFingerprint = recordSetFingerprint(ledgerVersions);
+    assert('and the two orders really are two different sets, so this case can tell them apart',
+      ledgerFingerprint !== recordSetFingerprint(fileVersions));
+
+    // The first search finds no segment to answer from, so the rebuild answers it — and
+    // publishes the segments the next search is answered from.
+    const rebuilt = await get('/api/trajectory/search?session=' + LEDGER
+      + '&q=LEDGER ORDER&n=' + ledgerVersions.length + '&fp=' + ledgerFingerprint);
+    assert('the search answers the set the page holds',
+      rebuilt.status === 200, why(rebuilt));
+    check('and it reports the records that match',
+      (rebuilt.body && rebuilt.body.hits ? rebuilt.body.hits : []).map((hit) => hit.index), [1, 3, 2]);
+    const ledgerSurfaces = await waitForSegmentsWith(home, 'ledger order', 2);
+    assert('and the search published a segment for each of the two generations',
+      ledgerSurfaces.length === 2, 'surfaces holding the marker: ' + ledgerSurfaces.length);
+
+    // THE REBUILD IS TAKEN OUT OF THE PICTURE, so that the answers below can only be the
+    // segments'. The active file's line stops parsing while the file keeps its length and its
+    // timestamp, so the segments still match their source — and a rebuild would see a body
+    // without the record that arrived late. The service is restarted because the rendered body
+    // is cached under the file's size and timestamp, and both of those are unchanged.
+    const ledgerActive = join(ledgerDir, 'messages.jsonl');
+    const ledgerStat = await stat(ledgerActive);
+    const ledgerText = await readFile(ledgerActive, 'utf8');
+    // The colon after the message id becomes a letter: the line stops being JSON, and the file
+    // keeps every byte it had — a segment is reusable while its source is the same file, and a
+    // file's identity here is its size and its timestamp.
+    await writeFile(ledgerActive, ledgerText.replace('"message_id":', '"message_id"X'), 'utf8');
+    await utimes(ledgerActive, ledgerStat.mtimeMs / 1000, ledgerStat.mtimeMs / 1000);
+    await instance.dispose();
+    {
+      const restarted = await startService();
+      instance = restarted.instance;
+      base = restarted.base;
+    }
+    const onDisk = await get('/api/trajectory?session=' + LEDGER);
+    check('so the body on disk now holds only the records of the sealed generation',
+      (onDisk.body && onDisk.body.turns ? onDisk.body.turns : [])
+        .flatMap((turn) => (turn.records || [])).length, 2);
+
+    const cached = await get('/api/trajectory/search?session=' + LEDGER
+      + '&q=LEDGER ORDER&n=' + ledgerVersions.length + '&fp=' + ledgerFingerprint);
+    assert('a cached search accepts the unchanged displayed set when an earlier turn gains a record in a later generation',
+      cached.status === 200, why(cached));
+    // The hits come back in the ledger's order, which is the order the rebuild returns them in.
+    // The record's own number is NOT that order: the record that arrived for the first turn after
+    // the rotation is emitted last and drawn first, so the two orders really do differ here — the
+    // rebuild answers [1, 3, 2] and the segments hold [1, 2, 3].
+    assert('a cached search returns its hits in the same order the rebuild returns them',
+      JSON.stringify(cached.body && cached.body.hits) === JSON.stringify(rebuilt.body && rebuilt.body.hits),
+      'cached: ' + JSON.stringify(cached.body && cached.body.hits)
+      + ' rebuilt: ' + JSON.stringify(rebuilt.body && rebuilt.body.hits));
+    check('and the answer is the one the rebuild gave',
+      cached.body && cached.body.hits, rebuilt.body && rebuilt.body.hits);
+    check('and the count is the count',
+      cached.body && cached.body.total, rebuilt.body && rebuilt.body.total);
+
+    // A page that is behind is still answered, because its first records are the same ones. The
+    // body on disk holds two records, so a rebuild could not have answered this at all — which is
+    // what says the answer above came from the segments.
+    const ledgerBehind = await get('/api/trajectory/search?session=' + LEDGER
+      + '&q=LEDGER ORDER&n=2&fp=' + recordSetFingerprint(ledgerVersions.slice(0, 2)));
+    assert('and a page that is behind is still answered, because its first records are the same ones',
+      ledgerBehind.status === 200, why(ledgerBehind));
+
+    // And the refusal is still a refusal. The set the body on disk holds is the first two
+    // records in FILE order, which is not the first two in ledger order — so the segments do not
+    // stand for it, and a search that names it is refused rather than answered about the wrong
+    // set. A rebuild would have answered it, so the refusal says the segments answered.
+    const ledgerOtherSet = await get('/api/trajectory/search?session=' + LEDGER
+      + '&q=LEDGER ORDER&n=2&fp=' + recordSetFingerprint(fileVersions.slice(0, 2)));
+    assert('and a search that names a set the segments do not stand for is refused',
+      ledgerOtherSet.status === 409 && Boolean(ledgerOtherSet.body)
+      && ledgerOtherSet.body.error === 'search_version_mismatch', why(ledgerOtherSet));
+
+    // 6c — a set of segments that does not cover the whole body.
+    //
+    // The set a search is answered about is the first N records of the body, and the segments have
+    // to stand for THAT set. A record with no locator names no file, so it belongs to no
+    // generation's segment: the segments cover fewer records than the body, and the fold over them
+    // is a fold over a different set of records. The fingerprint of that set is not the one the
+    // page is holding, so the service refuses a body that did not change at all — and the reader is
+    // told the session moved when nothing moved.
+    //
+    // The route cannot produce that state today: every parsed row gets a locator, and a locator
+    // names a file that is in the lineage. So the state is put together by hand here — the state
+    // the segments would be in — and what is checked is the ANSWER: the search has to come from
+    // the rebuild, and it has to report every record that matches rather than the ones the
+    // segments happen to cover.
+    const uncoveredBody = await get('/api/trajectory?session=' + UNCOVERED);
+    const uncoveredVersions = versionsOf(uncoveredBody.body);
+    const uncoveredFingerprint = recordSetFingerprint(uncoveredVersions);
+    assert('the conversation whose segments will not cover the body holds three records',
+      uncoveredVersions.length === 3, 'records: ' + uncoveredVersions.length);
+    // The first search finds no segment to answer from, so the rebuild answers it — and publishes
+    // the segments the next search would be answered from.
+    const uncoveredRebuilt = await get('/api/trajectory/search?session=' + UNCOVERED
+      + '&q=UNCOVERED SET&n=' + uncoveredVersions.length + '&fp=' + uncoveredFingerprint);
+    assert('and it answers its search', uncoveredRebuilt.status === 200, why(uncoveredRebuilt));
+    const uncoveredSurfaces = await waitForSegmentsWith(home, 'uncovered set', 1);
+    assert('the search published a segment for it',
+      uncoveredSurfaces.length === 1, 'surfaces holding the marker: ' + uncoveredSurfaces.length);
+    if (uncoveredSurfaces.length === 1) {
+      const pair = await waitForManifest(uncoveredSurfaces[0]);
+      assert('the manifest beside it says how much of the body it does not cover', pair !== null);
+      if (pair !== null) {
+        check('which is nothing, because the segment covers the whole body',
+          pair.manifest.uncovered, 0);
+        // The segment is made to cover LESS than the body: the last record is taken out of the
+        // surface, the manifest is told about the shorter surface, and the manifest is told that it
+        // does not cover the whole body. The digest is fixed, so the pair still matches itself —
+        // the only thing wrong with it is that it does not stand for the body the page is holding.
+        const surface = await readFile(uncoveredSurfaces[0], 'utf8');
+        const shorter = surface.split('\n').slice(0, 2).join('\n');
+        await writeFile(uncoveredSurfaces[0], shorter);
+        pair.manifest.surfaceDigest = digestOf(shorter);
+        pair.manifest.surfaceBytes = Buffer.byteLength(shorter);
+        pair.manifest.recordCount = 2;
+        pair.manifest.uncovered = 1;
+        await writeFile(pair.manifestPath, JSON.stringify(pair.manifest));
+        const uncoveredAnswer = await get('/api/trajectory/search?session=' + UNCOVERED
+          + '&q=UNCOVERED SET&n=' + uncoveredVersions.length + '&fp=' + uncoveredFingerprint);
+        assert('a search whose segments do not cover the whole body is answered by the rebuild',
+          uncoveredAnswer.status === 200, why(uncoveredAnswer));
+        check('and the rebuild reports every record that matches, not the ones the segments cover',
+          (uncoveredAnswer.body && uncoveredAnswer.body.hits ? uncoveredAnswer.body.hits : [])
+            .map((hit) => hit.index), [1, 2, 3]);
+      }
+    }
   } finally {
     // The server is released here and not at the end of the happy path: an assertion that
     // throws would otherwise leave it listening, and the guard would hang instead of
@@ -903,6 +1160,23 @@ assert('the request resolves the session the family lookup is about, because a f
   startBody.includes("identityId: identity.id ?? ''"));
 assert('and the route records that session on the entry it stores',
   (startBody.match(/trajectoryCache\.set\(cacheKey, trajectoryCacheFamily\(entry\.dir, filter\), identity\.id \?\? ''/g) || []).length === 1);
+
+/* =====================================================================
+ * 8 — shape: the publish says how much of the body it does not cover
+ * ===================================================================== */
+
+// The reader's half of the rule is behavioural and lives in section 6c: a set of segments that does
+// not cover the whole body is refused, and the rebuild answers. The publisher's half is read out of
+// the source instead, and the reason is the same one that put the state together by hand in 6c —
+// the route cannot produce a record with no locator, so nothing that runs the route can observe what
+// the publish computes.
+//
+// So this is the claim that the count the publish writes into the manifest IS the count of the
+// records no segment covers: a publish that counted nothing would write 「the set covers the whole
+// body」 for a set that does not, and the reader would answer from it.
+assert('the publish counts the records no segment covers, and hands the count to the manifest',
+  startBody.includes('const uncovered = uncoveredRecordCount(fileIdxRows);')
+  && startBody.includes('        uncovered,\n'));
 
 if (failures.length) {
   console.error(`\n[trajectory-cache] ${failures.length} FAILED, ${pass} passed`);

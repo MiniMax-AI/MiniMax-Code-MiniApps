@@ -364,6 +364,64 @@ MUTATIONS = [
         "      sendJsonBody(response, 200, cached.body, { etag, revalidate: true });\n      return;\n",
         "      // the body is rebuilt below\n",
     ),
+    # ---- the order the first N records are folded over ---------------------------------
+    #
+    # The answer is about a SET of records, and the set is the first N of the body — the body in
+    # LEDGER order, which is turn by turn. The segments are one file per generation, read oldest
+    # first, and a record that belongs to an EARLIER turn can live in a LATER file: the first N
+    # records of the files are then not the first N records of the body. A fold over the files
+    # answers about a different set, the fingerprint of the first N does not match the one the
+    # page asked for, and the service refuses a body that did not change at all.
+    #
+    # The control below breaks the reconstruction by sorting on the record's own number, which is
+    # the order the files hold — the mistake reads as a simplification, because a record's number
+    # does order the records of one turn.
+    (
+        "the cached path folds the versions in the order the files hold them, not the order the ledger draws them",
+        SERVER,
+        "  placed.sort(byLedgerOrder);",
+        "  placed.sort((a, b) => a.index - b.index);",
+        "a cached search accepts the unchanged displayed set when an earlier turn gains a record in a later generation",
+    ),
+    (
+        # The hits are reported in the ledger's order, which is the order the rebuild reports them
+        # in. The record's own number is NOT that order: a record that belongs to an earlier turn
+        # and arrived after that turn was written is emitted later than a record of a later turn,
+        # and the ledger still draws it first. Sorted by the number alone, the cached path answers
+        # the same question in a different order — and two answers that differ only in order are
+        # two answers.
+        "the cached path sorts its hits by the record's number, so it answers in a different order than the rebuild",
+        SERVER,
+        "    hits.sort(byLedgerOrder);",
+        "    hits.sort((a, b) => a.index - b.index);",
+        "a cached search returns its hits in the same order the rebuild returns them",
+    ),
+    # ---- a set of segments that does not cover the whole body -------------------------------
+    #
+    # A record with no locator names no file, so it belongs to no generation's segment: the
+    # segments cover fewer records than the body, and the fold over them is a fold over a
+    # DIFFERENT set of records. The fingerprint of that set is not the one the page is holding, so
+    # the service refuses a body that did not change at all — and the reader is told the session
+    # moved when nothing moved.
+    #
+    # Two controls, one for each half. The reader's half is the refusal: without it the cached path
+    # answers from a set that is short. The publish's half is the count: a publish that counted
+    # nothing would write 「the set covers the whole body」 for a set that does not, and the reader
+    # would have nothing to refuse.
+    (
+        "the cached path answers from a set of segments that does not cover the whole body",
+        SERVER,
+        "      if (segment.manifest.uncovered > 0) return null;\n",
+        "",
+        "a search whose segments do not cover the whole body is answered by the rebuild",
+    ),
+    (
+        "the publish counts nothing, so a set that does not cover the body says it covers it",
+        SERVER,
+        "    const uncovered = uncoveredRecordCount(fileIdxRows);",
+        "    const uncovered = 0;",
+        "the publish counts the records no segment covers, and hands the count to the manifest",
+    ),
     # ---- the cap on the fold over the first N records ---------------------------------
     #
     # The cap is checked BEFORE the push, so a limit of zero is zero records. Checked after the

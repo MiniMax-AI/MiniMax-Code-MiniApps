@@ -117,6 +117,42 @@ MUTATIONS = [
         "    if (tab >= 0 && tab <= end) out.push(versionInAnswer(surface.slice(start, tab)));",
         "    if (tab >= 0 && tab <= end) out.push(String(out.length));",
     ),
+    (
+        # The ledger position of a record is what puts the records back where the body has them:
+        # the turn a record is in, and the record's own number in the body. The segments are one
+        # file per generation and the body is not in file order, so a fold over the files is a
+        # fold over a different set — and the answer is refused for a body that did not change.
+        # Reading the line's ordinal instead of the record's number makes the position say where
+        # the record sits IN THIS FILE, which is the order the wrong one.
+        "the record's own number is read as the line's ordinal, so the records cannot be put back in order",
+        "        index: numberInAnswer(answer, '\"index\":'),",
+        "        index: numberInAnswer(answer, '\"ordinal\":'),",
+    ),
+    (
+        # The turn a record is in is the other half of the position. Read as the record's own
+        # number, the two halves of the position become one, and the turns of the body are gone.
+        "the turn a record is in is read as its own number, so the ledger's order cannot be rebuilt",
+        "        turnIndex: numberInAnswer(answer, '\"turnIndex\":'),",
+        "        turnIndex: numberInAnswer(answer, '\"index\":'),",
+    ),
+    (
+        # The manifest has to say how many of the body's records the segments do NOT cover. A
+        # manifest that does not say cannot be told apart from one that says 「none」, and a set that
+        # covers part of the body is not the set the page is holding — so a reader that takes such a
+        # manifest for a complete one answers about a set nobody can name.
+        "a manifest that does not say what it does not cover is served anyway",
+        "      if (!Number.isInteger(manifest.uncovered) || manifest.uncovered < 0) return null;\n",
+        "",
+    ),
+    (
+        # The count itself: a record whose locator names no file in the table — and a record with no
+        # locator at all — belongs to no generation's segment, so no segment holds it. Counted as
+        # covered, the manifest says the set stands for the whole body, and the reader answers from
+        # a set that is one record short.
+        "the records no segment covers are counted as covered",
+        "    if (typeof row.fileIdx !== 'number' || !Number.isFinite(row.fileIdx) || row.fileIdx < 0) {\n      uncovered += 1;\n    }",
+        "    if (false) {\n      uncovered += 1;\n    }",
+    ),
     # ---- the rest of the contract ---------------------------------------------------------
     (
         "the needle floor is dropped, so one character is a search",

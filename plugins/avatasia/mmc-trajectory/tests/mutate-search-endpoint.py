@@ -123,6 +123,15 @@ MUTATIONS = [
         "    return { hits, total: hits.length, fingerprint: recordSetFingerprint(versions) };",
     ),
     (
+        # The two readings of "the versions of the first N records" have to agree, and the limit
+        # is read the same way in both: an explicit zero is zero records, and a missing, negative
+        # or fractional limit is every record. Read the other way round, a request for no records
+        # at all is answered about every record there is.
+        "the limit on the fold over the first N records is read as something else",
+        "  const wanted = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;",
+        "  const wanted = Number.isInteger(limit) && limit > 0 ? limit : Infinity;",
+    ),
+    (
         # The summary a hit answers with now lives on the segment line, so the mutation that swaps it
         # for the kind belongs with the module that writes it — mutate-search-segments.py.
         "writing the artifacts can fail the search that asked for them",
@@ -167,8 +176,8 @@ MUTATIONS = [
         # actually write instead of a revert. It trips both halves of the rule: the store's name and
         # the second directory it makes.
         "a second artifact store is written beside the segments, and nothing reads it",
-        "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        source: [files[fileIdx]],\n      });",
-        "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        source: [files[fileIdx]],\n      });\n      const indexStore = createSegmentStore(join(artifactRoot, 'index'));\n      await indexStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        source: [files[fileIdx]],\n      });",
+        "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        uncovered,\n        source: [files[fileIdx]],\n      });",
+        "      const segment = buildSegment({ records });\n      await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        uncovered,\n        source: [files[fileIdx]],\n      });\n      const indexStore = createSegmentStore(join(artifactRoot, 'index'));\n      await indexStore.write(sessionKey, viewKey, generationKeyValue, segment, {\n        generation,\n        uncovered,\n        source: [files[fileIdx]],\n      });",
     ),
 ]
 
