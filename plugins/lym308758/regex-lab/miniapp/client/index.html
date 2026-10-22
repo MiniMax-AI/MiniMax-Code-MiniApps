@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Regex Lab · 正则实验室</title>
+    <style>
+      :root {
+        --bg: #f6f7fb;
+        --panel: #ffffff;
+        --panel-2: #f0f2f8;
+        --text: #1c2230;
+        --muted: #6b7280;
+        --border: #e3e6ef;
+        --accent: #5b5bd6;
+        --accent-soft: #ececff;
+        --ok: #1f9d57;
+        --err: #d23b3b;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14161d;
+          --panel: #1d2029;
+          --panel-2: #232732;
+          --text: #e7e9f0;
+          --muted: #9aa1b1;
+          --border: #2c3140;
+          --accent: #8b8bff;
+          --accent-soft: #2a2c4a;
+          --ok: #4ad08a;
+          --err: #ff7b7b;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.5;
+      }
+      .wrap { max-width: 920px; margin: 0 auto; padding: 24px 18px 64px; }
+      header h1 { margin: 0 0 4px; font-size: 22px; }
+      header p { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 16px;
+      }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      input[type="text"], textarea {
+        width: 100%;
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text);
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px 11px;
+        outline: none;
+      }
+      input[type="text"]:focus, textarea:focus { border-color: var(--accent); }
+      textarea { min-height: 130px; resize: vertical; white-space: pre; overflow-wrap: normal; }
+      .pattern-wrap { display: flex; gap: 8px; align-items: stretch; }
+      .pattern-wrap .slash { display: flex; align-items: center; color: var(--muted); font-family: var(--mono); }
+      .pattern-wrap input { flex: 1; }
+      .flags { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+      .flag {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 12px; color: var(--muted); cursor: pointer; user-select: none;
+        background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px;
+      }
+      .flag input { accent-color: var(--accent); margin: 0; }
+      .flag.on { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+      .status { font-size: 13px; margin: 8px 0 0; min-height: 18px; }
+      .status.err { color: var(--err); }
+      .status.ok { color: var(--ok); }
+      h2 { font-size: 14px; margin: 0 0 10px; }
+      .match { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel-2); }
+      .match .head { display: flex; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      .match .val { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+      .match .grp { margin-top: 6px; font-size: 12px; color: var(--muted); }
+      .match .grp b { color: var(--text); font-weight: 600; }
+      code { font-family: var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+      .hint { font-size: 12px; color: var(--muted); }
+      .empty { color: var(--muted); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Regex Lab · 正则实验室</h1>
+        <p>实时测试正则表达式：逐条查看匹配、捕获组与命名组，并预览替换结果。计算全部在 Mini App 的 Node 后端完成，数据不出本机。</p>
+      </header>
+
+      <div class="panel">
+        <label for="pattern">Pattern</label>
+        <div class="pattern-wrap">
+          <span class="slash">/</span>
+          <input id="pattern" type="text" spellcheck="false" autocomplete="off" placeholder="例如 (?<year>\d{4})-(\d{2})" value="(?<year>\d{4})-(\d{2})-(\d{2})" />
+          <span class="slash">/</span>
+          <input id="flags" type="text" spellcheck="false" autocomplete="off" placeholder="gimsuy" value="g" style="width: 90px" />
+        </div>
+        <div class="flags" id="flagToggles">
+          <label class="flag"><input type="checkbox" data-flag="g" checked /> g 全局</label>
+          <label class="flag"><input type="checkbox" data-flag="i" /> i 忽略大小写</label>
+          <label class="flag"><input type="checkbox" data-flag="m" /> m 多行</label>
+          <label class="flag"><input type="checkbox" data-flag="s" /> s 单行</label>
+          <label class="flag"><input type="checkbox" data-flag="u" /> u Unicode</label>
+          <label class="flag"><input type="checkbox" data-flag="y" /> y 粘连</label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <label for="text">Sample text</label>
+        <textarea id="text" spellcheck="false">2024-01-15 released v2.
+2025-12-31 happy new year.
+Order 2023-06-30 shipped.</textarea>
+        <div class="status" id="status"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Matches</h2>
+        <div id="matches"><p class="empty">输入有效的正则后会在这里显示匹配结果。</p></div>
+      </div>
+
+      <div class="panel">
+        <label for="replacement">Replacement （支持 $1、$&lt;name&gt;、$$ 等）</label>
+        <input id="replacement" type="text" spellcheck="false" autocomplete="off" placeholder="例如 $<year>/$2/$3" value="$<year>/$2/$3" />
+        <h2 style="margin-top: 14px">Replaced result</h2>
+        <pre id="result" class="match" style="white-space: pre-wrap; word-break: break-all; margin: 0"></pre>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const patternEl = $('pattern');
+      const flagsEl = $('flags');
+      const textEl = $('text');
+      const replEl = $('replacement');
+      const statusEl = $('status');
+      const matchesEl = $('matches');
+      const resultEl = $('result');
+      const flagToggles = $('flagToggles');
+
+      function syncFlags() {
+        const set = new Set(flagsEl.value.split('').filter((c) => 'gimsuy'.includes(c)));
+        flagToggles.querySelectorAll('input[data-flag]').forEach((cb) => {
+          cb.checked = set.has(cb.dataset.flag);
+          cb.closest('.flag').classList.toggle('on', cb.checked);
+        });
+      }
+      flagsEl.addEventListener('input', syncFlags);
+      flagToggles.addEventListener('change', () => {
+        const active = [...flagToggles.querySelectorAll('input[data-flag]:checked')].map((cb) => cb.dataset.flag).join('');
+        flagsEl.value = active;
+        syncFlags();
+        run();
+      });
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      }
+
+      async function post(path, body) {
+        const res = await fetch(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        return res.json();
+      }
+
+      let timer = null;
+      function schedule() {
+        clearTimeout(timer);
+        timer = setTimeout(run, 180);
+      }
+      patternEl.addEventListener('input', schedule);
+      textEl.addEventListener('input', schedule);
+      replEl.addEventListener('input', schedule);
+
+      async function run() {
+        const pattern = patternEl.value;
+        const flags = flagsEl.value;
+        const text = textEl.value;
+        const replacement = replEl.value;
+
+        const match = await post('/api/match', { pattern, flags, text });
+        if (match.error) {
+          statusEl.className = 'status err';
+          statusEl.textContent = '⚠ ' + match.error;
+          matchesEl.innerHTML = '<p class="empty">正则无效。</p>';
+          resultEl.textContent = '';
+          return;
+        }
+        statusEl.className = 'status ok';
+        statusEl.textContent = match.global
+          ? `✓ 找到 ${match.count} 处匹配`
+          : `✓ ${match.count === 1 ? '找到 1 处匹配' : '未找到匹配'}`;
+
+        if (match.count === 0) {
+          matchesEl.innerHTML = '<p class="empty">没有匹配。</p>';
+        } else {
+          matchesEl.innerHTML = '';
+          match.matches.forEach((m, i) => {
+            const div = document.createElement('div');
+            div.className = 'match';
+            const head = document.createElement('div');
+            head.className = 'head';
+            head.append(`#${i + 1}　位置 ${m.index}–${m.end}`);
+            div.append(head);
+
+            const val = document.createElement('div');
+            val.className = 'val';
+            val.textContent = m.value === '' ? '（空匹配）' : m.value;
+            div.append(val);
+
+            if (m.groups.length > 0) {
+              const g = document.createElement('div');
+              g.className = 'grp';
+              const parts = m.groups
+                .map((grp, idx) => `<b>$${idx + 1}</b> ${grp.value === null ? '（未匹配）' : escapeHtml(grp.value)}`)
+                .join('　');
+              g.innerHTML = parts;
+              div.append(g);
+            }
+            if (m.namedGroups) {
+              const n = document.createElement('div');
+              n.className = 'grp';
+              const parts = Object.entries(m.namedGroups)
+                .map(([k, v]) => `<b>$${k}</b> ${escapeHtml(v)}`)
+                .join('　');
+              n.innerHTML = '命名组：' + parts;
+              div.append(n);
+            }
+            matchesEl.append(div);
+          });
+        }
+
+        const rep = await post('/api/replace', { pattern, flags, text, replacement });
+        if (rep.error) {
+          resultEl.textContent = '⚠ ' + rep.error;
+        } else {
+          resultEl.textContent = rep.result;
+        }
+      }
+
+      syncFlags();
+      run();
+    </script>
+  </body>
+</html>
