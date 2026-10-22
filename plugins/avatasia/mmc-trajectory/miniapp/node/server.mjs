@@ -4913,7 +4913,14 @@ export async function start(context) {
         // does not agree with this reader. Answering without it would quietly drop a record.
         if (hit === null) return null;
         total += 1;
-        if (hits.length < MAX_SEARCH_HITS) hits.push(hit);
+        // Every match is kept, and the cap is applied later. The cap is about WHICH records the
+        // answer is about, and the records that come first in the ledger's order are not the
+        // records that come first in the generations: a record that belongs to an earlier turn and
+        // arrived after that turn was written sits in a later file, and the ledger still draws it
+        // first. Truncating here would keep the first N in the order the generations happened to
+        // be in — a different SET of records, with the same count and the same fingerprint, which
+        // is the hardest kind of difference for anything downstream to notice.
+        hits.push(hit);
       }
       // The position and the version of every record this generation holds, read from the surface
       // the segment already holds rather than from a second copy of it: both are on every line,
@@ -4936,7 +4943,15 @@ export async function start(context) {
     // only in order are two answers, so the cached path reports its hits in the same order the
     // rebuild does.
     hits.sort(byLedgerOrder);
-    return { hits, total, fingerprint: recordSetFingerprint(versions) };
+    // The cap is applied HERE, after the order is restored — the first N in the ledger's order is
+    // what the rebuilt path returns, and the two paths have to answer with the same records, not
+    // merely with the same number of them.
+    //
+    // The cost is that every match is held for the length of the walk. That is the same order of
+    // magnitude as the body this path exists to avoid reading, and it is released with the
+    // request. Capping the cache by bytes is a separate piece of work.
+    const capped = hits.length > MAX_SEARCH_HITS ? hits.slice(0, MAX_SEARCH_HITS) : hits;
+    return { hits: capped, total, fingerprint: recordSetFingerprint(versions) };
   };
 
   /**
