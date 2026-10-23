@@ -714,9 +714,20 @@ const SERVER_MASK = codeMask(SERVER);
 // owners of the number read the annotation and report the promise to be sound. A preferred
 // spelling does not establish which sentence is the reader's promise, so the form accepts every
 // spelling of the unit and the VALUE is read in the unit the sentence wrote it in.
-const PROMISE_UNIT = /\b(?:ms|msec|msecs|milli(?:s|second|seconds)?|s|sec|secs|second|seconds)\b/i;
-// The number in brackets, in the unit that follows it.
-const PROMISE_NUMBER = /\(\s*([\d,]+)\s*([a-z]+)\s*\)/gi;
+//
+// And the SHAPE of the number in the brackets does not make it a promise either. A locator that
+// recognises only the shapes it can read makes a promise written "600000.0 milliseconds" -- the
+// same number with a decimal point -- invisible, and the annotation beside it becomes the only
+// candidate and answers for it. So the SENTENCE is found by its shape: the word "minutes" and a
+// bracketed group. What is inside the brackets is then READ, and a group this reader cannot read
+// is REFUSED BY NAME rather than skipped -- a skipped form is a promise nobody looked at, and the
+// owners of the number would report the promise to be sound.
+const PROMISE_SHAPE = /\bminutes?\s*\(/i;
+// The bracketed group of a promise form, and the text inside it.
+const PROMISE_FORM = /\bminutes?\s*\(([^()]*)\)/gi;
+// The number in brackets, in the unit that follows it. The number may carry a decimal point:
+// "600000.0 milliseconds" states the number "600000 milliseconds" states.
+const PROMISE_NUMBER = /^\s*(\d[\d,]*(?:\.\d+)?)\s*([a-z]+)\s*$/i;
 // The value of a number written in a unit, in milliseconds. A unit this reader does not know
 // makes the number unreadable rather than a number in some other unit.
 const UNIT_IN_MS = {
@@ -733,53 +744,92 @@ const UNIT_IN_MS = {
   second: 1000,
   seconds: 1000,
 };
-const PROMISE_FORM = new RegExp('\\bminutes?\\s*\\(\\s*[\\d,]*\\s*' + PROMISE_UNIT.source + '\\s*\\)', 'i');
 const promiseSentencesOf = (block) => {
   if (block === null) return [];
   // The sentences of the block, keeping their terminators so a sentence can be recognised.
   const sentences = block.split(/(?<=\.)\s+/);
-  return sentences.filter((sentence) => PROMISE_FORM.test(sentence));
+  return sentences.filter((sentence) => PROMISE_SHAPE.test(sentence));
 };
-// Every number in brackets in the sentences that are candidates, each read in its OWN unit --
-// so "600000 milliseconds" is six hundred thousand and "750000 ms" is seven hundred and fifty
-// thousand, and both are milliseconds.
+// One promise form, read in its OWN unit -- so "600000 milliseconds" is six hundred thousand and
+// "750000 ms" is seven hundred and fifty thousand, and both are milliseconds.
 //
-// A number whose unit this reader does not know is NOT read as a number: it is left out, and the
-// count of what is left is what the owners below are given.
+// A group this reader cannot read is NOT read as a number in some other unit, and it is NOT
+// skipped either: it is counted, because a promise in a shape nobody can read is a diagnosis of
+// its own and not a number the owners below may compare.
+const readPromiseForm = (text) => {
+  const found = PROMISE_NUMBER.exec(text);
+  if (found === null) return null;
+  const factor = UNIT_IN_MS[found[2].toLowerCase()];
+  if (factor === undefined) return null;
+  return Number(found[1].replace(/,/g, '')) * factor;
+};
+// The promise forms of the candidate sentences: the text inside the brackets of each.
+const promiseFormsIn = (sentences) => {
+  const forms = [];
+  for (const sentence of sentences) {
+    for (const found of sentence.matchAll(PROMISE_FORM)) forms.push(found[1]);
+  }
+  return forms;
+};
+// Every number in brackets in the sentences that are candidates, each read in its own unit.
 const promisedNumbersIn = (sentences) => {
   const values = [];
-  for (const sentence of sentences) {
-    for (const found of sentence.matchAll(PROMISE_NUMBER)) {
-      const unit = found[2].toLowerCase();
-      const factor = UNIT_IN_MS[unit];
-      if (factor === undefined) continue;
-      values.push(Number(found[1].replace(/,/g, '')) * factor);
-    }
+  for (const form of promiseFormsIn(sentences)) {
+    const value = readPromiseForm(form);
+    if (value !== null) values.push(value);
   }
   return values;
 };
+// How many of those forms there are that this reader could not read.
+const unreadableFormsIn = (sentences) => {
+  let count = 0;
+  for (const form of promiseFormsIn(sentences)) {
+    if (readPromiseForm(form) === null) count += 1;
+  }
+  return count;
+};
 
-// The locator itself is held to the two rules it exists for.
+// The locator itself is held to the rules it exists for.
 //
-// The first: which sentence is the promise is not decided by a preferred spelling. A form that
-// only knows "ms" leaves a promise written "600000 milliseconds" invisible, and the annotation
-// beside it becomes the only candidate -- so both of the owners of the number read the annotation
-// and report the promise to be sound. So every spelling of the unit has to find the sentence.
+// The first: which sentence is the promise is not decided by the spelling of the unit, and not by
+// the shape of the number either. A form that only knows "ms" leaves a promise written "600000
+// milliseconds" invisible, and the annotation beside it becomes the only candidate -- so both of
+// the owners of the number read the annotation and report the promise to be sound. So every
+// spelling of the unit has to find the sentence -- including the spellings this reader cannot
+// read, because a promise in a shape nobody can read is still a promise, and a locator that
+// cannot see it lets the annotation beside it answer for it.
 //
-// The second: what has to be unique is the NUMBER. A sentence can carry two promise forms, joined
-// by punctuation that says nothing about which of them the service meant, and a count of sentences
-// would call that one promise.
+// The second: what has to be unique is the PROMISE, not the sentence. A sentence can carry two
+// promise forms, joined by punctuation that says nothing about which of them the service meant,
+// and a count of sentences would call that one promise.
 assert('the promise is found whatever spelling of the unit it is written in',
   promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 ms)').length === 1
   && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 milliseconds)').length === 1
   && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 msec)').length === 1
-  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 MS)').length === 1);
+  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 MS)').length === 1
+  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 millisec)').length === 1
+  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000.0 ms)').length === 1);
 assert('a number in brackets is read in the unit it is written in',
   JSON.stringify(promisedNumbersIn(['no later than twelve and a half minutes (750000 ms)'])) === '[750000]'
   && JSON.stringify(promisedNumbersIn(['no later than ten minutes (600000 milliseconds)'])) === '[600000]'
   && JSON.stringify(promisedNumbersIn(['no later than ten minutes (600 seconds)'])) === '[600000]'
   && JSON.stringify(promisedNumbersIn(['no later than twelve and a half minutes (750000 ms); '
     + 'no later than fourteen minutes (840000 ms)'])) === '[750000,840000]');
+// A number written with a decimal point states the number it states: "600000.0 milliseconds" is
+// the number "600000 milliseconds" states, and a reader that cannot read the point would make
+// the promise invisible.
+assert('a number in brackets written with a decimal point is the number it states',
+  readPromiseForm('600000.0 milliseconds') === 600000
+  && readPromiseForm('750000.0 ms') === 750000
+  && readPromiseForm('750000 ms') === 750000);
+// And a group this reader cannot read is REFUSED rather than skipped: a skipped form is a promise
+// nobody looked at, and the owners of the number would report the promise to be sound.
+assert('a number in brackets that this reader cannot read is refused rather than skipped',
+  readPromiseForm('600000 millisec') === null
+  && readPromiseForm('600000 m.s.') === null
+  && readPromiseForm('twelve and a half') === null
+  && unreadableFormsIn(['no later than ten minutes (600000 milliseconds)']) === 0
+  && unreadableFormsIn(['no later than ten minutes (600000 millisec)']) === 1);
 
 // The number words a promise may be written in.
 const UNITS = {
@@ -821,6 +871,9 @@ const SCALES = {
 const NUMBER_PARTS = new Set([...Object.keys(UNITS), ...Object.keys(TENS), ...Object.keys(SCALES),
   'dozen', 'score', 'and']);
 const DIGIT_PART = /^\d+(?:\.\d+)?$/;
+// A word that can be part of a number: one the tables know, or one written as digits -- "1,012.5"
+// is a number.
+const isNumberWord = (word) => NUMBER_PARTS.has(word) || DIGIT_PART.test(word);
 
 // The number a run of number words states, or null when the run does not state one.
 //
@@ -877,10 +930,11 @@ const parseNumberWords = (words) => {
 // The number a phrase of words states.
 //
 // The number is the TRAILING run of words that can be part of a number; the words before it belong
-// to the sentence around it, so "no later than twelve and a half" states twelve and a half. The
-// run is collected by its boundary rather than by the first word the parser fails to know, so a
-// phrase that holds a compound the parser does not state is reported as unreadable instead of
-// being answered with the part that happened to be understood.
+// to the sentence around it -- but only if every one of them is a word this reader knows cannot be
+// part of a number, so "no later than twelve and a half" states twelve and a half. The run is
+// collected by its boundary rather than by the first word the parser fails to know, so a phrase
+// that holds a compound the parser does not state is reported as unreadable instead of being
+// answered with the part that happened to be understood.
 //
 // "Collected by its boundary" is what makes that true, and the boundary has to be COLLECTED
 // rather than guessed. The run used to be found by walking back from the end of the phrase and
@@ -891,32 +945,42 @@ const parseNumberWords = (words) => {
 // table now knows the English scales, and a word it still does not know is REFUSED rather than
 // dropped -- so the phrase is reported as a number nobody can read.
 //
-// Refusing a word is only safe if the word really is part of the number. Two neighbours decide
-// that, and they are the tight ones: the word immediately to the LEFT of the run, and the word
-// immediately to the left of THAT.
+// Refusing a word is only safe if the word really is part of the number, and NO NEIGHBOUR can
+// tell that. Two neighbours used to decide it -- the word in front of the run, and the word in
+// front of that -- and a word two places away slipped between them: "one great myriad twelve
+// and a half" and "myriad myriad twelve and a half" both have an unsupported word in them, and
+// neither was refused, so the reader read the tail of the number and the tail agreed with the
+// promise's other form.
 //
-//   - The word just left of the run is part of the number when the word before it is a number
-//     word: "one myriad twelve" -- "myriad" sits between two number words, so it is one of
-//     them. A word with no number word before it ("within a few minutes") belongs to the
-//     sentence, and dropping it is correct.
-//   - The word in front of the run is the head of a number when it is the ONLY word in front of
-//     it: "myriad twelve and a half" is a number whose head this reader does not know, so the
-//     phrase is unreadable. Two or more words in front of the run ("within a few minutes") are
-//     the sentence around it, and the number in the run is the number.
+// The rule now is a list, not a guess. Every word in front of the number has to be a word this
+// reader KNOWS cannot be part of a number; a word that is not on the list is refused, because it
+// may be the head of a number this reader cannot read, and dropping it would leave the tail --
+// and a tail that happens to agree with the promise is the worst case there is.
 //
-// Both tests look at ONE neighbour each. A wider net -- "any number word anywhere to the left" --
-// reaches into the sentence around the phrase: "one sweep interval after the limit, twelve and a
-// half" would then be refused because of the "one" in "one sweep interval", and a promise that IS
-// readable would be reported as unreadable. That is worse than the hole it closes, so the net is
-// tight.
+// The list is closed on purpose, and that is the cost: a promise written with a lead-in this
+// reader has not heard of is reported as unreadable, which is a wrong answer about a promise that
+// is not broken. That cost is paid on purpose too, because the alternative is a silent wrong
+// answer: an unreadable promise is reported BY NAME (the owner of the minutes says it could not
+// read them) and the owners that depend on it hold vacuously and count themselves, so a promise
+// nobody can check is never mistaken for a promise that was checked and agreed.
 //
-// The head test has a cost, and it is paid on purpose. A promise whose minutes are written with
-// ONE context word stuck to the front of them -- "limit twelve and a half minutes" -- is a phrase
-// whose number this reader cannot locate, so it is reported as unreadable even though the two
-// forms agree. That is the wrong answer about a promise that is not broken, and it is the price of
-// not letting an unknown word be the head of a number. The promise the package ships is written
-// with the number on its own -- "twelve and a half minutes (750000 ms)" -- and that is the shape
-// the reader reads.
+// The promise the package ships is written with the number on its own -- the lead-in ends at the
+// dash in front of it -- so nothing stands in front of the number there and the list is consulted
+// only for a lead-in some other wording would introduce.
+const LEAD_IN = new Set([
+  'a', 'about', 'after', 'all', 'an', 'any', 'approximately', 'at', 'before', 'but', 'by',
+  'each', 'either', 'every', 'for', 'from', 'in', 'into', 'just', 'later', 'least', 'less',
+  'more', 'most', 'nearly', 'neither', 'no', 'not', 'of', 'off', 'on', 'once', 'only', 'or',
+  'other', 'over', 'per', 'roughly', 'since', 'some', 'than', 'that', 'the', 'their', 'then',
+  'there', 'these', 'this', 'those', 'to', 'under', 'until', 'up', 'upon', 'within', 'without',
+]);
+// A word the reader reads as part of a number may NOT be a lead-in word. If it were, the phrase
+// "one myriad twelve and a half" would have a lead-in this reader knows, and the unknown word in
+// the middle would be dropped -- and the reader would read the tail again, which is the hole the
+// list was built to close. So the two lists are disjoint, and this says so.
+assert('no word the reader reads as part of a number may be a lead-in word',
+  [...LEAD_IN].every((word) => !NUMBER_PARTS.has(word))
+  && [...LEAD_IN].every((word) => !isNumberWord(word)));
 const englishNumber = (text) => {
   // A thousands separator and an ampersand are INSIDE a number phrase, not around it: "one
   // thousand, twelve and a half" states ONE number, and "one hundred & twelve and a half" states
@@ -935,22 +999,19 @@ const englishNumber = (text) => {
     half = true;
     words.splice(words.length - 3, 3);
   }
-  // A word written as digits counts: "1,012.5" is a number.
-  const isNumberWord = (word) => NUMBER_PARTS.has(word) || DIGIT_PART.test(word);
   let start = words.length;
   while (start > 0 && isNumberWord(words[start - 1])) start -= 1;
   if (start === words.length) return null;
-  // The word the run stopped at is refused when the word before it is a number word: it sits
-  // between two number words, so it is one of them and this reader does not know it.
-  if (start >= 2 && isNumberWord(words[start - 2])) return null;
-  // And the word in front of the run is refused when it is the ONLY word in front of it and it is
-  // not a number word: then it is the head of a number this reader cannot read -- "myriad twelve
-  // and a half". Two or more words in front of the run are the sentence around it, and the number
-  // in the run is the number.
+  // Every word in front of the run has to be a word this reader KNOWS cannot be part of a number.
+  // A word that is not on that list may be the head of a number this reader cannot read -- "myriad
+  // twelve and a half" -- and dropping it would read the tail of the number instead, and a tail
+  // that agrees with the promise's other form is the worst case there is.
   //
   // The shipped promise is written with the number on its own -- "twelve and a half minutes
   // (750000 ms)" -- so nothing stands in front of the run there.
-  if (start === 1 && !isNumberWord(words[0])) return null;
+  for (let index = 0; index < start; index += 1) {
+    if (!LEAD_IN.has(words[index])) return null;
+  }
   const value = parseNumberWords(words.slice(start));
   if (value === null) return null;
   return half ? value + 0.5 : value;
@@ -994,7 +1055,20 @@ const minutesForm = (sentence) => {
   if (anchor === null) return { written: false, minutes: null };
   const at = anchor.index;
   let start = at;
-  while (start > 0 && PHRASE_CLASS.test(sentence[start - 1])) start -= 1;
+  while (start > 0 && PHRASE_CLASS.test(sentence[start - 1])) {
+    // A hyphen with a space on each side is a DASH, and the promise the package ships is written
+    // with one in front of it. A writer may write that dash as a hyphen instead of an em dash,
+    // and the scan has to stop there as well -- otherwise it walks on past the dash, eats the
+    // whole sentence, and the number in it ends up behind a lead-in of words nobody can vouch for
+    // ("one sweep interval after the limit - twelve and a half minutes"). The promise that is
+    // written that way is readable, so the reader has to read it.
+    //
+    // A hyphen INSIDE a word is not a dash: "twelve-and-a-half" is one number written with hyphens,
+    // and the scan has to walk over it.
+    if (start >= 2 && sentence[start - 1] === '-' && sentence[start - 2] === ' '
+      && sentence[start] === ' ') break;
+    start -= 1;
+  }
   // The scan has to stop where the PHRASE ends, not inside the number. A character that can carry a
   // number and that this scan cannot read is a sign that the phrase was cut in the middle of one,
   // and a phrase cut in the middle of a number is not a number: it is the tail of one. The minutes
@@ -1035,6 +1109,35 @@ assert('the promised minutes are read from the whole phrase, not from a tail of 
   && minutesForm('one trillion twelve and a half minutes (750000 ms)').minutes === 1000000000012.5
   && minutesForm('one myriad twelve and a half minutes (750000 ms)').minutes === null
   && minutesForm('myriad twelve and a half minutes (750000 ms)').minutes === null);
+// The words in front of the number are the sentence around it only when every one of them is a
+// word this reader knows cannot be part of a number. A word it does not know may be the head of a
+// number it cannot read, and dropping it would read the tail of the number instead -- and a tail
+// that happens to agree with the promise is the worst case there is.
+//
+// A NUMBER word in front of the number is the same failure from the other side, and it is why the
+// list and the number table are kept apart: "one more than twelve and a half" states THIRTEEN AND
+// A HALF, and a reader that read the tail would state twelve and a half -- a number that happens
+// to agree with the promise's other form. So a number word in front of the number is refused as
+// well.
+//
+// So a lead-in this reader knows is read past ("within twelve and a half" states twelve and a
+// half), and a lead-in it does not know makes the phrase unreadable -- loudly, by name, and never
+// by reading the tail.
+assert('a word in front of the number that the reader does not know makes the phrase unreadable',
+  minutesForm('within twelve and a half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('no later than twelve and a half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('one more than twelve and a half minutes (750000 ms)').minutes === null
+  && minutesForm('two no later than twelve and a half minutes (750000 ms)').minutes === null
+  && minutesForm('one great myriad twelve and a half minutes (750000 ms)').minutes === null
+  && minutesForm('myriad myriad twelve and a half minutes (750000 ms)').minutes === null
+  && minutesForm('no later than myriad twelve and a half minutes (750000 ms)').minutes === null);
+// The dash in front of the number ends the phrase, whichever dash it is written with. The promise
+// the package ships is written with an em dash, and a writer may write that same dash as a
+// hyphen: the number in front of it is the same number either way, and the reader has to read it.
+assert('a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen',
+  minutesForm('after the limit — twelve and a half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('after the limit - twelve and a half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5);
 
 // The lifetime the cache gives its rows when nobody tells it one, observed rather than read.
 //
@@ -1263,24 +1366,42 @@ assert('the shipped default is the interval the service declares',
 // gives its rows.
 const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS', SERVER_MASK);
 const promiseSentences = promiseSentencesOf(ttlDoc);
+// The promise forms of those sentences: how many times the block states the promise, and how many
+// of those forms this reader cannot read.
+const promiseForms = promiseFormsIn(promiseSentences);
+const unreadableForms = unreadableFormsIn(promiseSentences);
 // The numbers the candidate sentences state, read in their own units.
 const promisedNumbers = promisedNumbersIn(promiseSentences);
-// What has to be UNIQUE is the NUMBER, not the sentence. A sentence can carry two promise forms
+// What has to be UNIQUE is the PROMISE, not the sentence. A sentence can carry two promise forms
 // -- "annotation twelve and a half minutes (750000 ms); the rows are gone no later than fourteen
 // minutes (840000 ms)" -- and the punctuation that joins them says nothing about which of them
 // the service meant. Counting sentences would accept that as one promise, and the owner of the
 // bound would then accuse a limit that the block states correctly -- because the number it
 // accuses is one of two, and neither of them is THE number.
-const oneNumberInAll = promisedNumbers.length === 1;
+//
+// And a block that states the promise in two sentences is the same case: two forms, one of them
+// the annotation left beside the other.
+const onePromiseInAll = promiseForms.length === 1 && promiseSentences.length === 1;
+// What the owners of the number compare is ONE number that could be read. A form this reader
+// could not read is not a number, and a promise whose number is in a shape nobody can read is not
+// a promise anybody can compare.
+const oneNumberInAll = promisedNumbers.length === 1 && unreadableForms === 0;
 // The promise has to be READABLE, and it is readable only when the block states it once. A block
 // that states it twice is not a block with two promises to choose from: it is a block where the
 // promise cannot be told from the annotation beside it, and an owner that picks one of them accuses
 // the service of a number it never promised.
 assert('the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
-  promiseSentences.length === 1 && oneNumberInAll);
+  onePromiseInAll);
 const promiseSentence = promiseSentences.length === 1 ? promiseSentences[0] : null;
 const MINUTES_FORM = minutesForm(promiseSentence);
 const promisedMinutes = MINUTES_FORM.minutes;
+// Whether the minutes could be read at all. This is a fact about the PROMISE, and it is kept apart
+// from the two questions the owners below ask about it: whether the block states the promise once,
+// and whether the two forms agree. A promise whose minutes are in words nobody can read is neither
+// agreement nor disagreement -- there is no number to compare -- so the owner of the two forms must
+// not report a disagreement it did not find. It holds vacuously there, and counts itself, and the
+// owner further down names the failure.
+const minutesReadable = promisedMinutes !== null;
 const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
 // The owner of the number holds vacuously while the promise cannot be read: a number nobody could
 // locate is not a number the service stated wrongly. The reason it could not be located has its own
@@ -1289,13 +1410,22 @@ const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
 // "Could not be located" covers a block that states the promise more than once, and it covers a
 // sentence that states it twice. In both of those there is no single number to accuse -- the block
 // states one the service does honour, and accusing THAT would be accusing a rule nobody broke.
+const boundComparable = promiseSentences.length === 1 && oneNumberInAll;
 assert('the number promised to a reader is the limit plus one sweep interval',
   holds(oneNumberInAll
     && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL,
-  true, promiseSentences.length === 1 && oneNumberInAll));
-// The two forms have to be the SAME promise. A promise whose words cannot be read is not
-// agreement: the words are parsed completely above, so a phrase that is still not a number is a
-// promise nobody can check, and this owner says so rather than passing it.
+  true, boundComparable));
+// The two forms have to be the SAME promise. The two of them are a number of minutes and a number
+// of milliseconds, and a reader who is told one thing and gets another has been told a lie.
+//
+// What this owner CANNOT do is report a disagreement it did not find. The minutes are parsed
+// completely above, and a phrase that is still not a number is a promise nobody can check -- there
+// is no number on one side to compare with the number on the other, so there is no disagreement to
+// report either. Two forms that state the same number and a form that cannot be read at all are
+// two different facts, and only the first of them is this owner's.
+//
+// So when the minutes cannot be read, this owner holds vacuously and counts itself, and the owner
+// further down names the failure.
 //
 // And a promise that is written in only ONE of the two forms is nothing for this owner to
 // compare -- the minutes are there and the milliseconds are not, or the other way round. That is
@@ -1314,8 +1444,22 @@ const samePromiseInBothForms = promisedMinutes !== null
   && oneNumberInAll
   && Math.abs(promisedMinutes * 60_000 - promisedNumbers[0]) < 1;
 const bothFormsWritten = MINUTES_FORM.written && oneNumberInAll;
+const sameFormsComparable = bothFormsWritten && minutesReadable;
 assert('the promise to a reader is the same promise in both of the forms it is written in',
-  holds(samePromiseInBothForms, true, bothFormsWritten));
+  holds(samePromiseInBothForms, true, sameFormsComparable));
+
+// The two owners above compare numbers, and a number they could not read is not a number the
+// service stated wrongly. So the promise this guard could not read is reported BY NAME -- once for
+// each half of it -- and the owners that depend on the reading hold vacuously and count themselves
+// rather than accusing a rule nobody broke.
+//
+// And they do not overlap with the owner of the promise being stated once: a block that states the
+// promise more than once is that owner's, and a block that states it once but in a shape nobody can
+// read is these two. One block, one owner.
+assert('the guard could not read the number in the brackets of the promise',
+  !(onePromiseInAll && unreadableForms > 0));
+assert('the guard could not read the minutes the promise states',
+  !(onePromiseInAll && oneNumberInAll && MINUTES_FORM.written && !minutesReadable));
 
 // The promise above holds only if the TIMER runs on that interval: the rows are released on the
 // next tick, and the tick is the sweep. Nothing in the package watched the call that starts that
@@ -1426,11 +1570,19 @@ const PAGE_OWNERS = [
   'the poll waits as long as the client declares',
   'the time limit is longer than one poll, so an open tab never loses its rows',
 ];
-// The owners that read the PROMISE. A promise the block states more than once cannot be located,
-// and a number nobody could locate is not a number the service stated wrongly. A block that states
-// one number in more than one sentence is in the same position.
-const PROMISE_OWNERS = [
+// The owners that read the PROMISE, in two groups, because the two of them have different
+// premises. The owner of the bound compares the number the block states with the limit and the
+// interval, so it needs a number it could read. The owner of the two forms compares the minutes
+// with that number, so it needs the minutes as well.
+//
+// A promise the block states more than once cannot be located, and a number nobody could locate is
+// not a number the service stated wrongly. A block that states one number in more than one
+// sentence is in the same position. A group of owners is a list that has to be kept in step with
+// the gates above -- a list that is not kept in step is a list that quietly stops covering.
+const BOUND_OWNERS = [
   'the number promised to a reader is the limit plus one sweep interval',
+];
+const FORMS_OWNERS = [
   'the promise to a reader is the same promise in both of the forms it is written in',
 ];
 const UNOBSERVABLE = [
@@ -1438,7 +1590,8 @@ const UNOBSERVABLE = [
   ...(TTL === null ? TTL_OWNERS : []),
   ...(SHIPPED_SWEEP === null ? SWEEP_OWNERS : []),
   ...(CLIENT_SCOPE.ok ? [] : PAGE_OWNERS),
-  ...(promiseSentences.length === 1 && oneNumberInAll ? [] : PROMISE_OWNERS),
+  ...(boundComparable ? [] : BOUND_OWNERS),
+  ...(sameFormsComparable ? [] : FORMS_OWNERS),
 ];
 assert('the guard accuses no rule it could not observe',
   !UNOBSERVABLE.some((name) => failures.includes(name)));

@@ -44,16 +44,31 @@
            bound accused a limit the block states correctly -- the number it accused was one of two,
            and neither of them was THE number.
 
+  Round twenty:
+  R29-F42  the reader refused an unknown word only when ONE neighbour said the word was part of a
+           number, so two unsupported words in front of the number -- or an unsupported head behind
+           ordinary sentence context -- were dropped, and the tail was read instead, and the tail
+           agreed with the promise's other form.
+  R29-F43  the locator recognised the promise only in the shapes it could read, so a promise
+           written "600000.0 milliseconds" -- or with a unit it had no factor for -- was not a
+           candidate at all, and the annotation beside it became the only candidate and answered
+           for it.
+  R29-F44  one ordinary context word in front of the number made the minutes unreadable, and the
+           owner of the two forms reported that they DISAGREE -- an accusation that is false, because
+           both forms state the same number. An unreadable phrase is not a disagreement, and an
+           owner that reports one is accusing a rule nobody broke.
+
 THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and that is a shape of its own: the other
 eleven break the SHIPPED source, and this one breaks the boundary that the reader walks back
 over, so the guard's own assertion about reading a whole phrase is the one that has to go red.
 An assertion that no case can make fail is an assertion nobody is watching.
 
-THE LAST THREE CASES BREAK THE GUARD'S OWN READER AND LOCATOR, and they are the same shape: the
-break is in the machinery that reads the promise -- the number table, the unit the form accepts, and
-the number the form counts -- so the guard's own assertions about that machinery are the ones that
-have to go red. A rule that reads the promise has an owner, and the owner is an assertion about the
-reading itself.
+THE LAST SIX CASES BREAK THE GUARD'S OWN READER AND LOCATOR, and they are the same shape as the
+three before them: the break is in the machinery that reads the promise -- the words that may stand
+in front of a number, the reader of a decimal point, the reader of a unit it does not know, and the
+owner that compares the two forms -- so the guard's own assertions about that machinery are the
+ones that have to go red. A rule that reads the promise has an owner, and the owner is an assertion
+about the reading itself.
 
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
@@ -78,8 +93,8 @@ the guard cannot read is a control the guard cannot hold to the contract: this f
 with dictionaries once, and the guard reported it as judging by the exit code alone. So the cases
 are tuples, and a case that needs more than one edit carries its edits in parallel lists.
 
-THE LAST TWO CASES BREAK THE GUARD ITSELF, and they are the two shapes a control of this kind
-has to be able to state:
+TWO CASES BREAK THE GUARD ITSELF, and they are two shapes a control of this kind has to be able
+to state:
 
   * a case can break the copy the guard reads the service's numbers from, so the guard cannot
     observe them. The guard then has to FAIL LOUDLY -- by naming the rule it could not observe --
@@ -255,13 +270,18 @@ MUTATIONS = [
         (),
     ),
     (
-        "the promise names a scale word the number table does not know, and the reader reads the tail",
+        "the promise names a scale word the number table does not know",
         [SERVER],
         ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
         ["one sweep interval after the limit — one myriad twelve and a half minutes (750000 ms) with the shipped"],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        ("the promise to a reader is the same promise in both of the forms it is written in",),
-        (),
+        "the guard could not read the minutes the promise states",
+        ("the guard could not read the minutes the promise states",),
+        # The owner of the two forms cannot compare a promise it could not read, so it holds
+        # vacuously and counts itself.  It used to be this owner that went red here, and it went
+        # red by calling the two forms DISAGREENT -- a disagreement the block does not state, and
+        # one that no reader of the promise would ever see.  The escape is caught, and now it is
+        # caught by the owner of the thing that is actually wrong: the minutes cannot be read.
+        ("held vacuously",),
     ),
     (
         "the promise is written with the unit spelled out, and the annotation beside it answers the form",
@@ -285,6 +305,176 @@ MUTATIONS = [
         ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
         # The owner of the bound holds vacuously here: there is no single number to accuse, and
         # accusing the one the block states correctly would be accusing a rule nobody broke.
+        ("held vacuously",),
+    ),
+    # ------------------------------------------------------------------ round twenty
+    #
+    # The twentieth pass found three escapes in the owners of the promise, and all three are the
+    # same shape: the machinery guessed, and where the guess failed it dropped what it did not
+    # understand instead of saying so.
+    #
+    #   R29-F42  the reader refused an unknown word only when ONE neighbour said the word was part
+    #             of a number. Two unsupported words in front of the number, or an unsupported head
+    #             behind ordinary sentence context, were dropped -- and the tail was read, and the
+    #             tail agreed with the promise's other form.
+    #   R29-F43  the locator recognised the promise only in the shapes it could read, so a promise
+    #             written "600000.0 milliseconds" -- or with a unit it had no factor for -- was not
+    #             a candidate at all, and the annotation beside it became the only candidate and
+    #             answered for it.
+    #   R29-F44  one ordinary context word in front of the number made the minutes unreadable, and
+    #             the owner of the two forms then reported that they DISAGREE -- an accusation that
+    #             is false, because both forms state the same number.
+    #
+    # The first three cases below are those escapes, on the shipped source. The last six break the
+    # guard's own machinery: the list of words that may stand in front of a number, the reader of
+    # a number written with a decimal point, the reader of a number in a unit it does not know, and
+    # the rule that says a word in front of the number has to be known. A rule that reads the
+    # promise has an owner, and the owner is an assertion about the reading itself.
+    (
+        "the promise names words the reader does not know, and the reader reads the tail",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — one great myriad twelve and a half minutes (750000 ms) "
+         "with the shipped"],
+        "the guard could not read the minutes the promise states",
+        ("the guard could not read the minutes the promise states",),
+        # The owner of the two forms cannot compare a promise it could not read, so it holds
+        # vacuously and counts itself -- it does not accuse a disagreement it did not find.
+        ("held vacuously",),
+    ),
+    (
+        "the promise is written with a decimal point, and the annotation beside it answers for it",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — ten minutes (600000.0 milliseconds) with the shipped. "
+         "Historical annotation twelve and a half minutes (750000 ms) with the shipped"],
+        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
+        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
+        ("held vacuously",),
+    ),
+    (
+        "the promise is written with a unit the reader does not know, and the annotation answers for it",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — ten minutes (600000 millisec) with the shipped. "
+         "Historical annotation twelve and a half minutes (750000 ms) with the shipped"],
+        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
+        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
+        ("held vacuously",),
+    ),
+    (
+        "the owner compares the two forms even when it could not read the minutes",
+        [
+            SERVER,
+            PROBE,
+        ],
+        [
+            "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
+            "holds(samePromiseInBothForms, true, sameFormsComparable)",
+        ],
+        [
+            "one sweep interval after the limit — one great myriad twelve and a half minutes (750000 ms) "
+            "with the shipped",
+            "holds(samePromiseInBothForms, true, bothFormsWritten)",
+        ],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        (
+            "the promise to a reader is the same promise in both of the forms it is written in",
+            "the guard could not read the minutes the promise states",
+            # And the guard's own rule about accusing: an owner that compares what it could not
+            # read is an owner that accused a rule nobody broke, and that is what this third name
+            # says.
+            "the guard accuses no rule it could not observe",
+        ),
+        (),
+    ),
+    (
+        "a number word is a lead-in word, and the reader reads the tail again",
+        [PROBE],
+        ["'there', 'these', 'this', 'those', 'to', 'under', 'until', 'up', 'upon', 'within', 'without',"],
+        ["'there', 'these', 'this', 'those', 'to', 'under', 'until', 'up', 'upon', 'within', 'without', "
+         "'one',"],
+        "no word the reader reads as part of a number may be a lead-in word",
+        (
+            "no word the reader reads as part of a number may be a lead-in word",
+            # And the behaviour goes with it: a number word in the lead-in lets the reader state
+            # the tail of the phrase instead of the phrase -- "one more than twelve and a half" is
+            # thirteen and a half, and reading the tail would state twelve and a half, which
+            # happens to agree with the promise's other form.
+            "a word in front of the number that the reader does not know makes the phrase unreadable",
+        ),
+        (),
+    ),
+    (
+        "the reader cannot read a number written with a decimal point",
+        [PROBE],
+        ["const PROMISE_NUMBER = /^\\s*(\\d[\\d,]*(?:\\.\\d+)?)\\s*([a-z]+)\\s*$/i;"],
+        ["const PROMISE_NUMBER = /^\\s*(\\d[\\d,]*)\\s*([a-z]+)\\s*$/i;"],
+        "a number in brackets written with a decimal point is the number it states",
+        ("a number in brackets written with a decimal point is the number it states",),
+        (),
+    ),
+    (
+        "the reader skips a number it cannot read instead of refusing it",
+        [PROBE],
+        ["  if (factor === undefined) return null;"],
+        ["  if (factor === undefined) return 0;"],
+        "a number in brackets that this reader cannot read is refused rather than skipped",
+        ("a number in brackets that this reader cannot read is refused rather than skipped",),
+        (),
+    ),
+    (
+        "the promise states its number in a unit the reader does not know",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — twelve and a half minutes (750000 millisec)"],
+        "the guard could not read the number in the brackets of the promise",
+        ("the guard could not read the number in the brackets of the promise",),
+        # The owners of the number cannot compare a number nobody could read, so they hold
+        # vacuously and count themselves.
+        ("held vacuously",),
+    ),
+    (
+        "the reader drops the words in front of the number that it does not know",
+        [PROBE],
+        ["  for (let index = 0; index < start; index += 1) {\n"
+         "    if (!LEAD_IN.has(words[index])) return null;\n"
+         "  }"],
+        ["  if (start >= 2 && isNumberWord(words[start - 2])) return null;\n"
+         "  if (start === 1 && !isNumberWord(words[0])) return null;"],
+        "a word in front of the number that the reader does not know makes the phrase unreadable",
+        ("a word in front of the number that the reader does not know makes the phrase unreadable",),
+        (),
+    ),
+    (
+        "the scan walks past a dash written as a hyphen, and the number behind it cannot be located",
+        [PROBE],
+        ["    if (start >= 2 && sentence[start - 1] === '-' && sentence[start - 2] === ' '\n"
+         "      && sentence[start] === ' ') break;"],
+        ["    // the dash is not a boundary any more"],
+        "a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen",
+        ("a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen",),
+        (),
+    ),
+    (
+        "the promise states a number in front of the number, and the tail is read instead",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — one more than twelve and a half minutes (750000 ms)"],
+        "the guard could not read the minutes the promise states",
+        ("the guard could not read the minutes the promise states",),
+        # "one more than twelve and a half" states THIRTEEN AND A HALF. A reader that read the tail
+        # would state twelve and a half -- a number that happens to agree with the promise's other
+        # form, which is the worst case there is.
+        ("held vacuously",),
+    ),
+    (
+        "the promise states two numbers, and the second one is read",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — two no later than twelve and a half minutes (750000 ms)"],
+        "the guard could not read the minutes the promise states",
+        ("the guard could not read the minutes the promise states",),
         ("held vacuously",),
     ),
 ]
