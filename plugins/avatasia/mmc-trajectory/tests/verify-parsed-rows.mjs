@@ -589,9 +589,13 @@ const CLIENT_SCOPE = (() => {
   return { ok: true, context, timers };
 })();
 if (!CLIENT_SCOPE.ok) {
-  failures.push('the page\'s inline script did not run, so the owner cannot read the delay the '
-    + `page's poll waits: ${CLIENT_SCOPE.error && CLIENT_SCOPE.error.message}`);
+  // The reason, as a note and not as a failure of its own: the rule that could not be observed is
+  // named by the assertion below, and a second entry in the failure list would be the same fact
+  // told twice -- which is how a reader stops knowing which entry is the rule.
+  console.error('  note: the page\'s inline script did not run, so the owners below cannot read the '
+    + `delay the page's poll waits: ${CLIENT_SCOPE.error && CLIENT_SCOPE.error.message}`);
 }
+assert('the guard could not observe the page\'s polling interval', CLIENT_SCOPE.ok);
 
 // A value read out of the page's own scope.
 const readInPage = (expression) => {
@@ -687,15 +691,28 @@ const declarationIndexOf = (source, name, mask) => {
 // The mask of the shipped service: which of its characters are code.
 const SERVER_MASK = codeMask(SERVER);
 
-// The sentence of a doc block that makes a promise. A block can hold several sentences, and only
-// one of them is the promise to a reader -- so the number has to be read out of THAT sentence and
-// not out of the block. A number that sat in some other sentence of the same block would answer
-// the pattern while the promise itself said something else.
-const promiseSentenceOf = (block) => {
-  if (block === null) return null;
+// The sentence of a doc block that makes a promise, and HOW MANY of them there are.
+//
+// A block can hold several sentences, and only one of them is the promise to a reader -- so the
+// number has to be read out of THAT sentence and not out of the block. A number that sat in some
+// other sentence of the same block would answer the pattern while the promise itself said something
+// else.
+//
+// WHICH sentence is the promise is not something a first match can answer: an annotation left
+// beside the promise says the same words, and the first sentence that happens to contain them wins
+// -- which is not the promise but whatever was written before it. So the sentence is found by the
+// promise's OWN thing: the two forms of the same promise are written together, and the sentence
+// that carries the number in brackets next to the minutes is the sentence that states it.
+//
+// And a block that states the promise TWICE leaves a reader with two sentences that both claim to
+// be it. Which one the service meant is not something the block can say, so the promise is then
+// UNREADABLE -- reported by name, and not resolved by picking one of the candidates.
+const PROMISE_FORM = /\bminutes?\s*\(\s*[\d,]*\s*ms\s*\)/i;
+const promiseSentencesOf = (block) => {
+  if (block === null) return [];
   // The sentences of the block, keeping their terminators so a sentence can be recognised.
   const sentences = block.split(/(?<=\.)\s+/);
-  return sentences.find((sentence) => sentence.includes('no later than')) ?? null;
+  return sentences.filter((sentence) => PROMISE_FORM.test(sentence));
 };
 
 // The number words a promise may be written in.
@@ -708,10 +725,20 @@ const TENS = {
   twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
 };
 
+// The scales a number may be written in. "One hundred" is a hundred; "one thousand, twelve and a
+// half" is one thousand AND twelve and a half -- the words after the scale count on from it, and a
+// reader that drops the scale reads a tail of the number instead of the number.
+const SCALES = {
+  hundred: 100,
+  thousand: 1000,
+  million: 1000000,
+  billion: 1000000000,
+};
+
 // The words that can be part of a number. A word in here that is not understood below is NOT
 // dropped: the phrase is then a number this parser cannot state, and it says so.
-const NUMBER_PARTS = new Set([...Object.keys(UNITS), ...Object.keys(TENS),
-  'hundred', 'thousand', 'million', 'billion', 'dozen', 'score', 'and']);
+const NUMBER_PARTS = new Set([...Object.keys(UNITS), ...Object.keys(TENS), ...Object.keys(SCALES),
+  'dozen', 'score', 'and']);
 const DIGIT_PART = /^\d+(?:\.\d+)?$/;
 
 // The number a run of number words states, or null when the run does not state one.
@@ -735,17 +762,29 @@ const parseNumberWords = (words) => {
     }
     if (word in UNITS) { current += UNITS[word]; unitBefore = true; sawWords = true; continue; }
     if (word in TENS) { current += TENS[word]; unitBefore = false; sawWords = true; continue; }
-    if (word === 'hundred') {
-      // "hundred" multiplies the one to nine before it: "one hundred" is 100 and "one hundred
-      // twelve" is 112. Anything else is a compound this parser does not state.
-      if (!unitBefore || current < 1 || current > 9) return null;
-      total += current * 100;
+    if (word in SCALES) {
+      if (word === 'hundred') {
+        // "hundred" multiplies the one to nine before it: "one hundred" is 100 and "one hundred
+        // twelve" is 112. Anything else is a compound this parser does not state.
+        if (!unitBefore || current < 1 || current > 9) return null;
+        total += current * 100;
+        current = 0;
+        unitBefore = false;
+        sawWords = true;
+        continue;
+      }
+      // A bigger scale multiplies what came before it, and the rest of the phrase counts on FROM
+      // it: "one thousand, twelve and a half" is one thousand and twelve and a half. A scale with
+      // nothing in front of it states no number this parser knows.
+      if (current < 1) return null;
+      total += current * SCALES[word];
       current = 0;
       unitBefore = false;
       sawWords = true;
       continue;
     }
-    // A scale this parser does not state -- "thousand" -- or a word that is not part of a number.
+    // A word that is not part of a number at all -- "dozen", "score" -- is not dropped either: the
+    // phrase is then a number this parser cannot state, and it says so.
     return null;
   }
   if (sawWords && digits !== null) return null;   // a phrase that states two numbers
@@ -762,7 +801,15 @@ const parseNumberWords = (words) => {
 // phrase that holds a compound the parser does not state is reported as unreadable instead of
 // being answered with the part that happened to be understood.
 const englishNumber = (text) => {
-  const words = text.toLowerCase().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+  // A thousands separator and an ampersand are INSIDE a number phrase, not around it: "one
+  // thousand, twelve and a half" states ONE number, and "one hundred & twelve and a half" states
+  // another. Dropping them leaves the tail of the phrase -- and a tail that happens to be a number
+  // of its own is worse than no number at all, because it agrees with something.
+  const words = text.toLowerCase()
+    .replace(/,/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/-/g, ' ')
+    .split(/\s+/).filter(Boolean);
   let half = false;
   if (words.length >= 3
     && words[words.length - 3] === 'and'
@@ -779,6 +826,18 @@ const englishNumber = (text) => {
   if (value === null) return null;
   return half ? value + 0.5 : value;
 };
+
+// The characters a number phrase is written with, and the characters that can appear INSIDE one.
+//
+// A number can be written with a thousands separator and with an ampersand: "one thousand, twelve
+// and a half" and "one hundred & twelve and a half" are one number each. So a scan that stops at
+// those leaves the TAIL of the phrase -- and the tail of a number is a number of its own, which is
+// worse than reading no number at all: the tail can agree with the promise while the phrase does
+// not.
+const PHRASE_CLASS = /[A-Za-z0-9\s.,&'-]/;
+// A character that can continue a number and that neither the scan nor the parser reads: the
+// phrase was cut INSIDE a number, and a cut phrase is not a number -- it is the tail of one.
+const NUMBER_CONTINUATION = /[\p{Nd}‘’½¼¾⅓⅔]/u;
 
 // The minutes a sentence promises, and whether it states them in the form the promise is written
 // in.
@@ -806,11 +865,34 @@ const minutesForm = (sentence) => {
   if (anchor === null) return { written: false, minutes: null };
   const at = anchor.index;
   let start = at;
-  while (start > 0 && /[A-Za-z0-9\s.-]/.test(sentence[start - 1])) start -= 1;
+  while (start > 0 && PHRASE_CLASS.test(sentence[start - 1])) start -= 1;
+  // The scan has to stop where the PHRASE ends, not inside the number. A character that can carry a
+  // number and that this scan cannot read is a sign that the phrase was cut in the middle of one,
+  // and a phrase cut in the middle of a number is not a number: it is the tail of one. The minutes
+  // are then unreadable, which is a different fact from "this promise states no minutes" -- and the
+  // owner of that difference says so.
+  if (start > 0 && NUMBER_CONTINUATION.test(sentence[start - 1])) {
+    return { written: true, minutes: null };
+  }
   const phrase = sentence.slice(start, at).trim();
   const digits = /^\s*(\d+(?:\.\d+)?)\s*$/.exec(phrase);
   return { written: true, minutes: digits !== null ? Number(digits[1]) : englishNumber(phrase) };
 };
+
+// The reader itself is held to reading the WHOLE phrase, and not a tail of it. A tail of a number
+// is a number of its own, and a tail that happens to agree with the promise is the worst case there
+// is: the promise states one number in words and another in milliseconds, and the reader agrees
+// with the tail.
+//
+// The phrases here are the ones a promise can be written in, and the numbers are the ones they
+// state: "one thousand, twelve and a half" is one thousand AND twelve and a half, because a
+// thousands separator is not a boundary, and neither is an ampersand. A phrase that was cut inside
+// a number is not a number at all -- and it is not a tail of one either.
+assert('the promised minutes are read from the whole phrase, not from a tail of it',
+  minutesForm('one thousand, twelve and a half minutes (750000 ms)').minutes === 1012.5
+  && minutesForm('one hundred & twelve and a half minutes (750000 ms)').minutes === 112.5
+  && minutesForm('1,012.5 minutes (750000 ms)').minutes === 1012.5
+  && minutesForm('one hundred and twenty ½ minutes (750000 ms)').minutes === null);
 
 // The lifetime the cache gives its rows when nobody tells it one, observed rather than read.
 //
@@ -936,10 +1018,15 @@ check('and the cache is empty', liveCache.size, 0);
 // string that looks like one would be handed over as a string.
 const DECLARED = readInPage('TRAJECTORY_POLL_INTERVAL');
 const DECLARED_INTERVAL = DECLARED.ok ? DECLARED.value : null;
+// The owners that depend on the PAGE hold vacuously when the page could not be observed, and they
+// count themselves when they do: a delay nobody could read does not contradict what the client
+// declares, and an owner that accused it anyway would be accusing a rule it never looked at. The
+// failure to observe has its own rule, above.
 assert('the client declares the interval it polls the trajectory at',
-  DECLARED_INTERVAL !== null
-  && typeof DECLARED_INTERVAL === 'number'
-  && Number.isFinite(DECLARED_INTERVAL));
+  holds(DECLARED_INTERVAL !== null
+    && typeof DECLARED_INTERVAL === 'number'
+    && Number.isFinite(DECLARED_INTERVAL),
+  true, CLIENT_SCOPE.ok));
 
 // The timer the page polls the trajectory with, and the delay it was really given.
 //
@@ -958,7 +1045,7 @@ const TRAJECTORY_TIMER = CLIENT_SCOPE.ok
   : undefined;
 const POLL_DELAY = TRAJECTORY_TIMER === undefined ? null : TRAJECTORY_TIMER.delay;
 assert('the poll waits as long as the client declares',
-  POLL_DELAY !== null && POLL_DELAY === DECLARED_INTERVAL);
+  holds(POLL_DELAY !== null && POLL_DELAY === DECLARED_INTERVAL, true, CLIENT_SCOPE.ok));
 
 assert('the rows cache has a time limit', holds(TTL !== null, true, BINDINGS !== null));
 assert('the time limit is a number the service declares',
@@ -969,7 +1056,7 @@ const DEFAULT_LIMIT = defaultLimitOf(1024 * 1024);
 assert('the limit the service declares is the limit the cache gives its rows',
   holds(DEFAULT_LIMIT, TTL, BINDINGS !== null));
 assert('the time limit is longer than one poll, so an open tab never loses its rows',
-  POLL_DELAY !== null && DEFAULT_LIMIT > POLL_DELAY);
+  holds(POLL_DELAY !== null && DEFAULT_LIMIT > POLL_DELAY, true, CLIENT_SCOPE.ok));
 // The page stops polling while its tab is hidden, so a reader who switches away for a while is
 // the ordinary case. A limit shorter than that would make every return to the tab cost a
 // re-parse — which is the other half of what this limit buys, and it has to be paid for.
@@ -1033,16 +1120,27 @@ assert('the shipped default is the interval the service declares',
 // are read as well, and the two are compared with each other and with the limit the cache really
 // gives its rows.
 const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS', SERVER_MASK);
-const promiseSentence = promiseSentenceOf(ttlDoc);
+const promiseSentences = promiseSentencesOf(ttlDoc);
+// The promise has to be READABLE, and it is readable only when the block states it once. A block
+// that states it twice is not a block with two promises to choose from: it is a block where the
+// promise cannot be told from the annotation beside it, and an owner that picks one of them accuses
+// the service of a number it never promised.
+assert('the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
+  promiseSentences.length === 1);
+const promiseSentence = promiseSentences.length === 1 ? promiseSentences[0] : null;
 const promisedNumbers = promiseSentence === null
   ? []
-  : [...promiseSentence.matchAll(/\((\d+) ms\)/g)].map((found) => Number(found[1]));
+  : [...promiseSentence.matchAll(/\((\d[\d,]*) ms\)/g)].map((found) => Number(found[1].replace(/,/g, '')));
 const MINUTES_FORM = minutesForm(promiseSentence);
 const promisedMinutes = MINUTES_FORM.minutes;
 const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
+// The owner of the number holds vacuously while the promise cannot be read: a number nobody could
+// locate is not a number the service stated wrongly. The reason it could not be located has its own
+// rule, above.
 assert('the number promised to a reader is the limit plus one sweep interval',
-  promisedNumbers.length === 1
-  && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL);
+  holds(promisedNumbers.length === 1
+    && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL,
+  true, promiseSentences.length === 1));
 // The two forms have to be the SAME promise. A promise whose words cannot be read is not
 // agreement: the words are parsed completely above, so a phrase that is still not a number is a
 // promise nobody can check, and this owner says so rather than passing it.
@@ -1145,7 +1243,7 @@ assert('a time limit of zero starts no sweeper, because nothing in it ever expir
 // not a broken rule. This check is here, at the end, because it looks at what the other owners
 // reported.
 //
-// The three groups are the owners of each observed value. Adding an owner that depends on one of
+// The groups are the owners of each observed value. Adding an owner that depends on one of
 // them is adding a line to that group -- a list that is not kept in step is a list that quietly
 // stops covering.
 const PROXY_OWNERS = [
@@ -1164,10 +1262,25 @@ const SWEEP_OWNERS = [
   'the sweep interval is a number the service declares',
   'the shipped default is the interval the service declares',
 ];
+// The owners that read the PAGE. The page's script is run in a sandbox, and a script that will not
+// run leaves the delay it waits unreadable -- so these owners must not accuse anything then.
+const PAGE_OWNERS = [
+  'the client declares the interval it polls the trajectory at',
+  'the poll waits as long as the client declares',
+  'the time limit is longer than one poll, so an open tab never loses its rows',
+];
+// The owners that read the PROMISE. A promise the block states more than once cannot be located,
+// and a number nobody could locate is not a number the service stated wrongly.
+const PROMISE_OWNERS = [
+  'the number promised to a reader is the limit plus one sweep interval',
+  'the promise to a reader is the same promise in both of the forms it is written in',
+];
 const UNOBSERVABLE = [
   ...(PROXY === null ? PROXY_OWNERS : []),
   ...(TTL === null ? TTL_OWNERS : []),
   ...(SHIPPED_SWEEP === null ? SWEEP_OWNERS : []),
+  ...(CLIENT_SCOPE.ok ? [] : PAGE_OWNERS),
+  ...(promiseSentences.length === 1 ? [] : PROMISE_OWNERS),
 ];
 assert('the guard accuses no rule it could not observe',
   !UNOBSERVABLE.some((name) => failures.includes(name)));
