@@ -4,7 +4,7 @@
     "miniApp": "./miniapp/miniapp.json"
   },
   "name": "wechat-miniprogram-preview",
-  "version": "0.5.0-rc.3",
+  "version": "0.5.0-rc.4",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.9",
