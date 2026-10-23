@@ -33,6 +33,14 @@ THE RULES ARE CHECKED THE WAY THE ROUNDS THAT FOUND THEM ASKED FOR: the owner ha
 BEHAVIOUR, not a shape. The page's script is run in a sandbox and the delay comes from the timer
 the page itself starts; the service's numbers come from the module's own bindings.
 
+A CASE IS A TUPLE, AND THAT IS NOT A MATTER OF STYLE. `tests/verify-mutation-contracts.py` reads
+this file's source to decide whether it judges its cases by membership -- whether the case's own
+expected rule name is tested against the collection of names the guard reported -- and it reads a
+case table as a LIST OF TUPLES. A case written as a dictionary is invisible to it, and a control
+the guard cannot read is a control the guard cannot hold to the contract: this file was written
+with dictionaries once, and the guard reported it as judging by the exit code alone. So the cases
+are tuples, and a case that needs more than one edit carries its edits in parallel lists.
+
 THE LAST TWO CASES BREAK THE GUARD ITSELF, and they are the two shapes a control of this kind
 has to be able to state:
 
@@ -43,8 +51,8 @@ has to be able to state:
     interval the service declares" would have accused a rule the break did not break.
   * a case can break TWO things at once, when the escape only exists in that combination. The
     mis-accusation needs the observation to have failed AND the owner to compare anyway, so the
-    case removes both and the guard has to name the rule that says it accuses nothing it could
-    not observe.
+    case breaks the copy and removes the gate, and the guard has to name the rule that says it
+    accuses nothing it could not observe.
 """
 import json
 import re
@@ -58,8 +66,9 @@ SERVER = ROOT / "miniapp" / "node" / "server.mjs"
 CLIENT = ROOT / "miniapp" / "client" / "index.html"
 PROBE = HERE / "verify-parsed-rows.mjs"
 
-# Each case: what it breaks, the edits that break it, the rule that owns it, the EXACT set of
-# rules that break may report, and anything the output has to say.
+# Each case: what it breaks, the files it breaks, the text before and after each of them, the
+# rule that owns it, the EXACT set of rules that break may report, and anything the output has to
+# say.
 #
 # The exact set is the isolation, and it is what the frozen control's table does for the other
 # forty: a guard that also reported a rule this break did not break has accused another owner,
@@ -69,94 +78,79 @@ PROBE = HERE / "verify-parsed-rows.mjs"
 # the first occurrence of a string that occurs twice edits a place it did not mean to edit, and
 # the case then passes or fails for a reason that has nothing to do with the rule it is about.
 MUTATIONS = [
-    {
-        "label": "the promise sentence names minutes in words the parser did not know",
-        "edits": [
-            (
-                SERVER,
-                "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
-                "one sweep interval after the limit — thirteen minutes (750000 ms) with the shipped",
-            ),
-        ],
-        "expect": "the promise to a reader is the same promise in both of the forms it is written in",
-        "exact": ("the promise to a reader is the same promise in both of the forms it is written in",),
-    },
-    {
-        "label": "the page hands its timer a comma expression",
-        "edits": [
-            (
-                CLIENT,
-                "        }, TRAJECTORY_POLL_INTERVAL);",
-                "        }, (TRAJECTORY_POLL_INTERVAL, 8000000));",
-            ),
-        ],
-        "expect": "the poll waits as long as the client declares",
-        "exact": (
+    (
+        "the promise sentence names minutes in words the parser did not know",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — thirteen minutes (750000 ms) with the shipped"],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        ("the promise to a reader is the same promise in both of the forms it is written in",),
+        (),
+    ),
+    (
+        "the page hands its timer a comma expression",
+        [CLIENT],
+        ["        }, TRAJECTORY_POLL_INTERVAL);"],
+        ["        }, (TRAJECTORY_POLL_INTERVAL, 8000000));"],
+        "the poll waits as long as the client declares",
+        (
             "the poll waits as long as the client declares",
             "the time limit is longer than one poll, so an open tab never loses its rows",
         ),
-    },
-    {
-        "label": "a template literal impersonates the proxy's declaration while the binding is a string",
-        "edits": [
-            (
-                SERVER,
-                "\nconst PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;\n",
-                "\nconst annotation = `\nconst PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;\n`;\n"
-                "const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = '2';\n",
-            ),
-        ],
-        "expect": "the heap proxy is a number the service declares",
-        "exact": ("the heap proxy is a number the service declares",),
-    },
-    {
-        "label": "the minutes are written as a compound the parser reads as a smaller number",
-        "edits": [
-            (
-                SERVER,
-                "after the limit — twelve and a half minutes (750000 ms)",
-                "after the limit — one hundred twelve and a half minutes (750000 ms)",
-            ),
-        ],
-        "expect": "the promise to a reader is the same promise in both of the forms it is written in",
-        "exact": ("the promise to a reader is the same promise in both of the forms it is written in",),
-    },
-    {
-        "label": "the copy the guard reads the service's numbers from will not import",
-        "edits": [
-            (
-                PROBE,
-                "await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { ${names.join(', ')} };\\n`);",
-                "await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { nonexistentBinding };\\n`);",
-            ),
-        ],
-        "expect": "the guard could not observe the numbers the service declares",
-        "exact": ("the guard could not observe the numbers the service declares",),
+        (),
+    ),
+    (
+        "a template literal impersonates the proxy's declaration while the binding is a string",
+        [SERVER],
+        ["\nconst PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;\n"],
+        ["\nconst annotation = `\nconst PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;\n`;\n"
+         "const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = '2';\n"],
+        "the heap proxy is a number the service declares",
+        ("the heap proxy is a number the service declares",),
+        (),
+    ),
+    (
+        "the minutes are written as a compound the parser reads as a smaller number",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — one hundred twelve and a half minutes (750000 ms)"],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        ("the promise to a reader is the same promise in both of the forms it is written in",),
+        (),
+    ),
+    (
+        "the copy the guard reads the service's numbers from will not import",
+        [PROBE],
+        ["await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { ${names.join(', ')} };\\n`);"],
+        ["await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { nonexistentBinding };\\n`);"],
+        "the guard could not observe the numbers the service declares",
+        ("the guard could not observe the numbers the service declares",),
         # The owners that could not be compared have to say so: an owner that held quietly is an
         # owner nobody can tell apart from one that was checked and matched.
-        "must_contain": ("held vacuously",),
-    },
-    {
-        "label": "the copy will not import and the owner compares the interval anyway",
-        "edits": [
-            (
-                PROBE,
-                "await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { ${names.join(', ')} };\\n`);",
-                "await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { nonexistentBinding };\\n`);",
-            ),
-            (
-                PROBE,
-                "holds(createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP, true, BINDINGS !== null)",
-                "holds(createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP, true, true)",
-            ),
+        ("held vacuously",),
+    ),
+    (
+        "the copy will not import and the owner compares the interval anyway",
+        [
+            PROBE,
+            PROBE,
         ],
-        "expect": "the guard accuses no rule it could not observe",
-        "exact": (
+        [
+            "await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { ${names.join(', ')} };\\n`);",
+            "holds(createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP, true, BINDINGS !== null)",
+        ],
+        [
+            "await writeFile(join(dir, 'server.mjs'), `${shipped}\\nexport { nonexistentBinding };\\n`);",
+            "holds(createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP, true, true)",
+        ],
+        "the guard accuses no rule it could not observe",
+        (
             "the guard accuses no rule it could not observe",
             "the guard could not observe the numbers the service declares",
             "the shipped default is the interval the service declares",
         ),
-    },
+        (),
+    ),
 ]
 
 
@@ -241,16 +235,13 @@ def main():
     originals = {}
     missed = []
     unnamed = []
-    for case in MUTATIONS:
-        label = case["label"]
-        expect = case["expect"]
-        exact = case["exact"]
-        must_contain = case.get("must_contain", ())
+    for label, targets, olds, news, expect, exact, must_contain in MUTATIONS:
+        edits = list(zip(targets, olds, news))
         # Every edit has to land, or the case does not run at all: a case that did not happen
         # proves nothing, and reporting it as "got through" would blame the guard for an anchor
         # that has gone stale.
         stale = None
-        for target, old, new in case["edits"]:
+        for target, old, new in edits:
             if target not in originals:
                 originals[target] = target.read_bytes()
             text, newline = read_exact(target)
@@ -264,13 +255,13 @@ def main():
             print(f"SKIP  {label}: {stale}")
             missed.append(label)
             continue
-        for target, old, new in case["edits"]:
+        for target, old, new in edits:
             text, newline = read_exact(target)
             write_exact(target, text.replace(old, new, 1), newline)
         try:
             code, output = run_probe()
         finally:
-            for target in {target for target, _, _ in case["edits"]}:
+            for target in {target for target, _, _ in edits}:
                 target.write_bytes(originals[target])
         if code == 0:
             print(f"MISSED {label}: the probe still passed")

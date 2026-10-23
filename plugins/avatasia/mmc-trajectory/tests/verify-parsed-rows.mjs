@@ -1141,25 +1141,36 @@ assert('a time limit of zero starts no sweeper, because nothing in it ever expir
   zeroTimerCalls.recorded.length === 0);
 
 // The owners that depend on the observation of the service's declared numbers must not accuse
-// anything when that observation failed: a number the guard could not read is not a broken rule.
-// This check is here, at the end, because it looks at what the other owners reported.
+// anything when the value they depend on could not be read: a number the guard could not read is
+// not a broken rule. This check is here, at the end, because it looks at what the other owners
+// reported.
 //
-// The list is the owners that depend on the observation. Adding an owner that depends on it is
-// adding a line here -- a list that is not kept in step is a list that quietly stops covering.
-const OBSERVED_OWNERS = [
+// The three groups are the owners of each observed value. Adding an owner that depends on one of
+// them is adding a line to that group -- a list that is not kept in step is a list that quietly
+// stops covering.
+const PROXY_OWNERS = [
   'the heap proxy is a number the service declares',
   'the cache is charged the source bytes times the heap proxy',
   'so the source bytes it holds are computable from its own accounting',
   'and the charge the route makes is that one',
+];
+const TTL_OWNERS = [
   'the rows cache has a time limit',
   'the time limit is a number the service declares',
   'the limit the service declares is the limit the cache gives its rows',
-  'the sweep interval is a number the service declares',
-  'the shipped default is the interval the service declares',
   'the timer that releases the rows runs on the interval the cache reports',
 ];
+const SWEEP_OWNERS = [
+  'the sweep interval is a number the service declares',
+  'the shipped default is the interval the service declares',
+];
+const UNOBSERVABLE = [
+  ...(PROXY === null ? PROXY_OWNERS : []),
+  ...(TTL === null ? TTL_OWNERS : []),
+  ...(SHIPPED_SWEEP === null ? SWEEP_OWNERS : []),
+];
 assert('the guard accuses no rule it could not observe',
-  BINDINGS !== null || !OBSERVED_OWNERS.some((name) => failures.includes(name)));
+  !UNOBSERVABLE.some((name) => failures.includes(name)));
 
 await rm(root, { recursive: true, force: true });
 
