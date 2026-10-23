@@ -68,6 +68,17 @@ Apache-2.0）。
 
 跑真实工作流仍然需要本机 `mcode` CLI 可用：引擎通过它去编排 Agent。demo 执行器不需要。
 
+## Skill
+
+本包附带一个 Skill：`skills/workflow-console/SKILL.md`。它告诉 Agent 怎么用这个控制台——
+引擎启动前必须先选定项目目录、运行在 `pending_review` 状态要等审核、
+「审核通过 / 暂停 / 取消 / 恢复」各自意味着什么、复用模板只是新建草稿而不是开始执行、
+`demo` 执行器不调模型。也明确要求 Agent 不要替用户猜工作目录，也不要在用户没点头时替他批准运行。
+
+这个 Skill 是宿主注册本插件时加载的，控制台进程自己不会读它。
+它同时也是本包**能通过「从 Git 仓库导入」装上**的原因：宿主只在包里声明了 Skill、MCP Server 或
+Hook 时才接受 Git 导入，光有一个 Mini App 不算。
+
 ## 测试环境
 
 - MiniMax Code 3.1.4 + Windows 11，Node.js 22 与 26。从本目录安装，经 Agent 打开，页面渲染正常，
@@ -84,6 +95,7 @@ Apache-2.0）。
 ### 读取的文件
 
 - `miniapp/client/` 与 `miniapp/node/vendor/` —— 本包自己的资源。
+- `skills/workflow-console/SKILL.md` —— 宿主注册本插件时读取，控制台进程自己不读。
 - 它绑定的那个项目目录 —— 引擎以它为工作目录运行，被它拉起的 `mcode` CLI 在其中读写文件。
 
 本包**不读**自己包目录与项目目录之外的任何文件。特别是**不读**
@@ -134,6 +146,7 @@ argv 元素传入，不会拼进命令行。应用退出时整棵进程树会被
 ```text
 .minimax-plugin/plugin.json                 插件清单
 package.json                                Mini App 声明
+skills/workflow-console/SKILL.md            Agent 用来操作本控制台的 Skill
 miniapp/miniapp.json                        运行时根目录、Node 入口、页面路由
 miniapp/client/index.html                   /dashboard 上提供的页面
 miniapp/client/app.js                       前端（原生 HTML/CSS/JS，无框架无构建）

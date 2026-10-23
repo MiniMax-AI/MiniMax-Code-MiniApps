@@ -74,6 +74,20 @@ engine's own database and is not affected by the change.
 Running real workflows still requires a working `mcode` CLI: the engine orchestrates agents through
 it. The demo executor works without it.
 
+## Skill
+
+The package ships one Skill, `skills/workflow-console/SKILL.md`. It tells the Agent how to drive
+this console: that a project directory must be chosen before the engine can start, that a run sits
+in `pending_review` until it is approved, what "approve", "pause", "cancel" and "resume" mean, that
+reusing a template creates a new draft rather than running anything, and that the `demo` executor
+calls no model. It also tells the Agent not to pick a working directory on the user's behalf and
+not to approve a run without the user's say-so.
+
+The Skill is what the Host loads when it registers this plugin; the console process itself never
+reads it. It is also what makes the package importable through **"Import from a Git repository"**:
+the Host accepts a Git import only when the package declares at least one Skill, MCP server, or
+hook, and a Mini App on its own does not count.
+
 ## Tested environment
 
 - MiniMax Code 3.1.4 on Windows 11, Node.js 22 and 26. Installed from this directory, opened
@@ -96,6 +110,8 @@ this app.
 Read:
 
 - `miniapp/client/` and `miniapp/node/vendor/` — this package's own assets.
+- `skills/workflow-console/SKILL.md` — read by the Host when it registers this plugin, not by the
+  console process.
 - The project directory it is bound to — the engine runs with it as its working directory, and the
   `mcode` CLI it launches reads and writes inside it.
 
@@ -153,6 +169,7 @@ in browser storage.
 ```text
 .minimax-plugin/plugin.json                 Plugin manifest
 package.json                                Mini App declaration
+skills/workflow-console/SKILL.md            Skill the Agent loads to drive this console
 miniapp/miniapp.json                        Payload roots, Node entry, page route
 miniapp/client/index.html                   The page served at /dashboard
 miniapp/client/app.js                       Front end (plain HTML/CSS/JS, no framework, no build)

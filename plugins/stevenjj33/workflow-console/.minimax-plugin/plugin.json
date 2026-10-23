@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "workflow-console",
   "displayName": "Dynamic Workflow Console / 动态工作流控制台",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Run and supervise MiniMax Code dynamic workflows from one page: live status, a stage-and-dependency flow graph, per-node output, approval and control, templates, and report export. 自带的动态工作流监控与控制台：内置 Workflow Studio 引擎，无需安装插件即可运行。提供运行列表、实时日志、拓扑与节点结果、审核后开始执行、暂停取消恢复、模板保存与复用、报告导出。",
   "author": "书先生 (stevenjj33)",
   "icon": "icon.png",
@@ -13,5 +13,7 @@
   ],
   "apps": [],
   "mcpServers": [],
-  "skills": []
+  "skills": [
+    "skills/workflow-console/SKILL.md"
+  ]
 }
