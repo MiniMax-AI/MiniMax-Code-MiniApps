@@ -362,7 +362,10 @@ assert('loadParsedRows is exported so a test can run the real step',
  *   exactly when the reader comes back, which is the one moment they are wanted again. And the
  *   release lands on a sweep tick, so the rows are gone a sweep interval AFTER the limit, not at
  *   it: the number to promise a reader is the limit plus that interval, and the two have to stay
- *   in that relation.
+ *   in that relation. Both ends of that interval are floored at a millisecond, because a timer
+ *   cannot be finer than that: an interval a caller asks for that is not positive would
+ *   otherwise switch the sweeper off, and a sweeper that is off releases the rows only when
+ *   somebody asks for them.
  * ===================================================================== */
 
 // A constant the source declares as an expression — `60 * 1000` — is read by arithmetic rather
@@ -373,6 +376,19 @@ const declaredNumber = (source, name) => {
   const parts = match[1].replace(/_/g, '').split('*').map((part) => Number(part.trim()));
   if (parts.some((part) => !Number.isFinite(part))) return null;
   return parts.reduce((carry, part) => carry * part, 1);
+};
+
+// The doc block above a constant, so a promise the package states in prose can be read and
+// compared with what the code does. The block is taken around ONE declaration rather than the
+// whole file, because a whole-file match keeps passing after the promise has moved somewhere
+// else -- which is the way a rule quietly loses its owner.
+const docBlockOf = (source, name) => {
+  const at = source.indexOf('const ' + name + ' =');
+  if (at < 0) return null;
+  const before = source.slice(0, at);
+  const start = before.lastIndexOf('/**');
+  const end = before.lastIndexOf('*/');
+  return start >= 0 && end > start ? before.slice(start, end) : null;
 };
 
 // The proxy is read out of the shipped source rather than repeated here, so the relationship
@@ -465,6 +481,57 @@ assert('an interval the caller asks for is clamped to the limit as well',
   asked.sweepIntervalMs <= 1_000 / 4);
 assert('the shipped default is the interval the service declares',
   createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP);
+
+// The number a reader is promised: the rows are gone no later than the limit plus one sweep
+// interval. The bound is computed here from the limit the service DECLARES and the interval
+// the RUNNING cache uses, and it is compared with the number the package states in prose -- so
+// a change to one of them without the other is caught here and not by a reader. The promise is
+// in prose because that is where a reader meets it, and a promise nobody checks is a promise
+// that is true on the day it was written.
+const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS');
+const promisedMs = ttlDoc === null ? null : /\((\d+) ms\)/.exec(ttlDoc);
+assert('the number promised to a reader is the limit plus one sweep interval',
+  promisedMs !== null
+  && Number(promisedMs[1]) === TTL + createParsedRowsCache(1000).sweepIntervalMs);
+
+// The promise above holds only if the TIMER runs on that interval: the rows are released on the
+// next tick, and the tick is the sweep. Nothing in the package watched the call that starts that
+// timer, so an interval multiplied by two left every other check here green while the real
+// release moved to "the limit plus twice the interval" -- and the promise to a reader went on
+// saying twelve and a half minutes.
+//
+// The timer is not reachable from outside the cache, so what can be checked is the call that
+// starts it: it has to take the interval the cache itself reports, with nothing done to it on the
+// way. An interval that is not the reported one is not the interval the number in the prose is
+// built from, and the promise would be true of a timer that does not exist.
+const sweepTimerCalls = [...SERVER.matchAll(/setInterval\(\s*sweep\s*,\s*([^)]*)\)/g)];
+assert('the timer that releases the rows runs on the interval the cache reports',
+  sweepTimerCalls.length === 1 && sweepTimerCalls[0][1].trim() === 'sweepIntervalMs');
+
+// The quarter has a floor of a millisecond, because a timer cannot be finer than that. For a
+// limit below four milliseconds the floor is the larger of the two, so the release is then at
+// most a millisecond late rather than a quarter of a tiny limit late. The limit below is
+// deliberately tiny: with a limit of a second the floor never applies, and a case that cannot
+// reach the floor would pass without anything having been decided.
+const tinyLimit = createParsedRowsCache(1000, { ttlMs: 3 });
+assert('a limit too small for a quarter of a millisecond still sweeps no finer than a millisecond',
+  tinyLimit.sweepIntervalMs === 1);
+
+// An interval the caller asks for that is not positive is taken as a millisecond. It used to
+// switch the sweeper off instead, and a cache whose sweeper is off only releases the rows when
+// somebody asks for them -- the one moment they are wanted again.
+const nonPositive = createParsedRowsCache(1000, { ttlMs: 1_000, sweepIntervalMs: 0 });
+const negative = createParsedRowsCache(1000, { ttlMs: 1_000, sweepIntervalMs: -5 });
+assert('an interval the caller asks for that is not positive is taken as a millisecond',
+  nonPositive.sweepIntervalMs === 1 && negative.sweepIntervalMs === 1);
+
+// And the consequence of that floor: the sweeper still runs, so the rows are still released
+// without a request. This one is a real timer, because the sweeper is a timer.
+const nonPositiveCache = createParsedRowsCache(1000, { ttlMs: 100, sweepIntervalMs: 0 });
+nonPositiveCache.set('k', val, 500);
+await new Promise((resolve) => setTimeout(resolve, 500));
+check('a caller who asks for a non-positive interval still gets the rows released without a request',
+  nonPositiveCache.bytes, 0);
 
 // A time limit of zero means NO time limit. The other reading — everything expires at once —
 // would be a cache that never hits and never releases, which is worse than either.

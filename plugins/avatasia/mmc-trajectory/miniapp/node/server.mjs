@@ -179,9 +179,18 @@ const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
  *
  * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.** The limit is when the rows
  * stop being wanted; the release happens on the next sweep, so the rows are gone no later than
- * one sweep interval after the limit — twelve and a half minutes with the shipped values, and
- * never longer than a quarter of the limit beyond it. The number to promise a reader is the
- * second one, and it is asserted: the sweep interval is at most a quarter of the limit.
+ * one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped
+ * values. The number to promise a reader is that one, and it is the number in brackets: it is
+ * the limit plus the interval, and the two have to move together. The interval is at most a
+ * quarter of the limit, so the release is no later than a quarter of the limit after it; and
+ * when the limit is so small that a quarter of it is less than a millisecond, the interval is
+ * not finer than a millisecond and the release is at most a millisecond late. Both of those are
+ * asserted.
+ *
+ * The number in brackets is not a loose upper bound: it IS the limit plus the interval, to the
+ * millisecond. An assertion of its own compares it as an equality with the limit the service
+ * declares and the interval the running cache uses, so this number is watched: changing one of
+ * the three without the others is caught there, and not by a reader.
  *
  * An expiry is a MISS and not a deletion of something still wanted: the next request parses the
  * file again and the cache fills itself back up. The price of that is one re-parse, and only when
@@ -202,9 +211,18 @@ const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;
  *
  * The relation is enforced where the interval is TAKEN, not only here: the interval is clamped
  * to a quarter of the limit the cache was given, so "never later than a quarter of the limit
- * beyond it" holds for every limit and not only for the shipped one. A constant that could
- * outgrow the limit would make the promise true on the day it was written and false after
- * somebody changed the limit.
+ * beyond it" holds for every limit above four milliseconds and not only for the shipped one. A
+ * constant that could outgrow the limit would make the promise true on the day it was written
+ * and false after somebody changed the limit.
+ *
+ * The timer that runs the sweep is started with this interval, and the cache reports the interval
+ * it uses, so the promise above is checked against the running cache rather than against two
+ * numbers in the source. The call that starts the timer is read by a check of its own, so the
+ * promise cannot drift away from the timer that has to keep it.
+ *
+ * The clamp has a floor of one millisecond, because a timer cannot be finer than that. For a
+ * limit below four milliseconds the floor is the larger of the two, and the release is then at
+ * most a millisecond late rather than a quarter of the limit late.
  *
  * Pinned by tests/verify-parsed-rows.mjs.
  */
@@ -3656,20 +3674,33 @@ export function parsedRowsKey(filePath, size, mtimeMs, limit) {
  * expire and the sweeper never runs. (The other reading — "everything expires at once" — would be
  * a cache that never hits and never releases, which is worse than either.)
  *
+ * A sweep interval that is not positive is taken as one millisecond: a timer cannot be finer
+ * than that, and an interval of zero used to switch the sweeper off, which left the rows to be
+ * released only when somebody asked for them.
+ *
  * @param {number} budget
  * @param {{ ttlMs?: number, now?: () => number, sweepIntervalMs?: number }} [options]
  */
 export function createParsedRowsCache(budget, options = {}) {
   const ttlMs = options.ttlMs ?? PARSED_ROWS_CACHE_TTL_MS;
   const now = options.now ?? (() => Date.now());
-  // The interval the sweep actually uses, clamped to a quarter of the limit the cache was
-  // given. The clamp is the rule, not a convenience: without it the promise to a reader — the
-  // rows are gone no later than a quarter of the limit after they expire — would hold for the
-  // shipped limit and for nothing else, and the limit is an option a caller may set.
-  const sweepIntervalMs = Math.min(
-    options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS,
-    Math.max(1, Math.floor(ttlMs / 4)),
-  );
+  // The interval the sweep actually uses, taken between two bounds.
+  //
+  // The limit bound is the rule the promise to a reader is made of: the interval is at most a
+  // quarter of the limit the cache was given, so the rows are gone no later than a quarter of
+  // the limit after they expire. The clamp is the rule and not a convenience: without it the
+  // promise would hold for the shipped limit and for nothing else, and the limit is an option a
+  // caller may set. Its floor is one millisecond, because a timer cannot be finer than that —
+  // so for a limit below four milliseconds the release is at most a millisecond late rather
+  // than a quarter of a tiny limit late.
+  //
+  // The asked bound is that same floor applied to what the caller asked for. A caller who asks
+  // for an interval that is not positive used to switch the sweeper off, and a cache whose
+  // sweeper is off only releases the rows when somebody asks for them — the one moment they
+  // are wanted again. The floor keeps the sweeper running.
+  const limitBoundMs = Math.max(1, Math.floor(ttlMs / 4));
+  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);
+  const sweepIntervalMs = Math.min(limitBoundMs, askedBoundMs);
   /** @type {Map<string, { value: ParsedRows, size: number, at: number }>} */
   const entries = new Map();
   let bytes = 0;
@@ -3710,6 +3741,10 @@ export function createParsedRowsCache(budget, options = {}) {
   };
 
   const startSweeper = () => {
+    // The interval is floored at a millisecond where it is taken, so the third condition cannot
+    // fire today. It stays because it is the difference between the two ways a non-positive
+    // interval could hurt: a timer that runs as fast as the platform allows, or no timer at all
+    // — and no timer means the rows are released only when somebody asks for them.
     if (sweeper !== null || ttlMs <= 0 || sweepIntervalMs <= 0) return;
     sweeper = setInterval(sweep, sweepIntervalMs);
     // An interval that is not unref'd keeps the event loop alive after the server closes, and the

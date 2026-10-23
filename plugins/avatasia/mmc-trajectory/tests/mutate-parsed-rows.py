@@ -20,6 +20,10 @@ cache has to answer about ITSELF rather than about the page's bytes:
     release that only ran on a request would happen exactly when the reader comes back;
   - that release is longer than one poll, or an open tab would lose its rows between polls;
   - and the timer that does it never keeps the process alive.
+  - the sweep interval is floored at a millisecond on both sides: the quarter of a limit below
+    four milliseconds is finer than a timer can be, and an interval a caller asks for that is not
+    positive used to switch the sweeper off — which left the rows to be released only when
+    somebody asked for them.
 """
 import json
 import re
@@ -206,12 +210,32 @@ MUTATIONS = [
         # limit where it is taken, so a longer constant is simply never used. The rule itself is
         # still owned — by this case.
         "the sweep interval is taken without being clamped to the limit",
-        """  const sweepIntervalMs = Math.min(
-    options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS,
-    Math.max(1, Math.floor(ttlMs / 4)),
-  );""",
-        "  const sweepIntervalMs = options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS;",
+        """  const limitBoundMs = Math.max(1, Math.floor(ttlMs / 4));
+  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);
+  const sweepIntervalMs = Math.min(limitBoundMs, askedBoundMs);""",
+        """  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);
+  const sweepIntervalMs = askedBoundMs;""",
         'the sweep interval the cache uses is at most a quarter of the limit',
+    ),
+    (
+        # The floor of a millisecond is what makes the promise true for a limit below four
+        # milliseconds: a quarter of such a limit is finer than a timer can be, so the floor is
+        # the larger of the two. Without the floor the interval would be zero there, and a zero
+        # interval is not a fast timer — it is no timer at all.
+        "the limit bound loses its floor of a millisecond",
+        "  const limitBoundMs = Math.max(1, Math.floor(ttlMs / 4));",
+        "  const limitBoundMs = Math.floor(ttlMs / 4);",
+        'a limit too small for a quarter of a millisecond still sweeps no finer than a millisecond',
+    ),
+    (
+        # A caller who asks for an interval that is not positive used to switch the sweeper off,
+        # and a cache whose sweeper is off only releases the rows when somebody asks for them —
+        # the one moment they are wanted again. The floor on what the caller asked for is what
+        # keeps the sweeper running.
+        "the asked interval loses its floor of a millisecond",
+        "  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);",
+        "  const askedBoundMs = options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS;",
+        'an interval the caller asks for that is not positive is taken as a millisecond',
     ),
     (
         # A time limit of zero means NO time limit. The other reading — everything expires at
@@ -220,6 +244,38 @@ MUTATIONS = [
         "  const expired = (at) => ttlMs > 0 && now() - at >= ttlMs;",
         "  const expired = (at) => now() - at >= ttlMs;",
         'a time limit of zero means no time limit, not that everything expires at once',
+    ),
+    (
+        # The number the package promises a reader is the limit plus the interval, and it is
+        # written down in prose where a reader meets it. Change the prose and the code keeps
+        # its promise while the promise itself says something else — so the prose has to be
+        # compared with the code, not trusted.
+        "the promise to a reader says a number the code does not have",
+        "(750000 ms) with the shipped",
+        "(600000 ms) with the shipped",
+        'the number promised to a reader is the limit plus one sweep interval',
+    ),
+    (
+        # The other half of the same tie: the limit moves and the promise stays where it was.
+        # The rows would still be released on a sweep, and the reader would still be promised
+        # twelve and a half minutes.
+        "the limit is longer than the promise to a reader",
+        "const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;",
+        "const PARSED_ROWS_CACHE_TTL_MS = 20 * 60 * 1000;",
+        'the number promised to a reader is the limit plus one sweep interval',
+    ),
+
+    (
+        # The promise to a reader is that the rows are gone no later than one sweep interval after
+        # the limit -- and that holds only if the TIMER runs on that interval. Nothing watched the
+        # call that starts the timer, so doubling the interval there left every other case green:
+        # the cache still reported the interval it was asked for, the number in the prose still
+        # matched that reported interval, and the real release had moved to "the limit plus twice
+        # the interval" while the promise went on saying twelve and a half minutes.
+        "the timer that releases the rows runs on twice the interval the cache reports",
+        "    sweeper = setInterval(sweep, sweepIntervalMs);",
+        "    sweeper = setInterval(sweep, sweepIntervalMs * 2);",
+        'the timer that releases the rows runs on the interval the cache reports',
     ),
 ]
 
@@ -306,8 +362,13 @@ def main():
     unnamed = []
     for label, old, new, expect in MUTATIONS:
         text, newline = read_exact(SERVER)
-        if old not in text:
-            print(f"SKIP  {label}: anchor not found")
+        # The anchor has to be there EXACTLY once. A control that replaces the first occurrence of
+        # a string that occurs twice edits a place it did not mean to edit, and the case then
+        # passes or fails for a reason that has nothing to do with the rule it is about -- so the
+        # count is checked here, by the control itself, instead of being counted by somebody
+        # reading the source.
+        if text.count(old) != 1:
+            print(f"SKIP  {label}: anchor found {text.count(old)} times")
             missed.append(label)
             continue
         if old == new:
