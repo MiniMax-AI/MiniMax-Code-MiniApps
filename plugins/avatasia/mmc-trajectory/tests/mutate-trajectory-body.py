@@ -108,6 +108,24 @@ MUTATIONS = [
         "the socket was handed the pieces as bytes, not as a string",
     ),
 
+    # The send path keeps the NUMBER of writes and cuts the pieces up differently. The bytes
+    # that reach the socket are the same bytes, every write is still a Buffer, and the body
+    # still declares the same length — but the first two writes are not the first two pieces.
+    # A count cannot see this, and neither can the total bytes.
+    (
+        "the send path cuts the pieces up differently and writes the same number of times",
+        "    for (const piece of pieces) response.write(piece);",
+        """    if (pieces.length > 1) {
+      const pair = Buffer.concat(pieces.slice(0, 2));
+      response.write(pair.subarray(0, 1));
+      response.write(pair.subarray(1));
+      for (const piece of pieces.slice(2)) response.write(piece);
+    } else {
+      for (const piece of pieces) response.write(piece);
+    }""",
+        "and the pieces are what reached the socket",
+    ),
+
     # The send path changes the bytes on the way out without changing their length. The body is
     # still parseable, still holds the same number of records, and still declares the same
     # length — and it is a different body. Only a byte-for-byte comparison sees it.
@@ -127,6 +145,17 @@ MUTATIONS = [
         "the live body carries records that are not the ones the file holds",
         "      id: messageId,",
         "      id: messageId + 'x',",
+        "the bytes on the wire carry the records the file holds",
+    ),
+
+    # The live body carries ONE wrong record, in the middle. The count is the same, the body
+    # still parses, the first record and the last record are the right ones — and everything
+    # in between is not. A check that looks at two of the ids cannot see this, and neither
+    # can the count.
+    (
+        "the live body carries one record that is not the one the file holds",
+        "      id: messageId,",
+        "      id: messageId === 'm6000' ? 'x6000' : messageId,",
         "the bytes on the wire carry the records the file holds",
     ),
 

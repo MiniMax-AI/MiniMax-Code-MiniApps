@@ -207,8 +207,15 @@ assert('the declared length is the sum of the pieces, not the length of one stri
 // remove, and one that hands over a string does it with the very representation the change
 // was made to get rid of. The COUNT is what sees the first, and the TYPE is what sees the
 // second -- and a length comparison sees neither.
+//
+// The correspondence has to be one for one and not just the same NUMBER of writes: a send path
+// that cut the pieces up differently and wrote the same number of times would keep the count,
+// the type and the total bytes, and would still be handing the socket something else. So the
+// check is the objects themselves -- write N has to BE piece N -- which pins the boundaries
+// and the lengths as well, because the object carries them.
 assert('and the pieces are what reached the socket',
-  chunked.written.length === largePieces.length);
+  chunked.written.length === largePieces.length
+  && chunked.written.every((chunk, index) => chunk === largePieces[index]));
 assert('the socket was handed the pieces as bytes, not as a string',
   chunked.written.every((chunk) => Buffer.isBuffer(chunk)));
 // And the bytes that arrived have to be the bytes of the body, compared against an
@@ -251,9 +258,13 @@ const sessionDir = join(home, 'v2', 'sessions', '2026', '10', '22', '00-00-00-se
   + Buffer.from(SID, 'utf8').toString('base64url'));
 await mkdir(sessionDir, { recursive: true });
 const rows = [];
+// The ids the file holds, in order. The live section compares the body's record ids against
+// this list, so the oracle is the file this guard wrote rather than two names typed by hand.
+const idsInTheFile = [];
 // Enough records that the body on the wire is bigger than one piece, so the live section
 // exercises the path this change is about and not only the small-body case.
 for (let index = 0; index < 12000; index += 1) {
+  idsInTheFile.push('m' + index);
   rows.push(JSON.stringify({
     message_id: 'm' + index,
     turn_id: 't' + (index >> 3),
@@ -315,10 +326,17 @@ try {
     // payload, so the oracle here is the file this guard wrote: the ids are in it, and the
     // body has to carry them. A count and a parse are not enough -- a body can hold the
     // right number of records and be the wrong records.
-    const idsInBody = ['m0', 'm11999'].every((id) => (
-      coldBytes.includes(Buffer.from('"id":"' + id + '"', 'utf8'))
-    ));
-    assert('the bytes on the wire carry the records the file holds', idsInBody);
+    //
+    // ALL of the ids, in order, and not two of them: a body can hold the right number of
+    // records, the right FIRST and LAST record, and the wrong records in between, and the
+    // count and the parse would both stay green. So the whole sequence is compared, against
+    // the ids the file was written with.
+    const idsOnTheWire = parsed !== null && Array.isArray(parsed.turns)
+      ? parsed.turns.flatMap((turn) => turn.records || []).map((record) => record.id)
+      : [];
+    assert('the bytes on the wire carry the records the file holds',
+      idsOnTheWire.length === idsInTheFile.length
+      && idsOnTheWire.every((id, index) => id === idsInTheFile[index]));
 
     // The warm read is the one that comes out of the cache, and the cache keeps PIECES now.
     const warm = await fetch(base + '/api/trajectory?session=' + encodeURIComponent(SID));
