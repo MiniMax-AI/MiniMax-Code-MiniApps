@@ -140,14 +140,17 @@ test('miniapp: surface.window rejects unknown fields, non-booleans, min above si
   assert.deepEqual(equal.report.diagnostics, []);
 });
 
-test('miniapp: agentAccess allows only session.run and reports the feature', async () => {
+test('miniapp: agentAccess allows session.run and session.read and reports the features', async () => {
   const granted = await run((m) => { m.agentAccess = ['session.run']; return m; });
   assert.deepEqual(granted.report.diagnostics, []);
   assert.deepEqual(granted.resolved.features, ['agentAccess']);
   const denied = await run((m) => { m.agentAccess = []; return m; });
   assert.deepEqual(denied.report.diagnostics, []);
   assert.deepEqual(denied.resolved.features, ['agentAccess']);
-  for (const value of [['session.run', 'session.read'], 'session.run', [null]]) {
+  const read = await run((m) => { m.agentAccess = ['session.run', 'session.read']; return m; });
+  assert.deepEqual(read.report.diagnostics, []);
+  assert.deepEqual(read.resolved.features, ['agentAccess', 'agentAccess.session.read']);
+  for (const value of [['session.run', 'session.write'], 'session.run', [null]]) {
     const bad = await run((m) => { m.agentAccess = value; return m; });
     assert.deepEqual(codes(bad.report.diagnostics), ['MINIAPP_AGENT_ACCESS_INVALID'], JSON.stringify(value));
   }

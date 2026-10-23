@@ -9,7 +9,7 @@
 // delivered to our listener; it is recognised by the "cqv-" id prefix and ignored.
 
 const PROTOCOL_VERSION = '2026-01-26';
-const APP_INFO = { name: 'cq-viewer', version: '1.2.1' }; // keep equal to plugin.json (tests check)
+const APP_INFO = { name: 'cq-viewer', version: '1.4.0' }; // keep equal to plugin.json (tests check)
 const OWN_NOTIFICATIONS = new Set(['ui/notifications/initialized', 'ui/notifications/size-changed']);
 
 /**

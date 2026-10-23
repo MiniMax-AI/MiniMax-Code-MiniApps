@@ -47,6 +47,7 @@ export async function checkMiniApp(report, { packageDir, manifest }) {
   checkAgentAccess(report, manifest.agentAccess);
   checkAgentConcurrency(report, manifest.agentConcurrency);
   if (manifest.agentAccess !== undefined) resolved.features.push('agentAccess');
+  if (Array.isArray(manifest.agentAccess) && manifest.agentAccess.includes('session.read')) resolved.features.push('agentAccess.session.read');
   if (manifest.agentConcurrency !== undefined) resolved.features.push('agentConcurrency');
   if (isRecord(manifest.surface) && manifest.surface.window !== undefined) resolved.features.push('surface.window');
   return resolved;

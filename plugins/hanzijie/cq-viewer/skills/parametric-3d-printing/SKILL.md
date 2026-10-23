@@ -418,9 +418,9 @@ Before delivering a model, verify:
 
 When the `cq-viewer` MCP tools are available, also show each phase's model in the viewer, so the user can orbit it, section it, and mark positions on it. Keep rendering the PNG preview for your own self-review.
 
-- After the script writes `model.stl` or `model.step`, call `add_model_file` with the file's absolute path. The viewer opens the file in place and reloads it every time the script re-exports it, so call it once per file, not once per iteration.
+- After the script writes `model.stl` or `model.step`, call `add_model_file` with the file's absolute path and `workspace` set to your current working directory, so only this conversation's viewer opens it. The viewer opens the file in place and reloads it every time the script re-exports it, so call it once per file, not once per iteration. Write models inside your working directory when you can: the viewer lists that folder on its own.
 - Export STEP as well (`cq.exporters.export(result, "model.step")`) when edges or assembly parts matter: the viewer keeps part names, colours, and real CAD edges for STEP.
-- Files outside the home directory (for example a scratch directory in `/tmp`) cannot be opened in place: pass `copy_to_scene: true` to copy them into the viewer's scene instead.
-- Use `add_model_folder` to register the project folder once, and `list_model_folders` to find models already there.
-- If the tool result says no viewer window is connected, ask the user to open CadQuery Viewer; the requested models open automatically when it starts.
-- Positions the user marks in the viewer arrive as a message in the conversation; the same data is in `~/.cqview/selection.json`.
+- Files outside both your working directory and the home directory (for example a scratch directory in `/tmp`) cannot be opened in place: pass `copy_to_scene: true` to copy them into the viewer's scene instead.
+- Use `add_model_folder` (with `workspace`) to add a model folder outside your working directory to this conversation's viewer, and `list_model_folders` to find models already there.
+- If the tool result says no viewer window is connected, ask the user to open CadQuery Viewer in this conversation; the requested models open automatically when it starts.
+- Positions the user marks in the viewer arrive as a message in the conversation; the same data is in `~/.cqview/selections/<folder id>.json` (the message names the file), and the latest in `~/.cqview/selection.json`.
