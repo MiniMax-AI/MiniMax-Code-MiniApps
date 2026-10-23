@@ -184,6 +184,18 @@ MUTATIONS = [
         'the sweeper does not keep the process alive',
     ),
     (
+        # The same rule, but with a decoy: the owner used to be a pattern over the source, and a
+        # pattern cannot tell the cache's own handle from an unrelated one's. A function that is
+        # never called, with a parameter of the same name, satisfied it -- while the real timer was
+        # left referenced and the process would have waited for it. The owner now watches the handle
+        # the cache was given, so the decoy has to go with the real unref.
+        "an unrelated unref stands in for the sweeper's own",
+        "    if (typeof sweeper.unref === 'function') sweeper.unref();\n",
+        "    const unrelatedTimer = (sweeper) => { sweeper.unref(); };\n"
+        "    if (typeof sweeper.ref === 'function') sweeper.ref();\n",
+        'the sweeper does not keep the process alive',
+    ),
+    (
         # The page polls every 8 seconds. A limit shorter than one poll would make an open tab
         # lose its rows between two polls and re-parse the whole lineage for nothing.
         "the time limit is shorter than one poll",

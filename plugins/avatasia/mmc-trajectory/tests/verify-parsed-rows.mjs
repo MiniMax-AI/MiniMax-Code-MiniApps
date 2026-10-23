@@ -51,6 +51,41 @@ function assert(name, cond) {
   else failures.push(name);
 }
 
+// The timer the cache starts is not reachable from outside it, so the only way to see the
+// interval it really got -- and the only way to see whether it holds the process open -- is to
+// stand in for the clock's own timer call while the cache runs.
+//
+// The handle handed to the cache is a REAL timer handle, so its reference state is the platform's
+// own answer and not this file's opinion of it. The handle is cleared as soon as the window
+// closes, so no timer is left behind, and its callback can never run: the window is synchronous
+// and the event loop does not turn inside it.
+//
+// A pattern over the source cannot do this. It can see that the text says `sweeper.unref()`, but
+// not that the handle the cache was given is the one that was unref'd -- and an unrelated
+// function with a parameter of the same name used to satisfy it while the real timer stayed
+// referenced.
+function withRecordedTimers(run) {
+  const recorded = [];
+  const handles = [];
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = (callback, delay, ...rest) => {
+    recorded.push(delay);
+    const handle = realSetInterval(callback, delay, ...rest);
+    handles.push(handle);
+    return handle;
+  };
+  globalThis.clearInterval = () => {};
+  try {
+    run();
+  } finally {
+    globalThis.setInterval = realSetInterval;
+    globalThis.clearInterval = realClearInterval;
+    for (const handle of handles) realClearInterval(handle);
+  }
+  return { recorded, handles };
+}
+
 const LIMIT = 64 * 1024 * 1024;
 const root = await mkdtemp(join(tmpdir(), 'parsed-rows-'));
 
@@ -459,10 +494,19 @@ assert('the time limit is longer than one poll, so an open tab never loses its r
 assert('the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
   TTL >= 5 * 60 * 1000);
 
-// And the sweeper must never be the reason the process is still running. The name is the
-// sweeper's own, because a whole-file pattern would keep passing after some OTHER timer in the
-// service grew an unref of its own — and the rule would quietly lose its owner.
-assert('the sweeper does not keep the process alive', /sweeper\.unref\(\)/.test(SERVER));
+// And the sweeper must never be the reason the process is still running. The owner of that rule
+// used to be a pattern over the source, and a pattern cannot tell the cache's own handle from an
+// unrelated one's: a function elsewhere with a parameter of the same name satisfied it while the
+// real timer stayed referenced. So the owner watches the handle the cache was given: the timer it
+// created has to be one that does not hold the process open.
+const unrefWindow = withRecordedTimers(() => {
+  const unrefCache = createParsedRowsCache(1000, { ttlMs: 1_000 });
+  unrefCache.set('k', val, 500);
+});
+assert('the sweeper does not keep the process alive',
+  unrefWindow.handles.length === 1
+  && typeof unrefWindow.handles[0].hasRef === 'function'
+  && unrefWindow.handles[0].hasRef() === false);
 
 // The release lands on a sweep tick, so the rows are gone a sweep interval AFTER the limit. The
 // promise to a reader is that interval added on, and it only stays a promise while the interval
@@ -508,31 +552,14 @@ assert('the number promised to a reader is the limit plus one sweep interval',
 //
 // The timer is not reachable from outside the cache, so the only way to see the interval it really
 // got is to stand in for the clock's own timer call while the cache runs.
-function withRecordedIntervals(run) {
-  const recorded = [];
-  const realSetInterval = globalThis.setInterval;
-  const realClearInterval = globalThis.clearInterval;
-  globalThis.setInterval = (callback, delay) => {
-    recorded.push(delay);
-    return { unref() { return this; }, ref() { return this; }, hasRef() { return false; } };
-  };
-  globalThis.clearInterval = () => {};
-  try {
-    run();
-  } finally {
-    globalThis.setInterval = realSetInterval;
-    globalThis.clearInterval = realClearInterval;
-  }
-  return recorded;
-}
-
 let timedCache = null;
-const timerCalls = withRecordedIntervals(() => {
+const timerWindow = withRecordedTimers(() => {
   timedCache = createParsedRowsCache(1000, { ttlMs: TTL });
   timedCache.set('k', val, 500);
 });
 assert('the timer that releases the rows runs on the interval the cache reports',
-  timerCalls.length === 1 && timerCalls[0] === timedCache.sweepIntervalMs);
+  timerWindow.recorded.length === 1
+  && timerWindow.recorded[0] === timedCache.sweepIntervalMs);
 
 // The quarter has a floor of a millisecond, because a timer cannot be finer than that. For a
 // limit below four milliseconds the floor is the larger of the two, so the release is then at
@@ -572,12 +599,12 @@ check('and the rows are still held', noLimit.bytes, 500);
 // expires, a timer would scan it for ever, because the sweep only stops when the cache empties
 // and this one never does. So that half has to be owned by watching the TIMER, not by watching
 // the hit: the hit stays true and the bytes stay counted either way.
-const zeroTimerCalls = withRecordedIntervals(() => {
+const zeroTimerCalls = withRecordedTimers(() => {
   const zeroCache = createParsedRowsCache(1000, { ttlMs: 0, now: () => clock });
   zeroCache.set('k', val, 500);
 });
 assert('a time limit of zero starts no sweeper, because nothing in it ever expires',
-  zeroTimerCalls.length === 0);
+  zeroTimerCalls.recorded.length === 0);
 
 await rm(root, { recursive: true, force: true });
 

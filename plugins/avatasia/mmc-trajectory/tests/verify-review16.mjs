@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, basename, dirname, relative, isAbsolute } from 'node:path';
+import { createParsedRowsCache } from '../miniapp/node/server.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PKG = join(HERE, '..');
@@ -267,8 +268,19 @@ assert('dispose() clears the parsed-row cache too',
 assert('dispose() still clears the other two caches',
   !!disposeBody && /descriptorCache\.clear\(\)/.test(disposeBody[1])
   && /trajectoryCache\.clear\(\)/.test(disposeBody[1]));
+// The parsed-row cache has to expose clear(), and it has to be THAT cache's clear(). The pattern
+// this replaces could be satisfied by an unrelated cache's method further down the file: the parsed
+// cache's own clear() could be renamed while another one supplied the text the pattern was looking
+// for -- and then the dispose path would throw when it reached the cache it meant to release. So
+// the owner asks the cache instead of reading about it.
+const parsedRowsCache = createParsedRowsCache(1000);
+parsedRowsCache.set('k', { rows: [] }, 500);
+const parsedRowsExposesClear = typeof parsedRowsCache.clear === 'function';
+if (parsedRowsExposesClear) parsedRowsCache.clear();
 assert('the parsed-row cache really does expose clear()',
-  /createParsedRowsCache[\s\S]*?clear\(\)\s*\{[^}]*entries\.clear\(\);[^}]*bytes = 0;[^}]*\}/.test(serverJs));
+  parsedRowsExposesClear
+  && parsedRowsCache.bytes === 0
+  && parsedRowsCache.size === 0);
 
 /* ---------- 6. the empty state names a control that still works ---------- */
 

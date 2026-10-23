@@ -251,6 +251,21 @@ MUTATIONS = [
      "    reset() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },",
      "the parsed-row cache really does expose clear()"),
 
+    # The same rename, with a decoy: the owner used to be a pattern over the source, and the
+    # pattern could be satisfied by an unrelated cache's method further down the file. The parsed
+    # cache's own clear() could be renamed -- and the dispose path would throw when it reached the
+    # cache it meant to release -- while another clear() supplied the text. The owner now asks the
+    # cache, so the decoy has to go with the rename.
+    ("an unrelated clear() stands in for the parsed-row cache's own",
+     "    clear() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },",
+     "    reset() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },\n"
+     "    unrelatedCache() {\n"
+     "      const entries = new Map();\n"
+     "      let bytes = 0;\n"
+     "      return { clear() { entries.clear(); bytes = 0; } };\n"
+     "    },",
+     "the parsed-row cache really does expose clear()"),
+
     # ---- 6. the empty state points at inert controls again ----
     ("the empty state goes back to one hint for both modes",
      "var anomalyOn = state.anomaly.rules.length > 0;",
