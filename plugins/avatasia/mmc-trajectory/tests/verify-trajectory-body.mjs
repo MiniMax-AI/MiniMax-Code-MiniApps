@@ -226,6 +226,19 @@ assert('the socket was handed the pieces as bytes, not as a string',
 assert('the bytes that reached the socket are the bytes of the body',
   asBytes(chunked.written).equals(Buffer.from(JSON.stringify(LARGE), 'utf8')));
 
+// The three owners above are not independent of each other, and they are not meant to be. The
+// correspondence check is an IDENTITY check, so a send path that hands the socket a different
+// object -- a copy, a string, a modified buffer -- is not writing piece N, and it goes red there
+// as well, whatever else it breaks. That is the strength of the check rather than a false alarm:
+// a body the socket receives as copies is the memory shape this change was made to remove.
+//
+// So the three are judged one by one, each on its own property: the correspondence is green when
+// every write IS its piece, the type is green when every write is bytes, and the bytes are green
+// when what arrived is what the body says. Each of the three has a break that only it catches,
+// and the control has one for each: a send path that cuts the pieces up differently (the
+// correspondence), a serializer that hands the pieces back as strings (the type), and a send path
+// that changes the bytes of the piece IN PLACE, without changing the object (the bytes).
+
 const asString = fakeResponse();
 sendJsonBody(asString, 200, JSON.stringify(LARGE), {});
 assert('a body that is one string still declares its own length',

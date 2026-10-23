@@ -136,6 +136,33 @@ MUTATIONS = [
         "the bytes that reached the socket are the bytes of the body",
     ),
 
+    (
+        # The send path changes the bytes of the piece IN PLACE: the same object, the same length,
+        # different bytes. The correspondence stays green (the object did not change), the type
+        # stays green (it is still bytes) -- and the byte comparison is the only thing that goes
+        # red. That is what makes this the byte owner's OWN escape: the other two owners have
+        # theirs, and this one is the one that was missing.
+        #
+        # Every occurrence is replaced, and not only the first one, because replacing the first is
+        # not idempotent: the warm read sends the SAME pieces again, so it would replace the next
+        # occurrence, and the cold body and the warm body would stop being the same bytes -- which
+        # is a different owner's failure and would hide this one. The replacement is the same
+        # length, so the declared length does not move either.
+        "the send path changes the bytes of the piece in place, without changing the object",
+        "    for (const piece of pieces) response.write(piece);",
+        """    for (const piece of pieces) {
+      if (Buffer.isBuffer(piece)) {
+        let at = piece.indexOf('user');
+        while (at >= 0) {
+          piece.write('xxxx', at, 'utf8');
+          at = piece.indexOf('user', at + 4);
+        }
+      }
+      response.write(piece);
+    }""",
+        "the bytes that reached the socket are the bytes of the body",
+    ),
+
     # The live body carries the wrong records. The count is the same, the body still parses, and
     # the declared length is still the length of what was written — and the records in it are not
     # the ones the file holds. This is what gives the live section's own assertion an owner:
