@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Agent 协作透视</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="brand-copy"><strong>Agent 协作透视</strong><small>原生子 Agent · 本机只读观测</small></div>
+    <span class="local-badge">● 本机数据</span>
+  </header>
+  <main>
+    <section class="toolbar" aria-label="会话选择">
+      <div><div class="eyebrow">观察会话</div><select id="session-select" aria-label="选择会话"></select>
+        <p id="selection-note" class="hint">自动跟随最近更新的本机会话（推断）</p>
+        <button id="follow-latest" type="button" hidden>跟随最新会话</button>
+        <button id="load-more-sessions" type="button" hidden>加载更多会话</button></div>
+      <div class="toolbar-right"><span id="refresh-state" class="hint">读取中…</span><button id="refresh-button" type="button">刷新</button></div>
+    </section>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section class="overview" aria-label="协作概况">
+      <div class="stat"><span>子任务</span><strong id="total">—</strong></div>
+      <div class="stat"><span>进行中（含排队）</span><strong id="running">—</strong></div>
+      <div class="stat"><span>已完成</span><strong id="done">—</strong></div>
+      <div class="stat"><span>失败或中断</span><strong id="failed">—</strong></div>
+    </section>
+    <section class="observation" aria-label="执行观察">
+      <strong>执行观察</strong><div id="observation">正在读取任务时间和结果记录…</div>
+    </section>
+    <section class="workspace">
+      <div class="timeline-column">
+        <div class="section-heading"><div><div class="eyebrow">EXECUTION FLOW</div><h1>协作时间线</h1></div><span class="hint">点击任务查看证据</span></div>
+        <div id="flow" class="flow" aria-live="polite"><div class="empty">正在读取本机会话…</div></div>
+      </div>
+      <aside class="detail-column" aria-label="子任务详情">
+        <div class="section-heading"><div><div class="eyebrow">TASK EVIDENCE</div><h2>任务详情</h2></div></div>
+        <div id="detail" class="detail"><div class="empty">选择一项子任务</div></div>
+      </aside>
+    </section>
+    <p class="footnote">状态来自本机保存的任务与会话记录；“已交付”是任务记录状态，父会话回传须另行核实。页面打开期间定期刷新。</p>
+  </main>
+</body>
+</html>

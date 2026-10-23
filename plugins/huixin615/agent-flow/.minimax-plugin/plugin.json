@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "agent-flow",
+  "displayName": "Agent 协作透视",
+  "version": "1.0.0",
+  "description": "Read-only timeline of native sub-agent tasks, child sessions, and result handoffs in local MiniMax Code conversations.",
+  "author": "Huixin615",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": ["打开 Agent 协作透视", "查看这次任务的子 Agent 协作过程"],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
