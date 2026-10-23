@@ -42,6 +42,20 @@ const SERVER = readFileSync(new URL('../miniapp/node/server.mjs', import.meta.ur
 
 let pass = 0;
 const failures = [];
+// How many of the assertions below held VACUOUSLY -- green because there was nothing to compare
+// against, rather than because the thing they are about was checked and matched.
+//
+// A vacuous holding has to be VISIBLE. An owner that says nothing cannot be told apart from one
+// that was checked and found true, and the reader of this guard's output has to be able to tell
+// the two apart -- that reader is the one asking "did this break break the rule that owner
+// names?", and an owner that went quiet is not an answer to it.
+let vacuous = 0;
+
+// A comparison that holds vacuously when it cannot be made, and counts itself when it does.
+const holds = (actual, expected, comparable) => {
+  if (!comparable) { vacuous += 1; return true; }
+  return actual === expected;
+};
 function check(name, actual, expected) {
   if (JSON.stringify(actual) === JSON.stringify(expected)) pass += 1;
   else failures.push(`${name}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
@@ -324,7 +338,12 @@ const beforeShape = JSON.stringify(one.rows);
 await buildBody([{ cache: shareRows, path: a, generation: 4 }], null);
 const two = await loadParsedRows(shareRows, a, LIMIT);
 assert('building a payload leaves the cached rows byte-identical', beforeShape === JSON.stringify(two.rows));
-assert('and it is literally the same array, not a copy', one === two);
+// The ARRAY is what the name says: the same array, not a copy of it. The check used to compare
+// the whole value the read returned, which is a STRONGER thing than the name claims -- a read
+// that handed back a fresh wrapper around the same array would have been reported as a copy of
+// the array, and the rule this owner names would have been reported as broken by a break that
+// did not break it. The owner now compares the arrays.
+assert('and it is literally the same array, not a copy', one.rows === two.rows);
 // ROW_GENERATION is the one write the route makes to a cached row, and one path maps to one
 // generation — so stamping twice leaves the same value.
 check('stamping the generation is idempotent', two.rows[0][ROW_GENERATION], 4);
@@ -349,7 +368,12 @@ const e1 = await loadParsedRows(emptyCache, emptyPath, LIMIT);
 const e2 = await loadParsedRows(emptyCache, emptyPath, LIMIT);
 assert('an empty file reports empty on a cold read', e1.empty === true);
 assert('an empty file still reports empty on a hit', e2.empty === true);
-assert('and the hit is a hit', e1 === e2);
+// The second read of an empty file is served from the cache, and what it hands back is the very
+// object the cold read gave. The name used to say "the hit is a hit" while the check compared
+// objects -- and "is a hit" is not what an object comparison can tell you: a cache that served a
+// copy on a hit would still have been a hit, and the owner would have reported the rule it names
+// as broken by a break that did not break it. The owner now says what it compares.
+assert('and the hit on an empty file gives back the same object the cold read gave', e1 === e2);
 
 /* =====================================================================
  * 8 — structure: where the cache lives and what it is keyed on
@@ -485,8 +509,13 @@ const defaultLimitOf = (budget) => {
     cache.clear();
     return released;
   };
-  // A cache that never lets the rows go has no limit to find.
-  if (!releasedAt(CAP)) return null;
+  // A cache that never lets the rows go has no limit to find -- but it does have a FLOOR on the
+  // limit it gives: the ceiling this probe reached. So the probe returns that ceiling rather
+  // than nothing, and the owners below read it as the lower bound it is. A limit of at least
+  // twenty-four days is longer than one poll and longer than five minutes, and it is not the
+  // limit the service declares -- so every owner below says the right thing about it, instead of
+  // going quiet and accusing the rules of a break that did not break them.
+  if (!releasedAt(CAP)) return CAP;
   let low = 0;
   let high = CAP;
   while (low + 1 < high) {
@@ -541,16 +570,29 @@ assert('the heap proxy is a number the service declares', PROXY !== null);
 
 // A file of a known size, loaded through the shipped step: the cache must be charged the source
 // bytes times the proxy, so the source bytes it holds are recoverable from its own accounting.
+//
+// The three owners below are about the CHARGE, and the proxy they compare against is read out of
+// the source. When it cannot be read as a number there is no proxy to charge with -- and the rule
+// that the proxy has to be a number the service DECLARES has an owner of its own, the one above.
+// So these three hold vacuously in that case, and they never accuse the rule about the
+// declaration.
+//
+// That is not a technicality. A cache whose proxy is the string "2" is still charged twice the
+// source bytes, because that is what the service's own arithmetic does with it, so the rule these
+// three name is not broken by the break that made them red. An owner that reports "I expected 0
+// bytes" is not reporting a broken rule -- it is reporting that it could not read the number it
+// wanted. A break of the declaration has to be reported by the owner of the declaration and by
+// nobody else.
 const sized = join(root, 'sized.jsonl');
 const sizedText = ROWS.map((r) => JSON.stringify(r)).join('\n') + '\n';
 await writeFile(sized, sizedText);
 const sizedBytes = Buffer.byteLength(sizedText, 'utf8');
 const coverageCache = createParsedRowsCache(64 * 1024 * 1024);
 await loadParsedRows(coverageCache, sized, LIMIT);
-check('the cache is charged the source bytes times the heap proxy',
-  coverageCache.bytes, Math.ceil(sizedBytes * PROXY));
-check('so the source bytes it holds are computable from its own accounting',
-  coverageCache.bytes / PROXY, sizedBytes);
+assert('the cache is charged the source bytes times the heap proxy',
+  holds(coverageCache.bytes, Math.ceil(sizedBytes * PROXY), PROXY !== null));
+assert('so the source bytes it holds are computable from its own accounting',
+  holds(coverageCache.bytes / PROXY, sizedBytes, PROXY !== null));
 // The charge the ROUTE makes, observed by making the call the route makes. The route passes
 // options, and a fixture that leaves them out takes a different branch of the same function, so
 // a charge that was wrong on the route's path was invisible here -- and the old owner asked only
@@ -558,7 +600,7 @@ check('so the source bytes it holds are computable from its own accounting',
 const routeCache = createParsedRowsCache(64 * 1024 * 1024);
 await loadParsedRows(routeCache, sized, LIMIT, { cacheable: true });
 assert('and the charge the route makes is that one',
-  routeCache.bytes === Math.ceil(sizedBytes * PROXY));
+  holds(routeCache.bytes, Math.ceil(sizedBytes * PROXY), PROXY !== null));
 
 // A clock the test controls, so "expired" is a fact rather than a wait.
 let clock = 1_700_000_000_000;
@@ -616,14 +658,14 @@ assert('the poll waits as long as the client declares',
 const POLL_DELAY = poll === null ? null : Math.max(...poll.delays);
 const DEFAULT_LIMIT = defaultLimitOf(1024 * 1024);
 assert('the limit the service declares is the limit the cache gives its rows',
-  DEFAULT_LIMIT !== null && DEFAULT_LIMIT === TTL);
+  DEFAULT_LIMIT === TTL);
 assert('the time limit is longer than one poll, so an open tab never loses its rows',
-  POLL_DELAY !== null && DEFAULT_LIMIT !== null && DEFAULT_LIMIT > POLL_DELAY);
+  POLL_DELAY !== null && DEFAULT_LIMIT > POLL_DELAY);
 // The page stops polling while its tab is hidden, so a reader who switches away for a while is
 // the ordinary case. A limit shorter than that would make every return to the tab cost a
 // re-parse — which is the other half of what this limit buys, and it has to be paid for.
 assert('the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
-  DEFAULT_LIMIT !== null && DEFAULT_LIMIT >= 5 * 60 * 1000);
+  DEFAULT_LIMIT >= 5 * 60 * 1000);
 
 // And the sweeper must never be the reason the process is still running. The owner of that rule
 // used to be a pattern over the source, and a pattern cannot tell the cache's own handle from an
@@ -685,7 +727,7 @@ const promisedNumbers = promiseSentence === null
 const promisedMinutes = minutesPromised(promiseSentence);
 const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
 assert('the number promised to a reader is the limit plus one sweep interval',
-  promisedNumbers.length === 1 && DEFAULT_LIMIT !== null
+  promisedNumbers.length === 1
   && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL);
 assert('the promise to a reader is the same promise in both of the forms it is written in',
   promisedMinutes === null || promisedNumbers.length === 0
@@ -725,7 +767,7 @@ assert('the timer that releases the rows runs on the interval the cache reports'
 // deliberately tiny: with a limit of a second the floor never applies, and a case that cannot
 // reach the floor would pass without anything having been decided.
 const tinyLimit = createParsedRowsCache(1000, { ttlMs: 3 });
-assert('a limit too small for a quarter of a millisecond still sweeps no finer than a millisecond',
+assert('a limit below four milliseconds is still swept every millisecond, so the release is at most a millisecond late',
   tinyLimit.sweepIntervalMs === 1);
 
 // An interval the caller asks for that is not positive is taken as a millisecond. It used to
@@ -771,6 +813,14 @@ await rm(root, { recursive: true, force: true });
 if (failures.length) {
   console.error(`\n[parsed-rows] ${failures.length} FAILED, ${pass} passed`);
   for (const f of failures) console.error('  - ' + f);
+  if (vacuous > 0) {
+    console.error(`[parsed-rows] ${vacuous} of them held vacuously: there was nothing to `
+      + `compare against, so they say nothing about the thing they are about`);
+  }
   process.exit(1);
 }
 console.log(`\n[parsed-rows] ${pass} assertions passed`);
+if (vacuous > 0) {
+  console.log(`[parsed-rows] ${vacuous} of them held vacuously: there was nothing to compare `
+    + `against, so they say nothing about the thing they are about`);
+}
