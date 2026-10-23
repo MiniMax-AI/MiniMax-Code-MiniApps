@@ -16,4 +16,13 @@ Submit ready-to-run files. If the app requires a build step, include its source 
 
 Before submitting, install the app in MiniMax Code, open it, and check its main features. Include your test environment and results in the pull request, and state any unverified behavior. When updating an existing app, keep its plugin ID and update the version and usage instructions as appropriate.
 
+## Plugin tests
+
+Tests for a plugin are optional and live inside the plugin's own directory (for example `plugins/<author>/<plugin-id>/test/`). They run through the `test` script in the plugin's `package.json`, i.e. `npm test` from the plugin directory.
+
+- Tests must not use the network and must not depend on the MiniMax Code host app.
+- Install any dependencies only inside the plugin directory (commit a `package-lock.json` if you have dependencies); never add them to the root `package.json`.
+- The root `test/` directory is reserved for repository-wide Mini App rule checks. It must not import or run plugin tests.
+- The `Plugin tests` workflow runs only for plugins changed by a pull request, separately from the rules CI (`npm run check`). CI uses Node.js 22.
+
 Working with an AI coding agent? It reads `AGENTS.md` automatically; `docs/` holds the same rules for people.
