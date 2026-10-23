@@ -342,6 +342,107 @@ assert('the truncation verdict comes from truncatedByCap',
 assert('loadParsedRows is exported so a test can run the real step',
   SERVER.includes('export async function loadParsedRows('));
 
+/* =====================================================================
+ * 9 — the coverage is computable, and the rows are released when nobody wants them
+ *
+ * Two questions this cache has to answer, and neither of them is "how many entries are in
+ * there" — that number moves with the order the files happened to be read in.
+ *
+ *   COVERAGE. The budget is charged in SOURCE bytes times the heap proxy, not in resident bytes,
+ *   which V8 cannot report. That is what makes the coverage computable: the source bytes a
+ *   round does NOT have to parse again are the lineage's source bytes minus the source bytes this
+ *   cache holds, and the cache can say the second number exactly. A cache whose accounting had
+ *   drifted from its input could not answer that at all, and then the budget would only be a
+ *   number in a source file.
+ *
+ *   LIFETIME. The rows are the largest thing this service holds and they are only worth holding
+ *   while somebody asks for them: the page stops asking the moment its tab is hidden, so a cache
+ *   with no expiry keeps that conversation's rows for as long as the runtime lives. The release
+ *   has to happen WITHOUT a request — a sweep that only ran on a request would release them
+ *   exactly when the reader comes back, which is the one moment they are wanted again.
+ * ===================================================================== */
+
+// A constant the source declares as an expression — `60 * 1000` — is read by arithmetic rather
+// than by a digit pattern, so the check follows the constant instead of repeating it.
+const declaredNumber = (source, name) => {
+  const match = source.match(new RegExp(`const ${name} = ([0-9_ *]+);`));
+  if (match === null) return null;
+  const parts = match[1].replace(/_/g, '').split('*').map((part) => Number(part.trim()));
+  if (parts.some((part) => !Number.isFinite(part))) return null;
+  return parts.reduce((carry, part) => carry * part, 1);
+};
+
+// The proxy is read out of the shipped source rather than repeated here, so the relationship
+// below is checked against the constant the service actually charges with.
+const PROXY = declaredNumber(SERVER, 'PARSED_ROWS_HEAP_PER_SOURCE_BYTE');
+assert('the heap proxy is a number the service declares', PROXY !== null);
+
+// A file of a known size, loaded through the shipped step: the cache must be charged the source
+// bytes times the proxy, so the source bytes it holds are recoverable from its own accounting.
+const sized = join(root, 'sized.jsonl');
+const sizedText = ROWS.map((r) => JSON.stringify(r)).join('\n') + '\n';
+await writeFile(sized, sizedText);
+const sizedBytes = Buffer.byteLength(sizedText, 'utf8');
+const coverageCache = createParsedRowsCache(64 * 1024 * 1024);
+await loadParsedRows(coverageCache, sized, LIMIT);
+check('the cache is charged the source bytes times the heap proxy',
+  coverageCache.bytes, Math.ceil(sizedBytes * PROXY));
+check('so the source bytes it holds are computable from its own accounting',
+  coverageCache.bytes / PROXY, sizedBytes);
+assert('and the charge the route makes is that one',
+  SERVER.includes('cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));'));
+
+// A clock the test controls, so "expired" is a fact rather than a wait.
+let clock = 1_700_000_000_000;
+const ttlCache = createParsedRowsCache(1000, { ttlMs: 60_000, now: () => clock });
+ttlCache.set('k', val, 500);
+assert('a stored entry is there', ttlCache.get('k') !== null);
+clock += 59_000;
+assert('a read inside the time limit is still a hit', ttlCache.get('k') !== null);
+check('and it is still held', ttlCache.bytes, 500);
+// The read above refreshed the entry, so the limit runs from THAT moment: the clock has to move
+// a whole limit again, not a little more than the limit.
+clock += 61_000;
+assert('a read after the time limit is a miss', ttlCache.get('k') === null);
+check('and the entry is not held any more', ttlCache.bytes, 0);
+
+// The sweep releases what expired and keeps what has not.
+const sweepCache = createParsedRowsCache(1000, { ttlMs: 60_000, now: () => clock });
+sweepCache.set('k', val, 500);
+sweepCache.sweep();
+check('a sweep inside the time limit keeps the entry', sweepCache.bytes, 500);
+clock += 61_000;
+sweepCache.sweep();
+check('a sweep releases what expired', sweepCache.bytes, 0);
+check('and leaves nothing behind', sweepCache.size, 0);
+
+// And the release happens without a request, which is the whole point of the time limit.
+const liveCache = createParsedRowsCache(1000, { ttlMs: 100, sweepIntervalMs: 25 });
+liveCache.set('k', val, 500);
+assert('the rows are there to begin with', liveCache.bytes, 500);
+await new Promise((resolve) => setTimeout(resolve, 1000));
+check('the rows are released without a request', liveCache.bytes, 0);
+check('and the cache is empty', liveCache.size, 0);
+
+// The time limit has to outlive one poll, or an open tab would lose its rows between polls.
+const clientSource = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
+const pollMatch = clientSource.match(/TRAJECTORY_POLL_INTERVAL = (\d+)/);
+assert('the client says how often it polls the trajectory', pollMatch !== null);
+const ttlMatch = SERVER.match(/const PARSED_ROWS_CACHE_TTL_MS = ([0-9_ *]+);/);
+assert('the rows cache has a time limit', ttlMatch !== null);
+const TTL = declaredNumber(SERVER, 'PARSED_ROWS_CACHE_TTL_MS');
+assert('the time limit is a number the service declares', TTL !== null);
+assert('the time limit is longer than one poll, so an open tab never loses its rows',
+  TTL > Number(pollMatch[1]));
+// The page stops polling while its tab is hidden, so a reader who switches away for a while is
+// the ordinary case. A limit shorter than that would make every return to the tab cost a
+// re-parse — which is the other half of what this limit buys, and it has to be paid for.
+assert('the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
+  TTL >= 5 * 60 * 1000);
+
+// And the sweeper must never be the reason the process is still running.
+assert('the sweeper does not keep the process alive', /\.unref\(\)/.test(SERVER));
+
 await rm(root, { recursive: true, force: true });
 
 /* ===================================================================== */

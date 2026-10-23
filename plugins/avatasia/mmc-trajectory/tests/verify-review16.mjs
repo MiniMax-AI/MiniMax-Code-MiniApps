@@ -268,7 +268,7 @@ assert('dispose() still clears the other two caches',
   !!disposeBody && /descriptorCache\.clear\(\)/.test(disposeBody[1])
   && /trajectoryCache\.clear\(\)/.test(disposeBody[1]));
 assert('the parsed-row cache really does expose clear()',
-  /createParsedRowsCache[\s\S]*?clear\(\)\s*\{\s*entries\.clear\(\);\s*bytes = 0;\s*\}/.test(serverJs));
+  /createParsedRowsCache[\s\S]*?clear\(\)\s*\{[^}]*entries\.clear\(\);[^}]*bytes = 0;[^}]*\}/.test(serverJs));
 
 /* ---------- 6. the empty state names a control that still works ---------- */
 
