@@ -723,8 +723,10 @@ const SERVER_MASK = codeMask(SERVER);
 // is REFUSED BY NAME rather than skipped -- a skipped form is a promise nobody looked at, and the
 // owners of the number would report the promise to be sound.
 const PROMISE_SHAPE = /\bminutes?\s*\(/i;
-// The bracketed group of a promise form, and the text inside it.
-const PROMISE_FORM = /\bminutes?\s*\(([^()]*)\)/gi;
+// The anchor of a promise form: the word "minutes" and the bracket that follows it. The group
+// itself is taken by BALANCE rather than by a pattern that cannot see a nested bracket -- see
+// promiseFormsIn below.
+const PROMISE_ANCHOR = /\bminutes?\s*\(/gi;
 // The number in brackets, in the unit that follows it. The number may carry a decimal point:
 // "600000.0 milliseconds" states the number "600000 milliseconds" states.
 const PROMISE_NUMBER = /^\s*(\d[\d,]*(?:\.\d+)?)\s*([a-z]+)\s*$/i;
@@ -759,15 +761,47 @@ const promiseSentencesOf = (block) => {
 const readPromiseForm = (text) => {
   const found = PROMISE_NUMBER.exec(text);
   if (found === null) return null;
-  const factor = UNIT_IN_MS[found[2].toLowerCase()];
-  if (factor === undefined) return null;
-  return Number(found[1].replace(/,/g, '')) * factor;
+  const unit = found[2].toLowerCase();
+  // The unit table is a plain object, so a name that is not one of the units can still be a key
+  // it INHERITS: "constructor" resolves to Object's constructor, and multiplying a number by that
+  // gives NaN -- which then counts as one OBSERVED number, so the owners of the number accuse a
+  // promise that stated no number at all. An unknown unit supplies no observation, so it has to
+  // be refused by NAME, and not by whatever the name happens to multiply to.
+  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return null;
+  const value = Number(found[1].replace(/,/g, '')) * UNIT_IN_MS[unit];
+  // A number that is not finite is not a number of milliseconds either: a promise written with
+  // more digits than a double can hold overflows, and an overflow that reads as a number is the
+  // same kind of hole as an inherited key -- a number nobody can compare.
+  if (!Number.isFinite(value)) return null;
+  return value;
 };
 // The promise forms of the candidate sentences: the text inside the brackets of each.
+//
+// The forms are found by the ANCHOR and their group is taken by BALANCE. A pattern that cannot
+// see a nested bracket counts only the forms it can read: a promise written "minutes
+// ((600000 ms))" has its number HIDDEN, the counter sees no form there at all, the annotation
+// beside it becomes the only candidate, and the owners of the number read the annotation and
+// report the promise to be sound. So every anchor is counted, and a group this reader cannot
+// read is counted as unreadable rather than skipped -- a shape nobody can read has to be a
+// diagnosis of its own, not a hole in the count.
 const promiseFormsIn = (sentences) => {
   const forms = [];
   for (const sentence of sentences) {
-    for (const found of sentence.matchAll(PROMISE_FORM)) forms.push(found[1]);
+    for (const anchor of sentence.matchAll(PROMISE_ANCHOR)) {
+      const open = anchor.index + anchor[0].lastIndexOf('(');
+      let depth = 0;
+      let end = -1;
+      for (let at = open; at < sentence.length; at += 1) {
+        if (sentence[at] === '(') depth += 1;
+        else if (sentence[at] === ')') {
+          depth -= 1;
+          if (depth === 0) { end = at; break; }
+        }
+      }
+      // A group that is never closed is a shape nobody can read: it is counted, and it is
+      // counted as unreadable.
+      forms.push(end === -1 ? sentence.slice(open + 1) : sentence.slice(open + 1, end));
+    }
   }
   return forms;
 };
@@ -830,6 +864,47 @@ assert('a number in brackets that this reader cannot read is refused rather than
   && readPromiseForm('twelve and a half') === null
   && unreadableFormsIn(['no later than ten minutes (600000 milliseconds)']) === 0
   && unreadableFormsIn(['no later than ten minutes (600000 millisec)']) === 1);
+// And a unit this reader does not know supplies NO number -- and "constructor" is not an unknown
+// unit but a key the table INHERITS, which used to multiply the number by a function and leave
+// NaN behind as an observation: the owners of the number then accused a promise that stated no
+// number at all. An unknown name has to be refused by the NAME.
+//
+// A name the table does not carry can still be a name the PROTOTYPE carries -- which is what a
+// polluted prototype looks like -- and the factor it carries would then decide what the promise
+// says. So the name is refused there too, and the probe adds the name to the prototype for the
+// length of one call and takes it away again: the factor it carries is a NUMBER, which is the
+// one case the check below cannot catch.
+const POLLUTED_UNIT = 'mmcprobeunit';
+const pollutedRead = (() => {
+  Object.prototype[POLLUTED_UNIT] = 2;
+  try {
+    return readPromiseForm('750000 ' + POLLUTED_UNIT);
+  } finally {
+    delete Object.prototype[POLLUTED_UNIT];
+  }
+})();
+assert('a unit that this reader does not know supplies no number, whatever name it carries',
+  readPromiseForm('750000 constructor') === null
+  && readPromiseForm('750000 __proto__') === null
+  && readPromiseForm('750000 toString') === null
+  && readPromiseForm('750000 millisec') === null
+  && pollutedRead === null
+  && readPromiseForm('750000 ms') === 750000);
+// A number that is not finite is not a number of milliseconds either: a promise written with
+// more digits than a double can hold overflows, and an overflow that reads as a number is the
+// same kind of hole as an inherited key -- a number nobody can compare.
+assert('a number of milliseconds that overflows is not a number of milliseconds',
+  readPromiseForm('1' + '0'.repeat(308) + ' seconds') === null
+  && readPromiseForm('1' + '0'.repeat(300) + ' seconds') === 1e303);
+// A promise form with brackets inside it is COUNTED, not skipped. A shape this reader cannot
+// read has to be a diagnosis of its own: a form that disappears from the count lets the
+// annotation beside it answer for the promise, and the owners report the promise to be sound.
+assert('a promise form with brackets inside it is counted rather than skipped',
+  promiseFormsIn(['no later than twelve and a half minutes ((600000 ms))']).length === 1
+  && unreadableFormsIn(['no later than twelve and a half minutes ((600000 ms))']) === 1
+  && promisedNumbersIn(['no later than twelve and a half minutes ((600000 ms))']).length === 0
+  && promiseFormsIn(['no later than twelve and a half minutes (750000 ms)']).length === 1
+  && unreadableFormsIn(['no later than twelve and a half minutes (750000 ms)']) === 0);
 
 // The number words a promise may be written in.
 const UNITS = {
@@ -982,6 +1057,20 @@ assert('no word the reader reads as part of a number may be a lead-in word',
   [...LEAD_IN].every((word) => !NUMBER_PARTS.has(word))
   && [...LEAD_IN].every((word) => !isNumberWord(word)));
 const englishNumber = (text) => {
+  // A hyphen INSIDE a word is one of the ways a number is written -- "twelve-and-a-half" is one
+  // number -- and the walk over hyphens below turns it into words. A hyphen that is NOT inside a
+  // word is a SIGN, and a signed number is not a number of minutes a promise can state: reading
+  // it as its absolute value turns "-12.5 minutes (750000 ms)" into a promise that AGREES with
+  // "750000 ms", which is the opposite of what the promise says. So a signed phrase is not read
+  // at all -- it is a phrase nobody can read, and the owner of that says so by name.
+  //
+  // A hyphen with a space on each side never reaches this reader: the scan that walks back from
+  // the millisecond form stops at such a dash, because a dash ends the phrase (see minutesForm).
+  for (let at = text.indexOf('-'); at !== -1; at = text.indexOf('-', at + 1)) {
+    const before = at > 0 ? text[at - 1] : '';
+    const after = at + 1 < text.length ? text[at + 1] : '';
+    if (!/[A-Za-z0-9]/.test(before) || !/[A-Za-z0-9]/.test(after)) return null;
+  }
   // A thousands separator and an ampersand are INSIDE a number phrase, not around it: "one
   // thousand, twelve and a half" states ONE number, and "one hundred & twelve and a half" states
   // another. Dropping them leaves the tail of the phrase -- and a tail that happens to be a number
@@ -1137,6 +1226,17 @@ assert('a word in front of the number that the reader does not know makes the ph
 assert('a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen',
   minutesForm('after the limit — twelve and a half minutes (750000 ms)').minutes === 12.5
   && minutesForm('after the limit - twelve and a half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5);
+// A sign in front of the number is not read away. A hyphen inside a word is one of the ways a
+// number is written, but a hyphen that is not inside a word is a SIGN, and a promise of negative
+// minutes is not a promise this reader can state: reading it as its absolute value would make
+// "-12.5 minutes (750000 ms)" agree with "750000 ms", which is the opposite of what it says.
+// So a signed phrase is unreadable, and the owner of that says so by name.
+assert('a number in the minutes that carries a sign is refused rather than read as its absolute value',
+  minutesForm('-12.5 minutes (750000 ms)').minutes === null
+  && minutesForm('-twelve and a half minutes (750000 ms)').minutes === null
+  && minutesForm('twelve and -a half minutes (750000 ms)').minutes === null
+  && minutesForm('12.5- minutes (750000 ms)').minutes === null
   && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5);
 
 // The lifetime the cache gives its rows when nobody tells it one, observed rather than read.

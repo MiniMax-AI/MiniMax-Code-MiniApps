@@ -58,17 +58,31 @@
            both forms state the same number. An unreadable phrase is not a disagreement, and an
            owner that reports one is accusing a rule nobody broke.
 
-THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and that is a shape of its own: the other
-eleven break the SHIPPED source, and this one breaks the boundary that the reader walks back
-over, so the guard's own assertion about reading a whole phrase is the one that has to go red.
-An assertion that no case can make fail is an assertion nobody is watching.
+  Round twenty-one:
+  R29-F45  the reader erased a SIGN along with the hyphens it walks over, so "-12.5 minutes
+           (750000 ms)" was read as twelve and a half -- a promise that states one number in
+           words and another in milliseconds, and the owner called it agreement. A signed number
+           is not a number of minutes a promise can state, so the phrase is not read at all.
+  R29-F46  the unit table was asked for a name it INHERITS: "constructor" resolves to Object's
+           constructor, the multiplication gave NaN, and that NaN counted as one OBSERVED number
+           -- so the owners of the number accused a promise that stated no number at all, while
+           the premise that says the number could not be read stayed green.
+  R29-F47  the locator counted only the promise forms it could read: a promise written
+           "minutes ((600000 ms))" had its number hidden, the annotation beside it became the
+           only candidate, and the owners of the number read the annotation and reported the
+           promise to be sound.
 
-THE LAST SIX CASES BREAK THE GUARD'S OWN READER AND LOCATOR, and they are the same shape as the
-three before them: the break is in the machinery that reads the promise -- the words that may stand
-in front of a number, the reader of a decimal point, the reader of a unit it does not know, and the
-owner that compares the two forms -- so the guard's own assertions about that machinery are the
-ones that have to go red. A rule that reads the promise has an owner, and the owner is an assertion
-about the reading itself.
+THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and so do the two cases before it that break the
+machinery that reads the promise: the break is in the guard and not in the shipped source, so the
+guard's own assertion about reading a whole phrase is the one that has to go red. An assertion
+that no case can make fail is an assertion nobody is watching.
+
+THE TWELVE OTHER CASES THAT BREAK THE GUARD BREAK ITS READER AND ITS LOCATOR, and they are the
+same shape: the break is in the machinery that reads the promise -- the words that may stand in
+front of a number, the reader of a decimal point, the reader of a unit it does not know, the
+reader of a sign, and the locator that counts the forms -- so the guard's own assertions about
+that machinery are the ones that have to go red. A rule that reads the promise has an owner, and
+the owner is an assertion about the reading itself.
 
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
@@ -417,10 +431,14 @@ MUTATIONS = [
     (
         "the reader skips a number it cannot read instead of refusing it",
         [PROBE],
-        ["  if (factor === undefined) return null;"],
-        ["  if (factor === undefined) return 0;"],
+        ["  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return null;"],
+        ["  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return 0;"],
         "a number in brackets that this reader cannot read is refused rather than skipped",
-        ("a number in brackets that this reader cannot read is refused rather than skipped",),
+        # This break makes an unreadable unit read as ZERO -- a number -- so it breaks the rule
+        # that says an unreadable number is refused, and the rule that says a unit this reader
+        # does not know supplies no number: both of them are the same fact seen from two sides.
+        ("a number in brackets that this reader cannot read is refused rather than skipped",
+         "a unit that this reader does not know supplies no number, whatever name it carries"),
         (),
     ),
     (
@@ -476,6 +494,48 @@ MUTATIONS = [
         "the guard could not read the minutes the promise states",
         ("the guard could not read the minutes the promise states",),
         ("held vacuously",),
+    ),
+    (
+        "the reader reads a signed number as its absolute value",
+        [PROBE],
+        ["  for (let at = text.indexOf('-'); at !== -1; at = text.indexOf('-', at + 1)) {\n"
+         "    const before = at > 0 ? text[at - 1] : '';\n"
+         "    const after = at + 1 < text.length ? text[at + 1] : '';\n"
+         "    if (!/[A-Za-z0-9]/.test(before) || !/[A-Za-z0-9]/.test(after)) return null;\n"
+         "  }"],
+        ["  // the sign is not a sign any more"],
+        "a number in the minutes that carries a sign is refused rather than read as its absolute value",
+        ("a number in the minutes that carries a sign is refused rather than read as its absolute value",),
+        (),
+    ),
+    (
+        "the unit table is asked for a name it inherits",
+        [PROBE],
+        ["  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return null;"],
+        ["  if (UNIT_IN_MS[unit] === undefined) return null;"],
+        "a unit that this reader does not know supplies no number, whatever name it carries",
+        ("a unit that this reader does not know supplies no number, whatever name it carries",),
+        (),
+    ),
+    (
+        "a number of milliseconds that overflows is read as a number",
+        [PROBE],
+        ["  if (!Number.isFinite(value)) return null;"],
+        ["  if (value === undefined) return null;"],
+        "a number of milliseconds that overflows is not a number of milliseconds",
+        ("a number of milliseconds that overflows is not a number of milliseconds",),
+        (),
+    ),
+    (
+        "the locator counts only the promise forms it can read",
+        [PROBE],
+        ["    for (const anchor of sentence.matchAll(PROMISE_ANCHOR)) {\n"
+         "      const open = anchor.index + anchor[0].lastIndexOf('(');"],
+        ["    for (const anchor of sentence.matchAll(/\\bminutes?\\s*\\(([^()]*)\\)/gi)) {\n"
+         "      const open = anchor.index + anchor[0].lastIndexOf('(');"],
+        "a promise form with brackets inside it is counted rather than skipped",
+        ("a promise form with brackets inside it is counted rather than skipped",),
+        (),
     ),
 ]
 
