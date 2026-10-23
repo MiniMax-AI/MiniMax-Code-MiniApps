@@ -1,6 +1,6 @@
 # Application icon attribution
 
-`../icon.png` is the WeChat DevTools application icon, supplied by the contributor from a local
+`../icon-wechat-devtools-d3f126d2.png` is the WeChat DevTools application icon, supplied by the contributor from a local
 installation of WeChat DevTools Nightly **2.02.2607162** on macOS. It was converted from the
 application's `Contents/Resources/app.icns` and resized to a 256 x 256 PNG; its design is not
 original work by this Mini App's contributor.

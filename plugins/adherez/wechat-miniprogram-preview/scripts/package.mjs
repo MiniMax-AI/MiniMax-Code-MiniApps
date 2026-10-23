@@ -27,7 +27,7 @@ await readFile(path.join(root, 'miniapp/client/game-runtime.css'));
 await readFile(path.join(root, 'miniapp/client/preview-chrome.css'));
 const staging = await mkdtemp(path.join(os.tmpdir(), 'wechat-preview-package-'));
 try {
-  for (const file of ['.minimax-plugin', 'icon.png', 'miniapp', 'skills', 'package.json', 'servers.mcp.json', 'README.md', 'README.zh-CN.md', 'LICENSE', 'docs']) {
+  for (const file of ['.minimax-plugin', metadata.icon, 'miniapp', 'skills', 'package.json', 'servers.mcp.json', 'README.md', 'README.zh-CN.md', 'LICENSE', 'docs']) {
     await cp(path.join(root, file), path.join(staging, file), { recursive: true, dereference: false });
   }
   const check = async (directory) => {
