@@ -18,6 +18,18 @@
            the interval the service declares" compared the interval the cache really uses with the
            number it could not read -- so a broken harness accused a rule that was not broken.
 
+  Round eighteen:
+  R29-F36  the PHRASE was cut, not the words: the scan that walks back from the millisecond form
+           stopped at a thousands separator and at an ampersand -- both of which can appear INSIDE a
+           number -- so "one thousand, twelve and a half minutes (750000 ms)" was read as twelve and
+           a half, and the tail agreed with the promise while the phrase did not.
+  R29-F37  a sentence written BEFORE the promise said the same words, and the owner took the first
+           sentence that contained them: the promise to a reader was read out of an annotation left
+           beside it, and the annotation agreed with the cache.
+  R29-F38  the page's inline script did not run, and the three owners that read the page's delay
+           compared a value they never saw: the premise failed loudly, and three rules were
+           accused anyway.
+
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
 threw, or that went red without naming anything, has not shown that it owns this break.
@@ -150,6 +162,63 @@ MUTATIONS = [
             "the shipped default is the interval the service declares",
         ),
         (),
+    ),
+    (
+        "the promise states a compound number whose thousands separator hides the head of it",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — one thousand, twelve and a half minutes (750000 ms)"],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        ("the promise to a reader is the same promise in both of the forms it is written in",),
+        (),
+    ),
+    (
+        "the promise states a compound number with an ampersand in it",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — one hundred & twelve and a half minutes (750000 ms)"],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        ("the promise to a reader is the same promise in both of the forms it is written in",),
+        (),
+    ),
+    (
+        "the promise states the same number with a thousands separator in it",
+        [SERVER],
+        ["after the limit — twelve and a half minutes (750000 ms)"],
+        ["after the limit — 1,012.5 minutes (750000 ms)"],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        ("the promise to a reader is the same promise in both of the forms it is written in",),
+        (),
+    ),
+    (
+        "a sentence written before the promise says the same words, and the promise says another number",
+        [
+            SERVER,
+            SERVER,
+        ],
+        [
+            " * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.**",
+            "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
+        ],
+        [
+            " * Historical annotation, no later than twelve and a half minutes (750000 ms).\n"
+            " * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.**",
+            "one sweep interval after the limit — fourteen minutes (840000 ms) with the shipped",
+        ],
+        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
+        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
+        (),
+    ),
+    (
+        "the page's inline script does not run, so the owners below cannot read what they are about",
+        [CLIENT],
+        ["    <script>\n      'use strict';"],
+        ["    <script>\n      new ResizeObserver(() => {});\n      'use strict';"],
+        "the guard could not observe the page's polling interval",
+        ("the guard could not observe the page's polling interval",),
+        # The owners that could not be compared have to say so: an owner that held quietly is an
+        # owner nobody can tell apart from one that was checked and matched.
+        ("held vacuously",),
     ),
 ]
 

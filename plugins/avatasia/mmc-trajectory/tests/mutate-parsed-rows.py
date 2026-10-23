@@ -376,15 +376,27 @@ MUTATIONS = [
     (
         # The same promise, read out of the whole block: a number left in an obsolete annotation
         # answered the pattern while the sentence a reader reads no longer stated one.
+        #
+        # The rule that owns this break changed in round nineteen. The promise is no longer found
+        # by "the first sentence that contains these words" -- which any sentence written before it
+        # could take over -- but by the promise's OWN FORM: the sentence that carries the minutes
+        # AND the number in brackets. A block that states that form zero times or twice cannot say
+        # which sentence the service meant, so the promise is then unreadable and the rule that
+        # says so owns the break.
+        #
+        # The owner that owned it before -- "the number promised to a reader is the limit plus one
+        # sweep interval" -- accused a rule that was not broken: the block still promised 750000,
+        # in the annotation. A number nobody could locate is not a number the service stated
+        # wrongly, and the rule now says what is true instead.
         "the number promised to a reader is moved into an obsolete annotation",
         "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped\n"
         " * values. The number to promise a reader is that one, and it is the number in brackets: it is",
         "one sweep interval after the limit — twelve and a half minutes with the shipped\n"
         " * values. Internal obsolete annotation (750000 ms). The number to promise a reader is that one,"
         " and it is the number in brackets: it is",
-        'the number promised to a reader is the limit plus one sweep interval',
+        'the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
         None,
-        ('the number promised to a reader is the limit plus one sweep interval',),
+        ('the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',),
     ),
     (
         # The page polls every TRAJECTORY_POLL_INTERVAL milliseconds -- unless the expression the
@@ -611,7 +623,7 @@ EXACT = {
         'the promise to a reader is the same promise in both of the forms it is written in',
     ),
     'the number promised to a reader is moved into an obsolete annotation': (
-        'the number promised to a reader is the limit plus one sweep interval',
+        'the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
     ),
     'the poll waits a thousand times the interval it declares': (
         'the poll waits as long as the client declares',
