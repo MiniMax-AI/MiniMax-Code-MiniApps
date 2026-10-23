@@ -646,9 +646,13 @@ const BINDINGS_RESULT = await readModuleBindings([
   'PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS',
 ]);
 if (!BINDINGS_RESULT.ok) {
-  failures.push('the shipped module could not be imported by the copy this guard reads the '
-    + `service's declared numbers from, so they cannot be read: ${BINDINGS_RESULT.error && BINDINGS_RESULT.error.message}`);
+  // The reason, as a note and not as a failure of its own: the rule that could not be observed is
+  // named by the assertion below, and a second entry in the failure list would be the same fact
+  // told twice -- which is how a reader stops knowing which entry is the rule.
+  console.error('  note: the copy this guard reads the service\'s declared numbers from would not '
+    + `import: ${BINDINGS_RESULT.error && BINDINGS_RESULT.error.message}`);
 }
+assert('the guard could not observe the numbers the service declares', BINDINGS_RESULT.ok);
 const BINDINGS = BINDINGS_RESULT.ok ? BINDINGS_RESULT.values : null;
 const PROXY = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_HEAP_PER_SOURCE_BYTE;
 const TTL = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_CACHE_TTL_MS;
@@ -704,8 +708,59 @@ const TENS = {
   twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
 };
 
-// The number a run of words states, read from its END: the words of a number are the last ones
-// before "minutes", and the words before them belong to the sentence around it.
+// The words that can be part of a number. A word in here that is not understood below is NOT
+// dropped: the phrase is then a number this parser cannot state, and it says so.
+const NUMBER_PARTS = new Set([...Object.keys(UNITS), ...Object.keys(TENS),
+  'hundred', 'thousand', 'million', 'billion', 'dozen', 'score', 'and']);
+const DIGIT_PART = /^\d+(?:\.\d+)?$/;
+
+// The number a run of number words states, or null when the run does not state one.
+//
+// The WHOLE run is parsed, because the words of a number are not only its last word: "one hundred
+// twelve and a half" states 112.5, and a parser that reads the end of the run alone answers 12.5
+// -- a number the phrase never states, so a promise can say one thing in words and another in
+// milliseconds and still be accepted.
+const parseNumberWords = (words) => {
+  let total = 0;
+  let current = 0;
+  let unitBefore = false;
+  let sawWords = false;
+  let digits = null;
+  for (const word of words) {
+    if (word === 'and') continue;
+    if (DIGIT_PART.test(word)) {
+      if (digits !== null) return null;
+      digits = Number(word);
+      continue;
+    }
+    if (word in UNITS) { current += UNITS[word]; unitBefore = true; sawWords = true; continue; }
+    if (word in TENS) { current += TENS[word]; unitBefore = false; sawWords = true; continue; }
+    if (word === 'hundred') {
+      // "hundred" multiplies the one to nine before it: "one hundred" is 100 and "one hundred
+      // twelve" is 112. Anything else is a compound this parser does not state.
+      if (!unitBefore || current < 1 || current > 9) return null;
+      total += current * 100;
+      current = 0;
+      unitBefore = false;
+      sawWords = true;
+      continue;
+    }
+    // A scale this parser does not state -- "thousand" -- or a word that is not part of a number.
+    return null;
+  }
+  if (sawWords && digits !== null) return null;   // a phrase that states two numbers
+  if (digits !== null) return digits;
+  if (!sawWords) return null;
+  return total + current;
+};
+
+// The number a phrase of words states.
+//
+// The number is the TRAILING run of words that can be part of a number; the words before it belong
+// to the sentence around it, so "no later than twelve and a half" states twelve and a half. The
+// run is collected by its boundary rather than by the first word the parser fails to know, so a
+// phrase that holds a compound the parser does not state is reported as unreadable instead of
+// being answered with the part that happened to be understood.
 const englishNumber = (text) => {
   const words = text.toLowerCase().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
   let half = false;
@@ -716,14 +771,11 @@ const englishNumber = (text) => {
     half = true;
     words.splice(words.length - 3, 3);
   }
-  const last = words[words.length - 1];
-  let value = null;
-  if (/^\d+(?:\.\d+)?$/.test(last)) value = Number(last);
-  else if (last in UNITS) value = UNITS[last];
-  else if (last in TENS) {
-    const unit = words.length >= 2 ? UNITS[words[words.length - 2]] : undefined;
-    value = unit === undefined ? TENS[last] : TENS[last] + unit;
-  }
+  let start = words.length;
+  while (start > 0
+    && (NUMBER_PARTS.has(words[start - 1]) || DIGIT_PART.test(words[start - 1]))) start -= 1;
+  if (start === words.length) return null;
+  const value = parseNumberWords(words.slice(start));
   if (value === null) return null;
   return half ? value + 0.5 : value;
 };
@@ -958,8 +1010,12 @@ for (const limit of [1_000, 60_000, 600_000, 3_600_000]) {
 const asked = createParsedRowsCache(1000, { ttlMs: 1_000, sweepIntervalMs: 500_000 });
 assert('an interval the caller asks for is clamped to the limit as well',
   asked.sweepIntervalMs <= 1_000 / 4);
+// The interval the cache gives its rows by default is the one the service DECLARES. The
+// comparison needs the declared value, so it is made only when the declaration could be observed:
+// a guard that cannot read the number must not accuse the rule because the number it could not
+// read is not the number the cache uses. The failure to read has its own rule, above.
 assert('the shipped default is the interval the service declares',
-  createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP);
+  holds(createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP, true, BINDINGS !== null));
 
 // The number a reader is promised: the rows are gone no later than the limit plus one sweep
 // interval. The bound is computed here from the limit the service DECLARES and the interval
@@ -1026,13 +1082,18 @@ assert('the promise to a reader is the same promise in both of the forms it is w
 // has to start" is a different rule with a different owner (the rows have to be released without a
 // request). So the check below holds for every timer the cache starts, and holds vacuously when
 // it starts none: that keeps the two rules apart instead of making one of them the other's echo.
+//
+// And when the limit the cache was given could not be observed, the check is vacuous and COUNTS
+// itself rather than holding quietly: the interval the cache really got is not knowable then, and
+// an owner that says nothing about that is how a premise breaks without anybody noticing.
 let timedCache = null;
 const timerWindow = withRecordedTimers(() => {
   timedCache = createParsedRowsCache(1000, { ttlMs: TTL });
   timedCache.set('k', val, 500);
 });
 assert('the timer that releases the rows runs on the interval the cache reports',
-  timerWindow.recorded.every((interval) => interval === timedCache.sweepIntervalMs));
+  holds(timerWindow.recorded.every((interval) => interval === timedCache.sweepIntervalMs),
+    true, TTL !== null));
 
 // The quarter has a floor of a millisecond, because a timer cannot be finer than that. For a
 // limit below four milliseconds the floor is the larger of the two, so the release is then at
@@ -1078,6 +1139,27 @@ const zeroTimerCalls = withRecordedTimers(() => {
 });
 assert('a time limit of zero starts no sweeper, because nothing in it ever expires',
   zeroTimerCalls.recorded.length === 0);
+
+// The owners that depend on the observation of the service's declared numbers must not accuse
+// anything when that observation failed: a number the guard could not read is not a broken rule.
+// This check is here, at the end, because it looks at what the other owners reported.
+//
+// The list is the owners that depend on the observation. Adding an owner that depends on it is
+// adding a line here -- a list that is not kept in step is a list that quietly stops covering.
+const OBSERVED_OWNERS = [
+  'the heap proxy is a number the service declares',
+  'the cache is charged the source bytes times the heap proxy',
+  'so the source bytes it holds are computable from its own accounting',
+  'and the charge the route makes is that one',
+  'the rows cache has a time limit',
+  'the time limit is a number the service declares',
+  'the limit the service declares is the limit the cache gives its rows',
+  'the sweep interval is a number the service declares',
+  'the shipped default is the interval the service declares',
+  'the timer that releases the rows runs on the interval the cache reports',
+];
+assert('the guard accuses no rule it could not observe',
+  BINDINGS !== null || !OBSERVED_OWNERS.some((name) => failures.includes(name)));
 
 await rm(root, { recursive: true, force: true });
 
