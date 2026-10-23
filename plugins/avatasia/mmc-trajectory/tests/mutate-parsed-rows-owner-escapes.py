@@ -30,10 +30,30 @@
            compared a value they never saw: the premise failed loudly, and three rules were
            accused anyway.
 
+  Round nineteen:
+  R29-F39  a scale word the number table does not know was DROPPED, and the tail was read instead:
+           "one myriad twelve and a half minutes (750000 ms)" was read as twelve and a half -- a
+           promise that states one number in words and another in milliseconds, and the owner called
+           it agreement. A word that cannot be read has to make the phrase unreadable, not shorten
+           it.
+  R29-F40  the form that finds the promise knew ONE spelling of the unit, so a promise written
+           "600000 milliseconds" was invisible and the annotation beside it became the only
+           candidate: both owners of the number read the annotation, and reported the promise to be
+           sound.
+  R29-F41  two promise forms inside ONE sentence were counted as one promise, so the owner of the
+           bound accused a limit the block states correctly -- the number it accused was one of two,
+           and neither of them was THE number.
+
 THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and that is a shape of its own: the other
 eleven break the SHIPPED source, and this one breaks the boundary that the reader walks back
 over, so the guard's own assertion about reading a whole phrase is the one that has to go red.
 An assertion that no case can make fail is an assertion nobody is watching.
+
+THE LAST THREE CASES BREAK THE GUARD'S OWN READER AND LOCATOR, and they are the same shape: the
+break is in the machinery that reads the promise -- the number table, the unit the form accepts, and
+the number the form counts -- so the guard's own assertions about that machinery are the ones that
+have to go red. A rule that reads the promise has an owner, and the owner is an assertion about the
+reading itself.
 
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
@@ -233,6 +253,39 @@ MUTATIONS = [
         "the promised minutes are read from the whole phrase, not from a tail of it",
         ("the promised minutes are read from the whole phrase, not from a tail of it",),
         (),
+    ),
+    (
+        "the promise names a scale word the number table does not know, and the reader reads the tail",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — one myriad twelve and a half minutes (750000 ms) with the shipped"],
+        "the promise to a reader is the same promise in both of the forms it is written in",
+        ("the promise to a reader is the same promise in both of the forms it is written in",),
+        (),
+    ),
+    (
+        "the promise is written with the unit spelled out, and the annotation beside it answers the form",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — ten minutes (600000 milliseconds) with the shipped. "
+         "Annotation twelve and a half minutes (750000 ms)"],
+        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
+        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
+        # The two owners of the number cannot locate a promise that is stated twice, so they say
+        # so instead of accusing a number nobody can point at.
+        ("held vacuously",),
+    ),
+    (
+        "two promise forms share one sentence, and the bound is accused over a number nobody can locate",
+        [SERVER],
+        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
+        ["one sweep interval after the limit — historical annotation twelve and a half minutes (750000 ms); "
+         "the rows are gone no later than fourteen minutes (840000 ms) with the shipped"],
+        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
+        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
+        # The owner of the bound holds vacuously here: there is no single number to accuse, and
+        # accusing the one the block states correctly would be accusing a rule nobody broke.
+        ("held vacuously",),
     ),
 ]
 
