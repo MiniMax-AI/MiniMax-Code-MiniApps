@@ -408,6 +408,16 @@ assert('loadParsedRows is exported so a test can run the real step',
 const declaredNumber = (source, name) => {
   const match = source.match(new RegExp(`const ${name} = ([0-9_ *]+);`));
   if (match === null) return null;
+  // A declaration that is COMMENTED OUT is not a declaration. The first match in the file is
+  // otherwise enough to answer with a number the code does not have: an annotation left beside
+  // the real one satisfies the pattern while the binding is something else, and the real one
+  // turned into a string stops matching at all -- so the number read would be the annotation's
+  // and the binding's type would go unexamined. The line the match is on therefore has to
+  // DECLARE it: nothing but whitespace before it, and no block comment open around it.
+  const lineStart = source.lastIndexOf('\n', match.index) + 1;
+  if (source.slice(lineStart, match.index).trim() !== '') return null;
+  const before = source.slice(0, match.index);
+  if (before.split('/*').length !== before.split('*/').length) return null;
   const parts = match[1].replace(/_/g, '').split('*').map((part) => Number(part.trim()));
   if (parts.some((part) => !Number.isFinite(part))) return null;
   return parts.reduce((carry, part) => carry * part, 1);
@@ -424,6 +434,104 @@ const docBlockOf = (source, name) => {
   const start = before.lastIndexOf('/**');
   const end = before.lastIndexOf('*/');
   return start >= 0 && end > start ? before.slice(start, end) : null;
+};
+
+// The sentence of a doc block that makes a promise. A block can hold several sentences, and only
+// one of them is the promise to a reader -- so the number has to be read out of THAT sentence and
+// not out of the block. A number that sat in some other sentence of the same block would answer
+// the pattern while the promise itself said something else.
+const promiseSentenceOf = (block) => {
+  if (block === null) return null;
+  // The sentences of the block, keeping their terminators so a sentence can be recognised.
+  const sentences = block.split(/(?<=\.)\s+/);
+  return sentences.find((sentence) => sentence.includes('no later than')) ?? null;
+};
+
+// The minutes a sentence promises, in either form it can be written in. A promise to a reader is
+// written both as a number of milliseconds and as a number of minutes, and the two forms have to
+// be the same promise -- otherwise the reader is told one thing and the service does another.
+const minutesPromised = (sentence) => {
+  if (sentence === null) return null;
+  const words = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+  };
+  const match = /\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty)(?:\s+and\s+a\s+half)?\s+minutes?\b/i
+    .exec(sentence);
+  if (match === null) return null;
+  const raw = match[1].toLowerCase();
+  let value = /^\d/.test(raw) ? Number(raw) : words[raw];
+  if (value === undefined || !Number.isFinite(value)) return null;
+  if (/\s+and\s+a\s+half/.test(match[0])) value += 0.5;
+  return value;
+};
+
+// The lifetime the cache gives its rows when nobody tells it one, observed rather than read.
+//
+// The declaration of the limit says what the service INTENDS to give its rows; this says what it
+// gives them. A cache whose default is taken from somewhere else than the constant the prose
+// documents answers every declaration-based check with the documented number while the rows it
+// actually holds live twice as long -- so the clock is moved until the cache lets the rows go by
+// itself, and the moment it does is the limit.
+const defaultLimitOf = (budget) => {
+  const CAP = 2 ** 31;
+  const releasedAt = (delta) => {
+    const clock = { at: 1_700_000_000_000 };
+    const cache = createParsedRowsCache(budget, { now: () => clock.at });
+    cache.set('k', { id: 'k' }, 1);
+    clock.at += delta;
+    cache.sweep();
+    const released = cache.bytes === 0;
+    cache.clear();
+    return released;
+  };
+  // A cache that never lets the rows go has no limit to find.
+  if (!releasedAt(CAP)) return null;
+  let low = 0;
+  let high = CAP;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (releasedAt(middle)) high = middle;
+    else low = middle;
+  }
+  return high;
+};
+
+// The delay the page's poll actually waits, observed by evaluating the expression the timer is
+// given. The declaration of the interval is a number in the source; the delay is what the poll
+// really waits, and a poll that waits longer than the limit it has to survive loses its rows
+// between polls while every check that reads the declaration stays green.
+const effectivePollDelay = (clientSource) => {
+  const declared = /TRAJECTORY_POLL_INTERVAL\s*=\s*(\d+)\s*;/.exec(clientSource);
+  if (declared === null) return null;
+  const value = Number(declared[1]);
+  // Every use of the name that is not its declaration, and the expression it is part of.
+  const uses = [];
+  const pattern = /TRAJECTORY_POLL_INTERVAL/g;
+  let match;
+  while ((match = pattern.exec(clientSource)) !== null) {
+    const after = clientSource.slice(match.index + 'TRAJECTORY_POLL_INTERVAL'.length);
+    if (/^\s*=\s*\d+/.test(after)) continue;   // the declaration itself
+    let start = match.index;
+    while (start > 0 && /[A-Za-z0-9_.*+\-/<> ]/.test(clientSource[start - 1])) start -= 1;
+    let end = match.index + 'TRAJECTORY_POLL_INTERVAL'.length;
+    while (end < clientSource.length && /[A-Za-z0-9_.*+\-/<> ]/.test(clientSource[end])) end += 1;
+    uses.push(clientSource.slice(start, end).trim());
+  }
+  if (uses.length === 0) return null;
+  const delays = [];
+  for (const expression of uses) {
+    let evaluated;
+    try {
+      // The expression is the page's own code, evaluated with the value the page declares.
+      evaluated = new Function('TRAJECTORY_POLL_INTERVAL', `return (${expression});`)(value);
+    } catch {
+      return null;
+    }
+    if (!Number.isFinite(evaluated)) return null;
+    delays.push(evaluated);
+  }
+  return { declared: value, delays };
 };
 
 // The proxy is read out of the shipped source rather than repeated here, so the relationship
@@ -443,8 +551,14 @@ check('the cache is charged the source bytes times the heap proxy',
   coverageCache.bytes, Math.ceil(sizedBytes * PROXY));
 check('so the source bytes it holds are computable from its own accounting',
   coverageCache.bytes / PROXY, sizedBytes);
+// The charge the ROUTE makes, observed by making the call the route makes. The route passes
+// options, and a fixture that leaves them out takes a different branch of the same function, so
+// a charge that was wrong on the route's path was invisible here -- and the old owner asked only
+// whether the text of the charge was somewhere in the file, which a commented-out line satisfied.
+const routeCache = createParsedRowsCache(64 * 1024 * 1024);
+await loadParsedRows(routeCache, sized, LIMIT, { cacheable: true });
 assert('and the charge the route makes is that one',
-  SERVER.includes('cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));'));
+  routeCache.bytes === Math.ceil(sizedBytes * PROXY));
 
 // A clock the test controls, so "expired" is a fact rather than a wait.
 let clock = 1_700_000_000_000;
@@ -479,6 +593,14 @@ check('the rows are released without a request', liveCache.bytes, 0);
 check('and the cache is empty', liveCache.size, 0);
 
 // The time limit has to outlive one poll, or an open tab would lose its rows between polls.
+//
+// Both numbers here are OBSERVED, and that is the point of this block. The delay the poll waits
+// and the lifetime the cache gives its rows were both read out of the source before, and a source
+// says what the code INTENDS: the number a constant is declared with, and the number the page
+// writes next to its timer. A cache whose default lifetime comes from somewhere else, or a poll
+// that multiplies the interval it declared, leaves every declaration exactly as it was while the
+// service behaves differently -- and the promise to a reader is about the service, not about a
+// declaration.
 const clientSource = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
 const pollMatch = clientSource.match(/TRAJECTORY_POLL_INTERVAL = (\d+)/);
 assert('the client says how often it polls the trajectory', pollMatch !== null);
@@ -486,13 +608,22 @@ const ttlMatch = SERVER.match(/const PARSED_ROWS_CACHE_TTL_MS = ([0-9_ *]+);/);
 assert('the rows cache has a time limit', ttlMatch !== null);
 const TTL = declaredNumber(SERVER, 'PARSED_ROWS_CACHE_TTL_MS');
 assert('the time limit is a number the service declares', TTL !== null);
+
+// The delay the page's timer is really given, and the lifetime the cache really gives its rows.
+const poll = effectivePollDelay(clientSource);
+assert('the poll waits as long as the client declares',
+  poll !== null && poll.delays.every((delay) => delay === poll.declared));
+const POLL_DELAY = poll === null ? null : Math.max(...poll.delays);
+const DEFAULT_LIMIT = defaultLimitOf(1024 * 1024);
+assert('the limit the service declares is the limit the cache gives its rows',
+  DEFAULT_LIMIT !== null && DEFAULT_LIMIT === TTL);
 assert('the time limit is longer than one poll, so an open tab never loses its rows',
-  TTL > Number(pollMatch[1]));
+  POLL_DELAY !== null && DEFAULT_LIMIT !== null && DEFAULT_LIMIT > POLL_DELAY);
 // The page stops polling while its tab is hidden, so a reader who switches away for a while is
 // the ordinary case. A limit shorter than that would make every return to the tab cost a
 // re-parse — which is the other half of what this limit buys, and it has to be paid for.
 assert('the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
-  TTL >= 5 * 60 * 1000);
+  DEFAULT_LIMIT !== null && DEFAULT_LIMIT >= 5 * 60 * 1000);
 
 // And the sweeper must never be the reason the process is still running. The owner of that rule
 // used to be a pattern over the source, and a pattern cannot tell the cache's own handle from an
@@ -502,14 +633,16 @@ assert('the time limit is at least five minutes, so stepping away from the tab d
 //
 // A cache that starts no timer at all has nothing that could hold the process open, so that is
 // green here: whether a sweeper starts at all is another owner's rule, and this one is not a second
-// accusation of it.
+// accusation of it. A handle that exists but cannot answer the question is not green either -- the
+// owner has to be able to say that the handle does not hold the process open, and a handle it
+// cannot ask has not said it.
 const unrefWindow = withRecordedTimers(() => {
   const unrefCache = createParsedRowsCache(1000, { ttlMs: 1_000 });
   unrefCache.set('k', val, 500);
 });
 assert('the sweeper does not keep the process alive',
-  unrefWindow.handles.every((handle) => typeof handle.hasRef !== 'function'
-    || handle.hasRef() === false));
+  unrefWindow.handles.every((handle) => typeof handle.hasRef === 'function'
+    && handle.hasRef() === false));
 
 // The release lands on a sweep tick, so the rows are gone a sweep interval AFTER the limit. The
 // promise to a reader is that interval added on, and it only stays a promise while the interval
@@ -535,11 +668,28 @@ assert('the shipped default is the interval the service declares',
 // a change to one of them without the other is caught here and not by a reader. The promise is
 // in prose because that is where a reader meets it, and a promise nobody checks is a promise
 // that is true on the day it was written.
+// The number the package promises a reader, read out of the SENTENCE that makes the promise.
+//
+// That block states the promise twice -- as a number of minutes and as a number of milliseconds
+// -- and the two forms have to be the same promise, or the reader is told one thing and the
+// service does another. A block can also hold a number that is not part of the promise at all: an
+// annotation left beside it would answer the pattern while the sentence a reader reads said
+// something else. So the number is taken from the promise sentence, that sentence's own words
+// are read as well, and the two are compared with each other and with the limit the cache really
+// gives its rows.
 const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS');
-const promisedMs = ttlDoc === null ? null : /\((\d+) ms\)/.exec(ttlDoc);
+const promiseSentence = promiseSentenceOf(ttlDoc);
+const promisedNumbers = promiseSentence === null
+  ? []
+  : [...promiseSentence.matchAll(/\((\d+) ms\)/g)].map((found) => Number(found[1]));
+const promisedMinutes = minutesPromised(promiseSentence);
+const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
 assert('the number promised to a reader is the limit plus one sweep interval',
-  promisedMs !== null
-  && Number(promisedMs[1]) === TTL + createParsedRowsCache(1000).sweepIntervalMs);
+  promisedNumbers.length === 1 && DEFAULT_LIMIT !== null
+  && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL);
+assert('the promise to a reader is the same promise in both of the forms it is written in',
+  promisedMinutes === null || promisedNumbers.length === 0
+  || Math.abs(promisedMinutes * 60_000 - promisedNumbers[0]) < 1);
 
 // The promise above holds only if the TIMER runs on that interval: the rows are released on the
 // next tick, and the tick is the sweep. Nothing in the package watched the call that starts that

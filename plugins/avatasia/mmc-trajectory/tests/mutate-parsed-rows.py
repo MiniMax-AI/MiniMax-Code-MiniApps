@@ -333,6 +333,68 @@ MUTATIONS = [
         "",
         'the rows are released without a request',
     ),
+    (
+        # The owners of the lifetime read the DECLARATION of the limit, so a cache whose default
+        # comes from somewhere else answered them with the documented number while the rows it
+        # actually held lived twice as long. The owner now watches the limit the cache gives its
+        # rows when nobody tells it one.
+        "the default lifetime is doubled, so the declaration no longer says what the cache does",
+        "  const ttlMs = options.ttlMs ?? PARSED_ROWS_CACHE_TTL_MS;",
+        "  const ttlMs = options.ttlMs ?? (PARSED_ROWS_CACHE_TTL_MS * 2);",
+        'the limit the service declares is the limit the cache gives its rows',
+    ),
+    (
+        # The promise to a reader is written twice -- as minutes and as milliseconds -- and the two
+        # forms have to be the same promise. Change the words and the reader is told one thing
+        # while the service does another.
+        "the promise to a reader says ten minutes while the number still says 750000",
+        "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
+        "one sweep interval after the limit — ten minutes (750000 ms) with the shipped",
+        'the promise to a reader is the same promise in both of the forms it is written in',
+    ),
+    (
+        # The same promise, read out of the whole block: a number left in an obsolete annotation
+        # answered the pattern while the sentence a reader reads no longer stated one.
+        "the number promised to a reader is moved into an obsolete annotation",
+        "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped\n"
+        " * values. The number to promise a reader is that one, and it is the number in brackets: it is",
+        "one sweep interval after the limit — twelve and a half minutes with the shipped\n"
+        " * values. Internal obsolete annotation (750000 ms). The number to promise a reader is that one,"
+        " and it is the number in brackets: it is",
+        'the number promised to a reader is the limit plus one sweep interval',
+    ),
+    (
+        # The page polls every TRAJECTORY_POLL_INTERVAL milliseconds -- unless the expression the
+        # timer is given says otherwise. A poll that waits a thousand times longer than the limit
+        # it has to survive loses its rows between polls, and the owners that read the declaration
+        # said nothing about it. This one breaks the PAGE, so it names the file it breaks.
+        "the poll waits a thousand times the interval it declares",
+        "        }, TRAJECTORY_POLL_INTERVAL);",
+        "        }, TRAJECTORY_POLL_INTERVAL * 1000);",
+        'the poll waits as long as the client declares',
+        "miniapp/client/index.html",
+    ),
+    (
+        # The route passes options, and a fixture that leaves them out takes a different branch of
+        # the same function -- so the charge the route really made was never the charge that was
+        # checked, and a commented-out line satisfied the check that only asked about the text.
+        "the route charges the source bytes while a commented-out line supplies the old text",
+        "  if (cacheable) cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));",
+        "  // cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));\n"
+        "  if (cacheable) cache.set(key, value,\n"
+        "    options === undefined\n"
+        "      ? Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE)\n"
+        "      : head.size);",
+        'and the charge the route makes is that one',
+    ),
+    (
+        # A declaration that is commented out is not a declaration. The pattern read the comment
+        # and answered with the number the annotation carried while the binding was a string.
+        "the proxy declaration is commented out and the binding is a string",
+        "const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;",
+        "// const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;\nconst PARSED_ROWS_HEAP_PER_SOURCE_BYTE = '2';",
+        'the heap proxy is a number the service declares',
+    ),
 ]
 
 
@@ -413,11 +475,18 @@ def main():
         return 1
     print("baseline clean")
 
-    original = SERVER.read_bytes()
+    originals = {}
     missed = []
     unnamed = []
-    for label, old, new, expect in MUTATIONS:
-        text, newline = read_exact(SERVER)
+    for label, old, new, expect, *rest in MUTATIONS:
+        # A case may name the file it breaks. Most break the service; the ones about the PAGE break
+        # the page, because a control that could only break one file could not hold a case about
+        # the other half of the package.
+        target = SERVER if not rest else (ROOT / rest[0])
+        if target not in originals:
+            originals[target] = target.read_bytes()
+        original = originals[target]
+        text, newline = read_exact(target)
         # The anchor has to be there EXACTLY once. A control that replaces the first occurrence of
         # a string that occurs twice edits a place it did not mean to edit, and the case then
         # passes or fails for a reason that has nothing to do with the rule it is about -- so the
@@ -431,11 +500,11 @@ def main():
             print(f"SKIP  {label}: the mutation changes nothing")
             missed.append(label)
             continue
-        write_exact(SERVER, text.replace(old, new, 1), newline)
+        write_exact(target, text.replace(old, new, 1), newline)
         try:
             code, output = run_probe()
         finally:
-            SERVER.write_bytes(original)
+            target.write_bytes(original)
         if code == 0:
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
@@ -454,9 +523,10 @@ def main():
             continue
         print(f"caught {label}\n         -> {expect}")
 
-    if SERVER.read_bytes() != original:
-        print(f"NOT RESTORED {SERVER}")
-        return 1
+    for target, original in originals.items():
+        if target.read_bytes() != original:
+            print(f"NOT RESTORED {target}")
+            return 1
     print("file restored byte-for-byte")
 
     if missed or unnamed:
