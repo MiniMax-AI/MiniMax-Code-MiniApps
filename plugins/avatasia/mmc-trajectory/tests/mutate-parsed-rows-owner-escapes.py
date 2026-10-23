@@ -30,6 +30,11 @@
            compared a value they never saw: the premise failed loudly, and three rules were
            accused anyway.
 
+THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and that is a shape of its own: the other
+eleven break the SHIPPED source, and this one breaks the boundary that the reader walks back
+over, so the guard's own assertion about reading a whole phrase is the one that has to go red.
+An assertion that no case can make fail is an assertion nobody is watching.
+
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
 threw, or that went red without naming anything, has not shown that it owns this break.
@@ -219,6 +224,15 @@ MUTATIONS = [
         # The owners that could not be compared have to say so: an owner that held quietly is an
         # owner nobody can tell apart from one that was checked and matched.
         ("held vacuously",),
+    ),
+    (
+        "the reader stops at the thousands separator and answers with the tail of the phrase",
+        [PROBE],
+        ["const PHRASE_CLASS = /[A-Za-z0-9\\s.,&'-]/;"],
+        ["const PHRASE_CLASS = /[A-Za-z0-9\\s.&'-]/;"],
+        "the promised minutes are read from the whole phrase, not from a tail of it",
+        ("the promised minutes are read from the whole phrase, not from a tail of it",),
+        (),
     ),
 ]
 
