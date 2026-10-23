@@ -1,5 +1,12 @@
 # Dynamic Workflow Console (`workflow-console`)
 
+[简体中文](README.zh-CN.md) | English
+
+> **中文速览**：一个把 MiniMax Code 动态工作流跑起来、盯住、看清的 Mini App。内置 Workflow Studio
+> 引擎，**无需另装插件即可运行**：运行列表、实时事件流、按阶段与依赖画出的流程图、每个节点的输出、
+> 审核后开始执行、暂停 / 取消 / 恢复、模板保存与复用、报告导出。引擎启动前必须先选定项目目录，
+> 它不会替你猜。完整中文说明见 [README.zh-CN.md](README.zh-CN.md)。
+
 A Mini App that runs, supervises, and inspects MiniMax Code dynamic workflows from one page.
 
 It embeds the `mcode-dynamic-workflows` runtime, so it works on a machine where that plugin was
@@ -8,7 +15,10 @@ project directory, and shows every run of that project: status, live event log, 
 flow graph, per-node output, and the final report. Runs can be approved, started, paused, cancelled,
 resumed, exported to Markdown or HTML, saved as a template, and restored from a template.
 
-The user interface is in Chinese.
+The user interface is in Chinese, so this README quotes the page's own wording. The terms you will
+meet on screen are: 「工作目录」 (Working directory), 「待审核」 (pending review), 「开始执行」 (start),
+「内置引擎」 (the bundled engine), 「还没有选择项目目录」 (no project directory chosen yet), and
+「审核版本已更新，请刷新后再开始执行」 (the reviewed version changed, refresh and start again).
 
 ## Based on which project
 
@@ -62,11 +72,12 @@ The console needs to know which project the engine should work in, and it will *
 
 - If the Host declares the current project through an environment variable
   (`MCODE_WORKSPACE`, `MCODE_PROJECT_DIR`, `PROJECT_DIR`, `WORKSPACE`), that directory is used.
-- Otherwise the console uses the directory you typed in the always-visible **Working directory** bar
-  at the top of the page, remembered under `context.dataDir`.
+- Otherwise the console uses the directory you typed in the always-visible **Working directory**
+  (「工作目录」) bar at the top of the page, remembered under `context.dataDir`.
 - If neither is available, **the engine does not start at all** and the page asks for an absolute
-  project path. It never falls back to your home directory — a run started there could act on your
-  whole home folder — and it never uses the Host's temporary deployment directory.
+  project path; the empty state reads 「还没有选择项目目录」 (no project directory chosen yet). It
+  never falls back to your home directory — a run started there could act on your whole home
+  folder — and it never uses the Host's temporary deployment directory.
 
 Saving the bar restarts the embedded engine against the new directory; run history is kept in the
 engine's own database and is not affected by the change.
@@ -78,10 +89,10 @@ it. The demo executor works without it.
 
 The package ships one Skill, `skills/workflow-console/SKILL.md`. It tells the Agent how to drive
 this console: that a project directory must be chosen before the engine can start, that a run sits
-in `pending_review` until it is approved, what "approve", "pause", "cancel" and "resume" mean, that
-reusing a template creates a new draft rather than running anything, and that the `demo` executor
-calls no model. It also tells the Agent not to pick a working directory on the user's behalf and
-not to approve a run without the user's say-so.
+in `pending_review` (「待审核」) until it is approved, what "approve" (「开始执行」), "pause",
+"cancel" and "resume" mean, that reusing a template creates a new draft rather than running
+anything, and that the `demo` executor calls no model. It also tells the Agent not to pick a
+working directory on the user's behalf and not to approve a run without the user's say-so.
 
 The Skill is what the Host loads when it registers this plugin; the console process itself never
 reads it. It is also what makes the package importable through **"Import from a Git repository"**:
