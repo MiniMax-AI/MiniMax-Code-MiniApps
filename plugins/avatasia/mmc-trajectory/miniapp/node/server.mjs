@@ -95,10 +95,13 @@ const TRAJECTORY_CACHE_ENTRIES = 4;
  *
  * The body of a large session is tens of megabytes, and it used to be built by ONE
  * `JSON.stringify` call — so the process had to hold all of it as one string at once, and V8's
- * string builder leaves its intermediate copies behind while it doubles its buffer. Measured on
- * this machine, serializing a 52.4M-character body cost 745 MB of heap on top of the payload it
- * came from, and the pages that peak left behind stayed resident long after the body itself was
- * gone: the process kept 965 MB with an 8.4 MB live heap.
+ * string builder leaves its intermediate copies behind while it doubles its buffer.
+ *
+ * The numbers here were measured on 2026-10-23 on this machine, on the code as it stood before
+ * the body was chunked, on one session of 57,436 records whose body was 53,581,503 bytes
+ * (52,648,733 characters): serializing it cost 749 MB of heap on top of the 366 MB payload it
+ * came from, and with every cache emptied the process still held 1,070 MB of resident memory on
+ * an 8.4 MB live heap.
  *
  * A megabyte is a compromise. Small enough that the builder's doubling is noise next to the
  * payload it is serializing; large enough that a 53 MB body is fifty-odd writes rather than
@@ -113,35 +116,77 @@ const TRAJECTORY_BODY_CHUNK_BYTES = 1024 * 1024;
  */
 const MAX_SEARCH_HITS = MAX_HITS;
 /**
- * Upper bound on the parsed generation rows kept resident, in bytes.
+ * How many BYTES OF ACCOUNTING the parsed generation rows may cost.
+ *
+ * The unit is NOT resident bytes, and this comment used to say it was. V8 cannot report an object
+ * graph's size, so an entry is charged for the SOURCE bytes it was parsed from, times
+ * `PARSED_ROWS_HEAP_PER_SOURCE_BYTE`. What this budget bounds is therefore how much INPUT the
+ * cache holds, not how much memory the process ends up holding. The two are related by a measured
+ * factor — on this machine the retained rows cost about 1.4x their source bytes — and that factor
+ * moves with the shape of the messages, so it is a measurement and not an identity.
  *
  * This budget no longer covers the file that matters. A cache keyed on path+size+mtime for a file
  * that is being appended to has no hit rate to speak of: `handleTrajectory` only reaches the parse
  * after the trajectory key — which carries the same size and mtime — has already missed, so every
  * store here is followed by a miss and the entry is dead weight that still costs its rows'
- * memory. Measured on this machine, retaining it was the largest single cost in the process: 378 MB
- * of heap after one session and 304 polls, against 145 MB once it is not retained.
+ * memory.
  *
  * What is left is the sealed generations, whose stat never changes and which are therefore the
- * only parses a second request can genuinely reuse. Those files are rare at a session root — the
- * store keeps rotated generations under `snapshots/`, not beside `messages.jsonl` — so the budget
- * is now generous rather than tuned. Pinned by tests/verify-parsed-rows.mjs.
+ * only parses a second request can genuinely reuse. A LONG session has a great many of them — the
+ * store keeps one rotated generation per compaction under `snapshots/` — and when they add up to
+ * more than this budget, the ones the budget cannot hold are parsed again on every request. So
+ * this is a trade and not a generosity: what the budget holds is paid for in memory, and what it
+ * does not hold is paid for again on every poll. Measured on 2026-10-23 on this machine, on one
+ * session of 79 sealed generations and 255 MB of source text, this budget retained 49.2% of that
+ * source (about 187 MB of live heap) and the other 50.6% was parsed again on every request, at
+ * 1.33 s of parsing per poll.
+ *
+ * `PARSED_ROWS_CACHE_TTL_MS` bounds the other end: how long the retained rows stay after nobody
+ * asks for them. Pinned by tests/verify-parsed-rows.mjs.
  */
 const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
 /**
  * Heap charged to one cache entry per source byte read. V8 cannot report an object graph's
  * size, so a byte budget needs a proxy.
  *
- * Measured on this machine's own lineage: 95.3 MB of messages.jsonl retained 116 MB of heap
- * after two forced collections, i.e. 1.22x the source. 2x leaves headroom over that while
- * still erring on the side of over-counting, because a proxy that under-counts would let the
- * cache grow past its own budget without noticing.
+ * Measured on this machine: on 2026-10-15, 95.3 MB of messages.jsonl retained 116 MB of heap
+ * after two forced collections, i.e. 1.22x the source; on 2026-10-23, the rows a session of 255
+ * MB of source left in the cache cost about 187 MB of live heap for the 131.5 MB of source the
+ * budget held, i.e. 1.42x. 2x leaves headroom over both while still erring on the side of
+ * over-counting, because a proxy that under-counts would let the cache grow past its own budget
+ * without noticing.
  *
  * It was 3x before, and that was wrong in the direction that matters: 95.3 MB x 3 charged
  * 286 MB against a 256 MB budget, so the LRU evicted entries it had room for in reality and
  * re-parsed them on the next poll. The budget is only as good as this number.
  */
 const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
+/**
+ * How long the parsed rows of a generation stay in the cache after the last request that wanted
+ * them.
+ *
+ * The rows are the largest thing this service holds, and they are only worth holding while
+ * somebody is asking for them. The page rebuilds the whole trajectory every 8 seconds while it is
+ * open, and it stops asking the moment the tab is hidden or closed — so a cache with no expiry
+ * keeps a conversation's rows for as long as the runtime lives, which is how the last session a
+ * reader opened stayed resident after they walked away.
+ *
+ * Ten minutes has two numbers behind it. The page polls every 8 seconds
+ * (`TRAJECTORY_POLL_INTERVAL` in the client), so an open tab asks again long before this expires.
+ * And the page stops polling the moment its tab is HIDDEN, so a reader who switches away for a
+ * while is the ordinary case and not an exception — a limit shorter than that would make every
+ * return to the tab cost a re-parse. A reader who is really gone gets their rows back within ten
+ * minutes.
+ *
+ * An expiry is a MISS and not a deletion of something still wanted: the next request parses the
+ * file again and the cache fills itself back up. The price of that is one re-parse, and only when
+ * the whole-session cache misses too — which happens only when the conversation grew while the
+ * reader was away, in which case the rebuild was going to happen anyway.
+ *
+ * The timer that does the releasing is unref'd, so it never keeps the process alive, and it is
+ * stopped when the cache empties. Pinned by tests/verify-parsed-rows.mjs.
+ */
+const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;
 /**
  * How many decoded messages one trajectory entry keeps for `/raw`, per open session.
  *
@@ -3568,18 +3613,77 @@ export function parsedRowsKey(filePath, size, mtimeMs, limit) {
 }
 
 /**
- * LRU over parsed generation rows, bounded by bytes.
+ * LRU over parsed generation rows, bounded by bytes and by how long they are wanted.
  *
  * Bounded by bytes rather than entries because entries say nothing about volume: one
  * generation file is 40 KB and the next is 10 MB. A single entry larger than the whole budget
  * is not stored at all — it would evict everything else and still miss every time.
  *
+ * The accounting unit is the SOURCE bytes the entry was parsed from, times the heap proxy — not
+ * resident bytes, which V8 cannot report. That is what makes the coverage computable: the source
+ * bytes a round does NOT have to parse again are the lineage's source bytes minus the source
+ * bytes this cache holds, and the cache can say the second number exactly.
+ *
+ * Bounded by time as well, because the rows are only worth holding while somebody asks for them:
+ * a reader who closes the tab stops asking, and a cache with no expiry would keep that
+ * conversation's rows for as long as the runtime lives. The expiry is a MISS and not a deletion
+ * of something still wanted — the next request parses the file again and the cache fills itself
+ * back up.
+ *
  * @param {number} budget
+ * @param {{ ttlMs?: number, now?: () => number, sweepIntervalMs?: number }} [options]
  */
-export function createParsedRowsCache(budget) {
-  /** @type {Map<string, { value: ParsedRows, size: number }>} */
+export function createParsedRowsCache(budget, options = {}) {
+  const ttlMs = options.ttlMs ?? PARSED_ROWS_CACHE_TTL_MS;
+  const now = options.now ?? (() => Date.now());
+  const sweepIntervalMs = options.sweepIntervalMs ?? Math.max(1000, Math.floor(ttlMs / 4));
+  /** @type {Map<string, { value: ParsedRows, size: number, at: number }>} */
   const entries = new Map();
   let bytes = 0;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let sweeper = null;
+
+  /** @param {number} at */
+  const expired = (at) => now() - at >= ttlMs;
+
+  /** @param {string} key */
+  const drop = (key) => {
+    const victim = entries.get(key);
+    if (victim === undefined) return 0;
+    entries.delete(key);
+    bytes -= victim.size;
+    return victim.size;
+  };
+
+  const stopSweeper = () => {
+    if (sweeper === null) return;
+    clearInterval(sweeper);
+    sweeper = null;
+  };
+
+  /**
+   * Release what nobody has wanted for a while. This is what makes the rows go away while the
+   * reader is gone: a sweep that only ran on a request would release them exactly when the
+   * reader comes back, which is the one moment they are wanted again.
+   *
+   * @returns {number} the bytes still held afterwards
+   */
+  const sweep = () => {
+    for (const [key, entry] of entries) {
+      if (expired(entry.at)) drop(key);
+    }
+    if (entries.size === 0) stopSweeper();
+    return bytes;
+  };
+
+  const startSweeper = () => {
+    if (sweeper !== null || ttlMs <= 0 || sweepIntervalMs <= 0) return;
+    sweeper = setInterval(sweep, sweepIntervalMs);
+    // An interval that is not unref'd keeps the event loop alive after the server closes, and the
+    // runtime would wait for it. It must never be the reason the process is still running.
+    if (typeof sweeper.unref === 'function') sweeper.unref();
+  };
+
   return {
     get bytes() { return bytes; },
     get size() { return entries.size; },
@@ -3590,9 +3694,16 @@ export function createParsedRowsCache(budget) {
     get(key) {
       const hit = entries.get(key);
       if (hit === undefined) return null;
+      if (expired(hit.at)) {
+        // The rows have been here longer than anybody asked for them. Releasing them here is the
+        // same release the sweeper would do; the only difference is that this request asked.
+        drop(key);
+        return null;
+      }
       // Re-reading is the only signal that a file is still hot, so it refreshes recency.
       entries.delete(key);
       entries.set(key, hit);
+      hit.at = now();
       return hit.value;
     },
     /**
@@ -3608,7 +3719,7 @@ export function createParsedRowsCache(budget) {
         entries.delete(key);
       }
       if (size > budget) return bytes;
-      entries.set(key, { value, size });
+      entries.set(key, { value, size, at: now() });
       bytes += size;
       while (bytes > budget && entries.size > 1) {
         const oldest = entries.keys().next();
@@ -3617,11 +3728,15 @@ export function createParsedRowsCache(budget) {
         entries.delete(oldest.value);
         bytes -= victim ? victim.size : 0;
       }
+      startSweeper();
       return bytes;
     },
+    /** Release what expired. The timer calls this; a caller may call it too. */
+    sweep,
     clear() {
       entries.clear();
       bytes = 0;
+      stopSweeper();
     },
   };
 }
@@ -3848,12 +3963,18 @@ function jsonArrayPieces(items, budgetBytes) {
  * string is let go before the next piece is built. So the process never holds the whole body as
  * one string, and never holds the builder's intermediate copies either.
  *
- * WHY IT IS WORTH THE ROUTE'S ATTENTION. Measured on this machine, one cold read of a
- * 57,192-record session left the process at 1094 MB resident with a 299 MB live heap, and the
- * peak inside the route was 1341 MB: the payload was 361 MB, and the single `JSON.stringify`
- * that followed it added 745 MB on top. Clearing every cache afterwards freed the live heap
- * down to 8.4 MB and the process still held 965 MB — the pages that peak left behind. The
- * floor follows the peak, not the cache, so the peak is the thing to change.
+ * WHY IT IS WORTH THE ROUTE'S ATTENTION. Measured on 2026-10-23 on this machine, on the code as
+ * it stood before the body was chunked, on one session of 57,436 records: one cold read left the
+ * process at 1,199 MB resident with a 302.7 MB live heap, and the peak inside the route was
+ * 1,331 MB resident on 1,115 MB of live heap — the payload object graph was 366 MB, and the single
+ * `JSON.stringify` that followed it added 749 MB on top. Clearing every cache afterwards freed
+ * the live heap down to 8.4 MB and the process still held 1,070 MB: the pages this request
+ * touched are not given back.
+ *
+ * And the floor does NOT follow the peak. Chunking the body took 151 MB off the high-water mark
+ * and the floor did not move (1,070.1 MB before, 1,069.7 MB after). So the floor is neither what
+ * the cache holds nor what the peak left behind: it is what this request allocated, and cutting
+ * the allocation is the lever.
  *
  * @param {Record<string, any>} payload
  * @param {number} [budgetBytes]
@@ -5546,7 +5667,9 @@ export async function start(context) {
     trajectoryCache.clear();
     // The parsed-row cache only ever holds sealed generations now, but it is still a cache that
     // has to be released here: a disposed runtime that kept it would still hold a rotated
-    // generation's rows. The line is here so the next cache added cannot repeat the omission.
+    // generation's rows. Clearing it also stops the sweeper that releases the rows nobody wants
+    // any more, so a disposed runtime leaves no timer behind either. The line is here so the next
+    // cache added cannot repeat the omission.
     parsedRows.clear();
     clientEntry = null;
     disposal = close(server).then(() => undefined);
