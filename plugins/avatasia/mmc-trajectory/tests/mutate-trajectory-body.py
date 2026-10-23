@@ -57,8 +57,11 @@ MUTATIONS = [
         "the body is cut into more pieces as it grows, so no single string holds it",
     ),
 
-    # The pieces as strings. Every character outside Latin-1 makes V8 hold a string as two bytes
-    # per character, which is the whole reason the pieces are bytes: a Chinese transcript doubles.
+    # The pieces as strings. V8 holds a string in ONE representation for the whole string: one
+    # character outside Latin-1 and the whole string is two bytes per character, ASCII majority
+    # included. That is the whole reason the pieces are bytes: they are the UTF-8 the text already
+    # is — a Chinese character is three of those bytes, not one — and they live outside the JS
+    # heap instead of in a string that has to be copied.
     (
         "the pieces are handed back as strings",
         "      pieces.push(Buffer.from(current, 'utf8'));",
@@ -70,9 +73,61 @@ MUTATIONS = [
     # holds everything, and the peak is back.
     (
         "the budget stops bounding a piece",
-        "    if (currentBytes > 1 && currentBytes + pieceBytes > budgetBytes) {",
+        "    if (currentBytes > 1 && currentBytes + pieceBytes + 1 > budgetBytes) {",
         "    if (false) {",
         "no piece is bigger than the budget unless it holds a single element",
+    ),
+
+    # The closing bracket is not counted against the budget. The bytes are still right, and the
+    # piece that holds two elements comes out ONE BYTE over the budget — the bracket lands on it
+    # after the size was decided. The boundary fixture is the one that sees it: the fixture above
+    # cannot, because its piece holds a single element.
+    (
+        "the closing bracket is not counted against the budget",
+        "    if (currentBytes > 1 && currentBytes + pieceBytes + 1 > budgetBytes) {",
+        "    if (currentBytes > 1 && currentBytes + pieceBytes > budgetBytes) {",
+        "a piece never ends over the budget because of the bracket that closes it",
+    ),
+
+    # The send path joins the pieces into one write. The bytes that reach the socket are the
+    # same bytes, and the length is the same length — but the body is handed over in one piece
+    # again, which is the half of the change that is about memory.
+    (
+        "the send path joins the pieces into one write",
+        "    for (const piece of pieces) response.write(piece);",
+        "    response.write(Buffer.concat(pieces));",
+        "and the pieces are what reached the socket",
+    ),
+
+    # The send path hands the socket a string instead of the bytes. The bytes that reach it are
+    # the same bytes, and the length is the same length — but the body is a string again.
+    (
+        "the send path hands the socket a string instead of the bytes",
+        "    for (const piece of pieces) response.write(piece);",
+        "    for (const piece of pieces) response.write(piece.toString('utf8'));",
+        "the socket was handed the pieces as bytes, not as a string",
+    ),
+
+    # The send path changes the bytes on the way out without changing their length. The body is
+    # still parseable, still holds the same number of records, and still declares the same
+    # length — and it is a different body. Only a byte-for-byte comparison sees it.
+    (
+        "the send path changes the bytes without changing their length",
+        "    for (const piece of pieces) response.write(piece);",
+        "    for (const piece of pieces) response.write(Buffer.from(piece.toString('utf8').replaceAll('user', 'xxxx'), 'utf8'));",
+        "the bytes that reached the socket are the bytes of the body",
+    ),
+
+    # The live body carries the wrong records. The count is the same, the body still parses, and
+    # the declared length is still the length of what was written — and the records in it are not
+    # the ones the file holds. This is what gives the live section's own assertion an owner:
+    # without a case that breaks it, that assertion could stop being true while the count and the
+    # parse stayed green.
+    (
+        "the live body carries records that are not the ones the file holds",
+        "      id: messageId,",
+        "      id: messageId + 'x',",
+        "the bytes on the wire carry the records the file holds",
     ),
 
     # The route goes back to one string. The helper stays correct, so every unit assertion above

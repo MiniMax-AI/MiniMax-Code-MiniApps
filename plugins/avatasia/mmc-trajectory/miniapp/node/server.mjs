@@ -3950,6 +3950,11 @@ export async function loadParsedRows(cache, filePath, limit, options) {
  * An element that does not fit the budget on its own becomes a piece of its own. That is the one
  * thing the budget cannot bound, and it is bounded by the element instead of by the budget.
  *
+ * THE CLOSING BRACKET IS COUNTED. It is one byte, it lands on the piece that holds the last
+ * element, and a piece that held two elements and ended one byte over the budget was a piece
+ * the budget did not bound. One byte is reserved for it on every piece, so no piece that holds
+ * more than one element is ever bigger than the budget.
+ *
  * @param {Array<any>} items
  * @param {number} budgetBytes
  * @returns {Array<Buffer>}
@@ -3968,7 +3973,12 @@ function jsonArrayPieces(items, budgetBytes) {
     // cons string, and measuring its length would flatten it into a second copy of the
     // element. On a body of fifty thousand records that is fifty thousand copies.
     const pieceBytes = textBytes + (first ? 0 : 1);
-    if (currentBytes > 1 && currentBytes + pieceBytes > budgetBytes) {
+    // The closing bracket is counted here, not appended at the end. It lands on the piece that
+    // holds the LAST element, and a piece that ended exactly at the budget came out one byte
+    // over it — so the budget did not bound the piece it was supposed to bound. One byte is
+    // reserved on every piece, which is one byte more than the pieces that do not carry the
+    // bracket need: the budget is a ceiling, not a target.
+    if (currentBytes > 1 && currentBytes + pieceBytes + 1 > budgetBytes) {
       pieces.push(Buffer.from(current, 'utf8'));
       current = '';
       currentBytes = 0;
@@ -3996,8 +4006,13 @@ function jsonArrayPieces(items, budgetBytes) {
  *
  * WHAT CHANGES IS HOW THEY ARE PRODUCED. The payload's big array is cut into pieces at element
  * boundaries, each piece is serialized on its own and turned into bytes immediately, and the
- * string is let go before the next piece is built. So the process never holds the whole body as
- * one string, and never holds the builder's intermediate copies either.
+ * string is let go before the next piece is built. So the process never holds THAT ARRAY as one
+ * string, and never holds the builder's intermediate copies either.
+ *
+ * THE EXCEPTION IS A VALUE THAT IS NOT AN ARRAY. It is serialized on its own, by
+ * `JSON.stringify(value)`, and appended to the piece being built — so a payload whose bulk is one
+ * large string still holds that string, and the piece that holds it is a piece like any other.
+ * What this change removes is the array.
  *
  * WHY IT IS WORTH THE ROUTE'S ATTENTION. Measured on 2026-10-23 on this machine, on the code as
  * it stood before the body was chunked, on one session of 57,436 records: one cold read left the
@@ -4066,8 +4081,10 @@ export function serializeTrajectoryBody(payload, budgetBytes = TRAJECTORY_BODY_C
  * (storable, but must be revalidated) and carry the tag the page echoes back.
  *
  * The body is either one string or a list of byte pieces. The list is what the trajectory route
- * sends now: the bytes are the same bytes, but they were never held as one string, so the
- * declared length is the sum of the pieces rather than the length of a string.
+ * sends now: the bytes are the same bytes, but the payload's big array was never held as one
+ * string, so the declared length is the sum of the pieces rather than the length of a string.
+ * (A value inside the payload that is not an array is still one string — see
+ * `serializeTrajectoryBody`.)
  * @param {any} response
  * @param {number} status
  * @param {string | Buffer | Array<string | Buffer>} body
@@ -4960,8 +4977,9 @@ export async function start(context) {
     let body;
     try {
       // In pieces, not as one string. The bytes are the same bytes — see serializeTrajectoryBody
-      // for why that is a contract and not an accident — but the process never holds the whole
-      // body as a string, and the peak this route used to leave behind does not come back.
+      // for why that is a contract and not an accident — but the process never holds the
+      // payload's big array as a string, and the peak this route used to leave behind does not
+      // come back.
       body = serializeTrajectoryBody(payload);
     } catch {
       sendJson(response, 500, { error: 'trajectory_unserializable', message: '会话数据暂时无法读取' });

@@ -25,6 +25,14 @@
  *      disagrees with, and the page hangs waiting for a body that ended early.
  *   5. the route must USE the pieces, and the cache must KEEP them. A helper that is correct and
  *      a route that does not call it are both green, and the memory is exactly as bad as before.
+ *   6. the socket has to be handed the PIECES, as bytes, and the bytes that arrive have to be
+ *      the bytes of the body. A send path that joins the pieces into one write brings the peak
+ *      this change was made to remove back, and one that changes the bytes without changing
+ *      their length is a body the page cannot tell from the right one. Comparing the LENGTHS
+ *      sees neither.
+ *   7. the closing bracket has to be counted against the budget. It is one byte and it lands on
+ *      the piece that holds the last element, so a piece that held two elements and ended
+ *      exactly at the budget came out one byte over it.
  *
  * The live section at the end is the wiring: it asks a real service for a real body and checks
  * that the bytes on the wire are the bytes the serializer produced, on the first read and on the
@@ -161,6 +169,19 @@ assert('an element bigger than the budget becomes a piece of its own',
   huge.length === 3 && huge[1].length > BUDGET);
 check('and it is still the same bytes', asBytes(huge).toString('utf8'), JSON.stringify(HUGE));
 
+// The bracket that closes the array is counted against the budget. The element below is sized
+// so that the array ENDS exactly at the budget: with the bracket left out of the count, the
+// piece that holds both elements comes out one byte over it, and the budget did not bound the
+// piece it was supposed to bound. This is the fixture that sees it, and the one above cannot:
+// its piece holds a single element, and a single element is the one thing the budget cannot
+// bound.
+const BOUNDARY_PAYLOAD = { turns: ['x'.repeat(BUDGET - 5), 0] };
+const boundary = serializeTrajectoryBody(BOUNDARY_PAYLOAD, BUDGET);
+assert('a piece never ends over the budget because of the bracket that closes it',
+  boundary.every((piece) => piece.length <= BUDGET));
+check('and the bytes are the same bytes', asBytes(boundary).toString('utf8'),
+  JSON.stringify(BOUNDARY_PAYLOAD));
+
 /* =====================================================================
  * 4 — the declared length is the sum of the pieces
  * ===================================================================== */
@@ -181,7 +202,22 @@ const declared = Number(chunked.headers['content-length']);
 const sent = asBytes(chunked.written).length;
 assert('the declared length is the sum of the pieces, not the length of one string',
   declared === sent && declared === asBytes(largePieces).length);
-assert('and the pieces are what reached the socket', sent === asBytes(largePieces).length);
+// What reached the socket has to BE the pieces: one write per piece, each of them bytes.
+// A send path that joins them into one write brings back the peak this change was made to
+// remove, and one that hands over a string does it with the very representation the change
+// was made to get rid of. The COUNT is what sees the first, and the TYPE is what sees the
+// second -- and a length comparison sees neither.
+assert('and the pieces are what reached the socket',
+  chunked.written.length === largePieces.length);
+assert('the socket was handed the pieces as bytes, not as a string',
+  chunked.written.every((chunk) => Buffer.isBuffer(chunk)));
+// And the bytes that arrived have to be the bytes of the body, compared against an
+// expectation THIS FILE derives itself -- its own JSON.stringify of the payload -- rather
+// than against whatever the product produced. A body changed on the way out without
+// changing its length is the same length and a different body, and the page cannot tell it
+// from the right one.
+assert('the bytes that reached the socket are the bytes of the body',
+  asBytes(chunked.written).equals(Buffer.from(JSON.stringify(LARGE), 'utf8')));
 
 const asString = fakeResponse();
 sendJsonBody(asString, 200, JSON.stringify(LARGE), {});
@@ -275,6 +311,14 @@ try {
       parsed !== null && Array.isArray(parsed.turns)
         ? parsed.turns.flatMap((turn) => turn.records || []).length === 12000
         : false);
+    // The bytes on the wire have to be the ones the FILE holds. The route builds its own
+    // payload, so the oracle here is the file this guard wrote: the ids are in it, and the
+    // body has to carry them. A count and a parse are not enough -- a body can hold the
+    // right number of records and be the wrong records.
+    const idsInBody = ['m0', 'm11999'].every((id) => (
+      coldBytes.includes(Buffer.from('"id":"' + id + '"', 'utf8'))
+    ));
+    assert('the bytes on the wire carry the records the file holds', idsInBody);
 
     // The warm read is the one that comes out of the cache, and the cache keeps PIECES now.
     const warm = await fetch(base + '/api/trajectory?session=' + encodeURIComponent(SID));
