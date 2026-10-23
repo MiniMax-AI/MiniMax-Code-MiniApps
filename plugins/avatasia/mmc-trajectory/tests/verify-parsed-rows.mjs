@@ -497,16 +497,19 @@ assert('the time limit is at least five minutes, so stepping away from the tab d
 // And the sweeper must never be the reason the process is still running. The owner of that rule
 // used to be a pattern over the source, and a pattern cannot tell the cache's own handle from an
 // unrelated one's: a function elsewhere with a parameter of the same name satisfied it while the
-// real timer stayed referenced. So the owner watches the handle the cache was given: the timer it
-// created has to be one that does not hold the process open.
+// real timer stayed referenced. So the owner watches the handle the cache was given: a timer the
+// cache created has to be one that does not hold the process open.
+//
+// A cache that starts no timer at all has nothing that could hold the process open, so that is
+// green here: whether a sweeper starts at all is another owner's rule, and this one is not a second
+// accusation of it.
 const unrefWindow = withRecordedTimers(() => {
   const unrefCache = createParsedRowsCache(1000, { ttlMs: 1_000 });
   unrefCache.set('k', val, 500);
 });
 assert('the sweeper does not keep the process alive',
-  unrefWindow.handles.length === 1
-  && typeof unrefWindow.handles[0].hasRef === 'function'
-  && unrefWindow.handles[0].hasRef() === false);
+  unrefWindow.handles.every((handle) => typeof handle.hasRef !== 'function'
+    || handle.hasRef() === false));
 
 // The release lands on a sweep tick, so the rows are gone a sweep interval AFTER the limit. The
 // promise to a reader is that interval added on, and it only stays a promise while the interval
@@ -552,14 +555,19 @@ assert('the number promised to a reader is the limit plus one sweep interval',
 //
 // The timer is not reachable from outside the cache, so the only way to see the interval it really
 // got is to stand in for the clock's own timer call while the cache runs.
+//
+// What this owner rules about is the INTERVAL a timer runs on -- not whether a timer is started at
+// all. A cache that starts no sweeper has no timer running on the wrong interval, and "a sweeper
+// has to start" is a different rule with a different owner (the rows have to be released without a
+// request). So the check below holds for every timer the cache starts, and holds vacuously when
+// it starts none: that keeps the two rules apart instead of making one of them the other's echo.
 let timedCache = null;
 const timerWindow = withRecordedTimers(() => {
   timedCache = createParsedRowsCache(1000, { ttlMs: TTL });
   timedCache.set('k', val, 500);
 });
 assert('the timer that releases the rows runs on the interval the cache reports',
-  timerWindow.recorded.length === 1
-  && timerWindow.recorded[0] === timedCache.sweepIntervalMs);
+  timerWindow.recorded.every((interval) => interval === timedCache.sweepIntervalMs));
 
 // The quarter has a floor of a millisecond, because a timer cannot be finer than that. For a
 // limit below four milliseconds the floor is the larger of the two, so the release is then at

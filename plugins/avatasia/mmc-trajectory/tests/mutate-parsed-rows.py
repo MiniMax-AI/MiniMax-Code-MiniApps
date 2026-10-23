@@ -320,6 +320,19 @@ MUTATIONS = [
         "    if (sweeper !== null || ttlMs < 0 || sweepIntervalMs <= 0) return;",
         'a time limit of zero starts no sweeper, because nothing in it ever expires',
     ),
+    (
+        # The sweeper is what releases the rows without a request. Take the call away and the rows
+        # are held until somebody asks for them -- the shape the whole time limit exists to avoid.
+        #
+        # This case belongs to the release owners, and the point of it is that the other two
+        # owners stay out of it: a cache that starts no timer has no timer running on the wrong
+        # interval, and nothing that could hold the process open, so neither of those rules is
+        # broken by this break. If they went red here, one rule would be standing in for another.
+        "the sweeper is never started, so the rows are held until somebody asks for them",
+        "      startSweeper();\n",
+        "",
+        'the rows are released without a request',
+    ),
 ]
 
 
