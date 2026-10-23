@@ -500,13 +500,39 @@ assert('the number promised to a reader is the limit plus one sweep interval',
 // release moved to "the limit plus twice the interval" -- and the promise to a reader went on
 // saying twelve and a half minutes.
 //
-// The timer is not reachable from outside the cache, so what can be checked is the call that
-// starts it: it has to take the interval the cache itself reports, with nothing done to it on the
-// way. An interval that is not the reported one is not the interval the number in the prose is
-// built from, and the promise would be true of a timer that does not exist.
-const sweepTimerCalls = [...SERVER.matchAll(/setInterval\(\s*sweep\s*,\s*([^)]*)\)/g)];
+// What has to be checked is the NUMBER the timer is given, not the way the call spells it. A
+// pattern over the source can only see the spelling, and a local binding that shadows the name
+// keeps that spelling while doubling the number that is actually passed: the cache kept reporting
+// the interval it was asked for, the number in the prose kept matching that reported interval, and
+// the real release moved out to nearly fifteen minutes.
+//
+// The timer is not reachable from outside the cache, so the only way to see the interval it really
+// got is to stand in for the clock's own timer call while the cache runs.
+function withRecordedIntervals(run) {
+  const recorded = [];
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = (callback, delay) => {
+    recorded.push(delay);
+    return { unref() { return this; }, ref() { return this; }, hasRef() { return false; } };
+  };
+  globalThis.clearInterval = () => {};
+  try {
+    run();
+  } finally {
+    globalThis.setInterval = realSetInterval;
+    globalThis.clearInterval = realClearInterval;
+  }
+  return recorded;
+}
+
+let timedCache = null;
+const timerCalls = withRecordedIntervals(() => {
+  timedCache = createParsedRowsCache(1000, { ttlMs: TTL });
+  timedCache.set('k', val, 500);
+});
 assert('the timer that releases the rows runs on the interval the cache reports',
-  sweepTimerCalls.length === 1 && sweepTimerCalls[0][1].trim() === 'sweepIntervalMs');
+  timerCalls.length === 1 && timerCalls[0] === timedCache.sweepIntervalMs);
 
 // The quarter has a floor of a millisecond, because a timer cannot be finer than that. For a
 // limit below four milliseconds the floor is the larger of the two, so the release is then at
@@ -541,6 +567,17 @@ clock += 10 * 60 * 1000;
 assert('a time limit of zero means no time limit, not that everything expires at once',
   noLimit.get('k') !== null);
 check('and the rows are still held', noLimit.bytes, 500);
+
+// The other half of that promise is that NO SWEEPER runs. In a cache in which nothing ever
+// expires, a timer would scan it for ever, because the sweep only stops when the cache empties
+// and this one never does. So that half has to be owned by watching the TIMER, not by watching
+// the hit: the hit stays true and the bytes stay counted either way.
+const zeroTimerCalls = withRecordedIntervals(() => {
+  const zeroCache = createParsedRowsCache(1000, { ttlMs: 0, now: () => clock });
+  zeroCache.set('k', val, 500);
+});
+assert('a time limit of zero starts no sweeper, because nothing in it ever expires',
+  zeroTimerCalls.length === 0);
 
 await rm(root, { recursive: true, force: true });
 

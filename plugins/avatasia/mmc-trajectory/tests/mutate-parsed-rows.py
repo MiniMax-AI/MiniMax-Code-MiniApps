@@ -277,6 +277,37 @@ MUTATIONS = [
         "    sweeper = setInterval(sweep, sweepIntervalMs * 2);",
         'the timer that releases the rows runs on the interval the cache reports',
     ),
+    (
+        # The rule is about the NUMBER the timer is given, not about the way the call spells it.
+        # A local binding that shadows the name keeps the spelling and doubles the number that is
+        # actually passed: the cache kept reporting the interval it was asked for, the number in
+        # the prose kept matching that reported interval, and the real release moved out to nearly
+        # fifteen minutes -- while every check that only read the source stayed green.
+        "a shadowed binding doubles the interval the timer really gets",
+        "    sweeper = setInterval(sweep, sweepIntervalMs);",
+        "    { const sweepIntervalMs = Math.min(limitBoundMs, askedBoundMs) * 2;\n"
+        "      sweeper = setInterval(sweep, sweepIntervalMs); }",
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    (
+        # The same escape with a number that is not derived from the interval at all: the spelling
+        # is still the reported name, and the value the timer gets is not the reported interval.
+        "a shadowed binding replaces the interval with a number of its own",
+        "    sweeper = setInterval(sweep, sweepIntervalMs);",
+        "    { const sweepIntervalMs = 300000;\n"
+        "      sweeper = setInterval(sweep, sweepIntervalMs); }",
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    (
+        # Zero means no limit AND no sweeper. The owner checked the hit and the retained bytes but
+        # never the timer, so moving the boundary of the start condition by one comparison let the
+        # sweeper run under a zero limit -- and nothing in such a cache ever expires, so that timer
+        # would scan it for ever.
+        "a zero limit starts the sweeper it promised not to start",
+        "    if (sweeper !== null || ttlMs <= 0 || sweepIntervalMs <= 0) return;",
+        "    if (sweeper !== null || ttlMs < 0 || sweepIntervalMs <= 0) return;",
+        'a time limit of zero starts no sweeper, because nothing in it ever expires',
+    ),
 ]
 
 
