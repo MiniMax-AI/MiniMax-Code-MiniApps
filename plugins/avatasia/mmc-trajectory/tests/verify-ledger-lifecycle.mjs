@@ -95,7 +95,12 @@ const LIFECYCLE_FNS = [
   // The build itself, because the rule this file has to prove is about what the build
   // writes. A group the reader has left must not be kept alive by the rebuild — and the
   // source of a function cannot say whether it stamps the reader's lease or not.
-  'buildStep'
+  'buildStep',
+  // The watcher itself, and not a stub of it. The rule below is about which sections the
+  // observer is pointed at after a rebuild, and only the shipped watcher can say that: a
+  // stub that records "the build called the watcher" cannot tell a re-registration from a
+  // first one, and a rule whose name says "rebuilt" has to be able to.
+  'watchLedgerGroups'
 ];
 
 const fnSrc = LIFECYCLE_FNS.map((name) => functionSource(name));
@@ -144,6 +149,11 @@ const resizeRegistration = refreshSrc
 // The frame the deferred measurement is waiting in, lifted on its own — it is a declaration
 // and not a function, and it is read by the shipped handler.
 const measureFrameDecl = html.match(/^[ \t]*var ledgerMeasureFrame = [^;]+;/m);
+
+// The observer the shipped watcher registers. It is a declaration and not a function, so it
+// is lifted on its own — and it has to be the same binding the watcher assigns, or the
+// watcher would be reading one observer and the case another.
+const observerDecl = html.match(/^[ \t]*var ledgerObserver = [^;]+;/m);
 
 // The two limits are declarations, not functions, so they are lifted on their own. They are
 // numbers the shipped code reads, and the guard below uses the shipped values rather than
@@ -244,7 +254,8 @@ function harness() {
   // builds. It is a variable rather than a fixed number because a height is a measurement of
   // a layout, and a case about a layout that changed has to be able to change it and then ask
   // again — a DOM that always answers 240 px cannot hold a layout change at all.
-  const box = { clock: 1000, built: [], sized: [], frames: [], listeners: {}, layoutHeight: 240 };
+  const box = { clock: 1000, built: [], sized: [], frames: [], listeners: {}, layoutHeight: 240,
+    observers: [] };
   // The window the shipped code talks to. It records the handlers it is given and the frames
   // it is asked for, so a case can deliver a real event and then run the frame the handler
   // deferred its work to.
@@ -269,6 +280,23 @@ function harness() {
     // The row heights the last build calibrated. The visit path prices the difference a
     // released group has with them, so the build writes them and the visit path reads them.
     ledgerCalibration: null,
+    // The observer the shipped watcher registers, and the set of sections it is pointed at.
+    // That set is the whole of what a rebuild has to replace: a section from the previous
+    // table is not in `ledgerContent` any more, so an observer left pointing at the old table
+    // never sees the new one. A browser's observer forgets its targets when it is
+    // disconnected, so this double forgets them too — which is what makes "the build
+    // re-registered the observer" and "the build registered it once" two different things.
+    IntersectionObserver: function (callback) {
+      const observer = {
+        callback,
+        targets: new Set(),
+        observe(target) { observer.targets.add(target); },
+        unobserve(target) { observer.targets.delete(target); },
+        disconnect() { observer.targets.clear(); }
+      };
+      box.observers.push(observer);
+      return observer;
+    },
     // The ledger the table is in. The shipped code reads it when it has to take the rows out
     // of a group the reader is no longer on.
     dom: { ledger: makeEl('div') },
@@ -315,8 +343,10 @@ function harness() {
   const registration = resizeRegistration ? resizeRegistration[0] + '\n' : '';
   const frameDecl = measureFrameDecl ? measureFrameDecl[0] + '\n'
     : (refreshSrc ? 'var ledgerMeasureFrame = null;\n' : '');
+  // The observer's own binding, so the watcher assigns the very observer the case reads.
+  const observerDeclSrc = observerDecl ? observerDecl[0] + '\n' : 'var ledgerObserver = null;\n';
   vm.runInContext(
-    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + frameDecl
+    idleDecl[0] + '\n' + capDecl[0] + '\n' + batchDecl[0] + '\n' + frameDecl + observerDeclSrc
     + fnSrc.join('\n') + '\n' + optionalSrc.join('\n') + '\n' + registration,
     sandbox
   );
@@ -363,12 +393,12 @@ function buildHarness(options) {
   s.setLedgerProgress = () => {};
   s.restoreRowAnchor = () => {};
   s.flushDeferredPoll = () => {};
-  // The build re-registers the observer after every rebuild: a section from the previous table
-  // is not in `ledgerContent` any more, so an observer left pointing at the old table never
-  // sees the new one. The harness records that the call happened, and the observer's visit
-  // happens only if it did — which is what a browser does with an observer that was never
-  // pointed at the new table.
-  s.watchLedgerGroups = () => { h.observed = true; };
+  // The watcher here is the shipped one, not a stub of it. It is the shipped watcher that
+  // disconnects the observer and points it at the new table, and the rule under test is
+  // about exactly that: a section from the previous table is not in `ledgerContent` any more,
+  // so an observer left pointing at the old table never sees the new one. A stub that
+  // recorded "the build called the watcher" could not tell the two apart — and a rule whose
+  // name says "rebuilt" has to be able to.
   s.syncStickyOffsets = () => {};
   // The same window the harness made, so a case that delivers a resize event reaches the
   // handler the client registered for it.
@@ -414,17 +444,24 @@ function sectionOf(h, index) {
  * The observer's visit, the way the browser delivers it.
  *
  * The observer is what measures a group that is really laid out, and the build is what points
- * it at the new table. So the visit happens only if the build called the watcher — and when it
- * did not, the observer is still pointing at the previous table, the group the reader is on is
- * never measured again, and the height it keeps is the height of a layout that is gone.
+ * it at the new table. So the visit is delivered only if the section is one the observer is
+ * pointed at — and after a rebuild the sections are new ones, so an observer that was not
+ * re-registered is still pointing at the previous table: the group the reader is on is never
+ * measured again, and the height it keeps is the height of a layout that is gone.
+ *
+ * The visit goes through the observer's own callback, and that callback is the shipped one: it
+ * is what fills the group, and a case that filled the group by hand would be testing the
+ * harness rather than the client.
  *
  * @param {object} h the harness
  * @param {object} section the group the reader is on
  * @returns {boolean} whether the observer was there to deliver the visit
  */
 function observeGroups(h, section) {
-  if (!h.observed) return false;
-  h.sandbox.fillLedgerGroup(section);
+  const observer = h.sandbox.ledgerObserver;
+  if (!observer) return false;
+  if (!observer.targets.has(section)) return false;
+  observer.callback([{ target: section, isIntersecting: true }]);
   return true;
 }
 
@@ -1202,13 +1239,18 @@ function measureGroup(h, key, entries, bands, height) {
   h.layoutHeight = 1000;
   rebuild(h, groups);
   // The reader is on the second group, and it is laid out for real at 1,000 px.
-  s.fillLedgerGroup(sectionOf(h, 1));
+  const firstSection = sectionOf(h, 1);
+  s.fillLedgerGroup(firstSection);
   // The layout changes and nothing about the content does: the same three rows and the same
   // number of bands, in a box that is 500 px taller.
   h.layoutHeight = 1500;
   // The poll brings a rebuild, and the rebuild is what re-registers the observer.
   h.clock += 10;
   rebuild(h, groups);
+  // The table is a new one, so the group the reader is on is a new section — and the
+  // observer has to be pointed at it. This is the half the rule is named after: an observer
+  // that was registered once and never again is still pointing at the section it replaced.
+  const rebuiltSection = sectionOf(h, 1);
   // The window is resized, and the measurement it drives cannot see the change: the build
   // sized the groups of its first batch by the height they are really at, so the number the
   // group reads back is the number it was given.
@@ -1216,7 +1258,11 @@ function measureGroup(h, key, entries, bands, height) {
   const frames = h.frames.splice(0, h.frames.length);
   for (const frame of frames) frame();
   // The observer's visit: the group is laid out for real, and it is measured again.
-  observeGroups(h, sectionOf(h, 1));
+  const visited = observeGroups(h, rebuiltSection);
+  const observer = h.sandbox.ledgerObserver;
+  assert('a rebuilt observer watches the group the reader is on, not the one it replaced',
+    visited === true && !!observer && observer.targets.has(rebuiltSection)
+    && !observer.targets.has(firstSection));
   // The reader walks through the rest of the window, so the cap releases the group.
   for (let i = 2; i < n; i += 1) {
     h.clock += 10;

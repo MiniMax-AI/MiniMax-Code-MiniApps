@@ -423,7 +423,22 @@ MUTATIONS = [
     # out. The observer's visit is the only thing that measures it again.
     ("the build does not observe the groups it rebuilt",
      [("          watchLedgerGroups();\n", "")],
-     "resize and a rebuilt observer preserve the current layout through release"),
+     ["resize and a rebuilt observer preserve the current layout through release",
+      "a rebuilt observer watches the group the reader is on, not the one it replaced"]),
+
+    # The other half of the same rule, and the one a deletion cannot reach: an observer that
+    # is registered once and never pointed at the new table is still watching the sections of
+    # the previous table. The build's watcher disconnects the observer before it observes the
+    # new sections, and that disconnect is the whole of what makes the second build's
+    # observer the current one. Without it the observer's visit never reaches the group the
+    # reader is on — the section that replaced it is not one the observer knows — so the group
+    # keeps the height of the layout before the resize, and the document under the reader comes
+    # up short by exactly the difference.
+    ("the build observes the groups it rebuilt only once",
+     [("        } else {\n          ledgerObserver.disconnect();\n        }\n",
+       "        } else {\n          return;\n        }\n")],
+     ["resize and a rebuilt observer preserve the current layout through release",
+      "a rebuilt observer watches the group the reader is on, not the one it replaced"]),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
