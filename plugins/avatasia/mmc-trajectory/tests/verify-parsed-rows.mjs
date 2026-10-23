@@ -359,7 +359,10 @@ assert('loadParsedRows is exported so a test can run the real step',
  *   while somebody asks for them: the page stops asking the moment its tab is hidden, so a cache
  *   with no expiry keeps that conversation's rows for as long as the runtime lives. The release
  *   has to happen WITHOUT a request — a sweep that only ran on a request would release them
- *   exactly when the reader comes back, which is the one moment they are wanted again.
+ *   exactly when the reader comes back, which is the one moment they are wanted again. And the
+ *   release lands on a sweep tick, so the rows are gone a sweep interval AFTER the limit, not at
+ *   it: the number to promise a reader is the limit plus that interval, and the two have to stay
+ *   in that relation.
  * ===================================================================== */
 
 // A constant the source declares as an expression — `60 * 1000` — is read by arithmetic rather
@@ -440,8 +443,37 @@ assert('the time limit is longer than one poll, so an open tab never loses its r
 assert('the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
   TTL >= 5 * 60 * 1000);
 
-// And the sweeper must never be the reason the process is still running.
-assert('the sweeper does not keep the process alive', /\.unref\(\)/.test(SERVER));
+// And the sweeper must never be the reason the process is still running. The name is the
+// sweeper's own, because a whole-file pattern would keep passing after some OTHER timer in the
+// service grew an unref of its own — and the rule would quietly lose its owner.
+assert('the sweeper does not keep the process alive', /sweeper\.unref\(\)/.test(SERVER));
+
+// The release lands on a sweep tick, so the rows are gone a sweep interval AFTER the limit. The
+// promise to a reader is that interval added on, and it only stays a promise while the interval
+// is a fraction of the limit. This is checked on the interval the cache ACTUALLY uses, for
+// several limits — not on two numbers read out of the source, which would keep passing after
+// the line that takes the interval had changed.
+const SHIPPED_SWEEP = declaredNumber(SERVER, 'PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS');
+assert('the sweep interval is a number the service declares', SHIPPED_SWEEP !== null);
+for (const limit of [1_000, 60_000, 600_000, 3_600_000]) {
+  const bounded = createParsedRowsCache(1000, { ttlMs: limit });
+  assert('the sweep interval the cache uses is at most a quarter of the limit',
+    bounded.sweepIntervalMs <= limit / 4);
+}
+const asked = createParsedRowsCache(1000, { ttlMs: 1_000, sweepIntervalMs: 500_000 });
+assert('an interval the caller asks for is clamped to the limit as well',
+  asked.sweepIntervalMs <= 1_000 / 4);
+assert('the shipped default is the interval the service declares',
+  createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP);
+
+// A time limit of zero means NO time limit. The other reading — everything expires at once —
+// would be a cache that never hits and never releases, which is worse than either.
+const noLimit = createParsedRowsCache(1000, { ttlMs: 0, now: () => clock });
+noLimit.set('k', val, 500);
+clock += 10 * 60 * 1000;
+assert('a time limit of zero means no time limit, not that everything expires at once',
+  noLimit.get('k') !== null);
+check('and the rows are still held', noLimit.bytes, 500);
 
 await rm(root, { recursive: true, force: true });
 

@@ -196,6 +196,31 @@ MUTATIONS = [
         "const PARSED_ROWS_CACHE_TTL_MS = 60 * 1000;",
         'the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
     ),
+    (
+        # The relation between the limit and the sweep interval has to hold for the interval the
+        # cache ACTUALLY uses. Reading two numbers out of the source would keep passing after the
+        # line that TAKES the interval had changed, so the mutation is on that line.
+        #
+        # The case that used to change the constant's value is not a defect any more and is gone
+        # for that reason, not because its rule lost an owner: the interval is clamped to the
+        # limit where it is taken, so a longer constant is simply never used. The rule itself is
+        # still owned — by this case.
+        "the sweep interval is taken without being clamped to the limit",
+        """  const sweepIntervalMs = Math.min(
+    options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS,
+    Math.max(1, Math.floor(ttlMs / 4)),
+  );""",
+        "  const sweepIntervalMs = options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS;",
+        'the sweep interval the cache uses is at most a quarter of the limit',
+    ),
+    (
+        # A time limit of zero means NO time limit. The other reading — everything expires at
+        # once — would be a cache that never hits and never releases.
+        "a time limit of zero expires everything anyway",
+        "  const expired = (at) => ttlMs > 0 && now() - at >= ttlMs;",
+        "  const expired = (at) => now() - at >= ttlMs;",
+        'a time limit of zero means no time limit, not that everything expires at once',
+    ),
 ]
 
 

@@ -175,8 +175,13 @@ const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
  * (`TRAJECTORY_POLL_INTERVAL` in the client), so an open tab asks again long before this expires.
  * And the page stops polling the moment its tab is HIDDEN, so a reader who switches away for a
  * while is the ordinary case and not an exception — a limit shorter than that would make every
- * return to the tab cost a re-parse. A reader who is really gone gets their rows back within ten
- * minutes.
+ * return to the tab cost a re-parse. A reader who is really gone gets their rows back.
+ *
+ * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.** The limit is when the rows
+ * stop being wanted; the release happens on the next sweep, so the rows are gone no later than
+ * one sweep interval after the limit — twelve and a half minutes with the shipped values, and
+ * never longer than a quarter of the limit beyond it. The number to promise a reader is the
+ * second one, and it is asserted: the sweep interval is at most a quarter of the limit.
  *
  * An expiry is a MISS and not a deletion of something still wanted: the next request parses the
  * file again and the cache fills itself back up. The price of that is one re-parse, and only when
@@ -187,6 +192,23 @@ const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
  * stopped when the cache empties. Pinned by tests/verify-parsed-rows.mjs.
  */
 const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;
+/**
+ * How often the cache sweeps for what has expired.
+ *
+ * The release lands on a tick, so this interval is also the gap between "the rows expired" and
+ * "the rows are gone" — which is why it is a named constant and not a fraction written at the
+ * call site: the promise to a reader is the limit PLUS this, and the two have to stay in that
+ * relation.
+ *
+ * The relation is enforced where the interval is TAKEN, not only here: the interval is clamped
+ * to a quarter of the limit the cache was given, so "never later than a quarter of the limit
+ * beyond it" holds for every limit and not only for the shipped one. A constant that could
+ * outgrow the limit would make the promise true on the day it was written and false after
+ * somebody changed the limit.
+ *
+ * Pinned by tests/verify-parsed-rows.mjs.
+ */
+const PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS = 150 * 1000;
 /**
  * How many decoded messages one trajectory entry keeps for `/raw`, per open session.
  *
@@ -3630,13 +3652,24 @@ export function parsedRowsKey(filePath, size, mtimeMs, limit) {
  * of something still wanted — the next request parses the file again and the cache fills itself
  * back up.
  *
+ * A time limit of zero means NO time limit, and it means that in one place only: the rows never
+ * expire and the sweeper never runs. (The other reading — "everything expires at once" — would be
+ * a cache that never hits and never releases, which is worse than either.)
+ *
  * @param {number} budget
  * @param {{ ttlMs?: number, now?: () => number, sweepIntervalMs?: number }} [options]
  */
 export function createParsedRowsCache(budget, options = {}) {
   const ttlMs = options.ttlMs ?? PARSED_ROWS_CACHE_TTL_MS;
   const now = options.now ?? (() => Date.now());
-  const sweepIntervalMs = options.sweepIntervalMs ?? Math.max(1000, Math.floor(ttlMs / 4));
+  // The interval the sweep actually uses, clamped to a quarter of the limit the cache was
+  // given. The clamp is the rule, not a convenience: without it the promise to a reader — the
+  // rows are gone no later than a quarter of the limit after they expire — would hold for the
+  // shipped limit and for nothing else, and the limit is an option a caller may set.
+  const sweepIntervalMs = Math.min(
+    options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS,
+    Math.max(1, Math.floor(ttlMs / 4)),
+  );
   /** @type {Map<string, { value: ParsedRows, size: number, at: number }>} */
   const entries = new Map();
   let bytes = 0;
@@ -3644,7 +3677,7 @@ export function createParsedRowsCache(budget, options = {}) {
   let sweeper = null;
 
   /** @param {number} at */
-  const expired = (at) => now() - at >= ttlMs;
+  const expired = (at) => ttlMs > 0 && now() - at >= ttlMs;
 
   /** @param {string} key */
   const drop = (key) => {
@@ -3687,6 +3720,9 @@ export function createParsedRowsCache(budget, options = {}) {
   return {
     get bytes() { return bytes; },
     get size() { return entries.size; },
+    // The interval the sweep actually uses, so the relation between the limit and the release
+    // can be checked on the running cache rather than on the two numbers in the source.
+    get sweepIntervalMs() { return sweepIntervalMs; },
     /**
      * @param {string} key
      * @returns {ParsedRows | null}
