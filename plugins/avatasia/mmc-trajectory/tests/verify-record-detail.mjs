@@ -382,7 +382,7 @@ const routeEnd = route.indexOf('\n  /**');
 const trajectory = route.slice(0, routeEnd === -1 ? undefined : routeEnd);
 assert('the trajectory route strips before serializing',
   trajectory.indexOf('slimPayloadForWire(payload)') !== -1
-  && trajectory.indexOf('slimPayloadForWire(payload)') < trajectory.indexOf('JSON.stringify(payload)'));
+  && trajectory.indexOf('slimPayloadForWire(payload)') < trajectory.indexOf('serializeTrajectoryBody(payload)'));
 check('the strip happens once', trajectory.split('slimPayloadForWire(payload)').length - 1, 1);
 assert('the delta is built from the stripped payload, so a poll carries no more bulk than the first load',
   trajectory.indexOf('buildDeltaPayload') > trajectory.indexOf('slimPayloadForWire(payload)'));

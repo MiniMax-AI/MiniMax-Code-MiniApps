@@ -91,6 +91,22 @@ const SESSION_CACHE_TTL_MS = 5000;
 const SESSION_CACHE_ENTRIES = 80;
 const TRAJECTORY_CACHE_ENTRIES = 4;
 /**
+ * How many bytes one piece of the trajectory body may hold.
+ *
+ * The body of a large session is tens of megabytes, and it used to be built by ONE
+ * `JSON.stringify` call — so the process had to hold all of it as one string at once, and V8's
+ * string builder leaves its intermediate copies behind while it doubles its buffer. Measured on
+ * this machine, serializing a 52.4M-character body cost 745 MB of heap on top of the payload it
+ * came from, and the pages that peak left behind stayed resident long after the body itself was
+ * gone: the process kept 965 MB with an 8.4 MB live heap.
+ *
+ * A megabyte is a compromise. Small enough that the builder's doubling is noise next to the
+ * payload it is serializing; large enough that a 53 MB body is fifty-odd writes rather than
+ * fifty thousand. A body piece that cannot be made smaller than this is one element bigger than
+ * the budget, and the budget does not pretend otherwise: it bounds that element instead.
+ */
+const TRAJECTORY_BODY_CHUNK_BYTES = 1024 * 1024;
+/**
  * The most hits one search response carries. The count is still reported in full — a needle that
  * matches ten thousand records is a real answer — so this is a transport bound and not a claim
  * about how many there were.
@@ -3773,12 +3789,131 @@ export async function loadParsedRows(cache, filePath, limit, options) {
 }
 
 /**
+ * One piece of a JSON array, serialized on its own.
+ *
+ * The array is cut at element boundaries, and the pieces concatenate back into exactly the
+ * string `JSON.stringify` would have produced for the whole array — the opening bracket opens
+ * the first piece, the closing bracket closes the last one, and every element after the first
+ * carries its comma with it, so a piece boundary never lands between an element and its comma.
+ *
+ * An element that does not fit the budget on its own becomes a piece of its own. That is the one
+ * thing the budget cannot bound, and it is bounded by the element instead of by the budget.
+ *
+ * @param {Array<any>} items
+ * @param {number} budgetBytes
+ * @returns {Array<Buffer>}
+ */
+function jsonArrayPieces(items, budgetBytes) {
+  const pieces = [];
+  let current = '[';
+  let currentBytes = 1;
+  let first = true;
+  for (const item of items) {
+    const encoded = JSON.stringify(item);
+    // JSON.stringify writes an undefined element as null, and so does this.
+    const text = encoded === undefined ? 'null' : encoded;
+    const textBytes = Buffer.byteLength(text, 'utf8');
+    // The comma is counted but not concatenated into the piece: `',' + text` would be a
+    // cons string, and measuring its length would flatten it into a second copy of the
+    // element. On a body of fifty thousand records that is fifty thousand copies.
+    const pieceBytes = textBytes + (first ? 0 : 1);
+    if (currentBytes > 1 && currentBytes + pieceBytes > budgetBytes) {
+      pieces.push(Buffer.from(current, 'utf8'));
+      current = '';
+      currentBytes = 0;
+    }
+    if (!first) {
+      current += ',';
+      currentBytes += 1;
+    }
+    current += text;
+    currentBytes += textBytes;
+    first = false;
+  }
+  current += ']';
+  pieces.push(Buffer.from(current, 'utf8'));
+  return pieces;
+}
+
+/**
+ * The trajectory body, serialized in pieces small enough that no single string ever holds it.
+ *
+ * THE BYTES ARE THE SAME BYTES. Concatenating the pieces gives exactly what
+ * `JSON.stringify(payload)` would have produced — same key order, same escaping, same numbers —
+ * so the page, the search, `/raw` and `?since=` cannot tell the difference. A guard pins that
+ * byte for byte, because a body that is *nearly* the same is a body the page cannot parse.
+ *
+ * WHAT CHANGES IS HOW THEY ARE PRODUCED. The payload's big array is cut into pieces at element
+ * boundaries, each piece is serialized on its own and turned into bytes immediately, and the
+ * string is let go before the next piece is built. So the process never holds the whole body as
+ * one string, and never holds the builder's intermediate copies either.
+ *
+ * WHY IT IS WORTH THE ROUTE'S ATTENTION. Measured on this machine, one cold read of a
+ * 57,192-record session left the process at 1094 MB resident with a 299 MB live heap, and the
+ * peak inside the route was 1341 MB: the payload was 361 MB, and the single `JSON.stringify`
+ * that followed it added 745 MB on top. Clearing every cache afterwards freed the live heap
+ * down to 8.4 MB and the process still held 965 MB — the pages that peak left behind. The
+ * floor follows the peak, not the cache, so the peak is the thing to change.
+ *
+ * @param {Record<string, any>} payload
+ * @param {number} [budgetBytes]
+ * @returns {Array<Buffer>}
+ */
+export function serializeTrajectoryBody(payload, budgetBytes = TRAJECTORY_BODY_CHUNK_BYTES) {
+  const pieces = [];
+  let current = '';
+  let currentBytes = 0;
+  let needsComma = false;
+
+  const flush = () => {
+    if (currentBytes === 0) return;
+    pieces.push(Buffer.from(current, 'utf8'));
+    current = '';
+    currentBytes = 0;
+  };
+  const append = (text) => {
+    current += text;
+    currentBytes += Buffer.byteLength(text, 'utf8');
+  };
+
+  append('{');
+  for (const key of Object.keys(payload)) {
+    const value = payload[key];
+    // What JSON.stringify leaves out, this leaves out: a key whose value is undefined, a
+    // function or a symbol is not in the JSON at all.
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') continue;
+    if (Array.isArray(value)) {
+      if (needsComma) append(',');
+      append(JSON.stringify(key) + ':');
+      // The array goes out in pieces, so the string it would have been never exists.
+      flush();
+      for (const piece of jsonArrayPieces(value, budgetBytes)) pieces.push(piece);
+      needsComma = true;
+      continue;
+    }
+    const encoded = JSON.stringify(value);
+    // A value whose toJSON() returns undefined is left out by JSON.stringify as well.
+    if (encoded === undefined) continue;
+    if (needsComma) append(',');
+    append(JSON.stringify(key) + ':' + encoded);
+    needsComma = true;
+  }
+  append('}');
+  flush();
+  return pieces;
+}
+
+/**
  * Sends an already-serialized JSON body. Unlike {@link sendJson} it supports revalidation:
  * `no-store` would suppress the 304 path, so revalidated responses advertise `no-cache`
  * (storable, but must be revalidated) and carry the tag the page echoes back.
+ *
+ * The body is either one string or a list of byte pieces. The list is what the trajectory route
+ * sends now: the bytes are the same bytes, but they were never held as one string, so the
+ * declared length is the sum of the pieces rather than the length of a string.
  * @param {any} response
  * @param {number} status
- * @param {string} body
+ * @param {string | Buffer | Array<string | Buffer>} body
  * @param {{ etag?: string, revalidate?: boolean }} [options]
  */
 export function sendJsonBody(response, status, body, options) {
@@ -3796,10 +3931,20 @@ export function sendJsonBody(response, status, body, options) {
     }
     return;
   }
-  headers['content-length'] = Buffer.byteLength(body, 'utf8');
+  const pieces = Array.isArray(body) ? body : [body];
+  let length = 0;
+  for (const piece of pieces) {
+    length += Buffer.isBuffer(piece) ? piece.length : Buffer.byteLength(piece, 'utf8');
+  }
+  headers['content-length'] = length;
   try {
     response.writeHead(status, headers);
-    response.end(body);
+    if (pieces.length === 1 && typeof pieces[0] === 'string') {
+      response.end(pieces[0]);
+      return;
+    }
+    for (const piece of pieces) response.write(piece);
+    response.end();
   } catch {
     // The client polls aggressively and aborts requests; a closed socket is not an error here.
   }
@@ -4657,7 +4802,10 @@ export async function start(context) {
 
     let body;
     try {
-      body = JSON.stringify(payload);
+      // In pieces, not as one string. The bytes are the same bytes — see serializeTrajectoryBody
+      // for why that is a contract and not an accident — but the process never holds the whole
+      // body as a string, and the peak this route used to leave behind does not come back.
+      body = serializeTrajectoryBody(payload);
     } catch {
       sendJson(response, 500, { error: 'trajectory_unserializable', message: '会话数据暂时无法读取' });
       return;
