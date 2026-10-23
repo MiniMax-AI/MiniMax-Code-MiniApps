@@ -23,13 +23,17 @@
  * a path, because every session has a `messages.jsonl` and a basename key lets two of them
  * collide; a size, because the active file grows; a limit, because readHead truncates at it.
  *
- * Read-only: imports the pure helpers, never starts the runtime.
- * mutate-parsed-rows.py breaks each of these in the shipped file.
+ * Read-only: it imports the pure helpers, and it runs the PAGE's own inline script in a sandbox
+ * whose DOM is stubbed; it never starts the runtime.
+ * mutate-parsed-rows.py and mutate-parsed-rows-owner-escapes.py break each of these in the
+ * shipped file.
  */
 import { mkdtemp, mkdir, writeFile, rm, utimes, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import vm from 'node:vm';
 import {
   ROW_GENERATION,
   buildTrajectoryPayload,
@@ -427,38 +431,257 @@ assert('loadParsedRows is exported so a test can run the real step',
  *   somebody asks for them.
  * ===================================================================== */
 
-// A constant the source declares as an expression — `60 * 1000` — is read by arithmetic rather
-// than by a digit pattern, so the check follows the constant instead of repeating it.
-const declaredNumber = (source, name) => {
-  const match = source.match(new RegExp(`const ${name} = ([0-9_ *]+);`));
-  if (match === null) return null;
-  // A declaration that is COMMENTED OUT is not a declaration. The first match in the file is
-  // otherwise enough to answer with a number the code does not have: an annotation left beside
-  // the real one satisfies the pattern while the binding is something else, and the real one
-  // turned into a string stops matching at all -- so the number read would be the annotation's
-  // and the binding's type would go unexamined. The line the match is on therefore has to
-  // DECLARE it: nothing but whitespace before it, and no block comment open around it.
-  const lineStart = source.lastIndexOf('\n', match.index) + 1;
-  if (source.slice(lineStart, match.index).trim() !== '') return null;
-  const before = source.slice(0, match.index);
-  if (before.split('/*').length !== before.split('*/').length) return null;
-  const parts = match[1].replace(/_/g, '').split('*').map((part) => Number(part.trim()));
-  if (parts.some((part) => !Number.isFinite(part))) return null;
-  return parts.reduce((carry, part) => carry * part, 1);
+// A lexical mask of a JavaScript source: which characters are CODE, and which are inside a
+// string, a template literal or a comment.
+//
+// A scanner that cannot tell those apart stops at a bracket that was never one, and reads a
+// declaration that is only text. A template literal can hold a whole declaration -- and the
+// service's own arithmetic cannot tell a number from the string that looks like one -- so the
+// helpers below talk about the code, not about the characters.
+//
+// WHAT THIS IS NOT, and it is worth being exact about it: this is not a complete lexical
+// analysis. A REGULAR EXPRESSION LITERAL is not recognised. `/` is both the division operator
+// and the start of one, and telling them apart needs the parser this package does not have --
+// there is no JavaScript parser in it, and adding one is a bigger change than this guard is.
+//
+// The shipped service has such literals: miniapp/node/server.mjs:340, :345 and :349, and each of
+// them holds a quote inside a character class. The scan reads that quote as the start of a string
+// and swallows the text up to the next one, so the mask steps out of step with the file from
+// line 340 on.
+//
+// The direction of that step is the part that matters, and it is LOUD rather than quiet. Every
+// declaration this mask is asked about -- the time limit, at :203 -- is declared ABOVE those
+// lines, so the mask is right about all of them today. And a declaration the mask could not find
+// leaves the owner that wants it with nothing to read, which FAILS: the promise in brackets is
+// read out of the file, and a file whose mask is out of step does not yield one. A mask that is
+// out of step can only cost this guard a red, never a green.
+const codeMask = (source) => {
+  const mask = new Uint8Array(source.length);
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '`') {
+      i += 1;
+      let depth = 0;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === '$' && source[i + 1] === '{') { depth += 1; i += 2; continue; }
+        if (depth > 0 && source[i] === '}') { depth -= 1; i += 1; continue; }
+        if (depth === 0 && source[i] === '`') { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    mask[i] = 1;
+    i += 1;
+  }
+  return mask;
 };
+
+// The page's own script, and the scope it declares.
+//
+// The interval the trajectory is polled at is declared by the page, and a constant read out of
+// the page's TEXT is a line of text: a copy of the declaration inside a template literal
+// satisfies any pattern over the text while the binding the page's timer really uses is
+// something else. So the script is RUN, in a context that answers the DOM with stubs, and the
+// values are read out of the scope it created. A template literal creates no binding, so a
+// declaration that is only text cannot be read here.
+//
+// The DELAY is not read out of the text either. The page is asked to start its timers, the stub
+// records what it was handed, and the timer that polls the trajectory is found by the handle the
+// page itself stored in `trajectoryPollTimer` -- not by the order the timers were started in,
+// and not by the biggest delay among them. So both halves of the comparison -- what the page
+// declares, and what the page's own timer is really given -- are facts about the running page
+// rather than about its characters.
+//
+// The context never lets the page start by itself: `document.readyState` is 'loading', so the
+// page's own entry point is not called, no DOM is touched and no request is made. The guard
+// starts the page's polling itself, because that is the thing being observed.
+const CLIENT_SOURCE = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
+const CLIENT_SCRIPT = (() => {
+  const match = /<script\b[^>]*>([\s\S]*?)<\/script>/i.exec(CLIENT_SOURCE);
+  return match === null ? null : match[1];
+})();
+
+// A stub for anything the page asks the DOM for: a function that answers everything and does
+// nothing. The script is run to observe the timers it starts, not to exercise the page, so the
+// DOM only has to not be there.
+const domStub = (name) => new Proxy(function stub() {}, {
+  get: (target, property) => {
+    if (property === 'then') return undefined;                    // not a thenable
+    if (property === Symbol.toPrimitive) return () => name;
+    return domStub(`${name}.${String(property)}`);
+  },
+  apply: () => domStub(`${name}()`),
+  set: () => true,
+});
+
+// The scope the page's script declares, and the timers it starts.
+//
+// A script that will not run is a fact about the PAGE and not about this file's harness: the
+// page's own entry point is not called here, so the only thing that can throw is the script's
+// top level. Either way the owner below cannot read what it is about, and that is reported as a
+// failure of this guard -- never as a quiet holding, and never as an accusation of the service.
+// A guard that says nothing about a rule is a guard that has stopped holding it.
+const CLIENT_SCOPE = (() => {
+  if (CLIENT_SCRIPT === null) {
+    return { ok: false, error: new Error('the page has no inline script') };
+  }
+  const timers = [];
+  let nextHandle = 0;
+  const document = new Proxy({ readyState: 'loading' }, {
+    get: (target, property) => (property in target
+      ? target[property]
+      : domStub(`document.${String(property)}`)),
+  });
+  const sandbox = {
+    console,
+    document,
+    fetch: () => new Promise(() => {}),
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    // The page's timers are recorded, not run. The handle is a FRESH OBJECT every time, so the
+    // page's own global says which timer is which -- the page stores the handle it was given in
+    // `trajectoryPollTimer`, and the identity of that object is what identifies the timer.
+    setInterval: (_callback, delay) => {
+      const handle = { id: (nextHandle += 1) };
+      timers.push({ handle, delay });
+      return handle;
+    },
+    clearInterval: () => {},
+    matchMedia: () => domStub('matchMedia'),
+    location: { href: 'http://localhost/', search: '', hash: '' },
+    navigator: domStub('navigator'),
+  };
+  const context = vm.createContext(sandbox);
+  sandbox.window = sandbox;
+  try {
+    vm.runInContext(CLIENT_SCRIPT, context, { filename: 'client-inline.js', timeout: 20000 });
+    // The page does not start its timers by itself -- its entry point waits for the DOM -- so the
+    // guard starts the polling, because that is the thing being observed.
+    if (typeof context.startPolling !== 'function') {
+      throw new Error('the page does not expose the function that starts its polling');
+    }
+    context.startPolling();
+  } catch (error) {
+    return { ok: false, error };
+  }
+  return { ok: true, context, timers };
+})();
+if (!CLIENT_SCOPE.ok) {
+  failures.push('the page\'s inline script did not run, so the owner cannot read the delay the '
+    + `page's poll waits: ${CLIENT_SCOPE.error && CLIENT_SCOPE.error.message}`);
+}
+
+// A value read out of the page's own scope.
+const readInPage = (expression) => {
+  if (!CLIENT_SCOPE.ok) return { ok: false, value: null };
+  try {
+    return { ok: true, value: vm.runInContext(expression, CLIENT_SCOPE.context, { timeout: 5000 }) };
+  } catch {
+    return { ok: false, value: null };
+  }
+};
+
+// The values the shipped module really binds.
+//
+// A constant read out of the source TEXT is a line of text, not a binding: a template literal
+// holding the same line satisfies any pattern over the text while the binding the service uses is
+// something else -- a string, for instance, which the service's multiplication still coerces to the
+// number it looks like, so every owner that reads the text goes on saying the rule holds.
+//
+// So the numbers are read from the module itself. A copy of it -- the shipped bytes with one export
+// line appended -- is imported next to a copy of the module it imports relatively, and the values
+// are read out of that namespace. The copy is the shipped file: the export line adds a name, not a
+// value.
+//
+// If the copy cannot be imported at all, that is a fact about THIS FILE and not about the
+// service: this guard imports the same module statically at the top of it, so a copy that will
+// not import means the copy is broken. It is reported as a failure of this guard -- and NOT as a
+// quiet holding. An owner that cannot read what it needs must not accuse the rules it is not
+// about, and it must not go quiet either: the guard says that it could not read, and it stops.
+const readModuleBindings = async (names) => {
+  try {
+    const dir = join(root, 'module');
+    await mkdir(dir, { recursive: true });
+    const nodeDir = new URL('../miniapp/node/', import.meta.url);
+    for (const file of ['server.mjs', 'search-segments.mjs']) {
+      await writeFile(join(dir, file), readFileSync(new URL(file, nodeDir)));
+    }
+    const shipped = readFileSync(new URL('server.mjs', nodeDir), 'utf8');
+    await writeFile(join(dir, 'server.mjs'), `${shipped}\nexport { ${names.join(', ')} };\n`);
+    const copy = await import(pathToFileURL(join(dir, 'server.mjs')).href);
+    const values = {};
+    for (const name of names) values[name] = copy[name];
+    return { ok: true, values };
+  } catch (error) {
+    return { ok: false, error };
+  }
+};
+
+// The three numbers the service declares, read from the module itself.
+const BINDINGS_RESULT = await readModuleBindings([
+  'PARSED_ROWS_HEAP_PER_SOURCE_BYTE',
+  'PARSED_ROWS_CACHE_TTL_MS',
+  'PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS',
+]);
+if (!BINDINGS_RESULT.ok) {
+  failures.push('the shipped module could not be imported by the copy this guard reads the '
+    + `service's declared numbers from, so they cannot be read: ${BINDINGS_RESULT.error && BINDINGS_RESULT.error.message}`);
+}
+const BINDINGS = BINDINGS_RESULT.ok ? BINDINGS_RESULT.values : null;
+const PROXY = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_HEAP_PER_SOURCE_BYTE;
+const TTL = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_CACHE_TTL_MS;
+const SHIPPED_SWEEP = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS;
 
 // The doc block above a constant, so a promise the package states in prose can be read and
 // compared with what the code does. The block is taken around ONE declaration rather than the
 // whole file, because a whole-file match keeps passing after the promise has moved somewhere
 // else -- which is the way a rule quietly loses its owner.
-const docBlockOf = (source, name) => {
-  const at = source.indexOf('const ' + name + ' =');
+//
+// The declaration is found in the CODE, not in the text: a copy of it inside a template literal is
+// not a declaration, and the block above such a copy is not the block above the real one.
+const docBlockOf = (source, name, mask) => {
+  const at = declarationIndexOf(source, name, mask);
   if (at < 0) return null;
   const before = source.slice(0, at);
   const start = before.lastIndexOf('/**');
   const end = before.lastIndexOf('*/');
   return start >= 0 && end > start ? before.slice(start, end) : null;
 };
+
+// Where a constant is declared in the code of a source, or -1 when it is not declared in code.
+const declarationIndexOf = (source, name, mask) => {
+  const pattern = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=`, 'g');
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    if (mask[match.index]) return match.index;
+  }
+  return -1;
+};
+
+// The mask of the shipped service: which of its characters are code.
+const SERVER_MASK = codeMask(SERVER);
 
 // The sentence of a doc block that makes a promise. A block can hold several sentences, and only
 // one of them is the promise to a reader -- so the number has to be read out of THAT sentence and
@@ -471,23 +694,70 @@ const promiseSentenceOf = (block) => {
   return sentences.find((sentence) => sentence.includes('no later than')) ?? null;
 };
 
-// The minutes a sentence promises, in either form it can be written in. A promise to a reader is
-// written both as a number of milliseconds and as a number of minutes, and the two forms have to
-// be the same promise -- otherwise the reader is told one thing and the service does another.
-const minutesPromised = (sentence) => {
-  if (sentence === null) return null;
-  const words = {
-    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
-    eleven: 11, twelve: 12, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
-  };
-  const match = /\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty)(?:\s+and\s+a\s+half)?\s+minutes?\b/i
-    .exec(sentence);
-  if (match === null) return null;
-  const raw = match[1].toLowerCase();
-  let value = /^\d/.test(raw) ? Number(raw) : words[raw];
-  if (value === undefined || !Number.isFinite(value)) return null;
-  if (/\s+and\s+a\s+half/.test(match[0])) value += 0.5;
-  return value;
+// The number words a promise may be written in.
+const UNITS = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19,
+};
+const TENS = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+
+// The number a run of words states, read from its END: the words of a number are the last ones
+// before "minutes", and the words before them belong to the sentence around it.
+const englishNumber = (text) => {
+  const words = text.toLowerCase().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+  let half = false;
+  if (words.length >= 3
+    && words[words.length - 3] === 'and'
+    && words[words.length - 2] === 'a'
+    && words[words.length - 1] === 'half') {
+    half = true;
+    words.splice(words.length - 3, 3);
+  }
+  const last = words[words.length - 1];
+  let value = null;
+  if (/^\d+(?:\.\d+)?$/.test(last)) value = Number(last);
+  else if (last in UNITS) value = UNITS[last];
+  else if (last in TENS) {
+    const unit = words.length >= 2 ? UNITS[words[words.length - 2]] : undefined;
+    value = unit === undefined ? TENS[last] : TENS[last] + unit;
+  }
+  if (value === null) return null;
+  return half ? value + 0.5 : value;
+};
+
+// The minutes a sentence promises, and whether it states them in the form the promise is written
+// in.
+//
+// The number words are parsed COMPLETELY. A parser that knows only some of the numbers a promise
+// may be written in answers "I did not understand" for the rest -- and an owner that accepts that
+// answer as agreement lets a promise state two different numbers and still report success. So
+// every number word a promise can use is understood here, and a phrase that is still not
+// understood is not agreement: it is a promise nobody can check.
+//
+// The word "minutes" is the one the millisecond form FOLLOWS. The promise writes the two forms
+// together, and a sentence can hold other uses of the word -- "the rows are gone within a few
+// minutes, and no later than twelve and a half minutes (750000 ms)" -- whose words are not the
+// promise. Reading the wrong one accuses the promise of a number it never stated, so the phrase
+// is taken from the word the millisecond form is attached to and from nowhere else.
+//
+// TWO ANSWERS, and they are kept apart. `written` says the promise states the minutes at all;
+// `minutes` is the number, and it is null when the words are there but cannot be read. "There are
+// no minutes in this promise" and "the minutes in this promise are words nobody can read" are
+// different facts about the promise, and an owner that treats them as one thing either accuses
+// the promise of a number it never stated or lets a promise nobody can check pass.
+const minutesForm = (sentence) => {
+  if (sentence === null) return { written: false, minutes: null };
+  const anchor = /\bminutes?\s*\(/i.exec(sentence);
+  if (anchor === null) return { written: false, minutes: null };
+  const at = anchor.index;
+  let start = at;
+  while (start > 0 && /[A-Za-z0-9\s.-]/.test(sentence[start - 1])) start -= 1;
+  const phrase = sentence.slice(start, at).trim();
+  const digits = /^\s*(\d+(?:\.\d+)?)\s*$/.exec(phrase);
+  return { written: true, minutes: digits !== null ? Number(digits[1]) : englishNumber(phrase) };
 };
 
 // The lifetime the cache gives its rows when nobody tells it one, observed rather than read.
@@ -526,47 +796,12 @@ const defaultLimitOf = (budget) => {
   return high;
 };
 
-// The delay the page's poll actually waits, observed by evaluating the expression the timer is
-// given. The declaration of the interval is a number in the source; the delay is what the poll
-// really waits, and a poll that waits longer than the limit it has to survive loses its rows
-// between polls while every check that reads the declaration stays green.
-const effectivePollDelay = (clientSource) => {
-  const declared = /TRAJECTORY_POLL_INTERVAL\s*=\s*(\d+)\s*;/.exec(clientSource);
-  if (declared === null) return null;
-  const value = Number(declared[1]);
-  // Every use of the name that is not its declaration, and the expression it is part of.
-  const uses = [];
-  const pattern = /TRAJECTORY_POLL_INTERVAL/g;
-  let match;
-  while ((match = pattern.exec(clientSource)) !== null) {
-    const after = clientSource.slice(match.index + 'TRAJECTORY_POLL_INTERVAL'.length);
-    if (/^\s*=\s*\d+/.test(after)) continue;   // the declaration itself
-    let start = match.index;
-    while (start > 0 && /[A-Za-z0-9_.*+\-/<> ]/.test(clientSource[start - 1])) start -= 1;
-    let end = match.index + 'TRAJECTORY_POLL_INTERVAL'.length;
-    while (end < clientSource.length && /[A-Za-z0-9_.*+\-/<> ]/.test(clientSource[end])) end += 1;
-    uses.push(clientSource.slice(start, end).trim());
-  }
-  if (uses.length === 0) return null;
-  const delays = [];
-  for (const expression of uses) {
-    let evaluated;
-    try {
-      // The expression is the page's own code, evaluated with the value the page declares.
-      evaluated = new Function('TRAJECTORY_POLL_INTERVAL', `return (${expression});`)(value);
-    } catch {
-      return null;
-    }
-    if (!Number.isFinite(evaluated)) return null;
-    delays.push(evaluated);
-  }
-  return { declared: value, delays };
-};
-
-// The proxy is read out of the shipped source rather than repeated here, so the relationship
-// below is checked against the constant the service actually charges with.
-const PROXY = declaredNumber(SERVER, 'PARSED_ROWS_HEAP_PER_SOURCE_BYTE');
-assert('the heap proxy is a number the service declares', PROXY !== null);
+// The proxy is read out of the shipped MODULE rather than repeated here, so the relationship
+// below is checked against the constant the service actually charges with -- and against the type
+// it really has: the service's multiplication coerces the string "2" to the number 2, so only the
+// binding itself can tell whether the proxy is a number or the text of one.
+assert('the heap proxy is a number the service declares',
+  holds(typeof PROXY, 'number', PROXY !== null));
 
 // A file of a known size, loaded through the shipped step: the cache must be charged the source
 // bytes times the proxy, so the source bytes it holds are recoverable from its own accounting.
@@ -637,28 +872,50 @@ check('and the cache is empty', liveCache.size, 0);
 // The time limit has to outlive one poll, or an open tab would lose its rows between polls.
 //
 // Both numbers here are OBSERVED, and that is the point of this block. The delay the poll waits
-// and the lifetime the cache gives its rows were both read out of the source before, and a source
-// says what the code INTENDS: the number a constant is declared with, and the number the page
-// writes next to its timer. A cache whose default lifetime comes from somewhere else, or a poll
-// that multiplies the interval it declared, leaves every declaration exactly as it was while the
-// service behaves differently -- and the promise to a reader is about the service, not about a
-// declaration.
-const clientSource = readFileSync(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
-const pollMatch = clientSource.match(/TRAJECTORY_POLL_INTERVAL = (\d+)/);
-assert('the client says how often it polls the trajectory', pollMatch !== null);
-const ttlMatch = SERVER.match(/const PARSED_ROWS_CACHE_TTL_MS = ([0-9_ *]+);/);
-assert('the rows cache has a time limit', ttlMatch !== null);
-const TTL = declaredNumber(SERVER, 'PARSED_ROWS_CACHE_TTL_MS');
-assert('the time limit is a number the service declares', TTL !== null);
+// is what the page really hands to its timer, and the lifetime the cache gives its rows is what
+// the running cache gives them. A source says what the code INTENDS -- the number a constant is
+// declared with, and the number the page writes next to its timer -- and a cache whose default
+// lifetime comes from somewhere else, or a poll that multiplies the interval it declared, leaves
+// every declaration exactly as it was while the service behaves differently -- and the promise to
+// a reader is about the service, not about a declaration.
+// The interval the page declares, read out of the scope the page's own script created.
+//
+// The declaration has to be a NUMBER: this value is what the page hands to a timer, and a
+// string that looks like one would be handed over as a string.
+const DECLARED = readInPage('TRAJECTORY_POLL_INTERVAL');
+const DECLARED_INTERVAL = DECLARED.ok ? DECLARED.value : null;
+assert('the client declares the interval it polls the trajectory at',
+  DECLARED_INTERVAL !== null
+  && typeof DECLARED_INTERVAL === 'number'
+  && Number.isFinite(DECLARED_INTERVAL));
 
-// The delay the page's timer is really given, and the lifetime the cache really gives its rows.
-const poll = effectivePollDelay(clientSource);
+// The timer the page polls the trajectory with, and the delay it was really given.
+//
+// The timer is found by the HANDLE the page stored in `trajectoryPollTimer` -- the page starts a
+// second timer for the session list, and the two are told apart by the object the page was
+// given, not by the order they were started in and not by which delay is the larger one.
+//
+// The delay is what the page handed to the timer, which is not the same thing as the text
+// around the interval's name: a comma expression hides a second value behind the first, so
+// `(TRAJECTORY_POLL_INTERVAL, 8000000)` gives the timer eight million milliseconds while the
+// characters around the name still read "TRAJECTORY_POLL_INTERVAL".
+const TRAJECTORY_TIMER = CLIENT_SCOPE.ok
+  && CLIENT_SCOPE.context.trajectoryPollTimer !== null
+  && CLIENT_SCOPE.context.trajectoryPollTimer !== undefined
+  ? CLIENT_SCOPE.timers.find((timer) => timer.handle === CLIENT_SCOPE.context.trajectoryPollTimer)
+  : undefined;
+const POLL_DELAY = TRAJECTORY_TIMER === undefined ? null : TRAJECTORY_TIMER.delay;
 assert('the poll waits as long as the client declares',
-  poll !== null && poll.delays.every((delay) => delay === poll.declared));
-const POLL_DELAY = poll === null ? null : Math.max(...poll.delays);
+  POLL_DELAY !== null && POLL_DELAY === DECLARED_INTERVAL);
+
+assert('the rows cache has a time limit', holds(TTL !== null, true, BINDINGS !== null));
+assert('the time limit is a number the service declares',
+  holds(typeof TTL, 'number', BINDINGS !== null));
+
+// The lifetime the cache really gives its rows.
 const DEFAULT_LIMIT = defaultLimitOf(1024 * 1024);
 assert('the limit the service declares is the limit the cache gives its rows',
-  DEFAULT_LIMIT === TTL);
+  holds(DEFAULT_LIMIT, TTL, BINDINGS !== null));
 assert('the time limit is longer than one poll, so an open tab never loses its rows',
   POLL_DELAY !== null && DEFAULT_LIMIT > POLL_DELAY);
 // The page stops polling while its tab is hidden, so a reader who switches away for a while is
@@ -691,8 +948,8 @@ assert('the sweeper does not keep the process alive',
 // is a fraction of the limit. This is checked on the interval the cache ACTUALLY uses, for
 // several limits — not on two numbers read out of the source, which would keep passing after
 // the line that takes the interval had changed.
-const SHIPPED_SWEEP = declaredNumber(SERVER, 'PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS');
-assert('the sweep interval is a number the service declares', SHIPPED_SWEEP !== null);
+assert('the sweep interval is a number the service declares',
+  holds(typeof SHIPPED_SWEEP, 'number', BINDINGS !== null));
 for (const limit of [1_000, 60_000, 600_000, 3_600_000]) {
   const bounded = createParsedRowsCache(1000, { ttlMs: limit });
   assert('the sweep interval the cache uses is at most a quarter of the limit',
@@ -719,19 +976,35 @@ assert('the shipped default is the interval the service declares',
 // something else. So the number is taken from the promise sentence, that sentence's own words
 // are read as well, and the two are compared with each other and with the limit the cache really
 // gives its rows.
-const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS');
+const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS', SERVER_MASK);
 const promiseSentence = promiseSentenceOf(ttlDoc);
 const promisedNumbers = promiseSentence === null
   ? []
   : [...promiseSentence.matchAll(/\((\d+) ms\)/g)].map((found) => Number(found[1]));
-const promisedMinutes = minutesPromised(promiseSentence);
+const MINUTES_FORM = minutesForm(promiseSentence);
+const promisedMinutes = MINUTES_FORM.minutes;
 const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
 assert('the number promised to a reader is the limit plus one sweep interval',
   promisedNumbers.length === 1
   && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL);
+// The two forms have to be the SAME promise. A promise whose words cannot be read is not
+// agreement: the words are parsed completely above, so a phrase that is still not a number is a
+// promise nobody can check, and this owner says so rather than passing it.
+//
+// And a promise that is written in only ONE of the two forms is nothing for this owner to
+// compare -- the minutes are there and the milliseconds are not, or the other way round. That is
+// counted with the result, so a reader can tell it from one that was checked and matched.
+//
+// So the two answers about the minutes are kept apart here, and they are what the two cases are.
+// The minutes are stated next to the millisecond form, the promise writes both forms, and the two
+// have to agree: a promise that states the minutes in words nobody can read is a promise nobody
+// can check, and it is NOT the same thing as a promise that states only one form.
+const samePromiseInBothForms = promisedMinutes !== null
+  && promisedNumbers.length === 1
+  && Math.abs(promisedMinutes * 60_000 - promisedNumbers[0]) < 1;
+const bothFormsWritten = MINUTES_FORM.written && promisedNumbers.length === 1;
 assert('the promise to a reader is the same promise in both of the forms it is written in',
-  promisedMinutes === null || promisedNumbers.length === 0
-  || Math.abs(promisedMinutes * 60_000 - promisedNumbers[0]) < 1);
+  holds(samePromiseInBothForms, true, bothFormsWritten));
 
 // The promise above holds only if the TIMER runs on that interval: the rows are released on the
 // next tick, and the tick is the sweep. Nothing in the package watched the call that starts that
