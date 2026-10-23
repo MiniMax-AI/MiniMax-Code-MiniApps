@@ -1,8 +1,9 @@
-# WeChat Mini Program & Game Preview
+# WeChat Mini Program Developer
 
 English | [简体中文](README.zh-CN.md)
 
-A local MiniMax Code Mini App for previewing an **existing native WeChat project**. It compiles
+**微信小程序开发者** is a community MiniMax Code Mini App for developing and previewing an
+**existing native WeChat project**. It compiles
 WXML/WXSS/JavaScript/TypeScript into a browser approximation, or runs a Canvas2D/WebGL mini game,
 inside the same preview plugin. It does not replace your project with a generated HTML app.
 
@@ -136,7 +137,9 @@ includes the runtime, skill, README files, LICENSE and docs, but not dependencie
 sources. Its isolated import/compile/jsdom checks do not prove Host rendering. From the repository
 root also run `npm run check` before contributing.
 
-[Architecture and tools](docs/architecture.md) · [MIT License](LICENSE). Third-party bundle
+[Architecture and tools](docs/architecture.md) · [MIT License](LICENSE) (code only; the application
+icon is excluded, see [asset attribution](docs/assets.md)). Third-party bundle
 licenses are preserved in `miniapp/client/vendor/THIRD-PARTY-NOTICES.txt` and
-`miniapp/node/vendor/THIRD-PARTY-NOTICES.txt`. No WeChat DevTools/WorkBuddy executable, SDK bundle,
-SVG asset or user project is included.
+`miniapp/node/vendor/THIRD-PARTY-NOTICES.txt`. No WeChat DevTools/WorkBuddy executable, SDK bundle or user project is included. The application
+icon comes from WeChat DevTools; it remains Tencent brand material, not MIT-licensed code. This
+is not a Tencent product and is not affiliated with or endorsed by Tencent.

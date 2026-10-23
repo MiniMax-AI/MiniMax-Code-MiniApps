@@ -44,7 +44,7 @@ test('HTTP/MCP directly open safe projects while preserving Host and explicit co
   const scratch = await mkdtemp(path.join(os.tmpdir(), 'wx-http-identity-'));
   const app = await launch(path.join(scratch, 'state'));
   try {
-    const shell = await app.request('/preview'); assert.equal(shell.status, 200); assert.match(await shell.text(), /微信小程序预览/);
+    const shell = await app.request('/preview'); assert.equal(shell.status, 200); assert.match(await shell.text(), /微信小程序开发者/);
     const rebinding = await new Promise((resolve, reject) => {
       const req = httpRequest(app.origin + '/api/previews', { headers: { host: 'evil.example' } }, (response) => { response.resume(); response.on('end', () => resolve(response.statusCode)); });
       req.on('error', reject); req.end();

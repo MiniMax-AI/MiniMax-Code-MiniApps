@@ -57,7 +57,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 
 | MiniApp | What it does | Author |
 | --- | --- | --- |
-| [WeChat Mini Program & Game Preview](plugins/adherez/wechat-miniprogram-preview/) | Preview native WXML/WXSS/JS/TS projects and Canvas2D/WebGL mini games locally, with retained page stacks, live rebuilds and persistent Storage | [AdhereZ](https://github.com/AdhereZ) |
+| [WeChat Mini Program Developer](plugins/adherez/wechat-miniprogram-preview/) | Develop and preview WeChat Mini Programs and Mini Games locally, with page interaction, live updates, runtime logs and error diagnostics | [AdhereZ](https://github.com/AdhereZ) |
 | [Dynamic Workflow Console](plugins/stevenjj33/workflow-console/) | Run and supervise MiniMax Code dynamic workflows from one page: live status, a stage-and-dependency flow graph, per-node output, approval and control, templates, and report export | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | Layered image editing with an in-app AI assistant, local recovery and programmatic editing tools | [WebGuHui](https://github.com/WebGuHui) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | Local video editing with captions, a host Agent assistant, reviewable timeline edits, and MP4/MP3 export | [WebGuHui](https://github.com/WebGuHui) |

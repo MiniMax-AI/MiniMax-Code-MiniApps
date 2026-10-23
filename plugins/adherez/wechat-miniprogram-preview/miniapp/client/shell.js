@@ -408,7 +408,7 @@ function renderPreviewStatus() {
 }
 function renderDetails() {
   const project = state?.activeProject || state?.projects?.find((item) => item.id === state?.projectId);
-  $('project-name').textContent = project?.name || '微信小程序与小游戏预览';
+  $('project-name').textContent = project?.name || '微信小程序开发者';
   $('project-name').title = $('project-name').textContent;
   $('project-kind-label').textContent = project ? isGame() ? '小游戏 · 本地' : '小程序 · 本地' : '本地预览';
   renderPreviewStatus(); syncControls(); sizeDevice();

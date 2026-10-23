@@ -1,6 +1,8 @@
-# 微信小程序与小游戏本地预览
+# 微信小程序开发者
 
 [English](README.md) | 简体中文
+
+用于微信小程序与小游戏的本地开发预览，支持页面交互、自动更新、运行日志和错误排查。
 
 在 MiniMax Code 的既有 Mini App 中直接预览原生微信工程：小程序使用 WXML/WXSS/JS/TS，
 小游戏使用 Canvas2D/WebGL。预览器不是另造一份 HTML 业务应用，也不替代微信开发者工具。
@@ -85,5 +87,7 @@ CAS 防覆盖；最多 8 个预览记录、4 个活动工程、4 个连接页面
 仓库根目录执行 `npm run check`。测试、源码和文档位于 runtime payload 外；不提交 node_modules、
 个人工程、私有会话日志或凭据。
 
-[实现说明](docs/architecture.md) · [MIT LICENSE](LICENSE)。未附带官方微信/WorkBuddy SDK、
-可执行包或复制的 SVG 素材；第三方开源依赖的声明保留在两个 vendor 目录中。
+[实现说明](docs/architecture.md) · [MIT LICENSE](LICENSE)（仅覆盖代码，应用图标除外）。
+图标使用微信开发者工具的应用图标，属于腾讯品牌素材，来源及许可边界见[素材说明](docs/assets.md)。
+这不是腾讯官方产品，也不代表腾讯授权或背书。未附带官方微信/WorkBuddy SDK 或可执行包；
+第三方开源依赖的声明保留在两个 vendor 目录中。
