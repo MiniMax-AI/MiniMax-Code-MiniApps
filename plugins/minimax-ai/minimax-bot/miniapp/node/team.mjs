@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { isAbsolute, join } from 'node:path';
 import { BOT_SKINS, SKIN_INK, effortOf, newId, normalizeEffort, normalizeFace, normalizeModel, normalizeSkin, skinForColor } from './store.mjs';
 import { EngineError, nextRun } from './engine.mjs';
+import { hopLimit } from './relay-guard.mjs';
 import { MemoryError, TOPIC_KEY_RE, storageBudget } from './memory.mjs';
 import { MEMORY_CONTEXT_MAX } from './memory-context.mjs';
 import { isDefaultText, resolveLocale, setLocale, t } from './i18n.mjs';
@@ -330,6 +331,11 @@ export class Team {
       replyMode: input.replyMode === 'all' ? 'all' : 'admin',
       pinned: false,
       createdAt: Date.now(),
+      // F7 · the relay guardrails. The hop limit counts how many Bots may speak in one relay
+      // chain; 0 means "no limit", which is the baseline behaviour. The hand-over carries the
+      // conclusion of the previous hop into the next one. Both are off unless the group asks.
+      maxHops: hopLimit({ maxHops: input.maxHops }),
+      handover: input.handover === true,
     };
     this.store.state.groups.push(group);
     this.store.bumpRoster();
@@ -360,6 +366,9 @@ export class Team {
     if (patch.notice !== undefined) draft.notice = String(patch.notice).trim().slice(0, 500);
     if (patch.replyMode !== undefined) draft.replyMode = patch.replyMode === 'all' ? 'all' : 'admin';
     if (patch.pinned !== undefined) draft.pinned = Boolean(patch.pinned);
+    // The relay guardrails: absent leaves the group's own setting alone. 0 = no limit.
+    if (patch.maxHops !== undefined) draft.maxHops = hopLimit({ maxHops: patch.maxHops });
+    if (patch.handover !== undefined) draft.handover = Boolean(patch.handover);
     if (patch.members !== undefined) {
       const members = this.memberList(patch.members);
       if (members.length === 0) throw new EngineError('invalid', t('err.groupNeedsMember'));
