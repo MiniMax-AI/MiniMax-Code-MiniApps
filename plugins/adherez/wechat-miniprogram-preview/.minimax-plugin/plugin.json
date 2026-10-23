@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "wechat-miniprogram-preview",
+  "displayName": "微信小程序与小游戏预览",
+  "version": "0.5.0-rc.1",
+  "description": "Agent 直接打开原生微信小程序与小游戏工程，在既有 Mini App 内展示。本地编译、自动更新、持久存储，页面只保留刷新预览，诊断在聊天中查询。",
+  "author": "AdhereZ",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": [
+    "打开微信小程序预览",
+    "预览当前工作区的小程序并读取构建错误",
+    "打开微信小游戏预览并查看运行日志"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": [
+    "skills/wechat-project-preview/SKILL.md"
+  ]
+}

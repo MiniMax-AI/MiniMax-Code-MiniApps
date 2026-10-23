@@ -1,0 +1,1 @@
+<view class="page"><text class="title">详情页</text><view class="card"><text>来自：{{from}}</text><view class="description">navigateTo 创建页面栈，返回按钮恢复上一页。</view><button type="primary" bindtap="back">返回实验室</button></view></view>

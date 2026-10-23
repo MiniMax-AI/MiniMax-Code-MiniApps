@@ -1,0 +1,1 @@
+.counter{background:#eaf5ee;border:1px solid #d3e7da;border-radius:24rpx;padding:32rpx;margin-top:24rpx}.row{display:flex;align-items:center;justify-content:space-between}.value{font-size:48rpx;font-weight:600;color:#078442}button{font-size:28rpx;margin-top:16rpx;background:#fff;color:#176d39}

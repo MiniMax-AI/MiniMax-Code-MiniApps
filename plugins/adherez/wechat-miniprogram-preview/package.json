@@ -1,0 +1,22 @@
+{
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  },
+  "name": "wechat-miniprogram-preview",
+  "version": "0.5.0-rc.1",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "glass-easel": "1.2.0",
+    "glass-easel-miniprogram-adapter": "1.2.0",
+    "jsdom": "24.1.3",
+    "sucrase": "3.35.1",
+    "yazl": "3.3.1"
+  }
+}

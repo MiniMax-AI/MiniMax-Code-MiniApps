@@ -1,0 +1,7 @@
+{
+  "pages": ["pages/index/index", "pages/settings/settings", "pages/detail/detail"],
+  "window": {"navigationBarTitleText":"预览实验室","backgroundColor":"#f6f7f8","navigationBarTextStyle":"black"},
+  "tabBar": {"color":"#777777","selectedColor":"#078442","backgroundColor":"#ffffff","list":[{"pagePath":"pages/index/index","text":"实验室"},{"pagePath":"pages/settings/settings","text":"设置"}]},
+  "lazyCodeLoading":"requiredComponents",
+  "style":"v2"
+}

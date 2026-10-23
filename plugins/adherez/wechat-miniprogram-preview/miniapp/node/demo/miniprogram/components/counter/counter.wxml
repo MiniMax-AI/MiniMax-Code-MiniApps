@@ -1,0 +1,1 @@
+<view class="counter"><view class="row"><text>{{label}}</text><text class="value">{{value}}</text></view><button bindtap="increment">计数 +1</button><slot /></view>

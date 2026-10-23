@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>微信小程序与小游戏预览 · MCode</title>
+  <link rel="stylesheet" href="/static/shell.css">
+  <script src="/static/device-config.js" defer></script>
+  <script src="/static/icons.js" defer></script>
+  <script src="/static/shell.js" defer></script>
+</head>
+<body>
+<header class="app-header" aria-label="微信小程序预览">
+  <div class="project-summary">
+    <h1 id="project-name">微信小程序预览</h1>
+    <span class="preview-kind"><span data-icon="mobile" aria-hidden="true"></span><span id="project-kind-label">本地预览</span></span>
+  </div>
+</header>
+<main>
+  <div id="notice" role="alert" hidden></div>
+  <section class="workspace" aria-label="小程序预览">
+    <div class="preview-area">
+      <div id="device-stage">
+        <div id="device-wrap">
+          <div id="phone-frame" class="phone-frame">
+            <div class="phone-screen">
+              <div id="empty" class="empty">
+                <span class="empty-icon" data-icon="mobile" aria-hidden="true"></span>
+                <h2>等待预览工程</h2>
+                <p>请在聊天中让 Agent 打开要预览的小程序或小游戏。</p>
+              </div>
+              <iframe id="simulator" title="微信小程序 H5 预览" sandbox="allow-scripts" referrerpolicy="no-referrer" hidden></iframe>
+              <span class="phone-notch" aria-hidden="true"></span>
+            </div>
+            <span class="phone-home-indicator" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>
+      <div class="preview-footer">
+        <div class="preview-notice">
+          <div class="runtime-notice"><span id="preview-status" role="status" aria-live="polite">等待预览</span></div>
+          <p>预览仅供参考，微信能力需在真机验证。</p>
+        </div>
+        <button id="refresh-preview" class="footer-refresh" type="button" disabled><span data-icon="refresh" aria-hidden="true"></span><span>刷新预览</span></button>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

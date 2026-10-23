@@ -1,0 +1,8 @@
+{
+  "description": "Self-authored WebGL texture mini game preview fixture",
+  "projectname": "Signal Atlas - WebGL",
+  "compileType": "game",
+  "miniprogramRoot": "./",
+  "appid": "touristappid",
+  "setting": { "es6": true }
+}

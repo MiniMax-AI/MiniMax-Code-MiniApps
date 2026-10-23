@@ -1,0 +1,15 @@
+<view class="page">
+  <text class="eyebrow">MCODE · MINI PROGRAM</text>
+  <text class="title">预览实验室</text>
+  <view class="description">原生 WXML / WXSS / JS，实时呈现在 Mini App 中。</view>
+  <counter-card label="组件计数器" bind:change="onCountChange" />
+  <view class="card">
+    <text class="section-title">数据绑定与表单</text>
+    <input placeholder="输入一个任务" value="{{draft}}" bindinput="onInput" />
+    <button type="primary" bindtap="addTask">添加任务</button>
+    <view wx:if="{{tasks.length === 0}}" class="muted">还没有任务</view>
+    <view wx:for="{{tasks}}" wx:key="id" class="list-row"><text>{{index + 1}}. {{item.title}}</text></view>
+    <text class="muted">组件事件收到：{{count}}</text>
+  </view>
+  <view class="card"><text class="section-title">页面与 API</text><text class="chip" wx:for="{{features}}" wx:key="*this">{{item}}</text><button bindtap="openDetail">打开详情页</button><button bindtap="showToast">显示 Toast</button></view>
+</view>

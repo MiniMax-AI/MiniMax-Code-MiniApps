@@ -1,0 +1,8 @@
+{
+  "description": "Self-authored Canvas2D mini game preview fixture",
+  "projectname": "Orbit Post - Canvas2D",
+  "compileType": "game",
+  "miniprogramRoot": "./",
+  "appid": "touristappid",
+  "setting": { "es6": true }
+}

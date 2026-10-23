@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "wechat-preview": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/preview",
+      "headers": {},
+      "description": "直接加载原生微信小程序与小游戏工程，按返回动作在既有 Mini App 展示；查询诊断、导航、重建及安全恢复，不创建替代 HTML 插件。",
+      "timeout": 30000
+    }
+  }
+}

@@ -1,0 +1,11 @@
+:root { color-scheme: light; --wx-game-width: 390px; --wx-game-height: 844px; --wx-capsule-width: 87px; --wx-capsule-height: 32px; --wx-capsule-top: 51px; --wx-capsule-right: 7px; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #fff; }
+body { position: relative; isolation: isolate; }
+/* Keep the native-style capsule above a game's canvas without putting it in the viewport. */
+#wx-game-viewport { position: relative; z-index: 0; width: var(--wx-game-width); height: var(--wx-game-height); overflow: hidden; touch-action: none; }
+#wx-game-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#wx-game-overlay { position: fixed; inset: 0; z-index: 999; display: grid; place-items: center; background: rgba(255,255,255,.55); color: #333; font: 14px/1.5 sans-serif; pointer-events: auto; }
+#wx-game-overlay[hidden] { display: none; }
+
+/* DevTools uses a separate, always-white capsule for games. */
+#wx-capsule { color: var(--wx-chrome-on-dark); border-color: var(--wx-chrome-dark-border); background: var(--wx-chrome-game-surface); }

@@ -1,0 +1,73 @@
+/* WeChat simulation colors are independent of the desktop tool-shell theme. */
+:root {
+  --wx-chrome-on-light: #000000;
+  --wx-chrome-on-dark: #ffffff;
+  --wx-chrome-light-surface: rgba(255, 255, 255, .6);
+  --wx-chrome-dark-surface: rgba(0, 0, 0, .15);
+  --wx-chrome-game-surface: rgba(0, 0, 0, .6);
+  --wx-chrome-light-border: rgba(0, 0, 0, .1);
+  --wx-chrome-dark-border: rgba(255, 255, 255, .25);
+}
+
+/* Shared native-style WeChat chrome. This is decorative and never handles input. */
+#wx-capsule {
+  position: fixed;
+  top: var(--wx-capsule-top, 51px);
+  right: var(--wx-capsule-right, 7px);
+  width: var(--wx-capsule-width, 87px);
+  height: var(--wx-capsule-height, 32px);
+  box-sizing: border-box;
+  border: 1px solid var(--wx-chrome-light-border);
+  border-radius: 27px;
+  background: var(--wx-chrome-light-surface);
+  display: flex;
+  align-items: center;
+  font-size: 0;
+  line-height: 1;
+  color: var(--wx-chrome-on-light);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+#wx-capsule[data-tone="light"] {
+  color: var(--wx-chrome-on-dark);
+  border-color: var(--wx-chrome-dark-border);
+  background: var(--wx-chrome-dark-surface);
+}
+
+#wx-capsule .wx-capsule-part {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  height: 30px;
+  padding: 6.4px 0;
+  align-items: center;
+  justify-content: center;
+}
+
+#wx-capsule .wx-capsule-separator {
+  flex: 0 0 1px;
+  height: 17.2px;
+  background: var(--wx-chrome-dark-border);
+}
+
+/* Same 22x7 and 17x17 silhouettes as DevTools, without a font or copied SVG. */
+#wx-capsule .wx-capsule-menu {
+  display: block;
+  width: 22px;
+  height: 7px;
+  background:
+    radial-gradient(ellipse 2.444px 2.333px at 2.444px 3.733px, currentColor 95%, transparent 100%),
+    radial-gradient(ellipse 3.667px 3.5px at 11px 3.5px, currentColor 95%, transparent 100%),
+    radial-gradient(ellipse 2.444px 2.333px at 19.556px 3.733px, currentColor 95%, transparent 100%);
+}
+
+#wx-capsule .wx-capsule-exit {
+  box-sizing: border-box;
+  display: block;
+  width: 17px;
+  height: 17px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: radial-gradient(circle 2.942px, currentColor 95%, transparent 100%);
+}
