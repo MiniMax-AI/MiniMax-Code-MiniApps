@@ -18,7 +18,7 @@
   --mcode-chart-1:#0094fc; --mcode-chart-2:#2ea6a4; --mcode-chart-3:#e0932f;
   --mcode-chart-4:#d0567a; --mcode-chart-5:#6c5ce7; --mcode-chart-6:#8a9a5b;
   --mcode-chart-grid:#ececf1; --mcode-chart-axis:#9a9aa3;
-  --tmb-line-hit:#059669; --tmb-line-rate:#c026d3;
+  --tmb-line-hit:#059669;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
@@ -30,7 +30,7 @@
     --mcode-chart-1:#3ea6ff; --mcode-chart-2:#45c0bd; --mcode-chart-3:#e5a84d;
     --mcode-chart-4:#e0709a; --mcode-chart-5:#8b7cf0; --mcode-chart-6:#a3b877;
     --mcode-chart-grid:#2a2a31; --mcode-chart-axis:#6e6e77;
-    --tmb-line-hit:#34d399; --tmb-line-rate:#e879f9;
+    --tmb-line-hit:#34d399;
   }
 }
 [data-theme='light'] {
@@ -42,7 +42,7 @@
   --mcode-chart-1:#0094fc; --mcode-chart-2:#2ea6a4; --mcode-chart-3:#e0932f;
   --mcode-chart-4:#d0567a; --mcode-chart-5:#6c5ce7; --mcode-chart-6:#8a9a5b;
   --mcode-chart-grid:#ececf1; --mcode-chart-axis:#9a9aa3;
-  --tmb-line-hit:#059669; --tmb-line-rate:#c026d3;
+  --tmb-line-hit:#059669;
 }
 [data-theme='dark'] {
   --mcode-bg:#171717; --mcode-bg-secondary:#1c1c1c; --mcode-surface:#262626;
@@ -198,7 +198,6 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
 .hit { color: var(--mcode-success); }
 .hit.mid { color: var(--mcode-warning); }
 .hit.low { color: var(--mcode-danger); }
-.rate-warn { color: var(--mcode-warning); }
 
 /* footer + toast */
 .page-foot { font-size: 12px; color: var(--mcode-text-subtle); line-height: 1.7; margin-top: 4px; }
@@ -256,7 +255,7 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
     <div class="cell"><div class="v" id="kpi-total">--</div><div class="l">总 tokens</div><div class="s" id="kpi-total-sub"></div></div>
     <div class="cell"><div class="v" id="kpi-calls">--</div><div class="l">调用次数</div><div class="s" id="kpi-calls-sub"></div></div>
     <div class="cell"><div class="v" id="kpi-hit">--</div><div class="l">缓存命中率</div><div class="s">cacheRead / (cacheRead + input)</div></div>
-    <div class="cell"><div class="v"><span id="kpi-rate">--</span><span class="unit">tok/s</span></div><div class="l">token 输出速率</div><div class="s" id="kpi-rate-sub">中位数</div></div>
+    <div class="cell"><div class="v" id="kpi-turns">--</div><div class="l">对话次数</div><div class="s" id="kpi-turns-sub">一次提问 = 一个 turn</div></div>
     <div class="cell"><div class="v" id="kpi-models">--</div><div class="l">活跃模型</div><div class="s" id="kpi-models-sub"></div></div>
   </section>
 
@@ -268,7 +267,6 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
       <div class="card-title">用量构成</div>
       <div class="chip-group" role="group" aria-label="折线开关">
         <button class="chip" id="flt-hit" aria-pressed="true">缓存命中率</button>
-        <button class="chip" id="flt-rate" aria-pressed="true">输出速率</button>
       </div>
     </div>
     <div class="filter-bar" id="model-chips" aria-label="模型筛选"></div>
@@ -288,10 +286,10 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th class="name">提供商 / 模型</th><th>调用</th><th>输入</th><th>输出</th>
-          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th>
+          <th class="name">模型</th><th>调用</th><th>输入</th><th>输出</th>
+          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>命中率</th>
         </tr></thead>
-        <tbody id="models-body"><tr class="empty-row"><td colspan="9">加载中…</td></tr></tbody>
+        <tbody id="models-body"><tr class="empty-row"><td colspan="8">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="sec-err" id="models-err" role="alert"></div>
@@ -309,10 +307,10 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>日期</th><th>调用</th><th>输入</th><th>输出</th><th>推理</th>
-          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th><th class="name">主要模型</th>
+          <th>日期</th><th>调用</th><th>输入</th><th>输出</th>
+          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>命中率</th><th class="name">主要模型</th>
         </tr></thead>
-        <tbody id="daily-body"><tr class="empty-row"><td colspan="11">加载中…</td></tr></tbody>
+        <tbody id="daily-body"><tr class="empty-row"><td colspan="9">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="sec-err" id="daily-err" role="alert"></div>
@@ -330,10 +328,10 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>时间</th><th class="name">模型</th><th>输入</th><th>输出</th><th>推理</th>
-          <th>缓存读</th><th>缓存写</th><th>速率 (tok/s)</th><th>全程速率</th><th>decode</th><th>请求全程</th><th>状态码</th>
+          <th>时间</th><th class="name">模型</th><th>输入</th><th>输出</th>
+          <th>缓存读</th><th>缓存写</th><th>总 tokens</th><th>结束方式</th>
         </tr></thead>
-        <tbody id="calls-body"><tr class="empty-row"><td colspan="12">加载中…</td></tr></tbody>
+        <tbody id="calls-body"><tr class="empty-row"><td colspan="8">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="sec-err" id="calls-err" role="alert"></div>
@@ -351,9 +349,9 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>开始时间</th><th class="name">用户消息</th><th>状态</th><th>时长</th><th>调用</th><th>输出</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th><th class="name">会话</th><th class="name">主要模型</th>
+          <th>开始时间</th><th class="name">会话</th><th>状态</th><th>调用</th><th>输出</th><th>总 tokens</th><th>命中率</th><th class="name">主要模型</th>
         </tr></thead>
-        <tbody id="turn-body"><tr class="empty-row"><td colspan="11">加载中…</td></tr></tbody>
+        <tbody id="turn-body"><tr class="empty-row"><td colspan="8">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="sec-err" id="turn-err" role="alert"></div>
@@ -374,16 +372,16 @@ td .sub { display: block; font-size: 11px; color: var(--mcode-text-subtle); }
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th class="name">会话</th><th>Agent</th><th>调用</th><th>总 tokens</th><th>速率 (tok/s)</th><th>命中率</th><th class="name">主要模型</th><th>最后活动</th>
+          <th class="name">会话</th><th>调用</th><th>总 tokens</th><th>命中率</th><th class="name">主要模型</th><th>最后活动</th>
         </tr></thead>
-        <tbody id="sess-body"><tr class="empty-row"><td colspan="8">加载中…</td></tr></tbody>
+        <tbody id="sess-body"><tr class="empty-row"><td colspan="6">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="sec-err" id="sess-err" role="alert"></div>
   </section>
 
   <footer class="page-foot" id="page-foot">
-    口径：总 tokens = 输入 + 输出 + 推理 + 缓存读 + 缓存写；命中率 = 缓存读 / (缓存读 + 输入)；输出速率 = 输出 tokens ÷ decode 时长（首 token 到流结束），与 MiniMax Code 界面显示完全一致，窗口内按耗时加权；调用日志另列请求全程速率（发起请求→流结束，含首字等待）；对话明细以一次提问（turn）为单位，用户发出消息后模型经若干次调用直至给出最终回答即为一次，实时读取、无需关闭会话，其时长为挂钟跨度、不参与速率计算。数据来自本机 runtime 用量记录（sqlite + 日志按 turn 补全 + config.yaml 显示名），只读。
+    口径：总 tokens = 输入 + 输出 + 缓存读 + 缓存写；命中率 = 缓存读 / (缓存读 + 输入)；对话明细以一次提问（turn）为单位，实时读取、无需关闭会话。数据源：MiniMax Code 自己写下的会话记录文件（<code>v2/sessions/**/messages.jsonl</code>），只读；不打开宿主内部数据库、观测日志与配置，因此本页不提供 token 速率、也不显示任何工作区路径。
   </footer>
 </div>
 <div class="toast" id="toast" role="status"></div>
@@ -399,20 +397,7 @@ function toInput(ms) { var x = new Date(ms); return x.getFullYear() + '-' + pad(
 function fmtLocal(iso) { var x = new Date(iso); return x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()) + ' ' + pad(x.getHours()) + ':' + pad(x.getMinutes()); }
 function fmtTime(iso) { var x = new Date(iso); return pad(x.getMonth() + 1) + '-' + pad(x.getDate()) + ' ' + pad(x.getHours()) + ':' + pad(x.getMinutes()); }
 function fmtTimeSec(ms) { var x = new Date(ms); return pad(x.getHours()) + ':' + pad(x.getMinutes()) + ':' + pad(x.getSeconds()); }
-function fmtDur(ms) {
-  if (ms < 0) ms = 0;
-  var m = Math.round(ms / 60000);
-  if (m < 60) return m + 'm';
-  var h = Math.floor(m / 60);
-  if (h < 24) return h + 'h' + pad(m % 60) + 'm';
-  return Math.floor(h / 24) + 'd' + (h % 24) + 'h';
-}
 function pct(v) { return v == null ? '--' : (v * 100).toFixed(1) + '%'; }
-function rateFmt(v) {
-  if (v == null) return '--';
-  if (v >= 100) return String(Math.round(v));
-  return (Math.round(v * 10) / 10).toFixed(1);
-}
 function hitClass(v) { return v == null ? '' : v >= 0.8 ? 'hit' : v >= 0.5 ? 'hit mid' : 'hit low'; }
 function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
@@ -463,7 +448,6 @@ var activePreset = 'today';
 var followNow = true;
 var hiddenModels = new Set();
 var showHit = true;
-var showRate = true;
 
 function windowMs() {
   var start = new Date($('win-start').value).getTime();
@@ -502,7 +486,6 @@ function renderCompose(kpis) {
   var parts = [
     { label: '输入', value: kpis.inputTokens, color: cssVar('--mcode-chart-1') },
     { label: '输出', value: kpis.outputTokens, color: cssVar('--mcode-chart-2') },
-    { label: '推理', value: kpis.reasoningTokens, color: cssVar('--mcode-chart-5') },
     { label: '缓存读', value: kpis.cacheReadTokens, color: cssVar('--mcode-chart-3') },
     { label: '缓存写', value: kpis.cacheWriteTokens, color: cssVar('--mcode-chart-6') }
   ];
@@ -618,19 +601,11 @@ function rebuildChart(d) {
   });
   // 曲线专用配色：与模型柱色系（chart-1..6）完全错开
   var hitColor = cssVar('--tmb-line-hit');
-  var rateColor = cssVar('--tmb-line-rate');
   if (showHit) {
     datasets.push({
       type: 'line', label: '缓存命中率', data: d.series.cacheHitRate,
       borderColor: hitColor, backgroundColor: hitColor, borderWidth: 2,
       pointRadius: 2.5, spanGaps: false, tension: 0.35, yAxisID: 'y1', order: 1
-    });
-  }
-  if (showRate) {
-    datasets.push({
-      type: 'line', label: '输出速率', data: d.series.outputRate,
-      borderColor: rateColor, backgroundColor: rateColor, borderWidth: 2,
-      borderDash: [5, 3], pointRadius: 2, spanGaps: false, tension: 0.35, yAxisID: 'y2', order: 1
     });
   }
   if (!datasets.length) {
@@ -660,9 +635,6 @@ function rebuildChart(d) {
               if (ctx.dataset.yAxisID === 'y1') {
                 return ' 缓存命中率: ' + (ctx.parsed.y == null ? '--' : (ctx.parsed.y * 100).toFixed(1) + '%');
               }
-              if (ctx.dataset.yAxisID === 'y2') {
-                return ' 输出速率: ' + rateFmt(ctx.parsed.y) + ' tok/s';
-              }
               return ' ' + ctx.dataset.label + ': ' + fmt.format(ctx.parsed.y) + ' tokens';
             },
             footer: function (items) { var i = items[0].dataIndex; return '调用 ' + d.series.calls[i] + ' 次 · 合计 ' + fmt.format(d.series.totalTokens[i]); }
@@ -674,8 +646,7 @@ function rebuildChart(d) {
         y: { stacked: true, grid: { color: gridColor }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return compact(v); } } },
         // grace 给命中率轴顶部留出余量，避免接近 100% 的曲线贴到绘图区顶边；
         // 超出 100% 的刻度不标注文字
-        y1: { display: showHit, position: 'right', min: 0, grace: '8%', grid: { display: false }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return v <= 1.0001 ? (v * 100).toFixed(0) + '%' : ''; } } },
-        y2: { display: showRate, position: 'right', min: 0, offset: true, grid: { display: false }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return compact(v) + '/s'; } } }
+        y1: { display: showHit, position: 'right', min: 0, grace: '8%', grid: { display: false }, border: { display: false }, ticks: { color: axisColor, callback: function (v) { return v <= 1.0001 ? (v * 100).toFixed(0) + '%' : ''; } } }
       }
     }
   });
@@ -693,14 +664,8 @@ function renderTrend(d) {
   $('kpi-calls').textContent = fmt.format(d.kpis.calls);
   $('kpi-calls-sub').textContent = d.series.totalTokens.length ? '峰值 ' + compact(Math.max.apply(null, d.series.totalTokens.concat([0]))) + ' / 桶' : '';
   $('kpi-hit').textContent = pct(d.kpis.cacheHitRate);
-  var rs = d.kpis.rate || {};
-  var qs = d.kpis.requestRate || {};
-  $('kpi-rate').textContent = rateFmt(rs.weighted != null ? rs.weighted : d.kpis.outputRate);
-  $('kpi-rate-sub').textContent = 'Σ输出÷Σdecode · P50 ' + rateFmt(rs.p50) + ' · N=' + fmt.format(rs.n || 0);
-  $('kpi-rate-sub').title = '口径与 MiniMax Code 界面一致：输出 tokens ÷ decode 时长（首 token 到流结束），窗口内按耗时加权（Σ输出 ÷ Σ耗时）。\n' +
-    (rs.n || 0) + '/' + fmt.format(d.kpis.calls) + ' 次可测，加权 ' + rateFmt(rs.weighted) +
-    '、P50 ' + rateFmt(rs.p50) + '、P90 ' + rateFmt(rs.p90) + '、峰值 ' + rateFmt(rs.max) + ' tok/s。\n' +
-    '对照：请求全程速率（发起请求→流结束，含首字等待）加权 ' + rateFmt(qs.weighted) + ' tok/s。';
+  $('kpi-turns').textContent = fmt.format(d.kpis.turns || 0);
+  $('kpi-turns-sub').textContent = '覆盖 ' + fmt.format(d.kpis.sessions || 0) + ' 个会话';
   $('kpi-models').textContent = d.kpis.activeModels;
   $('kpi-models-sub').textContent = d.models.map(function (m) { return m.modelName; }).join(' · ');
 
@@ -709,9 +674,9 @@ function renderTrend(d) {
   renderModelChips(d);
 
   $('trend-foot').textContent =
-    '来源：本机 runtime 用量记录（sqlite + 日志补全）' +
-    (d.unknownRows > 0 ? ' · ' + d.unknownRows + ' 条未识别模型（早于日志保留期）' : '') +
-    ' · 命中率 = cacheRead / (cacheRead + input) · 速率 = 桶内成功调用的加权速率（Σ输出 ÷ Σdecode），无调用的桶不绘制';
+    '来源：本机会话记录文件（v2/sessions/**/messages.jsonl，只读）' +
+    ' · 命中率 = cacheRead / (cacheRead + input)' +
+    ' · 会话记录不含调用耗时，因此本页不提供 token 速率';
 
   rebuildChart(d);
 }
@@ -732,18 +697,16 @@ function fillTable(tbodyId, colCount, rows, rowBuilder, emptyText) {
 }
 
 function tdNum(v) { return el('td', null, fmt.format(v)); }
-function tdRate(v) { return el('td', null, rateFmt(v)); }
 function tdHit(v) { return el('td', hitClass(v), pct(v)); }
 
 function renderModels(d) {
   sectionError('models-err', null);
-  fillTable('models-body', 9, d.byModel, function (g) {
+  fillTable('models-body', 8, d.byModel, function (g) {
     var tr = el('tr');
     var name = el('td', 'name');
     var title = el('span', null, g.modelName);
-    title.title = g.provider + ' / ' + g.model;
+    title.title = g.model;
     name.appendChild(title);
-    name.appendChild(el('span', 'sub', g.providerName + (g.custom ? ' · 自定义接入' : '')));
     tr.appendChild(name);
     tr.appendChild(tdNum(g.calls));
     tr.appendChild(tdNum(g.inputTokens));
@@ -751,7 +714,6 @@ function renderModels(d) {
     tr.appendChild(tdNum(g.cacheReadTokens));
     tr.appendChild(tdNum(g.cacheWriteTokens));
     tr.appendChild(tdNum(g.totalTokens));
-    tr.appendChild(tdRate(g.outputRate));
     tr.appendChild(tdHit(g.cacheHitRate));
     return tr;
   }, '该窗口内没有用量记录');
@@ -762,74 +724,39 @@ function topModelNames(byModel, n) {
 }
 
 /* 调用日志：逐次调用明细（当前窗口，新的在前） */
+var STOP_LABEL = { 1: '正常结束', 2: '工具调用', 3: '已中止' };
+
 function renderCalls(d) {
   sectionError('calls-err', null);
-  fillTable('calls-body', 12, d.calls, function (c) {
+  fillTable('calls-body', 8, d.calls, function (c) {
     var tr = el('tr');
     var time = el('td', null, fmtTimeSec(c.ts));
-    time.title = c.time + ' · turn ' + (c.turnId || '--');
+    time.title = c.time + (c.turnId ? ' · turn ' + c.turnId : '');
     tr.appendChild(time);
     var name = el('td', 'name');
-    var title = el('span', null, c.modelName);
-    title.title = c.provider + ' / ' + c.model;
-    name.appendChild(title);
-    if (c.custom) name.appendChild(el('span', 'tag', '自定义'));
+    name.appendChild(el('span', null, c.modelName));
     tr.appendChild(name);
     tr.appendChild(tdNum(c.inputTokens));
     tr.appendChild(tdNum(c.outputTokens));
-    tr.appendChild(tdNum(c.reasoningTokens));
     tr.appendChild(tdNum(c.cacheReadTokens));
     tr.appendChild(tdNum(c.cacheWriteTokens));
-    var rateCell = tdRate(c.outputRate);
-    rateCell.title = c.decodeMs != null
-      ? '输出 ' + fmt.format(c.outputTokens) + ' tokens ÷ decode ' + fmt.format(c.decodeMs) + 'ms（首 token → 流结束）——与 MiniMax Code 界面同口径'
-      : '该调用无 decode 计时（老数据），不参与速率统计';
-    if (c.decodeMs != null && c.requestMs != null && c.decodeMs > c.requestMs) {
-      // decode > request 等价于首 token 早于请求发起：时间戳来自不同尝试，不计入速率聚合
-      rateCell.classList.add('rate-warn');
-      rateCell.title =
-        '该调用的两个时间戳不自洽（decode ' + fmt.format(c.decodeMs) + 'ms > request ' + fmt.format(c.requestMs) +
-        'ms，等价于首 token 早于请求发起），通常出现在工具调用续传；不计入速率聚合，逐次值仅供核查。';
-    }
-    tr.appendChild(rateCell);
-    var reqCell = tdRate(c.requestRate);
-    reqCell.title = c.requestMs != null
-      ? '输出 tokens ÷ 请求全程 ' + fmt.format(c.requestMs) + 'ms（含首字等待与排队）'
-      : '';
-    tr.appendChild(reqCell);
-    var decCell = el('td', null, c.decodeMs != null ? (c.decodeMs / 1000).toFixed(1) + 's' : '--');
-    decCell.title = c.decodeMs != null ? '模型实际输出耗时 ' + fmt.format(c.decodeMs) + 'ms' : '';
-    tr.appendChild(decCell);
-    var durCell = el('td', null, c.requestMs != null ? (c.requestMs / 1000).toFixed(1) + 's' : '--');
-    durCell.title = c.requestMs != null
-      ? '请求全程 ' + fmt.format(c.requestMs) + 'ms' + (c.decodeMs != null ? '，其中 decode ' + fmt.format(c.decodeMs) + 'ms' : '')
-      : '';
-    tr.appendChild(durCell);
-    var st = el('td', c.status == null ? null : c.status === 200 ? 'hit' : 'hit low', c.status == null ? '—' : String(c.status));
-    tr.appendChild(st);
+    tr.appendChild(tdNum(c.totalTokens));
+    tr.appendChild(el('td', null, STOP_LABEL[c.stopReason] || '—'));
     return tr;
   }, '该窗口内没有调用记录');
 }
 
 function renderSessions(d) {
   sectionError('sess-err', null);
-  fillTable('sess-body', 8, d.sessions, function (s) {
+  fillTable('sess-body', 6, d.sessions, function (s) {
     var tr = el('tr');
     var name = el('td', 'name');
     var title = el('span', null, s.title || s.sessionId);
-    title.title = s.sessionId + (s.workspaceDir ? '\n' + s.workspaceDir : '');
+    title.title = s.sessionId;
     name.appendChild(title);
-    if (s.title) name.appendChild(el('span', 'sub', s.sessionId.slice(0, 12) + '…'));
     tr.appendChild(name);
-    tr.appendChild(el('td', null, s.agentName || '--'));
     tr.appendChild(tdNum(s.calls));
     tr.appendChild(tdNum(s.totalTokens));
-    var rateCell = tdRate(s.outputRate);
-    rateCell.title = '该会话成功调用的加权速率（Σ输出 ÷ Σdecode）';
-    if (s.rate && s.rate.n) {
-      rateCell.appendChild(el('span', 'sub', 'Σ ' + rateFmt(s.rate.weighted) + ' · P50 ' + rateFmt(s.rate.p50)));
-    }
-    tr.appendChild(rateCell);
     tr.appendChild(tdHit(s.cacheHitRate));
     var models = el('td', 'name');
     models.appendChild(el('span', null, topModelNames(s.byModel, 2) || '--'));
@@ -842,22 +769,15 @@ function renderSessions(d) {
 function renderDaily(d) {
   sectionError('daily-err', null);
   var rows = d.days.slice().reverse(); // newest day first
-  fillTable('daily-body', 11, rows, function (day) {
+  fillTable('daily-body', 9, rows, function (day) {
     var tr = el('tr');
     tr.appendChild(el('td', null, day.day));
     tr.appendChild(tdNum(day.total.calls));
     tr.appendChild(tdNum(day.total.inputTokens));
     tr.appendChild(tdNum(day.total.outputTokens));
-    tr.appendChild(tdNum(day.total.reasoningTokens));
     tr.appendChild(tdNum(day.total.cacheReadTokens));
     tr.appendChild(tdNum(day.total.cacheWriteTokens));
     tr.appendChild(tdNum(day.total.totalTokens));
-    var rateCell = tdRate(day.total.outputRate);
-    rateCell.title = '当天成功调用的加权速率（Σ输出 ÷ Σdecode）';
-    if (day.total.rate && day.total.rate.n) {
-      rateCell.appendChild(el('span', 'sub', 'Σ ' + rateFmt(day.total.rate.weighted) + ' · P50 ' + rateFmt(day.total.rate.p50)));
-    }
-    tr.appendChild(rateCell);
     tr.appendChild(tdHit(day.total.cacheHitRate));
     var models = el('td', 'name');
     models.appendChild(el('span', null, topModelNames(day.byModel, 2) || '--'));
@@ -870,6 +790,7 @@ var TURN_STATUS = {
   completed: { text: '已完成', cls: 'ok' },
   unfinished: { text: '未收尾', cls: 'warn' },
   pending: { text: '进行中', cls: 'live' },
+  aborted: { text: '已中止', cls: 'warn' }
 };
 
 function renderTurns(d) {
@@ -878,42 +799,24 @@ function renderTurns(d) {
   var summary =
     '本次窗口共 ' + d.totalTurns + ' 次对话（已完成 ' + (counts.completed || 0) +
     ' · 未收尾 ' + (counts.unfinished || 0) + ' · 进行中 ' + (counts.pending || 0) + '）';
-  fillTable('turn-body', 11, d.turns, function (t) {
+  fillTable('turn-body', 8, d.turns, function (t) {
     var tr = el('tr');
     tr.appendChild(el('td', null, fmtTime(t.startedAt)));
 
-    // the user's own words — this is the point of the table
-    var msg = el('td', 'name');
-    var text = (t.userPreview || '').replace(/\s+/g, ' ').trim();
-    msg.appendChild(el('span', null, text || '（无用户消息记录）'));
-    if (text.length > 60) msg.firstChild.title = text;
-    tr.appendChild(msg);
+    var sess = el('td', 'name');
+    sess.appendChild(el('span', null, t.sessionTitle || t.sessionId));
+    sess.firstChild.title = t.sessionId;
+    tr.appendChild(sess);
 
     var st = TURN_STATUS[t.status] || { text: t.status, cls: '' };
     var stCell = el('td');
     stCell.appendChild(el('span', 'tag ' + st.cls, st.text));
-    if (t.finishReason) stCell.title = '末条 finish_reason = ' + t.finishReason;
     tr.appendChild(stCell);
 
-    tr.appendChild(el('td', null, t.durationMs == null ? '--' : fmtDur(t.durationMs)));
     tr.appendChild(tdNum(t.calls));
     tr.appendChild(tdNum(t.outputTokens));
     tr.appendChild(tdNum(t.totalTokens));
-
-    var rateCell = tdRate(t.outputRate);
-    rateCell.title = '与界面同口径：该次对话内 Σ输出 tokens ÷ Σdecode 时长（不含等待与工具执行）';
-    tr.appendChild(rateCell);
-    if (t.rate && t.rate.n) {
-      var sub = el('div', 'sub', 'P50 ' + t.rate.p50 + ' · ' + t.rate.n + ' 次');
-      rateCell.appendChild(sub);
-    }
-
     tr.appendChild(tdHit(t.cacheHitRate));
-
-    var sess = el('td', 'name');
-    sess.appendChild(el('span', null, t.sessionTitle || t.sessionId.slice(0, 12) + '…'));
-    sess.firstChild.title = t.sessionId;
-    tr.appendChild(sess);
 
     var models = el('td', 'name');
     models.appendChild(el('span', null, topModelNames(t.byModel || [], 2) || '--'));
@@ -981,7 +884,7 @@ async function refreshSessions() {
   } catch (e) {
     if (!isCurrent('sessions', ticket)) return;
     sectionError('sess-err', '会话排行加载失败：' + e.message);
-    fillTable('sess-body', 8, [], null, '加载失败');
+    fillTable('sess-body', 6, [], null, '加载失败');
   }
 }
 async function refreshDaily() {
@@ -993,7 +896,7 @@ async function refreshDaily() {
   } catch (e) {
     if (!isCurrent('daily', ticket)) return;
     sectionError('daily-err', '每日统计加载失败：' + e.message);
-    fillTable('daily-body', 11, [], null, '加载失败');
+    fillTable('daily-body', 9, [], null, '加载失败');
   }
 }
 async function refreshTurns() {
@@ -1007,7 +910,7 @@ async function refreshTurns() {
   } catch (e) {
     if (!isCurrent('turns', ticket)) return;
     sectionError('turn-err', '对话明细加载失败：' + e.message);
-    fillTable('turn-body', 11, [], null, '加载失败');
+    fillTable('turn-body', 8, [], null, '加载失败');
   }
 }
 async function refreshCalls() {
@@ -1021,7 +924,7 @@ async function refreshCalls() {
   } catch (e) {
     if (!isCurrent('calls', ticket)) return;
     sectionError('calls-err', '调用日志加载失败：' + e.message);
-    fillTable('calls-body', 12, [], null, '加载失败');
+    fillTable('calls-body', 8, [], null, '加载失败');
   }
 }
 
@@ -1036,14 +939,13 @@ function refreshWindowTables() {
 async function refreshHealth() {
   try {
     var h = await api('/api/health');
-    if (!h.dbExists) {
-      showWinError('未找到本机 runtime 用量数据库（该 Mini App 需要在记录过用量的 MiniMax Code 数据目录上运行）。');
-      return;
-    }
     $('page-foot').textContent =
-      '口径：总 tokens = 输入 + 输出 + 推理 + 缓存读 + 缓存写；命中率 = 缓存读 / (缓存读 + 输入)；输出速率 = 输出 tokens ÷ decode 时长（首 token 到流结束，MiniMax Code 同口径）；对话明细以一次提问（turn）为单位，实时读取、无需关闭会话。' +
-      '数据源：runtime sqlite（' + fmt.format(h.usageRows == null ? 0 : h.usageRows) + ' 行，只读）· Node ' + h.runtime.node +
-      (h.runtime.queryMode === 'child' ? ' · 子进程查询' : '') + '。';
+      '口径：总 tokens = 输入 + 输出 + 缓存读 + 缓存写；命中率 = 缓存读 / (缓存读 + 输入)；对话明细以一次提问（turn）为单位，实时读取、无需关闭会话。' +
+      '数据源：MiniMax Code 自己写下的会话记录文件（v2/sessions/**/messages.jsonl，只读；本次已扫描 ' + fmt.format(h.files) + ' 个文件 / ' +
+      fmt.format(h.calls) + ' 次调用）。不打开宿主内部数据库、观测日志与配置，因此本页不提供 token 速率、也不显示任何工作区路径。';
+    if (!h.files) {
+      showWinError('未找到本机会话记录文件：该 Mini App 需要运行在写过会话的本机 MiniMax Code 数据目录上。');
+    }
   } catch (e) {
     // health is advisory only
   }
@@ -1139,7 +1041,6 @@ $('calls-limit').addEventListener('change', refreshCalls);
 
 /* line toggle chips */
 bindLineToggle('flt-hit', function () { return showHit; }, function (v) { showHit = v; });
-bindLineToggle('flt-rate', function () { return showRate; }, function (v) { showRate = v; });
 
 /* ---------- ask agent ---------- */
 (function setupAskAgent() {
@@ -1156,7 +1057,7 @@ bindLineToggle('flt-rate', function () { return showRate; }, function (v) { show
     var text = '请分析我在 ' + label + ' 的 token 用量（token-meter 数据）' +
       (kpis
         ? '：总 tokens ' + fmt.format(kpis.totalTokens) + '、调用 ' + fmt.format(kpis.calls) + ' 次、缓存命中率 ' + pct(kpis.cacheHitRate) +
-          '、输出速率 ' + rateFmt(kpis.outputRate) + ' tok/s。重点看看缓存命中率是否还有优化空间，以及哪个模型消耗最多。'
+          '、对话 ' + fmt.format(kpis.turns || 0) + ' 次。重点看看缓存命中率是否还有优化空间，以及哪个模型消耗最多。'
         : '。');
     btn.disabled = true;
     try {

@@ -1,454 +1,494 @@
-// token-meter-board query layer: windowed usage aggregations shared by the HTTP
-// routes (in-process) and the child-process fallback (db-child.mjs). All reads
-// are read-only against the MiniMax Code runtime state.
+// @ts-check
+// token-meter-board queries.
 //
-// Rate methodology (v1.5): token 输出速率 与 MiniMax Code 界面同口径 ——
-// 单次成功调用为 输出 tokens ÷ decode 时长（首 token 到流结束，取自 assistant
-// 消息的 usage.decode_duration_ms）；跨调用的聚合一律为 Σ输出 ÷ Σdecode 耗时
-//（时间加权），不使用逐次算术平均。没有 decode 记录的老数据不参与，避免被口径
-// 外的数值稀释。decode > request 的调用不计入聚合：它等价于首 token 早于请求发起，
-// 说明两个时间戳来自不同尝试（实测仅出现在 finish=toolUse，2674 次里 6 次），
-// 其 decode 物理上不可能更长，会灌大分母。逐次值仍照常展示。
-import fs from 'node:fs';
-import {
-  openDb,
-  queryUsageRows,
-  loadCatalog,
-  loadTurnEnrichment,
-  buildLedgerWithDb,
-  loadTurnMessageMeta,
-  syncMessageFacts,
-  meanCallRate,
-  rateStats,
-  requestRateStats,
-  countRatedCalls,
-  emptyMetrics,
-  addRow,
-  finalize,
-  sortGroups,
-  dayKey,
-  clampInt,
-} from './common.mjs';
-import { resolveTrendWindow, buildTrendFromContext } from './trend.mjs';
-
-export const NOTES = [
-  'cacheHitRate = cacheReadTokens / (cacheReadTokens + inputTokens)，表示提示词中命中缓存的比例；cacheWriteTokens 不计入分母。',
-  'totalTokens = input + output + reasoning + cacheRead + cacheWrite。',
-  'token 输出速率（token/s）与 MiniMax Code 界面显示的口径完全一致：单次调用的 输出 tokens ÷ decode 时长（首 token 到流结束），窗口值为 Σ输出 ÷ Σdecode 耗时（按耗时加权），并附 P50/P90 供分布参考。',
-  'costUsd 为 runtime 记录值；自定义套餐/订阅类提供商通常为 0，不代表实际账单。',
-  '请求全程速率（对照列）= 输出 tokens ÷ request_duration_ms（发起请求到流结束），与输出速率的差值即首字等待与排队；decode > request 的调用（首 token 早于请求发起、时间戳来自不同尝试）不计入输出速率聚合，逐次值仍展示。',
-  'model 字段由 runtime 日志 llm_response_identifiers 按 turn 补全（按小时文件名覆盖整个窗口）；仍为 unknown 的记录早于日志保留期。',
-  '对话明细：每行是一次完整对话，即用户发送一条消息后，模型经过若干次调用直至给出最终回答（turn_id 即该单位）；实时读取，无需等待会话结束。状态分为已完成（末条 finish_reason=stop）、未收尾（末条仍为 toolUse 等）与进行中（尚无 assistant 消息）。',
-  '对话明细会显示该轮用户消息原文的前 200 字，仅在本机页面内展示，不出网、不落盘。',
-  '统计范围限于本机 runtime 数据库当前保留的数据；早于该保留期的历史不会出现在本表中。',
-];
-
-// Open the DB and load the window rows plus the per-call ledger (identity,
-// decode timing, response status).
+// Every number comes from the session records read by lib/sessions.mjs. There
+// is no runtime database, no observability log and no Host configuration in
+// this file, and therefore no token rate and no workspace path: the session
+// records do not carry durations or paths.
 //
-// The derived context is cached for a few seconds, so the endpoints that
-// describe the same window — trend, call log and conversation list — share one
-// scan instead of each repeating it. That is what keeps a window switch from
-// queueing three expensive passes behind each other.
-//
-// The cache key includes the data directory: the same time window against two
-// different runtime databases is two different contexts, and keying on the
-// window alone would let one answer the other.
-const CONTEXT_TTL_MS = 3000;
-const contextCache = new Map();
+// A call is identified by its message id and de-duplicated globally, because a
+// rebuilt session copies its earlier messages into the new session file.
 
-function contextKey(dataDir, startMs, endMs) {
-  return `${dataDir}|${startMs}|${endMs}`;
+import { SessionStore, dayKey } from './sessions.mjs';
+
+/** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
+
+/** How long an aggregate stays valid before it is rebuilt. */
+const AGGREGATE_TTL_MS = 3000;
+/** How often the transcript files are re-read. */
+const SCAN_TTL_MS = 3000;
+
+/** @type {SessionStore | null} */
+let store = null;
+
+/**
+ * @param {MiniAppContext} context
+ * @returns {SessionStore}
+ */
+export function getStore(context) {
+  if (!store) store = new SessionStore(context);
+  return store;
 }
 
-function loadSessionTitles(db) {
-  const titles = new Map();
-  try {
-    for (const r of db.prepare('SELECT session_id, title, agent_name, workspace_dir FROM local_runtime_sessions').all()) {
-      titles.set(r.session_id, r);
+/** Reset the module-level store (used by tests and on dispose). */
+export function resetStore() {
+  store = null;
+}
+
+/**
+ * Persist the scan cursor so the next start resumes instead of re-reading
+ * every transcript.
+ * @param {boolean} force
+ */
+export async function saveStore(force = true) {
+  if (store) await store.save(force);
+}
+
+/**
+ * Make sure the transcripts are read up to date.
+ * @param {MiniAppContext} context
+ * @param {number} now
+ */
+export async function ensureScanned(context, now = Date.now()) {
+  const current = getStore(context);
+  if (!current.ready) await current.init();
+  if (now - current.scannedAt > SCAN_TTL_MS) await current.scan();
+  return current;
+}
+
+/** @param {unknown} value */
+export function clampInt(value, min, max, fallback) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Parse a local "YYYY-MM-DDTHH:MM" stamp.
+ * @param {unknown} value
+ */
+export function parseLocalDateTime(value) {
+  const m = String(value ?? '')
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0), 0);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
+/**
+ * Resolve a query window: an explicit local start/end pair, or a trailing
+ * number of days that includes today.
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown}} args
+ * @param {number} now
+ */
+export function resolveWindow(args = {}, now = Date.now()) {
+  const startMs = parseLocalDateTime(args.startAt);
+  if (startMs != null) {
+    const endRaw = args.endAt != null ? parseLocalDateTime(args.endAt) : now;
+    if (endRaw == null) throw new Error('invalid endAt; expect local "YYYY-MM-DDTHH:MM"');
+    const endMs = Math.min(endRaw, now);
+    if (endMs <= startMs) throw new Error('endAt must be after startAt');
+    return { startMs, endMs, label: `${dayKey(startMs)}..${dayKey(endMs)}` };
+  }
+  const days = clampInt(args.days ?? 7, 1, 400, 7);
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const start = todayStart.getTime() - (days - 1) * 86400000;
+  return { startMs: start, endMs: now, label: days === 1 ? dayKey(start) : `${dayKey(start)}..${dayKey(now)}` };
+}
+
+/**
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {unknown} requested
+ */
+export function pickBucket(startMs, endMs, requested) {
+  const spanMin = (endMs - startMs) / 60000;
+  let bucket = requested && requested !== 'auto' ? String(requested) : spanMin <= 360 ? 'minute' : spanMin <= 7 * 24 * 60 ? 'hour' : 'day';
+  const spanMs = Math.max(endMs - startMs, 1);
+  const approx = (b) => Math.ceil(spanMs / (b === 'minute' ? 60000 : b === 'hour' ? 3600000 : 86400000));
+  if (approx(bucket) > 600) bucket = bucket === 'minute' ? 'hour' : 'day';
+  return bucket;
+}
+
+/**
+ * @param {number} ts
+ * @param {string} bucket
+ */
+export function bucketFloor(ts, bucket) {
+  const d = new Date(ts);
+  if (bucket === 'minute') d.setSeconds(0, 0);
+  else if (bucket === 'hour') d.setMinutes(0, 0, 0);
+  else d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * @param {number} ms
+ * @param {string} bucket
+ * @param {boolean} multiDay
+ */
+export function bucketLabel(ms, bucket, multiDay) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  if (bucket === 'day') return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  if (multiDay) return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Cache the aggregate for the current window. */
+/** @type {{key: string, at: number, agg: any}} */
+let aggregateCache = { key: '', at: 0, agg: null };
+
+/**
+ * @param {SessionStore} current
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {number} now
+ */
+function aggregateCached(current, startMs, endMs, now) {
+  const key = `${startMs}|${endMs}|${current.scannedAt}`;
+  if (aggregateCache.key === key && now - aggregateCache.at < AGGREGATE_TTL_MS) return aggregateCache.agg;
+  const agg = current.aggregate(startMs, endMs);
+  aggregateCache = { key, at: now, agg };
+  return agg;
+}
+
+/** @param {any} bucket */
+function hitRate(bucket) {
+  const denom = (bucket.cacheRead || 0) + (bucket.input || 0);
+  if (!denom) return null;
+  return (bucket.cacheRead || 0) / denom;
+}
+
+/** @param {number} ms */
+function isoLocal(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * A turn's status, derived from the stop reason of its last assistant call.
+ * @param {any} turn
+ */
+function turnStatus(turn) {
+  if (turn.calls === 0) return 'pending';
+  if (turn.lastStop === 3) return 'aborted';
+  if (turn.lastStop === 2) return 'unfinished';
+  if (turn.lastStop === 1) return 'completed';
+  return 'unfinished';
+}
+
+/**
+ * The window view: KPIs, a per-model share and a bucketed trend.
+ * @param {MiniAppContext} context
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown, bucket?: unknown, fillEmpty?: unknown}} args
+ * @param {number} now
+ */
+export async function queryWindow(context, args, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const { startMs, endMs } = resolveWindow(args, now);
+  const agg = aggregateCached(current, startMs, endMs, now);
+  const bucket = pickBucket(startMs, endMs, args.bucket);
+  const multiDay = dayKey(startMs) !== dayKey(endMs);
+
+  /** @type {Map<string, any>} */
+  const buckets = new Map();
+  const ensureBucket = (ts) => {
+    const key = String(bucketFloor(ts, bucket));
+    let entry = buckets.get(key);
+    if (!entry) {
+      entry = {
+        key,
+        label: bucketLabel(bucketFloor(ts, bucket), bucket, multiDay),
+        calls: 0,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+        cost: 0,
+        models: new Map(),
+      };
+      buckets.set(key, entry);
     }
-  } catch {
-    // titles optional
+    return entry;
+  };
+  for (const call of agg.calls) {
+    const entry = ensureBucket(call.ts);
+    entry.calls += 1;
+    entry.input += call.input;
+    entry.output += call.output;
+    entry.cacheRead += call.cacheRead;
+    entry.cacheWrite += call.cacheWrite;
+    entry.total += call.total;
+    entry.cost += call.cost;
+    entry.models.set(call.model, (entry.models.get(call.model) ?? 0) + call.total);
   }
-  return titles;
-}
 
-export function openContext(dataDir, startMs, endMs, now = Date.now()) {
-  const key = contextKey(dataDir, startMs, endMs);
-  const hit = contextCache.get(key);
-  if (hit && now - hit.at < CONTEXT_TTL_MS) return hit.ctx;
+  const ordered = [...buckets.values()].sort((a, b) => Number(a.key) - Number(b.key));
+  const models = [...agg.byModel.entries()]
+    .map(([model, bucketValue]) => ({
+      key: model,
+      model,
+      modelName: model,
+      providerName: '',
+      custom: false,
+      totalTokens: bucketValue.total,
+    }))
+    .sort((a, b) => b.totalTokens - a.totalTokens);
+  const topModels = models.slice(0, 6);
 
-  const { db, error } = openDb(dataDir);
-  if (!db) {
-    const err = new Error(error || `runtime state database unavailable under ${dataDir}`);
-    err.code = 'NO_DB';
-    throw err;
+  const labels = ordered.map((b) => b.label);
+  const tokensByModel = {};
+  for (const model of topModels) {
+    tokensByModel[model.key] = ordered.map((b) => b.models.get(model.key) ?? 0);
   }
-  try {
-    const rows = queryUsageRows(db, startMs, endMs);
-    const catalog = loadCatalog(dataDir);
-    const { map: enrichment, filesScanned } = loadTurnEnrichment(dataDir, startMs, { now });
-    // Message facts are extracted once per process and reused; this only picks
-    // up rows appended since the last query.
-    const store = syncMessageFacts(db, dataDir, { now });
-    const ledger = buildLedgerWithDb(db, rows, enrichment, catalog, store);
-    const turnMeta = loadTurnMessageMeta(rows, store);
-    const titles = loadSessionTitles(db);
-    const meta = {
-      dataDir,
-      window: {
-        label: `${dayKey(startMs)}..${dayKey(endMs)}`,
-        start: new Date(startMs).toISOString(),
-        end: new Date(endMs).toISOString(),
+  const cacheHitRate = ordered.map((b) => {
+    const denom = b.cacheRead + b.input;
+    return denom ? b.cacheRead / denom : null;
+  });
+
+  const totals = agg.totals;
+  return {
+    trend: {
+      window: { start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), bucket },
+      meta: { rows: totals.calls, generatedAt: now },
+      kpis: {
+        totalTokens: totals.total,
+        calls: totals.calls,
+        cacheHitRate: hitRate(totals),
+        activeModels: agg.byModel.size,
+        inputTokens: totals.input,
+        outputTokens: totals.output,
+        cacheReadTokens: totals.cacheRead,
+        cacheWriteTokens: totals.cacheWrite,
+        turns: agg.byTurn.size,
+        sessions: agg.bySession.size,
+        cost: totals.cost,
       },
-      rows: rows.length,
-      rateMeasured: countRatedCalls(ledger),
-      rate: rateStats(ledger),
-      requestRate: requestRateStats(ledger),
-      logFilesScanned: filesScanned,
-      turnsEnriched: enrichment.size,
-      generatedAt: new Date(now).toISOString(),
-    };
-    const ctx = { rows, catalog, enrichment, ledger, turnMeta, titles, filesScanned, dataDir, meta };
-    contextCache.set(key, { at: now, ctx });
-    if (contextCache.size > 32) {
-      const oldest = contextCache.keys().next().value;
-      if (oldest !== key) contextCache.delete(oldest);
-    }
-    return ctx;
-  } finally {
-    db.close();
-  }
-}
-
-export function groupByModel(ctx) {
-  const groups = new Map();
-  const total = emptyMetrics();
-  let unknownRows = 0;
-  for (const call of ctx.ledger) {
-    if (call.model === '(unknown)') unknownRows += 1;
-    const key = `${call.provider}|${call.model}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        provider: call.provider,
-        providerName: call.providerName,
-        model: call.model,
-        modelName: call.modelName,
-        custom: call.custom,
-        metrics: emptyMetrics(),
-        callList: [],
-      });
-    }
-    const g = groups.get(key);
-    addRow(g.metrics, call);
-    g.callList.push(call);
-    addRow(total, call);
-  }
-  const byModel = sortGroups(
-    [...groups.values()].map((g) => ({
-      ...g,
-      ...finalize(g.metrics),
-      outputRate: meanCallRate(g.callList),
-      metrics: undefined,
-      callList: undefined,
-    })),
-  );
-  return { byModel, total: finalize(total), unknownRows };
-}
-
-function summaryFromContext(ctx) {
-  const { byModel, total, unknownRows } = groupByModel(ctx);
-  return {
-    window: ctx.meta.window,
-    total: { ...total, outputRate: meanCallRate(ctx.ledger), rate: rateStats(ctx.ledger), rateMeasured: ctx.meta.rateMeasured },
-    byModel,
-    unknownRows,
-    notes: NOTES,
-    meta: ctx.meta,
+      models: topModels,
+      series: {
+        labels,
+        tokensByModel,
+        cacheHitRate,
+        calls: ordered.map((b) => b.calls),
+        totalTokens: ordered.map((b) => b.total),
+      },
+      unknownRows: 0,
+    },
+    summary: {
+      byModel: [...agg.byModel.entries()]
+        .map(([model, bucketValue]) => ({
+          model,
+          modelName: model,
+          provider: '',
+          providerName: '',
+          custom: false,
+          calls: bucketValue.calls,
+          inputTokens: bucketValue.input,
+          outputTokens: bucketValue.output,
+          cacheReadTokens: bucketValue.cacheRead,
+          cacheWriteTokens: bucketValue.cacheWrite,
+          totalTokens: bucketValue.total,
+          cacheHitRate: hitRate(bucketValue),
+        }))
+        .sort((a, b) => b.totalTokens - a.totalTokens),
+    },
   };
 }
 
-// summary: window (startAt/endAt minute precision, or days) grouped by provider/model.
-export function querySummary({ dataDir, startAt, endAt, days }, now = Date.now()) {
-  const { startMs, endMs } = resolveTrendWindow({ startAt, endAt, days }, now);
-  const ctx = openContext(dataDir, startMs, endMs, now);
-  return summaryFromContext(ctx);
+/**
+ * Per-model breakdown for the window.
+ * @param {MiniAppContext} context
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown}} args
+ * @param {number} now
+ */
+export async function queryModels(context, args, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const { startMs, endMs } = resolveWindow(args, now);
+  const agg = aggregateCached(current, startMs, endMs, now);
+  return {
+    byModel: [...agg.byModel.entries()]
+      .map(([model, bucketValue]) => ({
+        model,
+        modelName: model,
+        provider: '',
+        providerName: '',
+        custom: false,
+        calls: bucketValue.calls,
+        inputTokens: bucketValue.input,
+        outputTokens: bucketValue.output,
+        cacheReadTokens: bucketValue.cacheRead,
+        cacheWriteTokens: bucketValue.cacheWrite,
+        totalTokens: bucketValue.total,
+        cacheHitRate: hitRate(bucketValue),
+      }))
+      .sort((a, b) => b.totalTokens - a.totalTokens),
+  };
 }
 
-// window: trend + summary over a single DB/log scan (one enrichment pass).
-export function queryWindow({ dataDir, startAt, endAt, days, bucket, fillEmpty }, now = Date.now()) {
-  const { startMs, endMs } = resolveTrendWindow({ startAt, endAt, days }, now);
-  const ctx = openContext(dataDir, startMs, endMs, now);
-  const trend = buildTrendFromContext(ctx, { startMs, endMs, bucket, fillEmpty, now });
-  const summary = summaryFromContext(ctx);
-  return { trend, summary };
+/**
+ * Sessions ranked by usage. Only the session id and its own title are shown:
+ * no workspace path is ever read, so none can be shown.
+ * @param {MiniAppContext} context
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown, limit?: unknown}} args
+ * @param {number} now
+ */
+export async function querySessions(context, args, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const { startMs, endMs } = resolveWindow(args, now);
+  const agg = aggregateCached(current, startMs, endMs, now);
+  const limit = clampInt(args.limit ?? 50, 1, 500, 50);
+  const rows = [...agg.bySession.values()]
+    .map((session) => ({
+      sessionId: session.sessionId,
+      title: session.title || session.sessionId,
+      calls: session.calls,
+      inputTokens: session.input,
+      outputTokens: session.output,
+      cacheReadTokens: session.cacheRead,
+      cacheWriteTokens: session.cacheWrite,
+      totalTokens: session.total,
+      cacheHitRate: hitRate(session),
+      turns: session.turns.size,
+      firstActivity: new Date(session.firstTs).toISOString(),
+      lastActivity: new Date(session.lastTs).toISOString(),
+      byModel: [...session.models.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([model, tokens]) => ({ model, modelName: model, totalTokens: tokens })),
+    }))
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+    .slice(0, limit);
+  return { sessions: rows };
 }
 
-// calls: the per-call ledger for the window, newest first (调用日志).
-export function queryCalls({ dataDir, startAt, endAt, days, limit }, now = Date.now()) {
-  const lim = clampInt(limit, 1, 1000, 200);
-  const { startMs, endMs } = resolveTrendWindow({ startAt, endAt, days: days ?? 1 }, now);
-  const ctx = openContext(dataDir, startMs, endMs, now);
-  const calls = ctx.ledger
-    .slice()
-    .sort((a, b) => b.ts - a.ts)
-    .slice(0, lim)
-    .map((c) => ({
-      ts: c.ts,
-      time: new Date(c.ts).toISOString(),
-      sessionId: c.sessionId,
-      agentName: c.agentName,
-      turnId: c.turnId,
-      provider: c.provider,
-      providerName: c.providerName,
-      model: c.model,
-      modelName: c.modelName,
-      custom: c.custom,
-      inputTokens: c.input_tokens,
-      outputTokens: c.output_tokens,
-      reasoningTokens: c.reasoning_tokens,
-      cacheReadTokens: c.cache_read_tokens,
-      cacheWriteTokens: c.cache_write_tokens,
-      totalTokens:
-        c.input_tokens + c.output_tokens + c.reasoning_tokens + c.cache_read_tokens + c.cache_write_tokens,
-      decodeMs: c.decodeMs,
-      requestMs: c.requestMs,
-      status: c.status,
-      finishReason: c.finishReason,
-      outputRate: c.rate,
-      requestRate: c.requestRate,
+/**
+ * One row per local day.
+ * @param {MiniAppContext} context
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown}} args
+ * @param {number} now
+ */
+export async function queryDaily(context, args, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const { startMs, endMs } = resolveWindow(args, now);
+  const agg = aggregateCached(current, startMs, endMs, now);
+  const rows = [...agg.byDay.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([day, bucketValue]) => ({
+      day,
+      total: {
+        calls: bucketValue.calls,
+        inputTokens: bucketValue.input,
+        outputTokens: bucketValue.output,
+        cacheReadTokens: bucketValue.cacheRead,
+        cacheWriteTokens: bucketValue.cacheWrite,
+        totalTokens: bucketValue.total,
+        cacheHitRate: hitRate(bucketValue),
+      },
+      byModel: [...bucketValue.models.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([model, tokens]) => ({ model, modelName: model, totalTokens: tokens })),
     }));
-  return {
-    window: ctx.meta.window,
-    calls,
-    totalCalls: ctx.ledger.length,
-    rateMeasured: ctx.meta.rateMeasured,
-    rate: ctx.meta.rate,
-    requestRate: ctx.meta.requestRate,
-    notes: NOTES,
-    meta: ctx.meta,
-  };
+  return { days: rows };
 }
 
-// turns: one row per conversation — a single user message plus however many
-// model calls the agent needed before answering. Read live from the database, so
-// it works while the conversation is still running and never waits for SessionEnd.
-//
-// Rate uses the same basis as the KPI (Σoutput ÷ Σdecode); wall-clock span is
-// reported separately as 时长 and is deliberately NOT used as the denominator,
-// otherwise a long conversation with a slow tail would read as a slow model.
-export function queryTurns({ dataDir, startAt, endAt, days, limit }, now = Date.now()) {
-  const lim = clampInt(limit, 1, 500, 120);
-  const { startMs, endMs } = resolveTrendWindow({ startAt, endAt, days: days ?? 1 }, now);
-  const ctx = openContext(dataDir, startMs, endMs, now);
-  const byTurn = new Map();
-  for (const call of ctx.ledger) {
-    if (!call.turnId) continue;
-    if (!byTurn.has(call.turnId)) {
-      byTurn.set(call.turnId, {
-        total: emptyMetrics(),
-        calls: [],
-        firstTs: call.ts,
-        lastCallTs: call.ts,
-        groups: new Map(),
-        sessionId: call.sessionId,
-        agentName: call.agentName || null,
-      });
-    }
-    const t = byTurn.get(call.turnId);
-    t.firstTs = Math.min(t.firstTs, call.ts);
-    t.lastCallTs = Math.max(t.lastCallTs, call.ts);
-    addRow(t.total, call);
-    t.calls.push(call);
-    const gk = `${call.provider}|${call.model}`;
-    if (!t.groups.has(gk)) {
-      t.groups.set(gk, {
-        provider: call.provider,
-        providerName: call.providerName,
-        model: call.model,
-        modelName: call.modelName,
-        custom: call.custom,
-        metrics: emptyMetrics(),
-        callList: [],
-      });
-    }
-    const g = t.groups.get(gk);
-    addRow(g.metrics, call);
-    g.callList.push(call);
+/**
+ * One row per conversation turn.
+ * @param {MiniAppContext} context
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown, limit?: unknown}} args
+ * @param {number} now
+ */
+export async function queryTurns(context, args, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const { startMs, endMs } = resolveWindow(args, now);
+  const agg = aggregateCached(current, startMs, endMs, now);
+  const limit = clampInt(args.limit ?? 100, 1, 1000, 100);
+  const rows = [...agg.byTurn.values()]
+    .sort((a, b) => b.lastTs - a.lastTs)
+    .slice(0, limit);
+  const counts = { completed: 0, unfinished: 0, pending: 0, aborted: 0 };
+  for (const turn of agg.byTurn.values()) {
+    const status = turnStatus(turn);
+    if (counts[status] != null) counts[status] += 1;
   }
-
-  const allTurns = [...byTurn.entries()]
-    .map(([turnId, t]) => {
-      const meta = ctx.turnMeta.get(turnId) || null;
-      const startedMs = meta?.userTs != null ? Math.min(meta.userTs, t.firstTs) : t.firstTs;
-      const endedMs = meta?.lastTs != null ? meta.lastTs : null;
-      const finished = endedMs != null && (meta?.assistantCount || 0) > 0;
-      let status = 'pending';
-      if (finished) status = meta.finishReason === 'stop' ? 'completed' : 'unfinished';
-      const models = sortGroups(
-        [...t.groups.values()].map((g) => ({
-          ...g,
-          ...finalize(g.metrics),
-          outputRate: meanCallRate(g.callList),
-          metrics: undefined,
-          callList: undefined,
-        })),
-      );
-      const metrics = finalize(t.total);
-      return {
-        turnId,
-        sessionId: t.sessionId,
-        sessionTitle: ctx.titles.get(t.sessionId)?.title || null,
-        agentName: t.agentName,
-        startedAt: new Date(startedMs).toISOString(),
-        endedAt: endedMs != null ? new Date(endedMs).toISOString() : null,
-        durationMs: endedMs != null ? endedMs - startedMs : null,
-        status,
-        finishReason: meta?.finishReason || null,
-        userPreview: meta?.userPreview || null,
-        ...metrics,
-        outputRate: meanCallRate(t.calls),
-        rate: rateStats(t.calls),
-        byModel: models,
-      };
-    })
-    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
-
-  // The status breakdown covers EVERY turn in the window, not only the rows
-  // that survive the `limit` slice. Counting the slice instead made the
-  // headline ("本次窗口共 N 次对话（已完成 X · 未收尾 Y · 进行中 Z）") add up
-  // to less than N as soon as the window held more turns than the limit.
-  const counts = { completed: 0, unfinished: 0, pending: 0 };
-  for (const t of allTurns) counts[t.status] = (counts[t.status] || 0) + 1;
-
-  const turns = allTurns.slice(0, lim);
-
   return {
-    window: ctx.meta.window,
-    turns,
-    totalTurns: byTurn.size,
+    turns: rows.map((turn) => ({
+      turnId: turn.turnId,
+      sessionId: turn.sessionId,
+      sessionTitle: turn.title || turn.sessionId,
+      status: turnStatus(turn),
+      startedAt: new Date(turn.firstTs).toISOString(),
+      finishedAt: new Date(turn.lastTs).toISOString(),
+      calls: turn.calls,
+      inputTokens: turn.input,
+      outputTokens: turn.output,
+      cacheReadTokens: turn.cacheRead,
+      cacheWriteTokens: turn.cacheWrite,
+      totalTokens: turn.total,
+      cacheHitRate: hitRate(turn),
+      byModel: [...turn.models].map((model) => ({ model, modelName: model })),
+    })),
     counts,
-    notes: NOTES,
-    meta: ctx.meta,
+    totalTurns: agg.byTurn.size,
   };
 }
 
-// sessions: per-session aggregation over the window, newest activity first.
-// outputRate = the session's weighted decode rate (Σ output ÷ Σ decode).
-export function querySessions({ dataDir, startAt, endAt, days, limit }, now = Date.now()) {
-  const lim = clampInt(limit, 1, 50, 10);
-  const { startMs, endMs } = resolveTrendWindow({ startAt, endAt, days: days ?? 30 }, now);
-  const ctx = openContext(dataDir, startMs, endMs, now);
-  const bySession = new Map();
-  for (const call of ctx.ledger) {
-    if (!bySession.has(call.sessionId)) {
-      bySession.set(call.sessionId, {
-        total: emptyMetrics(),
-        firstTs: call.ts,
-        lastTs: call.ts,
-        groups: new Map(),
-        calls: [],
-        agentName: call.agentName || null,
-      });
-    }
-    const s = bySession.get(call.sessionId);
-    s.firstTs = Math.min(s.firstTs, call.ts);
-    s.lastTs = Math.max(s.lastTs, call.ts);
-    addRow(s.total, call);
-    s.calls.push(call);
-    const gk = `${call.provider}|${call.model}`;
-    if (!s.groups.has(gk)) {
-      s.groups.set(gk, {
-        provider: call.provider,
-        providerName: call.providerName,
-        model: call.model,
-        modelName: call.modelName,
-        custom: call.custom,
-        metrics: emptyMetrics(),
-        callList: [],
-      });
-    }
-    const g = s.groups.get(gk);
-    addRow(g.metrics, call);
-    g.callList.push(call);
-  }
-  const sessions = [...bySession.entries()]
-    .map(([sessionId, s]) => {
-      const info = ctx.titles.get(sessionId);
-      const models = sortGroups(
-        [...s.groups.values()].map((g) => ({
-          ...g,
-          ...finalize(g.metrics),
-          outputRate: meanCallRate(g.callList),
-          metrics: undefined,
-          callList: undefined,
-        })),
-      );
-      const metrics = finalize(s.total);
-      return {
-        sessionId,
-        title: info?.title || null,
-        agentName: s.agentName || info?.agent_name || null,
-        workspaceDir: info?.workspace_dir || null,
-        firstActivity: new Date(s.firstTs).toISOString(),
-        lastActivity: new Date(s.lastTs).toISOString(),
-        ...metrics,
-        outputRate: meanCallRate(s.calls),
-        rate: rateStats(s.calls),
-        byModel: models,
-      };
-    })
-    .sort((a, b) => (a.lastActivity < b.lastActivity ? 1 : -1))
-    .slice(0, lim);
-  return { window: ctx.meta.window, sessions, notes: NOTES, meta: ctx.meta };
+/**
+ * One row per call, newest first.
+ * @param {MiniAppContext} context
+ * @param {{startAt?: unknown, endAt?: unknown, days?: unknown, limit?: unknown}} args
+ * @param {number} now
+ */
+export async function queryCalls(context, args, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const { startMs, endMs } = resolveWindow(args, now);
+  const agg = aggregateCached(current, startMs, endMs, now);
+  const limit = clampInt(args.limit ?? 200, 1, 2000, 200);
+  const rows = [...agg.calls]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, limit);
+  return {
+    calls: rows.map((call) => ({
+      ts: call.ts,
+      time: isoLocal(call.ts),
+      turnId: call.turn,
+      sessionId: '',
+      model: call.model,
+      modelName: call.model,
+      provider: '',
+      custom: false,
+      inputTokens: call.input,
+      outputTokens: call.output,
+      cacheReadTokens: call.cacheRead,
+      cacheWriteTokens: call.cacheWrite,
+      totalTokens: call.total,
+      stopReason: call.stop,
+    })),
+  };
 }
 
-// daily: day x model aggregation over the trailing N days.
-// outputRate = the day's weighted decode rate (Σ output ÷ Σ decode).
-export function queryDaily({ dataDir, days }, now = Date.now()) {
-  const n = clampInt(days, 1, 90, 7);
-  const { startMs, endMs } = resolveTrendWindow({ days: n }, now);
-  const ctx = openContext(dataDir, startMs, endMs, now);
-  const byDay = new Map();
-  for (const call of ctx.ledger) {
-    const key = dayKey(call.ts);
-    if (!byDay.has(key)) byDay.set(key, { total: emptyMetrics(), groups: new Map(), calls: [] });
-    const day = byDay.get(key);
-    addRow(day.total, call);
-    day.calls.push(call);
-    const gk = `${call.provider}|${call.model}`;
-    if (!day.groups.has(gk)) {
-      day.groups.set(gk, {
-        provider: call.provider,
-        providerName: call.providerName,
-        model: call.model,
-        modelName: call.modelName,
-        custom: call.custom,
-        metrics: emptyMetrics(),
-        callList: [],
-      });
-    }
-    const g = day.groups.get(gk);
-    addRow(g.metrics, call);
-    g.callList.push(call);
-  }
-  const daysOut = [...byDay.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([day, v]) => {
-      const total = finalize(v.total);
-      return {
-        day,
-        total: { ...total, outputRate: meanCallRate(v.calls), rate: rateStats(v.calls) },
-        byModel: sortGroups(
-          [...v.groups.values()].map((g) => ({
-            ...g,
-            ...finalize(g.metrics),
-            outputRate: meanCallRate(g.callList),
-            metrics: undefined,
-            callList: undefined,
-          })),
-        ),
-      };
-    });
-  return { window: ctx.meta.window, days: daysOut, notes: NOTES, meta: ctx.meta };
+/**
+ * A short description of the scan. No absolute path is returned.
+ * @param {MiniAppContext} context
+ * @param {number} now
+ */
+export async function queryHealth(context, now = Date.now()) {
+  const current = await ensureScanned(context, now);
+  const info = current.describe();
+  return {
+    ok: true,
+    now,
+    source: 'session-records',
+    sessionsDir: current.root ? current.root.split(/[\\/]/).pop() : '',
+    files: info.files,
+    calls: info.calls,
+    turns: info.turns,
+    scannedAt: info.scannedAt,
+    scanMs: info.scanMs,
+    runtime: { node: process.version },
+  };
 }
