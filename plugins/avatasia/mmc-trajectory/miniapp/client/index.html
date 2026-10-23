@@ -7477,8 +7477,9 @@
        * never visited again, keeps the height it was last really measured at. Off screen the
        * browser answers with the group's own `contain-intrinsic-size`, and that number is a
        * prediction — a prediction written down as a measurement is a guess the next rebuild
-       * reads back as a fact. So a group whose height is the size it was given is left alone,
-       * and this is the same limit the build path has.
+       * reads back as a fact. So a group that reads back the size it was given is left alone
+       * here, and the observer's visit is what measures a group that happens to be laid out at
+       * exactly that height — the same limit the build path has.
        */
       function refreshLedgerMeasurements() {
         if (ledgerMeasureFrame !== null) return;
@@ -7493,8 +7494,14 @@
             var group = ledgerContent.get(section);
             if (!group) continue;
             // The size the browser answers with while a group is off screen is the size
-            // written on it, so a group that reads back exactly the number it was given is
-            // being sized rather than laid out — and what it reads is a prediction.
+            // written on it — so a group that reads back exactly the number it was given MAY
+            // be being sized rather than laid out, and what it reads is then a prediction.
+            // It is not proof of that: the first batch's own size writer puts the group's REAL
+            // height on it, so a group that is laid out reads back its own height too. What
+            // keeps the rule true is the observer: a group the reader is on is measured again
+            // by the observer's visit, and the rebuild is what re-registers that observer. A
+            // group that is neither visited nor observed keeps the height it was measured at,
+            // and that is the same limit the build path has.
             var sizes = String(section.style.containIntrinsicSize || '').match(/(-?[0-9.]+)px/g);
             if (sizes) {
               var predicted = Math.round(parseFloat(sizes[sizes.length - 1]));

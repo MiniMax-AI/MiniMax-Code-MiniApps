@@ -186,6 +186,16 @@ function makeEl(tag) {
       if (selector === ':scope > section.turn-group') {
         return el.children.filter((c) => c && c.tagName === 'SECTION' && c.classes.has('turn-group'));
       }
+      // The build's own query for the groups of its first batch that are holding their rows:
+      // it is the query that decides which groups get the height they are really at written
+      // on them. A fake DOM that answers it with an empty list leaves every group sized by a
+      // number nobody measured — and the case about a layout that changed cannot be built at
+      // all, because the number on the group and the number it reads back are then the same
+      // one for the wrong reason.
+      if (selector === '.turn-group[data-rows="live"]') {
+        return el.children.filter((c) => c && c.classes.has('turn-group')
+          && c.getAttribute('data-rows') === 'live');
+      }
       return [];
     },
     getBoundingClientRect() { return { height: 240, width: 900, top: 0, bottom: 240 }; }
@@ -230,7 +240,11 @@ function entriesOf(count, bands, prefix) {
  * time and a test that has to wait fifteen seconds to check it is a test nobody runs.
  */
 function harness() {
-  const box = { clock: 1000, built: [], sized: [], frames: [], listeners: {} };
+  // layoutHeight is the height the browser answers with for the elements the shipped code
+  // builds. It is a variable rather than a fixed number because a height is a measurement of
+  // a layout, and a case about a layout that changed has to be able to change it and then ask
+  // again — a DOM that always answers 240 px cannot hold a layout change at all.
+  const box = { clock: 1000, built: [], sized: [], frames: [], listeners: {}, layoutHeight: 240 };
   // The window the shipped code talks to. It records the handlers it is given and the frames
   // it is asked for, so a case can deliver a real event and then run the frame the handler
   // deferred its work to.
@@ -264,6 +278,13 @@ function harness() {
     el: (tag, className) => {
       const e = makeEl(tag);
       if (className) String(className).split(/\s+/).forEach((c) => { if (c) e.classes.add(c); });
+      // The height the browser answers with for this element. The fake DOM's own answer is a
+      // fixed 240 px, which is the right answer for a fixture and the wrong one for a case
+      // about a layout that changed — so the elements the shipped code builds read the
+      // harness's height instead, and a case can change it.
+      e.getBoundingClientRect = () => ({
+        height: box.layoutHeight, width: 900, top: 0, bottom: box.layoutHeight
+      });
       box.built.push(e);
       return e;
     },
@@ -342,7 +363,12 @@ function buildHarness(options) {
   s.setLedgerProgress = () => {};
   s.restoreRowAnchor = () => {};
   s.flushDeferredPoll = () => {};
-  s.watchLedgerGroups = () => {};
+  // The build re-registers the observer after every rebuild: a section from the previous table
+  // is not in `ledgerContent` any more, so an observer left pointing at the old table never
+  // sees the new one. The harness records that the call happened, and the observer's visit
+  // happens only if it did — which is what a browser does with an observer that was never
+  // pointed at the new table.
+  s.watchLedgerGroups = () => { h.observed = true; };
   s.syncStickyOffsets = () => {};
   // The same window the harness made, so a case that delivers a resize event reaches the
   // handler the client registered for it.
@@ -382,6 +408,24 @@ function rebuild(h, groups) {
 /** The section the build made for a group, by its order in the window. */
 function sectionOf(h, index) {
   return h.sandbox.ledger.children[index];
+}
+
+/**
+ * The observer's visit, the way the browser delivers it.
+ *
+ * The observer is what measures a group that is really laid out, and the build is what points
+ * it at the new table. So the visit happens only if the build called the watcher — and when it
+ * did not, the observer is still pointing at the previous table, the group the reader is on is
+ * never measured again, and the height it keeps is the height of a layout that is gone.
+ *
+ * @param {object} h the harness
+ * @param {object} section the group the reader is on
+ * @returns {boolean} whether the observer was there to deliver the visit
+ */
+function observeGroups(h, section) {
+  if (!h.observed) return false;
+  h.sandbox.fillLedgerGroup(section);
+  return true;
 }
 
 /* ---------- 1. the rows of a group the reader is not on are not built ---------- */
@@ -1117,6 +1161,72 @@ function measureGroup(h, key, entries, bands, height) {
   // its layout has now. No numbers in the name — a control catches a rule by name.
   assert('a live group refreshes its measurement when the window is resized',
     s.ledgerState.get('k2').height === 1500);
+}
+
+/* ---------- 3l. a resize and a rebuilt observer keep the layout the group has now ---------- */
+
+/*
+ * The height a released group keeps is the height it was measured at, and a measurement is of
+ * a layout that was there then. A layout can change without the content changing — the window
+ * is resized — and then the height the group remembers describes a layout that is no longer
+ * there, and the document under the reader comes up short by exactly the difference.
+ *
+ * The refresh that a resize drives cannot fix that on its own, and the reason is the shape of
+ * the numbers. The build sizes the groups of its first batch by the height they are really
+ * at, so a group laid out at 1,500 px reads back 1,500 px — and the refresh cannot tell
+ * "laid out at 1,500 px" from "sized at 1,500 px". It reads the number it was given and skips
+ * the group, so the height the group remembers is still the old one.
+ *
+ * What keeps the rule true is the observer: the group the reader is on is measured again by
+ * the observer's visit, and the observer is re-registered by the build — a section from the
+ * previous table is not in `ledgerContent` any more. A build that stops watching leaves the
+ * reader's next visit unobserved, and the height the group keeps after that is the height of
+ * a layout that is gone.
+ *
+ * The case: eight groups of three rows; the second one laid out at 1,000 px and visited; the
+ * layout changed to 1,500 px; a rebuild, which is what re-registers the observer; the resize
+ * delivered the way the browser delivers it, with the measurement deferred to the next frame;
+ * the observer's visit; and then the reader walks through the rest of the window, so that the
+ * cap takes the group away. The height the released group keeps has to be the height its
+ * layout has now — 1,500 px, and not the 1,000 px it was measured at.
+ */
+{
+  const h = buildHarness();
+  const s = h.sandbox;
+  const n = 8;
+  const groups = [];
+  for (let i = 0; i < n; i += 1) {
+    groups.push({ turn: { index: i + 1 }, entries: entriesOf(3, 0, 'g' + i) });
+  }
+  h.clock = 1000;
+  h.layoutHeight = 1000;
+  rebuild(h, groups);
+  // The reader is on the second group, and it is laid out for real at 1,000 px.
+  s.fillLedgerGroup(sectionOf(h, 1));
+  // The layout changes and nothing about the content does: the same three rows and the same
+  // number of bands, in a box that is 500 px taller.
+  h.layoutHeight = 1500;
+  // The poll brings a rebuild, and the rebuild is what re-registers the observer.
+  h.clock += 10;
+  rebuild(h, groups);
+  // The window is resized, and the measurement it drives cannot see the change: the build
+  // sized the groups of its first batch by the height they are really at, so the number the
+  // group reads back is the number it was given.
+  for (const handler of (h.listeners.resize || [])) handler();
+  const frames = h.frames.splice(0, h.frames.length);
+  for (const frame of frames) frame();
+  // The observer's visit: the group is laid out for real, and it is measured again.
+  observeGroups(h, sectionOf(h, 1));
+  // The reader walks through the rest of the window, so the cap releases the group.
+  for (let i = 2; i < n; i += 1) {
+    h.clock += 10;
+    s.fillLedgerGroup(sectionOf(h, i));
+  }
+  const released = sectionOf(h, 1);
+  // The rule, by name: the height the released group keeps is the height its layout has now.
+  // No numbers in the name — a control catches a rule by name.
+  assert('resize and a rebuilt observer preserve the current layout through release',
+    released.style.minHeight === '1500px');
 }
 
 /* ---------- 4. the rows come back when the reader reaches the group ---------- */

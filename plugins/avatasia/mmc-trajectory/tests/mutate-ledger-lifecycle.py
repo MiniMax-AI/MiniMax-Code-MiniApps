@@ -409,6 +409,21 @@ MUTATIONS = [
        "        }\n"
        "        ledgerState.forEach(function (state, key) {\n")],
      "the window's first group keeps its rows when the clock cannot break the tie"),
+
+    # The observer is registered by the build, and the build is what re-registers it after
+    # every rebuild: a section from the previous table is not in `ledgerContent` any more, so
+    # an observer left pointing at the old table never sees the new one. A build that stops
+    # watching leaves the reader's next visit unobserved, and the height the group keeps
+    # after that is the height of a layout that is gone — the group stands 500 px shorter
+    # than the content it is holding.
+    #
+    # The refresh that a resize drives cannot cover for it: the build sized the groups of its
+    # first batch by the height they are really at, so the number the group reads back is the
+    # number it was given, and the refresh skips it as a group that is sized rather than laid
+    # out. The observer's visit is the only thing that measures it again.
+    ("the build does not observe the groups it rebuilt",
+     [("          watchLedgerGroups();\n", "")],
+     "resize and a rebuilt observer preserve the current layout through release"),
 ]
 
 original = io.open(CLIENT, encoding="utf-8", newline="").read()
