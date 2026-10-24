@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="节点画布">
+  <!-- The icon of the node canvas: three cards and the lines that carry what
+       each one made to the next. The colours are the ones the board uses for
+       the kind of data: amber for text, green for a picture, blue for a
+       video, and a line takes the colour of what flows along it. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1c212b"/>
+      <stop offset="1" stop-color="#0a0c11"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.6" fill="#ffffff" opacity="0.05"/>
+    </pattern>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="116" fill="url(#grid)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="114.5" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="3"/>
+
+  <!-- The lines first: the cards sit on top of them. -->
+  <path d="M192 150 C 222 176 184 220 214 248" fill="none" stroke="#d9a441" stroke-width="14" stroke-linecap="round"/>
+  <path d="M316 250 C 344 276 302 322 334 350" fill="none" stroke="#35b98a" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- A card that holds a text. -->
+  <g transform="translate(88 92)">
+    <rect width="104" height="104" rx="26" fill="#d9a441"/>
+    <path d="M26 36 H78 M26 54 H62 M26 72 H70" fill="none" stroke="#14161d" stroke-width="11" stroke-linecap="round"/>
+  </g>
+
+  <!-- A card that holds a picture. -->
+  <g transform="translate(212 196)">
+    <rect width="104" height="104" rx="26" fill="#35b98a"/>
+    <path d="M22 80 L46 52 L64 70 L75 57 L86 80 Z" fill="none" stroke="#14161d" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="34" cy="34" r="9" fill="#14161d"/>
+  </g>
+
+  <!-- A card that holds a video. -->
+  <g transform="translate(332 300)">
+    <rect width="104" height="104" rx="26" fill="#5a9cf0"/>
+    <path d="M38 30 L78 52 L38 74 Z" fill="none" stroke="#14161d" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/>
+  </g>
+</svg>
