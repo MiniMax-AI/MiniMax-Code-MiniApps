@@ -7,7 +7,13 @@ and the file must come back byte-for-byte identical afterwards.
 The first six are the ones that matter: together they are the ways a segment can quietly stop being
 "the text the page was searching". A dropped field, a reordered field, a different separator, no
 folding and no whitespace rule each narrow what a reader can find, and none of them throws.
+
+Every case names the rule it is about in its `expect` field, and a case counts as caught only
+when the probe reported THAT rule: a probe that went red on some other assertion has not shown
+that this guard owns this mutation.
 """
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,93 +31,195 @@ MUTATIONS = [
         "the thinking field is dropped from the search surface",
         FIELDS,
         "export const SEARCH_FIELDS = ['summary', 'text', 'result', 'toolName'];",
+        'a word in a thinking block is found',
     ),
     (
         "the fields are read in a different order",
         FIELDS,
         "export const SEARCH_FIELDS = ['summary', 'result', 'text', 'thinking', 'toolName'];",
+        "the field list is the page's, in the page's order",
     ),
     (
         "the fields are joined with nothing instead of a separator",
         "  return normaliseWhitespace(parts.join('\\n')).toLowerCase();",
         "  return normaliseWhitespace(parts.join('')).toLowerCase();",
+        'and a needle spanning two fields of one record is found, which is the point of the space',
     ),
     (
         "whitespace is not normalised, so the surface is five lines per record again",
         "  return String(value).replace(/\\s+/g, ' ').trim();",
         "  return String(value);",
+        'a record with five fields is still one line',
     ),
     (
         "the surface is not folded, so an upper-case needle finds nothing",
         "  return normaliseWhitespace(parts.join('\\n')).toLowerCase();",
         "  return normaliseWhitespace(parts.join('\\n'));",
+        'the surface is folded once, at build time',
     ),
     (
         "the needle is folded but not normalised, so what the reader typed decides the answer",
         "  return normaliseWhitespace(typeof needle === 'string' ? needle : '').toLowerCase();",
         "  return (typeof needle === 'string' ? needle : '').toLowerCase();",
+        'a needle with odd whitespace finds what the tidy one finds',
     ),
     # ---- the boundary, and the ordinal it is only correct because of ----------------------
     (
         "the scan joins every line into one blob, so a needle can cross a record boundary",
         "  const hits = [];\n  let start = 0;\n  let ordinal = 0;",
         "  const hits = [];\n  const flat = surface.replace(/\\n/g, ' ');\n  if (flat.includes(needle)) hits.push(0);\n  let start = 0;\n  let ordinal = 0;",
+        'and does not match either side',
+    ),
+    (
+        # The hazard the case above cannot reach, and the one the rule about the boundary is really
+        # about. Every line carries a JSON prefix, so joining whole LINES splices the next record's
+        # answer between the two texts — and a needle crossing a record boundary still cannot match,
+        # which is why the case above is caught by another rule and not by that one.
+        #
+        # Joining the TEXTS — the searchable parts, with the prefix stripped — is the blob the
+        # boundary exists to prevent, and a needle that starts at the end of one record and finishes
+        # at the start of the next IS found by it. So this is the case that owns the rule, and it
+        # owns the structural rule about the scan not being a joined blob as well: the per-line test
+        # is gone from the module entirely.
+        "the scan joins the record texts, so a needle can cross a record boundary",
+        "    if (tab >= 0 && line.slice(tab + 1).includes(needle)) hits.push(ordinal);",
+        "    if (tab >= 0 && surface.split('\\n').map((l) => l.slice(l.indexOf('\\t') + 1)).join(' ').includes(needle)) hits.push(ordinal);",
+        'a needle spanning two records matches nothing',
     ),
     (
         # Was about empty lines in a plain surface, which the new format cannot produce: every
         # record's line starts with its answer, so an empty line means a record that is not there.
         # The hazard that replaced it is the prefix itself — a scan that tested the whole line would
         # answer from a record's KIND and SUMMARY rather than from the text being searched.
+        #
+        # The rule it is about is the one that says a needle which is only in the answer is not
+        # found. It could not be named before: the rule's own needle was `undefined` (the fixture
+        # record carried no kind), so it folded to the empty string and the rule passed whatever
+        # the module did. The fixture carries a kind now, so this case really breaks that rule.
+        # The structural rule about the scan not being a joined blob breaks with it — the module no
+        # longer holds the per-line test either — and the case above owns that one.
         "the scan tests the record's answer as well as its text",
         "    if (tab >= 0 && line.slice(tab + 1).includes(needle)) hits.push(ordinal);",
         "    if (tab >= 0 && line.includes(needle)) hits.push(ordinal);",
+        'a needle that is only in the answer, not in the text, finds nothing',
     ),
     (
         "the locators are numbered from one while the scan numbers from zero",
         "      ordinal: i,",
         "      ordinal: i + 1,",
+        'the ordinal is the record order',
     ),
     (
         "a locator of a record with no position claims file 0",
         "      fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,",
         "      fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : 0,",
+        'a record with no file number says -1, not 0',
     ),
     # ---- the artifact ---------------------------------------------------------------------
     (
         "the manifest is published before the surface it describes",
         "      await rename(`${join(dir, 'surface.txt')}.tmp`, join(dir, 'surface.txt'));",
         "      await rename(`${join(dir, 'manifest.json')}.tmp`, join(dir, 'manifest.json'));",
+        'the manifest is published last',
     ),
     (
         "a manifest from another schema version is served anyway",
         "    if (manifest.schemaVersion !== SEGMENT_SCHEMA_VERSION) return null;",
         "",
+        'a manifest from another schema version is refused',
     ),
     (
         "a surface with a line the manifest does not count is accepted",
         "  if (lines !== manifest.recordCount) return null;",
         "",
+        'a surface the manifest does not count is refused',
     ),
     (
         "the runtime's own revision stops being compared, so a rewrite that kept the length is reused",
         "    if (typeof a.revision === 'string' && a.revision.length > 0\n      && typeof b.revision === 'string' && b.revision.length > 0 && a.revision !== b.revision) {\n      return false;\n    }\n",
         "",
+        'a source whose revision changed refuses the segment',
+    ),
+    (
+        # The one that was still wrong after the revision comparison was fixed: the ACTIVE file has
+        # no catalog entry, so it has no revision to compare, and a transcript rewritten in place
+        # keeps its length — so "ALPHA BODY" became "BRAVO BODY" and every comparison in the file
+        # said the same file. The mtime is the other half of this process's idea of a file's
+        # identity (the parsed-rows cache and the trajectory entry both key on (size, mtime)), so
+        # leaving it out is what let a segment built from the old bytes answer for the new ones.
+        "the mtime stops being compared, so a rewrite that kept the length is reused",
+        "    if (a.mtimeMs !== b.mtimeMs) return false;\n",
+        "",
+        'a source whose mtime changed refuses the segment, so a rewrite that kept the length is not reused',
+    ),
+    (
+        # The versions are read out of the lines by hand, so that a search over a big segment does
+        # not parse every line it does not need. A hand-reading is a second way to answer 「which
+        # version is this record」, and the two have to agree — the service folds them into the
+        # fingerprint that says whether an answer is about the body the page is showing.
+        "the versions of a segment's records are read as something else",
+        "    if (tab >= 0 && tab <= end) out.push(versionInAnswer(surface.slice(start, tab)));",
+        "    if (tab >= 0 && tab <= end) out.push(String(out.length));",
+        'the versions of a segment can be read back in order',
+    ),
+    (
+        # The ledger position of a record is what puts the records back where the body has them:
+        # the turn a record is in, and the record's own number in the body. The segments are one
+        # file per generation and the body is not in file order, so a fold over the files is a
+        # fold over a different set — and the answer is refused for a body that did not change.
+        # Reading the line's ordinal instead of the record's number makes the position say where
+        # the record sits IN THIS FILE, which is the order the wrong one.
+        "the record's own number is read as the line's ordinal, so the records cannot be put back in order",
+        "        index: numberInAnswer(answer, '\"index\":'),",
+        "        index: numberInAnswer(answer, '\"ordinal\":'),",
+        'a segment reads back the turn and the number of each of its records',
+    ),
+    (
+        # The turn a record is in is the other half of the position. Read as the record's own
+        # number, the two halves of the position become one, and the turns of the body are gone.
+        "the turn a record is in is read as its own number, so the ledger's order cannot be rebuilt",
+        "        turnIndex: numberInAnswer(answer, '\"turnIndex\":'),",
+        "        turnIndex: numberInAnswer(answer, '\"index\":'),",
+        'and the record that arrived for the earlier turn carries that turn',
+    ),
+    (
+        # The manifest has to say how many of the body's records the segments do NOT cover. A
+        # manifest that does not say cannot be told apart from one that says 「none」, and a set that
+        # covers part of the body is not the set the page is holding — so a reader that takes such a
+        # manifest for a complete one answers about a set nobody can name.
+        "a manifest that does not say what it does not cover is served anyway",
+        "      if (!Number.isInteger(manifest.uncovered) || manifest.uncovered < 0) return null;\n",
+        "",
+        'a manifest that does not say what it does not cover is refused',
+    ),
+    (
+        # The count itself: a record whose locator names no file in the table — and a record with no
+        # locator at all — belongs to no generation's segment, so no segment holds it. Counted as
+        # covered, the manifest says the set stands for the whole body, and the reader answers from
+        # a set that is one record short.
+        "the records no segment covers are counted as covered",
+        "    if (typeof row.fileIdx !== 'number' || !Number.isFinite(row.fileIdx) || row.fileIdx < 0) {\n      uncovered += 1;\n    }",
+        "    if (false) {\n      uncovered += 1;\n    }",
+        'and the records no segment covers are counted',
     ),
     # ---- the rest of the contract ---------------------------------------------------------
     (
         "the needle floor is dropped, so one character is a search",
         "  return foldNeedle(needle).trim().length >= MIN_NEEDLE_CHARS;",
         "  return foldNeedle(needle).length >= 0;",
+        'a one-character needle is refused',
     ),
     (
         "the hit cap is dropped, so a two-character needle returns the whole ledger",
         "  return { ordinals: hits.slice(0, limit), total: hits.length, truncated: true };",
         "  return { ordinals: hits, total: hits.length, truncated: true };",
+        'hits are capped',
     ),
     (
         "the active generation's segment is stored under a sealed generation's key",
         "  return generation === null || generation === undefined ? 'active' : `g${generation}`;",
         "  return generation === null || generation === undefined ? 'g0' : `g${generation}`;",
+        'the active generation has a key of its own',
     ),
     # ---- a generation read short must not look like one read whole --------------------------
     (
@@ -120,6 +228,7 @@ MUTATIONS = [
         "the segment line reports the kind where the summary belongs",
         "      summary: typeof record.summary === 'string' ? record.summary : '',",
         "      summary: typeof record.kind === 'string' ? record.kind : '',",
+        "the summary it reads back is the record's own",
     ),
     (
         # `size` is the whole file whether or not the read covered it, so this comparison is the
@@ -129,6 +238,7 @@ MUTATIONS = [
         "a source that was read short is trusted as if it had been read whole",
         "    if ((a.truncated === true) !== (b.truncated === true)) return false;\n    if (typeof a.revision === 'string' && a.revision.length > 0",
         "    if (typeof a.revision === 'string' && a.revision.length > 0",
+        'a source read short is not trusted as if it had been read whole',
     ),
     # ---- the answer is read back in ONE walk -----------------------------------------------
     (
@@ -154,6 +264,7 @@ MUTATIONS = [
         "    }\n"
         "    return found.get(ordinal) ?? null;\n"
         "  });",
+        'reading 200 answers out of 200 lines takes one walk (counted 21100 per-line string calls)',
     ),
     (
         # The batch is a batch because the scan hands back every ordinal at once. Answering in the
@@ -162,6 +273,7 @@ MUTATIONS = [
         "the answers come back in the order they sit rather than the order asked",
         "  return ordinals.map((ordinal) => found.get(ordinal) ?? null);",
         "  return [...found.values()];",
+        'the batch reader answers in the order asked, not the order they sit',
     ),
     (
         # Structural, and the reason the first one is worth a mutation at all: a per-ordinal reader
@@ -172,6 +284,7 @@ MUTATIONS = [
         "export function generationKey(generation) {\n  return generation === null || generation === undefined ? 'active' : `g${generation}`;\n}\n\n"
         "/** @deprecated one ordinal at a time — walks the whole segment to find it. */\n"
         "export function readSegmentHit(surface, ordinal) {\n  return readSegmentHits(surface, [ordinal])[0] ?? null;\n}",
+        'and there is no per-ordinal reader exported for a caller to reach for by mistake',
     ),
     # ---- a retired field must not come back through this door ---------------------------
     (
@@ -188,6 +301,7 @@ MUTATIONS = [
         "      byteStart: typeof record.byteStart === 'number' ? record.byteStart : -1,\n"
         "      byteEnd: typeof record.byteEnd === 'number' ? record.byteEnd : -1,\n"
         "    }) + '\\t' + searchSurfaceOf(record));",
+        'no line carries a byte range any more',
     ),
 ]
 
@@ -217,6 +331,45 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def rule_name(text):
+    """The name of a rule a probe reported, without the evidence a comparison carries.
+
+    A probe reports an assertion as `<name>` and a comparison as
+    `<name>: got <value>, want <value>`. The values are the evidence, not the rule, so they are
+    cut off — and the cut is made at a `: got ` whose tail really is `<json>, want <json>`, so a
+    name that itself contains those words is not truncated.
+    """
+    for match in reversed(list(re.finditer(re.escape(": got "), text))):
+        head = text[:match.start()].strip()
+        tail = text[match.end():]
+        cut = tail.rfind(", want ")
+        if cut < 0:
+            continue
+        try:
+            json.loads(tail[:cut])
+            json.loads(tail[cut + len(", want "):])
+        except ValueError:
+            continue
+        return head
+    return text
+
+
+def reported_rules(output):
+    """The rules a probe named as broken.
+
+    Two formats, as in `mutate-trajectory-cache.py`: `  - <name>` and `FAIL <name>`. A case is
+    only caught when the rule it names is among them.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(rule_name(text[2:].strip()))
+        elif text.startswith("FAIL "):
+            names.append(rule_name(text[5:].strip()))
+    return names
+
+
 def main():
     code, output = run_probe()
     if code != 0:
@@ -228,7 +381,7 @@ def main():
     original = MODULE.read_bytes()
     missed = []
     unnamed = []
-    for label, old, new in MUTATIONS:
+    for label, old, new, expect in MUTATIONS:
         text, newline = read_exact(MODULE)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
@@ -247,15 +400,19 @@ def main():
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
             continue
-        first = next(
-            (line.strip() for line in output.splitlines() if line.strip().startswith("- ")),
-            None,
-        )
-        if first is None:
+        names = reported_rules(output)
+        if not names:
             print(f"UNNAMED {label}: the probe failed without naming a rule")
             unnamed.append(label)
-        else:
-            print(f"caught {label}\n         -> {first}")
+            continue
+        # The case names the rule it is about, so the probe has to name THAT rule and not some
+        # other one that happened to go red in the same run: a probe that went red elsewhere has
+        # not shown that this guard owns this mutation.
+        if expect not in names:
+            print(f"MISSED {label}: the probe named {names} instead of {expect}")
+            missed.append(label)
+            continue
+        print(f"caught {label}\n         -> {expect}")
 
     if MODULE.read_bytes() != original:
         print(f"NOT RESTORED {MODULE}")

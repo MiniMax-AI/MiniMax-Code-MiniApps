@@ -129,8 +129,14 @@ check('the server sends the cap it applied', buildTrajectoryPayload(baseInput).s
 check('64 MB is what that cap is', MAX_MESSAGE_BYTES, 64 * 1024 * 1024);
 assert('the client renders the cap it was sent', /session\.maxMessageBytes/.test(CLIENT));
 assert('the client formats it rather than restating a number', /formatBytes\(session\.maxMessageBytes\)/.test(CLIENT));
-assert('no hardcoded 8 MB survives in the markup', !/8 MB/.test(CLIENT));
-assert('no hardcoded 64 MB either — the value comes from the payload', !/64 MB/.test(CLIENT));
+// The cap is a number of its own, and the boundary is part of the rule. The client's own comments
+// carry measurements — the ledger's cost is written down there, in megabytes — and a measurement
+// whose number merely ENDS in 8 ("268 MB") is not a hardcoded cap. A scan that cannot tell the two
+// apart is a guard that fails for the wrong reason, and it would fail on the file that documents
+// this very change, which is the worst place for it to fail. So the number has to begin where a
+// number begins, not at the tail of one.
+assert('no hardcoded 8 MB survives in the markup', !/(?<![\d.,])8 MB/.test(CLIENT));
+assert('no hardcoded 64 MB either — the value comes from the payload', !/(?<![\d.,])64 MB/.test(CLIENT));
 
 await rm(dir, { recursive: true, force: true });
 

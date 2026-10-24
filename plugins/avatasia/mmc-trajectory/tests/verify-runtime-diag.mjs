@@ -18,7 +18,7 @@
  * this output is the reader who is already having a bad day. On Windows those paths carry the user
  * profile directory, which is the identity leak this package treats as a release blocker elsewhere.
  *
- * Three kinds of check, each named for what it is, because a guard that does not say which of its
+ * Four kinds of check, each named for what it is, because a guard that does not say which of its
  * checks are the strong kind is worse than one that has none:
  *
  *   1. BEHAVIOURAL. The redactor is the real exported `createRedactor`, and the text it is handed
@@ -28,17 +28,23 @@
  *
  *   2. SHAPE, on three lines, count-checked: that the three fields go through `redact`, and that
  *      they do so BEFORE `slice`. These cannot be behavioural, and the reason is worth recording:
- *      the handler is a closure inside `start()`, and this suite's own convention
- *      (`verify-search-endpoint.mjs` states it) is read-only, pure helpers, never start the
- *      runtime. Moving a route handler out of its closure purely so a test could call it is a
- *      bigger change to shipped code than the property is worth. So the shape checks hold the
- *      wiring, the behavioural one holds the property, and neither is asked to do the other's job.
+ *      those three fields only carry text on paths that are hard to induce on purpose — a
+ *      database that refuses to open, a handler that throws — and a route-level test that cannot
+ *      reach them would be a route-level test about the happy path only. Moving a route handler
+ *      out of its closure purely so a test could call it is a bigger change to shipped code than
+ *      the property is worth. So the shape checks hold the wiring, the behavioural one holds the
+ *      property, and neither is asked to do the other's job.
  *
  *   3. That the published location fields stay NAMES. `basename` is what turns a path into a fact
  *      about this machine that the browser cannot use to find anything.
  *
- * `tests/mutate-runtime-diag.py` reverts each of the three redacting fields and requires this guard
- * to report it by name.
+ *   4. The route itself, over HTTP, against a temporary home: the service is started and
+ *      `/api/runtime` is requested, and the answer is read as BYTES. A route that assembles its
+ *      answer out of three scrubbed fields can still publish a path from a fourth one, and no
+ *      amount of reading the source says which — the source only says what the fields are named.
+ *
+ * `tests/mutate-runtime-diag.py` reverts each of the three redacting fields, and each of the two
+ * published locations, and requires this guard to report it by name.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -58,6 +64,14 @@ function assert(name, cond, detail) {
 }
 
 const home = mkdtempSync(join(mkdtempSync(join(tmpdir(), 'mmc-trajectory-diag-')), '.minimax'));
+/**
+ * Where the runtime may write what it derives.
+ *
+ * Not the package: the runtime refuses a data dir inside the package, because anything written
+ * there is part of what ships to every reader. A harness that handed it the package would put the
+ * search segments in the published directory, so the data dir here is a temporary one outside it.
+ */
+const dataHome = mkdtempSync(join(tmpdir(), 'mmc-trajectory-datadir-'));
 try {
   const where = resolveSessionsRoot({ MMC_TRAJECTORY_ROOT: home });
   const redact = createRedactor([where.sessionsRoot, where.root, join(homedir(), '.minimax')]);
@@ -196,8 +210,60 @@ try {
   assert('and nothing publishes the sessions root or the data directory verbatim',
     !/:\s*location\.sessionsRoot\s*[,}]/.test(server)
     && !/:\s*context\.dataDir\s*[,}]/.test(server));
+
+  // --- 5. BEHAVIOURAL: the route itself, asked over HTTP -----------------------------------------
+  // The scrubber is the property; this is the ROUTE. A route that assembles its answer out of
+  // three scrubbed fields can still publish a path from a fourth one, and no amount of reading
+  // the source says which -- the source only says what the fields are named.
+  //
+  // So the route is started against a temporary home and asked, and the answer is read as bytes.
+  const { start } = await import(pathToFileURL(SERVER).href);
+  const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url));
+  const noop = () => {};
+  const controller = new AbortController();
+  const previousRoot = process.env.MMC_TRAJECTORY_ROOT;
+  process.env.MMC_TRAJECTORY_ROOT = home;
+  let instance = null;
+  let base = null;
+  for (let attempt = 0; attempt < 12 && !base; attempt += 1) {
+    const port = 20200 + Math.floor(Math.random() * 300) + attempt;
+    try {
+      instance = await start({
+        pluginId: 'mmc-trajectory',
+        pluginRoot: PLUGIN_ROOT,
+        dataDir: dataHome,
+        generationId: 'guard',
+        listen: { host: '127.0.0.1', port },
+        signal: controller.signal,
+        logger: { debug: noop, info: noop, warn: noop, error: noop }
+      });
+      base = 'http://127.0.0.1:' + port;
+    } catch (error) {
+      // The port was taken. Another one is tried.
+    }
+  }
+  try {
+    if (!base) throw new Error('could not bind a port for the runtime route');
+    const response = await fetch(base + '/api/runtime');
+    const raw = await response.text();
+    assert('the runtime route answers with JSON',
+      response.status === 200 && raw.trim().startsWith('{'),
+      raw.slice(0, 200));
+    assert('the runtime route publishes no absolute path',
+      !/[A-Za-z]:[\\/]/.test(raw) && !raw.includes(home),
+      raw.slice(0, 240));
+    assert('and the location it does publish is a name, not the directory it was derived from',
+      !raw.includes(PLUGIN_ROOT) && !raw.includes(home),
+      raw.slice(0, 240));
+  } finally {
+    if (instance) await instance.dispose();
+    controller.abort();
+    if (previousRoot === undefined) delete process.env.MMC_TRAJECTORY_ROOT;
+    else process.env.MMC_TRAJECTORY_ROOT = previousRoot;
+  }
 } finally {
   rmSync(home, { recursive: true, force: true });
+  rmSync(dataHome, { recursive: true, force: true });
 }
 
 console.log('[runtime-diag] ' + pass + ' passed, ' + failures.length + ' failed');

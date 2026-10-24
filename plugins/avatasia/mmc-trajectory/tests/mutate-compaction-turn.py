@@ -60,10 +60,15 @@ MUTATIONS = [
         "        var opened = false",
     ),
     (
+        # Re-anchored: the routing moved out of renderLedger() and into fillGroupRows(), which
+        # is the one place a group's rows are built. The rule did not change, only where it
+        # lives. The decision and the branch that uses it are two lines apart here, so the
+        # branch is what gets broken — and the guard that owns the rule now reads the branch
+        # rather than the word.
         "client: the ledger stops routing checkpoints to the band",
         CLIENT,
-        "            if (group.entries[j].record.kind === 'compaction') {",
-        "            if (false) {",
+        "          if (isBand) {\n",
+        "          if (false) {\n",
     ),
 ]
 

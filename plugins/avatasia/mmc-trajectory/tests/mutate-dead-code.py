@@ -21,7 +21,13 @@ actually breaks, because they are three different mistakes:
 
 Each must be caught *by name*. A probe that dies on an exception names nothing, and a control
 that reports that as caught is reporting a crash as if it were evidence.
+
+Every case names the rule it is about in its `expect` field, and a case counts as caught only
+when the probe reported THAT rule: a probe that went red on some other assertion has not shown
+that this guard owns this mutation.
 """
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -47,16 +53,19 @@ MUTATIONS = [
       }
 
       function axisIcon() {""",
+        "every function the client declares is used by something",
     ),
     (
         "a caller is deleted and the helper is left behind",
         AXIS_ICON_CALLER,
         "        axis.appendChild(document.createTextNode(''));",
+        "every function the client declares is used by something",
     ),
     (
         "the only reference to a function is left in a comment",
         AXIS_ICON_CALLER,
         "        // was: axis.appendChild(axisIcon())\n        axis.appendChild(document.createTextNode(''));",
+        "every function the client declares is used by something",
     ),
 ]
 
@@ -86,13 +95,43 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
-def named_failure(output):
-    """The first rule the probe named, or None when it failed without naming one."""
-    return next(
-        (line.strip()[len("FAIL"):].strip() for line in output.splitlines()
-         if line.strip().startswith("FAIL")),
-        None,
-    )
+def rule_name(text):
+    """The name of a rule a probe reported, without the evidence a comparison carries.
+
+    A probe reports an assertion as `<name>` and a comparison as
+    `<name>: got <value>, want <value>`. The values are the evidence, not the rule, so they are
+    cut off — and the cut is made at a `: got ` whose tail really is `<json>, want <json>`, so a
+    name that itself contains those words is not truncated.
+    """
+    for match in reversed(list(re.finditer(re.escape(": got "), text))):
+        head = text[:match.start()].strip()
+        tail = text[match.end():]
+        cut = tail.rfind(", want ")
+        if cut < 0:
+            continue
+        try:
+            json.loads(tail[:cut])
+            json.loads(tail[cut + len(", want "):])
+        except ValueError:
+            continue
+        return head
+    return text
+
+
+def reported_rules(output):
+    """The rules a probe named as broken.
+
+    Two formats, as in `mutate-search-endpoint.py`: `  - <name>` and `FAIL <name>`. A case is
+    only caught when the rule it names is among them.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(rule_name(text[2:].strip()))
+        elif text.startswith("FAIL "):
+            names.append(rule_name(text[5:].strip()))
+    return names
 
 
 def main():
@@ -106,7 +145,7 @@ def main():
     original = CLIENT.read_bytes()
     missed = []
     unnamed = []
-    for label, old, new in MUTATIONS:
+    for label, old, new, expect in MUTATIONS:
         text, newline = read_exact(CLIENT)
         if old not in text:
             print(f"SKIP  {label}: anchor not found")
@@ -129,12 +168,19 @@ def main():
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
             continue
-        name = named_failure(output)
-        if name is None:
+        names = reported_rules(output)
+        if not names:
             print(f"UNNAMED {label}: the probe failed without naming a rule")
             unnamed.append(label)
-        else:
-            print(f"caught {label}\n         -> {name}")
+            continue
+        # The case names the rule it is about, so the probe has to name THAT rule and not some
+        # other one that happened to go red in the same run: a probe that went red elsewhere has
+        # not shown that this guard owns this mutation.
+        if expect not in names:
+            print(f"MISSED {label}: the probe named {names} instead of {expect}")
+            missed.append(label)
+            continue
+        print(f"caught {label}\n         -> {expect}")
 
     if CLIENT.read_bytes() != original:
         print(f"NOT RESTORED {CLIENT}")

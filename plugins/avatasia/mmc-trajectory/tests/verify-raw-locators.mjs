@@ -273,11 +273,22 @@ assert('the decode cache is per entry, so a new body starts empty',
  * key the page keeps showing the previous version's message for the same record.
  * ===================================================================== */
 
-const rawCacheKeyAt = CLIENT.indexOf('function rawCacheKey(index)');
+const rawCacheKeyAt = CLIENT.indexOf('function rawCacheKey(index, version)');
 assert('rawCacheKey exists', rawCacheKeyAt > 0);
-const keyBody = CLIENT.slice(rawCacheKeyAt, rawCacheKeyAt + 900);
+// The whole function, not a fixed number of characters. A window of N characters stops being
+// the function the moment a comment grows, and the assertion then fails on the edit rather
+// than on the defect it is about — which is how a guard starts reporting somebody else's work.
+const keyEnd = rawCacheKeyAt >= 0 ? CLIENT.indexOf('\n      }', rawCacheKeyAt) : -1;
+const keyBody = rawCacheKeyAt >= 0 && keyEnd > rawCacheKeyAt
+  ? CLIENT.slice(rawCacheKeyAt, keyEnd)
+  : '';
 assert("the page's raw cache key includes the validator", /state\.etag/.test(keyBody));
 assert('and still the session and the index', keyBody.includes("sid + '#' + gen + '#'"));
+// The key says whose answer a caller gets, so it has to say which RECORD is being read: the
+// validator and the position do not, and a read that was retried after a reload found the pending
+// read of the record that had taken its place.
+assert("and the record's own version, so a read cannot take another record's answer",
+  keyBody.includes("(version || '')"));
 // A raw the server refuses is a hint, not a broken tab, so there is deliberately no second chance
 // for it: `raw_stale` stays out of the reload-and-retry path and lands on the same line every
 // other raw failure uses. What must not happen is the opposite — a stale answer being kept.

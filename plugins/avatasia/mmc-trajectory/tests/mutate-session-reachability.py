@@ -11,11 +11,16 @@ back into one, trusting a decoded name as if it were an identity, or letting a r
 answer a question it has no standing to answer.
 
 The two that look like harmless simplifications are the dangerous ones. Dropping the manifest
-re-check on the index hit is faster and passes every existing guard, because nothing else in
-the suite has a directory whose name disagrees with its manifest — it just serves the wrong
-conversation under an id the reader typed. And replacing the `session_scan_budget_exhausted`
-branch with a plain 404 is a one-line change that turns "we stopped looking" back into "it does
-not exist", which is the same lie the original slice told, just further from its cause.
+re-check on the index hit is faster, and since the walk started refusing a directory whose name
+and its manifest disagree, no fixture in the suite can see it any more: such a directory is not
+in the index to be served in the first place. What the re-check still holds is the row that is
+about to be served -- a manifest rewritten under the walk is caught there instead of in the
+reader's face -- and it is pinned by the shape of that line rather than by a fixture, because
+no fixture rewrites a manifest between the walk and the route. The judgment that a disagreeing
+directory never reaches the index at all is pinned behaviourally, in `mutate-session-layers.py`,
+where the walk itself is broken. And replacing the `session_scan_budget_exhausted` branch with
+a plain 404 is a one-line change that turns "we stopped looking" back into "it does not
+exist", which is the same lie the original slice told, just further from its cause.
 
 Anchors are multi-line and the tree is LF, so they carry bare \\n and the files are read and
 written with newline=''. No anchor may contain a line ending of its own.
@@ -37,14 +42,19 @@ MUTATIONS = [
     # The original shape. Everything else in the suite still passes: the list is unchanged, the
     # trajectory route still finds every session in the window, and no assertion anywhere else
     # had a session outside it.
+    #
+    # The walk now hands out THREE products -- the thirty most recent sessions, the whole walk,
+    # and the id index -- so "one truncated list again" is the whole walk truncated as well as the
+    # index dropped. The second layer's pool is the whole walk, and the reachability fix's
+    # product is the index: losing either one is the shape this mutation puts back.
     ("the walk returns one truncated list again",
-     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };",
-       "  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId: new Map(), truncated };")],
+     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, bySessionId, truncated };",
+       "  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable.slice(0, MAX_SESSION_LIST), bySessionId: new Map(), truncated };")],
      "the id index is not the recent list", SERVER),
 
     ("the recent list is no longer capped",
-     [("  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };",
-       "  return { recentEntries: entries, byDecodedId, truncated };")],
+     [("  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, bySessionId, truncated };",
+       "  return { recentEntries: publishable, allEntries: publishable, bySessionId, truncated };")],
      "the recent list is still capped at MAX_SESSION_LIST", SERVER),
 
     # ---- the index stops being built from the walk ----
@@ -52,22 +62,31 @@ MUTATIONS = [
     # Correct-looking, and now the picker pays for the reachability fix: the index is derived
     # from the slice, so a session outside the window has no fast path again.
     ("the index is derived from the recent list instead of the walk",
-     [("  for (const entry of entries) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));",
-       "  for (const entry of entries.slice(0, MAX_SESSION_LIST)) {\n    const id = decodeSessionIdFromDirName(basename(entry.dir));")],
+     [("  for (const entry of publishable) {\n    // The key is the id the entry is published under,",
+       "  for (const entry of publishable.slice(0, MAX_SESSION_LIST)) {\n    // The key is the id the entry is published under,")],
      "the id index is not the recent list", SERVER),
 
-    ("the index is no longer built at all",
-     [("    const id = decodeSessionIdFromDirName(basename(entry.dir));",
-       "    const id = null;")],
-     "the index is built from the decoded directory name", SERVER),
+    # The index keyed by nothing: every directory lands under one key, and the id the list shows
+    # is not an id the index can resolve.
+    ("the index is keyed by nothing",
+     [("    const bucket = bySessionId.get(entry.sessionId);",
+       "    const bucket = bySessionId.get(null);")],
+     "the index is keyed by the id the walk published the entry under", SERVER),
+
+    # The index keyed by the name again. A directory the manifest identifies is not in it under
+    # that id any more, so the id the list shows cannot be resolved.
+    ("the index is keyed by the decoded name again",
+     [("    else bySessionId.set(entry.sessionId, [entry]);",
+       "    else bySessionId.set(decodeSessionIdFromDirName(basename(entry.dir)), [entry]);")],
+     "a directory the manifest identifies is published under that id", SERVER),
 
     # ---- duplicates silently resolved by directory order ----
     #
     # `Map.set` keeps the last writer. `readdir` order is not sorted and is not stable across
     # platforms, so this is a Map that answers differently on two machines with the same store.
     ("duplicate ids are collapsed by directory order",
-     [("    const bucket = byDecodedId.get(id);\n    if (bucket) bucket.push(entry);\n    else byDecodedId.set(id, [entry]);",
-       "    byDecodedId.set(id, [entry]);")],
+     [("    const bucket = bySessionId.get(entry.sessionId);\n    if (bucket) bucket.push(entry);\n    else bySessionId.set(entry.sessionId, [entry]);",
+       "    bySessionId.set(entry.sessionId, [entry]);")],
      "duplicate ids are kept as a list rather than collapsed", SERVER),
 
     # ---- a decoded name promoted to an identity ----
@@ -125,18 +144,30 @@ MUTATIONS = [
     # A second way to name a session, and the only one that covers a directory whose name does
     # not decode at all.
     ("a full directory basename can no longer name a session",
-     [("          if (candidateIdentity.id === requested || basename(candidate.dir) === requested) {",
-       "          if (candidateIdentity.id === requested) {")],
+     [("          if (holds && (candidateIdentity.id === requested || basename(candidate.dir) === requested)) {",
+       "          if (holds && candidateIdentity.id === requested) {")],
      "a full directory basename can still name a session", SERVER),
 
     # ---- the picker starts paying for the fix ----
     #
     # Widening the picker is a UI decision that was explicitly not taken here. Taking it by
     # accident, inside a reachability fix, is how a 9x descriptor cost arrives unannounced.
+    #
+    # The picker's pool is now the whole walk rather than the thirty most recent sessions, so
+    # this is the line that says so. It is the second layer's requirement: a sub-agent in a
+    # thirty-row window would take a main session' place.
     ("the list route starts building from the id index",
-     [("      entries = (await listEntries()).recentEntries;",
-       "      entries = [...(await listEntries()).byDecodedId.values()].flat();")],
-     "the list route builds from recentEntries", SERVER),
+     [("    const allEntries = candidates.allEntries;\n",
+       "    const allEntries = [...candidates.bySessionId.values()].flat();\n")],
+     "the list route builds from the whole walk", SERVER),
+
+    # The trajectory route keeps the thirty most recent sessions for its 'latest' branch, and it
+    # must not start building from the index either: the index is a reachability fix, and the
+    # trajectory route is the one that pays for a descriptor per candidate.
+    ("the trajectory route starts building from the id index",
+     [("    const entries = candidates.recentEntries;\n",
+       "    const entries = [...candidates.bySessionId.values()].flat();\n")],
+     "the trajectory route keeps the recent list for the latest branch", SERVER),
 
     # ---- the page names a session it is not showing ----
     #

@@ -153,28 +153,41 @@ MUTATIONS = [
     # above still passes and the page is simply broken on every database written before child
     # sessions existed. The assertion that catches it is the one that builds such a database here.
     ("a database without the parent column loses every title and kind, not just the parent",
-     [("""    let stmt;
-    try {
-      stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
-    } catch {
+     [("""    let stmt = null;
+    for (const sql of SESSION_TITLE_SELECTS) {
       try {
-        stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+        stmt = db.prepare(sql);
+        break;
       } catch {
-        return result;
+        // This database does not have that column yet; ask for less.
       }
     }
-""", "    const stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');")],
+    if (!stmt) return result;
+""", "    const stmt = db.prepare(SESSION_TITLE_SELECTS[0]);")],
      "a database WITHOUT the column keeps the title and the kind, and only loses the parent"),
 
+    # ---- the ladder: one rung at a time ----
+    #
+    # The read asks for the columns a current runtime writes and falls back, one column at a time,
+    # to the ones an older database has. A rung that is missing is not a rung that asks for less:
+    # the database above it lands on the empty catch instead, and the page shows no titles and no
+    # kinds at all. Both of these remove one rung, and each is caught by the assertion about the
+    # database shape that rung was there for.
+    ("the rung that reads the parent without the purpose is dropped",
+     [("  'select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?',\n", "")],
+     "a database WITHOUT the purpose column still reports the title, the kind and the parent"),
+
+    ("the rung that reads the purpose without the workspace is dropped",
+     [("  'select session_id, title, session_kind, parent_session_id, purpose from local_runtime_sessions where session_id = ?',\n", "")],
+     "a database WITHOUT the workspace column still reports the title, the kind, the parent and the purpose"),
+
     ("the parent row is read but never mapped",
-     [("        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''\n"
-       "          ? row.parent_session_id\n"
-       "          : null,\n", "")],
+     [("        parent: parentNames ? parent : null,\n", "")],
      'the parent row is mapped, and an empty id is no parent rather than a parent named ""'),
 
-    ("the descriptor is built without the parent",
-     [("            descriptor.sessionParentId = meta.parent;", "")],
-     "the descriptor carries the parent onto the row the page receives"),
+    ("the row is built without the parent",
+     [("          sessionParentId: meta ? meta.parent : null,", "")],
+     "the row the page receives carries the parent, on every row"),
 
     # This one is the most likely to be reintroduced by accident: it is a whole-field removal in
     # a function whose job is to decide what may leave the service, and nothing else in it fails.
@@ -182,12 +195,32 @@ MUTATIONS = [
      [("    sessionParentId: value.sessionParentId ?? null,", "")],
      "the field survives the strip, with null as the floor"),
 
-    # The direction that looks right and is not: marking every row. Every string the guard looks
-    # for is still present, and the list reads as though every conversation were a sub-agent run.
-    ("the mark is applied to every session rather than the branches",
-     [("        var branch = session && session.sessionParentId ? BRANCH_MARK : '';",
-       "        var branch = BRANCH_MARK;")],
-     "the page decides the marker by the field and not unconditionally",
+    # The parent column is a foreign key into the runtime database's own session table, and the
+    # page groups its runs by that name -- so a value that names no session there is a name the
+    # list must not publish. No regex over the source can catch this one: the query ran, it
+    # found nothing, and the only thing that shows it is a database built to have that hole.
+    ("a parent that names no session is published as a parent anyway",
+     [("      const parentNames = parent ? Boolean(stmt.get(parent)) : false;",
+       "      const parentNames = Boolean(parent);")],
+     "a parent that names no session is not published as a parent"),
+
+    # The direction that looks right and is not: the parent field is read, but not as the key
+    # the rows are grouped under. Every conversation then hangs the same sub-agents, and the run
+    # pick of every conversation lists the same thirteen of them -- so a reader picks a run that
+    # belongs to somebody else's conversation, and the page shows it as their own.
+    ("the parent field is read, but not as the key the rows are grouped under",
+     [("          var bucket = grouped[child.sessionParentId];",
+       "          var bucket = grouped['mvs_one_parent_for_everything'];")],
+     "the page decides which rows are sub-agents by the parent field and not unconditionally",
+     CLIENT),
+
+    # The same pair, for the kind badge: applied to every row, and applied to none. The first one
+    # still contains 轻量 on every line, so every check that asks "does the row say 轻量" passes —
+    # and every ordinary conversation now claims to be a lightweight exchange.
+    ("the kind badge is applied to every session",
+     [("        var tag = session ? sessionTagBadge(session.sessionTag) : '';",
+       "        var tag = sessionTagBadge('lightweight');")],
+     "the page decides the kind badge by the field and not unconditionally",
      CLIENT),
 ]
 

@@ -1409,6 +1409,48 @@
         content-visibility: auto;
       }
 
+      /* A group that is holding its height but not its rows.
+
+         The rows are gone, so the box is empty — and an empty box is a box of no height, which is
+         how the document under the reader loses the height of everything they have scrolled past.
+         The height is written onto the group from JavaScript, from the height it had while it was
+         holding its rows — brought up to date with what the group holds now, since the turn keeps
+         its key while its content changes — and it is the only thing that holds the box while the
+         browser is RENDERING the group rather than skipping it: `contain-intrinsic-size` sizes an
+         element the browser has skipped, and a group near the viewport is rendered.
+
+         Measured, on a real session of 47,937 records: releasing the rows of the groups around
+         the viewport took the scroll height down by 79,288 px, and releasing the viewport's own
+         group took another 257,378 px. Pinned by tests/verify-ledger-lifecycle.mjs. */
+      .turn-group.is-released .row-list {
+        min-height: 2px;
+      }
+
+      /* The group is on its way back. The bar stands where the rows are coming, so the reader
+         sees a line rather than a hole; the group's own height is held by its min-height, so the
+         bar costs the document nothing. */
+      .turn-group.is-released .row-list::after {
+        content: '';
+        display: block;
+        height: 2px;
+        margin: 10px 0;
+        border-radius: 1px;
+        background: var(--mcode-accent, currentColor);
+        opacity: .3;
+        animation: ledger-release 1.2s ease-in-out infinite;
+      }
+
+      @keyframes ledger-release {
+        0%, 100% { opacity: .1; transform: scaleX(.3); }
+        50% { opacity: .55; transform: scaleX(1); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .turn-group.is-released .row-list::after {
+          animation: none;
+        }
+      }
+
       .turn-head {
         position: sticky;
         /* Below every band above it, measured. It used to pin at 0 with z-index 2 and simply got
@@ -2456,6 +2498,14 @@
             <label class="field-label" for="session-select">会话</label>
             <select id="session-select" aria-describedby="window-count"></select>
           </div>
+          <!-- The second half of a cascade: which conversation, and which run inside it. Empty
+               until a conversation is picked, and disabled while the page follows the newest one
+               -- that list changes under the reader, so a run picked out of it would belong to a
+               conversation that is no longer on screen. -->
+          <div class="field">
+            <label class="field-label" for="child-select">子代理</label>
+            <select id="child-select"></select>
+          </div>
           <div class="field field-grow" data-filter-scope>
             <label class="field-label" for="search-input">搜索</label>
             <input type="search" id="search-input" placeholder="搜索摘要、正文、结果与思考" autocomplete="off" />
@@ -2813,7 +2863,7 @@
           // A turn that took a prompt and never produced a reply — the shape an interruption
           // leaves behind. The turn still running is excluded: it is open because it is
           // going, which is not the same thing as broken, and a filter that re-flags the live
-          // turn on every 2.5s poll is a filter nobody can leave on.
+          // turn on every poll is a filter nobody can leave on.
           turn: function (turn, ctx) {
             return !!turn && turn.closed === false && turn !== ctx.liveTurn;
           }
@@ -3237,6 +3287,50 @@
         return flat.slice(0, Math.max(0, limit - 1)) + '…';
       }
 
+      /* The badge that says what KIND of session a row is.
+       *
+       * The service sends a token, never the raw `purpose` it read from the runtime database:
+       * that value is free text and can carry anything a person typed into it, so what travels
+       * is a closed set of three words and nothing else. An unknown token is not a badge — a
+       * token this page does not know about must not become a label it invented.
+       *
+       * It is a marker, not a filter: a scheduled run is still selectable, the reader is just
+       * told what it is instead of being handed something that looks like their own
+       * conversation. */
+      function sessionTagBadge(tag) {
+        if (tag === 'lightweight') return ' · 轻量';
+        if (tag === 'scheduled') return ' · 定时';
+        if (tag === 'task') return ' · 任务';
+        return '';
+      }
+
+      /**
+       * The three parts of a session's label, in the order they are printed.
+       *
+       * One function, because two places print a session's label — the picker's option and the
+       * sub-agent row under it — and two copies of a format is two places for the format to
+       * drift. It returns the parts rather than the whole string because the two callers put
+       * them in different shapes: the picker appends 「子会话」 after them, and the sub-agent row
+       * would only be repeating itself.
+       *
+       * DOM-free on purpose: it lives in this block so the offline probe can run it without a
+       * page, and so a change to the format is one edit rather than two.
+       *
+       * @param {any} session
+       * @param {number} now
+       * @returns {{ label: string, tail: string, tag: string }}
+       */
+      function sessionLabelParts(session, now) {
+        var label = truncateText(session && session.label ? session.label : '', 42);
+        var when = formatAgo(session ? session.lastActiveAt : null, now);
+        var count = session ? session.messageCount : null;
+        var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
+        // What kind of session this is, when the service said. It is a marker and not a filter:
+        // the row is still selectable, and a row with no kind of its own gets no marker.
+        var tag = session ? sessionTagBadge(session.sessionTag) : '';
+        return { label: label, tail: tail, tag: tag };
+      }
+
       function safeText(value) {
         if (value === null || value === undefined) return '';
         if (typeof value === 'string') return value;
@@ -3378,7 +3472,7 @@
       }
 
       /**
-       * Cheap change detector: rebuilding 200+ rows every 2.5s is wasteful
+       * Cheap change detector: rebuilding a window of rows on every poll is wasteful
        * when nothing changed. Only structural counters participate.
        */
       function signatureOf(payload) {
@@ -3401,7 +3495,7 @@
         ].join('|');
       }
 
-      /** markdown handed to the Host chat input; raw JSON capped at 8000 chars. */
+      /** markdown handed to the Host chat input; raw JSON capped at HANDOFF_RAW_LIMIT chars. */
       var HANDOFF_RAW_LIMIT = 8000;
 
       function truncateJson(value, limit) {
@@ -3486,7 +3580,7 @@
       function inTimeRange(record) {
         if (!recordInRange(record, state.rangeFrom, state.rangeTo)) return false;
         // The snapshot half of the range. Without it an open-ended range grows on its own and
-        // the table appends itself every 2.5s.
+        // the table appends itself on every poll.
         if (isCount(state.rangeCutoff) && isCount(record.index) && record.index > state.rangeCutoff) {
           return false;
         }
@@ -3610,8 +3704,8 @@
 
       // Two cadences, one per fetch, because the two are not the same work. See startPolling().
       //
-      // 2500 for the list, which is a cached walk and a cached title read and now usually a 304 —
-      // and which the picker renders 「刚刚」 against. 8000 for the trajectory, which reparses a
+      // SESSION_POLL_INTERVAL for the list, which is a cached walk and a cached title read and now usually a 304 —
+      // and which the picker renders 「刚刚」 against. TRAJECTORY_POLL_INTERVAL for the trajectory, which reparses a
       // lineage and reopens the runtime database on every request. The list wakes the trajectory
       // early when it has evidence, so the slow tick is a floor on latency, not a replacement for
       // noticing a change.
@@ -3631,6 +3725,10 @@
 
       var state = {
         sessions: [],
+        // The sub-agents of the main sessions in `sessions`, flat: every row names the main it
+        // hangs off. One list and one join key, rather than a second hierarchy — the page groups
+        // them by parent, and the service decides who the parent is.
+        children: [],
         sessionsLoaded: false,
         followLatest: true,
         // Seeded from the host id so the picker and the content agree. `sessionParam()` already
@@ -3716,6 +3814,24 @@
         // Why the last search could not be answered, or null. 「没搜到」 and 「没搜成」 are
         // different states and the count line has to be able to tell them apart.
         searchError: null,
+        // How many times this needle has been re-asked against a freshly fetched body because the
+        // answer turned out to be about a different version of the records. Bounded, because a
+        // session that is being written to keeps moving — the counter is what stops the page from
+        // chasing it forever, and it is reset by the next answer that does apply.
+        searchRefresh: 0,
+        // The needle `searchRefresh` belongs to. A new needle is a new question and starts over.
+        searchRefreshFor: '',
+        // WHICH SET the search answer on screen is about: the session and the slice of the body it
+        // was computed against, and a fingerprint of that body's records.
+        //
+        // A body can change without changing its shape — a record's text rewritten under the page
+        // keeps every counter the same — so the shape of the body cannot say whether the answer
+        // still covers the records on screen. This does: it is the same set the request names, so
+        // the standing answer and the request cannot disagree about which records it is about.
+        //
+        // Written in exactly one place: `runSearch`, when the question is put. Read in exactly one
+        // place: `applyPayload`, which is the only writer of the body on screen.
+        searchSet: '',
         // Time range, in milliseconds since the session started — the same zero the ledger's
         // `+893 分 21 秒` column counts from. `null` on either side means that end is open,
         // and both null is the default: no range, whole session.
@@ -3742,13 +3858,13 @@
         rangeToText: '',
         limit: PAGE_STEP,
         // 「全部」 is a mode, not just a big `limit`. A poll that arrives mid-session used to
-        // re-pin the window to the newest page, which would have thrown 「全部」 back to 200
+        // re-pin the window to the newest page, which would have thrown 「全部」 back to the default window
         // the instant a record landed. This flag is what says "the reader asked for all of
         // it", so a growing session extends the view instead of cancelling it.
         //
         // It opens OFF, and that is not a shortcut: 全部 renders every record of the session as
         // real DOM — around 9,900 rows and 57,000 elements on this one — with no virtual
-        // scrolling, rebuilt on every 2.5s poll. On load that froze the page outright (a single
+        // scrolling, rebuilt on every poll. On load that froze the page outright (a single
         // inspect took 13.7s, a click 5.4s), which was measured, not estimated. So 全部 is
         // something a reader asks for and can live with, not something the page does to them.
         allRecords: false,
@@ -3804,7 +3920,7 @@
        * The one writer for this layer, and it reports whether the bar's state actually moved.
        *
        * That return value is load-bearing rather than a convenience: `render()` rebuilds the
-       * whole ledger, and a quiet session revalidates into a 304 every 8 seconds, so a fix that
+       * whole ledger, and a quiet session revalidates into a 304 on every poll, so a fix that
        * re-rendered on every 304 would trade a sticky banner for a permanent rebuild.
        *
        * @param {'trajectory'|'sessions'} source
@@ -3861,6 +3977,9 @@
       var dom = {};
       var inflight = null;
       var sessionsInflight = null;
+      // The sequence that decides which of several list requests is allowed to answer. The
+      // controller above says which request to stop; this says which answer may write.
+      var sessionsSeq = 0;
       var sessionPollTimer = null;
       var trajectoryPollTimer = null;
       var searchTimer = null;
@@ -3885,6 +4004,7 @@
         dom.kindControls = document.getElementById('kind-controls');
         dom.filterSticky = document.getElementById('filter-sticky');
         dom.sessionSelect = document.getElementById('session-select');
+        dom.childSelect = document.getElementById('child-select');
         dom.generationField = document.getElementById('generation-field');
         dom.generationSelect = document.getElementById('generation-select');
         dom.generationHint = document.getElementById('generation-hint');
@@ -3973,6 +4093,206 @@
       }
 
       /**
+       * The session the body on screen is about, for a read that addresses a position inside it.
+       *
+       * A record index is a position within one body, so a request carrying that index has to ask
+       * about the session that body was built for. `sessionParam()` answers a different question
+       * — which session is current — and while the page follows the newest conversation that is
+       * `latest`, which is not necessarily the body on screen: the runtime can have made another
+       * session current while the page still shows this one.
+       *
+       * The client's own cache key already says which body a value belongs to — `rawCacheKey`
+       * names the displayed session — so asking the server for `latest` stored one session's
+       * record under another session's key, and the page showed the other session's words.
+       *
+       * @returns {string}
+       */
+      function displayedSessionParam() {
+        var payload = state.payload;
+        var session = payload && payload.session ? payload.session : null;
+        var sid = session && typeof session.id === 'string' ? session.id : '';
+        if (sid) return encodeURIComponent(sid);
+        return sessionParam();
+      }
+
+      /**
+       * The slice of history the body on screen is, for a request that addresses a position
+       * inside it.
+       *
+       * A record index is a position within one body, and a body is one slice of one session's
+       * history. The reader's SELECTION and the body on screen are two different things: the
+       * reader can pick a generation, and the load of that generation can fail and leave the
+       * previous body on screen. A request built from the selection would then ask about a slice
+       * the page is not showing, and the answer's indexes would filter rows that are not there.
+       *
+       * So this reads the slice the payload says, which is the slice it was built for. The
+       * service sends it as the payload's own generation, and it means the same thing there as
+       * it does in a search answer: `null` is the whole lineage.
+       *
+       * @returns {number | null}
+       */
+      function displayedGeneration() {
+        var payload = state.payload;
+        var session = payload && payload.session ? payload.session : null;
+        return session && typeof session.generation === 'number' ? session.generation : null;
+      }
+
+      /**
+       * The records of the body on screen, by their index.
+       *
+       * A record index is a position inside ONE body, so anything that names an index has to be
+       * able to say which record of that body it means. This is the same set the ledger draws —
+       * the flattened body, not a second copy of it.
+       *
+       * @returns {Map<number, any>}
+       */
+      function displayedRecordsByIndex() {
+        var map = new Map();
+        var flat = Array.isArray(state.flat) ? state.flat : [];
+        for (var i = 0; i < flat.length; i++) {
+          var entry = flat[i];
+          var record = entry && entry.record ? entry.record : entry;
+          if (record && typeof record.index === 'number') map.set(record.index, record);
+        }
+        return map;
+      }
+
+      /**
+       * The identity of a SET of records: a fold over their version tokens, in the order they are
+       * shown.
+       *
+       * A version token says 「this one record is this one version」. A search answer is about a SET
+       * of them — it says 「these match and the rest do not」 — and the part that matters to the
+       * reader is the part it does NOT name. So the set needs an identity of its own, and it has to
+       * be one the service can compute over ITS records and compare.
+       *
+       * Two properties, and both of them are the point:
+       *
+       *  - **Stable under APPEND.** A session that grows does not change the records it already
+       *    has, so the fold over the first N records is the same before and after an append. A
+       *    body-level identity (an ETag, a digest of the whole body) changes every time the session
+       *    is written to, and then every answer stops applying every few seconds — the common case
+       *    would be the broken one.
+       *  - **Different when a record is rewritten.** The token is a digest of that record's own
+       *    bytes, so a record whose text was replaced under the page has a different token, and the
+       *    fold over the same positions has a different answer.
+       *
+       * The fold is ordered, so a set that was reordered is a different set. Two lanes of 32 bits
+       * each. This is the same function as `recordSetFingerprint` in the service, and
+       * `tests/client-check.mjs` pins that the two agree — two implementations of one question is
+       * two answers, and the difference between them is nobody's to explain.
+       *
+       * @param {Array<string>} versions
+       * @returns {string} 16 hex characters
+       */
+      function recordSetFingerprint(versions) {
+        var h1 = 0x811c9dc5 >>> 0;
+        var h2 = 0x9e3779b9 >>> 0;
+        var list = Array.isArray(versions) ? versions : [];
+        for (var i = 0; i < list.length; i += 1) {
+          var text = typeof list[i] === 'string' ? list[i] : '';
+          for (var j = 0; j < text.length; j += 1) {
+            var code = text.charCodeAt(j);
+            h1 = Math.imul(h1 ^ code, 16777619) >>> 0;
+            h2 = Math.imul(h2 ^ code, 2246822519) >>> 0;
+          }
+          // A separator, so that ["ab", "c"] and ["a", "bc"] are two different sets.
+          h1 = Math.imul(h1 ^ 0x1f, 16777619) >>> 0;
+          h2 = Math.imul(h2 ^ 0x1f, 2246822519) >>> 0;
+        }
+        return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+      }
+
+      /**
+       * The version tokens of the records on screen, in the order they are shown.
+       *
+       * The COUNT comes with them, because the service folds over ITS first N records and N is
+       * what says which of its records the fold is about. A page that is behind because the
+       * session grew has FEWER records, not different ones, so its first N are still the same N.
+       *
+       * @returns {Array<string>}
+       */
+      function displayedRecordVersions() {
+        var out = [];
+        var flat = Array.isArray(state.flat) ? state.flat : [];
+        for (var i = 0; i < flat.length; i++) {
+          var entry = flat[i];
+          var record = entry && entry.record ? entry.record : entry;
+          out.push(record && typeof record.v === 'string' ? record.v : '');
+        }
+        return out;
+      }
+
+      /**
+       * WHICH SET the page's search answer is about.
+       *
+       * The session and the slice say WHICH BODY; the fingerprint says WHICH RECORDS of it. A body
+       * can change without changing its shape — a record's text rewritten under the page keeps every
+       * counter the same — so a comparison of counters cannot see that the records behind an answer
+       * are not the ones it was computed about. This is the same set the search request names, so
+       * the standing answer and the request cannot disagree about which records it covers.
+       *
+       * @param {Array<string>} [versions] the versions to fold, when the caller already has them
+       * @returns {string}
+       */
+      function displayedRecordSet(versions) {
+        var list = Array.isArray(versions) ? versions : displayedRecordVersions();
+        return displayedSessionParam() + '#'
+          + (displayedGeneration() === null ? 'all' : String(displayedGeneration()))
+          + '#' + recordSetFingerprint(list);
+      }
+
+      /**
+       * The set of records the page holds, as a request states it.
+       *
+       * The same question the search request asks, and for the same reason: the answer is about a
+       * SET of records, and a body can change without changing its shape — a record rewritten in
+       * place keeps every counter the same, so how many records the page has says nothing about
+       * whether its copies are still the service's. The versions do.
+       *
+       * @returns {{ count: number, fingerprint: string }}
+       */
+      function heldRecordSet() {
+        var versions = displayedRecordVersions();
+        return { count: versions.length, fingerprint: recordSetFingerprint(versions) };
+      }
+
+      /**
+       * The query a tail is asked with: the cursor, and the set the page holds.
+       *
+       * The cursor says how far the page got; the set says which records that is. A tail asked
+       * for without the set is a tail the service cannot answer without guessing: the records
+       * before the cursor are not in the tail, so the service would have no way of knowing
+       * whether the page's copies of them are still its own — and a record rewritten in place
+       * keeps its index and its id, so nothing else would say so either.
+       *
+       * @returns {string}
+       */
+      function tailQuery() {
+        var held = heldRecordSet();
+        return '&since=' + encodeURIComponent(String(state.since))
+          + '&n=' + held.count
+          + '&fp=' + encodeURIComponent(held.fingerprint);
+      }
+
+      /**
+       * The version of one record, as the record itself carries it.
+       *
+       * The record, and NOT the body on screen. A read that comes back 「this session is not
+       * cached」 reloads the body and asks again — and the body it reloads is a DIFFERENT one, so a
+       * version read off the screen at that moment belongs to the new body's record, and the retry
+       * would be asking about a different record than the one the reader opened. The record the
+       * reader opened is the one that carries the answer to 「which record is this」, so it is the
+       * one that carries the version.
+       *
+       * @param {Record<string, any>} record
+       * @returns {string} the version, or '' when the record carries none
+       */
+      function recordVersionOf(record) {
+        return record && typeof record.v === 'string' ? record.v : '';
+      }
+
+      /**
        * The session list, on its own validator.
        *
        * `manual` is the refresh button asking for the truth, and it drops the validator the way
@@ -3990,6 +4310,7 @@
         if (sessionsInflight) sessionsInflight.abort();
         var controller = new AbortController();
         sessionsInflight = controller;
+        var seq = (sessionsSeq += 1);
         var key = 'limit=20';
         var query = '?' + key;
         var headers = { Accept: 'application/json' };
@@ -4004,10 +4325,14 @@
             // Nothing moved since the copy already on screen. Keep every piece of state and
             // re-render nothing: the picker, its 「刚刚」 labels and its counts are all still true.
             if (response.status === 304) {
+              // The validator is written by the one writer below, and that runs after the
+              // sequence gate. A request that has been replaced must write nothing at all: a
+              // 304 that arrived late used to put its own older tag over the newer one, and
+              // the list on screen and the tag that describes it were then two different
+              // things -- so the next poll asked the server about the old list and kept the
+              // new one.
               var fresh = response.headers.get('etag');
-              if (fresh) state.sessionsEtag = fresh;
-              state.sessionsEtagFor = key;
-              return { changed: false, body: null, etag: state.sessionsEtag };
+              return { changed: false, body: null, etag: fresh || state.sessionsEtag };
             }
             if (!response.ok) {
               // The status is what tells a dropped connection apart from a server that answered
@@ -4019,14 +4344,26 @@
 
             return response
               .json()
-              .catch(function () { return null; })
+              .catch(function (error) {
+                // An aborted request is not a broken answer. Swallowing it here reported a list
+                // that failed for a request that was simply replaced by a newer one.
+                if (error && error.name === 'AbortError') throw error;
+                return null;
+              })
               .then(function (body) {
                 if (!body || typeof body !== 'object') throw new Error('api');
                 return { changed: true, body: body, etag: response.headers.get('etag') || '' };
               });
           })
           .then(function (result) {
-            sessionsInflight = null;
+            // The controller this request installed is the only one it may clear. A request that
+            // has been replaced must not take the next request's controller with it: that is how
+            // the next request stopped being able to abort this one, and an older answer ended
+            // up replacing a newer list.
+            if (sessionsInflight === controller) sessionsInflight = null;
+            // A late answer must not win. Every request carries a sequence number, and only the
+            // newest one may write -- the same rule the trajectory poll follows.
+            if (seq !== sessionsSeq) return false;
             // One writer for the list's validator, on the one path that carried a body.
             state.sessionsEtag = result.etag;
             state.sessionsEtagFor = key;
@@ -4040,13 +4377,21 @@
               return false;
             }
             state.sessions = Array.isArray(result.body.sessions) ? result.body.sessions : [];
+            // The two lists are two views of one set: the service sends the main sessions and the
+            // runs of every conversation in the pool, and every run row names the main it hangs
+            // off. The page groups them by that name instead of keeping a hierarchy of its own.
+            state.children = Array.isArray(result.body.children) ? result.body.children : [];
             state.sessionsLoaded = true;
             renderSessionSelect();
+            renderChildSelect();
             if (cleared) renderBars();
             return true;
           })
           .catch(function (error) {
-            sessionsInflight = null;
+            if (sessionsInflight === controller) sessionsInflight = null;
+            // A request that has been replaced says nothing about the list on screen: the
+            // request that replaced it is the one that gets to report a failure.
+            if (seq !== sessionsSeq) return false;
             if (error && error.name === 'AbortError') return false;
             noteFresh('sessions', false, freshnessReason(error));
             renderBars();
@@ -4072,8 +4417,12 @@
           // and the delta only ever arrives when the session really did grow. A manual refresh
           // drops the cursor as well as the validator: it is asking for the truth from the
           // server, and a tail is not that.
+          //
+          // The tail says which set the page holds as well, because the records before the
+          // cursor are not in the tail: the service can only answer one if it knows that the
+          // page's copies of those records are still its own.
           + (!manual && state.sinceFor === cacheKey && state.since > 0
-            ? '&since=' + encodeURIComponent(String(state.since)) : '');
+            ? tailQuery() : '');
         var headers = { Accept: 'application/json' };
         // A manual refresh must always reach the server: drop the validator so the
         // response cannot be revalidated into a 304 the user did not ask for.
@@ -4092,10 +4441,13 @@
             // Nothing changed since the copy already on screen. Keep every piece of state
             // — no re-flatten, no re-render — and let the next poll do the same cheaply.
             if (response.status === 304) {
+              // The validator is written by the one writer below, and that runs after the
+              // sequence gate. A request that has been replaced must write nothing at all: a
+              // 304 that arrived late used to put its own older tag over the newer one, so the
+              // body on screen and the tag that described it were two different things — and
+              // the next poll asked the server about the old one and kept the new one.
               var fresh = response.headers.get('etag');
-              if (fresh) state.etag = fresh;
-              state.etagFor = cacheKey;
-              return null;
+              return { changed: false, body: null, etag: fresh || state.etag };
             }
             return response
               .json()
@@ -4112,15 +4464,21 @@
                 }
                 if (!body || typeof body !== 'object') throw new Error('api');
                 var tag = response.headers.get('etag');
-                state.etag = tag || '';
-                state.etagFor = cacheKey;
-                return body;
+                return { changed: true, body: body, etag: tag || '' };
               });
           })
-          .then(function (payload) {
+          .then(function (result) {
+            // A late answer must not win. Every request carries a sequence number, and only
+            // the newest one may write — the same rule the session list follows.
             if (seq !== refreshSeq) return;
             inflight = null;
-            if (payload === null) {
+            // One writer for the trajectory's validator, on the one path that carried an
+            // answer. A request that has been replaced writes neither a body nor a tag: the
+            // tag is what the next poll asks the server with, so a stale one leaves the page
+            // describing a body it is no longer showing.
+            state.etag = result.etag;
+            state.etagFor = cacheKey;
+            if (!result.changed) {
               // 304: the previous render is still accurate. Only clear a pending loading
               // state, because nothing on screen should have been replaced.
               //
@@ -4133,17 +4491,26 @@
                 state.loading = false;
                 cleared = true;
               }
-              // Rendering on every 304 would rebuild the whole ledger every 8 seconds on an
+              // Rendering on every 304 would rebuild the whole ledger on every poll of an
               // idle session. Escaping the sticky banner must not cost that.
               if (cleared) render();
               return;
             }
-            applyPayload(payload, manual);
+            applyPayload(result.body, manual);
           })
           .catch(function (error) {
             if (seq !== refreshSeq) return;
             inflight = null;
             if (error && error.name === 'AbortError') return;
+            // The service will not answer a tail to a page whose copy is not the one it has, and
+            // it will not answer a tail asked for without saying which set the page holds.
+            // Either way the page's copy cannot be laid on top of what comes back, so the only
+            // answer left is the whole body — asked for again, without the cursor and without
+            // the validator that belonged to the copy that is gone.
+            if (isStaleCopyRefusal(error)) {
+              reloadWholeBody();
+              return;
+            }
             handleTrajectoryError(error);
           });
       }
@@ -4167,6 +4534,45 @@
        *
        * @param {string} needle
        */
+      /**
+       * An answer that is not about the body on screen.
+       *
+       * One place, because there are two ways to find that out, and they mean the same thing: a
+       * hit whose position holds a different record, and a service that says the body it searched
+       * is not this one. Both mean the answer cannot be installed, and both are answered the same
+       * way — the body is fetched once more and the same question is put again against it.
+       *
+       * Bounded, because a session that is being written to keeps moving: after a couple of tries
+       * the page stops chasing it, says that the answer does not apply, and the next poll's own
+       * re-run takes over.
+       *
+       * @returns {boolean} whether the page is going to ask again
+       */
+      function searchAnswerDoesNotApply() {
+        if (state.searchRefresh < 2) {
+          state.searchRefresh += 1;
+          state.searchError = null;
+          state.searchPending = true;
+          // The whole body, not a tail: a delta carries the records after the cursor, and the
+          // record that moved is not one of them.
+          state.since = 0;
+          state.sinceFor = '';
+          state.etag = '';
+          state.etagFor = '';
+          fetchTrajectory(false).then(function () {
+            runSearch(state.query);
+          }, function () {
+            state.searchPending = false;
+            state.searchError = 'search_version_mismatch';
+            renderLedger();
+          });
+          return true;
+        }
+        state.searchError = 'search_version_mismatch';
+        renderLedger();
+        return false;
+      }
+
       function runSearch(needle) {
         if (searchController) searchController.abort();
         var asked = String(needle == null ? '' : needle).trim();
@@ -4175,17 +4581,46 @@
           state.searchPending = false;
           state.searchTotal = 0;
           state.searchTruncated = false;
+          state.searchRefresh = 0;
+          state.searchRefreshFor = '';
+          // No question, no set. An answer about a set that is no longer on screen would filter
+          // rows by a question nobody is asking.
+          state.searchSet = '';
           searchSeq += 1;
           return;
+        }
+        // A new needle is a new question, and the counter that bounds the re-asking belongs to
+        // the question that started it.
+        if (state.searchRefreshFor !== asked) {
+          state.searchRefreshFor = asked;
+          state.searchRefresh = 0;
         }
         var controller = new AbortController();
         searchController = controller;
         var seq = (searchSeq += 1);
         state.searchPending = true;
-        var session = sessionParam();
+        // The search is about the body on screen, so it asks about THAT session — the same
+        // question the raw and detail reads ask. Asking for the current session instead would
+        // answer with another session's records, and their indexes would then filter these rows.
+        // The slice is asked about the same way: the reader's selection and the body on screen
+        // are two different things, and a selection whose load failed leaves the old body up.
+        var session = displayedSessionParam();
+        var generation = displayedGeneration();
+        // WHICH BODY. The answer is about a SET of records, and the part of it that matters to
+        // the reader is the part it does not name: a record this body has and the other body does
+        // not match would be dimmed as if it did not contain the needle, with no error anywhere.
+        // So the request says which set it is about — how many records the page has, and a
+        // fingerprint of their versions — and the service answers only if it searched THAT set.
+        var versions = displayedRecordVersions();
+        // The set this question is about, recorded before it is asked. The body on screen can be
+        // replaced while the answer is in flight, and a poll that finds the set has moved has to
+        // know that the answer it is waiting for is about the old one.
+        state.searchSet = displayedRecordSet(versions);
         var url = '/api/trajectory/search?session=' + session
           + '&q=' + encodeURIComponent(asked)
-          + (state.generation === null ? '' : '&generation=' + encodeURIComponent(String(state.generation)));
+          + (generation === null ? '' : '&generation=' + encodeURIComponent(String(generation)))
+          + '&n=' + versions.length
+          + '&fp=' + encodeURIComponent(recordSetFingerprint(versions));
 
         fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
           .then(function (response) {
@@ -4206,9 +4641,78 @@
             if (seq !== searchSeq) return;
             searchController = null;
             state.searchPending = false;
-            state.searchHits = searchHitSet(body.hits);
-            state.searchTotal = Number.isInteger(body.total) ? body.total : 0;
+            // The answer has to be about the body on screen BEFORE its indexes may filter that
+            // body. Three things have to agree, and each of them answers a different question:
+            //
+            //  - WHICH SESSION. The server names the session it answered for, and a body of
+            //    another session's records would report a miss for a row that matches.
+            //  - WHICH SLICE. The slice is compared against the body's own, not against the
+            //    reader's selection: a selection whose load failed leaves the previous body on
+            //    screen, and an answer about the selected slice would then filter rows that are
+            //    not the ones on screen.
+            //  - WHICH VERSION. The session and the slice say WHICH BODY; they say nothing about
+            //    whether the record at a given index is still the same record. A transcript
+            //    rewritten under a running page leaves the indexes alone and changes the records
+            //    behind them, and an answer about the rewritten body would then light up a row
+            //    whose text does not contain the needle at all.
+            var answered = body && body.session ? body.session : null;
+            var displayed = state.payload && state.payload.session ? state.payload.session : null;
+            // The two slices are compared as the page reads them: a number names one generation and
+            // nothing names the whole lineage. So a body that does not carry the field at all and a
+            // body that carries the whole lineage are the same question, and only a real difference
+            // between two real generations is a mismatch.
+            var answeredSlice = answered && typeof answered.generation === 'number'
+              ? answered.generation : null;
+            var displayedSlice = displayed && typeof displayed.generation === 'number'
+              ? displayed.generation : null;
+            if (!answered || !displayed || answered.id !== displayed.id
+              || answeredSlice !== displayedSlice) {
+              var mismatch = new Error('session_mismatch');
+              mismatch.code = 'session_mismatch';
+              throw mismatch;
+            }
+            // Every hit is checked against the body on screen, one by one, because a hit is a
+            // POSITION and a position only names a record when the version agrees.
+            //
+            // A hit whose position is on screen and whose version differs is about another version
+            // of that record: the whole answer is refused rather than partly installed, because
+            // the answer is about one body and the page is showing another. The body is then
+            // fetched once more and the same question is put again against the current body.
+            //
+            // A hit whose position is NOT on screen is about a record this body does not have — the
+            // session grew after the body was built. It cannot be shown, so it is not counted
+            // either: the number the reader sees has to be the number of rows that are lit up.
+            var byIndex = displayedRecordsByIndex();
+            var hits = Array.isArray(body.hits) ? body.hits : [];
+            var applicable = [];
+            var wrongVersion = false;
+            for (var h = 0; h < hits.length; h += 1) {
+              var hit = hits[h];
+              if (!hit || typeof hit.index !== 'number') continue;
+              var shown = byIndex.get(hit.index);
+              if (!shown) continue;
+              if (typeof shown.v === 'string' && shown.v !== '' && shown.v !== hit.v) {
+                wrongVersion = true;
+                break;
+              }
+              applicable.push(hit);
+            }
+            if (wrongVersion) {
+              // The whole answer is refused rather than partly installed, because the answer is
+              // about one body and the page is showing another. The body is then fetched once
+              // more and the same question is put again against the current body.
+              searchAnswerDoesNotApply();
+              return;
+            }
+            state.searchHits = searchHitSet(applicable);
             state.searchTruncated = body.truncated === true;
+            // The count is the number of matches IN THE BODY ON SCREEN, so it is the number of rows
+            // the reader can see lit up. A truncated answer is the one exception: there the server's
+            // total is the real count and the rows on screen are only the first N of them, which
+            // the 「已截断」 mark says.
+            state.searchTotal = state.searchTruncated
+              ? (Number.isInteger(body.total) ? body.total : 0)
+              : applicable.length;
             // An answer that arrived retires the failure that preceded it. This line is here
             // because the two other places that clear the field are the two a READER triggers —
             // typing in the box and pressing clear — so nothing else could. A poll that re-runs the
@@ -4217,6 +4721,7 @@
             // session: the label reads the error first, so the stale one outranked the fresh hit
             // set it was describing.
             state.searchError = null;
+            state.searchRefresh = 0;
             resetWindowMode();
             renderLedger();
           })
@@ -4225,6 +4730,13 @@
             searchController = null;
             state.searchPending = false;
             if (error && error.name === 'AbortError') return;
+            // The service refused because the body it searched is not the one on screen. That is
+            // the same thing a hit with the wrong version says, and it is answered the same way:
+            // fetch the body again and ask the question against it.
+            if (error && error.code === 'search_version_mismatch') {
+              searchAnswerDoesNotApply();
+              return;
+            }
             // A search that could not be answered leaves the previous answer standing rather than
             // emptying the table: 「没搜到」 and 「没搜成」 are different, and only one of them is
             // true. The count line carries the reason.
@@ -4381,6 +4893,38 @@
         return false;
       }
 
+      /**
+       * The copy on screen is not the one the service has: the whole body is asked for again.
+       *
+       * The cursor goes with it — a cursor into a copy that no longer exists — and so does the
+       * validator, which described that copy. What comes back is the whole body, which is the
+       * one answer that cannot be laid on top of a stale copy.
+       */
+      function reloadWholeBody() {
+        state.since = null;
+        state.sinceFor = null;
+        state.loading = true;
+        render();
+        fetchTrajectory(true);
+      }
+
+      /**
+       * Whether the service's answer is a refusal to answer a tail to this page's copy.
+       *
+       * Two refusals, and both of them mean the same thing: the records the page holds are not
+       * the ones the service has — either because they have changed under it, or because the
+       * request never said which set it was holding. Neither is a failed poll: the request was
+       * answered, and the answer is that it cannot be answered with a tail.
+       *
+       * @param {any} error
+       * @returns {boolean}
+       */
+      function isStaleCopyRefusal(error) {
+        if (!error || typeof error.code !== 'string') return false;
+        return error.code === 'trajectory_version_mismatch'
+          || error.code === 'trajectory_fingerprint_required';
+      }
+
       function applyPayload(body, manual) {
         // A delta is only ever laid onto a payload this page actually has. Without one —
         // first load, a session switch, a manual refresh — the whole payload is the answer.
@@ -4389,11 +4933,7 @@
         // BEFORE the merge and returns early, because the alternative — merging it and noticing
         // afterwards — leaves records in the wrong turn with nothing to undo them.
         if (hasDelta && !deltaMatchesNumbering(state.payload, body)) {
-          state.since = null;
-          state.sinceFor = null;
-          state.loading = true;
-          render();
-          fetchTrajectory(true);
+          reloadWholeBody();
           return;
         }
         var mergeable = hasDelta;
@@ -4429,7 +4969,20 @@
         // the old answer would show the reader rows that never matched. Re-running it here is the
         // whole of the rule; doing it at the reader would leave the poll path stale, which is the
         // same mistake the window pinning above used to make.
-        if (changed && state.query) runSearch(state.query);
+        //
+        // WHICH SET, and not only which shape. A body can change without changing its shape: a
+        // record's text rewritten under the page keeps every counter the same, so `changed` is
+        // false and the answer standing on screen is still about the old text — it would light up
+        // a row whose text does not contain the needle, and nothing anywhere would say so. The
+        // set the answer is about is the set of record versions it was computed against, which is
+        // the same set the request names; so the standing answer and the request cannot disagree
+        // about which records it covers.
+        //
+        // The set is only compared once a question has been asked (`state.searchSet` is empty
+        // until then), and a question that was never put has no answer to retire.
+        if (state.query && (changed || (state.searchSet && displayedRecordSet() !== state.searchSet))) {
+          runSearch(state.query);
+        }
         render();
         if (manual) announce('已刷新，正在显示最新数据。');
       }
@@ -4453,39 +5006,97 @@
 
       /* The count is omitted whole when there is none, rather than printed as a dash.
        *
-       * `/api/sessions` reads the first 64 KB of the active `messages.jsonl` to build this list, so
-       * it used to send a message count that was really 「how many messages are in the first 64 KB」.
-       * On a session whose active file is 1 MB that is 10 against 23,642 — and this line put it in
+       * `/api/sessions` reads only a prefix of the active `messages.jsonl` to build this list, so
+       * it used to send a message count that was really 「how many messages are in that prefix」.
+       * When the prefix was a small part of the file, that count was wrong by orders of magnitude — and this line put it in
        * front of the reader as `（3 分钟前 · 10 条）`, with nothing to say it was a prefix. It now
        * sends no count when the prefix was not the whole file, so `— 条` here would be printing the
        * absence of a number in the shape of a number. Omitting the segment is the honest rendering
        * of 「这个数不存在」: the reader still has the label and the recency, which is what the picker
        * is for. tests/verify-list-cache.mjs pins the gate that produces the absence. */
-      /* 「子会话」 says the structural fact and stops there.
+      /* The two picks, and what each one answers.
        *
-       * The parent is named by nobody, on purpose. A branch is always newer than the session that
-       * spawned it, so its parent has usually aged out of the most-recent-N window this list is
-       * built from — naming it would mean a lookup that fails exactly when a reader wants the
-       * answer most, and a lookup that fails quietly is how a picker ends up asserting something
-       * it cannot see.
+       * A run the runtime spawned from another session is a session like any other, and the runtime
+       * hangs it off its parent with one column. The page used to draw both in one dropdown, flat:
+       * thirteen of twenty rows were runs of the one conversation being read, and nothing on the row
+       * said so.
        *
-       * It is a marker and not a filter: nothing here writes state, so there is no second opinion
-       * about which records are on screen that could disagree with the table. */
-      var BRANCH_MARK = ' · 子会话';
-
+       * It then drew them inside the same dropdown, indented under their conversation. That made the
+       * hierarchy visible, and made the dropdown long — forty rows on this machine, nineteen of them
+       * runs — so picking one conversation meant scrolling a list of titles to find it.
+       *
+       * It is two controls now, and the second is a cascade of the first:
+       *
+       *   - 「会话」 answers 「which conversation」. It holds conversations and nothing else.
+       *   - 「子代理」 answers 「which run inside it」. It holds the runs of the conversation the first
+       *     pick names, and stays empty until there is one to name.
+       *
+       * Two controls is not two answers to one question: the questions are nested, and each has one.
+       * The layer is the container now, which says more than an indent or a word did — a row under
+       * 「子代理」 says what it is without saying it in words.
+       *
+       * A run is a session with its own transcript, and the parent transcript does not contain its
+       * turns. So picking a run shows that run's own trajectory, and the conversation pick moves to
+       * its parent: the two controls always agree about what is on screen. */
       function sessionOptionLabel(session, now) {
-        var label = truncateText(session && session.label ? session.label : '', 42);
-        var when = formatAgo(session ? session.lastActiveAt : null, now);
-        var count = session ? session.messageCount : null;
-        var tail = isCount(count) ? '（' + when + ' · ' + formatInt(count) + ' 条）' : '（' + when + '）';
-        var branch = session && session.sessionParentId ? BRANCH_MARK : '';
-        if (!label) return '未命名会话 ' + tail + branch;
-        return label + ' ' + tail + branch;
+        var parts = sessionLabelParts(session, now);
+        if (!parts.label) return '未命名会话 ' + parts.tail + parts.tag;
+        return parts.label + ' ' + parts.tail + parts.tag;
+      }
+
+      /**
+       * The sub-agents of each conversation, grouped by the parent the service named.
+       *
+       * One pass over the flat list the service sends, and the order inside each group is the
+       * order it arrived in — most recently active first, which is the service's ordering and the
+       * only one the picker promises.
+       *
+       * @returns {Object<string, any[]>}
+       */
+      function childrenByParent() {
+        // A map with no prototype. The parent id is data that crossed the wire from the
+        // runtime database, and the names a plain object inherits -- '__proto__',
+        // 'constructor' -- are truthy and are not arrays, so a plain object reads one of them
+        // as a group and then throws on it, and the picker stops updating after an otherwise
+        // successful list.
+        var grouped = Object.create(null);
+        var all = state.children || [];
+        for (var i = 0; i < all.length; i += 1) {
+          var child = all[i];
+          if (!child || !child.id || !child.sessionParentId) continue;
+          var bucket = grouped[child.sessionParentId];
+          if (bucket) bucket.push(child);
+          else grouped[child.sessionParentId] = [child];
+        }
+        return grouped;
+      }
+
+      /**
+       * The conversation the session on screen belongs to.
+       *
+       * A run belongs to the conversation that spawned it; a conversation belongs to itself. That
+       * is the only thing the two picks have to agree about, and it is derived rather than stored:
+       * the parent id comes down with the row, so there is no second copy of the mapping to keep
+       * in step with the service.
+       *
+       * @returns {string}
+       */
+      function ownerSessionId() {
+        var id = state.sessionId || '';
+        if (!id) return '';
+        var all = state.children || [];
+        for (var i = 0; i < all.length; i += 1) {
+          var child = all[i];
+          if (child && child.id === id && child.sessionParentId) return child.sessionParentId;
+        }
+        return id;
       }
 
       function renderSessionSelect() {
         var select = dom.sessionSelect;
-        var previous = state.followLatest ? 'latest' : state.sessionId || '';
+        // The conversation pick names the conversation, not the run: picking a run leaves this
+        // control on the run's parent, so the two controls never disagree about what is on screen.
+        var previous = state.followLatest ? 'latest' : ownerSessionId();
         clear(select);
 
         var followOption = el('option', null, '跟随最新（自动切换）');
@@ -4513,6 +5124,50 @@
           select.value = 'latest';
         }
         if (select.selectedIndex < 0) select.value = 'latest';
+      }
+
+      /**
+       * The run pick: the runs of the conversation on screen, and nothing else.
+       *
+       * Empty while the page follows the newest conversation — that list changes under the reader,
+       * and a run picked out of it would be a run of a conversation that is no longer on screen.
+       * Empty with a conversation picked and no run picked, which is the default; the first option
+       * says so in words.
+       */
+      function renderChildSelect() {
+        var select = dom.childSelect;
+        clear(select);
+        var owner = state.followLatest ? '' : ownerSessionId();
+
+        if (!owner) {
+          var idle = el('option', null, '（跟随最新）');
+          idle.value = '';
+          select.appendChild(idle);
+          select.disabled = true;
+          select.value = '';
+          return;
+        }
+
+        select.disabled = false;
+        var self = el('option', null, '（主会话本身）');
+        self.value = '';
+        select.appendChild(self);
+
+        var now = Date.now();
+        var kids = childrenByParent()[owner] || [];
+        for (var j = 0; j < kids.length; j += 1) {
+          var option = el('option', null, sessionOptionLabel(kids[j], now));
+          option.value = kids[j].id;
+          select.appendChild(option);
+        }
+        // The run on screen, when it is a run of this conversation; otherwise the default, which
+        // is the conversation itself.
+        var current = state.sessionId || '';
+        var isRun = false;
+        for (var k = 0; k < kids.length; k += 1) {
+          if (kids[k].id === current) isRun = true;
+        }
+        select.value = isRun ? current : '';
       }
 
       /* ---------------- rendering: KPI ---------------- */
@@ -4641,7 +5296,7 @@
         return wrap;
       }
 
-      /** What the 对话轮次 line cannot say by looking at it. Kept to six lines: it opens under the
+      /** What the 对话轮次 line cannot say by looking at it. Kept to a few lines: it opens under the
        * card and covers the kind chips, so every extra line hides the thing it points at. */
       function turnTipLines(stats) {
         var total = isCount(stats.turnsWithPrompt) ? stats.turnsWithPrompt : 0;
@@ -4663,7 +5318,7 @@
        *
        * The session total deliberately does NOT live here. Putting 「共 84 轮」 next to a table
        * that starts at 第 82 轮 invited exactly the reading "these should be equal" — and they
-       * are not, because the default window holds only the newest 200 records and one of those
+       * are not, because the default window holds only the newest PAGE_STEP records and one of those
        * turns alone holds 183 of them. The total is still on screen, on the window bar beside
        * how many records are not loaded, which is the question it actually answers.
        */
@@ -6040,7 +6695,7 @@
        * Whether the record the inspector is showing still belongs to the table.
        *
        * It used to ask `state.flat` — the whole session, unfiltered — so a record stayed selected
-       * after every filter had already removed it: the ledger read 已显示 2 条, the inspector still
+       * after every filter had already removed it: the ledger read 已显示 N 条, the inspector still
        * showed the row the reader had picked, and no row anywhere carried the selection mark. The
        * list handed in here is the filter result the table is narrowed from, not the session, so a
        * record this accepts is by construction one the filters kept.
@@ -6404,8 +7059,8 @@
        * Anything that changes what the numbers mean — a filter, a new session, a fresh search,
        * a brush, a generation pin — resets to the default. Resetting is not about shrinking the
        * window: it is about discarding a window that was chosen for a set of records which no
-       * longer exists. A reader who was looking at only the newest 200 and then brushes an
-       * older range must not be left with a 200-row cap over a range holding thousands.
+       * longer exists. A reader who was looking at only the newest PAGE_STEP records and then brushes an
+       * older range must not be left with the default window's cap over a range holding thousands.
        *
        * @param {'latest'|'all'} mode
        */
@@ -6431,7 +7086,7 @@
        * What happens to the window when a poll brings new records.
        *
        * 全部 must not re-pin, or the first record to arrive after the click would cancel it
-       * and the reader would be thrown back to 200 records without ever being told why.
+       * and the reader would be thrown back to the default window without ever being told why.
        *
        * 「向上加载更早的 N 条」 must not re-pin either, and that is the older of the two.
        * `limit` is the reader's own choice, not a cache: at exactly PAGE_STEP the window is
@@ -6439,14 +7094,14 @@
        * reader pressed a button asking for more, and a poll that resets the limit takes that
        * back without saying so. The button re-rendered and appeared to do nothing — the only
        * reason it was not noticed is that this session grows by a few records per second, so
-       * the count stayed near 200 either way. Growing the session hid a dead control.
+       * the count stayed near PAGE_STEP either way. Growing the session hid a dead control.
        *
        * @returns {number} the limit now in force
        */
       function rePinWindow() {
         if (state.allRecords) return state.limit;
         // A time range is a fixed stretch of the session, so the window follows it rather
-        // than the tail. Re-pinning would slide the whole range forward every 2.5s, and the
+        // than the tail. Re-pinning would slide the whole range forward on every poll, and the
         // records that scrolled off the top would be records the reader had scoped to.
         if (hasTimeRange()) return state.limit;
         if (state.limit > PAGE_STEP) return state.limit;
@@ -6454,13 +7109,594 @@
         return state.limit;
       }
 
+      /* ---------------- ledger group lifecycle ---------------- */
+
+      /**
+       * How long a group may keep its rows after the reader has left it.
+       *
+       * Long enough that scrolling back and forth over the same stretch does not rebuild it
+       * every time, short enough that the rows of a session the reader has moved past are not
+       * held for the rest of the session.
+       */
+      var LEDGER_IDLE_MS = 15000;
+
+      /**
+       * How many groups may hold their rows at once.
+       *
+       * The cap is what makes the memory bounded rather than merely reduced. A reader who
+       * scrolls through three hundred groups in a minute has been on all of them, and the idle
+       * timeout alone would not release them fast enough to stop it. Past the cap the oldest one
+       * goes, which is the order the reader would choose.
+       */
+      var LEDGER_LIVE_GROUPS = 6;
+
+      /**
+       * What is known about each turn group: whether it is holding its rows, when the reader was
+       * last on it, and how tall it was.
+       *
+       * Keyed by the turn's key, so it survives the poll that rebuilds the table. The DOM is
+       * thrown away and rebuilt on every poll; this is what carries the reader's
+       * place in it across that, and it is why the reader does not have to start again at the top
+       * of the session on every tick.
+       *
+       * @type {Map<string, {live: boolean, lastSeen: number, height: number, heightRows: number, heightBands: number}>}
+       */
+      var ledgerState = new Map();
+
+      /**
+       * The group each section was built from.
+       *
+       * A section that scrolls into view has to be filled, and filling it needs the records it
+       * stands for. The table is rebuilt on every poll, so this is rebuilt with it — a section
+       * from the previous table is not in here any more, and filling it would put rows into a
+       * table that no longer exists.
+       *
+       * @type {Map<HTMLElement, {key: string, turn: any, entries: any[]}>}
+       */
+      var ledgerContent = new Map();
+
+      /**
+       * The row heights the last build calibrated: the head, a row and a band.
+       *
+       * The build measures them off the first batch, which is the only part of the table that
+       * has been laid out for real. The visit path needs them as well: it has to bring the
+       * height a released group keeps up to date with what the group holds now, and a group
+       * that has gained a row since it was measured is taller by a row's worth of height.
+       *
+       * One writer: the build, right after it has measured the batch. The visit path reads it
+       * and never writes it.
+       *
+       * @type {{head: number, row: number, band: number}|null}
+       */
+      var ledgerCalibration = null;
+
+      /**
+       * The observer that fills a group when the reader reaches it.
+       *
+       * One observer for the whole table: the sections are rebuilt on every poll, so an observer
+       * per section would have to be rebuilt with them.
+       */
+      var ledgerObserver = null;
+
+      /**
+       * The state of one group, created on first sight.
+       *
+       * `heightRows` and `heightBands` say what the measured height was a measurement OF. A
+       * height on its own describes a past: the group can hold a different number of rows by
+       * the time the height is read again, and without the two counts the difference cannot be
+       * charged to anything.
+       *
+       * @param {string} key
+       * @returns {{live: boolean, lastSeen: number, height: number, heightRows: number, heightBands: number}}
+       */
+      function ledgerStateOf(key) {
+        var state = ledgerState.get(key);
+        if (!state) {
+          state = { live: false, lastSeen: 0, height: 0, heightRows: 0, heightBands: 0 };
+          ledgerState.set(key, state);
+        }
+        return state;
+      }
+
+      /**
+       * Whether a group should be holding its rows right now.
+       *
+       * Three things make a group live: the reader is on it, the reader was on it recently and
+       * the idle timeout has not passed, and it is the first group of the window — which is where
+       * the reader arrives, and the only source of the heights every other group is predicted
+       * from.
+       *
+       * @param {string} key
+       * @param {boolean} isFirst
+       * @returns {boolean}
+       */
+      function ledgerHoldsRows(key, isFirst) {
+        if (isFirst) return true;
+        var state = ledgerState.get(key);
+        if (!state || !state.live) return false;
+        return Date.now() - state.lastSeen < LEDGER_IDLE_MS;
+      }
+
+      /**
+       * Decide which groups give up their rows.
+       *
+       * Three rules, and the order matters. A group the reader has left goes when the idle
+       * timeout has passed; when more groups are live than the cap allows, the oldest goes
+       * first; and the groups the caller is holding on to are none of the reader's visits at
+       * all, so they are counted rather than timed.
+       *
+       * That last one is what keeps the bound about the rows on screen. The groups the caller
+       * holds on to hold their rows whatever the reader is doing — the window's first group is
+       * where the reader arrives and every other group's height is predicted from it — so a
+       * bound on the reader's groups alone would leave one group holding its rows outside the
+       * count. Counting them here makes the two sets the same set: the groups that are live
+       * are the groups that hold their rows.
+       *
+       * One decision and two callers, and that is the point of it. The bound is about what the
+       * reader is holding at this moment, not only about what a rebuild leaves behind: a reader
+       * who walks through more groups than the cap allows between two rebuilds is holding all
+       * of them until the next poll comes round. So the rebuild and the visit both come through
+       * here, and they cannot disagree about which groups go — the same order, the same count.
+       *
+       * They do not hold on to the same groups, and the difference is the point. The rebuild
+       * holds on to the window's first group. The visit holds on to that group as well, and to
+       * the group the reader has just reached: a visit that protected only the group the
+       * reader had just reached would let the window's first group go — the idle timeout
+       * would take it, or the cap would reach for it as the oldest one there is — and the
+       * group every height is predicted from would lose its rows while the reader was on the
+       * page.
+       *
+       * This decides. The rows are taken away by the build, which writes the released groups
+       * as it writes the table, and by the visit, which takes the rows out of a table that is
+       * already on screen.
+       *
+       * @param {string[]} keepKeys the groups that hold their rows whatever else happens: the
+       * window's first group, and on a visit the group the reader has just reached as well.
+       * The group the reader has just reached is the last of them, so that a visit in the same
+       * millisecond as another one cannot be put at the head of the queue.
+       * @returns {string[]} the groups that have to give up their rows
+       */
+      function releaseStaleGroups(keepKeys) {
+        var now = Date.now();
+        var live = [];
+        var doomed = [];
+        var kept = [];
+        var keptIndex = Object.create(null);
+        var keys = Array.isArray(keepKeys) ? keepKeys : [keepKeys];
+        for (var k = 0; k < keys.length; k += 1) {
+          if (keys[k] === null || keys[k] === undefined) continue;
+          if (keptIndex[keys[k]]) continue;
+          keptIndex[keys[k]] = true;
+          kept.push(keys[k]);
+        }
+        ledgerState.forEach(function (state, key) {
+          if (keptIndex[key]) return;
+          if (!state.live) return;
+          if (now - state.lastSeen >= LEDGER_IDLE_MS) {
+            state.live = false;
+            doomed.push(key);
+            return;
+          }
+          live.push({ key: key, at: state.lastSeen });
+        });
+        // The groups the caller is holding on to are counted with the current time, so they are
+        // never the oldest ones the cap reaches for. Their leases are not consulted: they do
+        // not have one.
+        //
+        // They are counted after the others, so that a visit in the same millisecond as another
+        // one — a tie the clock cannot break — cannot put the group the reader has just reached
+        // at the head of the queue. The group the reader has just reached is the last of them,
+        // and the cap must not take it.
+        for (var j = 0; j < kept.length; j += 1) {
+          ledgerStateOf(kept[j]).live = true;
+          live.push({ key: kept[j], at: now });
+        }
+        if (live.length <= LEDGER_LIVE_GROUPS) return doomed;
+        live.sort(function (a, b) { return a.at - b.at; });
+        for (var i = 0; i < live.length - LEDGER_LIVE_GROUPS; i += 1) {
+          var state = ledgerState.get(live[i].key);
+          if (!state) continue;
+          state.live = false;
+          doomed.push(live[i].key);
+        }
+        return doomed;
+      }
+
+      /**
+       * The key of the window's first group.
+       *
+       * The window's first group is the first section of the table: the build writes the groups
+       * in the order of the window, so the first section is the group the reader arrives at and
+       * the one every other group's height is predicted from.
+       *
+       * It is read out of the table rather than remembered in a variable of its own. A variable
+       * would be a second copy of the same fact, and the two copies would have to be kept in
+       * step; the table has one writer — the build — and its first section is the window's
+       * first group by construction.
+       *
+       * @returns {string|null} null when the table has no group in it
+       */
+      function ledgerFirstGroupKey() {
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        if (!sections.length) return null;
+        var content = ledgerContent.get(sections[0]);
+        return content ? content.key : null;
+      }
+
+      /**
+       * The groups that have to give up their rows before a rebuild writes the table.
+       *
+       * The rebuild and the visit make the same decision, so they come through the same
+       * function; this is the rebuild's half of it, and it is a function of its own so that the
+       * two halves cannot drift apart: the rebuild holds on to the window's first group, and
+       * the visit holds on to that group and to the group the reader has just reached.
+       *
+       * @param {Array<{turn: any}>} groups the window's groups, in order
+       */
+      function releaseStaleGroupsBeforeRebuild(groups) {
+        if (!groups.length) return;
+        releaseStaleGroups([turnKey(groups[0].turn)]);
+      }
+
+      /**
+       * Put a group's rows back into it.
+       *
+       * The group is in view, so this is what the reader is about to read, and the rows go in
+       * before the next paint — so there is no frame in which the group is empty.
+       *
+       * The rows go in once. A group that is already holding them is not built a second time,
+       * and the second copy of every row is the whole cost of getting it wrong.
+       *
+       * @param {HTMLElement} section
+       */
+      function fillLedgerGroup(section) {
+        var group = ledgerContent.get(section);
+        if (!group) return;
+        var state = ledgerStateOf(group.key);
+        state.live = true;
+        state.lastSeen = Date.now();
+        var alreadyLive = section.getAttribute('data-rows') === 'live';
+        if (!alreadyLive) {
+          var list = section.querySelector('ul.row-list');
+          if (!list) return;
+          fillGroupRows(list, group);
+          section.setAttribute('data-rows', 'live');
+          section.classList.remove('is-released');
+          section.style.minHeight = '';
+        }
+        // The height the group really has, taken on both paths — see measureLedgerGroup().
+        // A group that is already holding its rows is measured again when its LAYOUT has
+        // changed, and the test for that is the layout and not the content: the rows and the
+        // bands can be exactly the same and the height a different one — the window resized,
+        // the text scale turned up, the group's own chrome taller. The height that was
+        // measured then describes a layout that is no longer there, and the height a released
+        // group keeps is that height unchanged, because the counts it was measured at have
+        // not changed either — so the group stands shorter than the content it is holding,
+        // and the document under the reader comes up short by exactly that much.
+        //
+        // The group the reader is on is rendered, so the height it has now is its layout and
+        // not the prediction an off-screen group is sized by; the off-screen groups are the
+        // calibration-priced path's business, and this does not touch them.
+        if (!alreadyLive || !state.height || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);
+        // The cap, on the visit path as well as on the rebuild: the number of groups holding
+        // their rows is bounded at any moment, not only right after a rebuild.
+        //
+        // Two groups are held on to: the group the reader has just reached, and the window's
+        // first group, which holds its rows whatever the reader is doing — it is where the
+        // reader arrives and the one every other group's height is predicted from. The group
+        // the reader has just reached is the last of the two, so that a tie the clock cannot
+        // break cannot put it at the head of the queue.
+        releaseLedgerRows(releaseStaleGroups([ledgerFirstGroupKey(), group.key]));
+      }
+
+      /**
+       * Record how tall a group really is, and what it was holding when it was measured.
+       *
+       * The measurement belongs to the observer, because the observer is what sees the group
+       * laid out for real. The build never measures: a group it holds has no height of its own
+       * until somebody looks at it, and a build that stamped one would be writing down a
+       * height it never measured.
+       *
+       * Both paths record it. The group the build made live — the first group of the window is
+       * always live — is visited by the observer like any other, and it is laid out for real at
+       * that moment. Without a measurement here it keeps no height of its own, and when the
+       * window widens and the group is released it falls back on the prediction: the document
+       * under the reader loses the height the group really had, over a group whose rows and
+       * bands did not change by one.
+       *
+       * The counts go with the height, because a height is a measurement OF something. The group
+       * is keyed by its turn, and the turn keeps its key while its content changes — a late
+       * reply, a band from a compaction — so a height that is not read together with its counts
+       * describes a content that is no longer there.
+       *
+       * The two counts are rows and bands, and they are counted apart. A band is an entry as
+       * well as a row, so a count of entries would charge every band once as a row and once as
+       * a band — the band at 36 px and 38 px would be charged 74 px, and the box would stand
+       * taller than the content it is holding.
+       *
+       * @param {HTMLElement} section
+       * @param {{key: string, entries: any[], bands?: number}} group
+       */
+      function measureLedgerGroup(section, group) {
+        var state = ledgerStateOf(group.key);
+        // The height it really has, now that it is laid out for real. A group the browser has
+        // skipped measures by its own contain-intrinsic-size, so this reads the prediction back
+        // rather than the truth — which is why it is the remembered height and not the only one.
+        sizeBuiltGroup(section);
+        state.height = Math.round(section.getBoundingClientRect().height);
+        var measuredBands = group.bands || 0;
+        state.heightRows = group.entries.length - measuredBands;
+        state.heightBands = measuredBands;
+      }
+
+      /**
+       * Whether a group's layout is not the one its remembered height was measured at.
+       *
+       * The remembered height is a measurement of a layout that was there then, and a layout
+       * can change without the content changing: the window is resized, the text scale is
+       * turned up, the group's own chrome becomes taller. The rows and the bands can be
+       * exactly the same and the height a different one — and the height a released group
+       * keeps is the remembered one unchanged, because the counts it was measured at have not
+       * changed either. So the group stands shorter than the content it is holding, and the
+       * document under the reader comes up short by exactly that much.
+       *
+       * So the test is the height itself: the group has a height of its own now, and it is
+       * not the one that was remembered.
+       *
+       * A group with no remembered height has no layout to compare against, and this says
+       * nothing about it: the caller has a rule of its own for that case, and it is the one
+       * that has to stay — the group the build made live has to record the height it was
+       * measured at, because the build never measures.
+       *
+       * @param {HTMLElement} section
+       * @param {{height: number}} state
+       * @returns {boolean}
+       */
+      function ledgerLayoutChanged(section, state) {
+        if (!state.height) return false;
+        return Math.round(section.getBoundingClientRect().height) !== state.height;
+      }
+
+      var ledgerMeasureFrame = null;
+
+      /**
+       * Measure the groups that are on screen again, after the window has changed shape.
+       *
+       * WHY: a height is a measurement of a layout, and a resize changes the layout of every
+       * group that is rendered without changing a row or a band in it. The measurement is the
+       * observer's, and the observer is not told that the window changed shape — so a group
+       * the reader is looking at keeps the height it was measured at, and that height
+       * describes the layout before the resize, until the reader scrolls away from it and
+       * back. And when the cap releases it, the height it reserves is that stale number, so
+       * the document under the reader comes up short by exactly the difference.
+       *
+       * The measurement is deferred to the next frame, because the layout a resize brought
+       * about is not there yet when the event arrives.
+       *
+       * What it does not claim: a group that was off screen when the layout changed, and is
+       * never visited again, keeps the height it was last really measured at. Off screen the
+       * browser answers with the group's own `contain-intrinsic-size`, and that number is a
+       * prediction — a prediction written down as a measurement is a guess the next rebuild
+       * reads back as a fact. So a group that reads back the size it was given is left alone
+       * here, and the observer's visit is what measures a group that happens to be laid out at
+       * exactly that height — the same limit the build path has.
+       */
+      function refreshLedgerMeasurements() {
+        if (ledgerMeasureFrame !== null) return;
+        ledgerMeasureFrame = window.requestAnimationFrame(function () {
+          ledgerMeasureFrame = null;
+          var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+          for (var i = 0; i < sections.length; i += 1) {
+            var section = sections[i];
+            // Only the groups that are holding their rows. A group that has given them up is
+            // sized by the prediction, and the height it keeps is the one it was measured at.
+            if (section.getAttribute('data-rows') !== 'live') continue;
+            var group = ledgerContent.get(section);
+            if (!group) continue;
+            // The size the browser answers with while a group is off screen is the size
+            // written on it — so a group that reads back exactly the number it was given MAY
+            // be being sized rather than laid out, and what it reads is then a prediction.
+            // It is not proof of that: the first batch's own size writer puts the group's REAL
+            // height on it, so a group that is laid out reads back its own height too. What
+            // keeps the rule true is the observer: a group the reader is on is measured again
+            // by the observer's visit, and the rebuild is what re-registers that observer. A
+            // group that is neither visited nor observed keeps the height it was measured at,
+            // and that is the same limit the build path has.
+            var sizes = String(section.style.containIntrinsicSize || '').match(/(-?[0-9.]+)px/g);
+            if (sizes) {
+              var predicted = Math.round(parseFloat(sizes[sizes.length - 1]));
+              if (Math.round(section.getBoundingClientRect().height) === predicted) continue;
+            }
+            // The rows are not built here: a group that is holding them is holding them, and
+            // the second copy of every row is the whole cost of getting it wrong.
+            measureLedgerGroup(section, group);
+          }
+        });
+      }
+
+      /**
+       * Take the rows out of the groups that have to give up their rows.
+       *
+       * The rebuild writes the released groups as it builds the table, so there is nothing to do
+       * there. A visit happens between two rebuilds, and the groups it releases are in a table
+       * that is already on screen: their rows have to go now, or the reader is holding more
+       * rows than the cap allows until the next poll comes round.
+       *
+       * The height is kept. The rows are the DOM; the height is the reader's place in a session
+       * they have scrolled through, and a group that has given up its rows has to keep it or
+       * the document shrinks under them.
+       *
+       * @param {string[]} keys the groups that have to give up their rows
+       */
+      function releaseLedgerRows(keys) {
+        if (!keys.length) return;
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        for (var i = 0; i < sections.length; i += 1) {
+          var section = sections[i];
+          var content = ledgerContent.get(section);
+          if (!content) continue;
+          if (keys.indexOf(content.key) < 0) continue;
+          var bands = content.bands || 0;
+          var rows = content.entries.length - bands;
+          // The height the group keeps is the one it was measured at. It is read before the
+          // rows go, because after them the box is the group's own head and nothing else.
+          var measured = Math.round(section.getBoundingClientRect().height);
+          var list = section.querySelector('ul.row-list');
+          if (list) clear(list);
+          section.setAttribute('data-rows', 'released');
+          section.classList.add('is-released');
+          // The measured height, brought up to date with what the group holds now; the height
+          // read above otherwise. The difference is priced at the row heights the last build
+          // calibrated, which is the same arithmetic the build uses.
+          //
+          // The height read above cannot be used on its own: a group the browser has skipped
+          // measures by its own contain-intrinsic-size, so for the groups that are off screen
+          // it is the prediction and not a measurement — and writing it would replace the
+          // height the group was really measured at with a guess. The calibration is what
+          // prices the difference, and it is what the build prices it with.
+          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));
+        }
+      }
+
+      /**
+       * Watch the groups, so a group the reader scrolls to gets its rows.
+       *
+       * The observer is disconnected and rebuilt on every poll, because the sections are: a
+       * section from the previous table is not in `ledgerContent` any more.
+       */
+      function watchLedgerGroups() {
+        if (!ledgerObserver) {
+          ledgerObserver = new IntersectionObserver(function (entries) {
+            for (var i = 0; i < entries.length; i += 1) {
+              if (!entries[i].isIntersecting) continue;
+              fillLedgerGroup(entries[i].target);
+            }
+          });
+        } else {
+          ledgerObserver.disconnect();
+        }
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        for (var i = 0; i < sections.length; i += 1) ledgerObserver.observe(sections[i]);
+      }
+
+      /**
+       * Hold a group's height while it is not holding its rows.
+       *
+       * `contain-intrinsic-size` sizes a group the browser has skipped, and `min-height` sizes
+       * one it is rendering. A group near the viewport is rendered, so it needs the second, and
+       * without it the document under the reader loses the height of everything they have
+       * scrolled past — measured at 79,288 px for the groups around the viewport, and 257,378 px
+       * more for the viewport's own group.
+       *
+       * @param {HTMLElement} section
+       * @param {number} height
+       */
+      function holdLedgerHeight(section, height) {
+        if (!(height > 0)) return;
+        section.style.minHeight = Math.round(height) + 'px';
+      }
+
+      /**
+       * The height a released group should keep, brought up to date with what it holds now.
+       *
+       * The remembered height is a measurement of a past. It was taken when the group was
+       * holding a particular number of rows and bands, and the group can gain one of each
+       * after the reader has walked away from it — a late reply, a band from a compaction —
+       * because a group is keyed by its turn, and the turn keeps its key while its content
+       * changes. A height kept unchanged then describes content that is no longer there, and
+       * the document under the reader comes up short by exactly the rows that were added.
+       *
+       * So the difference between what the group holds now and what it held when it was
+       * measured is charged at the rates the prediction uses: a row's worth of height for
+       * every row added, a band's worth for every band. The two counts are kept apart, so a
+       * band is charged as a band and not as a row as well — the two heights are close (36 px
+       * and 38 px, measured on a real session), and a band charged twice would leave the box
+       * a whole row taller than the content it is holding. What is left of the measurement is
+       * the part that belongs to the group rather than to its content — its own header, its
+       * borders — and that is the part the prediction cannot know, because the prediction is
+       * priced from medians and this group's chrome is its own.
+       *
+       * The difference is local: the measured height is kept as it was, and only the rows
+       * that changed are priced. That is the whole difference between this and falling back
+       * on the prediction, which would price the whole group again — and a group's real
+       * height runs to several times the median one.
+       *
+       * The measurement is the observer's: it is taken when the group is really laid out.
+       * This reads it and never writes it, because a build that stamped one would be writing
+       * down a height it never measured.
+       *
+       * What this does not claim: the difference is priced at the calibrated heights, which
+       * are medians, so a group whose own rows are taller than the median one has its
+       * difference undercounted. The height is brought up to date; it is not a measurement of
+       * what the group holds now.
+       *
+       * @param {string} key
+       * @param {number} rows how many rows the group holds now; the compaction bands are
+       * counted apart and are not rows
+       * @param {number} bands how many compaction bands the group holds now
+       * @param {number} predicted the height the shape of the group predicts
+       * @param {{head: number, row: number, band: number}|null} heights the calibrated heights
+       * @returns {number}
+       */
+      function heldLedgerHeight(key, rows, bands, predicted, heights) {
+        var state = ledgerState.get(key);
+        if (!state || !(state.height > 0)) return predicted;
+        // A height measured without knowing what was in the group cannot be brought up to
+        // date: there is no difference to charge.
+        if (typeof state.heightRows !== 'number') return predicted;
+        // No calibration yet, so a difference in rows cannot be turned into pixels. The
+        // measured height is stale rather than right, and a stale height is better than none:
+        // the first batch is re-sized from the calibration as soon as there is one.
+        if (!heights) return state.height;
+        var addedRows = rows - state.heightRows;
+        var addedBands = bands - state.heightBands;
+        if (!addedRows && !addedBands) return state.height;
+        var held = state.height + addedRows * heights.row + addedBands * heights.band;
+        return held > 0 ? held : predicted;
+      }
+
+      /**
+       * Build a group's rows into its list.
+       *
+       * The rows of a group are built in one place, and the table has two writers for them: the
+       * build, which makes the groups the reader is on, and the observer, which fills a group the
+       * reader has just scrolled to. A second copy of this loop would be two definitions of what
+       * a row is, and the page has already paid for that once.
+       *
+       * A `null` list counts the compaction bands without building anything, which is what a
+       * group that is not holding its rows needs: its height is predicted from how many bands it
+       * has, and a prediction that ignored them would be short by every band in it.
+       *
+       * @param {HTMLElement|null} list
+       * @param {{turn: any, entries: any[]}} group
+       * @returns {number} how many of the entries are compaction bands
+       */
+      function fillGroupRows(list, group) {
+        var rails = list ? railStates(group.entries) : null;
+        var bands = 0;
+        for (var j = 0; j < group.entries.length; j += 1) {
+          var isBand = group.entries[j].record.kind === 'compaction';
+          if (isBand) bands += 1;
+          if (!list) continue;
+          var item = el('li');
+          if (isBand) {
+            item.className = 'compaction-cell';
+            item.appendChild(buildCompactionBand(group.entries[j]));
+          } else {
+            item.appendChild(buildRow(group.entries[j], rails[j]));
+          }
+          list.appendChild(item);
+        }
+        return bands;
+      }
+
       /* ---------------- batched row build ---------------- */
 
       /**
        * Turn groups built per frame once a window is too large for one.
        *
-       * Measured, not chosen. On this session at 18,924 rows across 150 turns, 25 groups is
-       * ~3,150 rows and ~145 ms of row construction — the largest slice of a frame this loop can
+       * Measured, not chosen: a batch of LEDGER_BATCH_GROUPS is
+       * the largest slice of a frame this loop can
        * take before the page stops answering the pointer.
        *
        * The alternative was measured and rejected rather than untried: skipping layout for the
@@ -6497,7 +7733,7 @@
       /** A poll tick that arrived while the ledger was still being built. */
       var pollDeferred = false;
 
-      /** Whether a batched build is running. One tick every 2.5 s asks this before it redraws. */
+      /** Whether a batched build is running. One tick on every poll asks this before it redraws. */
       function ledgerBuilding() {
         return ledgerProgress !== null;
       }
@@ -6578,6 +7814,10 @@
            only fixes the first build after a page load. This line is what fixes the rest. */
         ledger.classList.remove('is-skipping-offscreen');
         clear(ledger);
+        // The sections the last build made are gone with them, and the map that says which group
+        // each one stands for has to go with them: a section that is no longer in the table must
+        // not be filled when the observer reports it as in view.
+        ledgerContent.clear();
 
         if (state.loading) {
           ledger.appendChild(buildSkeleton());
@@ -6634,7 +7874,7 @@
         // It said: what the reader can see is the window, not the filter result. That was written
         // to fix a real thing: this call used to RAISE `state.limit` to reach a selection
         // below the window, which made the window a thing the inspector could widen, and left the
-        // promise 「已显示 200 条」 true at the moment the reader pressed 显示最新 200 条 and false a
+        // promise 「已显示 N 条」 true at the moment the reader pressed 显示最新 N 条 and false a
         // second later. **That part is still true and the prohibition still stands** — the window
         // never widens to reach a selection, and it still does not below.
         //
@@ -6643,7 +7883,7 @@
         // record slides the whole tail forward by one row. So 「not in the window」 was measuring
         // the projection's motion, not the reader's attention. Measured on a real session (32,386
         // records, 216 turns, the reader touching nothing): a record selected at position p of the
-        // 200-row tail survived exactly `200 - p` new records, and p=0 died after ONE of them,
+        // tail survived exactly `PAGE_STEP - p` new records, and p=0 died after ONE of them,
         // inside a single poll. On a session that is still being written, that is every selection
         // that is not already the newest — which is why it read as 「过一会检视会消失」.
         //
@@ -6723,6 +7963,12 @@
         var buildTotal = 0;
         for (var b = 0; b < groups.length; b += 1) buildTotal += groups[b].entries.length;
 
+        // The groups the reader has left give up their rows, and the ones past the cap give them
+        // up oldest first. The same decision the visit path makes, so the two cannot disagree
+        // about which groups go; applied by this build, which writes the released groups as it
+        // writes the table.
+        releaseStaleGroupsBeforeRebuild(groups);
+
         function buildStep() {
           // A newer renderLedger() owns the ledger now. Stop without touching it: the rows half
           // built here belong to a table that no longer exists, and the exit that replaced it has
@@ -6738,18 +7984,29 @@
             var list = el('ul', 'row-list');
             // Every entry that survived the filters becomes a row. There is no second pass
             // that hides anything, so what is on screen is exactly what was selected.
-            var rails = railStates(group.entries);
-            var bands = 0;
-            for (var j = 0; j < group.entries.length; j += 1) {
-              var item = el('li');
-              if (group.entries[j].record.kind === 'compaction') {
-                item.className = 'compaction-cell';
-                item.appendChild(buildCompactionBand(group.entries[j]));
-                bands += 1;
-              } else {
-                item.appendChild(buildRow(group.entries[j], rails[j]));
-              }
-              list.appendChild(item);
+            //
+            // The rows are built for the groups the reader is on and released for the rest. What
+            // the reader gives up is the DOM, and the DOM is where the cost lives: the page pays
+            // for the rows of the groups the reader is on and nothing else. How many groups are
+            // live changes as the reader moves through the conversation, so there is no fixed
+            // count of held rows to quote here.
+            //
+            // What the reader does not give up is the height — a released group keeps the box it
+            // had, brought up to date with what it holds now, so the document under them does not
+            // change size when they scroll.
+            var key = turnKey(group.turn);
+            // The rebuild is not a visit. The poll runs on a timer whether the reader
+            // is there or not, so a build that stamped the lease would renew it forever: the
+            // idle timeout could never pass, and the group the reader had left would keep its
+            // row DOM for the rest of the session. The lease belongs to the observer, which
+            // only speaks when the reader is actually at the group.
+            var holds = ledgerHoldsRows(key, build.at === 1);
+            var bands = fillGroupRows(holds ? list : null, group);
+            if (holds) {
+              section.setAttribute('data-rows', 'live');
+            } else {
+              section.setAttribute('data-rows', 'released');
+              section.classList.add('is-released');
             }
             section.appendChild(list);
             build.rows += group.entries.length;
@@ -6759,8 +8016,20 @@
             // how a scrollbar ends up shorter than the table it is supposed to describe. On the
             // first batch build.heights is still null, so this is a no-op and sizeBuiltGroup()
             // below is what covers those groups.
-            applyIntrinsicSize(section, group.entries.length, bands, build.heights);
+            //
+            // The rows are counted apart from the bands. A band is an entry as well as a row, so
+            // a count of entries would price every band twice — once at the row height and once
+            // at the band's own — and the box would stand taller than what it is holding.
+            var predicted = applyIntrinsicSize(section, group.entries.length - bands, bands, build.heights);
+            if (!holds) {
+              // The height the group had while it was holding its rows, brought up to date
+              // with the content it holds now; the prediction otherwise. A group that has
+              // never been on screen has no measured height, and the prediction is the best
+              // answer there is — the same answer the scrollbar is already giving.
+              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));
+            }
             ledger.appendChild(section);
+            ledgerContent.set(section, { key: key, turn: group.turn, entries: group.entries, bands: bands });
             built += 1;
           }
 
@@ -6776,13 +8045,42 @@
           // sizeBuiltGroup then writes that 0 onto it. A group sized 0px occupies no space, so it
           // can never come back into the viewport, so it is never re-rendered: the ledger stays
           // collapsed for good and the document is two thousand pixels tall above a hundred and
-          // forty kilobytes of rows. It only showed up in the default window, where 200 records
+          // forty kilobytes of rows. It only showed up in the default window, where PAGE_STEP records
           // span fewer turns than LEDGER_BATCH_GROUPS and therefore the *whole* ledger is this
           // batch; the A/B that measured it ran on 显示全部, where the batch is long enough to sit in the
           // viewport and get measured for real.
           if (!build.heights) {
             build.heights = calibrateRowHeights(ledger);
-            var firstBatch = ledger.querySelectorAll('.turn-group');
+            // The visit path prices the difference a released group has with the same
+            // calibration, so the last one is kept where the visit path can reach it.
+            ledgerCalibration = build.heights;
+            // The groups that were built without their rows have nothing to be sized from, and a
+            // group left unsized collapses to nothing the moment the class goes on. They are
+            // sized now, from the calibration, with the same arithmetic every other group is
+            // sized with.
+            var dormant = ledger.querySelectorAll('.turn-group[data-rows="released"]');
+            for (var d = 0; d < dormant.length; d += 1) {
+              var content = ledgerContent.get(dormant[d]);
+              if (!content) continue;
+              // The rows are counted apart from the bands, for the same reason as above: a band
+              // is an entry as well as a row, and the prediction prices it once, at its own
+              // height.
+              var dormantRows = content.entries.length - content.bands;
+              var dormantPredicted = applyIntrinsicSize(dormant[d], dormantRows, content.bands, build.heights);
+              // And the height that is held is the measured one, brought up to date with what
+              // the group holds now — the same rule the build applies to the groups it writes
+              // above. A group that was never measured has nothing to bring up to date, and the
+              // prediction is the answer there.
+              //
+              // Writing the prediction here instead would undo the rule on every group of the
+              // first batch, and in the default view the first batch is the whole window: the
+              // page opens on the newest PAGE_STEP records, and that window spans fewer turns than
+              // LEDGER_BATCH_GROUPS.
+              holdLedgerHeight(dormant[d], heldLedgerHeight(content.key, dormantRows, content.bands, dormantPredicted, build.heights));
+            }
+            // The groups that were holding their rows are the ones that can be measured. A group
+            // without rows measures as its header, and writing that down would collapse it.
+            var firstBatch = ledger.querySelectorAll('.turn-group[data-rows="live"]');
             for (var f = 0; f < firstBatch.length && f < LEDGER_BATCH_GROUPS; f += 1) {
               sizeBuiltGroup(firstBatch[f]);
             }
@@ -6802,6 +8100,10 @@
           // measuring has to stay the last word, and a trailing statement is the one place where
           // a future synchronous call would quietly measure an empty page.
           flushDeferredPoll();
+          // The groups are watched from here, so a group the reader scrolls to gets its rows back
+          // before the next paint. Before this the sections do not exist — the table was empty a
+          // moment ago — and an observer pointed at nothing sees nothing.
+          watchLedgerGroups();
           // Measured here rather than at the end of render(): this is the one exit every path that
           // changes what the table shows goes through — the filters that call render() and the nine
           // that call renderLedger() directly. A filter that grows the band therefore cannot leave
@@ -6814,10 +8116,10 @@
         }
 
         // Windows of a few groups never reach the yield: the while loop inside buildStep consumes
-        // all of them and falls straight through, so the default 200-row table is built exactly as
+        // all of them and falls straight through, so the default window's table is built exactly as
         // it always was, in one pass, with no progress written and no frame spent. Seeding the
         // progress only when there is more than one batch is what keeps that true — otherwise the
-        // common path paid for a 「正在显示 0 / 200 条」 that no reader ever saw.
+        // common path paid for a 「正在显示 0 / N 条」 that no reader ever saw.
         if (groups.length > LEDGER_BATCH_GROUPS) setLedgerProgress(0, buildTotal);
         buildStep();
       }
@@ -6918,7 +8220,7 @@
           // double-count the shift and leave the page visibly off.
           //
           // Guarded, because this button is meaningless in 全部: state.limit is Infinity there,
-          // and Infinity + 200 is still Infinity, so the click would re-render and change
+          // and Infinity + PAGE_STEP is still Infinity, so the click would re-render and change
           // nothing — a control that looks live and is not. It is hidden in that mode, so the
           // branch is unreachable through the UI; the guard is there so that hiding it can
           // never be the only thing standing between a reader and a button that does nothing.
@@ -6928,7 +8230,7 @@
         });
         actions.appendChild(more);
 
-        // One button for the one choice. It was two — 「只看最新 200 条」 and 「已显示全部」 —
+        // One button for the one choice. It was two — 「只看最新 N 条」 and 「已显示全部」 —
         // and the first one relabelled itself to the second one's wording once you were
         // already showing everything, which made the row read as three controls for two
         // states. The label names the state you are in; the accessible name names the action.
@@ -6981,7 +8283,7 @@
        * so follows the panel rather than whatever the last poll happened to build. And it is re-read
        * on every frame rather than remembered, because 「the end」 moves every poll: the window is
        * the newest N records and each new one slides it forward, so the bottom of the ledger is a
-       * different document position every 2.5 seconds. Anything derived from scrollHeight against a
+       * different document position on every poll. Anything derived from scrollHeight against a
        * stored value would be correct only between polls.
        *
        * Both edges, or neither: an earlier version tested `r.height > 0 || r.top < viewH`, and the
@@ -7112,7 +8414,7 @@
        *
        * It moves the page and nothing else. It does not touch `state.limit`, so it cannot make the
        * window wider — the prohibition this function exists to enforce, and the one the window bar's
-       * 「已显示 N 条」 depends on. Both ends are already loaded: down reaches the newest 200, up
+       * 「已显示 N 条」 depends on. Both ends are already loaded: down reaches the newest PAGE_STEP records, up
        * reaches the oldest of them.
        */
       function setLedgerJumpLabel() {
@@ -7260,15 +8562,15 @@
        * The mode button names the action; the count beside it names the state.
        *
        * They are not saying the same thing twice, and they must not be made to. The count is
-       * the report — 已显示 200 条, 更早的 9,783 条未加载 — and it is the only thing on the row
+       * the report — 已显示 N 条, 更早的 M 条未加载 — and it is the only thing on the row
        * that tells you what you are looking at. The button is the offer, and what it offers is
-       * by definition not what you already have: from the newest 200, the whole session; from
+       * by definition not what you already have: from the newest PAGE_STEP records, the whole session; from
        * everything, back to one page. A button that restates the current state is a button
        * whose text changes to tell you nothing new.
        *
        * It was briefly written the other way and read as a contradiction, because at the time
        * the label and the count were describing the same quantity with different wording —
-       * 「只看最新 200 条」 above 「已显示 200 条」. Naming the action dissolves that rather than
+       * 「只看最新 N 条」 above 「已显示 N 条」. Naming the action dissolves that rather than
        * causing it: the two now answer different questions, and neither can contradict the
        * other because neither claims to be the other.
        *
@@ -7286,14 +8588,14 @@
         parts.more.textContent = '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, Math.max(hiddenAbove, 0))) + ' 条';
         // The button names the ACTION: it says what pressing it will do, which is the only
         // information the reader does not already have. The state is already on screen — the
-        // count beside this button reports 已显示 200 条 or 已显示 9,977 条, and the page title
+        // count beside this button reports 已显示 N 条 or 已显示 M 条, and the page title
         // says which turns that covers — so a label restating it spends its width saying
-        // nothing. At the default the window already holds only the newest 200, so the one
+        // nothing. At the default the window already holds only the newest PAGE_STEP records, so the one
         // thing worth offering is the whole session; once everything is shown, the one thing
         // worth offering is going back to a page.
         //
-        // It went the other way twice. Describing the state put 「只看最新 200 条」 next to
-        // 「已显示 200 条」 — the button echoing the count beside it. Describing the state after
+        // It went the other way twice. Describing the state put 「只看最新 N 条」 next to
+        // 「已显示 N 条」 — the button echoing the count beside it. Describing the state after
         // a second change put 「已显示全部」 on a page showing everything, which is true and
         // therefore tells you nothing about the button. Naming the action is what both cases
         // need.
@@ -7316,6 +8618,16 @@
 
       /** The topmost row that intersects the viewport, as {id, top}, or null. */
       function firstVisibleRow() {
+        // The group the reader is on has to be holding its rows before the anchor can be read out
+        // of it. A released group has no rows, and an anchor read from the next live group down
+        // is an anchor to the wrong place — the reader would be moved to wherever the first group
+        // that still has rows happens to start.
+        var sections = dom.ledger.querySelectorAll(':scope > section.turn-group');
+        for (var s = 0; s < sections.length; s += 1) {
+          if (sections[s].getBoundingClientRect().bottom <= 0) continue;
+          if (sections[s].getAttribute('data-rows') !== 'live') fillLedgerGroup(sections[s]);
+          break;
+        }
         var nodes = dom.ledger.querySelectorAll('[data-row-id]');
         for (var i = 0; i < nodes.length; i += 1) {
           var rect = nodes[i].getBoundingClientRect();
@@ -7403,13 +8715,24 @@
       /**
        * A group's predicted height from its own shape: one head, then rows and bands.
        *
+       * The rows and the bands are two counts: `rows` is the number of rows ALONE, and the
+       * compaction bands are counted in `bands`. A band is an entry as well as a row, so
+       * passing the entry count as the row count would price every band twice — once at the
+       * row height and once at the band's own — and the box would stand taller than what it
+       * is holding.
+       *
        * `auto` on the left is what lets the browser prefer the size it has already rendered once
        * the reader has scrolled past — so scrolling down and back does not accumulate drift.
+       *
+       * The height is returned as well as written, because a group that is not holding its rows
+       * needs the same number on its `min-height`: `contain-intrinsic-size` sizes a group the
+       * browser has skipped, and a group near the viewport is rendered rather than skipped.
        */
       function applyIntrinsicSize(section, rows, bands, heights) {
-        if (!heights) return;
+        if (!heights) return 0;
         var h = heights.head + rows * heights.row + bands * heights.band;
         section.style.containIntrinsicSize = 'auto ' + Math.round(h) + 'px';
+        return h;
       }
 
       /**
@@ -7661,7 +8984,7 @@
 
         // Like every other filter, and for the same reason: the window the reader was looking
         // at was chosen for a set of records that no longer exists. Setting a range used to
-        // force 「全部」 instead, on the theory that a 200-cap inside a range silently drops
+        // force 「全部」 instead, on the theory that the default cap inside a range silently drops
         // the start of what the reader asked for. Measured, that theory is not worth its
         // price — a range covering the whole session rendered ~11,000 rows and took the
         // document to 414,000px, where one query took 19s. The window bar still says how many
@@ -7758,7 +9081,7 @@
       /* ---------------- inspector ---------------- */
 
       var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
-      // The height the panel gets when the reader has not asked for another one. 2/5 of the
+      // The height the panel gets when the reader has not asked for another one. INSPECTOR_DOCK_SHARE of the
       // window, on the reviewer's instruction (it was a quarter for a while before that).
       //
       // One constant, because this number used to be written twice — applyInspectorDock() and
@@ -8425,24 +9748,45 @@
       var rawCache = {};
       var rawPending = {};
 
-      function rawCacheKey(index) {
+      function rawCacheKey(index, version) {
         var payload = state.payload;
         var session = payload && payload.session ? payload.session : null;
         var sid = session && typeof session.id === 'string' ? session.id : '';
-        var gen = state.generation === null ? 'all' : String(state.generation);
+        // The slice the value belongs to is the slice the body on screen is, for the same
+        // reason the session is: a record index is a position inside one body, and the body on
+        // screen is not always the body the reader last selected.
+        var gen = displayedGeneration() === null ? 'all' : String(displayedGeneration());
         // The validator belongs in this key. A record index is only a position within one version
         // of one body: the same index in the next version of the session is a different message.
         // Without the tag, a body that changed since the raw was read kept being served from here
         // forever, and the page had no way to notice. Pinned by tests/verify-raw-lazy.mjs.
-        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;
+        //
+        // And the RECORD's own version belongs in it too. This key is what decides whose answer a
+        // caller gets, and it used to be built out of what is on screen — the validator, the slice,
+        // the position — and none of those say which RECORD is being read. So a read that is
+        // retried after a reload found the pending read of the record that had taken its place
+        // (the rebuild of the panel starts one) and took its answer for its own: the reader
+        // opened ALPHA and the page handed back CHARLIE. The version is the caller's, not the
+        // screen's — the same rule the request itself follows.
+        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index + '#' + (version || '');
       }
 
-      function requestRaw(index) {
+      function requestRaw(index, version) {
         var url = '/api/trajectory/raw?index=' + encodeURIComponent(String(index))
-          + '&session=' + sessionParam();
-        if (state.generation !== null) {
-          url += '&generation=' + encodeURIComponent(String(state.generation));
+          + '&session=' + displayedSessionParam();
+        var generation = displayedGeneration();
+        if (generation !== null) {
+          url += '&generation=' + encodeURIComponent(String(generation));
         }
+        // WHICH RECORD. The index is a position inside the body on screen, and the service may be
+        // holding a newer body in which that position is another record — so the version of the
+        // record the reader opened travels with the request, and the service can tell the two
+        // apart instead of serving the newer record under the older one's number.
+        //
+        // The version is the one the RECORD carries, and that is the whole point: a read that is
+        // retried after a reload must ask about the same record it asked about the first time, or
+        // the retry is a different question wearing the same question's clothes.
+        if (version) url += '&v=' + encodeURIComponent(version);
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
             function (body) { return { ok: response.ok, body: body }; },
@@ -8470,10 +9814,15 @@
       function fetchRaw(record, retried) {
         var index = record && record.index;
         if (!isCount(index) || index < 1) return Promise.reject(new Error('record_index_missing'));
-        var key = rawCacheKey(index);
+        // The version of the record the READER opened, read off that record and not off the
+        // screen — and it decides the key, because the key is what says whose answer a caller
+        // gets. A version read off the screen at this moment would belong to the record that has
+        // taken this one's place, and the retry would be answered with it.
+        var version = recordVersionOf(record);
+        var key = rawCacheKey(index, version);
         if (Object.prototype.hasOwnProperty.call(rawCache, key)) return Promise.resolve(rawCache[key]);
         if (rawPending[key]) return rawPending[key];
-        var attempt = requestRaw(index).then(function (result) {
+        var attempt = requestRaw(index, version).then(function (result) {
           delete rawPending[key];
           if (result.ok && result.body && Object.prototype.hasOwnProperty.call(result.body, 'raw')) {
             var entry = { raw: result.body.raw, omitted: result.body.omitted === true };
@@ -8528,12 +9877,17 @@
       var detailCache = {};
       var detailPending = {};
 
-      function requestDetail(index) {
+      function requestDetail(index, version) {
         var url = '/api/trajectory/record?index=' + encodeURIComponent(String(index))
-          + '&session=' + sessionParam();
-        if (state.generation !== null) {
-          url += '&generation=' + encodeURIComponent(String(state.generation));
+          + '&session=' + displayedSessionParam();
+        var generation = displayedGeneration();
+        if (generation !== null) {
+          url += '&generation=' + encodeURIComponent(String(generation));
         }
+        // The same record, the same way: the version travels with the request so the service can
+        // refuse when the position it would answer is a different record than the one opened — and
+        // it is the record's own version, so a retry after a reload asks about the same record.
+        if (version) url += '&v=' + encodeURIComponent(version);
         return fetch(url, { headers: { Accept: 'application/json' } }).then(function (response) {
           return response.json().then(
             function (body) { return { ok: response.ok, body: body }; },
@@ -8555,10 +9909,13 @@
       function fetchDetail(record, retried) {
         var index = record && record.index;
         if (!isCount(index) || index < 1) return Promise.reject(new Error('record_index_missing'));
-        var key = rawCacheKey(index);
+        // The same version, and for the same reason: the key is the same key, and it decides
+        // whose answer a caller gets.
+        var version = recordVersionOf(record);
+        var key = rawCacheKey(index, version);
         if (Object.prototype.hasOwnProperty.call(detailCache, key)) return Promise.resolve(detailCache[key]);
         if (detailPending[key]) return detailPending[key];
-        var attempt = requestDetail(index).then(function (result) {
+        var attempt = requestDetail(index, version).then(function (result) {
           delete detailPending[key];
           if (result.ok && result.body && typeof result.body.index === 'number') {
             var entry = {
@@ -8752,6 +10109,11 @@
           updateHandoffButton();
           return;
         }
+        // The session is captured with the record, because the two reads below are asynchronous
+        // and the page can be showing another conversation by the time they answer. A label that
+        // names the session on screen at that moment would put one conversation's name on
+        // another conversation's message.
+        var session = state.payload ? state.payload.session : null;
         var record = entry.record;
         dom.handoffBtn.disabled = true;
         inspectorSay('正在读取原文…');
@@ -8772,7 +10134,7 @@
             : fetched.raw;
           var raw = truncateJson(rawSource, HANDOFF_RAW_LIMIT);
           var text = buildHandoffMarkdown(
-            state.payload ? state.payload.session : null,
+            session,
             entry.turn,
             record,
             raw.text,
@@ -8868,7 +10230,7 @@
         updateRangeHint();
         // The refresh button depends on how far the session has run past the snapshot, which
         // changes on every poll — it has to be re-decided here or it would offer to refresh
-        // for records that are already in, or stay hidden while 200 records pile up behind it.
+        // for records that are already in, or stay hidden while a window of records piles up behind it.
         syncRangeButtons();
         // The picker bounds move with the session, which grows during the very first poll.
         // Setting them once at startup would leave the calendar capped at whatever the
@@ -9025,18 +10387,85 @@
         }
       }
 
+      /**
+       * The reader picked a conversation.
+       *
+       * A conversation and a run are both sessions, and both go through the one writer that says
+       * which session is on screen. Picking a conversation leaves the run pick empty, so the page
+       * shows the conversation's own trajectory.
+       */
+      function onSessionSelectChange() {
+        var value = dom.sessionSelect.value;
+        // A different session has a different generation chain; keeping the old pin would
+        // ask that session for a generation number it may never have had.
+        state.generation = null;
+        if (value === 'latest') {
+          setFollow(true);
+          return;
+        }
+        selectSession(value);
+      }
+
+      /**
+       * The reader picked a run, or the conversation itself.
+       *
+       * A run is a session with its own transcript, and the conversation's transcript does not
+       * contain its turns — so this switches the page to that run's own trajectory. The
+       * conversation pick stays on the run's parent, which is where it already was.
+       *
+       * The first option is the conversation itself: picking it returns to the conversation's
+       * trajectory, and it is where the pick sits until a run is chosen.
+       */
+      function onChildSelectChange() {
+        var value = dom.childSelect.value;
+        state.generation = null;
+        if (!value) {
+          var owner = ownerSessionId();
+          if (!owner) return;
+          selectSession(owner);
+          return;
+        }
+        selectSession(value);
+      }
+
       /* ---------------- wiring ---------------- */
 
       function setFollow(enabled) {
         state.followLatest = enabled;
         dom.followBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
         dom.followState.textContent = enabled ? '开' : '关';
-        dom.sessionSelect.value = enabled ? 'latest' : state.sessionId || 'latest';
+        // The conversation pick names the conversation, not the run: with a run on screen it
+        // stays on the run's parent.
+        dom.sessionSelect.value = enabled ? 'latest' : (ownerSessionId() || 'latest');
+        renderChildSelect();
         state.signature = '';
         state.loading = true;
         fetchSessions();
         fetchTrajectory(false);
         announce(enabled ? '已开启跟随最新，正在跟踪最近的会话。' : '已关闭跟随最新，固定在所选会话。');
+      }
+
+      /**
+       * The one place a session is chosen.
+       *
+       * A conversation and a sub-agent are both sessions, so both come through here and
+       * 「which session is on screen」 has one writer and one meaning. A different session has a
+       * different generation chain, so the pin is dropped here rather than at each call site — a
+       * generation number the new session may never have had would ask it for a slice it does not
+       * have.
+       *
+       * @param {string} id
+       */
+      function selectSession(id) {
+        state.generation = null;
+        state.sessionId = id;
+        // The groups of the last session are not the groups of this one, and a turn key means
+        // nothing across two sessions. What is known about them goes with them, so the first
+        // build of the new session starts from nothing rather than from another session's
+        // heights.
+        ledgerState.clear();
+        ledgerContent.clear();
+        setFollow(false);
       }
 
       /**
@@ -9411,6 +10840,14 @@
         window.addEventListener('scroll', scheduleInspectorDock, { passive: true });
         window.addEventListener('resize', scheduleInspectorDock);
 
+        // The ledger's groups keep the height they were measured at, and a resize changes the
+        // layout of every group on screen without changing a row or a band in it. The
+        // measurement is the observer's, and the observer is not told that the window changed
+        // shape — so the groups the reader is looking at would keep a height of the layout
+        // before the resize, and the height a released group reserves would be that stale
+        // number.
+        window.addEventListener('resize', refreshLedgerMeasurements);
+
         // Two buttons, one job each, and neither writes the field itself — each names the state its
         // click goes to and hands it to the one writer. The single button this replaced cycled
         // folded -> half -> expanded -> folded, which was correct and still wrong to use: reaching
@@ -9445,18 +10882,8 @@
           fetchTrajectory(true);
         });
 
-        dom.sessionSelect.addEventListener('change', function () {
-          var value = dom.sessionSelect.value;
-          // A different session has a different generation chain; keeping the old pin would
-          // ask that session for a generation number it may never have had.
-          state.generation = null;
-          if (value === 'latest') {
-            setFollow(true);
-            return;
-          }
-          state.sessionId = value;
-          setFollow(false);
-        });
+        dom.sessionSelect.addEventListener('change', onSessionSelectChange);
+        dom.childSelect.addEventListener('change', onChildSelectChange);
 
         dom.generationSelect.addEventListener('change', function () {
           var raw = dom.generationSelect.value;

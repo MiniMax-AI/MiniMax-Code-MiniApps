@@ -35,6 +35,7 @@ import {
   capHits,
   createSegmentStore,
   digestOf,
+  fileIdxRowsFromPayload,
   foldNeedle,
   generationKey,
   needleIsUsable,
@@ -42,7 +43,10 @@ import {
   readSegmentHits,
   sameSource,
   scanSegment,
+  segmentLedgerPositions,
+  segmentVersions,
   searchSurfaceOf,
+  uncoveredRecordCount,
 } from '../miniapp/node/search-segments.mjs';
 
 const SEGMENT_PATH = new URL('../miniapp/node/search-segments.mjs', import.meta.url);
@@ -84,7 +88,11 @@ function pageRecordSearchText(record) {
 }
 
 const RECORDS = [
-  { summary: 'the first answer', text: 'a longer Body of the reply', result: null, thinking: null, toolName: null },
+  // The first record carries a KIND. The kind is part of a record's ANSWER and not one of the five
+  // searched fields, and the rule about a needle that is only in the answer needs one to point at —
+  // a needle taken from a record that has no kind is `undefined`, which folds to the empty string
+  // and answers nothing. That rule says the whole of it; this line is the other half.
+  { kind: 'assistant', summary: 'the first answer', text: 'a longer Body of the reply', result: null, thinking: null, toolName: null },
   { summary: 'Reading a file', text: null, result: 'file contents here', thinking: null, toolName: 'read' },
   { summary: 'Thinking it over', text: null, result: null, thinking: { text: 'weighing the options' }, toolName: null },
   { summary: '', text: null, result: null, thinking: null, toolName: 'grep' },
@@ -288,10 +296,25 @@ assert('and there is no per-ordinal reader exported for a caller to reach for by
 
 // The JSON prefix holds the answer, so a needle must not be able to match it. Otherwise a search
 // for a record's kind would return every record of that kind whether its text says so or not.
+//
+// The needle has to be a REAL string, and it is one now. The first draft took it from a fixture
+// record that carried no `kind`, so the needle was `undefined`, it folded to `''`, and `scanSegment`
+// answers an empty needle with nothing — the rule then passed whatever the module did, which is the
+// one thing a rule must never do. The fixture record carries a kind, so the needle is that kind: it
+// is on the line, in the answer part, and it is NOT in the searchable text, because the kind is not
+// one of the five searched fields. The first two thirds of the check say that out loud, so the last
+// third cannot go back to being an empty assertion.
 const kindNeedle = RECORDS[0].kind;
+const kindSurface = buildSegment({
+  records: [{ kind: kindNeedle, summary: 'zzz nothing alike', text: null, result: null, thinking: null, toolName: null }],
+}).surface;
+const kindLine = kindSurface.split('\n')[0];
+const kindTab = kindLine.indexOf('\t');
+const kindAnswer = kindLine.slice(0, kindTab);
+const kindText = kindLine.slice(kindTab + 1);
 check('a needle that is only in the answer, not in the text, finds nothing',
-  scanSegment(buildSegment({ records: [{ kind: kindNeedle, summary: 'zzz nothing alike', text: null, result: null, thinking: null, toolName: null }] }).surface,
-    foldNeedle(kindNeedle)), []);
+  [kindAnswer.includes(kindNeedle), kindText.includes(kindNeedle), scanSegment(kindSurface, foldNeedle(kindNeedle))],
+  [true, false, []]);
 
 // The direct statement of the line-number bug, as an assertion: for every record, that record's own
 // surface finds that record, AT THAT RECORD'S ORDINAL. A surface that kept the page's newline
@@ -416,8 +439,9 @@ try {
   assert('nothing stored yet reads as no segment',
     (await store.read('s', 'all', 'g0', SOURCE)) === null);
 
-  const written = await store.write('s', 'all', 'g0', segment, { generation: 0, source: SOURCE });
+  const written = await store.write('s', 'all', 'g0', segment, { generation: 0, uncovered: 0, source: SOURCE });
   check('the manifest counts the records', written.recordCount, RECORDS.length);
+  check('and says how much of the body it does not cover', written.uncovered, 0);
   const good = await store.read('s', 'all', 'g0', SOURCE);
   assert('a complete segment reads back', good !== null);
   if (good !== null) {
@@ -452,13 +476,13 @@ try {
   const counted = await store.read('s', 'all', 'g0', SOURCE);
   assert('and is read once the manifest counts it', counted !== null);
   if (counted !== null) check('with every line present', counted.surface.split('\n').length, RECORDS.length + 1);
-  await store.write('s', 'all', 'g0', segment, { generation: 0, source: SOURCE });
+  await store.write('s', 'all', 'g0', segment, { generation: 0, uncovered: 0, source: SOURCE });
 
   await rm(join(dir, 'manifest.json'), { force: true });
   assert('a pair with no manifest is refused',
     (await store.read('s', 'all', 'g0', SOURCE)) === null);
 
-  await store.write('s', 'all', 'g0', segment, { generation: 0, source: SOURCE });
+  await store.write('s', 'all', 'g0', segment, { generation: 0, uncovered: 0, source: SOURCE });
   const manifestPath = join(dir, 'manifest.json');
   const original = JSON.parse(await readFile(manifestPath, 'utf8'));
   for (const [patch, label] of [
@@ -468,6 +492,19 @@ try {
     await writeFile(manifestPath, JSON.stringify({ ...original, ...patch }), 'utf8');
     assert(`a manifest from ${label} is refused`, (await store.read('s', 'all', 'g0', SOURCE)) === null);
   }
+  // What the manifest has to SAY. A set of segments that covers fewer records than the body stands
+  // for a different set — the records it does not cover are missing from the fold — and the page
+  // is holding the ones it does not. So the manifest states the shortfall, and a reader that sees
+  // a shortfall knows the set cannot answer for the body.
+  //
+  // A manifest that does not state it cannot be told apart from one that states 「none」, so it is
+  // refused rather than read as 「none」.
+  await writeFile(manifestPath, JSON.stringify({ ...original, uncovered: undefined }), 'utf8');
+  assert('a manifest that does not say what it does not cover is refused',
+    (await store.read('s', 'all', 'g0', SOURCE)) === null);
+  await writeFile(manifestPath, JSON.stringify({ ...original, uncovered: 2 }), 'utf8');
+  assert('and one that says it does not cover the whole body is read, so the reader can see it',
+    (await store.read('s', 'all', 'g0', SOURCE)) !== null);
   await writeFile(manifestPath, 'not json', 'utf8');
   assert('an unreadable manifest is refused', (await store.read('s', 'all', 'g0', SOURCE)) === null);
   await writeFile(manifestPath, JSON.stringify(original), 'utf8');
@@ -478,6 +515,8 @@ try {
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], size: 101 }])) === null);
   assert('a source whose revision changed refuses the segment',
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], revision: 'sha256:' + 'f'.repeat(64) }])) === null);
+  assert('a source whose mtime changed refuses the segment, so a rewrite that kept the length is not reused',
+    (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], mtimeMs: 999 }])) === null);
   assert('a renamed source refuses the segment',
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], fileName: 'x.jsonl' }])) === null);
   assert('a source that went away refuses the segment',
@@ -486,7 +525,7 @@ try {
     (await store.read('s', 'all', 'g0', [{ ...SOURCE[0], revision: SOURCE[0].revision }])) !== null);
 
   // Two generations are two segments: one never answers for the other.
-  await store.write('s', 'all', 'g1', segment, { generation: 1, source: [{ ...SOURCE[0], generation: 1 }] });
+  await store.write('s', 'all', 'g1', segment, { generation: 1, uncovered: 0, source: [{ ...SOURCE[0], generation: 1 }] });
   const g0 = await store.read('s', 'all', 'g0', SOURCE);
   const g1 = await store.read('s', 'all', 'g1', [{ ...SOURCE[0], generation: 1 }]);
   check('two generations read back the same bytes', g0?.surface, g1?.surface);
@@ -501,7 +540,35 @@ try {
 for (const line of storeFailures) failures.push(line);
 
 /* =====================================================================
- * 5 — the rest of the contract
+ * 5 — the coverage a manifest states
+ * ===================================================================== */
+
+// A record is filed under the generation its locator names. A record with no locator names no file,
+// so it is filed under NO generation — and no segment holds it, so the segments cover fewer records
+// than the body. That is a shorter set, which is a different set: the records it does not cover are
+// missing from the fold, and the page is holding those. So the shortfall is counted here and stated
+// in the manifest, and a reader that sees it knows the set cannot answer for the body.
+const PLACEMENT = { turns: [{ records: [{ index: 1 }, { index: 2 }, { index: 3 }] }] };
+const PLACED_FILES = [{ filePath: '/store/g0.jsonl' }];
+// The first record names the file in the table; the second names a file that is not in it; the third
+// has no locator at all. The last two are the same state seen from two sides, and neither of them
+// may be filed under a generation that did not produce them.
+const PLACEMENT_RAWS = new Map([
+  [1, { filePath: '/store/g0.jsonl' }],
+  [2, { filePath: '/store/elsewhere.jsonl' }],
+]);
+const placement = fileIdxRowsFromPayload(PLACEMENT, PLACEMENT_RAWS, PLACED_FILES);
+check('a record whose file is not in the table is filed under no generation',
+  placement.map((row) => row.fileIdx), [0, -1, -1]);
+check('and the records no segment covers are counted',
+  uncoveredRecordCount(placement), 2);
+check('a set that covers the whole body counts nothing',
+  uncoveredRecordCount([{ fileIdx: 0 }, { fileIdx: 1 }]), 0);
+check('a placement that is not a placement counts as missing, not as covered',
+  uncoveredRecordCount([{ fileIdx: 0 }, null, { fileIdx: -1 }]), 2);
+
+/* =====================================================================
+ * 6 — the rest of the contract
  * ===================================================================== */
 
 check('the active generation has a key of its own', generationKey(null), 'active');
@@ -560,6 +627,104 @@ assert('an older artifact that predates the field is rebuilt rather than trusted
 assert('the comparison is in this module and not only in the caller',
   /if \(\(a\.truncated === true\) !== \(b\.truncated === true\)\) return false;/.test(
     source.split('export function sameSource')[1] || ''));
+
+/* ---------------------------------------------------------------------
+ * The source identity has to see a rewrite that kept the LENGTH.
+ *
+ * `size` is the whole file whether or not the read covered it, and a transcript rewritten in
+ * place keeps its length: "ALPHA BODY" becomes "BRAVO BODY" and the file is the same size. Every
+ * other part of this process treats (size, mtime) as a file's identity — the parsed-rows cache
+ * keys on it and the trajectory entry keys on it — so a file that was rewritten in place is a
+ * DIFFERENT file to everything else in here, and a segment built from the old bytes must not be
+ * served as if it were built from the new ones.
+ *
+ * The old wording of this rule said "identity, not mtime", because a sealed file is not written
+ * to and a reader that treated a touch as a change would rebuild correct bytes. That was true and
+ * it was the wrong question: the file that is written to is the active one, and it is exactly the
+ * one whose bytes can change under a size that did not.
+ * --------------------------------------------------------------------- */
+const ACTIVE_SOURCE = { fileName: 'messages.jsonl', generation: null, size: 500, mtimeMs: 1000, revision: null };
+check('an active file rewritten in place is not the same source',
+  sameSource([{ ...ACTIVE_SOURCE }], [{ ...ACTIVE_SOURCE, mtimeMs: 2000 }]), false);
+check('and the same file untouched is',
+  sameSource([{ ...ACTIVE_SOURCE }], [{ ...ACTIVE_SOURCE }]), true);
+check('and a rewrite that also changed the length is not either',
+  sameSource([{ ...ACTIVE_SOURCE }], [{ ...ACTIVE_SOURCE, size: 501, mtimeMs: 2000 }]), false);
+check('and a sealed file is judged the same way, because a sealed file can be rewritten too',
+  sameSource([{ fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 1000, revision: 'r1' }],
+    [{ fileName: 'g1.jsonl', generation: 1, size: 500, mtimeMs: 2000, revision: 'r1' }]), false);
+
+/* ---------------------------------------------------------------------
+ * The versions of the records a segment covers, read back out of the lines themselves.
+ *
+ * The service folds them into the fingerprint that says whether an answer is about the body the
+ * page is showing, and the answer it compares against carries the same versions. Two readings of
+ * one thing would be two answers, so the reading that is done by hand is pinned against the one
+ * that parses the line.
+ * --------------------------------------------------------------------- */
+const versionedRecords = RECORDS.map((r, i) => ({ ...r, index: i, v: 'version-' + i }));
+const versionedSurface = buildSegment({ records: versionedRecords }).surface;
+check('the versions of a segment can be read back in order',
+  segmentVersions(versionedSurface, versionedRecords.length),
+  versionedRecords.map((r) => r.v));
+check('and only as many as were asked for',
+  segmentVersions(versionedSurface, 2), ['version-0', 'version-1']);
+check('and the reading agrees with the answer the line carries',
+  segmentVersions(versionedSurface, versionedRecords.length),
+  readSegmentHits(versionedSurface, versionedRecords.map((_, i) => i)).map((h) => (h === null ? '' : h.v)));
+check('and an empty surface has no versions',
+  segmentVersions('', 10), []);
+
+/* ---------------------------------------------------------------------
+ * The ledger position of a record, which is what puts the records back
+ * where the body has them.
+ *
+ * The segments are one file per generation and the body is not in file order: a record that
+ * belongs to an EARLIER turn and arrived after that turn was written lives in a LATER file. So
+ * the first N records of the body and the first N records of the files are two different sets,
+ * and the fold that says which set an answer is about has to be over the body's.
+ *
+ * The position is what makes the reconstruction possible without rebuilding anything: the turn
+ * a record is in, and the record's own number in the body. Both are on the line.
+ * --------------------------------------------------------------------- */
+{
+  // A generation that holds two turns, and a second generation that holds a record which
+  // belongs to the FIRST turn — the shape that makes the two orders differ.
+  const sealed = buildSegment({
+    records: [
+      { index: 1, turnIndex: 1, kind: 'user', summary: 'first question', v: 'version-1' },
+      { index: 2, turnIndex: 2, kind: 'user', summary: 'second question', v: 'version-2' },
+    ],
+  }).surface;
+  const active = buildSegment({
+    records: [
+      { index: 3, turnIndex: 1, kind: 'user', summary: 'the late answer', v: 'version-3' },
+    ],
+  }).surface;
+  check('a segment reads back the turn and the number of each of its records',
+    segmentLedgerPositions(sealed), [
+      { turnIndex: 1, index: 1, v: 'version-1' },
+      { turnIndex: 2, index: 2, v: 'version-2' },
+    ]);
+  check('and the record that arrived for the earlier turn carries that turn',
+    segmentLedgerPositions(active), [
+      { turnIndex: 1, index: 3, v: 'version-3' },
+    ]);
+  check('and the reading agrees with the answer the line carries',
+    segmentLedgerPositions(sealed).map((one) => one.v),
+    readSegmentHits(sealed, [0, 1]).map((hit) => (hit === null ? '' : hit.v)));
+  check('and a segment with no records has no positions',
+    segmentLedgerPositions(''), []);
+  check('and a record with no turn of its own is reported as having none',
+    segmentLedgerPositions(buildSegment({
+      records: [{ index: 7, kind: 'user', summary: 'no turn', v: 'version-7' }],
+    }).surface), [{ turnIndex: null, index: 7, v: 'version-7' }]);
+  // A field with nothing in it is nothing, not a number: `Number('')` is zero, and a record that
+  // carries no number of its own must not come back as the record numbered zero.
+  check('and a field with nothing in it is reported as having no number',
+    segmentLedgerPositions('{"index":,"turnIndex":1,"v":"version-1"}\ttext'),
+    [{ turnIndex: 1, index: null, v: 'version-1' }]);
+}
 
 /* --------------------------------------------------------------------- */
 

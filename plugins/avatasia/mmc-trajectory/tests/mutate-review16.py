@@ -172,6 +172,65 @@ MUTATIONS = [
      "       * read rather than re-measured here: band is L2 and overview is L3, and",
      "no shipped file carries a private defect or layer number"),
 
+    # ---- the same three checks, over the six files the hand-written table had left out ----
+    #
+    # The guard derives its shipped-text set from the package now, and this block is what makes that
+    # derivation a claim rather than a hope. Each of the six files the old table missed gets a
+    # defect planted in it and the guard has to name it -- otherwise "the set is derived" is a
+    # sentence, and the hole is the same hole one level down: the three checks above could have
+    # gone green with the defect fully back in any of these six files.
+    #
+    # The defects are spread across all three checks on purpose. Proving coverage with one check
+    # would leave the other two free to have quietly stopped reading the new files, which is the
+    # same failure the old table had.
+    #
+    # The anchor of each one is a string that occurs exactly once in its own file and in none of the
+    # others this control searches, so the mutation cannot land somewhere it was not aimed at.
+    ("the package manifest points at the document that left the package",
+     '"miniApp": "./miniapp/miniapp.json"',
+     '"miniApp": "./miniapp/miniapp.json",\n    "docs": "docs/LAYERS.md"',
+     "nothing still points at a docs/ file that does not ship"),
+
+    # chr(0) rather than an escape, so the byte is written literally instead of being re-read as
+    # text -- the same reason the server-source mutation above does it.
+    ("a NUL byte ships inside the mini app manifest",
+     '"lifecycle": "on-demand"',
+     '"lifecycle": "on-' + chr(0) + 'demand"',
+     "no shipped source file carries a NUL byte"),
+
+    ("a private defect number comes back into the shipped type declarations",
+     "export type HostConnectorErrorDisposition =",
+     "export type HostConnectorErrorDisposition = // D8",
+     "no shipped file carries a private defect or layer number"),
+
+    # The three configuration files that ship. The defect planted in each is a pointer to a
+    # document that does not ship -- the class the check exists for -- and the point of the three
+    # is coverage rather than plausibility: the licence and the two dotfiles were the three
+    # shipped text files no check had ever read.
+    ("the licence points at the document that left the package",
+     "Copyright (c) 2026 avatasia",
+     "Copyright (c) 2026 avatasia\n\nAdditional warranty terms: docs/STAGE1-SPEC.md",
+     "nothing still points at a docs/ file that does not ship"),
+
+    ("the line-ending rules point at the document that left the package",
+     "*.png binary",
+     "*.png binary\n\n# the reasoning is in docs/LAYERS.md",
+     "nothing still points at a docs/ file that does not ship"),
+
+    ("the ignore rules point at the document that left the package",
+     "trajectory-artifacts/",
+     "trajectory-artifacts/\n\n# see docs/LAYERS.md",
+     "nothing still points at a docs/ file that does not ship"),
+
+    # And the deriver itself. If the walk stops returning anything -- a skip list that grew a
+    # name, a directory that moved -- all three checks read an empty set and none of them fires,
+    # which is a guard that cannot fail rather than a guard that passed. The self-check is what
+    # catches that, so it needs a mutation of its own or it is an assertion nobody can break.
+    ("the deriver stops deriving anything, so the three checks read nothing",
+     "if (DEV_TREES.has(entry.name)) continue;",
+     "if (true) continue;",
+     "the shipped text set is derived from the package, and covers the twelve text files that ship"),
+
     # ---- 5. the cache stops being released ----
     # Anchored without any line ending on purpose. The first version of these two used \r\n because
     # server.mjs is CRLF in the working tree — and that is exactly the trap: it only matched because
@@ -188,8 +247,23 @@ MUTATIONS = [
     # and this harness reports an ambiguous anchor as unresolved rather than guessing. The bytes
     # below are what make it specific to the parsed-row cache: its counter has to be reset too.
     ("the parsed-row cache loses its clear()",
-     "    clear() {\n      entries.clear();\n      bytes = 0;\n    },",
-     "    reset() {\n      entries.clear();\n      bytes = 0;\n    },",
+     "    clear() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },",
+     "    reset() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },",
+     "the parsed-row cache really does expose clear()"),
+
+    # The same rename, with a decoy: the owner used to be a pattern over the source, and the
+    # pattern could be satisfied by an unrelated cache's method further down the file. The parsed
+    # cache's own clear() could be renamed -- and the dispose path would throw when it reached the
+    # cache it meant to release -- while another clear() supplied the text. The owner now asks the
+    # cache, so the decoy has to go with the rename.
+    ("an unrelated clear() stands in for the parsed-row cache's own",
+     "    clear() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },",
+     "    reset() {\n      entries.clear();\n      bytes = 0;\n      stopSweeper();\n    },\n"
+     "    unrelatedCache() {\n"
+     "      const entries = new Map();\n"
+     "      let bytes = 0;\n"
+     "      return { clear() { entries.clear(); bytes = 0; } };\n"
+     "    },",
      "the parsed-row cache really does expose clear()"),
 
     # ---- 6. the empty state points at inert controls again ----
@@ -209,14 +283,14 @@ MUTATIONS = [
      "the non-anomaly hint is still the one that names types and search"),
 
     # ---- 7. the version goes back ----
-    # Re-anchored at the 1.2.0 bump: the three below were written against the literal `1.1.0` in the
+    # Re-anchored at the 1.3.0 bump: the three below were written against the literal `1.2.0` in the
     # manifest and in both READMEs, so leaving them would have made four mutations stop resolving —
     # and one of them, the last, would have become an edit that changes nothing, which the runner
     # rejects. The properties are the reviewer's complaint and are unchanged; only the text they are
-    # written against moved. The numbers are now `1.2.0` and `1.3.0` for the same reason the old pair
-    # was `1.1.0` and `1.2.0`: the replacement has to be a version the tree does not already carry.
+    # written against moved. The numbers are now `1.3.0` and `1.4.0` for the same reason the old pair
+    # was `1.2.0` and `1.3.0`: the replacement has to be a version the tree does not already carry.
     ("the version is put back to 1.0.0",
-     '"version": "1.2.0",',
+     '"version": "1.3.0",',
      '"version": "1.0.0",',
      "the plugin version was bumped off 1.0.0"),
 
@@ -225,12 +299,12 @@ MUTATIONS = [
     # announcing 1.0.0 to every reader who opens the plugin's front page. A rule that checks the
     # field nobody complained about is not the rule that was asked for.
     ("the English README goes back to announcing the old version",
-     'Version: `1.2.0`',
+     'Version: `1.3.0`',
      'Version: `1.0.0`',
      "the English README carries the shipped version"),
 
     ("the Chinese README goes back to announcing the old version",
-     '版本：`1.2.0`',
+     '版本：`1.3.0`',
      '版本：`1.0.0`',
      "the Chinese README carries the shipped version"),
 
@@ -238,8 +312,8 @@ MUTATIONS = [
     # on and the READMEs stay behind. Asserted as equality with plugin.json rather than as "not
     # 1.0.0", so this is the case the rule is actually for.
     ("the manifest moves on and the READMEs do not follow",
-     '"version": "1.2.0",',
      '"version": "1.3.0",',
+     '"version": "1.4.0",',
      "the English README carries the shipped version"),
 
     # ---- the snapshot the last run left, and the run that never looked at it ----
@@ -526,14 +600,20 @@ for entry in MUTATIONS:
         if replace_all:
             for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
-                        ".minimax-plugin/plugin.json", "tests/verify-review16.mjs"):
+                        ".minimax-plugin/plugin.json",
+                        ".gitattributes", ".gitignore", "LICENSE", "package.json",
+                        "miniapp/miniapp.json", "miniapp/node/miniapp-api.ts",
+                        "tests/verify-review16.mjs"):
                 if old in read(rel):
                     target = rel
                     break
         else:
             for rel in ("tests/run.mjs", "README.md", "README.zh-CN.md",
                         "miniapp/client/index.html", "miniapp/node/server.mjs",
-                        ".minimax-plugin/plugin.json", "tests/verify-review16.mjs"):
+                        ".minimax-plugin/plugin.json",
+                        ".gitattributes", ".gitignore", "LICENSE", "package.json",
+                        "miniapp/miniapp.json", "miniapp/node/miniapp-api.ts",
+                        "tests/verify-review16.mjs"):
                 if read(rel).count(old) == 1:
                     target = rel
                     break

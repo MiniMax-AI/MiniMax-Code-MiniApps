@@ -1,15 +1,32 @@
 """Mutation control for verify-parsed-rows.mjs.
 
-Each mutation reintroduces exactly one bug the probe is supposed to catch. The probe must FAIL
-every time, and the file must come back byte-for-byte identical afterwards. A mutation that the
-probe still passes means the assertion was tautological; a mutation whose anchor no longer
-exists means the assertion went dead, which is worse — the runner reports those as misses too.
+Each mutation reintroduces exactly one bug the probe is supposed to catch, BY NAME. The ones that
+matter most are the first three: each of them makes the endpoint answer something plausible and
+wrong, and none of them throws.
 
-Every mutation here is non-trivial: it changes behaviour under the condition the assertion is
-about, not just text. In particular the four key mutations each break a *different* component,
-because a key that drops two of them would still be caught by the wrong test and we would not
-learn which one mattered.
+  - searching the STORED rows instead of the projected view reports versions the ledger is not
+    showing, and hands back an index no row occupies;
+  - dropping one of the five searched fields narrows what a reader can find with no error at all;
+  - counting only what fits under the cap turns "how many matched" into "how many did we send".
+
+Every case names the rule it is about in its `expect` field, and a case counts as caught only
+when the probe reported THAT rule: a probe that went red on some other assertion has not shown
+that this guard owns this mutation. The rules the last six cases are about are the ones this
+cache has to answer about ITSELF rather than about the page's bytes:
+
+  - the cache is charged the SOURCE bytes it holds (times the heap proxy), so the part of a
+    lineage a round does not have to parse again is a number and not a guess;
+  - the rows are released when nobody has wanted them for a while, without a request, because a
+    release that only ran on a request would happen exactly when the reader comes back;
+  - that release is longer than one poll, or an open tab would lose its rows between polls;
+  - and the timer that does it never keeps the process alive.
+  - the sweep interval is floored at a millisecond on both sides: the quarter of a limit below
+    four milliseconds is finer than a timer can be, and an interval a caller asks for that is not
+    positive used to switch the sweeper off — which left the rows to be released only when
+    somebody asked for them.
 """
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,45 +40,52 @@ MUTATIONS = [
     # ---- the key: each component removed on its own -------------------------------
     (
         "server: the key stops naming the file, so two sessions share their messages.jsonl",
-        SERVER,
         "  return `${filePath}|${size}|${mtimeMs}|${limit}`;",
         "  return `${filePath.split(/[\\\\/]/).pop()}|${size}|${mtimeMs}|${limit}`;",
+        'the path is part of the key (two sessions, one basename)',
     ),
     (
         "server: the key stops carrying the size, so a grown file serves a stale tail",
-        SERVER,
         "  return `${filePath}|${size}|${mtimeMs}|${limit}`;",
         "  return `${filePath}|${mtimeMs}|${limit}`;",
+        'the size is part of the key (the active file grows)',
     ),
     (
         "server: the key stops carrying the mtime, so a same-size rewrite serves stale rows",
-        SERVER,
         "  return `${filePath}|${size}|${mtimeMs}|${limit}`;",
         "  return `${filePath}|${size}|${limit}`;",
+        'the mtime is part of the key (a rewrite at the same size)',
     ),
     (
         "server: the key stops carrying the limit, so the truncation verdict is read at another width",
-        SERVER,
         "  return `${filePath}|${size}|${mtimeMs}|${limit}`;",
         "  return `${filePath}|${size}|${mtimeMs}|64 * 1024 * 1024`;",
+        'the limit is part of the key (readHead truncates at it)',
     ),
     # ---- the cache value ----------------------------------------------------------
     (
         "server: `empty` is not carried on the cached value, so a hit stops reporting it",
-        SERVER,
         "    empty: head.buffer.length === 0,\n",
         "    empty: false,\n",
+        'an empty file still reports empty on a hit',
     ),
     (
-        "server: `skipped` is not carried, so a hit under-counts the lines it dropped",
-        SERVER,
+        "server: `skipped` is not carried, so a read under-counts the lines it dropped",
         "    skipped: parsed.skipped,\n",
         "    skipped: 0,\n",
+        'two lines are skipped: one unparseable, one not an object',
+    ),
+    (
+        # The value carries the count the parse reported, so the only way a HIT can disagree with
+        # a cold read is if the hit path stops handing back what it was given.
+        "a hit reports a skipped count of its own rather than the one it was given",
+        "    if (hit !== null) return hit;\n",
+        "    if (hit !== null) return { ...hit, skipped: 0 };\n",
+        'a hit reports the same skipped count as a cold read',
     ),
     # ---- the budget ---------------------------------------------------------------
     (
         "the budget stops evicting, so the cache grows without limit",
-        SERVER,
         """      while (bytes > budget && entries.size > 1) {
         const oldest = entries.keys().next();
         if (oldest.done) break;
@@ -71,26 +95,27 @@ MUTATIONS = [
       }
 """,
         "",
+        'the third evicts the oldest, keeping the budget',
     ),
     (
         "reading stops refreshing recency, so the 22 frozen files get evicted by insertion order",
-        SERVER,
         """      // Re-reading is the only signal that a file is still hot, so it refreshes recency.
       entries.delete(key);
       entries.set(key, hit);
+      hit.at = now();
       return hit.value;
 """,
         "      return hit.value;\n",
+        'a file that was just read survives the eviction that follows',
     ),
     (
         "an entry larger than the whole budget is stored anyway, evicting everything for one hit",
-        SERVER,
         "      if (size > budget) return bytes;\n",
         "",
+        'a single entry larger than the budget is not stored',
     ),
     (
         "re-storing a key double-counts it, so the budget shrinks over time",
-        SERVER,
         """      const previous = entries.get(key);
       if (previous !== undefined) {
         bytes -= previous.size;
@@ -98,29 +123,462 @@ MUTATIONS = [
       }
 """,
         "",
+        're-storing the same key counts once',
     ),
     # ---- structure ----------------------------------------------------------------
     (
         "the cache becomes a module-level singleton, shared across every runtime instance",
-        SERVER,
         "  const parsedRows = createParsedRowsCache(PARSED_ROWS_CACHE_BYTES);",
         "  globalThis.__parsedRows = globalThis.__parsedRows || createParsedRowsCache(PARSED_ROWS_CACHE_BYTES);\n  const parsedRows = globalThis.__parsedRows;",
+        'the cache is created inside start(), not at module level',
     ),
     (
         "the route parses the file inline again instead of going through the cache",
-        SERVER,
         "        parsedFile = await loadParsedRows(parsedRows, filePath, limit, { cacheable: link.fileName !== activeFileName });",
         "        parsedFile = await (async () => { const h = await readHead(filePath, limit); const p = parseMessagesJsonl(h.buffer); return { rows: p.rows, locators: p.spans.map(([s, e]) => ({ start: s, end: e, digest: lineDigest(h.buffer.subarray(s, e)) })), skipped: p.skipped, size: h.size, read: h.read, empty: h.buffer.length === 0, truncated: truncatedByCap(h.size, limit) }; })();",
+        'the route reaches the file through loadParsedRows()',
+    ),
+    # ---- the coverage the cache can state about itself ---------------------------------
+    (
+        # The budget is charged in SOURCE bytes times the heap proxy. That is what makes the
+        # coverage computable: the source bytes a round does not have to parse again are the
+        # lineage's source bytes minus the source bytes this cache holds. Charge the source
+        # bytes alone and the number a reader can compute no longer matches what the cache holds.
+        "the cache is charged the source bytes without the heap proxy, so its accounting drifts from its input",
+        "  if (cacheable) cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));",
+        "  if (cacheable) cache.set(key, value, head.size);",
+        'the cache is charged the source bytes times the heap proxy',
+    ),
+    # ---- the rows are released when nobody wants them ------------------------------------
+    (
+        # The read path has to notice that the rows have been here longer than anybody asked
+        # for them. Without this the cache keeps a conversation's rows for as long as the
+        # runtime lives, which is how the last session a reader opened stayed resident.
+        "a read does not notice that the rows have expired",
+        "      if (expired(hit.at)) {\n",
+        "      if (false) {\n",
+        'a read after the time limit is a miss',
+    ),
+    (
+        # The sweep is what releases the rows while the reader is gone. A sweep that releases
+        # nothing is a sweep that does not exist.
+        "the sweep releases nothing",
+        "      if (expired(entry.at)) drop(key);\n",
+        "      if (false) drop(key);\n",
+        'a sweep releases what expired',
+    ),
+    (
+        # Without the timer, the rows are only released by the next request — which is exactly
+        # the moment the reader comes back and wants them again.
+        "the sweeper is never started, so the rows stay until the next request",
+        "      startSweeper();\n",
+        "",
+        'the rows are released without a request',
+        None,
+        (
+            'the rows are released without a request',
+            'and the cache is empty',
+            'a caller who asks for a non-positive interval still gets the rows released '
+            'without a request',
+        ),
+    ),
+    (
+        # An interval that is not unref'd keeps the event loop alive after the server closes,
+        # and the runtime would wait for it.
+        "the sweeper keeps the process alive",
+        "    if (typeof sweeper.unref === 'function') sweeper.unref();\n",
+        "",
+        'the sweeper does not keep the process alive',
+    ),
+    (
+        # The same rule, but with a decoy: the owner used to be a pattern over the source, and a
+        # pattern cannot tell the cache's own handle from an unrelated one's. A function that is
+        # never called, with a parameter of the same name, satisfied it -- while the real timer was
+        # left referenced and the process would have waited for it. The owner now watches the handle
+        # the cache was given, so the decoy has to go with the real unref.
+        "an unrelated unref stands in for the sweeper's own",
+        "    if (typeof sweeper.unref === 'function') sweeper.unref();\n",
+        "    const unrelatedTimer = (sweeper) => { sweeper.unref(); };\n"
+        "    if (typeof sweeper.ref === 'function') sweeper.ref();\n",
+        'the sweeper does not keep the process alive',
+    ),
+    (
+        # The page polls every 8 seconds. A limit shorter than one poll would make an open tab
+        # lose its rows between two polls and re-parse the whole lineage for nothing.
+        "the time limit is shorter than one poll",
+        "const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;",
+        "const PARSED_ROWS_CACHE_TTL_MS = 1000;",
+        'the time limit is longer than one poll, so an open tab never loses its rows',
+    ),
+    (
+        # The page stops polling while its tab is hidden, so a reader who switches away for a
+        # while is the ordinary case. A minute is short enough that every return to the tab
+        # costs a re-parse — which is the other half of what this limit buys.
+        "the time limit is short enough that switching away from the tab costs a re-parse",
+        "const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;",
+        "const PARSED_ROWS_CACHE_TTL_MS = 60 * 1000;",
+        'the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
+    ),
+    (
+        # The relation between the limit and the sweep interval has to hold for the interval the
+        # cache ACTUALLY uses. Reading two numbers out of the source would keep passing after the
+        # line that TAKES the interval had changed, so the mutation is on that line.
+        #
+        # The case that used to change the constant's value is not a defect any more and is gone
+        # for that reason, not because its rule lost an owner: the interval is clamped to the
+        # limit where it is taken, so a longer constant is simply never used. The rule itself is
+        # still owned — by this case.
+        "the sweep interval is taken without being clamped to the limit",
+        """  const limitBoundMs = Math.max(1, Math.floor(ttlMs / 4));
+  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);
+  const sweepIntervalMs = Math.min(limitBoundMs, askedBoundMs);""",
+        """  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);
+  const sweepIntervalMs = askedBoundMs;""",
+        'the sweep interval the cache uses is at most a quarter of the limit',
+    ),
+    (
+        # The floor of a millisecond is what makes the promise true for a limit below four
+        # milliseconds: a quarter of such a limit is finer than a timer can be, so the floor is
+        # the larger of the two. Without the floor the interval would be zero there, and a zero
+        # interval is not a fast timer — it is no timer at all.
+        "the limit bound loses its floor of a millisecond",
+        "  const limitBoundMs = Math.max(1, Math.floor(ttlMs / 4));",
+        "  const limitBoundMs = Math.floor(ttlMs / 4);",
+        'a limit below four milliseconds is still swept every millisecond, so the release is at most a millisecond late',
+    ),
+    (
+        # A caller who asks for an interval that is not positive used to switch the sweeper off,
+        # and a cache whose sweeper is off only releases the rows when somebody asks for them —
+        # the one moment they are wanted again. The floor on what the caller asked for is what
+        # keeps the sweeper running.
+        "the asked interval loses its floor of a millisecond",
+        "  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);",
+        "  const askedBoundMs = options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS;",
+        'an interval the caller asks for that is not positive is taken as a millisecond',
+    ),
+    (
+        # A time limit of zero means NO time limit. The other reading — everything expires at
+        # once — would be a cache that never hits and never releases.
+        "a time limit of zero expires everything anyway",
+        "  const expired = (at) => ttlMs > 0 && now() - at >= ttlMs;",
+        "  const expired = (at) => now() - at >= ttlMs;",
+        'a time limit of zero means no time limit, not that everything expires at once',
+    ),
+    (
+        # The promise to a reader is that the rows are gone no later than one sweep interval after
+        # the limit -- and that holds only if the TIMER runs on that interval. Nothing watched the
+        # call that starts the timer, so doubling the interval there left every other case green:
+        # the cache still reported the interval it was asked for, the number in the prose still
+        # matched that reported interval, and the real release had moved to "the limit plus twice
+        # the interval" while the promise went on saying twelve and a half minutes.
+        "the timer that releases the rows runs on twice the interval the cache reports",
+        "    sweeper = setInterval(sweep, sweepIntervalMs);",
+        "    sweeper = setInterval(sweep, sweepIntervalMs * 2);",
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    (
+        # The rule is about the NUMBER the timer is given, not about the way the call spells it.
+        # A local binding that shadows the name keeps the spelling and doubles the number that is
+        # actually passed: the cache kept reporting the interval it was asked for, the number in
+        # the prose kept matching that reported interval, and the real release moved out to nearly
+        # fifteen minutes -- while every check that only read the source stayed green.
+        "a shadowed binding doubles the interval the timer really gets",
+        "    sweeper = setInterval(sweep, sweepIntervalMs);",
+        "    { const sweepIntervalMs = Math.min(limitBoundMs, askedBoundMs) * 2;\n"
+        "      sweeper = setInterval(sweep, sweepIntervalMs); }",
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    (
+        # The same escape with a number that is not derived from the interval at all: the spelling
+        # is still the reported name, and the value the timer gets is not the reported interval.
+        "a shadowed binding replaces the interval with a number of its own",
+        "    sweeper = setInterval(sweep, sweepIntervalMs);",
+        "    { const sweepIntervalMs = 300000;\n"
+        "      sweeper = setInterval(sweep, sweepIntervalMs); }",
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    (
+        # Zero means no limit AND no sweeper. The owner checked the hit and the retained bytes but
+        # never the timer, so moving the boundary of the start condition by one comparison let the
+        # sweeper run under a zero limit -- and nothing in such a cache ever expires, so that timer
+        # would scan it for ever.
+        "a zero limit starts the sweeper it promised not to start",
+        "    if (sweeper !== null || ttlMs <= 0 || sweepIntervalMs <= 0) return;",
+        "    if (sweeper !== null || ttlMs < 0 || sweepIntervalMs <= 0) return;",
+        'a time limit of zero starts no sweeper, because nothing in it ever expires',
+    ),
+    (
+        # The sweeper is what releases the rows without a request. Take the call away and the rows
+        # are held until somebody asks for them -- the shape the whole time limit exists to avoid.
+        #
+        # This case belongs to the release owners, and the point of it is that the other two
+        # owners stay out of it: a cache that starts no timer has no timer running on the wrong
+        # interval, and nothing that could hold the process open, so neither of those rules is
+        # broken by this break. If they went red here, one rule would be standing in for another.
+        "the sweeper is never started, so the rows are held until somebody asks for them",
+        "      startSweeper();\n",
+        "",
+        'the rows are released without a request',
+        None,
+        (
+            'the rows are released without a request',
+            'and the cache is empty',
+            'a caller who asks for a non-positive interval still gets the rows released '
+            'without a request',
+        ),
+    ),
+    (
+        # The owners of the lifetime read the DECLARATION of the limit, so a cache whose default
+        # comes from somewhere else answered them with the documented number while the rows it
+        # actually held lived twice as long. The owner now watches the limit the cache gives its
+        # rows when nobody tells it one.
+        "the default lifetime is doubled, so the declaration no longer says what the cache does",
+        "  const ttlMs = options.ttlMs ?? PARSED_ROWS_CACHE_TTL_MS;",
+        "  const ttlMs = options.ttlMs ?? (PARSED_ROWS_CACHE_TTL_MS * 2);",
+        'the limit the service declares is the limit the cache gives its rows',
+        None,
+        (
+            'the limit the service declares is the limit the cache gives its rows',
+        ),
+    ),
+    (
+        # The page polls every TRAJECTORY_POLL_INTERVAL milliseconds -- unless the expression the
+        # timer is given says otherwise. A poll that waits a thousand times longer than the limit
+        # it has to survive loses its rows between polls, and the owners that read the declaration
+        # said nothing about it. This one breaks the PAGE, so it names the file it breaks.
+        "the poll waits a thousand times the interval it declares",
+        "        }, TRAJECTORY_POLL_INTERVAL);",
+        "        }, TRAJECTORY_POLL_INTERVAL * 1000);",
+        'the poll waits as long as the client declares',
+        "miniapp/client/index.html",
+        (
+            'the poll waits as long as the client declares',
+            'the time limit is longer than one poll, so an open tab never loses its rows',
+        ),
+    ),
+    (
+        # The route passes options, and a fixture that leaves them out takes a different branch of
+        # the same function -- so the charge the route really made was never the charge that was
+        # checked, and a commented-out line satisfied the check that only asked about the text.
+        "the route charges the source bytes while a commented-out line supplies the old text",
+        "  if (cacheable) cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));",
+        "  // cache.set(key, value, Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE));\n"
+        "  if (cacheable) cache.set(key, value,\n"
+        "    options === undefined\n"
+        "      ? Math.ceil(head.size * PARSED_ROWS_HEAP_PER_SOURCE_BYTE)\n"
+        "      : head.size);",
+        'and the charge the route makes is that one',
+        None,
+        ('and the charge the route makes is that one',),
+    ),
+    (
+        # A declaration that is commented out is not a declaration. The pattern read the comment
+        # and answered with the number the annotation carried while the binding was a string.
+        "the proxy declaration is commented out and the binding is a string",
+        "const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;",
+        "// const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;\nconst PARSED_ROWS_HEAP_PER_SOURCE_BYTE = '2';",
+        'the heap proxy is a number the service declares',
+        None,
+        ('the heap proxy is a number the service declares',),
+    ),
+    (
+        # The owner of the rule that the cached rows are the same ARRAY and not a copy of it now
+        # compares the arrays -- it used to compare the whole value a read hands back, which is a
+        # stronger thing than the name claims, and a read that handed back a fresh wrapper around
+        # the same array was reported as a copy of the array. This break hands back a copy of the
+        # array, and it has to be caught by the owner of the array.
+        "the hit hands back a copy of the rows array",
+        "    if (hit !== null) return hit;\n",
+        "    if (hit !== null) return { ...hit, rows: [...hit.rows] };\n",
+        'and it is literally the same array, not a copy',
+        None,
+    ),
+    (
+        # The owner of the rule that the hit gives back the same object the cold read gave used to
+        # be named "the hit is a hit" while it compared objects -- and "is a hit" is not what an
+        # object comparison can tell you. It now says what it compares, and this break is what
+        # breaks THAT: the hit hands back a copy of the value.
+        "the hit hands back a copy of the value",
+        "    if (hit !== null) return hit;\n",
+        "    if (hit !== null) return { ...hit };\n",
+        'and the hit on an empty file gives back the same object the cold read gave',
+        None,
     ),
 ]
+
+
+# The EXACT set of rules each case's break is allowed to report.
+#
+# A control that only asks "was the rule named among those that went red" is also satisfied by a
+# guard that reported three further rules which that break did not break -- and a guard like that
+# cannot tell the reader which rule had actually been broken. So each case names the rules its
+# break may report, and the control fails when the probe reports anything outside that set.
+#
+# The table below is the single source of truth: a case that names a set inline has to agree with
+# it, and the control refuses to run when the two disagree.
+#
+# WHAT THIS PINS, and what it does not: it pins WHICH ASSERTIONS GO RED. It does not decide which
+# rule was broken -- that is the reviewer's judgement, and the table is what lets the reviewer
+# check it: every rule in a case's set has to be a rule that the break really does break.
+
+EXACT = {
+    'server: the key stops naming the file, so two sessions share their messages.jsonl': (
+        'two sessions with identically-sized, identically-timed messages.jsonl do not share rows',
+        "and the first one was not served the second one's content",
+        'the cache kept both',
+        'the path is part of the key (two sessions, one basename)',
+    ),
+    'server: the key stops carrying the size, so a grown file serves a stale tail': (
+        'the size is part of the key (the active file grows)',
+    ),
+    'server: the key stops carrying the mtime, so a same-size rewrite serves stale rows': (
+        'a same-size rewrite is noticed, via mtime',
+        'and it is a different object, not the cached one',
+        'the mtime is part of the key (a rewrite at the same size)',
+    ),
+    'server: the key stops carrying the limit, so the truncation verdict is read at another width': (
+        'the limit is part of the key (readHead truncates at it)',
+    ),
+    'server: `empty` is not carried on the cached value, so a hit stops reporting it': (
+        'an empty file reports empty on a cold read',
+        'an empty file still reports empty on a hit',
+    ),
+    'server: `skipped` is not carried, so a read under-counts the lines it dropped': (
+        'two lines are skipped: one unparseable, one not an object',
+    ),
+    'a hit reports a skipped count of its own rather than the one it was given': (
+        'a hit reports the same skipped count as a cold read',
+        'an unchanged file is served from the cache (same object, not a re-read)',
+        'and the hit on an empty file gives back the same object the cold read gave',
+    ),
+    'the budget stops evicting, so the cache grows without limit': (
+        'the third evicts the oldest, keeping the budget',
+        'and the total stays inside the budget',
+        'the least recently used entry is the one that went',
+        'the file that was not read is the one evicted',
+    ),
+    'reading stops refreshing recency, so the 22 frozen files get evicted by insertion order': (
+        'a file that was just read survives the eviction that follows',
+        'the file that was not read is the one evicted',
+    ),
+    'an entry larger than the whole budget is stored anyway, evicting everything for one hit': (
+        'a single entry larger than the budget is not stored',
+        'and it is not retrievable',
+    ),
+    're-storing a key double-counts it, so the budget shrinks over time': (
+        're-storing the same key counts once',
+    ),
+    'the cache becomes a module-level singleton, shared across every runtime instance': (
+        'the cache is created inside start(), not at module level',
+    ),
+    'the route parses the file inline again instead of going through the cache': (
+        'the route reaches the file through loadParsedRows()',
+    ),
+    'the cache is charged the source bytes without the heap proxy, so its accounting drifts from its input': (
+        'the cache is charged the source bytes times the heap proxy',
+        'so the source bytes it holds are computable from its own accounting',
+        'and the charge the route makes is that one',
+    ),
+    'a read does not notice that the rows have expired': (
+        'a read after the time limit is a miss',
+        'and the entry is not held any more',
+    ),
+    'the sweep releases nothing': (
+        'a sweep releases what expired',
+        'and leaves nothing behind',
+        'the rows are released without a request',
+        'and the cache is empty',
+        'the limit the service declares is the limit the cache gives its rows',
+        'a caller who asks for a non-positive interval still gets the rows released without a request',
+    ),
+    'the sweeper is never started, so the rows stay until the next request': (
+        'the rows are released without a request',
+        'and the cache is empty',
+        'a caller who asks for a non-positive interval still gets the rows released without a request',
+    ),
+    'the sweeper keeps the process alive': (
+        'the sweeper does not keep the process alive',
+    ),
+    "an unrelated unref stands in for the sweeper's own": (
+        'the sweeper does not keep the process alive',
+    ),
+    'the time limit is shorter than one poll': (
+        'the time limit is longer than one poll, so an open tab never loses its rows',
+        'the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
+        'the shipped default is the interval the service declares',
+    ),
+    'the time limit is short enough that switching away from the tab costs a re-parse': (
+        'the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
+        'the shipped default is the interval the service declares',
+    ),
+    'the sweep interval is taken without being clamped to the limit': (
+        'the sweep interval the cache uses is at most a quarter of the limit',
+        'the sweep interval the cache uses is at most a quarter of the limit',
+        'an interval the caller asks for is clamped to the limit as well',
+        'a limit below four milliseconds is still swept every millisecond, so the release is at most a millisecond late',
+    ),
+    'the limit bound loses its floor of a millisecond': (
+        'a limit below four milliseconds is still swept every millisecond, so the release is at most a millisecond late',
+    ),
+    'the asked interval loses its floor of a millisecond': (
+        'an interval the caller asks for that is not positive is taken as a millisecond',
+        'a caller who asks for a non-positive interval still gets the rows released without a request',
+    ),
+    'a time limit of zero expires everything anyway': (
+        'a time limit of zero means no time limit, not that everything expires at once',
+        'and the rows are still held',
+    ),
+    'the timer that releases the rows runs on twice the interval the cache reports': (
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    'a shadowed binding doubles the interval the timer really gets': (
+        'the timer that releases the rows runs on the interval the cache reports',
+    ),
+    'a shadowed binding replaces the interval with a number of its own': (
+        'the rows are released without a request',
+        'and the cache is empty',
+        'the timer that releases the rows runs on the interval the cache reports',
+        'a caller who asks for a non-positive interval still gets the rows released without a request',
+    ),
+    'a zero limit starts the sweeper it promised not to start': (
+        'a time limit of zero starts no sweeper, because nothing in it ever expires',
+    ),
+    'the sweeper is never started, so the rows are held until somebody asks for them': (
+        'the rows are released without a request',
+        'and the cache is empty',
+        'a caller who asks for a non-positive interval still gets the rows released without a request',
+    ),
+    'the default lifetime is doubled, so the declaration no longer says what the cache does': (
+        'the limit the service declares is the limit the cache gives its rows',
+    ),
+    'the poll waits a thousand times the interval it declares': (
+        'the poll waits as long as the client declares',
+        'the time limit is longer than one poll, so an open tab never loses its rows',
+    ),
+    'the route charges the source bytes while a commented-out line supplies the old text': (
+        'and the charge the route makes is that one',
+    ),
+    'the proxy declaration is commented out and the binding is a string': (
+        'the heap proxy is a number the service declares',
+    ),
+    'the hit hands back a copy of the rows array': (
+        'an unchanged file is served from the cache (same object, not a re-read)',
+        'and it is literally the same array, not a copy',
+        'and the hit on an empty file gives back the same object the cold read gave',
+    ),
+    'the hit hands back a copy of the value': (
+        'an unchanged file is served from the cache (same object, not a re-read)',
+        'and the hit on an empty file gives back the same object the cold read gave',
+    ),
+}
 
 
 def read_exact(path):
     """Normalise to LF for matching, and report the file's own newline so it can be put back.
 
-    server.mjs is CRLF in the working tree. Matching against the raw bytes would make every
-    multi-line anchor miss — which the runner reports as a surviving mutation, so the failure
-    looks like a dead guard rather than a broken anchor.
+    Matching against the raw bytes would make every multi-line anchor miss — which the runner
+    reports as a surviving mutation, so the failure looks like a dead guard rather than a
+    broken anchor.
     """
     data = path.read_bytes()
     text = data.decode("utf-8").replace("\r\n", "\n")
@@ -145,6 +603,45 @@ def run_probe():
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def rule_name(text):
+    """The name of a rule a probe reported, without the evidence a comparison carries.
+
+    A probe reports an assertion as `<name>` and a comparison as
+    `<name>: got <value>, want <value>`. The values are the evidence, not the rule, so they are
+    cut off — and the cut is made at a `: got ` whose tail really is `<json>, want <json>`, so a
+    name that itself contains those words is not truncated.
+    """
+    for match in reversed(list(re.finditer(re.escape(": got "), text))):
+        head = text[:match.start()].strip()
+        tail = text[match.end():]
+        cut = tail.rfind(", want ")
+        if cut < 0:
+            continue
+        try:
+            json.loads(tail[:cut])
+            json.loads(tail[cut + len(", want "):])
+        except ValueError:
+            continue
+        return head
+    return text
+
+
+def reported_rules(output):
+    """The rules a probe named as broken.
+
+    Two formats, as in `mutate-search-endpoint.py`: `  - <name>` and `FAIL <name>`. A case is
+    only caught when the rule it names is among them.
+    """
+    names = []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            names.append(rule_name(text[2:].strip()))
+        elif text.startswith("FAIL "):
+            names.append(rule_name(text[5:].strip()))
+    return names
+
+
 def main():
     code, output = run_probe()
     if code != 0:
@@ -153,39 +650,92 @@ def main():
         return 1
     print("baseline clean")
 
-    originals = {path: path.read_bytes() for path in {m[1] for m in MUTATIONS}}
+    originals = {}
     missed = []
-    for label, path, old, new in MUTATIONS:
-        text, newline = read_exact(path)
-        if old not in text:
-            print(f"SKIP  {label}: anchor not found in {path.name}")
+    unnamed = []
+    for label, old, new, expect, *rest in MUTATIONS:
+        # A case may name the file it breaks, and it may name the EXACT set of rules that are
+        # allowed to go red.
+        #
+        # Most cases break the service; the ones about the PAGE break the page, because a control
+        # that could only break one file could not hold a case about the other half of the
+        # package. A case with no file named breaks the service.
+        #
+        # The exact set is there for the cases whose POINT is the isolation: a break that belongs
+        # to one rule has to be reported by the owner of THAT rule and by nobody else. A control
+        # that only asked "was the rule named among those that went red" would also pass on a
+        # guard that reported three further rules which that break did not break -- and that is
+        # the shape the two owners that stood in for each other had, and the shape this round is
+        # about. So for those cases the set of reported rules has to be EXACTLY the set the case
+        # names, and a case that names none claims no isolation.
+        target = SERVER if not rest or rest[0] is None else (ROOT / rest[0])
+        # The exact set of rules this break is allowed to report comes from the table below -- the
+        # one place that holds it. A case that also names a set inline has to agree with it, and
+        # the control refuses to run when the two disagree: two places that have to agree are a
+        # check, one place that has to be remembered is a hope.
+        exact = set(EXACT[label])
+        if len(rest) > 1 and set(rest[1]) != exact:
+            raise SystemExit("FAIL  the case %r names two different exact sets" % label)
+        if target not in originals:
+            originals[target] = target.read_bytes()
+        original = originals[target]
+        text, newline = read_exact(target)
+        # The anchor has to be there EXACTLY once. A control that replaces the first occurrence of
+        # a string that occurs twice edits a place it did not mean to edit, and the case then
+        # passes or fails for a reason that has nothing to do with the rule it is about -- so the
+        # count is checked here, by the control itself, instead of being counted by somebody
+        # reading the source.
+        if text.count(old) != 1:
+            print(f"SKIP  {label}: anchor found {text.count(old)} times")
             missed.append(label)
             continue
-        write_exact(path, text.replace(old, new, 1), newline)
+        if old == new:
+            print(f"SKIP  {label}: the mutation changes nothing")
+            missed.append(label)
+            continue
+        write_exact(target, text.replace(old, new, 1), newline)
         try:
             code, output = run_probe()
         finally:
-            path.write_bytes(originals[path])
+            target.write_bytes(original)
         if code == 0:
             print(f"MISSED {label}: the probe still passed")
             missed.append(label)
-        else:
-            first = next(
-                (line.strip() for line in output.splitlines() if line.strip().startswith("- ")),
-                "(no detail)",
-            )
-            print(f"caught {label}\n         -> {first}")
+            continue
+        names = reported_rules(output)
+        if not names:
+            print(f"UNNAMED {label}: the probe failed without naming a rule")
+            unnamed.append(label)
+            continue
+        # The case names the rule it is about, so the probe has to name THAT rule and not some
+        # other one that happened to go red in the same run: a probe that went red elsewhere has
+        # not shown that this guard owns this mutation.
+        if expect not in names:
+            print(f"MISSED {label}: the probe named {names} instead of {expect}")
+            missed.append(label)
+            continue
+        # When the case names the exact set of rules that may go red, a guard that also reported
+        # a rule this break did not break has failed the case: it accused another owner.
+        if exact is not None and set(names) != exact:
+            print(f"OVERREACH {label}: the probe named {sorted(set(names))} "
+                  f"instead of exactly {sorted(exact)}")
+            missed.append(label)
+            continue
+        print(f"caught {label}\n         -> {expect}")
 
-    for path, data in originals.items():
-        if path.read_bytes() != data:
-            print(f"NOT RESTORED {path}")
+    for target, original in originals.items():
+        if target.read_bytes() != original:
+            print(f"NOT RESTORED {target}")
             return 1
-    print("all files restored byte-for-byte")
+    print("file restored byte-for-byte")
 
-    if missed:
-        print(f"\n{len(missed)} mutation(s) got through")
+    if missed or unnamed:
+        if missed:
+            print(f"\n{len(missed)} mutation(s) got through")
+        if unnamed:
+            print(f"{len(unnamed)} mutation(s) failed without naming a rule")
         return 1
-    print(f"\nall {len(MUTATIONS)} mutations caught")
+    print(f"\nall {len(MUTATIONS)} mutations caught, each by name")
     return 0
 
 
