@@ -33,8 +33,11 @@ const TOOL = {
 };
 
 // The provider takes media URLs, never local paths or data URIs.
+//
+// The link comes under a few names, and the video task answers with its own:
+// a video has no drive asset, so its link travels with the task.
 function mediaUrl(item) {
-  return item?.url ?? item?.link ?? item?.download_url ?? null;
+  return item?.url ?? item?.link ?? item?.download_url ?? item?.video_url ?? null;
 }
 
 // The note that goes with a batch: what did not come out of it.
@@ -445,7 +448,18 @@ export function createConnectorRunner(context, options = {}) {
     const status = String(value?.status ?? value?.state ?? '').toLowerCase();
     if (status === 'succeeded' || status === 'success' || status === 'completed') {
       const nodeId = value?.file_id ?? value?.node_id ?? null;
-      const url = (await assetUrl(nodeId)) ?? mediaUrl(value);
+      // A video has no drive asset: the provider keeps the file on its task and
+      // gives the link with the task's own answer. So the task's link comes
+      // first, and the drive asset is only the second try.
+      const url = mediaUrl(value) ?? (await assetUrl(nodeId));
+      if (!url) {
+        // The task is done but the file could not be fetched. Saying "完成"
+        // with nothing behind it is a lie the user would believe.
+        throw Object.assign(
+          new Error('视频已经生成完，但这次没有取回文件（provider 没有给出下载地址），请重试这次运行'),
+          { code: 'MEDIA_MISSING' },
+        );
+      }
       const local = await publishSafely(url, 'video');
       // The download link is temporary, so the task id travels with it: the
       // task can be queried again for a fresh link.

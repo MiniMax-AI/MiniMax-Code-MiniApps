@@ -276,6 +276,15 @@ function createMockHostConnector(voices = [
       };
     }
     if (name === 'get_asset_url') {
+      // A video has no drive asset: the provider keeps the file on its task
+      // and gives the link with the task's own answer. Asking for a video by
+      // its file id is refused.
+      if (String(args?.node_id ?? '').startsWith('video-')) {
+        return {
+          invocationId: 'invocation-test',
+          value: [{ type: 'text', text: JSON.stringify({ code: 500, message: 'video has no drive asset' }) }],
+        };
+      }
       return {
         invocationId: 'invocation-test',
         // The provider's asset host cannot be reached from a test, and a
@@ -310,7 +319,17 @@ function createMockHostConnector(voices = [
     }
     if (name === 'query_video_generation') {
       if (options.videoState === 'succeeded') {
-        return { invocationId: 'invocation-test', value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', status: 'succeeded', file_id: 'node-2' }) }] };
+        // A finished video answers with its own link. The file id points at a
+        // drive asset that does not exist, so the link in the answer is the
+        // only way to the file.
+        return {
+          invocationId: 'invocation-test',
+          value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', status: 'succeeded', file_id: 'video-1', video_url: 'https://cdn.example.com/video-1.mp4' }) }],
+        };
+      }
+      if (options.videoState === 'succeeded-without-link') {
+        // The task is done but the answer carries no link at all.
+        return { invocationId: 'invocation-test', value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', status: 'succeeded', file_id: 'video-1' }) }] };
       }
       return { invocationId: 'invocation-test', value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', status: 'running' }) }] };
     }
@@ -2951,6 +2970,32 @@ test('a call that waited for the machine says how long it waited when it fails',
   assert.equal(doneThird.status, 'done', 'a failed call blocked the one behind it');
 });
 
+test('a finished video that cannot be fetched says so instead of finishing empty', async (t) => {
+  // The task is done, but the answer carries no link and the video has no
+  // drive asset. Saying "完成" with nothing behind it is a lie the user would
+  // believe, so the run says the file is missing.
+  const connector = createMockHostConnector(undefined, { videoState: 'succeeded-without-link' });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_nolink',
+      mode: 'video',
+      prompt: '一只猫在跑',
+      modelKey: 'MiniMax-H3',
+      params: { ratio: '16:9', resolution: '768P', duration: 6 },
+    }),
+  });
+  assert.equal(started.status, 202);
+  const { run } = await started.json();
+  const polled = await waitFor(h.base, run.id, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(polled.status, 'error', 'a run that produced no file called itself done');
+  assert.match(polled.error, /没有取回文件/);
+});
+
 test('a video node submits first and is polled afterwards', async (t) => {
   const connector = createMockHostConnector(undefined, { videoState: 'succeeded' });
   const h = await createHarness({ hostConnector: connector });
@@ -2986,7 +3031,8 @@ test('a video node submits first and is polled afterwards', async (t) => {
   // into a displayable URL.
   const polled = await waitFor(h.base, run.id, (item) => item.status === 'done' || item.status === 'error');
   assert.equal(polled.status, 'done');
-  assert.equal(polled.media[0].url, `${ASSET_HOST}/node-2`);
+  // A video has no drive asset: the file comes with the task's own answer.
+  assert.equal(polled.media[0].url, 'https://cdn.example.com/video-1.mp4');
   assert.equal(polled.media[0].kind, 'video');
 });
 
