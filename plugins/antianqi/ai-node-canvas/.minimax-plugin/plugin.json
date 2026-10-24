@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "ai-node-canvas",
   "displayName": "节点画布",
-  "version": "0.61.0",
+  "version": "0.62.0",
   "description": "无限画布节点编排：把 MiniMax 模型生成的文本、图片、视频串成工作流，连线即数据流，上游产物可直接被下游引用。",
   "author": "antianqi",
   "icon": "icon.png",
