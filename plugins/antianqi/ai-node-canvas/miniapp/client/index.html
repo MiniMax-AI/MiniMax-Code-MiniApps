@@ -11,10 +11,11 @@
         <div class="nxc-toolbar__group">
           <h1 class="nxc-brand"><i class="nxc-brand__dot"></i>节点画布</h1>
           <button id="canvas-select" class="nxc-select nxc-select--canvas" type="button" title="切换画布"></button>
+          <span id="save-state" class="nxc-savestate" data-state="saved" title="画布自己会存：改动后一秒左右落盘，不用手动保存">已保存</span>
           <input id="canvas-rename" class="nxc-rename" type="text" maxlength="120" hidden aria-label="画布名称" />
           <button id="btn-new" class="nxc-btn" type="button">新建</button>
-          <button id="btn-save" class="nxc-btn" type="button">保存</button>
           <button id="btn-rename" class="nxc-btn" type="button">重命名</button>
+          <span class="nxc-toolbar__sep" aria-hidden="true"></span>
           <button id="btn-export" class="nxc-btn" type="button" title="把当前画布的步骤存成一份模板文件，可以发给别的机器">导出模板</button>
           <button id="btn-import" class="nxc-btn" type="button" title="把本机的一份模板文件铺到当前画布上">导入模板</button>
           <button id="btn-templates" class="nxc-btn" type="button" title="可以一键铺开的现成工作流">模板</button>
@@ -22,7 +23,6 @@
         </div>
         <div class="nxc-toolbar__group nxc-toolbar__group--right">
           <span id="build-badge" class="nxc-build" title="运行中的客户端版本与构建指纹"></span>
-          <span id="save-state" class="nxc-savestate" data-state="saved">已保存</span>
           <span id="zoom" class="nxc-zoom">100%</span>
           <button id="btn-undo" class="nxc-btn" type="button" title="撤销 (Ctrl+Z)">撤销</button>
           <button id="btn-redo" class="nxc-btn" type="button" title="重做 (Ctrl+Shift+Z)">重做</button>

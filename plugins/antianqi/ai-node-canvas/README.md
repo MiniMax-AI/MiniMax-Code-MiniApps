@@ -281,11 +281,15 @@ this package.
   nothing else, so it opens whole on another machine: no results, no material,
   nothing that would break. The imported template is kept in the template list
   as well, so it can be put on again later.
-- **The whole canvas is kept apart** — the export and import of a canvas
-  (every node, every line, every result) live in the 模板 panel now. That is
-  the **backup of this machine**: the result and the material travel with it,
-  so it only opens whole where it came from, and it does not sit next to the
-  templates.
+- **The canvas is a workbench, and it saves itself** — a change is written
+  down about a second later, and the state beside the canvas name says
+  whether it happened, so the toolbar has no **保存** button: a button that
+  does by hand what the page already does is only a second way to do it. A
+  window that goes away takes the local draft with it, so a change made
+  between the timer and the close is still there when the canvas is opened
+  again. What is worth **keeping** is a **template** (the steps) and the
+  **results** (in the library, savable to the disk) — and the delete dialog
+  says so before it takes anything away.
 - **The prompt node carries the template** — `canvas_add_node` and
   `canvas_update_node` take a `templateId`, so a prompt node the Agent makes
   expands the sentence with the same template the page would pick, the H3
@@ -578,7 +582,7 @@ separate pictures.
   the node carries. It happens only when the user asks for it, and the page says
   where the file landed. A file that is already there is never overwritten: the
   copy gets a number.
-  **导出模板** and **导出画布** write there too — the runtime writes the file and
+  **导出模板** writes there too — the runtime writes the file and
   says where it went, because a download the browser starts inside the Host
   never arrives under the name it was given.
 - **What is read of the Downloads folder** — only `*.json` files, and only the

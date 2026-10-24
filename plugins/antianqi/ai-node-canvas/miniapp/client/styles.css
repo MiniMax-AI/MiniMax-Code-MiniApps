@@ -195,6 +195,17 @@ input {
   justify-content: flex-end;
 }
 
+/* The toolbar carries two kinds of verbs: the ones that act on this canvas
+   and the ones that act on a template. The line between them says where the
+   canvas ends and a shareable chain begins. */
+.nxc-toolbar__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: color-mix(in srgb, var(--mcode-text) 22%, transparent);
+  flex: none;
+}
+
 .nxc-brand {
   display: inline-flex;
   align-items: center;
@@ -1431,6 +1442,19 @@ input {
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.6px;
+}
+
+/* A heading inside the panel: it says which kind of thing the list under it
+   holds, so a list of templates is not one long row of buttons. */
+.nxc-panel__section {
+  margin: 10px 0 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.5px;
+}
+
+.nxc-panel__section:first-child {
+  margin-top: 0;
 }
 
 /* The way out of the app: the file is on this machine, and the user may

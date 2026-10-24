@@ -3102,7 +3102,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
 
   function renderToolbar() {
     renderCanvasSelect();
-    dom.saveButton.disabled = !state.canvas.id;
     dom.renameButton.disabled = !state.canvas.id;
     dom.deleteButton.disabled = !state.canvas.id;
     dom.gridButton.textContent = state.canvas.backgroundMode === 'dots' ? '网格：圆点' : '网格：线条';
@@ -3538,20 +3537,29 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       return;
     }
     body.textContent = '';
+    // The templates of the user come first: they are the ones that were made
+    // here. The ready-made ones are what a person finds when they have none.
+    const own = templates.filter((item) => item.own);
+    const builtin = templates.filter((item) => !item.own);
     if (!templates.length) {
       body.appendChild(el('div', 'nxc-panel__desc', '还没有模板。'));
-      return;
     }
-    for (const template of templates) {
-      const item = el('button', 'nxc-panel__option');
-      item.type = 'button';
-      item.appendChild(el('span', null, template.title));
-      item.appendChild(el('small', null, template.description || `${template.steps ?? 0} 步`));
-      item.addEventListener('click', () => {
-        applyTemplateOnCanvas(template);
-      });
-      body.appendChild(item);
-    }
+    const section = (label, list) => {
+      if (!list.length) return;
+      body.appendChild(el('div', 'nxc-panel__section', label));
+      for (const template of list) {
+        const item = el('button', 'nxc-panel__option');
+        item.type = 'button';
+        item.appendChild(el('span', null, template.title));
+        item.appendChild(el('small', null, template.description || `${template.steps ?? 0} 步`));
+        item.addEventListener('click', () => {
+          applyTemplateOnCanvas(template);
+        });
+        body.appendChild(item);
+      }
+    };
+    section('我的模板', own);
+    section('内置工作流', builtin);
     // The canvas that is open now can become a template of its own: the
     // steps are taken from it, the results and the material are left behind.
     const save = el('button', 'nxc-panel__option');
@@ -3562,31 +3570,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       void saveCurrentCanvasAsTemplate();
     });
     body.appendChild(save);
-    // The whole canvas — every node, every line, every result — is the other
-    // kind of thing a file can carry. It is the backup of the work itself, and
-    // it lives here because it is not a template: the result and the material
-    // travel with it, so it only opens whole on the machine it came from.
-    const exportCanvas = el('button', 'nxc-panel__option');
-    exportCanvas.type = 'button';
-    exportCanvas.appendChild(el('span', null, '导出画布'));
-    exportCanvas.appendChild(el('small', null, '整张画布：节点、连线和结果；换机器会因为缺素材而裂图'));
-    exportCanvas.addEventListener('click', exportCanvasFile);
-    body.appendChild(exportCanvas);
-    const importCanvas = el('label', 'nxc-panel__option nxc-file');
-    importCanvas.appendChild(el('span', null, '导入画布'));
-    importCanvas.appendChild(el('small', null, '整张画布的 JSON；本机备份用这个'));
-    const canvasFile = el('input');
-    canvasFile.type = 'file';
-    canvasFile.accept = 'application/json,.json';
-    canvasFile.title = '选一个画布 JSON 文件';
-    canvasFile.setAttribute('aria-label', '导入画布');
-    canvasFile.addEventListener('change', () => {
-      const file = canvasFile.files?.[0];
-      canvasFile.value = '';
-      void importCanvasFile(file);
-    });
-    importCanvas.appendChild(canvasFile);
-    body.appendChild(importCanvas);
+    // A template travels two ways: into a file that can be sent to another
+    // machine, and out of a file that one sent. Both are on the toolbar.
+    body.appendChild(el('div', 'nxc-panel__desc', '要发给别的机器用「导出模板」；要捡一个别人发来的文件用「导入模板」。'));
   }
 
   /**
@@ -4611,7 +4597,11 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   async function deleteCanvas() {
     if (!state.canvas.id) return;
     const title = state.canvas.title || '未命名画布';
-    const yes = await confirmInPage(`确定删除画布「${title}」？`);
+    const yes = await confirmInPage(
+      // What goes away is said out loud, and the way to keep it is named: the
+      // chain can become a template, and a result can be written to the disk.
+      `确定删除画布「${title}」？画布上的步骤会一起没了；想留住就先「存成模板」，结果去「资产库」存到本地。`,
+    );
     if (!yes) return;
     await api(`/api/canvases/${state.canvas.id}`, { method: 'DELETE' });
     // The canvas is gone: the page does not hold it any more.
@@ -4632,40 +4622,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     state.selection = [];
     render();
     await refreshCanvasList();
-  }
-
-  /**
-   * Download the whole canvas: every node, every line, every result.
-   *
-   * This is the backup of the work itself, not a template — the result and the
-   * material travel with it, so it only opens whole on the machine it came
-   * from. The steps on their own travel as a template.
-   */
-  async function exportCanvasFile() {
-    try {
-      const response = await api('/api/export', {
-        method: 'POST',
-        body: { name: `${state.canvas.title || 'canvas'}.json`, document: state.canvas },
-      });
-      showBanner(`已导出到 ${response.path}`);
-    } catch (error) {
-      showBanner(`没导出成：${error?.message ?? error}`, 'error');
-    }
-  }
-
-  async function importCanvasFile(file) {
-    if (!file) return;
-    try {
-      const parsed = JSON.parse(await file.text());
-      const payload = await api('/api/canvases', { method: 'POST', body: { title: parsed.title || '导入的画布' } });
-      state.canvas = payload.canvas;
-      await api(`/api/canvases/${state.canvas.id}`, { method: 'PUT', body: parsed });
-      await openCanvas(state.canvas.id);
-      await refreshCanvasList();
-      showBanner('导入成功');
-    } catch (error) {
-      showBanner(`导入失败，请检查 JSON 文件：${error?.message ?? error}`, 'error');
-    }
   }
 
   /**
@@ -5568,9 +5524,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       // instead, right after the canvas is made.
       void createCanvas(nextCanvasTitle());
     });
-    dom.saveButton.addEventListener('click', () => {
-      void saveCanvas();
-    });
     dom.renameButton.addEventListener('click', () => {
       startRename(state.canvas.title || '未命名画布');
     });
@@ -5677,7 +5630,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.confirmOk = $('confirm-ok');
     dom.confirmCancel = $('confirm-cancel');
     dom.newButton = $('btn-new');
-    dom.saveButton = $('btn-save');
     dom.renameButton = $('btn-rename');
     dom.exportButton = $('btn-export');
     dom.importButton = $('btn-import');
@@ -5705,10 +5657,18 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     // for good, and it takes it back — and reads the stored one — when it
     // comes back.
     window.addEventListener('pagehide', () => {
+      // The canvas saves itself, but the last change may still be waiting for
+      // the timer. The draft is written right here, and it is written in one
+      // go, so a change made a moment before the window closed is still there
+      // when the canvas is opened again.
+      saveDraft();
+      void saveCanvas();
       releaseCanvas(state.canvas.id);
     });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void resyncCanvas('stale');
+      // A window that is hidden may never come back. The draft goes with it.
+      if (document.visibilityState === 'hidden') saveDraft();
     });
 
     void syncBuild();

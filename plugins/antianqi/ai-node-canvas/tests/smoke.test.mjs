@@ -6846,8 +6846,6 @@ test('the toolbar shares templates, and the template button stands by the import
   assert.ok(templatesAt > importAt, 'the template button is not right of the import');
   // The canvas itself can still be saved: it lives in the template panel.
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
-  assert.match(source, /导出画布/);
-  assert.match(source, /导入画布/);
   assert.match(source, /function exportTemplateFile\(\)/);
   assert.match(source, /function openImportTemplatePanel\(/);
   assert.match(source, /function importTemplateDocument\(/);
@@ -6857,6 +6855,53 @@ test('the toolbar shares templates, and the template button stands by the import
   // The file reaches the page without a dialog in between: the control that
   // reads it is in the page.
   assert.match(source, /const input = el\('input'\);\s*\n\s*input\.type = 'file'/);
+});
+
+test('the canvas saves itself, so the toolbar has no save button', async () => {
+  // The canvas is a workbench, not something that is written by hand: a
+  // change is written down by itself a moment later, and the state beside
+  // the canvas name says whether it happened. A button that does it by hand
+  // would only be a second way to do what the page already does.
+  const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
+  assert.doesNotMatch(html, /id="btn-save"/);
+  // The state is next to the canvas it talks about.
+  assert.match(html, /id="save-state"/);
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  // A change schedules the writing of the canvas.
+  assert.match(source, /const AUTOSAVE_MS = \d+;/);
+  assert.match(source, /function markDirty\(/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{\s*\n\s*void saveCanvas\(\);/);
+  // And a window that goes away takes the draft with it, so a change made
+  // between the timer and the close is not lost.
+  assert.match(source, /window\.addEventListener\('pagehide', \(\) => \{[^}]*saveDraft\(\);/);
+  assert.match(source, /document\.addEventListener\('visibilitychange', \(\) => \{[^}]*saveDraft\(\);/);
+});
+
+test('the panel of the templates holds templates only', async () => {
+  // The whole canvas is not a thing that travels: what a run left behind is
+  // in the library, and the steps travel as a template. So the panel does not
+  // offer a copy of the canvas any more.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.doesNotMatch(source, /导出画布/);
+  assert.doesNotMatch(source, /导入画布/);
+  assert.doesNotMatch(source, /function exportCanvasFile\(/);
+  assert.doesNotMatch(source, /function importCanvasFile\(/);
+  // What it does hold: the chains of the user, the ready-made ones, and the
+  // way to make one of the canvas.
+  assert.match(source, /把当前画布存成模板/);
+  assert.match(source, /我的模板/);
+  assert.match(source, /内置工作流/);
+});
+
+test('the page says what deleting a canvas takes away, and how to keep it', async () => {
+  // Deleting the canvas takes the steps with it. The page says so, and it
+  // names the two ways of keeping the work: a template and a local copy of a
+  // result.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const warning = source.match(/confirmInPage\([\s\S]*?`([^`]*)`/)?.[1] ?? '';
+  assert.match(warning, /确定删除画布/);
+  assert.match(warning, /存成模板/);
+  assert.match(warning, /资产库/);
 });
 
 test('a shared file is written by the runtime, not by the browser', async () => {
