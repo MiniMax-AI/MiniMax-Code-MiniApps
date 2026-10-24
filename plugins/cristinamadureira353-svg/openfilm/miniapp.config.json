@@ -1,0 +1,5 @@
+{
+  "flavor": "release",
+  "desktopMode": true,
+  "_notes": "Pinned: OpenFilm is started as `npx -y openfilm@0.2.5` (no configurable executables or args). flavor: which project list to show — release=~/.openfilm + ~/Movies/OpenFilm/Projects (default), dev=~/.openfilm-dev + ~/Movies/OpenFilm Dev/Projects. desktopMode: true = desktop interface (editor + chat + local agents), false = plain web Studio. openfilmRepo: local openfilm/openfilm clone needed for desktop mode (the desktop handlers are not published to npm), default ~/Developer/openfilm, or OPENFILM_REPO env; run `pnpm --filter @openfilm/desktop build:shell` there once. shellDist: built desktop page (default <repo>/apps/desktop/shell/dist). desktopApp: fixed auto-detection only (repo dev runtimes first, then /Applications/OpenFilm.app) — not configurable. studioHome/studioPort: overrides for isolated tests or legacy state directories (documented in ## Data & access). Machine-specific overrides belong in miniapp.config.local.json (gitignored)."
+}

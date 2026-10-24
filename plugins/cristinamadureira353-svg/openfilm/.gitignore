@@ -1,0 +1,11 @@
+# 自己机器上的覆盖配置（个人路径、个人偏好），不进仓库
+miniapp.config.local.json
+
+# 依赖与系统垃圾
+node_modules/
+.DS_Store
+*.log
+
+# 运行时的东西（token、锁、缓存）不该进包
+panel-token
+starting.lock

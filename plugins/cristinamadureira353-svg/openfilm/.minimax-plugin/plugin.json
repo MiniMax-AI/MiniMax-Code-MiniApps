@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "openfilm",
+  "displayName": "OpenFilm",
+  "version": "1.0.0",
+  "description": "OpenFilm inside MiniMax Code: the full desktop interface (Studio editor, chat column, local agents) with no extra chrome. Runs the official openfilm/openfilm release (npx openfilm@0.2.5) against your release project library (~/Movies/OpenFilm/Projects). Original project: https://github.com/openfilm/openfilm; this package only wraps it as a MiniApp.",
+  "author": "cristinamadureira353-svg",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "Open the OpenFilm panel",
+    "Show the most recent OpenFilm project",
+    "Open Settings → Agents in OpenFilm"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": [
+    "skills/openfilm/SKILL.md"
+  ],
+  "hooks": []
+}

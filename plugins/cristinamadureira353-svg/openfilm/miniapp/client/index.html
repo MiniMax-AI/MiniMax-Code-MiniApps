@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenFilm</title>
+    <style>
+      /* 这一层只是个壳：整个面板就是 OpenFilm 自己，没有额外的一条一条。
+         项目切换在 OpenFilm 里面做（它自己的「打开项目」），这里不再重复。 */
+      :root {
+        --bg: #101114; --surface-2: #1d2128;
+        --text: #e8eaee; --text-muted: #97a0ae;
+        --border-strong: #3a424f; --accent: #4cc2ff; --danger: #ff6b5b;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--bg); color: var(--text);
+        font: 13px/1.5 ui-sans-serif, -apple-system, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      .frame { flex: 1 1 auto; min-height: 0; position: relative; }
+      iframe { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
+      .note {
+        position: absolute; inset: 0; display: none; flex-direction: column;
+        align-items: center; justify-content: center; gap: 10px; padding: 24px;
+        text-align: center; color: var(--text-muted); background: var(--bg);
+      }
+      .note.on { display: flex; }
+      .note b { color: var(--text); font-size: 14px; }
+      .note button {
+        margin-top: 4px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border-strong);
+        background: var(--surface-2); color: var(--text); font-size: 12.5px; cursor: pointer;
+      }
+      .note button:hover { border-color: var(--accent); color: var(--accent); }
+      .err { color: var(--danger); font-size: 12px; max-width: 560px; }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <iframe id="frame" title="OpenFilm" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+      <div class="note" id="note">
+        <b id="noteTitle">正在起 OpenFilm…</b>
+        <div id="noteBody" class="err"></div>
+        <button id="retry" type="button">再试一次</button>
+      </div>
+    </div>
+
+    <script>
+      /* 整个面板就是 OpenFilm 自己（桌面版那一页，或回落时的网页版 Studio）。
+         这里只负责：把它起来、打开最近那个项目、起不来时说句人话。 */
+      (function () {
+        const frame = document.getElementById('frame');
+        const note = document.getElementById('note');
+        const noteTitle = document.getElementById('noteTitle');
+        const noteBody = document.getElementById('noteBody');
+        const retry = document.getElementById('retry');
+
+        const state = { studio: null, current: null, loadFail: 0 };
+
+        const json = async (path) => {
+          const r = await fetch(path, { cache: 'no-store' });
+          const t = await r.text();
+          try { return JSON.parse(t); } catch { return null; }
+        };
+
+        function show(title, body, withRetry) {
+          noteTitle.textContent = title;
+          noteBody.textContent = body || '';
+          retry.style.display = withRetry ? '' : 'none';
+          note.classList.add('on');
+          frame.style.visibility = 'hidden';
+        }
+        function hide() {
+          note.classList.remove('on');
+          frame.style.visibility = 'visible';
+        }
+
+        /** 打开某个项目：iframe 的 src 换成那个项目的地址。
+            桌面版模式里，面板自己伺服桌面版的那一页（同源，聊天栏和原生桥都在那儿）；
+            网页版模式里，直接是 Studio 的 /open?to=…（首次会种下 framed cookie）。 */
+        function select(id) {
+          state.current = id;
+          if (!state.studio?.ready) return;
+          const to = '/projects/' + encodeURIComponent(id);
+          /* 一律同源：key 只留在 Node 进程，页面 URL 里永远不会有它。
+             桌面版由 serveDesktop 伺服，网页版由 forwardEditorToStudio 伺服。 */
+          frame.src = location.origin + to;
+        }
+
+        async function loadTree() {
+          const tree = await json('/miniapp/tree');
+          if (!tree) { show('OpenFilm 没应答', '面板读不到 OpenFilm 的项目列表。', true); return; }
+          if (tree.error) { show('OpenFilm 没起来', tree.error, true); return; }
+          const groups = tree.groups || [];
+          /* 项目列表只在打开时用一次（最近那个）。之后换项目在 OpenFilm 里面做。 */
+          if (!state.current && groups.length) state.current = groups[0].project.id;
+          if (state.current) select(state.current);
+        }
+
+        async function loadStudio() {
+          const s = await json('/miniapp/studio');
+          state.studio = s || {};
+          if (!s?.ready) {
+            show('正在起 OpenFilm…', s?.error || '第一次起它要一会儿（Node + 浏览器渲染）。', true);
+            // 还没好就再等一会儿：起 Studio 是慢的，不是坏了
+            state.loadFail = 0;
+            pollStudio();
+            return;
+          }
+          hide();
+          await loadTree();
+        }
+
+        let pollTimer = null;
+        function pollStudio() {
+          if (pollTimer) return;
+          pollTimer = setInterval(async () => {
+            const s = await json('/miniapp/studio');
+            if (s?.ready) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              state.studio = s;
+              hide();
+              await loadTree();
+            } else {
+              state.loadFail++;
+              if (state.loadFail > 40) { clearInterval(pollTimer); pollTimer = null; }
+            }
+          }, 1500);
+        }
+
+        retry.onclick = () => { state.loadFail = 0; void loadStudio(); };
+
+        frame.addEventListener('error', () => {
+          show('OpenFilm 没加载出来', '面板里的 OpenFilm 页面没能打开。看 /miniapp/health 的错误。', true);
+        });
+
+        void loadStudio();
+      })();
+    </script>
+  </body>
+</html>
