@@ -72,17 +72,36 @@
            only candidate, and the owners of the number read the annotation and reported the
            promise to be sound.
 
+  Round twenty-two:
+  R29-F48  the characters a hyphen may be written with were not ONE family: the reader knew the
+           ASCII hyphen, so a promise written with the Unicode MINUS SIGN was not read as a
+           signed number at all -- "-12.5 minutes (750000 ms)" was read as twelve and a half, a
+           promise that states one number in words and another in milliseconds, and the owner
+           called it agreement. A sign is a sign whichever character it is written with.
+  R29-F49  a phrase that holds a SLASH was cut at the slash, so "25/12.5 minutes (750000 ms)" was
+           read as its denominator -- twelve and a half -- and the two forms of the promise were
+           declared the same when the phrase says something else. A fraction is not a number of
+           minutes a promise can state, so the phrase is not read at all.
+  R29-F50  the guard read the FIRST spelling of a name in the file, so a decoy could answer for
+           the promise: a local copy of the constant inside a function that is never called, with
+           its own comment above it, supplied the prose, and the guard was green while the
+           declaration the module really uses said something else. And a comment that stands above
+           other code documents that other code -- so the documentation has to TOUCH the
+           declaration as well as belong to the module.
+
 THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and so do the two cases before it that break the
 machinery that reads the promise: the break is in the guard and not in the shipped source, so the
 guard's own assertion about reading a whole phrase is the one that has to go red. An assertion
 that no case can make fail is an assertion nobody is watching.
 
-THE TWELVE OTHER CASES THAT BREAK THE GUARD BREAK ITS READER AND ITS LOCATOR, and they are the
+THE SIXTEEN OTHER CASES THAT BREAK THE GUARD BREAK ITS READER AND ITS LOCATOR, and they are the
 same shape: the break is in the machinery that reads the promise -- the words that may stand in
 front of a number, the reader of a decimal point, the reader of a unit it does not know, the
-reader of a sign, and the locator that counts the forms -- so the guard's own assertions about
-that machinery are the ones that have to go red. A rule that reads the promise has an owner, and
-the owner is an assertion about the reading itself.
+reader of a sign, the reader of a fraction, the reader of the characters a hyphen may be written
+with, the reader of the declaration the documentation has to belong to, and the locator that
+counts the forms -- so the guard's own assertions about that machinery are the ones that have to
+go red. A rule that reads the promise has an owner, and the owner is an assertion about the
+reading itself.
 
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
@@ -277,8 +296,8 @@ MUTATIONS = [
     (
         "the reader stops at the thousands separator and answers with the tail of the phrase",
         [PROBE],
-        ["const PHRASE_CLASS = /[A-Za-z0-9\\s.,&'-]/;"],
-        ["const PHRASE_CLASS = /[A-Za-z0-9\\s.&'-]/;"],
+        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'/${HYPHEN_CLASS}]`);"],
+        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.&'/${HYPHEN_CLASS}]`);"],
         "the promised minutes are read from the whole phrase, not from a tail of it",
         ("the promised minutes are read from the whole phrase, not from a tail of it",),
         (),
@@ -467,7 +486,7 @@ MUTATIONS = [
     (
         "the scan walks past a dash written as a hyphen, and the number behind it cannot be located",
         [PROBE],
-        ["    if (start >= 2 && sentence[start - 1] === '-' && sentence[start - 2] === ' '\n"
+        ["    if (start >= 2 && isHyphenLike(sentence[start - 1]) && sentence[start - 2] === ' '\n"
          "      && sentence[start] === ' ') break;"],
         ["    // the dash is not a boundary any more"],
         "a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen",
@@ -498,7 +517,8 @@ MUTATIONS = [
     (
         "the reader reads a signed number as its absolute value",
         [PROBE],
-        ["  for (let at = text.indexOf('-'); at !== -1; at = text.indexOf('-', at + 1)) {\n"
+        ["  for (let at = 0; at < text.length; at += 1) {\n"
+         "    if (!isHyphenLike(text[at])) continue;\n"
          "    const before = at > 0 ? text[at - 1] : '';\n"
          "    const after = at + 1 < text.length ? text[at + 1] : '';\n"
          "    if (!/[A-Za-z0-9]/.test(before) || !/[A-Za-z0-9]/.test(after)) return null;\n"
@@ -535,6 +555,62 @@ MUTATIONS = [
          "      const open = anchor.index + anchor[0].lastIndexOf('(');"],
         "a promise form with brackets inside it is counted rather than skipped",
         ("a promise form with brackets inside it is counted rather than skipped",),
+        (),
+    ),
+    (
+        "the reader knows one spelling of the sign and reads the other spellings as positive numbers",
+        [PROBE],
+        ["  for (let at = 0; at < text.length; at += 1) {\n"
+         "    if (!isHyphenLike(text[at])) continue;\n"],
+        ["  for (let at = 0; at < text.length; at += 1) {\n"
+         "    if (text[at] !== '-') continue;\n"],
+        "a number in the minutes that carries a sign is refused rather than read as its absolute value",
+        ("a number in the minutes that carries a sign is refused rather than read as its absolute value",),
+        # The Unicode MINUS SIGN is the same sign as the ASCII hyphen. A reader that knows one
+        # spelling of it and not the others reads a promise of negative minutes as a promise of
+        # positive ones -- and the two forms of that promise then agree.
+        (),
+    ),
+    (
+        "the reader stops at the slash and reads the denominator of the fraction",
+        [PROBE],
+        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'/${HYPHEN_CLASS}]`);"],
+        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'${HYPHEN_CLASS}]`);"],
+        "a number phrase written as a fraction is refused rather than read as its denominator",
+        ("a number phrase written as a fraction is refused rather than read as its denominator",),
+        (),
+    ),
+    (
+        "the reader takes a local copy of the constant for the declaration the module uses",
+        [PROBE],
+        ["    if (braceDepthAt(source, mask, match.index) !== 0) continue;"],
+        ["    // the scope of the declaration is not checked here"],
+        "the documentation the guard reads belongs to the declaration, not to a decoy",
+        ("the documentation the guard reads belongs to the declaration, not to a decoy",),
+        (),
+    ),
+    (
+        "the reader takes the nearest block above the declaration, whatever stands between them",
+        [PROBE],
+        ["  // The comment has to end right above the declaration: only whitespace may stand between them.\n"
+         "  let cursor = before.length - 1;\n"
+         "  while (cursor >= 0 && /\\s/.test(before[cursor])) cursor -= 1;\n"
+         "  if (cursor < 1 || before[cursor] !== '/' || before[cursor - 1] !== '*') return null;\n"
+         "  const start = before.lastIndexOf('/**', cursor);\n"
+         "  if (start < 0) return null;\n"
+         "  // And it has to be ONE comment: another '*/' between its opening and this one means the text\n"
+         "  // is two comments, and the first of them documents something else. The closing of THIS block\n"
+         "  // starts one character before the one this block ends on, so the search for an earlier closing\n"
+         "  // has to start one character before THAT -- otherwise the block finds its own ending.\n"
+         "  if (before.lastIndexOf('*/', cursor - 2) >= start) return null;\n"
+         "  return before.slice(start, cursor + 1);"],
+        ["  // The nearest block above the declaration, whatever stands between them.\n"
+         "  const start = before.lastIndexOf('/**');\n"
+         "  if (start < 0) return null;\n"
+         "  const end = before.lastIndexOf('*/');\n"
+         "  return end > start ? before.slice(start, end) : null;"],
+        "the documentation the guard reads belongs to the declaration, not to a decoy",
+        ("the documentation the guard reads belongs to the declaration, not to a decoy",),
         (),
     ),
 ]

@@ -669,24 +669,103 @@ const SHIPPED_SWEEP = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_CACHE_SWEE
 //
 // The declaration is found in the CODE, not in the text: a copy of it inside a template literal is
 // not a declaration, and the block above such a copy is not the block above the real one.
+//
+// The declaration has to be the MODULE's, and the documentation has to be the comment DIRECTLY
+// above it. A declaration inside a function body is a local binding, and the comment above it
+// documents that function; a comment that is followed by other code documents that code. Both
+// were ways for a decoy to answer for the promise, and both are refused here: the declaration is
+// found at the top level of the module, and the comment has to touch it.
 const docBlockOf = (source, name, mask) => {
   const at = declarationIndexOf(source, name, mask);
   if (at < 0) return null;
   const before = source.slice(0, at);
-  const start = before.lastIndexOf('/**');
-  const end = before.lastIndexOf('*/');
-  return start >= 0 && end > start ? before.slice(start, end) : null;
+  // The comment has to end right above the declaration: only whitespace may stand between them.
+  let cursor = before.length - 1;
+  while (cursor >= 0 && /\s/.test(before[cursor])) cursor -= 1;
+  if (cursor < 1 || before[cursor] !== '/' || before[cursor - 1] !== '*') return null;
+  const start = before.lastIndexOf('/**', cursor);
+  if (start < 0) return null;
+  // And it has to be ONE comment: another '*/' between its opening and this one means the text
+  // is two comments, and the first of them documents something else. The closing of THIS block
+  // starts one character before the one this block ends on, so the search for an earlier closing
+  // has to start one character before THAT -- otherwise the block finds its own ending.
+  if (before.lastIndexOf('*/', cursor - 2) >= start) return null;
+  return before.slice(start, cursor + 1);
+};
+
+// How many blocks of code enclose a position: a declaration at the top level of the module is
+// at depth zero, and one inside a function body is not. The braces are counted in the CODE only,
+// so a brace inside a string, a comment or a template literal does not move the depth.
+const braceDepthAt = (source, mask, at) => {
+  let depth = 0;
+  for (let index = 0; index < at; index += 1) {
+    if (!mask[index]) continue;
+    if (source[index] === '{') depth += 1;
+    else if (source[index] === '}') depth -= 1;
+  }
+  return depth;
 };
 
 // Where a constant is declared in the code of a source, or -1 when it is not declared in code.
+//
+// The declaration has to be at the top level of the module: the first spelling of a name in the
+// file is not necessarily the binding the module uses, and a local one -- a declaration inside a
+// function that is never called -- answers for the module's promise when it is found first.
 const declarationIndexOf = (source, name, mask) => {
   const pattern = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=`, 'g');
   let match;
   while ((match = pattern.exec(source)) !== null) {
-    if (mask[match.index]) return match.index;
+    if (!mask[match.index]) continue;
+    if (braceDepthAt(source, mask, match.index) !== 0) continue;
+    return match.index;
   }
   return -1;
 };
+
+// The documentation the guard reads has to belong to the declaration it reads, and there are two
+// ways for it not to.
+//
+// The first is a DECOY INSIDE A FUNCTION: the first spelling of a name in a file is not
+// necessarily the binding the module uses, and a local one -- a declaration inside a function that
+// is never called -- answers for the module's promise when it is found first. The comment above
+// that decoy then supplies the prose, and the promise is read out of a block that documents
+// nothing the service does.
+//
+// The second is a COMMENT THAT DOES NOT TOUCH THE DECLARATION: a comment followed by other code
+// documents that other code, and reading it as the declaration's documentation reads a promise
+// the declaration never made.
+//
+// So the declaration has to be the MODULE's and the comment has to touch it, and both are checked
+// here on sources written for the purpose -- a source of the decoy, and a source of the comment
+// that stands above other code.
+const DECOY_SCOPE_SOURCE = [
+  'function neverCalled() {',
+  '  /**',
+  '   * Twelve and a half minutes (750000 ms) -- a decoy that states a promise of its own.',
+  '   */',
+  '  const PARSED_ROWS_CACHE_TTL_MS = 600000;',
+  '}',
+  '/**',
+  ' * Ten minutes has two numbers behind it.',
+  ' */',
+  'const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;',
+  '',
+].join('\n');
+const DECOY_ADJACENCY_SOURCE = [
+  '/**',
+  ' * Twelve and a half minutes (750000 ms) -- a decoy that stands above other code.',
+  ' */',
+  'const unrelatedDocOwner = true;',
+  'const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;',
+  '',
+].join('\n');
+const decoyScopeDoc = docBlockOf(DECOY_SCOPE_SOURCE, 'PARSED_ROWS_CACHE_TTL_MS', codeMask(DECOY_SCOPE_SOURCE));
+const decoyAdjacencyDoc = docBlockOf(DECOY_ADJACENCY_SOURCE, 'PARSED_ROWS_CACHE_TTL_MS', codeMask(DECOY_ADJACENCY_SOURCE));
+assert('the documentation the guard reads belongs to the declaration, not to a decoy',
+  decoyScopeDoc !== null
+  && decoyScopeDoc.includes('Ten minutes')
+  && !decoyScopeDoc.includes('Twelve and a half')
+  && decoyAdjacencyDoc === null);
 
 // The mask of the shipped service: which of its characters are code.
 const SERVER_MASK = codeMask(SERVER);
@@ -1056,6 +1135,18 @@ const LEAD_IN = new Set([
 assert('no word the reader reads as part of a number may be a lead-in word',
   [...LEAD_IN].every((word) => !NUMBER_PARTS.has(word))
   && [...LEAD_IN].every((word) => !isNumberWord(word)));
+// The characters a hyphen may be written with.
+//
+// A hyphen INSIDE a word is one of the ways a number is written -- "twelve-and-a-half" is one
+// number -- and a hyphen that is NOT inside a word is a SIGN, and a sign is not a number of
+// minutes a promise can state. The same characters have to be treated the same way whichever way
+// they are written: a promise written with a Unicode minus sign used to be read as a positive
+// number, while the ASCII spelling of the same thing was refused.
+//
+// The em dash and the en dash are NOT in this list. They are not hyphens: they are the boundary
+// the package writes its promise with, and the promise the package ships is written with one.
+const HYPHEN_CLASS = '‐‑−﹣－-';
+const isHyphenLike = (character) => HYPHEN_CLASS.includes(character);
 const englishNumber = (text) => {
   // A hyphen INSIDE a word is one of the ways a number is written -- "twelve-and-a-half" is one
   // number -- and the walk over hyphens below turns it into words. A hyphen that is NOT inside a
@@ -1066,7 +1157,8 @@ const englishNumber = (text) => {
   //
   // A hyphen with a space on each side never reaches this reader: the scan that walks back from
   // the millisecond form stops at such a dash, because a dash ends the phrase (see minutesForm).
-  for (let at = text.indexOf('-'); at !== -1; at = text.indexOf('-', at + 1)) {
+  for (let at = 0; at < text.length; at += 1) {
+    if (!isHyphenLike(text[at])) continue;
     const before = at > 0 ? text[at - 1] : '';
     const after = at + 1 < text.length ? text[at + 1] : '';
     if (!/[A-Za-z0-9]/.test(before) || !/[A-Za-z0-9]/.test(after)) return null;
@@ -1078,7 +1170,7 @@ const englishNumber = (text) => {
   const words = text.toLowerCase()
     .replace(/,/g, '')
     .replace(/&/g, ' and ')
-    .replace(/-/g, ' ')
+    .replace(new RegExp(`[${HYPHEN_CLASS}]`, 'g'), ' ')
     .split(/\s+/).filter(Boolean);
   let half = false;
   if (words.length >= 3
@@ -1113,7 +1205,10 @@ const englishNumber = (text) => {
 // those leaves the TAIL of the phrase -- and the tail of a number is a number of its own, which is
 // worse than reading no number at all: the tail can agree with the promise while the phrase does
 // not.
-const PHRASE_CLASS = /[A-Za-z0-9\s.,&'-]/;
+// A hyphen can be written with any of the characters in HYPHEN_CLASS, and a SLASH can appear
+// inside a fraction. So the scan walks over both of them: a phrase that holds one is a phrase
+// this reader cannot read, and it is refused rather than read as the part after the mark.
+const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'/${HYPHEN_CLASS}]`);
 // A character that can continue a number and that neither the scan nor the parser reads: the
 // phrase was cut INSIDE a number, and a cut phrase is not a number -- it is the tail of one.
 const NUMBER_CONTINUATION = /[\p{Nd}‘’½¼¾⅓⅔]/u;
@@ -1150,11 +1245,12 @@ const minutesForm = (sentence) => {
     // and the scan has to stop there as well -- otherwise it walks on past the dash, eats the
     // whole sentence, and the number in it ends up behind a lead-in of words nobody can vouch for
     // ("one sweep interval after the limit - twelve and a half minutes"). The promise that is
-    // written that way is readable, so the reader has to read it.
+    // written that way is readable, so the reader has to read it. The same is true of every
+    // character a hyphen may be written with: a dash written with any of them ends the phrase.
     //
     // A hyphen INSIDE a word is not a dash: "twelve-and-a-half" is one number written with hyphens,
     // and the scan has to walk over it.
-    if (start >= 2 && sentence[start - 1] === '-' && sentence[start - 2] === ' '
+    if (start >= 2 && isHyphenLike(sentence[start - 1]) && sentence[start - 2] === ' '
       && sentence[start] === ' ') break;
     start -= 1;
   }
@@ -1223,21 +1319,51 @@ assert('a word in front of the number that the reader does not know makes the ph
 // The dash in front of the number ends the phrase, whichever dash it is written with. The promise
 // the package ships is written with an em dash, and a writer may write that same dash as a
 // hyphen: the number in front of it is the same number either way, and the reader has to read it.
+//
+// The characters a hyphen may be written with are ONE family, and the family is treated as one.
+// The Unicode MINUS SIGN (U+2212) is a dash in front of the number here, just as the ASCII
+// hyphen is -- and it is a SIGN of the number when it stands next to it. A reader that knows one
+// spelling of the family and not the others reads a promise written in another spelling as
+// something else, and that is how a promise of negative minutes turns into a promise of positive
+// ones.
 assert('a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen',
   minutesForm('after the limit — twelve and a half minutes (750000 ms)').minutes === 12.5
   && minutesForm('after the limit - twelve and a half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5);
+  && minutesForm('after the limit − twelve and a half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('twelve−and−a−half minutes (750000 ms)').minutes === 12.5);
 // A sign in front of the number is not read away. A hyphen inside a word is one of the ways a
 // number is written, but a hyphen that is not inside a word is a SIGN, and a promise of negative
 // minutes is not a promise this reader can state: reading it as its absolute value would make
 // "-12.5 minutes (750000 ms)" agree with "750000 ms", which is the opposite of what it says.
 // So a signed phrase is unreadable, and the owner of that says so by name.
+//
+// And the sign is a sign whichever character it is written with: the ASCII hyphen and the Unicode
+// MINUS SIGN are the same sign, so the same promise written with either one is refused with
+// either one. A reader that refuses one spelling and reads the other reads a promise of negative
+// minutes as a promise of positive ones -- and the two forms of that promise then agree.
 assert('a number in the minutes that carries a sign is refused rather than read as its absolute value',
   minutesForm('-12.5 minutes (750000 ms)').minutes === null
   && minutesForm('-twelve and a half minutes (750000 ms)').minutes === null
   && minutesForm('twelve and -a half minutes (750000 ms)').minutes === null
   && minutesForm('12.5- minutes (750000 ms)').minutes === null
-  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5);
+  && minutesForm('−12.5 minutes (750000 ms)').minutes === null
+  && minutesForm('−twelve and a half minutes (750000 ms)').minutes === null
+  && minutesForm('twelve and −a half minutes (750000 ms)').minutes === null
+  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5
+  && minutesForm('twelve−and−a−half minutes (750000 ms)').minutes === 12.5);
+// A phrase that holds a SLASH is a fraction, and a fraction is not a number of minutes a promise
+// can state: this reader has no way to say what the two parts of it mean, so it cannot say that
+// they agree with the other form.
+//
+// A scan that stops at the slash reads the part AFTER it -- "25/12.5" would be read as twelve and
+// a half, which is the number the promise's other form states, and the two forms would be
+// declared the same when the phrase says something else. So the scan walks over the slash, and
+// the phrase is refused rather than read as its denominator.
+assert('a number phrase written as a fraction is refused rather than read as its denominator',
+  minutesForm('25/12.5 minutes (750000 ms)').minutes === null
+  && minutesForm('twelve and a half/2 minutes (750000 ms)').minutes === null
+  && minutesForm('twelve and a half minutes (750000 ms)').minutes === 12.5);
 
 // The lifetime the cache gives its rows when nobody tells it one, observed rather than read.
 //
