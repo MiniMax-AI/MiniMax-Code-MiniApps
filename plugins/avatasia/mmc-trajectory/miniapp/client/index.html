@@ -3759,7 +3759,7 @@
         // which the dock has moved on and the memory has not.
         inspectorDockBeforeFold: 'docked',
         // The docked height in px, once the reader has dragged it. null means "they have not", and
-        // the quarter-window default applies. A separate field rather than an extra mode on
+        // the dock's default height applies. A separate field rather than an extra mode on
         // inspectorDock because it survives the state leaving the dock: coming back to the panel
         // later should not silently forget the height the reader just chose.
         inspectorDockH: null,
@@ -9243,9 +9243,9 @@
           );
           var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, inspectorUnderPins() - ledgerReserve);
           dom.inspectorPanel.style.setProperty('--inspector-full-h', panelMax + 'px');
-          // A quarter of the measured window, or the height the reader dragged to — clamped to the
-          // same ceiling the expanded state gets, so the two ways of making the panel taller cannot
-          // disagree about where the top one is.
+          // The dock's share of the measured window, or the height the reader dragged to — clamped
+          // to the same ceiling the expanded state gets, so the two ways of making the panel taller
+          // cannot disagree about where the top one is.
           var dockH = state.inspectorDockH;
           if (dockH === null || dockH === undefined || !isFinite(dockH)) {
             dockH = inspectorDefaultDockHeight();
