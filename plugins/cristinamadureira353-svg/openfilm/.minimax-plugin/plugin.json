@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "openfilm",
+  "displayName": "OpenFilm",
+  "version": "1.0.0",
+  "description": "OpenFilm 本体装进 MiniMax Code：整个面板就是 OpenFilm 的完整界面（Studio 的编辑器 + 右边的聊天栏 + 本地 agent），没有额外的壳。跑的是 GitHub 官方仓库当前最新的发布版（npx openfilm@0.2.5），连正式版项目库 ~/Movies/OpenFilm/Projects。",
+  "author": "cristinamadureira353-svg",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "打开 OpenFilm 面板",
+    "在 OpenFilm 里看未命名那个项目",
+    "切到未命名 3 那个项目"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": [
+    "skills/openfilm/SKILL.md"
+  ],
+  "hooks": []
+}

@@ -1,0 +1,10 @@
+{
+  "openfilmBin": "npx",
+  "openfilmArgs": [
+    "-y",
+    "openfilm@0.2.5"
+  ],
+  "flavor": "release",
+  "desktopMode": true,
+  "_说明": "openfilmBin/openfilmArgs：跑哪个 OpenFilm（默认 npm 上 GitHub 官方仓库的发布版 openfilm@0.2.5）。flavor：连哪一套项目列表 —— release=~/.openfilm + ~/Movies/OpenFilm/Projects（默认），dev=~/.openfilm-dev + ~/Movies/OpenFilm Dev/Projects。desktopMode：true = 面板里跑桌面版的界面（编辑器 + 右边那栏聊天 + 本地 agent），false = 纯网页版 Studio。openfilmRepo：桌面 app 的模块只在仓库里（@openfilm/desktop 没发 npm），桌面模式需要它，默认 ~/Developer/openfilm，也可用环境变量 OPENFILM_REPO 覆盖；仓库里要先 pnpm --filter @openfilm/desktop build:shell。desktopApp：「桌面版」按钮要叫起来的 app，可省略（自动找 /Applications/OpenFilm.app 与仓库里的 Dev 版）；要指定就写 [{\"path\":\"…\",\"args\":[\"…\"]}]。studioHome/studioPort：测试用，指到临时目录与别的端口。自己机器上的覆盖写 miniapp.config.local.json（不提交）。"
+}
