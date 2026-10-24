@@ -87,8 +87,11 @@ Apache-2.0）。
 
 1. `PATH` 里的 `mcode`；
 2. 官方用户安装位置——macOS 与 Linux 是 `~/.minimax-code/bin/mcode`，Windows 是
-   `~/.minimax-code/mcode.cmd`；
-3. 设了 `MCODE_INSTALL_DIR` 时，用它指的那个位置。
+   `~/.minimax-code/mcode.cmd`；设了 `MCODE_INSTALL_DIR` 时，它顶替 `~/.minimax-code` 当根目录，
+   引擎找的就是 `$MCODE_INSTALL_DIR/bin/mcode`；
+3. 工作流托管的工具链（该目录已就位时才会命中）——macOS 与 Linux 是
+   `~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js`，Windows 是
+   `~/.mcode-dynamic-workflows/toolchain/node_modules/@minimax-ai/code/cli.js`。
 
 状态栏上的「MCode CLI 可用/不可用」**只表示找到了这个可执行文件**——它不说明 CLI 有没有登录、
 还剩多少模型额度，那两件事要等 CLI 真正跑起来时自己判断。CLI 缺失时，控制台会在横幅上写明，

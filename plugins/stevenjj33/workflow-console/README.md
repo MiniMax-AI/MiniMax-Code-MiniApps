@@ -105,8 +105,11 @@ Where the engine looks for the CLI, in the order it tries:
 
 1. `mcode` on `PATH`;
 2. the official user install — `~/.minimax-code/bin/mcode` on macOS and Linux,
-   `~/.minimax-code/mcode.cmd` on Windows;
-3. the same official install under `$MCODE_INSTALL_DIR` when that variable is set.
+   `~/.minimax-code/mcode.cmd` on Windows. `MCODE_INSTALL_DIR` replaces `~/.minimax-code`
+   as that root, so the engine then looks for `$MCODE_INSTALL_DIR/bin/mcode`;
+3. a workflow-managed toolchain, if that directory has been populated —
+   `~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js` on macOS and
+   Linux, `~/.mcode-dynamic-workflows/toolchain/node_modules/@minimax-ai/code/cli.js` on Windows.
 
 The status line reports "MCode CLI 可用/不可用". That flag only means **the executable was found** —
 it says nothing about whether the CLI is logged in or still has model quota, which the CLI itself

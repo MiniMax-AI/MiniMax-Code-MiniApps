@@ -76,8 +76,9 @@ description: "运行、查看与管控 MiniMax Code 动态工作流（多 Agent 
 
 CLI 找不到时，控制台会在横幅上写明并**拒绝启动真实执行**——这时候别反复重试，让用户先装好并登录，
 或改用 demo 执行器。引擎查找 CLI 的顺序：`PATH` 里的 `mcode` → 官方用户安装位置
-（macOS/Linux 是 `~/.minimax-code/bin/mcode`，Windows 是 `~/.minimax-code/mcode.cmd`）→
-`$MCODE_INSTALL_DIR` 指定的目录。
+（根目录是 `$MCODE_INSTALL_DIR`，没设时是 `~/.minimax-code`；macOS/Linux 找其下的 `bin/mcode`，
+Windows 找 `mcode.cmd`）→ 工作流托管的工具链
+（`~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js`，Windows 少一层 `lib`）。
 
 ## 数据与边界
 
