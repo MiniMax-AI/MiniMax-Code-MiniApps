@@ -7,11 +7,11 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="nxc-app">
-      <header class="nxc-toolbar">
+    <div class="nxc-app">      <header class="nxc-toolbar">
         <div class="nxc-toolbar__group">
           <h1 class="nxc-brand"><i class="nxc-brand__dot"></i>节点画布</h1>
           <button id="canvas-select" class="nxc-select nxc-select--canvas" type="button" title="切换画布"></button>
+          <input id="canvas-rename" class="nxc-rename" type="text" maxlength="120" hidden aria-label="画布名称" />
           <button id="btn-new" class="nxc-btn" type="button">新建</button>
           <button id="btn-save" class="nxc-btn" type="button">保存</button>
           <button id="btn-rename" class="nxc-btn" type="button">重命名</button>
@@ -59,6 +59,18 @@
       <div id="mention-menu" class="nxc-menu nxc-mention-menu" hidden></div>
       <div id="dropdown-menu" class="nxc-menu nxc-menu--dropdown" hidden></div>
       <div id="floating-panel" class="nxc-panel" hidden></div>
+
+      <!-- The question is asked in the page: a native confirm() is a separate
+           OS window that never reaches the screen inside the MiniApp host. -->
+      <div id="confirm-dialog" class="nxc-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-text" hidden>
+        <div class="nxc-confirm__box">
+          <p id="confirm-text" class="nxc-confirm__text"></p>
+          <div class="nxc-confirm__actions">
+            <button id="confirm-ok" class="nxc-btn nxc-btn--danger" type="button">确定</button>
+            <button id="confirm-cancel" class="nxc-btn" type="button">取消</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/app.js"></script>

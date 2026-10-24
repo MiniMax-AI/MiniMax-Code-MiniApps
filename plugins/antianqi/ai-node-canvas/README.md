@@ -317,6 +317,12 @@ this package.
 - **Undo / redo, multi-select, minimap, draft recovery** — snapshot history over
   nodes, connections and viewport; `Shift`-drag marquee; a live overview of the
   graph; and a local draft that can be restored after a crash.
+- **The page asks in itself** — a new canvas, a new name and a deletion are
+  settled **inside the board**: the name is typed into the header and the
+  deletion is confirmed in a dialog that belongs to the page. A native
+  `prompt()` or `confirm()` is a separate OS window that never reaches the
+  screen inside the MiniApp host, so a question asked that way is a question
+  nobody answers — and the button looks as if it did nothing.
 
 ## Connections
 

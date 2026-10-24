@@ -6725,6 +6725,21 @@ test('a canvas can be kept as a template of its own', async (t) => {
   assert.equal(own.title, '我的链 的模板');
 });
 
+test('the page asks in itself: a native dialog never reaches the screen', async () => {
+  // A native prompt() or confirm() is a separate OS window. Inside the
+  // MiniApp host it never shows, so the button that used it looked as if it
+  // did nothing — 新建 and 删除 were both mute.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.doesNotMatch(source, /window\.(prompt|confirm|alert)\(/);
+  // The name is typed into the page instead, and the question is drawn there.
+  const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
+  assert.match(html, /id="canvas-rename"/);
+  assert.match(html, /id="confirm-dialog"/);
+  // And the new canvas gets a name of its own without anyone being asked.
+  assert.match(source, /function nextCanvasTitle\(\)/);
+  assert.match(source, /startRename\(state\.canvas\.title \|\| title\)/);
+});
+
 test('the Agent can ask for a run, and the result lands on the canvas', async (t) => {
   const h = await createHarness();
   t.after(() => h.cleanup());

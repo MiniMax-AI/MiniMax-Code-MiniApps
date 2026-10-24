@@ -303,6 +303,67 @@ input {
   min-width: 140px;
 }
 
+/* The name of the canvas, edited in place.
+   A native prompt() is a separate OS window that never reaches the screen
+   inside the MiniApp host, so the name is typed into the page itself. */
+.nxc-rename {
+  min-width: 140px;
+  max-width: 210px;
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--mcode-surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.nxc-rename:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+/* ---------------- asking in the page ----------------
+   A native confirm() is a separate OS window that never reaches the screen
+   inside the MiniApp host, so the question is drawn here instead. */
+.nxc-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 42%);
+}
+
+/* The rule above says how the question is drawn, not that it is always
+   there: a `display` on the class would beat the `hidden` attribute. */
+.nxc-confirm[hidden] {
+  display: none;
+}
+
+.nxc-confirm__box {
+  max-width: 360px;
+  padding: 20px 22px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  color: var(--text);
+  box-shadow: var(--mcode-shadow-strong);
+}
+
+.nxc-confirm__text {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.nxc-confirm__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* ---------------- self-drawn dropdown ----------------
    A native <select> popup is a separate OS window that never reaches the
    screen inside the MiniApp host, so the canvas draws its own menu. The

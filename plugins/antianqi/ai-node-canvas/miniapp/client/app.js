@@ -64,6 +64,8 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   const layoutGroups = new Map();
   const layoutGroupOf = new Map();
   let layoutSeq = 0;
+  // The answer to the one question the page asks in itself.
+  let confirmResolve = null;
 
   const state = {
     canvas: {
@@ -4494,6 +4496,51 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     }
   }
 
+  /**
+   * The name a new canvas gets when nobody types one.
+   *
+   * The name is a name, not a question: the page asks nothing with a native
+   * dialog, because such a dialog never reaches the screen inside the
+   * MiniApp host.
+   */
+  function nextCanvasTitle() {
+    const taken = new Set((state.canvases ?? []).map((item) => String(item.title ?? '')));
+    if (!taken.has('未命名画布')) return '未命名画布';
+    for (let index = 2; index < 1000; index += 1) {
+      const title = `未命名画布 ${index}`;
+      if (!taken.has(title)) return title;
+    }
+    return '未命名画布';
+  }
+
+  /** Rename the canvas in place: the name is typed into the page itself. */
+  function startRename(initial = '') {
+    const field = dom.canvasRename;
+    if (!field) return;
+    field.value = initial;
+    field.hidden = false;
+    // The name sits where the title of the canvas was, so the two do not
+    // stand next to each other.
+    if (dom.canvasSelect) dom.canvasSelect.hidden = true;
+    // The focus never scrolls: the board is a transformed layer, and the
+    // browser would scroll to the layout box of the focused control.
+    field.focus({ preventScroll: true });
+    field.select();
+  }
+
+  function commitRename() {
+    const field = dom.canvasRename;
+    if (!field || field.hidden) return;
+    const title = field.value.trim();
+    field.hidden = true;
+    if (dom.canvasSelect) dom.canvasSelect.hidden = false;
+    if (!title || title === state.canvas.title) return;
+    state.canvas.title = title;
+    markDirty();
+    render();
+    void saveCanvas();
+  }
+
   async function createCanvas(title) {
     const payload = await api('/api/canvases', { method: 'POST', body: { title } });
     // A canvas the page made is a canvas the page holds: the runtime does not
@@ -4506,12 +4553,41 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     setSaveState('saved');
     ensureActionPolling();
     await refreshCanvasList();
+    // The name is written right away, while the new canvas is in front.
+    startRename(state.canvas.title || title);
+  }
+
+  /**
+   * Ask the user to confirm, in the page.
+   *
+   * A native confirm() is a separate OS window that never reaches the screen
+   * inside the MiniApp host, so a question asked that way is a question
+   * nobody answers — and the button looks as if it did nothing.
+   */
+  function confirmInPage(text) {
+    const dialog = dom.confirmDialog;
+    if (!dialog) return Promise.resolve(false);
+    dom.confirmText.textContent = text;
+    dialog.hidden = false;
+    dom.confirmOk.focus({ preventScroll: true });
+    return new Promise((resolve) => {
+      confirmResolve = resolve;
+    });
+  }
+
+  function closeConfirm(answer) {
+    const dialog = dom.confirmDialog;
+    if (dialog) dialog.hidden = true;
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(answer);
   }
 
   async function deleteCanvas() {
     if (!state.canvas.id) return;
     const title = state.canvas.title || '未命名画布';
-    if (!window.confirm(`确定删除画布「${title}」？`)) return;
+    const yes = await confirmInPage(`确定删除画布「${title}」？`);
+    if (!yes) return;
     await api(`/api/canvases/${state.canvas.id}`, { method: 'DELETE' });
     // The canvas is gone: the page does not hold it any more.
     releaseCanvas(state.canvas.id);
@@ -4745,6 +4821,11 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
 
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        // The question the page asks is closed by Escape, like any other.
+        if (dom.confirmDialog && !dom.confirmDialog.hidden) {
+          closeConfirm(false);
+          return;
+        }
         if (state.dropdown) {
           // Escape closes the drop-down and hands the focus back to the
           // control that opened it.
@@ -5318,19 +5399,38 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       openCanvasDropdown();
     });
     dom.newButton.addEventListener('click', () => {
-      const title = window.prompt('新画布名称', '未命名画布');
-      if (title === null) return;
-      void createCanvas(title || '未命名画布');
+      // No native dialog: a prompt() is a separate OS window that never
+      // reaches the screen inside the MiniApp host, so asking there left
+      // the button doing nothing at all. The name is typed into the page
+      // instead, right after the canvas is made.
+      void createCanvas(nextCanvasTitle());
     });
     dom.saveButton.addEventListener('click', () => {
       void saveCanvas();
     });
     dom.renameButton.addEventListener('click', () => {
-      const title = window.prompt('重命名画布', state.canvas.title || '未命名画布');
-      if (title === null) return;
-      state.canvas.title = title || state.canvas.title;
-      markDirty();
-      render();
+      startRename(state.canvas.title || '未命名画布');
+    });
+    // The name is typed into the page: Enter keeps it, Escape leaves it as it
+    // was, and leaving the field keeps it too.
+    dom.canvasRename?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commitRename();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        dom.canvasRename.hidden = true;
+        dom.canvasSelect.hidden = false;
+      }
+    });
+    dom.canvasRename?.addEventListener('blur', () => {
+      commitRename();
+    });
+    dom.confirmOk?.addEventListener('click', () => {
+      closeConfirm(true);
+    });
+    dom.confirmCancel?.addEventListener('click', () => {
+      closeConfirm(false);
     });
     dom.exportButton.addEventListener('click', exportCanvas);
     dom.importButton.addEventListener('click', () => {
@@ -5403,11 +5503,16 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.saveState = $('save-state');
     dom.buildBadge = $('build-badge');
     dom.canvasSelect = $('canvas-select');
+    dom.canvasRename = $('canvas-rename');
     dom.contextMenu = $('context-menu');
     dom.addMenu = $('add-menu');
     dom.mentionMenu = $('mention-menu');
     dom.dropdownMenu = $('dropdown-menu');
     dom.floatingPanel = $('floating-panel');
+    dom.confirmDialog = $('confirm-dialog');
+    dom.confirmText = $('confirm-text');
+    dom.confirmOk = $('confirm-ok');
+    dom.confirmCancel = $('confirm-cancel');
     dom.newButton = $('btn-new');
     dom.saveButton = $('btn-save');
     dom.renameButton = $('btn-rename');
