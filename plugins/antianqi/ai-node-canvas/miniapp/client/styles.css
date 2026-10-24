@@ -2190,6 +2190,29 @@ input {
   padding-top: 0;
 }
 
+/* ---------------- a control that reads a file ----------------
+   The file input is the control itself. It stays in the page and lies over
+   the label, so the label is what the user reads and clicks, and the file
+   reaches the page without a native dialog that the host may never show. */
+.nxc-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.nxc-file input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 /* ---------------- reduced motion ----------------
    Movement, scaling and continuous animation are removed; only opacity
    transitions that carry state survive. */

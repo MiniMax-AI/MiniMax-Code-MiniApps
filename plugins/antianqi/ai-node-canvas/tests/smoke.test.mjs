@@ -6725,6 +6725,240 @@ test('a canvas can be kept as a template of its own', async (t) => {
   assert.equal(own.title, '我的链 的模板');
 });
 
+test('a template travels in a file, and lands the same way on another machine', async () => {
+  const { applyTemplate, readTemplateFile, templateFile, templateFromCanvas } = await import('../miniapp/client/actions.mjs');
+
+  // The file says what it is, and carries the steps and nothing else.
+  const skeleton = templateFromCanvas(
+    {
+      nodes: [
+        { id: 'n_t', type: 'text', title: '文案', metadata: { prompt: '一只猫' } },
+        { id: 'n_g', type: 'image', title: '主图', metadata: { prompt: '白底', mode: 'text2image', ratio: '1:1' } },
+        { id: 'n_r', type: 'result', title: '主图 · 结果', metadata: { kind: 'image' } },
+      ],
+      connections: [{ id: 'c1', fromNodeId: 'n_t', toNodeId: 'n_g', kind: 'text' }],
+    },
+    { id: 'own-1', title: '我的模板' },
+  );
+  const file = templateFile({ id: skeleton.id, title: skeleton.title, actions: skeleton.actions });
+  assert.equal(file.kind, 'ai-node-canvas-template');
+  assert.equal(file.steps, 3);
+  // Only the steps are in the file: a result is not a step.
+  assert.deepEqual([...new Set(file.actions.map((action) => action.type))].sort(), ['add_node', 'connect']);
+
+  // Another machine reads it with the one rule that reads a template.
+  const read = readTemplateFile(JSON.stringify(file));
+  assert.equal(read.ok, true);
+  assert.equal(read.template.title, '我的模板');
+  assert.equal(read.template.actions.length, 3);
+
+  // And it lands on the canvas exactly as the skeleton would.
+  const ids = () => {
+    let n = 0;
+    return (prefix) => `${prefix}_${(n += 1)}`;
+  };
+  const here = applyTemplate({ nodes: [], connections: [] }, skeleton, { idFor: ids() });
+  const there = applyTemplate({ nodes: [], connections: [] }, read.template, { idFor: ids() });
+  assert.equal(here.error, undefined);
+  assert.equal(there.error, undefined);
+  assert.equal(there.canvas.nodes.length, here.canvas.nodes.length);
+  assert.equal(there.canvas.connections.length, here.canvas.connections.length);
+  assert.deepEqual(there.canvas.nodes.map((node) => node.type), here.canvas.nodes.map((node) => node.type));
+  assert.equal(there.canvas.nodes[1].metadata.ratio, '1:1');
+  assert.equal(there.canvas.nodes[1].metadata.mode, 'text2image');
+});
+
+test('a file that is not a template is refused, and says why', async () => {
+  const { readTemplateFile } = await import('../miniapp/client/actions.mjs');
+  // Not JSON at all.
+  const broken = readTemplateFile('这不是 JSON');
+  assert.equal(broken.ok, false);
+  assert.match(broken.error, /JSON/);
+  // JSON, but something else entirely.
+  const other = readTemplateFile(JSON.stringify({ kind: 'something-else', actions: [{ type: 'add_node', args: {} }] }));
+  assert.equal(other.ok, false);
+  assert.match(other.error, /模板/);
+  // A template with no steps in it.
+  const empty = readTemplateFile(JSON.stringify({ kind: 'ai-node-canvas-template', actions: [] }));
+  assert.equal(empty.ok, false);
+  assert.match(empty.error, /步骤/);
+  // A step that is neither a node nor a line.
+  const odd = readTemplateFile(JSON.stringify({ kind: 'ai-node-canvas-template', actions: [{ type: 'drop_everything', args: {} }] }));
+  assert.equal(odd.ok, false);
+  assert.match(odd.error, /连线/);
+  // A file from a newer canvas than this one.
+  const future = readTemplateFile(JSON.stringify({ kind: 'ai-node-canvas-template', version: 99, actions: [{ type: 'add_node', args: { type: 'image' } }] }));
+  assert.equal(future.ok, false);
+  assert.match(future.error, /版本/);
+});
+
+test('a template that came from another machine is kept on this one', async (t) => {
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const { templateFile } = await import('../miniapp/client/actions.mjs');
+
+  const file = templateFile({
+    id: 'from-another-machine',
+    title: '别处的链',
+    description: '另一台机器上做的',
+    actions: [
+      { type: 'add_node', args: { type: 'text', title: '文案', prompt: '一只猫' } },
+      { type: 'add_node', args: { type: 'image', title: '主图', mode: 'text2image', ratio: '1:1' } },
+      { type: 'connect', args: { from: '@1', to: '@2' } },
+    ],
+  });
+
+  // The steps come with the file, so they are kept as they are.
+  const saved = await getJson(h.base, '/api/templates', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'own-imported-1',
+      title: file.title,
+      description: file.description,
+      actions: file.actions,
+    }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.template.steps, 3);
+
+  // It is in the list, with its steps — so it can be put on the canvas again.
+  const listed = await getJson(h.base, '/api/templates');
+  const own = listed.body.templates.find((item) => item.id === 'own-imported-1');
+  assert.ok(own, 'the imported template was not kept');
+  assert.equal(own.own, true);
+  assert.equal(own.title, '别处的链');
+  assert.equal(own.actions.length, 3);
+  assert.equal(own.actions[2].args.from, '@1');
+});
+
+test('the toolbar shares templates, and the template button stands by the import', async () => {
+  // 导出 and 导入 carried the whole canvas, which only opens whole on the
+  // machine it came from. The toolbar now shares templates: the steps, which
+  // travel.
+  const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
+  assert.match(html, /id="btn-export"[^>]*>导出模板</);
+  assert.match(html, /id="btn-import"[^>]*>导入模板</);
+  // The template button stands right of the import.
+  const importAt = html.indexOf('id="btn-import"');
+  const templatesAt = html.indexOf('id="btn-templates"');
+  assert.ok(importAt >= 0, 'the import button is gone');
+  assert.ok(templatesAt > importAt, 'the template button is not right of the import');
+  // The canvas itself can still be saved: it lives in the template panel.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(source, /导出画布/);
+  assert.match(source, /导入画布/);
+  assert.match(source, /function exportTemplateFile\(\)/);
+  assert.match(source, /function openImportTemplatePanel\(/);
+  assert.match(source, /function importTemplateDocument\(/);
+  // The templates of this machine come from the runtime, which knows which
+  // files are templates.
+  assert.match(source, /api\('\/api\/templates\/files'\)/);
+  // The file reaches the page without a dialog in between: the control that
+  // reads it is in the page.
+  assert.match(source, /const input = el\('input'\);\s*\n\s*input\.type = 'file'/);
+});
+
+test('a shared file is written by the runtime, not by the browser', async () => {
+  // A download the browser starts inside the host never arrives under the name
+  // it was given: the file stays a temporary name in the Downloads folder. So
+  // the runtime writes the file and says where it went.
+  const { createMediaStore } = await import('../miniapp/node/media-store.mjs');
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const target = await mkdtemp(join(tmpdir(), 'nxc-downloads-'));
+  const store = createMediaStore({ dataDir: await mkdtemp(join(tmpdir(), 'nxc-assets-')) });
+
+  const saved = await store.writeToDownloads('耳机.模板.json', '{"kind":"ai-node-canvas-template"}', target);
+  assert.equal(saved.ok, true);
+  assert.equal(saved.name, '耳机.模板.json');
+  assert.equal(saved.path.startsWith(target), true);
+
+  // The file is there, and the runtime can find it again.
+  const written = await readFile(saved.path, 'utf8');
+  assert.match(written, /ai-node-canvas-template/);
+  const found = await store.listDownloadsFiles('.json', 40, target);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].name, '耳机.模板.json');
+
+  // A name that walks out of the folder is refused, not tidied up.
+  const escape = await store.writeToDownloads('../逃出去.json', '{}', target);
+  assert.equal(escape.ok, false);
+  assert.equal(escape.reason, 'bad_name');
+});
+
+test('the templates of this machine are found, and a file that is not one is not offered', async (t) => {
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const { mkdtemp, writeFile, mkdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { templateFile } = await import('../miniapp/client/actions.mjs');
+
+  // The Downloads folder of this machine is pointed at a folder of our own, so
+  // the test does not put anything in the user's own folder.
+  const folder = await mkdtemp(join(tmpdir(), 'nxc-downloads-'));
+  const before = process.env.USERPROFILE;
+  process.env.USERPROFILE = folder;
+  t.after(() => {
+    if (before === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = before;
+  });
+  await mkdir(join(folder, 'Downloads'), { recursive: true });
+
+  // A template somebody sent to this machine.
+  const document = templateFile({
+    id: 'from-another-machine',
+    title: '别处的链',
+    actions: [
+      { type: 'add_node', args: { type: 'image', title: '主图', mode: 'text2image' } },
+      { type: 'connect', args: { from: '@1', to: '@1' } },
+    ],
+  });
+  await writeFile(join(folder, 'Downloads', '别处的链.模板.json'), JSON.stringify(document), 'utf8');
+  // And a file that is something else entirely.
+  await writeFile(join(folder, 'Downloads', '随便.json'), JSON.stringify({ hello: 'world' }), 'utf8');
+
+  const listed = await getJson(h.base, '/api/templates/files');
+  assert.equal(listed.status, 200);
+  const files = listed.body.files;
+  assert.equal(files.length, 1, 'a file that is not a template was offered');
+  assert.equal(files[0].name, '别处的链.模板.json');
+  assert.equal(files[0].title, '别处的链');
+  assert.equal(files[0].steps, 2);
+  assert.equal(files[0].actions[0].type, 'add_node');
+
+  // And the file the page shares is written by the runtime, under the name it
+  // was given.
+  const exported = await getJson(h.base, '/api/export', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '我的链.模板.json', document }),
+  });
+  assert.equal(exported.status, 200);
+  assert.equal(exported.body.ok, true);
+  assert.equal(exported.body.name, '我的链.模板.json');
+  const onDisk = JSON.parse(await readFile(exported.body.path, 'utf8'));
+  assert.equal(onDisk.kind, 'ai-node-canvas-template');
+  assert.equal(onDisk.actions.length, 2);
+
+  // A name that walks out of the folder is refused.
+  const bad = await getJson(h.base, '/api/export', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '../逃出去.json', document }),
+  });
+  assert.equal(bad.status, 400);
+  // And a file with nothing in it is refused too.
+  const empty = await getJson(h.base, '/api/export', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '空的.json' }),
+  });
+  assert.equal(empty.status, 400);
+});
+
 test('the page asks in itself: a native dialog never reaches the screen', async () => {
   // A native prompt() or confirm() is a separate OS window. Inside the
   // MiniApp host it never shows, so the button that used it looked as if it

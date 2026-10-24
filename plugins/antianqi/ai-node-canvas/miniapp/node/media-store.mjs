@@ -738,6 +738,71 @@ export function createMediaStore(context) {
     return { ok: true, path: finalPath, bytes: info.size, name: finalPath.split(/[\\/]/).pop() };
   }
 
+  /**
+   * Write a file of our own into the Downloads folder.
+   *
+   * The file the page makes — a template to share, for instance — has to land
+   * where a person looks for it. The browser's own download cannot be trusted
+   * to finish here, so the runtime writes the file and says where it went.
+   *
+   * The name is judged as it was given: a name that walks out of the folder is
+   * refused, not tidied up into something that looks safe.
+   */
+  async function writeToDownloads(name, data, targetDir = '') {
+    const asked = String(name ?? '').trim();
+    if (!asked) return { ok: false, reason: 'bad_name' };
+    const folder = targetDir || downloadsDir();
+    if (!resolveInside(folder, asked)) return { ok: false, reason: 'bad_name' };
+    const plain = plainName(asked);
+    if (!plain) return { ok: false, reason: 'bad_name' };
+    await mkdir(folder, { recursive: true });
+    let finalPath = join(folder, plain);
+    let index = 1;
+    // A file that is already there is kept: the new one gets a number.
+    while (await exists(finalPath)) {
+      const ext = extensionOf(finalPath, '');
+      const stem = finalPath.slice(0, finalPath.length - ext.length);
+      finalPath = `${stem} (${index})${ext}`;
+      index += 1;
+    }
+    const body = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
+    await writeFile(finalPath, body);
+    return { ok: true, path: finalPath, bytes: body.length, name: finalPath.split(/[\\/]/).pop() };
+  }
+
+  /**
+   * The files of one kind that lie in the Downloads folder.
+   *
+   * The newest come first: the file a person just put there is the one they
+   * are about to want.
+   */
+  async function listDownloadsFiles(extension = '.json', limit = 40, targetDir = '') {
+    const folder = targetDir || downloadsDir();
+    let entries = [];
+    try {
+      entries = await readdir(folder);
+    } catch {
+      return [];
+    }
+    const wanted = String(extension ?? '').toLowerCase();
+    const found = [];
+    for (const entry of entries) {
+      if (!entry.toLowerCase().endsWith(wanted)) continue;
+      const plain = plainName(entry);
+      if (!plain) continue;
+      const path = join(folder, plain);
+      try {
+        const info = await stat(path);
+        if (!info.isFile() || info.size > 4 * 1024 * 1024) continue;
+        found.push({ name: plain, path, bytes: info.size, mtime: info.mtimeMs });
+      } catch {
+        continue;
+      }
+    }
+    found.sort((a, b) => b.mtime - a.mtime);
+    return found.slice(0, limit);
+  }
+
   return {
     assetsDir,
     workDir,
@@ -761,5 +826,7 @@ export function createMediaStore(context) {
     listLibrary,
     removeAsset,
     saveToDownloads,
+    writeToDownloads,
+    listDownloadsFiles,
   };
 }

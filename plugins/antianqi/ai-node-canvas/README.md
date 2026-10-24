@@ -274,6 +274,18 @@ this package.
   and keeps it on this machine, for any canvas. The Agent sees them too:
   `canvas_list_templates` lists them, `canvas_apply_template` puts one on
   the canvas.
+- **A template travels as a file** — 导出模板 writes the steps of the canvas
+  that is open now into a JSON file in the **Downloads** folder, and says where
+  it landed. 导入模板 opens a panel that lists the template files this machine
+  has, and putting one on the board is a click. A file carries the steps and
+  nothing else, so it opens whole on another machine: no results, no material,
+  nothing that would break. The imported template is kept in the template list
+  as well, so it can be put on again later.
+- **The whole canvas is kept apart** — the export and import of a canvas
+  (every node, every line, every result) live in the 模板 panel now. That is
+  the **backup of this machine**: the result and the material travel with it,
+  so it only opens whole where it came from, and it does not sit next to the
+  templates.
 - **The prompt node carries the template** — `canvas_add_node` and
   `canvas_update_node` take a `templateId`, so a prompt node the Agent makes
   expands the sentence with the same template the page would pick, the H3
@@ -566,6 +578,13 @@ separate pictures.
   the node carries. It happens only when the user asks for it, and the page says
   where the file landed. A file that is already there is never overwritten: the
   copy gets a number.
+  **导出模板** and **导出画布** write there too — the runtime writes the file and
+  says where it went, because a download the browser starts inside the Host
+  never arrives under the name it was given.
+- **What is read of the Downloads folder** — only `*.json` files, and only the
+  ones that are a template by the one rule that reads a template. The
+  **导入模板** panel lists those, so a template that was sent to this machine
+  can be put on the canvas. A file that is something else is never offered.
 - **The library reads those two folders** — the asset folder and the upload
   folder are what the **资产库** panel lists, and **清理未引用** deletes the
   files in them that no canvas points at any more. A file a canvas still

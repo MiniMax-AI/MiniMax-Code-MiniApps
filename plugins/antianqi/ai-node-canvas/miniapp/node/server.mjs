@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 
-import { templateFromCanvas } from '../client/actions.mjs';
+import { readTemplateFile, templateFromCanvas } from '../client/actions.mjs';
 import { createActionQueue } from './action-queue.mjs';
 import { createAgentRunner } from './agent-runner.mjs';
 import { palette } from './capabilities.mjs';
@@ -282,20 +282,87 @@ export async function start(context) {
       });
     }
 
+    // The template files that lie on this machine.
+    //
+    // The file the page shares is written into the Downloads folder, so the
+    // file somebody sends to this machine lands there too. Each one is read
+    // by the one rule that reads a template, so a file that is something else
+    // is not offered at all.
+    if (path === '/api/templates/files' && req.method === 'GET') {
+      const files = [];
+      for (const entry of await media.store.listDownloadsFiles('.json')) {
+        let text = '';
+        try {
+          text = await readFile(entry.path, 'utf8');
+        } catch {
+          continue;
+        }
+        const parsed = readTemplateFile(text);
+        if (!parsed.ok) continue;
+        files.push({
+          name: entry.name,
+          path: entry.path,
+          title: parsed.template.title,
+          description: parsed.template.description,
+          steps: parsed.template.actions.length,
+          actions: parsed.template.actions,
+        });
+      }
+      return sendJson(res, 200, { files });
+    }
+
+    // Write a file of the page's own into the Downloads folder, so it can be
+    // sent to another machine.
+    //
+    // The browser's own download cannot be trusted to finish here: the file
+    // stays a temporary name and never arrives under the name the page asked
+    // for. The runtime writes it instead and says where it went.
+    if (path === '/api/export' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const name = String(body.name ?? '').trim();
+      if (!name) {
+        return sendJson(res, 400, { error: 'bad_name', message: '这个文件还没有名字' });
+      }
+      if (body.document === undefined || body.document === null) {
+        return sendJson(res, 400, { error: 'empty', message: '这个文件是空的' });
+      }
+      const text = typeof body.document === 'string'
+        ? body.document
+        : `${JSON.stringify(body.document, null, 2)}\n`;
+      const saved = await media.store.writeToDownloads(name, text);
+      if (!saved.ok) {
+        return sendJson(res, 400, { error: saved.reason, message: '这个文件名用不了' });
+      }
+      return sendJson(res, 200, { ok: true, path: saved.path, name: saved.name, bytes: saved.bytes });
+    }
+
     // Keep a template of the user's own: the skeleton of the canvas that is
     // open now. The steps are taken from the canvas; the results and the
     // material somebody picked are left behind.
+    //
+    // A template that came from another machine arrives with its steps in it,
+    // so the same place keeps both kinds of template by the same rule.
     if (path === '/api/templates' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const id = String(body.id ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64);
       if (!id) {
         return sendJson(res, 400, { error: 'bad_id', message: '这个模板还没有名字' });
       }
-      const canvas = body.canvas ?? (body.canvasId ? await store.get(body.canvasId) : null);
-      if (!canvas) {
-        return sendJson(res, 404, { error: 'not_found', message: '没有这张画布' });
+      let template = null;
+      if (Array.isArray(body.actions)) {
+        template = {
+          id,
+          title: String(body.title ?? id),
+          description: String(body.description ?? ''),
+          actions: body.actions,
+        };
+      } else {
+        const canvas = body.canvas ?? (body.canvasId ? await store.get(body.canvasId) : null);
+        if (!canvas) {
+          return sendJson(res, 404, { error: 'not_found', message: '没有这张画布' });
+        }
+        template = templateFromCanvas(canvas, { id, title: String(body.title ?? id) });
       }
-      const template = templateFromCanvas(canvas, { id, title: String(body.title ?? id) });
       if (!template.actions.length) {
         return sendJson(res, 400, {
           error: 'empty',

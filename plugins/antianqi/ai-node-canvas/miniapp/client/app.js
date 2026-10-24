@@ -12,7 +12,7 @@
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
 import { cardChrome, DATA_KINDS, hasTextBox, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, runModeOf, stripInputs } from './forms.mjs';
-import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, runSpecFor, syncMentions } from './actions.mjs';
+import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
   'use strict';
@@ -3562,6 +3562,31 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       void saveCurrentCanvasAsTemplate();
     });
     body.appendChild(save);
+    // The whole canvas — every node, every line, every result — is the other
+    // kind of thing a file can carry. It is the backup of the work itself, and
+    // it lives here because it is not a template: the result and the material
+    // travel with it, so it only opens whole on the machine it came from.
+    const exportCanvas = el('button', 'nxc-panel__option');
+    exportCanvas.type = 'button';
+    exportCanvas.appendChild(el('span', null, '导出画布'));
+    exportCanvas.appendChild(el('small', null, '整张画布：节点、连线和结果；换机器会因为缺素材而裂图'));
+    exportCanvas.addEventListener('click', exportCanvasFile);
+    body.appendChild(exportCanvas);
+    const importCanvas = el('label', 'nxc-panel__option nxc-file');
+    importCanvas.appendChild(el('span', null, '导入画布'));
+    importCanvas.appendChild(el('small', null, '整张画布的 JSON；本机备份用这个'));
+    const canvasFile = el('input');
+    canvasFile.type = 'file';
+    canvasFile.accept = 'application/json,.json';
+    canvasFile.title = '选一个画布 JSON 文件';
+    canvasFile.setAttribute('aria-label', '导入画布');
+    canvasFile.addEventListener('change', () => {
+      const file = canvasFile.files?.[0];
+      canvasFile.value = '';
+      void importCanvasFile(file);
+    });
+    importCanvas.appendChild(canvasFile);
+    body.appendChild(importCanvas);
   }
 
   /**
@@ -4609,37 +4634,175 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     await refreshCanvasList();
   }
 
-  function exportCanvas() {
-    const blob = new Blob([JSON.stringify(state.canvas, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = el('a');
-    link.href = url;
-    link.download = `${state.canvas.title || 'canvas'}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    showBanner('已开始下载导出文件');
+  /**
+   * Download the whole canvas: every node, every line, every result.
+   *
+   * This is the backup of the work itself, not a template — the result and the
+   * material travel with it, so it only opens whole on the machine it came
+   * from. The steps on their own travel as a template.
+   */
+  async function exportCanvasFile() {
+    try {
+      const response = await api('/api/export', {
+        method: 'POST',
+        body: { name: `${state.canvas.title || 'canvas'}.json`, document: state.canvas },
+      });
+      showBanner(`已导出到 ${response.path}`);
+    } catch (error) {
+      showBanner(`没导出成：${error?.message ?? error}`, 'error');
+    }
   }
 
-  async function importCanvas() {
+  async function importCanvasFile(file) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const payload = await api('/api/canvases', { method: 'POST', body: { title: parsed.title || '导入的画布' } });
+      state.canvas = payload.canvas;
+      await api(`/api/canvases/${state.canvas.id}`, { method: 'PUT', body: parsed });
+      await openCanvas(state.canvas.id);
+      await refreshCanvasList();
+      showBanner('导入成功');
+    } catch (error) {
+      showBanner(`导入失败，请检查 JSON 文件：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /**
+   * Share the steps of the canvas that is open now, as a template file.
+   *
+   * A template is the skeleton of a chain: the nodes that generate, the lines
+   * between them and the prompts and parameters they carry. What a run left
+   * behind is left behind, so the file opens whole on another machine.
+   *
+   * The file is written by the runtime, not by the browser: a download the
+   * browser starts here never arrives under the name it was given, so the
+   * runtime writes it into the Downloads folder and says where it went.
+   */
+  async function exportTemplateFile() {
+    const base = String(state.canvas.title || '画布').replace(/[\\/:*?"<>|]/g, '').trim() || '画布';
+    const skeleton = templateFromCanvas(state.canvas, { id: `own-${base}-${Date.now().toString(36)}`, title: `${base} 的模板` });
+    if (!skeleton.actions.length) {
+      showBanner('这张画布上没有能带走的步骤（结果和素材不算步骤）', 'error');
+      return;
+    }
+    const document = templateFile({
+      id: skeleton.id,
+      title: skeleton.title,
+      description: `从画布「${state.canvas.title || base}」存下来的模板`,
+      actions: skeleton.actions,
+    });
+    try {
+      const response = await api('/api/export', {
+        method: 'POST',
+        body: { name: `${base}.模板.json`, document },
+      });
+      showBanner(`已导出模板「${skeleton.title}」到 ${response.path}`);
+    } catch (error) {
+      showBanner(`没导出成：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /**
+   * The template files on this machine, and the way to bring one in.
+   *
+   * The file a template travels in lands in the Downloads folder, so that is
+   * where the runtime looks for it. Every file is read by the one rule that
+   * reads a template, so a file that is something else is not offered.
+   */
+  async function openImportTemplatePanel(anchorRect) {
+    const panel = dom.floatingPanel;
+    state.panel = { type: 'import-template', nodeId: null };
+    panel.textContent = '';
+    panel.dataset.canvasNoZoom = 'true';
+    panel.appendChild(el('div', 'nxc-panel__title', '导入模板'));
+    const body = el('div', 'nxc-panel__body', '找模板中…');
+    panel.appendChild(body);
+    panel.hidden = false;
+    const rect = panel.getBoundingClientRect();
+    const place = placeOverlay(
+      { left: anchorRect.left, top: anchorRect.bottom + 6 },
+      rect,
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    panel.style.left = `${place.left}px`;
+    panel.style.top = `${place.top}px`;
+
+    let files = [];
+    try {
+      const response = await api('/api/templates/files');
+      files = Array.isArray(response.files) ? response.files : [];
+    } catch (error) {
+      body.textContent = `没找到模板：${error?.message ?? error}`;
+      return;
+    }
+    body.textContent = '';
+    if (!files.length) {
+      body.appendChild(el('div', 'nxc-panel__desc', '下载文件夹里还没有模板文件。把别人发来的模板存进去，再点这里。'));
+    }
+    for (const file of files) {
+      const item = el('button', 'nxc-panel__option');
+      item.type = 'button';
+      item.appendChild(el('span', null, file.title));
+      item.appendChild(el('small', null, `${file.name} · ${file.steps} 步`));
+      item.addEventListener('click', () => {
+        closePanel();
+        void importTemplateDocument({
+          title: file.title,
+          description: file.description,
+          actions: file.actions,
+        });
+      });
+      body.appendChild(item);
+    }
+    // A file from somewhere else on this machine: the control is in the page,
+    // so the file reaches the page without a dialog in between.
+    const pick = el('label', 'nxc-panel__option nxc-file');
+    pick.appendChild(el('span', null, '从别的位置选一个模板文件'));
+    pick.appendChild(el('small', null, '本机任意位置的 .json'));
     const input = el('input');
     input.type = 'file';
-    input.accept = 'application/json';
+    input.accept = 'application/json,.json';
+    input.title = '选一个模板文件';
+    input.setAttribute('aria-label', '从别的位置选一个模板文件');
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
+      input.value = '';
       if (!file) return;
-      try {
-        const parsed = JSON.parse(await file.text());
-        const payload = await api('/api/canvases', { method: 'POST', body: { title: parsed.title || '导入的画布' } });
-        state.canvas = payload.canvas;
-        await api(`/api/canvases/${state.canvas.id}`, { method: 'PUT', body: parsed });
-        await openCanvas(state.canvas.id);
-        await refreshCanvasList();
-        showBanner('导入成功');
-      } catch (error) {
-        showBanner(`导入失败，请检查 JSON 文件：${error?.message ?? error}`, 'error');
+      const parsed = readTemplateFile(await file.text());
+      if (!parsed.ok) {
+        showBanner(`导入模板失败：${parsed.error}`, 'error');
+        return;
       }
+      closePanel();
+      await importTemplateDocument(parsed.template);
     });
-    input.click();
+    pick.appendChild(input);
+    body.appendChild(pick);
+  }
+
+  /**
+   * Put a template on the canvas and keep it in the template list.
+   */
+  async function importTemplateDocument(template) {
+    applyTemplateOnCanvas(template);
+    // The template is kept on this machine as well: the file may be gone
+    // later, and a template in the list can be put on again.
+    const id = `own-imported-${Date.now().toString(36)}`;
+    try {
+      await api('/api/templates', {
+        method: 'POST',
+        body: {
+          id,
+          title: template.title,
+          description: template.description || '导入的模板',
+          actions: template.actions,
+        },
+      });
+      showBanner(`已导入模板「${template.title}」，也存进了模板清单`);
+    } catch (error) {
+      showBanner(`模板已铺到画布上，但没存进模板清单：${error?.message ?? error}`, 'error');
+    }
   }
 
   function showBanner(message, tone = 'info') {
@@ -5432,9 +5595,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.confirmCancel?.addEventListener('click', () => {
       closeConfirm(false);
     });
-    dom.exportButton.addEventListener('click', exportCanvas);
+    dom.exportButton.addEventListener('click', exportTemplateFile);
     dom.importButton.addEventListener('click', () => {
-      void importCanvas();
+      void openImportTemplatePanel(dom.importButton.getBoundingClientRect());
     });
     dom.deleteButton.addEventListener('click', () => {
       void deleteCanvas();

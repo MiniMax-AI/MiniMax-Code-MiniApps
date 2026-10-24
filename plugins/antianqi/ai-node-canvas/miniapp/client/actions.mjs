@@ -616,6 +616,83 @@ export function templateFromCanvas(canvas, { id = '', title = '' } = {}) {
 }
 
 /**
+ * The kind a shared template file says it is.
+ *
+ * A file carries what it is, so a file that is something else is refused
+ * instead of being read as a template.
+ */
+export const TEMPLATE_FILE_KIND = 'ai-node-canvas-template';
+
+/** The shape of the file this version writes. */
+export const TEMPLATE_FILE_VERSION = 1;
+
+/**
+ * The document a template is shared as.
+ *
+ * A template travels as a file: the steps are in it, and nothing else is, so
+ * it works on another machine and does not come out as a canvas full of
+ * broken pictures.
+ */
+export function templateFile({ id = '', title = '', description = '', actions = [] } = {}) {
+  const steps = Array.isArray(actions) ? actions : [];
+  return {
+    kind: TEMPLATE_FILE_KIND,
+    version: TEMPLATE_FILE_VERSION,
+    id: String(id ?? ''),
+    title: String(title ?? ''),
+    description: String(description ?? ''),
+    steps: steps.length,
+    actions: steps,
+  };
+}
+
+/**
+ * Read a shared template file.
+ *
+ * The file is read by the one rule that puts a template on a canvas, so a
+ * template from another machine lands the same way as one made here. A file
+ * that is not a template is refused, and the reason names the rule it broke.
+ */
+export function readTemplateFile(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(text ?? ''));
+  } catch {
+    return { ok: false, error: '这个文件不是 JSON' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: '这个文件不是一份模板' };
+  }
+  if (parsed.kind && parsed.kind !== TEMPLATE_FILE_KIND) {
+    return { ok: false, error: '这个文件不是节点画布的模板' };
+  }
+  if (parsed.version && Number(parsed.version) > TEMPLATE_FILE_VERSION) {
+    return { ok: false, error: '这个模板的版本比这个画布新，请先更新画布' };
+  }
+  const actions = parsed.actions;
+  if (!Array.isArray(actions) || !actions.length) {
+    return { ok: false, error: '这个模板里没有步骤' };
+  }
+  for (const action of actions) {
+    if (!action || typeof action !== 'object' || !action.args || typeof action.args !== 'object') {
+      return { ok: false, error: '这个模板里有一步写坏了' };
+    }
+    if (action.type !== 'add_node' && action.type !== 'connect') {
+      return { ok: false, error: `这个模板里有一步不是节点也不是连线：${action.type ?? '空'}` };
+    }
+  }
+  return {
+    ok: true,
+    template: {
+      id: String(parsed.id ?? ''),
+      title: String(parsed.title ?? '').trim() || '导入的模板',
+      description: String(parsed.description ?? ''),
+      actions,
+    },
+  };
+}
+
+/**
  * Apply one action to a canvas document.
  *
  * The document is not changed in place: the caller decides when to write it.
