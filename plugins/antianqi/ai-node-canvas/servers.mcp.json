@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "canvas": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/canvas",
+      "headers": {},
+      "description": "读取节点画布的画布列表与结构：节点、连线、插槽与状态。只读。",
+      "timeout": 30000
+    }
+  }
+}
