@@ -76,8 +76,6 @@ Apache-2.0）。
 `demo` 执行器不调模型。也明确要求 Agent 不要替用户猜工作目录，也不要在用户没点头时替他批准运行。
 
 这个 Skill 是宿主注册本插件时加载的，控制台进程自己不会读它。
-它同时也是本包**能通过「从 Git 仓库导入」装上**的原因：宿主只在包里声明了 Skill、MCP Server 或
-Hook 时才接受 Git 导入，光有一个 Mini App 不算。
 
 ## 测试环境
 
@@ -107,7 +105,8 @@ Hook 时才接受 Git 导入，光有一个 Mini App 不算。
 一律写在 `context.dataDir` 下，绝不写到别处：
 
 - `workspace.json` —— 内置引擎绑定的工作目录；
-- `hidden-runs.json` —— 本地隐藏的运行列表。隐藏不是删除，记录仍在引擎数据库里，可恢复；
+- `hidden-runs.json` —— 本地隐藏的运行列表。隐藏不是删除，记录仍在**内置引擎自己的数据库**里
+  （`context.dataDir/engine/` 下的 `workflows.sqlite`），可恢复；
 - `engine/` —— `address.json`、`endpoint.json`、`service.log`、`workflows.sqlite`，由内置引擎写入。
 
 ### 网络
@@ -167,8 +166,10 @@ icon.png                                    插件图标
 测试用 Node 自带的测试运行器，在沙箱主目录里起一个隔离的控制台实例，不会碰任何真实项目：
 
 ```bash
-node --test "tests/*.test.mjs"
+npm test
 ```
+
+`npm test` 就是在本目录跑 `node --test "tests/*.test.mjs"`，不用 npm 直接敲那条命令也一样。
 
 `tests/workspace-resolution.test.mjs` 覆盖工作目录解析：宿主那个临时投放目录和其它不可信路径会被拒掉，
 用户主目录绝不会被当成兜底，没选定项目目录之前引擎不会启动。

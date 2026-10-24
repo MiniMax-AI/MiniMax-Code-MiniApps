@@ -79,7 +79,8 @@ description: "运行、查看与管控 MiniMax Code 动态工作流（多 Agent 
 - 引擎只监听 `127.0.0.1`，控制台只代理到它：不连外网，也不连别的本地服务。
 - 状态文件全在 `context.dataDir`：`workspace.json`、`hidden-runs.json`、`engine/`。
 - 引擎在项目目录里工作，真实执行会读写那个目录。
-- 隐藏某个运行只是本地隐藏，不是删除；运行记录还在引擎数据库里，可以恢复。
+- 隐藏某个运行只是本地隐藏，不是删除；运行记录还在内置引擎自己的数据库里
+  （`context.dataDir/engine/` 下的 `workflows.sqlite`），可以恢复。
 
 ## 不要做的事
 
