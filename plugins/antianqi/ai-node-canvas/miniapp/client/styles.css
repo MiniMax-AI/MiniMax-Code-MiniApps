@@ -2237,6 +2237,28 @@ input {
   cursor: pointer;
 }
 
+/* The place a file goes: the path is typed into the page, because a native
+   file dialog is a separate OS window that never reaches the screen inside
+   the MiniApp host. */
+.nxc-panel__path {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text);
+  font-size: 12px;
+}
+
+.nxc-panel__row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
 /* ---------------- reduced motion ----------------
    Movement, scaling and continuous animation are removed; only opacity
    transitions that carry state survive. */

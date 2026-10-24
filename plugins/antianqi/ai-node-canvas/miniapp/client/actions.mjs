@@ -579,10 +579,12 @@ export function templateFromCanvas(canvas, { id = '', title = '' } = {}) {
   const kept = [];
   const index = new Map();
   for (const node of nodes) {
-    // A result is a result, and a node that holds something is a place, not
-    // a step.
+    // A result is a result: what a run left behind is not a step. An input
+    // node IS a step — it is the place the material goes in — but the
+    // material itself stays behind: the template carries the empty holder,
+    // and the person who puts the template on their board puts their own file
+    // in it.
     if (node.type === 'result') continue;
-    if (node.type === 'input') continue;
     index.set(node.id, kept.length + 1);
     kept.push(node);
   }

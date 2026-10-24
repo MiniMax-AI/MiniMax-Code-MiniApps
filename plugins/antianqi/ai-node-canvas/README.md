@@ -262,25 +262,37 @@ this package.
   models refuse. The Agent reads it when the request is a generation chain
   rather than a single prompt.
 - **A template is the skeleton of a chain** — the toolbar's 模板 button holds
-  ready-made workflows: a product picture and then an ad, an e-commerce hero
-  shot, a shot list and a short film, a batch of pictures, a clip read back
-  into a prompt, a picture redrawn. A template carries the **steps** only —
-  the nodes, the lines, the prompts and the parameters — and never what a
-  run left behind, so it works on another machine and does not come out as a
-  canvas full of broken pictures. Putting one on the canvas does **not** run
-  it: the money is spent when the user presses 生成.
+  **thirteen ready-made workflows**, under the headings they belong to:
+  - *从文字出发* — a product picture and then an ad, an e-commerce hero shot, a
+    shot list and a short film, a batch of pictures;
+  - *从素材出发* — a picture redrawn (图生图), a picture **imitated** and a clip
+    **imitated**: the material is read back into a prompt and the prompt is what
+    is generated from;
+  - *读回提示词* — a clip read back into a prompt;
+  - *H3* — one for each shape the request can carry: T2VA (words), I2VA (a
+    first frame), FL2VA (a first and a last frame), L2VA (a last frame) and the
+    full-reference set. Each of them carries the **prompt node** that writes the
+    structure H3 expects — the runtime adds the line that names the picture.
+
+  A template carries the **steps** only — the nodes, the lines, the prompts and
+  the parameters — and never what a run left behind, so it works on another
+  machine and does not come out as a canvas full of broken pictures. Putting one
+  on the canvas does **not** run it: the money is spent when the user presses
+  生成.
 - **A chain of your own can be kept as a template** — "把当前画布存成模板"
   strips the canvas down to its steps (results and material are left behind)
   and keeps it on this machine, for any canvas. The Agent sees them too:
   `canvas_list_templates` lists them, `canvas_apply_template` puts one on
   the canvas.
-- **A template travels as a file** — 导出模板 writes the steps of the canvas
-  that is open now into a JSON file in the **Downloads** folder, and says where
-  it landed. 导入模板 opens a panel that lists the template files this machine
-  has, and putting one on the board is a click. A file carries the steps and
-  nothing else, so it opens whole on another machine: no results, no material,
-  nothing that would break. The imported template is kept in the template list
-  as well, so it can be put on again later.
+- **A template travels as a file, and it goes where the user says** — 导出模板
+  writes the steps of the canvas that is open now into a JSON file and asks for
+  the path: the Downloads folder, the desktop, the documents, or any folder the
+  user types. 导入模板 opens a panel with the ready-made workflows and the
+  template files this machine has, and **a template that is picked there gets a
+  canvas of its own** — the canvas that is open now is a piece of work in
+  progress and is left alone. A file carries the steps and nothing else, so it
+  opens whole on another machine: no results, no material, nothing that would
+  break.
 - **The canvas is a workbench, and it saves itself** — a change is written
   down about a second later, and the state beside the canvas name says
   whether it happened, so the toolbar has no **保存** button: a button that
@@ -584,11 +596,14 @@ separate pictures.
   copy gets a number.
   **导出模板** writes there too — the runtime writes the file and
   says where it went, because a download the browser starts inside the Host
-  never arrives under the name it was given.
-- **What is read of the Downloads folder** — only `*.json` files, and only the
+  never arrives under the name it was given. The folder is the one the user
+  named in the export panel; it has to be a folder that is there, and the file
+  name has to be one plain name.
+- **What is read of a folder of the user** — only `*.json` files, and only the
   ones that are a template by the one rule that reads a template. The
   **导入模板** panel lists those, so a template that was sent to this machine
   can be put on the canvas. A file that is something else is never offered.
+  The folder is the one the user named (the Downloads folder by default).
 - **The library reads those two folders** — the asset folder and the upload
   folder are what the **资产库** panel lists, and **清理未引用** deletes the
   files in them that no canvas points at any more. A file a canvas still

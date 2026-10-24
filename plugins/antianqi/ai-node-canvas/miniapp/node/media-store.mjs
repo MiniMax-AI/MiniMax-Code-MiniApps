@@ -739,19 +739,20 @@ export function createMediaStore(context) {
   }
 
   /**
-   * Write a file of our own into the Downloads folder.
+   * Write a file of our own into a folder of this machine.
    *
    * The file the page makes — a template to share, for instance — has to land
    * where a person looks for it. The browser's own download cannot be trusted
    * to finish here, so the runtime writes the file and says where it went.
    *
-   * The name is judged as it was given: a name that walks out of the folder is
-   * refused, not tidied up into something that looks safe.
+   * The folder is the one the user named, and the name is judged as it was
+   * given: a name that walks out of the folder is refused, not tidied up into
+   * something that looks safe.
    */
-  async function writeToDownloads(name, data, targetDir = '') {
+  async function writeToFolder(name, data, targetDir = '') {
     const asked = String(name ?? '').trim();
     if (!asked) return { ok: false, reason: 'bad_name' };
-    const folder = targetDir || downloadsDir();
+    const folder = targetDir ? String(targetDir) : downloadsDir();
     if (!resolveInside(folder, asked)) return { ok: false, reason: 'bad_name' };
     const plain = plainName(asked);
     if (!plain) return { ok: false, reason: 'bad_name' };
@@ -826,7 +827,7 @@ export function createMediaStore(context) {
     listLibrary,
     removeAsset,
     saveToDownloads,
-    writeToDownloads,
+    writeToFolder,
     listDownloadsFiles,
   };
 }

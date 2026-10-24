@@ -3504,11 +3504,57 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   /**
+   * The templates of a panel, under the headings they belong to.
+   *
+   * The headings are the groups the templates carry, in the order they come:
+   * the ones that start from words, the ones that start from material, the
+   * H3 shapes and the one that reads a clip back.
+   */
+  function templateGroups(templates) {
+    const groups = [];
+    const byLabel = new Map();
+    for (const template of templates) {
+      const label = template.group || '其它';
+      if (!byLabel.has(label)) {
+        const group = { label, templates: [] };
+        byLabel.set(label, group);
+        groups.push(group);
+      }
+      byLabel.get(label).templates.push(template);
+    }
+    return groups;
+  }
+
+  /**
+   * Write a list of templates into a panel.
+   *
+   * The panel says what happens when a template is picked, and the picker
+   * does exactly that: one list, one way of picking it.
+   */
+  function renderTemplateGroups(body, groups, onPick) {
+    for (const group of groups) {
+      if (!group.templates.length) continue;
+      body.appendChild(el('div', 'nxc-panel__section', group.label));
+      for (const template of group.templates) {
+        const item = el('button', 'nxc-panel__option');
+        item.type = 'button';
+        item.appendChild(el('span', null, template.title));
+        item.appendChild(el('small', null, template.description || `${template.steps ?? 0} 步`));
+        item.addEventListener('click', () => onPick(template));
+        body.appendChild(item);
+      }
+    }
+  }
+
+  /**
    * The workflows that are ready to use.
    *
    * A template is a skeleton: the steps and their prompts, without what a
    * run left behind. Putting one on the canvas does not run it — the user
    * decides when the first node may spend anything.
+   *
+   * The ones picked here land on the canvas that is open now. The ones in the
+   * import panel get a canvas of their own instead.
    */
   async function openTemplatesPanel(anchorRect) {
     const panel = dom.floatingPanel;
@@ -3544,22 +3590,11 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     if (!templates.length) {
       body.appendChild(el('div', 'nxc-panel__desc', '还没有模板。'));
     }
-    const section = (label, list) => {
-      if (!list.length) return;
-      body.appendChild(el('div', 'nxc-panel__section', label));
-      for (const template of list) {
-        const item = el('button', 'nxc-panel__option');
-        item.type = 'button';
-        item.appendChild(el('span', null, template.title));
-        item.appendChild(el('small', null, template.description || `${template.steps ?? 0} 步`));
-        item.addEventListener('click', () => {
-          applyTemplateOnCanvas(template);
-        });
-        body.appendChild(item);
-      }
-    };
-    section('我的模板', own);
-    section('内置工作流', builtin);
+    const groups = templateGroups(builtin);
+    if (own.length) groups.unshift({ label: '我的模板', templates: own });
+    renderTemplateGroups(body, groups, (template) => {
+      applyTemplateOnCanvas(template);
+    });
     // The canvas that is open now can become a template of its own: the
     // steps are taken from it, the results and the material are left behind.
     const save = el('button', 'nxc-panel__option');
@@ -3572,7 +3607,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     body.appendChild(save);
     // A template travels two ways: into a file that can be sent to another
     // machine, and out of a file that one sent. Both are on the toolbar.
-    body.appendChild(el('div', 'nxc-panel__desc', '要发给别的机器用「导出模板」；要捡一个别人发来的文件用「导入模板」。'));
+    body.appendChild(el('div', 'nxc-panel__desc', '这里铺在当前画布上；要开一张新画布，用「导入模板」。'));
   }
 
   /**
@@ -4552,7 +4587,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     void saveCanvas();
   }
 
-  async function createCanvas(title) {
+  async function createCanvas(title, { askName = true } = {}) {
     const payload = await api('/api/canvases', { method: 'POST', body: { title } });
     // A canvas the page made is a canvas the page holds: the runtime does not
     // write it behind the page's back either.
@@ -4564,8 +4599,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     setSaveState('saved');
     ensureActionPolling();
     await refreshCanvasList();
-    // The name is written right away, while the new canvas is in front.
-    startRename(state.canvas.title || title);
+    // The name is written right away, while the new canvas is in front. A
+    // canvas that was made for a template already has its name.
+    if (askName) startRename(state.canvas.title || title);
   }
 
   /**
@@ -4633,13 +4669,34 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
    *
    * The file is written by the runtime, not by the browser: a download the
    * browser starts here never arrives under the name it was given, so the
-   * runtime writes it into the Downloads folder and says where it went.
+   * runtime writes it and says where it went.
+   *
+   * Where it goes is the user's to say: the panel asks for the path, because
+   * a native file dialog is a separate OS window that never reaches the
+   * screen inside the MiniApp host.
    */
   async function exportTemplateFile() {
+    const panel = dom.floatingPanel;
+    state.panel = { type: 'export-template', nodeId: null };
+    panel.textContent = '';
+    panel.dataset.canvasNoZoom = 'true';
+    panel.appendChild(el('div', 'nxc-panel__title', '导出模板'));
+    const body = el('div', 'nxc-panel__body', '找位置中…');
+    panel.appendChild(body);
+    panel.hidden = false;
+    const rect = panel.getBoundingClientRect();
+    const place = placeOverlay(
+      { left: dom.exportButton.getBoundingClientRect().left, top: dom.exportButton.getBoundingClientRect().bottom + 6 },
+      rect,
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    panel.style.left = `${place.left}px`;
+    panel.style.top = `${place.top}px`;
+
     const base = String(state.canvas.title || '画布').replace(/[\\/:*?"<>|]/g, '').trim() || '画布';
     const skeleton = templateFromCanvas(state.canvas, { id: `own-${base}-${Date.now().toString(36)}`, title: `${base} 的模板` });
     if (!skeleton.actions.length) {
-      showBanner('这张画布上没有能带走的步骤（结果和素材不算步骤）', 'error');
+      body.textContent = '这张画布上没有能带走的步骤（结果和素材不算步骤）';
       return;
     }
     const document = templateFile({
@@ -4648,19 +4705,72 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       description: `从画布「${state.canvas.title || base}」存下来的模板`,
       actions: skeleton.actions,
     });
+
+    let places = null;
+    try {
+      places = await api('/api/places');
+    } catch (error) {
+      body.textContent = `找不到本机的位置：${error?.message ?? error}`;
+      return;
+    }
+    const sep = places.sep || '\\';
+    const fileName = `${base}.模板.json`;
+    body.textContent = '';
+    body.appendChild(el('div', 'nxc-panel__desc', '这个文件会存到本机的哪个位置：'));
+    const path = el('input', 'nxc-panel__path');
+    path.type = 'text';
+    path.value = `${places.downloads}${sep}${fileName}`;
+    path.setAttribute('aria-label', '保存到哪个位置');
+    body.appendChild(path);
+    // The folders a person looks in, so the path is one click away.
+    const row = el('div', 'nxc-panel__row');
+    for (const [label, key] of [['下载文件夹', 'downloads'], ['桌面', 'desktop'], ['文档', 'documents'], ['主目录', 'home']]) {
+      const pick = el('button', 'nxc-btn nxc-btn--small', label);
+      pick.type = 'button';
+      pick.addEventListener('click', () => {
+        path.value = `${places[key]}${sep}${fileName}`;
+      });
+      row.appendChild(pick);
+    }
+    body.appendChild(row);
+    const save = el('button', 'nxc-panel__option');
+    save.type = 'button';
+    save.appendChild(el('span', null, '存到这儿'));
+    save.appendChild(el('small', null, `${fileName} · 模板文件`));
+    save.addEventListener('click', () => {
+      void writeTemplateFile(path.value, document);
+    });
+    body.appendChild(save);
+  }
+
+  /**
+   * Write the template file where the user said.
+   */
+  async function writeTemplateFile(path, document) {
+    const asked = String(path ?? '').trim();
+    if (!asked) {
+      showBanner('没写这个文件要去哪里', 'error');
+      return;
+    }
     try {
       const response = await api('/api/export', {
         method: 'POST',
-        body: { name: `${base}.模板.json`, document },
+        body: { path: asked, document },
       });
-      showBanner(`已导出模板「${skeleton.title}」到 ${response.path}`);
+      closePanel();
+      showBanner(`已导出模板到 ${response.path}`);
     } catch (error) {
       showBanner(`没导出成：${error?.message ?? error}`, 'error');
     }
   }
 
   /**
-   * The template files on this machine, and the way to bring one in.
+   * The templates that are ready to use and the files on this machine.
+   *
+   * A template that is picked here gets a canvas of its own: the canvas that
+   * is open now is a piece of work in progress, and a new chain should not be
+   * poured into it. The template panel puts a template on the canvas that is
+   * open instead.
    *
    * The file a template travels in lands in the Downloads folder, so that is
    * where the runtime looks for it. Every file is read by the one rule that
@@ -4684,33 +4794,90 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     panel.style.left = `${place.left}px`;
     panel.style.top = `${place.top}px`;
 
-    let files = [];
+    let templates = [];
     try {
-      const response = await api('/api/templates/files');
-      files = Array.isArray(response.files) ? response.files : [];
+      const response = await api('/api/templates');
+      templates = (Array.isArray(response.templates) ? response.templates : []).filter((item) => !item.own);
     } catch (error) {
       body.textContent = `没找到模板：${error?.message ?? error}`;
       return;
     }
     body.textContent = '';
-    if (!files.length) {
-      body.appendChild(el('div', 'nxc-panel__desc', '下载文件夹里还没有模板文件。把别人发来的模板存进去，再点这里。'));
+    body.appendChild(el('div', 'nxc-panel__desc', '选中的模板会开一张新画布。'));
+    if (!templates.length) {
+      body.appendChild(el('div', 'nxc-panel__desc', '还没有预设模板。'));
     }
-    for (const file of files) {
-      const item = el('button', 'nxc-panel__option');
-      item.type = 'button';
-      item.appendChild(el('span', null, file.title));
-      item.appendChild(el('small', null, `${file.name} · ${file.steps} 步`));
-      item.addEventListener('click', () => {
-        closePanel();
-        void importTemplateDocument({
-          title: file.title,
-          description: file.description,
-          actions: file.actions,
-        });
+    renderTemplateGroups(body, templateGroups(templates), (template) => {
+      void openTemplateInNewCanvas(template);
+    });
+
+    // The files on this machine. A template that was exported to a folder of
+    // the user's own is looked for in that folder, so the path is asked for
+    // and the folders a person looks in are one click away.
+    let places = null;
+    try {
+      places = await api('/api/places');
+    } catch {
+      places = null;
+    }
+    const sep = places?.sep || '\\';
+    body.appendChild(el('div', 'nxc-panel__section', '本机模板文件'));
+    const folderRow = el('div', 'nxc-panel__row');
+    const folderInput = el('input', 'nxc-panel__path');
+    folderInput.type = 'text';
+    folderInput.value = places?.downloads ?? '';
+    folderInput.setAttribute('aria-label', '在哪个文件夹里找模板文件');
+    for (const [label, key] of [['下载文件夹', 'downloads'], ['桌面', 'desktop'], ['文档', 'documents'], ['主目录', 'home']]) {
+      const pick = el('button', 'nxc-btn nxc-btn--small', label);
+      pick.type = 'button';
+      pick.addEventListener('click', () => {
+        if (!places) return;
+        folderInput.value = places[key];
       });
-      body.appendChild(item);
+      folderRow.appendChild(pick);
     }
+    body.appendChild(folderRow);
+    body.appendChild(folderInput);
+    const fileBody = el('div', 'nxc-panel__body');
+    body.appendChild(fileBody);
+    const reload = async () => {
+      fileBody.textContent = '找模板中…';
+      let files = [];
+      try {
+        const response = await api(`/api/templates/files?folder=${encodeURIComponent(folderInput.value.trim())}`);
+        files = Array.isArray(response.files) ? response.files : [];
+      } catch (error) {
+        fileBody.textContent = `没找到模板：${error?.message ?? error}`;
+        return;
+      }
+      fileBody.textContent = '';
+      if (!files.length) {
+        fileBody.appendChild(el('div', 'nxc-panel__desc', '这个文件夹里还没有模板文件。把别人发来的模板存进去，再点这里。'));
+        return;
+      }
+      for (const file of files) {
+        const item = el('button', 'nxc-panel__option');
+        item.type = 'button';
+        item.appendChild(el('span', null, file.title));
+        item.appendChild(el('small', null, `${file.name} · ${file.steps} 步`));
+        item.addEventListener('click', () => {
+          void openTemplateInNewCanvas({
+            title: file.title,
+            description: file.description,
+            actions: file.actions,
+          });
+        });
+        fileBody.appendChild(item);
+      }
+    };
+    const find = el('button', 'nxc-panel__option');
+    find.type = 'button';
+    find.appendChild(el('span', null, '在这个文件夹里找'));
+    find.addEventListener('click', () => {
+      void reload();
+    });
+    body.appendChild(find);
+    await reload();
     // A file from somewhere else on this machine: the control is in the page,
     // so the file reaches the page without a dialog in between.
     const pick = el('label', 'nxc-panel__option nxc-file');
@@ -4730,35 +4897,26 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         showBanner(`导入模板失败：${parsed.error}`, 'error');
         return;
       }
-      closePanel();
-      await importTemplateDocument(parsed.template);
+      await openTemplateInNewCanvas(parsed.template);
     });
     pick.appendChild(input);
     body.appendChild(pick);
   }
 
   /**
-   * Put a template on the canvas and keep it in the template list.
+   * Put a template on a canvas of its own.
+   *
+   * The canvas that is open now is left alone: a chain that was picked in the
+   * import panel is a new piece of work, and it gets a canvas of its own.
+   *
+   * The template is not kept in the list: the file it came from stays where
+   * it is, and the import panel finds it there again. A template the user
+   * wants to keep is one they save from the canvas it landed on.
    */
-  async function importTemplateDocument(template) {
+  async function openTemplateInNewCanvas(template) {
+    closePanel();
+    await createCanvas(`${template.title || '新画布'}`, { askName: false });
     applyTemplateOnCanvas(template);
-    // The template is kept on this machine as well: the file may be gone
-    // later, and a template in the list can be put on again.
-    const id = `own-imported-${Date.now().toString(36)}`;
-    try {
-      await api('/api/templates', {
-        method: 'POST',
-        body: {
-          id,
-          title: template.title,
-          description: template.description || '导入的模板',
-          actions: template.actions,
-        },
-      });
-      showBanner(`已导入模板「${template.title}」，也存进了模板清单`);
-    } catch (error) {
-      showBanner(`模板已铺到画布上，但没存进模板清单：${error?.message ?? error}`, 'error');
-    }
   }
 
   function showBanner(message, tone = 'info') {

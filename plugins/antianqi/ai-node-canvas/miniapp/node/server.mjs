@@ -8,7 +8,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
+import { homedir } from 'node:os';
 
 import { readTemplateFile, templateFromCanvas } from '../client/actions.mjs';
 import { createActionQueue } from './action-queue.mjs';
@@ -51,6 +52,26 @@ function sendJson(res, status, payload) {
 function sendText(res, status, body, type) {
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);
+}
+
+/**
+ * The folder a file may be put in, or looked for.
+ *
+ * It is the folder the user named, and it has to be a folder that is there:
+ * the runtime does not make one on the way, and a path that is not a folder
+ * is refused rather than guessed at.
+ */
+async function folderOf(asked) {
+  const folder = String(asked ?? '').trim() || join(homedir(), 'Downloads');
+  if (!isAbsolute(folder)) return { error: '这个位置不是一个完整的路径' };
+  let info = null;
+  try {
+    info = await stat(folder);
+  } catch {
+    info = null;
+  }
+  if (!info?.isDirectory()) return { error: '这个位置不是一个文件夹' };
+  return { folder };
 }
 
 /**
@@ -273,6 +294,8 @@ export async function start(context) {
           id: item.id,
           title: item.title,
           description: item.description ?? '',
+          // The group is what the panel tells the templates apart by.
+          group: item.group ?? '',
           own: Boolean(item.own),
           steps: item.actions?.length ?? 0,
           // The steps themselves: the page puts a template on the canvas
@@ -289,8 +312,12 @@ export async function start(context) {
     // by the one rule that reads a template, so a file that is something else
     // is not offered at all.
     if (path === '/api/templates/files' && req.method === 'GET') {
+      const where = await folderOf(new URL(req.url ?? '/', 'http://miniapp.local').searchParams.get('folder') ?? '');
+      if (where.error) {
+        return sendJson(res, 400, { error: 'bad_folder', message: where.error });
+      }
       const files = [];
-      for (const entry of await media.store.listDownloadsFiles('.json')) {
+      for (const entry of await media.store.listDownloadsFiles('.json', 40, where.folder)) {
         let text = '';
         try {
           text = await readFile(entry.path, 'utf8');
@@ -311,7 +338,25 @@ export async function start(context) {
       return sendJson(res, 200, { files });
     }
 
-    // Write a file of the page's own into the Downloads folder, so it can be
+    // The folders a file may be put in.
+    //
+    // The page asks where a file should go, and the answer is a path on this
+    // machine. The runtime names the ones a person looks in, so the page does
+    // not have to guess a home directory.
+    if (path === '/api/places' && req.method === 'GET') {
+      const home = homedir();
+      return sendJson(res, 200, {
+        home,
+        downloads: join(home, 'Downloads'),
+        desktop: join(home, 'Desktop'),
+        documents: join(home, 'Documents'),
+        // The separator of this machine: the page joins a folder and a file
+        // name with it, so the path it shows is one the machine understands.
+        sep,
+      });
+    }
+
+    // Write a file of the page's own into a folder of this machine, so it can be
     // sent to another machine.
     //
     // The browser's own download cannot be trusted to finish here: the file
@@ -319,17 +364,30 @@ export async function start(context) {
     // for. The runtime writes it instead and says where it went.
     if (path === '/api/export' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const name = String(body.name ?? '').trim();
-      if (!name) {
+      const asked = String(body.path ?? '').trim();
+      if (!asked) {
         return sendJson(res, 400, { error: 'bad_name', message: '这个文件还没有名字' });
       }
       if (body.document === undefined || body.document === null) {
         return sendJson(res, 400, { error: 'empty', message: '这个文件是空的' });
       }
+      // The path is the one the user named: where the file goes and what it is
+      // called. The folder has to be a folder that is there, and the name has
+      // to be one plain name — a name that walks out of the folder is refused,
+      // not tidied up into something that looks safe.
+      const folder = dirname(asked);
+      const name = basename(asked);
+      if (!name || name === '.' || name === '..') {
+        return sendJson(res, 400, { error: 'bad_name', message: '这个文件名用不了' });
+      }
+      const where = await folderOf(folder);
+      if (where.error) {
+        return sendJson(res, 400, { error: 'bad_folder', message: where.error });
+      }
       const text = typeof body.document === 'string'
         ? body.document
         : `${JSON.stringify(body.document, null, 2)}\n`;
-      const saved = await media.store.writeToDownloads(name, text);
+      const saved = await media.store.writeToFolder(name, text, where.folder);
       if (!saved.ok) {
         return sendJson(res, 400, { error: saved.reason, message: '这个文件名用不了' });
       }
