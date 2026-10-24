@@ -101,6 +101,10 @@ model. Everything else works without it:
 | A run on the **demo** executor (placeholder results, no model call) | no |
 | A run on the **real** executor (`mcode`, actual agent calls) | **yes** |
 
+A new workflow starts in **demo** mode: the Studio's execution-mode picker defaults to demo, so
+creating and running a workflow needs no CLI at all. Switch it to "MCode · real agents" only when
+you want real agents — that is the point where the CLI becomes required.
+
 Where the engine looks for the CLI, in the order it tries:
 
 1. `mcode` on `PATH`;
