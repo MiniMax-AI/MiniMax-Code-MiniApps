@@ -1,0 +1,1 @@
+svg.w-heatmap rect:hover{stroke:var(--rhm-rect-hover-stroke, rgba(0, 0, 0, .14));stroke-width:1px}svg.w-heatmap rect:active{fill:#196127;fill:var(--rhm-rect-active, #196127);stroke-width:0}
