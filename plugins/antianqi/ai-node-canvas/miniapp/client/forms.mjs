@@ -323,6 +323,36 @@ export function kindOf(node) {
 }
 
 /**
+ * The tools a card shows under itself.
+ *
+ * A result card shows the tools of what it holds, and a generating card shows
+ * none, because it has nothing to transform yet.
+ *
+ * A card holding a video shows none either: the finished clip is a
+ * deliverable, not a working material, and a dozen buttons under it are
+ * noise. The video tools stay in the runtime, so the Agent can still call
+ * them.
+ */
+export function cardTools(node, tools = []) {
+  if (roleOf(node) !== 'result') return [];
+  const kind = kindOf(node);
+  if (kind === 'video') return [];
+  return tools.filter((tool) => tool?.kind === kind);
+}
+
+/**
+ * The chrome a card carries under its material.
+ *
+ * The footer is the toolbar, so a card with no tools has no footer either:
+ * an empty strip with a border would still read like a toolbar that lost
+ * its buttons.
+ */
+export function cardChrome(node, tools = []) {
+  const list = cardTools(node, tools);
+  return { tools: list, hasFooter: list.length > 0 };
+}
+
+/**
  * The slots a node declares: what may be plugged into it, and what it hands
  * on.
  *

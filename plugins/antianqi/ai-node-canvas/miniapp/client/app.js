@@ -11,7 +11,7 @@
 // chips in the text.
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
-import { DATA_KINDS, hasTextBox, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, runModeOf, stripInputs } from './forms.mjs';
+import { cardChrome, DATA_KINDS, hasTextBox, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, runModeOf, stripInputs } from './forms.mjs';
 import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, runSpecFor, syncMentions } from './actions.mjs';
 
 (() => {
@@ -1469,9 +1469,14 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     bindNodeGestures(node, wrap);
 
     if (role === 'result') {
-      const footer = el('div', 'nxc-node__footer');
-      footer.appendChild(renderToolBar(node));
-      wrap.appendChild(footer);
+      // The footer is the toolbar. A card with no tools has no footer, so no
+      // empty strip with a border is left under the material.
+      const bar = renderToolBar(node);
+      if (bar) {
+        const footer = el('div', 'nxc-node__footer');
+        footer.appendChild(bar);
+        wrap.appendChild(footer);
+      }
     }
 
     if (node.type !== 'group') {
@@ -2361,15 +2366,19 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
 
   // ---------------------------------------------------------------- tool bar
 
-  function toolsFor(kind) {
-    return (state.palette?.tools ?? []).filter((tool) => tool.kind === kind);
+  // The tools a card offers: a result card offers the tools of what it
+  // holds, a generating card offers none (it has nothing to transform yet),
+  // and a card holding a video offers none either — the finished clip is a
+  // deliverable, not a working material.
+  //
+  // The tools and the footer come from one rule, so the buttons under a card
+  // and the strip that holds them can never disagree.
+  function cardChromeFor(node) {
+    return cardChrome(node, state.palette?.tools ?? []);
   }
 
-  // The tools a card offers: a result card offers the tools of what it
-  // holds, a generating card offers none (it has nothing to transform yet).
   function toolsForNode(node) {
-    if (roleOf(node) !== 'result') return [];
-    return toolsFor(kindOf(node));
+    return cardChromeFor(node).tools;
   }
 
   // Why a tool cannot run right now, or null when it can. The local media
@@ -2392,12 +2401,14 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   function renderToolBar(node) {
-    const tools = toolsForNode(node);
-    if (tools.length === 0) return document.createDocumentFragment();
+    const chrome = cardChromeFor(node);
+    // No tools, no toolbar — and no footer either, so an empty strip is not
+    // left under the material.
+    if (!chrome.hasFooter) return null;
     const bar = el('div', 'nxc-tools');
     bar.dataset.canvasNoZoom = 'true';
     const hasAsset = Boolean(node.metadata.output?.media?.length);
-    for (const tool of tools) {
+    for (const tool of chrome.tools) {
       const pending = tool.status !== 'ready';
       const needsSource = tool.needs && !hasAsset;
       const blocked = toolBlockedReason(tool, node);

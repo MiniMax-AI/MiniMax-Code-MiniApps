@@ -2923,6 +2923,37 @@ test('a stale tool reference is listed again and tried once more', async (t) => 
   assert.ok(connector.state.listCalls >= 2, 'the tool list was not read again');
 });
 
+test('a card holding a video shows no tools, a picture result shows its own', async () => {
+  // A finished clip is a deliverable, not a working material: a dozen buttons
+  // under it are noise. The video tools stay in the runtime, so the Agent can
+  // still call them.
+  const { cardChrome, cardTools } = await import('../miniapp/client/forms.mjs');
+  const tools = [
+    { key: 'cutout', kind: 'image' },
+    { key: 'gridSplit', kind: 'image' },
+    { key: 'videoSplit', kind: 'video' },
+    { key: 'frameExtract', kind: 'video' },
+  ];
+  const picture = { type: 'result', metadata: { kind: 'image', output: { media: [] } } };
+  const video = { type: 'result', metadata: { kind: 'video', output: { media: [] } } };
+  const generating = { type: 'image', metadata: { output: { media: [] } } };
+
+  // A picture result offers the picture tools, and only those.
+  assert.deepEqual(cardTools(picture, tools).map((tool) => tool.key), ['cutout', 'gridSplit']);
+  // A video result offers none.
+  assert.deepEqual(cardTools(video, tools), []);
+  // A generating card has nothing to transform yet.
+  assert.deepEqual(cardTools(generating, tools), []);
+
+  // The footer is the toolbar: a card with no tools has no footer either, so
+  // no empty strip is left under the material.
+  assert.equal(cardChrome(picture, tools).hasFooter, true);
+  assert.equal(cardChrome(video, tools).hasFooter, false);
+  assert.equal(cardChrome(generating, tools).hasFooter, false);
+  // The two answers come from the same rule, so they cannot disagree.
+  assert.deepEqual(cardChrome(video, tools).tools, cardTools(video, tools));
+});
+
 test('a call that waited for the machine says how long it waited when it fails', async (t) => {
   // The Host stops a call that runs over its window, and the message it
   // raises says nothing about the step. The runtime adds the step: which

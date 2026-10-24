@@ -482,6 +482,12 @@ When ffmpeg is missing, the tool buttons stay disabled and say what is
 missing, and the media status route reports the same. Everything else — the
 generating modes, the canvas, the text tools — works without it.
 
+A card holding a **video** shows no tool bar at all: the finished clip is a
+deliverable, not a working material, and a dozen buttons under it are noise.
+No empty strip is left under the clip either — no tools, no footer.
+The video tools stay in the runtime, so the Agent can still call them through
+the MCP server.
+
 ### The tools that draw in the browser
 
 Two of the tools work in the page rather than on this machine: **宫格切分**
