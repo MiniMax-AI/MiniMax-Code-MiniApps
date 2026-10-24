@@ -77,6 +77,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [仓库透视 / Repo X-Ray](plugins/yujiachen-y/repo-xray/) | Understand a codebase from its Git history: a code map you can drill into, hotspots and bug magnets, high-risk files, owners and knowledge loss, commit rhythm and firefighting, and the tech stack. Works with GitHub, GitLab, and local repositories; analysis runs on your machine | [yujiachen-y](https://github.com/yujiachen-y) |
 | [Disk Insight](plugins/zch0227/disk-insight/) | See where disk space went on macOS and Windows with a sunburst space map, find junk files sorted into three safety tiers, large and duplicate files, and how much code repositories and Git worktrees take; ask an Agent about any item, and permanently delete what you select after a confirmation that lists every item. Requires MiniMax Code 3.1.2 or later | [zch0227](https://github.com/zch0227) |
 | [A/时差保安 / Timezone Guard](plugins/liuchen19960902/timezone-guard/) | Check the other side's local time before you message: the target city's clock turns into a green "now is fine", yellow "keep it short", or red "go to sleep" verdict. Requires MiniMax Code 3.1.2 or later | [FineCat](https://github.com/LiuChen19960902) |
+| [AI Node Canvas](plugins/antianqi/ai-node-canvas/) | An infinite-canvas node graph for MiniMax Code: wire text, image, video and audio runs into a graph, let each result flow downstream, and run media tools on any result | [antianqi](https://github.com/antianqi) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>
