@@ -16,7 +16,7 @@ import { CREATABLE_TYPES, DATA_KINDS, kindLabel, kindOf, modeLabelOf, modeOf, mo
 import { batchCount, fitParamsToCaps, framePorts, assignPorts, directLines, planBatchPlacement, portKey, pushAside, takenPorts, upstreamNodes } from './tools.mjs';
 
 /** The actions an Agent may ask for. */
-export const ACTION_TYPES = ['add_node', 'connect', 'remove_node', 'update_node', 'run'];
+export const ACTION_TYPES = ['add_node', 'connect', 'remove_node', 'update_node', 'run', 'apply_template'];
 
 /** How many nodes one canvas may hold. */
 export const MAX_NODES = 300;
@@ -497,6 +497,125 @@ export function promptTemplateFor({
 }
 
 /**
+ * The template a workflow is made of.
+ *
+ * A template is a list of actions, and a node it makes is named by its
+ * order: `@1` is the first node, `@2` the second. The real ids are handed
+ * out when the template is applied, so the same template can be applied
+ * twice on one canvas.
+ */
+function templateRef(value, ids) {
+  const text = String(value ?? '');
+  const match = /^@(\d+)$/.exec(text);
+  if (!match) return text;
+  const index = Number(match[1]) - 1;
+  return ids[index] ?? text;
+}
+
+/**
+ * Put a template on a canvas.
+ *
+ * The template's steps are performed by the same rules that perform the
+ * Agent's actions, so a template lands on the board exactly as if the
+ * steps had been asked for one by one. The nodes are laid out from left to
+ * right in the order the template makes them, at the place the canvas is
+ * looking at.
+ */
+export function applyTemplate(canvas, template, context = {}) {
+  const doc = canvas ?? { nodes: [], connections: [] };
+  const actions = Array.isArray(template?.actions) ? template.actions : [];
+  if (!actions.length) return { canvas: doc, error: '这个模板是空的' };
+  const ctx = { idFor: fallbackId, ...context };
+  const view = doc.viewport ?? { x: 80, y: 60 };
+  const ids = [];
+  let next = doc;
+  for (const action of actions) {
+    const args = { ...(action.args ?? {}) };
+    if (action.type === 'add_node') {
+      const id = args.id ?? ctx.idFor('n');
+      ids.push(id);
+      args.id = id;
+      // The place is the beginning: the nodes of a template are a chain, so
+      // they are laid out in a row where the canvas is looking.
+      args.x = Number(args.x ?? view.x + ids.length * 380);
+      args.y = Number(args.y ?? view.y);
+      const added = applyAction(next, { type: 'add_node', args }, ctx);
+      if (added.error) return { canvas: next, error: added.error };
+      next = added.canvas;
+      // A node is made with its kind and its text; the rest of the settings
+      // are set on it afterwards, by the same rule that changes a node.
+      const settings = {};
+      for (const key of ['model', 'ratio', 'resolution', 'duration', 'count', 'voice', 'emotion']) {
+        if (args[key] !== undefined && args[key] !== null) settings[key] = args[key];
+      }
+      if (Object.keys(settings).length) {
+        const set = applyAction(next, { type: 'update_node', args: { id, ...settings } }, ctx);
+        if (set.error) return { canvas: next, error: set.error };
+        next = set.canvas;
+      }
+      continue;
+    }
+    // A line names the nodes by the order the template made them.
+    args.from = templateRef(args.from, ids);
+    args.to = templateRef(args.to, ids);
+    const applied = applyAction(next, { type: action.type, args }, ctx);
+    if (applied.error) return { canvas: next, error: applied.error };
+    next = applied.canvas;
+  }
+  return { canvas: next, nodes: ids };
+}
+
+/**
+ * The skeleton of a canvas: what a template of it would be.
+ *
+ * A result node is what a run left behind, and an input node's material is
+ * the file somebody picked — neither belongs to the steps. What is left is
+ * the steps themselves: the nodes that generate, the lines between them and
+ * the prompts and parameters they carry.
+ */
+export function templateFromCanvas(canvas, { id = '', title = '' } = {}) {
+  const nodes = canvas?.nodes ?? [];
+  const connections = canvas?.connections ?? [];
+  const kept = [];
+  const index = new Map();
+  for (const node of nodes) {
+    // A result is a result, and a node that holds something is a place, not
+    // a step.
+    if (node.type === 'result') continue;
+    if (node.type === 'input') continue;
+    index.set(node.id, kept.length + 1);
+    kept.push(node);
+  }
+  if (!kept.length) return { id, title, actions: [] };
+  const actions = [];
+  for (const node of kept) {
+    actions.push({
+      type: 'add_node',
+      args: {
+        type: node.type,
+        title: node.title,
+        prompt: node.metadata?.prompt ?? '',
+        mode: node.metadata?.mode ?? undefined,
+        kind: node.metadata?.kind ?? undefined,
+        model: node.metadata?.model ?? undefined,
+        ratio: node.metadata?.ratio ?? undefined,
+        resolution: node.metadata?.resolution ?? undefined,
+        duration: node.metadata?.duration ?? undefined,
+        count: node.metadata?.count ?? undefined,
+        templateId: node.metadata?.templateId ?? undefined,
+      },
+    });
+  }
+  for (const conn of connections) {
+    const from = index.get(conn.fromNodeId);
+    const to = index.get(conn.toNodeId);
+    if (!from || !to) continue;
+    actions.push({ type: 'connect', args: { from: `@${from}`, to: `@${to}` } });
+  }
+  return { id, title, actions };
+}
+
+/**
  * Apply one action to a canvas document.
  *
  * The document is not changed in place: the caller decides when to write it.
@@ -590,6 +709,17 @@ export function applyAction(canvas, action, context = {}) {
       canvas: { ...doc, nodes },
       node,
       info: { id, type, title: node.title, added: true },
+    };
+  }
+
+  if (action?.type === 'apply_template') {
+    // A template is a list of actions, so putting one on the canvas is
+    // putting those actions on the canvas — by the same rules.
+    const applied = applyTemplate(doc, action.args?.template, ctx);
+    if (applied.error) return { canvas: doc, error: applied.error };
+    return {
+      canvas: applied.canvas,
+      info: { nodes: applied.nodes, added: applied.nodes.length, id: action.args?.template?.id ?? '' },
     };
   }
 

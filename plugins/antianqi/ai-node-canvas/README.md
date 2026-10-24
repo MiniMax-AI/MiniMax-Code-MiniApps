@@ -255,11 +255,25 @@ this package.
   `canvas_remove_node` and `canvas_run`. They change what the user sees, so
   they are never read-only and they say so in their description.
 - **The package tells the Agent how to use it** — a Skill
-  (`skills/canvas/SKILL.md`) says what the canvas is for, when the **prompt
-  node** is the right step (the H3 templates carry the provider's own prompt
-  shape, and writing one by hand loses it), how the reference numbers work,
-  which chains are worth building, and what the models refuse. The Agent reads
-  it when the request is a generation chain rather than a single prompt.
+  (`skills/ai-node-canvas/SKILL.md`, written in Chinese) says what the canvas
+  is for, when the **prompt node** is the right step (the H3 templates carry
+  the provider's own prompt shape, and writing one by hand loses it), how the
+  reference numbers work, which chains are worth building, and what the
+  models refuse. The Agent reads it when the request is a generation chain
+  rather than a single prompt.
+- **A template is the skeleton of a chain** — the toolbar's 模板 button holds
+  ready-made workflows: a product picture and then an ad, an e-commerce hero
+  shot, a shot list and a short film, a batch of pictures, a clip read back
+  into a prompt, a picture redrawn. A template carries the **steps** only —
+  the nodes, the lines, the prompts and the parameters — and never what a
+  run left behind, so it works on another machine and does not come out as a
+  canvas full of broken pictures. Putting one on the canvas does **not** run
+  it: the money is spent when the user presses 生成.
+- **A chain of your own can be kept as a template** — "把当前画布存成模板"
+  strips the canvas down to its steps (results and material are left behind)
+  and keeps it on this machine, for any canvas. The Agent sees them too:
+  `canvas_list_templates` lists them, `canvas_apply_template` puts one on
+  the canvas.
 - **The prompt node carries the template** — `canvas_add_node` and
   `canvas_update_node` take a `templateId`, so a prompt node the Agent makes
   expands the sentence with the same template the page would pick, the H3

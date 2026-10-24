@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 
+import { templateFromCanvas } from '../client/actions.mjs';
 import { createActionQueue } from './action-queue.mjs';
 import { createAgentRunner } from './agent-runner.mjs';
 import { palette } from './capabilities.mjs';
@@ -17,6 +18,7 @@ import { decodeHostConnectorValue } from './host-connector-value.mjs';
 import { handleMcp, MCP_PATH } from './mcp.mjs';
 import { createMediaRunner } from './media-runner.mjs';
 import { createCanvasStore } from './store.mjs';
+import { readTemplates, saveTemplate } from './templates.mjs';
 
 // Keep in sync with `surface.path` in miniapp/miniapp.json.
 const SURFACE_PATH = '/canvas';
@@ -261,6 +263,49 @@ export async function start(context) {
         // decides what it granted. The inventory is read fresh here: right
         // after the runtime starts it is not complete yet.
         connectorTools: await runner.connectorTools({ fresh: true }),
+      });
+    }
+
+    if (path === '/api/templates' && req.method === 'GET') {
+      const list = await readTemplates(context.dataDir);
+      return sendJson(res, 200, {
+        templates: list.map((item) => ({
+          id: item.id,
+          title: item.title,
+          description: item.description ?? '',
+          own: Boolean(item.own),
+          steps: item.actions?.length ?? 0,
+          // The steps themselves: the page puts a template on the canvas
+          // with them.
+          actions: item.actions ?? [],
+        })),
+      });
+    }
+
+    // Keep a template of the user's own: the skeleton of the canvas that is
+    // open now. The steps are taken from the canvas; the results and the
+    // material somebody picked are left behind.
+    if (path === '/api/templates' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const id = String(body.id ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64);
+      if (!id) {
+        return sendJson(res, 400, { error: 'bad_id', message: '这个模板还没有名字' });
+      }
+      const canvas = body.canvas ?? (body.canvasId ? await store.get(body.canvasId) : null);
+      if (!canvas) {
+        return sendJson(res, 404, { error: 'not_found', message: '没有这张画布' });
+      }
+      const template = templateFromCanvas(canvas, { id, title: String(body.title ?? id) });
+      if (!template.actions.length) {
+        return sendJson(res, 400, {
+          error: 'empty',
+          message: '这张画布上没有能存成模板的步骤（结果和素材不算步骤）',
+        });
+      }
+      await saveTemplate(context.dataDir, template);
+      return sendJson(res, 200, {
+        ok: true,
+        template: { id, title: template.title, steps: template.actions.length },
       });
     }
 
@@ -575,6 +620,7 @@ export async function start(context) {
           queue,
           serverInfo: { name: 'ai-node-canvas', version: await pluginVersion() },
           json: sendJson,
+          templates: () => readTemplates(context.dataDir),
         });
       }
 

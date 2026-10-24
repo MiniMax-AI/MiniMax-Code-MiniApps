@@ -163,6 +163,32 @@ export const MCP_TOOLS = [
     annotations: { readOnlyHint: false, idempotentHint: true },
   },
   {
+    name: 'canvas_list_templates',
+    description:
+      '列出这个画布上可以用的工作流模板：一条链的骨架（节点、连线、提示词、参数），不含任何已经跑出来的结果。内置的模板有产品图到广告片、电商主图、分镜到短片、批量出图、视频读回提示词、图生图换个样子。想少从零搭一条链的时候，先读这里。',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'canvas_apply_template',
+    description:
+      '把一个工作流模板铺到画布上：按模板的骨架建出节点、连好线、填好提示词和参数。铺完不会自己跑 —— 要跑就再调 canvas_run，跑了才花钱。模板名用 canvas_list_templates 给的 id。不给画布 id 时用最近修改的那张。改的是画布上用户看得见的东西。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '画布 id；省略时用最近修改的一张' },
+        template: { type: 'string', description: '模板 id，来自 canvas_list_templates' },
+      },
+      required: ['template'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, idempotentHint: false },
+  },
+  {
     name: 'canvas_remove_node',
     description:
       '删掉一个节点，连在它上面的线也一起去掉。删掉的东西没法恢复。',
@@ -320,7 +346,7 @@ async function deliver(queue, canvas, action) {
 }
 
 /** Run one tool and return its result. */
-export async function callCanvasTool(name, args, { store, queue }) {
+export async function callCanvasTool(name, args, { store, queue, templates }) {
   if (name === 'canvas_list') {
     return { canvases: await store.list() };
   }
@@ -353,6 +379,27 @@ export async function callCanvasTool(name, args, { store, queue }) {
       args: { id: args.nodeId, ...definedArgs(args, ['title', 'prompt', 'model', 'ratio', 'resolution', 'duration', 'count', 'voice', 'emotion', 'mode', 'templateId', 'templateText']) },
     });
   }
+  if (name === 'canvas_list_templates') {
+    const list = templates ? await templates() : [];
+    return {
+      templates: list.map((item) => ({
+        id: item.id,
+        title: item.title,
+        description: item.description ?? '',
+        own: Boolean(item.own),
+      })),
+    };
+  }
+  if (name === 'canvas_apply_template') {
+    const list = templates ? await templates() : [];
+    const template = list.find((item) => item.id === args.template);
+    if (!template) throw Object.assign(new Error('没有这个模板'), { code: 'NOT_FOUND' });
+    const canvas = await resolveCanvas(store, args);
+    return deliver(queue, canvas, {
+      type: 'apply_template',
+      args: { template },
+    });
+  }
   if (name === 'canvas_remove_node') {
     const canvas = await resolveCanvas(store, args);
     return deliver(queue, canvas, {
@@ -376,7 +423,7 @@ export async function callCanvasTool(name, args, { store, queue }) {
  * The transport is stateless Streamable HTTP with JSON answers: a request
  * carries everything it needs and the answer carries everything back.
  */
-export async function handleMcp(req, res, { store, queue, serverInfo, json }) {
+export async function handleMcp(req, res, { store, queue, serverInfo, json, templates }) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return json(res, 405, { error: 'Use POST' });
@@ -425,7 +472,7 @@ export async function handleMcp(req, res, { store, queue, serverInfo, json }) {
         const { name, arguments: args = {} } = message.params || {};
         if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('工具参数无效');
         if (!MCP_TOOLS.some((tool) => tool.name === name)) throw Error('未知工具');
-        const result = await callCanvasTool(name, args, { store, queue });
+        const result = await callCanvasTool(name, args, { store, queue, templates });
         return reply({ content: [{ type: 'text', text: JSON.stringify(result) }] });
       } catch (error) {
         const text = error?.message || '这个操作没有成功';

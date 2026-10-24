@@ -3503,6 +3503,116 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   /**
+   * The workflows that are ready to use.
+   *
+   * A template is a skeleton: the steps and their prompts, without what a
+   * run left behind. Putting one on the canvas does not run it — the user
+   * decides when the first node may spend anything.
+   */
+  async function openTemplatesPanel(anchorRect) {
+    const panel = dom.floatingPanel;
+    state.panel = { type: 'templates', nodeId: null };
+    panel.textContent = '';
+    panel.dataset.canvasNoZoom = 'true';
+    panel.appendChild(el('div', 'nxc-panel__title', '模板'));
+    const body = el('div', 'nxc-panel__body', '加载中…');
+    panel.appendChild(body);
+    panel.hidden = false;
+    const rect = panel.getBoundingClientRect();
+    const place = placeOverlay(
+      { left: anchorRect.left, top: anchorRect.bottom + 6 },
+      rect,
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    panel.style.left = `${place.left}px`;
+    panel.style.top = `${place.top}px`;
+
+    let templates = [];
+    try {
+      const response = await api('/api/templates');
+      templates = Array.isArray(response.templates) ? response.templates : [];
+    } catch (error) {
+      body.textContent = `加载失败：${error?.message ?? error}`;
+      return;
+    }
+    body.textContent = '';
+    if (!templates.length) {
+      body.appendChild(el('div', 'nxc-panel__desc', '还没有模板。'));
+      return;
+    }
+    for (const template of templates) {
+      const item = el('button', 'nxc-panel__option');
+      item.type = 'button';
+      item.appendChild(el('span', null, template.title));
+      item.appendChild(el('small', null, template.description || `${template.steps ?? 0} 步`));
+      item.addEventListener('click', () => {
+        applyTemplateOnCanvas(template);
+      });
+      body.appendChild(item);
+    }
+    // The canvas that is open now can become a template of its own: the
+    // steps are taken from it, the results and the material are left behind.
+    const save = el('button', 'nxc-panel__option');
+    save.type = 'button';
+    save.appendChild(el('span', null, '把当前画布存成模板'));
+    save.appendChild(el('small', null, '只留步骤：生成节点、连线和提示词；结果和素材不留'));
+    save.addEventListener('click', () => {
+      void saveCurrentCanvasAsTemplate();
+    });
+    body.appendChild(save);
+  }
+
+  /**
+   * Put a template on the canvas.
+   *
+   * The page is the writer of the canvas, so the template is put on by the
+   * same rules that put on an action from the Agent. Nothing is run: the
+   * first node waits for the user.
+   */
+  function applyTemplateOnCanvas(template) {
+    const applied = applyAction(
+      state.canvas,
+      { type: 'apply_template', args: { template } },
+      actionContext(),
+    );
+    if (applied.error) {
+      showBanner(`模板没有铺上：${applied.error}`, 'error');
+      return;
+    }
+    state.canvas.nodes = applied.canvas.nodes;
+    state.canvas.connections = applied.canvas.connections;
+    state.selection = [];
+    markDirty();
+    render();
+    showBanner(`已铺上「${template.title}」，点节点上的「生成」开始`);
+  }
+
+  /**
+   * Keep the canvas that is open now as a template of the user's own.
+   *
+   * The name comes from the canvas, so no name has to be typed: the page
+   * cannot ask for one, because a native dialog would block it.
+   */
+  async function saveCurrentCanvasAsTemplate() {
+    if (!state.canvas.id) {
+      showBanner('先有一张画布，才能存成模板', 'error');
+      return;
+    }
+    const base = String(state.canvas.title || '画布').replace(/[\\/:*?"<>|]/g, '').trim() || '画布';
+    const id = `own-${base}-${Date.now().toString(36)}`;
+    try {
+      const response = await api('/api/templates', {
+        method: 'POST',
+        body: { id, title: `${base} 的模板`, canvasId: state.canvas.id },
+      });
+      showBanner(`已存成模板「${response?.template?.title ?? base}」`);
+      await openTemplatesPanel(dom.templatesButton.getBoundingClientRect());
+    } catch (error) {
+      showBanner(`没存上：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /**
    * The local library.
    *
    * Everything the runtime produced and everything the user picked from their
@@ -5242,6 +5352,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       await loadPalette();
       openPanel('caps', dom.capsButton.getBoundingClientRect());
     });
+    dom.templatesButton.addEventListener('click', () => {
+      void openTemplatesPanel(dom.templatesButton.getBoundingClientRect());
+    });
     dom.toolsButton.addEventListener('click', () => {
       openToolMenu(dom.toolsButton.getBoundingClientRect());
     });
@@ -5305,6 +5418,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.undoButton = $('btn-undo');
     dom.redoButton = $('btn-redo');
     dom.capsButton = $('btn-caps');
+    dom.templatesButton = $('btn-templates');
     dom.toolsButton = $('btn-tools');
     dom.libraryButton = $('btn-library');
     dom.minimapButton = $('btn-minimap');

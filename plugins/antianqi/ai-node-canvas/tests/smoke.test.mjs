@@ -4392,8 +4392,10 @@ test('the hosted MCP server speaks the protocol the Host expects', async (t) => 
   const list = await mcpCall(h.base, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
   assert.deepEqual(list.body.result.tools.map((tool) => tool.name).sort(), [
     'canvas_add_node',
+    'canvas_apply_template',
     'canvas_connect',
     'canvas_list',
+    'canvas_list_templates',
     'canvas_read',
     'canvas_remove_node',
     'canvas_run',
@@ -4404,6 +4406,7 @@ test('the hosted MCP server speaks the protocol the Host expects', async (t) => 
   const byName = new Map(list.body.result.tools.map((tool) => [tool.name, tool]));
   assert.equal(byName.get('canvas_list').annotations.readOnlyHint, true);
   assert.equal(byName.get('canvas_read').annotations.readOnlyHint, true);
+  assert.equal(byName.get('canvas_list_templates').annotations.readOnlyHint, true);
   for (const name of [
     'canvas_add_node',
     'canvas_connect',
@@ -6572,6 +6575,154 @@ test('the Agent can give a prompt node the H3 template', async (t) => {
     changed.body.canvas.nodes[0].metadata.templateText,
     PROMPT_TEMPLATES.find((item) => item.id === 'h3-l2va').text,
   );
+});
+
+test('a template is a skeleton, and putting it on the canvas does not run it', async () => {
+  // A template is the steps of a chain: the nodes, the lines between them
+  // and the prompts they carry — and nothing of what a run leaves behind.
+  const { applyTemplate, templateFromCanvas } = await import('../miniapp/client/actions.mjs');
+  const { BUILTIN_TEMPLATES } = await import('../miniapp/node/templates.mjs');
+
+  // The built-in template that makes a product picture and then an ad.
+  const template = BUILTIN_TEMPLATES.find((item) => item.id === 'product-to-ad');
+  assert.ok(template, 'the product-to-ad template is missing');
+
+  const applied = applyTemplate({ nodes: [], connections: [] }, template, { idFor: (p) => `${p}_${Math.random().toString(36).slice(2, 8)}` });  assert.equal(applied.error, undefined);
+  // Three nodes: the text, the picture and the video — and two lines.
+  assert.equal(applied.canvas.nodes.length, 3);
+  assert.equal(applied.canvas.connections.length, 2);
+  assert.deepEqual(applied.canvas.nodes.map((node) => node.type), ['text', 'image', 'video']);
+  // The lines point at the nodes the template made, in the order it made
+  // them: the text feeds the picture, the picture feeds the video.
+  assert.equal(applied.canvas.connections[0].fromNodeId, applied.canvas.nodes[0].id);
+  assert.equal(applied.canvas.connections[0].toNodeId, applied.canvas.nodes[1].id);
+  assert.equal(applied.canvas.connections[1].fromNodeId, applied.canvas.nodes[1].id);
+  assert.equal(applied.canvas.connections[1].toNodeId, applied.canvas.nodes[2].id);
+  // The nodes carry the template's own settings.
+  assert.equal(applied.canvas.nodes[1].metadata.ratio, '16:9');
+  assert.equal(applied.canvas.nodes[2].metadata.mode, 'imagekey2video');
+  // And nothing is run: a template puts the steps on the canvas, the user
+  // decides when the first node may spend anything.
+  assert.equal(applied.canvas.nodes.every((node) => node.metadata.output?.status === 'idle'), true);
+
+  // The skeleton of a canvas: the steps, without the results and without
+  // the material somebody picked.
+  const skeleton = templateFromCanvas(
+    {
+      nodes: [
+        { id: 'n_t', type: 'text', title: '文案', metadata: { prompt: '一只猫' } },
+        { id: 'n_i', type: 'input', title: '原图', metadata: { kind: 'image' } },
+        { id: 'n_g', type: 'image', title: '主图', metadata: { prompt: '白底', mode: 'text2image', ratio: '1:1' } },
+        { id: 'n_r', type: 'result', title: '主图 · 结果', metadata: { kind: 'image' } },
+      ],
+      connections: [
+        { id: 'c1', fromNodeId: 'n_t', toNodeId: 'n_g', kind: 'text' },
+        { id: 'c2', fromNodeId: 'n_i', toNodeId: 'n_g', kind: 'image' },
+        { id: 'c3', fromNodeId: 'n_g', toNodeId: 'n_r', kind: 'image' },
+      ],
+    },
+    { id: 'own-1', title: '我的模板' },
+  );
+  // The result and the input are not steps: what is left is the text node
+  // and the picture node, and the line between them.
+  assert.equal(skeleton.actions.filter((action) => action.type === 'add_node').length, 2);
+  assert.equal(skeleton.actions.filter((action) => action.type === 'connect').length, 1);
+  assert.equal(skeleton.actions[0].args.title, '文案');
+  assert.equal(skeleton.actions[1].args.title, '主图');
+  // The line is written by the order of the steps, so the skeleton can be
+  // applied without knowing the ids.
+  assert.deepEqual(skeleton.actions[2].args, { from: '@1', to: '@2' });
+  // And the skeleton can be put on a canvas: it is a template like any.
+  const back = applyTemplate({ nodes: [], connections: [] }, skeleton, { idFor: (p) => `${p}_${Math.random().toString(36).slice(2, 8)}` });
+  assert.equal(back.error, undefined);
+  assert.equal(back.canvas.nodes.length, 2);
+  assert.equal(back.canvas.connections.length, 1);
+});
+
+test('the Agent can list the templates and put one on the canvas', async (t) => {
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const created = await getJson(h.base, '/api/canvases', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: '模板' }),
+  });
+  const canvas = created.body.canvas;
+
+  // The Agent can see what there is.
+  const listed = toolResult(await mcpCall(h.base, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'canvas_list_templates', arguments: {} },
+  }));
+  assert.ok(listed.templates.length >= 5, 'the built-in templates are not listed');
+  assert.ok(listed.templates.some((item) => item.id === 'product-to-ad'));
+
+  // And it can put one on the canvas.
+  const applied = toolResult(await mcpCall(h.base, {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: { name: 'canvas_apply_template', arguments: { id: canvas.id, template: 'ecommerce-main' } },
+  }));
+  assert.ok(applied.id, 'the template was not applied');
+  const doc = await getJson(h.base, `/api/canvases/${canvas.id}`);
+  assert.equal(doc.body.canvas.nodes.length, 2);
+  assert.equal(doc.body.canvas.connections.length, 1);
+  // And nothing is run: a template puts the steps there, the Agent runs
+  // them when it wants to spend something.
+  assert.equal(doc.body.canvas.nodes.every((node) => node.metadata.output?.status === 'idle'), true);
+
+  // A template that is not there is refused, not silently ignored.
+  const missing = await mcpCall(h.base, {
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: { name: 'canvas_apply_template', arguments: { id: canvas.id, template: 'nope' } },
+  });
+  assert.equal(missing.body.result.isError, true);
+});
+
+test('a canvas can be kept as a template of its own', async (t) => {
+  // The steps of a canvas can be kept, so the next one starts from a
+  // chain instead of from nothing.
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const created = await getJson(h.base, '/api/canvases', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: '我的链' }),
+  });
+  const canvas = created.body.canvas;
+  await getJson(h.base, `/api/canvases/${canvas.id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      ...canvas,
+      nodes: [
+        { id: 'n_t', type: 'text', title: '文案', position: { x: 0, y: 0 }, width: 320, height: 300, metadata: { prompt: '一只猫' } },
+        { id: 'n_g', type: 'image', title: '主图', position: { x: 400, y: 0 }, width: 320, height: 420, metadata: { prompt: '白底', mode: 'text2image' } },
+        { id: 'n_r', type: 'result', title: '主图 · 结果', position: { x: 800, y: 0 }, width: 320, height: 420, metadata: { kind: 'image' } },
+      ],
+      connections: [{ id: 'c1', fromNodeId: 'n_t', toNodeId: 'n_g', kind: 'text' }],
+    }),
+  });
+
+  const saved = await getJson(h.base, '/api/templates', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'own-test', title: '我的链 的模板', canvasId: canvas.id }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.template.steps, 3);
+
+  // It is there afterwards, and the Agent can see it too.
+  const listed = await getJson(h.base, '/api/templates');
+  const own = listed.body.templates.find((item) => item.id === 'own-test');
+  assert.ok(own, 'the template of the user was not kept');
+  assert.equal(own.own, true);
+  assert.equal(own.title, '我的链 的模板');
 });
 
 test('the Agent can ask for a run, and the result lands on the canvas', async (t) => {
