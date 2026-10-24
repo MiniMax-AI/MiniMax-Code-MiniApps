@@ -95,9 +95,7 @@ anything, and that the `demo` executor calls no model. It also tells the Agent n
 working directory on the user's behalf and not to approve a run without the user's say-so.
 
 The Skill is what the Host loads when it registers this plugin; the console process itself never
-reads it. It is also what makes the package importable through **"Import from a Git repository"**:
-the Host accepts a Git import only when the package declares at least one Skill, MCP server, or
-hook, and a Mini App on its own does not count.
+reads it.
 
 ## Tested environment
 
@@ -136,7 +134,8 @@ Written — always under `context.dataDir`, never elsewhere:
 
 - `workspace.json` — the working directory the embedded engine is bound to.
 - `hidden-runs.json` — the list of runs hidden locally. Hiding is not deletion; the run record
-  stays in the engine's database and can be restored.
+  stays in the bundled engine's own database — `workflows.sqlite` under `context.dataDir/engine/` —
+  and can be restored.
 - `engine/` — `address.json`, `endpoint.json`, `service.log`, and `workflows.sqlite`, written by the
   embedded engine.
 
@@ -202,8 +201,11 @@ The tests use Node's built-in test runner and start an isolated console instance
 directory, so they never touch a real project:
 
 ```bash
-node --test "tests/*.test.mjs"
+npm test
 ```
+
+`npm test` runs `node --test "tests/*.test.mjs"` in this directory; the same command works
+without npm.
 
 `tests/workspace-resolution.test.mjs` covers working-directory resolution: the Host's temporary
 deployment directory and other implausible paths are rejected, the home directory is never used as
