@@ -465,6 +465,38 @@ export function applyModel(canvas, node, modelKey, context = {}) {
 }
 
 /**
+ * The template a prompt node expands its sentence with.
+ *
+ * The page and the Agent make a prompt node the same way: it names one of the
+ * templates the palette offers, and the text of that template is what the
+ * expansion follows. A node that names none takes the first one, so it is
+ * useful before anything is typed — and a node the Agent made is as useful as
+ * one the user made.
+ *
+ * The text of the template follows the name, unless a text of its own comes
+ * with it.
+ */
+export function promptTemplateFor({
+  mode = '',
+  templateId = '',
+  templateText,
+  templates = [],
+} = {}) {
+  const list = Array.isArray(templates) ? templates : [];
+  const wanted = String(templateId ?? '').trim();
+  const own = templateText === undefined ? null : String(templateText);
+  if (mode !== 'prompt') {
+    return { templateId: wanted || 'custom', templateText: own ?? '' };
+  }
+  const found = list.find((item) => item.id === wanted);
+  if (found) return { templateId: found.id, templateText: own ?? String(found.text ?? '') };
+  if (wanted) return { templateId: wanted, templateText: own ?? '' };
+  const first = list[0];
+  if (first) return { templateId: first.id, templateText: own ?? String(first.text ?? '') };
+  return { templateId: 'custom', templateText: own ?? '' };
+}
+
+/**
  * Apply one action to a canvas document.
  *
  * The document is not changed in place: the caller decides when to write it.
@@ -505,6 +537,16 @@ export function applyAction(canvas, action, context = {}) {
     }
     const size = ctx.sizes[type] ?? { width: 300, height: 300, title: '节点' };
     const prompt = String(args.prompt ?? '').slice(0, MAX_PROMPT);
+    const mode = args.mode ? String(args.mode) : null;
+    // The template the prompt node expands its sentence with. The Agent names
+    // the same template the page would pick, so the two ways of making a
+    // prompt node end up the same.
+    const template = promptTemplateFor({
+      mode: mode ?? '',
+      templateId: args.templateId,
+      templateText: args.templateText,
+      templates: ctx.promptTemplates,
+    });
     const node = {
       id,
       type,
@@ -516,7 +558,7 @@ export function applyAction(canvas, action, context = {}) {
       width: Math.round(Number(args.width ?? size.width ?? 300)),
       height: Math.round(Number(args.height ?? size.height ?? 300)),
       metadata: {
-        templateId: 'custom',
+        templateId: template.templateId,
         templateVars: {},
         segments: prompt ? [{ type: 'text', text: prompt }] : [],
         prompt,
@@ -538,8 +580,8 @@ export function applyAction(canvas, action, context = {}) {
           : kindOf({ type }),
         // The way the node makes its data: a text node writes text or expands
         // a sentence into a prompt, an audio node speaks or makes music.
-        mode: args.mode ? String(args.mode) : null,
-        templateText: '',
+        mode,
+        templateText: template.templateText,
         output: { ...IDLE_OUTPUT },
       },
     };
@@ -672,6 +714,18 @@ export function applyAction(canvas, action, context = {}) {
     }
     if (args.voice !== undefined) next.metadata.voice = args.voice ? String(args.voice) : null;
     if (args.emotion !== undefined) next.metadata.emotion = args.emotion ? String(args.emotion) : null;
+    if (args.templateId !== undefined || args.templateText !== undefined) {
+      // The template the prompt node expands its sentence with. Naming
+      // another one brings that one's text with it.
+      const template = promptTemplateFor({
+        mode: next.metadata.mode ?? '',
+        templateId: args.templateId ?? next.metadata.templateId,
+        templateText: args.templateText,
+        templates: ctx.promptTemplates,
+      });
+      next.metadata.templateId = template.templateId;
+      next.metadata.templateText = template.templateText;
+    }
     let dropped = [];
     let modeChanged = null;
     if (args.mode !== undefined) {

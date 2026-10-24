@@ -15,7 +15,7 @@
 // what the Agent reads is what the user sees on the card.
 import { batchCount, effectiveOption, inputSlotState, kindOf, modeOf, modeRecordOf, roleOf, slotsOf } from '../client/tools.mjs';
 import { stripInputs } from '../client/forms.mjs';
-import { limitsForNodeType } from './capabilities.mjs';
+import { limitsForNodeType, PROMPT_TEMPLATES } from './capabilities.mjs';
 
 // Keep in sync with `mcpEndpoints` in miniapp/miniapp.json.
 export const MCP_PATH = '/mcp/canvas';
@@ -24,6 +24,13 @@ const PROTOCOL_VERSION = '2025-03-26';
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_BATCH = 20;
 const PROMPT_LIMIT = 240;
+
+// The templates the prompt node can expand a sentence with, named so the
+// Agent can pick one without reading the whole table.
+const PROMPT_TEMPLATE_IDS = PROMPT_TEMPLATES.map((item) => item.id);
+const PROMPT_TEMPLATE_HINT = PROMPT_TEMPLATES
+  .map((item) => `${item.id}（${item.label}）`)
+  .join('、');
 
 export const MCP_TOOLS = [
   {
@@ -53,7 +60,10 @@ export const MCP_TOOLS = [
   {
     name: 'canvas_add_node',
     description:
-      '在画布上加一个节点。type 取 input（输入）、text（生成·文本）、image（生成·图片）、video（生成·视频）、audio（生成·音频）、group（分组）。可以写标题、提示词和位置；input 节点还可以用 kind 指定它装的是 text / image / video / audio，text 节点可以用 mode 指定 prompt（提示词增强），audio 节点可以用 mode 指定 music（文生音乐）。不给 id 时加到最后修改的那张画布。改的是画布上用户看得见的东西。',
+      '在画布上加一个节点。type 取 input（输入）、text（生成·文本）、image（生成·图片）、video（生成·视频）、audio（生成·音频）、group（分组）。可以写标题、提示词和位置；input 节点还可以用 kind 指定它装的是 text / image / video / audio，text 节点可以用 mode 指定 prompt（提示词增强），audio 节点可以用 mode 指定 music（文生音乐）。不给 id 时加到最后修改的那张画布。改的是画布上用户看得见的东西。'
+      + ` 用 mode=prompt 建的提示词增强节点，可以用 templateId 指定扩写要遵守的模板：${PROMPT_TEMPLATE_HINT}；`
+      + '写 H3 视频的提示词就用 h3- 开头的模板，手写一遍那个结构很容易漏掉分段、镜头时间码和声音层。'
+      + ` 可选：${PROMPT_TEMPLATE_IDS.join('、')}。`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -77,6 +87,15 @@ export const MCP_TOOLS = [
         },
         x: { type: 'number', description: '画布上的横坐标' },
         y: { type: 'number', description: '画布上的纵坐标' },
+        templateId: {
+          type: 'string',
+          enum: PROMPT_TEMPLATE_IDS,
+          description: `只有 mode=prompt 的节点用得上：扩写要遵守的模板。${PROMPT_TEMPLATE_HINT}`,
+        },
+        templateText: {
+          type: 'string',
+          description: '只有 mode=prompt 的节点用得上：自己写的模板要求；不给就按 templateId 那个模板的文本',
+        },
       },
       required: ['type'],
       additionalProperties: false,
@@ -107,7 +126,8 @@ export const MCP_TOOLS = [
   {
     name: 'canvas_update_node',
     description:
-      '改一个节点：标题、提示词、模型、画幅、分辨率、时长、数量、音色、情绪、模式。不给的字段就不动。改模式时，下游端口跟着变，这个模式接不住的连线会被去掉。改的是画布上用户看得见的东西。',
+      '改一个节点：标题、提示词、模型、画幅、分辨率、时长、数量、音色、情绪、模式、扩写模板。不给的字段就不动。改模式时，下游端口跟着变，这个模式接不住的连线会被去掉。改的是画布上用户看得见的东西。'
+      + ` 提示词增强节点还可以用 templateId 换扩写模板：${PROMPT_TEMPLATE_HINT}。`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -126,6 +146,15 @@ export const MCP_TOOLS = [
           type: 'string',
           enum: ['generate', 'prompt', 'describe', 'video2text', 'speech', 'music', 'text2image', 'image2image', 'text2video', 'image2video', 'image2videoaudio', 'imagekey2video', 'imagefl2video', 'imageend2video', 'video2video', 'video2videoaudio'],
           description: '节点做什么：模式决定它接什么（左侧的端点）。text 节点可用 prompt（提示词增强）、describe（图生文）、video2text（视频生文，反推提示词），image 节点可用 image2image（图生图），video 节点可用 text2video（文生视频）、imagekey2video（图生视频·首帧）、imagefl2video（图生视频·首尾帧）、imageend2video（图生视频·末帧）、image2video（图生视频·参考）、image2videoaudio（图生视频·参考+音频）、video2video（视频续写）、video2videoaudio（视频续写+音频），audio 节点可用 music（文生音乐）',
+        },
+        templateId: {
+          type: 'string',
+          enum: PROMPT_TEMPLATE_IDS,
+          description: `只有提示词增强节点用得上：换掉扩写要遵守的模板。${PROMPT_TEMPLATE_HINT}`,
+        },
+        templateText: {
+          type: 'string',
+          description: '只有提示词增强节点用得上：自己写的模板要求；不给就按 templateId 那个模板的文本',
         },
       },
       required: ['nodeId'],
@@ -307,7 +336,7 @@ export async function callCanvasTool(name, args, { store, queue }) {
     const canvas = await resolveCanvas(store, args);
     return deliver(queue, canvas, {
       type: 'add_node',
-      args: definedArgs(args, ['type', 'title', 'prompt', 'kind', 'mode', 'x', 'y']),
+      args: definedArgs(args, ['type', 'title', 'prompt', 'kind', 'mode', 'x', 'y', 'templateId', 'templateText']),
     });
   }
   if (name === 'canvas_connect') {
@@ -321,7 +350,7 @@ export async function callCanvasTool(name, args, { store, queue }) {
     const canvas = await resolveCanvas(store, args);
     return deliver(queue, canvas, {
       type: 'update_node',
-      args: { id: args.nodeId, ...definedArgs(args, ['title', 'prompt', 'model', 'ratio', 'resolution', 'duration', 'count', 'voice', 'emotion', 'mode']) },
+      args: { id: args.nodeId, ...definedArgs(args, ['title', 'prompt', 'model', 'ratio', 'resolution', 'duration', 'count', 'voice', 'emotion', 'mode', 'templateId', 'templateText']) },
     });
   }
   if (name === 'canvas_remove_node') {

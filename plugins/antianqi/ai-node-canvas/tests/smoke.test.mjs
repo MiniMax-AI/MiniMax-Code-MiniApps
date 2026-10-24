@@ -3587,8 +3587,69 @@ test('the last frame request sends the picture as the ending, not as the first f
   assert.equal(args.last_frame_image, undefined);
 });
 
-test('an audio line moves the node to the mode that carries it', async () => {
-  // The one mode that takes an audio is the one with the audio port, so a
+test('a prompt node the Agent makes carries the template it was given', async () => {
+  // The shape of the enhanced prompt is a template, and the H3 ones are the
+  // provider's own. A node the Agent makes has to be able to name one,
+  // otherwise it expands the sentence into whatever the Agent felt like
+  // writing — and the whole point of the template is lost.
+  const { applyAction, promptTemplateFor } = await import('../miniapp/client/actions.mjs');
+  const { PROMPT_TEMPLATES } = await import('../miniapp/node/capabilities.mjs');
+  const templates = PROMPT_TEMPLATES;
+
+  // A prompt node without a name takes the first template, so it is useful
+  // before anything is typed.
+  const first = promptTemplateFor({ mode: 'prompt', templates });
+  assert.equal(first.templateId, templates[0].id);
+  assert.equal(first.templateText, templates[0].text);
+
+  // A named template brings its own text.
+  const named = promptTemplateFor({ mode: 'prompt', templateId: 'h3-i2va', templates });
+  assert.equal(named.templateId, 'h3-i2va');
+  assert.equal(named.templateText, templates.find((item) => item.id === 'h3-i2va').text);
+
+  // A template of its own wins over the text of the named one.
+  const own = promptTemplateFor({
+    mode: 'prompt',
+    templateId: 'h3-i2va',
+    templateText: '只写三段',
+    templates,
+  });
+  assert.equal(own.templateText, '只写三段');
+
+  // A node that is not a prompt node carries no template.
+  const other = promptTemplateFor({ mode: 'generate', templates });
+  assert.equal(other.templateId, 'custom');
+  assert.equal(other.templateText, '');
+
+  // The Agent adds a prompt node with a template: the node carries it.
+  const added = applyAction(
+    { nodes: [], connections: [] },
+    { type: 'add_node', args: { type: 'text', mode: 'prompt', templateId: 'h3-fl2va' } },
+    { promptTemplates: templates },
+  );
+  assert.equal(added.error, undefined);
+  assert.equal(added.node.metadata.templateId, 'h3-fl2va');
+  assert.equal(
+    added.node.metadata.templateText,
+    templates.find((item) => item.id === 'h3-fl2va').text,
+  );
+
+  // And it can change the template of a node that is already there: the text
+  // of the template follows the name.
+  const changed = applyAction(
+    { nodes: [added.node], connections: [] },
+    { type: 'update_node', args: { id: added.node.id, templateId: 'h3-l2va' } },
+    { promptTemplates: templates },
+  );
+  assert.equal(changed.error, undefined);
+  assert.equal(changed.canvas.nodes[0].metadata.templateId, 'h3-l2va');
+  assert.equal(
+    changed.canvas.nodes[0].metadata.templateText,
+    templates.find((item) => item.id === 'h3-l2va').text,
+  );
+});
+
+test('an audio line moves the node to the mode that carries it', async () => {  // The one mode that takes an audio is the one with the audio port, so a
   // line that carries an audio moves the node there — and the lines it
   // already had go with it.
   const { applyAction } = await import('../miniapp/client/actions.mjs');
@@ -6461,6 +6522,58 @@ test('the writing tools change the canvas the user sees', async (t) => {
   assert.equal(refused.body.result.isError, true);
 });
 
+test('the Agent can give a prompt node the H3 template', async (t) => {
+  // The shape of an H3 prompt is the provider's own, and it is long: the
+  // segments, the shot notation and the sound layers. Hand-writing it loses
+  // them, so the Agent asks for the template by name and the node carries it.
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const { PROMPT_TEMPLATES } = await import('../miniapp/node/capabilities.mjs');
+  const created = await getJson(h.base, '/api/canvases', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: '模板' }),
+  });
+  const canvas = created.body.canvas;
+
+  const added = toolResult(await mcpCall(h.base, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: {
+      name: 'canvas_add_node',
+      arguments: { id: canvas.id, type: 'text', mode: 'prompt', templateId: 'h3-i2va' },
+    },
+  }));
+  assert.ok(added.id);
+
+  // The node that landed on the canvas carries that template's text.
+  const doc = await getJson(h.base, `/api/canvases/${canvas.id}`);
+  const node = doc.body.canvas.nodes[0];
+  assert.equal(node.metadata.templateId, 'h3-i2va');
+  assert.equal(
+    node.metadata.templateText,
+    PROMPT_TEMPLATES.find((item) => item.id === 'h3-i2va').text,
+  );
+
+  // And the template can be changed on a node that is already there.
+  await mcpCall(h.base, {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'canvas_update_node',
+      arguments: { id: canvas.id, nodeId: added.id, templateId: 'h3-l2va' },
+    },
+  });
+  const changed = await getJson(h.base, `/api/canvases/${canvas.id}`);
+  assert.equal(changed.body.canvas.nodes[0].metadata.templateId, 'h3-l2va');
+  assert.equal(
+    changed.body.canvas.nodes[0].metadata.templateText,
+    PROMPT_TEMPLATES.find((item) => item.id === 'h3-l2va').text,
+  );
+});
+
 test('the Agent can ask for a run, and the result lands on the canvas', async (t) => {
   const h = await createHarness();
   t.after(() => h.cleanup());
@@ -6950,4 +7063,42 @@ test('the focus never scrolls the canvas, and the mode switch keeps it in the no
   // next Tab does not wander to another node.
   assert.match(source, /field\.dataset\.field = 'mode';/);
   assert.match(source, /focusModeControl\(node\);/);
+});
+
+test('the package tells the Agent how to use the canvas', async () => {
+  // A Skill is how a plugin tells the Agent what it can do and when to reach
+  // for what. It is named in the manifest and read from the package, so a
+  // rename that leaves the manifest pointing at nothing has to fail here.
+  const { readFile, stat } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { join, dirname } = await import('node:path');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const manifest = JSON.parse(await readFile(join(root, '.minimax-plugin', 'plugin.json'), 'utf8'));
+  assert.ok(Array.isArray(manifest.skills) && manifest.skills.length, 'the package declares no skill');
+  for (const relative of manifest.skills) {
+    const file = join(root, ...relative.split('/'));
+    const info = await stat(file);
+    assert.ok(info.isFile(), `${relative} is not a file`);
+    const text = await readFile(file, 'utf8');
+    // The frontmatter is what the Agent reads first: without a name and a
+    // description the skill is never matched against a request.
+    assert.match(text, /^---\r?\n/, `${relative} has no frontmatter`);
+    assert.match(text, /^name:\s*\S+/m, `${relative} has no name`);
+    assert.match(text, /^description:\s*\S+/m, `${relative} has no description`);
+    // A description that carries a colon has to be quoted: an unquoted
+    // scalar with ": " in it is not a string, and the Host reads the
+    // frontmatter as YAML — the whole package is refused when it is not.
+    const lines = text.split(/\r?\n/);
+    const end = lines.indexOf('---', 1);
+    const frontmatter = lines.slice(1, end);
+    for (const line of frontmatter) {
+      const value = line.match(/^description:\s*(.*)$/)?.[1]?.trim() ?? '';
+      if (!value) continue;
+      const quoted = /^["'].*["']$/.test(value);
+      assert.ok(
+        quoted || !value.includes(': '),
+        `${relative}: the description has a colon in it and is not quoted`,
+      );
+    }
+  }
 });

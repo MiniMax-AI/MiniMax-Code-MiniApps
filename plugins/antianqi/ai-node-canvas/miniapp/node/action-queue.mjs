@@ -219,6 +219,9 @@ export function createActionQueue({ store, runner, logger = null, signal = null,
       ),
       defaultModelKey: catalog.defaultKey ?? null,
       idFor,
+      // The templates the prompt node offers, so a prompt node the runtime
+      // makes is the same one the page would make.
+      promptTemplates: palette().promptTemplates ?? [],
       // What the model this node selected can take. The rules about the modes
       // and the ports ask for it, so the runtime answers the same way the
       // page does.

@@ -254,6 +254,16 @@ this package.
   `canvas_add_node`, `canvas_connect`, `canvas_update_node`,
   `canvas_remove_node` and `canvas_run`. They change what the user sees, so
   they are never read-only and they say so in their description.
+- **The package tells the Agent how to use it** — a Skill
+  (`skills/canvas/SKILL.md`) says what the canvas is for, when the **prompt
+  node** is the right step (the H3 templates carry the provider's own prompt
+  shape, and writing one by hand loses it), how the reference numbers work,
+  which chains are worth building, and what the models refuse. The Agent reads
+  it when the request is a generation chain rather than a single prompt.
+- **The prompt node carries the template** — `canvas_add_node` and
+  `canvas_update_node` take a `templateId`, so a prompt node the Agent makes
+  expands the sentence with the same template the page would pick, the H3
+  shapes included. The page and the Agent ask one rule for it.
 - **The page stays the only writer** — a canvas lives in the page's memory, and
   the store refuses a write that is based on an older version of it. So a change
   from the Agent is never written to the stored document behind the page's

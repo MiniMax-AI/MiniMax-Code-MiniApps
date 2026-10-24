@@ -12,7 +12,7 @@
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
 import { cardChrome, DATA_KINDS, hasTextBox, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, runModeOf, stripInputs } from './forms.mjs';
-import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, runSpecFor, syncMentions } from './actions.mjs';
+import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, runSpecFor, syncMentions } from './actions.mjs';
 
 (() => {
   'use strict';
@@ -458,7 +458,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       width: size.width,
       height: size.height,
       metadata: {
-          templateId: 'custom',
         templateVars: {},
         segments: [],
         prompt: '',
@@ -478,9 +477,15 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         // result node holds what the generation produced. A generating node
         // holds nothing but its own settings.
         kind: options.kind ?? (type === 'result' ? 'image' : 'text'),
-        // The template the prompt card expands the sentence with.
-        templateId: options.templateId ?? 'custom',
-        templateText: options.templateText ?? '',
+        // The template the prompt card expands the sentence with. The page
+        // and the Agent ask the same rule, so a prompt node is the same
+        // either way.
+        ...promptTemplateFor({
+          mode: mode || '',
+          templateId: options.templateId,
+          templateText: options.templateText,
+          templates: state.palette?.promptTemplates ?? [],
+        }),
         output: { status: 'idle', text: '', media: [], error: '', posterUrl: '', durationMs: 0, width: 0, height: 0, missing: false, updatedAt: '' },
       },
     };
@@ -1854,8 +1859,12 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         if (value === 'prompt') {
           const at = state.canvas.nodes.findIndex((item) => item.id === node.id);
           if (at >= 0) {
-            state.canvas.nodes[at].metadata.templateId = state.palette?.promptTemplates?.[0]?.id ?? 'custom';
-            state.canvas.nodes[at].metadata.templateText = state.palette?.promptTemplates?.[0]?.text ?? '';
+            const template = promptTemplateFor({
+              mode: 'prompt',
+              templates: state.palette?.promptTemplates ?? [],
+            });
+            state.canvas.nodes[at].metadata.templateId = template.templateId;
+            state.canvas.nodes[at].metadata.templateText = template.templateText;
           }
         }
         if (applied.info?.dropped?.length) {
@@ -3984,6 +3993,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       ),
       defaultModelKey: state.defaultModelKey,
       idFor: (prefix) => uid(prefix),
+      // The templates the prompt node offers, so a prompt node the Agent
+      // makes is the same one the page would make.
+      promptTemplates: state.palette?.promptTemplates ?? [],
       // What the model this node selected can take. The rules about the modes
       // and the ports ask for it, so the page and the runtime answer the same.
       capsFor: (node) => effectiveCaps(node),
