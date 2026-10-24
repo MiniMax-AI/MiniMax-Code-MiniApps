@@ -7986,15 +7986,10 @@
             // that hides anything, so what is on screen is exactly what was selected.
             //
             // The rows are built for the groups the reader is on and released for the rest. What
-            // the reader gives up is the DOM, which is the whole cost: measured on one session of
-            // about 50,600 records (2026-10-22), the rows of 「显示全部」 were 463,122 DOM nodes and
-            // the renderer's private memory read 785 to 820 MB; with only the groups the reader is
-            // on holding their rows, the same session measured 14,801 nodes and 199 to 268 MB.
-            // Those are measurements of one session, not bounds: each run reads three positions
-            // and the figure above is the middle-of-session one, and the same build read 194.1 MB
-            // at the first position of one run and 269.8 MB at the last position of the other — a
-            // spread of 39% for the same code on the same afternoon. The service's own memory was
-            // not measured in these runs at all.
+            // the reader gives up is the DOM, and the DOM is where the cost lives: the page pays
+            // for the rows of the groups the reader is on and nothing else. How many groups are
+            // live changes as the reader moves through the conversation, so there is no fixed
+            // count of held rows to quote here.
             //
             // What the reader does not give up is the height — a released group keeps the box it
             // had, brought up to date with what it holds now, so the document under them does not
