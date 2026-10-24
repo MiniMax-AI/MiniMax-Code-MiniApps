@@ -1,129 +1,114 @@
 ---
 name: ai-node-canvas
-description: "Drive the Node Canvas MiniApp — an infinite canvas where every node is one model run and every line is a data path. Use it when the work is a generation chain rather than a single prompt: text to picture to video, a picture worked on again (cut out, sharpen, resize, grid split, ID photo), the same subject from another angle, a clip read back into a prompt, or a set of variants laid out side by side."
+description: "驱动 MiniMax Code 的「节点画布」MiniApp —— 一张无限画布，每个节点是一次模型运行，每根线是数据通路。当用户的活儿是一条生成链、而不是一句提示词时使用：文字到图到视频、一张图再加工（抠图、变清晰、改尺寸、切九宫格、证件照）、同一主体的另一个机位、把一段视频读回提示词，或者一组并排的版本。"
 ---
 
-# Node Canvas
+# 节点画布
 
-The MiniApp is the canvas, and the Agent reaches it through the `canvas` MCP
-server: `canvas_list`, `canvas_read`, `canvas_add_node`, `canvas_connect`,
-`canvas_update_node`, `canvas_remove_node`, `canvas_run`.
+MiniApp 就是这块画布，Agent 通过 `canvas` MCP 服务器碰它：`canvas_list`、
+`canvas_read`、`canvas_add_node`、`canvas_connect`、`canvas_update_node`、
+`canvas_remove_node`、`canvas_run`。
 
-**What the canvas is.** A node is one model run; a line carries what the
-upstream made into the downstream. A run leaves a **result node of its own**
-next to the node that ran — never create one by hand, and never wire one that
-is not there yet. Results are what the next step works on: cut them out,
-sharpen them, split them into a grid, read them back.
+**画布是什么。** 节点是一次模型运行，连线把上游做出来的东西送到下游。跑完会**自己
+落一个结果节点**在跑过的节点旁边 —— 不要手建结果节点，也不要去连还没出现的结果节点。
+结果节点就是下一步加工的原料：抠图、变清晰、切九宫格、读回来。
 
-## Reach for the prompt node first
+## 先想该用不用提示词增强
 
-A generating node takes the text in its own box, and that text goes to the
-model as it is. When the model has a **documented shape** for the task, writing
-that shape by hand is where the work is lost.
+生成节点把文本框里的文字**原样**送给模型。当模型对某个任务有成文的格式时，手写那个
+格式就是白干。
 
-The **text node in `prompt` mode** (提示词增强) is that shape. It runs one
-text turn that rewrites a rough sentence into the shape, and the canvas
-offers these:
+**text 节点在 `prompt` 模式（提示词增强）**就是那个格式：它跑一轮文本，把一句粗话
+重写成那个格式，画布上提供这些模板：
 
-| Template | Use it for |
+| 模板 | 什么时候用 |
 | --- | --- |
-| 电商主图 | a product hero shot: subject, material, scene and light, framing, quality |
-| 短视频分镜 | a shot list: timecode, framing, camera move, action, mood, sound |
-| 人物写真 | a portrait: looks, clothing, pose, light, background, lens |
-| 产品质感 | a product detail shot: material, structure, use case, light, macro, background |
-| 社媒封面 | a social cover: headline, subject, palette, whitespace, platform size |
-| **H3 T2VA / I2VA / FL2VA / L2VA / 全参考六段** | **any MiniMax H3 video request** |
+| 电商主图 | 产品主图：主体 + 材质细节 + 场景光线 + 构图视角 + 画质 |
+| 短视频分镜 | 分镜表：时间码 + 景别 + 运镜 + 动作 + 情绪 + 音效 |
+| 人物写真 | 人像：外貌 + 服装 + 姿态表情 + 光线 + 背景 + 镜头画质 |
+| 产品质感 | 产品特写：材质结构 + 使用场景 + 光影 + 微距细节 + 背景 |
+| 社媒封面 | 封面：主标题 + 视觉主体 + 配色 + 留白排版 + 平台尺寸 |
+| **H3 T2VA / I2VA / FL2VA / L2VA / 全参考六段** | **任何 MiniMax H3 视频请求** |
 
-The H3 ones are the provider's own prompt-writing guides. They carry the
-three-part shape H3 reads best — `integrated_multimodal_description` (the
-picture timeline), `overall_soundscape`, `non_diegetic_music` — and the
-conventions that go with it: `[Shot N] At MM:SS.mmm` for cuts, camera moves
-as "type + amplitude + speed" in a plain sentence, speakers as `(S1)`, speech
-as `<d>[language] line</d>`, cross-cuts as `<scenetrans>`. The structure is
-English, the dialogue stays in its own language.
+H3 那几个是 provider 自己的提示词写作指南，带着 H3 最吃的三段结构
+（`integrated_multimodal_description` 画面时间线、`overall_soundscape` 环境音与
+非语言人声、`non_diegetic_music` 只有观众听得见的配乐），和配套的写法约定：切点用
+`[Shot N] At MM:SS.mmm`，运镜写成"运动类型 + 幅度 + 速度"的自然句，说话人写
+`(S1)`，台词写 `<d>[语言] 台词</d>`，跨切写 `<scenetrans>`。结构用英文写，台词保留
+原语言。
 
-**What the prompt node saves.** The alignment line that names the reference
-picture and the timestamp is written by the runtime, not by the prompt — but
-only if the rest of the prompt is in the shape it expects. Hand-writing an H3
-prompt loses the structure, the shot notation and the sound layers; the
-result is a clip that reads flat. The prompt node costs one text turn and
-returns a prompt the video model understands.
+**提示词节点省下的是什么。** 点名那张图和时间戳的对齐行**由运行时写**，不由提示词
+写 —— 但只有当提示词的其余部分已经是它期待的结构时才对齐。手写一条 H3 提示词会丢掉
+结构、镜头记法和声音层，成片会很平。提示词节点花一轮文本，换回来一条视频模型看得懂
+的提示词。
 
-**How to pick one.** `canvas_add_node` and `canvas_update_node` both take a
-`templateId`, and the text of that template comes with it: `ecommerce-main`,
-`short-video`, `portrait`, `product-texture`, `social-cover`, `h3-t2va`,
-`h3-i2va`, `h3-fl2va`, `h3-l2va`, `h3-reference`, `custom`. A `templateText`
-of your own replaces the text of the named template. A prompt node that names
-none takes the first template, so it is useful before anything is typed.
+**怎么点名。** `canvas_add_node` 和 `canvas_update_node` 都接受 `templateId`，模板的
+正文会跟着一起带上：`ecommerce-main`、`short-video`、`portrait`、
+`product-texture`、`social-cover`、`h3-t2va`、`h3-i2va`、`h3-fl2va`、`h3-l2va`、
+`h3-reference`、`custom`。自己写 `templateText` 就替换掉模板的正文。不点名的话取第一个
+模板 —— 所以还没打字时它也是有用的。
 
-**One thing the prompt node must not do.** It never writes the alignment
-line and never invents the reference numbers. Those belong to the runtime.
+**提示词节点不做的一件事。** 它不写对齐行，也不自己编引用编号。那两样归运行时。
 
-## References are numbered by the request
+## 引用编号由请求决定
 
-A line into a generating node becomes a reference in the request, and the
-runtime numbers them: `@图片1`, `@图片2`, `@视频1`, `@音频1` — the same
-numbers it puts in the reference blocks of the prompt. Write `@图片1` in the
-prompt to mean the first reference. The number follows the **request**, not
-the card title and not the position on the board: a node with two pictures
-upstream is `@图片1` and `@图片2`, and which is which is decided by the
-request, not by you.
+连线进生成节点，就成了请求里的一个参考，运行时给它们编号：`@图片1`、`@图片2`、
+`@视频1`、`@音频1` —— 和提示词里参考素材块的编号是同一套。提示词里写 `@图片1` 就是
+指第一个参考。编号跟的是**请求**，不是卡片标题、也不是画布上的位置：一个节点上游接了
+两张图，哪张是 1 由请求决定，不是你决定。
 
-The prompt node in `prompt` mode has a template dropdown and a template box
-next to it, so the user can change it by hand. The Agent changes it the same
-way, through the same rule.
+`prompt` 模式节点旁边有模板下拉和模板文本框，用户可以自己改；Agent 走的是同一条规则。
 
-## Chains that are worth building
+## 值得搭的链
 
-- **Text → picture → video.** Text node (or prompt node) → image node →
-  video node. The picture is the video's first frame, and the reference
-  number it gets is the one the alignment line names.
-- **Work a picture on again.** Result node → a tool on that card (cut out,
-  sharpen, resize, grid split, ID photo, another angle, another light). The
-  tool leaves a result node, so the chain keeps going.
-- **The same subject, another angle.** The 多角度 tool asks the model for
-  the same subject from another camera position and keeps the material and
-  the colours.
-- **A grid.** 宫格切分 cuts one picture into N×M pieces, each its own node.
-- **A clip read back.** A video into a text node in `video2text` mode: the
-  provider reads the clip shot by shot and the text model writes the prompt
-  that would produce it.
+- **文字 → 图 → 视频。** 文字节点（或提示词节点）→ 图片节点 → 视频节点。图自动成为
+  视频的首帧，它拿到的编号就是对齐行里写的那个。
+- **一张图再加工。** 结果节点 → 那张卡上的工具（抠图、变清晰、改尺寸、切九宫格、
+  证件照、换机位、换光）。工具会留下自己的结果节点，所以链能一直接下去。
+- **同一主体，另一个机位。** 多角度工具让模型换个机位重出，主体的特征、材质和配色
+  保持不变。
+- **切九宫格。** 宫格切分把一张图切成 N×M 块，每块一个节点。
+- **把片子读回来。** 视频接进 `video2text` 模式的文本节点：provider 逐镜头读，文本
+  模型写出能做出这条片子的提示词。
 
-## Running it
+## 跑的时候
 
-`canvas_run` starts the run and returns as soon as the page has taken it —
-the picture is not finished yet. Read the result node later with
-`canvas_read`; the node's status is the truth (`success`, `error`, or
-still running).
+`canvas_run` 只是把这件事交给页面就返回了 —— 图还没好。之后用 `canvas_read` 看结果
+节点，**节点的状态才是真的**（`success` / `error` / 还在跑）。
 
-**One slow call at a time.** Pictures, speech, music and video submits queue
-behind each other, because the machine can only give one of them the window
-they need. Two runs asked for at once will not both be fast, and the second
-one says in the log how long it waited. A run that was refused for the
-window came back with "结果未知" — the call may have reached the provider
-and may have been charged. Do not retry that one by itself.
+**慢调用一次只跑一个。** 图片、语音、音乐、视频提交会排队，因为机器一次只给得起一个
+窗口。一起要两个不会都快，第二个会在日志里说它等了多久。因为窗口被拒的那次回来说的是
+「结果未知」—— 调用可能已经到了 provider，也可能已经扣了费，**不要自己重试那一次**。
 
-**The page is the only writer.** When the page holds the canvas, a change is
-handed to it and applied there; when nobody is looking, the runtime applies
-it. The canvas the Agent reads is the canvas the user sees.
+**批量只对图片、语音、音乐有效**（一次 2/3/4/6/8 张）。视频一个片子一个任务，文本
+一轮一个回复，都不批量。
 
-**`canvas_remove_node` cannot be undone.** It takes the lines with it. Do not
-use it to "tidy up" a canvas the user is working on.
+**页面是唯一写者。** 页面拿着画布时，改动交给页面执行；没人看着时运行时自己执行。
+Agent 读到的画布，就是用户看到的画布。
 
-## What the models allow
+**`canvas_remove_node` 撤不回来**，连在上面的线也一起去。不要拿它去「整理」用户
+正在做的画布。
 
-Parameters follow the model that is selected: a duration a model does not
-offer is not in the menu, and a request that breaks one of the provider's
-rules (an audio reference with nothing else, more than nine pictures or
-twelve references in all) is refused before it is sent, with the reason.
+## 画布上可能有别的东西
 
-Video with a sound track needs MiniMax **H3**, and H3 is billed from account
-credits — if the account has credit auto-consumption turned off, the
-provider refuses the request. Hailuo runs on the Token Plan but is silent.
+- **多张画布时先确认画布 id。** `canvas_add_node` 不给 id，就加到**最近修改的那张**
+  —— 可能不是用户说的那张。`canvas_list` 一次就能看到所有画布。
+- **位置只是初值。** 给的 x/y 是起点，页面会自己重排（谁压到谁谁让开），但画布上
+  节点已经很多的时候，给一个空着的位置。
+- **素材没了的时候**，那个结果节点会标「素材已不在」，这次请求会**少带那一份**继续
+  跑 —— 不是模型坏了。把少了哪一份告诉用户。
 
-## Starting
+## 模型的限制
 
-The user opens the canvas by name ("打开节点画布" / "open the node canvas"),
-or the Agent opens it for them. Read the board with `canvas_list` and
-`canvas_read` before changing anything, and tell the user what the board
-already holds instead of building a second copy of it.
+参数跟着选中的模型走：模型不提供的时长，菜单里根本没有。请求里破了 provider 的硬
+规则（音频参考不能单独来、参考一共超过九张图或十二项），会在发出去之前就带着理由
+被拒。
+
+**带音轨的视频要 MiniMax H3**，而 H3 走账户余额 —— 账户没开「按量自动扣费」，
+provider 会直接拒。Hailuo 走 Token Plan，但是静音的。
+
+## 开始
+
+用户按名字打开画布（「打开节点画布」/「open the node canvas」），或者 Agent 替他打开。
+改任何东西之前先用 `canvas_list` 和 `canvas_read` 读一遍画布，**告诉用户画布上已经
+有什么**，而不是再搭一份。
