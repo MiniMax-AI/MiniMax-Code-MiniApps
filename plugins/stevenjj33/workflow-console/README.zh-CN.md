@@ -87,6 +87,9 @@ Apache-2.0）。
 工作流全程不需要 CLI。只有当你要用真实 Agent 时，才需要把执行方式改成「MCode · 真实执行」——
 那一步才让 CLI 变成硬前置。
 
+另外注意：MiniMax Code 桌面版**不自带** CLI。CLI 是单独的 `@minimax-ai/code` 安装
+（npm prefix 是 `~/.minimax-code`），所以装了桌面版不等于装了 CLI。
+
 引擎按这个顺序找 CLI：
 
 1. `PATH` 里的 `mcode`；
