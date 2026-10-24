@@ -68,6 +68,43 @@ Apache-2.0）。
 
 跑真实工作流仍然需要本机 `mcode` CLI 可用：引擎通过它去编排 Agent。demo 执行器不需要。
 
+## 前置条件
+
+控制台本身不需要任何东西：不用配置、不用构建，也不用另外装插件——它自带 Workflow Studio 引擎，
+直接作为子进程拉起来。
+
+**`mcode` CLI 只是「真实执行」的前置条件。** 引擎通过 `mcode` CLI 驱动 Agent，所以用真实执行器
+跑一次工作流，需要这个 CLI 已安装、已登录、且能调用模型。其余环节都不需要它：
+
+| 环节 | 需要 `mcode` CLI |
+| --- | --- |
+| 打开页面、启动引擎、选定项目目录 | 不需要 |
+| 审核草稿、暂停、取消、恢复 | 不需要 |
+| **演示执行器**的运行（只返回占位结果，不调模型） | 不需要 |
+| **真实执行器**（`mcode`，真正调度 Agent）的运行 | **需要** |
+
+新建工作流默认是**演示**执行方式：Studio 的「执行方式」下拉框默认选中 demo，所以创建并运行一条
+工作流全程不需要 CLI。只有当你要用真实 Agent 时，才需要把执行方式改成「MCode · 真实执行」——
+那一步才让 CLI 变成硬前置。
+
+另外注意：MiniMax Code 桌面版**不自带** CLI。CLI 是单独的 `@minimax-ai/code` 安装
+（npm prefix 是 `~/.minimax-code`），所以装了桌面版不等于装了 CLI。
+
+引擎按这个顺序找 CLI：
+
+1. `PATH` 里的 `mcode`；
+2. 官方用户安装位置——macOS 与 Linux 是 `~/.minimax-code/bin/mcode`，Windows 是
+   `~/.minimax-code/mcode.cmd`；设了 `MCODE_INSTALL_DIR` 时，它顶替 `~/.minimax-code` 当根目录，
+   引擎找的就是 `$MCODE_INSTALL_DIR/bin/mcode`；
+3. 工作流托管的工具链（该目录已就位时才会命中）——macOS 与 Linux 是
+   `~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js`，Windows 是
+   `~/.mcode-dynamic-workflows/toolchain/node_modules/@minimax-ai/code/cli.js`。
+
+状态栏上的「MCode CLI 可用/不可用」**只表示找到了这个可执行文件**——它不说明 CLI 有没有登录、
+还剩多少模型额度，那两件事要等 CLI 真正跑起来时自己判断。CLI 缺失时，控制台会在横幅上写明，
+并且拒绝启动真实执行，而不是让它跑到一半失败；引擎那边对应的报错是
+「找不到 MCode CLI，请安装并登录后开始。」
+
 ## Skill
 
 本包附带一个 Skill：`skills/workflow-console/SKILL.md`。它告诉 Agent 怎么用这个控制台——

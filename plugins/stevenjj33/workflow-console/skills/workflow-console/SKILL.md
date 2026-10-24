@@ -74,6 +74,13 @@ description: "运行、查看与管控 MiniMax Code 动态工作流（多 Agent 
 页面上 `mcodeAvailable: true` 只说明 `mcode` 可执行文件存在，**不代表它登录了或还有额度**。
 真实执行失败时先查登录和额度，别直接归因给工作流本身。
 
+CLI 找不到时，控制台会在横幅上写明并**拒绝启动真实执行**——这时候别反复重试，让用户先装好并登录，
+或改用 demo 执行器（Studio 的「执行方式」默认就是 demo，不调模型，所以没有 CLI 也能把工作流
+创建并跑起来）。引擎查找 CLI 的顺序：`PATH` 里的 `mcode` → 官方用户安装位置
+（根目录是 `$MCODE_INSTALL_DIR`，没设时是 `~/.minimax-code`；macOS/Linux 找其下的 `bin/mcode`，
+Windows 找 `mcode.cmd`）→ 工作流托管的工具链
+（`~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js`，Windows 少一层 `lib`）。
+
 ## 数据与边界
 
 - 引擎只监听 `127.0.0.1`，控制台只代理到它：不连外网，也不连别的本地服务。

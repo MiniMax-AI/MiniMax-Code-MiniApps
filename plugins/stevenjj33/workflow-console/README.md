@@ -85,6 +85,46 @@ engine's own database and is not affected by the change.
 Running real workflows still requires a working `mcode` CLI: the engine orchestrates agents through
 it. The demo executor works without it.
 
+## Prerequisites
+
+The console itself needs nothing: no configuration step, no build step, and no other plugin
+installed. It ships the Workflow Studio engine and starts it as a child process.
+
+**The `mcode` CLI is a prerequisite for real runs only.** The engine drives agents through the
+`mcode` CLI, so a run on the real executor needs that CLI installed, logged in, and able to call a
+model. Everything else works without it:
+
+| | needs `mcode` CLI |
+| --- | --- |
+| Opening the page, starting the engine, choosing a project directory | no |
+| Approving a draft, pausing, cancelling, resuming | no |
+| A run on the **demo** executor (placeholder results, no model call) | no |
+| A run on the **real** executor (`mcode`, actual agent calls) | **yes** |
+
+A new workflow starts in **demo** mode: the Studio's execution-mode picker defaults to demo, so
+creating and running a workflow needs no CLI at all. Switch it to "MCode · real agents" only when
+you want real agents — that is the point where the CLI becomes required.
+
+Note that the MiniMax Code desktop app does **not** bundle the CLI. The CLI is a separate
+`@minimax-ai/code` install (npm prefix `~/.minimax-code`), so having the desktop app installed is
+not the same as having the CLI.
+
+Where the engine looks for the CLI, in the order it tries:
+
+1. `mcode` on `PATH`;
+2. the official user install — `~/.minimax-code/bin/mcode` on macOS and Linux,
+   `~/.minimax-code/mcode.cmd` on Windows. `MCODE_INSTALL_DIR` replaces `~/.minimax-code`
+   as that root, so the engine then looks for `$MCODE_INSTALL_DIR/bin/mcode`;
+3. a workflow-managed toolchain, if that directory has been populated —
+   `~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js` on macOS and
+   Linux, `~/.mcode-dynamic-workflows/toolchain/node_modules/@minimax-ai/code/cli.js` on Windows.
+
+The status line reports "MCode CLI 可用/不可用". That flag only means **the executable was found** —
+it says nothing about whether the CLI is logged in or still has model quota, which the CLI itself
+decides when a real run starts. When the CLI is missing, the console says so in a banner and
+refuses to start a real run instead of failing halfway through; the engine's own error for that
+case is "找不到 MCode CLI，请安装并登录后开始。"
+
 ## Skill
 
 The package ships one Skill, `skills/workflow-console/SKILL.md`. It tells the Agent how to drive
