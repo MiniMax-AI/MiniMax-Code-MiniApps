@@ -152,9 +152,9 @@ const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
  * Measured on this machine: on 2026-10-15, 95.3 MB of messages.jsonl retained 116 MB of heap
  * after two forced collections, i.e. 1.22x the source; on 2026-10-23, the rows a session of 255
  * MB of source left in the cache cost about 187 MB of live heap for the 131.5 MB of source the
- * budget held, i.e. 1.42x. 2x leaves headroom over both while still erring on the side of
- * over-counting, because a proxy that under-counts would let the cache grow past its own budget
- * without noticing.
+ * budget held, i.e. 1.42x. PARSED_ROWS_HEAP_PER_SOURCE_BYTE leaves headroom over both while still
+ * erring on the side of over-counting, because a proxy that under-counts would let the cache grow
+ * past its own budget without noticing.
  *
  * It was 3x before, and that was wrong in the direction that matters: 95.3 MB x 3 charged
  * 286 MB against the budget, so the LRU evicted entries it had room for in reality and
