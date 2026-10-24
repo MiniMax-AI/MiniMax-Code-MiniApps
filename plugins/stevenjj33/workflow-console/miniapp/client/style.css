@@ -45,6 +45,23 @@
   --mcode-primary-action-text: #171717;
 }
 
+/* 实际配色由 data-theme 决定：脚本把「跟随系统」解析成 light/dark 落到这个属性上。
+   color-scheme 决定原生控件（输入框、滚动条）用哪一套配色，别让它们跟页面脱节。 */
+[data-theme='light'] {
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* 脚本还没跑（首屏那一瞬）时，原生控件先按系统偏好走。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

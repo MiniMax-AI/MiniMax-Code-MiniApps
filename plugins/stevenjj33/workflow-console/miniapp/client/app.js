@@ -259,24 +259,48 @@ function toast(message, tone = 'success') {
 
 const THEMES = ['system', 'light', 'dark'];
 const THEME_LABEL = { system: '跟随系统', light: '浅色', dark: '深色' };
+const THEME_STORAGE_KEY = 'wf-console-theme';
+/* 系统配色偏好。跟随系统时由它决定实际是浅色还是深色；系统换配色时页面也跟着换。 */
+const systemDark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
+function storedTheme() {
+  try {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return THEMES.includes(saved) ? saved : 'system';
+  } catch {
+    /* 忽略存储不可用 */
+  }
+  return 'system';
+}
+
+/* 跟随系统 → 按系统偏好解析成浅色或深色；显式选择 → 用用户选的那个。
+   data-theme 一律设成具体值，CSS 只认 light/dark 两种；
+   早先这里是「system 就删掉 data-theme」，结果永远退回浅色。 */
 function applyTheme(theme) {
-  if (theme === 'system') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', theme);
+  const resolved = theme === 'system' ? (systemDark && systemDark.matches ? 'dark' : 'light') : theme;
+  document.documentElement.setAttribute('data-theme', resolved);
   dom.themeToggle.textContent = `主题：${THEME_LABEL[theme]}`;
   dom.themeToggle.dataset.theme = theme;
   try {
-    window.localStorage.setItem('wf-console-theme', theme);
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   } catch {
     /* 忽略存储不可用 */
   }
 }
 
 dom.themeToggle.addEventListener('click', () => {
-  const current = window.localStorage.getItem('wf-console-theme') || 'system';
-  const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
+  const next = THEMES[(THEMES.indexOf(storedTheme()) + 1) % THEMES.length];
   applyTheme(next);
 });
+
+/* 用户选的是「跟随系统」时，系统配色一变就跟着变。 */
+if (systemDark) {
+  const onSystemThemeChange = () => {
+    if (storedTheme() === 'system') applyTheme('system');
+  };
+  if (systemDark.addEventListener) systemDark.addEventListener('change', onSystemThemeChange);
+  else if (systemDark.addListener) systemDark.addListener(onSystemThemeChange);
+}
 
 /* ---------------- engine status ---------------- */
 
@@ -286,8 +310,13 @@ dom.themeToggle.addEventListener('click', () => {
 
 let lastEngineSignature = '';
 
+/** 当前这台控制台唯一的后端：它自己内置的 Workflow Studio 引擎。 */
+function activeEngine() {
+  return state.services.find((service) => service.id === state.activeServiceId) || null;
+}
+
 function renderEngine() {
-  const active = state.services.find((service) => service.id === state.activeServiceId) || null;
+  const active = activeEngine();
   const signature = active
     ? [
         active.id,
@@ -323,21 +352,38 @@ function renderEngine() {
       ` · 并发 ${scheduler.active ?? 0}/${scheduler.limit ?? '—'}`;
   }
 
-  if (live) {
+  if (live && active && active.mcodeAvailable === false) {
+    /* 引擎起来了，但真实执行器还差 MCode CLI：这时只有演示执行器能跑。 */
+    dom.serviceBanner.hidden = false;
+    dom.serviceBanner.textContent = '';
+    dom.serviceBanner.append(
+      node('strong', { text: '未找到 MCode CLI。' }),
+      node('span', {
+        text: ' 演示执行器（demo）不受影响，但用真实执行器跑工作流需要先安装并登录 MCode CLI，' +
+          '否则运行会在启动时失败。安装位置见 README 的「前置条件」。',
+      }),
+    );
+  } else if (live) {
     dom.serviceBanner.hidden = true;
   } else {
     dom.serviceBanner.hidden = false;
     dom.serviceBanner.textContent = '';
+    const starting = Boolean(active?.starting);
     dom.serviceBanner.append(
       node('strong', {
-        text: needsWorkspace ? '还没有选择项目目录。' : '内置引擎未能启动。',
+        text: needsWorkspace
+          ? '还没有选择项目目录。'
+          : starting
+            ? '内置引擎正在启动…'
+            : '内置引擎未能启动。',
       }),
       node('span', {
         text: needsWorkspace
           ? ' 内置引擎不会在用户主目录或系统临时目录里运行——那样一次运行就能改写整个家目录。' +
             '请在下方填写项目的绝对路径，保存后引擎会自动启动。'
-          : ' 控制台会自动重试；若持续失败，请确认 MCode CLI 可用（需要登录且模型可调用），' +
-            '并查看 dataDir/engine/service.log 里的引擎日志。',
+          : starting
+            ? ' 控制台会拉起内置引擎，稍等即可；期间还不能开始执行。'
+            : ' 控制台会自动重试；若持续失败，请查看 dataDir/engine/service.log 里的引擎日志。',
       }),
     );
   }
@@ -1567,6 +1613,12 @@ async function confirmStart(runId) {
   }
   const nodeCount = Array.isArray(run.topology?.nodes) ? run.topology.nodes.length : 0;
   const real = run.executor !== 'demo';
+  /* 真实执行器要靠 MCode CLI 调度 Agent：CLI 根本不在时，运行一定起不来，
+     与其让它跑到一半失败，不如在这里说清楚。演示执行器不需要 CLI。 */
+  if (real && activeEngine()?.mcodeAvailable === false) {
+    toast('未找到 MCode CLI，真实执行无法启动；请先安装并登录 MCode CLI，或改用演示执行器。', 'danger');
+    return;
+  }
   const answer = await askConfirm({
     title: '开始执行该工作流',
     note:
@@ -1985,13 +2037,7 @@ async function loadBootstrap() {
 }
 
 async function boot() {
-  let theme = 'system';
-  try {
-    theme = window.localStorage.getItem('wf-console-theme') || 'system';
-  } catch {
-    theme = 'system';
-  }
-  applyTheme(THEMES.includes(theme) ? theme : 'system');
+  applyTheme(storedTheme());
 
   try {
     await loadBootstrap();
