@@ -2863,7 +2863,7 @@
           // A turn that took a prompt and never produced a reply — the shape an interruption
           // leaves behind. The turn still running is excluded: it is open because it is
           // going, which is not the same thing as broken, and a filter that re-flags the live
-          // turn on every 2.5s poll is a filter nobody can leave on.
+          // turn on every poll is a filter nobody can leave on.
           turn: function (turn, ctx) {
             return !!turn && turn.closed === false && turn !== ctx.liveTurn;
           }
@@ -3472,7 +3472,7 @@
       }
 
       /**
-       * Cheap change detector: rebuilding 200+ rows every 2.5s is wasteful
+       * Cheap change detector: rebuilding a window of rows on every poll is wasteful
        * when nothing changed. Only structural counters participate.
        */
       function signatureOf(payload) {
@@ -3495,7 +3495,7 @@
         ].join('|');
       }
 
-      /** markdown handed to the Host chat input; raw JSON capped at 8000 chars. */
+      /** markdown handed to the Host chat input; raw JSON capped at HANDOFF_RAW_LIMIT chars. */
       var HANDOFF_RAW_LIMIT = 8000;
 
       function truncateJson(value, limit) {
@@ -3580,7 +3580,7 @@
       function inTimeRange(record) {
         if (!recordInRange(record, state.rangeFrom, state.rangeTo)) return false;
         // The snapshot half of the range. Without it an open-ended range grows on its own and
-        // the table appends itself every 2.5s.
+        // the table appends itself on every poll.
         if (isCount(state.rangeCutoff) && isCount(record.index) && record.index > state.rangeCutoff) {
           return false;
         }
@@ -3704,8 +3704,8 @@
 
       // Two cadences, one per fetch, because the two are not the same work. See startPolling().
       //
-      // 2500 for the list, which is a cached walk and a cached title read and now usually a 304 —
-      // and which the picker renders 「刚刚」 against. 8000 for the trajectory, which reparses a
+      // SESSION_POLL_INTERVAL for the list, which is a cached walk and a cached title read and now usually a 304 —
+      // and which the picker renders 「刚刚」 against. TRAJECTORY_POLL_INTERVAL for the trajectory, which reparses a
       // lineage and reopens the runtime database on every request. The list wakes the trajectory
       // early when it has evidence, so the slow tick is a floor on latency, not a replacement for
       // noticing a change.
@@ -3858,13 +3858,13 @@
         rangeToText: '',
         limit: PAGE_STEP,
         // 「全部」 is a mode, not just a big `limit`. A poll that arrives mid-session used to
-        // re-pin the window to the newest page, which would have thrown 「全部」 back to 200
+        // re-pin the window to the newest page, which would have thrown 「全部」 back to the default window
         // the instant a record landed. This flag is what says "the reader asked for all of
         // it", so a growing session extends the view instead of cancelling it.
         //
         // It opens OFF, and that is not a shortcut: 全部 renders every record of the session as
         // real DOM — around 9,900 rows and 57,000 elements on this one — with no virtual
-        // scrolling, rebuilt on every 2.5s poll. On load that froze the page outright (a single
+        // scrolling, rebuilt on every poll. On load that froze the page outright (a single
         // inspect took 13.7s, a click 5.4s), which was measured, not estimated. So 全部 is
         // something a reader asks for and can live with, not something the page does to them.
         allRecords: false,
@@ -3920,7 +3920,7 @@
        * The one writer for this layer, and it reports whether the bar's state actually moved.
        *
        * That return value is load-bearing rather than a convenience: `render()` rebuilds the
-       * whole ledger, and a quiet session revalidates into a 304 every 8 seconds, so a fix that
+       * whole ledger, and a quiet session revalidates into a 304 on every poll, so a fix that
        * re-rendered on every 304 would trade a sticky banner for a permanent rebuild.
        *
        * @param {'trajectory'|'sessions'} source
@@ -4491,7 +4491,7 @@
                 state.loading = false;
                 cleared = true;
               }
-              // Rendering on every 304 would rebuild the whole ledger every 8 seconds on an
+              // Rendering on every 304 would rebuild the whole ledger on every poll of an
               // idle session. Escaping the sticky banner must not cost that.
               if (cleared) render();
               return;
@@ -5006,9 +5006,9 @@
 
       /* The count is omitted whole when there is none, rather than printed as a dash.
        *
-       * `/api/sessions` reads the first 64 KB of the active `messages.jsonl` to build this list, so
-       * it used to send a message count that was really 「how many messages are in the first 64 KB」.
-       * On a session whose active file is 1 MB that is 10 against 23,642 — and this line put it in
+       * `/api/sessions` reads only a prefix of the active `messages.jsonl` to build this list, so
+       * it used to send a message count that was really 「how many messages are in that prefix」.
+       * When the prefix was a small part of the file, that count was wrong by orders of magnitude — and this line put it in
        * front of the reader as `（3 分钟前 · 10 条）`, with nothing to say it was a prefix. It now
        * sends no count when the prefix was not the whole file, so `— 条` here would be printing the
        * absence of a number in the shape of a number. Omitting the segment is the honest rendering
@@ -5296,7 +5296,7 @@
         return wrap;
       }
 
-      /** What the 对话轮次 line cannot say by looking at it. Kept to six lines: it opens under the
+      /** What the 对话轮次 line cannot say by looking at it. Kept to a few lines: it opens under the
        * card and covers the kind chips, so every extra line hides the thing it points at. */
       function turnTipLines(stats) {
         var total = isCount(stats.turnsWithPrompt) ? stats.turnsWithPrompt : 0;
@@ -5318,7 +5318,7 @@
        *
        * The session total deliberately does NOT live here. Putting 「共 84 轮」 next to a table
        * that starts at 第 82 轮 invited exactly the reading "these should be equal" — and they
-       * are not, because the default window holds only the newest 200 records and one of those
+       * are not, because the default window holds only the newest PAGE_STEP records and one of those
        * turns alone holds 183 of them. The total is still on screen, on the window bar beside
        * how many records are not loaded, which is the question it actually answers.
        */
@@ -6695,7 +6695,7 @@
        * Whether the record the inspector is showing still belongs to the table.
        *
        * It used to ask `state.flat` — the whole session, unfiltered — so a record stayed selected
-       * after every filter had already removed it: the ledger read 已显示 2 条, the inspector still
+       * after every filter had already removed it: the ledger read 已显示 N 条, the inspector still
        * showed the row the reader had picked, and no row anywhere carried the selection mark. The
        * list handed in here is the filter result the table is narrowed from, not the session, so a
        * record this accepts is by construction one the filters kept.
@@ -7059,8 +7059,8 @@
        * Anything that changes what the numbers mean — a filter, a new session, a fresh search,
        * a brush, a generation pin — resets to the default. Resetting is not about shrinking the
        * window: it is about discarding a window that was chosen for a set of records which no
-       * longer exists. A reader who was looking at only the newest 200 and then brushes an
-       * older range must not be left with a 200-row cap over a range holding thousands.
+       * longer exists. A reader who was looking at only the newest PAGE_STEP records and then brushes an
+       * older range must not be left with the default window's cap over a range holding thousands.
        *
        * @param {'latest'|'all'} mode
        */
@@ -7086,7 +7086,7 @@
        * What happens to the window when a poll brings new records.
        *
        * 全部 must not re-pin, or the first record to arrive after the click would cancel it
-       * and the reader would be thrown back to 200 records without ever being told why.
+       * and the reader would be thrown back to the default window without ever being told why.
        *
        * 「向上加载更早的 N 条」 must not re-pin either, and that is the older of the two.
        * `limit` is the reader's own choice, not a cache: at exactly PAGE_STEP the window is
@@ -7094,14 +7094,14 @@
        * reader pressed a button asking for more, and a poll that resets the limit takes that
        * back without saying so. The button re-rendered and appeared to do nothing — the only
        * reason it was not noticed is that this session grows by a few records per second, so
-       * the count stayed near 200 either way. Growing the session hid a dead control.
+       * the count stayed near PAGE_STEP either way. Growing the session hid a dead control.
        *
        * @returns {number} the limit now in force
        */
       function rePinWindow() {
         if (state.allRecords) return state.limit;
         // A time range is a fixed stretch of the session, so the window follows it rather
-        // than the tail. Re-pinning would slide the whole range forward every 2.5s, and the
+        // than the tail. Re-pinning would slide the whole range forward on every poll, and the
         // records that scrolled off the top would be records the reader had scoped to.
         if (hasTimeRange()) return state.limit;
         if (state.limit > PAGE_STEP) return state.limit;
@@ -7135,7 +7135,7 @@
        * last on it, and how tall it was.
        *
        * Keyed by the turn's key, so it survives the poll that rebuilds the table. The DOM is
-       * thrown away and rebuilt every two and a half seconds; this is what carries the reader's
+       * thrown away and rebuilt on every poll; this is what carries the reader's
        * place in it across that, and it is why the reader does not have to start again at the top
        * of the session on every tick.
        *
@@ -7695,8 +7695,8 @@
       /**
        * Turn groups built per frame once a window is too large for one.
        *
-       * Measured, not chosen. On this session at 18,924 rows across 150 turns, 25 groups is
-       * ~3,150 rows and ~145 ms of row construction — the largest slice of a frame this loop can
+       * Measured, not chosen: a batch of LEDGER_BATCH_GROUPS is
+       * the largest slice of a frame this loop can
        * take before the page stops answering the pointer.
        *
        * The alternative was measured and rejected rather than untried: skipping layout for the
@@ -7733,7 +7733,7 @@
       /** A poll tick that arrived while the ledger was still being built. */
       var pollDeferred = false;
 
-      /** Whether a batched build is running. One tick every 2.5 s asks this before it redraws. */
+      /** Whether a batched build is running. One tick on every poll asks this before it redraws. */
       function ledgerBuilding() {
         return ledgerProgress !== null;
       }
@@ -7874,7 +7874,7 @@
         // It said: what the reader can see is the window, not the filter result. That was written
         // to fix a real thing: this call used to RAISE `state.limit` to reach a selection
         // below the window, which made the window a thing the inspector could widen, and left the
-        // promise 「已显示 200 条」 true at the moment the reader pressed 显示最新 200 条 and false a
+        // promise 「已显示 N 条」 true at the moment the reader pressed 显示最新 N 条 and false a
         // second later. **That part is still true and the prohibition still stands** — the window
         // never widens to reach a selection, and it still does not below.
         //
@@ -7883,7 +7883,7 @@
         // record slides the whole tail forward by one row. So 「not in the window」 was measuring
         // the projection's motion, not the reader's attention. Measured on a real session (32,386
         // records, 216 turns, the reader touching nothing): a record selected at position p of the
-        // 200-row tail survived exactly `200 - p` new records, and p=0 died after ONE of them,
+        // tail survived exactly `PAGE_STEP - p` new records, and p=0 died after ONE of them,
         // inside a single poll. On a session that is still being written, that is every selection
         // that is not already the newest — which is why it read as 「过一会检视会消失」.
         //
@@ -7995,7 +7995,7 @@
             // had, brought up to date with what it holds now, so the document under them does not
             // change size when they scroll.
             var key = turnKey(group.turn);
-            // The rebuild is not a visit. The poll runs every eight seconds whether the reader
+            // The rebuild is not a visit. The poll runs on a timer whether the reader
             // is there or not, so a build that stamped the lease would renew it forever: the
             // idle timeout could never pass, and the group the reader had left would keep its
             // row DOM for the rest of the session. The lease belongs to the observer, which
@@ -8045,7 +8045,7 @@
           // sizeBuiltGroup then writes that 0 onto it. A group sized 0px occupies no space, so it
           // can never come back into the viewport, so it is never re-rendered: the ledger stays
           // collapsed for good and the document is two thousand pixels tall above a hundred and
-          // forty kilobytes of rows. It only showed up in the default window, where 200 records
+          // forty kilobytes of rows. It only showed up in the default window, where PAGE_STEP records
           // span fewer turns than LEDGER_BATCH_GROUPS and therefore the *whole* ledger is this
           // batch; the A/B that measured it ran on 显示全部, where the batch is long enough to sit in the
           // viewport and get measured for real.
@@ -8074,7 +8074,7 @@
               //
               // Writing the prediction here instead would undo the rule on every group of the
               // first batch, and in the default view the first batch is the whole window: the
-              // page opens on the newest 200 records, and 200 records span fewer turns than
+              // page opens on the newest PAGE_STEP records, and that window spans fewer turns than
               // LEDGER_BATCH_GROUPS.
               holdLedgerHeight(dormant[d], heldLedgerHeight(content.key, dormantRows, content.bands, dormantPredicted, build.heights));
             }
@@ -8116,10 +8116,10 @@
         }
 
         // Windows of a few groups never reach the yield: the while loop inside buildStep consumes
-        // all of them and falls straight through, so the default 200-row table is built exactly as
+        // all of them and falls straight through, so the default window's table is built exactly as
         // it always was, in one pass, with no progress written and no frame spent. Seeding the
         // progress only when there is more than one batch is what keeps that true — otherwise the
-        // common path paid for a 「正在显示 0 / 200 条」 that no reader ever saw.
+        // common path paid for a 「正在显示 0 / N 条」 that no reader ever saw.
         if (groups.length > LEDGER_BATCH_GROUPS) setLedgerProgress(0, buildTotal);
         buildStep();
       }
@@ -8220,7 +8220,7 @@
           // double-count the shift and leave the page visibly off.
           //
           // Guarded, because this button is meaningless in 全部: state.limit is Infinity there,
-          // and Infinity + 200 is still Infinity, so the click would re-render and change
+          // and Infinity + PAGE_STEP is still Infinity, so the click would re-render and change
           // nothing — a control that looks live and is not. It is hidden in that mode, so the
           // branch is unreachable through the UI; the guard is there so that hiding it can
           // never be the only thing standing between a reader and a button that does nothing.
@@ -8230,7 +8230,7 @@
         });
         actions.appendChild(more);
 
-        // One button for the one choice. It was two — 「只看最新 200 条」 and 「已显示全部」 —
+        // One button for the one choice. It was two — 「只看最新 N 条」 and 「已显示全部」 —
         // and the first one relabelled itself to the second one's wording once you were
         // already showing everything, which made the row read as three controls for two
         // states. The label names the state you are in; the accessible name names the action.
@@ -8283,7 +8283,7 @@
        * so follows the panel rather than whatever the last poll happened to build. And it is re-read
        * on every frame rather than remembered, because 「the end」 moves every poll: the window is
        * the newest N records and each new one slides it forward, so the bottom of the ledger is a
-       * different document position every 2.5 seconds. Anything derived from scrollHeight against a
+       * different document position on every poll. Anything derived from scrollHeight against a
        * stored value would be correct only between polls.
        *
        * Both edges, or neither: an earlier version tested `r.height > 0 || r.top < viewH`, and the
@@ -8414,7 +8414,7 @@
        *
        * It moves the page and nothing else. It does not touch `state.limit`, so it cannot make the
        * window wider — the prohibition this function exists to enforce, and the one the window bar's
-       * 「已显示 N 条」 depends on. Both ends are already loaded: down reaches the newest 200, up
+       * 「已显示 N 条」 depends on. Both ends are already loaded: down reaches the newest PAGE_STEP records, up
        * reaches the oldest of them.
        */
       function setLedgerJumpLabel() {
@@ -8562,15 +8562,15 @@
        * The mode button names the action; the count beside it names the state.
        *
        * They are not saying the same thing twice, and they must not be made to. The count is
-       * the report — 已显示 200 条, 更早的 9,783 条未加载 — and it is the only thing on the row
+       * the report — 已显示 N 条, 更早的 M 条未加载 — and it is the only thing on the row
        * that tells you what you are looking at. The button is the offer, and what it offers is
-       * by definition not what you already have: from the newest 200, the whole session; from
+       * by definition not what you already have: from the newest PAGE_STEP records, the whole session; from
        * everything, back to one page. A button that restates the current state is a button
        * whose text changes to tell you nothing new.
        *
        * It was briefly written the other way and read as a contradiction, because at the time
        * the label and the count were describing the same quantity with different wording —
-       * 「只看最新 200 条」 above 「已显示 200 条」. Naming the action dissolves that rather than
+       * 「只看最新 N 条」 above 「已显示 N 条」. Naming the action dissolves that rather than
        * causing it: the two now answer different questions, and neither can contradict the
        * other because neither claims to be the other.
        *
@@ -8588,14 +8588,14 @@
         parts.more.textContent = '向上加载更早的 ' + formatInt(Math.min(PAGE_STEP, Math.max(hiddenAbove, 0))) + ' 条';
         // The button names the ACTION: it says what pressing it will do, which is the only
         // information the reader does not already have. The state is already on screen — the
-        // count beside this button reports 已显示 200 条 or 已显示 9,977 条, and the page title
+        // count beside this button reports 已显示 N 条 or 已显示 M 条, and the page title
         // says which turns that covers — so a label restating it spends its width saying
-        // nothing. At the default the window already holds only the newest 200, so the one
+        // nothing. At the default the window already holds only the newest PAGE_STEP records, so the one
         // thing worth offering is the whole session; once everything is shown, the one thing
         // worth offering is going back to a page.
         //
-        // It went the other way twice. Describing the state put 「只看最新 200 条」 next to
-        // 「已显示 200 条」 — the button echoing the count beside it. Describing the state after
+        // It went the other way twice. Describing the state put 「只看最新 N 条」 next to
+        // 「已显示 N 条」 — the button echoing the count beside it. Describing the state after
         // a second change put 「已显示全部」 on a page showing everything, which is true and
         // therefore tells you nothing about the button. Naming the action is what both cases
         // need.
@@ -8984,7 +8984,7 @@
 
         // Like every other filter, and for the same reason: the window the reader was looking
         // at was chosen for a set of records that no longer exists. Setting a range used to
-        // force 「全部」 instead, on the theory that a 200-cap inside a range silently drops
+        // force 「全部」 instead, on the theory that the default cap inside a range silently drops
         // the start of what the reader asked for. Measured, that theory is not worth its
         // price — a range covering the whole session rendered ~11,000 rows and took the
         // document to 414,000px, where one query took 19s. The window bar still says how many
@@ -9081,7 +9081,7 @@
       /* ---------------- inspector ---------------- */
 
       var INSPECTOR_DOCK_QUERY = '(max-width: 1080px)';
-      // The height the panel gets when the reader has not asked for another one. 2/5 of the
+      // The height the panel gets when the reader has not asked for another one. INSPECTOR_DOCK_SHARE of the
       // window, on the reviewer's instruction (it was a quarter for a while before that).
       //
       // One constant, because this number used to be written twice — applyInspectorDock() and
@@ -10230,7 +10230,7 @@
         updateRangeHint();
         // The refresh button depends on how far the session has run past the snapshot, which
         // changes on every poll — it has to be re-decided here or it would offer to refresh
-        // for records that are already in, or stay hidden while 200 records pile up behind it.
+        // for records that are already in, or stay hidden while a window of records piles up behind it.
         syncRangeButtons();
         // The picker bounds move with the session, which grows during the very first poll.
         // Setting them once at startup would leave the calendar capped at whatever the

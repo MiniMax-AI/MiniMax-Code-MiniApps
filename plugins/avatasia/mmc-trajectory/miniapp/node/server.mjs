@@ -56,8 +56,8 @@ const GENERATION_PROBE_BYTES = 64 * 1024;
  *
  * The last clause used to end "for counts nobody treats as exact", and that is what turned out
  * to be false: the page printed the message count in the session picker (`（3 分钟前 · 10 条）`), so it
- * was treated as exact. On a session whose active file is 1 MB, the first 64 KB held 10 messages
- * out of 23,642 — a number that was wrong by three orders of magnitude and carried no hint of it.
+ * was treated as exact. When the prefix was a small part of the file, the count it produced was
+ * wrong by orders of magnitude and carried no hint of it.
  * So the prefix stays bounded and the counters it buys are only REPORTED when the prefix was the
  * whole file; see {@link describeSession}. Counting exactly is not available: the list reads the
  * active file, and an exact count there would still miss the rest of the lineage.
@@ -82,7 +82,7 @@ const MAX_RAW_BYTES = 65536;
  * rides the same interval, but the current conversation is re-read on every poll and is not
  * cached at all: it is the one fact here that must not be stale, because a cached "current
  * conversation" is the very defect the picker was built to remove. That read costs a few
- * milliseconds — measured at 4.00 ms per call against a 2.5 s poll, so 0.16% of the interval —
+ * milliseconds — measured at 4.00 ms per call against the poll interval, a fraction of one percent of it —
  * which is why it is left uncached rather than paid for with a TTL that could hide a switch
  * from one conversation to another.
  */
@@ -157,7 +157,7 @@ const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
  * without noticing.
  *
  * It was 3x before, and that was wrong in the direction that matters: 95.3 MB x 3 charged
- * 286 MB against a 256 MB budget, so the LRU evicted entries it had room for in reality and
+ * 286 MB against the budget, so the LRU evicted entries it had room for in reality and
  * re-parsed them on the next poll. The budget is only as good as this number.
  */
 const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
@@ -223,7 +223,7 @@ const PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS = 150 * 1000;
 /**
  * How many decoded messages one trajectory entry keeps for `/raw`, per open session.
  *
- * Bounded by count rather than bytes because the thing being kept is one message, and a 64 KB cap
+ * Bounded by count rather than bytes because the thing being kept is one message, and the raw cap
  * is already what decides whether a message is too big to show. The point is not to be a cache —
  * it is so that paging back and forth in the inspector does not re-read the file each time — and a
  * reader who opens more than this many at once is served correctly either way.
@@ -235,7 +235,7 @@ const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache
  * Scans for the list counters, one per field. Each one stops right after the opening quote of
  * the value, so the value can be read out of `text` by position instead of being captured —
  * which is the whole point: a capturing `matchAll` allocates a match object per hit, and on a
- * 64 KB prefix with thousands of messages that is thousands of short-lived objects per session,
+ * the peek prefix with thousands of messages that is thousands of short-lived objects per session,
  * per rebuild.
  *
  * They carry `/g` and are driven with `test`, which allocates nothing. That mutates `lastIndex`,
@@ -812,7 +812,7 @@ export function activeCatalogBytes(catalog) {
  * The catalog-recorded sizes are a snapshot, and the active `messages.jsonl` keeps being appended
  * to after the catalog was written — so "we read fewer bytes than the file now has" is not evidence
  * that the file is too large. Reporting it as truncation is how a merely-active session ended up
- * claiming the first 64 MB when it was nowhere near it.
+ * claiming the whole read cap when it was nowhere near it.
  *
  * @param {number} size the file's size at read time
  * @param {number} limit the bytes we were willing to read
@@ -1225,11 +1225,9 @@ async function readManifestSessionId(dir) {
  * The whole candidate set from one walk, as two products of the same traversal.
  *
  * These used to be one thing, and that is the defect. `slice(0, MAX_SESSION_LIST)` ran last,
- * so the only handle the service had on a session directory was "one of the 30 most recently
+ * so the only handle the service had on a session directory was "one of the most recently
  * touched" — and `resolveTrajectoryRequest` resolved an explicit id by scanning exactly those
- * 30. Measured on this machine: 146 candidate directories, 30 exposed, 116 of them
- * unreachable by id (window inside 200/200, a sample outside 404/404). A session the user
- * could name but not open is a correctness bug, not a small one.
+ * MAX_SESSION_LIST. A session the user could name but not open is a correctness bug, not a small one.
  *
  * So the traversal now yields two things:
  *
@@ -1337,7 +1335,7 @@ export async function collectSessionCandidates(sessionsRoot) {
     else bySessionId.set(entry.sessionId, [entry]);
   }
 
-  // `allEntries` is the same walk, uncut. The 30-entry window is what 'latest' falls back to and
+  // `allEntries` is the same walk, uncut. The capped window is what 'latest' falls back to and
   // what the picker used to draw from; the list of MAIN sessions needs a deeper pool than that,
   // because a sub-agent sits in that window and would otherwise take a main session' place.
   // The walk already stat'ed every one of these, so the deeper pool costs no extra disk work.
@@ -1467,7 +1465,7 @@ export async function resolveCurrentConversation(home) {
   } catch {
     return null;
   } finally {
-    // Every call opened its own handle and none of them closed it. Polling every 2.5s meant
+    // Every call opened its own handle and none of them closed it. Polling on every tick meant
     // 20–30 live handles waiting on the GC, and dispose() left them open too.
     closeQuietly(db);
   }
@@ -2160,7 +2158,7 @@ export function toolCallSummary(name, args) {
  * The message itself was carried on every row and taken off again by this function. That is
  * what kept the bulk response small, and it stays true. What did not survive scrutiny is how
  * the size was decided: buildRawPayload() had to JSON.stringify the message to measure it, so
- * every rebuild serialized about 100 MB of message bodies to compare them against a 64 KB cap
+ * every rebuild serialized about 100 MB of message bodies to compare them against the read cap
  * and then threw the string away — for a body the page reads for one record at a time, if at
  * all. Pinned by tests/verify-raw-lazy.mjs.
  *
@@ -3812,7 +3810,7 @@ export function createParsedRowsCache(budget, options = {}) {
  * a session that is still being written to mints a NEW key every time it grows — and every miss
  * stores another complete body. A plain FIFO therefore keeps four versions of the SAME question
  * alive, three of which no request can reach any more: `/raw` resolves the current key, and the
- * page's next poll produces a newer one. Measured on a 9.1 MB session polled every 8s, the cache
+ * page's next poll produces a newer one. Measured on a 9.1 MB session polled on every tick, the cache
  * held four bodies (49.6 MB) after four polls; at this machine's 68 MB body that is three dead
  * copies.
  *
@@ -4270,7 +4268,7 @@ export async function start(context) {
    *
    * readSessionTitles opens the runtime database on every call, and the list route calls it once
    * per poll for rows that only change when somebody renames a session. Raising the walk's TTL
-   * without this would still reopen a 700 MB store every 2.5 s forever, so the two caches answer
+   * without this would still reopen a 700 MB store on every poll forever, so the two caches answer
    * the same poll or neither does.
    * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null, parent: string | null, purpose: string | null, workspace: string | null }> }}
    */
@@ -4420,7 +4418,7 @@ export async function start(context) {
       // That list is also what 'latest' falls back to when the runtime database is unavailable,
       // and nothing here reorders it. The VISIBLE set below is a different set — it draws from
       // the MAIN sessions only, and the rule for picking twenty of them is no longer pure mtime:
-      // the current conversation comes first, then the sessions of its workspace. The 30-entry
+      // the current conversation comes first, then the sessions of its workspace. The capped
       // window is deliberately NOT the pool: a sub-agent sits in that window and would take a
       // main session' place, and the walk has already stat'ed every candidate besides, so the
       // deeper pool costs no extra disk work.
@@ -4617,7 +4615,7 @@ export async function start(context) {
       //
       // Fast path: the id is the one the walk published that directory under, so the directory is
       // already known and no scanning is needed. This is what makes a session outside the recent
-      // 30 reachable at all — before this, the only directories this branch could see were the 30
+      // window reachable at all — before this, the only directories this branch could see were the ones
       // the picker shows, so 116 of 146 sessions on this machine answered 404 to their own id.
       //
       // The walk's decision is not the last word. The manifest can change under the walk, so the
@@ -5139,7 +5137,7 @@ export async function start(context) {
 
     // Before anything expensive. The lineage walk above is stat-driven and cheap; everything after
     // this line is the rebuild, and on the largest session measured here it was 3.7 seconds for a
-    // search that returns at most 500 rows.
+    // search that returns at most MAX_SEARCH_HITS rows.
     const onDisk = await searchFromArtifacts({ sessionKey, viewKey, files, needle, count });
     if (onDisk !== null) {
       // The segments ARE the body this answer is about, so their records decide whether it is

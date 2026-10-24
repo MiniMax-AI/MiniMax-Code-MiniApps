@@ -6,7 +6,7 @@
 // WHY A SEGMENT AND NOT A FIELD ON THE INDEX. The search surface is five fields per record
 // (summary, text, result, thinking, toolName) — measured at 36.7 MB for a 44-generation session,
 // against 8.6 MB for the index. Folding it in would make every read of the index pay for search, on
-// a page that reads the index every eight seconds and searches when someone types. Kept apart, the
+// a page that reads the index on every poll and searches when someone types. Kept apart, the
 // ordinary read never opens the surface and a search never opens the index's own metadata twice.
 //
 // WHY PER GENERATION AND NOT PER SESSION. A sealed generation's records cannot change, so its
