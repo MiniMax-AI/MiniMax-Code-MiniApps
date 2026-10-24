@@ -1,5 +1,8 @@
 # MiniMax Photo
 
+**0.2.37** updates the icon to a matte blue octopus painter with a beret, brush and drawing board. This release changes only the icon and version metadata; editor functionality and language behavior are unchanged.
+
+
 [简体中文](README.zh-CN.md)
 
 An image-editing MiniApp for MiniMax Code. Edit layers, selections and colors yourself, or ask the in-app assistant to inspect the canvas, perform reversible edits and generate images with the tools available in your Host.

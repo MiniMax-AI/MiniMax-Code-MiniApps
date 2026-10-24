@@ -33,9 +33,26 @@ const HELPER_ACTIVE = new Set(['queued', 'running']);
  * A turn that failed before running any tool is retried this many more times, after these waits.
  * Model capacity errors (429/529) and timeouts usually clear within a minute.
  */
-const TURN_RETRY_DELAYS_MS = [8000, 20000];
+export const TURN_RETRY_DELAYS_MS = Object.freeze([8000, 20000]);
 /** Failure reasons a retry cannot fix; anything else (or no reason from an older Host) may be retried. */
-const NO_RETRY_REASONS = new Set(['auth', 'quota', 'context_too_long', 'blocked', 'invalid_request']);
+export const NO_RETRY_REASONS = new Set(['auth', 'quota', 'context_too_long', 'blocked', 'invalid_request']);
+/** The turn may already have run, so resending it could repeat a reply or an action. */
+const OUTCOME_UNKNOWN = 'AGENT_OUTCOME_UNKNOWN';
+
+/**
+ * Whether a failed turn may be sent again automatically. `retryable: false` always vetoes,
+ * whether it was thrown or returned, and so does an unknown outcome or a reason a retry
+ * cannot fix. A thrown error is retried only when it says `retryable: true`; a returned
+ * `error` result without the flag may be retried.
+ *
+ * @param {{ thrown: boolean, retryable?: unknown, code?: string, reason?: string }} failure
+ */
+export function mayRetryFailure({ thrown, retryable, code, reason }) {
+  if (retryable === false) return false;
+  if (code === OUTCOME_UNKNOWN) return false;
+  if (reason && NO_RETRY_REASONS.has(reason)) return false;
+  return thrown ? retryable === true : true;
+}
 
 /** Resolves true after `ms`, or false at once if `signal` aborts first. */
 function sleepUnlessAborted(ms, signal) {
@@ -504,14 +521,17 @@ export class Engine {
     let result;
     let failure = '';
     let failureCode = '';
-    let failureRetryable = false;
+    /** @type {unknown} */
+    let failureRetryable;
+    let failureReason = '';
     let attempt = 0;
     try {
       for (;;) {
         result = undefined;
         failure = '';
         failureCode = '';
-        failureRetryable = false;
+        failureRetryable = undefined;
+        failureReason = '';
         if (controller.signal.aborted || this.isStale(ticket)) {
           controller.abort();
           result = skippedTurn();
@@ -535,25 +555,28 @@ export class Engine {
             } catch (retryError) {
               failure = describeAgentError(retryError);
               failureCode = errorCode(retryError);
-              failureRetryable = Boolean(/** @type {any} */ (retryError)?.retryable);
+              failureRetryable = /** @type {any} */ (retryError)?.retryable;
+              failureReason = String(/** @type {any} */ (retryError)?.reason ?? '');
             }
           } else {
             failure = describeAgentError(error);
             failureCode = errorCode(error);
-            failureRetryable = Boolean(/** @type {any} */ (error)?.retryable);
+            failureRetryable = /** @type {any} */ (error)?.retryable;
+            failureReason = String(/** @type {any} */ (error)?.reason ?? '');
           }
         }
-        const failed = Boolean(failure) ? failureRetryable : result?.status === 'error';
-        const reason = result?.error?.reason;
+        const thrown = Boolean(failure);
+        const failed = thrown || result?.status === 'error';
         const canRetry =
           failed &&
+          mayRetryFailure(thrown
+            ? { thrown, retryable: failureRetryable, code: failureCode, reason: failureReason }
+            : { thrown, retryable: result?.error?.retryable, code: result?.error?.code, reason: result?.error?.reason }) &&
           !input.answer &&
           !toolStarted &&
           attempt < this.retryDelays.length &&
           !controller.signal.aborted &&
-          !this.disposed &&
-          result?.error?.retryable !== false &&
-          !NO_RETRY_REASONS.has(reason);
+          !this.disposed;
         if (!canRetry) break;
         const delay = this.retryDelays[attempt];
         attempt += 1;

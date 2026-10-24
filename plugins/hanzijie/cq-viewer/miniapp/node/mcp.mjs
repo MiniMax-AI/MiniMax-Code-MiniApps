@@ -6,18 +6,26 @@
 
 export const MCP_PATH = '/mcp/cq-viewer';
 
-const SERVER_INFO = { name: 'cq-viewer', version: '1.2.1' }; // keep equal to plugin.json (tests check)
+const SERVER_INFO = { name: 'cq-viewer', version: '1.4.0' }; // keep equal to plugin.json (tests check)
 
 const INSTRUCTIONS = [
   'CadQuery Viewer 是本机的 STL / STEP 查看器，页面在 MiniMax Code 的 Mini App 面板里打开。',
-  '导出模型后用 add_model_file 在查看器里打开它：默认原地打开，脚本重新导出同一个文件时查看器会自动刷新，所以每个文件调用一次即可。',
-  '用 add_model_folder 登记项目文件夹，用 list_model_folders 查看已登记的文件夹和模型。',
+  '在对话里打开时，查看器只列出这个对话所在文件夹（会话文件夹）里的模型，默认一个都不打开；不在对话里打开时什么都不显示。',
+  '导出模型后用 add_model_file 在查看器里打开它，并把你当前的工作目录作为 workspace 传入，这样只有这个对话的查看器会打开它。默认原地打开，脚本重新导出同一个文件时查看器会自动刷新，所以每个文件调用一次即可。',
+  '会话文件夹之外的模型文件夹，用 add_model_folder（同样传 workspace）加到这个对话的查看器里；用 list_model_folders 查看已登记的文件夹和模型。',
   '查看器没打开时请求会保留 24 小时，用户打开查看器后自动执行；结果里 viewer_connected 为 false 时，提醒用户打开 CadQuery Viewer。',
-  '用户在查看器里标注的位置会作为消息发到对话里，同样的数据也在 ~/.cqview/selection.json。',
+  '用户在查看器里标注的位置会作为消息发到对话里，同样的数据按会话文件夹保存在 ~/.cqview/selections/ 下，最近一次写入的也在 ~/.cqview/selection.json。',
 ].join('\n');
 
 const NAME_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$';
 const COLOR_PATTERN = '^#[0-9a-fA-F]{6}$';
+/** @type {Schema} */
+const WORKSPACE = {
+  type: 'string',
+  minLength: 1,
+  maxLength: 1024,
+  description: '你当前的工作目录（这个对话所在的文件夹，绝对路径）。传了它，只有这个对话里的查看器会执行这次请求',
+};
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -30,14 +38,15 @@ export const TOOLS = [
     name: 'add_model_folder',
     title: '添加模型文件夹',
     description:
-      '把本机的一个文件夹登记到 CadQuery Viewer。查看器会递归列出其中的 .stl / .step / .stp，并在文件变化时刷新。' +
-      '文件夹必须在用户主目录内，不能是主目录本身、~/Library 或以 . 开头的顶层目录。' +
+      '把一个文件夹加到 CadQuery Viewer。传 workspace 时，它会作为额外文件夹出现在这个对话的查看器里（会话文件夹本身及其子文件夹不用加，查看器已经会列出）。' +
+      '会话文件夹之外的文件夹必须在用户主目录内，不能是主目录本身、~/Library 或以 . 开头的顶层目录。' +
       '返回文件夹 ID 和其中的模型文件（绝对路径，最多 200 个）。select 为 true（默认）时，查看器会切换到这个文件夹。',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', minLength: 1, maxLength: 1024, description: '文件夹的绝对路径，可以用 ~/ 开头' },
         select: { type: 'boolean', description: '是否让查看器切换到这个文件夹，默认 true' },
+        workspace: WORKSPACE,
       },
       required: ['path'],
       additionalProperties: false,
@@ -48,18 +57,19 @@ export const TOOLS = [
     name: 'add_model_file',
     title: '添加模型文件',
     description:
-      '在 CadQuery Viewer 里打开一个 .stl / .step / .stp 文件。' +
-      '默认原地打开：自动登记文件所在的文件夹（已登记的上级文件夹优先），文件之后被重新导出时查看器自动刷新；这种方式要求文件在用户主目录内。' +
-      'copy_to_scene 为 true 时，改为把文件复制到查看器的脚本推送目录 ~/.cqview/scene/<name>.<扩展名>，适合主目录以外的文件（例如 /tmp），但源文件之后的修改不会同步；name、color、opacity 只在这种方式下生效。' +
+      '在 CadQuery Viewer 里打开一个 .stl / .step / .stp 文件。请传 workspace（你当前的工作目录），只有这个对话的查看器会打开它。' +
+      '默认原地打开：文件在会话文件夹里就直接从那里打开；在别处（须在用户主目录内）则把它所在的文件夹加为这个对话的额外文件夹。之后重新导出这个文件，查看器自动刷新。' +
+      'copy_to_scene 为 true 时，改为把文件复制到查看器的 scene 文件夹 ~/.cqview/scene/<name>.<扩展名>（查看器把它当作一个文件夹列出），适合主目录以外的文件（例如 /tmp），但源文件之后的修改不会同步；name、color、opacity 只在这种方式下生效。' +
       '查看器没打开时请求会保留 24 小时，打开后自动执行。',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', minLength: 1, maxLength: 1024, description: '模型文件的绝对路径，可以用 ~/ 开头' },
-        copy_to_scene: { type: 'boolean', description: '复制到脚本推送目录而不是原地打开，默认 false' },
+        copy_to_scene: { type: 'boolean', description: '复制到 ~/.cqview/scene 而不是原地打开，默认 false' },
         name: { type: 'string', pattern: NAME_PATTERN, description: '复制后的模型名（字母、数字、. _ -），默认取文件名' },
         color: { type: 'string', pattern: COLOR_PATTERN, description: '显示颜色，例如 #4f8cff' },
         opacity: { type: 'number', minimum: 0.05, maximum: 1, description: '不透明度 0.05–1' },
+        workspace: WORKSPACE,
       },
       required: ['path'],
       additionalProperties: false,
@@ -70,7 +80,7 @@ export const TOOLS = [
     name: 'list_model_folders',
     title: '列出模型文件夹',
     description:
-      '列出 CadQuery Viewer 已登记的模型文件夹，以及脚本推送目录 ~/.cqview/scene 里的模型。' +
+      '列出 CadQuery Viewer 已登记的模型文件夹，以及 scene 文件夹 ~/.cqview/scene 里的模型。' +
       '传 folder（文件夹 ID 或绝对路径）时，改为返回该文件夹里的模型文件（绝对路径，最多 200 个）。',
     inputSchema: {
       type: 'object',

@@ -1,0 +1,6 @@
+.miniapp-setup { min-height:100vh; display:grid; place-items:center; padding:24px; box-sizing:border-box; background:var(--cc-bg); color:var(--cc-text); font-size:var(--mini-type-body); line-height:var(--mini-leading-body); }
+.miniapp-setup__card { width:min(100%,560px); display:flex; flex-direction:column; gap:20px; padding:32px; border:1px solid var(--cc-border); border-radius:12px; background:var(--cc-panel); }
+.miniapp-setup h1,.miniapp-setup h2 { font-size:var(--mini-type-title); line-height:var(--mini-leading-title); }
+.miniapp-setup p { color:var(--cc-text-muted); overflow-wrap:anywhere; }
+.miniapp-setup__choices { display:flex; gap:12px; flex-wrap:wrap; }
+.miniapp-setup button { font-size:var(--mini-type-control); line-height:var(--mini-leading-control); }

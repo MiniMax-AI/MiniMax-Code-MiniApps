@@ -229,6 +229,79 @@ test('reactions stay on the final bubble while message parts change, preserving 
   assert.equal(document.activeElement, document.querySelector('.reaction-trigger'));
 });
 
+test('a long reply keeps every bubble in the open, one per recorded part', async () => {
+  const parts = [];
+  for (let index = 0; index < 12; index += 1) {
+    parts.push({ type: 'text', text: `Step ${index}` }, { type: 'tool', name: 'read', state: 'done' });
+  }
+  parts.push({ type: 'text', text: 'The answer' });
+  const item = message('m-long-reply', 'The answer', { parts, userReactions: ['👍'], reactionsRevision: 1 });
+  await reset([item]);
+  // The bubbles stay the ones the official build draws, in the order it draws them.
+  assert.equal(document.querySelector('.bubble-fold'), null);
+  const wrap = document.querySelector('article.msg .bubble-wrap');
+  const open = [...wrap.children].filter((child) => child.classList.contains('bubble'));
+  assert.equal(open.length, 13);
+  assert.match(open[0].textContent, /Step 0/);
+  assert.match(open[12].textContent, /The answer/);
+  // The answer is the last bubble, so the reaction indicator sits on it.
+  assert.equal(open[12].querySelector('.reaction-chip').dataset.emoji, '👍');
+  // The bubbles follow each other directly, so the gap rule reaches every one of them.
+  assert.equal(wrap.querySelectorAll('.bubble + .bubble').length, 12);
+});
+
+test('the bubbles of one reply keep a small gap between them', async () => {
+  const css = await readFile(new URL('../miniapp/client/app.css', import.meta.url), 'utf8');
+  const column = css.match(/\n\.bubble-wrap \{[^}]*\}/)?.[0] ?? '';
+  assert.ok(column, 'the column of bubbles needs a rule of its own');
+  // The gap belongs to the bubbles alone. The action row, the notes and the event lines keep
+  // the spacing the official build gave them, so the column itself cannot carry the gap.
+  assert.doesNotMatch(column, /gap:/);
+  const gap = css.match(/\n\.bubble-wrap > \.bubble \+ \.bubble \{[^}]*\}/)?.[0] ?? '';
+  assert.ok(gap, 'the bubbles that follow each other need a gap of their own');
+  assert.match(gap, /margin-top: 4px/);
+});
+
+test('a multi-line reply keeps its actions below the text and its reaction indicator above them', async () => {
+  const text = 'First line\nSecond line\n\nThird paragraph\nFourth line';
+  const item = message('m-multiline', text, {
+    parts: [{ type: 'text', text }],
+    userReactions: ['👍'], reactionsRevision: 1,
+  });
+  await reset([item]);
+  const wrap = document.querySelector('article.msg .bubble-wrap');
+  const bubble = wrap.querySelector('.bubble');
+  const tools = wrap.querySelector('.msg-tools');
+  // The action row is a sibling below the bubble, never a child of it: a reply that runs
+  // over several lines must not push the buttons back to the top of the message.
+  assert.equal(bubble.querySelector('.msg-tools'), null);
+  assert.equal(tools.parentElement, wrap);
+  assert.equal(wrap.lastElementChild, tools);
+  assert.deepEqual([...wrap.children].map((child) => child.className), ['bubble', 'msg-tools']);
+  // Every line of the reply belongs to that one bubble.
+  assert.match(bubble.textContent, /First line/);
+  assert.match(bubble.textContent, /Fourth line/);
+  // The reaction indicator stays with the bubble it belongs to, so it renders above the row.
+  assert.equal(bubble.querySelector('.reaction-chip').dataset.emoji, '👍');
+  // The quote action still carries the whole reply, however many lines it has.
+  tools.querySelector('[aria-label="Quote"]').click();
+  await settle();
+  assert.match(document.querySelector('.quoting').textContent, /First line/);
+});
+
+test('the reaction indicator is painted from the theme instead of a fixed brand colour', async () => {
+  const css = await readFile(new URL('../miniapp/client/app.css', import.meta.url), 'utf8');
+  const rule = css.match(/\n\.reaction-bar \{[^}]*\}/)?.[0] ?? '';
+  assert.ok(rule, 'the reaction indicator needs a rule of its own');
+  // The indicator sits on the bubble, so it follows the app's tag language: a themed
+  // surface, a hairline border and muted ink. Both themes then read the same way.
+  assert.match(rule, /background: var\(--tag\)/);
+  assert.match(rule, /border: 1px solid var\(--line-strong\)/);
+  assert.match(rule, /color: var\(--muted\)/);
+  assert.doesNotMatch(rule, /var\(--accent\)/);
+  assert.doesNotMatch(css, /--reaction-ink/);
+});
+
 test('history paging prepends in order, retains scroll position and exports every page separately', async () => {
   await reset();
   // Several messages can share the same millisecond; page order remains authoritative.
@@ -636,4 +709,107 @@ test('group execution records keep each reply linked to its own session and part
     state.groups = [];
     await reset();
   }
+});
+
+test('the background task strip keeps the official one line rows and folds a long queue', async () => {
+  await reset();
+  // Nothing is running: the strip stays empty instead of printing a stray "null".
+  assert.equal(document.querySelector('.helpers').textContent, '');
+  const chat = 'bot:bot_a';
+  const queued = Array.from({ length: 5 }, (_, index) => ({
+    id: `hlp_q${index}`, botId: 'bot_a', chatId: chat, title: `Queued task ${index + 1}`, task: `Queued task ${index + 1}`,
+    status: 'queued', createdAt: Date.now(),
+  }));
+  const helpers = [
+    { id: 'hlp_run', botId: 'bot_a', chatId: chat, title: 'Rebuild the truth table', task: 'Rebuild the truth table in the verifier', status: 'running', startedAt: Date.now() - 60000 },
+    { id: 'hlp_wait', botId: 'bot_b', chatId: chat, title: 'Collect the samples', task: 'Collect the samples', status: 'waiting_for_tasks', createdAt: Date.now() - 120000 },
+    ...queued,
+  ];
+  emit({ type: 'helpers.changed', helpers });
+  await settle();
+  const strip = document.querySelector('.helpers');
+  const rows = strip.querySelectorAll('.helper-row');
+  // The rows are the ones the official build draws. The fold keeps three of them in the open,
+  // the ones that are already working first, and the rest fold into one line.
+  assert.equal(rows.length, 3);
+  // A row is one line: who is doing what, then the elapsed time, then the stop button.
+  const running = rows[0];
+  assert.equal(running.className, 'helper-row');
+  assert.match(running.querySelector('.helper-text').textContent, /Rob is working on "Rebuild the truth table"/);
+  assert.ok(running.querySelector('.helper-time').textContent);
+  assert.equal(running.querySelector('button').className, 'btn sm');
+  assert.equal(running.querySelector('button').textContent, 'Stop');
+  // The row carries the whole task as its hover hint.
+  assert.equal(running.title, 'Rebuild the truth table in the verifier');
+  // A queued job says so, and has no elapsed time yet.
+  const queuedRow = rows[2];
+  assert.match(queuedRow.querySelector('.helper-text').textContent, /Rob has this queued: "Queued task 1"/);
+  assert.equal(queuedRow.querySelector('.helper-time').textContent, '');
+  // The queue behind the third row folds into one line.
+  const more = strip.querySelector('.helper-more');
+  assert.match(more.textContent, /4 more tasks/);
+  more.click();
+  await settle();
+  assert.equal(strip.querySelectorAll('.helper-row').length, 7);
+  assert.equal(strip.querySelector('.helper-more').textContent, 'Collapse queue');
+
+  // The button is the same node from one render to the next, so a redraw does not take the
+  // keyboard focus away from it.
+  const button = strip.querySelector('.helper-more');
+  button.focus();
+  assert.equal(document.activeElement, button, 'the fold button takes the focus');
+  emit({ type: 'helpers.changed', helpers });
+  await settle();
+  assert.equal(strip.querySelector('.helper-more'), button, 'the redraw reuses the button node');
+  assert.equal(document.activeElement, button, 'the redraw keeps the focus on it');
+
+  // The rows are ordered by how far along the job is, and the fold keeps the first three: a job
+  // that is already working is never the one that folds away, even when the queue in front of
+  // it is long.
+  button.click();
+  await settle();
+  emit({
+    type: 'tasks.changed',
+    tasks: [{ id: 'tsk_run', batchId: 'batch_1', botId: 'bot_a', chatId: chat, title: 'Answer the ticket', task: 'Answer the ticket', status: 'running', startedAt: Date.now() - 30000 }],
+  });
+  await settle();
+  const visible = [...strip.querySelectorAll('.helper-row')].map((row) => row.textContent);
+  assert.equal(visible.length, 3);
+  assert.match(visible[0], /Rebuild the truth table/, 'a running job comes first');
+  assert.match(visible[1], /Answer the ticket/, 'the running task comes next');
+  assert.match(visible[2], /Awaiting dependencies/, 'the waiting job comes after the running ones');
+  assert.ok(!visible.some((text) => /Queued task/.test(text)), 'a queued job gives way to the running one');
+
+  // Two jobs and no fold: the strip still orders them by how far along they are, so a queued
+  // job never sits above a job that is already working.
+  emit({ type: 'tasks.changed', tasks: [] });
+  emit({ type: 'helpers.changed', helpers: [queued[0], helpers[0]] });
+  await settle();
+  const plain = [...strip.querySelectorAll('.helper-row')].map((row) => row.textContent);
+  assert.equal(plain.length, 2);
+  assert.match(plain[0], /Rebuild the truth table/, 'the running job comes first even without a fold');
+  assert.match(plain[1], /Queued task 1/);
+
+  // Jobs of the same kind keep the order they arrived in, whichever list they came from.
+  emit({
+    type: 'helpers.changed',
+    helpers: [
+      { id: 'hlp_new', botId: 'bot_a', chatId: chat, title: 'Queued task 9', task: 'Queued task 9', status: 'queued', createdAt: Date.now() },
+      { id: 'hlp_old', botId: 'bot_a', chatId: chat, title: 'Queued task 8', task: 'Queued task 8', status: 'queued', createdAt: Date.now() - 60000 },
+    ],
+  });
+  await settle();
+  const sameKind = [...strip.querySelectorAll('.helper-row')].map((row) => row.textContent);
+  assert.match(sameKind[0], /Queued task 8/, 'the job that arrived first comes first');
+  assert.match(sameKind[1], /Queued task 9/);
+
+  // The open queue ends with the queue: when it shrinks to three jobs the fold button goes,
+  // and the next busy chat starts folded again.
+  emit({ type: 'tasks.changed', tasks: [] });
+  emit({ type: 'helpers.changed', helpers: helpers.slice(0, 3) });
+  await settle();
+  assert.equal(strip.querySelector('.helper-more'), null, 'a queue of three needs no fold button');
+  emit({ type: 'helpers.changed', helpers });
+  await settle();
+  assert.match(strip.querySelector('.helper-more').textContent, /4 more tasks/, 'the queue starts folded again');
 });

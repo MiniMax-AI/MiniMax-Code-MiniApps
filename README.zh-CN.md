@@ -18,14 +18,9 @@
 
 与此同时，各行各业的真实生产力依然扎根于高度专业化的工作环境中。单纯的“对话式交互（Chat UI）”无法替代专业工具的精准控制与复杂视图。未来的专业工作流，不应是让用户离开工作台去迁就 AI，而是让专业工作环境与 AI 深度共生——将 AI 内化为像水电、计算、存储一样可随时调用的底层原子能力。通过构建生长在 Agent OS 之上的专业级 MiniApps，我们致力于连接垂直领域的专业交互界面与底层的 AI 原生算力，重塑各行各业的工作方式。
 
-> *自驾规划案例：在 Agent 协助下规划上海周边周末自驾，并同时查看最终行程和同步后的路线工作台。* 这个案例展示了 MiniApp 可以提供的专业工作界面：左侧是 Agent 对话与完整行程，右侧是路线摘要、交互式地图和可编辑的行程工作台。
+> *CadQuery Viewer 案例：一句话让 Agent 生成 MiniMax 小章鱼的 3D 模型，想改哪里就直接在模型上指出来。* Agent 先查官方形象作参考，再编写 CadQuery 参数化脚本、自己运行并修正问题，构建结果直接显示在右侧的 Viewer 里。要改的时候，在模型上点一下标出位置（比如嘴巴），写一句“嘴巴染成红色”发回对话——Agent 拿到准确的零件和坐标，改完后 Viewer 自动换成新版本。
 
-![自驾规划案例：Agent 协作与 MiniApp 工作台](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
-
-> *CadQuery Viewer 案例：一句话让 Agent 设计一个可 3D 打印的 MiniMax 小章鱼玩偶，模型在对话旁实时成形。* Agent 先查官方形象作参考，再编写 CadQuery 参数化脚本、自己运行并修正问题，每次构建都推送到右侧的 Viewer。你可以随时旋转、切换视角、剖切检查模型，最后拿到打印建议和一张可调参数表——决定改哪一项，再让 Agent 重新出图。
-
-![CadQuery Viewer 案例：Agent 设计 MiniMax 小章鱼玩偶，模型在 Viewer 中实时预览](plugins/hanzijie/cq-viewer/docs/case-study.gif)
-
+![CadQuery Viewer 案例：Agent 生成 MiniMax 小章鱼模型，用户在模型上标注嘴巴并让 Agent 改成红色](plugins/hanzijie/cq-viewer/docs/case-study.gif)
 
 **MiniApp 的产品立场：让人始终参与协作与决策（Human-in-the-Loop）。**
 
@@ -62,7 +57,9 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 
 | MiniApp | 功能 | 作者 |
 | --- | --- | --- |
+| [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | 图层图片编辑、应用内 AI 助手、本地恢复与程序化编辑工具 | [WebGuHui](https://github.com/WebGuHui) |
+| [MiniMax Video](plugins/webguhui/minimax-video/) | 本地视频剪辑、字幕、宿主 Agent 助手、可预览的时间线修改与 MP4/MP3 导出 | [WebGuHui](https://github.com/WebGuHui) |
 | [AI 事务所](plugins/cristinamadureira353-svg/ai-office/README.zh-CN.md) | 五位真实模型员工的像素事务所：接单、聊天、休息和开会，额度耗尽时角色暂停；使用玩家自己的 API Key | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
 | [Token 用量看板](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md) | 近实时查看本机 Token 用量、输出速度与缓存命中率，可按时间范围、模型和会话筛选 | [yanhy2000](https://github.com/yanhy2000) |
@@ -72,12 +69,14 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [番茄钟 · 久坐提醒](plugins/1602winxp/pomodoro-sit-timer/README.zh-CN.md) | 只计时的番茄钟：工作段结束在页面内弹出久坐提醒并响铃，不锁状态、不限制休息时长；提醒音支持单文件或文件夹、顺序/随机播放、单曲循环与响度匹配 | [1602WinXP](https://github.com/1602WinXP) |
 | [灵签易占](plugins/weekbin/chinese-divination/README.zh-CN.md) | 梅花易数起卦与解卦：时间、数字、铜钱摇卦、每日一卦四法起卦，按体用生克断吉凶，另备六十四卦全文与干支历法 | [weekbin](https://github.com/weekbin) |
 | [会话轨迹](plugins/avatasia/mmc-trajectory/README.zh-CN.md) | 按轮次浏览一段会话的模型轨迹：消息流、思考过程、工具调用与结果、token 用量与每轮耗时 | [avatasia](https://github.com/avatasia) |
-| [CadQuery Viewer](plugins/hanzijie/cq-viewer/README.zh-CN.md) | 本地查看项目里的 STL / STEP（保留装配零件名称、颜色和真实边线），实时显示 CadQuery 脚本推送的模型，在模型上标注位置后一键发给 AI；AI 可通过 MCP 工具添加模型文件夹、打开模型，并内置 CadQuery 参数化建模 skill | [HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai) |
+| [CadQuery Viewer](plugins/hanzijie/cq-viewer/README.zh-CN.md) | 在对话里打开时列出对话所在文件夹里的 STL / STEP（保留装配零件名称、颜色和真实边线），按住哪里就绕哪里旋转；显示 CadQuery 脚本推送的模型，在模型上标注位置后一键发给 AI；再点一下，后台 Agent 用 MiniMax 图像生成把当前视角的白模渲染成成品图，可补充自己的描述；AI 可通过 MCP 工具添加模型文件夹、打开模型，并内置 CadQuery 参数化建模 skill | [HanZijie](https://github.com/HanZijie) · [flowful-ai](https://github.com/flowful-ai) |
 | [MiniMax Bot](plugins/minimax-ai/minimax-bot/) | 【官方插件】把 MiniMax Code 变成常驻的 Bot 团队：总管 Bot 帮你组建团队，群聊里用 `@` 在成员之间交接工作，每个 Bot 有自己的记忆、定时任务和用量统计；需要 MiniMax Code 3.1.2 或更高版本（说明文档为英文） | [MiniMax-AI](https://github.com/MiniMax-AI) |
 | [心屿](plugins/yujiachen-y/xinyu-daily/README.zh-CN.md) | 像独立小游戏的每日心情小岛：由你的回答决定的今日灵感卡、心情贴纸、小确幸罐子、纠结老虎机、答案之书，还有坏脾气螃蟹藏起来的 20 个秘密；可选开启小屿陪伴，借用你的模型每天写信、陪你聊天。需要 MiniMax Code 3.1.2 或更高版本 | [yujiachen-y](https://github.com/yujiachen-y) |
 | [协作 · MoMo](plugins/amszuidas/momo-collab/README.zh-CN.md) | 项目管家 MoMo：把随手的想法、截图和链接攒成想法，写清后变成任务，派 Agent 会话带着完整背景去执行，按验收标准核对结果后交你审核，进展在看板上一眼可见。需要 MiniMax Code 3.1.2 或更高版本 | [amszuidas](https://github.com/amszuidas) |
 | [Anatomy 画廊](plugins/zch0227/anatomy-gallery/README.zh-CN.md) | 集中展示 anatomy 技能做出的交互式等距图解：按自建展区挂墙，全屏查看明暗两版，保留全部历史版本；在画廊里让 Agent 新建或修改作品，每次运行都有过程记录。自带 anatomy 技能。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
 | [仓库透视](plugins/yujiachen-y/repo-xray/README.zh-CN.md) | 从 Git 历史看懂一个代码仓库：可逐层下钻的代码地图、热点与 Bug 磁铁、高风险文件、负责人与知识流失、提交节奏与救火记录、技术栈；支持 GitHub、GitLab 和本机仓库，全部在本机分析 | [yujiachen-y](https://github.com/yujiachen-y) |
+| [磁盘透视](plugins/zch0227/disk-insight/README.zh-CN.md) | 查看 macOS 和 Windows 的磁盘空间去向：旭日图空间地图，按三档风险分类的垃圾文件，大文件和重复文件，代码仓库和 Git worktree 的占用；任何条目都可以问 Agent，选中的条目在确认框里逐一列出，确认后直接永久删除。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
+| [A/时差保安](plugins/liuchen19960902/timezone-guard/README.zh-CN.md) | 发消息前先看对方那边几点：按对方城市当地时间给出「现在可以聊 / 短聊就好 / 先睡，别发」三档判定。需要 MiniMax Code 3.1.2 或更高版本 | [FineCat](https://github.com/LiuChen19960902) |
 
 <details>
 <summary>预览：Token 用量看板</summary>

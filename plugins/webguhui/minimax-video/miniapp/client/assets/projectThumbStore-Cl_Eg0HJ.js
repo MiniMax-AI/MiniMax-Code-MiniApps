@@ -1,0 +1,1 @@
+import{i as e,l as t}from"./sharedKv-CvWPOULA.js";async function n(t){let n=await e(`thumb:${t}`);return n&&typeof n.dataUrl==`string`&&typeof n.key==`number`?n:null}async function r(e,n,r){await t(`thumb:${e}`,{key:n,dataUrl:r})}export{r as n,n as t};

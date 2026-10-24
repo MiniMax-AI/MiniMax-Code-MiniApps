@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>磁盘透视</title>
+    <link rel="stylesheet" href="assets/app.css" />
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <svg class="sr-defs" aria-hidden="true" focusable="false" width="0" height="0">
+      <defs>
+        <pattern id="hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+          <rect width="6" height="6" class="hatch-bg" />
+          <line x1="0" y1="0" x2="0" y2="6" class="hatch-line" />
+        </pattern>
+      </defs>
+    </svg>
+
+    <div class="page">
+      <header class="page-header">
+        <div class="title-block">
+          <h1>磁盘透视</h1>
+          <p class="subtitle" id="subtitle">扫描磁盘里的垃圾文件，确认后直接删除</p>
+          <p class="stats-line" id="statsLine" hidden></p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn btn-primary" id="scanBtn" disabled>开始扫描</button>
+          <div class="menu-wrap">
+            <button
+              type="button"
+              class="btn btn-icon"
+              id="moreBtn"
+              aria-label="更多"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="moreMenu"
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" /></svg>
+            </button>
+            <ul class="menu" id="moreMenu" role="menu" aria-label="更多操作" hidden></ul>
+          </div>
+        </div>
+      </header>
+
+      <section class="scope-panel" id="scopePanel" aria-label="扫描范围" hidden></section>
+
+      <div class="banner banner-warn" id="connBanner" role="status" hidden></div>
+      <div class="banner banner-error" id="pageAlert" role="alert" hidden></div>
+
+      <section class="overview" aria-labelledby="diskHeading">
+        <h2 class="sr-only" id="diskHeading">磁盘容量</h2>
+        <ul class="disk-list" id="diskList"></ul>
+        <div class="unscanned-note" id="unscannedNote" hidden></div>
+        <div class="scan-status" id="scanStatus" hidden>
+          <div class="progress-head">
+            <span class="spinner" id="scanSpinner" aria-hidden="true" hidden></span>
+            <span id="scanPhase" role="status"></span>
+            <span class="phase-steps" id="phaseSteps" aria-hidden="true" hidden></span>
+          </div>
+          <div class="progress-stats" id="scanStats" hidden></div>
+          <span class="progress-path mono truncate" id="scanPath" hidden></span>
+        </div>
+      </section>
+
+      <nav class="tabs-nav" aria-label="视图">
+        <div class="tabs" role="tablist" id="tablist" aria-label="视图">
+          <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected="true" tabindex="0" data-tab="map">空间地图</button>
+          <button type="button" role="tab" id="tab-junk" aria-controls="panel-junk" aria-selected="false" tabindex="-1" data-tab="junk">垃圾清理</button>
+          <button type="button" role="tab" id="tab-large" aria-controls="panel-large" aria-selected="false" tabindex="-1" data-tab="large">大文件与重复文件</button>
+          <button type="button" role="tab" id="tab-repos" aria-controls="panel-repos" aria-selected="false" tabindex="-1" data-tab="repos">代码仓库</button>
+        </div>
+      </nav>
+
+      <main class="content" id="main">
+        <section class="panel" role="tabpanel" id="panel-map" aria-labelledby="tab-map" tabindex="0"></section>
+        <section class="panel" role="tabpanel" id="panel-junk" aria-labelledby="tab-junk" tabindex="0" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-large" aria-labelledby="tab-large" tabindex="0" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-repos" aria-labelledby="tab-repos" tabindex="0" hidden></section>
+      </main>
+
+      <footer class="selbar" aria-label="已选清单">
+        <p class="selbar-text" id="selText" role="status" aria-live="polite">已选 0 项，可释放 0 B</p>
+        <div class="selbar-actions">
+          <button type="button" class="btn btn-secondary" id="viewSelBtn">查看清单</button>
+          <button type="button" class="btn btn-primary" id="cleanBtn" disabled>清理</button>
+        </div>
+      </footer>
+    </div>
+
+    <aside class="ask-panel" id="askPanel" aria-labelledby="askTitle" hidden>
+      <div class="ask-head">
+        <h2 id="askTitle">问 Agent</h2>
+        <button type="button" class="btn btn-icon" id="askClose" aria-label="关闭问 Agent 侧栏">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
+      <p class="ask-subject mono" id="askSubject"></p>
+      <div class="ask-status" id="askStatus" role="status" aria-live="polite"></div>
+      <div class="ask-alert" id="askAlert" role="alert" hidden></div>
+      <div class="ask-perms" id="askPerms"></div>
+      <div class="ask-output" id="askOutput"></div>
+      <div class="ask-question" id="askQuestion" hidden></div>
+      <div class="ask-actions">
+        <button type="button" class="btn btn-secondary" id="askOpen" hidden>在对话中打开</button>
+        <button type="button" class="btn btn-danger-ghost" id="askStop" disabled>停止</button>
+      </div>
+    </aside>
+
+    <dialog class="modal" id="modal" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <h2 id="modalTitle"></h2>
+        <button type="button" class="btn btn-icon" id="modalClose" aria-label="关闭">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot" id="modalFoot"></div>
+    </dialog>
+
+    <dialog class="drawer" id="drawer" aria-labelledby="drawerTitle">
+      <div class="modal-head">
+        <h2 id="drawerTitle">已选清单</h2>
+        <button type="button" class="btn btn-icon" id="drawerClose" aria-label="关闭已选清单">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
+      <div class="drawer-body" id="drawerBody"></div>
+      <div class="modal-foot" id="drawerFoot"></div>
+    </dialog>
+
+    <ul class="menu item-menu" id="itemMenu" role="menu" aria-label="更多操作" hidden></ul>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <div class="toast is-error" id="toastError" role="alert" hidden></div>
+  </body>
+</html>

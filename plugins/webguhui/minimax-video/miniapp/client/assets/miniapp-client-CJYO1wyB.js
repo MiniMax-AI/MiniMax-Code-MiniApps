@@ -1,0 +1,1 @@
+async function e(){throw Error(`此功能需要宿主 AI：请在 MiniMax 剪辑助手中提出翻译或生成要求，再导入结果。`)}export{e as generateAgentText};

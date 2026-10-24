@@ -1,0 +1,746 @@
+/* A/时差保安 — 独立 Client 视觉层。
+   语义色全部收敛在变量声明里，组件样式只引用变量。
+   设计取向：一页一个主角（判定），整页只保留一个状态色（判定区），
+   太阳/月亮只出现在城市旁。 */
+
+:root {
+  --mcode-bg-secondary: #eef0f2;
+  --mcode-surface: #ffffff;
+  --mcode-surface-muted: #f0f1f3;
+  /* 卡片外壳外的底色：卡片浮在它上面，层次才分得开。 */
+  --mcode-canvas: #e8eaec;
+  --mcode-text: #17191c;
+  --mcode-text-muted: #5c6268;
+  --mcode-text-subtle: #6b7178;
+  --mcode-border: #17191c21;
+  --mcode-border-strong: #17191c47;
+  --mcode-focus: #0077d9;
+  --mcode-success: #0f7a3c;
+  --mcode-warning: #a95b08;
+  --mcode-danger: #b42318;
+  --mcode-primary-action-bg: #17191c;
+  --mcode-primary-action-text: #ffffff;
+
+  /* 状态色：fg 用于文字，dot 用于色点。 */
+  --band-ok-fg: var(--mcode-success);
+  --band-ok-dot: var(--mcode-success);
+  --band-warn-fg: var(--mcode-warning);
+  --band-warn-dot: var(--mcode-warning);
+  --band-bad-fg: var(--mcode-danger);
+  --band-bad-dot: var(--mcode-danger);
+
+  /* 窗口宽度默认 560，可拉宽到任意尺寸。
+     上限给到 680：窄窗口下它就是 100%（贴合），
+     宽窗口下也不会让两列时钟被扯得太散。 */
+  --page-max: 680px;
+  --radius-card: 12px;
+  --radius-control: 8px;
+
+  --sans: ui-sans-serif, -apple-system, system-ui, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  --mcode-bg-secondary: #191c1f;
+  --mcode-surface: #1a1d20;
+  --mcode-surface-muted: #1f2225;
+  --mcode-text: #edeff1;
+  --mcode-text-muted: #9ba1a7;
+  --mcode-text-subtle: #838a90;
+  --mcode-border: #ffffff21;
+  --mcode-border-strong: #ffffff47;
+  /* 焦点色要同时压得住三种相邻底色：深色页面底、控件容器面，
+     以及选中态分段按钮的浅色药丸（#edeff1）。
+     更亮的蓝在浅色药丸上只有 2.53:1，这档更暗的蓝对三处都在 3.9:1 以上。 */
+  --mcode-focus: #0077d9;
+  --mcode-success: #5bd98a;
+  --mcode-warning: #f0a94a;
+  --mcode-danger: #f87171;
+  --mcode-primary-action-bg: #edeff1;
+  --mcode-primary-action-text: #101214;
+  --mcode-canvas: #0b0d0e;
+}
+
+/* 状态色挂在 <html> 上，全页继承：判定文字与色点共用同一套变量。 */
+[data-band="green"] {
+  --band-fg: var(--band-ok-fg);
+  --band-dot: var(--band-ok-dot);
+}
+
+[data-band="yellow"] {
+  --band-fg: var(--band-warn-fg);
+  --band-dot: var(--band-warn-dot);
+}
+
+[data-band="red"] {
+  --band-fg: var(--band-bad-fg);
+  --band-dot: var(--band-bad-dot);
+}
+
+/* 首帧占位：脚本还没跑时不该显示任何状态色，
+   否则会出现「黄色图标配红色文案」这种自相矛盾的第一帧。 */
+[data-band="neutral"] {
+  --band-fg: var(--mcode-text);
+  --band-dot: var(--mcode-border-strong);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* 卡片浮在这层底色上，靠一道灰差建立前后关系，不用投影堆层次。 */
+  background: var(--mcode-canvas);
+  color: var(--mcode-text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  padding: 16px;
+}
+
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.page {
+  max-width: var(--page-max);
+  /* 铺满一屏：内容不满时，把多出来的空间平均分给各分区之间的间隙，
+     整张卡片从页头到时差行撑到底，而不是在底部堆一块死白。 */
+  min-height: calc(100vh - 32px);
+  margin: 0 auto;
+  padding: 22px 24px 26px;
+  background: var(--mcode-surface);
+  border: 1px solid var(--mcode-border);
+  border-radius: var(--radius-card);
+  /* 投影只用来表达「这张卡片浮在画布上」，不做装饰。 */
+  box-shadow: 0 1px 2px rgb(10 10 10 / 6%);
+  display: flex;
+  flex-direction: column;
+  /* 分区之间的最小间距交给 row-gap；条件允许时再多分一点空气，
+     这样每一段间距都一致，发丝线正好落在每段间距的中间。 */
+  row-gap: 20px;
+  justify-content: space-between;
+}
+
+/* ---------- 页头 ---------- */
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-head-text {
+  min-width: 0;
+}
+
+.page-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* 城市对中间的 ⇄：真正可点的一键对调。
+   按钮撑出来的 3px 内边距用 -3px 外边距抵消，所以视觉间距和改之前一模一样，
+   但多了一个 21×21 的点击区。 */
+.page-title .swap-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -3px;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--mcode-text-muted);
+  cursor: pointer;
+}
+
+/* 悬停时把图标提到正文色：浅色主题是变深，深色主题是变亮，
+   两个主题都是"更强调"的方向。 */
+.page-title .swap-btn:hover {
+  color: var(--mcode-text);
+}
+
+/* 焦点语言与全页统一：2px 实色 --mcode-focus 环。
+   offset 2px 时整道环正好落在标题 7px 的间隙里，不会压到城市名上。 */
+.page-title .swap-btn:focus-visible {
+  outline: 2px solid var(--mcode-focus);
+  outline-offset: 2px;
+}
+
+.page-title .swap {
+  width: 15px;
+  height: 15px;
+}
+
+.lede {
+  margin: 3px 0 0;
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.head-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 12H / 24H 分段控件：选中段是实心药丸，靠底色差即可分辨。 */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--mcode-border);
+  border-radius: var(--radius-control);
+  background: var(--mcode-surface);
+}
+
+.seg {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: transparent;
+  color: var(--mcode-text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 15px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 150ms ease-out, color 150ms ease-out;
+}
+
+.seg:hover {
+  color: var(--mcode-text);
+}
+
+/* 选中态由 <html data-fmt> 驱动：首帧就能显示正确的制式，
+   不会出现「先按 12H 画一帧再翻转」的闪烁。 */
+:root[data-fmt="12h"] #fmt-12h,
+:root[data-fmt="24h"] #fmt-24h {
+  background: var(--mcode-primary-action-bg);
+  color: var(--mcode-primary-action-text);
+  font-weight: 600;
+}
+
+.icon-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--mcode-text-muted);
+  cursor: pointer;
+  transition: background 150ms ease-out, color 150ms ease-out;
+}
+
+.icon-button:hover {
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text);
+}
+
+.icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- 城市切换 ---------- */
+
+.switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.field {
+  min-width: 0;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--mcode-text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.combo {
+  position: relative;
+}
+
+.combo-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 30px 0 12px;
+  border: 1px solid var(--mcode-border);
+  border-radius: var(--radius-control);
+  background: var(--mcode-surface);
+  color: var(--mcode-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.combo-input::placeholder {
+  color: var(--mcode-text-subtle);
+}
+
+.combo-input:hover {
+  border-color: var(--mcode-text-subtle);
+}
+
+.combo-input:focus,
+.combo-input:focus-visible {
+  /* offset 0：实色 outline 紧贴同色 border，合成一道 3px 的实边，
+     不会出现「两条蓝线夹一道缝」的双线。 */
+  outline: 2px solid var(--mcode-focus);
+  outline-offset: 0;
+  border-color: var(--mcode-focus);
+}
+
+/* 焦点语言全页统一：一道 2px 实色 --mcode-focus 环。
+   之前用的是 25% 透明度的软环，合成到浅底上只有 1.4:1，达不到 3:1；
+   而 .seg 与 .icon-button 没有边框变化，这道环是它们唯一的焦点提示。 */
+.seg:focus-visible {
+  outline: 2px solid var(--mcode-focus);
+  outline-offset: -2px;
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--mcode-focus);
+  outline-offset: 2px;
+}
+
+.combo-chevron {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--mcode-text-subtle);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.combo-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 264px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--mcode-border);
+  border-radius: var(--radius-card);
+  background: var(--mcode-surface);
+  box-shadow: 0 0 20px rgb(10 10 10 / 8%);
+}
+
+.combo-list[hidden] {
+  display: none;
+}
+
+.combo-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.combo-option:hover,
+.combo-option[data-active="true"] {
+  background: var(--mcode-surface-muted);
+}
+
+.combo-option[aria-selected="true"] {
+  background: var(--mcode-bg-secondary);
+}
+
+.combo-option-title {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--mcode-text);
+}
+
+.combo-option-sub {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--mcode-text-muted);
+}
+
+/* 空态提示放在 listbox 之外，避免 listbox 里混入非 option 子元素 */
+.combo-empty {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--mcode-border);
+  border-radius: var(--radius-card);
+  background: var(--mcode-surface);
+  color: var(--mcode-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.combo-empty[hidden] {
+  display: none;
+}
+
+/* ---------- 分区线：靠留白和发丝线组织版面，不用卡片框 ---------- */
+
+/* 间距由 .page 的 row-gap 统一给，分区线自己不再带外边距，
+   否则「固定 20px 外边距 + 均分空气」两套间距会互相打架。 */
+.rule {
+  height: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--mcode-border);
+}
+
+/* ---------- 判定区：整页唯一的状态色，也是唯一的焦点 ---------- */
+
+.verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.verdict-dot {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  margin-top: 9px;
+  border-radius: 50%;
+  background: var(--band-dot);
+}
+
+.verdict-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--band-fg);
+}
+
+.verdict-detail {
+  margin: 5px 0 0;
+  color: var(--mcode-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.verdict-extra {
+  margin: 2px 0 0;
+  color: var(--mcode-text-subtle);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ---------- 双方时钟：并排对照，中间一条竖线 ---------- */
+
+.clocks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.clock {
+  min-width: 0;
+  padding: 0 20px;
+}
+
+.clock:first-child {
+  padding-left: 0;
+}
+
+.clock:last-child {
+  padding-right: 0;
+  border-left: 1px solid var(--mcode-border);
+}
+
+.clock-role {
+  margin: 0 0 4px;
+  color: var(--mcode-text-subtle);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+/* 太阳/月亮只在这里出现：每个城市一个，说明那边现在是白昼还是夜里。 */
+.clock-city {
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.clock-city .sky {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--mcode-text);
+}
+
+.clock-city .name {
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clock-time {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.clock-period {
+  color: var(--mcode-text-muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0;
+}
+
+.clock-date {
+  margin: 4px 0 0;
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.clock-zone {
+  margin: 1px 0 0;
+  color: var(--mcode-text-subtle);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 一天的图标带：对方那一整天 ---------- */
+
+/* 格子间隙由变量给出：刻度要按它算偏移，窄断点改间隙时两处一起变。 */
+.dayline {
+  --hour-gap: 2px;
+}
+
+.dayline-label {
+  margin: 0 0 12px;
+  color: var(--mcode-text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.hour-bar {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: var(--hour-gap);
+}
+
+/* 一小时一格，格里一枚昼夜图标：太阳 / 半日 / 月亮。
+   形状本身就在说「那边是白天还是夜里」，不再靠灰阶深浅去暗示。 */
+.hour-cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+}
+
+.hour-icon {
+  width: 80%;
+  height: 80%;
+  color: var(--mcode-text-subtle);
+}
+
+/* 深夜那几格的墨色再重一档：不靠颜色，只靠一点点重量让「对方在睡」那一段先跳出来。 */
+.hour-cell[data-tone="night"] .hour-icon {
+  color: var(--mcode-text-muted);
+}
+
+/* 当前所在的那一小时：唯一带状态色的一格。
+   图标反白是为了在状态块上还看得清形状，不是给图标上状态色。 */
+.hour-cell[data-now="true"] {
+  background: var(--band-dot);
+}
+
+.hour-cell[data-now="true"] .hour-icon {
+  color: var(--mcode-primary-action-text);
+}
+
+.hour-ticks {
+  position: relative;
+  height: 16px;
+  margin-top: 11px;
+}
+
+/* 刻度必须落在格子的左边缘上。网格的间隙会把每一格整体右推，
+   第 i 格左边缘 = i/24 × 100% + i/24 × 间隙，所以这三档要补上间隙的相应份额，
+   否则 6/12/18 会固定偏左 0.5/1.0/1.5px。 */
+.hour-ticks span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: var(--mcode-text-subtle);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.hour-ticks span:nth-child(1) {
+  left: 0;
+  transform: none;
+}
+
+.hour-ticks span:nth-child(2) {
+  left: calc(25% + var(--hour-gap) * 0.25);
+}
+
+.hour-ticks span:nth-child(3) {
+  left: calc(50% + var(--hour-gap) * 0.5);
+}
+
+.hour-ticks span:nth-child(4) {
+  left: calc(75% + var(--hour-gap) * 0.75);
+}
+
+.hour-ticks span:nth-child(5) {
+  left: 100%;
+  transform: translateX(-100%);
+}
+
+/* ---------- 信息行 ---------- */
+
+.facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fact {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.fact dt {
+  flex: none;
+  width: 34px;
+  color: var(--mcode-text-subtle);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.fact dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--mcode-text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 460px) {
+  body {
+    padding: 8px;
+  }
+
+  .page {
+    padding: 16px 16px 20px;
+    min-height: calc(100vh - 16px);
+  }
+
+  .switcher {
+    grid-template-columns: 1fr;
+  }
+
+  /* 24 格摊在 ~350px 里时单格只有 12.7px：把间隙收窄、图标吃满格子。
+     否则半日图标的地平线会被抗锯齿吃掉，又读成一个小山包。 */
+  .dayline {
+    --hour-gap: 1px;
+  }
+
+  .hour-icon {
+    width: 100%;
+    height: 100%;
+  }
+
+  .clocks {
+    grid-template-columns: 1fr;
+  }
+
+  .clock {
+    padding: 0;
+  }
+
+  .clock:last-child {
+    border-left: 0;
+    border-top: 1px solid var(--mcode-border);
+    padding-top: 16px;
+    margin-top: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

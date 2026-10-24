@@ -7,6 +7,7 @@
 //   ~/.cqview/roots.json         registered folders the page may browse          (read/write)
 //   ~/.cqview/selection.json     last picked points, resolved to absolute files  (write)
 //   <dataDir>/open-requests.json what the AI asked the page to open (MCP tools)  (read/write)
+//   <dataDir>/renders/           white-model renders: captured view, Agent turn, result (render.mjs)
 //
 // Folder browsing is scoped: only folders registered in roots.json, only inside the
 // user's home directory, only .stl/.step/.stp files, no symlinks, no hidden folders.
@@ -37,6 +38,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { createMcpHandler, MCP_PATH } from './mcp.mjs';
+import { createRenderService, JOB_ID_RE, RENDER_BODY_BYTES } from './render.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
@@ -47,8 +49,11 @@ const EXCHANGE_DIR = join(HOME, '.cqview');
 const SCENE_DIR = join(EXCHANGE_DIR, 'scene');
 const ROOTS_FILE = join(EXCHANGE_DIR, 'roots.json');
 const SELECTION_FILE = join(EXCHANGE_DIR, 'selection.json');
+const SELECTIONS_DIR = join(EXCHANGE_DIR, 'selections');
 const DISPLAY_SCENE_DIR = '~/.cqview/scene';
 const DISPLAY_SELECTION_FILE = '~/.cqview/selection.json';
+const MAX_WORKSPACES = 100;
+const MAX_EXTRAS = 20;
 
 const PART_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.(stl|step|stp)$/i;
 const PART_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -97,8 +102,9 @@ const STEP_TO_STL_PY = [
 const ASSETS = /** @type {Record<string, string>} */ ({
   'app.js': 'text/javascript; charset=utf-8',
   'host-bridge.js': 'text/javascript; charset=utf-8',
+  'render-panel.js': 'text/javascript; charset=utf-8',
   'style.css': 'text/css; charset=utf-8',
-  'logo.svg': 'image/svg+xml',
+  'logo.png': 'image/png',
   'vendor/three.module.min.js': 'text/javascript; charset=utf-8',
   'vendor/OrbitControls.js': 'text/javascript; charset=utf-8',
   'vendor/STLLoader.js': 'text/javascript; charset=utf-8',
@@ -123,6 +129,7 @@ export async function start(context) {
   const indexHtml = await readFile(join(clientRoot, 'index.html'));
   const stepCacheDir = join(context.dataDir, 'step-cache');
   const requestsFile = join(context.dataDir, 'open-requests.json');
+  const workspacesFile = join(context.dataDir, 'workspaces.json');
   const log = context.logger;
   /** Set by dispose(): from then on nothing new is spawned. */
   let disposed = false;
@@ -149,6 +156,8 @@ export async function start(context) {
   // ---------- live updates (SSE) ----------
   /** @type {Set<import('node:http').ServerResponse>} */
   const clients = new Set();
+  /** Workspace of each live page that told us one. @type {Map<import('node:http').ServerResponse, string>} */
+  const clientDirs = new Map();
   /** @type {import('node:fs').FSWatcher | null} */
   let sceneWatcher = null;
   /** @type {Map<string, import('node:fs').FSWatcher>} */
@@ -198,16 +207,25 @@ export async function start(context) {
     });
   };
 
+  /** Watch registered folders plus the session folders (and their extras) of the pages that are open. */
   const syncRootWatchers = async () => {
-    const roots = await readRoots();
+    const paths = new Set((await readRoots()).map((r) => r.path));
+    const live = new Set(clientDirs.values());
+    if (live.size) {
+      const ws = await readWorkspaces();
+      for (const dir of live) {
+        paths.add(dir);
+        for (const p of ws[dir]?.extras ?? []) paths.add(p);
+      }
+    }
     if (disposed) return;
     const wanted = new Set();
-    for (const r of roots) {
-      const id = rootId(r.path);
+    for (const path of paths) {
+      const id = rootId(path);
       wanted.add(id);
       if (rootWatchers.has(id)) continue;
       try {
-        const w = watch(r.path, { persistent: false, recursive: true }, (_event, filename) => {
+        const w = watch(path, { persistent: false, recursive: true }, (_event, filename) => {
           if (filename && !MODEL_EXT.has(extname(String(filename)).toLowerCase())) return;
           debounced(`root:${id}`, () => broadcast({ type: 'files', root: id }));
         });
@@ -296,6 +314,93 @@ export async function start(context) {
     return describeRoot(real);
   };
 
+  // ---------- domain: session folders ----------
+  // A page opened in a chat works in that chat's folder (its "workspace"). Each workspace keeps the
+  // extra folders added to it; models and annotations are per workspace. Stored in dataDir.
+  /** @returns {Promise<Record<string, {extras: string[], used: string}>>} */
+  const readWorkspaces = async () => {
+    /** @type {Record<string, {extras: string[], used: string}>} */
+    const out = {};
+    try {
+      const parsed = JSON.parse(await readFile(workspacesFile, 'utf8'));
+      const all = parsed && typeof parsed.workspaces === 'object' && parsed.workspaces ? parsed.workspaces : {};
+      for (const [dir, w] of Object.entries(all)) {
+        if (!isAbsolute(dir) || !isAllowedWorkspace(dir) || !w || typeof w !== 'object') continue;
+        const extras = Array.isArray(w.extras)
+          ? w.extras.filter((/** @type {unknown} */ p) => typeof p === 'string' && isAbsolute(p) && isAllowedRoot(p))
+          : [];
+        out[dir] = { extras: extras.slice(0, MAX_EXTRAS), used: typeof w.used === 'string' ? w.used : '' };
+      }
+    } catch {
+      /* none yet */
+    }
+    return out;
+  };
+  /** Read-modify-write of workspaces.json (one at a time), keeping the MAX_WORKSPACES most recent. */
+  const updateWorkspaces = (/** @type {(ws: Record<string, {extras: string[], used: string}>) => void} */ fn) =>
+    serial(async () => {
+      const ws = await readWorkspaces();
+      fn(ws);
+      const keep = Object.entries(ws)
+        .sort((a, b) => b[1].used.localeCompare(a[1].used))
+        .slice(0, MAX_WORKSPACES);
+      await writeJsonAtomic(workspacesFile, { version: 1, workspaces: Object.fromEntries(keep) });
+      return Object.fromEntries(keep);
+    });
+  const touchWorkspace = (/** @type {string} */ dir) =>
+    updateWorkspaces((ws) => {
+      ws[dir] = { extras: ws[dir]?.extras ?? [], used: new Date().toISOString() };
+    });
+  /** @param {string} dir @param {string} extra */
+  const addExtra = async (dir, extra) => {
+    await updateWorkspaces((ws) => {
+      const prev = ws[dir]?.extras ?? [];
+      ws[dir] = { extras: [...prev.filter((p) => p !== extra), extra].slice(-MAX_EXTRAS), used: new Date().toISOString() };
+    });
+    await syncRootWatchers();
+    broadcast({ type: 'workspace', folder: rootId(dir) });
+  };
+  /** @param {string} dir @param {string} extraId */
+  const removeExtra = async (dir, extraId) => {
+    await updateWorkspaces((ws) => {
+      if (ws[dir]) ws[dir] = { ...ws[dir], extras: ws[dir].extras.filter((p) => rootId(p) !== extraId) };
+    });
+    await syncRootWatchers();
+    broadcast({ type: 'workspace', folder: rootId(dir) });
+  };
+  /** What the page shows for a workspace: the session folder, its extra folders, its annotation file. */
+  const describeWorkspace = async (/** @type {string} */ dir) => {
+    const ws = await readWorkspaces();
+    const extras = [];
+    for (const p of ws[dir]?.extras ?? []) {
+      const st = await stat(p).catch(() => null);
+      extras.push({ ...describeRoot(p), kind: 'extra', missing: !st || !st.isDirectory() });
+    }
+    return {
+      folder: { ...describeRoot(dir), kind: 'session' },
+      extras,
+      selectionFile: `~/.cqview/selections/${rootId(dir)}.json`,
+    };
+  };
+  /** Every folder the viewer may read: registered folders, session folders, and their extras. */
+  const allFolders = async () => {
+    const set = new Set((await readRoots()).map((r) => r.path));
+    for (const [dir, w] of Object.entries(await readWorkspaces())) {
+      set.add(dir);
+      for (const p of w.extras) set.add(p);
+    }
+    return [...set];
+  };
+  const findFolder = async (/** @type {string | null | undefined} */ id) => {
+    if (!id || !ROOT_ID_RE.test(id)) return null;
+    return (await allFolders()).find((p) => rootId(p) === id) ?? null;
+  };
+  const requireFolder = async (/** @type {string | null} */ id) => {
+    const p = await findFolder(id);
+    if (!p) throw new HttpError(404, 'root_not_registered', '这个文件夹还没有登记');
+    return { path: p };
+  };
+
   // ---------- domain: requests from the AI (MCP) for the page ----------
   /** @returns {Promise<{epoch: string|null, seq: number, items: Record<string, unknown>[]}>} */
   const readRequests = async () => {
@@ -303,6 +408,7 @@ export async function start(context) {
       const parsed = JSON.parse(await readFile(requestsFile, 'utf8'));
       if (parsed && typeof parsed.epoch === 'string' && Number.isInteger(parsed.seq) && Array.isArray(parsed.items)) {
         const now = Date.now();
+        const absOpt = (/** @type {unknown} */ v) => v === undefined || (typeof v === 'string' && isAbsolute(v));
         const items = parsed.items.filter(
           (/** @type {any} */ it) =>
             it &&
@@ -310,6 +416,9 @@ export async function start(context) {
             typeof it.at === 'string' &&
             now - Date.parse(it.at) < REQUEST_TTL_MS &&
             REQUEST_TYPES.has(it.type) &&
+            absOpt(it.workspace) &&
+            absOpt(it.path) &&
+            absOpt(it.folder) &&
             (it.type === 'scene'
               ? typeof it.name === 'string' && PART_NAME_RE.test(it.name)
               : typeof it.root === 'string' && ROOT_ID_RE.test(it.root) && (it.type === 'folder' || typeof it.rel === 'string')),
@@ -320,6 +429,35 @@ export async function start(context) {
       /* none yet */
     }
     return { epoch: null, seq: 0, items: [] };
+  };
+
+  /**
+   * The requests that belong to one workspace, pointed at its own folders. A request made with a
+   * workspace goes only there; one without goes wherever its file or folder lies inside the
+   * workspace or one of its extra folders. Scene requests without a workspace go everywhere.
+   * @param {string} dir
+   */
+  const requestsFor = async (dir) => {
+    const doc = await readRequests();
+    const ws = await readWorkspaces();
+    const targets = [dir, ...(ws[dir]?.extras ?? [])];
+    /** @param {string} p */
+    const owner = (p) =>
+      targets.filter((t) => p === t || p.startsWith(t + sep)).sort((a, b) => b.length - a.length)[0] ?? null;
+    const items = [];
+    for (const it of /** @type {any[]} */ (doc.items)) {
+      if (it.workspace && it.workspace !== dir) continue;
+      if (it.type === 'scene') {
+        items.push({ seq: it.seq, at: it.at, type: 'scene', name: it.name });
+        continue;
+      }
+      const target = it.type === 'file' ? it.path : it.folder;
+      const t = typeof target === 'string' ? owner(target) : null;
+      if (!t) continue;
+      if (it.type === 'file') items.push({ seq: it.seq, at: it.at, type: 'file', root: rootId(t), rel: relative(t, target).split(sep).join('/') });
+      else items.push({ seq: it.seq, at: it.at, type: 'folder', root: rootId(t) });
+    }
+    return { epoch: doc.epoch, seq: doc.seq, items };
   };
 
   /** Persist a request (the page may not be open, or the process may restart), then notify. */
@@ -335,7 +473,9 @@ export async function start(context) {
     return seq;
   };
 
-  const viewerConnected = () => clients.size > 0;
+  /** Is a viewer page listening (for that workspace, when given)? */
+  const viewerConnected = (/** @type {string | null} */ ws = null) =>
+    ws ? [...clientDirs.values()].includes(ws) : clients.size > 0;
 
   /** @param {string} p */
   const folderInfo = (p) => ({ id: rootId(p), path: p, label: basename(p) });
@@ -344,63 +484,97 @@ export async function start(context) {
   const modelList = (rootPath, files) =>
     files.slice(0, MCP_LIST_LIMIT).map((f) => ({ path: join(rootPath, ...f.rel.split('/')), kind: f.kind, size: f.size }));
 
-  /** @param {{path: string, select?: boolean}} args */
+  /** @param {string} p @param {string} dir */
+  const isInside = (p, dir) => p === dir || p.startsWith(dir + sep);
+
+  /** @param {{path: string, select?: boolean, workspace?: string}} args */
   const addModelFolder = async (args) => {
-    const real = await validateRootPath(args.path);
-    await addRoot(real);
+    const ws = args.workspace !== undefined ? await validateWorkspacePath(args.workspace) : null;
+    // inside the caller's session folder any subfolder is fine; elsewhere the usual folder rules apply
+    let real = ws ? await realDirOrNull(args.path) : null;
+    if (!real || !ws || !isInside(real, ws)) real = await validateRootPath(args.path);
+    if (ws) {
+      await touchWorkspace(ws);
+      if (!isInside(real, ws)) {
+        await addRoot(real);
+        await addExtra(ws, real);
+      }
+    } else {
+      await addRoot(real);
+    }
     const { files, truncated } = await listModels(real);
-    if (args.select !== false) await pushRequest({ type: 'folder', root: rootId(real) });
+    if (args.select !== false) {
+      await pushRequest({ type: 'folder', root: rootId(real), folder: real, ...(ws ? { workspace: ws } : {}) });
+    }
     return {
       folder: folderInfo(real),
       model_count: files.length,
       truncated,
       models: modelList(real, files),
-      viewer_connected: viewerConnected(),
+      viewer_connected: viewerConnected(ws),
     };
   };
 
-  /** @param {{path: string, copy_to_scene?: boolean, name?: string, color?: string, opacity?: number}} args */
+  /** @param {{path: string, copy_to_scene?: boolean, name?: string, color?: string, opacity?: number, workspace?: string}} args */
   const addModelFile = async (args) => {
+    const ws = args.workspace !== undefined ? await validateWorkspacePath(args.workspace) : null;
     const src = await validateModelPath(args.path);
-    if (args.copy_to_scene) return copyToScene(src, args);
+    if (args.copy_to_scene) return copyToScene(src, args, ws);
     if (args.name !== undefined || args.color !== undefined || args.opacity !== undefined) {
       throw new HttpError(400, 'copy_only_option', 'name、color、opacity 只在 copy_to_scene 为 true 时可用');
     }
     if (basename(src.real).startsWith('.')) throw new HttpError(400, 'hidden_file', '不能打开隐藏文件');
-    if (!isAllowedRoot(dirname(src.real))) {
-      throw new HttpError(
-        400,
-        'outside_home',
-        '只能原地打开用户主目录内的文件（不能直接放在主目录下，也不能在 ~/Library 或隐藏的顶层目录里）；其他位置的文件请加 copy_to_scene: true',
-      );
-    }
-    // closest registered folder that really lists the file, else register its own folder
-    const candidates = (await readRoots())
-      .filter((r) => src.real.startsWith(r.path + sep))
-      .sort((a, b) => b.path.length - a.path.length);
     /** @type {{rootPath: string, rel: string} | null} */
     let chosen = null;
-    for (const r of candidates) {
-      const rel = relative(r.path, src.real).split(sep).join('/');
-      if (!isListableRel(rel)) continue;
-      const { files } = await listModels(r.path);
-      if (files.some((f) => f.rel === rel)) {
-        chosen = { rootPath: r.path, rel };
-        break;
+    if (ws && isInside(src.real, ws)) {
+      // in the caller's session folder: the viewer lists it from there
+      const rel = relative(ws, src.real).split(sep).join('/');
+      if (!isListableRel(rel)) {
+        throw new HttpError(422, 'not_listed', '这个文件在隐藏目录、node_modules 之类的目录里，或者层级太深，查看器不会列出它');
       }
-    }
-    if (!chosen) {
-      const dir = dirname(src.real);
-      const rel = basename(src.real);
-      await validateRootPath(dir);
-      const { files } = await listModels(dir);
-      if (!files.some((f) => f.rel === rel)) {
-        throw new HttpError(422, 'not_listed', '这个文件所在的文件夹模型太多，查看器列不出它');
+      await touchWorkspace(ws);
+      chosen = { rootPath: ws, rel };
+    } else {
+      if (!isAllowedRoot(dirname(src.real))) {
+        throw new HttpError(
+          400,
+          'outside_home',
+          '只能原地打开会话文件夹或用户主目录内的文件（不能直接放在主目录下，也不能在 ~/Library 或隐藏的顶层目录里）；其他位置的文件请加 copy_to_scene: true',
+        );
       }
-      chosen = { rootPath: dir, rel };
+      // closest registered folder that really lists the file, else register its own folder
+      const candidates = (await readRoots())
+        .filter((r) => src.real.startsWith(r.path + sep))
+        .sort((a, b) => b.path.length - a.path.length);
+      for (const r of candidates) {
+        const rel = relative(r.path, src.real).split(sep).join('/');
+        if (!isListableRel(rel)) continue;
+        const { files } = await listModels(r.path);
+        if (files.some((f) => f.rel === rel)) {
+          chosen = { rootPath: r.path, rel };
+          break;
+        }
+      }
+      if (!chosen) {
+        const dir = dirname(src.real);
+        const rel = basename(src.real);
+        await validateRootPath(dir);
+        const { files } = await listModels(dir);
+        if (!files.some((f) => f.rel === rel)) {
+          throw new HttpError(422, 'not_listed', '这个文件所在的文件夹模型太多，查看器列不出它');
+        }
+        chosen = { rootPath: dir, rel };
+      }
+      await addRoot(chosen.rootPath); // registers it, or marks it recently used
+      if (ws) await addExtra(ws, chosen.rootPath); // shows up in that session's viewer as an extra folder
     }
-    await addRoot(chosen.rootPath); // registers it, or marks it recently used
-    await pushRequest({ type: 'file', root: rootId(chosen.rootPath), rel: chosen.rel });
+    await pushRequest({
+      type: 'file',
+      root: rootId(chosen.rootPath),
+      rel: chosen.rel,
+      path: src.real,
+      ...(ws ? { workspace: ws } : {}),
+    });
     return {
       mode: 'reference',
       path: src.real,
@@ -408,7 +582,7 @@ export async function start(context) {
       size: src.stat.size,
       folder: folderInfo(chosen.rootPath),
       rel: chosen.rel,
-      viewer_connected: viewerConnected(),
+      viewer_connected: viewerConnected(ws),
       note: '原地打开：之后重新导出这个文件，查看器会自动刷新，不用再调用。',
     };
   };
@@ -417,8 +591,9 @@ export async function start(context) {
    * Copy a model file into the pushed scene, like cqview.show_file().
    * @param {{real: string, stat: import('node:fs').Stats, ext: string}} src
    * @param {{name?: string, color?: string, opacity?: number}} opts
+   * @param {string | null} [ws] the caller's session folder: only that viewer opens the copy
    */
-  const copyToScene = async (src, opts) => {
+  const copyToScene = async (src, opts, ws = null) => {
     const name = opts.name ?? sceneNameFrom(src.real);
     if (!PART_NAME_RE.test(name)) throw new HttpError(400, 'invalid_name', '模型名只能用字母、数字、. _ -，且不能以 . 开头');
     if (src.stat.size === 0) throw new HttpError(422, 'empty_file', '这个文件是空的');
@@ -438,7 +613,7 @@ export async function start(context) {
       }
       await setSceneMeta(name, opts);
     });
-    await pushRequest({ type: 'scene', name });
+    await pushRequest({ type: 'scene', name, ...(ws ? { workspace: ws } : {}) });
     return {
       mode: 'copy',
       name,
@@ -446,7 +621,7 @@ export async function start(context) {
       source: src.real,
       kind: src.ext === '.stl' ? 'stl' : 'step',
       size: src.stat.size,
-      viewer_connected: viewerConnected(),
+      viewer_connected: viewerConnected(ws),
       note: '这是一份副本：源文件之后的修改不会同步，需要时再调用一次。',
     };
   };
@@ -492,14 +667,16 @@ export async function start(context) {
         viewer_connected: viewerConnected(),
       };
     }
-    let root = ROOT_ID_RE.test(args.folder) ? roots.find((r) => rootId(r.path) === args.folder) : undefined;
-    if (!root) {
+    const folders = await allFolders();
+    let rootPath = ROOT_ID_RE.test(args.folder) ? folders.find((p) => rootId(p) === args.folder) : undefined;
+    if (!rootPath) {
       let p = args.folder.trim();
       if (p === '~' || p.startsWith('~/')) p = join(HOME, p.slice(1));
       const real = isAbsolute(p) ? await realpath(p).catch(() => null) : null;
-      root = real ? roots.find((r) => r.path === real) : undefined;
+      rootPath = real ? folders.find((f) => f === real) : undefined;
     }
-    if (!root) throw new HttpError(404, 'root_not_registered', '这个文件夹还没有登记，先调用 add_model_folder');
+    if (!rootPath) throw new HttpError(404, 'root_not_registered', '这个文件夹还没有登记，先调用 add_model_folder');
+    const root = { path: rootPath };
     const st = await stat(root.path).catch(() => null);
     if (!st || !st.isDirectory()) throw new HttpError(404, 'root_missing', '文件夹已不存在');
     const { files, truncated } = await listModels(root.path);
@@ -517,6 +694,17 @@ export async function start(context) {
     addModelFile,
     listModelFolders,
     log: (message) => log.info(message),
+  });
+
+  // ---------- domain: white-model renders (background Agent turns) ----------
+  const renders = createRenderService({
+    agent: context.agent,
+    dataDir: context.dataDir,
+    broadcast,
+    serial,
+    writeJsonAtomic,
+    HttpError,
+    log: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
   });
 
   /** @param {string} file @param {import('node:fs').Stats} st @returns {Promise<{path: string, type: 'cqvm'|'stl'}>} */
@@ -671,9 +859,21 @@ export async function start(context) {
     });
 
   // ---------- domain: selection ----------
-  const readSelection = async () => {
+  // One annotation file per session folder (~/.cqview/selections/<folder id>.json). Every write is
+  // also mirrored to ~/.cqview/selection.json, the last-written file cqview.selection() reads.
+  /** @param {string | null} folder @returns {string} */
+  const selectionFileFor = (folder) => (folder ? join(SELECTIONS_DIR, `${folder}.json`) : SELECTION_FILE);
+  /** @param {unknown} folder @returns {Promise<string | null>} */
+  const checkSelectionFolder = async (folder) => {
+    if (folder === undefined || folder === null || folder === '') return null;
+    if (typeof folder !== 'string' || !ROOT_ID_RE.test(folder) || !(await findFolder(folder))) {
+      throw new HttpError(400, 'invalid_folder', '这个文件夹还没有登记');
+    }
+    return folder;
+  };
+  const readSelection = async (/** @type {string | null} */ folder = null) => {
     try {
-      return JSON.parse(await readFile(SELECTION_FILE, 'utf8'));
+      return JSON.parse(await readFile(selectionFileFor(folder), 'utf8'));
     } catch {
       return { points: [] };
     }
@@ -681,6 +881,7 @@ export async function start(context) {
 
   /** @param {unknown} body */
   const writeSelection = async (body) => {
+    const folder = await checkSelectionFolder(/** @type {any} */ (body)?.folder);
     const raw = validateSelection(body);
     const points = [];
     for (const p of raw) {
@@ -709,9 +910,13 @@ export async function start(context) {
       const { d, dx, dy, dz } = /** @type {any[]} */ (doc.segments)[0];
       doc.distance = { d, dx, dy, dz };
     }
-    await serial(() => writeJsonAtomic(SELECTION_FILE, doc)); // commit first …
+    await serial(async () => {
+      // commit first …
+      if (folder) await writeJsonAtomic(selectionFileFor(folder), doc);
+      await writeJsonAtomic(SELECTION_FILE, folder ? { ...doc, folder } : doc);
+    });
     const client = /** @type {any} */ (body).client;
-    broadcast({ type: 'selection', client: typeof client === 'string' && CLIENT_ID_RE.test(client) ? client : null }); // … then notify
+    broadcast({ type: 'selection', folder, client: typeof client === 'string' && CLIENT_ID_RE.test(client) ? client : null }); // … then notify
     return doc;
   };
 
@@ -728,10 +933,10 @@ export async function start(context) {
       return null;
     }
     if (r.source === 'file' && typeof r.root === 'string' && typeof r.rel === 'string') {
-      const root = await findRoot(r.root);
-      if (!root) return null;
+      const rootPath = await findFolder(r.root);
+      if (!rootPath) return null;
       try {
-        return (await resolveModel(root.path, r.rel)).full;
+        return (await resolveModel(rootPath, r.rel)).full;
       } catch {
         return null;
       }
@@ -820,6 +1025,28 @@ export async function start(context) {
       return serveModel(response, full, st, extname(file).toLowerCase() === '.stl' ? 'stl' : 'step');
     }
 
+    // session folder (the chat's folder, from the page) and the extra folders added to it
+    if (method === 'POST' && path === `${BASE}/api/workspace`) {
+      const body = /** @type {any} */ (await readJsonBody(request));
+      const dir = await validateWorkspacePath(body?.dir);
+      await touchWorkspace(dir);
+      return sendJson(response, 200, await describeWorkspace(dir));
+    }
+    if (method === 'POST' && path === `${BASE}/api/workspace/folders`) {
+      const body = /** @type {any} */ (await readJsonBody(request));
+      const dir = await validateWorkspacePath(body?.dir);
+      if (body?.remove !== undefined) {
+        if (typeof body.remove !== 'string' || !ROOT_ID_RE.test(body.remove)) throw new HttpError(400, 'invalid_folder');
+        await removeExtra(dir, body.remove);
+      } else {
+        const real = await validateRootPath(body?.path);
+        if (real === dir) throw new HttpError(400, 'invalid_root', '这就是会话文件夹，已经在列表里了');
+        await addRoot(real);
+        await addExtra(dir, real);
+      }
+      return sendJson(response, 200, await describeWorkspace(dir));
+    }
+
     // registered folders
     if (method === 'GET' && path === `${BASE}/api/roots`) {
       const roots = await readRoots();
@@ -831,28 +1058,67 @@ export async function start(context) {
       return sendJson(response, 200, { root });
     }
     if (method === 'GET' && path === `${BASE}/api/files`) {
-      const root = await requireRoot(url.searchParams.get('root'));
+      const root = await requireFolder(url.searchParams.get('root'));
       const st = await stat(root.path).catch(() => null);
       if (!st || !st.isDirectory()) throw new HttpError(404, 'root_missing', '文件夹已不存在');
       const { files, truncated } = await listModels(root.path);
       return sendJson(response, 200, { root: describeRoot(root.path), files, truncated });
     }
     if (method === 'GET' && path === `${BASE}/api/file`) {
-      const root = await requireRoot(url.searchParams.get('root'));
+      const root = await requireFolder(url.searchParams.get('root'));
       const model = await resolveModel(root.path, url.searchParams.get('rel'));
       return serveModel(response, model.full, model.stat, model.kind);
     }
 
-    // selection
-    if (method === 'GET' && path === `${BASE}/api/selection`) return sendJson(response, 200, await readSelection());
+    // selection (per session folder with ?folder=<id>)
+    if (method === 'GET' && path === `${BASE}/api/selection`) {
+      const folder = await checkSelectionFolder(url.searchParams.get('folder'));
+      return sendJson(response, 200, await readSelection(folder));
+    }
     if (method === 'POST' && path === `${BASE}/api/selection`) {
       const body = await readJsonBody(request);
       return sendJson(response, 200, await writeSelection(body));
     }
 
-    // what the AI asked the page to open
-    if (method === 'GET' && path === `${BASE}/api/requests`) return sendJson(response, 200, await readRequests());
+    // what the AI asked the page to open (?dir=<session folder>: only that workspace's, pointed at its folders)
+    if (method === 'GET' && path === `${BASE}/api/requests`) {
+      const dir = url.searchParams.get('dir');
+      if (dir === null) return sendJson(response, 200, await readRequests());
+      return sendJson(response, 200, await requestsFor(await validateWorkspacePath(dir)));
+    }
 
+    // white-model renders (?folder=<id>: that session folder's)
+    if (path === `${BASE}/api/renders`) {
+      if (method === 'GET') {
+        const folder = url.searchParams.get('folder');
+        return sendJson(response, 200, await renders.list(folder && ROOT_ID_RE.test(folder) ? folder : null));
+      }
+      if (method === 'POST') {
+        const body = await readJsonBody(request, RENDER_BODY_BYTES);
+        return sendJson(response, 202, { job: await renders.create(body) });
+      }
+      return sendJson(response, 405, { error: 'method_not_allowed' });
+    }
+    if (path.startsWith(`${BASE}/api/renders/`)) {
+      const [id, action = '', ...rest] = path.slice(`${BASE}/api/renders/`.length).split('/');
+      if (!JOB_ID_RE.test(id) || rest.length) return sendJson(response, 404, { error: 'not_found' });
+      if (method === 'GET' && (action === 'input' || action === 'output')) {
+        const img = await renders.file(id, action);
+        const disposition = url.searchParams.get('download') === '1' ? `attachment; filename="${img.name}"` : undefined;
+        return streamFile(response, img.path, img.size, img.type, disposition);
+      }
+      if (method === 'DELETE' && action === '') {
+        await renders.remove(id);
+        return sendJson(response, 200, { ok: true });
+      }
+      if (method === 'POST' && (action === 'cancel' || action === 'retry' || action === 'permission')) {
+        const body = await readJsonBody(request);
+        if (action === 'cancel') return sendJson(response, 200, { job: await renders.cancel(id) });
+        if (action === 'retry') return sendJson(response, 202, { job: await renders.retry(id) });
+        return sendJson(response, 200, { job: await renders.reply(id, body) });
+      }
+      return sendJson(response, 404, { error: 'not_found' });
+    }
 
     // live updates
     if (method === 'GET' && path === `${BASE}/api/events`) {
@@ -863,7 +1129,16 @@ export async function start(context) {
       });
       response.write('retry: 2000\n\n');
       clients.add(response);
-      response.on('close', () => clients.delete(response));
+      response.on('close', () => {
+        clients.delete(response);
+        if (clientDirs.delete(response)) void syncRootWatchers().catch(() => {});
+      });
+      try {
+        const dir = url.searchParams.get('dir');
+        if (dir !== null) clientDirs.set(response, await validateWorkspacePath(dir));
+      } catch {
+        /* not a usable session folder: this page gets no folder updates */
+      }
       try {
         await ensureSceneWatcher();
         await syncRootWatchers();
@@ -883,6 +1158,7 @@ export async function start(context) {
     if (disposed) return;
     disposed = true; // runChild refuses from here on, so no fallback can start after this
     context.signal.removeEventListener('abort', onAbort);
+    renders.dispose(); // aborts running Agent turns; the next start reports them as interrupted
     clearInterval(heartbeat);
     for (const t of timers.values()) clearTimeout(t);
     timers.clear();
@@ -894,6 +1170,7 @@ export async function start(context) {
     children.clear();
     for (const res of clients) res.end();
     clients.clear();
+    clientDirs.clear();
     server.closeAllConnections?.();
     await close(server);
     await writeChain; // let a write already in progress finish its rename
@@ -940,17 +1217,36 @@ async function readRoots() {
   return [];
 }
 
-/** @param {string | null} id */
-async function findRoot(id) {
-  if (!id || !ROOT_ID_RE.test(id)) return null;
-  return (await readRoots()).find((r) => rootId(r.path) === id) ?? null;
+/**
+ * A session folder (the chat's folder) may be anywhere, hidden folders included, except the home
+ * directory itself or a filesystem root: both are too large to scan.
+ * @param {string} p
+ */
+function isAllowedWorkspace(p) {
+  return isAbsolute(p) && p !== HOME && dirname(p) !== p;
 }
 
-/** @param {string | null} id */
-async function requireRoot(id) {
-  const root = await findRoot(id);
-  if (!root) throw new HttpError(404, 'root_not_registered', '这个文件夹还没有登记');
-  return root;
+/** @param {unknown} input */
+async function validateWorkspacePath(input) {
+  if (typeof input !== 'string' || !input.trim() || input.length > 1024 || input.includes('\0')) {
+    throw new HttpError(400, 'invalid_workspace', '会话文件夹路径无效');
+  }
+  const real = await realDirOrNull(input);
+  if (!real) throw new HttpError(400, 'invalid_workspace', '会话文件夹不存在');
+  if (!isAllowedWorkspace(real)) throw new HttpError(400, 'invalid_workspace', '会话文件夹是用户主目录或磁盘根目录，范围太大，查看器不扫描');
+  return real;
+}
+
+/** Absolute (or ~/) path to an existing directory, symlinks resolved; null otherwise. @param {unknown} input */
+async function realDirOrNull(input) {
+  if (typeof input !== 'string' || !input.trim() || input.length > 1024 || input.includes('\0')) return null;
+  let p = input.trim();
+  if (p === '~' || p.startsWith('~/')) p = join(HOME, p.slice(1));
+  if (!isAbsolute(p)) return null;
+  const real = await realpath(p).catch(() => null);
+  if (!real) return null;
+  const st = await stat(real).catch(() => null);
+  return st && st.isDirectory() ? real : null;
 }
 
 /** Folders must live under the home directory, not be home itself, not hidden/Library at the top level. */
@@ -1248,8 +1544,9 @@ async function pruneStepCache(dir) {
  * JSON-only bodies: a cross-site page cannot send application/json without a CORS preflight,
  * which this server never grants.
  * @param {import('node:http').IncomingMessage} request
+ * @param {number} [maxBytes]
  */
-async function readJsonBody(request) {
+async function readJsonBody(request, maxBytes = MAX_BODY_BYTES) {
   const type = String(request.headers['content-type'] || '').toLowerCase();
   if (!type.startsWith('application/json')) {
     request.resume();
@@ -1263,7 +1560,7 @@ async function readJsonBody(request) {
     request.on('data', (chunk) => {
       if (tooLarge) return; // keep draining so the error response can still be delivered
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         tooLarge = true;
         chunks.length = 0;
         reject(new HttpError(413, 'body_too_large'));
@@ -1288,9 +1585,15 @@ async function readJsonBody(request) {
  * @param {string} file
  * @param {number} size
  * @param {string} type
+ * @param {string} [disposition]
  */
-function streamFile(response, file, size, type) {
-  response.writeHead(200, { 'content-type': type, 'content-length': String(size), 'cache-control': 'no-store' });
+function streamFile(response, file, size, type, disposition) {
+  response.writeHead(200, {
+    'content-type': type,
+    'content-length': String(size),
+    'cache-control': 'no-store',
+    ...(disposition ? { 'content-disposition': disposition } : {}),
+  });
   const stream = createReadStream(file);
   stream.on('error', () => response.destroy());
   stream.pipe(response);

@@ -447,6 +447,7 @@ async function mountChat(chatId) {
   const revision = ++mountRevision;
   closeReactionPicker();
   mounted = chatId;
+  helpersExpanded = false;
   const target = targetOf(chatId);
   ui.pillBar = h('div', { class: 'pill-bar' });
   ui.feedInner = h('div', { class: 'feed-inner' });
@@ -971,22 +972,9 @@ function partViews(m, inGroup) {
   return views;
 }
 
+/** The bubble carries the reply text and the reaction badge; the action row lives below it. */
 function updateBubbleControls(bubble, m, isLast) {
   updateBubbleReactions(bubble, m, isLast);
-  const old = bubble.querySelector(':scope > .msg-tools');
-  if (!isLast || m.status === 'streaming') {
-    old?.remove();
-    bubble.style.removeProperty('--message-tools-width');
-  } else {
-    const signature = JSON.stringify([displayText(m), m.sessionId, botById(m.botId)?.name, locale()]);
-    if (old?.dataset.signature !== signature) {
-      const tools = msgTools(displayText(m), m);
-      tools.dataset.signature = signature;
-      if (old) old.replaceWith(tools);
-      else bubble.append(tools);
-      bubble.style.setProperty('--message-tools-width', `${tools.children.length * 28 + 8}px`);
-    }
-  }
   return bubble;
 }
 
@@ -1103,7 +1091,9 @@ function botMessage(m, existing) {
   notes.forEach((node, index) => views.push({ key: `note:${index}`, signature: node.outerHTML, create: () => node }));
   if (m.question) views.push({ key: 'question', signature: JSON.stringify([m.question, m.answering, locale()]), create: () => questionCard(m) });
   if (m.answerSummary?.length) views.push({ key: 'answers', signature: JSON.stringify(m.answerSummary), create: () => h('dl', { class: 'answered' }, m.answerSummary.map((a) => [h('dt', null, a.question), h('dd', null, a.answer)])) });
-  if (m.status !== 'streaming' && views.some((view) => view.key === 'reactions')) views.push({ key: 'tools', signature: JSON.stringify([displayText(m), m.sessionId, name, locale()]), create: () => msgTools(displayText(m), m) });
+  // The action row hangs below the reply, at its bottom-left. Anchoring it to the bubble's
+  // top pushed the buttons off-screen as soon as the reply grew past the viewport.
+  if (m.status !== 'streaming') views.push({ key: 'tools', signature: JSON.stringify([displayText(m), m.sessionId, name, locale()]), create: () => msgTools(displayText(m), m) });
   const compatible = existing?.matches(inGroup ? 'article.gmsg' : 'article.msg');
   const article = compatible ? existing : h('article', { class: inGroup ? 'gmsg' : 'msg' });
   article.setAttribute('aria-label', t('a11y.reply', { name }));
@@ -1240,12 +1230,59 @@ function helperElapsed(helper) {
   return minutes < 1 ? t('helper.justStarted') : t('helper.minutes', { n: minutes });
 }
 
+/** How many job rows stay in the open before the rest folds into one line. */
+const HELPER_ROWS_PREVIEW = 3;
+let helpersExpanded = false;
+
+/** A job that is already working comes first; one that still waits can wait a little longer. */
+const HELPER_STATUS_ORDER = { running: 0, waiting_for_tasks: 1, queued: 2 };
+
+/** How far along a job is. A status the strip does not know yet comes last. */
+function helperRank(item) {
+  return HELPER_STATUS_ORDER[item.status] ?? Number.MAX_SAFE_INTEGER;
+}
+
+/** When the job arrived: when it started, or when it was queued. */
+function helperArrival(item) {
+  return item.startedAt ?? item.createdAt ?? 0;
+}
+
+/**
+ * The rows of the strip, ordered by how far along the job is: the ones already working first,
+ * the ones waiting for another job next, the queued ones last. The fold keeps the first rows,
+ * so the order decides which jobs stay in the open. Jobs of the same kind keep the order they
+ * arrived in.
+ */
+function orderedHelperRows(items) {
+  return [...items].sort((a, b) => helperRank(a) - helperRank(b) || helperArrival(a) - helperArrival(b));
+}
+
 /** Background helpers working for this chat: one line each, with a stop button. */
 function renderHelpers() {
   if (!ui.helpers) return;
   const items = [...state.helpers, ...state.tasks].filter((x) => [x.chatId, x.originChatId, x.resultChatId].includes(mounted) && ['queued', 'running', 'waiting_for_tasks'].includes(x.status));
-  ui.helpers.replaceChildren(
-    ...items.map((helper) => {
+  if (!items.length) {
+    ui.helpers.replaceChildren();
+    ui.helpers.classList.remove('has-fold');
+    helpersExpanded = false;
+    return;
+  }
+  // A queue that fits in the open rows has nothing to fold, so an open queue ends with it and
+  // the next busy chat starts folded again.
+  if (items.length <= HELPER_ROWS_PREVIEW) helpersExpanded = false;
+  const foldable = items.length > HELPER_ROWS_PREVIEW;
+  const ordered = orderedHelperRows(items);
+  const preview = helpersExpanded ? ordered : ordered.slice(0, HELPER_ROWS_PREVIEW);
+  const hidden = items.length - preview.length;
+  // The rows keep the scroll area they had, and the fold button sits below it, so the button
+  // stays reachable however long the queue is.
+  let rows = ui.helpers.querySelector('.helper-rows');
+  if (!rows) {
+    rows = h('div', { class: 'helper-rows' });
+    ui.helpers.replaceChildren(rows);
+  }
+  rows.replaceChildren(
+    ...preview.map((helper) => {
       const bot = botById(helper.botId);
       return h(
         'div',
@@ -1271,6 +1308,31 @@ function renderHelpers() {
       );
     }),
   );
+  ui.helpers.classList.toggle('has-fold', foldable);
+  // The fold button is the same node from one render to the next, so the keyboard focus stays
+  // on it when a new job arrives, when the clock ticks or when the button itself is pressed.
+  let more = ui.helpers.querySelector('.helper-more');
+  if (!foldable) {
+    more?.remove();
+    return;
+  }
+  if (!more) {
+    more = h(
+      'button',
+      {
+        type: 'button',
+        class: 'btn sm helper-more',
+        'aria-expanded': String(helpersExpanded),
+        onclick: () => {
+          helpersExpanded = !helpersExpanded;
+          renderHelpers();
+        },
+      },
+    );
+    ui.helpers.append(more);
+  }
+  more.textContent = hidden > 0 ? t('helper.more', { n: hidden }) : t('helper.collapse');
+  more.setAttribute('aria-expanded', String(helpersExpanded));
 }
 setInterval(() => {
   if (mounted && state.helpers.some((x) => x.chatId === mounted && x.status === 'running')) renderHelpers();

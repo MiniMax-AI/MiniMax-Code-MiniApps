@@ -1,0 +1,1 @@
+function e(e){return e.timelines.find(t=>t.id===e.activeTimelineId)??e.timelines[0]}function t(t){return{...e(t),assets:t.assets}}export{e as n,t};

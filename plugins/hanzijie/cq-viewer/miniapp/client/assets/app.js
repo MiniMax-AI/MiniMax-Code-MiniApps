@@ -5,6 +5,7 @@ import * as THREE from './vendor/three.module.min.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { STLLoader } from './vendor/STLLoader.js';
 import { createHostBridge } from './host-bridge.js';
+import { createRenderPanel } from './render-panel.js';
 
 const API_BASE = new URL('../api/', import.meta.url);
 /** @param {string} path @param {Record<string,string>} [query] */
@@ -22,36 +23,42 @@ document.documentElement.dataset.theme = darkQuery.matches ? 'dark' : 'light';
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888888';
 
 // ---------------------------------------------------------------- prefs (view-only)
+// Opened models, hidden parts and the selected folder live only as long as the page: the Viewer
+// opens with nothing shown. Only view preferences are kept in browser storage.
 const prefs = loadPrefs();
 function loadPrefs() {
+  /** @type {Record<string, any>} */
+  let raw = {};
   try {
-    const raw = JSON.parse(localStorage.getItem('cqv.prefs.v2') || '{}');
-    return {
-      hidden: new Set(Array.isArray(raw.hidden) ? raw.hidden.filter((k) => typeof k === 'string') : []),
-      opened: Array.isArray(raw.opened) ? raw.opened.filter((k) => typeof k === 'string' && parseFileKey(k)) : [],
-      root: typeof raw.root === 'string' ? raw.root : null,
-      edges: raw.edges !== false,
-      grid: raw.grid !== false,
-      // last AI request (MCP) this browser has carried out
-      reqEpoch: typeof raw.reqEpoch === 'string' ? raw.reqEpoch : null,
-      reqSeq: Number.isInteger(raw.reqSeq) ? raw.reqSeq : 0,
-    };
+    raw = JSON.parse(localStorage.getItem('cqv.prefs.v3') || '{}') || {};
   } catch {
-    return { hidden: new Set(), opened: [], root: null, edges: true, grid: true, reqEpoch: null, reqSeq: 0 };
+    /* storage unavailable */
   }
+  return {
+    hidden: /** @type {Set<string>} */ (new Set()),
+    opened: /** @type {string[]} */ ([]),
+    root: /** @type {string|null} */ (null),
+    edges: raw.edges !== false,
+    grid: raw.grid !== false,
+    // white-model render options
+    renderStyle: typeof raw.renderStyle === 'string' ? raw.renderStyle : null,
+    renderAspect: typeof raw.renderAspect === 'string' ? raw.renderAspect : 'auto',
+    renderColors: raw.renderColors === true,
+    // wheel / trackpad mapping
+    navMode: raw.navMode === 'trackpad' || raw.navMode === 'mouse' ? raw.navMode : 'auto',
+  };
 }
 function savePrefs() {
   try {
     localStorage.setItem(
-      'cqv.prefs.v2',
+      'cqv.prefs.v3',
       JSON.stringify({
-        hidden: [...prefs.hidden],
-        opened: prefs.opened,
-        root: prefs.root,
         edges: prefs.edges,
         grid: prefs.grid,
-        reqEpoch: prefs.reqEpoch,
-        reqSeq: prefs.reqSeq,
+        renderStyle: prefs.renderStyle,
+        renderAspect: prefs.renderAspect,
+        renderColors: prefs.renderColors,
+        navMode: prefs.navMode,
       }),
     );
   } catch {
@@ -70,15 +77,13 @@ const el = {
   overlayHint: $('overlay-hint'),
   toast: $('toast'),
   rootName: $('root-name'),
-  rootSelect: /** @type {HTMLSelectElement} */ ($('root-select')),
-  rootPath: $('root-path'),
-  rootAddToggle: $('root-add-toggle'),
+  rootAddToggle: /** @type {HTMLButtonElement} */ ($('root-add-toggle')),
   rootAddForm: /** @type {HTMLFormElement} */ ($('root-add-form')),
   rootAddInput: /** @type {HTMLInputElement} */ ($('root-add-input')),
   rootAddCancel: $('root-add-cancel'),
   rootAddError: $('root-add-error'),
   fileFilter: /** @type {HTMLInputElement} */ ($('file-filter')),
-  files: $('files'),
+  folders: $('folders'),
   filesStatus: $('files-status'),
   parts: $('parts'),
   partsEmpty: $('parts-empty'),
@@ -88,9 +93,11 @@ const el = {
     files: $('panel-files'),
     parts: $('panel-parts'),
     info: $('panel-info'),
+    render: $('panel-render'),
   },
   markers: $('markers'),
   hoverDot: $('hover-dot'),
+  pivotDot: $('pivot-dot'),
   annot: $('annot'),
   annotCount: $('annot-count'),
   annotCollapse: $('annot-collapse'),
@@ -125,6 +132,11 @@ const el = {
   clipButtons: /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[data-clip]')]),
   clipPos: /** @type {HTMLInputElement} */ ($('clip-pos')),
   clipVal: $('clip-val'),
+  navToggle: /** @type {HTMLButtonElement} */ ($('nav-toggle')),
+  navPop: $('nav-pop'),
+  navButtons: /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[data-nav]')]),
+  navDetected: $('nav-detected'),
+  navKeys: $('nav-keys'),
   viewButtons: /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('[data-view]')]),
 };
 
@@ -163,6 +175,8 @@ function hideToast() {
 }
 
 // ---------------------------------------------------------------- renderer
+/** White-model render panel; created after everything it calls into exists. @type {ReturnType<typeof createRenderPanel> | null} */
+let renderPanel = null;
 let renderer;
 try {
   renderer = new THREE.WebGLRenderer({ canvas: el.canvas, antialias: true });
@@ -183,9 +197,12 @@ const controls = new OrbitControls(camera, el.canvas);
 controls.enableDamping = false;
 controls.screenSpacePanning = true;
 controls.zoomToCursor = true;
+// left: orbit (Shift/Ctrl/⌘ + left: pan), middle and right: pan; the wheel is routed in setupWheel()
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
 controls.addEventListener('change', () => {
   updateDepthRange();
   requestRender();
+  renderPanel?.viewChanged();
 });
 controls.addEventListener('start', () => setViewPressed(null));
 
@@ -292,17 +309,28 @@ function renderNow() {
   renderer.autoClear = true;
   positionOverlays(w, h);
 }
-function resize() {
+/**
+ * Centre of the window in camera space. Non-zero after the orbit centre moved to a point that is not
+ * in the middle of the window (orbit around the point under the cursor): the camera then looks at
+ * that point and the frustum is shifted so nothing on screen moves.
+ */
+const viewOffset = { x: 0, y: 0 };
+/** Drawing buffer and camera frustum follow the window. Does not notify (the capture uses it to restore). */
+function applySize() {
   const w = Math.max(1, el.viewport.clientWidth);
   const h = Math.max(1, el.viewport.clientHeight);
   renderer.setSize(w, h, false);
   const aspect = w / h;
-  camera.left = -frustumHalf * aspect;
-  camera.right = frustumHalf * aspect;
-  camera.top = frustumHalf;
-  camera.bottom = -frustumHalf;
+  camera.left = viewOffset.x - frustumHalf * aspect;
+  camera.right = viewOffset.x + frustumHalf * aspect;
+  camera.top = viewOffset.y + frustumHalf;
+  camera.bottom = viewOffset.y - frustumHalf;
   camera.updateProjectionMatrix();
+}
+function resize() {
+  applySize();
   requestRender();
+  renderPanel?.viewChanged();
 }
 new ResizeObserver(resize).observe(el.viewport);
 
@@ -343,6 +371,7 @@ function fitTo(box, dirArray) {
   camera.position.copy(center).addScaledVector(dir, Math.max(radius, sceneRadius) * 4);
   camera.zoom = 1;
   frustumHalf = radius * 1.08;
+  viewOffset.x = viewOffset.y = 0;
   resize();
   controls.update();
   updateDepthRange();
@@ -366,6 +395,104 @@ function updateDepthRange() {
 function setViewPressed(name) {
   for (const b of el.viewButtons) b.setAttribute('aria-pressed', String(b.dataset.view === name));
 }
+
+/**
+ * Make `point` the orbit centre without moving anything on screen: the camera keeps its direction
+ * and distance but looks at `point`, and the frustum shifts by the same amount the other way.
+ * @param {THREE.Vector3} point
+ */
+function setPivot(point) {
+  camera.updateMatrixWorld();
+  const p = point.clone().applyMatrix4(camera.matrixWorldInverse); // camera space
+  const dist = camera.position.distanceTo(controls.target);
+  const dir = controls.target.clone().sub(camera.position).normalize();
+  controls.target.copy(point);
+  camera.position.copy(point).addScaledVector(dir, -dist);
+  viewOffset.x -= p.x;
+  viewOffset.y -= p.y;
+  applySize();
+  controls.update();
+}
+
+// Orbit around the point under the cursor: pressing on the model moves the orbit centre there; on
+// empty space the centre stays. A dot marks the centre while dragging.
+/** @type {THREE.Vector3 | null} */
+let pivotPoint = null;
+let pivotDown = /** @type {{x: number, y: number} | null} */ (null);
+el.canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || !controls.enabled) return;
+  const hit = hitAt(e.clientX, e.clientY);
+  if (!hit) return;
+  setPivot(hit.point);
+  pivotPoint = hit.point.clone();
+  pivotDown = { x: e.clientX, y: e.clientY };
+});
+el.canvas.addEventListener('pointermove', (e) => {
+  if (!pivotDown || !pivotPoint || !(e.buttons & 1)) return;
+  if (Math.hypot(e.clientX - pivotDown.x, e.clientY - pivotDown.y) > 4 && el.pivotDot.hidden) {
+    el.pivotDot.hidden = false;
+    requestRender();
+  }
+});
+const endPivot = () => {
+  pivotDown = null;
+  pivotPoint = null;
+  if (!el.pivotDot.hidden) el.pivotDot.hidden = true;
+};
+window.addEventListener('pointerup', endPivot);
+window.addEventListener('pointercancel', endPivot);
+el.canvas.addEventListener('lostpointercapture', endPivot);
+
+// ---- wheel: mouse wheel zooms; on a trackpad two fingers pan and a pinch zooms.
+// 'auto' tells them apart per gesture; the 操作 popover can force either.
+let wheelGesture = /** @type {{at: number, kind: 'pan'|'zoom'} | null} */ (null);
+/** Last input device seen by 'auto', shown in the 操作 popover. */
+let detectedDevice = /** @type {'trackpad'|'mouse'|null} */ (null);
+
+/** @param {WheelEvent} e @returns {'trackpad'|'mouse'} */
+function classifyWheel(e) {
+  const legacy = /** @type {any} */ (e).wheelDeltaY;
+  if (e.ctrlKey) return 'trackpad'; // pinch
+  if (e.deltaMode !== 0) return 'mouse'; // lines / pages: a notched wheel
+  if (e.deltaX !== 0) return 'trackpad'; // two fingers rarely move perfectly vertically
+  if (!Number.isInteger(e.deltaY)) return 'trackpad';
+  if (typeof legacy === 'number' && legacy !== 0) {
+    if (Math.abs(legacy) % 120 === 0) return 'mouse'; // whole notches
+    if (legacy === -3 * e.deltaY) return 'trackpad'; // Chromium's pixel-scroll signature
+  }
+  return Math.abs(e.deltaY) >= 50 ? 'mouse' : 'trackpad';
+}
+
+el.canvas.addEventListener(
+  'wheel',
+  (e) => {
+    if (!controls.enabled) return;
+    const now = performance.now();
+    /** @type {'pan'|'zoom'} */
+    let kind;
+    if (e.ctrlKey) kind = 'zoom'; // pinch, or Ctrl + wheel
+    else if (prefs.navMode === 'mouse') kind = 'zoom';
+    else if (prefs.navMode === 'trackpad') kind = 'pan';
+    else if (wheelGesture && now - wheelGesture.at < 180) kind = wheelGesture.kind; // same gesture
+    else {
+      const device = classifyWheel(e);
+      if (device !== detectedDevice) {
+        detectedDevice = device;
+        renderNavHelp();
+      }
+      kind = device === 'trackpad' ? 'pan' : 'zoom';
+    }
+    wheelGesture = { at: now, kind };
+    if (kind === 'zoom') return; // OrbitControls zooms towards the cursor
+    // pan: the model follows the fingers
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
+    /** @type {any} */ (controls)._pan(-e.deltaX * scale, -e.deltaY * scale);
+    controls.update();
+  },
+  { passive: false, capture: true },
+);
 
 // ---------------------------------------------------------------- parts (scene + files)
 /**
@@ -417,7 +544,7 @@ const CQVM_TYPE = 'application/x-cqview-mesh';
 function makeEntry(key, ref, info) {
   const label = ref.source === 'scene' ? ref.name : baseName(ref.rel);
   const root = ref.source === 'file' ? roots.find((r) => r.id === ref.root) : null;
-  const title = ref.source === 'scene' ? `脚本推送：${ref.name}` : `${root ? root.display : ''}/${ref.rel}`;
+  const title = ref.source === 'scene' ? `~/.cqview/scene/${ref.name}` : `${root ? root.display : ''}/${ref.rel}`;
   /** @type {PartEntry} */
   const entry = { key, ref, label, title, info, loadedKey: null, status: 'loading', mesh: null, back: null, edges: null, tris: 0 };
   parts.set(key, entry);
@@ -763,100 +890,135 @@ async function refreshScene() {
       await syncScene();
     } while (refreshAgain);
   } catch (error) {
-    showWarning(`脚本推送目录读取失败：${error instanceof Error ? error.message : String(error)}`);
+    showWarning(`~/.cqview/scene 读取失败：${error instanceof Error ? error.message : String(error)}`);
   } finally {
     refreshing = false;
   }
 }
+
+/** Parts pushed to ~/.cqview/scene, listed in the files panel; only the ticked ones are loaded. */
+let sceneParts = /** @type {(PartInfo & {name: string, file?: string})[]} */ ([]);
+/** @type {Set<string>} */
+const openScene = new Set();
 
 async function syncScene() {
   const res = await fetch(apiUrl('scene'), { cache: 'no-store' });
   if (!res.ok) throw new Error(await errorMessage(res));
   const data = await res.json();
   if (!data || !Array.isArray(data.parts)) throw new Error('场景数据格式不正确');
-  if (typeof data.selectionFile === 'string') selectionFile = data.selectionFile;
   showWarning(Array.isArray(data.warnings) ? data.warnings.join('；') : '');
 
   const incoming = data.parts.filter((p) => p && typeof p.name === 'string');
-  const keep = new Set(incoming.map((p) => sceneKey(p.name)));
+  sceneParts = incoming;
+  const available = new Map(incoming.map((p) => [p.name, p]));
+  for (const name of [...openScene]) if (!available.has(name)) openScene.delete(name);
   for (const entry of [...parts.values()]) {
-    if (entry.ref.source === 'scene' && !keep.has(entry.key)) removeEntry(entry.key);
+    if (entry.ref.source === 'scene' && !openScene.has(entry.ref.name)) removeEntry(entry.key);
   }
   const loads = [];
-  for (const info of incoming) {
-    const key = sceneKey(info.name);
-    const entry = parts.get(key) ?? makeEntry(key, { source: 'scene', name: info.name }, info);
+  for (const name of openScene) {
+    const info = available.get(name);
+    const key = sceneKey(name);
+    const entry = parts.get(key) ?? makeEntry(key, { source: 'scene', name }, info);
     // scene.json may drop a colour: rebuild meta from the fresh record rather than merging
     entry.info = { size: entry.info.size, mtime: entry.info.mtime };
     const job = ensureLoaded(entry, info);
     if (job) loads.push(job);
   }
   renderParts();
+  renderFileList();
   await Promise.all(loads);
   afterSceneChange(true);
 }
 
+async function openScenePart(name) {
+  if (openScene.has(name)) return;
+  openScene.add(name);
+  prefs.hidden.delete(sceneKey(name));
+  const refit = hadContent;
+  await refreshScene();
+  if (refit && parts.get(sceneKey(name))?.mesh) fitTo(visibleBox());
+}
+function closeScenePart(name) {
+  openScene.delete(name);
+  const key = sceneKey(name);
+  prefs.hidden.delete(key);
+  removeEntry(key);
+  const kept = picks.filter((p) => !(p.ref && p.ref.source === 'scene' && p.ref.name === name));
+  if (kept.length !== picks.length) setPicks(kept);
+  renderParts();
+  renderFileList();
+  afterSceneChange(false);
+}
+
 // ---------------------------------------------------------------- folders & files
-/** @type {{id:string,label:string,display:string}[]} */
+/**
+ * The chat folder this page works in: from the Host (agent.session()), or from ?root= when the
+ * Host cannot tell. null when the Viewer is not opened in a chat: then nothing is listed.
+ * @type {{dir: string, source: 'session'|'param', since: number, folder: {id: string, label: string, display: string} | null} | null}
+ */
+let workspace = null;
+/** The session folder first, then the extra folders added to it. @type {{id:string,label:string,display:string,kind?:string,missing?:boolean}[]} */
 let roots = [];
-/** @type {string|null} */
-let currentRoot = null;
 /** @type {Map<string, {files:{rel:string,size:number,mtime:number,kind:'stl'|'step'}[], truncated:boolean, error:string, loading:boolean}>} */
 const fileLists = new Map();
+/** Folder groups the user folded in the files panel (page lifetime only). @type {Set<string>} */
+const collapsedFolders = new Set();
+/** The pushed-model folder (~/.cqview/scene) is listed as one more folder, under this id. */
+const SCENE_FOLDER = 'scene';
 
-async function loadRoots() {
-  const res = await fetch(apiUrl('roots'), { cache: 'no-store' });
-  if (!res.ok) throw new Error(await errorMessage(res));
-  const data = await res.json();
-  roots = Array.isArray(data.roots) ? data.roots.filter((r) => r && ROOT_ID_RE.test(r.id)) : [];
-  renderRootSelect();
+/** @param {any} data */
+function applyWorkspace(data) {
+  if (!workspace || !data || !data.folder || !ROOT_ID_RE.test(data.folder.id)) throw new Error('会话文件夹数据格式不正确');
+  workspace.folder = data.folder;
+  const before = new Set(roots.map((r) => r.id));
+  roots = [data.folder, ...(Array.isArray(data.extras) ? data.extras : [])].filter((r) => r && ROOT_ID_RE.test(r.id));
+  if (typeof data.selectionFile === 'string') selectionFile = data.selectionFile;
+  for (const id of [...fileLists.keys()]) if (!roots.some((r) => r.id === id)) fileLists.delete(id);
+  for (const r of roots) if (!before.has(r.id) && !r.missing) void syncFiles(r.id);
+  renderChip();
+  renderFileList();
 }
-
-/** @param {string} path @returns {Promise<string>} root id */
-async function registerRoot(path) {
-  const res = await fetch(apiUrl('roots'), {
+/** @param {string} path @param {Record<string, unknown>} body */
+async function postWorkspace(path, body) {
+  if (!workspace) throw new Error('不在对话中');
+  const res = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ dir: workspace.dir, ...body }),
   });
   if (!res.ok) throw new Error(await errorMessage(res));
-  const data = await res.json();
-  await loadRoots();
-  return data.root.id;
+  return res.json();
 }
-
-function selectRoot(id) {
-  currentRoot = id;
-  prefs.root = id;
-  savePrefs();
-  renderRootSelect();
+async function loadWorkspace() {
+  applyWorkspace(await postWorkspace('workspace', {}));
+}
+/** @param {string} path @returns {Promise<string>} id of the added folder */
+async function addExtraFolder(path) {
+  applyWorkspace(await postWorkspace('workspace/folders', { path }));
+  return roots[roots.length - 1].id; // the server keeps the newest last
+}
+/** @param {string} id */
+async function removeExtraFolder(id) {
+  applyWorkspace(await postWorkspace('workspace/folders', { remove: id }));
+  for (const key of [...prefs.opened]) if (parseFileKey(key)?.root === id) closeFile(key);
+  collapsedFolders.delete(id);
   renderFileList();
-  return syncFiles(id);
 }
 
-function renderRootSelect() {
-  el.rootSelect.replaceChildren();
-  if (!roots.length) {
-    const opt = document.createElement('option');
-    opt.textContent = '还没有文件夹';
-    opt.value = '';
-    el.rootSelect.append(opt);
-    el.rootSelect.disabled = true;
-  } else {
-    el.rootSelect.disabled = false;
-    for (const r of roots) {
-      const opt = document.createElement('option');
-      opt.value = r.id;
-      opt.textContent = r.label;
-      opt.title = r.display;
-      el.rootSelect.append(opt);
-    }
-    if (currentRoot) el.rootSelect.value = currentRoot;
-  }
-  const cur = roots.find((r) => r.id === currentRoot);
-  el.rootPath.textContent = cur ? cur.display : '';
-  el.rootPath.title = cur ? cur.display : '';
-  el.rootName.textContent = cur ? cur.label : '选择文件夹';
+/** Unfold a folder group, refresh its list, and bring it into view. */
+function revealFolder(id) {
+  collapsedFolders.delete(id);
+  renderFileList();
+  requestAnimationFrame(() => el.folders.querySelector(`[data-folder="${id}"]`)?.scrollIntoView({ block: 'nearest' }));
+  return id === SCENE_FOLDER ? refreshScene() : syncFiles(id);
+}
+
+/** The title chip names the session folder. */
+function renderChip() {
+  el.rootAddToggle.disabled = !workspace;
+  const cur = roots[0];
+  el.rootName.textContent = cur ? cur.label : workspace ? '正在读取…' : '不在对话中';
   el.rootName.title = cur ? cur.display : '';
 }
 
@@ -864,7 +1026,7 @@ async function syncFiles(rootId) {
   const state = fileLists.get(rootId) ?? { files: [], truncated: false, error: '', loading: true };
   state.loading = true;
   fileLists.set(rootId, state);
-  if (rootId === currentRoot) renderFileList();
+  renderFileList();
   try {
     const res = await fetch(apiUrl('files', { root: rootId }), { cache: 'no-store' });
     if (!res.ok) throw new Error(await errorMessage(res));
@@ -877,7 +1039,7 @@ async function syncFiles(rootId) {
     state.error = error instanceof Error ? error.message : String(error);
   }
   state.loading = false;
-  if (rootId === currentRoot) renderFileList();
+  renderFileList();
   await reconcileOpened(rootId, state);
 }
 
@@ -912,7 +1074,6 @@ async function openFile(rootId, file) {
   if (prefs.opened.includes(key)) return;
   prefs.opened.push(key);
   prefs.hidden.delete(key);
-  savePrefs();
   const entry = makeEntry(key, { source: 'file', root: rootId, rel: file.rel }, file);
   renderFileList();
   const refit = hadContent;
@@ -924,7 +1085,6 @@ async function openFile(rootId, file) {
 function closeFile(key) {
   prefs.opened = prefs.opened.filter((k) => k !== key);
   prefs.hidden.delete(key);
-  savePrefs();
   removeEntry(key);
   const kept = picks.filter((p) => !(p.ref && p.ref.source === 'file' && fileKey(p.ref.root, p.ref.rel) === key));
   if (kept.length !== picks.length) setPicks(kept);
@@ -933,73 +1093,200 @@ function closeFile(key) {
   afterSceneChange(false);
 }
 
+/**
+ * @param {{checked: boolean, name: string, step: boolean, dir?: string, size: number, title: string,
+ *   label: string, onChange: (checked: boolean) => void}} f
+ */
+function fileRow(f) {
+  const li = document.createElement('li');
+  const label = document.createElement('label');
+  label.className = 'file-row';
+  label.title = f.title;
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = f.checked;
+  cb.setAttribute('aria-label', f.label);
+  cb.addEventListener('change', () => f.onChange(cb.checked));
+  const main = document.createElement('span');
+  main.className = 'file-main';
+  const name = document.createElement('span');
+  name.className = 'file-name';
+  name.textContent = f.name;
+  if (f.step) {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = 'STEP';
+    name.append(tag);
+  }
+  main.append(name);
+  if (f.dir !== undefined) {
+    const dir = document.createElement('span');
+    dir.className = 'file-dir';
+    dir.textContent = f.dir;
+    main.append(dir);
+  }
+  const size = document.createElement('span');
+  size.className = 'file-size';
+  size.textContent = fmtSize(f.size);
+  label.append(cb, main, size);
+  li.append(label);
+  return li;
+}
+
+const chevronIcon =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const minusIcon =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+/**
+ * One group per folder: the session folder, its extra folders, and ~/.cqview/scene when it holds
+ * pushed models. Each group folds; ticking a model opens it.
+ * @param {{id: string, label: string, display: string, kind?: string, removable: boolean}} g
+ * @param {HTMLLIElement[]} rows @param {string} status @param {boolean} [error]
+ */
+function folderGroup(g, rows, status, error = false) {
+  const open = !collapsedFolders.has(g.id);
+  const section = document.createElement('section');
+  section.className = 'folder';
+  section.dataset.folder = g.id;
+  section.setAttribute('aria-label', g.label);
+  const head = document.createElement('div');
+  head.className = 'folder-head';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'folder-toggle';
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.setAttribute('aria-controls', `folder-${g.id}`);
+  toggle.title = g.display;
+  toggle.innerHTML = chevronIcon;
+  const name = document.createElement('span');
+  name.className = 'folder-name';
+  name.textContent = g.label;
+  toggle.append(name);
+  if (g.kind === 'session') {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = '会话文件夹';
+    toggle.append(tag);
+  }
+  const count = document.createElement('span');
+  count.className = 'folder-count';
+  count.textContent = String(rows.length);
+  toggle.append(count);
+  toggle.addEventListener('click', () => {
+    if (collapsedFolders.has(g.id)) collapsedFolders.delete(g.id);
+    else collapsedFolders.add(g.id);
+    renderFileList();
+  });
+  head.append(toggle);
+  if (g.removable) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-btn';
+    remove.innerHTML = minusIcon;
+    remove.title = '从这个对话的列表里移除';
+    remove.setAttribute('aria-label', `从这个对话的列表里移除 ${g.label}`);
+    remove.addEventListener('click', async () => {
+      try {
+        await removeExtraFolder(g.id);
+        showToast(`已从这个对话移除「${g.label}」`, 'info', 2400);
+      } catch (err) {
+        showToast(`没有移除：${err instanceof Error ? err.message : String(err)}`, 'error', 4000);
+      }
+    });
+    head.append(remove);
+  }
+  section.append(head);
+  if (open) {
+    const path = document.createElement('p');
+    path.className = 'folder-path';
+    path.textContent = g.display;
+    path.title = g.display;
+    const list = document.createElement('ul');
+    list.className = 'files';
+    list.id = `folder-${g.id}`;
+    list.append(...rows);
+    section.append(path, list);
+    if (status) {
+      const note = document.createElement('p');
+      note.className = error ? 'folder-status error' : 'folder-status';
+      note.textContent = status;
+      section.append(note);
+    }
+  }
+  return section;
+}
+
 function renderFileList() {
-  el.files.replaceChildren();
+  el.folders.replaceChildren();
   el.filesStatus.classList.remove('error');
-  if (!currentRoot) {
-    el.filesStatus.textContent = '点右上角的 + 添加一个项目文件夹。';
+  if (!workspace) {
+    el.filesStatus.textContent = '在对话里打开 CadQuery Viewer，这里会列出对话所在文件夹里的模型。';
     return;
   }
-  const state = fileLists.get(currentRoot);
-  if (!state || (state.loading && state.files.length === 0 && !state.error)) {
-    el.filesStatus.textContent = '正在扫描文件夹…';
-    return;
-  }
-  if (state.error) {
-    el.filesStatus.classList.add('error');
-    el.filesStatus.textContent = state.error;
+  if (!roots.length) {
+    el.filesStatus.textContent = '正在读取会话文件夹…';
     return;
   }
   const filter = el.fileFilter.value.trim().toLowerCase();
-  const shown = filter ? state.files.filter((f) => f.rel.toLowerCase().includes(filter)) : state.files;
-  for (const f of shown) {
-    const key = fileKey(currentRoot, f.rel);
-    const li = document.createElement('li');
-    const label = document.createElement('label');
-    label.className = 'file-row';
-    label.title = f.rel;
-
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = prefs.opened.includes(key);
-    const rootId = currentRoot;
-    cb.addEventListener('change', () => {
-      if (cb.checked) void openFile(rootId, f);
-      else closeFile(key);
+  let total = 0;
+  let found = 0;
+  for (const r of roots) {
+    const state = fileLists.get(r.id);
+    const files = state?.files ?? [];
+    const shown = filter ? files.filter((f) => f.rel.toLowerCase().includes(filter)) : files;
+    total += files.length;
+    found += shown.length;
+    const rows = shown.map((f) => {
+      const key = fileKey(r.id, f.rel);
+      return fileRow({
+        checked: prefs.opened.includes(key),
+        name: baseName(f.rel),
+        step: f.kind === 'step',
+        dir: dirName(f.rel) || '（根目录）',
+        size: f.size,
+        title: f.rel,
+        label: `打开 ${f.rel}`,
+        onChange: (on) => (on ? void openFile(r.id, f) : closeFile(key)),
+      });
     });
-
-    const main = document.createElement('span');
-    main.className = 'file-main';
-    const name = document.createElement('span');
-    name.className = 'file-name';
-    name.textContent = baseName(f.rel);
-    if (f.kind === 'step') {
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = 'STEP';
-      name.append(tag);
-    }
-    const dir = document.createElement('span');
-    dir.className = 'file-dir';
-    dir.textContent = dirName(f.rel) || '（根目录）';
-    main.append(name, dir);
-
-    const size = document.createElement('span');
-    size.className = 'file-size';
-    size.textContent = fmtSize(f.size);
-
-    label.append(cb, main, size);
-    li.append(label);
-    el.files.append(li);
+    let status = '';
+    let error = false;
+    if (r.missing) status = '文件夹已不存在';
+    else if (!state || (state.loading && !files.length && !state.error)) status = '正在扫描…';
+    else if (state.error) {
+      status = state.error;
+      error = true;
+    } else if (!files.length) status = '没有 STL 或 STEP 文件';
+    else if (filter && !shown.length) status = '没有匹配的模型';
+    else if (state.truncated) status = '只列出前 1000 个';
+    el.folders.append(
+      folderGroup({ id: r.id, label: r.label, display: r.display, kind: r.kind, removable: r.kind !== 'session' }, rows, status, error),
+    );
   }
-  if (!state.files.length) {
-    el.filesStatus.textContent = '这个文件夹里还没有 STL 或 STEP 文件';
-  } else {
-    const bits = [`共 ${state.files.length} 个模型`];
-    if (filter) bits.push(`找到 ${shown.length} 个`);
-    if (state.truncated) bits.push('只显示前 1000 个');
-    el.filesStatus.textContent = bits.join('，');
+  if (sceneParts.length) {
+    const shown = filter ? sceneParts.filter((p) => p.name.toLowerCase().includes(filter)) : sceneParts;
+    total += sceneParts.length;
+    found += shown.length;
+    const rows = shown.map((p) =>
+      fileRow({
+        checked: openScene.has(p.name),
+        name: p.name,
+        step: p.kind === 'step',
+        size: p.size,
+        title: `~/.cqview/scene/${p.file ?? p.name}`,
+        label: `打开 ${p.name}`,
+        onChange: (on) => (on ? void openScenePart(p.name) : closeScenePart(p.name)),
+      }),
+    );
+    el.folders.append(
+      folderGroup({ id: SCENE_FOLDER, label: 'scene', display: '~/.cqview/scene', removable: false }, rows, filter && !shown.length ? '没有匹配的模型' : ''),
+    );
   }
+  const folders = roots.length + (sceneParts.length ? 1 : 0);
+  el.filesStatus.textContent = filter
+    ? `${folders} 个文件夹，找到 ${found} / ${total} 个模型`
+    : `${folders} 个文件夹，共 ${total} 个模型`;
 }
 
 // ---------------------------------------------------------------- after any change
@@ -1011,11 +1298,18 @@ function afterSceneChange(fromLoad) {
   updateClipRange();
   updateInfo(vis);
 
-  if (parts.size === 0) {
-    showOverlay('empty', '打开一个模型开始', '从项目文件夹中选择 STL 或 STEP 文件。', {
+  if (!workspace) {
+    showOverlay(
+      'empty',
+      '在对话里打开 Viewer',
+      '查看器只显示对话所在文件夹里的模型。从一个对话里打开 CadQuery Viewer，就能看到那个文件夹里的 STL 和 STEP。',
+    );
+    hadContent = false;
+  } else if (parts.size === 0) {
+    showOverlay('empty', '打开一个模型开始', '在左侧的模型文件里勾选会话文件夹中的 STL 或 STEP。', {
       action: '选择模型',
       onAction: () => openPanel('files'),
-      hint: '也可以在 CadQuery 脚本里调用 show()，模型会直接显示在这里。',
+      hint: '让 AI 导出模型后用 add_model_file 打开，模型也会出现在这里。',
     });
     hadContent = false;
   } else {
@@ -1037,6 +1331,7 @@ function afterSceneChange(fromLoad) {
   }
   updateDepthRange();
   requestRender();
+  renderPanel?.viewChanged();
 }
 
 function showWarning(text) {
@@ -1110,6 +1405,139 @@ function applyClip() {
   sectionMaterial.clippingPlanes = clipList();
   sectionMaterial.needsUpdate = true;
   requestRender();
+}
+
+// ---------------------------------------------------------------- white-model capture (for rendering)
+// One neutral clay material, a clean light background, no grid / axes / markers / gizmo: the picture
+// the background render turns into a finished image.
+const CLAY = { color: '#dededa', roughness: 0.82, metalness: 0, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+const CAPTURE_BG = '#f1f2f4';
+
+const hasVisibleModel = () => [...parts.values()].some((p) => p.mesh && p.mesh.visible);
+const visibleModelNames = () => orderedEntries().filter((e) => e.mesh && e.mesh.visible).map((e) => e.label);
+const FRAME_MARGIN = 0.1;
+const FRAME_SAMPLES = 40_000;
+
+/**
+ * Where the visible models sit in camera space (x right, y up), clipped to what the window shows,
+ * plus a margin: the camera keeps its direction, the picture is cropped to the model. Zoomed in on
+ * a detail, the window itself is the limit, so the picture never shows more than the window does.
+ * @returns {{cx: number, cy: number, hw: number, hh: number}}
+ */
+function contentFrame() {
+  const va = Math.max(1, el.viewport.clientWidth) / Math.max(1, el.viewport.clientHeight);
+  const viewHH = frustumHalf / camera.zoom;
+  const viewHW = viewHH * va;
+  camera.updateMatrixWorld();
+  const toCam = camera.matrixWorldInverse;
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  const v = new THREE.Vector3();
+  const meshes = [...parts.values()].filter((p) => p.mesh && p.mesh.visible).map((p) => /** @type {THREE.Mesh} */ (p.mesh));
+  const total = meshes.reduce((s, m) => s + m.geometry.getAttribute('position').count, 0);
+  const stride = Math.max(1, Math.ceil(total / FRAME_SAMPLES));
+  for (const mesh of meshes) {
+    mesh.updateMatrixWorld();
+    const pos = mesh.geometry.getAttribute('position');
+    for (let i = 0; i < pos.count; i += stride) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld).applyMatrix4(toCam);
+      if (v.x < x0) x0 = v.x;
+      if (v.x > x1) x1 = v.x;
+      if (v.y < y0) y0 = v.y;
+      if (v.y > y1) y1 = v.y;
+    }
+  }
+  // the window spans viewOffset ± (viewHW, viewHH) in camera space
+  x0 = Math.max(x0, viewOffset.x - viewHW);
+  x1 = Math.min(x1, viewOffset.x + viewHW);
+  y0 = Math.max(y0, viewOffset.y - viewHH);
+  y1 = Math.min(y1, viewOffset.y + viewHH);
+  if (!(x1 > x0 && y1 > y0)) return { cx: viewOffset.x, cy: viewOffset.y, hw: viewHW, hh: viewHH };
+  const hw = ((x1 - x0) / 2) * (1 + 2 * FRAME_MARGIN);
+  const hh = ((y1 - y0) / 2) * (1 + 2 * FRAME_MARGIN);
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hw, hh };
+}
+/** Width / height of the framed model, for the automatic aspect ratio. */
+const frameAspect = () => {
+  const f = contentFrame();
+  return f.hw / f.hh;
+};
+
+/**
+ * PNG data URL of the visible models at `aspect` (width / height): same camera direction, cropped
+ * to the model (contentFrame). Synchronous, so the window is restored before the browser paints.
+ * @param {{longSide: number, aspect: number, keepColors: boolean}} opts
+ */
+function captureView({ longSide, aspect, keepColors }) {
+  const w = Math.round(aspect >= 1 ? longSide : longSide * aspect);
+  const h = Math.round(aspect >= 1 ? longSide / aspect : longSide);
+  const frame = contentFrame();
+  // grow the frame to the requested aspect around its centre (never crop the model)
+  const hh = Math.max(frame.hh, frame.hw / aspect);
+  const hw = hh * aspect;
+  const zoom = camera.zoom; // the projection divides the extent (not the centre) by zoom
+
+  const ratio = renderer.getPixelRatio();
+  const clear = renderer.getClearColor(new THREE.Color());
+  const clearAlpha = renderer.getClearAlpha();
+  const helpersVisible = helpersGroup.visible;
+  const pickVisible = pickGroup.visible;
+  const edgeColor = edgeMaterial.color.clone();
+  const edgeOpacity = edgeMaterial.opacity;
+  const sectionColor = sectionMaterial.color.clone();
+  /** @type {[THREE.Mesh, THREE.Material][]} */
+  const swapped = [];
+  try {
+    camera.left = frame.cx - hw * zoom;
+    camera.right = frame.cx + hw * zoom;
+    camera.top = frame.cy + hh * zoom;
+    camera.bottom = frame.cy - hh * zoom;
+    camera.updateProjectionMatrix();
+    helpersGroup.visible = false;
+    pickGroup.visible = false;
+    edgeMaterial.color.set('#3d4148');
+    edgeMaterial.opacity = 0.4;
+    if (!keepColors) {
+      sectionMaterial.color.set('#c9c9c5');
+      for (const p of parts.values()) {
+        if (!p.mesh) continue;
+        const old = /** @type {THREE.MeshStandardMaterial} */ (p.mesh.material);
+        const opacity = old.opacity ?? 1;
+        p.mesh.material = new THREE.MeshStandardMaterial({
+          ...CLAY,
+          transparent: opacity < 1,
+          opacity,
+          depthWrite: opacity >= 1,
+          clippingPlanes: clipList(),
+        });
+        swapped.push([p.mesh, old]);
+      }
+    }
+    renderer.setPixelRatio(1);
+    renderer.setSize(w, h, false);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    renderer.autoClear = true;
+    renderer.setClearColor(CAPTURE_BG, 1);
+    renderer.render(scene, camera);
+    return el.canvas.toDataURL('image/png');
+  } finally {
+    for (const [mesh, old] of swapped) {
+      /** @type {THREE.Material} */ (mesh.material).dispose();
+      mesh.material = old;
+    }
+    helpersGroup.visible = helpersVisible;
+    pickGroup.visible = pickVisible;
+    edgeMaterial.color.copy(edgeColor);
+    edgeMaterial.opacity = edgeOpacity;
+    sectionMaterial.color.copy(sectionColor);
+    renderer.setClearColor(clear, clearAlpha);
+    renderer.setPixelRatio(ratio);
+    applySize(); // drawing buffer and frustum back to the window
+    renderNow();
+  }
 }
 
 // ---------------------------------------------------------------- annotations (positions on parts)
@@ -1381,6 +1809,10 @@ function positionOverlays(w, h) {
   const hs = hoverPoint ? screenOf(hoverPoint.x, hoverPoint.y, hoverPoint.z, w, h) : null;
   el.hoverDot.hidden = !hs;
   if (hs) el.hoverDot.style.transform = `translate(${hs[0].toFixed(1)}px, ${hs[1].toFixed(1)}px)`;
+  if (!el.pivotDot.hidden && pivotPoint) {
+    const ps = screenOf(pivotPoint.x, pivotPoint.y, pivotPoint.z, w, h);
+    if (ps) el.pivotDot.style.transform = `translate(${ps[0].toFixed(1)}px, ${ps[1].toFixed(1)}px)`;
+  }
 }
 
 function syncMarkers() {
@@ -1505,6 +1937,8 @@ function focusPick(i) {
   const target = new THREE.Vector3(p.x, p.y, p.z);
   camera.position.add(target.clone().sub(controls.target));
   controls.target.copy(target);
+  viewOffset.x = viewOffset.y = 0; // the point goes to the middle of the window
+  applySize();
   controls.update();
   updateDepthRange();
   requestRender();
@@ -1622,12 +2056,13 @@ async function postSelection() {
   }
 }
 async function writeSelectionOnce() {
+  if (!workspace?.folder) return; // not in a chat: nothing to annotate
   try {
     const points = picks.map(({ x, y, z, part, body, ref, normal, note }) => ({ x, y, z, part, body, ref, normal, note }));
     const res = await fetch(apiUrl('selection'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ client: clientId, instruction, points }),
+      body: JSON.stringify({ client: clientId, folder: workspace.folder.id, instruction, points }),
     });
     if (!res.ok) throw new Error(await errorMessage(res));
     const doc = await res.json();
@@ -1637,8 +2072,9 @@ async function writeSelectionOnce() {
   }
 }
 async function loadSelection() {
+  if (!workspace?.folder) return;
   try {
-    const res = await fetch(apiUrl('selection'), { cache: 'no-store' });
+    const res = await fetch(apiUrl('selection', { folder: workspace.folder.id }), { cache: 'no-store' });
     if (!res.ok) return;
     const doc = await res.json();
     if (!doc || !Array.isArray(doc.points)) return;
@@ -1732,6 +2168,7 @@ function openPanel(name) {
   openPanelName = name;
   for (const [key, panel] of Object.entries(el.panels)) panel.hidden = key !== name;
   for (const b of el.railButtons) b.setAttribute('aria-pressed', String(b.dataset.panel === name));
+  renderPanel?.panelToggled(name === 'render');
 }
 for (const b of el.railButtons) {
   b.addEventListener('click', () => openPanel(openPanelName === b.dataset.panel ? null : b.dataset.panel || null));
@@ -1777,6 +2214,7 @@ el.optGrid.addEventListener('click', () => {
 function setClipPopover(open) {
   el.clipPop.hidden = !open;
   el.clipToggle.setAttribute('aria-expanded', String(open));
+  if (open) setNavPopover(false);
 }
 el.clipToggle.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1785,7 +2223,63 @@ el.clipToggle.addEventListener('click', (e) => {
 el.clipPop.addEventListener('click', (e) => e.stopPropagation());
 document.addEventListener('click', () => {
   if (!el.clipPop.hidden) setClipPopover(false);
+  if (!el.navPop.hidden) setNavPopover(false);
 });
+
+// 操作方式: which gestures pan and zoom, and what everything does
+const NAV_HELP = {
+  trackpad: [
+    ['按下拖动', '旋转，绕按下的点'],
+    ['双指滑动', '平移'],
+    ['双指捏合', '缩放，朝向指针'],
+    ['Shift + 拖动', '平移'],
+    ['F', '适配视图'],
+  ],
+  mouse: [
+    ['左键拖动', '旋转，绕按下的点'],
+    ['右键 / 中键拖动', '平移'],
+    ['滚轮', '缩放，朝向光标'],
+    ['Shift + 左键拖动', '平移'],
+    ['F', '适配视图'],
+  ],
+};
+function setNavPopover(open) {
+  el.navPop.hidden = !open;
+  el.navToggle.setAttribute('aria-expanded', String(open));
+  if (open) {
+    setClipPopover(false);
+    renderNavHelp();
+  }
+}
+function renderNavHelp() {
+  const mode = prefs.navMode;
+  for (const b of el.navButtons) b.setAttribute('aria-pressed', String(b.dataset.nav === mode));
+  const device = mode !== 'auto' ? mode : detectedDevice ?? (/Mac/i.test(navigator.platform) ? 'trackpad' : 'mouse');
+  el.navDetected.textContent =
+    mode !== 'auto'
+      ? ''
+      : detectedDevice
+        ? `当前识别为${detectedDevice === 'trackpad' ? '触控板' : '鼠标'}，每次滚动重新判断`
+        : '滚动一下，就会识别是触控板还是鼠标';
+  el.navKeys.replaceChildren(
+    ...NAV_HELP[device].flatMap(([k, v]) => [
+      Object.assign(document.createElement('dt'), { textContent: k }),
+      Object.assign(document.createElement('dd'), { textContent: v }),
+    ]),
+  );
+}
+el.navToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  setNavPopover(el.navPop.hidden);
+});
+el.navPop.addEventListener('click', (e) => e.stopPropagation());
+for (const b of el.navButtons) {
+  b.addEventListener('click', () => {
+    prefs.navMode = /** @type {'auto'|'trackpad'|'mouse'} */ (b.dataset.nav);
+    savePrefs();
+    renderNavHelp();
+  });
+}
 for (const b of el.clipButtons) {
   b.addEventListener('click', () => {
     clipAxis = b.dataset.clip || 'off';
@@ -1828,9 +2322,6 @@ el.clearPick.addEventListener('click', () => {
 });
 
 // files panel
-el.rootSelect.addEventListener('change', () => {
-  if (el.rootSelect.value) selectRoot(el.rootSelect.value);
-});
 el.fileFilter.addEventListener('input', () => renderFileList());
 
 function setAddFormOpen(open) {
@@ -1850,10 +2341,10 @@ el.rootAddForm.addEventListener('submit', async (e) => {
     return;
   }
   try {
-    const id = await registerRoot(value);
+    const id = await addExtraFolder(value);
     el.rootAddInput.value = '';
     setAddFormOpen(false);
-    selectRoot(id);
+    void revealFolder(id);
   } catch (error) {
     el.rootAddError.hidden = false;
     el.rootAddError.textContent = error instanceof Error ? error.message : String(error);
@@ -1862,6 +2353,7 @@ el.rootAddForm.addEventListener('submit', async (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
+  if (renderPanel?.isDialogOpen()) return; // the result viewer is modal and handles Esc itself
   const t = /** @type {HTMLElement} */ (e.target);
   const typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
   if (e.key === 'Escape') {
@@ -1870,6 +2362,7 @@ window.addEventListener('keydown', (e) => {
       return;
     }
     if (!el.clipPop.hidden) setClipPopover(false);
+    else if (!el.navPop.hidden) setNavPopover(false);
     else if (pickMode) setPickMode(false);
     else if (openPanelName) openPanel(null);
     return;
@@ -1920,21 +2413,44 @@ function applyHostContext(ctx) {
 }
 
 // ---------------------------------------------------------------- requests from the AI (MCP tools)
-// The Node side keeps the last requests in dataDir, so they still apply when the page opens later.
+// The Node side keeps the last requests in dataDir and hands each workspace only its own, pointed at
+// its folders. Progress is remembered per session folder; the first time, only requests made since
+// the chat started (or the last ten minutes, without Host session info) are carried out.
 let requestChain = Promise.resolve();
 function applyRequests() {
+  if (!workspace?.folder) return requestChain;
   requestChain = requestChain.then(applyRequestsNow, applyRequestsNow).catch(() => {});
   return requestChain;
 }
+const reqKey = () => `cqv.req.v3.${workspace?.folder?.id ?? ''}`;
+function loadReqState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(reqKey()) || 'null');
+    return s && typeof s.epoch === 'string' && Number.isInteger(s.seq) ? s : null;
+  } catch {
+    return null;
+  }
+}
+function saveReqState(epoch, seq) {
+  try {
+    localStorage.setItem(reqKey(), JSON.stringify({ epoch, seq }));
+  } catch {
+    /* storage unavailable */
+  }
+}
 async function applyRequestsNow() {
-  const res = await fetch(apiUrl('requests'), { cache: 'no-store' });
+  if (!workspace) return;
+  const res = await fetch(apiUrl('requests', { dir: workspace.dir }), { cache: 'no-store' });
   if (!res.ok) return;
   const data = await res.json();
   if (!data || !Array.isArray(data.items) || typeof data.epoch !== 'string') return;
+  const state = loadReqState();
   // a new epoch means the request log was recreated: everything in it is new to us
-  const after = data.epoch === prefs.reqEpoch ? prefs.reqSeq : 0;
+  const fresh = !state || state.epoch !== data.epoch;
+  const after = fresh ? 0 : state.seq;
   const todo = data.items
     .filter((it) => it && Number.isInteger(it.seq) && it.seq > after)
+    .filter((it) => !fresh || Date.parse(it.at) >= workspace.since)
     .sort((a, b) => a.seq - b.seq);
   for (const item of todo) {
     try {
@@ -1942,33 +2458,27 @@ async function applyRequestsNow() {
     } catch (error) {
       showToast(`AI 请求的内容没有打开：${error instanceof Error ? error.message : String(error)}`, 'error', 5000);
     }
-    prefs.reqEpoch = data.epoch;
-    prefs.reqSeq = item.seq;
-    savePrefs();
+    saveReqState(data.epoch, item.seq);
   }
-  if (prefs.reqEpoch !== data.epoch) {
-    prefs.reqEpoch = data.epoch;
-    prefs.reqSeq = Number.isInteger(data.seq) ? data.seq : 0;
-    savePrefs();
-  }
+  if (fresh || !todo.length) saveReqState(data.epoch, Number.isInteger(data.seq) ? data.seq : 0);
 }
 
 async function applyRequest(item) {
   if (item.type === 'scene' && typeof item.name === 'string') {
-    const key = sceneKey(item.name);
-    if (prefs.hidden.delete(key)) savePrefs();
+    prefs.hidden.delete(sceneKey(item.name));
+    openScene.add(item.name);
     await refreshScene();
-    const entry = await settled(key);
+    const entry = await settled(sceneKey(item.name));
     if (entry) applyMaterial(entry);
     revealAll();
-    showToast(`AI 推送了 ${item.name}`, 'info', 3000);
+    showToast(`AI 打开了 ${item.name}`, 'info', 3000);
     return;
   }
   if ((item.type !== 'folder' && item.type !== 'file') || !ROOT_ID_RE.test(item.root)) return;
-  if (!roots.some((r) => r.id === item.root)) await loadRoots();
+  if (!roots.some((r) => r.id === item.root)) await loadWorkspace(); // the AI may just have added it
   const root = roots.find((r) => r.id === item.root);
   if (!root) throw new Error('文件夹已不在列表里');
-  await selectRoot(item.root);
+  await revealFolder(item.root);
   if (item.type === 'folder') {
     openPanel('files');
     showToast(`AI 添加了文件夹「${root.label}」`, 'info', 3000);
@@ -1981,7 +2491,7 @@ async function applyRequest(item) {
   const key = fileKey(item.root, item.rel);
   if (prefs.opened.includes(key)) {
     // already open: make sure it is shown
-    if (prefs.hidden.delete(key)) savePrefs();
+    prefs.hidden.delete(key);
     const entry = parts.get(key);
     if (entry) applyMaterial(entry);
     renderParts();
@@ -2013,12 +2523,10 @@ let events = null;
 let offlineTimer = null;
 let wasOffline = false;
 function rootsInUse() {
-  const ids = new Set(prefs.opened.map((k) => parseFileKey(k)?.root).filter(Boolean));
-  if (currentRoot) ids.add(currentRoot);
-  return ids;
+  return new Set(roots.map((r) => r.id));
 }
 function connect() {
-  events = new EventSource(apiUrl('events'));
+  events = new EventSource(apiUrl('events', workspace ? { dir: workspace.dir } : undefined));
   events.onopen = () => {
     if (offlineTimer) clearTimeout(offlineTimer);
     offlineTimer = null;
@@ -2049,11 +2557,15 @@ function connect() {
       void refreshScene();
       for (const id of rootsInUse()) void syncFiles(id);
       void applyRequests(); // the server may have restarted while we were away
+      void renderPanel?.refresh();
     } else if (msg.type === 'scene') void refreshScene();
+    else if (msg.type === 'renders') void renderPanel?.refresh();
     else if (msg.type === 'files' && typeof msg.root === 'string' && rootsInUse().has(msg.root)) void syncFiles(msg.root);
-    else if (msg.type === 'roots') void loadRoots().catch(() => {});
-    else if (msg.type === 'request') void applyRequests();
-    else if (msg.type === 'selection' && msg.client !== clientId) void loadSelection(); // ignore our own echo
+    else if (msg.type === 'workspace' && msg.folder === workspace?.folder?.id) {
+      // extra folders changed (added here, in another page of this folder, or by the AI)
+      void loadWorkspace().then(() => renderFileList(), () => {});
+    } else if (msg.type === 'request') void applyRequests();
+    else if (msg.type === 'selection' && msg.client !== clientId && msg.folder === workspace?.folder?.id) void loadSelection(); // ignore our own echo
     else if (msg.type === 'watch-lost') {
       events?.close();
       setTimeout(connect, 2000);
@@ -2085,6 +2597,33 @@ function detectHostBridge() {
   return bridgeDetection;
 }
 
+/**
+ * Which chat folder this page works in. MiniMax Code tells the page the chat it is open in
+ * (agent.session(), granted by agentAccess "session.read"); a Host that cannot, or a page opened
+ * outside a chat, falls back to ?root=<folder> (the AI can open the Viewer with it), else null.
+ */
+async function resolveWorkspace() {
+  const agent = /** @type {any} */ (window).mcode?.miniapp?.agent;
+  if (typeof agent?.session === 'function') {
+    try {
+      const s = await Promise.race([agent.session(), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))]);
+      if (s && typeof s.workspaceDir === 'string' && s.workspaceDir) {
+        return {
+          dir: s.workspaceDir,
+          source: /** @type {const} */ ('session'),
+          since: typeof s.createdAtMs === 'number' ? s.createdAtMs : Date.now() - 10 * 60_000,
+          folder: null,
+        };
+      }
+    } catch {
+      /* not opened in a chat, or this Host has no session info: try ?root= */
+    }
+  }
+  const root = new URLSearchParams(location.search).get('root');
+  if (root) return { dir: root, source: /** @type {const} */ ('param'), since: Date.now() - 10 * 60_000, folder: null };
+  return null;
+}
+
 async function boot() {
   void detectHostBridge();
   renderer.setClearColor(css('--cqv-canvas'), 1);
@@ -2092,39 +2631,58 @@ async function boot() {
   renderPicks(); // includes the pick bar
   renderParts();
 
-  try {
-    await loadRoots();
-  } catch (error) {
-    el.filesStatus.textContent = `文件夹列表没有读取成功：${error instanceof Error ? error.message : String(error)}`;
-  }
+  renderPanel = createRenderPanel({
+    apiUrl,
+    errorMessage,
+    capture: captureView,
+    hasModel: hasVisibleModel,
+    modelNames: visibleModelNames,
+    frameAspect,
+    folder: () => workspace?.folder?.id ?? null,
+    isOpen: () => openPanelName === 'render',
+    open: () => openPanel(openPanelName === 'render' ? null : 'render'),
+    showToast,
+    prefs,
+    savePrefs,
+  });
+  renderPanel.init();
 
-  // ?root=<absolute path> (how a session opens the viewer on its own folder) or ?root=<id>
-  const requested = new URLSearchParams(location.search).get('root');
-  let target = null;
-  if (requested) {
-    if (ROOT_ID_RE.test(requested) && roots.some((r) => r.id === requested)) target = requested;
-    else {
-      try {
-        target = await registerRoot(requested);
-      } catch (error) {
-        showToast(`无法打开这个文件夹：${error instanceof Error ? error.message : String(error)}`, 'error', 5000);
-      }
+  showOverlay('loading', '正在读取会话文件夹', '请稍候…');
+  workspace = await resolveWorkspace();
+  if (workspace) {
+    try {
+      await loadWorkspace();
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      workspace = null;
+      renderChip();
+      renderFileList();
+      showOverlay('error', '会话文件夹打不开', why);
+      return;
     }
   }
-  if (!target && prefs.root && roots.some((r) => r.id === prefs.root)) target = prefs.root;
-  if (!target && roots.length) target = roots[0].id;
+  renderChip();
+  if (!workspace) {
+    renderFileList();
+    afterSceneChange(false); // "open the Viewer from a chat"
+    void renderPanel.refresh();
+    return;
+  }
 
-  // forget files whose folder is no longer registered
-  prefs.opened = prefs.opened.filter((k) => roots.some((r) => r.id === parseFileKey(k)?.root));
-  savePrefs();
-
-  if (target) selectRoot(target);
-  else renderFileList();
-  for (const id of rootsInUse()) if (id !== target) void syncFiles(id);
+  // ?root= next to Host session info: the AI asked for that folder, add it to this chat's list
+  const requested = new URLSearchParams(location.search).get('root');
+  if (workspace.source === 'session' && requested) {
+    try {
+      void revealFolder(await addExtraFolder(requested));
+    } catch (error) {
+      showToast(`无法打开这个文件夹：${error instanceof Error ? error.message : String(error)}`, 'error', 5000);
+    }
+  }
 
   await refreshScene();
   afterSceneChange(false);
   await loadSelection();
+  void renderPanel.refresh();
   connect();
   await applyRequests(); // models the AI asked for while the viewer was closed
 }

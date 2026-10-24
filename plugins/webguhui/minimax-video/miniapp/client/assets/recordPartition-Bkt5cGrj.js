@@ -1,0 +1,1 @@
+function e(e,t){if(!Array.isArray(e))return{valid:[],opaque:[]};let n=[],r=[];for(let i of e){let e=t(i);e===null?r.push(i):n.push(e)}return{valid:n,opaque:r}}function t(e,t){return t.length?[...e,...t]:[...e]}export{t as n,e as t};

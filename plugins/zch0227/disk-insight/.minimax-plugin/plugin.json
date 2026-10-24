@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "disk-insight",
+  "displayName": "磁盘透视",
+  "version": "1.0.0",
+  "description": "扫描 macOS 和 Windows 磁盘里的垃圾文件、大文件、重复文件和代码仓库占用，确认后直接删除选中的条目。",
+  "author": "zch0227",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": [
+    "打开磁盘透视，扫描一下哪些垃圾文件可以清理",
+    "帮我看看磁盘空间都被什么占了"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
