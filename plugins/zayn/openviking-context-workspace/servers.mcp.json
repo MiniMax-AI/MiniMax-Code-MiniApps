@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "openviking": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/openviking",
+      "headers": {},
+      "description": "OpenViking context tools for resources, semantic search, sessions, messages, commit, and memory.",
+      "timeout": 120000
+    }
+  }
+}

@@ -1,0 +1,1 @@
+import{u as i,a as n,j as r,N as t}from"./index-CrpXeiZm.js";function a(){const{connection:e}=i(),{provider:o}=n(),s=o==="volcengine"?"viking://~/memories/":`viking://user/${e.userId}/memories/`;return r.jsx(t,{replace:!0,to:"/filesystem",search:{uri:s,upload:!1}})}export{a as component};
