@@ -370,9 +370,15 @@ export async function start(context) {
     const saveMatch = /^\/api\/library\/([\w.\-]+)\/save$/.exec(path);
     if (saveMatch && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const wanted = String(body.name ?? '').replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 120);
-      const saved = await media.store.saveToDownloads(saveMatch[1], wanted);
-      if (!saved) return sendJson(res, 404, { error: 'not_found', message: '库里没有这个素材' });
+      // The name is cleaned and judged inside the store, so one rule decides
+      // what a file may be called and where it may land.
+      const saved = await media.store.saveToDownloads(saveMatch[1], String(body.name ?? ''));
+      if (!saved.ok) {
+        if (saved.reason === 'bad_name') {
+          return sendJson(res, 400, { error: 'bad_name', message: '这个名字不能用，换一个普通的文件名试试' });
+        }
+        return sendJson(res, 404, { error: 'not_found', message: '库里没有这个素材' });
+      }
       return sendJson(res, 200, { ok: true, path: saved.path, name: saved.name, bytes: saved.bytes });
     }
 

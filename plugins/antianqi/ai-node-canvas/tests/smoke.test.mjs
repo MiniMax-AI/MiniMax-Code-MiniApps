@@ -8,7 +8,7 @@
 // Run with: node --test "tests/*.test.mjs"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5822,7 +5822,7 @@ test('a file can be put where the user can find it', async (t) => {
   const target = join(dir, 'out');
   await mkdir(target, { recursive: true });
   const out = await store.saveToDownloads(uploaded.name, '商品图.jpg', target);
-  assert.ok(out, '文件没有存出去');
+  assert.ok(out?.ok, '文件没有存出去');
   assert.equal(out.path, join(target, '商品图.jpg'));
   assert.ok((await readFile(out.path)).length > 0);
   // The copy says it is a fresh save: a copied file keeps the time of the
@@ -5834,6 +5834,126 @@ test('a file can be put where the user can find it', async (t) => {
   const again = await store.saveToDownloads(uploaded.name, '商品图.jpg', target);
   assert.notEqual(again.path, out.path);
   assert.match(again.path, /商品图 \(1\)\.jpg/);
+});
+
+test('a save name cannot walk out of the folder it lands in', async (t) => {
+  // The name of a saved file comes from outside. A name like `..` points at
+  // the parent of the Downloads folder, so it would put a file next to it
+  // instead of inside it. The name is judged, not tidied up: `.` and `..`
+  // are not names at all.
+  const { createMediaStore, plainName, resolveInside } = await import('../miniapp/node/media-store.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-escape-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = createMediaStore({ dataDir: dir });
+  const uploaded = await store.saveUpload('商品图.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'image');
+
+  const target = join(dir, 'out');
+  await mkdir(target, { recursive: true });
+
+  for (const name of ['..', '.', '../逃出去.png', 'sub/../../逃出去.png']) {
+    const saved = await store.saveToDownloads(uploaded.name, name, target);
+    assert.equal(saved.ok, false, `这个名字不该被接受：${name}`);
+    assert.equal(saved.reason, 'bad_name', `拒绝的理由说错了：${name}`);
+  }
+  // Nothing landed next to the folder either: a file written outside would
+  // show up here as an extra entry.
+  const beside = await readdir(dir);
+  assert.deepEqual(beside.sort(), ['assets', 'out', 'uploads', 'work'], '有文件被写到了文件夹外面');
+
+  // The rule itself: a path inside a folder, or nothing.
+  assert.equal(resolveInside(target, 'ok.png'), join(target, 'ok.png'));
+  assert.equal(resolveInside(target, '..'), null);
+  assert.equal(resolveInside(target, '.'), null);
+  assert.equal(resolveInside(target, '../out.png'), null);
+  assert.equal(resolveInside(target, 'a/../../out.png'), null);
+  // What lands on disk is one plain name: no separator, no dot segment.
+  assert.equal(plainName('商品图.jpg'), '商品图.jpg');
+  assert.equal(plainName(''), null);
+  assert.equal(plainName('..'), null);
+  assert.equal(plainName('.'), null);
+  assert.equal(plainName('a/b:c.jpg'), 'abc.jpg');
+});
+
+test('a material id cannot walk out of the asset folder', async (t) => {
+  // The id of a material comes from the route, so it is judged the same way
+  // a save name is: `..` is not a material, and it must not read the folder
+  // above the assets.
+  const { createMediaStore } = await import('../miniapp/node/media-store.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-id-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = createMediaStore({ dataDir: dir });
+  const uploaded = await store.saveUpload('商品图.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'image');
+
+  const target = join(dir, 'out');
+  await mkdir(target, { recursive: true });
+  const saved = await store.saveToDownloads('..', '逃出去.png', target);
+  assert.equal(saved.ok, false);
+  assert.equal(saved.reason, 'not_found');
+  const again = await store.saveToDownloads(uploaded.name, 'ok.png', target);
+  assert.equal(again.ok, true, '正常的素材还是应该存得出去');
+});
+
+test('a download never reaches this machine or the network it sits in', async () => {
+  // A provider link is an address this runtime would fetch, so the address
+  // is judged before the request goes out: the loopback, the private ranges
+  // and the link-local range are this machine, and a link to them is
+  // refused.
+  const { isPrivateAddress, isPublicUrl } = await import('../miniapp/node/media-store.mjs');
+
+  assert.equal(isPrivateAddress('127.0.0.1'), true);
+  assert.equal(isPrivateAddress('127.13.2.9'), true);
+  assert.equal(isPrivateAddress('10.0.0.1'), true);
+  assert.equal(isPrivateAddress('172.16.0.1'), true);
+  assert.equal(isPrivateAddress('172.31.255.255'), true);
+  assert.equal(isPrivateAddress('192.168.1.1'), true);
+  assert.equal(isPrivateAddress('169.254.1.1'), true);
+  assert.equal(isPrivateAddress('0.0.0.0'), true);
+  assert.equal(isPrivateAddress('::1'), true);
+  assert.equal(isPrivateAddress('fe80::1'), true);
+  assert.equal(isPrivateAddress('fd00::1'), true);
+  assert.equal(isPrivateAddress('::ffff:127.0.0.1'), true);
+  // A public address is not refused.
+  assert.equal(isPrivateAddress('8.8.8.8'), false);
+  assert.equal(isPrivateAddress('172.32.0.1'), false);
+  assert.equal(isPrivateAddress('2606:4700::1111'), false);
+
+  assert.equal(isPublicUrl('http://127.0.0.1:9/file.png'), false);
+  assert.equal(isPublicUrl('http://localhost/file.png'), true, '一个名字要等查了才知道');
+  assert.equal(isPublicUrl('https://cdn.example.com/file.png'), true);
+  assert.equal(isPublicUrl('file:///etc/passwd'), false);
+  assert.equal(isPublicUrl('not a url'), false);
+});
+
+test('a redirect into the loopback is refused', async (t) => {
+  // The redirect is followed by hand, so every hop is judged: a public
+  // address that redirects into this machine is still this machine.
+  const { createMediaStore, isAllowedHop } = await import('../miniapp/node/media-store.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-redirect-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = createMediaStore({ dataDir: dir });
+
+  // A hop is allowed when its address is public and every address its name
+  // points at is public too.
+  assert.equal(isAllowedHop('https://cdn.example.com/a.png', ['93.184.216.34']), true);
+  assert.equal(isAllowedHop('https://cdn.example.com/a.png', ['93.184.216.34', '127.0.0.1']), false);
+  assert.equal(isAllowedHop('http://127.0.0.1:9/a.png', []), false);
+  assert.equal(isAllowedHop('http://192.168.0.10/a.png', []), false);
+
+  // And a link to this machine is refused before a socket is opened.
+  const http = await import('node:http');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'image/png' });
+    res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  await assert.rejects(
+    () => store.materialize({ url: `http://127.0.0.1:${port}/start.png` }),
+    /拒绝/,
+    '指向本机的请求不该被放行',
+  );
 });
 
 test('a material can be handed to the user, and the library can be opened', async () => {

@@ -329,6 +329,8 @@ provider 有**几种不同的请求**把素材变成视频，不是同一个请�
 
 ## 数据与访问
 
+- **连接器用来做什么** — `matrix` 连接器只用来生成媒体：图片、视频、语音、音乐，
+  以及读一段视频做理解。凭据与出网都在宿主手里，本包不碰任何自己的账号信息。
 - **读取的文件** — 只有本包自己的页面资源，从 `context.pluginRoot` 读取
   （`miniapp/client/index.html`、`app.js`、`mention.mjs`、`tools.mjs`、`forms.mjs`、
   `actions.mjs`、`styles.css`）。不读取任何宿主文件。

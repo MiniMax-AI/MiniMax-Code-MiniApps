@@ -8,8 +8,10 @@
 // The provider hands out a short-lived download link, so a link that has
 // expired is refreshed through the connector instead of failing the tool.
 import { randomUUID } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { createWriteStream } from 'node:fs';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -89,6 +91,102 @@ function downloadsDir() {
   return join(homedir(), 'Downloads');
 }
 
+/**
+ * A plain file name: one segment of a name, never a path.
+ *
+ * The name of a material and the name a file is saved under both end up on
+ * the file system, so this is the rule they share: no separator survives,
+ * and a dot segment is not a name at all. One rule, so an id can never
+ * name the folder above the assets.
+ */
+export function plainName(name) {
+  const clean = String(name ?? '').replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 120);
+  if (!clean) return null;
+  if (clean === '.' || clean === '..') return null;
+  return clean;
+}
+
+/**
+ * A path inside a folder, or nothing.
+ *
+ * A name that walks out of the folder is refused, not tidied up: `.` is the
+ * folder itself, `..` is its parent, and anything that resolves outside
+ * the folder is refused too. The check is made on the **resolved** path, so
+ * a name that only looks harmless cannot escape.
+ */
+export function resolveInside(folder, name) {
+  const base = resolve(String(folder ?? ''));
+  const raw = String(name ?? '').trim();
+  if (!raw) return null;
+  const target = resolve(base, raw);
+  const inside = relative(base, target);
+  if (!inside || inside.startsWith('..') || isAbsolute(inside)) return null;
+  return target;
+}
+
+/**
+ * Whether an address is one a download must not reach.
+ *
+ * The loopback, the private ranges, the link-local range and the reserved
+ * ranges are this machine or the network it sits in. A provider link never
+ * points there, so a request to one is refused.
+ */
+export function isPrivateAddress(address) {
+  const ip = String(address ?? '').trim().toLowerCase();
+  if (!ip) return true;
+  if (ip === '::' || ip === '::1' || ip === '0:0:0:0:0:0:0:1') return true;
+  // An IPv4 address written inside an IPv6 one (::ffff:127.0.0.1).
+  if (ip.startsWith('::ffff:')) return isPrivateAddress(ip.slice(7));
+  if (/^fe[89ab]/.test(ip)) return true;
+  if (/^f[cd]/.test(ip)) return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!v4) return false;
+  const first = Number(v4[1]);
+  const second = Number(v4[2]);
+  if (first === 0 || first === 127) return true;
+  if (first === 10) return true;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  if (first === 192 && second === 168) return true;
+  if (first === 169 && second === 254) return true;
+  if (first >= 224) return true;
+  return false;
+}
+
+/**
+ * Whether a link may be fetched at all.
+ *
+ * A name is judged by its shape: it has to be an http(s) link, and a link
+ * that spells out a private address is refused. A name that has to be
+ * looked up is judged when it is looked up.
+ */
+export function isPublicUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url));
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (!host) return false;
+  if (isIP(host)) return !isPrivateAddress(host);
+  return true;
+}
+
+/**
+ * Whether one hop of a download may be made.
+ *
+ * The address is judged twice: by its shape (a private address spelled out
+ * is refused at once) and by where the name points (a name that resolves
+ * into this machine is refused too). Every hop of a redirect is judged the
+ * same way, so a public address that redirects into the loopback is
+ * refused as well.
+ */
+export function isAllowedHop(url, addresses = []) {
+  if (!isPublicUrl(url)) return false;
+  return !addresses.some((entry) => isPrivateAddress(entry?.address ?? entry));
+}
+
 /** Whether a path is taken. */
 async function exists(path) {
   try {
@@ -148,11 +246,46 @@ export function createMediaStore(context) {
     return path;
   }
 
-  async function downloadTo(url, path) {
+  /**
+   * The address a download may go to.
+   *
+   * A link that spells out a private address is refused straight away, and
+   * a name is looked up first: if any of the addresses it points at is
+   * this machine or the network it sits in, the download is refused too.
+   */
+  async function assertPublicUrl(url) {
+    const parsed = new URL(String(url));
+    const host = parsed.hostname.replace(/^\[|\]$/g, '');
+    if (isIP(host)) {
+      if (!isAllowedHop(url, [])) throw new Error('素材链接指向本机或内网，已拒绝');
+      return parsed.toString();
+    }
+    let addresses = [];
+    try {
+      addresses = await lookup(host, { all: true });
+    } catch {
+      throw new Error('素材链接的主机名解析失败');
+    }
+    if (!addresses.length) throw new Error('素材链接的主机名解析失败');
+    if (!isAllowedHop(url, addresses)) throw new Error('素材链接指向本机或内网，已拒绝');
+    return parsed.toString();
+  }
+
+  async function downloadTo(url, path, hops = 0) {
+    const target = await assertPublicUrl(url);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
     try {
-      const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+      const response = await fetch(target, { signal: controller.signal, redirect: 'manual' });
+      // The redirect is followed by hand, so every hop is judged too: a
+      // public address that redirects into the loopback is still refused.
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        await response.body?.cancel().catch(() => {});
+        if (!location) throw new Error(`素材下载失败（HTTP ${response.status}）`);
+        if (hops >= 5) throw new Error('素材下载失败（重定向过多）');
+        return downloadTo(new URL(location, target).toString(), path, hops + 1);
+      }
       if (!response.ok) {
         throw new Error(`素材下载失败（HTTP ${response.status}）`);
       }
@@ -380,9 +513,9 @@ export function createMediaStore(context) {
   // deleting the source of a tool would kill the picture the node still shows.
   async function discard(path) {
     try {
-      const target = resolve(path);
-      const inside = relative(workDir, target);
-      if (!inside || inside.startsWith('..') || isAbsolute(inside)) return false;
+      // The same rule as everywhere else: a path inside a folder, or nothing.
+      const target = resolveInside(workDir, path);
+      if (!target) return false;
       await rm(target, { force: true });
       return true;
     } catch {
@@ -557,10 +690,16 @@ export function createMediaStore(context) {
    * folder, which is not somewhere a person looks for a picture. Saving it
    * copies it into the Downloads folder under the name the user knows it by.
    * A file that is already there is not overwritten: the copy gets a number.
+   *
+   * Both names are checked: the name of the material and the name it is
+   * saved under. A name that walks out of its folder is refused, so a
+   * request cannot write next to the Downloads folder.
    */
   async function saveToDownloads(name, wanted = '', targetDir = '') {
-    const safe = String(name ?? '').replace(/[^\w.\-]/g, '');
-    if (!safe) return null;
+    // The material is named by a plain name: no separator, no dot segment.
+    // That is what keeps the lookup inside the folder it belongs to.
+    const safe = plainName(name);
+    if (!safe) return { ok: false, reason: 'not_found' };
     let source = null;
     for (const folder of [assetsDir, uploadsDir]) {
       const path = join(folder, safe);
@@ -572,8 +711,15 @@ export function createMediaStore(context) {
         continue;
       }
     }
-    if (!source) return null;
-    const target = join(targetDir || downloadsDir(), wanted || safe);
+    if (!source) return { ok: false, reason: 'not_found' };
+    const folder = targetDir || downloadsDir();
+    // The name is judged as it was given: a name that walks out of the
+    // folder is refused, not tidied up into something that looks safe.
+    const asked = String(wanted ?? '').trim();
+    if (!resolveInside(folder, asked || safe)) return { ok: false, reason: 'bad_name' };
+    // What lands on disk is one plain name: the separators are taken out,
+    // so the file lands in the folder itself.
+    const target = join(folder, plainName(asked) ?? safe);
     const info = await stat(source);
     let finalPath = target;
     let index = 1;
@@ -589,7 +735,7 @@ export function createMediaStore(context) {
     // keeps the time of the original, which would make a fresh save look old.
     const now = new Date();
     await utimes(finalPath, now, now).catch(() => {});
-    return { path: finalPath, bytes: info.size, name: finalPath.split(/[\\/]/).pop() };
+    return { ok: true, path: finalPath, bytes: info.size, name: finalPath.split(/[\\/]/).pop() };
   }
 
   return {

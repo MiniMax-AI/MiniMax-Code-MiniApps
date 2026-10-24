@@ -5,7 +5,7 @@
       "type": "streamable-http",
       "url": "http://127.0.0.1:9/mcp/canvas",
       "headers": {},
-      "description": "读取节点画布的画布列表与结构：节点、连线、插槽与状态。只读。",
+      "description": "节点画布的托管 MCP：读画布（canvas_list / canvas_read），也在画布上加节点、连线、改节点、删节点、发起运行（canvas_add_node / canvas_connect / canvas_update_node / canvas_remove_node / canvas_run）。写操作改的是用户画布上看得见的东西；canvas_remove_node 删掉的节点没法恢复；canvas_run 会真的发起一次生成、花掉用户自己的额度（视频可能跑十几分钟，但这次调用很快就会返回「已经开始」，结果用 canvas_read 看）。",
       "timeout": 30000
     }
   }

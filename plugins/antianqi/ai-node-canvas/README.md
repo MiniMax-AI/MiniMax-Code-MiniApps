@@ -518,6 +518,10 @@ separate pictures.
 
 ## Data & access
 
+- **What the connector is for** — the `matrix` connector is used for media
+  generation only: images, video, speech and music, plus reading a video
+  back for understanding. The Host holds the credentials and the egress;
+  this package never touches an account of its own.
 - **Files read** — only this package's own page assets, read from `context.pluginRoot`
   (`miniapp/client/index.html`, `app.js`, `mention.mjs`, `tools.mjs`,
   `forms.mjs`, `actions.mjs`, `styles.css`).

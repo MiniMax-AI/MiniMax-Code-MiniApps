@@ -183,7 +183,6 @@ export function createActionQueue({ store, runner, logger = null, signal = null,
         waiters.delete(id);
         resolve(null);
       }, timeoutMs);
-      timer.unref?.();
       waiters.set(id, (payload) => {
         clearTimeout(timer);
         resolve(payload);
