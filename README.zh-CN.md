@@ -57,6 +57,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 
 | MiniApp | 功能 | 作者 |
 | --- | --- | --- |
+| [OpenFilm](plugins/cristinamadureira353-svg/openfilm/) | 把 OpenFilm 装进 MiniMax Code：桌面版界面（Studio 编辑器 + 聊天栏 + 本地 agent），桌面模式不可用时回落网页版 | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | 图层图片编辑、应用内 AI 助手、本地恢复与程序化编辑工具 | [WebGuHui](https://github.com/WebGuHui) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | 本地视频剪辑、字幕、宿主 Agent 助手、可预览的时间线修改与 MP4/MP3 导出 | [WebGuHui](https://github.com/WebGuHui) |
