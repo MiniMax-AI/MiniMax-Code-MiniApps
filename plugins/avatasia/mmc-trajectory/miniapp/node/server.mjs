@@ -166,7 +166,7 @@ const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
  * them.
  *
  * The rows are the largest thing this service holds, and they are only worth holding while
- * somebody is asking for them. The page rebuilds the whole trajectory every 8 seconds while it is
+ * somebody is asking for them. The page rebuilds the whole trajectory on every poll while it is
  * open, and it stops asking the moment the tab is hidden or closed — so a cache with no expiry
  * keeps a conversation's rows for as long as the runtime lives, which is how the last session a
  * reader opened stayed resident after they walked away.
