@@ -1,122 +1,49 @@
-"""Mutation control for the owner escapes two review rounds reported.
+"""Mutation control for the owner escapes that outlived the removal of the prose contract.
 
-  Round sixteen:
-  R29-F31  the promise sentence names minutes in words the parser did not know, and the owner of
-           "the two forms are the same promise" held VACUOUSLY: it could not read the words, and
-           a promise nobody can check is not a promise anybody checked.
-  R29-F32  the page hands its timer a comma expression -- `(TRAJECTORY_POLL_INTERVAL, 8000000)`
-           -- and the owner read the characters around the name instead of the argument the timer
-           is really given, so the timer was seen to wait 8000 while it waits 8000000.
-  R29-F33  a template literal holding a declaration impersonated the proxy's numeric declaration
-           while the binding the service really uses was the string "2".
+WHAT THIS FILE USED TO OWN, AND WHY IT IS SMALLER NOW. Most of the escapes this file held were
+escapes of the READER: the machinery that read a number out of a sentence and compared it with the
+number the service declares. That reader is gone. The service's comments no longer state the number
+the package used to promise a reader -- the shipped comment names the RULE and the constants it
+holds, and a guard that compared a comment with a constant was asserting that a piece of prose had
+not gone stale. A control that kept those cases would have been holding a rule the package no
+longer has, and the cases would have failed for a reason that has nothing to do with the guard.
 
-  Round seventeen:
-  R29-F34  the same parser read the END of the words and dropped the rest, so "one hundred twelve
-           and a half minutes (750000 ms)" was read as twelve and a half -- a promise that states
-           one number in words and another in milliseconds, and the owner called it agreement.
-  R29-F35  the guard's own copy could not be imported, and the owner of "the shipped default is
-           the interval the service declares" compared the interval the cache really uses with the
-           number it could not read -- so a broken harness accused a rule that was not broken.
+WHAT IS LEFT IS THE MACHINERY THE GUARD STILL USES TO OBSERVE THE SERVICE, and it is four shapes:
 
-  Round eighteen:
-  R29-F36  the PHRASE was cut, not the words: the scan that walks back from the millisecond form
-           stopped at a thousands separator and at an ampersand -- both of which can appear INSIDE a
-           number -- so "one thousand, twelve and a half minutes (750000 ms)" was read as twelve and
-           a half, and the tail agreed with the promise while the phrase did not.
-  R29-F37  a sentence written BEFORE the promise said the same words, and the owner took the first
-           sentence that contained them: the promise to a reader was read out of an annotation left
-           beside it, and the annotation agreed with the cache.
-  R29-F38  the page's inline script did not run, and the three owners that read the page's delay
-           compared a value they never saw: the premise failed loudly, and three rules were
-           accused anyway.
+  * the PAGE. The guard reads the interval the page's own script hands its timer, so a page that
+    hands the timer a comma expression -- or a page whose inline script does not run at all -- is a
+    break the guard cannot see through. The rule that owns it says so by name.
+  * the SERVICE'S OWN BINDINGS. The guard reads the service's numbers from the module it imports,
+    so a declaration that is really a string, or a template literal impersonating one, is a break in
+    what the guard is about to read.
+  * THE COPY THE GUARD READS. The guard makes a copy of the service and imports it. A copy that
+    will not import leaves the guard with nothing to compare against, so it has to say that it could
+    not observe the numbers -- and it must not accuse any other rule.
+  * THE GUARD'S OWN SETUP. The cache starts its sweeper when the first row is written, so a service
+    that cannot start one throws in the middle of the guard's setup. A throw is a stack trace and not
+    the name of a rule, so the setup is wrapped, the failure is reported BY NAME, and the guard
+    stops there: without a cache there are no rows to read.
 
-  Round nineteen:
-  R29-F39  a scale word the number table does not know was DROPPED, and the tail was read instead:
-           "one myriad twelve and a half minutes (750000 ms)" was read as twelve and a half -- a
-           promise that states one number in words and another in milliseconds, and the owner called
-           it agreement. A word that cannot be read has to make the phrase unreadable, not shorten
-           it.
-  R29-F40  the form that finds the promise knew ONE spelling of the unit, so a promise written
-           "600000 milliseconds" was invisible and the annotation beside it became the only
-           candidate: both owners of the number read the annotation, and reported the promise to be
-           sound.
-  R29-F41  two promise forms inside ONE sentence were counted as one promise, so the owner of the
-           bound accused a limit the block states correctly -- the number it accused was one of two,
-           and neither of them was THE number.
+THE FOURTH ONE IS NEW IN THIS ROUND (R29-F53). The guard used to let the throw escape, so a
+service that could not start its sweeper produced a stack trace instead of a rule name, and a
+review that reads a stack trace cannot tell which rule was broken. The case below breaks the
+sweeper's creation, and the rule that owns it is the one that has to go red -- and it is the only
+one that may.
 
-  Round twenty:
-  R29-F42  the reader refused an unknown word only when ONE neighbour said the word was part of a
-           number, so two unsupported words in front of the number -- or an unsupported head behind
-           ordinary sentence context -- were dropped, and the tail was read instead, and the tail
-           agreed with the promise's other form.
-  R29-F43  the locator recognised the promise only in the shapes it could read, so a promise
-           written "600000.0 milliseconds" -- or with a unit it had no factor for -- was not a
-           candidate at all, and the annotation beside it became the only candidate and answered
-           for it.
-  R29-F44  one ordinary context word in front of the number made the minutes unreadable, and the
-           owner of the two forms reported that they DISAGREE -- an accusation that is false, because
-           both forms state the same number. An unreadable phrase is not a disagreement, and an
-           owner that reports one is accusing a rule nobody broke.
-
-  Round twenty-one:
-  R29-F45  the reader erased a SIGN along with the hyphens it walks over, so "-12.5 minutes
-           (750000 ms)" was read as twelve and a half -- a promise that states one number in
-           words and another in milliseconds, and the owner called it agreement. A signed number
-           is not a number of minutes a promise can state, so the phrase is not read at all.
-  R29-F46  the unit table was asked for a name it INHERITS: "constructor" resolves to Object's
-           constructor, the multiplication gave NaN, and that NaN counted as one OBSERVED number
-           -- so the owners of the number accused a promise that stated no number at all, while
-           the premise that says the number could not be read stayed green.
-  R29-F47  the locator counted only the promise forms it could read: a promise written
-           "minutes ((600000 ms))" had its number hidden, the annotation beside it became the
-           only candidate, and the owners of the number read the annotation and reported the
-           promise to be sound.
-
-  Round twenty-two:
-  R29-F48  the characters a hyphen may be written with were not ONE family: the reader knew the
-           ASCII hyphen, so a promise written with the Unicode MINUS SIGN was not read as a
-           signed number at all -- "-12.5 minutes (750000 ms)" was read as twelve and a half, a
-           promise that states one number in words and another in milliseconds, and the owner
-           called it agreement. A sign is a sign whichever character it is written with.
-  R29-F49  a phrase that holds a SLASH was cut at the slash, so "25/12.5 minutes (750000 ms)" was
-           read as its denominator -- twelve and a half -- and the two forms of the promise were
-           declared the same when the phrase says something else. A fraction is not a number of
-           minutes a promise can state, so the phrase is not read at all.
-  R29-F50  the guard read the FIRST spelling of a name in the file, so a decoy could answer for
-           the promise: a local copy of the constant inside a function that is never called, with
-           its own comment above it, supplied the prose, and the guard was green while the
-           declaration the module really uses said something else. And a comment that stands above
-           other code documents that other code -- so the documentation has to TOUCH the
-           declaration as well as belong to the module.
-
-THE TWELFTH CASE BREAKS THE GUARD'S OWN READER, and so do the two cases before it that break the
-machinery that reads the promise: the break is in the guard and not in the shipped source, so the
-guard's own assertion about reading a whole phrase is the one that has to go red. An assertion
-that no case can make fail is an assertion nobody is watching.
-
-THE SIXTEEN OTHER CASES THAT BREAK THE GUARD BREAK ITS READER AND ITS LOCATOR, and they are the
-same shape: the break is in the machinery that reads the promise -- the words that may stand in
-front of a number, the reader of a decimal point, the reader of a unit it does not know, the
-reader of a sign, the reader of a fraction, the reader of the characters a hyphen may be written
-with, the reader of the declaration the documentation has to belong to, and the locator that
-counts the forms -- so the guard's own assertions about that machinery are the ones that have to
-go red. A rule that reads the promise has an owner, and the owner is an assertion about the
-reading itself.
+THE RULES ARE CHECKED THE WAY THE ROUNDS THAT FOUND THEM ASKED FOR: the owner has to be a
+BEHAVIOUR, not a shape. The page's script is run in a sandbox and the delay comes from the timer
+the page itself starts; the service's numbers come from the module's own bindings.
 
 Each case breaks one file and one rule, and a case counts as caught only when the guard reported
 THAT rule -- by name -- and nothing else. The guard has to go red by NAMING a rule: a guard that
 threw, or that went red without naming anything, has not shown that it owns this break.
 
-WHY THIS IS A SEPARATE FILE. `tests/mutate-parsed-rows.py` owns the forty cases of the cache's
-own behaviour, and its EXACT table is the single source of truth for which rules each of those
-breaks may report. Those forty cases and that table are frozen: neither round changed product
-behaviour, only the owners of rules, so adding these to that file would have meant rewriting a
-table that is not this round's to rewrite. A control whose table has two owners is a table with no
-owner. So the escapes get their own control, and the suite runs one more file.
-
-THE RULES ARE CHECKED THE WAY THE ROUNDS THAT FOUND THEM ASKED FOR: the owner has to be a
-BEHAVIOUR, not a shape. The page's script is run in a sandbox and the delay comes from the timer
-the page itself starts; the service's numbers come from the module's own bindings.
+WHY THIS IS A SEPARATE FILE. `tests/mutate-parsed-rows.py` owns the thirty-six cases of the
+cache's own behaviour, and its EXACT table is the single source of truth for which rules each of
+those breaks may report. Those cases and that table are frozen: a round that changes product
+behaviour would have to rewrite a table that is not its own to rewrite. A control whose table has
+two owners is a table with no owner. So the escapes get their own control, and the suite runs one
+more file.
 
 A CASE IS A TUPLE, AND THAT IS NOT A MATTER OF STYLE. `tests/verify-mutation-contracts.py` reads
 this file's source to decide whether it judges its cases by membership -- whether the case's own
@@ -132,8 +59,8 @@ to state:
   * a case can break the copy the guard reads the service's numbers from, so the guard cannot
     observe them. The guard then has to FAIL LOUDLY -- by naming the rule it could not observe --
     and it must not accuse any other rule: a number the guard could not read is not a broken
-    rule. The exact set is what says so: a guard that also reported "the shipped default is the
-    interval the service declares" would have accused a rule the break did not break.
+    rule. The exact set is what says so: a guard that also reported "the shipped default is
+    the interval the service declares" would have accused a rule the break did not break.
   * a case can break TWO things at once, when the escape only exists in that combination. The
     mis-accusation needs the observation to have failed AND the owner to compare anyway, so the
     case breaks the copy and removes the gate, and the guard has to name the rule that says it
@@ -164,15 +91,6 @@ PROBE = HERE / "verify-parsed-rows.mjs"
 # the case then passes or fails for a reason that has nothing to do with the rule it is about.
 MUTATIONS = [
     (
-        "the promise sentence names minutes in words the parser did not know",
-        [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — thirteen minutes (750000 ms) with the shipped"],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        ("the promise to a reader is the same promise in both of the forms it is written in",),
-        (),
-    ),
-    (
         "the page hands its timer a comma expression",
         [CLIENT],
         ["        }, TRAJECTORY_POLL_INTERVAL);"],
@@ -192,15 +110,6 @@ MUTATIONS = [
          "const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = '2';\n"],
         "the heap proxy is a number the service declares",
         ("the heap proxy is a number the service declares",),
-        (),
-    ),
-    (
-        "the minutes are written as a compound the parser reads as a smaller number",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — one hundred twelve and a half minutes (750000 ms)"],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        ("the promise to a reader is the same promise in both of the forms it is written in",),
         (),
     ),
     (
@@ -237,52 +146,6 @@ MUTATIONS = [
         (),
     ),
     (
-        "the promise states a compound number whose thousands separator hides the head of it",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — one thousand, twelve and a half minutes (750000 ms)"],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        ("the promise to a reader is the same promise in both of the forms it is written in",),
-        (),
-    ),
-    (
-        "the promise states a compound number with an ampersand in it",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — one hundred & twelve and a half minutes (750000 ms)"],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        ("the promise to a reader is the same promise in both of the forms it is written in",),
-        (),
-    ),
-    (
-        "the promise states the same number with a thousands separator in it",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — 1,012.5 minutes (750000 ms)"],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        ("the promise to a reader is the same promise in both of the forms it is written in",),
-        (),
-    ),
-    (
-        "a sentence written before the promise says the same words, and the promise says another number",
-        [
-            SERVER,
-            SERVER,
-        ],
-        [
-            " * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.**",
-            "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
-        ],
-        [
-            " * Historical annotation, no later than twelve and a half minutes (750000 ms).\n"
-            " * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.**",
-            "one sweep interval after the limit — fourteen minutes (840000 ms) with the shipped",
-        ],
-        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
-        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
-        (),
-    ),
-    (
         "the page's inline script does not run, so the owners below cannot read what they are about",
         [CLIENT],
         ["    <script>\n      'use strict';"],
@@ -294,323 +157,16 @@ MUTATIONS = [
         ("held vacuously",),
     ),
     (
-        "the reader stops at the thousands separator and answers with the tail of the phrase",
-        [PROBE],
-        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'/${HYPHEN_CLASS}]`);"],
-        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.&'/${HYPHEN_CLASS}]`);"],
-        "the promised minutes are read from the whole phrase, not from a tail of it",
-        ("the promised minutes are read from the whole phrase, not from a tail of it",),
-        (),
-    ),
-    (
-        "the promise names a scale word the number table does not know",
+        # The sweeper is created when the first row is WRITTEN, so a service that cannot create
+        # one throws inside the guard's own setup -- and a throw is a stack trace, not the name of
+        # a rule. The guard wraps its setup, reports the failure BY NAME and stops there, so this
+        # break has to be caught by the rule that says the setup failed, and by nothing else.
+        "the sweeper is never created, so the guard's own setup throws",
         [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — one myriad twelve and a half minutes (750000 ms) with the shipped"],
-        "the guard could not read the minutes the promise states",
-        ("the guard could not read the minutes the promise states",),
-        # The owner of the two forms cannot compare a promise it could not read, so it holds
-        # vacuously and counts itself.  It used to be this owner that went red here, and it went
-        # red by calling the two forms DISAGREENT -- a disagreement the block does not state, and
-        # one that no reader of the promise would ever see.  The escape is caught, and now it is
-        # caught by the owner of the thing that is actually wrong: the minutes cannot be read.
-        ("held vacuously",),
-    ),
-    (
-        "the promise is written with the unit spelled out, and the annotation beside it answers the form",
-        [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — ten minutes (600000 milliseconds) with the shipped. "
-         "Annotation twelve and a half minutes (750000 ms)"],
-        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
-        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
-        # The two owners of the number cannot locate a promise that is stated twice, so they say
-        # so instead of accusing a number nobody can point at.
-        ("held vacuously",),
-    ),
-    (
-        "two promise forms share one sentence, and the bound is accused over a number nobody can locate",
-        [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — historical annotation twelve and a half minutes (750000 ms); "
-         "the rows are gone no later than fourteen minutes (840000 ms) with the shipped"],
-        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
-        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
-        # The owner of the bound holds vacuously here: there is no single number to accuse, and
-        # accusing the one the block states correctly would be accusing a rule nobody broke.
-        ("held vacuously",),
-    ),
-    # ------------------------------------------------------------------ round twenty
-    #
-    # The twentieth pass found three escapes in the owners of the promise, and all three are the
-    # same shape: the machinery guessed, and where the guess failed it dropped what it did not
-    # understand instead of saying so.
-    #
-    #   R29-F42  the reader refused an unknown word only when ONE neighbour said the word was part
-    #             of a number. Two unsupported words in front of the number, or an unsupported head
-    #             behind ordinary sentence context, were dropped -- and the tail was read, and the
-    #             tail agreed with the promise's other form.
-    #   R29-F43  the locator recognised the promise only in the shapes it could read, so a promise
-    #             written "600000.0 milliseconds" -- or with a unit it had no factor for -- was not
-    #             a candidate at all, and the annotation beside it became the only candidate and
-    #             answered for it.
-    #   R29-F44  one ordinary context word in front of the number made the minutes unreadable, and
-    #             the owner of the two forms then reported that they DISAGREE -- an accusation that
-    #             is false, because both forms state the same number.
-    #
-    # The first three cases below are those escapes, on the shipped source. The last six break the
-    # guard's own machinery: the list of words that may stand in front of a number, the reader of
-    # a number written with a decimal point, the reader of a number in a unit it does not know, and
-    # the rule that says a word in front of the number has to be known. A rule that reads the
-    # promise has an owner, and the owner is an assertion about the reading itself.
-    (
-        "the promise names words the reader does not know, and the reader reads the tail",
-        [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — one great myriad twelve and a half minutes (750000 ms) "
-         "with the shipped"],
-        "the guard could not read the minutes the promise states",
-        ("the guard could not read the minutes the promise states",),
-        # The owner of the two forms cannot compare a promise it could not read, so it holds
-        # vacuously and counts itself -- it does not accuse a disagreement it did not find.
-        ("held vacuously",),
-    ),
-    (
-        "the promise is written with a decimal point, and the annotation beside it answers for it",
-        [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — ten minutes (600000.0 milliseconds) with the shipped. "
-         "Historical annotation twelve and a half minutes (750000 ms) with the shipped"],
-        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
-        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
-        ("held vacuously",),
-    ),
-    (
-        "the promise is written with a unit the reader does not know, and the annotation answers for it",
-        [SERVER],
-        ["one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped"],
-        ["one sweep interval after the limit — ten minutes (600000 millisec) with the shipped. "
-         "Historical annotation twelve and a half minutes (750000 ms) with the shipped"],
-        "the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",
-        ("the promise to a reader is stated exactly once, in the sentence that carries the number in brackets",),
-        ("held vacuously",),
-    ),
-    (
-        "the owner compares the two forms even when it could not read the minutes",
-        [
-            SERVER,
-            PROBE,
-        ],
-        [
-            "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
-            "holds(samePromiseInBothForms, true, sameFormsComparable)",
-        ],
-        [
-            "one sweep interval after the limit — one great myriad twelve and a half minutes (750000 ms) "
-            "with the shipped",
-            "holds(samePromiseInBothForms, true, bothFormsWritten)",
-        ],
-        "the promise to a reader is the same promise in both of the forms it is written in",
-        (
-            "the promise to a reader is the same promise in both of the forms it is written in",
-            "the guard could not read the minutes the promise states",
-            # And the guard's own rule about accusing: an owner that compares what it could not
-            # read is an owner that accused a rule nobody broke, and that is what this third name
-            # says.
-            "the guard accuses no rule it could not observe",
-        ),
-        (),
-    ),
-    (
-        "a number word is a lead-in word, and the reader reads the tail again",
-        [PROBE],
-        ["'there', 'these', 'this', 'those', 'to', 'under', 'until', 'up', 'upon', 'within', 'without',"],
-        ["'there', 'these', 'this', 'those', 'to', 'under', 'until', 'up', 'upon', 'within', 'without', "
-         "'one',"],
-        "no word the reader reads as part of a number may be a lead-in word",
-        (
-            "no word the reader reads as part of a number may be a lead-in word",
-            # And the behaviour goes with it: a number word in the lead-in lets the reader state
-            # the tail of the phrase instead of the phrase -- "one more than twelve and a half" is
-            # thirteen and a half, and reading the tail would state twelve and a half, which
-            # happens to agree with the promise's other form.
-            "a word in front of the number that the reader does not know makes the phrase unreadable",
-        ),
-        (),
-    ),
-    (
-        "the reader cannot read a number written with a decimal point",
-        [PROBE],
-        ["const PROMISE_NUMBER = /^\\s*(\\d[\\d,]*(?:\\.\\d+)?)\\s*([a-z]+)\\s*$/i;"],
-        ["const PROMISE_NUMBER = /^\\s*(\\d[\\d,]*)\\s*([a-z]+)\\s*$/i;"],
-        "a number in brackets written with a decimal point is the number it states",
-        ("a number in brackets written with a decimal point is the number it states",),
-        (),
-    ),
-    (
-        "the reader skips a number it cannot read instead of refusing it",
-        [PROBE],
-        ["  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return null;"],
-        ["  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return 0;"],
-        "a number in brackets that this reader cannot read is refused rather than skipped",
-        # This break makes an unreadable unit read as ZERO -- a number -- so it breaks the rule
-        # that says an unreadable number is refused, and the rule that says a unit this reader
-        # does not know supplies no number: both of them are the same fact seen from two sides.
-        ("a number in brackets that this reader cannot read is refused rather than skipped",
-         "a unit that this reader does not know supplies no number, whatever name it carries"),
-        (),
-    ),
-    (
-        "the promise states its number in a unit the reader does not know",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — twelve and a half minutes (750000 millisec)"],
-        "the guard could not read the number in the brackets of the promise",
-        ("the guard could not read the number in the brackets of the promise",),
-        # The owners of the number cannot compare a number nobody could read, so they hold
-        # vacuously and count themselves.
-        ("held vacuously",),
-    ),
-    (
-        "the reader drops the words in front of the number that it does not know",
-        [PROBE],
-        ["  for (let index = 0; index < start; index += 1) {\n"
-         "    if (!LEAD_IN.has(words[index])) return null;\n"
-         "  }"],
-        ["  if (start >= 2 && isNumberWord(words[start - 2])) return null;\n"
-         "  if (start === 1 && !isNumberWord(words[0])) return null;"],
-        "a word in front of the number that the reader does not know makes the phrase unreadable",
-        ("a word in front of the number that the reader does not know makes the phrase unreadable",),
-        (),
-    ),
-    (
-        "the scan walks past a dash written as a hyphen, and the number behind it cannot be located",
-        [PROBE],
-        ["    if (start >= 2 && isHyphenLike(sentence[start - 1]) && sentence[start - 2] === ' '\n"
-         "      && sentence[start] === ' ') break;"],
-        ["    // the dash is not a boundary any more"],
-        "a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen",
-        ("a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen",),
-        (),
-    ),
-    (
-        "the promise states a number in front of the number, and the tail is read instead",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — one more than twelve and a half minutes (750000 ms)"],
-        "the guard could not read the minutes the promise states",
-        ("the guard could not read the minutes the promise states",),
-        # "one more than twelve and a half" states THIRTEEN AND A HALF. A reader that read the tail
-        # would state twelve and a half -- a number that happens to agree with the promise's other
-        # form, which is the worst case there is.
-        ("held vacuously",),
-    ),
-    (
-        "the promise states two numbers, and the second one is read",
-        [SERVER],
-        ["after the limit — twelve and a half minutes (750000 ms)"],
-        ["after the limit — two no later than twelve and a half minutes (750000 ms)"],
-        "the guard could not read the minutes the promise states",
-        ("the guard could not read the minutes the promise states",),
-        ("held vacuously",),
-    ),
-    (
-        "the reader reads a signed number as its absolute value",
-        [PROBE],
-        ["  for (let at = 0; at < text.length; at += 1) {\n"
-         "    if (!isHyphenLike(text[at])) continue;\n"
-         "    const before = at > 0 ? text[at - 1] : '';\n"
-         "    const after = at + 1 < text.length ? text[at + 1] : '';\n"
-         "    if (!/[A-Za-z0-9]/.test(before) || !/[A-Za-z0-9]/.test(after)) return null;\n"
-         "  }"],
-        ["  // the sign is not a sign any more"],
-        "a number in the minutes that carries a sign is refused rather than read as its absolute value",
-        ("a number in the minutes that carries a sign is refused rather than read as its absolute value",),
-        (),
-    ),
-    (
-        "the unit table is asked for a name it inherits",
-        [PROBE],
-        ["  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return null;"],
-        ["  if (UNIT_IN_MS[unit] === undefined) return null;"],
-        "a unit that this reader does not know supplies no number, whatever name it carries",
-        ("a unit that this reader does not know supplies no number, whatever name it carries",),
-        (),
-    ),
-    (
-        "a number of milliseconds that overflows is read as a number",
-        [PROBE],
-        ["  if (!Number.isFinite(value)) return null;"],
-        ["  if (value === undefined) return null;"],
-        "a number of milliseconds that overflows is not a number of milliseconds",
-        ("a number of milliseconds that overflows is not a number of milliseconds",),
-        (),
-    ),
-    (
-        "the locator counts only the promise forms it can read",
-        [PROBE],
-        ["    for (const anchor of sentence.matchAll(PROMISE_ANCHOR)) {\n"
-         "      const open = anchor.index + anchor[0].lastIndexOf('(');"],
-        ["    for (const anchor of sentence.matchAll(/\\bminutes?\\s*\\(([^()]*)\\)/gi)) {\n"
-         "      const open = anchor.index + anchor[0].lastIndexOf('(');"],
-        "a promise form with brackets inside it is counted rather than skipped",
-        ("a promise form with brackets inside it is counted rather than skipped",),
-        (),
-    ),
-    (
-        "the reader knows one spelling of the sign and reads the other spellings as positive numbers",
-        [PROBE],
-        ["  for (let at = 0; at < text.length; at += 1) {\n"
-         "    if (!isHyphenLike(text[at])) continue;\n"],
-        ["  for (let at = 0; at < text.length; at += 1) {\n"
-         "    if (text[at] !== '-') continue;\n"],
-        "a number in the minutes that carries a sign is refused rather than read as its absolute value",
-        ("a number in the minutes that carries a sign is refused rather than read as its absolute value",),
-        # The Unicode MINUS SIGN is the same sign as the ASCII hyphen. A reader that knows one
-        # spelling of it and not the others reads a promise of negative minutes as a promise of
-        # positive ones -- and the two forms of that promise then agree.
-        (),
-    ),
-    (
-        "the reader stops at the slash and reads the denominator of the fraction",
-        [PROBE],
-        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'/${HYPHEN_CLASS}]`);"],
-        [r"const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'${HYPHEN_CLASS}]`);"],
-        "a number phrase written as a fraction is refused rather than read as its denominator",
-        ("a number phrase written as a fraction is refused rather than read as its denominator",),
-        (),
-    ),
-    (
-        "the reader takes a local copy of the constant for the declaration the module uses",
-        [PROBE],
-        ["    if (braceDepthAt(source, mask, match.index) !== 0) continue;"],
-        ["    // the scope of the declaration is not checked here"],
-        "the documentation the guard reads belongs to the declaration, not to a decoy",
-        ("the documentation the guard reads belongs to the declaration, not to a decoy",),
-        (),
-    ),
-    (
-        "the reader takes the nearest block above the declaration, whatever stands between them",
-        [PROBE],
-        ["  // The comment has to end right above the declaration: only whitespace may stand between them.\n"
-         "  let cursor = before.length - 1;\n"
-         "  while (cursor >= 0 && /\\s/.test(before[cursor])) cursor -= 1;\n"
-         "  if (cursor < 1 || before[cursor] !== '/' || before[cursor - 1] !== '*') return null;\n"
-         "  const start = before.lastIndexOf('/**', cursor);\n"
-         "  if (start < 0) return null;\n"
-         "  // And it has to be ONE comment: another '*/' between its opening and this one means the text\n"
-         "  // is two comments, and the first of them documents something else. The closing of THIS block\n"
-         "  // starts one character before the one this block ends on, so the search for an earlier closing\n"
-         "  // has to start one character before THAT -- otherwise the block finds its own ending.\n"
-         "  if (before.lastIndexOf('*/', cursor - 2) >= start) return null;\n"
-         "  return before.slice(start, cursor + 1);"],
-        ["  // The nearest block above the declaration, whatever stands between them.\n"
-         "  const start = before.lastIndexOf('/**');\n"
-         "  if (start < 0) return null;\n"
-         "  const end = before.lastIndexOf('*/');\n"
-         "  return end > start ? before.slice(start, end) : null;"],
-        "the documentation the guard reads belongs to the declaration, not to a decoy",
-        ("the documentation the guard reads belongs to the declaration, not to a decoy",),
+        ["    sweeper = setInterval(sweep, sweepIntervalMs);"],
+        ["    if (false) { sweeper = setInterval(sweep, sweepIntervalMs); }"],
+        "the guard could not set up the cache it reads",
+        ("the guard could not set up the cache it reads",),
         (),
     ),
 ]

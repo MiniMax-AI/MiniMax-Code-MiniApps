@@ -265,26 +265,6 @@ MUTATIONS = [
         'a time limit of zero means no time limit, not that everything expires at once',
     ),
     (
-        # The number the package promises a reader is the limit plus the interval, and it is
-        # written down in prose where a reader meets it. Change the prose and the code keeps
-        # its promise while the promise itself says something else — so the prose has to be
-        # compared with the code, not trusted.
-        "the promise to a reader says a number the code does not have",
-        "(750000 ms) with the shipped",
-        "(600000 ms) with the shipped",
-        'the number promised to a reader is the limit plus one sweep interval',
-    ),
-    (
-        # The other half of the same tie: the limit moves and the promise stays where it was.
-        # The rows would still be released on a sweep, and the reader would still be promised
-        # twelve and a half minutes.
-        "the limit is longer than the promise to a reader",
-        "const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;",
-        "const PARSED_ROWS_CACHE_TTL_MS = 20 * 60 * 1000;",
-        'the number promised to a reader is the limit plus one sweep interval',
-    ),
-
-    (
         # The promise to a reader is that the rows are gone no later than one sweep interval after
         # the limit -- and that holds only if the TIMER runs on that interval. Nothing watched the
         # call that starts the timer, so doubling the interval there left every other case green:
@@ -359,44 +339,7 @@ MUTATIONS = [
         None,
         (
             'the limit the service declares is the limit the cache gives its rows',
-            'the number promised to a reader is the limit plus one sweep interval',
         ),
-    ),
-    (
-        # The promise to a reader is written twice -- as minutes and as milliseconds -- and the two
-        # forms have to be the same promise. Change the words and the reader is told one thing
-        # while the service does another.
-        "the promise to a reader says ten minutes while the number still says 750000",
-        "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped",
-        "one sweep interval after the limit — ten minutes (750000 ms) with the shipped",
-        'the promise to a reader is the same promise in both of the forms it is written in',
-        None,
-        ('the promise to a reader is the same promise in both of the forms it is written in',),
-    ),
-    (
-        # The same promise, read out of the whole block: a number left in an obsolete annotation
-        # answered the pattern while the sentence a reader reads no longer stated one.
-        #
-        # The rule that owns this break changed in round nineteen. The promise is no longer found
-        # by "the first sentence that contains these words" -- which any sentence written before it
-        # could take over -- but by the promise's OWN FORM: the sentence that carries the minutes
-        # AND the number in brackets. A block that states that form zero times or twice cannot say
-        # which sentence the service meant, so the promise is then unreadable and the rule that
-        # says so owns the break.
-        #
-        # The owner that owned it before -- "the number promised to a reader is the limit plus one
-        # sweep interval" -- accused a rule that was not broken: the block still promised 750000,
-        # in the annotation. A number nobody could locate is not a number the service stated
-        # wrongly, and the rule now says what is true instead.
-        "the number promised to a reader is moved into an obsolete annotation",
-        "one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped\n"
-        " * values. The number to promise a reader is that one, and it is the number in brackets: it is",
-        "one sweep interval after the limit — twelve and a half minutes with the shipped\n"
-        " * values. Internal obsolete annotation (750000 ms). The number to promise a reader is that one,"
-        " and it is the number in brackets: it is",
-        'the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
-        None,
-        ('the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',),
     ),
     (
         # The page polls every TRAJECTORY_POLL_INTERVAL milliseconds -- unless the expression the
@@ -546,7 +489,6 @@ EXACT = {
         'the rows are released without a request',
         'and the cache is empty',
         'the limit the service declares is the limit the cache gives its rows',
-        'the number promised to a reader is the limit plus one sweep interval',
         'a caller who asks for a non-positive interval still gets the rows released without a request',
     ),
     'the sweeper is never started, so the rows stay until the next request': (
@@ -564,12 +506,10 @@ EXACT = {
         'the time limit is longer than one poll, so an open tab never loses its rows',
         'the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
         'the shipped default is the interval the service declares',
-        'the number promised to a reader is the limit plus one sweep interval',
     ),
     'the time limit is short enough that switching away from the tab costs a re-parse': (
         'the time limit is at least five minutes, so stepping away from the tab does not cost a re-parse',
         'the shipped default is the interval the service declares',
-        'the number promised to a reader is the limit plus one sweep interval',
     ),
     'the sweep interval is taken without being clamped to the limit': (
         'the sweep interval the cache uses is at most a quarter of the limit',
@@ -587,13 +527,6 @@ EXACT = {
     'a time limit of zero expires everything anyway': (
         'a time limit of zero means no time limit, not that everything expires at once',
         'and the rows are still held',
-    ),
-    'the promise to a reader says a number the code does not have': (
-        'the number promised to a reader is the limit plus one sweep interval',
-        'the promise to a reader is the same promise in both of the forms it is written in',
-    ),
-    'the limit is longer than the promise to a reader': (
-        'the number promised to a reader is the limit plus one sweep interval',
     ),
     'the timer that releases the rows runs on twice the interval the cache reports': (
         'the timer that releases the rows runs on the interval the cache reports',
@@ -617,13 +550,6 @@ EXACT = {
     ),
     'the default lifetime is doubled, so the declaration no longer says what the cache does': (
         'the limit the service declares is the limit the cache gives its rows',
-        'the number promised to a reader is the limit plus one sweep interval',
-    ),
-    'the promise to a reader says ten minutes while the number still says 750000': (
-        'the promise to a reader is the same promise in both of the forms it is written in',
-    ),
-    'the number promised to a reader is moved into an obsolete annotation': (
-        'the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
     ),
     'the poll waits a thousand times the interval it declares': (
         'the poll waits as long as the client declares',

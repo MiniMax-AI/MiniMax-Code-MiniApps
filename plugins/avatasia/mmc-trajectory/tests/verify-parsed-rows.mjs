@@ -69,6 +69,28 @@ function assert(name, cond) {
   else failures.push(name);
 }
 
+// The result of the guard, printed once.
+//
+// The guard stops where it cannot continue -- a setup that failed leaves nothing to read -- and it
+// stops with the failures it has NAMED, so a reader sees which rules were broken. A stack trace is
+// not a name: it says where the guard stopped, not which rule it could not hold.
+const report = () => {
+  if (failures.length) {
+    console.error(`\n[parsed-rows] ${failures.length} FAILED, ${pass} passed`);
+    for (const f of failures) console.error('  - ' + f);
+    if (vacuous > 0) {
+      console.error(`[parsed-rows] ${vacuous} of them held vacuously: there was nothing to `
+        + `compare against, so they say nothing about the thing they are about`);
+    }
+    process.exit(1);
+  }
+  console.log(`\n[parsed-rows] ${pass} assertions passed`);
+  if (vacuous > 0) {
+    console.log(`[parsed-rows] ${vacuous} of them held vacuously: there was nothing to compare `
+      + `against, so they say nothing about the thing they are about`);
+  }
+};
+
 // The timer the cache starts is not reachable from outside it, so the only way to see the
 // interval it really got -- and the only way to see whether it holds the process open -- is to
 // stand in for the clock's own timer call while the cache runs.
@@ -176,8 +198,38 @@ async function buildBody(files, filter) {
 const a = join(root, 'gen0.jsonl');
 await writeFile(a, jsonl);
 
-const coldCache = createParsedRowsCache(64 * 1024 * 1024);
-const warmCache = createParsedRowsCache(64 * 1024 * 1024);
+// The cache the fixtures read, and the failure to read one.
+//
+// The service builds the cache, and the cache's own machinery runs when a row is WRITTEN, not when
+// it is built: the sweeper is started by the first write, and a service that never starts one then
+// reports its own handle -- and throws. A throw in the middle of a guard is a stack trace and not
+// the name of a rule, and a review that reads a stack trace cannot tell which rule was broken. So
+// the setup writes a row and takes it back out, the failure is reported BY NAME, and the guard
+// stops there: without a cache there are no rows to read, and a guard that keeps going after its
+// setup failed reports the failures of rules it could not observe.
+const SETUP_ROW_KEY = '__parsed_rows_setup_probe__';
+const setupCache = (budget, options) => {
+  try {
+    const cache = createParsedRowsCache(budget, options);
+    // One row, written and taken back out: the cache the guard reads has to take a row, and the
+    // row the setup wrote is gone before any fixture sees the cache.
+    cache.set(SETUP_ROW_KEY, { id: SETUP_ROW_KEY }, 1);
+    cache.clear();
+    return { cache, error: null };
+  } catch (error) {
+    return { cache: null, error };
+  }
+};
+const coldSetup = setupCache(64 * 1024 * 1024);
+const warmSetup = setupCache(64 * 1024 * 1024);
+assert('the guard could not set up the cache it reads',
+  coldSetup.error === null && warmSetup.error === null);
+const coldCache = coldSetup.cache;
+const warmCache = warmSetup.cache;
+if (coldSetup.error !== null || warmSetup.error !== null) {
+  await rm(root, { recursive: true, force: true });
+  report();
+}
 
 // cold: empty cache. warm: primed by a first pass that is thrown away.
 const cold = await buildBody([{ cache: coldCache, path: a, generation: 0 }], null);
@@ -431,73 +483,6 @@ assert('loadParsedRows is exported so a test can run the real step',
  *   somebody asks for them.
  * ===================================================================== */
 
-// A lexical mask of a JavaScript source: which characters are CODE, and which are inside a
-// string, a template literal or a comment.
-//
-// A scanner that cannot tell those apart stops at a bracket that was never one, and reads a
-// declaration that is only text. A template literal can hold a whole declaration -- and the
-// service's own arithmetic cannot tell a number from the string that looks like one -- so the
-// helpers below talk about the code, not about the characters.
-//
-// WHAT THIS IS NOT, and it is worth being exact about it: this is not a complete lexical
-// analysis. A REGULAR EXPRESSION LITERAL is not recognised. `/` is both the division operator
-// and the start of one, and telling them apart needs the parser this package does not have --
-// there is no JavaScript parser in it, and adding one is a bigger change than this guard is.
-//
-// The shipped service has such literals: miniapp/node/server.mjs:340, :345 and :349, and each of
-// them holds a quote inside a character class. The scan reads that quote as the start of a string
-// and swallows the text up to the next one, so the mask steps out of step with the file from
-// line 340 on.
-//
-// The direction of that step is the part that matters, and it is LOUD rather than quiet. Every
-// declaration this mask is asked about -- the time limit, at :203 -- is declared ABOVE those
-// lines, so the mask is right about all of them today. And a declaration the mask could not find
-// leaves the owner that wants it with nothing to read, which FAILS: the promise in brackets is
-// read out of the file, and a file whose mask is out of step does not yield one. A mask that is
-// out of step can only cost this guard a red, never a green.
-const codeMask = (source) => {
-  const mask = new Uint8Array(source.length);
-  let i = 0;
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === '/' && source[i + 1] === '/') {
-      while (i < source.length && source[i] !== '\n') i += 1;
-      continue;
-    }
-    if (ch === '/' && source[i + 1] === '*') {
-      i += 2;
-      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
-      i += 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      const quote = ch;
-      i += 1;
-      while (i < source.length) {
-        if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === quote) { i += 1; break; }
-        i += 1;
-      }
-      continue;
-    }
-    if (ch === '`') {
-      i += 1;
-      let depth = 0;
-      while (i < source.length) {
-        if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === '$' && source[i + 1] === '{') { depth += 1; i += 2; continue; }
-        if (depth > 0 && source[i] === '}') { depth -= 1; i += 1; continue; }
-        if (depth === 0 && source[i] === '`') { i += 1; break; }
-        i += 1;
-      }
-      continue;
-    }
-    mask[i] = 1;
-    i += 1;
-  }
-  return mask;
-};
-
 // The page's own script, and the scope it declares.
 //
 // The interval the trajectory is polled at is declared by the page, and a constant read out of
@@ -661,709 +646,6 @@ const BINDINGS = BINDINGS_RESULT.ok ? BINDINGS_RESULT.values : null;
 const PROXY = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_HEAP_PER_SOURCE_BYTE;
 const TTL = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_CACHE_TTL_MS;
 const SHIPPED_SWEEP = BINDINGS === null ? null : BINDINGS.PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS;
-
-// The doc block above a constant, so a promise the package states in prose can be read and
-// compared with what the code does. The block is taken around ONE declaration rather than the
-// whole file, because a whole-file match keeps passing after the promise has moved somewhere
-// else -- which is the way a rule quietly loses its owner.
-//
-// The declaration is found in the CODE, not in the text: a copy of it inside a template literal is
-// not a declaration, and the block above such a copy is not the block above the real one.
-//
-// The declaration has to be the MODULE's, and the documentation has to be the comment DIRECTLY
-// above it. A declaration inside a function body is a local binding, and the comment above it
-// documents that function; a comment that is followed by other code documents that code. Both
-// were ways for a decoy to answer for the promise, and both are refused here: the declaration is
-// found at the top level of the module, and the comment has to touch it.
-const docBlockOf = (source, name, mask) => {
-  const at = declarationIndexOf(source, name, mask);
-  if (at < 0) return null;
-  const before = source.slice(0, at);
-  // The comment has to end right above the declaration: only whitespace may stand between them.
-  let cursor = before.length - 1;
-  while (cursor >= 0 && /\s/.test(before[cursor])) cursor -= 1;
-  if (cursor < 1 || before[cursor] !== '/' || before[cursor - 1] !== '*') return null;
-  const start = before.lastIndexOf('/**', cursor);
-  if (start < 0) return null;
-  // And it has to be ONE comment: another '*/' between its opening and this one means the text
-  // is two comments, and the first of them documents something else. The closing of THIS block
-  // starts one character before the one this block ends on, so the search for an earlier closing
-  // has to start one character before THAT -- otherwise the block finds its own ending.
-  if (before.lastIndexOf('*/', cursor - 2) >= start) return null;
-  return before.slice(start, cursor + 1);
-};
-
-// How many blocks of code enclose a position: a declaration at the top level of the module is
-// at depth zero, and one inside a function body is not. The braces are counted in the CODE only,
-// so a brace inside a string, a comment or a template literal does not move the depth.
-const braceDepthAt = (source, mask, at) => {
-  let depth = 0;
-  for (let index = 0; index < at; index += 1) {
-    if (!mask[index]) continue;
-    if (source[index] === '{') depth += 1;
-    else if (source[index] === '}') depth -= 1;
-  }
-  return depth;
-};
-
-// Where a constant is declared in the code of a source, or -1 when it is not declared in code.
-//
-// The declaration has to be at the top level of the module: the first spelling of a name in the
-// file is not necessarily the binding the module uses, and a local one -- a declaration inside a
-// function that is never called -- answers for the module's promise when it is found first.
-const declarationIndexOf = (source, name, mask) => {
-  const pattern = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=`, 'g');
-  let match;
-  while ((match = pattern.exec(source)) !== null) {
-    if (!mask[match.index]) continue;
-    if (braceDepthAt(source, mask, match.index) !== 0) continue;
-    return match.index;
-  }
-  return -1;
-};
-
-// The documentation the guard reads has to belong to the declaration it reads, and there are two
-// ways for it not to.
-//
-// The first is a DECOY INSIDE A FUNCTION: the first spelling of a name in a file is not
-// necessarily the binding the module uses, and a local one -- a declaration inside a function that
-// is never called -- answers for the module's promise when it is found first. The comment above
-// that decoy then supplies the prose, and the promise is read out of a block that documents
-// nothing the service does.
-//
-// The second is a COMMENT THAT DOES NOT TOUCH THE DECLARATION: a comment followed by other code
-// documents that other code, and reading it as the declaration's documentation reads a promise
-// the declaration never made.
-//
-// So the declaration has to be the MODULE's and the comment has to touch it, and both are checked
-// here on sources written for the purpose -- a source of the decoy, and a source of the comment
-// that stands above other code.
-const DECOY_SCOPE_SOURCE = [
-  'function neverCalled() {',
-  '  /**',
-  '   * Twelve and a half minutes (750000 ms) -- a decoy that states a promise of its own.',
-  '   */',
-  '  const PARSED_ROWS_CACHE_TTL_MS = 600000;',
-  '}',
-  '/**',
-  ' * Ten minutes has two numbers behind it.',
-  ' */',
-  'const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;',
-  '',
-].join('\n');
-const DECOY_ADJACENCY_SOURCE = [
-  '/**',
-  ' * Twelve and a half minutes (750000 ms) -- a decoy that stands above other code.',
-  ' */',
-  'const unrelatedDocOwner = true;',
-  'const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;',
-  '',
-].join('\n');
-const decoyScopeDoc = docBlockOf(DECOY_SCOPE_SOURCE, 'PARSED_ROWS_CACHE_TTL_MS', codeMask(DECOY_SCOPE_SOURCE));
-const decoyAdjacencyDoc = docBlockOf(DECOY_ADJACENCY_SOURCE, 'PARSED_ROWS_CACHE_TTL_MS', codeMask(DECOY_ADJACENCY_SOURCE));
-assert('the documentation the guard reads belongs to the declaration, not to a decoy',
-  decoyScopeDoc !== null
-  && decoyScopeDoc.includes('Ten minutes')
-  && !decoyScopeDoc.includes('Twelve and a half')
-  && decoyAdjacencyDoc === null);
-
-// The mask of the shipped service: which of its characters are code.
-const SERVER_MASK = codeMask(SERVER);
-
-// The sentence of a doc block that makes a promise, and HOW MANY of them there are.
-//
-// A block can hold several sentences, and only one of them is the promise to a reader -- so the
-// number has to be read out of THAT sentence and not out of the block. A number that sat in some
-// other sentence of the same block would answer the pattern while the promise itself said something
-// else.
-//
-// WHICH sentence is the promise is not something a first match can answer: an annotation left
-// beside the promise says the same words, and the first sentence that happens to contain them wins
-// -- which is not the promise but whatever was written before it. So the sentence is found by the
-// promise's OWN thing: the two forms of the same promise are written together, and the sentence
-// that carries the number in brackets next to the minutes is the sentence that states it.
-//
-// And a block that states the promise TWICE leaves a reader with two sentences that both claim to
-// be it. Which one the service meant is not something the block can say, so the promise is then
-// UNREADABLE -- reported by name, and not resolved by picking one of the candidates.
-//
-// The unit in the brackets is NOT what makes a sentence the promise. A form that only knows the
-// unit "ms" leaves a promise written "600000 milliseconds" invisible, and the annotation beside
-// it -- written in the one spelling the form knows -- becomes the only candidate, so both of the
-// owners of the number read the annotation and report the promise to be sound. A preferred
-// spelling does not establish which sentence is the reader's promise, so the form accepts every
-// spelling of the unit and the VALUE is read in the unit the sentence wrote it in.
-//
-// And the SHAPE of the number in the brackets does not make it a promise either. A locator that
-// recognises only the shapes it can read makes a promise written "600000.0 milliseconds" -- the
-// same number with a decimal point -- invisible, and the annotation beside it becomes the only
-// candidate and answers for it. So the SENTENCE is found by its shape: the word "minutes" and a
-// bracketed group. What is inside the brackets is then READ, and a group this reader cannot read
-// is REFUSED BY NAME rather than skipped -- a skipped form is a promise nobody looked at, and the
-// owners of the number would report the promise to be sound.
-const PROMISE_SHAPE = /\bminutes?\s*\(/i;
-// The anchor of a promise form: the word "minutes" and the bracket that follows it. The group
-// itself is taken by BALANCE rather than by a pattern that cannot see a nested bracket -- see
-// promiseFormsIn below.
-const PROMISE_ANCHOR = /\bminutes?\s*\(/gi;
-// The number in brackets, in the unit that follows it. The number may carry a decimal point:
-// "600000.0 milliseconds" states the number "600000 milliseconds" states.
-const PROMISE_NUMBER = /^\s*(\d[\d,]*(?:\.\d+)?)\s*([a-z]+)\s*$/i;
-// The value of a number written in a unit, in milliseconds. A unit this reader does not know
-// makes the number unreadable rather than a number in some other unit.
-const UNIT_IN_MS = {
-  ms: 1,
-  msec: 1,
-  msecs: 1,
-  millis: 1,
-  milli: 1,
-  millisecond: 1,
-  milliseconds: 1,
-  s: 1000,
-  sec: 1000,
-  secs: 1000,
-  second: 1000,
-  seconds: 1000,
-};
-const promiseSentencesOf = (block) => {
-  if (block === null) return [];
-  // The sentences of the block, keeping their terminators so a sentence can be recognised.
-  const sentences = block.split(/(?<=\.)\s+/);
-  return sentences.filter((sentence) => PROMISE_SHAPE.test(sentence));
-};
-// One promise form, read in its OWN unit -- so "600000 milliseconds" is six hundred thousand and
-// "750000 ms" is seven hundred and fifty thousand, and both are milliseconds.
-//
-// A group this reader cannot read is NOT read as a number in some other unit, and it is NOT
-// skipped either: it is counted, because a promise in a shape nobody can read is a diagnosis of
-// its own and not a number the owners below may compare.
-const readPromiseForm = (text) => {
-  const found = PROMISE_NUMBER.exec(text);
-  if (found === null) return null;
-  const unit = found[2].toLowerCase();
-  // The unit table is a plain object, so a name that is not one of the units can still be a key
-  // it INHERITS: "constructor" resolves to Object's constructor, and multiplying a number by that
-  // gives NaN -- which then counts as one OBSERVED number, so the owners of the number accuse a
-  // promise that stated no number at all. An unknown unit supplies no observation, so it has to
-  // be refused by NAME, and not by whatever the name happens to multiply to.
-  if (!Object.prototype.hasOwnProperty.call(UNIT_IN_MS, unit)) return null;
-  const value = Number(found[1].replace(/,/g, '')) * UNIT_IN_MS[unit];
-  // A number that is not finite is not a number of milliseconds either: a promise written with
-  // more digits than a double can hold overflows, and an overflow that reads as a number is the
-  // same kind of hole as an inherited key -- a number nobody can compare.
-  if (!Number.isFinite(value)) return null;
-  return value;
-};
-// The promise forms of the candidate sentences: the text inside the brackets of each.
-//
-// The forms are found by the ANCHOR and their group is taken by BALANCE. A pattern that cannot
-// see a nested bracket counts only the forms it can read: a promise written "minutes
-// ((600000 ms))" has its number HIDDEN, the counter sees no form there at all, the annotation
-// beside it becomes the only candidate, and the owners of the number read the annotation and
-// report the promise to be sound. So every anchor is counted, and a group this reader cannot
-// read is counted as unreadable rather than skipped -- a shape nobody can read has to be a
-// diagnosis of its own, not a hole in the count.
-const promiseFormsIn = (sentences) => {
-  const forms = [];
-  for (const sentence of sentences) {
-    for (const anchor of sentence.matchAll(PROMISE_ANCHOR)) {
-      const open = anchor.index + anchor[0].lastIndexOf('(');
-      let depth = 0;
-      let end = -1;
-      for (let at = open; at < sentence.length; at += 1) {
-        if (sentence[at] === '(') depth += 1;
-        else if (sentence[at] === ')') {
-          depth -= 1;
-          if (depth === 0) { end = at; break; }
-        }
-      }
-      // A group that is never closed is a shape nobody can read: it is counted, and it is
-      // counted as unreadable.
-      forms.push(end === -1 ? sentence.slice(open + 1) : sentence.slice(open + 1, end));
-    }
-  }
-  return forms;
-};
-// Every number in brackets in the sentences that are candidates, each read in its own unit.
-const promisedNumbersIn = (sentences) => {
-  const values = [];
-  for (const form of promiseFormsIn(sentences)) {
-    const value = readPromiseForm(form);
-    if (value !== null) values.push(value);
-  }
-  return values;
-};
-// How many of those forms there are that this reader could not read.
-const unreadableFormsIn = (sentences) => {
-  let count = 0;
-  for (const form of promiseFormsIn(sentences)) {
-    if (readPromiseForm(form) === null) count += 1;
-  }
-  return count;
-};
-
-// The locator itself is held to the rules it exists for.
-//
-// The first: which sentence is the promise is not decided by the spelling of the unit, and not by
-// the shape of the number either. A form that only knows "ms" leaves a promise written "600000
-// milliseconds" invisible, and the annotation beside it becomes the only candidate -- so both of
-// the owners of the number read the annotation and report the promise to be sound. So every
-// spelling of the unit has to find the sentence -- including the spellings this reader cannot
-// read, because a promise in a shape nobody can read is still a promise, and a locator that
-// cannot see it lets the annotation beside it answer for it.
-//
-// The second: what has to be unique is the PROMISE, not the sentence. A sentence can carry two
-// promise forms, joined by punctuation that says nothing about which of them the service meant,
-// and a count of sentences would call that one promise.
-assert('the promise is found whatever spelling of the unit it is written in',
-  promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 ms)').length === 1
-  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 milliseconds)').length === 1
-  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 msec)').length === 1
-  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 MS)').length === 1
-  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000 millisec)').length === 1
-  && promiseSentencesOf('the rows are gone no later than twelve and a half minutes (750000.0 ms)').length === 1);
-assert('a number in brackets is read in the unit it is written in',
-  JSON.stringify(promisedNumbersIn(['no later than twelve and a half minutes (750000 ms)'])) === '[750000]'
-  && JSON.stringify(promisedNumbersIn(['no later than ten minutes (600000 milliseconds)'])) === '[600000]'
-  && JSON.stringify(promisedNumbersIn(['no later than ten minutes (600 seconds)'])) === '[600000]'
-  && JSON.stringify(promisedNumbersIn(['no later than twelve and a half minutes (750000 ms); '
-    + 'no later than fourteen minutes (840000 ms)'])) === '[750000,840000]');
-// A number written with a decimal point states the number it states: "600000.0 milliseconds" is
-// the number "600000 milliseconds" states, and a reader that cannot read the point would make
-// the promise invisible.
-assert('a number in brackets written with a decimal point is the number it states',
-  readPromiseForm('600000.0 milliseconds') === 600000
-  && readPromiseForm('750000.0 ms') === 750000
-  && readPromiseForm('750000 ms') === 750000);
-// And a group this reader cannot read is REFUSED rather than skipped: a skipped form is a promise
-// nobody looked at, and the owners of the number would report the promise to be sound.
-assert('a number in brackets that this reader cannot read is refused rather than skipped',
-  readPromiseForm('600000 millisec') === null
-  && readPromiseForm('600000 m.s.') === null
-  && readPromiseForm('twelve and a half') === null
-  && unreadableFormsIn(['no later than ten minutes (600000 milliseconds)']) === 0
-  && unreadableFormsIn(['no later than ten minutes (600000 millisec)']) === 1);
-// And a unit this reader does not know supplies NO number -- and "constructor" is not an unknown
-// unit but a key the table INHERITS, which used to multiply the number by a function and leave
-// NaN behind as an observation: the owners of the number then accused a promise that stated no
-// number at all. An unknown name has to be refused by the NAME.
-//
-// A name the table does not carry can still be a name the PROTOTYPE carries -- which is what a
-// polluted prototype looks like -- and the factor it carries would then decide what the promise
-// says. So the name is refused there too, and the probe adds the name to the prototype for the
-// length of one call and takes it away again: the factor it carries is a NUMBER, which is the
-// one case the check below cannot catch.
-const POLLUTED_UNIT = 'mmcprobeunit';
-const pollutedRead = (() => {
-  Object.prototype[POLLUTED_UNIT] = 2;
-  try {
-    return readPromiseForm('750000 ' + POLLUTED_UNIT);
-  } finally {
-    delete Object.prototype[POLLUTED_UNIT];
-  }
-})();
-assert('a unit that this reader does not know supplies no number, whatever name it carries',
-  readPromiseForm('750000 constructor') === null
-  && readPromiseForm('750000 __proto__') === null
-  && readPromiseForm('750000 toString') === null
-  && readPromiseForm('750000 millisec') === null
-  && pollutedRead === null
-  && readPromiseForm('750000 ms') === 750000);
-// A number that is not finite is not a number of milliseconds either: a promise written with
-// more digits than a double can hold overflows, and an overflow that reads as a number is the
-// same kind of hole as an inherited key -- a number nobody can compare.
-assert('a number of milliseconds that overflows is not a number of milliseconds',
-  readPromiseForm('1' + '0'.repeat(308) + ' seconds') === null
-  && readPromiseForm('1' + '0'.repeat(300) + ' seconds') === 1e303);
-// A promise form with brackets inside it is COUNTED, not skipped. A shape this reader cannot
-// read has to be a diagnosis of its own: a form that disappears from the count lets the
-// annotation beside it answer for the promise, and the owners report the promise to be sound.
-assert('a promise form with brackets inside it is counted rather than skipped',
-  promiseFormsIn(['no later than twelve and a half minutes ((600000 ms))']).length === 1
-  && unreadableFormsIn(['no later than twelve and a half minutes ((600000 ms))']) === 1
-  && promisedNumbersIn(['no later than twelve and a half minutes ((600000 ms))']).length === 0
-  && promiseFormsIn(['no later than twelve and a half minutes (750000 ms)']).length === 1
-  && unreadableFormsIn(['no later than twelve and a half minutes (750000 ms)']) === 0);
-
-// The number words a promise may be written in.
-const UNITS = {
-  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
-  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
-  seventeen: 17, eighteen: 18, nineteen: 19,
-};
-const TENS = {
-  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
-};
-
-// The scales a number may be written in. "One hundred" is a hundred; "one thousand, twelve and a
-// half" is one thousand AND twelve and a half -- the words after the scale count on from it, and a
-// reader that drops the scale reads a tail of the number instead of the number.
-//
-// The ladder is the English one, in the short scale, and it goes past billion: "one trillion" is a
-// number a reader can state, and a parser that refuses to state it would answer with the tail of
-// the phrase instead -- which is the number the promise's other form states, so the two forms are
-// wrongly declared the same. The magnitudes above the safe integer range are stated as doubles, so
-// the last of them is not exact; that does not matter here, because a promise is a number of
-// minutes and no plausible one is within a factor of a thousand of a septillion.
-const SCALES = {
-  hundred: 100,
-  thousand: 1000,
-  million: 1000000,
-  billion: 1000000000,
-  trillion: 1e12,
-  quadrillion: 1e15,
-  quintillion: 1e18,
-  sextillion: 1e21,
-  septillion: 1e24,
-  octillion: 1e27,
-  nonillion: 1e30,
-  decillion: 1e33,
-};
-
-// The words that can be part of a number. A word in here that is not understood below is NOT
-// dropped: the phrase is then a number this parser cannot state, and it says so.
-const NUMBER_PARTS = new Set([...Object.keys(UNITS), ...Object.keys(TENS), ...Object.keys(SCALES),
-  'dozen', 'score', 'and']);
-const DIGIT_PART = /^\d+(?:\.\d+)?$/;
-// A word that can be part of a number: one the tables know, or one written as digits -- "1,012.5"
-// is a number.
-const isNumberWord = (word) => NUMBER_PARTS.has(word) || DIGIT_PART.test(word);
-
-// The number a run of number words states, or null when the run does not state one.
-//
-// The WHOLE run is parsed, because the words of a number are not only its last word: "one hundred
-// twelve and a half" states 112.5, and a parser that reads the end of the run alone answers 12.5
-// -- a number the phrase never states, so a promise can say one thing in words and another in
-// milliseconds and still be accepted.
-const parseNumberWords = (words) => {
-  let total = 0;
-  let current = 0;
-  let unitBefore = false;
-  let sawWords = false;
-  let digits = null;
-  for (const word of words) {
-    if (word === 'and') continue;
-    if (DIGIT_PART.test(word)) {
-      if (digits !== null) return null;
-      digits = Number(word);
-      continue;
-    }
-    if (word in UNITS) { current += UNITS[word]; unitBefore = true; sawWords = true; continue; }
-    if (word in TENS) { current += TENS[word]; unitBefore = false; sawWords = true; continue; }
-    if (word in SCALES) {
-      if (word === 'hundred') {
-        // "hundred" multiplies the one to nine before it: "one hundred" is 100 and "one hundred
-        // twelve" is 112. Anything else is a compound this parser does not state.
-        if (!unitBefore || current < 1 || current > 9) return null;
-        total += current * 100;
-        current = 0;
-        unitBefore = false;
-        sawWords = true;
-        continue;
-      }
-      // A bigger scale multiplies what came before it, and the rest of the phrase counts on FROM
-      // it: "one thousand, twelve and a half" is one thousand and twelve and a half. A scale with
-      // nothing in front of it states no number this parser knows.
-      if (current < 1) return null;
-      total += current * SCALES[word];
-      current = 0;
-      unitBefore = false;
-      sawWords = true;
-      continue;
-    }
-    // A word that is not part of a number at all -- "dozen", "score" -- is not dropped either: the
-    // phrase is then a number this parser cannot state, and it says so.
-    return null;
-  }
-  if (sawWords && digits !== null) return null;   // a phrase that states two numbers
-  if (digits !== null) return digits;
-  if (!sawWords) return null;
-  return total + current;
-};
-
-// The number a phrase of words states.
-//
-// The number is the TRAILING run of words that can be part of a number; the words before it belong
-// to the sentence around it -- but only if every one of them is a word this reader knows cannot be
-// part of a number, so "no later than twelve and a half" states twelve and a half. The run is
-// collected by its boundary rather than by the first word the parser fails to know, so a phrase
-// that holds a compound the parser does not state is reported as unreadable instead of being
-// answered with the part that happened to be understood.
-//
-// "Collected by its boundary" is what makes that true, and the boundary has to be COLLECTED
-// rather than guessed. The run used to be found by walking back from the end of the phrase and
-// stopping at the first word the parser did not know -- which is the same thing as dropping that
-// word and reading the tail. "One myriad twelve and a half" is one number whose scale word is not
-// in the table above, and a parser that stops at "myriad" answers 12.5: the tail, which is exactly
-// the number the promise's other form states, so the two forms are wrongly declared the same. The
-// table now knows the English scales, and a word it still does not know is REFUSED rather than
-// dropped -- so the phrase is reported as a number nobody can read.
-//
-// Refusing a word is only safe if the word really is part of the number, and NO NEIGHBOUR can
-// tell that. Two neighbours used to decide it -- the word in front of the run, and the word in
-// front of that -- and a word two places away slipped between them: "one great myriad twelve
-// and a half" and "myriad myriad twelve and a half" both have an unsupported word in them, and
-// neither was refused, so the reader read the tail of the number and the tail agreed with the
-// promise's other form.
-//
-// The rule now is a list, not a guess. Every word in front of the number has to be a word this
-// reader KNOWS cannot be part of a number; a word that is not on the list is refused, because it
-// may be the head of a number this reader cannot read, and dropping it would leave the tail --
-// and a tail that happens to agree with the promise is the worst case there is.
-//
-// The list is closed on purpose, and that is the cost: a promise written with a lead-in this
-// reader has not heard of is reported as unreadable, which is a wrong answer about a promise that
-// is not broken. That cost is paid on purpose too, because the alternative is a silent wrong
-// answer: an unreadable promise is reported BY NAME (the owner of the minutes says it could not
-// read them) and the owners that depend on it hold vacuously and count themselves, so a promise
-// nobody can check is never mistaken for a promise that was checked and agreed.
-//
-// The promise the package ships is written with the number on its own -- the lead-in ends at the
-// dash in front of it -- so nothing stands in front of the number there and the list is consulted
-// only for a lead-in some other wording would introduce.
-const LEAD_IN = new Set([
-  'a', 'about', 'after', 'all', 'an', 'any', 'approximately', 'at', 'before', 'but', 'by',
-  'each', 'either', 'every', 'for', 'from', 'in', 'into', 'just', 'later', 'least', 'less',
-  'more', 'most', 'nearly', 'neither', 'no', 'not', 'of', 'off', 'on', 'once', 'only', 'or',
-  'other', 'over', 'per', 'roughly', 'since', 'some', 'than', 'that', 'the', 'their', 'then',
-  'there', 'these', 'this', 'those', 'to', 'under', 'until', 'up', 'upon', 'within', 'without',
-]);
-// A word the reader reads as part of a number may NOT be a lead-in word. If it were, the phrase
-// "one myriad twelve and a half" would have a lead-in this reader knows, and the unknown word in
-// the middle would be dropped -- and the reader would read the tail again, which is the hole the
-// list was built to close. So the two lists are disjoint, and this says so.
-assert('no word the reader reads as part of a number may be a lead-in word',
-  [...LEAD_IN].every((word) => !NUMBER_PARTS.has(word))
-  && [...LEAD_IN].every((word) => !isNumberWord(word)));
-// The characters a hyphen may be written with.
-//
-// A hyphen INSIDE a word is one of the ways a number is written -- "twelve-and-a-half" is one
-// number -- and a hyphen that is NOT inside a word is a SIGN, and a sign is not a number of
-// minutes a promise can state. The same characters have to be treated the same way whichever way
-// they are written: a promise written with a Unicode minus sign used to be read as a positive
-// number, while the ASCII spelling of the same thing was refused.
-//
-// The em dash and the en dash are NOT in this list. They are not hyphens: they are the boundary
-// the package writes its promise with, and the promise the package ships is written with one.
-const HYPHEN_CLASS = '‐‑−﹣－-';
-const isHyphenLike = (character) => HYPHEN_CLASS.includes(character);
-const englishNumber = (text) => {
-  // A hyphen INSIDE a word is one of the ways a number is written -- "twelve-and-a-half" is one
-  // number -- and the walk over hyphens below turns it into words. A hyphen that is NOT inside a
-  // word is a SIGN, and a signed number is not a number of minutes a promise can state: reading
-  // it as its absolute value turns "-12.5 minutes (750000 ms)" into a promise that AGREES with
-  // "750000 ms", which is the opposite of what the promise says. So a signed phrase is not read
-  // at all -- it is a phrase nobody can read, and the owner of that says so by name.
-  //
-  // A hyphen with a space on each side never reaches this reader: the scan that walks back from
-  // the millisecond form stops at such a dash, because a dash ends the phrase (see minutesForm).
-  for (let at = 0; at < text.length; at += 1) {
-    if (!isHyphenLike(text[at])) continue;
-    const before = at > 0 ? text[at - 1] : '';
-    const after = at + 1 < text.length ? text[at + 1] : '';
-    if (!/[A-Za-z0-9]/.test(before) || !/[A-Za-z0-9]/.test(after)) return null;
-  }
-  // A thousands separator and an ampersand are INSIDE a number phrase, not around it: "one
-  // thousand, twelve and a half" states ONE number, and "one hundred & twelve and a half" states
-  // another. Dropping them leaves the tail of the phrase -- and a tail that happens to be a number
-  // of its own is worse than no number at all, because it agrees with something.
-  const words = text.toLowerCase()
-    .replace(/,/g, '')
-    .replace(/&/g, ' and ')
-    .replace(new RegExp(`[${HYPHEN_CLASS}]`, 'g'), ' ')
-    .split(/\s+/).filter(Boolean);
-  let half = false;
-  if (words.length >= 3
-    && words[words.length - 3] === 'and'
-    && words[words.length - 2] === 'a'
-    && words[words.length - 1] === 'half') {
-    half = true;
-    words.splice(words.length - 3, 3);
-  }
-  let start = words.length;
-  while (start > 0 && isNumberWord(words[start - 1])) start -= 1;
-  if (start === words.length) return null;
-  // Every word in front of the run has to be a word this reader KNOWS cannot be part of a number.
-  // A word that is not on that list may be the head of a number this reader cannot read -- "myriad
-  // twelve and a half" -- and dropping it would read the tail of the number instead, and a tail
-  // that agrees with the promise's other form is the worst case there is.
-  //
-  // The shipped promise is written with the number on its own -- "twelve and a half minutes
-  // (750000 ms)" -- so nothing stands in front of the run there.
-  for (let index = 0; index < start; index += 1) {
-    if (!LEAD_IN.has(words[index])) return null;
-  }
-  const value = parseNumberWords(words.slice(start));
-  if (value === null) return null;
-  return half ? value + 0.5 : value;
-};
-
-// The characters a number phrase is written with, and the characters that can appear INSIDE one.
-//
-// A number can be written with a thousands separator and with an ampersand: "one thousand, twelve
-// and a half" and "one hundred & twelve and a half" are one number each. So a scan that stops at
-// those leaves the TAIL of the phrase -- and the tail of a number is a number of its own, which is
-// worse than reading no number at all: the tail can agree with the promise while the phrase does
-// not.
-// A hyphen can be written with any of the characters in HYPHEN_CLASS, and a SLASH can appear
-// inside a fraction. So the scan walks over both of them: a phrase that holds one is a phrase
-// this reader cannot read, and it is refused rather than read as the part after the mark.
-const PHRASE_CLASS = new RegExp(`[A-Za-z0-9\\s.,&'/${HYPHEN_CLASS}]`);
-// A character that can continue a number and that neither the scan nor the parser reads: the
-// phrase was cut INSIDE a number, and a cut phrase is not a number -- it is the tail of one.
-const NUMBER_CONTINUATION = /[\p{Nd}‘’½¼¾⅓⅔]/u;
-
-// The minutes a sentence promises, and whether it states them in the form the promise is written
-// in.
-//
-// The number words are parsed COMPLETELY. A parser that knows only some of the numbers a promise
-// may be written in answers "I did not understand" for the rest -- and an owner that accepts that
-// answer as agreement lets a promise state two different numbers and still report success. So
-// every number word a promise can use is understood here, and a phrase that is still not
-// understood is not agreement: it is a promise nobody can check.
-//
-// The word "minutes" is the one the millisecond form FOLLOWS. The promise writes the two forms
-// together, and a sentence can hold other uses of the word -- "the rows are gone within a few
-// minutes, and no later than twelve and a half minutes (750000 ms)" -- whose words are not the
-// promise. Reading the wrong one accuses the promise of a number it never stated, so the phrase
-// is taken from the word the millisecond form is attached to and from nowhere else.
-//
-// TWO ANSWERS, and they are kept apart. `written` says the promise states the minutes at all;
-// `minutes` is the number, and it is null when the words are there but cannot be read. "There are
-// no minutes in this promise" and "the minutes in this promise are words nobody can read" are
-// different facts about the promise, and an owner that treats them as one thing either accuses
-// the promise of a number it never stated or lets a promise nobody can check pass.
-const minutesForm = (sentence) => {
-  if (sentence === null) return { written: false, minutes: null };
-  const anchor = /\bminutes?\s*\(/i.exec(sentence);
-  if (anchor === null) return { written: false, minutes: null };
-  const at = anchor.index;
-  let start = at;
-  while (start > 0 && PHRASE_CLASS.test(sentence[start - 1])) {
-    // A hyphen with a space on each side is a DASH, and the promise the package ships is written
-    // with one in front of it. A writer may write that dash as a hyphen instead of an em dash,
-    // and the scan has to stop there as well -- otherwise it walks on past the dash, eats the
-    // whole sentence, and the number in it ends up behind a lead-in of words nobody can vouch for
-    // ("one sweep interval after the limit - twelve and a half minutes"). The promise that is
-    // written that way is readable, so the reader has to read it. The same is true of every
-    // character a hyphen may be written with: a dash written with any of them ends the phrase.
-    //
-    // A hyphen INSIDE a word is not a dash: "twelve-and-a-half" is one number written with hyphens,
-    // and the scan has to walk over it.
-    if (start >= 2 && isHyphenLike(sentence[start - 1]) && sentence[start - 2] === ' '
-      && sentence[start] === ' ') break;
-    start -= 1;
-  }
-  // The scan has to stop where the PHRASE ends, not inside the number. A character that can carry a
-  // number and that this scan cannot read is a sign that the phrase was cut in the middle of one,
-  // and a phrase cut in the middle of a number is not a number: it is the tail of one. The minutes
-  // are then unreadable, which is a different fact from "this promise states no minutes" -- and the
-  // owner of that difference says so.
-  if (start > 0 && NUMBER_CONTINUATION.test(sentence[start - 1])) {
-    return { written: true, minutes: null };
-  }
-  const phrase = sentence.slice(start, at).trim();
-  const digits = /^\s*(\d+(?:\.\d+)?)\s*$/.exec(phrase);
-  return { written: true, minutes: digits !== null ? Number(digits[1]) : englishNumber(phrase) };
-};
-
-// The reader itself is held to reading the WHOLE phrase, and not a tail of it. A tail of a number
-// is a number of its own, and a tail that happens to agree with the promise is the worst case there
-// is: the promise states one number in words and another in milliseconds, and the reader agrees
-// with the tail.
-//
-// The phrases here are the ones a promise can be written in, and the numbers are the ones they
-// state: "one thousand, twelve and a half" is one thousand AND twelve and a half, because a
-// thousands separator is not a boundary, and neither is an ampersand. A phrase that was cut inside
-// a number is not a number at all -- and it is not a tail of one either.
-//
-// A word the number table does not know is the same case from the other side. "One myriad twelve
-// and a half" is a number whose scale word this reader does not have, and the tail of that phrase
-// -- twelve and a half -- IS the number the promise's other form states. So a reader that drops
-// the word it does not know agrees with the tail, and the two forms are declared the same when
-// they are not. The phrase is therefore NOT readable, and the reader says so.
-//
-// A scale word the table DOES know is read as the number it is: "one trillion twelve and a half"
-// reads as a trillion and a half, which is not twelve and a half -- so that phrase is readable
-// AND it disagrees, which is the honest answer to it.
-assert('the promised minutes are read from the whole phrase, not from a tail of it',
-  minutesForm('one thousand, twelve and a half minutes (750000 ms)').minutes === 1012.5
-  && minutesForm('one hundred & twelve and a half minutes (750000 ms)').minutes === 112.5
-  && minutesForm('1,012.5 minutes (750000 ms)').minutes === 1012.5
-  && minutesForm('one hundred and twenty ½ minutes (750000 ms)').minutes === null
-  && minutesForm('one trillion twelve and a half minutes (750000 ms)').minutes === 1000000000012.5
-  && minutesForm('one myriad twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('myriad twelve and a half minutes (750000 ms)').minutes === null);
-// The words in front of the number are the sentence around it only when every one of them is a
-// word this reader knows cannot be part of a number. A word it does not know may be the head of a
-// number it cannot read, and dropping it would read the tail of the number instead -- and a tail
-// that happens to agree with the promise is the worst case there is.
-//
-// A NUMBER word in front of the number is the same failure from the other side, and it is why the
-// list and the number table are kept apart: "one more than twelve and a half" states THIRTEEN AND
-// A HALF, and a reader that read the tail would state twelve and a half -- a number that happens
-// to agree with the promise's other form. So a number word in front of the number is refused as
-// well.
-//
-// So a lead-in this reader knows is read past ("within twelve and a half" states twelve and a
-// half), and a lead-in it does not know makes the phrase unreadable -- loudly, by name, and never
-// by reading the tail.
-assert('a word in front of the number that the reader does not know makes the phrase unreadable',
-  minutesForm('within twelve and a half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('no later than twelve and a half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('one more than twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('two no later than twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('one great myriad twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('myriad myriad twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('no later than myriad twelve and a half minutes (750000 ms)').minutes === null);
-// The dash in front of the number ends the phrase, whichever dash it is written with. The promise
-// the package ships is written with an em dash, and a writer may write that same dash as a
-// hyphen: the number in front of it is the same number either way, and the reader has to read it.
-//
-// The characters a hyphen may be written with are ONE family, and the family is treated as one.
-// The Unicode MINUS SIGN (U+2212) is a dash in front of the number here, just as the ASCII
-// hyphen is -- and it is a SIGN of the number when it stands next to it. A reader that knows one
-// spelling of the family and not the others reads a promise written in another spelling as
-// something else, and that is how a promise of negative minutes turns into a promise of positive
-// ones.
-assert('a dash in front of the number ends the phrase, whether it is written as a dash or a hyphen',
-  minutesForm('after the limit — twelve and a half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('after the limit - twelve and a half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('after the limit − twelve and a half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('twelve−and−a−half minutes (750000 ms)').minutes === 12.5);
-// A sign in front of the number is not read away. A hyphen inside a word is one of the ways a
-// number is written, but a hyphen that is not inside a word is a SIGN, and a promise of negative
-// minutes is not a promise this reader can state: reading it as its absolute value would make
-// "-12.5 minutes (750000 ms)" agree with "750000 ms", which is the opposite of what it says.
-// So a signed phrase is unreadable, and the owner of that says so by name.
-//
-// And the sign is a sign whichever character it is written with: the ASCII hyphen and the Unicode
-// MINUS SIGN are the same sign, so the same promise written with either one is refused with
-// either one. A reader that refuses one spelling and reads the other reads a promise of negative
-// minutes as a promise of positive ones -- and the two forms of that promise then agree.
-assert('a number in the minutes that carries a sign is refused rather than read as its absolute value',
-  minutesForm('-12.5 minutes (750000 ms)').minutes === null
-  && minutesForm('-twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('twelve and -a half minutes (750000 ms)').minutes === null
-  && minutesForm('12.5- minutes (750000 ms)').minutes === null
-  && minutesForm('−12.5 minutes (750000 ms)').minutes === null
-  && minutesForm('−twelve and a half minutes (750000 ms)').minutes === null
-  && minutesForm('twelve and −a half minutes (750000 ms)').minutes === null
-  && minutesForm('twelve-and-a-half minutes (750000 ms)').minutes === 12.5
-  && minutesForm('twelve−and−a−half minutes (750000 ms)').minutes === 12.5);
-// A phrase that holds a SLASH is a fraction, and a fraction is not a number of minutes a promise
-// can state: this reader has no way to say what the two parts of it mean, so it cannot say that
-// they agree with the other form.
-//
-// A scan that stops at the slash reads the part AFTER it -- "25/12.5" would be read as twelve and
-// a half, which is the number the promise's other form states, and the two forms would be
-// declared the same when the phrase says something else. So the scan walks over the slash, and
-// the phrase is refused rather than read as its denominator.
-assert('a number phrase written as a fraction is refused rather than read as its denominator',
-  minutesForm('25/12.5 minutes (750000 ms)').minutes === null
-  && minutesForm('twelve and a half/2 minutes (750000 ms)').minutes === null
-  && minutesForm('twelve and a half minutes (750000 ms)').minutes === 12.5);
 
 // The lifetime the cache gives its rows when nobody tells it one, observed rather than read.
 //
@@ -1575,118 +857,6 @@ assert('an interval the caller asks for is clamped to the limit as well',
 assert('the shipped default is the interval the service declares',
   holds(createParsedRowsCache(1000).sweepIntervalMs === SHIPPED_SWEEP, true, BINDINGS !== null));
 
-// The number a reader is promised: the rows are gone no later than the limit plus one sweep
-// interval. The bound is computed here from the limit the service DECLARES and the interval
-// the RUNNING cache uses, and it is compared with the number the package states in prose -- so
-// a change to one of them without the other is caught here and not by a reader. The promise is
-// in prose because that is where a reader meets it, and a promise nobody checks is a promise
-// that is true on the day it was written.
-// The number the package promises a reader, read out of the SENTENCE that makes the promise.
-//
-// That block states the promise twice -- as a number of minutes and as a number of milliseconds
-// -- and the two forms have to be the same promise, or the reader is told one thing and the
-// service does another. A block can also hold a number that is not part of the promise at all: an
-// annotation left beside it would answer the pattern while the sentence a reader reads said
-// something else. So the number is taken from the promise sentence, that sentence's own words
-// are read as well, and the two are compared with each other and with the limit the cache really
-// gives its rows.
-const ttlDoc = docBlockOf(SERVER, 'PARSED_ROWS_CACHE_TTL_MS', SERVER_MASK);
-const promiseSentences = promiseSentencesOf(ttlDoc);
-// The promise forms of those sentences: how many times the block states the promise, and how many
-// of those forms this reader cannot read.
-const promiseForms = promiseFormsIn(promiseSentences);
-const unreadableForms = unreadableFormsIn(promiseSentences);
-// The numbers the candidate sentences state, read in their own units.
-const promisedNumbers = promisedNumbersIn(promiseSentences);
-// What has to be UNIQUE is the PROMISE, not the sentence. A sentence can carry two promise forms
-// -- "annotation twelve and a half minutes (750000 ms); the rows are gone no later than fourteen
-// minutes (840000 ms)" -- and the punctuation that joins them says nothing about which of them
-// the service meant. Counting sentences would accept that as one promise, and the owner of the
-// bound would then accuse a limit that the block states correctly -- because the number it
-// accuses is one of two, and neither of them is THE number.
-//
-// And a block that states the promise in two sentences is the same case: two forms, one of them
-// the annotation left beside the other.
-const onePromiseInAll = promiseForms.length === 1 && promiseSentences.length === 1;
-// What the owners of the number compare is ONE number that could be read. A form this reader
-// could not read is not a number, and a promise whose number is in a shape nobody can read is not
-// a promise anybody can compare.
-const oneNumberInAll = promisedNumbers.length === 1 && unreadableForms === 0;
-// The promise has to be READABLE, and it is readable only when the block states it once. A block
-// that states it twice is not a block with two promises to choose from: it is a block where the
-// promise cannot be told from the annotation beside it, and an owner that picks one of them accuses
-// the service of a number it never promised.
-assert('the promise to a reader is stated exactly once, in the sentence that carries the number in brackets',
-  onePromiseInAll);
-const promiseSentence = promiseSentences.length === 1 ? promiseSentences[0] : null;
-const MINUTES_FORM = minutesForm(promiseSentence);
-const promisedMinutes = MINUTES_FORM.minutes;
-// Whether the minutes could be read at all. This is a fact about the PROMISE, and it is kept apart
-// from the two questions the owners below ask about it: whether the block states the promise once,
-// and whether the two forms agree. A promise whose minutes are in words nobody can read is neither
-// agreement nor disagreement -- there is no number to compare -- so the owner of the two forms must
-// not report a disagreement it did not find. It holds vacuously there, and counts itself, and the
-// owner further down names the failure.
-const minutesReadable = promisedMinutes !== null;
-const DEFAULT_INTERVAL = createParsedRowsCache(1000).sweepIntervalMs;
-// The owner of the number holds vacuously while the promise cannot be read: a number nobody could
-// locate is not a number the service stated wrongly. The reason it could not be located has its own
-// rule, above.
-//
-// "Could not be located" covers a block that states the promise more than once, and it covers a
-// sentence that states it twice. In both of those there is no single number to accuse -- the block
-// states one the service does honour, and accusing THAT would be accusing a rule nobody broke.
-const boundComparable = promiseSentences.length === 1 && oneNumberInAll;
-assert('the number promised to a reader is the limit plus one sweep interval',
-  holds(oneNumberInAll
-    && promisedNumbers[0] === DEFAULT_LIMIT + DEFAULT_INTERVAL,
-  true, boundComparable));
-// The two forms have to be the SAME promise. The two of them are a number of minutes and a number
-// of milliseconds, and a reader who is told one thing and gets another has been told a lie.
-//
-// What this owner CANNOT do is report a disagreement it did not find. The minutes are parsed
-// completely above, and a phrase that is still not a number is a promise nobody can check -- there
-// is no number on one side to compare with the number on the other, so there is no disagreement to
-// report either. Two forms that state the same number and a form that cannot be read at all are
-// two different facts, and only the first of them is this owner's.
-//
-// So when the minutes cannot be read, this owner holds vacuously and counts itself, and the owner
-// further down names the failure.
-//
-// And a promise that is written in only ONE of the two forms is nothing for this owner to
-// compare -- the minutes are there and the milliseconds are not, or the other way round. That is
-// counted with the result, so a reader can tell it from one that was checked and matched.
-//
-// So the two answers about the minutes are kept apart here, and they are what the two cases are.
-// The minutes are stated next to the millisecond form, the promise writes both forms, and the two
-// have to agree: a promise that states the minutes in words nobody can read is a promise nobody
-// can check, and it is NOT the same thing as a promise that states only one form.
-//
-// And when the block states more than one number, there is no ONE promise for this owner to
-// compare -- the same reason the owner of the bound holds vacuously above. A block with two
-// numbers has no single pair of forms, so this owner says nothing about it rather than picking one
-// of them and calling the disagreement a broken rule.
-const samePromiseInBothForms = promisedMinutes !== null
-  && oneNumberInAll
-  && Math.abs(promisedMinutes * 60_000 - promisedNumbers[0]) < 1;
-const bothFormsWritten = MINUTES_FORM.written && oneNumberInAll;
-const sameFormsComparable = bothFormsWritten && minutesReadable;
-assert('the promise to a reader is the same promise in both of the forms it is written in',
-  holds(samePromiseInBothForms, true, sameFormsComparable));
-
-// The two owners above compare numbers, and a number they could not read is not a number the
-// service stated wrongly. So the promise this guard could not read is reported BY NAME -- once for
-// each half of it -- and the owners that depend on the reading hold vacuously and count themselves
-// rather than accusing a rule nobody broke.
-//
-// And they do not overlap with the owner of the promise being stated once: a block that states the
-// promise more than once is that owner's, and a block that states it once but in a shape nobody can
-// read is these two. One block, one owner.
-assert('the guard could not read the number in the brackets of the promise',
-  !(onePromiseInAll && unreadableForms > 0));
-assert('the guard could not read the minutes the promise states',
-  !(onePromiseInAll && oneNumberInAll && MINUTES_FORM.written && !minutesReadable));
-
 // The promise above holds only if the TIMER runs on that interval: the rows are released on the
 // next tick, and the tick is the sweep. Nothing in the package watched the call that starts that
 // timer, so an interval multiplied by two left every other check here green while the real
@@ -1796,28 +966,21 @@ const PAGE_OWNERS = [
   'the poll waits as long as the client declares',
   'the time limit is longer than one poll, so an open tab never loses its rows',
 ];
-// The owners that read the PROMISE, in two groups, because the two of them have different
-// premises. The owner of the bound compares the number the block states with the limit and the
-// interval, so it needs a number it could read. The owner of the two forms compares the minutes
-// with that number, so it needs the minutes as well.
+// The owners that read the PROMISE used to be two groups, because the two of them had different
+// premises: the owner of the bound compared the number the comment stated with the limit and the
+// interval, and the owner of the two forms compared the minutes with that number.
 //
-// A promise the block states more than once cannot be located, and a number nobody could locate is
-// not a number the service stated wrongly. A block that states one number in more than one
-// sentence is in the same position. A group of owners is a list that has to be kept in step with
-// the gates above -- a list that is not kept in step is a list that quietly stops covering.
-const BOUND_OWNERS = [
-  'the number promised to a reader is the limit plus one sweep interval',
-];
-const FORMS_OWNERS = [
-  'the promise to a reader is the same promise in both of the forms it is written in',
-];
+// That contract is gone. The comment states the RULE and the names of the two constants, and no
+// number in it can expire, so there is no promise in prose to read, and with it there is no owner
+// of a promise. The groups are therefore empty: there is nothing here to keep in step, and a group
+// that lists a rule nobody owns would only make the list look covered.
+const BOUND_OWNERS = [];
+const FORMS_OWNERS = [];
 const UNOBSERVABLE = [
   ...(PROXY === null ? PROXY_OWNERS : []),
   ...(TTL === null ? TTL_OWNERS : []),
   ...(SHIPPED_SWEEP === null ? SWEEP_OWNERS : []),
   ...(CLIENT_SCOPE.ok ? [] : PAGE_OWNERS),
-  ...(boundComparable ? [] : BOUND_OWNERS),
-  ...(sameFormsComparable ? [] : FORMS_OWNERS),
 ];
 assert('the guard accuses no rule it could not observe',
   !UNOBSERVABLE.some((name) => failures.includes(name)));
@@ -1826,17 +989,4 @@ await rm(root, { recursive: true, force: true });
 
 /* ===================================================================== */
 
-if (failures.length) {
-  console.error(`\n[parsed-rows] ${failures.length} FAILED, ${pass} passed`);
-  for (const f of failures) console.error('  - ' + f);
-  if (vacuous > 0) {
-    console.error(`[parsed-rows] ${vacuous} of them held vacuously: there was nothing to `
-      + `compare against, so they say nothing about the thing they are about`);
-  }
-  process.exit(1);
-}
-console.log(`\n[parsed-rows] ${pass} assertions passed`);
-if (vacuous > 0) {
-  console.log(`[parsed-rows] ${vacuous} of them held vacuously: there was nothing to compare `
-    + `against, so they say nothing about the thing they are about`);
-}
+report();

@@ -171,26 +171,19 @@ const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
  * keeps a conversation's rows for as long as the runtime lives, which is how the last session a
  * reader opened stayed resident after they walked away.
  *
- * Ten minutes has two numbers behind it. The page polls every 8 seconds
- * (`TRAJECTORY_POLL_INTERVAL` in the client), so an open tab asks again long before this expires.
+ * The shipped limit has two numbers behind it. The page polls as often as the client declares
+ * (`TRAJECTORY_POLL_INTERVAL`), so an open tab asks again long before this expires.
  * And the page stops polling the moment its tab is HIDDEN, so a reader who switches away for a
  * while is the ordinary case and not an exception — a limit shorter than that would make every
  * return to the tab cost a re-parse. A reader who is really gone gets their rows back.
  *
  * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.** The limit is when the rows
  * stop being wanted; the release happens on the next sweep, so the rows are gone no later than
- * one sweep interval after the limit — twelve and a half minutes (750000 ms) with the shipped
- * values. The number to promise a reader is that one, and it is the number in brackets: it is
- * the limit plus the interval, and the two have to move together. The interval is at most a
- * quarter of the limit, so the release is no later than a quarter of the limit after it; and
- * when the limit is so small that a quarter of it is less than a millisecond, the interval is
- * not finer than a millisecond and the release is at most a millisecond late. Both of those are
- * asserted.
- *
- * The number in brackets is not a loose upper bound: it IS the limit plus the interval, to the
- * millisecond. An assertion of its own compares it as an equality with the limit the service
- * declares and the interval the running cache uses, so this number is watched: changing one of
- * the three without the others is caught there, and not by a reader.
+ * one sweep interval after the limit, with the shipped limit and the shipped sweep interval.
+ * The limit and the interval have to move together: the interval is at most a quarter of the
+ * limit, so the release is no later than a quarter of the limit after it; and when the limit is
+ * so small that a quarter of it is less than a millisecond, the interval is not finer than a
+ * millisecond and the release is at most a millisecond late. Both of those are asserted.
  *
  * An expiry is a MISS and not a deletion of something still wanted: the next request parses the
  * file again and the cache fills itself back up. The price of that is one re-parse, and only when
