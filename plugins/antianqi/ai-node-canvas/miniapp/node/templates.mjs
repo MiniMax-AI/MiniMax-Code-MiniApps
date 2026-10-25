@@ -15,7 +15,7 @@
 // node the template makes, `@2` the second, and the lines point at those
 // names. The real ids are handed out when the template is applied, so the
 // same template can be applied twice on one canvas.
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** The templates that ship with the MiniApp. */
@@ -502,8 +502,7 @@ export async function saveTemplate(dataDir, template) {
 }
 
 /** The built-in templates and the user's own, one list. */
-export async function readTemplates(dataDir) {
-  const own = [];
+export async function readTemplates(dataDir) {  const own = [];
   try {
     for (const entry of await readdir(templatesDir(dataDir))) {
       if (!entry.endsWith('.json')) continue;
@@ -519,4 +518,28 @@ export async function readTemplates(dataDir) {
     // No folder yet: there are no templates of the user's own.
   }
   return [...BUILTIN_TEMPLATES.map((item) => ({ ...item, own: false })), ...own];
+}
+
+/**
+ * Take a template of the user's own away.
+ *
+ * The id is the name of the file under the template folder, so it is judged as
+ * a plain name: a request cannot walk out of the folder it belongs to, and it
+ * cannot take a built-in template away either — those are not in this folder.
+ */
+export async function removeTemplate(dataDir, id) {
+  const name = String(id ?? '').trim();
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || name === '.' || name === '..') return false;
+  const file = join(templatesDir(dataDir), `${name}.json`);
+  try {
+    await stat(file);
+  } catch {
+    return false;
+  }
+  try {
+    await rm(file, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }

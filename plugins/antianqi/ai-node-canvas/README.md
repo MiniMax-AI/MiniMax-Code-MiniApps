@@ -301,6 +301,14 @@ this package.
   a file becomes a canvas), and everything that is a template is in the one
   panel that 导入模板 opens. The same template in two menus would be the same
   thing twice.
+- **A template of the user can be managed** — "把当前画布存成模板" asks for the
+  name in the page, and every template of the user carries a delete button
+  next to it (the question is asked in the page too, like every other question
+  here). The ready-made ones are not the user's to take away.
+- **Where a template file is looked for** — the panel asks for a folder and the
+  runtime lists every template file in it, which is how a template that was
+  exported to a folder of the user's own is found again. "路径不知道？挑一个
+  模板文件" is the way in when the folder is not known.
 - **The canvas is a workbench, and it saves itself** — a change is written
   down about a second later, and the state beside the canvas name says
   whether it happened, so the toolbar has no **保存** button: a button that

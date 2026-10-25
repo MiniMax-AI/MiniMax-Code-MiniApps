@@ -3531,7 +3531,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
    * The panel says what happens when a template is picked, and the picker
    * does exactly that: one list, one way of picking it.
    */
-  function renderTemplateGroups(body, groups, onPick) {
+  function renderTemplateGroups(body, groups, onPick, onDelete) {
     for (const group of groups) {
       if (!group.templates.length) continue;
       body.appendChild(el('div', 'nxc-panel__section', group.label));
@@ -3541,7 +3541,24 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         item.appendChild(el('span', null, template.title));
         item.appendChild(el('small', null, template.description || `${template.steps ?? 0} 步`));
         item.addEventListener('click', () => onPick(template));
-        body.appendChild(item);
+        // A template of the user is one the user can take away again. The
+        // ready-made ones are not: they belong to the package.
+        if (!group.own || !onDelete) {
+          body.appendChild(item);
+          continue;
+        }
+        const row = el('div', 'nxc-panel__item');
+        row.appendChild(item);
+        const remove = el('button', 'nxc-panel__del', '×');
+        remove.type = 'button';
+        remove.title = '删掉这个模板';
+        remove.setAttribute('aria-label', `删掉模板 ${template.title}`);
+        remove.addEventListener('click', (event) => {
+          event.stopPropagation();
+          onDelete(template);
+        });
+        row.appendChild(remove);
+        body.appendChild(row);
       }
     }
   }
@@ -3578,22 +3595,44 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
    * The name comes from the canvas, so no name has to be typed: the page
    * cannot ask for one, because a native dialog would block it.
    */
-  async function saveCurrentCanvasAsTemplate() {
+  async function saveCurrentCanvasAsTemplate(title) {
     if (!state.canvas.id) {
       showBanner('先有一张画布，才能存成模板', 'error');
       return;
     }
-    const base = String(state.canvas.title || '画布').replace(/[\\/:*?"<>|]/g, '').trim() || '画布';
-    const id = `own-${base}-${Date.now().toString(36)}`;
+    const name = String(title ?? '').trim();
+    if (!name) {
+      showBanner('这个模板还没有名字', 'error');
+      return;
+    }
+    const id = `own-${Date.now().toString(36)}`;
     try {
       const response = await api('/api/templates', {
         method: 'POST',
-        body: { id, title: `${base} 的模板`, canvasId: state.canvas.id },
+        body: { id, title: name, canvasId: state.canvas.id },
       });
-      showBanner(`已存成模板「${response?.template?.title ?? base}」`);
+      showBanner(`已存成模板「${response?.template?.title ?? name}」`);
       await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
     } catch (error) {
       showBanner(`没存上：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /**
+   * Take a template of the user away.
+   *
+   * The question is asked in the page: a native confirm() is a separate OS
+   * window that never reaches the screen inside the MiniApp host.
+   */
+  async function deleteTemplate(template) {
+    const yes = await confirmInPage(`确定删掉模板「${template.title}」？画布本身不受影响。`);
+    if (!yes) return;
+    try {
+      await api(`/api/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
+      showBanner(`删掉了模板「${template.title}」`);
+      await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
+    } catch (error) {
+      showBanner(`没删掉：${error?.message ?? error}`, 'error');
     }
   }
 
@@ -4748,9 +4787,11 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     const own = templates.filter((item) => item.own);
     const builtin = templates.filter((item) => !item.own);
     const groups = templateGroups(builtin);
-    if (own.length) groups.unshift({ label: '我的模板', templates: own });
+    if (own.length) groups.unshift({ label: '我的模板', templates: own, own: true });
     renderTemplateGroups(body, groups, (template) => {
       void openTemplateInNewCanvas(template);
+    }, (template) => {
+      void deleteTemplate(template);
     });
 
     // The files on this machine. A template that was exported to a folder of
@@ -4763,7 +4804,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       places = null;
     }
     const sep = places?.sep || '\\';
-    body.appendChild(el('div', 'nxc-panel__section', '本机模板文件'));
+    body.appendChild(el('div', 'nxc-panel__section', '本机文件夹里的模板'));
     const folderRow = el('div', 'nxc-panel__row');
     const folderInput = el('input', 'nxc-panel__path');
     folderInput.type = 'text';
@@ -4821,9 +4862,10 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     body.appendChild(find);
     await reload();
     // A file from somewhere else on this machine: the control is in the page,
-    // so the file reaches the page without a dialog in between.
+    // so the file reaches the page without a dialog in between. It is the way
+    // in when the folder of the file is not known.
     const pick = el('label', 'nxc-panel__option nxc-file');
-    pick.appendChild(el('span', null, '从别的位置选一个模板文件'));
+    pick.appendChild(el('span', null, '路径不知道？挑一个模板文件'));
     pick.appendChild(el('small', null, '本机任意位置的 .json'));
     const input = el('input');
     input.type = 'file';
@@ -4846,14 +4888,48 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
 
     // The canvas that is open now can become a template of its own: the steps
     // are taken from it, the results and the material are left behind.
+    // The name is typed into the page: a template the user keeps should carry
+    // the name they gave it, not the name of the canvas it came from.
     const save = el('button', 'nxc-panel__option');
     save.type = 'button';
     save.appendChild(el('span', null, '把当前画布存成模板'));
     save.appendChild(el('small', null, '只留步骤：生成节点、连线和提示词；结果和素材不留'));
+    const nameRow = el('div', 'nxc-panel__row');
+    const nameInput = el('input', 'nxc-panel__path');
+    nameInput.type = 'text';
+    nameInput.maxLength = 80;
+    nameInput.value = `${state.canvas.title || '画布'} 的模板`;
+    nameInput.setAttribute('aria-label', '这个模板叫什么');
+    const nameOk = el('button', 'nxc-btn nxc-btn--small', '存下来');
+    nameOk.type = 'button';
+    nameRow.appendChild(nameInput);
+    nameRow.appendChild(nameOk);
+    nameRow.hidden = true;
+    const doSave = () => {
+      const title = nameInput.value.trim();
+      nameRow.hidden = true;
+      if (!title) return;
+      void saveCurrentCanvasAsTemplate(title);
+    };
+    nameOk.addEventListener('click', doSave);
+    nameInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        doSave();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        nameRow.hidden = true;
+      }
+    });
     save.addEventListener('click', () => {
-      void saveCurrentCanvasAsTemplate();
+      nameRow.hidden = !nameRow.hidden;
+      if (!nameRow.hidden) {
+        nameInput.focus({ preventScroll: true });
+        nameInput.select();
+      }
     });
     body.appendChild(save);
+    body.appendChild(nameRow);
   }
 
   /**

@@ -19,7 +19,7 @@ import { decodeHostConnectorValue } from './host-connector-value.mjs';
 import { handleMcp, MCP_PATH } from './mcp.mjs';
 import { createMediaRunner } from './media-runner.mjs';
 import { createCanvasStore } from './store.mjs';
-import { readTemplates, saveTemplate } from './templates.mjs';
+import { readTemplates, removeTemplate, saveTemplate } from './templates.mjs';
 
 // Keep in sync with `surface.path` in miniapp/miniapp.json.
 const SURFACE_PATH = '/canvas';
@@ -392,6 +392,19 @@ export async function start(context) {
         return sendJson(res, 400, { error: saved.reason, message: '这个文件名用不了' });
       }
       return sendJson(res, 200, { ok: true, path: saved.path, name: saved.name, bytes: saved.bytes });
+    }
+
+    // Take a template of the user's own away.
+    //
+    // The built-in templates are not in this folder, so they cannot be taken
+    // away by an id: only the ones the user kept are.
+    if (path.startsWith('/api/templates/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(path.slice('/api/templates/'.length));
+      const removed = await removeTemplate(context.dataDir, id);
+      if (!removed) {
+        return sendJson(res, 404, { error: 'not_found', message: '没有这个模板' });
+      }
+      return sendJson(res, 200, { ok: true, id });
     }
 
     // Keep a template of the user's own: the skeleton of the canvas that is

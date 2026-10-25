@@ -6877,7 +6877,7 @@ test('a template is listed in one menu, not two', async () => {
   // The ready-made workflows, the ones of the user, the files and the way to
   // keep the canvas that is open: all of it in this one menu.
   assert.match(importPanel, /renderTemplateGroups/);
-  assert.match(importPanel, /本机模板文件/);
+  assert.match(importPanel, /本机文件夹里的模板/);
   assert.match(importPanel, /把当前画布存成模板/);
   assert.match(source, /function templateGroups\(templates\)/);
 });
@@ -7006,10 +7006,50 @@ test('the page says what deleting a canvas takes away, and how to keep it', asyn
   // names the two ways of keeping the work: a template and a local copy of a
   // result.
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
-  const warning = source.match(/confirmInPage\([\s\S]*?`([^`]*)`/)?.[1] ?? '';
+  const warning = source.match(/`([^`]*确定删除画布[^`]*)`/)?.[1] ?? '';
   assert.match(warning, /确定删除画布/);
   assert.match(warning, /存成模板/);
   assert.match(warning, /资产库/);
+});
+
+test('a template of the user can be taken away again', async (t) => {
+  // A template the user kept is theirs: they can take it away. The
+  // ready-made ones are not — they belong to the package.
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const saved = await getJson(h.base, '/api/templates', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'own-to-delete',
+      title: '要删掉的模板',
+      actions: [{ type: 'add_node', args: { type: 'image', title: '主图', mode: 'text2image' } }],
+    }),
+  });
+  assert.equal(saved.status, 200);
+
+  const listed = await getJson(h.base, '/api/templates');
+  assert.ok(listed.body.templates.some((item) => item.id === 'own-to-delete'));
+
+  const removed = await getJson(h.base, '/api/templates/own-to-delete', { method: 'DELETE' });
+  assert.equal(removed.status, 200);
+  const after = await getJson(h.base, '/api/templates');
+  assert.equal(after.body.templates.some((item) => item.id === 'own-to-delete'), false);
+
+  // A name that walks out of the template folder is refused — and the file it
+  // points at is still there.
+  const { removeTemplate } = await import('../miniapp/node/templates.mjs');
+  const outside = join(h.dataDir, 'canvas.json');
+  await writeFile(outside, '{}', 'utf8');
+  assert.equal(await removeTemplate(h.dataDir, '../canvas'), false);
+  assert.equal(await readFile(outside, 'utf8'), '{}');
+  const escape = await getJson(h.base, '/api/templates/..%2F..%2Fcanvas', { method: 'DELETE' });
+  assert.equal(escape.status, 404);
+
+  // And the page asks in itself before it takes one away.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(source, /确定删掉模板/);
+  assert.match(source, /method: 'DELETE'/);
 });
 
 test('a shared file is written by the runtime, not by the browser', async () => {

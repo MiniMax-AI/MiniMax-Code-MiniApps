@@ -2259,6 +2259,35 @@ input {
   margin: 6px 0;
 }
 
+/* A template of the user, and the button that takes it away. */
+.nxc-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nxc-panel__item .nxc-panel__option {
+  flex: 1;
+  min-width: 0;
+}
+
+.nxc-panel__del {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 6px;
+}
+
+.nxc-panel__del:hover {
+  color: var(--mcode-danger);
+  background: color-mix(in srgb, var(--mcode-danger) 12%, transparent);
+}
+
 /* ---------------- reduced motion ----------------
    Movement, scaling and continuous animation are removed; only opacity
    transitions that carry state survive. */
