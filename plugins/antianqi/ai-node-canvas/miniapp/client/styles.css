@@ -2288,6 +2288,25 @@ input {
   background: color-mix(in srgb, var(--mcode-danger) 12%, transparent);
 }
 
+/* The button that keeps a template file in the list of the user's own. */
+.nxc-panel__keep {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 8px;
+  flex: none;
+}
+
+.nxc-panel__keep:hover {
+  color: var(--mcode-text);
+  border-color: var(--mcode-border-strong);
+}
+
 /* ---------------- reduced motion ----------------
    Movement, scaling and continuous animation are removed; only opacity
    transitions that carry state survive. */

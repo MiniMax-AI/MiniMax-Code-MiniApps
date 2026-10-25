@@ -6882,6 +6882,18 @@ test('a template is listed in one menu, not two', async () => {
   assert.match(source, /function templateGroups\(templates\)/);
 });
 
+test('a template file can be kept in the list of the user', async () => {
+  // A file on this machine is not the user's yet: it can be moved or thrown
+  // away. Keeping it puts it in the template folder of the runtime, where it
+  // stays whatever happens to the file.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(source, /async function keepTemplateFile\(file\) \{[\s\S]*?own-file-/);
+  // And the button that does it sits next to every file that was found.
+  assert.match(source, /nxc-panel__keep/);
+  assert.match(source, /存进「我的模板」/);
+  assert.match(source, /row\.appendChild\(keep\);/);
+});
+
 test('a template that is imported gets a canvas of its own', async () => {
   // The canvas that is open now is a piece of work in progress. A chain that
   // is picked in the import panel is a new piece of work, and it gets a

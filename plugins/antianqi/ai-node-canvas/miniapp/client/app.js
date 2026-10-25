@@ -3619,13 +3619,37 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   /**
+   * Keep a template file in the list of the user's own.
+   *
+   * The file lies on this machine, but it is not the user's yet: it can be
+   * moved or thrown away. Keeping it puts it in the template folder of the
+   * runtime, where it stays whatever happens to the file.
+   */
+  async function keepTemplateFile(file) {
+    try {
+      const response = await api('/api/templates', {
+        method: 'POST',
+        body: {
+          id: `own-file-${Date.now().toString(36)}`,
+          title: file.title,
+          description: file.description || '从本机的模板文件收进来的',
+          actions: file.actions,
+        },
+      });
+      showBanner(`已收进「我的模板」：${response?.template?.title ?? file.title}`);
+      await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
+    } catch (error) {
+      showBanner(`没收进去：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /**
    * Take a template of the user away.
    *
    * The question is asked in the page: a native confirm() is a separate OS
    * window that never reaches the screen inside the MiniApp host.
    */
-  async function deleteTemplate(template) {
-    const yes = await confirmInPage(`确定删掉模板「${template.title}」？画布本身不受影响。`);
+  async function deleteTemplate(template) {    const yes = await confirmInPage(`确定删掉模板「${template.title}」？画布本身不受影响。`);
     if (!yes) return;
     try {
       await api(`/api/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
@@ -4850,7 +4874,21 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
             actions: file.actions,
           });
         });
-        fileBody.appendChild(item);
+        // A file is on this machine, but it is not the user's yet: it can be
+        // moved or thrown away. Keeping it puts it in the list of the user's
+        // own templates, where it stays whatever happens to the file.
+        const row = el('div', 'nxc-panel__item');
+        row.appendChild(item);
+        const keep = el('button', 'nxc-panel__keep', '＋');
+        keep.type = 'button';
+        keep.title = '存进「我的模板」';
+        keep.setAttribute('aria-label', `把 ${file.title} 存进「我的模板」`);
+        keep.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void keepTemplateFile(file);
+        });
+        row.appendChild(keep);
+        fileBody.appendChild(row);
       }
     };
     const find = el('button', 'nxc-panel__option');
