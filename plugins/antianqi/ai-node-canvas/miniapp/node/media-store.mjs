@@ -771,39 +771,6 @@ export function createMediaStore(context) {
     return { ok: true, path: finalPath, bytes: body.length, name: finalPath.split(/[\\/]/).pop() };
   }
 
-  /**
-   * The files of one kind that lie in the Downloads folder.
-   *
-   * The newest come first: the file a person just put there is the one they
-   * are about to want.
-   */
-  async function listDownloadsFiles(extension = '.json', limit = 40, targetDir = '') {
-    const folder = targetDir || downloadsDir();
-    let entries = [];
-    try {
-      entries = await readdir(folder);
-    } catch {
-      return [];
-    }
-    const wanted = String(extension ?? '').toLowerCase();
-    const found = [];
-    for (const entry of entries) {
-      if (!entry.toLowerCase().endsWith(wanted)) continue;
-      const plain = plainName(entry);
-      if (!plain) continue;
-      const path = join(folder, plain);
-      try {
-        const info = await stat(path);
-        if (!info.isFile() || info.size > 4 * 1024 * 1024) continue;
-        found.push({ name: plain, path, bytes: info.size, mtime: info.mtimeMs });
-      } catch {
-        continue;
-      }
-    }
-    found.sort((a, b) => b.mtime - a.mtime);
-    return found.slice(0, limit);
-  }
-
   return {
     assetsDir,
     workDir,
@@ -828,6 +795,5 @@ export function createMediaStore(context) {
     removeAsset,
     saveToDownloads,
     writeToFolder,
-    listDownloadsFiles,
   };
 }

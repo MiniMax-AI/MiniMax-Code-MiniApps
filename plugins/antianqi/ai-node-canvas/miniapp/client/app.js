@@ -3612,34 +3612,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         body: { id, title: name, canvasId: state.canvas.id },
       });
       showBanner(`已存成模板「${response?.template?.title ?? name}」`);
-      await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
+      await openTemplatePanel(dom.templatesButton.getBoundingClientRect());
     } catch (error) {
       showBanner(`没存上：${error?.message ?? error}`, 'error');
-    }
-  }
-
-  /**
-   * Keep a template file in the list of the user's own.
-   *
-   * The file lies on this machine, but it is not the user's yet: it can be
-   * moved or thrown away. Keeping it puts it in the template folder of the
-   * runtime, where it stays whatever happens to the file.
-   */
-  async function keepTemplateFile(file) {
-    try {
-      const response = await api('/api/templates', {
-        method: 'POST',
-        body: {
-          id: `own-file-${Date.now().toString(36)}`,
-          title: file.title,
-          description: file.description || '从本机的模板文件收进来的',
-          actions: file.actions,
-        },
-      });
-      showBanner(`已收进「我的模板」：${response?.template?.title ?? file.title}`);
-      await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
-    } catch (error) {
-      showBanner(`没收进去：${error?.message ?? error}`, 'error');
     }
   }
 
@@ -3654,7 +3629,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     try {
       await api(`/api/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
       showBanner(`删掉了模板「${template.title}」`);
-      await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
+      await openTemplatePanel(dom.templatesButton.getBoundingClientRect());
     } catch (error) {
       showBanner(`没删掉：${error?.message ?? error}`, 'error');
     }
@@ -4675,18 +4650,18 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
    * a native file dialog is a separate OS window that never reaches the
    * screen inside the MiniApp host.
    */
-  async function exportTemplateFile() {
+  async function saveTemplateToLocal() {
     const panel = dom.floatingPanel;
     state.panel = { type: 'export-template', nodeId: null };
     panel.textContent = '';
     panel.dataset.canvasNoZoom = 'true';
-    panel.appendChild(el('div', 'nxc-panel__title', '导出模板'));
+    panel.appendChild(el('div', 'nxc-panel__title', '保存到本地'));
     const body = el('div', 'nxc-panel__body', '找位置中…');
     panel.appendChild(body);
     panel.hidden = false;
     const rect = panel.getBoundingClientRect();
     const place = placeOverlay(
-      { left: dom.exportButton.getBoundingClientRect().left, top: dom.exportButton.getBoundingClientRect().bottom + 6 },
+      { left: dom.templatesButton.getBoundingClientRect().left, top: dom.templatesButton.getBoundingClientRect().bottom + 6 },
       rect,
       { width: window.innerWidth, height: window.innerHeight },
     );
@@ -4758,32 +4733,35 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         body: { path: asked, document },
       });
       closePanel();
-      showBanner(`已导出模板到 ${response.path}`);
+      showBanner(`已保存到 ${response.path}`);
     } catch (error) {
       showBanner(`没导出成：${error?.message ?? error}`, 'error');
     }
   }
 
-  /**
-   * The templates of this machine and the files that came from elsewhere.
+/**
+   * The one menu that holds templates.
    *
-   * This is the one menu that holds templates: the ready-made workflows, the
-   * ones the user kept, and the template files lying on this machine. A
-   * template that is picked here lands on a canvas of its own — the canvas
+   * There are two ways in and two ways out, and no more:
+   *
+   * - **我的模板** — the chains the user kept. They live in the runtime's own
+   *   template folder, so they are there whatever happens to a file.
+   * - **打开本地模板** — a template file that is on this machine.
+   * - **保存为我的模板** — the canvas that is open now becomes one of the
+   *   user's own, under a name they give it.
+   * - **保存到本地** — the canvas that is open now becomes a file.
+   *
+   * A template that is picked here lands on a canvas of its own — the canvas
    * that is open now is a piece of work in progress, and a chain that came
    * from somewhere else should not be poured into it. An empty canvas is used
    * as it is: there is nothing on it to lose.
-   *
-   * The file a template travels in lands in the Downloads folder, so that is
-   * where the runtime looks for it. Every file is read by the one rule that
-   * reads a template, so a file that is something else is not offered.
    */
-  async function openImportTemplatePanel(anchorRect) {
+  async function openTemplatePanel(anchorRect) {
     const panel = dom.floatingPanel;
-    state.panel = { type: 'import-template', nodeId: null };
+    state.panel = { type: 'templates', nodeId: null };
     panel.textContent = '';
     panel.dataset.canvasNoZoom = 'true';
-    panel.appendChild(el('div', 'nxc-panel__title', '导入模板'));
+    panel.appendChild(el('div', 'nxc-panel__title', '模板'));
     const body = el('div', 'nxc-panel__body', '找模板中…');
     panel.appendChild(body);
     panel.hidden = false;
@@ -4818,105 +4796,24 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       void deleteTemplate(template);
     });
 
-    // The files on this machine. A template that was exported to a folder of
-    // the user's own is looked for in that folder, so the path is asked for
-    // and the folders a person looks in are one click away.
-    let places = null;
-    try {
-      places = await api('/api/places');
-    } catch {
-      places = null;
-    }
-    const sep = places?.sep || '\\';
-    body.appendChild(el('div', 'nxc-panel__section', '本机文件夹里的模板'));
-    const folderRow = el('div', 'nxc-panel__row');
-    const folderInput = el('input', 'nxc-panel__path');
-    folderInput.type = 'text';
-    folderInput.value = places?.downloads ?? '';
-    folderInput.setAttribute('aria-label', '在哪个文件夹里找模板文件');
-    for (const [label, key] of [['下载文件夹', 'downloads'], ['桌面', 'desktop'], ['文档', 'documents'], ['主目录', 'home']]) {
-      const pick = el('button', 'nxc-btn nxc-btn--small', label);
-      pick.type = 'button';
-      pick.addEventListener('click', () => {
-        if (!places) return;
-        folderInput.value = places[key];
-      });
-      folderRow.appendChild(pick);
-    }
-    body.appendChild(folderRow);
-    body.appendChild(folderInput);
-    const fileBody = el('div', 'nxc-panel__body');
-    body.appendChild(fileBody);
-    const reload = async () => {
-      fileBody.textContent = '找模板中…';
-      let files = [];
-      try {
-        const response = await api(`/api/templates/files?folder=${encodeURIComponent(folderInput.value.trim())}`);
-        files = Array.isArray(response.files) ? response.files : [];
-      } catch (error) {
-        fileBody.textContent = `没找到模板：${error?.message ?? error}`;
-        return;
-      }
-      fileBody.textContent = '';
-      if (!files.length) {
-        fileBody.appendChild(el('div', 'nxc-panel__desc', '这个文件夹里还没有模板文件。把别人发来的模板存进去，再点这里。'));
-        return;
-      }
-      for (const file of files) {
-        const item = el('button', 'nxc-panel__option');
-        item.type = 'button';
-        item.appendChild(el('span', null, file.title));
-        item.appendChild(el('small', null, `${file.name} · ${file.steps} 步`));
-        item.addEventListener('click', () => {
-          void openTemplateInNewCanvas({
-            title: file.title,
-            description: file.description,
-            actions: file.actions,
-          });
-        });
-        // A file is on this machine, but it is not the user's yet: it can be
-        // moved or thrown away. Keeping it puts it in the list of the user's
-        // own templates, where it stays whatever happens to the file.
-        const row = el('div', 'nxc-panel__item');
-        row.appendChild(item);
-        const keep = el('button', 'nxc-panel__keep', '＋');
-        keep.type = 'button';
-        keep.title = '存进「我的模板」';
-        keep.setAttribute('aria-label', `把 ${file.title} 存进「我的模板」`);
-        keep.addEventListener('click', (event) => {
-          event.stopPropagation();
-          void keepTemplateFile(file);
-        });
-        row.appendChild(keep);
-        fileBody.appendChild(row);
-      }
-    };
-    const find = el('button', 'nxc-panel__option');
-    find.type = 'button';
-    find.appendChild(el('span', null, '在这个文件夹里找'));
-    find.addEventListener('click', () => {
-      void reload();
-    });
-    body.appendChild(find);
-    await reload();
-    // A file from somewhere else on this machine: the control is in the page,
-    // so the file reaches the page without a dialog in between. It is the way
-    // in when the folder of the file is not known.
+    // A template file that is on this machine: the file the user picks is
+    // read by the one rule that reads a template, so a file that is something
+    // else is refused instead of being poured onto the canvas.
     const pick = el('label', 'nxc-panel__option nxc-file');
-    pick.appendChild(el('span', null, '路径不知道？挑一个模板文件'));
+    pick.appendChild(el('span', null, '打开本地模板'));
     pick.appendChild(el('small', null, '本机任意位置的 .json'));
     const input = el('input');
     input.type = 'file';
     input.accept = 'application/json,.json';
-    input.title = '选一个模板文件';
-    input.setAttribute('aria-label', '从别的位置选一个模板文件');
+    input.title = '打开一个本机的模板文件';
+    input.setAttribute('aria-label', '打开本地模板');
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       input.value = '';
       if (!file) return;
       const parsed = readTemplateFile(await file.text());
       if (!parsed.ok) {
-        showBanner(`导入模板失败：${parsed.error}`, 'error');
+        showBanner(`这不是一个模板：${parsed.error}`, 'error');
         return;
       }
       await openTemplateInNewCanvas(parsed.template);
@@ -4930,7 +4827,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     // the name they gave it, not the name of the canvas it came from.
     const save = el('button', 'nxc-panel__option');
     save.type = 'button';
-    save.appendChild(el('span', null, '把当前画布存成模板'));
+    save.appendChild(el('span', null, '保存为我的模板'));
     save.appendChild(el('small', null, '只留步骤：生成节点、连线和提示词；结果和素材不留'));
     const nameRow = el('div', 'nxc-panel__row');
     const nameInput = el('input', 'nxc-panel__path');
@@ -4968,7 +4865,18 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     });
     body.appendChild(save);
     body.appendChild(nameRow);
+
+    // And it can become a file on this machine, wherever the user says.
+    const toLocal = el('button', 'nxc-panel__option');
+    toLocal.type = 'button';
+    toLocal.appendChild(el('span', null, '保存到本地'));
+    toLocal.appendChild(el('small', null, '写成一个 .json 文件，可以发给别的机器'));
+    toLocal.addEventListener('click', () => {
+      void saveTemplateToLocal();
+    });
+    body.appendChild(toLocal);
   }
+
 
   /**
    * Put a template on a canvas of its own.
@@ -5787,9 +5695,8 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.confirmCancel?.addEventListener('click', () => {
       closeConfirm(false);
     });
-    dom.exportButton.addEventListener('click', exportTemplateFile);
-    dom.importButton.addEventListener('click', () => {
-      void openImportTemplatePanel(dom.importButton.getBoundingClientRect());
+    dom.templatesButton.addEventListener('click', () => {
+      void openTemplatePanel(dom.templatesButton.getBoundingClientRect());
     });
     dom.deleteButton.addEventListener('click', () => {
       void deleteCanvas();
@@ -5867,8 +5774,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.confirmCancel = $('confirm-cancel');
     dom.newButton = $('btn-new');
     dom.renameButton = $('btn-rename');
-    dom.exportButton = $('btn-export');
-    dom.importButton = $('btn-import');
+    dom.templatesButton = $('btn-templates');
     dom.deleteButton = $('btn-delete');
     dom.addButton = $('btn-add');
     dom.undoButton = $('btn-undo');

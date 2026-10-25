@@ -6842,59 +6842,44 @@ test('a template that came from another machine is kept on this one', async (t) 
   assert.equal(own.actions[2].args.from, '@1');
 });
 
-test('the toolbar shares templates, and the template button stands by the import', async () => {
-  // 导出 and 导入 carried the whole canvas, which only opens whole on the
-  // machine it came from. The toolbar now shares templates: the steps, which
-  // travel.
+test('the toolbar has one template button, and it opens the one menu', async () => {
+  // Two ways in and two ways out, and they all live in one menu: the toolbar
+  // carries a single button, so nothing about a template is spread over the
+  // page.
   const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
-  assert.match(html, /id="btn-export"[^>]*>导出模板</);
-  assert.match(html, /id="btn-import"[^>]*>导入模板</);
-  // There is no template button of its own: one menu holds the templates.
-  assert.doesNotMatch(html, /id="btn-templates"/);
-  // The canvas itself can still be saved: it lives in the template panel.
+  assert.match(html, /id="btn-templates"[^>]*>模板</);
+  assert.doesNotMatch(html, /id="btn-export"/);
+  assert.doesNotMatch(html, /id="btn-import"/);
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
-  assert.match(source, /function exportTemplateFile\(\)/);
-  assert.match(source, /function openImportTemplatePanel\(/);
+  assert.match(source, /function saveTemplateToLocal\(\)/);
+  assert.match(source, /function openTemplatePanel\(/);
   assert.match(source, /function openTemplateInNewCanvas\(/);
-  // The templates of this machine come from the runtime, which knows which
-  // files are templates.
-  assert.match(source, /api\(`\/api\/templates\/files\?folder=/);
-  // The file reaches the page without a dialog in between: the control that
-  // reads it is in the page.
+  // The file reaches the page through a control that is in the page.
   assert.match(source, /const input = el\('input'\);\s*\n\s*input\.type = 'file'/);
 });
 
-test('a template is listed in one menu, not two', async () => {
-  // One menu holds the templates: the ready-made workflows, the ones the user
-  // kept, and the files that came from somewhere else. The same template in
-  // two menus would be the same thing twice.
-  const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
-  assert.doesNotMatch(html, /id="btn-templates"/);
+test('the template menu has two ways in and two ways out', async () => {
+  // **In**: 我的模板 (the ones the user kept) and 打开本地模板 (a file on this
+  // machine). **Out**: 保存为我的模板 and 保存到本地. Nothing else: a folder to
+  // look in, a button that keeps a file, and a second way to pick a file were
+  // three ways to say the same thing.
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
-  assert.doesNotMatch(source, /openTemplatesPanel/);
-  const importPanel = source.match(/async function openImportTemplatePanel\([\s\S]*?\n  }\n/)?.[0] ?? '';
-  assert.ok(importPanel, 'the import panel is gone');
-  // The ready-made workflows, the ones of the user, the files and the way to
-  // keep the canvas that is open: all of it in this one menu.
-  assert.match(importPanel, /renderTemplateGroups/);
-  assert.match(importPanel, /本机文件夹里的模板/);
-  assert.match(importPanel, /把当前画布存成模板/);
+  const panel = source.match(/async function openTemplatePanel\([\s\S]*?\n  }\n/)?.[0] ?? '';
+  assert.ok(panel, 'the template menu is gone');
+  assert.match(panel, /renderTemplateGroups/);
+  assert.match(panel, /el\('span', null, '打开本地模板'\)/);
+  assert.match(panel, /el\('span', null, '保存为我的模板'\)/);
+  assert.match(panel, /el\('span', null, '保存到本地'\)/);
+  // And the ways that were too many are gone.
+  assert.doesNotMatch(panel, /本机文件夹里的模板/);
+  assert.doesNotMatch(panel, /在这个文件夹里找/);
+  assert.doesNotMatch(source, /nxc-panel__keep/);
+  assert.doesNotMatch(source, /listDownloadsFiles/);
+  assert.doesNotMatch(source, /api\/templates\/files/);
   assert.match(source, /function templateGroups\(templates\)/);
 });
 
-test('a template file can be kept in the list of the user', async () => {
-  // A file on this machine is not the user's yet: it can be moved or thrown
-  // away. Keeping it puts it in the template folder of the runtime, where it
-  // stays whatever happens to the file.
-  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
-  assert.match(source, /async function keepTemplateFile\(file\) \{[\s\S]*?own-file-/);
-  // And the button that does it sits next to every file that was found.
-  assert.match(source, /nxc-panel__keep/);
-  assert.match(source, /存进「我的模板」/);
-  assert.match(source, /row\.appendChild\(keep\);/);
-});
-
-test('a template that is imported gets a canvas of its own', async () => {
+test('a template that is opened gets a canvas of its own', async () => {
   // The canvas that is open now is a piece of work in progress. A chain that
   // is picked in the import panel is a new piece of work, and it gets a
   // canvas of its own — the current one is left alone.
@@ -6941,7 +6926,7 @@ test('the panel of the templates holds templates only', async () => {
   assert.doesNotMatch(source, /function importCanvasFile\(/);
   // What it does hold: the chains of the user, the ready-made ones, and the
   // way to make one of the canvas.
-  assert.match(source, /把当前画布存成模板/);
+  assert.match(source, /把当前画布存成模板|保存为我的模板/);
   assert.match(source, /我的模板/);
   // The ready-made ones are told apart by the group they carry.
   assert.match(source, /function templateGroups\(templates\)/);
@@ -7080,17 +7065,44 @@ test('a shared file is written by the runtime, not by the browser', async () => 
   assert.equal(saved.name, '耳机.模板.json');
   assert.equal(saved.path.startsWith(target), true);
 
-  // The file is there, and the runtime can find it again.
+  // The file is there, under the name it was given.
   const written = await readFile(saved.path, 'utf8');
   assert.match(written, /ai-node-canvas-template/);
-  const found = await store.listDownloadsFiles('.json', 40, target);
-  assert.equal(found.length, 1);
-  assert.equal(found[0].name, '耳机.模板.json');
 
   // A name that walks out of the folder is refused, not tidied up.
   const escape = await store.writeToFolder('../逃出去.json', '{}', target);
   assert.equal(escape.ok, false);
   assert.equal(escape.reason, 'bad_name');
+});
+
+test('a template file is read by the one rule that reads a template', async () => {
+  // A local template is opened by the user, one file at a time: the file is
+  // read by the same rule that reads a template that came from elsewhere, so
+  // a file that is something else is refused instead of being poured onto
+  // the canvas.
+  const { readTemplateFile, templateFile } = await import('../miniapp/client/actions.mjs');
+  const document = templateFile({
+    id: 'from-another-machine',
+    title: '别处的链',
+    actions: [
+      { type: 'add_node', args: { type: 'image', title: '主图', mode: 'text2image' } },
+      { type: 'connect', args: { from: '@1', to: '@1' } },
+    ],
+  });
+  const read = readTemplateFile(JSON.stringify(document));
+  assert.equal(read.ok, true);
+  assert.equal(read.template.title, '别处的链');
+  assert.equal(read.template.actions.length, 2);
+
+  // A file that is something else entirely.
+  const other = readTemplateFile(JSON.stringify({ hello: 'world' }));
+  assert.equal(other.ok, false);
+  // And a file that says it is something else, even if it carries steps.
+  const wrongKind = readTemplateFile(JSON.stringify({
+    kind: 'something-else',
+    actions: [{ type: 'add_node', args: { type: 'image' } }],
+  }));
+  assert.equal(wrongKind.ok, false);
 });
 
 test('the templates of this machine are found, and a file that is not one is not offered', async (t) => {
@@ -7118,20 +7130,7 @@ test('the templates of this machine are found, and a file that is not one is not
   // And a file that is something else entirely.
   await writeFile(join(folder, '随便.json'), JSON.stringify({ hello: 'world' }), 'utf8');
 
-  const listed = await getJson(h.base, `/api/templates/files?folder=${encodeURIComponent(folder)}`);
-  assert.equal(listed.status, 200);
-  const files = listed.body.files;
-  assert.equal(files.length, 1, 'a file that is not a template was offered');
-  assert.equal(files[0].name, '别处的链.模板.json');
-  assert.equal(files[0].title, '别处的链');
-  assert.equal(files[0].steps, 2);
-  assert.equal(files[0].actions[0].type, 'add_node');
-
-  // A folder that is not there is refused, not guessed at.
-  const nowhere = await getJson(h.base, `/api/templates/files?folder=${encodeURIComponent(join(folder, '没有这个'))}`);
-  assert.equal(nowhere.status, 400);
-
-  // And the file the page shares is written by the runtime, under the name it
+  // The file the page shares is written by the runtime, under the name it
   // was given and in the folder it was pointed at.
   const exported = await getJson(h.base, '/api/export', {
     method: 'POST',

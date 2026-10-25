@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { homedir } from 'node:os';
 
-import { readTemplateFile, templateFromCanvas } from '../client/actions.mjs';
+import { templateFromCanvas } from '../client/actions.mjs';
 import { createActionQueue } from './action-queue.mjs';
 import { createAgentRunner } from './agent-runner.mjs';
 import { palette } from './capabilities.mjs';
@@ -311,32 +311,6 @@ export async function start(context) {
     // file somebody sends to this machine lands there too. Each one is read
     // by the one rule that reads a template, so a file that is something else
     // is not offered at all.
-    if (path === '/api/templates/files' && req.method === 'GET') {
-      const where = await folderOf(new URL(req.url ?? '/', 'http://miniapp.local').searchParams.get('folder') ?? '');
-      if (where.error) {
-        return sendJson(res, 400, { error: 'bad_folder', message: where.error });
-      }
-      const files = [];
-      for (const entry of await media.store.listDownloadsFiles('.json', 40, where.folder)) {
-        let text = '';
-        try {
-          text = await readFile(entry.path, 'utf8');
-        } catch {
-          continue;
-        }
-        const parsed = readTemplateFile(text);
-        if (!parsed.ok) continue;
-        files.push({
-          name: entry.name,
-          path: entry.path,
-          title: parsed.template.title,
-          description: parsed.template.description,
-          steps: parsed.template.actions.length,
-          actions: parsed.template.actions,
-        });
-      }
-      return sendJson(res, 200, { files });
-    }
 
     // The folders a file may be put in.
     //
