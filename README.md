@@ -59,6 +59,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | --- | --- | --- |
 | [Dynamic Workflow Console](plugins/stevenjj33/workflow-console/) | Run and supervise MiniMax Code dynamic workflows from one page: live status, a stage-and-dependency flow graph, per-node output, approval and control, templates, and report export | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | Layered image editing with an in-app AI assistant, local recovery and programmatic editing tools | [WebGuHui](https://github.com/WebGuHui) |
+| [FableCut](plugins/klarkxy/fablecut/) | Local timeline editing with FableCut MCP tools and a skill for generating and importing media through mcode-tools | [klarkxy](https://github.com/klarkxy) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | Local video editing with captions, a host Agent assistant, reviewable timeline edits, and MP4/MP3 export | [WebGuHui](https://github.com/WebGuHui) |
 | [AI Office](plugins/cristinamadureira353-svg/ai-office/) | Manage five model-powered employees in a pixel office: client tasks, chats, breaks, meetings and quota-aware offline states; uses your own API keys | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |

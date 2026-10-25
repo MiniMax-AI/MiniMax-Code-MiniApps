@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+  <!-- FableCut animated SVG · loops · concentric pulse rings (attention / notify / sonar) -->
+  <style>
+    .r { transform-box: fill-box; transform-origin: center;
+         animation: pulse 2.4s cubic-bezier(.2,.6,.3,1) infinite; }
+    @keyframes pulse {
+      0%   { transform: scale(0.1); opacity: 0; }
+      15%  { opacity: 0.9; }
+      100% { transform: scale(1); opacity: 0; }
+    }
+  </style>
+  <g fill="none" stroke="#7b6cff" stroke-width="5">
+    <circle class="r" style="--d:0s"   cx="300" cy="300" r="290"/>
+    <circle class="r" style="--d:0.6s" cx="300" cy="300" r="290"/>
+    <circle class="r" style="--d:1.2s" cx="300" cy="300" r="290"/>
+    <circle class="r" style="--d:1.8s" cx="300" cy="300" r="290"/>
+  </g>
+  <circle cx="300" cy="300" r="30" fill="#7b6cff"/>
+</svg>

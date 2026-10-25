@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="240" viewBox="0 0 800 240">
+  <!-- FableCut animated SVG · one-shot (~1.1s) · 5 stars pop in sequence (review / rating) -->
+  <style>
+    .st { transform-box: fill-box; transform-origin: center;
+          animation: pop 0.5s cubic-bezier(.34,1.56,.64,1) both; }
+    @keyframes pop {
+      0%   { transform: scale(0) rotate(-60deg); opacity: 0; }
+      100% { transform: scale(1) rotate(0deg);   opacity: 1; }
+    }
+    .shine { transform-box: fill-box; transform-origin: center;
+             animation: gl 0.4s ease-out both; }
+    @keyframes gl { 0% { opacity: 0; transform: scale(0.3); } 60% { opacity: 0.9; } 100% { opacity: 0; transform: scale(1.4); } }
+  </style>
+  <g fill="#ffd166">
+    <path class="st" style="--d:0s"    d="M110 40 l24 60 64 4 -50 42 17 62 -55 -36 -55 36 17 -62 -50 -42 64 -4z"/>
+    <path class="st" style="--d:0.12s" d="M255 40 l24 60 64 4 -50 42 17 62 -55 -36 -55 36 17 -62 -50 -42 64 -4z"/>
+    <path class="st" style="--d:0.24s" d="M400 40 l24 60 64 4 -50 42 17 62 -55 -36 -55 36 17 -62 -50 -42 64 -4z"/>
+    <path class="st" style="--d:0.36s" d="M545 40 l24 60 64 4 -50 42 17 62 -55 -36 -55 36 17 -62 -50 -42 64 -4z"/>
+    <path class="st" style="--d:0.48s" d="M690 40 l24 60 64 4 -50 42 17 62 -55 -36 -55 36 17 -62 -50 -42 64 -4z"/>
+  </g>
+  <g fill="#fffbe6">
+    <circle class="shine" style="--d:0.62s" cx="110" cy="120" r="30"/>
+    <circle class="shine" style="--d:0.74s" cx="700" cy="120" r="30"/>
+  </g>
+</svg>

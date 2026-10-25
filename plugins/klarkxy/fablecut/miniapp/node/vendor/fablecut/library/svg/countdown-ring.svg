@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <!-- FableCut animated SVG · one-shot (~3s) · countdown ring 3 → 2 → 1
+       Useful for video intros, transitions, and "ready" cues. -->
+  <style>
+    /* Ring sweep — draws a circular arc over 1s per digit */
+    .ring {
+      fill: none;
+      stroke-width: 8;
+      stroke-linecap: round;
+      stroke-dasharray: 502.65;
+      stroke-dashoffset: 502.65;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: sweep 1s cubic-bezier(.4,0,.2,1) both;
+      animation-delay: var(--d, 0s);
+    }
+    @keyframes sweep {
+      0%   { stroke-dashoffset: 502.65; opacity: 0.3; }
+      10%  { opacity: 1; }
+      100% { stroke-dashoffset: 0; opacity: 1; }
+    }
+
+    /* Digit pop-in */
+    .digit {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-weight: 700;
+      font-size: 120px;
+      text-anchor: middle;
+      dominant-baseline: central;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: pop 0.4s cubic-bezier(.34,1.56,.64,1) both,
+                 hideAtEnd 0.01s linear 1s both;
+      animation-delay: var(--d, 0s), calc(var(--d, 0s) + 0.99s);
+      opacity: 0;
+    }
+    @keyframes pop {
+      0%   { transform: scale(0.3); opacity: 0; }
+      60%  { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(1);   opacity: 1; }
+    }
+    @keyframes hideAtEnd {
+      to { opacity: 0; }
+    }
+
+    /* Digit fade-out at end of each second */
+    .digit-out {
+      animation: fadeOut 0.25s ease-in both;
+    }
+    @keyframes fadeOut {
+      0%   { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(0.8); }
+    }
+
+    /* Outer glow pulse */
+    .glow {
+      fill: none;
+      stroke-width: 2;
+      opacity: 0;
+      animation: glowPulse 1s ease-out both;
+      animation-delay: var(--d, 0s);
+    }
+    @keyframes glowPulse {
+      0%   { opacity: 0.6; stroke-width: 8; }
+      100% { opacity: 0;   stroke-width: 30; }
+    }
+  </style>
+
+  <!-- "3" group — 0s to 1s -->
+  <g>
+    <!-- glow -->
+    <circle class="glow" style="--d:0s" cx="200" cy="200" r="150" stroke="#ff6b6b"/>
+    <!-- ring -->
+    <circle class="ring" style="--d:0s" cx="200" cy="200" r="80" stroke="#ff6b6b"/>
+    <!-- digit -->
+    <text class="digit" style="--d:0s" x="200" y="200" fill="#ff6b6b">3</text>
+  </g>
+
+  <!-- "2" group — 1s to 2s -->
+  <g>
+    <circle class="glow" style="--d:1s" cx="200" cy="200" r="150" stroke="#ffd166"/>
+    <circle class="ring" style="--d:1s" cx="200" cy="200" r="80" stroke="#ffd166"/>
+    <text class="digit" style="--d:1s" x="200" y="200" fill="#ffd166">2</text>
+  </g>
+
+  <!-- "1" group — 2s to 3s -->
+  <g>
+    <circle class="glow" style="--d:2s" cx="200" cy="200" r="150" stroke="#6ee7b7"/>
+    <circle class="ring" style="--d:2s" cx="200" cy="200" r="80" stroke="#6ee7b7"/>
+    <text class="digit" style="--d:2s" x="200" y="200" fill="#6ee7b7">1</text>
+  </g>
+</svg>

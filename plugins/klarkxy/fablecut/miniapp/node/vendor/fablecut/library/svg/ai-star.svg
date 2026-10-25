@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
+  <!-- FableCut animated SVG · loops · central AI star + three twinkling satellites (white) -->
+  <style>
+    .tw { transform-box: fill-box; transform-origin: center;
+          animation: twinkle 1.8s ease-in-out infinite; }
+    @keyframes twinkle {
+      0%, 100% { transform: scale(0.15) rotate(0deg); opacity: 0; }
+      50%      { transform: scale(1) rotate(45deg); opacity: 1; }
+    }
+  </style>
+  <g fill="#ffffff">
+    <path d="M400 148 l26 74 74 26 -74 26 -26 74 -26 -74 -74 -26 74 -26z"/>
+    <path class="tw" style="--d:0s"   d="M528 148 l8 20 20 8 -20 8 -8 20 -8 -20 -20 -8 20 -8z"/>
+    <path class="tw" style="--d:0.55s" d="M290 167 l7 18 18 7 -18 7 -7 18 -7 -18 -18 -7 18 -7z"/>
+    <path class="tw" style="--d:1.1s"  d="M288 295 l9 22 22 9 -22 9 -9 22 -9 -22 -22 -9 22 -9z"/>
+  </g>
+</svg>

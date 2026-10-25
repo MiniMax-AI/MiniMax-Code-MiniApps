@@ -1,0 +1,2472 @@
+# FableCut — browser video editor, drivable by Claude Code
+
+A production-style non-linear video editor (Premiere-style) that runs in the
+browser. An AI agent edits videos by **editing `project.json`** (or calling the
+REST API / MCP tools) — the open browser UI live-reloads within ~150 ms via SSE.
+No build step, no npm dependencies.
+
+**This file is the master manual.** Any model pointed at this document (or at
+the `fablecut_docs` MCP tool, which returns it) has everything needed to fully
+drive the editor.
+
+## MCP connection (preferred — works from any session, any directory)
+
+Register the MCP server once at user scope as `fablecut`:
+`claude mcp add -s user fablecut -- npx -y fablecut mcp` (from npm, no path needed),
+or from a clone `claude mcp add -s user fablecut -- node "<path-to>/fablecut/mcp-server.js"`.
+Every Claude Code session then has these tools:
+
+- `fablecut_status` — auto-starts the editor server, returns URL + project summary. Call first.
+- `fablecut_docs` — returns this document (`section: "…"` returns only matching `## ` sections).
+- `fablecut_get_project` / `fablecut_set_project` — read / replace the timeline JSON.
+  `fablecut_get_project {compact:true}` returns a one-line-per-clip summary instead.
+- `fablecut_patch_project` — apply targeted ops (add/update/remove clip/media,
+  set project fields, add and open sequences) without round-tripping the document. **Prefer this for edits.**
+- `fablecut_import_media` — copy a local file (or download an `https://` URL)
+  into `./media/` and register it. The stored `src` is always `/media/…`.
+- `fablecut_analyze_reference` — turn a reference video into an edit blueprint
+  (shots, beats, BPM, energy, drop) + extract its music. See "Remake a reference video".
+- `fablecut_frame` — **look at** a moment and get back an actual image.
+  `{path, t}` returns one frame of a source clip; `{path, frames}` returns a
+  contact sheet across it; with no `path`, `{time}` renders the composed
+  timeline. See "Look at the footage" below.
+- `fablecut_encode_profiles` — list the **delivery presets** (YouTube, Shorts, Reels, TikTok,
+  X, LinkedIn, Master, Broadcast, Web, Archive, saved ones) and the raw ffmpeg **encoding
+  profiles** from `encoding-profiles.json`. `{preset:"youtube"}` returns one preset's spec.
+  See "Export" below.
+- `fablecut_normalize_audio` — measure clips (BS.1770 LUFS or sample peak, via ffmpeg) and
+  set their clip gain to a loudness target. See "Audio mix" below.
+- `fablecut_auto_duck` — find where the voice tracks speak and write `duck` keyframes that
+  dip the music under it. See "Audio mix" below.
+- `fablecut_frame` — **see** a moment. `{path, t}` → one JPEG frame of a source
+  clip; `{path, frames:12}` → a contact sheet across it; `{time}` → the composed
+  timeline, graded, as export renders it. Returns a real image, not numbers.
+  See "Look at the footage" below.
+- `fablecut_denoise` — reduce background noise on audio clips (renders a cleaned copy of the
+  file and switches the clip's stems to it). See "Audio mix" below.
+- `fablecut_silence` — find the pauses in speech and, with `cut:true`, cut them out
+  (extract on the targeted tracks, stems in step). See "Audio mix" below.
+- `fablecut_export` — render the timeline to a file in `exports/` with the editor's own
+  Fast export (open tab, or headless Chrome / Edge). See "Export" below.
+- `fablecut_scopes` — measure the graded picture at a moment (levels, clipping, colour
+  cast), as the editor's scopes see it; also what a grade layer or a clip's masks
+  select. See "Color" and "Masks" below.
+- `fablecut_track` — motion tracking: follow a region of a video clip, store it as
+  a track, and make a mask or another clip follow it. See "Tracking" below.
+- `fablecut_proxy` — make, check or delete proxies: light copies of heavy footage
+  the editor plays while editing (export always reads the originals). See
+  "Media management" below.
+- `fablecut_projects` — list, open, create (from a canvas or a saved template),
+  duplicate, rename, annotate, archive and delete projects. `./project.json` is
+  always the open one. See "Projects" below.
+- `fablecut_versions` — a project's saved versions: save one before big edits, compare
+  a version with now, restore one (never destructive), mark the final cut. See "Versions" below.
+
+### Token-efficient editing (important for agents)
+
+Editing via full get→modify→set costs thousands of tokens per change. Cheaper:
+
+1. **Plan** from `fablecut_get_project {compact:true}` (≈10× smaller than the JSON)
+   and `fablecut_status` — fetch the full JSON only to inspect exact keyframes.
+2. **Edit** with `fablecut_patch_project` ops — send only what changes, e.g.
+   `{ops:[{op:"updateClip", id:"c_v2", set:{props:{filterPreset:"noir"}}}]}`.
+   It re-reads the latest document internally, so it is merge-safe by design
+   (no CONFLICT dance) and never destroys concurrent UI tweaks. To also be sure
+   the clips you touch haven't changed since you looked, pass `baseRevision`
+   (the `revision` you planned from — `fablecut_get_project`, `fablecut_status`
+   or the last "Patched (revision N)" result): if the project has moved past it,
+   the patch is refused with "CONFLICT — not saved" and the current revision.
+   Re-check the clips, then retry with that revision.
+3. **Docs**: request `fablecut_docs {section:"schema"}` (or "Recipes", "Remake", …)
+   instead of the whole manual; skip it entirely if the schema is already in context.
+4. **Media questions** (duration, resolution, fps, codec, audio channels, file
+   size, how often it is used): read them from the registered media entries or
+   the compact view's MEDIA lines — don't shell out to ffprobe; the editor
+   probes every file and writes them back (see "Media management").
+   For what the footage *looks like*, use `fablecut_frame` — it is far cheaper
+   than reading a file, and far more reliable than inferring from a number.
+5. Batch related changes into ONE patch call (ops apply in order, one revision bump).
+6. **Cut and trim with the edit ops** (next section) rather than recomputing
+   `start` / `in` / `duration` by hand — they keep linked stems in sync.
+
+### Timeline edit ops (`fablecut_patch_project`)
+
+The editor's own split / ripple / trim code (`edit-ops.js`), run on the
+document — so linked audio stems ride along, edits land on the **targeted**
+tracks (`untargetedTracks`, see Semantics), and locked clips stay put, exactly
+as with the keyboard shortcuts. Times are seconds.
+
+| op | does |
+|---|---|
+| `{op:"split", at, ids?}` | cut at `at` — the named clips (and their stems), or every targeted track |
+| `{op:"rippleDelete", ids}` | remove clips; later clips on those tracks close the hole |
+| `{op:"closeGap", at}` | close the gap under `at` on every targeted track |
+| `{op:"lift" \| "extract", from?, to?}` | remove a range (default: `inPoint`→`outPoint`, which then clear); extract also closes it |
+| `{op:"insert" \| "overwrite", mediaId, at, in?, duration?}` | three-point edit: place `in`→`in+duration` of the media at `at` (default: the rest of the media). Insert pushes later clips right; overwrite replaces what is under it. A video brings one linked audio stem per channel. |
+| `{op:"rippleTrim", id, side:"in"\|"out", delta}` | move a head / tail; everything after follows |
+| `{op:"roll", id, side, delta}` | move the cut between two clips; nothing else moves |
+| `{op:"slip", id, delta}` · `{op:"slide", id, delta}` | new source window in place · move a clip between its neighbors |
+| `{op:"crossfade", ids? \| at, duration?}` | constant-power audio crossfade at the cuts touching `ids`, or the cut nearest `at` (handles borrowed from both sides) |
+
+Trims are clamped to the source media, the free room and `MIN_DUR`; the result
+note shows the applied delta (`… (asked +5, clamped)`). Any edit op takes
+`tracks:[…]` to target lanes for that op only, and `force:true` to edit locked
+material (only when the user asked). A refused op (nothing under `at`, a
+locked clip, a media window past the file's end) aborts the whole patch unsaved.
+`setProject` also sets `inPoint` / `outPoint` (`null` clears).
+
+Example — cut the 2 s from 10 s to 12 s out of the edit, then crossfade the new cut:
+`{ops:[{op:"extract", from:10, to:12}, {op:"crossfade", at:10, duration:0.5}]}`
+
+**`fablecut_set_project` is conflict-checked.** The MCP server remembers the
+`revision` from the most recent `fablecut_get_project` call. If `project.json`
+has been written by anyone else since that read (e.g. the user dragged a clip in
+the UI), `fablecut_set_project` refuses with a "CONFLICT — not saved" error
+instead of overwriting. Protocol:
+
+1. `fablecut_get_project` → read the document and note its `revision`.
+2. Apply your edits in memory, bump `revision`.
+3. `fablecut_set_project` → if it succeeds you're done.
+4. **On conflict**: call `fablecut_get_project` again to get the latest document,
+   re-apply your intended changes on top of it, bump `revision`, and call
+   `fablecut_set_project` again.
+
+Pass `force: true` to `fablecut_set_project` only when the user explicitly
+asks to overwrite conflicting changes. `fablecut_import_media` only appends a
+new media entry and always merges safely — no conflict check needed.
+
+For Claude Desktop, add to its MCP config:
+`{"mcpServers":{"fablecut":{"command":"npx","args":["-y","fablecut","mcp"]}}}`
+(or `"command":"node","args":["<path-to>/fablecut/mcp-server.js"]` from a clone)
+Direct file editing of `project.json` (below) works too and is equivalent.
+
+Installing as a Claude Code plugin (`/plugin marketplace add ronak-create/FableCut`,
+then `/plugin install fablecut@fablecut`) does the registration for you.
+
+### Where the files are
+
+`project.json`, `projects/`, `media/`, `exports/`, `analysis/` and `library/` normally sit in
+the repo next to `server.js`; installed from npm (`npx fablecut`) they sit in
+`~/FableCut`. Set **`FABLECUT_DATA_DIR`** to move all six
+somewhere else; the code and the static app files stay in the install directory
+either way. The plugin sets this so a plugin update can replace the install
+directory without touching anyone's timeline or footage. **Don't assume
+`project.json` is beside `mcp-server.js`** — call `fablecut_status`, which
+reports the real paths.
+
+Tests (and nothing else) may set **`FABLECUT_NO_FS_WATCH=1`** to skip `fs.watch`.
+On Windows, libuv can abort the process when a file is created under a temp
+data dir. Production leaves watching on so the UI live-reloads.
+Tests may also set **`FABLECUT_NO_AUTOSTART=1`** so `ensureUIServer()` reports
+a missing editor server instead of spawning one — the auto-start is detached,
+so a test that triggers it would leave a `server.js` running after it finishes.
+
+## Run
+
+```
+node server.js        # → http://localhost:7777   (from npm: npx -y fablecut)
+```
+
+Files: `index.html` + `style.css` + `app.js` (editor UI), `server.js` (API + hosting),
+`project.json` (the timeline — THE file to edit), `media/` (project footage),
+`library/` (default asset library, see below).
+
+## How Claude Code edits a video
+
+1. Ensure the server is running (background: `node server.js`, or `fablecut_status`).
+2. Put source files in `./media/` (copy them in, import via the UI / **+ URL**,
+   or `fablecut_import_media` with a local path or HTTPS URL).
+3. Read `project.json`, modify `media` / `clips`, **increment `revision`**, write it back.
+4. The browser UI (if open) reloads instantly. The user previews/exports from the UI.
+
+Rules:
+- **Prefer `fablecut_set_project`** over direct file writes — it detects conflicts
+  automatically (see the MCP section above). If you do write `project.json`
+  directly, read it **immediately** before writing (never write from a stale read:
+  if the user tweaked something in the UI between your read and write, that write
+  destroys their changes). The UI detects external changes by revision comparison,
+  so a write that does not bump `revision` is invisible to it.
+- Make each edit a single atomic write (read → modify → write once), and bump
+  `revision` (integer). Partial multi-step edits can be picked up half-finished.
+- New media entries may omit `duration` — the browser probes it and writes it back.
+  If you need the duration yourself, re-read `project.json` after a second or two,
+  or probe with ffprobe.
+- Don't edit `project.json` while the UI may be mid-drag — the UI defers external
+  reloads during gestures, then picks up the next change.
+
+## The asset library (`./library/`) — default media
+
+Reusable assets, visible in the editor's left-panel tabs and never copied:
+
+| Folder      | Editor tab   | Purpose |
+| ----------- | ------------ | ------- |
+| `library/sfx/`      | **Sound FX** | whooshes, impacts, risers, UI clicks |
+| `library/elements/` | **Elements** | overlay art: alpha PNGs, light leaks, textures, stickers |
+| `library/svg/`      | **SVG**      | animated vector graphics **you author** (convention below) |
+| `library/fonts/`    | font editor  | `.ttf/.otf/.woff/.woff2`, auto-registered, family name = file name; a variable font draws every `weight` |
+| `library/presets/`  | Inspector → Motion → Presets | saved animation presets, one `.json` each (see "Presets and templates") |
+| `library/templates/`| **Templates** | saved templates, one `.json` each, listed after the built-in ones |
+
+- List via `GET /api/library?dir=sfx|elements|svg|fonts|presets|templates` (recursive; subfolders OK).
+- To use one in the timeline, add a media entry whose `src` is its library path,
+  e.g. `{ "id":"m_x", "name":"whoosh.mp3", "kind":"audio", "src":"/library/sfx/whoosh.mp3" }`
+  — then reference it from clips like any other media.
+- Dropping files into these folders live-refreshes the open UI.
+
+## Authoring animated SVGs (the `svg` clip kind)
+
+You can create your own vector animations/overlays: write an `.svg` file into
+`library/svg/` (or `media/`), register it as media with `"kind": "svg"`, and
+place it on a video track. The compositor renders it frame-accurately, driven
+by the clip's local time (preview and export).
+
+**Conventions (required for time-driven animation):**
+1. Root `<svg>` must carry `width` and `height` attributes (or a `viewBox`).
+2. Animate with **CSS `@keyframes` inside a `<style>` block** — SMIL
+   (`<animate>`) is NOT time-controlled.
+3. Never write a literal `animation-delay`. For staggered starts set the custom
+   property `--d` on the element instead: `style="--d:0.4s"`. (The engine drives
+   time by overriding `animation-delay` to `calc(var(--d,0s) - t)` with
+   animations paused.)
+4. `animation-fill-mode: both` (or the `both` keyword in the shorthand) for
+   one-shot intros; `infinite` for loops — both work.
+5. For rotations/scales around an element's own center add
+   `transform-box: fill-box; transform-origin: center;`.
+6. Keep files self-contained (no external hrefs).
+
+Skeleton:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
+  <style>
+    .a { transform-box: fill-box; transform-origin: center;
+         animation: pop 0.5s cubic-bezier(.34,1.56,.64,1) both; }
+    @keyframes pop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  </style>
+  <circle class="a" style="--d:0s"   cx="200" cy="225" r="60" fill="#7b6cff"/>
+  <circle class="a" style="--d:0.2s" cx="400" cy="225" r="60" fill="#ffd166"/>
+</svg>
+```
+
+Examples in `library/svg/`: `sparkles.svg` (loop), `lower-third.svg`,
+`confetti-burst.svg`, `underline-swoosh.svg` (draw-on via stroke-dashoffset).
+
+## project.json schema
+
+```jsonc
+{
+  "name": "My Edit",
+  "width": 1280, "height": 720, "fps": 30,   // composition canvas + timeline/export rate — sole FPS source (UI: FPS select)
+  "exportFrame": { "x": 438, "y": 0, "w": 404, "h": 720 },  // optional delivery crop (even w/h for H.264)
+  // ^ omit = export the full canvas. Preview dims outside this rect; Fast export crops
+  // JPEGs to w×h. Clip x/y/scale stay relative to the composition center, not the frame.
+  // Frame size is always even (yuv420p / libx264); 9:16 on 1280×720 → 404×720, not 405.
+  "background": "#000000",                    // canvas color behind all clips (optional)
+  "revision": 7,                              // bump on every write!
+  "panSchema": 1,                             // 1 = pan-aware; omit only on pre-pan projects (UI migrates once)
+  "markers": [ { "t": 2.5 }, { "t": 5.0, "label": "drop", "color": "red" } ],
+  // ^ beat/cue markers: diamonds on the ruler (label shown beside them), snap
+  //   targets for clip edges. color: gold (default) · red · orange · green ·
+  //   cyan · blue · purple · pink. Kept sorted by t; the UI rounds t to 1 ms.
+  "inPoint": 10.023, // IN work-area marker (Limit playback + optional export range)
+  "outPoint": 21.500, // OUT work-area marker; omit = timeline end
+  "folders": [
+    // Project-bin virtual folders (tree). Media reference them via folderId.
+    { "id": "f_broll", "name": "B-roll", "parentId": null, "open": true }
+  ],
+  "disabledTracks": [ "A2" ],
+  // ^ optional — track ids (e.g. V4 V3 V2 V1 A1 A2 A3) omitted from preview/export when listed
+  "lockedTracks": [ "A3" ],
+  // ^ optional — locked lanes: nothing on them may be edited or moved (see Semantics)
+  "untargetedTracks": [ "V2" ],
+  // ^ optional — lanes edits skip (split, insert, ripple, close gap…); default: all targeted
+  "encodeProfile": "hq",  // optional — fast-export profile id (see encoding-profiles.json)
+  "delivery": { "preset": "youtube", "width": 1920, "height": 1080, "…": "…" },
+  // ^ optional — the delivery spec exports use by default (see "Delivery presets"); setProject takes a preset id
+  "outputs": [ { "id": "o_1", "on": true, "preset": "master", "…": "…" } ],
+  // ^ optional — batch outputs: files made together, one render per frame rate (see "Batch outputs and the export queue")
+  "master": { "gain": -1.5, "fx": [ { "type": "limiter", "ceiling": -1 } ] },
+  // ^ optional — master fader, dB (−60 = silence … +12; omit = 0 dB) and master effects (see "Audio mix")
+  "tracks": [                          // optional — timeline lanes (default V3…V1 + A1…A4)
+    { "id": "V3", "kind": "video" },   // video: higher number drawn on top (V1 under V2 under V3…)
+    { "id": "V2", "kind": "video" },
+    { "id": "V1", "kind": "video" },
+    { "id": "A1", "kind": "audio", "gain": -6, "pan": 0, "out": "B1" },   // audio: A1…An top→bottom; +V/+A appends Vn+1 / An+1
+    // ^ gain = track fader in dB (−60 = silence … +12), pan = −1…1, fx = track effects,
+    //   out = the submix bus it feeds (default: the master); all optional
+    { "id": "A2", "kind": "audio" },
+    { "id": "A3", "kind": "audio" },
+    { "id": "A4", "kind": "audio" }
+  ],
+  "buses": [ { "id": "B1", "name": "Dialogue", "gain": -2, "fx": [ { "type": "compressor" } ] } ],
+  // ^ optional — submix buses B1…B8: name, gain (dB), pan, mute, fx; tracks route in with `out`
+  "collections": [ { "id": "col_sel", "name": "Selects", "media": [ "m_abc" ] } ],
+  // ^ optional — Project-bin collections: media grouped across folders; see "Media management"
+  "comps": [ { "id": "lt", "name": "Lower third", "width": 1280, "height": 720, "duration": 5, "clips": [ /* … */ ] } ],
+  // ^ optional — compositions (nested sequences), placed with kind:"comp" clips; see "Compositions (nested sequences)"
+  "sequence": "main", "sequences": [ { "id": "main", "name": "Main" }, { "id": "seq_v9", "name": "Reel 9:16", "width": 1080, "height": 1920, "clips": [ /* … */ ] } ],
+  // ^ optional — several timelines in one project; the open one is this top level; see "Sequences"
+  "media": [
+    { "id": "m_abc", "name": "intro.mp4", "kind": "video",  // video|audio|image|svg
+      "src": "/media/intro.mp4",             // path under ./media or ./library (never a raw https:// URL)
+      "duration": 12.4, "width": 1920, "height": 1080,
+      "fps": 29.97, "codec": "h264", "audioCodec": "aac", "audioChannels": 2, "sampleRate": 48000,
+      "size": 45200000, "bitrate": 29300000, // probed from the file (read-only; see "Media management")
+      "favorite": true, "tags": [ "interview", "day 1" ],   // optional: bin organization
+      "folderId": null },                    // optional: id of a folders[] entry
+    { "id": "m_abd", "name": "intro.denoise-medium.flac", "kind": "audio", "src": "/media/intro.denoise-medium.flac",
+      "derivedFrom": "m_abc", "denoise": "medium" }  // a noise-reduced copy of m_abc (see "Audio mix")
+  ],
+  "clips": [
+    {
+      "id": "c_xyz",             // unique string
+      "mediaId": "m_abc",        // null for kind:"text", "adjust", "shape", "null" and "comp"
+      "kind": "video",           // video | audio | image | svg | text | adjust | shape | null | comp
+      // kind:"comp" also has "compId" (a comps[] entry) — see "Compositions (nested sequences)"
+      "track": "V1",             // Vn…V1 (video) | A1…An (audio); extras via UI +V/+A or tracks[]
+      "start": 0,                // timeline position, seconds
+      "in": 2.5,                 // offset into source media, seconds (0 for image/svg/text)
+      "duration": 5,             // clip length on timeline, seconds
+      "name": "intro",
+      "linkGroup": "lg_abc",     // OPTIONAL — AV link: video + per-channel audio stems share one id
+      "locked": true,            // OPTIONAL — locked by the user: leave it alone (MCP patch refuses edits)
+      "disabled": true,          // OPTIONAL — stays on the timeline, hidden from preview / audio / export
+      "unlinked": true,          // OPTIONAL — the user unlinked this clip; never auto-relinked on load
+      "parent": "c_null",        // OPTIONAL — moves, turns and scales with that clip (see "Shapes, nulls and parenting")
+      "props": { /* all optional — see the props reference below */ },
+      // OPTIONAL — keyframe animation. Times are seconds RELATIVE TO CLIP START.
+      // "ease" sits on the DESTINATION keyframe of each segment:
+      // linear | ease-in | ease-out | ease-in-out (default ease-in-out).
+      // x and y keys at the same time are a position key; pin / pout on them (px)
+      // are motion-path curve handles (see "Motion paths, motion blur and text on a path").
+      "keyframes": {
+        "scale":   [ { "t": 0, "v": 1 }, { "t": 5, "v": 1.25, "ease": "linear" } ],
+        "opacity": [ { "t": 0, "v": 0 }, { "t": 0.8, "v": 1 } ]
+      },
+      // OPTIONAL — audio effects (audio clips), processed in order. See "Audio mix".
+      "fx": [ { "type": "highpass", "freq": 80 }, { "type": "compressor", "threshold": -20, "ratio": 4 } ],
+      // OPTIONAL — transitions at the clip's head/tail.
+      "transitionIn":  { "type": "fade", "duration": 0.8 },
+      "transitionOut": { "type": "slide-left", "duration": 0.6 }
+    }
+  ]
+}
+```
+
+### props reference
+
+**Transform & compositing** (all visual kinds):
+| prop | default | notes |
+|---|---|---|
+| `x`, `y` | 0 | px offset from canvas center |
+| `scale` | 1 | |
+| `rotation` | 0 | degrees |
+| `opacity` | 1 | 0–1 |
+| `anchorX`, `anchorY` | 0 | anchor point, px from the picture's centre: the point `x`/`y` place and `rotation`/`scale` turn around |
+| `autoOrient` | false | turn the clip with its direction of travel along its motion path (`rotation` adds on top) |
+| `motionBlur` · `motionBlurSamples` | 0 · 8 | motion blur: shutter angle in degrees (0 = off, 180 = film look, up to 720) · sub-frame samples 2–32 |
+| `blend` | "normal" | how the clip lays over what is under it (see Track mattes and blending) |
+| `matte` · `matteTrack` | — | a track matte (see Track mattes and blending) |
+
+**Layout** (video/image/svg):
+| prop | default | notes |
+|---|---|---|
+| `fit` | "contain" | contain · cover (fill canvas, crop overflow) · stretch · none (native px) |
+| `cropL` `cropR` `cropT` `cropB` | 0 | % of the source trimmed off each edge |
+| `cornerRadius` | 0 | px, rounded corners — the PiP look |
+| `flipH`, `flipV` | false | mirror |
+
+**Filter / color** (video/image/svg):
+| prop | default | notes |
+|---|---|---|
+| `filterPreset` | "none" | one of: cinematic · teal-orange · noir · vintage · faded · warm · cold · pop · dreamy · retro · bw-soft · cyberpunk · sunset · midnight. Combines non-destructively with the sliders below. |
+| `brightness` `contrast` `saturation` | 100 | % (100 = neutral) |
+| `hue` | 0 | degrees |
+| `temperature` | 0 | −100 (cool blue) … +100 (warm orange) |
+| `tint` | 0 | −100 (magenta) … +100 (green) |
+| `blur` | 0 | px |
+| `grayscale` `sepia` `invert` `vignette` | 0 | % |
+
+These are quick looks. For real grading use `props.grade` (see "Color" below).
+
+**Motion FX** (video/image/svg/adjust — all animatable):
+| prop | default | notes |
+|---|---|---|
+| `shake` | 0 | camera-shake amplitude in px (deterministic — identical in export) |
+| `shakeSpeed` | 8 | shake frequency |
+| `rgbSplit` | 0 | chromatic aberration / RGB channel split, px |
+| `grain` | 0 | animated film grain, % |
+
+**Keying / cut-out** (video/image):
+| prop | default | notes |
+|---|---|---|
+| `chromaKey` | "" | hex key color, e.g. `"#00ff00"` for green screen ("" = off) |
+| `chromaTolerance` | 26 | 0–100, how much color distance is keyed out |
+| `chromaSoftness` | 12 | 0–100, edge feather + spill suppression |
+| `bgRemove` | false | AI person cut-out (MediaPipe, loads from CDN on first use; needs internet once) |
+
+**Audio / time** (video/audio):
+| prop | default | notes |
+|---|---|---|
+| `volume` | 1 | 0–2 (linear; animatable — fades, ducking) |
+| `gain` | 0 | clip gain in dB (−60…+24), applied **before** `volume`, so keyframes and fades ride on top. Set by Normalize. |
+| `channelMode` | "stereo" | stereo · mono (L+R folded to one channel) · left · right (use one side) · swap (exchange L/R). Ignored on linked stems — `audioChannel` already picks their channel. |
+| `duck` | 0 | ducking in dB (≤ 0), multiplied into `volume`. Normally keyframed by Auto-duck (`keyframes.duck`), so the clip's own volume, keyframes and fades are untouched. |
+| `pan` | 0 | −1 (full left) … 0 (center) … +1 (full right). Linked stems default L `−1` / R `+1` / other `0`. Projects saved before pan migrate once on load (`panSchema`); keep `panSchema: 1` (and explicit `pan` on stems) when rewriting the document so a centered stem is not re-hard-panned. |
+| `speed` | 1 | 0.25–4× playback rate. **Keyframable → speed ramps**: with `keyframes.speed` the engine time-remaps (media time = `in` + ∫speed dt), in preview and in the export audio mix. Static case: source window consumed = `duration × speed`, so `in + duration×speed ≤ media.duration`. |
+
+**Text clips only:**
+| prop | default | notes |
+|---|---|---|
+| `text` | "Title" | `\n` for multi-line |
+| `fontSize` | 72 | px |
+| `color` | "#ffffff" | fill |
+| `color2` | "" | if set: vertical gradient fill color→color2 |
+| `font` | "Segoe UI" | system font, a `library/fonts` family, or ANY Google Font name — unknown names are fetched from Google Fonts automatically |
+| `bold` / `weight` | true / 0 | `weight` (300–900) overrides `bold` when non-zero |
+| `italic` `uppercase` | false | |
+| `align` | "center" | left · center · right · **justify** (inserts spaces between words to fill the text box width, or ~85% of the canvas when no box) |
+| `boxW` `boxH` | 0 | px text box; **0 = hug content**. When both > 0, corner handles resize the box (not `scale`). Default: fixed `fontSize`, word-wrap inside the box. |
+| `boxFit` | false | when a box is set: `false` = wrap at fixed font size; `true` = scale font down (up to `fontSize`) so the whole text fits |
+| `vAlign` | "middle" | top · middle · bottom — vertical alignment of the text block inside the box |
+| `direction` | "auto" | auto · ltr · rtl — `auto` detects per line (Hebrew/Arabic → RTL); all `textAnim` modes honor reading direction (wipe, typewriter reveal, word/letter layout) |
+| `letterSpacing` | 0 | px |
+| `lineHeight` | 1.2 | multiplier |
+| `textShadow` | 12 | soft drop shadow amount, 0 = off |
+| `glow` | 0 | neon glow strength (0–100); replaces the drop shadow |
+| `glowColor` | "" | glow color ("" = use the text color) |
+| `strokeWidth` `strokeColor` | 0, "#000" | text outline |
+| `bgColor` `bgOpacity` | "#000", 0 | rounded pill behind each line |
+| `textAnim` | "none" | typewriter · word-pop · word-slide · karaoke · **letter-pop** (per-character entrance; Arabic/Indic auto-fallback to per-word clusters so joined letters shape correctly) · **wave** (looping per-character ride; same shaping fallback) · **bounce** (looping per-word hop) · **shake** (looping jitter) · **clip-reveal** (wipe-mask sweep, per line) · **zoom-in** (scale + opacity settle) · **font-cut** (rhythmically swaps typeface, then settles — see `fontCutSet`) · **rise-mask** (line rises from behind its baseline, lower-third reveal) |
+| `wordRate` | 0.15 | seconds per word (typewriter: /4, letter-pop: /3 per character); also staggers `clip-reveal`/`zoom-in`/`rise-mask` per line |
+| `textPath` | — | set the title along a path: one shape item (`path`, `line`, `ellipse`, `rect`, `polygon`, `star`) whose outline is the baseline; more lines follow on parallel curves below it. See "Motion paths, motion blur and text on a path" |
+| `pathOffset` · `pathAlign` | 0 · "start" | where along the path the text sits (% of its length, keyframable, wraps on closed paths) · which end of the text sits there: start · center · end |
+| `fontCutSet` | (curated) | array of font family names cycled by `font-cut`, e.g. `["Anton","Bebas Neue","Archivo Black","Oswald"]`; each is auto-loaded |
+
+**Title styles (one-tap cohesive looks).** Text clips created in the UI now
+rotate through curated styles so titles vary instead of all looking basic (the
+old flat `Segoe UI` / no-animation default). Each style bundles a **different
+font**, placement and animation. Apply one in the inspector (Title style
+dropdown + Shuffle), or reproduce it from an agent by writing the same props:
+
+| Style | Font | Look |
+| --- | --- | --- |
+| `impact` | Anton | uppercase, lower third, `word-pop`, big shadow |
+| `elegant` | Playfair Display | white→gold gradient, centered, `clip-reveal` |
+| `kinetic` | Bebas Neue | gold, `font-cut` cycling Anton/Bebas/Archivo/Oswald |
+| `neon` | Bebas Neue | cyan `glow`, `wave` |
+| `handwritten` | Caveat | rotated −4°, lower-left, `word-slide` |
+| `serifDrop` | Abril Fatface | centered, `zoom-in` |
+| `subtitle` | Roboto | small, bottom, bg pill, `karaoke` |
+| `boldRise` | Archivo Black | uppercase, lower third, `rise-mask` |
+| `luxury` | Cinzel | uppercase, cream→gold gradient, wide `letterSpacing`, `clip-reveal` |
+
+**Rule for agents: vary the font per title — never reuse one font across a whole
+edit.** Any Google Font name auto-loads; the display faces above ship in
+`library/fonts/`. Placement props (`x`/`y`) are canvas-aware in the styles
+(lower third ≈ `y: height*0.30`).
+
+Switching the style on an **existing** title (inspector dropdown/Shuffle) only
+restyles the look (font, size, colors, shadow/glow, animation) — the clip's
+`x`/`y`/`scale`/`rotation`/`align` and its `text` are preserved. The style's
+canvas-aware placement is applied only when a title is first created.
+
+**Adjustment layers** (`kind:"adjust"`, `mediaId:null`): a clip that re-renders
+everything drawn *below* it (lower tracks + earlier clips) through its own
+filter stack — Premiere-style. Supports all Filter/Color props, vignette,
+grain, rgbSplit, temperature/tint, whole-frame `shake`, and `opacity` as the
+intensity. Keyframe/transition it like any clip. Put it on V2/V3 above the
+footage. Example: 0.3 s impact shake over everything =
+`{kind:"adjust", track:"V3", duration:0.3, props:{shake:18}}`.
+
+**Masks** (`masks`, video/image/svg/text/adjust): shapes that cut what the clip
+shows — rect, ellipse, bezier, free-hand; feather, expand, invert, add /
+subtract / intersect, keyframes. See "Masks" below.
+
+**Shape layers** (`kind:"shape"`): `props.shapes` (rectangles, ellipses,
+polygons, stars, lines, bezier paths, groups) and `trimStart` / `trimEnd` /
+`trimOffset` (%, a draw-on of every path). **Null objects** (`kind:"null"`)
+never render; other clips are parented to them. See "Shapes, nulls and parenting".
+
+**Comp clips** (`kind:"comp"`, `compId`): a composition placed as one clip — it
+draws like a picture of the comp's size (`fit` defaults to `none`) and its media
+plays and exports. See "Compositions (nested sequences)".
+
+**Animatable props** (usable in `keyframes`): x, y, scale, rotation, opacity, anchorX, anchorY, trimStart, trimEnd, trimOffset, pathOffset,
+volume, pan, duck, speed, brightness, contrast, saturation, hue, blur, grayscale, sepia,
+invert, temperature, tint, vignette, cornerRadius, shake, rgbSplit, grain,
+fontSize, letterSpacing, glow.
+
+**Transition types**: fade · slide-left/right/up/down · zoom · wipe (=wipe-left)
+· wipe-right/up/down · iris (circular) · spin · blur · whip (whip-pan) ·
+glitch (RGB split + jitter) · pop (overshoot scale — stickers/captions).
+
+### Audio mix
+
+Every clip runs through the same chain in preview **and** export:
+`source → channels (audioChannel / channelMode) → gain (dB) → clip fx → volume (keyframes, fades, duck) → pan → its A-track`,
+then `track fx → track fader → track pan → (submix bus fx → fader → pan) → master sum → master fx → master fader`.
+A track has a fader (`tracks[].gain`, dB), a pan (`tracks[].pan`) and effects
+(`tracks[].fx`); the master has a fader (`master.gain`) and effects (`master.fx`).
+**Submix buses** (`buses[]`, B1…B8) group tracks: a track with `out:"B1"` feeds
+that bus instead of the master, and the bus has its own effects, fader, pan and
+mute — e.g. every dialogue lane into one bus with one compressor and one fader.
+Audio on a video lane (a clip with `volume > 0` on V1…) goes straight to the
+master. In the UI these are the strips in the **Mixer** tab beside the
+Inspector (its **FX** button edits that track's or the master's effects);
+mute / solo are the existing track switches (`disabledTracks`).
+
+**Effects** (`fx` — an array processed in order; every parameter optional, out-of-range
+values are clamped; `on:false` bypasses one without losing its settings):
+
+| type | parameters (default) |
+|---|---|
+| `eq` | `lowFreq` 120 Hz, `lowGain` 0 dB (low shelf) · `midFreq` 1000, `midGain` 0, `midQ` 1 (peak) · `highFreq` 8000, `highGain` 0 (high shelf); gains −18…+18 |
+| `highpass` / `lowpass` | `freq` (80 / 8000 Hz), `q` 0.71 |
+| `compressor` | `threshold` −20 dB, `ratio` 4, `attack` 10 ms, `release` 200 ms, `knee` 6 dB, `makeup` 0 dB |
+| `limiter` | `ceiling` −1 dB, `release` 80 ms — brickwall, 5 ms lookahead; nothing passes the ceiling |
+| `gate` | `threshold` −50 dB, `range` −40 dB (how far it closes), `attack` 2, `hold` 80, `release` 150 ms |
+| `delay` | `time` 0.3 s, `feedback` 0.35, `mix` 0.25 |
+| `reverb` | `decay` 2 s, `predelay` 20 ms, `mix` 0.25 |
+| `distortion` | `drive` 0.3, `mix` 1 |
+| `widener` | `width` 1.5 (0 = mono, 1 = as is, 2 = extra wide) |
+| `pitch` | `semitones` 0 (−12…+12; changes pitch, not speed — about 30 ms of delay), `mix` 1 |
+
+**Presets** fill the chain with tweakable effects: Voice — `clean-voice`, `podcast`,
+`radio`, `deep-voice` (pitch down 4 semitones + a warmer EQ), `telephone`;
+Music — `cinematic`, `wide`, `muffled` (next room). Agents apply them (or any chain)
+with the patch op `setFx`:
+`{op:"setFx", target:"clip", id:"c_vo", preset:"podcast"}` ·
+`{op:"setFx", target:"track", id:"A3", fx:[{type:"eq", highGain:-3}]}` ·
+`{op:"setFx", target:"master", fx:[{type:"limiter", ceiling:-1}], append:true}` ·
+`{op:"setFx", target:"bus", id:"B1", preset:"podcast"}` ·
+`fx:null` clears. On a clip it applies to its linked stems too; chains are
+validated (unknown effect or preset → the whole patch is refused). The compact
+project view shows chains as `fx:highpass·eq·…` (`lowpass~freq` = automated).
+
+**Effect automation** — any effect parameter except reverb `decay` can follow
+keyframes: `keys` on the effect, `{param: [{t, v, ease?}]}`. `t` is seconds from
+the clip's start for a clip's effects, and timeline seconds for a track's, a
+bus's or the master's; `ease` (linear · ease-in · ease-out · ease-in-out, default
+ease-in-out) shapes the segment arriving at that key, as with clip keyframes.
+While a parameter has keys they set it. Preview and export follow them the same
+way (export steps every 20 ms with a short glide). In the effects panel each
+parameter has a ◆: set or remove a key at the playhead; with keys, the slider
+edits the key under the playhead. Agents:
+`{op:"setFxKeys", target:"bus", id:"B1", type:"lowpass", param:"freq", keys:[{t:0, v:18000}, {t:8, v:500, ease:"ease-in"}]}`
+(`index` picks the effect when the type repeats; `keys:null` clears) — or write
+`keys` inside a `setFx` chain. Example — a filter sweep into the drop: a
+`lowpass` on the music clip keyed from 400 Hz up to 20000 Hz over the build.
+
+- Set a track fader / pan: `{op:"setTrack", id:"A2", set:{gain:-8, pan:0}}`
+  (`null` or `0` resets). Master: `{op:"setProject", set:{master:{gain:-1}}}`.
+- Buses: `{op:"setBus", id:"B1", set:{name:"Dialogue", gain:-2, pan?, mute?}}`
+  creates or updates one; route a track in with `{op:"setTrack", id:"A1", set:{out:"B1"}}`
+  (`out:"master"` or `null` routes it back); `{op:"removeBus", id:"B1"}` sends
+  its tracks back to the master. In the Mixer: **+ Bus**, the **→** menu under a
+  track's name, double-click a bus name to rename it.
+- **Noise reduction** — `fablecut_denoise {clipIds, amount?:"light"|"medium"|"strong"|"off"}`
+  (default medium; the inspector's **Noise** control does the same). The file's
+  noise floor is measured (its quietest 50 ms windows), then ffmpeg's FFT
+  denoiser pulls everything near it down (10 / 18 / 30 dB) into a FLAC copy of
+  the **whole** source file in `media/`, registered with `derivedFrom` (the
+  original) and `denoise` (the amount). The clip and its linked audio stems
+  switch to that copy; the picture keeps its own file, so links, `in` points
+  and timing stay as they were. `off` switches back; a level already rendered
+  is reused. Works on audio clips (a video's sound is on its linked stems).
+  Needs ffmpeg. Use it before normalizing — the measured loudness changes.
+- **Normalize** — `fablecut_normalize_audio {clipIds, mode?:"lufs"|"peak", target?}`
+  measures each clip's source window after its channel routing (ITU-R BS.1770
+  integrated loudness with EBU R128 gating, or sample peak) and sets
+  `props.gain` to hit the target. Linked stems are measured together and share
+  one gain; passing a video clip normalizes its stems. Targets: **−14 LUFS**
+  streaming / social, **−16 LUFS** podcast / dialogue, **−23 LUFS** broadcast,
+  or `mode:"peak", target:-1`. Locked clips are skipped unless `force:true`.
+  The inspector's **Normalize** in the editor does the same measurement.
+- **Fade curves** — a `fade` transition on an audio clip may carry `curve`:
+  `"power"` (constant power — the crossfade default, no dip in the middle),
+  `"linear"` (constant gain — for crossfading the *same* material, e.g. a split
+  of one take) or `"exp"` (slow start, natural fade to silence). No `curve` keeps
+  the original eased shape. Only the volume follows the curve; picture fades
+  are unchanged. `{transitionOut:{type:"fade", duration:3, curve:"exp"}}`.
+- **Crossfades** — overlap A and B on one track and give A
+  `transitionOut:{type:"fade", duration:d, curve:"power"}` and B
+  `transitionIn` the same, with `d` = the overlap. **Shift+D** in the editor does
+  it for you: it borrows the overlap from spare media on both sides of the cut
+  (half each, or more from the side that has it), so nothing after the cut
+  moves; for a linked shot the stems crossfade and B's picture dissolves in.
+- **Auto-duck** — `fablecut_auto_duck {clipIds:[music…], under?:["A1"], amount?:-12,
+  threshold?:-40, attack?:0.3, release?:0.6}` finds where the voice tracks
+  (default: every other audio track) are above `threshold` dBFS — short gaps are
+  bridged so the music doesn't pump between words — and writes `keyframes.duck`
+  on the music: ramp down `attack` s before speech, hold, back up over
+  `release` s. It replaces earlier ducking; `amount:0` clears it. Same as the
+  inspector's **Auto-duck** section or the clip menu's *Auto-duck under other tracks*.
+- **Silence** — `fablecut_silence {clipIds, threshold?:-40, minSilence?:0.5, padding?:0.15, cut?, tracks?, force?}`
+  listens to the speech clips (a video brings its linked stems; each measured after
+  its channel routing, gain and volume) and finds every stretch where none of them
+  is above `threshold` dBFS for at least `minSilence` seconds. It keeps `padding`
+  seconds of quiet after the phrase before and before the phrase after, so words
+  aren't clipped; a clip's own start and end are cut to the first and last word.
+  Cuts land on whole frames, and the gaps *between* clips are left alone. Without
+  `cut` it only reports the spans (timeline seconds). With `cut:true` each one is
+  removed with an `extract` on the targeted tracks (`tracks` picks others), last
+  first, in one revision: later material moves up, linked stems stay in step, and
+  locked tracks and clips stay where they are — **lock the music bed first** if it
+  should keep running under the tightened edit. `force:true` cuts through locked
+  material too, so pass it only when the user asked. Only time that was actually
+  heard is cut: a clip with no audio stream (or disabled) is left alone, and so is
+  one with a speed ramp (`keyframes.speed`) — its sound doesn't sit on the timeline
+  at one speed. A version
+  of the project as it was is kept before the cut; if that fails the reply says
+  so in a warning, and then there is no version to go back to. Raise `threshold`
+  toward −30 in a noisy room; lower `minSilence` for a tighter, jump-cut feel. In
+  the editor: the Inspector's **Silence** section on an audio or video clip (or
+  right-click → **Find silences**) — **Find** marks the silences on the timeline
+  as amber bands, **Cut N** extracts them (one undo step), **Clear** removes the
+  marks. The marks drop when the timeline, a clip's file, speed or level, or the
+  frame rate changes.
+- In the editor, each audio clip shows its **volume line** (yellow; dashed =
+  after ducking): drag it to change the level, Ctrl/Cmd-click to add a keyframe,
+  drag a point to move it, Alt-click or double-click to remove one. The corner
+  **fade grips** drag a constant-power fade in or out. Both edit linked stems together.
+- Use **gain** for "this clip is too quiet / loud", **volume keyframes** for
+  shaping, **duck** for dipping under dialogue, the **track fader** to
+  balance whole lanes (dialogue against the music bed), and a **bus** when
+  several lanes need the same processing or one fader.
+
+### Color
+
+A clip's color grade lives in `props.grade` on any video, image, svg or
+adjustment clip (an adjustment layer grades everything below it). It runs on
+the GPU (WebGL2; CPU fallback) **before** the clip is composited, in preview and
+export alike, so it comes before the Filter / color sliders and presets, which
+still apply on top. In the editor: the **Color** workspace (top bar) shows
+scopes beside the program monitor and the **Color** tab beside the Inspector
+has the wheels and sliders for the selected clip.
+
+The grade is sparse: only keys that differ from neutral are stored.
+
+| key | neutral | range | does |
+|---|---|---|---|
+| `exposure` | 0 | −5…5 | stops, in linear light |
+| `temp` · `tint` | 0 | −100…100 | white balance in linear light: temp > 0 warmer, tint > 0 magenta (±100 ≈ ±1 stop per channel) |
+| `lift` · `gamma` · `gain` · `offset` | [0,0,0,0] | each −1…1 | colour wheels, `[r, g, b, master]`; a channel's amount is its own value + master. offset adds, lift raises blacks keeping white (`x + l·(1−x)`), gain multiplies (`x·(1+g)`), gamma bends mids (`x^(1/2^γ)`, > 0 brighter) |
+| `contrast` · `pivot` | 1 · 0.435 | 0…3 · 0.05…0.95 | log-style contrast `pivot·(x/pivot)^c` — blacks never crush |
+| `blacks` `shadows` `midtones` `highlights` `whites` | 0 | −100…100 | tone bands on luma, darkest → brightest (smooth, overlapping) |
+| `lowSoft` · `highSoft` | 0 | 0…100 | soft rolloff into black / white instead of a hard clip |
+| `saturation` | 100 | 0…200 | around Rec.709 luma |
+| `curves` | — | `{y?, r?, g?, b?}` | tone curves, each `[[x, y], …]` on 0…1 (see Curves below) |
+| `hueHue` · `hueSat` · `hueLuma` · `satLuma` | — | `[[x, value], …]` | hue / saturation curves (see Curves below) |
+| `layers` | — | up to 8 | secondaries: grades limited by a qualifier and / or a mask (see Layers below) |
+| `on` | true | — | `false` bypasses the grade without losing it |
+
+Order: exposure + white balance → offset → lift → gain → gamma → contrast →
+tone bands → rolloff → saturation → curves (luma, then R G B) → hue curves →
+layers, in order.
+
+**Curves.** Point lists drawn through a smooth curve that never overshoots
+(monotone cubic) — at most 24 points each.
+
+| key | x | value | neutral | does |
+|---|---|---|---|---|
+| `curves.y` | level 0…1 | level 0…1 | the diagonal | luma curve: brightness only, the colour is kept |
+| `curves.r` / `.g` / `.b` | level 0…1 | level 0…1 | the diagonal | one channel |
+| `hueHue` | hue 0…360° | shift −180…180° | 0 | rotate one hue toward another |
+| `hueSat` | hue 0…360° | factor 0…2 | 1 | saturate / desaturate one hue (0 = grey) |
+| `hueLuma` | hue 0…360° | −0.5…0.5 | 0 | brighten / darken one hue (scaled by its saturation, so greys never move) |
+| `satLuma` | saturation 0…1 | −0.5…0.5 | 0 | brighten / darken by how saturated a pixel is |
+
+Tone curves get `[0, 0]` and `[1, 1]` added when missing, so
+`curves:{y:[[0.25, 0.2], [0.75, 0.8]]}` is a gentle S. Hue curves wrap around
+360°, and **a hue curve with one point is a band**: that value at the hue,
+easing back to neutral 40° either side — `hueSat:[[220, 0.6]]` mutes blues
+only. Hues: red 0, yellow 60, green 120, cyan 180, blue 240, magenta 300;
+skin sits near 20–30. A curve equal to neutral is dropped.
+
+In the editor the **Curves** section of the Color tab edits them: tabs for
+Curves (Y / R / G / B) and the four hue curves; click to add a point on the
+curve, drag to move it, double-click to remove it, **Pick** then click the
+monitor to mark that colour's level or hue on the curve (new points snap to
+the mark), **Reset** clears the curve shown.
+
+**Layers (secondaries).** Each layer is a grade of its own — any keys above
+except `layers` — mixed into the picture where its **matte** says:
+matte = qualifier × mask (either may be left out; with neither, the layer
+grades the whole frame). Layers run after the primary grade, in order, and
+each one's qualifier looks at the picture as it reaches that layer.
+
+```jsonc
+"layers": [
+  { "name": "Skin", "qualifier": { "hue": [25, 40, 20], "sat": [0.15, 0.7, 0.1] },
+    "saturation": 90, "hueHue": [[25, -4]] },
+  { "name": "Vignette", "mask": { "shape": "ellipse", "x": 0.5, "y": 0.5, "w": 0.8, "h": 0.9, "feather": 0.25, "invert": true },
+    "exposure": -0.6 }
+]
+```
+
+| key | does |
+|---|---|
+| `name` · `on` | a label; `on:false` turns the layer off |
+| `qualifier.hue` | `[centre°, width°, soft°]` — hues within ±width/2 of the centre, easing out over `soft`; wraps through red. Greys carry no hue, so a hue range leaves them out |
+| `qualifier.sat` · `qualifier.luma` | `[low, high, soft]` on 0…1 — saturation (HSV) / Rec.709 luma between low and high |
+| `qualifier.invert` | select everything else |
+| `mask.shape` | `ellipse` · `rect` · `poly` · `bezier` (or `freehand` with a `stroke`, fitted into a bezier — see "Masks") |
+| `mask.x` · `mask.y` | centre, as fractions of the clip's picture (0…1, y down) |
+| `mask.w` · `mask.h` | size, fractions of the picture's width / height (ellipse, rect) |
+| `mask.rotation` | degrees, clockwise |
+| `mask.feather` | soft edge, a fraction of the picture's height (0…0.5), centred on the outline |
+| `mask.points` | poly: 3–16 `[dx, dy]` corners around `x, y` (fractions of width / height); bezier: 3–24 anchors `[dx, dy]` or `[dx, dy, inX, inY, outX, outY]` with curve handles |
+| `mask.invert` | grade outside the shape |
+| `mask.keys` | animate it: `[{t, x?, y?, w?, h?, rotation?, feather?, ease?}]`, `t` in seconds from the clip's start; each param eases between the keys that set it (`ease` on the arriving key, as for clip keyframes) |
+
+Masks live in the clip's own picture, so they follow the clip when it is
+moved, scaled, rotated, cropped or flipped. On an adjustment layer they are
+fractions of the canvas.
+
+In the editor the strip under **Copy / Paste** lists **Primary** and the
+layers; **+ Layer** adds one. With a layer picked, the wheels, sliders and
+curves edit that layer, and three more sections appear: the layer's name,
+**On**, **Matte** (the monitor shows what it selects, white = graded), ↑ ↓ to
+reorder, **Delete**; **Qualifier** — **Pick** then click a colour in the
+monitor to select its hue, saturation and luma, then tune the ranges; and
+**Mask** — pick a shape and drag it on the monitor (inside moves it, the
+handles resize it, the knob rotates it, Shift snaps to 15°; on a poly or
+bezier, Ctrl-click adds a point and double-click removes one), or **Draw** a
+free-hand outline on the monitor (it becomes a bezier). **◆ Key** keys the
+shape at the playhead; once it has keys, every change to the shape keys.
+
+**Wheel colours.** A wheel's `r, g, b` normally carry no brightness: they are a
+point on the vectorscope's Cb / Cr plane, so pushing a wheel toward a colour
+moves the picture's trace toward that colour's target. To tint shadows teal by
+about 0.03: `lift: [-0.034, 0.008, 0.012, 0]` (r = 1.5748·Cr, g = −0.1873·Cb −
+0.4681·Cr, b = 1.8556·Cb, with Cb = 0.0065, Cr = −0.0216 here). Small values go a
+long way — ±0.02…0.05 on lift and offset, ±0.05…0.15 on gamma and gain.
+
+**Agents** set a grade with the patch op `setGrade` and check it with
+`fablecut_scopes`:
+
+- `{op:"setGrade", id:"c_a", grade:{exposure:0.3, temp:-15, contrast:1.15}}` — merges
+  into the clip's grade key by key; `null` on a key resets it; `replace:true`
+  starts from neutral; `grade:null` clears it; `ids:[…]` grades several clips
+  at once. `curves` merges per channel: `grade:{curves:{r:[[0.5, 0.55]]}}`
+  keeps the other channels, `curves:{y:null}` removes the luma curve. `layers`
+  replaces the whole layer list. Unknown keys or bad values refuse the whole patch. Locks apply
+  (`force:true` as elsewhere).
+- `{op:"setGradeLayer", id, layer, set:{…}}` edits one layer: `layer` is an
+  index (0 = first) or a name. A name that isn't there yet — or the index one
+  past the end — adds a layer. `set` takes any layer key and merges like
+  `setGrade`; `qualifier` and `mask` also merge key by key (`mask:{x:0.6}`
+  moves it, `qualifier:{luma:null}` drops the luma range). `replace:true`
+  starts the layer from scratch (keeping its name), `remove:true` deletes it.
+  `ids:[…]` works too.
+- `fablecut_scopes {time}` renders the graded frame at `time` (default: the
+  playhead) exactly as export would — an open editor tab, else headless — and
+  returns numbers: luma min / 1st percentile / median / mean / 99th percentile /
+  max (0–1), the % of pixels at pure black and pure white, mean R/G/B, average
+  saturation, and the midtones' colour cast (hue name, hue angle, strength;
+  "neutral" below 0.01), plus the clips on screen and their grades. With an
+  `exportFrame` it measures the delivered crop.
+- `fablecut_scopes {time, matte:{clip, layer}}` also measures what one layer
+  selects: the matte's coverage (% of that clip's own picture, measured
+  alone — other clips and adjustment layers don't count) and the levels, mean
+  RGB, saturation and cast of the selected pixels after grading. A coverage
+  near 0 means the qualifier or mask misses; check it before trusting a
+  secondary.
+
+Reading the numbers: a normally exposed shot has its median near 0.35–0.5;
+`whitePct` above ~1 means clipped highlights (lower `highlights` / `whites`, or
+add `highSoft`); `blackPct` above ~2 means crushed shadows. A cast strength
+above ~0.03 on a scene that should be neutral wants white balance: move `temp`
+against the cast (orange / yellow → lower temp; blue / cyan → raise it) and
+`tint` against green / magenta, then measure again.
+
+Secondary workflow: grade the whole shot first (primary), then add a layer
+for the one thing that needs its own correction — e.g. skin:
+`{op:"setGradeLayer", id, layer:"Skin", set:{qualifier:{hue:[25, 40, 20], sat:[0.12, 0.7, 0.1]}, saturation:92}}`,
+then `fablecut_scopes {matte:{clip:id, layer:0}}` — expect a coverage that
+matches how much of the frame is skin and a cast near orange (hue ~25–35°).
+A sky: `qualifier:{hue:[210, 50, 25], luma:[0.45, 1, 0.1]}` with `hueSat:[[210, 1.25]]`.
+A vignette or a relight: a feathered ellipse `mask` with `invert:true` and
+`exposure:-0.5`, or without `invert` and `exposure:+0.3` on a face; give it
+`keys` to follow a move.
+
+Workflow for matching shots: grade the hero shot, measure it, then grade every
+other shot of the scene until its median and cast land near the hero's. In the
+editor, **Copy** / **Paste** on the Color tab pastes one clip's grade onto every
+selected clip.
+
+### Masks
+
+A clip's masks cut what it shows: only the parts the masks keep reach the
+frame, so a clip can be isolated, revealed or cut through, and anything under
+it shows in the gaps. They live in `props.masks` on any video, image, svg,
+text or adjustment clip. On an adjustment layer they limit where its effects
+and grade apply. They run in preview and export alike. The clip draws as usual,
+the masks cut it, and then its `opacity` and `blend` composite it.
+
+```jsonc
+"masks": [
+  { "name": "Subject", "shape": "ellipse", "x": 0.52, "y": 0.45, "w": 0.4, "h": 0.7, "feather": 40 },
+  { "name": "Hole", "shape": "rect", "mode": "subtract", "x": 0.6, "y": 0.4, "w": 0.1, "h": 0.1 },
+  { "shape": "bezier", "x": 0.3, "y": 0.7, "expand": 8,
+    "points": [[0, -0.1], [0.12, 0.08, 0, -0.05, 0, 0.05], [-0.12, 0.08]],
+    "keys": [{ "t": 0, "x": 0.3 }, { "t": 2, "x": 0.6, "ease": "linear" }] }
+]
+```
+
+| key | default | does |
+|---|---|---|
+| `shape` | — | `rect` · `ellipse` · `bezier` (write `freehand` with a `stroke` to have one drawn for you) |
+| `x` · `y` | 0.5 | centre, as fractions of the clip's picture (0…1, y down) |
+| `w` · `h` | 0.5 | size, fractions of the picture's width / height (rect, ellipse) |
+| `points` | — | bezier: 3–64 anchors around `x, y`, each `[dx, dy]` (a corner) or `[dx, dy, inX, inY, outX, outY]` (with curve handles relative to the anchor), all fractions of the picture's width / height |
+| `stroke` | — | freehand only: `[[u, v], …]` picture fractions along an outline; it is simplified and stored as an editable `bezier` |
+| `scale` · `rotation` | 1 · 0 | about the centre; degrees clockwise |
+| `mode` | `add` | how this mask combines with the ones before it: `add` · `subtract` · `intersect` · `difference` |
+| `invert` | false | use everything outside the shape |
+| `opacity` | 1 | 0…1, how strongly this mask counts |
+| `feather` | 0 | soft edge, project pixels, centred on the outline |
+| `expand` | 0 | grow (+) or shrink (−) the outline, project pixels |
+| `name` · `on` | — | a label; `on:false` turns the mask off |
+| `keys` | — | animate it: `[{t, x?, y?, w?, h?, scale?, rotation?, feather?, expand?, opacity?, points?, ease?}]`, `t` in seconds from the clip's start; each param eases between the keys that set it (`ease` on the arriving key, as for clip keyframes). `points` keys morph the outline and need the shape's point count |
+
+Masks combine bottom-up (first in the list first). The first one starts from
+nothing when it adds and from the whole picture otherwise, so a lone
+`subtract` cuts a hole in a full picture. At most 8 masks per clip.
+
+The picture a mask lives in is the clip's drawn rectangle for video, image
+and svg (after fit and crop), the text block for text, and the whole canvas
+for an adjustment layer. Masks follow the clip when it is moved, scaled,
+rotated or flipped, and keep the clip's keyframes.
+
+In the editor, the **Masks** section of the Inspector has **+ Rect**,
+**+ Ellipse**, **Pen** (click points on the monitor, drag while placing one to
+pull curve handles, click the first point or press Enter to close) and
+**Draw** (drag a free-hand outline). **Matte** shows the clip's matte in the
+monitor (white = visible). Pick a mask's chip to edit it: mode, **Invert**,
+the sliders, ↑ ↓ to reorder, **Copy**, **Delete**, and on the monitor, drag
+inside to move it, the edge handles to resize it and the knob to rotate it
+(Shift snaps to 15°). On a bezier, drag a point to move it, drag its handles
+to curve it (Alt breaks the pair), Alt-drag a point to pull fresh handles,
+Ctrl-click the outline to add a point, and double-click a point to remove
+it. **◆ Key** keys the whole mask at the playhead; once it has keys, every
+change keys. Esc steps back (point, then mask).
+
+**Agents** edit masks with patch ops:
+
+- `{op:"setMask", id, set:{shape:"ellipse", x:0.5, y:0.45, w:0.4, h:0.7, feather:40}}`
+  adds a mask (no `mask`, an index one past the end or a new name adds one; a
+  new mask needs `shape`). `{op:"setMask", id, mask:"Subject", set:{x:0.6}}`
+  edits one, by index (0 = first) or name, merging key by key (`null` resets a
+  key). `replace:true` starts it over, keeping its name. `ids:[…]` edits several clips.
+- A drawn outline: `set:{shape:"freehand", stroke:[[0.4, 0.3], [0.6, 0.32], …]}`.
+  It is stored as an editable bezier.
+- `{op:"setMaskKeys", id, mask, keys:[{t:0, x:0.3}, {t:2, x:0.7}]}` animates
+  one (`keys:null` stops it); `{op:"removeMask", id, mask}` deletes one.
+- `props.masks` written through `addClip` / `updateClip` is validated the same
+  way. Bad keys, shapes or values refuse the whole patch. Locks apply
+  (`force:true` as elsewhere).
+- `fablecut_scopes {time, mask:{clip}}` measures them: the % of the clip's
+  picture its masks keep (the feathered matte, measured alone) and the % of
+  the frame the masked clip covers. The compact project view lists each
+  clip's masks as `[2 masks: ellipse feather 40, rect subtract]`.
+
+Recipes: **spotlight** — a feathered ellipse on the clip; **split screen** —
+two clips on V1 / V2, a `rect` on the top one covering its half; **cut a
+logo out of the background** — a bezier around it, `feather` 2–4;
+**reveal** — a rect whose `w` (or `x`) keys from 0 to full; **effects only
+on the face** — an adjustment layer with a feathered ellipse, keyed to follow
+it; **vignette through an adjustment layer** — an inverted ellipse with
+`feather:200` and the layer's `brightness` down.
+
+### Track mattes and blending
+
+A **track matte** cuts a clip with the picture on another track: where that
+picture is opaque (alpha) or bright (luma), the clip shows. Set it on the
+clip being cut, the fill:
+
+| prop | does |
+|---|---|
+| `matte` | `alpha` · `alpha-inverted` · `luma` · `luma-inverted`. Alpha keeps the clip where the matte's pixels are opaque, luma where they are bright (white = shows, black = gone, Rec. 709 weights). The inverted modes keep the opposite |
+| `matteTrack` | the video track the matte comes from. Default: the video track directly above the clip (V2 for a clip on V1) |
+
+The matte track does not draw into the frame while a clip on screen uses it;
+it only cuts. Its clips keep their own transform, keyframes, opacity, masks
+and effects, so the matte can move, scale and animate on its own. When the
+matte track has nothing at that moment, `alpha` / `luma` show nothing of the
+clip and the inverted modes show all of it. Track mattes and masks combine:
+the matte cuts the clip, then its masks cut what is left, then `opacity` and
+`blend` composite it. A clip used as a matte is drawn without its own track
+matte. Audio clips take neither.
+
+`blend` is how a clip lays over what is under it: `normal` · `multiply` ·
+`screen` · `overlay` · `darken` · `lighten` · `color-dodge` · `color-burn` ·
+`hard-light` · `soft-light` · `difference` · `exclusion` · `hue` ·
+`saturation` · `color` · `luminosity` · `lighter` (add). Blending happens after
+masks and mattes, so a masked clip only blends where it is kept.
+
+In the editor, **Track matte** and **Matte track** sit under **Blend** in the
+Inspector's Transform section (the Adjustment layer section for an adjustment
+layer). The timeline marks a clip with a track matte ◐ and shows the clips
+that serve as its matte hatched, labelled **Matte**.
+
+**Agents:** `{op:"setMatte", id, matte:"luma"}` (or `ids:[…]`; `track:"V3"`
+picks the matte track, `track:null` goes back to the one above;
+`matte:null` removes it). `blend`, `matte` and `matteTrack` written through
+`addClip` / `updateClip` are validated too. `fablecut_scopes` lists each clip
+on screen with its `matte` (e.g. `luma from V2`), `blend`, and whether it is a
+matte itself.
+
+Recipes: **text filled with video** — the text on V2, the video on V1 with
+`matte:"alpha"`; **a shape reveal** — an svg or a masked solid on V2 whose
+scale keys up, the shot on V1 with `matte:"alpha"`; **light leaks / film
+burn** on V2 with `blend:"screen"`; **a grade only in the bright areas** — an
+adjustment layer with `matte:"luma"` over a copy of the shot;
+**a cut-out through a texture** — `luma-inverted` against a black-and-white
+texture.
+
+### Tracking
+
+Motion tracking follows something in a video clip frame by frame: a corner, a
+logo, a face, a sign. The result is a **track** stored on the clip, and masks
+and other clips **follow** it by having it written into their keys. Rendering
+never reads a track, so a followed mask or title renders and exports exactly
+like a hand-keyed one, and you can edit its keys afterwards.
+
+```jsonc
+"tracks": [
+  { "name": "Logo", "kind": "point", "w": 0.08, "h": 0.14,
+    "samples": [[0, 0.31, 0.42, 1, 0, 1], [0.0333, 0.312, 0.421, 1, 0, 0.98]] }
+]
+```
+
+| key | does |
+|---|---|
+| `name` | how masks, clips and agents refer to it (default `Track n`, or the mask's name) |
+| `kind` | `point` (position) or `box` (position, size and rotation were followed) |
+| `w` · `h` | the region that was matched, fractions of the clip's picture |
+| `samples` | one per frame: `[t, x, y, s, r, q]`. `t` is seconds from the clip's start, `x, y` is the centre (fractions of the picture, like masks), `s` is the scale and `r` the rotation (°) relative to the first sample, `q` is the match quality 0…1 |
+
+The tracker matches a small greyscale template of the region (normalized
+cross-correlation, sub-pixel, optionally over scale and rotation) and keeps
+the template fresh while anchoring it to the first frame so it does not
+drift. It stops where the match quality drops below 0.45 (the region was
+covered, left the frame or changed too much) and keeps what it tracked up to
+there. Pick regions with detail: corners, text, edges. Flat sky or a blank
+wall can't be tracked. A track without scale follows position only: if the
+thing grows, shrinks or turns noticeably, turn on Scale / Rotate (`scale` /
+`rotation`), or the match fades and the track stops early. Tracks are stored in clip time, so they move with the clip and follow
+trims and splits (re-track after changing its speed).
+
+In the editor:
+
+- **Mask tracking.** Select a mask on a video clip. Under its mode row,
+  **◀ Back** and **On ▶** follow what the mask covers from the playhead to
+  the clip's start or end, and key the mask's `x` / `y`. Turn on **Scale**
+  and **Rotate** to key those too. The keys are linear and simplified (a key
+  only where the motion turns, within ~1.5 px). Keys the mask had in that range lose their
+  position and keep everything else.
+- **Point tracking.** The Inspector's **Tracking** section (video clips):
+  **+ Track point**, then click the spot on the monitor. It tracks from the
+  playhead to the clip's end. **Region** sets the matched area (% of the
+  picture's width). Pick a track's chip to see its path and region on the
+  monitor, **◀ Track back** / **Track on ▶** to extend it from the playhead,
+  and **Delete** it.
+- **Attach a clip.** With a track picked, choose a clip in **Attach**
+  (any visual clip that overlaps it in time) and press **Attach to the track**. The clip
+  gets `x` / `y` keyframes (plus `scale` / `rotation` with those toggles on)
+  that ride on the track and keep it where it is at the playhead. Stickers,
+  titles, a blur box or a highlight then stay pinned to the moving thing.
+- Tracking runs from a private copy of the video, so the monitor does not
+  move. Progress shows in the Inspector, and **Esc** stops it and keeps what
+  it has. Each finished track is one undo step.
+
+**Agents:** `fablecut_track` runs the tracker in the editor (an open tab, else
+headless Chrome / Edge) and saves the result:
+
+- `{clip, point:{x:0.62, y:0.4}, at:12}` follows a spot from `at` to the
+  clip's end. `region:{x, y, w, h}` gives the area instead, `size` sets a
+  point's region (default 0.08 of the width), `direction:"backward"|"both"`
+  and `to` (timeline seconds) set the range, and `scale` / `rotation` follow
+  those too.
+- `apply:{mask:"Face"}` bakes the result into that mask's keys. Leave out
+  `point` / `region` and the mask's own outline is what gets followed.
+- `apply:{clip:"c_sticker", scale?, rotation?, at?}` pins another clip to
+  the track.
+- `name` names the track. Passing an existing name with `apply` and no
+  region re-applies the stored track without tracking again.
+- The reply gives the range, the match quality (min / mean; ≥ 0.8 is solid),
+  where it was lost, and what was keyed.
+- `{op:"removeTrack", id, track}` deletes a stored track; what followed it
+  keeps its keys. The compact project view lists tracks as
+  `[tracks: "Logo" point 0.00–4.20 s (127 samples)]`, never their samples.
+
+Recipes: **a title that follows a car** — track a point on the car, attach
+the title; **blur a face or a plate** — an ellipse mask on a blurred copy of
+the shot on the track above, then `apply:{mask:"Face"}`; **a screen replacement** —
+track the screen with Scale and Rotate on and attach the new picture, cropped
+to fit; **a highlight that stays on a UI element** in a screen recording —
+track the button, attach a rect svg.
+
+### Shapes, nulls and parenting
+
+Motion graphics are built from three pieces: **shape layers** (vector shapes
+drawn by the editor, crisp at any size), **null objects** (invisible layers that
+carry a transform) and **parenting** (a clip moves, turns and scales with
+another clip). Every visual clip also has an **anchor point**. All of it runs
+the same in preview and export.
+
+**Shape layers.** A clip with `kind:"shape"` (no `mediaId`) draws
+`props.shapes`, a list drawn bottom-up (first = bottom):
+
+```jsonc
+{ "id": "c_lt", "kind": "shape", "mediaId": null, "track": "V2", "start": 0, "duration": 5,
+  "props": { "x": -300, "y": 220, "shapes": [
+    { "type": "rect", "name": "Bar", "w": 520, "h": 90, "radius": 12, "fill": "#ffd166",
+      "keys": [ { "t": 0, "w": 0 }, { "t": 0.6, "w": 520, "ease": "ease-out" } ] },
+    { "type": "line", "y": 60, "points": [[-260, 0], [260, 0]], "stroke": "#ffffff", "strokeWidth": 6,
+      "keys": [ { "t": 0.3, "trimEnd": 0 }, { "t": 1.1, "trimEnd": 100 } ] },
+    { "type": "group", "x": 300, "items": [
+      { "type": "star", "sides": 5, "inner": 0.45, "w": 80, "h": 80, "fill": "#ff7ac8" },
+      { "type": "ellipse", "w": 120, "h": 120, "fill": "none", "stroke": "#ff7ac8", "strokeWidth": 4 } ],
+      "keys": [ { "t": 0, "rotation": 0 }, { "t": 5, "rotation": 360, "ease": "linear" } ] }
+  ] } }
+```
+
+| key | default | does |
+|---|---|---|
+| `type` | `rect` | `rect` · `ellipse` · `polygon` · `star` · `line` · `path` · `group` |
+| `x` · `y` | 0 | position in layer px, from the layer's origin (the clip's `x`/`y`, y down) |
+| `rotation` · `scale` · `opacity` | 0 · 1 · 1 | about the item's own `x, y` |
+| `w` · `h` | 200 | size, px (rect, ellipse, polygon, star) |
+| `radius` | 0 | rect corner radius, px |
+| `sides` · `inner` | 6 / 5 · 0.5 | polygon / star point count (3–64); a star's inner radius as a fraction of the outer |
+| `points` | — | line: exactly 2 · path: 2–128 points `[x, y]` or `[x, y, inX, inY, outX, outY]` (curve handles relative to the point), px around the item's `x, y` |
+| `closed` | true | path only; `false` leaves it open (lines are always open) |
+| `fill` · `stroke` | `#ffffff` · `none` | `"#rrggbb"`, `"#rrggbbaa"` or `"none"`; lines and open paths default to a white stroke and no fill |
+| `strokeWidth` | 6 (8 open) | px; set with `stroke` |
+| `lineCap` · `lineJoin` | `round` · `round` | `butt` · `round` · `square` / `miter` · `round` · `bevel` |
+| `dash` | — | `[on, off, …]` px, e.g. `[24, 12]` |
+| `trimStart` · `trimEnd` | 0 · 100 | the part of the outline drawn, % — key `trimEnd` 0→100 to draw a path on |
+| `trimOffset` | 0 | % of the outline the drawn part is shifted round by (key it to make a dash run round a loop) |
+| `items` | — | group only: its items. A group moves, turns, scales, fades and trims them together (groups nest 4 deep) |
+| `name` · `on` | — | a label (agents address items by it); `on:false` hides it |
+| `keys` | — | `[{t, ease?, …}]`, `t` in seconds from the clip's start. Keyable: `x y rotation scale opacity w h radius inner strokeWidth trimStart trimEnd trimOffset fill stroke points`. Each value eases between the keys that set it (`ease` on the arriving key); colours blend; `points` keys morph the path and need its point count |
+
+At most 64 items per layer (group children included). The layer itself is a
+normal visual clip: its `x`, `y`, `scale`, `rotation`, `opacity`, `blend`,
+masks, transitions and keyframes all work, as do `blur` and `shake`. Its own
+`trimStart` / `trimEnd` / `trimOffset` (clip props, keyframable) trim every
+path in it at once. A trimmed shape fills the part that is drawn.
+
+**Null objects.** `kind:"null"` (no `mediaId`) is a clip that never renders.
+Give it `x`, `y`, `rotation`, `scale` (and keyframes), and parent clips to it to
+move them as one. The monitor shows it as a red square while it is on screen.
+
+**Parenting.** `"parent": "<clip id>"` (top-level, next to `track`) makes a
+clip move, turn and scale with that clip. Its own `x`/`y` are then measured
+in the parent's space: from the parent's centre, turned and scaled with it.
+Parents chain (a parent can have a parent), and loops are refused. Only the
+transform follows: the parent's opacity, transitions, shake and effects do
+not, and the parent's keyframes are read even outside its time range (held
+at its first or last value). Splitting a parent leaves the children on the
+left half.
+
+**Anchor point.** `anchorX` / `anchorY` (px from the picture's centre, for any
+visual clip) pick the point that `x`/`y` place and that `rotation` and `scale`
+turn around: `anchorY: 200` on a 400 px tall shape spins it about its bottom
+edge. Moving the anchor without moving the picture means changing `x`/`y`
+with it (the editor's anchor tool does that).
+
+In the editor: the bin's **Shapes** tab adds a rectangle, ellipse, polygon,
+star, line or pen-path layer, or a null object, at the playhead. The **Shape layer** section lists the
+items; pick one to edit it — the sliders, Fill / Stroke (colour or **None**),
+ends and joins, trim, **Group** / **Ungroup** / **Out**, ↑ ↓, **Copy**,
+**Delete** — and on the monitor drag it to move, the knob to turn it (Shift:
+15°) and the corners to resize it. On a line or path, drag points and their
+handles (Alt breaks the pair, Alt-drag pulls new handles); on a path,
+Ctrl-click the outline to add a point and double-click one to remove it.
+**Pen** draws a new path: click points (drag to curve), click the first point
+to close it or press Enter to keep it open. Each value has its own **◆**: key
+it at the playhead, and from then on changing it keys it. Every visual clip's
+Transform section has **Anchor** (**✥ Move**: drag on the monitor to move the
+anchor point while the picture stays put, Shift snaps to the centre;
+**Centre** puts it back) and **Parent**. Right-click clips → **Parent to a
+new null** groups them under a fresh null at their centre.
+
+**Agents:**
+
+- Add a layer with `addClip {kind:"shape", track, start, duration, props:{shapes:[…]}}`,
+  a null with `addClip {kind:"null", track, start, duration, props:{x, y}}`.
+- `{op:"setShape", id, set:{type:"rect", w:400, h:80, fill:"#ffd166"}}` adds an
+  item (no `shape`, an index one past the end or a new name adds one; a new
+  item needs `type`). `{op:"setShape", id, shape:"Bar", set:{fill:"#22d3ee"}}`
+  edits one — by index (0 = first), name, or a path into groups like `"2.0"`
+  (item 0 of group 2; `"2.3"` with 3 items adds one there) — merging key by
+  key (`null` resets a key; a new `type` keeps the position and paint).
+  `replace:true` starts it over. `keys` in `set` replaces its keys.
+  `{op:"removeShape", id, shape}` deletes one. `ids:[…]` edits several clips.
+- `{op:"setParent", id | ids, parent:"c_null"}` parents clips and keeps them
+  where they are on screen (at time `at`, default each clip's start; keyed
+  channels are left as they are). `keep:false` keeps the numbers instead.
+  `parent:null` unparents. Removing a parent clip unparents its children
+  where they stand.
+- `props.shapes` and `parent` written through `addClip` / `updateClip` are
+  validated the same way; bad input refuses the whole patch. The compact
+  view lists a layer as `[3 shapes: rect #ffd166 2 keys, line stroke #ffffff/6, group(star(5) #ff7ac8)]`
+  and a child as `parent:c_null`.
+
+Recipes: **draw-on logo** — the logo as `path` items with a stroke and no fill,
+`trimEnd` keyed 0→100 (stagger the items' keys), then `fill` keyed from
+`"#ffffff00"` to `"#ffffff"`; **lower third** — a `rect` bar whose `w` keys
+from 0, a `line` drawn on under it, a title on the track above parented to the
+shape layer so they slide out together; **loading ring** — an ellipse with a
+stroke, `trimEnd: 25`, `trimOffset` keyed 0→100 with `ease:"linear"`;
+**orbit** — a null at the centre with `rotation` keyed 0→360, a shape parented
+to it with `x: 300`; **swing from the top** — `anchorY` at the top edge
+(minus half the height) and `rotation` keyed −10↔10; **burst** — a group of
+lines at different `rotation`s with `scale` keyed 0→1 and `opacity` 1→0.
+
+### Motion paths, motion blur and text on a path
+
+**Motion paths.** When `keyframes.x` and `keyframes.y` both have a key at the
+same time, that is a **position key**. Give position keys curve handles and
+the clip travels along a bezier path between them instead of a straight line.
+The handles are `pin` (arriving) and `pout` (leaving) on the x and y keys,
+in px relative to the key's position, in the clip's `x`/`y` space:
+
+```jsonc
+"keyframes": {
+  "x": [ { "t": 0, "v": -450, "pout": 250 }, { "t": 2, "v": 0, "pin": -250, "pout": 250 }, { "t": 4, "v": 450, "pin": -250 } ],
+  "y": [ { "t": 0, "v": 150, "pout": -300 }, { "t": 2, "v": 0 },                        { "t": 4, "v": 150, "pin": -300 } ]
+}
+```
+
+Between two position keys the clip moves along the curve at the pace of the
+arriving key's `ease`, measured along the curve, so a `linear` key gives an
+even speed around a bend. A segment with an extra x or y key inside it, or
+with no handles, runs the channels as before. `autoOrient: true` turns the
+clip to face its direction of travel, and its `rotation` adds on top. A
+parent on a curved path carries its children along it.
+
+**Motion blur.** `motionBlur` is a shutter angle: the clip is drawn at
+`motionBlurSamples` moments across `motionBlur / 360` of a frame, centred on
+the frame, and the samples are averaged. 180 is the film look; 360 smears a
+whole frame. It blurs whatever changes: position, scale, rotation, a parent's
+motion, keyed shapes and trims. A clip that does not move draws once. During
+playback the preview uses as many samples as fit in the frame time (all of them
+on a fast machine); a paused frame and export always use them all. It works on
+video, image, svg, text and shape clips.
+
+**Text on a path.** `textPath` on a text clip is one shape item (`path`, `line`,
+`ellipse`, `rect`, `polygon` or `star`, with the same geometry keys and
+`keys` as in "Shapes, nulls and parenting", but no paint or trim) whose
+outline is the baseline, in the title's own px. The first line of text runs
+along it, each letter turned with the path; each further line (`\n`) runs on a
+parallel curve one line-height below, so its letters space by that curve's own
+length. `pathOffset` (% of the path's length, keyframable) is where the text
+sits, and `pathAlign` says which end of each line sits there. On a closed path
+the text wraps around; keying `pathOffset` 0 → 100 sends it once around a
+circle. Every text animation plays along the path. Font, size, colour,
+gradient, stroke, glow, shadow, `lineHeight` and `letterSpacing` all apply;
+text boxes and `align` do not (`pathAlign` takes their place).
+
+```jsonc
+{ "kind": "text", "props": { "text": "AROUND AND AROUND • ", "font": "Anton", "fontSize": 40, "letterSpacing": 4,
+  "textPath": { "type": "ellipse", "w": 300, "h": 300 }, "pathAlign": "start" },
+  "keyframes": { "pathOffset": [ { "t": 0, "v": 0 }, { "t": 6, "v": 100, "ease": "linear" } ] } }
+```
+
+In the editor: when the selected clip has two or more position keys, its path
+shows on the monitor: the curve, a dot per frame (their spacing is the speed),
+a square per key and the keys' handles. Drag a key to move it, drag a handle to
+bend the path (Alt breaks the pair), Alt-drag a key to pull new handles, and
+double-click a key to make it a corner again. Moving the clip on the monitor
+or typing X / Y keys both channels together. The Inspector's **Motion**
+section has **Smooth** (handles through every position key), **Straight**,
+**Auto-orient**, **Motion blur** and **Blur samples**. A title's **Text path**
+section sets it on a **Line**, **Arc**, **Circle**, **Wave** or a **Pen** path
+(click points, drag to curve, Enter to finish, click the first point to close
+it). **Edit path** shows the path's points on the monitor, and **Offset** and
+**Align** place the text along it.
+
+**Agents:**
+
+- Write `pin` / `pout` on x / y keys directly, or
+  `{op:"setMotionPath", id | ids, path:"smooth" | "straight", autoOrient?: true}`.
+  `"smooth"` needs the position keys first (x and y keyed together at two or more times).
+- Motion blur: `updateClip` with `props:{motionBlur:180, motionBlurSamples:12}`.
+- `{op:"setTextPath", id | ids, path:"line" | "arc" | "circle" | "wave" | {type:"path", points:[…], closed:false, …} | null, offset?, align?}`
+  sets, replaces or removes (`null`) a title's path; animate `pathOffset` with
+  keyframes.
+- These are validated on `addClip` / `updateClip` too. The compact view shows
+  `path:curved` after a clip's keyframes, and a title's `"textPath":"ellipse 300×300"`.
+
+Recipes: **fly-in on a curve** — two position keys, `setMotionPath` smooth,
+`autoOrient:true`, `motionBlur:180`; **orbiting label** — circle `textPath`,
+`pathOffset` keyed 0 → 100 linear; **stamp along a road** — an open `path`
+textPath that follows the shape in the footage, `pathAlign:"center"`,
+`textAnim:"letter-pop"`; **whip without the transition** — a fast `x` move over
+4–6 frames with `motionBlur:360`.
+
+### Compositions (nested sequences)
+
+A **composition** (comp) is a timeline of its own, with its own size, length,
+tracks and clips, that is placed on the main timeline (or inside another comp)
+as one clip. Build a lower third, a logo sting or a whole scene once, then use
+it as many times as you like: every clip that shows the comp changes when the
+comp is edited. Comps live in `project.comps`:
+
+```jsonc
+"comps": [
+  { "id": "lt", "name": "Lower third", "width": 1280, "height": 720, "duration": 5,
+    "background": "#00000000",   // optional; leave it out for transparent
+    "tracks": [ { "id": "V2", "kind": "video" }, { "id": "V1", "kind": "video" }, { "id": "A1", "kind": "audio" } ],
+    "clips": [
+      { "id": "bar", "kind": "shape", "track": "V1", "start": 0, "duration": 5, "props": { "shapes": [ … ] } },
+      { "id": "name", "kind": "text", "track": "V2", "start": 0.3, "duration": 4.7, "props": { "text": "Ada Lovelace" } },
+      { "id": "whoosh", "kind": "audio", "mediaId": "m_whoosh", "track": "A1", "start": 0, "in": 0, "duration": 0.6 }
+    ] }
+],
+"clips": [
+  { "id": "c_lt1", "kind": "comp", "compId": "lt", "mediaId": null, "track": "V3", "start": 4, "in": 0, "duration": 5,
+    "props": { "fit": "none", "y": 220 } }
+]
+```
+
+| key | default | does |
+|---|---|---|
+| `id` · `name` | — · the id | how clips and agents refer to it · the label shown on its clips and in the bin |
+| `width` · `height` | the project's | the comp's frame, px (16…8192) |
+| `duration` | — | seconds; what the comp shows past its clips is transparent (or its `background`) |
+| `background` | none | a colour behind the comp's clips; leave it out for transparent |
+| `tracks` | V3…V1, A1, A2 | the comp's own lanes, like the project's `tracks` |
+| `clips` | [] | ordinary clips of any kind (comp clips too), with times inside the comp |
+| `template` | — | set on a placed template: `{id, hold, fields}` (see "Presets and templates") |
+
+**A comp clip** (`kind:"comp"`, `compId`, no `mediaId`) shows the comp from its
+`in` (comp seconds) for its `duration`, at speed 1. It draws like a picture of
+the comp's size: `fit` defaults to `none` (the comp's own pixels), and its
+transform, keyframes, opacity, transitions, masks, track matte, blend, grade and
+filters all apply to the comp's frame as a whole. Trims and splits move its
+`in` like a video clip's; the window can't run past the comp's length.
+
+The media inside a comp **plays and exports as if it were on the timeline**:
+its video frames, and its audio, which goes through the main timeline's audio
+track of the same name (its fader, effects and bus). A comp clip that is
+disabled, or sits on a disabled track, silences the comp's audio too. Comps
+nest up to 4 deep, and a comp can never contain itself.
+
+In the editor: the bin's **Project** tab lists the comps; drag one onto the
+timeline to place it, and double-click it (or a comp clip, or **Open** in the
+Inspector's **Composition** section) to open it. An open comp takes over the
+timeline: every tool, shortcut and inspector works on its clips, and the
+breadcrumb above the timeline (or **Esc**, once nothing is selected) goes back
+out. Right-click clips → **Precompose** moves them into a new comp and puts a
+comp clip in their place; right-click the Project tab → **New composition**
+starts an empty one. The Composition section also sets the comp's name, size,
+length and background.
+
+**Agents:**
+
+- `{op:"addComp", comp:{id?, name, duration, width?, height?, background?, tracks?, clips?:[…]}}`
+  adds one (its clips go through the same checks as `addClip`).
+  `{op:"updateComp", id, set:{name?, width?, height?, duration?, background?, tracks?}}`
+  changes it; `{op:"removeComp", id}` is refused while a clip still uses it.
+- Place it with `addClip {kind:"comp", compId, track, start, duration, in?}`.
+- `{op:"inComp", comp, ops:[…]}` runs clip and timeline ops on the comp's own
+  clips: `addClip`, `updateClip`, `removeClip`, `split`, `rippleDelete`, the
+  trims, `setShape`, `setMask`, `setGrade`, `setParent`, `setMotionPath`,
+  `setTextPath`, clip `setFx`, `precompose`, and `inComp` for a comp inside it.
+- `{op:"precompose", ids:[…], name?, id?}` moves those clips (here, or in the
+  comp an `inComp` is running in) into a new comp that starts at the earliest
+  of them; a comp clip of the same length takes their place.
+- The compact view shows a comp clip as `comp(lt in:1.5)` and lists every comp
+  under `COMPS` with its clips.
+
+Recipes: **reusable lower third** — a template (next section) gives every
+speaker their own copy with their own name; a plain comp suits a graphic that
+is the same every time; **logo sting** — a draw-on logo comp at the head and tail of the edit;
+**picture in picture of a whole scene** — precompose the scene's clips, then
+scale the comp clip down and move it into a corner;
+**one grade for a sequence** — precompose it and grade the comp clip once.
+
+### Presets and templates
+
+Two ways to reuse motion: an **animation preset** keys a named animation onto a
+clip, and a **template** is a ready-made comp (lower third, logo animation,
+social layout) whose text, colours and pictures are **fields** you fill in.
+
+**Presets.** A preset keys the clip's own channels, relative to where the clip
+already is: `scale` and `opacity` multiply the clip's value and everything else
+adds to it, so "Slide up" works wherever the clip sits and however big it is.
+Each has an anchor: **in** plays from the clip's start and settles on its
+values, **out** starts from them and ends at the clip's end, **at** is an
+emphasis at a time you pick (the playhead, or `at`), and **loop** spans the
+whole clip. Keys already in the window a preset covers are replaced; the rest
+stay, so an In, an Out and a loop on another channel live side by side.
+
+| group | presets |
+|---|---|
+| In | `fade-in` · `pop-in` · `slide-up-in` · `slide-down-in` · `slide-left-in` (from the right) · `slide-right-in` (from the left) · `drop-in` · `zoom-in` · `spin-in` · `whip-in` (with motion blur) · `rise-blur` · `draw-on` (shape layers) |
+| Out | `fade-out` · `pop-out` · `slide-up-out` · `slide-down-out` · `slide-left-out` · `slide-right-out` · `zoom-out` · `spin-out` · `whip-out` · `sink-blur` · `draw-off` |
+| At (emphasis) | `pulse` · `shake` · `wobble` · `bounce` · `flash` |
+| Loop | `float` · `breathe` · `sway` · `spin` · `wiggle` |
+
+Every In / Out / At preset is 0.35–1 s long; `length` stretches it (a clip
+shorter than the preset squeezes it in). A saved preset is a JSON file in
+`library/presets/`, shared by every project:
+
+```jsonc
+{ "id": "fly-in", "name": "Fly in", "group": "Saved", "anchor": "in", "length": 0.6,
+  "keys": { "x": [ { "t": 0, "v": -500 }, { "t": 0.6, "v": 0, "ease": "ease-out" } ],
+            "opacity": [ { "t": 0, "v": 0 }, { "t": 0.3, "v": 1 } ] },
+  "props": { "motionBlur": 180 } }   // optional: motionBlur, motionBlurSamples
+```
+
+`t` is seconds into the preset (for a loop, 0…1 of the clip). Channels: `x y
+scale rotation opacity blur anchorX anchorY trimStart trimEnd trimOffset
+brightness saturation hue grayscale shake rgbSplit glow fontSize letterSpacing
+pathOffset`.
+
+**Templates.** Placing one adds its own comp (so two lower thirds can show two
+names) and a comp clip showing it with `fit:"contain"`; a template made for
+another shape than the canvas sits inside it, letterboxed. The comp carries
+what makes it a template:
+
+```jsonc
+{ "id": "comp_x1", "name": "Lower third — Bar", "width": 1920, "height": 1080, "duration": 5, "clips": [ … ],
+  "template": { "id": "lower-third-bar", "hold": 4.5, "fields": [
+    { "key": "name", "label": "Name", "type": "text", "targets": [ "name:props.text" ], "value": "Ava Moreno" },
+    { "key": "accent", "label": "Accent", "type": "color", "targets": [ "bar:props.shapes.1.fill" ], "value": "#ffd166" } ] } }
+```
+
+| template | name | size | length | fields |
+|---|---|---|---|---|
+| `lower-third-bar` | Lower third — Bar | 1920×1080 | 5 s | `name` `title` `accent` `panel` |
+| `lower-third-underline` | Lower third — Underline | 1920×1080 | 5 s | `name` `title` `accent` |
+| `lower-third-boxes` | Lower third — Boxes | 1920×1080 | 5 s | `name` `title` `accent` `box` |
+| `logo-ring` | Logo — Ring reveal | 1920×1080 | 4 s | `logo` `brand` `accent` |
+| `logo-slam` | Logo — Slam | 1920×1080 | 3.5 s | `logo` `accent` |
+| `logo-lines` | Logo — Lines | 1920×1080 | 4 s | `logo` `tagline` `lines` |
+| `social-story` | Story — Headline (9:16) | 1080×1920 | 6 s | `headline` `subline` `button` `accent` `background` |
+| `social-quote` | Post — Quote (1:1) | 1080×1080 | 6 s | `quote` `author` `accent` `background` |
+| `social-end-card` | End card — Follow (16:9) | 1920×1080 | 6 s | `heading` `button` `accent` `background` |
+
+Field types: `text` (a string), `color` (`#rgb`, `#rrggbb` or `#rrggbbaa`) and
+`media` (a media id of a picture: image, svg or video; the clip's kind follows
+it). A target is `"<clip id>:<path>"` inside the comp (`props.text`,
+`props.shapes.1.fill`, `mediaId`, …) or `"comp:background"`; one field can set
+several. The logo templates start with a placeholder,
+`/library/elements/logo-placeholder.svg`, until the `logo` field gets a
+picture. **`hold`** is when the exit starts: changing a template's length
+keeps everything after it at the same distance from the end, so a longer lower
+third just holds longer (it can't get shorter than its entrance needs).
+
+A saved template (`library/templates/<id>.json`) is a template object:
+`{id, name, group, width, height, duration, hold, background?, tracks?, clips,
+media?, fields}`; `media` lists the `{id, name, kind, src}` entries its clips
+use (`/library/…` or `/media/…`), matched by `src` when it is placed. A saved
+preset or template whose name a built-in already has is saved as
+"<name> (saved)".
+
+In the editor: the bin's **Templates** tab lists them by group (Lower thirds,
+Logo animations, Social, then Saved); drag one onto the timeline or click ＋.
+The Inspector's **Template** section on its clip edits the fields, its
+**Length**, and offers **Use W×H canvas** when the template was made for
+another shape. Right-click a comp in the Project tab → **Save as template**
+keeps it (every title's text and every picture become fields). The
+**Motion** section's **Presets** menus (In, Out, At playhead, Loop) put a
+preset on the selected clips, and **Save as preset** keeps this clip's
+keyframes (In: from its start to its last key; Out: from its first key to its
+end; Loop: the whole clip).
+
+**Agents:**
+
+- `{op:"applyPreset", id | ids, preset, length?, at?}` — `preset` is a name,
+  a saved one's id, or an inline preset object; `at` is timeline seconds (for
+  an At preset; default the clip's start). Visual clips only.
+- `{op:"addTemplate", template, start?, track?, duration?, fields?:{key: value}, id?, compId?, name?}`
+  places one (default track V2, at 0, its own length).
+- `{op:"setTemplate", id, fields?:{key: value}, duration?}` — `id` is its comp
+  clip or its comp; a new `duration` retimes it, and clips that showed it to
+  its end keep doing so.
+- `{op:"savePreset", id, name, anchor?, from?, to?}` (`from`/`to` in clip
+  seconds) or `{op:"savePreset", preset:{…}}`; `{op:"saveTemplate", comp,
+  name?, fields?, hold?}` or `{op:"saveTemplate", template:{…}}`. Files are
+  written once the patch is saved, and later ops in the same patch can use them.
+- `applyPreset`, `addTemplate` and `setTemplate` also run inside `inComp`.
+- The compact view prints a placed template's fields under its comp:
+  `template lower-third-bar — fields (setTemplate): name="Ava Moreno" …`.
+
+Recipes: **name every speaker** — `addTemplate lower-third-bar` once per
+speaker with `fields:{name, title}`; **branded intro** — `addTemplate logo-ring`
+with `fields:{logo:"<your logo's media id>", brand, accent}` at 0;
+**vertical teaser** — set the canvas to 1080×1920, `addTemplate social-story`;
+**house style** — build a comp the way you like it, `saveTemplate`, then place
+it in every project; **titles that arrive and leave the same way** —
+`applyPreset` an In and an Out on every title in one patch.
+
+### Media management
+
+The Project bin knows each file's details and helps find, group and track
+footage. Everything here is organization: none of it changes what plays or
+exports.
+
+**Metadata.** The editor reads every file in `media/` and `library/` with
+ffprobe (via `GET /api/media-info`) and writes what it finds onto the media
+entry. These fields are read-only — they describe the file:
+
+| key | does |
+|---|---|
+| `fps` | video frame rate (29.97, 25, 59.94 …); absent for stills and audio |
+| `codec` | video codec (`h264`, `hevc`, `prores`, `vp9` …), or the image format (`png`, `mjpeg`) |
+| `audioCodec` · `audioChannels` · `sampleRate` | first audio stream: codec, channel count (`0` = the file has no audio), Hz |
+| `size` · `bitrate` | file size in bytes · overall bitrate, bits per second |
+| `width` · `height` · `duration` | as before; filled in when missing (phone footage shot rotated reports its upright size) |
+
+Without ffprobe on PATH only `size` is filled in; the browser still probes
+`duration`, `width` and `height`.
+
+**Organizing.** `favorite: true` stars a file; `tags` is a list of free-form
+labels (at most 24, each up to 32 characters, matched without regard to case).
+`collections` at the top of the document group media across folders — a file
+can be in any number of them, while it sits in one folder (`folderId`).
+
+**Usage.** A file's *placements* are the clips that show it, on the main
+timeline and inside every composition. A video and the audio stems linked to it
+count as one placement, so a shot used twice reads "used 2×".
+
+In the editor, the Project tab has:
+
+- **Search** — every word must match the name, kind, extension, codec,
+  resolution (`3840x2160`, `2160p`) or a tag; `#word` matches tags only. Esc clears it.
+- **Show** — All media · ★ Favorites · Used in the edit · Unused · a kind · a
+  collection · a tag. While searching or filtering, the bin lists the hits flat
+  (each with its folder), with a count and **Clear**; a collection's view also
+  has **Rename** and **Delete** (its media stay).
+- **Sort** — name (natural: `shot 2` before `shot 10`), kind, duration,
+  resolution, frame rate, codec, audio channels, file size or times used, with
+  ↑ / ↓. Files missing a value sort last either way. Folders keep their tree;
+  the sort applies inside each.
+- **☰ List view** — one row per file with columns: name, duration, resolution,
+  FPS, codec, audio, size and uses; click a column heading to sort by it. On a
+  narrow bin the columns drop out right to left; widen the panel to see them all.
+- On each file: **☆** stars it, the **uses** badge opens its placements.
+  Right-click a file → **Open in Source**, **Find timeline instances** (every
+  placement, main timeline and comps, with track and time — click one to jump
+  there, opening its comp if needed), **Media info…**, favorites, **Tags…**,
+  **Add to / Remove from** a collection, **New collection…**, **Remove from project**.
+- Right-click a clip on the timeline → **Reveal in project** scrolls the bin to
+  its file (or its comp), opening folders and clearing a search that hides it.
+
+**Offline media.** A file is *offline* when its `src` names nothing under
+`media/` or `library/` — it was moved, renamed or deleted. The editor checks
+on load and whenever those folders change. An offline file's clips stay where
+they are: the timeline hatches them red (**⚠ Offline**), the monitor and the
+export draw a **Media offline** slate in the picture's place, and its audio is
+silent. The bin marks the file **OFFLINE**, says how many are missing, and the
+Show filter gains **⚠ Offline**. The Export dialog warns before rendering one.
+Files under `media/` may sit in subfolders (`/media/archive/a.mp4`).
+
+- **Relink** points a media entry at the same footage where it is now; clips
+  keep their In points, edits and everything else. Right-click the file →
+  **Relink…** (or **Relink…** on the offline banner for all of them). The
+  dialog looks through `media/` and `library/` for each file — same name, the
+  same name with another extension, a similar name, the same size — and
+  picks a same-name match for you. **Browse…** picks one file and **Choose
+  folder…** matches a whole folder by name; either copies the chosen files
+  into `media/`. A relinked file whose length differs from the original gets
+  a warning (is it really the same footage?).
+- **Replace file…** (right-click a file) puts a *different* file behind the
+  media entry — a new render, a better take. Every clip using it switches;
+  each keeps its In point and timing, trimmed to fit a shorter file. The name
+  and details follow the new file; favorites, tags and collections stay. To
+  swap the file of one clip only, use the Inspector's **Source** menu instead.
+- Relink and replace are one undo step each.
+
+**Proxies.** Heavy footage — 4K, HEVC, ProRes, long phone clips — can stutter
+while you scrub and play. A *proxy* is a light copy the editor plays instead
+while you edit: H.264 at 540p (or 720p / 1080p, never larger than the
+source), a keyframe every 12 frames so seeking is quick, the source's own
+timestamps (frame for frame — no frames added or dropped) and its first audio
+stream. The edit always refers to the original: the timeline, `project.json`
+and every clip stay the same whether proxies are on or off.
+
+**Export always reads the originals**, and so do `fablecut_frame` (timeline
+mode), `fablecut_scopes`, tracking and every other measurement — the
+players switch to the original files for the render and back afterwards. A
+proxy only changes how smoothly the preview runs, never the result.
+
+- Right-click a video in the bin → **Create proxy (540p)** / **(720p)**;
+  right-click the **Project** tab → **Create proxies for N videos**. ffmpeg
+  makes them on the server one at a time in the background; the bin shows
+  each file's progress (**P 42%**), then a green **P** once it is ready.
+  **Delete proxy** removes one. The bin's list view has a **Proxy** column,
+  Show has **Has a proxy** / **Video without a proxy**, and **Media info**
+  says which file is playing.
+- The monitor's **Proxy** button turns proxy playback on and off (on by
+  default; remembered in this browser). The Source monitor follows it too.
+- Proxies live in `analysis/proxies/`, a disposable cache: each is named
+  after its source file *and that file's size and modification time*, so a
+  re-rendered or replaced original simply has no proxy until you make a new
+  one. Deleting the folder loses nothing but time. Proxies need ffmpeg.
+
+**Agents:**
+
+- `{op:"updateMedia", id | ids, set:{name?, favorite?, tags?, folderId?}, addTags?, removeTags?}`
+  — organize files (`favorite:false` unstars; `tags:[]` clears). Metadata keys
+  are refused: they come from the file.
+- `{op:"setCollection", id?, name?, media?, add?, remove?}` creates a collection
+  (a new `id`, or a `name` no collection has) or changes one: `media` replaces
+  its list, `add` / `remove` edit it. `{op:"removeCollection", id}` deletes it;
+  its media stay. `removeMedia` takes a file out of every collection.
+- The compact view lists each file with its metadata, ★, tags, folder and
+  `uses:N`, and the collections on one line:
+  `m_abc video "intro.mp4" 12.4s 1920×1080 29.97 fps h264 stereo 48 kHz 45 MB ★ #interview uses:2`.
+- `fablecut_import_media` probes the file as it imports it, so the entry it
+  returns already has these fields.
+- `fablecut_status` lists offline media, and the compact view marks each
+  `OFFLINE (file missing — relinkMedia)` and each video with a proxy `proxy:540p`.
+- `fablecut_proxy {}` reports every video's proxy; `{create:true, mediaIds?, height?}`
+  makes them (waits until done unless `wait:false`); `{delete:true, mediaIds?}`
+  removes them. Proxies never change what you measure or export, so an agent
+  only needs them when the user asks for smoother playback.
+- `{op:"relinkMedia", id, src:"/media/…", name?}` — the same footage found
+  elsewhere: put the file in `media/` (copy it, or `fablecut_import_media` and
+  `removeMedia` the extra entry it registers), then relink. The note warns when
+  the new file's length differs.
+- `{op:"replaceMedia", id, src, name?}` — a different file behind the entry;
+  clips keep their timing, trimmed to fit (the note says how many). `src` must
+  be an existing file under `/media/` or `/library/` of the same kind (an
+  audio entry may use a video container).
+
+### Projects
+
+One FableCut keeps any number of projects. **`./project.json` is always the
+open project**: the editor, every MCP tool, the REST API and scripts read and
+edit that file as before. The others wait in `projects/`, and opening one
+swaps it in:
+
+| path | holds |
+|---|---|
+| `projects/index.json` | `{active}` — the open project's id |
+| `projects/<id>/meta.json` | `{id, created, opened, archived, notes, tags, template?}` |
+| `projects/<id>/project.json` | the document (while that project is open, `./project.json` is the live copy) |
+| `projects/<id>/thumb.jpg` | the editor's last picture of it |
+| `library/project-templates/<id>.json` | a saved project template `{name, created, project}` |
+
+`media/`, `exports/`, `analysis/` and `library/` are shared by every project,
+so a duplicate or a project made from a template copies no footage. The first
+time projects are used, the existing `./project.json` becomes the first
+project, unchanged. Ids look like `p_3f9a01c2de`.
+
+**Opening a project** saves the open one into its folder, then copies the
+chosen one to `./project.json` with a `revision` above both. A save based on
+the project that was open before (an editor tab, an agent's
+`fablecut_set_project`, a `baseRevision` patch) is therefore refused as a
+CONFLICT instead of landing in the wrong project. Editor tabs reload, clear
+their undo history and close an open composition. `GET /api/project` names the
+open project in the `X-FableCut-Project` header, and the editor sends it back on
+every save, so an edit made for one project can never be written into another.
+
+In the editor: **Projects** in the top bar (**Ctrl/Cmd+O**, or a click on the
+project name) opens the dashboard: cards with a picture, size, frame rate and length; search
+by name, notes or `#tag`; sort by last opened, last modified, created or name.
+Pick one to rename it, write notes, tag it, **Open** (or double-click / **Enter** on its card), **Duplicate**, **Save as
+template** or **Archive** it. **Archived** lists archived projects, where
+**Unarchive** brings one back and **Delete…** (click twice) removes it; only
+archived projects can be deleted, and the open one can be neither archived
+nor deleted. **+ New project** starts one from a canvas (Landscape 16:9 1080p,
+Vertical 9:16, Square 1:1, Portrait 4:5, 4K UHD, Landscape 720p) or a saved
+template, with its own frame rate. **Import…** adds a project file from
+elsewhere (an old backup, another machine); its media must be in `media/`,
+and Relink finds files that moved.
+
+**Agents** use `fablecut_projects` (or `GET /api/projects`, `POST /api/projects`):
+
+- `{}` or `{action:"list", archived?:"only"|"all"}` lists them: id, name, size,
+  length, clips, tags, notes, and which is `(OPEN)`.
+- `{action:"open", id}` switches the editor to that project; re-read it with
+  `fablecut_get_project {compact:true}` before editing.
+- `{action:"new", name, template?, fps?, width?, height?, notes?, tags?, open?}` —
+  `template` is `landscape-1080` (default), `vertical-1080`, `square-1080`,
+  `portrait-1350`, `uhd-4k`, `landscape-720` or a saved template's id; it opens
+  unless `open:false`.
+- `{action:"duplicate", id, name?, open?}` · `{action:"update", id, name?, notes?, tags?}` ·
+  `{action:"archive" | "unarchive" | "delete", id}`.
+- `fablecut_status` also counts the open project's versions; see "Versions" for them.
+- `{action:"templates"}` · `{action:"save_template", id, name}` (the project's
+  canvas, tracks, clips and media references) · `{action:"delete_template", template}`.
+- Opening, archiving or deleting changes what the user sees: do it only when
+  they asked. `fablecut_status` says how many projects there are.
+
+Recipes: **one edit, three versions** — `duplicate` the project per client
+cut, put the brief in `notes`; **house canvas** — build an empty project with
+your tracks, intro and outro, `save_template`, then `new` from it for every
+episode; **park finished work** — `archive` delivered projects to keep the
+list short without deleting anything.
+
+### Versions
+
+Every edit is saved as it happens, and undo covers the session. **Versions** are
+what you come back to later: full copies of a project, kept beside it, that are
+never overwritten. Restoring one is not destructive either — what is there is
+saved as a version first, so a restore can be undone by restoring that.
+
+| path | holds |
+|---|---|
+| `projects/<id>/history/v0007.json` | the project as it was |
+| `projects/<id>/history/v0007.meta.json` | `{v, name, note, kind, created, revision, clips, duration, final}` |
+
+A version's `kind` says where it came from:
+
+| kind | made |
+|---|---|
+| `manual` | by you (**Save version**, **Ctrl/Cmd+S**) or an agent (`fablecut_versions {action:"save"}`) |
+| `auto` | every 10 minutes while the open project changes, whoever changes it (`FABLECUT_AUTO_VERSION_MIN` sets the minutes); the newest 30 are kept |
+| `agent` | before an agent's first edit of a session (again after 10 quiet minutes), and before every `fablecut_set_project` rewrite |
+| `restore` | what was there just before a restore |
+
+One version per project can be marked **final** (the cut that went out); a final
+version can't be deleted until it is unmarked. Manual, agent and restore
+versions are never pruned.
+
+**Compare** tells what changed between a version and now (or two versions):
+clips added, removed and changed (timing, which props, keyframes, effects,
+transitions, source, track), media added and removed, the length, and project
+settings (name, canvas, frame rate, IN / OUT, tracks, markers, comps, mix,
+delivery, …).
+
+**Backup and recovery.** **Download backup** saves a project with all its
+versions as one `.fablecut-backup.json` file; **Import…** in the dashboard brings
+it back, versions included. When `project.json` can't be read as the server
+starts (another tool crashed mid-write, a bad hand edit), the server keeps the
+broken file as `project.corrupt-<time>.json` and puts back the newest good copy:
+the latest version, or the project's last parked copy.
+
+In the editor: **Ctrl/Cmd+S** saves a version of the open project. In the
+Projects dashboard, a project's **Versions…** lists its versions, newest first,
+with **Save version** (name and note), and per version **Compare with now**,
+**Restore…** (click twice), **Mark final**, **Rename**, **Download** and
+**Delete…** (click twice). Esc goes back to the projects.
+
+**Agents** use `fablecut_versions` (or `GET` / `POST /api/versions`):
+
+- `{}` lists the open project's versions (`project` picks another one).
+- `{action:"save", name?, note?, final?}` — **save one before a big or risky
+  change** (a restructure, a remake, a new grade on every shot) and when the user
+  is happy with a cut, so there is a named point to go back to.
+- `{action:"diff", version, to?}` — what changed since that version (to now, or
+  to version `to`). Use it to tell the user what an edit session changed.
+- `{action:"restore", version}` — only when the user asked; then re-read the
+  project. `{action:"update", version, name?, note?, final?}` ·
+  `{action:"delete", version}`.
+
+Recipes: **try a bold alternative** — save a version, make the change, compare,
+and restore if the user prefers the old one; **client rounds** — save "Round 1",
+"Round 2", … with the feedback in the note, mark the approved one final;
+**what did the agent do?** — `diff` against the "Before agent edits" version.
+
+### Sequences
+
+A project can hold several **sequences**: timelines of their own that share
+the project's media, folders, collections and compositions. Typical uses: a
+16:9 cut and a 9:16 cut of the same edit, a 30 s and a 15 s version, a client
+cut beside an alternative, or a stringout of selects next to the edit. A
+project with one sequence (every project, until you add one) is exactly the
+document described above.
+
+**The open sequence is the document's top level.** `clips`, `tracks`,
+`markers`, `inPoint` / `outPoint`, the canvas (`width`, `height`, `fps`,
+`background`, `exportFrame`), the mix (`master`, `buses`), the track switches
+and the delivery settings (`delivery`, `outputs`, `encodeProfile`) are the open
+sequence's. Every tool, op, export and the compact view work on them, as
+always. The others wait in `sequences`, each with its own copy of those keys:
+
+```jsonc
+"sequence": "main",                          // the open one
+"sequences": [
+  { "id": "main", "name": "Main" },          // the open one: its timeline is the top level
+  { "id": "seq_v9", "name": "Reel 9:16", "width": 1080, "height": 1920, "fps": 30,
+    "clips": [ /* … */ ], "tracks": [ /* … */ ], "markers": [ /* … */ ], "delivery": { "preset": "instagram-reels" } }
+]
+```
+
+Opening another sequence parks the top-level keys in the open one's entry and
+brings the other's up, with a new `revision` — like any edit. A clip in a
+sequence that isn't open still counts: its media shows "used" in the bin,
+can't be removed while it is there (`removeMedia` and **Remove from project**
+refuse and name the sequence), and **Replace file…** trims it too; a comp it
+places can't be removed either. A project with one sequence named Main has
+neither key.
+
+In the editor: the **sequence menu** at the left of the timeline toolbar (it
+shows the open sequence's name, and how many there are) lists them — click one
+to open it — and has **New sequence…** (a name, a canvas — the same as the open
+one, or 16:9, 9:16, 4:5, 1:1 — and, optionally, a copy of the open sequence's
+timeline to start from), **Duplicate**, **Rename…** and **Delete…** (click
+twice; the project is first kept as a version, so a deleted sequence can be
+restored from **Projects → Versions**). For the session each sequence keeps its
+own undo history, playhead and selection. The Export dialog, the Mixer, IN /
+OUT and the canvas settings all belong to the open sequence. **Find timeline
+instances** lists placements in other sequences too; clicking one opens its
+sequence.
+
+**Agents** (`fablecut_patch_project`):
+
+- `{op:"addSequence", name?, id?, from?, width?, height?, fps?, open?:true}` —
+  `from:"empty"` (default; the open sequence's canvas and frame rate, no clips),
+  `"open"` (a copy of the open sequence's timeline) or a sequence id (a copy of
+  that one). `width` / `height` / `fps` change the copy's canvas: the clips keep
+  their positions relative to the centre, and an `exportFrame` is dropped.
+- `{op:"inSequence", sequence, ops:[…]}` runs ops on a sequence **without
+  opening it**: clip and timeline ops, `setProject` (its canvas, markers, IN /
+  OUT, delivery), `setTrack`, `setBus`, `setFx` on its tracks, and
+  `updateSequence` (name, index) — not `addSequence`, `openSequence`,
+  `removeSequence` or another `inSequence`. The user's editor stays where it is.
+- `{op:"openSequence", id}` changes what the user's editor shows, and what
+  `fablecut_export`, `fablecut_frame {time}` and `fablecut_scopes` render: do it
+  when the user asked, or to export that sequence.
+- `{op:"updateSequence", id, set:{name?, index?}}` renames or reorders one;
+  `{op:"removeSequence", id}` deletes one (only when asked; the last one stays,
+  deleting the open one opens its neighbour, and one holding locked clips or
+  tracks needs `force:true`).
+- The compact view and `fablecut_status` list every sequence (id, name,
+  canvas, clips, length, which is open). A version's **Compare** reports each
+  sequence's changes on its own, sequences added and removed, and which one
+  was open.
+
+Recipes: **vertical cut of a finished edit** — `addSequence {name:"Reel 9:16",
+from:"open", width:1080, height:1920}`, then `inSequence` ops to re-position
+or re-scale the shots and `setProject {delivery:"instagram-reels"}` in it;
+**cut-downs** — duplicate the edit as "30 s" and "15 s" and tighten each with
+the trim ops inside `inSequence`; **selects reel** — an empty sequence the
+user drops favourite takes on, cut into the edit from the Source monitor.
+
+### Semantics
+
+- Rendering order: V1 is drawn first, then V2, V3, … on top. SVG/image/text clips
+  go on any V track (higher V lanes are handy overlay lanes). Add lanes with the
+  timeline **+V** / **+A** buttons (or by listing them in `tracks`); up to 16 per kind.
+  Right-click an empty track header → **Remove track** (disabled if the lane has
+  clips or is the last video/audio track).
+- **Audio tracks A1–An** hold both standalone audio files *and* linked companions
+ for imported video. Dropping a video creates the picture on a V track
+ (`props.volume: 0` so it isn't doubled) plus one `kind:"audio"` clip per source
+ channel on consecutive A-tracks that share a `linkGroup` (and the same
+ `mediaId` / timing). Each stem is mono-isolated then placed with `pan` (defaults
+ preserve stereo: L `−1`, R `+1`). Standalone music/SFX also live on A-tracks. Linked partners
+ move/trim/split together — edit timing on any member of the group; do not treat
+ A-tracks as music-only.
+- **Three track switches** (Premiere-style), all in the track header and all
+  persisted on `project.json`:
+  - **Enable (eye / speaker)** → `disabledTracks`. Output only: a disabled lane
+    is left out of preview, audio and export. It does *not* affect editing.
+  - **Target (click the track name — lit = targeted)** → `untargetedTracks`.
+    Decides which lanes an edit touches when nothing is selected: split at
+    playhead (S), insert ripple (`,`), replace punches (`.`), ripple-delete
+    shifting (⇧Del), close gap (⇧G), next gap (G), split / trim at IN/OUT
+    (T / ⇧T) and jump to cut (↑ / ↓). Source placement follows targeting too:
+    the picture lands on V1 if it is targeted, else the lowest targeted video
+    lane (none → the edit lands audio-only); stems land on the first two
+    targeted audio lanes. A **selection** is always edited wherever it sits.
+  - **Lock (padlock)** → `lockedTracks`. Nothing on a locked lane can be
+    moved, trimmed, split, deleted or edited in the inspector, and ripples leave
+    it where it is while the other lanes shift. A locked lane is never an edit
+    target. Typical use: lock the music bed, then ripple the picture freely.
+- **Clip lock / enable** — right-click a clip, or use the toggles at the top of
+  the inspector. `locked: true` pins one clip the same way a locked lane does.
+  `disabled: true` (⇧E) keeps the clip on the timeline but drops it from
+  preview, audio and export — like a disabled lane, for a single clip. Both
+  apply to the clip's whole linked group.
+- **Locks and linked groups** — a linked A/V group with *any* locked member
+  (its own flag or its lane) counts as locked as a whole, so sync is never
+  broken by a partial move.
+- **Sync lock** — edits that shift clips move the targeted lanes; linked AV
+  partners always ride along, even on an untargeted lane, and locked groups
+  stay put. On reload `relinkClips` rebuilds `linkGroup` from matching
+  mediaId / start / in / duration.
+- **Unlink / link (Ctrl/Cmd+L)** — unlinking a group removes its `linkGroup`
+  and stamps `unlinked: true` on each member, so the reload-time relink leaves
+  them apart; picture and audio then move, trim and delete separately. Link
+  (select one video clip plus its audio, Ctrl/Cmd+L) only joins clips of the
+  same file that line up exactly — same start, in and duration — because a
+  link here means identical timing.
+- **Agents and locks** — `fablecut_patch_project` refuses `updateClip` /
+  `removeClip` on locked material (own flag, locked lane, or a linked partner
+  of one) and `addClip` onto a locked lane. Treat locked clips as the user's
+  finished work: leave them alone. Only when the user asks you to change one,
+  pass `force: true` on that op, or unlock first with
+  `updateClip set:{locked:null}` (always allowed). `fablecut_set_project`,
+  REST `PUT` and direct file edits are not guarded — respect locks there too.
+- Media is `fit`-ted to the canvas (default "contain"), then crop → scale/x/y/
+  rotation → flips apply.
+- `props` keys are all optional — missing keys get the defaults above.
+- Video/audio clips must satisfy `in + duration×speed ≤ media.duration`.
+- Keyframes fully override the static prop value while present; they are
+  clip-local and are re-based automatically when clips are split or trimmed.
+- Transitions modulate the evaluated props (fade also fades audio); they render
+  on top of keyframes, so both can coexist.
+- Same-track overlap IS the crossfade idiom: overlap A and B by ~1 s and give B
+  `transitionIn: {type:"fade"}` (for audio also A `transitionOut`, both with
+  `curve:"power"` — see "Audio mix").
+- A cut/split is just two clips: first with `duration: t`, second with
+  `start: +t, in: +t×speed, duration: rest`.
+- **Edit tools** (timeline toolbar picker, or V / B / R / Y / U) change what a
+  clip drag does. Agents run the same edits with the patch ops `rippleTrim`,
+  `roll`, `slip` and `slide` (see "Timeline edit ops").
+  - **Selection (V)** — move and trim, as always.
+  - **Ripple edit (B)** — drag a clip edge; everything after it on the targeted
+    tracks (and the clip's own lanes) moves with it, so no gap opens or closes.
+    Dragging a head keeps the clip's start and trims its source In.
+  - **Rolling edit (R)** — drag a cut; the clip on one side lengthens by what
+    the other loses, nothing else moves.
+  - **Slip (Y)** — drag a clip to change its source In only (dragging left shows
+    later source); position and length stay. Video / audio clips only.
+  - **Slide (U)** — drag a clip along its track; the clip before it trims its
+    tail and the clip after it its head, so the sequence length stays.
+  All four are clamped to the available source media, MIN_DUR and the free
+  room on the track, take linked partners with them, and refuse on locked
+  clips; a readout by the pointer shows the offset while dragging.
+- **Lift (;) / Extract (')** — remove IN→OUT on the targeted tracks. Lift
+  leaves the gap; Extract closes it. Linked partners are cut too, locked clips
+  stay whole, and IN / OUT clear afterwards.
+- **Jump to cut** — `↑` / `↓` move the playhead to the previous / next clip
+  In or Out. Selection first (that clip’s start then end); no selection walks
+  targeted-track cuts. Source monitor: 0 / In / Out / duration. Does not change
+  `project.json`.
+- `bgRemove` and `chromaKey` can combine with all filters; heavy pixel work is
+  automatic (only runs when those props are set).
+
+## Look at the footage (`fablecut_frame`)
+
+`fablecut_analyze_reference` gives you the **ears** — where the cuts are, how hard
+each shot hits. `fablecut_frame` gives you the **eyes**. It answers with a real
+image (an MCP `image` content block), so you can judge a shot instead of
+inferring it from an `energy` value.
+
+| call | returns |
+|---|---|
+| `{path:"/media/x.mp4", t:3.2}` | that exact frame |
+| `{path:"/media/x.mp4", frames:12}` | a 4×3 contact sheet across the whole clip |
+| `{path:"/media/x.mp4", frames:12, from:30, to:90}` | a contact sheet across part of it |
+| `{time:8.5}` (no `path`) | the **composed timeline** at 8.5 s, graded, all tracks |
+| `{path}` with an absolute path | the file is read in place without copying into `media/` |
+| `{path, text:true}` | text-only statistics (luma, colors, texture, saturation, motion) for non-vision agents |
+
+Each answer leads with a text line naming the source, the timestamp(s) and (in
+timeline mode) the clips on screen, so you always know what you are looking at.
+`width` sets the pixel width (default 768 for one frame, 320 per contact-sheet
+cell); `text:true` returns descriptive statistics instead of an image block, for
+agents without vision capability — luma levels (min, p1, median, mean, p99, max,
+all 0–1 like `fablecut_scopes`), dominant colors, texture, saturation and
+per-cell motion; `where`/`timeout` apply to timeline mode only.
+
+The REST endpoint `/api/frame` accepts `src`, `t`, `frames`, `from`, `to`, `w`,
+`q` (JPEG quality 1–31) and `text=1` (statistics mode) as query parameters.
+
+**When it pays.** Before choosing a clip's `in` point, sample a few candidate
+moments — the blueprint tells you a shot spans 2.1 s–4.9 s and reads
+`energy: 88`, but only a frame tells you whether that is a car jump or a pan
+across a landscape. Contact sheets are the cheap survey: one call shows you
+what a whole 3-minute clip holds, then you grab single frames where it matters.
+Timeline mode answers "what did I actually build?" — the same picture the user
+sees and export renders, grades and transitions included.
+
+Needs ffmpeg on PATH for the source modes. Timeline mode runs in the open editor
+tab, else a headless browser, like `fablecut_export`.
+
+## Remake a reference video (analyze → blueprint → rebuild)
+
+Given a reference edit (a reel/montage the user likes), FableCut can analyze it
+and hand back an **edit blueprint** so the same idea can be rebuilt with
+different footage over the same music.
+
+**Run the analysis** (any of):
+- MCP: `fablecut_analyze_reference {path:"C:\\…\\ref.mp4"}` (absolute path or an
+  existing `/media/...` src; copies the file into `media/` if needed)
+- REST: `POST /api/analyze` body `{"src":"/media/ref.mp4", "threshold":0.3, "music":true}`
+  (GET `/api/analyze?src=/media/ref.mp4` returns the cached result)
+- CLI: `node analyze.js media/ref.mp4` (results also cached in `./analysis/<name>.json`)
+
+**The blueprint** (needs ffmpeg on PATH):
+```jsonc
+{
+  "duration": 21.4, "fps": 30, "width": 1080, "height": 1920,
+  "cuts": [1.8, 3.1, ...],            // detected shot boundaries, seconds
+  "shots": [                           // one entry per shot between cuts
+    { "index": 0, "start": 0, "end": 1.8, "duration": 1.8, "energy": 42 } ],
+  "avgShotLen": 1.4, "cutsPerSecond": 0.7,
+  "beats": [0.51, 1.02, ...],          // music onsets — snap cut points to these
+  "bpm": 118,                          // detected tempo
+  "energy": { "step": 0.5, "values": [12, 30, ...] },  // loudness curve 0–100
+  "drop": 8.5,                         // biggest musical rise — the money moment
+  "music": { "name": "ref-music.m4a", "src": "/media/…", "mediaId": "m_x" }
+}                                      // ^ extracted + registered by the MCP tool
+```
+`threshold` tunes cut sensitivity (default adapts 0.30→0.20→0.12): lower it if
+obvious cuts were missed, raise it if motion is being misread as cuts.
+
+**Rebuild recipe** — the analysis is deterministic; the creative mapping is yours:
+1. `setProject`: copy the reference's `width/height/fps`; write `beats`
+   (or the `cuts`) into `markers` so the user sees the grid.
+2. Music: the extracted track on A1, `in:0, duration:<ref duration>`.
+3. Structure: one clip per `shots[]` entry on V1 at the same `start`/`duration`
+   (hard cuts by default — that's what shot detection saw). Pick source footage
+   whose motion matches each shot's `energy` (calm ≤40, action ≥70), and choose
+   each clip's `in` so something interesting happens inside the window.
+   **Then look**: `fablecut_frame {path, frames:12}` to survey a candidate clip,
+   `{path, t}` at the exact moment you want, before committing to an `in`.
+4. The `drop`: put the hero shot there; classic garnish = a speed ramp landing
+   on it, an impact `adjust` layer (shake+rgbSplit), or a whip transition.
+5. Pacing garnish to taste: shots shorter than ~0.6 s read as beat-flashes;
+   `avgShotLen` tells you the reference's overall pace. Captions/grade/SFX per
+   the Recipes section — the blueprint gives structure, not style.
+
+## REST API (alternative to file editing)
+
+- `GET  /api/project` — current project JSON
+- `PUT  /api/project` — replace project JSON (body = full document).
+  **Conflict-safe**: if the body's `revision` ≤ the revision currently on disk,
+  the server rejects with **409** and returns `{"error":"…","revision":<current>}`.
+  Append `?force=1` to overwrite unconditionally. A request with an `X-FableCut-Project`
+  header (the editor sends the id of the project it loaded) is also refused with 409 when
+  another project is open (see "Projects"). Writes are atomic (tmp file +
+  rename), so a crashed write never corrupts the file.
+- `GET  /api/media`   — list files in ./media (name, src, size)
+- `GET  /api/media-info?src=/media/x.mp4` → `{src, info}` · `POST /api/media-info {srcs:[…], stat?}` →
+  `{info:{src: info}}` (up to 2000; `stat:true` answers only `{size, mtimeMs}`, no ffprobe —
+  how the editor checks for offline files) — a file's metadata from ffprobe: `size`, `fps`, `codec`,
+  `audioCodec`, `audioChannels`, `sampleRate`, `bitrate`, `duration`, `width`, `height` and
+  `probe` (`"ffprobe"`, or `"stat"` when only the size could be read). `info` is `null` when
+  the src names no file under `/media/` or `/library/`. Cached per file version.
+- `POST /api/proxy {srcs:[…], height?:540|720|1080}` → `{status:{src: status}}` queues proxies
+  (ffmpeg, one at a time); `POST /api/proxy/status {srcs}` → `{status:{src: status | null}}`;
+  `POST /api/proxy/delete {srcs}` → `{deleted:{src: n}}`. A status is
+  `{state:"ready", src:"/proxies/…", width, height, size}`, `{state:"queued"|"running", progress, height}`,
+  `{state:"failed", error}` or `{state:"none"}` (`null` = no such source file). Progress and
+  results are also pushed as SSE event `proxy` (`{src, status}`). `GET /proxies/<name>` serves
+  a proxy file from `analysis/proxies/`. `/api/proxy` answers 503 without ffmpeg.
+- `POST /api/relink/candidates {media:[{id, name, src?, size?, kind?}]}` →
+  `{candidates:{id:[{src, name, size, score, why}]}}` — where a missing file might be now:
+  files under `media/` and `library/` (subfolders included) of the same kind, ranked by
+  name (same name, same name with another extension, similar name) and size, best 5 each.
+- `GET  /api/projects[?archived=only|all]` → `{active, projects:[{id, name, active, archived, notes, tags, created,
+  opened, modified, width, height, fps, duration, clips, media, thumb}], templates:[…]}` ·
+  `POST /api/projects {action, …}` — the actions of `fablecut_projects` (plus `import {project, name?}`).
+  The answer depends on the action: `{id, project}` for open / new / duplicate / update / archive /
+  unarchive / import (plus `from` when the open project changed, `already` when it was open), `{id, deleted}`
+  for delete, `{templates}` for templates, `{template}` for save_template (the saved one) and
+  `{template, deleted}` for delete_template · `GET` / `PUT /api/projects/thumb?id=`
+  — a project's JPEG thumbnail (1 MB max). SSE event `projects` (`{action, id, active}`) after each
+  change. See "Projects".
+- `GET  /api/versions[?project=]` → `{project, versions:[{v, name, note, kind, created, revision, clips, duration,
+  final}]}` (newest first; default the open project) · `POST /api/versions {action, project?, version?, …}` —
+  `save {name?, note?, final?}` → `{project, version}` · `diff {version, to?}` → `{same, lines, added, removed,
+  changed, mediaAdded, mediaRemoved, settings}` · `restore {version}` → `{restored, saved}` · `update {version,
+  name?, note?, final?}` → `{version}` · `delete {version}` → `{deleted}`. `GET /api/versions/file?project=&version=`
+  is that version's document; `GET /api/projects/backup?id=` a project with all its versions (import it with
+  `POST /api/projects {action:"import", project:<the backup>}`). SSE event `versions` (`{project, action}`). See "Versions".
+- `GET  /api/library?dir=sfx|elements|svg|fonts|presets|templates` — list library assets
+- `GET  /api/presets` · `GET /api/templates` — the saved presets / templates, validated (bad files skipped);
+  `POST /api/presets {preset}` · `POST /api/templates {template}` — validate one and save it as
+  `library/presets/<id>.json` / `library/templates/<id>.json`, returning `{id, name, file}`
+- `POST /api/upload?name=foo.mp4` — raw body saved into ./media, returns `{src}`.
+  MP4/MOV/M4V uploads are auto-remuxed with `+faststart` (needs ffmpeg on PATH).
+  Files copied straight into ./media by external tools skip this — remux big ones
+  yourself (`ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`) or playback stalls.
+- `POST /api/import-url` — body `{url:"https://…"}` downloads the file into
+  `./media/` and returns `{src,name}` (same-origin `/media/…`, like upload).
+  HTTPS only; rejects localhost, private/link-local/CGNAT addresses, and
+  redirects to those. Remote SVG is refused (`/media/*.svg` is served
+  same-origin as `image/svg+xml` — a scripted SVG opened as a document would
+  run on the editor origin). Does not write `project.json` — register the media
+  afterwards (UI and `fablecut_import_media` do this). Do **not** put a
+  raw `https://` URL (or another origin, including `localhost` on a different
+  port) in `media.src`: canvas CORS would taint the compositor and Fast /
+  WebCodecs export cannot JPEG-encode. Import into `./media` so `src` is
+  `/media/…`, or serve the remote with `Access-Control-Allow-Origin`.
+- `POST /api/denoise` — body `{src:"/media/…", amount:"light"|"medium"|"strong"}`: writes a
+  noise-reduced FLAC of the whole file into `./media/` (reused if it exists) and returns
+  `{src, name, duration, channels}`. Does not touch `project.json` (see "Audio mix").
+- `POST /api/analyze` — body `{src:"/media/ref.mp4", threshold?, music?}`: analyze a
+  reference video into an edit blueprint (see "Remake a reference video"); extracts
+  its music into ./media. `GET /api/analyze?src=…` returns the cached blueprint.
+- `GET  /api/frame?src=/media/x.mp4&t=3.2` — one JPEG still of a source clip, the
+  "eyes" to go with `/api/analyze`'s ears (see "Look at the footage"). Optional
+  `w` (pixel width, default 768) and `q` (ffmpeg `-q:v` 1–31, default 4).
+  `&frames=N[&cols=][&from=][&to=][&w=320]` instead returns one N-up **contact
+  sheet** across the clip (N 2–60; `cols` omitted → the squarest layout, so 6
+  frames give 3×2 rather than 4×2 with two black cells). `src` must name an
+  existing file under `/media/` or `/library/` (404 otherwise). `?path=` reads
+  any file on the machine but only with the `X-FableCut-Client: mcp` request
+  header, which only the local MCP client sends — without it the request is
+  refused (403) before the path is even resolved. Results are cached in
+  `analysis/frames/` keyed by source path, size and mtime; the cache is capped
+  (500 files / 128 MB, oldest first). The response carries
+  `X-FableCut-Frame-Times` (comma-separated sample times, so a sheet's cells can
+  be mapped back to timestamps) and `X-FableCut-Frame-Source`.
+- `POST /api/scopes/request` also takes `{"image":true}`, which makes the editor
+  return the measured still as a JPEG data URL in `result.image` — how
+  `fablecut_frame {time}` shows an agent the composed program picture.
+- `GET  /api/events`  — SSE: named event `change` when project.json, ./media or
+  ./library changes; named event `profiles` when `encoding-profiles.json` changes
+  (UI refreshes the export-profile list only — no project reload); named event
+  `proxy` as a proxy is queued, makes progress, finishes or is deleted
+- Fast / WebCodecs export (browser compositor → server ffmpeg):
+  `GET /api/export/ffmpeg` → `{available}` · `GET /api/export/profiles[?detail=1]` →
+  `{default, profiles, issues}` · `POST /api/export/begin`
+  `{fps,name,mode?,profile?,hasAudio?,pixelFormat?,width?,height?}` → `{id,mode,profile?,label,summary}`
+  (`fps` is required — pass `project.fps`, no server-side default;
+  `mode` is `"jpeg"` (default, Fast) or `"annexb"` (WebCodecs H.264 elementary stream);
+  jpeg **400** if `profile` is not a defined id, or if ffmpeg rejects its args in the dry run;
+  optional `pixelFormat:"rgba"` plus `width`/`height` pipes raw canvas frames instead of JPEG)
+  · `POST /api/export/frame?id=` (JPEG body for jpeg mode; raw RGBA if `begin`
+  used `pixelFormat:"rgba"`; Annex-B for annexb — one POST may concatenate frames
+  or AUs. Must be after audio; ffmpeg is spawned on the first frame in both modes)
+  · `POST /api/export/audio?id=` (WAV body — must be sent before the first frame)
+  · `POST /api/export/end?id=[&discard=1]` → `{src}` under `/exports/`
+- Export jobs (what `fablecut_export` drives): `POST /api/export/request`
+  `{range?, profile?, where?:"auto"|"tab"|"headless"}` → `{id, status, via, …}`
+  (409 if one is already running, or nothing can render it) · `GET /api/export/job?id=`
+  → `{status: pending|running|done|failed|cancelled, progress 0–1, src, error}` ·
+  `POST /api/export/job/cancel?id=`. The editor tab side: SSE event `export`
+  (a ticket), `GET /api/export/job/ticket?id=`, `POST /api/export/job/claim?id=`
+  (first tab wins, else 409), `POST /api/export/job/report?id=`
+  `{progress} | {status:"done", src} | {status:"failed", error}` → `{cancel}`.
+
+## Recipes
+
+**Assemble a rough cut**: clips back-to-back on V1; each `start` = running sum
+of previous durations.
+
+**Insert / replace at playhead (3-point editing)**: load media into the Source
+monitor (double-click a bin item or timeline clip), mark the window with I/O,
+then `,` (insert icon) splits straddling clips on targeted tracks at the
+playhead, ripples everything later to the right by the window length, and drops
+the Source window in — video brings its linked audio stems. `.` (replace icon)
+overwrites instead: punches the placement tracks (V1 + linked stems) over
+[playhead, +window) with no ripple. Placement lanes are resolved against the
+live track list and follow targeting — if V1 / A1 / A2 were removed or
+untargeted, the lowest remaining targeted lanes of the right kind are used
+instead. Locked clips are never punched or split. A locked clip loaded into
+Source can't be retargeted with `.` (toast) until it is unlocked. When Source was loaded *from* a timeline
+clip, `.` instead retargets that clip's In/Out (and its linked stems) and
+ripples later clips on its tracks if the duration changed.
+
+**Ripple delete**: select clip(s), then ⇧Del or the timeline-toolbar **Ripple
+delete** — removes the selection (linked partners included) and pulls later
+clips left on each targeted track to close the gap. Plain Del lifts (leaves a
+gap). Sync lock applies: linked partners on untargeted tracks move with the
+ripple, and locked clips are neither deleted nor moved. An unselected clip that merely *overlaps* the deleted range stays put —
+its overlap ends up bridging the shifted-in clip, so a crossfade across the cut
+survives.
+
+**Tighten a cut without breaking the rest**: Ripple edit (B) on the tail of the
+shot that runs long — the rest of the edit follows. To change where a cut
+falls between two shots without shifting anything else, Rolling edit (R) the
+cut. To keep a shot's timing but use a better take of the same moment, Slip
+(Y) it. To pull a whole segment out of the middle: set IN / OUT around it and
+Extract (').
+
+**Jump to cut**: select a clip, then ↑ / ↓ — playhead snaps to its In, then
+Out (further taps walk neighboring cuts). No selection → previous / next cut
+on targeted tracks. Source monitor: same keys jump among 0 / In / Out / duration.
+
+**Protect finished work**: lock the lanes you are done with (`lockedTracks`,
+or the padlock), e.g. `setProject {lockedTracks:["A3"]}` for a music bed. Now
+insert, ripple delete and close gap re-time the picture without touching it.
+To try an alternative without deleting a clip, disable it (⇧E / `disabled:true`).
+
+**Title card**: `{kind:"text", mediaId:null, track:"V2", props:{text,fontSize,color}}`.
+
+**Music bed**: audio file on A1, `props.volume: 0.3`, trim with `in`/`duration`.
+
+**Level a voice-over edit**: `fablecut_normalize_audio {clipIds:[…every VO clip…], target:-16}`
+so all takes sit at one loudness, then keep the music on its own lane and pull
+that lane down: `{op:"setTrack", id:"A3", set:{gain:-14}}`. Then dip it under the
+voice: `fablecut_auto_duck {clipIds:[<music clip>], under:["A1"], amount:-10}`.
+
+**Tighten a talking-head take**: lock the music lane (`setProject {lockedTracks:["A3"]}`),
+then `fablecut_silence {clipIds:[<the take>]}` to see the pauses (it does the
+listening; `fablecut_frame` only shows the picture, handy to check a cut won't land
+mid-gesture), and `fablecut_silence {clipIds:[<the take>], cut:true}`. Add
+`{op:"crossfade", ids:[…]}` on the new audio cuts if a breath clicks.
+
+**Center a mono stem**: linked or standalone audio clip with `props.pan: 0` (inspector **Pan** slider, −1…+1). Stereo video stems default to L `−1` / R `+1`; set A1 to `0` to center that channel in the mix.
+
+**Cinematic grade**: `props.filterPreset: "teal-orange"` (tweak with
+`temperature`/`vignette` on top).
+
+**Balanced, contrasty base grade** (then measure with `fablecut_scopes`):
+`{op:"setGrade", id, grade:{contrast:1.15, pivot:0.42, shadows:-10, highlights:-20, highSoft:30, saturation:108}}`.
+Teal shadows / warm highlights: add `lift:[-0.034, 0.008, 0.012, 0]` and `gain:[0.04, 0, -0.06, 0]`.
+Film-style S-curve, muted greens, yellows pushed toward orange:
+`grade:{curves:{y:[[0.25, 0.2], [0.75, 0.82]]}, hueSat:[[115, 0.7]], hueHue:[[60, -12]]}` —
+then `fablecut_scopes` to check the blacks didn't crush.
+A grade on an adjustment layer over the whole edit = one look for every shot.
+
+**Green-screen composite**: subject clip on V2 with
+`props: {chromaKey:"#00ff00", chromaTolerance:30, chromaSoftness:15}`,
+background footage on V1.
+
+**Remove background without a green screen** (people):
+`props: {bgRemove:true}` — then put anything behind it on V1.
+
+**Picture-in-picture**: clip on V3 with
+`props: {scale:0.35, x:380, y:-200, cornerRadius:24}` — add
+`transitionIn: {type:"slide-right", duration:0.5}` to fly it in.
+
+**Slow motion / timelapse**: `props.speed: 0.5` (half speed) or `4` (4×).
+Remember the source window is `duration × speed`.
+
+**Speed ramp** (the reel move — fast into slow on the beat):
+`keyframes: { speed: [ {t:0, v:3}, {t:1.1, v:3}, {t:1.3, v:0.4, "ease":"ease-out"} ] }`
+— sync the drop (t:1.3) to a marker; add `transitionIn:{type:"whip",duration:0.2}` before it.
+
+**Impact hit**: adjustment layer, 0.25–0.4 s at the hit:
+`{kind:"adjust", track:"V3", props:{shake:20, rgbSplit:8}}` + `impact-hit.mp3`
+from `library/sfx` on A2.
+
+**VHS / glitch look**: `props: {rgbSplit:4, grain:35, saturation:120}` +
+`library/elements/vhs-scanlines.svg` on V3 with `blend:"soft-light", fit:"stretch"`.
+Cut between shots with `transitionIn:{type:"glitch",duration:0.3}`.
+
+**Film look**: adjustment layer across the whole edit:
+`props: {filterPreset:"cinematic", grain:18}` — one clip grades every shot.
+
+**Neon caption**: `props: {glow:60, glowColor:"#22d3ee", color:"#ffffff",
+font:"Bebas Neue", textAnim:"wave"}` on a dark shot.
+
+**Light leak accent**: `library/elements/light-leak-warm.svg` on V3,
+`props:{blend:"screen", fit:"cover", opacity:0.7}`, 1–2 s at scene changes,
+`transitionIn/Out: fade`.
+
+**Light-leak / dust overlay**: element from `library/elements` on V3 with
+`props: {blend:"screen", opacity:0.6, fit:"cover"}`.
+
+**Reel caption**: text clip with `props: {textAnim:"word-pop", wordRate:0.15,
+strokeWidth:6, bgColor:"#000000", bgOpacity:0.45, fontSize:88}`. `karaoke`
+dims words until "spoken"; `typewriter` for terminal vibes.
+
+**RTL / Hebrew / Arabic caption**: omit `direction` (defaults to `"auto"`) or set
+`direction:"rtl"` explicitly; pick a font with the script's glyphs (Google Fonts
+work). Animations wipe and stagger in reading order automatically. `letter-pop` /
+`wave` animate whole words on Arabic/Indic lines (not isolated letters) so
+cursive joining stays correct.
+
+**Branded title**: `props: {font:"Bebas Neue", weight:700, letterSpacing:6,
+uppercase:true, color:"#ffffff", color2:"#7b6cff", textShadow:20}` — any Google
+Font name just works.
+
+**Kinetic font-cut title** (rhythmic typeface cuts on the beat, then settle):
+`props: {font:"Bebas Neue", fontSize:120, uppercase:true, color:"#ffd166",
+textAnim:"font-cut", fontCutSet:["Anton","Bebas Neue","Archivo Black","Oswald"]}`.
+
+**Elegant clip-on title** (letters wipe in): `props: {font:"Playfair Display",
+fontSize:88, color:"#ffffff", color2:"#ffd166", letterSpacing:2,
+textAnim:"clip-reveal"}` — centered, one clean sweep.
+
+**Lower-third reveal**: `props: {font:"Archivo Black", fontSize:92,
+uppercase:true, textAnim:"rise-mask", y:<height*0.30>}` — the line rises from
+behind its baseline. Pair with a `serifDrop`/`zoom-in` kicker above it.
+
+**Custom font**: drop `MyBrand.ttf` into `library/fonts/`, then
+`props.font: "MyBrand"`.
+
+**Animated sticker**: author an SVG (convention above) into `library/svg/`,
+register `{kind:"svg", src:"/library/svg/foo.svg"}`, clip on V2/V3. Scale/move/
+rotate with normal props & keyframes; the SVG's own CSS animation plays on top,
+frame-accurately.
+
+**Whoosh on a cut**: 0.4 s sfx clip from `library/sfx` on A2 aligned to the cut.
+
+**Ken Burns** (slow push on a photo):
+`keyframes: { scale:[{t:0,v:1},{t:D,v:1.2,ease:"linear"}], x:[{t:0,v:0},{t:D,v:-40,ease:"linear"}] }`.
+
+**Crossfade**: overlap two clips on the same track by ~1 s; later clip gets
+`transitionIn: {type:"fade", duration:1}`. For audio give the earlier clip the
+matching `transitionOut` and both `curve:"power"` (or select a clip and press
+Shift+D in the editor).
+
+**Whip-pan cut**: A gets `transitionOut:{type:"whip",duration:0.25}`, B gets
+`transitionIn:{type:"whip",duration:0.25}`.
+
+**Beat-synced cut**: write beat times into `markers`, then align clip `start`s
+to them (the UI also snaps drags to markers).
+
+**Label the structure**: write named, coloured markers for sections the user
+can jump between (⇧M / Alt+⇧M, or the Markers list):
+`setProject {markers:[{t:0,label:"intro",color:"blue"},{t:8.5,label:"drop",color:"red"},{t:24,label:"outro",color:"purple"}]}`.
+`setProject` replaces the whole list — include the existing markers you want to keep.
+
+**Music fade-out**: audio clip `keyframes: { volume:[{t:D-3,v:0.8},{t:D,v:0}] }`
+or simply `transitionOut: {type:"fade", duration:3, curve:"exp"}`.
+
+**Pulse / emphasis**: `keyframes: { scale:[{t:0,v:1},{t:0.3,v:1.12},{t:0.6,v:1}] }`.
+
+**Reframe horizontal → vertical**: keep a wide composition canvas and crop for
+delivery — e.g. `width:1920, height:1080` with
+`exportFrame:{x:656,y:0,w:608,h:1080}` (9:16 fitted to canvas height). Position
+footage with clip `x`/`y`/`scale`; the export frame can be dragged in the UI.
+Omit `exportFrame` to export the full canvas.
+
+**Vertical reel**: set project `width:1080, height:1920`; use the UI's safe-area
+guides (▦) to keep captions out of platform UI zones.
+
+**Project frame rate**: set `fps` in `project.json` (or the Program Monitor FPS
+dropdown — 24 / 25 / 30 / 50 / 60). Preview stepping, timecode frames, Fast /
+WebCodecs / Realtime export, and `/api/export/begin` all use this value; pass the same
+`fps` when starting an export via the API.
+
+## Export
+
+Export is the Export button → dialog, or `fablecut_export` from an agent (below). Three engines:
+
+1. **Fast** — browser renders each frame with the normal compositor (SVG, keys,
+   AI masks), streams JPEGs + an offline WAV mix to the server; a single ffmpeg
+   pass encodes them via an **encoding profile** into `./exports/`. Quality /
+   software path; keeps rendering if you switch tabs.
+2. **WebCodecs** — same frame-accurate compositor loop, but the browser’s
+   `VideoEncoder` produces Annex-B H.264 (Main 4:2:0) and the server stream-copies
+   (`-c:v copy`) while muxing the WAV. Faster uploads, less server CPU. Requires
+   Chromium-class `VideoEncoder` with `avc: { format: "annexb" }` plus ffmpeg.
+   Encoding profiles do not apply (the bitstream is already encoded). No ffmpeg-style
+   CRF — quality is bitrate + VBR/CBR (export dialog; remembered in localStorage).
+   Optional `bitrateMode: "quantizer"` (fixed QP) exists in the spec but is rarely
+   supported by hardware encoders with Annex-B. Unavailable while an `exportFrame`
+   crop is set — use Fast for cropped delivery.
+3. **Realtime (MediaRecorder)** — automatic offline fallback when the server,
+   ffmpeg, or WebCodecs is unavailable. Plays the timeline once and records it;
+   keep the tab focused.
+
+Fast and WebCodecs export decode MP4 / MOV clips with WebCodecs
+(`mp4-demux.js` + `VideoDecoder`), frame-exact. Fragmented, rotated or
+undecodable files and `bgRemove` clips fall back to the `<video>` element.
+
+The exported span is chosen in the Export dialog (**Range**: Entire
+timeline / IN–OUT). IN–OUT is the default when `inPoint` / `outPoint` are
+set; pick Entire timeline to keep those markers for split/trim. Effective
+IN/OUT export bounds are clamped to `projDur` so an IN past the last clip
+cannot produce a one-frame black file.
+
+1. Entire timeline (or no markers) → the whole timeline
+2. IN–OUT, IN only → from `inPoint` to the end
+3. IN–OUT, OUT only → from the start to `outPoint`
+4. IN–OUT, both → the range between them
+
+**Agents export with `fablecut_export`** (or `POST /api/export/request`). It is
+the same Fast export as the button — same compositor, audio mix and encoding
+profile — so it needs ffmpeg on PATH. The job goes to an open editor tab (the
+user sees the progress bar), or, with none open, the server starts a headless
+Chrome / Edge on the editor and closes it when the file is written
+(`FABLECUT_CHROME` picks the browser). The tab first loads the revision the
+agent last wrote, so an export right after a patch includes that patch.
+
+- `fablecut_export {}` — waits, then returns the file path under `exports/`.
+  Range: `inPoint`→`outPoint` when either is set, else the whole timeline;
+  `range:"entire"|"in-out"` overrides.
+- `preset:"instagram-reels"` picks a delivery preset; `delivery:{…}` changes any of its
+  settings (`{preset:"youtube", delivery:{fps:60, video:{rate:"vbr", bitrate:16000}}}`).
+  `profile:"hq"` picks a raw encoding profile instead. With neither, `project.delivery`
+  is used when set, else `project.encodeProfile`, else the server's default profile.
+- `outputs:true` exports the project's checked batch outputs; `outputs:[{preset:"master"},
+  {preset:"youtube"}, {preset:"instagram-reels"}, …]` exports a list. One render per
+  frame rate; the reply lists every file (or why one failed).
+- `where:"headless"` renders in the background and leaves the user's tab alone;
+  `where:"tab"` refuses if no tab is open.
+- Long edits: `wait:false` returns a job id at once; poll with `{job:"x_…"}`
+  and stop one with `{cancel:"x_…"}`. One export runs at a time.
+
+### Delivery presets
+
+The Export dialog's **Preset** list. Each preset is a structured spec — no ffmpeg
+arguments to write — that `delivery.js` turns into one ffmpeg pass:
+
+| Preset | Output |
+|---|---|
+| `youtube` | 1920×1080, H.264 CRF 18, keyframe every 0.5 s, AAC 384k 48 kHz |
+| `youtube-shorts` | 1080×1920, as YouTube; warns past 3 min |
+| `instagram-reels` | 1080×1920, H.264 CRF 19 capped at 25 Mb/s, AAC 256k; ≤ 60 fps, warns past 3 min |
+| `tiktok` | 1080×1920, H.264 CRF 19 capped at 20 Mb/s, AAC 256k; warns past 10 min |
+| `x` | 1920×1080, H.264 CRF 20 capped at 25 Mb/s, AAC 192k; warns past 2:20 and 512 MB |
+| `linkedin` | 1920×1080, H.264 CRF 20 capped at 20 Mb/s, AAC 192k; warns past 15 min and 5 GB |
+| `master` (default) | the picture's own size, H.264 CRF 16, AAC 320k |
+| `broadcast` | 1920×1080 ProRes 422 HQ MOV, PCM 24-bit 48 kHz, Rec. 709, normalized to −23 LUFS / −1 dBTP (EBU R128); warns off 25 / 29.97 / 50 / 59.94 fps |
+| `web` | 1280×720 H.264 CRF 23, AAC 128k, fast start |
+| `archive` | the picture's own size, lossless FFV1 4:2:2 10-bit MKV, PCM 24-bit |
+| `custom` | your own settings |
+
+A spec (every key optional — what is left out comes from its `preset`):
+
+```jsonc
+{
+  "preset": "youtube",
+  "width": 1920, "height": 1080,   // null = the picture's own size (the export frame, else the canvas)
+  "fps": null,                     // null = the project's; 23.976 / 29.97 / 59.94 are exact NTSC rates
+  "reframe": "fill",               // another shape: fill crops the middle (or the export frame), fit pads, stretch
+  "container": "mp4",              // mp4 · mov · mkv · webm · mxf
+  "video": {
+    "codec": "h264",               // h264 · hevc · av1 · vp9 · prores · dnxhr · mpeg2 (XDCAM HD422) · ffv1
+    "encoder": "libx264",          // or h264_nvenc / h264_qsv / h264_amf … — listed only when they work here
+    "rate": "crf",                 // crf · vbr · cbr (ProRes, DNxHR, XDCAM, FFV1 are fixed)
+    "crf": 18, "bitrate": 12000, "maxrate": null,   // kb/s; maxrate caps a CRF or VBR encode
+    "keyint": 2,                   // seconds between keyframes, 0 = the encoder's default
+    "speed": "balanced",           // fast · balanced · best
+    "pixFmt": "yuv420p",           // 4:2:0 / 4:2:2 / 4:4:4, 8 or 10 bit, as the codec allows
+    "profile": null                // ProRes: proxy lt standard hq 4444 4444xq · DNxHR: lb sq hq hqx 444
+  },
+  "audio": { "codec": "aac", "bitrate": 320, "sampleRate": 48000, "channels": 2,
+             "loudness": null, "truePeak": -1 },
+                                   // aac · opus · mp3 · pcm16 · pcm24 · flac · none
+                                   // loudness: a LUFS target (−14 streaming, −16 podcast, −23 EBU R128, −24 ATSC) or null
+  "color": "bt709",                // bt709 · bt709-full · bt601-625 (PAL) · bt601-525 (NTSC)
+  "filename": "{project}_{preset}_{res}",
+  // tokens: {project} {preset} {res} (1080p, 1080x1920, 1080sq) {w} {h} {fps} {codec} {date} {time} {range} {n}
+  "metadata": { "title": "", "artist": "", "description": "", "copyright": "", "date": "", "keywords": "" }
+}
+```
+
+- **Impossible combinations are corrected, and the reply says how** — ProRes moves to MOV,
+  WebM takes Opus, Quick Sync gets 4:2:0. The dialog shows the same notes.
+- **Reframing happens in ffmpeg**: the browser sends the whole canvas and ffmpeg crops
+  the export frame (or the middle, for another shape) and scales. The dialog warns
+  when the output is upscaled or cropped, when a platform's length, size or frame-rate
+  limit is passed, and estimates the file size where it can (bitrate and fixed-rate
+  codecs; CRF cannot know).
+- Outputs that keep more than 4:2:0 8-bit (ProRes, DNxHR, FFV1, 10-bit, 4:2:2, 4:4:4)
+  get raw RGBA frames instead of JPEG, so no chroma is lost on the way. Slower to send.
+- The audio is cut to exactly the frames' length.
+- **Loudness** (`audio.loudness`): the mix is measured and turned to the target with
+  ffmpeg's two-pass `loudnorm` — one linear gain, and a true-peak limiter at `truePeak`.
+  When the peaks leave no room for the gain it compresses instead and may land under the
+  target; the check after the export says so. Off (null) leaves the mix as mixed —
+  except Broadcast, which normalizes to −23 LUFS / −1 dBTP. Mixes shorter than 3 s may
+  not reach the target.
+- **Checked after the export.** Every file is read back with ffprobe and measured
+  (BS.1770 integrated loudness and true peak) and compared with what was asked:
+  size, frame rate, frame count, codec, color tags, audio codec / rate / channels,
+  length, loudness against the target (±1 LU) and the true-peak ceiling, and file size
+  against the platform's limit. Without a target the report says where the platform
+  plays it ("YouTube plays it 4.2 dB quieter"). The report shows in the queue, a toast
+  after a single export, and the `fablecut_export` reply.
+- **Saved presets**: "Save preset…" in the dialog writes `library/delivery/<id>.json`,
+  listed under "Saved" in every project (`GET / POST /api/export/presets`,
+  `POST /api/export/presets/delete {id}`).
+- The settings are checked by a 0.1 s ffmpeg dry run before anything renders.
+- The dialog remembers the last settings in this browser. `setProject {delivery:"youtube"}`
+  (or a spec) pins them in the project, for the dialog and for `fablecut_export`.
+- Fast export only — WebCodecs and Realtime export encode their own way.
+
+### Batch outputs and the export queue
+
+**One project → many files.** `project.outputs` is the project's list of files to make
+(up to 16), each a delivery spec plus `{id, on}`. In the Export dialog, **Batch outputs**
+lists them: **+ Add these settings** adds the preset shown above, **+ Typical set** adds
+Master, YouTube 1080p, Reel 1080×1920, Square 1080 and a 720p preview, the checkbox picks
+which go out, **Load** shows one's settings above. **Export checked** queues the checked
+ones and starts.
+
+```jsonc
+// setProject {outputs:[…]} — a preset id or a spec each; stored complete with an id
+{"op":"setProject","set":{"outputs":[
+  "master", "youtube",
+  {"preset":"instagram-reels"},
+  {"preset":"custom","width":1080,"height":1080,"filename":"{project}_square_{res}"},
+  {"preset":"web","filename":"{project}_preview_{res}","on":false}
+]}}
+```
+
+- **Rendered once.** Outputs with the same frame rate and range go out in ONE render:
+  the compositor draws each frame once and every output's ffmpeg encodes it (up to 8 per
+  render). Four 1080p files take about as long as one. Outputs at another frame rate get
+  their own render. When any output needs full chroma (ProRes, 10-bit, lossless) the
+  frames go as RGBA to all of them.
+- **The export frame** is the picture for outputs of its own shape (and for the
+  picture's own size). An output of another shape reframes the whole canvas — a project
+  framed for 9:16 still makes a proper 16:9 file.
+- **The export queue** (Export dialog → **Add to queue**, or **Queue**) runs waiting
+  outputs back to back with a progress bar each, **Stop**, **Retry** for a failed one,
+  **Open** for a finished file and **Clear finished**. It lives in the tab: a reload
+  empties it. One output that fails does not stop the others in its render.
+- REST: `POST /api/export/begin {deliveries:[{delivery, name}, …], canvasW, canvasH,
+  region?, duration, fps, hasAudio}` → `{id, input, jpegQuality, outputs:[{file, spec,
+  summary, notes, size}]}`; frames and audio as for one output; `/api/export/end` →
+  `{src, outputs:[{file, ok, src, report:{ok, checks:[{ok, text}], line}, mixLoudness?} | {file, ok:false, error}]}`.
+
+### Encoding profiles (`encoding-profiles.json`)
+
+User-editable at the repo root. A profile is a **raw ffmpeg argument list** plus the
+things that are not ffmpeg arguments: `jpegQuality` (browser frame quality),
+`extension` (output container), and optional `color` (output matrix / range tags).
+Edit the file while the server runs — the UI hot-reloads the profile list via an SSE
+`profiles` event (no full project reload). Fast export only; WebCodecs ignores them.
+
+```jsonc
+{
+  "default": "delivery",           // profile id used when nothing else is set
+  "profiles": {
+    "draft": {
+      "label": "Draft · H.264 fast",
+      "description": "Quick preview — smaller file, faster encode.",
+      "jpegQuality": 0.85,         // browser JPEG frame quality (0.1–1)
+      "extension": ".mp4",
+      // Output color (optional — defaults to BT.709 limited/tv). Independent of
+      // -pix_fmt: yuv420p and yuv422p10le both typically use bt709 for HD SDR.
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+               "-movflags", "+faststart", "-shortest"]
+    }
+  }
+}
+```
+
+Export is **one ffmpeg pass**. The server owns the input side and the output path;
+`args` is everything in between (plus JPEG color conversion derived from `color`):
+
+```
+ffmpeg -y -f image2pipe -framerate <fps> -i - [-i audio.wav] <jpeg-color> <args…> exports/<name><extension>
+```
+
+- **There is no allow-list.** Any codec, filter, container or flag your local ffmpeg
+  supports works — ProRes, DNxHD, NVENC/QSV/VideoToolbox, VP9/AV1, 10-bit, HDR tags.
+  See the shipped `prores422`, `broadcast1080i50`, `nvenc-h264`, `nvenc-hevc`,
+  `videotoolbox-h264` and `videotoolbox-hevc` profiles (the NVENC ones need an
+  NVIDIA GPU; VideoToolbox requires macOS / Apple Silicon).
+- **Args are validated by ffmpeg itself**, not by a schema: when an export starts the
+  server dry-runs the profile against a 0.1 s synthetic input (`lavfi`). A typo or an
+  encoder your build lacks is rejected up front with ffmpeg's own message, instead of
+  failing after every frame has been rendered.
+- Use the **array form** — each element is passed to `spawn` untouched, so no quoting
+  is needed (`["-vf", "drawtext=text='hi there'"]` just works). A plain string is
+  accepted and split on whitespace.
+- **`color`** controls JPEG→YUV conversion and stream tags (`-colorspace` /
+  `-color_primaries` / `-color_trc` / `-color_range`). Default is BT.709 limited
+  (`range: "tv"`). Use `"range": "pc"` for full-range masters. Do **not** put those
+  flags in `args` — the engine strips them and applies `color` so vf and tags stay
+  aligned. `-pix_fmt` stays in `args` (sampling / bit depth only).
+- Nothing else is injected for you: `+faststart`, `-shortest`, `-strict -2` for Opus
+  in MP4 and pixel-format choices are all yours to write.
+- Frames arrive as **JPEG (4:2:0)**, so `yuv422p`/`yuv444p` cannot recover chroma the
+  source never had; raise `jpegQuality` before reaching for a wider pixel format.
+  Optional `pixelFormat:"rgba"` on `/api/export/begin` pipes uncompressed canvas
+  frames instead (`-f rawvideo`) when a caller wants full chroma.
+- The audio mix is only present when the timeline has audio; with no audio there is a
+  single input, so avoid hardcoded `-map 1:a`.
+
+**Note:** Fast export pipes **composited JPEG frames** from the browser (`-f image2pipe`),
+not `-i source.mp4`. Filters and codec settings apply to that frame stream. To transcode
+an existing file verbatim, run ffmpeg directly — that is outside the compositor path.
+
+Encoding profiles are listed at the bottom of the Export dialog's Preset list.
+
+**What the Export dialog opens on (priority):**
+1. `project.delivery`, then `project.encodeProfile` — set with `setProject`
+2. The last preset or profile used in this browser
+3. The `master` delivery preset
+
+**MCP:** `fablecut_encode_profiles` lists profiles; `{detail:true}` includes each `args`
+array; `{profile:"hq"}` returns one profile. `fablecut_status` shows the effective profile.

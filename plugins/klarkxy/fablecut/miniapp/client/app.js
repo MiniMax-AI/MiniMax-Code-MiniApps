@@ -1,0 +1,19509 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   FableCut — a browser-based non-linear video editor
+   Works standalone (open index.html) or connected to server.js, which adds
+   persistent projects (project.json), a media library folder, and a REST API
+   so external tools (e.g. Claude Code) can edit the timeline programmatically.
+   ═══════════════════════════════════════════════════════════════════════════ */
+"use strict";
+
+/* ── Constants ─────────────────────────────────────────────────────────── */
+const VIDEO_TRACK_COLORS = ["#4f8cff", "#7b6cff", "#ffd166", "#ff6b9d", "#45d9c2", "#f4a261", "#e76f51", "#a8dadc"];
+const AUDIO_TRACK_COLORS = ["#7ec249", "#5a9e3a", "#4a8a2f", "#3a7226", "#2d5a1e", "#8fbc5a", "#6b9e3a", "#4d7a28"];
+const MAX_TRACKS_PER_KIND = 16; // +V/+A and auto-grown A-tracks for multi-channel sources
+const DEFAULT_TRACK_DEFS = [
+  { id: "V3", kind: "video" },
+  { id: "V2", kind: "video" },
+  { id: "V1", kind: "video" },
+  { id: "A1", kind: "audio" },
+  { id: "A2", kind: "audio" },
+  { id: "A3", kind: "audio" },
+  { id: "A4", kind: "audio" },
+];
+function makeTrack(id, kind) {
+  const n = Math.max(1, parseInt(String(id).slice(1), 10) || 1);
+  const colors = kind === "audio" ? AUDIO_TRACK_COLORS : VIDEO_TRACK_COLORS;
+  return { id, kind, h: kind === "audio" ? 42 : 58, color: colors[(n - 1) % colors.length] };
+}
+/** Live track list (top→bottom). Mutated by +V/+A; rebuilt from project.tracks on load. */
+let TRACKS = DEFAULT_TRACK_DEFS.map((d) => makeTrack(d.id, d.kind));
+/* Three timeline density presets. L matches the original track heights (with thumbs).
+   S is compact solid-color rows; M is in between. */
+const TRACK_SIZE_PRESETS = {
+  s: { thumbs: false, hVideo: 26, hAudio: 22 },
+  m: { thumbs: true, hVideo: 44, hAudio: 32 },
+  l: { thumbs: true, hVideo: 58, hAudio: 42 },
+};
+const TRACK_SIZE_KEY = "fablecut-track-size";
+const LAST_TRANS_KEY = { in: "fablecut-last-trans-in", out: "fablecut-last-trans-out" };
+const DEFAULT_LAST_TRANS = { type: "fade", duration: 1 };
+const RULER_H = 26;
+const SNAP_PX = 8;
+const MIN_DUR = 0.05;
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 300;
+const TIMELINE_PAD_SEC = 15; // trailing empty seconds in the scrollable content
+const TIMELINE_FIT_FILL = 0.95; // ⇧Z / Fit — clip content fills this fraction of the viewport
+
+const DEFAULT_PROPS = {
+  x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, volume: 1, pan: 0,
+  anchorX: 0, anchorY: 0,                      // anchor point, px from the picture's centre (motion.js)
+  trimStart: 0, trimEnd: 100, trimOffset: 0,   // shape layers: the part of every path that draws (%)
+  autoOrient: false,                           // turn along the motion path
+  pathOffset: 0, pathAlign: "start",           // text on a path: where along it (%), which end sits there
+  motionBlur: 0, motionBlurSamples: 8,         // shutter angle (°, 0 = off) and sub-frame samples
+  gain: 0,                                     // clip gain, dB — applied before volume
+  channelMode: "stereo",                       // stereo | mono | left | right | swap
+  duck: 0,                                     // ducking, dB (≤ 0) — keyframed by Auto-duck, multiplies volume
+  speed: 1,                                    // playback rate (video/audio)
+  brightness: 100, contrast: 100, saturation: 100, hue: 0,
+  blur: 0, grayscale: 0, sepia: 0, invert: 0,
+  temperature: 0, tint: 0, vignette: 0,        // color grade extensions
+  filterPreset: "none",                        // named look, see FILTER_PRESETS
+  fit: "contain",                              // contain | cover | stretch | none
+  cropL: 0, cropT: 0, cropR: 0, cropB: 0,      // % trimmed off each source edge
+  flipH: false, flipV: false,
+  cornerRadius: 0,                             // px, rounded corners (PiP look)
+  blend: "normal",                             // canvas blend mode
+  chromaKey: "", chromaTolerance: 26, chromaSoftness: 12,  // green-screen key
+  bgRemove: false,                             // AI person cut-out (MediaPipe)
+  shake: 0, shakeSpeed: 8,                     // handheld/impact camera shake (px)
+  rgbSplit: 0,                                 // chromatic aberration (px)
+  grain: 0,                                    // film grain (%)
+  text: "Title", fontSize: 72, color: "#ffffff", color2: "", font: "Segoe UI",
+  bold: true, italic: false, weight: 0, align: "center",
+  letterSpacing: 0, lineHeight: 1.2, uppercase: false, textShadow: 12,
+  glow: 0, glowColor: "",                      // neon glow (glowColor defaults to fill)
+  textAnim: "none", wordRate: 0.15, direction: "auto",
+  strokeWidth: 0, strokeColor: "#000000", bgColor: "#000000", bgOpacity: 0,
+  boxW: 0, boxH: 0,                            // text box (px); 0 = hug content. Resize handles edit these.
+  boxFit: false,                               // false = wrap at fixed fontSize; true = scale font to fit box
+  vAlign: "middle",                            // top | middle | bottom — vertical align of the text block in the box
+};
+const ANIMATABLE = ["x", "y", "scale", "rotation", "opacity", "volume", "pan", "duck", "speed",
+  "brightness", "contrast", "saturation", "hue", "blur", "grayscale", "sepia", "invert",
+  "temperature", "tint", "vignette", "cornerRadius", "shake", "rgbSplit", "grain",
+  "fontSize", "letterSpacing", "glow", "anchorX", "anchorY", "trimStart", "trimEnd", "trimOffset", "pathOffset"];
+const TRANSITIONS = ["none", "fade", "slide-left", "slide-right", "slide-up", "slide-down",
+  "zoom", "wipe", "wipe-right", "wipe-up", "wipe-down", "iris", "spin", "blur", "whip",
+  "glitch", "pop"];
+const TEXT_ANIMS = ["none", "typewriter", "word-pop", "word-slide", "karaoke",
+  "letter-pop", "wave", "bounce", "shake",
+  "clip-reveal", "zoom-in", "font-cut", "rise-mask"];
+const BLEND_MODES = self.FableCutMask.BLENDS;   // the canvas composite set, shared with the agent (mask.js)
+/* Named looks. % props multiply against the clip's own value, additive props add. */
+const FILTER_PRESETS = {
+  none: {},
+  cinematic: { contrast: 112, saturation: 118, temperature: -10, vignette: 28 },
+  "teal-orange": { contrast: 115, saturation: 125, temperature: -18, hue: -8, vignette: 22 },
+  noir: { grayscale: 100, contrast: 128, brightness: 96, vignette: 45 },
+  vintage: { sepia: 42, contrast: 92, brightness: 106, saturation: 88, temperature: 12, vignette: 30 },
+  faded: { contrast: 84, brightness: 110, saturation: 82 },
+  warm: { temperature: 28, brightness: 103, saturation: 108 },
+  cold: { temperature: -28, saturation: 104 },
+  pop: { saturation: 152, contrast: 116 },
+  dreamy: { brightness: 109, saturation: 112, blur: 0.6, temperature: 8 },
+  retro: { saturation: 130, hue: -6, contrast: 106, sepia: 15 },
+  "bw-soft": { grayscale: 100, contrast: 95, brightness: 108 },
+  cyberpunk: { saturation: 140, hue: 12, contrast: 118, temperature: -15, vignette: 25 },
+  sunset: { temperature: 24, tint: 6, brightness: 105, saturation: 116, contrast: 104, vignette: 20 },
+  midnight: { temperature: -24, brightness: 88, contrast: 122, saturation: 94, vignette: 38 },
+};
+const SYSTEM_FONTS = ["Segoe UI", "Arial", "Georgia", "Impact", "Courier New",
+  "Trebuchet MS", "Verdana", "Times New Roman", "Comic Sans MS", "Consolas"];
+const GOOGLE_FONTS = ["Anton", "Archivo Black", "Abril Fatface", "Barlow", "Bebas Neue",
+  "Caveat", "Inter", "Lobster", "Montserrat", "Oswald", "Pacifico", "Permanent Marker",
+  "Playfair Display", "Poppins", "Roboto", "Roboto Condensed", "Teko"];
+
+/* ── Title styles: cohesive one-tap looks. Each bundles a DIFFERENT font,
+   placement and animation, so titles vary instead of all looking basic.
+   Agents can reproduce a look by writing the same props directly. ── */
+const FONT_CUT_DEFAULT = ["Anton", "Bebas Neue", "Archivo Black", "Oswald", "Impact"];
+const STYLE_RESET = {   // decorative props a style owns; reset before applying
+  color2: "", glow: 0, glowColor: "", strokeWidth: 0, bgColor: "#000000", bgOpacity: 0,
+  rotation: 0, letterSpacing: 0, uppercase: false, italic: false, textShadow: 12,
+  fontCutSet: undefined, align: "center",
+};
+const TITLE_STYLES = {
+  plain: { label: "Plain", place: "center", props: { font: "Segoe UI", fontSize: 72, bold: true, color: "#ffffff", textAnim: "none" } },
+  impact: { label: "Impact", place: "lower", props: { font: "Anton", fontSize: 96, bold: false, uppercase: true, color: "#ffffff", textShadow: 22, textAnim: "word-pop" } },
+  elegant: { label: "Elegant", place: "center", props: { font: "Playfair Display", fontSize: 88, bold: false, color: "#ffffff", color2: "#ffd166", letterSpacing: 2, textAnim: "clip-reveal" } },
+  kinetic: { label: "Kinetic cut", place: "center", props: { font: "Bebas Neue", fontSize: 120, bold: false, uppercase: true, color: "#ffd166", letterSpacing: 3, textAnim: "font-cut", fontCutSet: ["Anton", "Bebas Neue", "Archivo Black", "Oswald"] } },
+  neon: { label: "Neon", place: "center", props: { font: "Bebas Neue", fontSize: 104, bold: false, uppercase: true, color: "#ffffff", glow: 60, glowColor: "#22d3ee", textAnim: "wave" } },
+  handwritten: { label: "Handwritten", place: "lower-left", props: { font: "Caveat", fontSize: 92, bold: false, color: "#ffffff", rotation: -4, textAnim: "word-slide" } },
+  serifDrop: { label: "Serif drop", place: "center", props: { font: "Abril Fatface", fontSize: 96, bold: false, color: "#ffffff", textShadow: 18, textAnim: "zoom-in" } },
+  subtitle: { label: "Subtitle", place: "lower", props: { font: "Roboto", fontSize: 52, bold: false, color: "#ffffff", bgColor: "#000000", bgOpacity: 0.5, textAnim: "karaoke" } },
+  boldRise: { label: "Bold rise", place: "lower", props: { font: "Archivo Black", fontSize: 92, bold: false, uppercase: true, color: "#ffffff", textAnim: "rise-mask" } },
+  luxury: { label: "Luxury", place: "center", props: { font: "Cinzel", fontSize: 88, bold: false, uppercase: true, color: "#faf0dc", color2: "#c9a227", letterSpacing: 6, textAnim: "clip-reveal" } },
+};
+const STYLE_CYCLE = ["impact", "elegant", "kinetic", "neon", "handwritten", "serifDrop", "boldRise", "luxury"];
+const AUDIO_EXT = /\.(mp3|wav|ogg|m4a|aac|flac|mpeg)$/i;
+const VIDEO_EXT = /\.(mp4|webm|mov|mkv|m4v)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif)$/i;
+const ASPECT_PRESETS = [
+  { label: "16:9 · 1280×720", w: 1280, h: 720 },
+  { label: "16:9 · 1920×1080", w: 1920, h: 1080 },
+  { label: "9:16 · Reel 1080×1920", w: 1080, h: 1920 },
+  { label: "4:5 · IG 1080×1350", w: 1080, h: 1350 },
+  { label: "1:1 · 1080×1080", w: 1080, h: 1080 },
+];
+const FPS_PRESETS = [24, 25, 30, 50, 60];
+/** Delivery-aspect presets fitted inside the composition canvas (export crop). */
+const EXPORT_FRAME_ASPECTS = [
+  { label: "Full canvas", w: 0, h: 0 },
+  { label: "9:16 Reel", w: 9, h: 16 },
+  { label: "16:9", w: 16, h: 9 },
+  { label: "4:5 IG", w: 4, h: 5 },
+  { label: "1:1 Square", w: 1, h: 1 },
+];
+const WAVE_PEAKS_PER_SEC = 50;
+/* ── Mixer levels (dB). Clip gain is a trim before volume; track and master
+   faders sit on the buses. A fader at its floor is silence, not −60 dB. ── */
+const CLIP_GAIN_MIN = -60, CLIP_GAIN_MAX = 24;
+const FADER_DB_MIN = -60, FADER_DB_MAX = 12;
+const CHANNEL_MODES = ["stereo", "mono", "left", "right", "swap"];
+function dbToGain(db) {
+  db = +db;
+  if (!Number.isFinite(db)) return 1;
+  return db <= FADER_DB_MIN ? 0 : Math.pow(10, db / 20);
+}
+function clampFaderDb(db) { return clamp(+db || 0, FADER_DB_MIN, FADER_DB_MAX); }
+/** What a clip's evaluated props send to its vol stage: volume × duck. */
+function clipAudioGain(p) {
+  const vol = clamp(+p.volume || 0, 0, 4);
+  return p.duck < 0 ? vol * dbToGain(p.duck) : vol;
+}
+function clipGainDb(c) { return clamp(+c?.props?.gain || 0, CLIP_GAIN_MIN, CLIP_GAIN_MAX); }
+function clipChannelMode(c) {
+  const m = c?.props?.channelMode;
+  return CHANNEL_MODES.includes(m) ? m : "stereo";
+}
+function trackGainDb(id) { return clampFaderDb(TRACKS.find((t) => t.id === id)?.gain); }
+function trackPanValue(id) { return clipPan(TRACKS.find((t) => t.id === id)?.pan); }
+function masterGainDb() { return clampFaderDb(project.master?.gain); }
+/** project.master on disk: {gain?, fx?}, written only when off-default. */
+function normalizeMaster(raw) {
+  const gain = clampFaderDb(raw?.gain);
+  const fx = normFx(raw?.fx);
+  if (!gain && !fx) return null;
+  const out = {};
+  if (gain) out.gain = gain;
+  if (fx) out.fx = fx;
+  return out;
+}
+/* Submix buses: project.buses = [{id:"B1", name?, gain?, pan?, mute?, fx?}].
+   An A-track routes into one with tracks[].out = "B1" (default: the master);
+   a bus has its own effects, fader and pan and feeds the master. */
+const BUS_MAX = 8;
+const BUS_COLOR = "#c58cff";
+function normalizeBuses(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set(), out = [];
+  for (const b of raw) {
+    if (!b || !/^B\d+$/.test(String(b.id)) || seen.has(b.id) || out.length >= BUS_MAX) continue;
+    seen.add(b.id);
+    const d = { id: b.id };
+    if (typeof b.name === "string" && b.name.trim()) d.name = b.name.trim().slice(0, 40);
+    const g = Math.round(clampFaderDb(b.gain) * 10) / 10;
+    if (g) d.gain = g;
+    const pn = clipPan(b.pan);
+    if (pn) d.pan = pn;
+    if (b.mute === true) d.mute = true;
+    const fx = normFx(b.fx);
+    if (fx) d.fx = fx;
+    out.push(d);
+  }
+  return out.sort((a, b) => parseInt(a.id.slice(1), 10) - parseInt(b.id.slice(1), 10));
+}
+function busById(id) { return (project.buses || []).find((b) => b.id === id) || null; }
+function busIdsNow() { return (project.buses || []).map((b) => b.id); }
+function busLabel(b) { return b?.name || b?.id || ""; }
+/** The bus an A-track feeds, or null for the master. */
+function trackOut(id) {
+  const o = TRACKS.find((t) => t.id === id)?.out;
+  return o && busById(o) ? o : null;
+}
+const TRACK_IDS = new Set(TRACKS.map((t) => t.id));
+function syncTrackIds() {
+  TRACK_IDS.clear();
+  for (const t of TRACKS) TRACK_IDS.add(t.id);
+}
+function serializeTracks() {
+  // Mixer settings are written only when off-default, so untouched projects
+  // stay byte-identical.
+  return TRACKS.map(({ id, kind, gain, pan, fx, out }) => {
+    const d = { id, kind };
+    if (kind === "audio" && +gain) d.gain = +gain;
+    if (kind === "audio" && +pan) d.pan = +pan;
+    if (kind === "audio" && fx?.length) d.fx = fx;
+    if (kind === "audio" && out && busById(out)) d.out = out;
+    return d;
+  });
+}
+function sortTracksInPlace() {
+  const vids = TRACKS.filter((t) => t.kind === "video")
+    .sort((a, b) => (parseInt(b.id.slice(1), 10) || 0) - (parseInt(a.id.slice(1), 10) || 0));
+  const auds = TRACKS.filter((t) => t.kind === "audio")
+    .sort((a, b) => (parseInt(a.id.slice(1), 10) || 0) - (parseInt(b.id.slice(1), 10) || 0));
+  TRACKS.length = 0;
+  TRACKS.push(...vids, ...auds);
+  syncTrackIds();
+}
+function applyTracksFromProject(defs) {
+  const raw = Array.isArray(defs) && defs.length
+    ? defs.filter((d) => d && d.id && (d.kind === "video" || d.kind === "audio"))
+    : DEFAULT_TRACK_DEFS;
+  const seen = new Set();
+  const list = raw.filter((d) => {
+    if (seen.has(d.id)) return false;
+    seen.add(d.id);
+    return true;
+  });
+  TRACKS.length = 0;
+  for (const d of list) {
+    const t = makeTrack(d.id, d.kind === "audio" ? "audio" : "video");
+    if (t.kind === "audio") {
+      if (+d.gain) t.gain = clampFaderDb(d.gain);
+      if (+d.pan) t.pan = clipPan(d.pan);
+      const fx = normFx(d.fx);
+      if (fx) t.fx = fx;
+      if (typeof d.out === "string" && /^B\d+$/.test(d.out)) t.out = d.out;
+    }
+    TRACKS.push(t);
+  }
+  sortTracksInPlace();
+  applyTrackHeights();
+}
+/** Ensure every clip.track exists (agents may reference V4+ before the UI adds it). */
+function ensureTracksCoverClips() {
+  let added = false;
+  for (const c of project.clips) {
+    if (!c.track || TRACK_IDS.has(c.track)) continue;
+    const kind = c.kind === "audio" || /^A\d+$/i.test(c.track) ? "audio" : "video";
+    TRACKS.push(makeTrack(c.track, kind));
+    TRACK_IDS.add(c.track); // mark present before later clips (avoids duplicate makeTrack)
+    added = true;
+  }
+  if (added) {
+    sortTracksInPlace();
+    applyTrackHeights();
+  }
+}
+function audioTrackIds() {
+  return TRACKS.filter((t) => t.kind === "audio").map((t) => t.id);
+}
+function nextTrackId(kind) {
+  const prefix = kind === "audio" ? "A" : "V";
+  let max = 0;
+  for (const t of TRACKS) {
+    if (t.kind !== kind) continue;
+    const n = parseInt(t.id.slice(1), 10);
+    if (n > max) max = n;
+  }
+  return prefix + (max + 1);
+}
+function addTimelineTrack(kind) {
+  const existing = TRACKS.filter((t) => t.kind === kind).length;
+  if (existing >= MAX_TRACKS_PER_KIND) {
+    toast(`Maximum ${MAX_TRACKS_PER_KIND} ${kind} tracks`);
+    return null;
+  }
+  const id = nextTrackId(kind);
+  const t = makeTrack(id, kind);
+  TRACKS.push(t);
+  sortTracksInPlace();
+  applyTrackHeights();
+  project.tracks = serializeTracks();
+  if (state.soloId && state.soloId !== id) {
+    state.disabledTracks.add(id);
+    project.disabledTracks = [...state.disabledTracks].sort();
+  }
+  if (kind === "audio") syncAudioGraphTracks();
+  buildTrackDOM();
+  syncAllTrackDisabledUI();
+  state.dirtyTimeline = true;
+  rebuildClips();
+  const h = setTimelineHeight(Math.max(
+    $("timelinePanel")?.getBoundingClientRect().height || 0,
+    defaultTimelineHeight()
+  ));
+  localStorage.setItem(TL_H_KEY, String(h));
+  scheduleSave();
+  return t;
+}
+function trackHasClips(trackId) {
+  return project.clips.some((c) => c.track === trackId);
+}
+function canRemoveTrack(trackId) {
+  const t = TRACKS.find((x) => x.id === trackId);
+  if (!t) return { ok: false, reason: "Unknown track" };
+  if (trackHasClips(trackId)) return { ok: false, reason: "Track has clips" };
+  if (TRACKS.filter((x) => x.kind === t.kind).length <= 1)
+    return { ok: false, reason: `Keep at least one ${t.kind} track` };
+  return { ok: true, reason: "" };
+}
+function removeTimelineTrack(trackId) {
+  const check = canRemoveTrack(trackId);
+  if (!check.ok) { toast(check.reason); return false; }
+  const wasAudio = TRACKS.find((t) => t.id === trackId)?.kind === "audio";
+  const idx = TRACKS.findIndex((t) => t.id === trackId);
+  if (idx < 0) return false;
+  if (state.soloId === trackId) clearTrackSolo({ restore: true });
+  TRACKS.splice(idx, 1);
+  syncTrackIds();
+  if (state.disabledTracks.has(trackId)) {
+    state.disabledTracks.delete(trackId);
+    project.disabledTracks = [...state.disabledTracks].sort();
+  }
+  state.lockedTracks.delete(trackId);
+  state.untargetedTracks.delete(trackId);
+  project.lockedTracks = [...state.lockedTracks].sort();
+  project.untargetedTracks = [...state.untargetedTracks].sort();
+  if (Array.isArray(state.soloRestore)) {
+    state.soloRestore = state.soloRestore.filter((id) => id !== trackId);
+  }
+  project.tracks = serializeTracks();
+  if (wasAudio) syncAudioGraphTracks();
+  buildTrackDOM();
+  syncAllTrackDisabledUI();
+  state.dirtyTimeline = true;
+  rebuildClips();
+  scheduleSave();
+  return true;
+}
+/* Lightweight right-click menu for track headers. */
+let trackCtxMenu = null;
+function hideTrackCtxMenu() {
+  if (trackCtxMenu) { trackCtxMenu.remove(); trackCtxMenu = null; }
+}
+function showTrackCtxMenu(clientX, clientY, track) {
+  hideTrackCtxMenu();
+  const check = canRemoveTrack(track.id);
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.id = "trackCtxMenu";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ctx-item";
+  btn.textContent = "Remove track";
+  if (!check.ok) {
+    btn.disabled = true;
+    btn.title = check.reason;
+  } else {
+    btn.addEventListener("click", () => {
+      hideTrackCtxMenu();
+      removeTimelineTrack(track.id);
+    });
+  }
+  menu.appendChild(btn);
+  document.body.appendChild(menu);
+  trackCtxMenu = menu;
+  const pad = 6;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  let x = clientX, y = clientY;
+  if (x + w + pad > window.innerWidth) x = window.innerWidth - w - pad;
+  if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
+  menu.style.left = Math.max(pad, x) + "px";
+  menu.style.top = Math.max(pad, y) + "px";
+  btn.focus();
+}
+/* Clip right-click menu: enable / lock / link for the clip's selection. */
+function showClipCtxMenu(clientX, clientY, c) {
+  hideTrackCtxMenu();
+  if (!state.selIds.has(c.id)) selectClip(c.id);
+  const group = withLinked(selectedClips());
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.id = "trackCtxMenu";
+  const item = (label, keys, run, disabledReason) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ctx-item";
+    btn.innerHTML = `<span>${escapeHtml(label)}</span>` + (keys ? `<kbd>${escapeHtml(keys)}</kbd>` : "");
+    if (disabledReason) { btn.disabled = true; btn.title = disabledReason; }
+    else btn.addEventListener("click", () => { hideTrackCtxMenu(); run(); });
+    menu.appendChild(btn);
+    return btn;
+  };
+  const anyEnabled = group.some((x) => x.disabled !== true);
+  const anyUnlocked = group.some((x) => x.locked !== true);
+  const locked = group.some(isClipLocked);
+  item(anyEnabled ? "Disable clip" : "Enable clip", "Shift+E", toggleClipsDisabled,
+    locked ? "Locked — unlock to change" : null);
+  item(anyUnlocked ? "Lock clip" : "Unlock clip", "", toggleClipsLocked);
+  if (group.some((x) => x.kind === "audio")) {
+    item("Crossfade with neighbours", "Shift+D", () => crossfadeSelected(), locked ? "Locked — unlock to change" : null);
+    item("Auto-duck under other tracks", "", () => autoDuckClips(selectedClips()), locked ? "Locked — unlock to change" : null);
+  }
+  if (group.some((x) => x.kind === "audio" || x.kind === "video"))
+    item("Find silences", "", () => findSilences(selectedClips()));
+  if (selectedClips().some((x) => isVisualClip(x) && x.kind !== "null"))
+    item("Parent to a new null", "", parentSelectionToNull, locked ? "Locked — unlock to change" : null);
+  item("Precompose", "", precomposeSelection, locked ? "Locked — unlock to change" : null);
+  if (c.kind === "comp") item("Open composition", "", () => enterComp(c.compId, c));
+  if (c.mediaId || c.kind === "comp") item("Reveal in project", "", () => revealInProject(c));
+  const linked = selectedClips().some((x) => x.linkGroup || x.linkedId);
+  if (linked) item("Unlink audio / video", "Ctrl+L", toggleLinkSelected, locked ? "Locked — unlock to change" : null);
+  else if (c.kind === "video" || c.kind === "audio") {
+    const why = linkRefusal(selectedClips());
+    item("Link audio / video", "Ctrl+L", toggleLinkSelected, why);
+  }
+  document.body.appendChild(menu);
+  trackCtxMenu = menu;
+  const pad = 6;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  let x = clientX, y = clientY;
+  if (x + w + pad > window.innerWidth) x = window.innerWidth - w - pad;
+  if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
+  menu.style.left = Math.max(pad, x) + "px";
+  menu.style.top = Math.max(pad, y) + "px";
+  menu.querySelector(".ctx-item:not(:disabled)")?.focus();
+}
+document.addEventListener("pointerdown", (e) => {
+  if (trackCtxMenu && !trackCtxMenu.contains(e.target)) hideTrackCtxMenu();
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideTrackCtxMenu();
+}, true);
+
+/* ── User settings (localStorage; optional behavior toggles) ── */
+const SETTINGS_KEY = "fablecut-settings";
+const DEFAULT_SETTINGS = {
+  linkSelect: false, // timeline ↔ project bin selection sync
+  encodeProfile: null, // null = server default from encoding-profiles.json
+  exportKind: null, // "delivery" | "profile" — what the Export dialog last used
+  delivery: null, // last delivery spec used in the Export dialog (delivery.js)
+  // WebCodecs has no CRF — bitrate (Mbps) + constant|variable mode
+  webCodecsBitrateMbps: null, // null = auto from canvas size
+  webCodecsBitrateMode: "variable", // "variable" | "constant"
+  snapTargets: { clips: true, playhead: true, markers: true, inout: true, keyframes: false, frames: true },
+  useProxies: true, // play proxies (when a file has one) while editing; export always reads the original
+};
+let settings = { ...DEFAULT_SETTINGS };
+function loadSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+    if (!raw || typeof raw !== "object") { settings = { ...DEFAULT_SETTINGS }; return; }
+    const next = { ...DEFAULT_SETTINGS };
+    for (const k of Object.keys(DEFAULT_SETTINGS)) {
+      if (Object.hasOwn(raw, k)) next[k] = raw[k];
+    }
+    // coerce WebCodecs bitrate settings
+    const mbps = next.webCodecsBitrateMbps;
+    if (mbps != null) {
+      const n = Number(mbps);
+      next.webCodecsBitrateMbps = (Number.isFinite(n) && n > 0) ? n : null;
+    }
+    if (next.webCodecsBitrateMode !== "constant" && next.webCodecsBitrateMode !== "variable") {
+      next.webCodecsBitrateMode = "variable";
+    }
+    const st = next.snapTargets;
+    next.snapTargets = { ...DEFAULT_SETTINGS.snapTargets };
+    if (st && typeof st === "object") {
+      for (const k of Object.keys(next.snapTargets)) if (typeof st[k] === "boolean") next.snapTargets[k] = st[k];
+    }
+    settings = next;
+  } catch {
+    settings = { ...DEFAULT_SETTINGS };
+  }
+}
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { }
+}
+function getSetting(key) {
+  return settings[key];
+}
+function setSetting(key, value) {
+  if (!Object.hasOwn(DEFAULT_SETTINGS, key)) return;
+  settings[key] = value;
+  saveSettings();
+}
+
+/* ── State ─────────────────────────────────────────────────────────────── */
+const project = {
+  name: "Untitled Project",
+  width: 1280, height: 720, fps: 30, // overwritten by project.json / applyProject
+  background: "#000000",
+  revision: 0,
+  folders: [], // {id, name, parentId:null|string, open:true} — Project-bin tree (virtual)
+  media: [],   // {id, name, kind, src, duration, width?, height?, folderId?}
+  clips: [],   // {id, mediaId, kind, track, start, in, duration, name, props:{}}
+  markers: [], // {t, label?} — beat/cue markers on the ruler; snap targets
+  inPoint: null,  // timeline work-area IN (seconds), or null
+  outPoint: null, // timeline work-area OUT (seconds), or null
+  disabledTracks: [], // track ids (V4…A3) hidden from preview/export when listed
+  lockedTracks: [],     // track ids no edit may change (UI and MCP patch)
+  untargetedTracks: [], // track ids edits skip (split, insert, ripple, close gap…)
+  exportFrame: null, // optional {x,y,w,h} delivery crop inside width×height canvas
+  encodeProfile: null, // optional fast-export profile id (overrides browser setting)
+  delivery: null, // optional delivery spec (delivery.js) — the default for exports, agents' included
+  outputs: null, // optional batch outputs: [{id, on, …delivery spec}] — one render, several files
+  tracks: null, // optional [{id, kind, gain?, pan?}] — null means default V3…V1 + A1…A4
+  master: null, // optional {gain} — master bus fader (dB)
+  buses: [],    // submix buses [{id:"B1", name?, gain?, pan?, mute?, fx?}]; tracks[].out routes into one
+  panSchema: 1, // 1 = pan-aware; gates one-time L/R stem migration on load
+};
+/** Sole runtime FPS source — always the loaded project’s `fps`. */
+function projectFps() {
+  const n = Number(project.fps);
+  return (Number.isFinite(n) && n > 0) ? n : 1;
+}
+const state = {
+  time: 0, playing: false, pps: 60, snap: true,
+  previewRate: 1,        // playback speed for PREVIEW only — never affects export
+  selId: null,           // primary selection (drives the inspector)
+  selIds: new Set(),     // full multi-selection (includes selId)
+  silence: null,         // silences found (Inspector → Silence): {ids, spans, sig}, shown on the timeline until cut or cleared
+  silenceBusy: false,    // a Find is listening (the Inspector offers Cancel)
+  trackSize: "l",        // s | m | l — timeline track density preset
+  connected: false, exporting: false,
+  rendering: false,      // fast (server/ffmpeg) export in progress
+  guides: false,         // safe-area overlay on the monitor
+  exportFrameView: true, // export frame overlay (border + overscan dim)
+  exportFrameCrop: false, // clip preview to the export frame (hide overscan)
+  viewZoom: 1,           // program-monitor display zoom (1 = fit stage)
+  monitorMode: "program", // "source" | "program" — single-viewer Avid-style toggle
+  source: {              // Source monitor (media-local; not timeline)
+    mediaId: null,
+    time: 0,
+    playing: false,
+    in: null,            // media-time mark, or null
+    out: null,
+    fromClipId: null,    // set when loaded from a timeline clip (informational)
+  },
+  audioHold: false,      // while paused, loop one frame of audio at the playhead
+  ffmpeg: false,         // server reports ffmpeg available
+  webCodecs: false,      // VideoEncoder + Annex-B H.264 supported
+  dirtyTimeline: true, gesture: false,
+  workAreaPlay: false,   // when true, play + Home/End stay inside IN/OUT
+  binTab: "project",     // project | elements | sfx | svg | shapes
+  disabledTracks: new Set(), // mirror of project.disabledTracks for fast lookup
+  lockedTracks: new Set(),   // mirror of project.lockedTracks
+  untargetedTracks: new Set(), // mirror of project.untargetedTracks
+  tool: "select",            // timeline edit tool: select | ripple | roll | slip | slide
+  soloId: null,              // track id when solo is active, else null
+  soloRestore: null,         // disabledTracks snapshot taken when solo engaged
+  transFocus: null,      // "in" | "out" — inspector transition row highlighted
+  kfGraphs: new Set(),   // animatable prop keys with open monitor graphs
+};
+function normalizeDisabledTracks(raw) {
+  if (raw == null) return [];
+  const arr = Array.isArray(raw) ? raw : [];
+  return [...new Set(arr.filter((id) => TRACK_IDS.has(id)))].sort();
+}
+function isTrackEnabled(id) {
+  return !state.disabledTracks.has(id);
+}
+/* ── Track targeting, locks and clip enable ──
+   Three independent switches, Premiere-style:
+   • enabled (eye)  — output only: hidden from preview, audio and export.
+   • targeted       — which lanes an edit touches: split, insert, ripple
+                      delete, close gap, T / ⇧T, jump-to-cut, Source placement.
+   • locked         — nothing may change it: not the mouse, not the keyboard,
+                      not a ripple (locked lanes stay put while others shift).
+   A clip can also be locked or disabled on its own. A linked A/V group with
+   any locked member counts as locked as a whole, so sync lock never splits it. */
+function isTrackTargeted(id) { return !state.untargetedTracks.has(id); }
+function isTrackLocked(id) { return state.lockedTracks.has(id); }
+/* Timeline edit ops (split, ripple, insert, trims, crossfade…) live in
+   edit-ops.js, shared with the MCP server so an agent's patch op and the
+   editor's shortcut run the same code. The wrappers below add undo,
+   selection, toasts and saving. */
+const EDIT = FableCutEdit.create({
+  doc: () => project,
+  tracks: () => TRACKS,
+  trackLocked: (id) => isTrackLocked(id),
+  trackTargeted: (id) => isTrackTargeted(id),
+  uid: () => uid(),
+  mediaTimeAt: (c, t) => mediaTimeAt(c, t),
+  onRemove: (c) => releaseClipEl(c.id),
+  onPlace: (m, c) => {
+    if (m.kind === "video" || m.kind === "audio") ensureWave(m);
+    if (m.kind === "video" && c) reconcileAudioChannels(c, true);
+  },
+  defaultProps: () => DEFAULT_PROPS,
+});
+const {
+  isEditTarget, isClipLocked, isGroupLocked, withoutLocked, editTargetTracks, withLinked, relinkClips,
+  splitClipAt, relinkSplitRights, sourceEditTracks, placeSourceWindowClips, punchTrackRange,
+  listAlignedGaps, adjacentClip, rippleTrim, rollEdit, slipClip, slideClip, crossfadeCuts, crossfadeCut,
+} = EDIT;
+/** Does this clip reach the picture / the mix? Track output and clip enable. */
+function clipRenders(c) {
+  // comp audio plays through the main timeline's track of the same id, so that track's switch applies too
+  if (c._comp) return c._on !== false && (c.kind !== "audio" || isTrackEnabled(c.track));
+  return isTrackEnabled(c.track) && c.disabled !== true;
+}
+function toastLocked(partial = false) {
+  toast(partial ? "Locked clips were left untouched — unlock them to edit"
+    : "Locked — unlock the clip or its track to edit");
+}
+function syncTrackDisabledUI(id) {
+  const on = isTrackEnabled(id);
+  const solo = state.soloId === id;
+  const head = els.trackHeaders.querySelector(`.track-head[data-track="${id}"]`);
+  const row = els.tracks.querySelector(`.track[data-track="${id}"]`);
+  if (head) {
+    head.classList.toggle("disabled", !on);
+    head.classList.toggle("solo", solo);
+    const btn = head.querySelector(".track-toggle");
+    if (btn) {
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = on ? "Disable track" : "Enable track";
+    }
+    const sBtn = head.querySelector(".track-solo");
+    if (sBtn) {
+      sBtn.setAttribute("aria-pressed", solo ? "true" : "false");
+      sBtn.classList.toggle("on", solo);
+      sBtn.title = solo ? "Unsolo track" : "Solo track (mute all others)";
+    }
+  }
+  const locked = isTrackLocked(id), targeted = isTrackTargeted(id);
+  if (head) {
+    head.classList.toggle("locked", locked);
+    head.classList.toggle("untargeted", !targeted);
+    const tBtn = head.querySelector(".track-id");
+    if (tBtn) {
+      tBtn.setAttribute("aria-pressed", targeted ? "true" : "false");
+      tBtn.title = targeted
+        ? "Targeted — edits (split, insert, ripple, close gap) touch this track. Click to untarget"
+        : "Not targeted — edits skip this track. Click to target";
+    }
+    const lBtn = head.querySelector(".track-lock");
+    if (lBtn) {
+      lBtn.setAttribute("aria-pressed", locked ? "true" : "false");
+      lBtn.classList.toggle("on", locked);
+      lBtn.title = locked ? "Unlock track" : "Lock track — nothing on it can be edited or moved";
+    }
+  }
+  if (row) {
+    row.classList.toggle("disabled", !on);
+    row.classList.toggle("solo", solo);
+    row.classList.toggle("locked", locked);
+  }
+  syncMixerStrip(id);
+}
+function syncAllTrackDisabledUI() {
+  for (const t of TRACKS) syncTrackDisabledUI(t.id);
+}
+function clearTrackSolo({ restore = false } = {}) {
+  if (!state.soloId) return;
+  if (restore && Array.isArray(state.soloRestore)) {
+    state.disabledTracks = new Set(state.soloRestore.filter((id) => TRACK_IDS.has(id)));
+    project.disabledTracks = [...state.disabledTracks].sort();
+  }
+  state.soloId = null;
+  state.soloRestore = null;
+}
+function toggleTrackSolo(id) {
+  if (!TRACK_IDS.has(id)) return;
+  if (state.soloId === id) {
+    clearTrackSolo({ restore: true });
+  } else {
+    if (!state.soloId) state.soloRestore = [...state.disabledTracks];
+    state.soloId = id;
+    state.disabledTracks = new Set(TRACKS.filter((t) => t.id !== id).map((t) => t.id));
+    project.disabledTracks = [...state.disabledTracks].sort();
+  }
+  syncAllTrackDisabledUI();
+  scheduleSave();
+}
+function toggleTrackEnabled(id) {
+  if (!TRACK_IDS.has(id)) return;
+  // Manual mute exits solo without restoring the pre-solo snapshot
+  if (state.soloId) clearTrackSolo({ restore: false });
+  if (state.disabledTracks.has(id)) state.disabledTracks.delete(id);
+  else state.disabledTracks.add(id);
+  project.disabledTracks = [...state.disabledTracks].sort();
+  syncAllTrackDisabledUI();
+  scheduleSave();
+}
+function toggleTrackLocked(id) {
+  if (!TRACK_IDS.has(id)) return;
+  if (state.lockedTracks.has(id)) state.lockedTracks.delete(id);
+  else state.lockedTracks.add(id);
+  project.lockedTracks = [...state.lockedTracks].sort();
+  syncAllTrackDisabledUI();
+  state.dirtyTimeline = true; // clips on the lane redraw with the lock hatch
+  renderInspector();
+  scheduleSave();
+}
+function toggleTrackTargeted(id) {
+  if (!TRACK_IDS.has(id)) return;
+  if (state.untargetedTracks.has(id)) state.untargetedTracks.delete(id);
+  else state.untargetedTracks.add(id);
+  project.untargetedTracks = [...state.untargetedTracks].sort();
+  syncAllTrackDisabledUI();
+  scheduleSave();
+}
+const runtime = {
+  clipEls: new Map(),   // clipId -> HTMLMediaElement
+  clipGain: new Map(),  // clipId -> GainNode
+  mediaAux: new Map(),  // mediaId -> {img?, thumb?, svgText?, svgAnimated?}
+  audioBufs: new Map(), // media src -> Promise<AudioBuffer> (waveforms + export mix); by file, so a relinked entry decodes its new one
+  wavePeaks: new Map(), // mediaId -> {src, channels: Float32Array[], max: Float32Array} | Float32Array (legacy) | {src, pending}
+  library: {},          // dir -> [{name, rel, src, size}] cached /api/library results
+  customFonts: [],      // family names loaded from /library/fonts
+  libraryFontReq: new Set(), // library families claimed by a load pass
+  googleLoaded: new Set(),   // loaded from Google Fonts (the font picker lists them)
+  fontReq: new Map(),   // font name -> Promise<boolean> (ensureFont)
+  undo: [], redo: [],
+  seqUndo: new Map(),   // sequence id -> {undo, redo, time, sel}: each sequence keeps its own undo history this session
+  seqOpen: null,        // the open sequence's id, to notice another one being opened
+  audio: null,          // {ctx, master (sum), masterOut (fader), trackBus, recDest, meter?, meterReady?}
+  saveTimer: null, pendingSync: false,
+  sfxPreview: null,     // <audio> element for library sound previews
+  importUrlAbort: null, // AbortController for an in-flight /api/import-url
+  importFolderId: null, // Project-bin folder to place the next import into
+  binDragFolderId: null, // folder id currently being dragged (cycle checks)
+  binCtxMenu: null,     // Project-tab context menu element
+  sourceEl: null,       // dedicated <video>/<audio> for Source monitor (not WebAudio-hooked)
+  sourceMarks: new Map(), // mediaId -> {in, out} remembered across loads
+  sourceHold: null,     // canvas of last good Source video frame (scrub/seek holdover)
+  sourceHoldOk: false,
+  sourceSeekPending: null, // coalesced scrub target (sec) while a seek is in flight
+  sourceSeekBusy: false,
+};
+
+/* ── DOM ───────────────────────────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+const els = {
+  binList: $("binList"), binEmpty: $("binEmpty"), fileInput: $("fileInput"),
+  binTabs: $("binTabs"), libList: $("libList"), toast: $("toast"),
+  binTools: $("binTools"), binSearch: $("binSearch"), binFilter: $("binFilter"), binSort: $("binSort"),
+  binSortDir: $("binSortDir"), binViewBtn: $("binViewBtn"), btnProxy: $("btnProxy"),
+  preview: $("preview"), tcCurrent: $("tcCurrent"), tcTotal: $("tcTotal"),
+  tcIo: $("tcIo"), tcIn: $("tcIn"), tcOut: $("tcOut"), tcDur: $("tcDur"),
+  btnPlay: $("btnPlay"), inspector: $("inspector"),
+  trackHeaders: $("trackHeaders"), timelineScroll: $("timelineScroll"),
+  tracksContent: $("tracksContent"), tracks: $("tracks"), playhead: $("playhead"),
+  ruler: $("ruler"), zoomSlider: $("zoomSlider"), btnSnap: $("btnSnap"),
+  btnSnapMenu: $("btnSnapMenu"), btnMarkers: $("btnMarkers"), snapLine: $("snapLine"),
+  btnAudioHold: $("btnAudioHold"),
+  exportOverlay: $("exportOverlay"), exportProgress: $("exportProgress"),
+  exportTitle: $("exportTitle"), exportNote: $("exportNote"),
+  projectName: $("projectName"), monitorRes: $("monitorRes"),
+  aspectSel: $("aspectSel"), fpsSel: $("fpsSel"),
+  btnGuides: $("btnGuides"), btnExportFrame: $("btnExportFrame"),
+  btnExportFrameDim: $("btnExportFrameDim"),
+  exportFrameSel: $("exportFrameSel"), exportFrameOverlay: $("exportFrameOverlay"),
+  btnZoom100: $("btnZoom100"),
+  safeOverlay: $("safeOverlay"), btnSpeed: $("btnSpeed"),
+  monitorStage: $("monitorStage"), monitorScroll: $("monitorScroll"),
+  monitorZoomInner: $("monitorZoomInner"), kfGraphs: $("kfGraphs"),
+  monitorPanel: $("monitorPanel"), monitorClipName: $("monitorClipName"),
+  sourceScrub: $("sourceScrub"), sourceScrubTrack: $("sourceScrubTrack"),
+  sourceScrubRange: $("sourceScrubRange"), sourceScrubIn: $("sourceScrubIn"),
+  sourceScrubOut: $("sourceScrubOut"), sourceScrubHead: $("sourceScrubHead"),
+  btnInsert: $("btnInsert"), btnReplace: $("btnReplace"),
+  vuMeter: $("vuMeter"),
+  sideTabs: $("sideTabs"),
+  mixer: $("mixer"), colorPage: $("colorPage"),
+  exportSetup: $("exportSetup"), engineFast: $("engineFast"), engineRealtime: $("engineRealtime"),
+  exportProfileRow: $("exportProfileRow"),
+  exportProfileSel: $("exportProfileSel"), exportProfileNote: $("exportProfileNote"),
+  exportProfileHint: $("exportProfileHint"),
+  importUrlOverlay: $("importUrlOverlay"), importUrlInput: $("importUrlInput"),
+  importUrlStatus: $("importUrlStatus"), importUrlProgress: $("importUrlProgress"),
+};
+let ctx2d = els.preview.getContext("2d");   // drawMaskedClip points it at an offscreen layer while a masked clip draws
+
+/* ── Utils ─────────────────────────────────────────────────────────────── */
+const uid = () => Math.random().toString(36).slice(2, 9);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+/** Other host/port than the editor. drawImage of that media taints the canvas
+ *  unless it was fetched with CORS — Fast/WebCodecs export then cannot toBlob. */
+function isCrossOriginSrc(src) {
+  if (!src) return false;
+  try { return new URL(src, location.href).origin !== location.origin; }
+  catch { return false; }
+}
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+function fmt(t) {
+  t = Math.max(0, t);
+  const m = Math.floor(t / 60), s = Math.floor(t % 60),
+    f = Math.floor((t % 1) * projectFps());
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(m)}:${p(s)}:${p(f)}`;
+}
+/* Typed timecode → seconds, or null if it doesn't parse. Colon (or ;)
+   fields read right-to-left as FF, SS, MM, HH; bare digits pack the same way
+   (Premiere style: "1500" = 15s 00f, "5" = 5 frames). Frames may overflow
+   ("0:45" at 30 fps = 1.5 s). A decimal point or trailing "s" means seconds
+   ("12.5", "90s").
+   A leading + / − offsets from `base` instead of setting an absolute time. */
+function parseTimecode(str, fps, base = 0) {
+  let s = String(str ?? "").trim().replace(/\s+/g, "");
+  if (!s) return null;
+  let sign = 0;
+  if (s[0] === "+" || s[0] === "-") { sign = s[0] === "+" ? 1 : -1; s = s.slice(1); }
+  if (!s) return null;
+  let sec;
+  const secs = /^(\d*\.\d+)s?$|^(\d+)s$/i.exec(s);
+  if (secs) sec = +(secs[1] ?? secs[2]);
+  else {
+    let fields;
+    if (/^\d+$/.test(s)) {
+      fields = [];
+      for (let i = s.length; i > 0; i -= 2) fields.unshift(s.slice(Math.max(0, i - 2), i));
+      if (fields.length > 4) fields = [fields.slice(0, fields.length - 3).join(""), ...fields.slice(-3)];
+    } else if (/^\d*([:;]\d*){1,3}$/.test(s)) fields = s.split(/[:;]/);
+    else return null;
+    const n = fields.map((f) => +f || 0).reverse(); // [ff, ss, mm, hh]
+    sec = (n[3] || 0) * 3600 + (n[2] || 0) * 60 + (n[1] || 0) + (n[0] || 0) / (fps > 0 ? fps : 30);
+  }
+  if (!Number.isFinite(sec)) return null;
+  return Math.max(0, sign ? base + sign * sec : sec);
+}
+/* ── Markers: named, coloured cues on the ruler ({t, label?, color?}) ── */
+const MARKER_COLORS = {
+  gold: "#ffd166", red: "#ff5c6c", orange: "#ff9f43", green: "#4ade80",
+  cyan: "#22d3ee", blue: "#60a5fa", purple: "#a78bfa", pink: "#f472b6",
+};
+function normalizeMarker(m) {
+  if (!m || !Number.isFinite(+m.t) || +m.t < 0) return null;
+  const out = { t: +(+m.t).toFixed(3) };
+  const label = typeof m.label === "string" ? m.label.trim().slice(0, 80) : "";
+  if (label) out.label = label;
+  if (m.color && m.color !== "gold" && Object.hasOwn(MARKER_COLORS, m.color)) out.color = m.color;
+  return out;
+}
+function normalizeMarkers(list) {
+  return (Array.isArray(list) ? list : []).map(normalizeMarker).filter(Boolean).sort((a, b) => a.t - b.t);
+}
+function markerColor(m) { return MARKER_COLORS[m?.color] || MARKER_COLORS.gold; }
+/* First marker strictly after t (dir 1) or before it (dir −1), or null. */
+function adjacentMarker(markers, t, dir, eps = 1e-3) {
+  let best = null;
+  for (const m of markers || []) {
+    if (dir > 0 ? m.t > t + eps && (!best || m.t < best.t) : m.t < t - eps && (!best || m.t > best.t)) best = m;
+  }
+  return best;
+}
+const getMedia = (id) => project.media.find((m) => m.id === id);
+const getClip = (id) => project.clips.find((c) => c.id === id);
+const clipEnd = (c) => c.start + c.duration;
+const trackOf = (c) => TRACKS.find((t) => t.id === c.track);
+/** Last timeline second occupied by a clip on a known track (ignores orphan refs). */
+function projDur() {
+  let mx = 0;
+  for (const c of project.clips) {
+    if (!trackOf(c)) continue;
+    const end = clipEnd(c);
+    if (Number.isFinite(end) && end > mx) mx = end;
+  }
+  return mx;
+}
+const clipSpeed = FableCutEdit.clipSpeed;   // comp clips run at 1×
+
+/* ── Speed ramps (time remapping) ──
+   `speed` is keyframable: media time = in + ∫ speed(t) dt over the clip.
+   The integral is sampled once per unique speed curve and cached. */
+const speedIntCache = new Map(); // clipId -> {key, cum: Float32Array, step}
+function kfChannel(c, key, local, fallback) {
+  const kfs = c.keyframes?.[key];
+  if (!Array.isArray(kfs) || !kfs.length) return fallback;
+  if (local <= kfs[0].t) return kfs[0].v;
+  if (local >= kfs[kfs.length - 1].t) return kfs[kfs.length - 1].v;
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const a = kfs[i], b = kfs[i + 1];
+    if (local >= a.t && local <= b.t) {
+      const u = (local - a.t) / Math.max(1e-6, b.t - a.t);
+      const ez = EASE[b.ease || "ease-in-out"] || EASE.linear;
+      return a.v + (b.v - a.v) * ez(u);
+    }
+  }
+  return fallback;
+}
+const kfTimeEps = () => 0.5 / projectFps();
+/* Is the playhead over the clip (± half a frame)? Keyframe edits are only
+   meaningful then — off-clip writes would land clamped on the clip's edge. */
+function playheadOverClip(c) {
+  const eps = kfTimeEps();
+  return state.time >= c.start - eps && state.time <= c.start + c.duration + eps;
+}
+/* Keyframe on this channel whose absolute time matches the playhead. */
+function kfAtPlayhead(c, k) {
+  const arr = c.keyframes?.[k];
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const eps = kfTimeEps();
+  const abs = state.time;
+  return arr.find((kf) => Math.abs(c.start + kf.t - abs) < eps) || null;
+}
+/* Static props with keyed channels replaced by the value at the playhead
+   (no transition envelopes — those would fake a keyframe in the inspector). */
+function propsAtPlayhead(c) {
+  const p = { ...c.props };
+  if (!c.keyframes) return p;
+  const local = state.time - c.start;
+  for (const k of ANIMATABLE) {
+    const kfs = c.keyframes[k];
+    if (!Array.isArray(kfs) || !kfs.length) continue;
+    const v = kfChannel(c, k, local, +(p[k] ?? DEFAULT_PROPS[k] ?? 0));
+    if (typeof v === "number" && !isNaN(v)) p[k] = v;
+  }
+  applyMotionPath(c, p, local, false);
+  return p;
+}
+/* Motion path (motion.js): position keys with spatial handles move the clip along a
+   curve; auto-orient turns it with its direction of travel. */
+function applyMotionPath(c, p, local, orient) {
+  if (!c.keyframes || !c.keyframes.x || !c.keyframes.y) return;
+  const q = self.FableCutMotion.pathPositionAt(c, local);
+  if (q) { p.x = q.x; p.y = q.y; }
+  if (orient && p.autoOrient) { const a = self.FableCutMotion.orientAt(c, local); if (a != null) p.rotation = (+p.rotation || 0) + a; }
+}
+function fmtInspNum(v, step) {
+  const n = +v;
+  if (!Number.isFinite(n)) return "0";
+  const s = +step;
+  if (Number.isFinite(s) && s > 0) {
+    if (s >= 1) return String(Math.round(n / s) * s);
+    const dec = Math.min(6, Math.max(0, Math.ceil(-Math.log10(s) - 1e-9)));
+    return String(+n.toFixed(dec));
+  }
+  if (Math.abs(n - Math.round(n)) < 1e-6) return String(Math.round(n));
+  return String(+n.toFixed(3));
+}
+/* Inspector playhead-sync cache: the rAF loop re-syncs inspector fields only
+   when the playhead, selection, keyed values, or the selected clip's start /
+   duration changed since the last sync.
+   Mutators that don't re-render the inspector bump inspPropGen. */
+let inspSyncStamp = "";
+let inspPropGen = 0;
+const inspStampNow = () => {
+  const c = getClip(state.selId);
+  return state.time + "|" + state.selId + "|" + inspPropGen + "|"
+    + (c ? c.start : "") + "|" + (c ? c.duration : "")
+    // Focus belongs in the stamp: the sync skips the focused field, so a blur
+    // has to invalidate the stamp or that field keeps the value it was left on.
+    + "|" + (document.activeElement?.dataset?.k || "");
+};
+/* Audio hold loops one frame of audio built from volume / pan / the speed
+   remap — a write to any of them must re-cut it. The mutators own this (like
+   dirtyTimeline); scheduleAudioHoldRefresh itself no-ops unless holding. */
+function refreshAudioHoldFor(k) {
+  if (k === "volume" || k === "pan" || k === "speed") scheduleAudioHoldRefresh();
+}
+/* Write an animatable prop: static if the channel has no keyframes; otherwise
+   update the keyframe under the playhead or insert one (auto-key). Returns
+   false when the write was refused — a keyed channel with the playhead off
+   the clip would corrupt the edge keyframe, so it must not be written.
+   dirtyTimeline ownership: the keyframe mutators (setAnimProp /
+   toggleKfAtPlayhead / resetProp*) set it themselves when a keyframe appears
+   or disappears (clip markers move); value-only writes skip it — the graphs
+   redraw every rAF anyway. Callers never set it for these. The same goes for
+   refreshAudioHoldFor() on volume/pan/speed writes. */
+function setAnimProp(c, k, v) {
+  if (!c || !ANIMATABLE.includes(k) || typeof v !== "number" || isNaN(v)) return false;
+  const arr = c.keyframes?.[k];
+  if (Array.isArray(arr) && arr.length && !playheadOverClip(c)) return false;
+  inspPropGen++;
+  refreshAudioHoldFor(k);
+  if (!Array.isArray(arr) || !arr.length) {
+    c.props[k] = v;
+    return true;
+  }
+  const near = kfAtPlayhead(c, k);
+  if (near) { near.v = v; return true; }
+  const lt = +clamp(state.time - c.start, 0, c.duration).toFixed(3);
+  const eps = kfTimeEps();
+  const dup = arr.find((kf) => Math.abs(kf.t - lt) < eps);
+  if (dup) { dup.v = v; return true; }
+  const other = k === "x" ? "y" : k === "y" ? "x" : null, oarr = other && c.keyframes[other];
+  if (other && Array.isArray(oarr) && oarr.length && self.FableCutMotion.hasPathHandles(c) && !oarr.some((kf) => Math.abs(kf.t - lt) < eps)) {
+    oarr.push({ t: lt, v: +self.FableCutMotion.positionAt(c, lt)[other].toFixed(3) });
+    oarr.sort((a, b) => a.t - b.t);
+  }
+  arr.push({ t: lt, v });
+  arr.sort((a, b) => a.t - b.t);
+  state.dirtyTimeline = true;
+  return true;
+}
+/* Wipe a property: factory default + delete that channel's keyframes. */
+function resetPropChannel(c, k) {
+  if (!c || !k) return;
+  if (k === "transIn" || k === "transOut") {
+    c[k === "transIn" ? "transitionIn" : "transitionOut"] = undefined;
+    state.dirtyTimeline = true;
+    return;
+  }
+  if (!Object.hasOwn(DEFAULT_PROPS, k)) return;
+  c.props[k] = DEFAULT_PROPS[k];
+  refreshAudioHoldFor(k);
+  if (c.keyframes?.[k]) {
+    delete c.keyframes[k];
+    if (!Object.keys(c.keyframes).length) c.keyframes = undefined;
+    state.dirtyTimeline = true;
+  }
+  if (k === "text" || k === "font") state.dirtyTimeline = true;
+  if (k === "font") ensureFont(String(DEFAULT_PROPS.font));
+}
+/* Playhead-local reset: remove the keyframe under the playhead, else set the
+   value at the playhead to the property default (auto-keys if already keyed).
+   Returns false when refused (keyed channel, playhead off the clip). */
+function resetPropAtPlayhead(c, k) {
+  if (!c || !k) return false;
+  if (k === "transIn" || k === "transOut") {
+    resetPropChannel(c, k);
+    return true;
+  }
+  if (!Object.hasOwn(DEFAULT_PROPS, k)) return false;
+  if (ANIMATABLE.includes(k) && kfAtPlayhead(c, k)) return toggleKfAtPlayhead(c, k);
+  const def = DEFAULT_PROPS[k];
+  if (ANIMATABLE.includes(k) && c.keyframes?.[k]?.length) {
+    if (!setAnimProp(c, k, def)) return false;
+  } else { c.props[k] = def; refreshAudioHoldFor(k); }
+  if (k === "text" || k === "font") state.dirtyTimeline = true;
+  if (k === "font") ensureFont(String(def));
+  return true;
+}
+function applyInspectorReset(keys, channelWide) {
+  const c = getClip(state.selId);
+  if (!c || !keys.length) return;
+  pushUndo();
+  let refused = false;
+  for (const k of keys) {
+    if (channelWide) resetPropChannel(c, k);
+    else refused = !resetPropAtPlayhead(c, k) || refused;
+  }
+  if (refused) toast("Move the playhead over the clip to edit its keyframes");
+  scheduleSave();
+  renderInspector();
+}
+/* ◆ : add a keyframe at the playhead, or remove the one already there.
+   Refused (false) when the playhead is off the clip — there is no "at the
+   playhead" then, and clamping would plant a keyframe on the clip's edge. */
+function toggleKfAtPlayhead(c, k) {
+  if (!c || !ANIMATABLE.includes(k) || !playheadOverClip(c)) return false;
+  const near = kfAtPlayhead(c, k);
+  if (near) {
+    inspPropGen++;
+    refreshAudioHoldFor(k);
+    const rest = c.keyframes[k].filter((kf) => kf !== near);
+    if (rest.length) c.keyframes[k] = rest;
+    else {
+      c.props[k] = near.v;
+      delete c.keyframes[k];
+      if (!Object.keys(c.keyframes).length) c.keyframes = undefined;
+    }
+    state.dirtyTimeline = true; // a diamond left the clip — mutators own this flag
+    return true;
+  }
+  const fallback = +(c.props?.[k] ?? DEFAULT_PROPS[k] ?? 0);
+  const v = kfChannel(c, k, state.time - c.start, fallback);
+  if (typeof v !== "number" || isNaN(v)) return false;
+  inspPropGen++;
+  refreshAudioHoldFor(k);
+  if (!c.keyframes) c.keyframes = {};
+  const arr = (c.keyframes[k] = c.keyframes[k] || []);
+  const lt = +clamp(state.time - c.start, 0, c.duration).toFixed(3);
+  const dup = arr.find((kf) => Math.abs(kf.t - lt) < kfTimeEps());
+  if (dup) dup.v = v; // value-only: no marker moves, no timeline rebuild
+  else {
+    arr.push({ t: lt, v });
+    arr.sort((a, b) => a.t - b.t);
+    state.dirtyTimeline = true;
+  }
+  return true;
+}
+function hasSpeedRamp(c) {
+  return c.kind !== "comp" && Array.isArray(c.keyframes?.speed) && c.keyframes.speed.length > 0;   // comps run at 1×
+}
+function mediaTimeAt(c, t) {
+  const base = clipSpeed(c);
+  const local = clamp(t - c.start, 0, c.duration);
+  if (!hasSpeedRamp(c)) return c.in + local * base;
+  const key = JSON.stringify(c.keyframes.speed) + "|" + c.duration.toFixed(4) + "|" + base;
+  let e = speedIntCache.get(c.id);
+  if (!e || e.key !== key) {
+    const step = 1 / 120;
+    const n = Math.max(2, Math.ceil(c.duration / step) + 1);
+    const cum = new Float32Array(n);
+    let prev = clamp(kfChannel(c, "speed", 0, base), 0.1, 8);
+    for (let i = 1; i < n; i++) {
+      const lt = Math.min(c.duration, i * step);
+      const cur = clamp(kfChannel(c, "speed", lt, base), 0.1, 8);
+      cum[i] = cum[i - 1] + ((prev + cur) / 2) * (lt - (i - 1) * step);
+      prev = cur;
+    }
+    e = { key, cum, step };
+    speedIntCache.set(c.id, e);
+  }
+  const idx = Math.min(e.cum.length - 1, local / e.step);
+  const i0 = Math.floor(idx), frac = idx - i0;
+  const v = i0 >= e.cum.length - 1 ? e.cum[e.cum.length - 1]
+    : e.cum[i0] + (e.cum[i0 + 1] - e.cum[i0]) * frac;
+  return c.in + v;
+}
+/** Inverse of mediaTimeAt for a given media-time target, returning the local
+ *  timeline offset within the clip, or null if no unique inverse exists.
+ *  Reuses the same trapezoid integral cache as mediaTimeAt. */
+function localTimeForMedia(c, mediaTarget) {
+  if (!hasSpeedRamp(c)) {
+    const base = clipSpeed(c);
+    return (mediaTarget - c.in) / base;
+  }
+  const base = clipSpeed(c);
+  const key = JSON.stringify(c.keyframes.speed) + "|" + c.duration.toFixed(4) + "|" + base;
+  let e = speedIntCache.get(c.id);
+  if (!e || e.key !== key) {
+    mediaTimeAt(c, c.start); // build cache
+    e = speedIntCache.get(c.id);
+  }
+  if (!e) return null;
+  const target = mediaTarget - c.in;
+  const { cum, step } = e;
+  if (target <= 0) return 0;
+  if (target >= cum[cum.length - 1]) return cum.length <= 1 ? 0 : (cum.length - 1) * step;
+  // Linear search for bracket; cum is monotonic because speed is clamped positive.
+  let i = 1;
+  while (i < cum.length && cum[i] < target) i++;
+  if (i >= cum.length) i = cum.length - 1;
+  const v0 = cum[i - 1], v1 = cum[i];
+  if (Math.abs(v1 - v0) < 1e-9) return null;
+  const frac = (target - v0) / (v1 - v0);
+  return (i - 1 + frac) * step;
+}
+let toastTimer = null;
+function toast(msg) {
+  if (!els.toast) return;
+  els.toast.textContent = msg;
+  els.toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove("show"), 3200);
+}
+
+/* True when keyboard events should go to a text-entry control (not range/checkbox). */
+function isTypingTarget(el) {
+  if (!el || el === document.body || el === document.documentElement) return false;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") {
+    const t = (el.type || "text").toLowerCase();
+    return !["range", "checkbox", "radio", "button", "submit", "reset", "color", "file", "hidden"].includes(t);
+  }
+  return !!el.isContentEditable;
+}
+
+/* ═══════════════════════ SERVER SYNC (optional) ═══════════════════════ */
+async function connectServer() {
+  try {
+    const res = await fetch("/api/project", { cache: "no-store" });
+    if (!res.ok) throw 0;
+    const data = await res.json();
+    applyProject(data);
+    state.connected = true;
+    els.projectName.textContent = project.name + "  ·  🟢 connected";
+    runtime.projectId = res.headers.get("X-FableCut-Project");
+    if (res.headers.get("X-FableCut-Projects")) initProjectsUi();
+    listenSSE();
+    fetch("/api/export/ffmpeg").then((r) => r.json())
+      .then((j) => { state.ffmpeg = !!j.available; }).catch(() => { });
+    fetchEncodeProfiles();
+    detectWebCodecs();
+  } catch {
+    state.connected = false;
+    els.projectName.textContent = project.name + "  ·  ⚪ local session";
+  }
+  initSequencesUi();
+  await probeMissingMeta();
+}
+/* Main-profile AVC level by canvas height; Annex-B is required so ffmpeg
+   can ingest the elementary stream with `-f h264` and no avcC converter. */
+function webCodecsAvcCodec() {
+  const h = project.height || 720;
+  if (h > 1080) return "avc1.4D0032"; // Main@L5.0
+  if (h > 720) return "avc1.4D0028";  // Main@L4.0
+  return "avc1.4D001F";               // Main@L3.1
+}
+async function detectWebCodecs() {
+  state.webCodecs = false;
+  try {
+    if (typeof VideoEncoder !== "function" || typeof VideoEncoder.isConfigSupported !== "function") return;
+    const base = {
+      codec: webCodecsAvcCodec(),
+      width: Math.max(2, project.width | 0 || 1280),
+      height: Math.max(2, project.height | 0 || 720),
+      bitrate: 8_000_000,
+      framerate: projectFps(),
+      avc: { format: "annexb" },
+      latencyMode: "quality",
+    };
+    const requested = getSetting("webCodecsBitrateMode") === "constant" ? "constant" : "variable";
+    const [variable, constant] = await Promise.all([
+      VideoEncoder.isConfigSupported({ ...base, bitrateMode: "variable" }),
+      VideoEncoder.isConfigSupported({ ...base, bitrateMode: "constant" }),
+    ]);
+    const match = requested === "constant" ? constant : variable;
+    state.webCodecs = !!match.supported;
+  } catch { state.webCodecs = false; }
+}
+const TIMELINE_START_TIME = 0.000; // composition timeline start (seconds)
+function normalizeWorkArea(i, o, t0 = TIMELINE_START_TIME) {
+  let inPoint = (i != null && isFinite(i)) ? Math.max(t0, +i) : null;
+  let outPoint = (o != null && isFinite(o)) ? Math.max(t0, +o) : null;
+  if (inPoint != null && outPoint != null && outPoint <= inPoint) {
+    inPoint = null;
+    outPoint = null;
+  }
+  return { inPoint, outPoint };
+}
+/* Project-bin media management: metadata, search / filter / sort, tags,
+   collections and usage live in media-lib.js (shared with the agent ops). */
+const MediaLib = self.FableCutMedia;
+const BIN_PREFS_KEY = "fablecut.binPrefs";
+const binView = (() => {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(BIN_PREFS_KEY) || "{}") || {}; } catch { }
+  return {
+    q: "", filter: "",   // per session: search text and the "Show" filter
+    sort: MediaLib.SORT_KEYS.includes(saved.sort) ? saved.sort : "name",
+    dir: saved.dir === "desc" ? "desc" : "asc",
+    list: saved.list === true,   // list view: metadata columns
+  };
+})();
+function saveBinPrefs() {
+  try { localStorage.setItem(BIN_PREFS_KEY, JSON.stringify({ sort: binView.sort, dir: binView.dir, list: binView.list })); } catch { }
+}
+function getFolder(id) {
+  return id ? project.folders.find((f) => f.id === id) : null;
+}
+function normalizeFolders(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const f of list) {
+    if (!f || !f.id || seen.has(f.id)) continue;
+    seen.add(f.id);
+    out.push({
+      id: String(f.id),
+      name: String(f.name || "Folder").trim() || "Folder",
+      parentId: f.parentId || null,
+      open: f.open !== false,
+    });
+  }
+  // drop parent refs that don't exist
+  for (const f of out) if (f.parentId && !seen.has(f.parentId)) f.parentId = null;
+  return out;
+}
+function normalizeMediaEntry(m) {
+  if (!m || typeof m !== "object") return m;
+  const out = { ...m, folderId: m.folderId || null };
+  const tags = MediaLib.normalizeTags(m.tags);
+  if (tags.length) out.tags = tags; else delete out.tags;
+  if (out.favorite !== true) delete out.favorite;
+  return out;
+}
+function folderChildren(parentId) {
+  return project.folders
+    .filter((f) => (f.parentId || null) === (parentId || null))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+function mediaInFolder(folderId, ctx) {
+  return MediaLib.sortMedia(project.media.filter((m) => (m.folderId || null) === (folderId || null)),
+    binView.sort, binView.dir, ctx);
+}
+/* True if ancestorId is the same as nodeId or an ancestor of nodeId. */
+function isSelfOrFolderAncestor(ancestorId, nodeId) {
+  let cur = getFolder(nodeId);
+  while (cur) {
+    if (cur.id === ancestorId) return true;
+    cur = cur.parentId ? getFolder(cur.parentId) : null;
+  }
+  return false;
+}
+function addFolder(parentId = null) {
+  if (parentId && !getFolder(parentId)) parentId = null;
+  const f = {
+    id: "f_" + uid(),
+    name: "New folder",
+    parentId: parentId || null,
+    open: true,
+  };
+  project.folders.push(f);
+  if (parentId) {
+    const p = getFolder(parentId);
+    if (p) p.open = true;
+  }
+  scheduleSave();
+  renderBin();
+  // defer rename so the row exists
+  requestAnimationFrame(() => startFolderRename(f.id));
+  return f;
+}
+function deleteFolder(id) {
+  const f = getFolder(id); if (!f) return;
+  const parent = f.parentId || null;
+  const doomed = new Set();
+  const walk = (fid) => {
+    doomed.add(fid);
+    for (const c of project.folders) if (c.parentId === fid) walk(c.id);
+  };
+  walk(id);
+  for (const m of project.media) if (m.folderId && doomed.has(m.folderId)) m.folderId = parent;
+  for (const c of project.folders) if (c.parentId && doomed.has(c.parentId) && !doomed.has(c.id)) c.parentId = parent;
+  project.folders = project.folders.filter((x) => !doomed.has(x.id));
+  scheduleSave();
+  renderBin();
+}
+function moveMediaToFolder(mediaId, folderId) {
+  const m = getMedia(mediaId); if (!m) return;
+  if (folderId && !getFolder(folderId)) folderId = null;
+  m.folderId = folderId || null;
+  if (folderId) { const f = getFolder(folderId); if (f) f.open = true; }
+  scheduleSave();
+  renderBin();
+}
+function moveFolderToParent(folderId, parentId) {
+  const f = getFolder(folderId); if (!f) return;
+  if (parentId && (parentId === folderId || isSelfOrFolderAncestor(folderId, parentId))) return;
+  if (parentId && !getFolder(parentId)) parentId = null;
+  f.parentId = parentId || null;
+  if (parentId) { const p = getFolder(parentId); if (p) p.open = true; }
+  scheduleSave();
+  renderBin();
+}
+function startFolderRename(folderId) {
+  const row = els.binList.querySelector(`.bin-folder[data-folder-id="${folderId}"] .bin-folder-name`);
+  if (!row) return;
+  row.contentEditable = "true";
+  row.focus();
+  const sel = window.getSelection(), range = document.createRange();
+  range.selectNodeContents(row); sel.removeAllRanges(); sel.addRange(range);
+  const commit = () => {
+    row.contentEditable = "false";
+    const f = getFolder(folderId); if (!f) return;
+    const name = row.textContent.replace(/\s+/g, " ").trim() || "Folder";
+    f.name = name;
+    row.textContent = name;
+    scheduleSave();
+  };
+  row.addEventListener("blur", commit, { once: true });
+  row.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); row.blur(); }
+    if (e.key === "Escape") { e.preventDefault(); row.textContent = getFolder(folderId)?.name || "Folder"; row.blur(); }
+  });
+}
+/** Floor to even ≥ 8 — required for libx264 + yuv420p (chroma 2×2). */
+function evenFloor(n) {
+  return Math.max(8, Math.floor(n / 2) * 2);
+}
+function normalizeExportFrame(raw, canvasW, canvasH) {
+  if (!raw || typeof raw !== "object") return null;
+  let w = Math.round(+raw.w), h = Math.round(+raw.h);
+  if (!w || !h || w < 8 || h < 8) return null;
+  let x = Math.round(+raw.x || 0), y = Math.round(+raw.y || 0);
+  w = evenFloor(Math.min(w, canvasW));
+  h = evenFloor(Math.min(h, canvasH));
+  x = clamp(x, 0, Math.max(0, canvasW - w));
+  y = clamp(y, 0, Math.max(0, canvasH - h));
+  if (w >= canvasW && h >= canvasH) return null;
+  return { x, y, w, h };
+}
+function getExportFrame() {
+  return normalizeExportFrame(project.exportFrame, project.width, project.height);
+}
+/** Largest axis-aligned rect of aspect aw×ah that fits inside the canvas.
+ *  Width/height are snapped even so Fast export (H.264 yuv420p) can encode. */
+function fitExportFrameAspect(aw, ah, canvasW = project.width, canvasH = project.height) {
+  const target = aw / ah, canvas = canvasW / canvasH;
+  let w, h;
+  if (target > canvas) { w = canvasW; h = Math.round(canvasW / target); }
+  else { h = canvasH; w = Math.round(canvasH * target); }
+  w = evenFloor(Math.min(w, canvasW));
+  h = evenFloor(Math.min(h, canvasH));
+  return {
+    x: Math.round((canvasW - w) / 2),
+    y: Math.round((canvasH - h) / 2),
+    w, h,
+  };
+}
+function exportFrameAspectIndex(ef) {
+  if (!ef) return 0;
+  const r = ef.w / ef.h;
+  for (let i = 1; i < EXPORT_FRAME_ASPECTS.length; i++) {
+    const a = EXPORT_FRAME_ASPECTS[i];
+    const ar = a.w / a.h;
+    if (Math.abs(r - ar) < 0.02) return i;
+  }
+  return -1;
+}
+function updateMonitorRes() {
+  if (!els.monitorRes) return;
+  const ef = getExportFrame();
+  els.monitorRes.textContent = ef
+    ? `${project.width}×${project.height} canvas → ${ef.w}×${ef.h} export · ${project.fps}fps`
+    : `${project.width} × ${project.height} · ${project.fps}fps`;
+}
+function syncExportFrameSel() {
+  if (!els.exportFrameSel) return;
+  const ef = getExportFrame();
+  const i = exportFrameAspectIndex(ef);
+  let html = EXPORT_FRAME_ASPECTS.map((a, j) => {
+    const sel = ef ? (i === j) : (j === 0);
+    return `<option value="${j}" ${sel ? "selected" : ""}>${a.label}</option>`;
+  }).join("");
+  if (ef && i < 0)
+    html += `<option value="custom" selected>Custom · ${ef.w}×${ef.h}</option>`;
+  els.exportFrameSel.innerHTML = html;
+}
+function applyProject(data, opts = {}) {
+  if (state.compCtx && !opts.ctx && SeqLib.activeId(data) !== SeqLib.activeId(state.compCtx.root)) {
+    // another sequence was opened (an agent, another tab): the comp was opened from the old one
+    state.compCtx = null;
+    runtime.undo.length = 0; runtime.redo.length = 0;
+    applyProject(data, { ctx: true });
+    syncCompCrumb();
+    return;
+  }
+  if (state.compCtx && !opts.ctx) {   // the root changed on disk (an agent, another tab): keep the open comp open
+    const x = state.compCtx;
+    x.root = data;
+    // every undo step here and in the levels above predates this document; replaying one would save over it
+    for (const f of x.frames) { f.undo = []; f.redo = []; }
+    runtime.undo.length = 0; runtime.redo.length = 0;
+    const path = x.path.filter((id) => CompLib.getComp(data, id));
+    if (path.length !== x.path.length) { state.compCtx = null; applyProject(data, { ctx: true }); syncCompCrumb(); toast("The open composition was removed"); return; }
+    applyProject(compSyntheticDoc(data, path), { ctx: true });
+    syncCompCrumb();
+    return;
+  }
+  if (!state.compCtx) noteOpenSequence(data);
+  const wa = normalizeWorkArea(data.inPoint, data.outPoint);
+  Object.assign(project, {
+    name: data.name || "Untitled Project",
+    width: data.width || 1280, height: data.height || 720,
+    fps: (Number(data.fps) > 0 ? Number(data.fps) : project.fps),
+    background: data.background || "#000000",
+    revision: data.revision || 0,
+    folders: normalizeFolders(data.folders),
+    media: (data.media || []).map(normalizeMediaEntry),
+    collections: MediaLib.normalizeCollections(data.collections, data.media || []),
+    clips: data.clips || [],
+    markers: normalizeMarkers(data.markers),
+    inPoint: wa.inPoint,
+    outPoint: wa.outPoint,
+    exportFrame: normalizeExportFrame(data.exportFrame, data.width || 1280, data.height || 720),
+    encodeProfile: data.encodeProfile || null,
+    delivery: data.delivery && typeof data.delivery === "object" ? data.delivery : null,
+    outputs: Array.isArray(data.outputs) ? data.outputs.filter((o) => o && typeof o === "object") : null,
+    master: normalizeMaster(data.master),
+    buses: normalizeBuses(data.buses),
+    // the sequences that aren't open, kept as they are (see sequences.js); the open one is this document
+    sequences: Array.isArray(data.sequences) && data.sequences.length ? data.sequences : null,
+    sequence: Array.isArray(data.sequences) && data.sequences.length ? SeqLib.activeId(data) : null,
+    comps: (Array.isArray(data.comps) ? data.comps : []).filter((cp) => cp && cp.id).map((cp) => ({
+      ...cp, clips: (cp.clips || []).map((x) => {
+        if (x.keyframes) for (const arr of Object.values(x.keyframes)) if (Array.isArray(arr)) arr.sort((a, b) => a.t - b.t);
+        return { ...x, props: { ...DEFAULT_PROPS, ...(x.kind === "comp" ? { fit: "none" } : {}), ...(x.props || {}) } };
+      }) })),
+  });
+  runtime.compGen = (runtime.compGen || 0) + 1;
+  applyTracksFromProject(data.tracks);
+  ensureTracksCoverClips();
+  project.tracks = serializeTracks();
+  const disabledTracks = normalizeDisabledTracks(data.disabledTracks);
+  project.disabledTracks = disabledTracks;
+  const folderIds = new Set(project.folders.map((f) => f.id));
+  for (const m of project.media) {
+    if (m.folderId && !folderIds.has(m.folderId)) m.folderId = null;
+  }
+  state.disabledTracks = new Set(disabledTracks);
+  project.lockedTracks = normalizeDisabledTracks(data.lockedTracks);
+  project.untargetedTracks = normalizeDisabledTracks(data.untargetedTracks);
+  state.lockedTracks = new Set(project.lockedTracks);
+  state.untargetedTracks = new Set(project.untargetedTracks);
+  state.soloId = null;
+  state.soloRestore = null;
+  // One-shot migration for projects saved before props.pan existed. Gated by
+  // panSchema so a later write that omits pan:0 (compact MCP / agent rebuild)
+  // does not re-hard-pan a deliberately centered stem.
+  const migratePan = !(data.panSchema >= 1);
+  for (const c of project.clips) {
+    c.fx = normFx(c.fx);
+    if (!c.fx) delete c.fx;
+    const raw = c.props || {};
+    c.props = { ...DEFAULT_PROPS, ...(c.kind === "comp" ? { fit: "none" } : {}), ...raw };
+    if (c.props.grade !== undefined) {
+      const g = self.FableCutColor.normalizeGrade(c.props.grade);
+      if (g) c.props.grade = g; else delete c.props.grade;
+    }
+    if (migratePan && !Object.hasOwn(raw, "pan") && Number.isInteger(raw.audioChannel) && raw.audioChannel >= 0)
+      c.props.pan = defaultPanForChannel(raw.audioChannel);
+    if (c.keyframes) for (const arr of Object.values(c.keyframes))
+      if (Array.isArray(arr)) arr.sort((a, b) => a.t - b.t);
+    if (c.kind === "text") ensureFont(c.props.font);
+  }
+  project.panSchema = 1;
+  if (migratePan) scheduleSave(); // persist marker + migrated stem pans
+  // AV links aren't always on disk (older saves / agents) — rebuild from matching timing.
+  relinkClips();
+  // reset runtime playback elements so they rebuild against new data
+  if (state.audioHold) setAudioHold(false);
+  else stopAudioHoldNodes();
+  // Tear down each clip's Web Audio chain (src→split→gain→panner→bus) before
+  // clearing the maps — otherwise nodes stay wired to live track buses and leak.
+  for (const id of new Set([...runtime.clipEls.keys(), ...runtime.clipGain.keys()]))
+    releaseClipEl(id);
+  if (runtime.audio) syncAudioGraphTracks();
+  // Drop Source if its media vanished from the new document
+  if (state.source.mediaId && !getMedia(state.source.mediaId)) clearSource();
+  else if (state.source.mediaId) restoreSourceAfterReload();
+  els.preview.width = project.width; els.preview.height = project.height;
+  updateMonitorRes();
+  syncAspectSel();
+  syncFpsSel();
+  syncExportFrameSel();
+  updateExportFrameOverlay();
+  els.btnExportFrame?.classList.toggle("on", state.exportFrameView && !!getExportFrame());
+  pruneSelection(); // keep the selection across external reloads where possible
+  buildTrackDOM();
+  state.dirtyTimeline = true;
+  renderBin(); renderInspector();
+  updateWorkArea();
+  syncTrimIOButton();
+  syncExportRangeSelect();
+  syncExportRangeUi();
+  syncAllTrackDisabledUI();
+}
+function scheduleSave() {
+  state.dirtyTimeline = true;
+  if (!state.connected) return;
+  clearTimeout(runtime.saveTimer);
+  runtime.saveTimer = setTimeout(() => { runtime.saveTimer = null; runtime.saving = saveNow(); }, 400);
+}
+async function saveNow() {
+  project.revision++;
+  const body = JSON.stringify(projectJSON(), null, 2);
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (runtime.projectId) headers["X-FableCut-Project"] = runtime.projectId;   // the project this edit belongs to
+    const res = await fetch("/api/project", { method: "PUT", headers, body });
+    if (res.status === 409) {
+      // an external tool saved a newer revision while this change was pending
+      const loaded = await syncFromServer(true);
+      toast("Project was updated externally — your last change may need redoing.");
+      runtime.saveFailed = loaded !== true;
+      return loaded === true;   // the newer document on disk is now what this tab shows
+    }
+    runtime.saveFailed = !res.ok;
+    return res.ok;
+  } catch { runtime.saveFailed = true; return false; }
+}
+/** Write a pending edit now (and wait for one in flight), e.g. before switching projects.
+ *  False when that save did not land. */
+async function flushSave() {
+  try { await runtime.saving; } catch { }
+  // a pending edit, or one whose last save did not land: send it (again) now
+  if (runtime.saveTimer || runtime.saveFailed) { clearTimeout(runtime.saveTimer); runtime.saveTimer = null; runtime.saving = saveNow(); }
+  try { return (await runtime.saving) !== false; } catch { return false; }
+}
+async function flushSaveBeforeSwitch() {
+  if (await flushSave()) return true;
+  toast("Your last change couldn't be saved, so the project stays open. Try again in a moment.");
+  return false;
+}
+/** One clip as saved: only the fields the editor knows (unknown runtime fields stay out). */
+function serializeClip({ id, mediaId, kind, compId, track, start, in: inn, duration, name, props, keyframes, transitionIn, transitionOut, linkedId, linkGroup, locked, disabled, unlinked, fx, parent }) {
+  const clipOut = { id, mediaId, kind, track, start, in: inn, duration, name, props, keyframes, transitionIn, transitionOut };
+  if (compId) clipOut.compId = compId;
+  if (fx?.length) clipOut.fx = fx;
+  if (linkGroup) clipOut.linkGroup = linkGroup;
+  if (linkedId) clipOut.linkedId = linkedId;
+  // Written only when set, so untouched projects stay byte-identical.
+  if (locked === true) clipOut.locked = true;
+  if (disabled === true) clipOut.disabled = true;
+  if (unlinked === true) clipOut.unlinked = true;
+  if (parent) clipOut.parent = parent;
+  return clipOut;
+}
+/** The document to save: the root project, with the open comp (if any) written into it. */
+function projectJSON() {
+  if (!state.compCtx) return projectJSONHere();
+  const root = commitCompCtx();
+  return { ...root, revision: project.revision };
+}
+/** The project as it is loaded right now (an open comp's stand-in project, or the root). */
+function projectJSONHere() {
+  const { name, width, height, fps, background, revision, folders, media, clips, markers, inPoint, outPoint, disabledTracks, encodeProfile, delivery, outputs } = project;
+  const out = {
+    name, width, height, fps, background, revision,
+    panSchema: 1,
+    folders: (folders || []).map(({ id, name, parentId, open }) =>
+      ({ id, name, parentId: parentId || null, open: open !== false })),
+    tracks: serializeTracks(),
+    media: media.filter((m) => !m.transient).map((m) => {
+      const { id, name, kind, src, duration, width, height, folderId, derivedFrom, denoise } = m;
+      const mo = { id, name, kind, src, duration, width, height, folderId: folderId || null };
+      for (const k of MediaLib.INFO_KEYS) if (m[k] != null) mo[k] = m[k];
+      if (m.favorite === true) mo.favorite = true;
+      if (m.tags && m.tags.length) mo.tags = m.tags.slice();
+      if (derivedFrom) { mo.derivedFrom = derivedFrom; if (denoise) mo.denoise = denoise; }
+      return mo;
+    }),
+    clips: clips.map(serializeClip),
+    markers: normalizeMarkers(markers),
+    inPoint: inPoint == null ? null : inPoint,
+    outPoint: outPoint == null ? null : outPoint,
+    disabledTracks: normalizeDisabledTracks(disabledTracks),
+  };
+  const collections = MediaLib.normalizeCollections(project.collections, out.media);
+  if (collections.length) out.collections = collections;
+  const locked = normalizeDisabledTracks(project.lockedTracks);
+  const untargeted = normalizeDisabledTracks(project.untargetedTracks);
+  if (locked.length) out.lockedTracks = locked;
+  if (untargeted.length) out.untargetedTracks = untargeted;
+  const ef = getExportFrame();
+  if (ef) out.exportFrame = ef;
+  if (encodeProfile) out.encodeProfile = encodeProfile;
+  if (delivery) out.delivery = delivery;
+  if (outputs && outputs.length) out.outputs = outputs;
+  const master = normalizeMaster(project.master);
+  if (master) out.master = master;
+  const buses = normalizeBuses(project.buses);
+  if (buses.length) out.buses = buses;
+  if (project.comps && project.comps.length) out.comps = project.comps.map((cp) => ({ ...cp, clips: (cp.clips || []).map(serializeClip) }));
+  if (project.sequences) {
+    out.sequences = project.sequences.map((sq) => (sq.id === project.sequence ? { id: sq.id, name: sq.name } : sq));
+    out.sequence = project.sequence;
+  }
+  return out;
+}
+function listenSSE() {
+  const es = new EventSource("/api/events");
+  // Named events: "change" = project/media/library; "profiles" = encoding-profiles.json only
+  es.addEventListener("change", () => { noteActivity(); syncFromServer(); scheduleOfflineCheck(); });
+  es.addEventListener("proxy", (e) => onProxyEvent(e.data));
+  es.addEventListener("versions", (e) => {
+    let d = {};
+    try { d = JSON.parse(e.data); } catch { }
+    if (!(projectsOpen() && pj.verOf && d.project === pj.verOf)) return;
+    if (pj.busy) { pj.verPending = true; return; }   // pjVersionAction refreshes when it is done
+    if (document.querySelector(".ver-rename")) return;   // a rename is being typed: it refreshes the list when it ends
+    pjDropDiffs();   // a comparison made before this change no longer holds
+    pjLoadVersions();
+  });
+  es.addEventListener("projects", (e) => {
+    let d = {};
+    try { d = JSON.parse(e.data); } catch { }
+    if (d.active && runtime.projectId && d.active !== runtime.projectId) syncFromServer(true);
+    else if (projectsOpen() && !pj.busy) pjLoad();
+  });
+  es.addEventListener("export", (e) => {
+    noteActivity();
+    try { runExportJob(JSON.parse(e.data)); } catch { }
+  });
+  es.addEventListener("delivery-presets", () => {
+    fetchDeliveryInfo().then(() => {
+      if (els.exportSetup && !els.exportSetup.classList.contains("hidden")) {
+        const keep = els.exportProfileSel.value;
+        populateExportProfileSelect();
+        els.exportProfileSel.value = keep;
+        if (els.exportProfileSel.value !== keep) els.exportProfileSel.value = "d:" + Delivery.DEFAULT_PRESET;
+        syncExportChoiceUi(dlvSource);
+      }
+    });
+  });
+  es.addEventListener("profiles", () => {
+    fetchEncodeProfiles().then(() => {
+      if (els.exportSetup && !els.exportSetup.classList.contains("hidden"))
+        populateExportProfileSelect();
+    });
+  });
+  // Legacy default "message" events (old servers that emit bare `data:`)
+  es.onmessage = () => { noteActivity(); syncFromServer(); };
+}
+/* Pull the server's project if it moved past our revision (an external tool —
+   e.g. Claude — wrote it). Our own saves land at our exact local revision, so
+   they compare equal and are skipped without any timing heuristics. Deferred
+   during gestures/exports and re-run when they end (runtime.pendingSync). */
+/** True when the server's document was loaded (a later caller may rely on it). */
+async function syncFromServer(force) {
+  if (state.gesture || state.exporting) { runtime.pendingSync = true; return false; }
+  runtime.pendingSync = false;
+  if (state.binTab === "templates") fetchSaved("templates").then(() => { if (state.binTab === "templates") renderTemplatesTab(); });
+  else if (state.binTab !== "project" && state.binTab !== "shapes") fetchLibrary(state.binTab).then(renderLibrary);
+  fetchSaved("presets");
+  loadLibraryFonts();
+  fetchEncodeProfiles();
+  const seq = runtime.syncSeq = (runtime.syncSeq || 0) + 1;
+  try {
+    const res = await fetch("/api/project", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (seq !== runtime.syncSeq) return;   // a newer reload is on its way: this answer may be older than it
+    if (!data || !Array.isArray(data.clips)) return;
+    // another project was opened (the dashboard, another tab, an agent)
+    const pid = res.headers.get("X-FableCut-Project");
+    const switched = !!(pid && runtime.projectId && pid !== runtime.projectId);
+    if (pid) runtime.projectId = pid;
+    if (switched) {
+      onProjectSwitched();
+      applyProject(data);
+      { // decoded audio is by file: keep what this project uses, free the rest
+        const srcs = new Set(project.media.map((m) => m.src));
+        for (const src of [...runtime.audioBufs.keys()]) if (!srcs.has(src)) runtime.audioBufs.delete(src);
+      }
+      setTime(0);
+      syncCompCrumb();
+      if (!pj.selfSwitch) toast(`Switched to “${project.name}”`);
+      if (projectsOpen()) pjLoad();
+      await probeMissingMeta();
+      return true;
+    }
+    if (!force && (data.revision || 0) === (project.revision || 0)) return; // our own save
+    if (runtime.saveTimer) { // unsaved local edit vs. external write: external wins, tell the user
+      clearTimeout(runtime.saveTimer); runtime.saveTimer = null;
+      // the undo steps describe the discarded edit; replaying one would re-save over the external write
+      runtime.undo.length = 0; runtime.redo.length = 0;
+      toast("Project was updated externally — your last change may need redoing.");
+    }
+    applyProject(data);
+    syncCompCrumb();   // the top bar shows the project's name
+    // "Compare with now" was against the document before this change
+    // (always: a comparison still on its way was made against the old document too)
+    if (pj.verOf === runtime.projectId) { const had = pj.verDiff.size; pjDropDiffs(); if (had && projectsOpen()) renderProjectGrid(); }
+    await probeMissingMeta();
+    return true;
+  } catch { }
+  return false;
+}
+/** Populate a media entry's duration/dimensions (and cache preview assets) by
+ * dispatching on kind: svg loads its markup, image loads for width/height,
+ * audio/video probes duration+size via a throwaway <video>/<audio> element.
+ * Throws on failure — callers decide whether that's fatal or best-effort.
+ * Shared by importFiles, addLibraryItem and probeMissingMeta. */
+async function loadMediaMetadata(m) {
+  if (m.kind === "svg") { await loadSvgMedia(m); return; }
+  if (m.kind === "image") {
+    const gen = runtime.projectGen;
+    const img = await loadImage(m.src);
+    if (gen !== runtime.projectGen) return;   // another project was opened meanwhile
+    runtime.mediaAux.set(m.id, { ...(runtime.mediaAux.get(m.id) || {}), img, imgSrc: m.src });
+    m.width = img.naturalWidth; m.height = img.naturalHeight;
+    return;
+  }
+  Object.assign(m, await probeAV(m.src, m.kind));
+}
+/* Fill in duration/size for media entries added externally without metadata */
+async function probeMissingMeta() {
+  let changed = false;
+  for (const m of project.media) {
+    if (m.kind === "svg") {
+      if (!runtime.mediaAux.get(m.id)?.svgText) { try { await loadMediaMetadata(m); changed = true; } catch { } }
+      continue;
+    }
+    if (m.kind !== "image" && (m.duration == null || isNaN(m.duration))) {
+      try { await loadMediaMetadata(m); changed = true; } catch { }
+    }
+    if (m.kind === "image" && !runtime.mediaAux.get(m.id)?.img) {
+      try { await loadMediaMetadata(m); changed = true; } catch { }
+    }
+    if (m.kind === "video" && !runtime.mediaAux.get(m.id)?.thumb) {
+      grabThumb(m).catch(() => { });
+    }
+    ensureWave(m);
+  }
+  if (changed) { renderBin(); scheduleSave(); }
+  state.dirtyTimeline = true;
+  refreshMediaInfo();
+  scheduleOfflineCheck(0);
+  syncProxyButton();
+}
+function probeAV(src, kind) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement(kind === "audio" ? "audio" : "video");
+    el.preload = "metadata"; el.src = src;
+    el.onloadedmetadata = () => resolve({
+      duration: el.duration,
+      width: el.videoWidth || undefined, height: el.videoHeight || undefined,
+    });
+    el.onerror = reject;
+  });
+}
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const i = new Image();
+    // Must be set before src. Same-origin stays unset so /media needs no ACAO;
+    // cross-origin needs CORS or drawImage taints the canvas.
+    if (isCrossOriginSrc(src)) i.crossOrigin = "anonymous";
+    i.onload = () => res(i);
+    i.onerror = rej;
+    i.src = src;
+  });
+}
+async function grabThumb(m) {
+  const gen = runtime.projectGen;
+  const v = document.createElement("video");
+  v.muted = true; v.preload = "auto";
+  if (isCrossOriginSrc(m.src)) v.crossOrigin = "anonymous";
+  v.src = m.src;
+  await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
+  v.currentTime = Math.min(0.5, (v.duration || 1) / 2);
+  await new Promise((res) => { v.onseeked = res; setTimeout(res, 1500); });
+  const c = document.createElement("canvas");
+  c.width = 160; c.height = 90;
+  c.getContext("2d").drawImage(v, 0, 0, 160, 90);
+  if (gen !== runtime.projectGen) { v.src = ""; return; }
+  runtime.mediaAux.set(m.id, { ...(runtime.mediaAux.get(m.id) || {}), thumb: c.toDataURL("image/jpeg", 0.6) });
+  v.src = "";
+  renderBin(); state.dirtyTimeline = true;
+}
+
+/* ── Audio decoding (shared by clip waveforms and the fast-export mix) ── */
+let decodeCtx = null;
+function getDecodeCtx() {
+  return decodeCtx || (decodeCtx = new (window.AudioContext || window.webkitAudioContext)());
+}
+function getAudioBuffer(m) {
+  const src = m.src;
+  let p = runtime.audioBufs.get(src);
+  if (!p) {
+    p = fetch(src).then((r) => r.arrayBuffer())
+      .then((ab) => getDecodeCtx().decodeAudioData(ab));
+    runtime.audioBufs.set(src, p);
+    p.catch(() => runtime.audioBufs.delete(src));
+  }
+  return p;
+}
+function ensureWave(m) {
+  // Also decode peaks from video files when their audio is placed on an A track
+  if (m.kind !== "audio" && m.kind !== "video") return;
+  const have = runtime.wavePeaks.get(m.id), src = m.src;
+  if (have && (have instanceof Float32Array || have.src === src)) return;
+  runtime.wavePeaks.set(m.id, { src, pending: true });
+  getAudioBuffer(m).then((buf) => {
+    if (runtime.wavePeaks.get(m.id)?.src !== src) return;   // the entry points at another file now (relink, another project)
+    const n = Math.max(1, Math.ceil(buf.duration * WAVE_PEAKS_PER_SEC));
+    const step = buf.length / n;
+    const channels = [];
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+      const data = buf.getChannelData(ch);
+      const peaks = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        let mx = 0;
+        const i0 = Math.floor(i * step), i1 = Math.min(data.length, Math.floor((i + 1) * step));
+        for (let j = i0; j < i1; j += 8) { const a = Math.abs(data[j]); if (a > mx) mx = a; }
+        peaks[i] = mx;
+      }
+      channels.push(peaks);
+    }
+    // Combined max envelope for clips that play full stereo
+    const max = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let mx = 0;
+      for (const p of channels) if (p[i] > mx) mx = p[i];
+      max[i] = mx;
+    }
+    runtime.wavePeaks.set(m.id, { src, channels, max });
+    if (m.channels == null) m.channels = buf.numberOfChannels;
+    state.dirtyTimeline = true;
+  }).catch(() => { if (runtime.wavePeaks.get(m.id)?.src === src) runtime.wavePeaks.delete(m.id); });
+}
+function wavePeaksFor(c) {
+  const w = runtime.wavePeaks.get(c.mediaId);
+  if (!w) return null;
+  // Legacy: bare Float32Array
+  if (w instanceof Float32Array) return w;
+  if (!w.max) return null;
+  const ch = c.props?.audioChannel;
+  if (Number.isInteger(ch) && ch >= 0 && w.channels?.[ch]) return w.channels[ch];
+  return w.max;
+}
+
+/* ═══════════════════════════ MEDIA IMPORT ═══════════════════════════ */
+/* Windows often leaves File.type empty for video/audio — fall back to extension. */
+function mediaKindFromFile(file) {
+  const t = file.type || "";
+  if (t === "image/svg+xml" || t === "image/svg") return "svg";
+  if (t.startsWith("video/")) return "video";
+  if (t.startsWith("audio/")) return "audio";
+  if (t.startsWith("image/")) return "image";
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (ext === "svg") return "svg";
+  if (["mp4", "mov", "webm", "mkv", "m4v", "avi", "mpg", "mpeg"].includes(ext)) return "video";
+  if (["mp3", "wav", "m4a", "aac", "ogg", "flac", "wma"].includes(ext)) return "audio";
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif"].includes(ext)) return "image";
+  return null;
+}
+async function importFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return [];
+  const folderId = runtime.importFolderId && getFolder(runtime.importFolderId)
+    ? runtime.importFolderId : null;
+  runtime.importFolderId = null;
+  let added = 0, skipped = 0;
+  const addedMedia = [], gen = runtime.projectGen;
+  for (const file of files) {
+    const kind = mediaKindFromFile(file);
+    if (!kind) { skipped++; continue; }
+    let src, transient = false;
+    if (state.connected) {
+      try {
+        const res = await fetch("/api/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
+        if (!res.ok) throw new Error("upload " + res.status);
+        src = (await res.json()).src;
+      } catch { src = URL.createObjectURL(file); transient = true; }
+    } else {
+      src = URL.createObjectURL(file); transient = true;
+    }
+    const m = { id: "m_" + uid(), name: file.name, kind, src, transient, folderId };
+    try {
+      await loadMediaMetadata(m);
+      if (kind === "video") grabThumb(m).catch(() => { });
+      ensureWave(m);
+    } catch { skipped++; continue; }
+    if (gen !== runtime.projectGen) { toast("Import stopped: another project was opened. The uploaded files are in media/"); break; }
+    project.media.push(m);
+    addedMedia.push(m);
+    added++;
+  }
+  renderBin(); scheduleSave();
+  refreshMediaInfo(addedMedia);
+  if (!added && skipped)
+    toast("Couldn't import — unsupported or unreadable file type");
+  else if (skipped)
+    toast(`Imported ${added}, skipped ${skipped}`);
+  return addedMedia;
+}
+
+function setImportUrlBusy(busy) {
+  const input = els.importUrlInput;
+  const go = $("btnDoImportUrl");
+  if (input) input.disabled = busy;
+  if (go) go.disabled = busy;
+  els.importUrlStatus?.classList.toggle("hidden", !busy);
+  els.importUrlProgress?.classList.toggle("hidden", !busy);
+}
+
+function closeImportUrl() {
+  if (runtime.importUrlAbort) {
+    try { runtime.importUrlAbort.abort(); } catch { }
+    runtime.importUrlAbort = null;
+  }
+  setImportUrlBusy(false);
+  els.importUrlOverlay?.classList.add("hidden");
+}
+
+function openImportUrl() {
+  if (!state.connected) {
+    toast("Import from URL needs the editor server");
+    return;
+  }
+  if (!els.importUrlOverlay) return;
+  if (els.importUrlInput) els.importUrlInput.value = "";
+  setImportUrlBusy(false);
+  els.importUrlOverlay.classList.remove("hidden");
+  setTimeout(() => els.importUrlInput?.focus(), 0);
+}
+
+async function importFromUrl(url) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) { toast("Paste an HTTPS URL first"); return; }
+  if (!/^https:\/\//i.test(trimmed)) { toast("URL must start with https://"); return; }
+  if (!state.connected) { toast("Import from URL needs the editor server"); return; }
+  runtime.importUrlAbort = new AbortController();
+  setImportUrlBusy(true);
+  const gen = runtime.projectGen;
+  try {
+    const res = await fetch("/api/import-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: trimmed }),
+      signal: runtime.importUrlAbort.signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "import failed (" + res.status + ")");
+    const kind = libKind(body.name);
+    if (!kind) throw new Error("unsupported file type: " + (body.name || ""));
+    const folderId = runtime.importFolderId && getFolder(runtime.importFolderId)
+      ? runtime.importFolderId : null;
+    runtime.importFolderId = null;
+    const m = { id: "m_" + uid(), name: body.name, kind, src: body.src, folderId };
+    try {
+      await loadMediaMetadata(m);
+      if (kind === "video") grabThumb(m).catch(() => { });
+      ensureWave(m);
+    } catch { /* browser will retry via probeMissingMeta */ }
+    if (gen !== runtime.projectGen) throw new Error("another project was opened — the file is in media/");
+    project.media.push(m);
+    renderBin(); scheduleSave();
+    closeImportUrl();
+    toast("Imported " + m.name);
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+    setImportUrlBusy(false);
+    toast(e && e.message ? e.message : "Couldn't import URL");
+  } finally {
+    runtime.importUrlAbort = null;
+  }
+}
+
+function renderBin() {
+  els.binList.querySelectorAll(".bin-item, .bin-folder, .bin-drop-root, .comp-item, .bin-filterbar, .bin-colhead, .bin-noresult").forEach((n) => n.remove());
+  syncBinTools();
+  const comps = project.comps || [];
+  const empty = !project.media.length && !project.folders.length && !comps.length;
+  els.binEmpty.style.display = empty ? "" : "none";
+  els.binList.classList.toggle("list-view", binView.list && !empty);
+  if (empty) return;
+  const ctx = binCtx();
+  const flat = !!(binView.q.trim() || binView.filter);   // searching / filtering → one flat list of hits
+  if (mediaOffline.size && binView.filter !== "offline") {
+    const warn = document.createElement("div");
+    warn.className = "bin-filterbar bin-offline-bar";
+    warn.innerHTML = `<span>⚠ ${mediaOffline.size} file${mediaOffline.size === 1 ? " is" : "s are"} offline</span>
+      <button type="button" class="btn tiny" data-show>Show</button><button type="button" class="btn tiny accent" data-relink>Relink…</button>`;
+    warn.querySelector("[data-show]").addEventListener("click", () => setBinFilter("offline"));
+    warn.querySelector("[data-relink]").addEventListener("click", () => openRelinkDialog());
+    els.binList.appendChild(warn);
+  }
+
+  const clearBinDropHints = () => {
+    els.binList.querySelectorAll(".bin-drop-over").forEach((n) => n.classList.remove("bin-drop-over"));
+  };
+
+  const bindFolderDropTarget = (el, folderId /* null = root */) => {
+    el.addEventListener("dragover", (e) => {
+      const types = [...(e.dataTransfer?.types || [])];
+      const hasMedia = types.includes("text/fablecut-media");
+      const hasFolder = types.includes("text/fablecut-folder");
+      const hasFiles = types.includes("Files");
+      if (!hasMedia && !hasFolder && !hasFiles) return;
+      if (hasFolder) {
+        const dragId = runtime.binDragFolderId;
+        if (dragId && folderId && isSelfOrFolderAncestor(dragId, folderId)) return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = hasFiles ? "copy" : "move";
+      clearBinDropHints();
+      el.classList.add("bin-drop-over");
+      if (hasFiles) runtime.importFolderId = folderId;
+    });
+    el.addEventListener("dragleave", (e) => {
+      if (el.contains(e.relatedTarget)) return;
+      el.classList.remove("bin-drop-over");
+      if (runtime.importFolderId === folderId) runtime.importFolderId = null;
+    });
+    el.addEventListener("drop", (e) => {
+      const mid = e.dataTransfer.getData("text/fablecut-media");
+      const fid = e.dataTransfer.getData("text/fablecut-folder");
+      const files = e.dataTransfer.files;
+      clearBinDropHints();
+      if (files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        runtime.importFolderId = folderId;
+        importFiles(files);
+        return;
+      }
+      if (mid) {
+        e.preventDefault();
+        e.stopPropagation();
+        moveMediaToFolder(mid, folderId);
+        return;
+      }
+      if (fid) {
+        e.preventDefault();
+        e.stopPropagation();
+        moveFolderToParent(fid, folderId);
+      }
+    });
+  };
+
+  const makeMediaItem = (m, depth) => {
+    const item = document.createElement("div");
+    const offline = isMediaOffline(m.id);
+    item.className = "bin-item" + (binView.list ? " bin-row" : "") + (offline ? " offline" : "");
+    item.draggable = true;
+    item.dataset.mediaId = m.id;
+    item.style.setProperty("--bin-depth", flat ? 0 : depth);
+    const aux = runtime.mediaAux.get(m.id) || {};
+    const icon = mediaKindIcon(m.kind, "🎞");
+    const thumbSrc = aux.thumb || (m.kind === "image" || m.kind === "svg" ? m.src : null);
+    const uses = ctx.usage.get(m.id) || 0;
+    const folder = flat && m.folderId ? getFolder(m.folderId) : null;
+    const usesHtml = `<button type="button" class="bin-uses${uses ? "" : " none"}" title="${uses ? `Used ${uses}× — click to find every instance` : "Not used on the timeline"}">${uses}</button>`;
+    const favHtml = `<button type="button" class="bin-fav${m.favorite ? " on" : ""}" title="${m.favorite ? "Favorite — click to unstar" : "Mark as favorite"}" aria-pressed="${!!m.favorite}">${m.favorite ? "★" : "☆"}</button>`;
+    if (binView.list) {
+      const cell = (v, cls = "") => `<span class="bin-cell${cls}">${escapeHtml(v || "—")}</span>`;
+      item.innerHTML = `
+        <span class="bin-cell bin-cell-name">${favHtml}<span class="bin-thumb sm"></span>${offline ? `<span class="bin-offline" title="The file is missing — right-click → Relink…">OFFLINE</span>` : ""}<span class="bin-name"></span></span>
+        ${cell(MediaLib.fmtDur(m.duration), " num c-duration")}${cell(MediaLib.fmtRes(m), " num c-resolution")}${cell(MediaLib.fmtFps(m.fps), " num c-fps")}
+        ${cell(m.codec, " c-codec")}${cell(MediaLib.fmtAudio(m), " c-audio")}${cell(MediaLib.fmtSize(m.size), " num c-size")}
+        <span class="bin-cell c-proxy">${proxyBadgeHtml(m) || escapeHtml(m.kind === "video" ? "—" : "")}</span>
+        <span class="bin-cell num c-usage">${usesHtml}</span>
+        <span class="bin-del" title="Remove (and its clips)">✕</span>`;
+    } else {
+      const sub = [folder ? "📁 " + folder.name : "", m.kind, m.duration ? fmt(m.duration) : "", MediaLib.fmtRes(m), m.fps ? MediaLib.fmtFps(m.fps) + " fps" : ""]
+        .filter(Boolean).join(" · ");
+      item.innerHTML = `
+        <div class="bin-thumb"></div>
+        <div class="bin-meta">
+          <div class="bin-name"></div>
+          <div class="bin-sub">${offline ? `<span class="bin-offline" title="The file is missing — right-click → Relink…">OFFLINE</span> ` : ""}${escapeHtml(sub)}</div>
+          ${m.tags && m.tags.length ? `<div class="bin-tags">${m.tags.map((t) => `<span class="bin-tag">#${escapeHtml(t)}</span>`).join("")}</div>` : ""}
+        </div>
+        <div class="bin-side">${favHtml}${usesHtml}${proxyBadgeHtml(m)}</div>
+        <span class="bin-del" title="Remove (and its clips)">✕</span>`;
+    }
+    const thumbEl = item.querySelector(".bin-thumb");
+    if (thumbSrc) thumbEl.style.backgroundImage = `url(${JSON.stringify(thumbSrc)})`;
+    else thumbEl.textContent = icon;
+    const nameEl = item.querySelector(".bin-name");
+    nameEl.textContent = m.name;
+    item.title = [m.name, offline ? "⚠ Offline: " + decodeURIComponent(String(m.src).split("?")[0]) + " is missing — right-click → Relink…" : "", MediaLib.describe(m), m.tags && m.tags.length ? m.tags.map((t) => "#" + t).join(" ") : ""].filter(Boolean).join("\n");
+    item.addEventListener("dragstart", (e) => {
+      runtime.binDragFolderId = null;
+      e.dataTransfer.setData("text/fablecut-media", m.id);
+      e.dataTransfer.effectAllowed = "copyMove";
+      item.classList.add("bin-dragging");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("bin-dragging");
+      clearBinDropHints();
+      runtime.importFolderId = null;
+    });
+    // Don't bubble to the root drop zone while hovering a media row
+    item.addEventListener("dragover", (e) => e.stopPropagation());
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".bin-del, .bin-fav, .bin-uses")) return;
+      if (e.ctrlKey || e.metaKey) return; // reserved for import
+      if (!getSetting("linkSelect")) return;
+      e.preventDefault();
+      selectClipsByMediaId(m.id);
+    });
+    item.addEventListener("dblclick", (e) => {
+      if (e.target.closest(".bin-del, .bin-fav, .bin-uses")) return;
+      // Double-click loads Source (single-click only selects when link-select is on).
+      if (state.source.mediaId === m.id) {
+        setMonitorMode("source");
+      } else {
+        loadSourceFromMedia(m);
+      }
+      if (getSetting("linkSelect")) flashMonitorAttention();
+    });
+    item.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showMediaMenu(e.clientX, e.clientY, m); });
+    item.querySelector(".bin-fav").addEventListener("click", (e) => { e.stopPropagation(); setMediaFavorite([m.id], !m.favorite); });
+    item.querySelector(".bin-uses").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const r = e.currentTarget.getBoundingClientRect();
+      showMediaInstances(m, r.left, r.bottom + 4);
+    });
+    item.querySelector(".bin-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeMediaFromBin(m);
+    });
+    return item;
+  };
+
+  const renderLevel = (parentId, depth) => {
+    for (const f of folderChildren(parentId)) {
+      const row = document.createElement("div");
+      row.className = "bin-folder" + (f.open ? " open" : "");
+      row.dataset.folderId = f.id;
+      row.draggable = true;
+      row.style.setProperty("--bin-depth", depth);
+      const count = mediaInFolder(f.id).length + folderChildren(f.id).length;
+      row.innerHTML = `
+        <button type="button" class="bin-folder-twist" title="${f.open ? "Collapse" : "Expand"}" aria-expanded="${f.open}">${f.open ? "▼" : "▶"}</button>
+        <span class="bin-folder-icon">📁</span>
+        <span class="bin-folder-name"></span>
+        <span class="bin-folder-count">${count}</span>
+        <button type="button" class="bin-folder-add" title="New subfolder">+</button>
+        <button type="button" class="bin-del bin-folder-del" title="Delete folder (keeps media)">✕</button>`;
+      const nameEl = row.querySelector(".bin-folder-name");
+      nameEl.textContent = f.name;
+      nameEl.title = f.name;
+      row.querySelector(".bin-folder-twist").addEventListener("click", (e) => {
+        e.stopPropagation();
+        f.open = !f.open;
+        scheduleSave();
+        renderBin();
+      });
+      row.querySelector(".bin-folder-name").addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        startFolderRename(f.id);
+      });
+      row.querySelector(".bin-folder-add").addEventListener("click", (e) => {
+        e.stopPropagation();
+        addFolder(f.id);
+      });
+      row.querySelector(".bin-folder-del").addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteFolder(f.id);
+      });
+      row.addEventListener("dragstart", (e) => {
+        // don't start folder drag from action buttons
+        if (e.target.closest("button")) { e.preventDefault(); return; }
+        runtime.binDragFolderId = f.id;
+        e.dataTransfer.setData("text/fablecut-folder", f.id);
+        e.dataTransfer.effectAllowed = "move";
+        row.classList.add("bin-dragging");
+      });
+      row.addEventListener("dragend", () => {
+        runtime.binDragFolderId = null;
+        row.classList.remove("bin-dragging");
+        clearBinDropHints();
+        runtime.importFolderId = null;
+      });
+      bindFolderDropTarget(row, f.id);
+      els.binList.appendChild(row);
+      if (f.open) renderLevel(f.id, depth + 1);
+    }
+    for (const m of mediaInFolder(parentId, ctx)) els.binList.appendChild(makeMediaItem(m, depth));
+  };
+
+  if (flat) {
+    const hits = MediaLib.query(project.media, binView, ctx);
+    els.binList.appendChild(makeFilterBar(hits.length));
+    if (binView.list) els.binList.appendChild(makeColumnHead());
+    const q = binView.q.trim().toLowerCase();
+    if (!binView.filter) for (const comp of comps) if (q && String(comp.name).toLowerCase().includes(q)) els.binList.appendChild(makeCompItem(comp));
+    for (const m of hits) els.binList.appendChild(makeMediaItem(m, 0));
+    if (!hits.length) {
+      const none = document.createElement("div");
+      none.className = "bin-noresult";
+      none.textContent = "No media matches.";
+      els.binList.appendChild(none);
+    }
+  } else {
+    if (binView.list) els.binList.appendChild(makeColumnHead());
+    for (const comp of comps) els.binList.appendChild(makeCompItem(comp));
+    renderLevel(null, 0);
+    // Root drop zone at the bottom so items can be moved out of folders
+    const root = document.createElement("div");
+    root.className = "bin-drop-root";
+    root.textContent = "Drop here to move to root";
+    bindFolderDropTarget(root, null);
+    els.binList.appendChild(root);
+  }
+  syncBinSelectionFromTimeline();
+}
+
+/* ── Project bin: media management ──
+   Search, the Show filter, sort, list view, favorites, tags, collections,
+   usage counts, find instances, reveal in project, server-probed metadata. */
+/** The whole document as it stands now — with an open comp's live clips written into it. */
+function usageDoc() {
+  if (!state.compCtx) return project;
+  const id = compCtxId();
+  return {
+    media: project.media,
+    clips: state.compCtx.root.clips || [],
+    sequences: state.compCtx.root.sequences, sequence: state.compCtx.root.sequence,
+    comps: (project.comps || []).map((c) => (c.id === id ? { ...c, clips: project.clips } : c)),
+  };
+}
+function binCtx() {
+  return {
+    usage: MediaLib.usageCounts(usageDoc()), collections: project.collections || [],
+    extraFilter: (m, f) => (f === "offline" ? isMediaOffline(m.id)
+      : f === "proxy" ? !!proxyOf(m) : f === "noproxy" ? m.kind === "video" && !proxyOf(m) : true),
+  };
+}
+function getCollection(id) { return (project.collections || []).find((c) => c.id === id) || null; }
+
+/* Fill the Show / Sort controls from the project (tags and collections change). */
+function syncBinTools() {
+  const tools = els.binTools;
+  if (!tools) return;
+  const tags = MediaLib.allTags(project.media);
+  const cols = project.collections || [];
+  // a filter whose tag / collection is gone falls back to everything
+  const f = binView.filter;
+  if ((f.startsWith("tag:") && !tags.some((t) => t.toLowerCase() === f.slice(4).toLowerCase())) ||
+    (f.startsWith("col:") && !getCollection(f.slice(4)))) binView.filter = "";
+  const opt = (v, label) => `<option value="${escapeHtml(v)}"${v === binView.filter ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const html = opt("", "All media") + opt("fav", "★ Favorites") + opt("used", "Used in the edit") + opt("unused", "Unused") +
+    (mediaOffline.size || binView.filter === "offline" ? opt("offline", `⚠ Offline (${mediaOffline.size})`) : "") +
+    (project.media.some((m) => m.kind === "video") ? opt("proxy", "Has a proxy") + opt("noproxy", "Video without a proxy") : "") +
+    `<optgroup label="Kind">${MediaLib.KINDS.map((k) => opt("kind:" + k, k[0].toUpperCase() + k.slice(1))).join("")}</optgroup>` +
+    (cols.length ? `<optgroup label="Collections">${cols.map((c) => opt("col:" + c.id, c.name + ` (${c.media.length})`)).join("")}</optgroup>` : "") +
+    (tags.length ? `<optgroup label="Tags">${tags.map((t) => opt("tag:" + t, "#" + t)).join("")}</optgroup>` : "");
+  if (els.binFilter.innerHTML !== html) els.binFilter.innerHTML = html;
+  els.binFilter.value = binView.filter;
+  els.binFilter.classList.toggle("on", !!binView.filter);
+  els.binSort.value = binView.sort;
+  els.binSortDir.textContent = binView.dir === "desc" ? "↓" : "↑";
+  els.binSortDir.title = binView.dir === "desc" ? "Descending — click for ascending" : "Ascending — click for descending";
+  els.binViewBtn.classList.toggle("on", binView.list);
+  els.binViewBtn.title = binView.list ? "Thumbnail view" : "List view: metadata columns";
+  if (els.binSearch.value !== binView.q && document.activeElement !== els.binSearch) els.binSearch.value = binView.q;
+}
+function setBinFilter(filter) {
+  binView.filter = filter || "";
+  renderBin();
+}
+/* The strip above search / filter results: how many, the active collection's actions, Clear. */
+function makeFilterBar(n) {
+  const bar = document.createElement("div");
+  bar.className = "bin-filterbar";
+  const col = binView.filter.startsWith("col:") ? getCollection(binView.filter.slice(4)) : null;
+  bar.innerHTML = `<span class="bin-filter-count">${n} of ${project.media.length}</span>` +
+    (col ? `<span class="bin-filter-name" title="Collection">▣ ${escapeHtml(col.name)}</span>
+      <button type="button" class="btn tiny" data-col-rename>Rename</button>
+      <button type="button" class="btn tiny" data-col-delete title="Delete the collection (keeps the media)">Delete</button>` : "") +
+    (binView.filter === "offline" && mediaOffline.size ? `<button type="button" class="btn tiny accent" data-relink-all>Relink…</button>` : "") +
+    `<button type="button" class="btn tiny" data-clear title="Show everything (Esc in the search box)">Clear</button>`;
+  bar.querySelector("[data-relink-all]")?.addEventListener("click", () => openRelinkDialog());
+  bar.querySelector("[data-clear]").addEventListener("click", () => { binView.q = ""; els.binSearch.value = ""; setBinFilter(""); });
+  if (col) {
+    bar.querySelector("[data-col-rename]").addEventListener("click", (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      promptBinText(r.left, r.bottom + 4, "Collection name", col.name, (name) => { col.name = name.slice(0, 80); scheduleSave(); renderBin(); });
+    });
+    bar.querySelector("[data-col-delete]").addEventListener("click", () => {
+      project.collections = (project.collections || []).filter((c) => c.id !== col.id);
+      binView.filter = "";
+      scheduleSave(); renderBin();
+      toast(`Deleted the collection “${col.name}” — its media stay in the bin`);
+    });
+  }
+  return bar;
+}
+/* List view header: click a column to sort by it (again to flip the direction). */
+const BIN_COLUMNS = [["name", "Name"], ["duration", "Duration"], ["resolution", "Resolution"], ["fps", "FPS"],
+  ["codec", "Codec"], ["audio", "Audio"], ["size", "Size"], ["proxy", "Proxy"], ["usage", "Uses"]];
+function makeColumnHead() {
+  const head = document.createElement("div");
+  head.className = "bin-colhead bin-row";
+  for (const [key, label] of BIN_COLUMNS) {
+    if (key === "proxy") { const sp = document.createElement("span"); sp.className = "bin-cell c-proxy"; sp.textContent = label; head.appendChild(sp); continue; }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "bin-cell c-" + key + (key === "name" ? " bin-cell-name" : "") + (["duration", "resolution", "fps", "size", "usage"].includes(key) ? " num" : "") + (binView.sort === key ? " on" : "");
+    b.textContent = label + (binView.sort === key ? (binView.dir === "desc" ? " ↓" : " ↑") : "");
+    b.addEventListener("click", () => {
+      if (binView.sort === key) binView.dir = binView.dir === "desc" ? "asc" : "desc";
+      else { binView.sort = key; binView.dir = key === "name" || key === "codec" ? "asc" : "desc"; }
+      saveBinPrefs(); renderBin();
+    });
+    head.appendChild(b);
+  }
+  head.appendChild(document.createElement("span"));
+  return head;
+}
+
+/* Server-probed metadata (fps, codecs, channels, sample rate, size) for media
+   that has none yet. Without ffprobe the server still answers the size. */
+let mediaInfoBusy = false, mediaInfoAgain = false;
+async function refreshMediaInfo(list) {
+  if (!state.connected) return;
+  if (mediaInfoBusy) { mediaInfoAgain = true; return; }   // run once more when this one ends
+  // blob: srcs are files a hosted editor reads from a folder (a local session's own blobs are transient)
+  const todo = (list || project.media).filter((m) => !m.transient && m.size == null && (isLocalSrc(m.src) || /^blob:/.test(m.src || "")));
+  if (!todo.length) return;
+  mediaInfoBusy = true;
+  try {
+    const res = await fetch("/api/media-info", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ srcs: [...new Set(todo.map((m) => m.src))] }),
+    });
+    if (!res.ok) return;
+    const { info } = await res.json();
+    let changed = false;
+    for (const m of project.media) {
+      const i = info && info[m.src];
+      if (!i) continue;
+      for (const k of MediaLib.INFO_KEYS) if (i[k] != null && m[k] !== i[k]) { m[k] = i[k]; changed = true; }
+      if (!(m.width > 0) && i.width > 0) { m.width = i.width; m.height = i.height; changed = true; }
+    }
+    if (changed) { renderBin(); scheduleSave(); if (state.selId) renderInspector(); }
+  } catch { } finally {
+    mediaInfoBusy = false;
+    // files imported (or a Media info opened) meanwhile: everything still without details
+    if (mediaInfoAgain) { mediaInfoAgain = false; refreshMediaInfo(); }
+  }
+}
+
+function setMediaFavorite(ids, on) {
+  for (const id of ids) {
+    const m = getMedia(id);
+    if (!m) continue;
+    if (on) m.favorite = true; else delete m.favorite;
+  }
+  scheduleSave(); renderBin();
+}
+function setMediaTags(m, tags) {
+  const t = MediaLib.normalizeTags(tags);
+  if (t.length) m.tags = t; else delete m.tags;
+  scheduleSave(); renderBin();
+}
+function addToCollection(colId, mediaId, on = true) {
+  const col = getCollection(colId);
+  if (!col) return;
+  if (on && !col.media.includes(mediaId)) col.media.push(mediaId);
+  if (!on) col.media = col.media.filter((id) => id !== mediaId);
+  scheduleSave(); renderBin();
+}
+function newCollection(name, mediaIds) {
+  const col = { id: "col_" + uid(), name: String(name).trim().slice(0, 80) || "Collection", media: [...new Set(mediaIds || [])] };
+  project.collections = [...(project.collections || []), col];
+  scheduleSave(); renderBin();
+  return col;
+}
+function removeMediaFromBin(m) {
+  if (state.compCtx && (state.compCtx.root.clips || []).some((c) => c.mediaId === m.id)) { toast(`It's used on the timeline of “${openSequenceName()}” — go back to it to delete it`); return; }
+  const elsewhere = SeqLib.others(seqRoot()).find((sq) => (sq.clips || []).some((c) => c.mediaId === m.id));
+  if (elsewhere) { toast(`It's used in the sequence “${elsewhere.name}” — remove its clips there first`); return; }
+  pushUndo(JSON.stringify({ clips: project.clips, markers: project.markers || [], comps: project.comps || [], media: project.media }));   // undo brings the media back too
+  project.media = project.media.filter((x) => x.id !== m.id);
+  project.clips = project.clips.filter((c) => c.mediaId !== m.id);
+  // and its clips inside comps (and on the main timeline while a comp is open)
+  project.comps = (project.comps || []).map((cp) => ({ ...cp, clips: (cp.clips || []).filter((c) => c.mediaId !== m.id) }));
+  runtime.compGen = (runtime.compGen || 0) + 1;
+  if (state.source.mediaId === m.id) clearSource();
+  renderBin(); scheduleSave(); renderInspector();
+}
+
+/* A one-line text prompt as a popover (Enter saves, Esc cancels). */
+function promptBinText(x, y, label, value, onOk, opts = {}) {
+  const pop = document.createElement("div");
+  pop.className = "ctx-menu bin-pop";
+  pop.innerHTML = `<label class="bin-pop-label">${escapeHtml(label)}</label>
+    <input type="text" class="bin-pop-input" maxlength="${opts.max || 80}" spellcheck="false">
+    ${opts.hint ? `<div class="bin-pop-hint">${escapeHtml(opts.hint)}</div>` : ""}
+    <div class="bin-pop-chips"></div>
+    <div class="bin-pop-btns"><button type="button" class="btn tiny" data-cancel>Cancel</button><button type="button" class="btn tiny accent" data-ok>${escapeHtml(opts.ok || "OK")}</button></div>`;
+  const input = pop.querySelector("input");
+  input.value = value || "";
+  if (opts.placeholder) input.placeholder = opts.placeholder;
+  const chips = pop.querySelector(".bin-pop-chips");
+  for (const c of opts.chips || []) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "bin-tag chip"; b.textContent = "#" + c;
+    b.title = "Add or remove this tag";
+    b.addEventListener("click", () => {
+      const cur = MediaLib.normalizeTags(input.value);
+      const has = cur.some((t) => t.toLowerCase() === c.toLowerCase());
+      input.value = (has ? cur.filter((t) => t.toLowerCase() !== c.toLowerCase()) : [...cur, c]).join(", ");
+      input.focus();
+    });
+    chips.appendChild(b);
+  }
+  if (!chips.children.length) chips.remove();
+  const ok = () => {
+    const v = input.value.trim();
+    if (!v && !opts.allowEmpty) { input.focus(); return; }
+    hideTrackCtxMenu();
+    onOk(v);
+  };
+  pop.querySelector("[data-ok]").addEventListener("click", ok);
+  pop.querySelector("[data-cancel]").addEventListener("click", () => hideTrackCtxMenu());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); ok(); }
+    else if (e.key === "Escape") { e.preventDefault(); hideTrackCtxMenu(); }
+    e.stopPropagation();
+  });
+  showPopover(pop, x, y);
+  input.focus(); input.select();
+}
+
+/* Right-click a media item in the Project bin. */
+function showMediaMenu(x, y, m) {
+  hideTrackCtxMenu();
+  closeBinCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  const uses = MediaLib.placements(usageDoc(), m.id).length;
+  const item = (label, run, why, keys) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ctx-item";
+    b.innerHTML = `<span>${escapeHtml(label)}</span>` + (keys ? `<kbd>${escapeHtml(keys)}</kbd>` : "");
+    if (why) { b.disabled = true; b.title = why; } else b.addEventListener("click", () => { hideTrackCtxMenu(); run(); });
+    menu.appendChild(b);
+    return b;
+  };
+  const sep = () => { const d = document.createElement("div"); d.className = "ctx-sep"; menu.appendChild(d); };
+  item("Open in Source", () => loadSourceFromMedia(m));
+  item(`Find timeline instances (${uses})`, () => showMediaInstances(m, x, y), uses ? null : "Not used on the timeline");
+  item("Media info…", () => showMediaInfo(m, x, y));
+  item(isMediaOffline(m.id) ? "Relink…" : "Relink to another copy…", () => openRelinkDialog([m]), state.connected ? null : "Needs the FableCut server");
+  item("Replace file…", () => replaceMediaFile(m), state.connected ? null : "Needs the FableCut server");
+  if (m.kind === "video") {
+    const ps = proxyStatus.get(m.id);
+    const why = !state.connected ? "Needs the FableCut server" : !state.ffmpeg ? "Needs ffmpeg on the server's PATH" : isMediaOffline(m.id) ? "The file is offline" : null;
+    if (ps && (ps.state === "ready" || ps.state === "running" || ps.state === "queued")) item(ps.state === "ready" ? "Delete proxy" : "Stop making the proxy", () => deleteProxies([m]));
+    else {
+      item("Create proxy (540p)", () => createProxies([m], 540), why);
+      item("Create proxy (720p)", () => createProxies([m], 720), why);
+    }
+  }
+  sep();
+  item(m.favorite ? "Remove from favorites" : "Add to favorites", () => setMediaFavorite([m.id], !m.favorite));
+  item("Tags…", () => promptBinText(x, y, `Tags for ${m.name}`, (m.tags || []).join(", "), (v) => setMediaTags(m, v),
+    { allowEmpty: true, max: 400, ok: "Save", placeholder: "interview, b-roll, day 1", hint: "Comma-separated. Search #tag to find them.",
+      chips: MediaLib.allTags(project.media) }));
+  for (const col of project.collections || []) {
+    const inIt = col.media.includes(m.id);
+    item(inIt ? `Remove from “${col.name}”` : `Add to “${col.name}”`, () => addToCollection(col.id, m.id, !inIt));
+  }
+  item("New collection…", () => promptBinText(x, y, "New collection", "", (name) => {
+    const col = newCollection(name, [m.id]);
+    toast(`Added ${m.name} to the collection “${col.name}”`);
+  }, { placeholder: "Selects, Interviews…", ok: "Create" }));
+  sep();
+  item("Remove from project", () => removeMediaFromBin(m));
+  document.body.appendChild(menu);
+  menu.id = "trackCtxMenu";
+  trackCtxMenu = menu;
+  menu.style.left = Math.max(6, Math.min(x, innerWidth - menu.offsetWidth - 6)) + "px";
+  menu.style.top = Math.max(6, Math.min(y, innerHeight - menu.offsetHeight - 6)) + "px";
+}
+
+/* Media info: everything the bin knows about one file. */
+function showMediaInfo(m, x, y) {
+  const doc = usageDoc();
+  const uses = MediaLib.placements(doc, m.id);
+  const folder = m.folderId ? getFolder(m.folderId) : null;
+  const cols = (project.collections || []).filter((c) => c.media.includes(m.id)).map((c) => c.name);
+  const audio = m.audioChannels == null ? "" : m.audioChannels === 0 ? "none" :
+    [m.audioCodec, MediaLib.fmtAudio(m)].filter(Boolean).join(" · ");
+  const rows = [
+    ["Kind", m.kind], ["File", decodeURIComponent(String(m.src || "").split("?")[0]) + (isMediaOffline(m.id) ? " — MISSING (offline)" : "")],
+    ["Duration", m.duration > 0 ? MediaLib.fmtDur(m.duration) + ` (${(+m.duration).toFixed(3)} s)` : ""],
+    ["Resolution", MediaLib.fmtRes(m)], ["Frame rate", m.fps ? MediaLib.fmtFps(m.fps) + " fps" : ""],
+    ["Video codec", m.kind === "video" ? m.codec : ""], ["Format", m.kind !== "video" && m.codec ? m.codec : ""],
+    ["Audio", audio], ["Bitrate", m.bitrate ? (m.bitrate >= 1e6 ? (m.bitrate / 1e6).toFixed(1) + " Mb/s" : Math.round(m.bitrate / 1000) + " kb/s") : ""],
+    ["Size", MediaLib.fmtSize(m.size)], ["Used", uses.length ? uses.length + "×" : "not used"],
+    ["Proxy", m.kind !== "video" ? "" : (() => {
+      const ps = proxyStatus.get(m.id);
+      if (!ps) return "none";
+      if (ps.state === "ready") return `${ps.width ? ps.width + "×" : ""}${ps.height} · ${MediaLib.fmtSize(ps.size)}${proxiesOn() ? " · playing it" : " · Proxy button off"}`;
+      return ps.state === "running" ? `making it — ${Math.round((ps.progress || 0) * 100)}%` : ps.state + (ps.error ? ": " + ps.error : "");
+    })()],
+    ["Folder", folder ? folder.name : ""], ["Tags", (m.tags || []).map((t) => "#" + t).join(" ")],
+    ["Collections", cols.join(", ")], ["Favorite", m.favorite ? "★ yes" : ""],
+  ].filter(([, v]) => v);
+  const pop = document.createElement("div");
+  pop.className = "ctx-menu bin-pop bin-info";
+  pop.innerHTML = `<div class="bin-pop-title"></div><table>${rows.map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(v)}</td></tr>`).join("")}</table>` +
+    (m.size == null && state.connected ? `<div class="bin-pop-hint">Reading the file's details…</div>` : "");
+  pop.querySelector(".bin-pop-title").textContent = m.name;
+  showPopover(pop, x, y);
+  if (m.size == null) refreshMediaInfo([m]);
+}
+
+/* Find all timeline instances: every placement (main timeline and inside comps); click one to go there. */
+function showMediaInstances(m, x, y) {
+  const list = MediaLib.placements(usageDoc(), m.id);
+  if (!list.length) { toast(`${m.name} isn't used on the timeline`); return; }
+  // select the instances on the timeline that is open now
+  const here = compCtxId();
+  const local = list.filter((p) => p.comp === here).map((p) => p.clipId);
+  if (local.length) selectClipsByMediaId(m.id);
+  const pop = document.createElement("div");
+  pop.className = "ctx-menu bin-pop bin-instances";
+  pop.innerHTML = `<div class="bin-pop-title"></div><div class="bin-pop-hint">${list.length} instance${list.length === 1 ? "" : "s"} — click one to jump to it</div>`;
+  pop.querySelector(".bin-pop-title").textContent = m.name;
+  for (const p of list) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ctx-item";
+    b.innerHTML = `<span>${escapeHtml(p.sequence ? `▤ ${p.sequenceName}` : p.comp ? `▣ ${p.compName}` : openSequenceName())} · ${escapeHtml(p.track)}</span><kbd>${fmt(p.start)} → ${fmt(p.start + p.duration)}</kbd>`;
+    b.addEventListener("click", () => { goToPlacement(p); });
+    pop.appendChild(b);
+  }
+  showPopover(pop, x, y);
+}
+function goToPlacement(p) {
+  if (p.sequence && !openSequence(p.sequence)) return;
+  const here = compCtxId();
+  if (p.comp !== here) {
+    if (state.compCtx) exitComp(state.compCtx.path.length);
+    if (p.comp) enterComp(p.comp);
+  }
+  const c = getClip(p.clipId);
+  if (!c) return;
+  if (isSourceMode()) setMonitorMode("program");
+  setSelection([...withLinked([c])].map((x) => x.id), c.id);
+  setTime(c.start);
+  revealTime(c.start);
+}
+
+/* Reveal in project: show a clip's media (or comp) in the Project bin. */
+function revealInProject(c) {
+  const id = c.kind === "comp" ? null : c.mediaId;
+  if (state.binTab !== "project") setBinTab("project");
+  let sel;
+  if (id) {
+    const m = getMedia(id);
+    if (!m) { toast("Its media is no longer in the project"); return; }
+    if ((binView.q || binView.filter) && !MediaLib.query([m], binView, binCtx()).length) { binView.q = ""; binView.filter = ""; }
+    for (let f = getFolder(m.folderId); f; f = getFolder(f.parentId)) f.open = true;
+    renderBin();
+    sel = `.bin-item[data-media-id="${CSS.escape(id)}"]`;
+  } else if (c.compId) {
+    binView.q = ""; binView.filter = "";
+    renderBin();
+    sel = `.comp-item[data-comp-id="${CSS.escape(c.compId)}"]`;
+  }
+  const el = sel && els.binList.querySelector(sel);
+  if (!el) return;
+  el.scrollIntoView({ block: "nearest" });
+  el.classList.remove("bin-flash");
+  void el.offsetWidth;
+  el.classList.add("bin-flash");
+}
+
+/* ── Offline media, relink and replace ──
+   A file is offline when its src names nothing under media/ or library/ (it was
+   moved, renamed or deleted). Its clips stay on the timeline and draw a "Media
+   offline" slate until it is relinked: pointed at the same footage somewhere
+   else (clips keep their In points). Replace puts a different file behind the
+   media entry (a new render): clips keep their timing, trimmed to fit. */
+const mediaOffline = new Set();   // media ids whose file is missing (runtime only, re-checked on every change)
+function isMediaOffline(id) { return !!id && mediaOffline.has(id); }
+const isLocalSrc = (src) => /^\/(media|library)\//.test(String(src || ""));
+let offlineCheckTimer = null, offlineChecking = false;
+function scheduleOfflineCheck(delay = 300) {
+  clearTimeout(offlineCheckTimer);
+  offlineCheckTimer = setTimeout(() => { checkOffline(); refreshProxyStatus(); }, delay);
+}
+async function checkOffline() {
+  if (!state.connected || offlineChecking) return;
+  const list = project.media.filter((m) => !m.transient && (isLocalSrc(m.src) || /^blob:/.test(m.src || "")));
+  offlineChecking = true;
+  try {
+    const res = await fetch("/api/media-info", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ srcs: [...new Set(list.map((m) => m.src))], stat: true }),
+    });
+    if (!res.ok) return;
+    const { info } = await res.json();
+    const was = new Set(mediaOffline);
+    mediaOffline.clear();
+    for (const m of list) if (info && info[m.src] === null) mediaOffline.add(m.id);
+    // a file that came back (put back, or relinked by an agent): reload what was cached from it
+    for (const id of was) if (!mediaOffline.has(id)) { const m = getMedia(id); if (m) reloadMediaSource(m); }
+    const changed = was.size !== mediaOffline.size || [...was].some((id) => !mediaOffline.has(id));
+    if (changed) {
+      renderBin(); state.dirtyTimeline = true;
+      const fresh = [...mediaOffline].filter((id) => !was.has(id));
+      if (fresh.length) toast(`${fresh.length === 1 ? `“${getMedia(fresh[0])?.name}” is` : fresh.length + " files are"} offline — right-click it in the bin → Relink…`);
+    }
+  } catch { } finally { offlineChecking = false; }
+}
+/* Everything cached from a media file (players, picture, waveform, thumbnail) is dropped and read again. */
+function reloadMediaSource(m, oldSrc) {
+  // a proxy belongs to a file, not to the entry: the old file's must not stand in for the new one
+  const proxySrc = proxyStatus.get(m.id)?.src;
+  proxyStatus.delete(m.id);
+  for (const [id, el] of runtime.clipEls)
+    if (el._fcSrc === m.src || (oldSrc && el._fcSrc === oldSrc) || (proxySrc && el._fcSrc === proxySrc)) releaseClipEl(id);
+  runtime.mediaAux.delete(m.id);
+  runtime.wavePeaks.delete(m.id);
+  if (state.source.mediaId === m.id) { const sm = m; clearSource(); loadSourceFromMedia(sm); }
+  seekMediaWhilePaused();   // fresh players start at 0 — park them on the playhead
+  loadMediaMetadata(m).then(() => {
+    if (m.kind === "video") grabThumb(m).catch(() => { });
+    ensureWave(m);
+    seekMediaWhilePaused();
+    renderBin(); state.dirtyTimeline = true;
+  }).catch(() => { });
+  if (m.kind === "video") refreshProxyStatus();   // the new file may have a proxy of its own
+}
+
+/** Point a media entry at another file. mode "relink" (same footage) or "replace" (a new file). */
+async function setMediaSource(m, src, mode, name) {
+  const oldSrc = m.src, oldDur = m.duration;
+  pushUndo(JSON.stringify({ clips: project.clips, markers: project.markers || [], comps: project.comps || [], media: project.media, seqClips: otherSequenceClips() }));
+  m.src = src;
+  for (const k of MediaLib.INFO_KEYS) delete m[k];
+  if (mode === "replace") {
+    m.name = name || MediaLib.srcName(src);
+    delete m.duration; delete m.width; delete m.height;
+  }
+  mediaOffline.delete(m.id);
+  reloadMediaSource(m, oldSrc);
+  try { await loadMediaMetadata(m); } catch { }
+  let msg = mode === "replace" ? `Replaced ${m.name}` : `Relinked ${m.name}`;
+  if (mode === "relink" && oldDur > 0 && m.duration > 0 && Math.abs(oldDur - m.duration) > 0.1)
+    msg += ` — but it is ${fmt(m.duration)} long, the original was ${fmt(oldDur)}: is it the same footage?`;
+  if (mode === "replace" && m.duration > 0) {
+    let trimmed = 0;
+    const fit = (clips) => {
+      for (const c of clips || []) {
+        if (c.mediaId !== m.id || c.kind === "image" || c.kind === "svg") continue;
+        const speed = c.props?.speed || 1;
+        const maxIn = Math.max(0, m.duration - 0.001);
+        if (c.in > maxIn) { c.in = maxIn; trimmed++; }
+        const maxDur = Math.max(0.05, (m.duration - c.in) / speed);
+        if (c.duration > maxDur + 1e-6) { c.duration = maxDur; trimmed++; }
+      }
+    };
+    fit(project.clips);
+    for (const comp of project.comps || []) fit(comp.clips);
+    if (state.compCtx) fit(state.compCtx.root.clips);
+    for (const sq of SeqLib.others(seqRoot())) fit(sq.clips);
+    runtime.compGen = (runtime.compGen || 0) + 1;
+    if (trimmed) msg += ` — ${trimmed} clip edge${trimmed === 1 ? "" : "s"} trimmed to fit`;
+    if (m.kind === "video") for (const c of project.clips) if (c.mediaId === m.id && c.kind === "video") reconcileAudioChannels(c);
+  }
+  state.dirtyTimeline = true;
+  renderBin(); scheduleSave(); renderInspector();
+  refreshMediaInfo([m]);
+  toast(msg);
+}
+
+/* Upload local files into media/ (like import, without adding bin entries) → [{file, src}]. */
+async function uploadForRelink(files, onProgress) {
+  const out = [];
+  for (const file of files) {
+    onProgress?.(file);
+    try {
+      const res = await fetch("/api/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
+      if (!res.ok) throw new Error("upload " + res.status);
+      out.push({ file, src: (await res.json()).src });
+    } catch { out.push({ file, src: null }); }
+  }
+  return out;
+}
+let relinkPicker = null;
+/** A file input of our own for relink / replace (never the shared #fileInput). */
+function pickFilesForRelink({ folder = false, accept = els.fileInput.accept } = {}) {
+  return new Promise((resolve) => {
+    relinkPicker?.remove();
+    const input = relinkPicker = document.createElement("input");
+    input.type = "file"; input.className = "sr-only";
+    if (folder) { input.webkitdirectory = true; input.multiple = true; } else input.accept = accept;
+    document.body.appendChild(input);
+    input.addEventListener("change", () => { resolve([...input.files]); input.remove(); }, { once: true });
+    input.addEventListener("cancel", () => { resolve([]); input.remove(); }, { once: true });
+    input.click();
+  });
+}
+
+/* Replace file…: a different file behind this media entry, for every clip that uses it. */
+async function replaceMediaFile(m) {
+  const files = await pickFilesForRelink({ accept: m.kind === "audio" ? "audio/*,.mp3,.wav,.m4a,.flac,.ogg" : els.fileInput.accept });
+  const file = files[0];
+  if (!file) return;
+  const kind = mediaKindFromFile(file);
+  if (kind !== m.kind && !(m.kind === "audio" && kind === "video")) { toast(`That is ${kind ? (kind === "audio" || kind === "image" ? "an " : "a ") + kind : "an unsupported"} file — ${m.name} is ${m.kind}`); return; }
+  toast(`Copying ${file.name} into the project…`);
+  const [up] = await uploadForRelink([file]);
+  if (!up || !up.src) { toast("Couldn't copy the file into media/"); return; }
+  await setMediaSource(m, up.src, "replace", file.name);
+}
+
+/* The Relink dialog: one row per file, each with candidates found on disk
+   (same name, same name with another extension, similar name, same size),
+   Browse… for one file and Choose folder… to match a whole folder by name. */
+async function openRelinkDialog(list) {
+  list = (list || project.media.filter((m) => isMediaOffline(m.id))).filter(Boolean);
+  if (!list.length) { toast("Nothing is offline"); return; }
+  document.getElementById("relinkOverlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  overlay.id = "relinkOverlay";
+  overlay.innerHTML = `<div class="dialog relink" role="dialog" aria-modal="true" aria-labelledby="relinkTitle" tabindex="-1">
+    <h2 id="relinkTitle">Relink media</h2>
+    <p class="dim">Point ${list.length === 1 ? "this file" : `these ${list.length} files`} at the footage where it is now. Clips keep their In points and edits.</p>
+    <div class="relink-tools">
+      <button type="button" class="btn tiny" data-folder title="Pick the folder the files are in now — they are matched by name and copied into the project">Choose folder…</button>
+      <span class="relink-status dim"></span>
+    </div>
+    <div class="relink-rows"></div>
+    <div class="dialog-actions"><button type="button" class="btn" data-cancel>Cancel</button><button type="button" class="btn primary" data-apply>Relink</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const dialog = overlay.querySelector(".dialog");
+  const rowsEl = overlay.querySelector(".relink-rows"), status = overlay.querySelector(".relink-status");
+  const pick = new Map();   // media id → {src, label} | null
+  const cands = new Map();  // media id → [{src, name, size, why}]
+  const close = () => { overlay.remove(); };
+  const render = () => {
+    rowsEl.innerHTML = "";
+    for (const m of list) {
+      const row = document.createElement("div");
+      row.className = "relink-row";
+      const cur = pick.get(m.id);
+      const options = (cands.get(m.id) || []);
+      row.innerHTML = `<div class="relink-name"><b></b><span class="dim relink-was"></span></div>
+        <div class="relink-pick">
+          <select aria-label="New location"></select>
+          <button type="button" class="btn tiny" data-browse title="Pick the file (it is copied into the project)">Browse…</button>
+        </div>`;
+      row.querySelector("b").textContent = (isMediaOffline(m.id) ? "⚠ " : "") + m.name;
+      row.querySelector(".relink-was").textContent = "was " + decodeURIComponent(String(m.src).split("?")[0]) + (m.duration ? " · " + fmt(m.duration) : "") + (m.size ? " · " + MediaLib.fmtSize(m.size) : "");
+      const sel = row.querySelector("select");
+      const opt = (v, label) => { const o = document.createElement("option"); o.value = v; o.textContent = label; sel.appendChild(o); };
+      opt("", options.length || cur ? "— leave it —" : "— not found: Browse… or Choose folder… —");
+      if (cur && !options.some((o) => o.src === cur.src)) opt(cur.src, cur.label);
+      for (const o of options) opt(o.src, `${decodeURIComponent(o.path || o.src)} · ${MediaLib.fmtSize(o.size)} (${o.why})`);
+      sel.value = cur ? cur.src : "";
+      sel.addEventListener("change", () => {
+        const o = options.find((x) => x.src === sel.value);
+        pick.set(m.id, sel.value ? { src: sel.value, label: o ? o.name : sel.value } : null);
+        syncApply();
+      });
+      row.querySelector("[data-browse]").addEventListener("click", async () => {
+        const [file] = await pickFilesForRelink({});
+        if (!file) return;
+        status.textContent = `Copying ${file.name}…`;
+        const [up] = await uploadForRelink([file]);
+        status.textContent = up?.src ? "" : "Couldn't copy " + file.name;
+        if (up?.src) { pick.set(m.id, { src: up.src, label: `${file.name} (chosen)` }); render(); }
+      });
+      rowsEl.appendChild(row);
+    }
+    syncApply();
+  };
+  const syncApply = () => {
+    const n = list.filter((m) => pick.get(m.id)).length;
+    const b = overlay.querySelector("[data-apply]");
+    b.disabled = !n;
+    b.textContent = n ? `Relink ${n}` : "Relink";
+  };
+  overlay.querySelector("[data-cancel]").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
+  overlay.querySelector("[data-folder]").addEventListener("click", async () => {
+    const files = await pickFilesForRelink({ folder: true });
+    if (!files.length) return;
+    // match each row by file name (then by size), copy only the matches
+    const want = [];
+    for (const m of list) {
+      let best = null, bestScore = 0;
+      for (const f of files) {
+        const { score } = MediaLib.relinkScore(m, { name: f.name, size: f.size });
+        if (score > bestScore && score >= 60) { best = f; bestScore = score; }
+      }
+      if (best) want.push([m, best]);
+    }
+    if (!want.length) { status.textContent = `None of the ${files.length} files in that folder match by name.`; return; }
+    let i = 0;
+    const ups = await uploadForRelink(want.map(([, f]) => f), (f) => { status.textContent = `Copying ${++i}/${want.length}: ${f.name}…`; });
+    want.forEach(([m, f], k) => { if (ups[k].src) pick.set(m.id, { src: ups[k].src, label: `${f.name} (from the folder)` }); });
+    status.textContent = `Matched ${ups.filter((u) => u.src).length} of ${list.length} by name.`;
+    render();
+  });
+  overlay.querySelector("[data-apply]").addEventListener("click", async () => {
+    const todo = list.filter((m) => pick.get(m.id));
+    close();
+    for (const m of todo) await setMediaSource(m, pick.get(m.id).src, "relink");
+    scheduleOfflineCheck(0);
+  });
+  render();
+  dialog.focus();
+  // candidates found on disk (same name, other extension, similar name, same size)
+  if (state.connected) {
+    status.textContent = "Looking for the files…";
+    try {
+      const res = await fetch("/api/relink/candidates", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media: list.map((m) => ({ id: m.id, name: m.name, src: m.src, size: m.size, kind: m.kind })) }),
+      });
+      const { candidates } = await res.json();
+      const used = new Set(project.media.map((x) => x.src));
+      let found = 0;
+      for (const m of list) {
+        const opts = (candidates[m.id] || []).filter((o) => o.src !== m.src && (!used.has(o.src) || !isMediaOffline(m.id)));
+        cands.set(m.id, opts);
+        // a confident match is picked for you (same name, or same name with a matching size)
+        if (opts[0] && opts[0].score >= 100 && !pick.get(m.id)) { pick.set(m.id, { src: opts[0].src, label: opts[0].name }); found++; }
+      }
+      status.textContent = found ? `Found ${found} of ${list.length} in the project folders.` : "";
+      if (overlay.isConnected) render();
+    } catch { status.textContent = ""; }
+  }
+}
+
+/* ── Proxies ──
+   The server makes light H.264 copies of heavy footage (proxy.js). With the
+   monitor's Proxy button on, video clips and the Source monitor play the
+   proxy; export, still renders for agents and scopes always switch back to
+   the original — so a proxy changes how smoothly you edit, never the result. */
+const proxyStatus = new Map();   // media id → {state, src?, height, width?, size?, progress?, error?}
+function proxyOf(m) { const s = m && proxyStatus.get(m.id); return s && s.state === "ready" ? s : null; }
+function proxiesOn() { return getSetting("useProxies") !== false; }
+/** The file a player should load for this media now: the proxy while editing, the original for output. */
+function mediaPlaySrc(m) {
+  if (!m || m.kind !== "video" || state.exporting || runtime.forceOriginals || !proxiesOn()) return m && m.src;
+  const p = proxyOf(m);
+  return p ? p.src : m.src;
+}
+/** Switch every player to the original files and wait until they can draw (export, still renders). */
+async function useOriginalPlayers() {
+  runtime.forceOriginals = true;
+  const waits = [];
+  for (const c of mediaClips()) {
+    if (c.kind !== "video" || !clipRenders(c)) continue;
+    const el = getClipEl(c);
+    if (el) waits.push(waitMediaEl(el));
+  }
+  await Promise.all(waits);
+}
+function releaseOriginalPlayers() {
+  if (!runtime.forceOriginals) return;
+  runtime.forceOriginals = false;
+  state.dirtyTimeline = true;
+  seekMediaWhilePaused();
+}
+async function refreshProxyStatus() {
+  if (!state.connected) return;
+  const vids = project.media.filter((m) => m.kind === "video" && !m.transient && isLocalSrc(m.src));
+  if (!vids.length) { if (proxyStatus.size) { proxyStatus.clear(); renderBin(); } return; }
+  try {
+    const res = await fetch("/api/proxy/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ srcs: [...new Set(vids.map((m) => m.src))] }) });
+    if (!res.ok) return;
+    const { status } = await res.json();
+    const before = JSON.stringify([...proxyStatus]);
+    proxyStatus.clear();
+    for (const m of vids) { const s = status[m.src]; if (s && s.state !== "none") proxyStatus.set(m.id, s); }
+    if (JSON.stringify([...proxyStatus]) !== before) onProxiesChanged();
+  } catch { }
+}
+/** SSE "proxy": one file's proxy moved on (queued, progress, ready, failed, deleted). */
+function onProxyEvent(data) {
+  let ev; try { ev = JSON.parse(data); } catch { return; }
+  let hit = false;
+  for (const m of project.media) {
+    if (m.src !== ev.src) continue;
+    hit = true;
+    const s = ev.status || { state: "none" };
+    if (s.state === "none") proxyStatus.delete(m.id); else proxyStatus.set(m.id, s);
+    if (s.state === "ready" && runtime.proxyAsked?.has(m.id)) { runtime.proxyAsked.delete(m.id); toast(`Proxy ready: ${m.name}`); }
+    if (s.state === "failed" && runtime.proxyAsked?.has(m.id)) { runtime.proxyAsked.delete(m.id); toast(`Couldn't make a proxy of ${m.name}: ${s.error}`); }
+  }
+  if (!hit) return;
+  if (ev.status && ev.status.state === "running") { renderBinProxyBadges(); return; }   // progress: just the badges
+  onProxiesChanged();
+}
+function onProxiesChanged() {
+  renderBin();
+  syncProxyButton();
+  state.dirtyTimeline = true;
+  seekMediaWhilePaused();   // players switch file on the next frame; park the new ones on the playhead
+}
+/* Progress ticks repaint only the badges, not the whole bin. */
+function renderBinProxyBadges() {
+  for (const el of els.binList.querySelectorAll(".bin-item[data-media-id] .bin-proxy")) {
+    const s = proxyStatus.get(el.closest(".bin-item").dataset.mediaId);
+    if (s && s.state === "running") el.textContent = `P ${Math.round((s.progress || 0) * 100)}%`;
+  }
+}
+function proxyBadgeHtml(m) {
+  const s = proxyStatus.get(m.id);
+  if (!s || m.kind !== "video") return "";
+  if (s.state === "ready") return `<span class="bin-proxy ready${proxiesOn() ? " on" : ""}" title="Proxy ready (${s.width ? s.width + "×" : ""}${s.height}p, ${MediaLib.fmtSize(s.size)})${proxiesOn() ? " — playing it while you edit" : " — the Proxy button is off"}">P</span>`;
+  if (s.state === "running" || s.state === "queued") return `<span class="bin-proxy busy" title="Making a ${s.height}p proxy">P ${s.state === "running" ? Math.round((s.progress || 0) * 100) + "%" : "…"}</span>`;
+  if (s.state === "failed") return `<span class="bin-proxy failed" title="Proxy failed: ${escapeHtml(s.error || "")}">P ✕</span>`;
+  return "";
+}
+function proxyLabel(m) {
+  const s = proxyStatus.get(m.id);
+  if (m.kind !== "video") return "";
+  if (!s) return "none";
+  if (s.state === "ready") return `${s.height}p`;
+  if (s.state === "running") return Math.round((s.progress || 0) * 100) + "%";
+  return s.state;
+}
+async function createProxies(list, height) {
+  list = list.filter((m) => m.kind === "video" && !m.transient && isLocalSrc(m.src) && !isMediaOffline(m.id));
+  if (!list.length) { toast("No video to make proxies of"); return; }
+  if (!state.ffmpeg) { toast("Proxies need ffmpeg on the server's PATH"); return; }
+  (runtime.proxyAsked ||= new Set());
+  for (const m of list) runtime.proxyAsked.add(m.id);
+  try {
+    const res = await fetch("/api/proxy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ srcs: [...new Set(list.map((m) => m.src))], height }) });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    for (const m of list) { const s = body.status[m.src]; if (s) proxyStatus.set(m.id, s); if (s && s.state === "ready") runtime.proxyAsked.delete(m.id); }
+    onProxiesChanged();
+    const queued = list.filter((m) => proxyStatus.get(m.id)?.state !== "ready").length;
+    toast(queued ? `Making ${queued} prox${queued === 1 ? "y" : "ies"} in the background — the bin shows the progress` : "Already has a proxy");
+  } catch (e) { toast("Couldn't start the proxies: " + (e.message || e)); }
+}
+async function deleteProxies(list) {
+  try {
+    await fetch("/api/proxy/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ srcs: list.map((m) => m.src) }) });
+  } catch { }
+  for (const m of list) proxyStatus.delete(m.id);
+  onProxiesChanged();
+}
+function syncProxyButton() {
+  const b = els.btnProxy;
+  if (!b) return;
+  const n = project.media.filter((m) => proxyOf(m)).length;
+  b.classList.toggle("on", proxiesOn());
+  b.classList.toggle("has", n > 0);
+  b.title = (proxiesOn() ? "Proxies on: " : "Proxies off: ") +
+    (n ? `${n} file${n === 1 ? " has a proxy" : "s have proxies"}` : "no proxies yet (right-click a video in the bin → Create proxy)") +
+    ". Export always uses the originals.";
+}
+
+/* Open the native file dialog. Windows anchors it to the <input>'s screen
+   position — park the input under the cursor and open after the mouse
+   gesture finishes so the dialog doesn't appear then jump. */
+function openFileImport(clientX, clientY) {
+  const input = els.fileInput;
+  if (clientX != null && clientY != null) {
+    input.style.cssText =
+      `position:fixed;left:${clientX}px;top:${clientY}px;width:1px;height:1px;` +
+      `opacity:0;margin:0;padding:0;border:0;overflow:hidden;z-index:-1;`;
+  }
+  setTimeout(() => input.click(), 0);
+}
+
+/* Bin search / Show / Sort / view controls. */
+els.binSearch.addEventListener("input", () => { binView.q = els.binSearch.value; renderBin(); });
+els.binSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); binView.q = ""; els.binSearch.value = ""; renderBin(); els.binSearch.blur(); }
+  e.stopPropagation();
+});
+els.binFilter.addEventListener("change", () => setBinFilter(els.binFilter.value));
+els.binSort.addEventListener("change", () => { binView.sort = els.binSort.value; saveBinPrefs(); renderBin(); });
+els.binSortDir.addEventListener("click", () => { binView.dir = binView.dir === "desc" ? "asc" : "desc"; saveBinPrefs(); renderBin(); });
+els.binViewBtn.addEventListener("click", () => { binView.list = !binView.list; saveBinPrefs(); renderBin(); });
+
+els.btnProxy?.addEventListener("click", () => {
+  setSetting("useProxies", !proxiesOn());
+  onProxiesChanged();
+  toast(proxiesOn() ? "Proxies on — files with a proxy play it while you edit" : "Proxies off — every clip plays its original");
+});
+
+/* Ctrl/Cmd+click in the Project bin opens the file importer. */
+els.binList.addEventListener("click", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.button !== 0) return;
+  if (e.target.closest(".bin-del")) return;
+  e.preventDefault();
+  openFileImport(e.clientX, e.clientY);
+});
+
+/* ═══════════════════ ASSET LIBRARY (./library on the server) ═══════════════
+   Read-only default assets in four tabs: Elements (overlay art), Sound FX,
+   SVG (Claude-authored vector animations), plus fonts consumed by the font
+   editor. Files are used in place (src under /library/…) — never copied. */
+async function fetchLibrary(dir) {
+  try { runtime.library[dir] = await (await fetch("/api/library?dir=" + dir)).json(); }
+  catch { runtime.library[dir] = []; }
+  return runtime.library[dir];
+}
+function libKind(name) {
+  if (/\.svg$/i.test(name)) return "svg";
+  if (AUDIO_EXT.test(name)) return "audio";
+  if (VIDEO_EXT.test(name)) return "video";
+  if (IMAGE_EXT.test(name)) return "image";
+  return null;
+}
+/** Emoji shown for a bin/library item without a thumbnail preview. `other` is
+ * the fallback for kinds not explicitly mapped here (image/svg items always
+ * render a real thumbnail in both callers, so their icon is never actually
+ * shown). Shared by renderBin and renderLibrary. */
+function mediaKindIcon(kind, other) {
+  return kind === "audio" ? "🎵" : kind === "svg" ? "✨" : kind === "image" ? "🖼" : kind === "video" ? "🎞" : other;
+}
+/* Find-or-create the project media entry for a library file (dedup by src). */
+function mediaForLibraryItem(f) {
+  let m = project.media.find((x) => x.src === f.src);
+  if (m) return m;
+  const kind = libKind(f.name);
+  if (!kind) return null;
+  m = { id: "m_" + uid(), name: f.name, kind, src: f.src, folderId: null };
+  project.media.push(m);
+  renderBin(); scheduleSave();
+  return m;
+}
+async function addLibraryItem(f, trackId, at) {
+  const m = mediaForLibraryItem(f), gen = runtime.projectGen;
+  if (!m) { toast("Unsupported file type: " + f.name); return; }
+  if ((m.kind === "audio" || m.kind === "video") && (m.duration == null || isNaN(m.duration))) {
+    try { await loadMediaMetadata(m); } catch { }
+    ensureWave(m);
+    if (m.kind === "video") grabThumb(m).catch(() => { });
+  }
+  if (m.kind === "svg" && !runtime.mediaAux.get(m.id)?.svgText) {
+    try { await loadMediaMetadata(m); } catch { }
+  }
+  if (m.kind === "image" && !runtime.mediaAux.get(m.id)?.img) {
+    try { await loadMediaMetadata(m); } catch { }
+  }
+  if (gen !== runtime.projectGen) return;   // another project was opened meanwhile
+  addClipFromMedia(m, trackId, at);
+}
+function toggleSfxPreview(f, btn) {
+  const cur = runtime.sfxPreview;
+  if (cur && cur.dataset.src === f.src && !cur.paused) {
+    cur.pause();
+    btn.textContent = "▶";
+    return;
+  }
+  if (cur) { cur.pause(); }
+  els.libList.querySelectorAll(".lib-play").forEach((b) => (b.textContent = "▶"));
+  const a = new Audio(f.src);
+  a.dataset.src = f.src;
+  a.onended = () => { btn.textContent = "▶"; };
+  a.play().catch(() => toast("Couldn't play " + f.name));
+  btn.textContent = "⏸";
+  runtime.sfxPreview = a;
+}
+function renderLibrary() {
+  const dir = state.binTab;
+  if (dir === "project") return;
+  const files = runtime.library[dir] || [];
+  els.libList.innerHTML = "";
+  if (!files.length) {
+    els.libList.innerHTML = `<div class="bin-empty">
+      <div class="bin-empty-icon">${dir === "sfx" ? "🔊" : dir === "svg" ? "✨" : "🧩"}</div>
+      <p>No assets yet.</p>
+      <p class="hint">Drop files into<br><b>library/${dir}/</b><br>— this list live-updates.</p></div>`;
+    return;
+  }
+  for (const f of files) {
+    const kind = libKind(f.name);
+    const item = document.createElement("div");
+    item.className = "bin-item lib-item";
+    item.draggable = true;
+    const visual = kind === "image" || kind === "svg";
+    const icon = mediaKindIcon(kind, "🧩");
+    item.innerHTML = `
+      <div class="bin-thumb${kind === "svg" ? " svg" : ""}"></div>
+      <div class="bin-meta">
+        <div class="bin-name"></div>
+        <div class="bin-sub">${(f.size / 1024).toFixed(0)} KB</div>
+      </div>
+      ${dir === "sfx" ? `<button class="btn tiny lib-play" title="Preview">▶</button>` : ""}
+      <button class="btn tiny accent lib-add" title="Add at playhead">＋</button>`;
+    const thumbEl = item.querySelector(".bin-thumb");
+    if (visual) thumbEl.style.backgroundImage = `url(${JSON.stringify(f.src)})`;
+    else thumbEl.textContent = icon;
+    const nameEl = item.querySelector(".bin-name");
+    nameEl.textContent = f.name;
+    nameEl.title = f.rel || f.name;
+    item.addEventListener("dragstart", (e) => {
+      const m = mediaForLibraryItem(f);
+      if (!m) { e.preventDefault(); return; }
+      e.dataTransfer.setData("text/fablecut-media", m.id);
+      e.dataTransfer.effectAllowed = "copy";
+    });
+    item.addEventListener("dblclick", () => addLibraryItem(f, null, state.time));
+    item.querySelector(".lib-add").addEventListener("click", () => addLibraryItem(f, null, state.time));
+    const play = item.querySelector(".lib-play");
+    if (play) play.addEventListener("click", () => toggleSfxPreview(f, play));
+    els.libList.appendChild(item);
+  }
+}
+function setBinTab(tab) {
+  state.binTab = tab;
+  for (const b of els.binTabs.querySelectorAll("[data-tab]"))
+    b.classList.toggle("on", b.dataset.tab === tab);
+  const isProj = tab === "project";
+  els.binList.classList.toggle("hidden", !isProj);
+  els.libList.classList.toggle("hidden", isProj);
+  if (els.binTools) els.binTools.classList.toggle("hidden", !isProj);
+  if (tab === "shapes") renderShapesTab();
+  else if (tab === "templates") { renderTemplatesTab(); fetchSaved("templates").then(() => { if (state.binTab === "templates") renderTemplatesTab(); }); }
+  else if (!isProj) fetchLibrary(tab).then(renderLibrary);
+}
+
+/* ═══════════════════════════ PROJECTS (dashboard) ═══════════════════════════ */
+/* Several projects in one data folder (projects.js on the server). The open one
+   is always ./project.json, so everything else in the editor is unchanged; the
+   dashboard lists the others and switches between them. A switch shows up in
+   syncFromServer as a new X-FableCut-Project id, wherever it came from (this
+   tab, another tab, an agent): undo, the open comp and the Source monitor
+   belong to the old project and are reset there. */
+const pj = {
+  view: "active",   // active | archived
+  mode: "detail",   // detail | new
+  sel: null, list: [], templates: [], tpl: "landscape-1080",
+  sort: "opened", search: "", busy: false, selfSwitch: false,
+  verOf: null, versions: [], verDiff: new Map(),   // the versions view: whose, its list, open comparisons
+  verDiffGen: 0, verPending: false,   // bumped when comparisons are dropped · a list refresh waiting for a busy action
+};
+const pjFmtDur = (s) => {
+  if (!(s > 0)) return "0:00";
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+};
+function pjAgo(iso) {
+  if (!iso) return "never";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!(s >= 0)) return new Date(iso).toLocaleDateString();
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)} d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+const pjFps = (f) => (f ? `${+(+f).toFixed(3)} fps` : "");
+async function pjPost(body) {
+  try {
+    const res = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(out.error || `Projects: request failed (${res.status})`); return null; }
+    return out;
+  } catch { toast("Projects: the editor server did not answer"); return null; }
+}
+/* The program monitor's picture, small, as the open project's card thumbnail. */
+async function pjSnapThumb() {
+  const id = runtime.projectId, cv = els.preview;
+  if (!id || !cv || !cv.width || !cv.height) return;
+  try {
+    const w = 360, h = Math.max(1, Math.round(w * cv.height / cv.width));
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(cv, 0, 0, w, h);
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.74));
+    if (blob) await fetch("/api/projects/thumb?id=" + encodeURIComponent(id), { method: "PUT", body: blob });
+  } catch { }
+}
+async function pjLoad() {
+  try {
+    const res = await fetch("/api/projects?archived=" + (pj.view === "archived" ? "only" : "exclude"), { cache: "no-store" });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    pj.list = data.projects || [];
+    pj.templates = data.templates || [];
+    // syncFromServer owns runtime.projectId: it resets undo, comp and Source on a switch.
+    // On first use the list has just given the shown project.json its id: adopt it, if
+    // project.json is still the document this tab shows.
+    if (data.active && !runtime.projectId) {
+      const r = await fetch("/api/project", { cache: "no-store" }).catch(() => null);
+      const doc = r && r.ok ? await r.json().catch(() => null) : null;
+      const ids = (d) => JSON.stringify([d.name, d.revision || 0, (d.clips || []).map((c) => c.id), (d.media || []).map((m) => m.id)]);
+      const shown = projectJSON();
+      if (doc && r.headers.get("X-FableCut-Project") === data.active && ids(doc) === ids(shown)) runtime.projectId = data.active;
+      else { runtime.projectId = "?"; syncFromServer(true); }   // not what this tab shows: load it as a switch
+    } else if (data.active && data.active !== runtime.projectId) syncFromServer(true);
+    if (!pj.list.some((p) => p.id === pj.sel)) pj.sel = (pj.list.find((p) => p.active) || pj.list[0] || {}).id || null;
+  } catch { pj.list = []; toast("Projects: couldn't read the project list"); }
+  renderProjects();
+}
+async function openProjects() {
+  const ov = $("projectsOverlay");
+  if (!ov || !state.connected) return;
+  pj.mode = "detail"; pj.view = "active"; pj.sel = runtime.projectId;
+  pj.verOf = null; pjDropDiffs();   // a versions list left open last time may be out of date
+  ov.classList.remove("hidden");
+  $("projectsDialog")?.focus();
+  renderProjects();   // the shell at once; cards once the list is in
+  await flushSave();
+  await pjSnapThumb();
+  await pjLoad();
+}
+function closeProjects() {
+  $("projectsOverlay")?.classList.add("hidden");
+  $("btnProjectsDash")?.focus();
+}
+const projectsOpen = () => !!$("projectsOverlay") && !$("projectsOverlay").classList.contains("hidden");
+function pjVisible() {
+  const q = pj.search.trim().toLowerCase();
+  const words = q ? q.split(/\s+/) : [];
+  const hit = (p, w) => w.startsWith("#")
+    ? (p.tags || []).some((t) => t.toLowerCase().includes(w.slice(1)))
+    : [p.name, p.notes, ...(p.tags || [])].some((s) => String(s || "").toLowerCase().includes(w));
+  const out = pj.list.filter((p) => words.every((w) => hit(p, w)));
+  const key = { opened: (p) => p.opened || p.modified || "", modified: (p) => p.modified || "", created: (p) => p.created || "" }[pj.sort];
+  if (key) out.sort((a, b) => String(key(b)).localeCompare(String(key(a))));
+  else out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  return out;
+}
+function pjThumbHtml(p, big) {
+  const ar = p.width > 0 && p.height > 0 ? `${p.width} / ${p.height}` : "16 / 9";
+  const inner = p.thumb
+    ? `<img src="/api/projects/thumb?id=${encodeURIComponent(p.id)}&v=${p.thumb}" alt="" loading="lazy" draggable="false">`
+    : `<span>${p.width ? `${p.width}×${p.height}` : "?"}</span>`;
+  return `<div class="pj-thumb${big ? " big" : ""}"><div class="pj-frame" style="aspect-ratio:${ar}">${inner}</div></div>`;
+}
+function renderProjects() {
+  renderProjectGrid();
+  renderProjectSide();
+}
+function renderProjectSide() {
+  const side = $("pjSide");
+  if (side) side.innerHTML = pj.mode === "new" ? pjNewHtml() : pjDetailHtml(pj.list.find((p) => p.id === pj.sel));
+  $("pjNewBtn")?.classList.toggle("on", pj.mode === "new");
+}
+function renderProjectGrid() {
+  const grid = $("pjGrid");
+  if (!grid) return;
+  for (const b of document.querySelectorAll("[data-pj-view]")) b.classList.toggle("on", b.dataset.pjView === pj.view);
+  grid.classList.toggle("versions", !!pj.verOf);
+  if (pj.verOf) { grid.innerHTML = pjVersionsHtml(); return; }
+  const rows = pjVisible();
+  grid.innerHTML = rows.length ? rows.map((p) => `
+    <button type="button" class="pj-card${p.id === pj.sel && pj.mode === "detail" ? " sel" : ""}${p.active ? " open" : ""}" data-pj="${escapeHtml(p.id)}" title="${p.active ? "Currently open" : "Double-click to open"}">
+      ${pjThumbHtml(p)}
+      <span class="pj-card-name">${escapeHtml(p.name)}${p.active ? ` <span class="pj-badge">Open</span>` : ""}</span>
+      <span class="pj-card-meta">${p.unreadable ? "file unreadable" : `${p.width}×${p.height} · ${pjFps(p.fps)} · ${pjFmtDur(p.duration)}`}</span>
+      <span class="pj-card-when dim">${pj.sort === "created" ? "Created " + pjAgo(p.created) : pj.sort === "modified" || !p.opened ? "Modified " + pjAgo(p.modified) : "Opened " + pjAgo(p.opened)}</span>
+    </button>`).join("")
+    : `<div class="pj-empty dim">${pj.list.length ? "No project matches the search." : pj.view === "archived" ? "Nothing archived. Archive a project to keep it out of the list without deleting it." : "Loading…"}</div>`;
+}
+function pjDetailHtml(p) {
+  if (!p) return `<p class="dim">Pick a project to see its details.</p>`;
+  const fact = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+  const tpl = p.template && pj.templates.find((t) => t.id === p.template);
+  return `${pjThumbHtml(p, true)}
+    <label class="pj-field"><span>Name</span><input type="text" id="pjName" value="${escapeHtml(p.name)}" maxlength="120" spellcheck="false"></label>
+    <dl class="pj-facts">
+      ${fact("Canvas", p.unreadable ? "—" : `${p.width}×${p.height} · ${pjFps(p.fps)}`)}
+      ${fact("Length", `${pjFmtDur(p.duration)} · ${p.clips} clip${p.clips === 1 ? "" : "s"} · ${p.media} media`)}
+      ${fact("Modified", pjAgo(p.modified))}
+      ${fact("Opened", p.active ? "open now" : pjAgo(p.opened))}
+      ${fact("Created", pjAgo(p.created))}
+      ${tpl ? fact("Template", escapeHtml(tpl.name)) : ""}
+    </dl>
+    <label class="pj-field"><span>Notes</span><textarea id="pjNotes" rows="4" maxlength="4000" placeholder="Brief, client, deadline, what's left to do…">${escapeHtml(p.notes || "")}</textarea></label>
+    <label class="pj-field"><span>Tags</span><input type="text" id="pjTags" value="${escapeHtml((p.tags || []).join(", "))}" placeholder="client, reel, draft" spellcheck="false"></label>
+    <div class="pj-actions">
+      ${p.archived
+        ? `<button type="button" class="btn primary" data-pj-act="unarchive">Unarchive</button>
+           <button type="button" class="btn danger-ghost" data-pj-act="delete" title="Deletes the project file. Its media stay in media/.">Delete…</button>`
+        : `<button type="button" class="btn primary" data-pj-act="open"${p.active ? " disabled" : ""}>${p.active ? "Currently open" : "Open"}</button>
+           <button type="button" class="btn" data-pj-act="duplicate" title="A copy of the whole project (the footage is shared, not copied)">Duplicate</button>
+           <button type="button" class="btn" data-pj-act="template" title="Start new projects from this one: its canvas, tracks, clips and media">Save as template</button>
+           <button type="button" class="btn" data-pj-act="archive"${p.active ? ` disabled title="Open another project first"` : ` title="Hide it from the list; nothing is deleted"`}>Archive</button>`}
+    </div>
+    <div class="pj-actions">
+      <button type="button" class="btn" data-pj-act="versions" title="Saved versions of this project: compare, restore, mark the final cut">Versions…</button>
+      <a class="btn" href="/api/projects/backup?id=${encodeURIComponent(p.id)}" download${p.active ? " data-pj-backup" : ""} title="The project and all its versions as one file. Import… restores it">Download backup</a>
+    </div>
+    <div class="pj-inline hidden" id="pjTplRow">
+      <input type="text" id="pjTplName" value="${escapeHtml(p.name)}" maxlength="120" aria-label="Template name" spellcheck="false">
+      <button type="button" class="btn primary" data-pj-act="template-save">Save template</button>
+    </div>`;
+}
+function pjNewHtml() {
+  const tpls = pj.templates;
+  if (!tpls.some((t) => t.id === pj.tpl)) pj.tpl = "landscape-1080";
+  const t = tpls.find((x) => x.id === pj.tpl) || { fps: 30 };
+  const shape = (x) => {
+    const k = 22 / Math.max(x.width || 16, x.height || 9);
+    return `<i class="pj-shape" style="width:${Math.round((x.width || 16) * k)}px;height:${Math.round((x.height || 9) * k)}px"></i>`;
+  };
+  const row = (x) => `<button type="button" class="pj-tpl${x.id === pj.tpl ? " on" : ""}" data-pj-tpl="${escapeHtml(x.id)}">
+      ${shape(x)}<span class="pj-tpl-name">${escapeHtml(x.name)}</span>
+      <span class="pj-tpl-meta dim">${x.width}×${x.height}${x.builtin ? "" : ` · ${x.clips} clip${x.clips === 1 ? "" : "s"}`}</span>
+      ${x.builtin ? "" : `<span class="pj-tpl-del" data-pj-tpldel="${escapeHtml(x.id)}" role="button" tabindex="0" title="Delete this template">✕</span>`}
+    </button>`;
+  const saved = tpls.filter((x) => !x.builtin);
+  return `<h3>New project</h3>
+    <label class="pj-field"><span>Name</span><input type="text" id="pjNewName" value="Untitled Project" maxlength="120" spellcheck="false"></label>
+    <div class="pj-field"><span>Start from</span>
+      <div class="pj-tpls">${tpls.filter((x) => x.builtin).map(row).join("")}</div>
+      ${saved.length ? `<span class="pj-sub">Saved templates</span><div class="pj-tpls">${saved.map(row).join("")}</div>` : ""}
+    </div>
+    <label class="pj-field"><span>Frame rate</span><select id="pjNewFps">
+      <option value="">${t.fps ? `${+(+t.fps).toFixed(3)} fps (template)` : "Template's"}</option>
+      ${[23.976, 24, 25, 29.97, 30, 50, 59.94, 60].map((f) => `<option value="${f}">${f} fps</option>`).join("")}
+    </select></label>
+    <div class="pj-actions">
+      <button type="button" class="btn" data-pj-act="new-cancel">Cancel</button>
+      <button type="button" class="btn primary" data-pj-act="new-create">Create and open</button>
+    </div>`;
+}
+async function pjOpenProject(id) {
+  const p = pj.list.find((x) => x.id === id);
+  if (!p || p.active || pj.busy) return;
+  if (state.exporting) { toast("Wait for the export to finish before switching projects"); return; }
+  pj.busy = true;
+  try {
+    if (!(await flushSaveBeforeSwitch())) return;
+    await pjSnapThumb();
+    pj.selfSwitch = true;
+    const out = await pjPost({ action: "open", id });
+    if (!out) return;
+    closeProjects();
+    if (await syncFromServer(true)) toast(`Opened “${out.project?.name || p.name}”`);
+    else toast(`“${out.project?.name || p.name}” is open, but this tab couldn't load it yet. It will reload when the editor server answers.`);
+  } finally { pj.busy = false; pj.selfSwitch = false; }
+}
+async function pjBusy(fn) {
+  pj.busy = true;
+  try { return await fn(); } finally { pj.busy = false; }
+}
+async function pjAction(act, btn) {
+  const p = pj.list.find((x) => x.id === pj.sel);
+  if (act === "new-cancel") { pj.mode = "detail"; renderProjects(); return; }
+  if (act === "new-create") {
+    if (pj.busy) return;
+    if (state.exporting) { toast("Wait for the export to finish before switching projects"); return; }
+    const name = ($("pjNewName")?.value || "").trim() || "Untitled Project";
+    const fps = $("pjNewFps")?.value;
+    pj.busy = true;
+    try {
+      if (!(await flushSaveBeforeSwitch())) return;
+      await pjSnapThumb();
+      pj.selfSwitch = true;
+      const out = await pjPost({ action: "new", name, template: pj.tpl, fps: fps ? +fps : undefined, open: true });
+      if (!out) return;
+      closeProjects();
+      if (await syncFromServer(true)) toast(`Created “${name}”`);
+      else toast(`“${name}” was created and opened, but this tab couldn't load it yet. It will reload when the editor server answers.`);
+    } finally { pj.busy = false; pj.selfSwitch = false; }
+    return;
+  }
+  if (!p) return;
+  if (act === "open") { pjOpenProject(p.id); return; }
+  if (act === "template") { $("pjTplRow")?.classList.toggle("hidden"); $("pjTplName")?.select(); return; }
+  if (act === "versions") { pj.verOf = p.id; pj.versions = []; pjDropDiffs(); renderProjectGrid(); pjLoadVersions(); return; }
+  if (pj.busy) return;   // one request at a time: a second click must not duplicate twice
+  if (act === "template-save") {
+    const out = await pjBusy(() => pjPost({ action: "save_template", id: p.id, name: $("pjTplName")?.value || p.name }));
+    if (out) { toast(`Saved template “${out.template.name}” — pick it under + New project`); await pjLoad(); }
+    return;
+  }
+  if (act === "delete") {
+    if (btn.dataset.armed !== "1") {
+      btn.dataset.armed = "1"; btn.textContent = "Click again to delete";
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Delete…"; } }, 3000);
+      return;
+    }
+    const out = await pjBusy(() => pjPost({ action: "delete", id: p.id }));
+    if (out) { toast(`Deleted “${p.name}”`); pj.sel = null; await pjLoad(); }
+    return;
+  }
+  const out = await pjBusy(() => pjPost({ action: act, id: p.id }));
+  if (!out) return;
+  if (act === "duplicate") { pj.sel = out.id; toast(`Duplicated as “${out.project.name}”`); }
+  if (act === "archive") toast(`Archived “${p.name}” — it's under Archived`);
+  if (act === "unarchive") toast(`“${p.name}” is back in Projects`);
+  await pjLoad();
+}
+async function pjSaveField(field) {
+  const p = pj.list.find((x) => x.id === pj.sel);
+  if (!p) return;
+  const el = $({ name: "pjName", notes: "pjNotes", tags: "pjTags" }[field]);
+  if (!el) return;
+  const v = el.value;
+  if (field === "name" && (!v.trim() || v.trim() === p.name)) { if (!v.trim()) el.value = p.name; return; }
+  if (field === "notes" && v === (p.notes || "")) return;
+  if (field === "tags" && v === (p.tags || []).join(", ")) return;
+  const out = await pjPost({ action: "update", id: p.id, [field]: field === "name" ? v.trim() : v });
+  if (!out) return;
+  Object.assign(p, out.project);
+  if (field === "tags") el.value = (out.project.tags || []).join(", ");
+  if (field === "name") renderProjectGrid();
+}
+async function pjImport(file) {
+  let doc;
+  try { doc = JSON.parse((await file.text()).replace(/^﻿/, "")); }
+  catch { toast(`${file.name} isn't JSON`); return; }
+  const name = doc && doc.name && doc.name !== "Untitled Project" ? doc.name : file.name.replace(/\.json$/i, "");
+  const out = await pjPost({ action: "import", project: doc, name });
+  if (!out) return;
+  pj.view = "active"; pj.mode = "detail"; pj.sel = out.id;
+  toast(`Imported “${out.project.name}” — its media must be in media/ (Relink finds moved files)`);
+  await pjLoad();
+}
+/* Versions of one project (history.js on the server), shown in the dashboard's
+   main area in place of the cards. Restoring never loses anything: the server
+   saves what was there as a version first. */
+const VER_KIND = { manual: "", auto: "Auto", agent: "Agent", restore: "Before restore" };
+/** Drop the open comparisons, and any still on their way: they were against an older state. */
+function pjDropDiffs() { pj.verDiff.clear(); pj.verDiffGen++; }
+async function pjLoadVersions() {
+  const id = pj.verOf;
+  if (!id) return;
+  const seq = pj.verSeq = (pj.verSeq || 0) + 1;
+  // only the newest request for the project still shown may change the list
+  const current = () => seq === pj.verSeq && pj.verOf === id;
+  try {
+    const res = await fetch("/api/versions?project=" + encodeURIComponent(id), { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    if (!current()) return;
+    pj.versions = data.versions || [];
+  } catch (e) {
+    if (!current()) return;
+    pj.versions = []; toast("Versions: " + (e.message || "couldn't read them"));
+  }
+  // what is being typed in Save version survives the repaint
+  const draft = { name: $("verName")?.value, note: $("verNote")?.value, focus: document.activeElement?.id };
+  renderProjectGrid();
+  if (draft.name != null && $("verName")) $("verName").value = draft.name;
+  if (draft.note != null && $("verNote")) $("verNote").value = draft.note;
+  if ((draft.focus === "verName" || draft.focus === "verNote") && $(draft.focus)) $(draft.focus).focus();
+}
+function pjVersionsHtml() {
+  const p = pj.list.find((x) => x.id === pj.verOf) || { name: "Project" };
+  const rows = pj.versions.map((v) => {
+    const diff = pj.verDiff.get(v.v);
+    return `<div class="ver-row${v.final ? " final" : ""}" data-ver="${v.v}">
+      <div class="ver-main">
+        <span class="ver-num">v${v.v}</span>
+        <span class="ver-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
+        ${v.final ? `<span class="ver-badge final">Final</span>` : ""}
+        ${VER_KIND[v.kind] ? `<span class="ver-badge">${VER_KIND[v.kind]}</span>` : ""}
+        <span class="ver-meta dim">${pjAgo(v.created)} · ${pjFmtDur(v.duration)} · ${v.clips} clip${v.clips === 1 ? "" : "s"}</span>
+      </div>
+      ${v.note ? `<div class="ver-note">${escapeHtml(v.note)}</div>` : ""}
+      ${diff ? `<ul class="ver-diff">${diff.length ? diff.map((l) => `<li>${escapeHtml(l)}</li>`).join("") : "<li>Same as now.</li>"}</ul>` : ""}
+      <div class="ver-actions">
+        <button type="button" class="btn tiny" data-ver-act="diff">${diff ? "Hide changes" : "Compare with now"}</button>
+        <button type="button" class="btn tiny" data-ver-act="restore" title="Put this version back. What is there now is saved as a version first.">Restore…</button>
+        <button type="button" class="btn tiny" data-ver-act="final">${v.final ? "Unmark final" : "Mark final"}</button>
+        <button type="button" class="btn tiny" data-ver-act="rename">Rename</button>
+        <a class="btn tiny" href="/api/versions/file?project=${encodeURIComponent(pj.verOf)}&version=${v.v}" download>Download</a>
+        <button type="button" class="btn tiny danger-ghost" data-ver-act="delete"${v.final ? ` disabled title="Unmark it as final first"` : ""}>Delete…</button>
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="ver-view">
+    <div class="ver-head">
+      <button type="button" class="btn tiny" data-ver-act="back">← All projects</button>
+      <h3>Versions of ${escapeHtml(p.name)}</h3>
+    </div>
+    <div class="ver-save">
+      <input type="text" id="verName" maxlength="120" placeholder="Name (optional), e.g. Client cut" spellcheck="false" aria-label="Version name">
+      <input type="text" id="verNote" maxlength="2000" placeholder="Note (optional)" aria-label="Version note">
+      <button type="button" class="btn primary" data-ver-act="save">Save version</button>
+    </div>
+    <p class="dim ver-hint">Versions are also saved on their own every 10 minutes while the project changes, and before an agent edits it.${p.active ? " Ctrl/Cmd+S saves one from anywhere in the editor." : ""}</p>
+    ${rows || `<div class="pj-empty dim">No versions yet. Save one to have a point to come back to.</div>`}
+  </div>`;
+}
+async function pjVersionAction(act, btn) {
+  if (act === "back") { pj.verOf = null; pjDropDiffs(); renderProjects(); return; }
+  if (pj.busy) return;
+  // busy from before the first await, so a second click can't start the same action again
+  if (act === "rename") return pjVersionRun(act, btn);
+  pj.verPending = false;
+  await pjBusy(() => pjVersionRun(act, btn));
+  if (pj.verPending && pj.verOf) { pj.verPending = false; pjDropDiffs(); pjLoadVersions(); }   // changed elsewhere meanwhile
+}
+async function pjVersionRun(act, btn) {
+  const p = pj.list.find((x) => x.id === pj.verOf);
+  if (!p) return;
+  const row = btn.closest("[data-ver]"), v = row ? +row.dataset.ver : null;
+  const post = (body) => fetch("/api/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: p.id, ...body }) })
+    .then(async (r) => { const out = await r.json().catch(() => ({})); if (!r.ok) { toast(out.error || "Versions: request failed"); return null; } return out; })
+    .catch(() => { toast("Versions: the editor server did not answer"); return null; });
+  if (act === "save") {
+    if (p.active && !(await flushSaveForVersion("no version was made"))) return;
+    const out = await post({ action: "save", name: $("verName")?.value, note: $("verNote")?.value });
+    if (out) {
+      toast(`Saved v${out.version.v} “${out.version.name}”`);
+      for (const id of ["verName", "verNote"]) if ($(id)) $(id).value = "";   // saved: not a draft any more
+      await pjLoadVersions();
+    }
+    return;
+  }
+  if (act === "diff") {
+    if (pj.verDiff.has(v)) { pj.verDiff.delete(v); renderProjectGrid(); return; }
+    // compare with what is on screen, or not at all
+    if (p.active && !(await flushSaveForVersion("the comparison would miss it"))) return;
+    const gen = pj.verDiffGen, of = pj.verOf;
+    const out = await post({ action: "diff", version: v });
+    if (out && gen === pj.verDiffGen && of === pj.verOf) { pj.verDiff.set(v, out.lines); renderProjectGrid(); }
+    return;
+  }
+  if (act === "restore") {
+    if (btn.dataset.armed !== "1") {
+      btn.dataset.armed = "1"; btn.textContent = "Click again to restore";
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Restore…"; } }, 3000);
+      return;
+    }
+    if (p.active && state.exporting) { toast("Wait for the export to finish before restoring"); return; }
+    if (p.active && !(await flushSaveForVersion("nothing was restored"))) return;
+    const out = await post({ action: "restore", version: v });
+    if (!out) return;
+    if (p.active) {
+      // the undo steps describe the document before the restore
+      runtime.undo.length = 0; runtime.redo.length = 0;
+      await syncFromServer(true);
+    }
+    pjDropDiffs();
+    toast(`Restored v${out.restored.v}. What was there is kept as v${out.saved.v}`);
+    await pjLoad();   // the card and details show the restored project
+    await pjLoadVersions();
+    return;
+  }
+  if (act === "final") {
+    const e = pj.versions.find((x) => x.v === v);
+    const out = await post({ action: "update", version: v, final: !e?.final });
+    if (out) await pjLoadVersions();
+    return;
+  }
+  if (act === "rename") {
+    const name = row.querySelector(".ver-name");
+    if (!name || name.querySelector("input")) return;
+    const e = pj.versions.find((x) => x.v === v);
+    name.innerHTML = `<input type="text" class="ver-rename" maxlength="120" value="${escapeHtml(e?.name || "")}" spellcheck="false" aria-label="Version name">`;
+    const inp = name.querySelector("input");
+    inp.focus(); inp.select();
+    const done = async (keep) => {
+      if (inp.dataset.done) return;
+      inp.dataset.done = "1";
+      const val = inp.value.trim();
+      if (keep && val && val !== e?.name) await post({ action: "update", version: v, name: val });
+      await pjLoadVersions();
+    };
+    // Enter / Esc reach it through the dashboard's key handler (initProjectsUi): they blur it
+    inp.addEventListener("blur", () => done(!inp.dataset.cancel));
+    return;
+  }
+  if (act === "delete") {
+    if (btn.dataset.armed !== "1") {
+      btn.dataset.armed = "1"; btn.textContent = "Click again to delete";
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Delete…"; } }, 3000);
+      return;
+    }
+    const out = await post({ action: "delete", version: v });
+    if (out) { pj.verDiff.delete(v); await pjLoadVersions(); }
+  }
+}
+/* Ctrl/Cmd+S: keep the open project as it is now. */
+let versionSaving = false;
+async function saveVersionNow() {
+  if (versionSaving) return;   // one at a time
+  versionSaving = true;
+  try {
+    const project = runtime.projectId;   // another tab may open another project meanwhile
+    if (!(await flushSaveForVersion("no version was made"))) return;
+    const res = await fetch("/api/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save", ...(project && project !== "?" ? { project } : {}) }) });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(out.error || "Couldn't save a version"); return; }
+    toast(`Saved v${out.version.v} “${out.version.name}” · Projects → Versions to go back to it`);
+  } catch { toast("Couldn't save a version: the editor server did not answer"); }
+  finally { versionSaving = false; }
+}
+/** Write the open project's pending edit before a version action; false (with a toast) when it didn't land. */
+async function flushSaveForVersion(skipped) {
+  if (await flushSave()) return true;
+  toast(`Your last change couldn't be saved, so ${skipped}. Try again in a moment.`);
+  return false;
+}
+/* Called by syncFromServer when ./project.json is now another project. */
+function onProjectSwitched() {
+  runtime.projectGen = (runtime.projectGen || 0) + 1;   // loads started before now no longer write the caches
+  // queued exports carry the old project's settings and names: they don't render this one
+  const queued = exportQueue.length;
+  for (let i = exportQueue.length - 1; i >= 0; i--)
+    if (["pending", "failed", "cancelled"].includes(exportQueue[i].status)) exportQueue.splice(i, 1);   // Retry would render this project
+  if (exportQueue.length !== queued) { renderQueue(); toast("Queued exports of the previous project were removed"); }
+  if (runtime.saveTimer) { clearTimeout(runtime.saveTimer); runtime.saveTimer = null; }  // an edit of the old project
+  runtime.saveFailed = false;
+  runtime.undo.length = 0; runtime.redo.length = 0;
+  runtime.seqUndo.clear(); runtime.seqOpen = null;
+  state.compCtx = null;
+  clearSource();
+  setSelection([]);
+  // players, pictures, waveforms and proxy states are keyed by media / clip id, which a
+  // duplicate or a template shares with a different file: rebuild them for this project
+  pause();
+  for (const id of [...runtime.clipEls.keys()]) releaseClipEl(id);
+  runtime.mediaAux.clear();
+  runtime.wavePeaks.clear();
+  proxyStatus.clear();
+}
+function initProjectsUi() {
+  const ov = $("projectsOverlay"), btn = $("btnProjectsDash");
+  if (!ov || !btn || ov.dataset.wired) return;
+  ov.dataset.wired = "1";
+  btn.classList.remove("hidden");
+  btn.addEventListener("click", openProjects);
+  els.projectName?.classList.add("clickable");
+  els.projectName?.setAttribute("title", "Projects");
+  els.projectName?.addEventListener("click", openProjects);
+  $("pjClose").addEventListener("click", closeProjects);
+  ov.addEventListener("click", (e) => { if (e.target === ov) closeProjects(); });
+  // capture on window: wherever focus is while the dashboard is up, the editor's shortcuts stay out of it
+  window.addEventListener("keydown", (e) => {
+    if (!projectsOpen()) return;
+    e.stopPropagation();
+    if ((e.ctrlKey || e.metaKey) && (e.key === "o" || e.key === "O")) {
+      e.preventDefault(); closeProjects();   // not the browser's Open File dialog
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
+      e.preventDefault();   // not the browser's Save Page dialog
+      if (!e.repeat) saveVersionNow().then(() => { if (pj.verOf) pjLoadVersions(); });   // holding the keys makes one
+    } else if (e.target.classList?.contains("ver-rename") && (e.key === "Enter" || e.key === "Escape")) {
+      e.preventDefault();
+      if (e.key === "Escape") e.target.dataset.cancel = "1";
+      e.target.blur();
+    } else if (e.key === "Enter" && (e.target.id === "verName" || e.target.id === "verNote")) {
+      e.preventDefault(); pjVersionAction("save", e.target);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      if (pj.mode === "new") { pj.mode = "detail"; renderProjects(); }
+      else if (pj.verOf) { pj.verOf = null; pjDropDiffs(); renderProjects(); }
+      else closeProjects();
+    } else if ((e.key === "Enter" || e.key === " ") && e.target.dataset?.pjTpldel) {
+      e.preventDefault(); e.target.click();
+    } else if (e.key === "Enter" && e.target.dataset?.pj) {
+      e.preventDefault(); pjOpenProject(e.target.dataset.pj);
+    } else if (e.key === "Enter" && e.target.id === "pjNewName") {
+      e.preventDefault(); pjAction("new-create");
+    } else if (e.key === "Enter" && (e.target.id === "pjName" || e.target.id === "pjTags")) {
+      e.preventDefault(); e.target.blur();
+    } else if (e.key === "Enter" && e.target.id === "pjTplName") {
+      e.preventDefault(); pjAction("template-save");
+    }
+  }, true);
+  for (const b of ov.querySelectorAll("[data-pj-view]")) b.addEventListener("click", () => {
+    if (pj.view === b.dataset.pjView && pj.mode === "detail") return;
+    pj.view = b.dataset.pjView; pj.mode = "detail"; pj.verOf = null; pj.list = []; renderProjects(); pjLoad();
+  });
+  $("pjNewBtn").addEventListener("click", () => {
+    pj.mode = pj.mode === "new" ? "detail" : "new";
+    renderProjects();
+    if (pj.mode === "new") $("pjNewName")?.select();
+  });
+  $("pjSearch").addEventListener("input", (e) => { pj.search = e.target.value; renderProjectGrid(); });
+  $("pjSort").addEventListener("change", (e) => { pj.sort = e.target.value; renderProjectGrid(); });
+  $("pjImportFile").addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) pjImport(f); });
+  $("pjGrid").addEventListener("click", (e) => {
+    const vact = e.target.closest("[data-ver-act]");
+    if (vact) { if (!vact.disabled) pjVersionAction(vact.dataset.verAct, vact); return; }
+    const card = e.target.closest("[data-pj]");
+    if (!card) return;
+    // only the selection changes: re-rendering the cards would swallow a double-click
+    pj.sel = card.dataset.pj; pj.mode = "detail";
+    for (const c of $("pjGrid").querySelectorAll(".pj-card")) c.classList.toggle("sel", c === card);
+    renderProjectSide();
+  });
+  $("pjGrid").addEventListener("dblclick", (e) => { const card = e.target.closest("[data-pj]"); if (card && pj.view === "active") pjOpenProject(card.dataset.pj); });
+  const side = $("pjSide");
+  side.addEventListener("click", async (e) => {
+    const bk = e.target.closest("[data-pj-backup]");
+    if (bk && !bk.dataset.flushed) {
+      // the open project: write its pending edit, then download
+      e.preventDefault();
+      if (!(await flushSaveForVersion("the backup would miss it"))) return;
+      bk.dataset.flushed = "1"; bk.click(); delete bk.dataset.flushed;
+      return;
+    }
+    const del = e.target.closest("[data-pj-tpldel]");
+    if (del) {
+      e.stopPropagation();
+      if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "Delete?"; setTimeout(() => { if (del.isConnected) { del.dataset.armed = ""; del.textContent = "✕"; } }, 3000); return; }
+      const out = await pjPost({ action: "delete_template", template: del.dataset.pjTpldel });
+      if (out) { if (pj.tpl === del.dataset.pjTpldel) pj.tpl = "landscape-1080"; await pjLoad(); }
+      return;
+    }
+    const tpl = e.target.closest("[data-pj-tpl]");
+    if (tpl) {
+      const keepName = $("pjNewName")?.value;
+      pj.tpl = tpl.dataset.pjTpl; renderProjects();
+      if (keepName != null && $("pjNewName")) $("pjNewName").value = keepName;
+      return;
+    }
+    const act = e.target.closest("[data-pj-act]");
+    if (act && !act.disabled) pjAction(act.dataset.pjAct, act);
+  });
+  side.addEventListener("focusout", (e) => {
+    if (e.target.id === "pjName") pjSaveField("name");
+    else if (e.target.id === "pjNotes") pjSaveField("notes");
+    else if (e.target.id === "pjTags") pjSaveField("tags");
+  });
+}
+
+/* ═══════════════════════════ EDIT OPERATIONS ═══════════════════════════ */
+/* Undo entries are {clips, markers} snapshots. Drag gestures still push a bare
+   clips array (taken at pointerdown) — restoring one leaves markers alone. */
+function undoSnapshot() {
+  return JSON.stringify({ clips: project.clips, markers: project.markers || [], comps: project.comps || [] });
+}
+/** Record an undo step — `snap` lets an edit snapshot first and record only
+ *  once it knows it changed something. */
+function pushUndo(snap = undoSnapshot()) {
+  runtime.undo.push(snap);
+  if (runtime.undo.length > 100) runtime.undo.shift();
+  runtime.redo.length = 0;
+}
+/** Does this undo step hold other sequences' clips (a top-level seqClips)? Parsed only when the text could say so. */
+function hasSeqClips(json) {
+  if (typeof json !== "string" || !json.includes('"seqClips":')) return false;
+  try { const snap = JSON.parse(json); return !!snap && typeof snap === "object" && !Array.isArray(snap) && Object.hasOwn(snap, "seqClips"); }
+  catch { return false; }
+}
+/** The clips of the sequences that aren't open, by id — for the undo of an edit that reaches into them. */
+function otherSequenceClips() { return Object.fromEntries(SeqLib.others(seqRoot()).map((sq) => [sq.id, sq.clips || []])); }
+function restoreSnapshot(json) {
+  const snap = JSON.parse(json);
+  if (snap && snap.seqClips) {
+    const open = SeqLib.activeId(seqRoot());
+    for (const [id, clips] of Object.entries(snap.seqClips)) { const sq = SeqLib.find(seqRoot(), id); if (sq && id !== open) sq.clips = clips; }
+  }
+  if (Array.isArray(snap)) project.clips = snap;
+  else {
+    project.clips = snap.clips; project.markers = snap.markers; if (snap.comps) project.comps = snap.comps;
+    if (snap.media) {
+      const before = new Map(project.media.map((m) => [m.id, m.src]));
+      project.media = snap.media;
+      // a relink / replace undone or redone: the players and pictures follow the src
+      for (const m of project.media) if (before.has(m.id) && before.get(m.id) !== m.src) reloadMediaSource(m, before.get(m.id));
+      renderBin(); scheduleOfflineCheck(0);
+    }
+  }
+  runtime.compGen = (runtime.compGen || 0) + 1;
+}
+/** The current state to step back to, carrying the media list when `snap` does
+ *  (removing, relinking or replacing media), so redo puts it back too. */
+function counterSnapshot(snap) {
+  if (!snap.includes('"media":')) return undoSnapshot();
+  return JSON.stringify({ clips: project.clips, markers: project.markers || [], comps: project.comps || [], media: project.media,
+    ...(hasSeqClips(snap) ? { seqClips: otherSequenceClips() } : {}) });
+}
+function undo() {
+  if (!runtime.undo.length) return;
+  const snap = runtime.undo.pop();
+  runtime.redo.push(counterSnapshot(snap));
+  restoreSnapshot(snap);
+  pruneSelection();
+  scheduleSave(); renderInspector();
+}
+function redo() {
+  if (!runtime.redo.length) return;
+  const snap = runtime.redo.pop();
+  runtime.undo.push(counterSnapshot(snap));
+  restoreSnapshot(snap);
+  pruneSelection();
+  scheduleSave(); renderInspector();
+}
+
+function defaultTrackFor(kind) {
+  return kind === "audio" ? "A1" : kind === "svg" ? "V3" : "V1";
+}
+/* ── Clip enable / lock / link ── Each acts on the selection's whole linked
+   group, so picture and stems never end up in different states. */
+function toggleClipsDisabled() {
+  const group = withLinked(selectedClips());
+  if (!group.length) { toast("Select a clip first"); return; }
+  if (group.some(isClipLocked)) { toastLocked(); return; }
+  const disable = group.some((c) => c.disabled !== true);
+  pushUndo();
+  for (const c of group) { if (disable) c.disabled = true; else delete c.disabled; }
+  state.dirtyTimeline = true;
+  scheduleSave(); renderInspector();
+  toast(disable ? "Clip disabled — hidden from preview and export" : "Clip enabled");
+}
+function toggleClipsLocked() {
+  const group = withLinked(selectedClips());
+  if (!group.length) { toast("Select a clip first"); return; }
+  const lock = group.some((c) => c.locked !== true);
+  pushUndo();
+  for (const c of group) { if (lock) c.locked = true; else delete c.locked; }
+  state.dirtyTimeline = true;
+  scheduleSave(); renderInspector();
+  const trackLocked = !lock && group.some((c) => isTrackLocked(c.track));
+  toast(lock ? "Clip locked" : trackLocked ? "Clip unlocked — its track is still locked" : "Clip unlocked");
+}
+/** Why these clips can't be linked, or null when they can. Links in FableCut
+ *  mean identical timing, so only aligned clips of one file qualify: one
+ *  video plus its audio (e.g. after unlink → nudge → nudge back). */
+function linkRefusal(clips) {
+  const near = (a, b) => Math.abs((+a || 0) - (+b || 0)) < 1e-3;
+  if (clips.length < 2) return "Select a video clip and its audio to link";
+  if (clips.some((c) => c.kind !== "video" && c.kind !== "audio")) return "Only video and audio clips can be linked";
+  if (clips.filter((c) => c.kind === "video").length !== 1) return "Select exactly one video clip and its audio";
+  const v = clips.find((c) => c.kind === "video");
+  if (clips.some((c) => !c.mediaId || baseMediaId(c.mediaId) !== v.mediaId)) return "Linked clips must come from the same media file";
+  if (clips.some((c) => !near(c.start, v.start) || !near(c.in, v.in) || !near(c.duration, v.duration)))
+    return "Line the clips up first — same start, in point and length";
+  return null;
+}
+function toggleLinkSelected() {
+  const sel = selectedClips();
+  if (!sel.length) { toast("Select clips first"); return; }
+  const linked = sel.filter((c) => c.linkGroup || c.linkedId);
+  if (linked.length) {
+    const group = withLinked(linked);
+    if (group.some(isClipLocked)) { toastLocked(); return; }
+    pushUndo();
+    for (const c of group) { delete c.linkGroup; delete c.linkedId; c.unlinked = true; }
+    toast("Unlinked — video and audio now move and trim separately");
+  } else {
+    const why = linkRefusal(sel);
+    if (why) { toast(why); return; }
+    if (sel.some(isClipLocked)) { toastLocked(); return; }
+    pushUndo();
+    const lg = "lg_" + uid();
+    for (const c of sel) { c.linkGroup = lg; delete c.linkedId; delete c.unlinked; }
+    toast("Linked");
+  }
+  state.dirtyTimeline = true;
+  scheduleSave(); renderInspector();
+}
+function syncLinkedTiming(c) {
+  for (const L of withLinked([c])) {
+    if (L.id === c.id) continue;
+    L.start = c.start;
+    L.in = c.in;
+    L.duration = c.duration;
+    if (c.props?.speed != null) {
+      L.props = L.props || {};
+      L.props.speed = c.props.speed;
+    }
+  }
+}
+/* Discrete-channel labels for linked stems (WAV / Web Audio order). */
+const CHANNEL_SHORT = ["L", "R", "C", "LFE", "Ls", "Rs", "Lb", "Rb"];
+const CHANNEL_LONG = ["Left", "Right", "Center", "LFE", "Surround L", "Surround R", "Back L", "Back R"];
+function audioChannelShort(ch) {
+  if (!Number.isInteger(ch) || ch < 0) return "";
+  return CHANNEL_SHORT[ch] || `Ch${ch + 1}`;
+}
+function audioChannelLong(ch) {
+  if (!Number.isInteger(ch) || ch < 0) return null;
+  return CHANNEL_LONG[ch] || `Channel ${ch + 1}`;
+}
+/** Default stereo pan for an isolated linked stem (L −1, R +1, else center). */
+function defaultPanForChannel(ch) {
+  if (ch === 0) return -1;
+  if (ch === 1) return 1;
+  return 0;
+}
+function clipPan(v) { return clamp(+v || 0, -1, 1); }
+/** Grow A-tracks to at least `need` (capped at MAX_TRACKS_PER_KIND). Returns how many were added. */
+function ensureAudioTrackCount(need) {
+  need = Math.min(Math.max(0, need | 0), MAX_TRACKS_PER_KIND);
+  let added = 0;
+  while (audioTrackIds().length < need) {
+    if (TRACKS.filter((t) => t.kind === "audio").length >= MAX_TRACKS_PER_KIND) break;
+    const id = nextTrackId("audio");
+    TRACKS.push(makeTrack(id, "audio"));
+    if (state.soloId && state.soloId !== id) state.disabledTracks.add(id);
+    added++;
+  }
+  if (!added) return 0;
+  sortTracksInPlace();
+  applyTrackHeights();
+  project.tracks = serializeTracks();
+  if (state.disabledTracks.size) project.disabledTracks = [...state.disabledTracks].sort();
+  syncAudioGraphTracks();
+  buildTrackDOM();
+  syncAllTrackDisabledUI();
+  state.dirtyTimeline = true;
+  rebuildClips();
+  const h = setTimelineHeight(Math.max(
+    $("timelinePanel")?.getBoundingClientRect().height || 0,
+    defaultTimelineHeight()
+  ));
+  localStorage.setItem(TL_H_KEY, String(h));
+  scheduleSave();
+  return added;
+}
+/** Attach one audio clip per source channel (A1…An), sharing the video's linkGroup. */
+function attachLinkedAudioChannels(videoClip, m, nCh) {
+  if (!videoClip?.linkGroup || !getClip(videoClip.id)) return [];
+  const lg = videoClip.linkGroup;
+  // Drop any prior stems for this group (e.g. stereo placeholder → 3.0 upgrade).
+  const doomed = project.clips.filter((x) => x.linkGroup === lg && x.kind === "audio");
+  for (const c of doomed) releaseClipEl(c.id);
+  project.clips = project.clips.filter((x) => !(x.linkGroup === lg && x.kind === "audio"));
+  const ids = audioTrackIds();
+  const n = Math.min(Math.max(1, nCh | 0), ids.length);
+  const out = [];
+  for (let ch = 0; ch < n; ch++) {
+    const a = {
+      id: "c_" + uid(), mediaId: m.id, kind: "audio", track: ids[ch],
+      start: videoClip.start, in: videoClip.in, duration: videoClip.duration,
+      name: videoClip.name,
+      props: { ...DEFAULT_PROPS, audioChannel: ch, pan: defaultPanForChannel(ch) },
+      linkGroup: lg,
+    };
+    if (videoClip.props?.speed != null) a.props.speed = videoClip.props.speed;
+    project.clips.push(a);
+    out.push(a);
+  }
+  return out;
+}
+function addClipFromMedia(m, trackId, at) {
+  const kind = m.kind;
+  trackId = trackId || defaultTrackFor(kind);
+  const tr = TRACKS.find((t) => t.id === trackId);
+  if (!tr || (kind === "audio") !== (tr.kind === "audio")) trackId = defaultTrackFor(kind);
+  if (isTrackLocked(trackId)) { toast(`${trackId} is locked — unlock it to add clips`); return null; }
+  pushUndo();
+  const start = Math.max(0, at ?? state.time);
+  const duration = m.duration || 5;
+  const name = m.name.replace(/\.[^.]+$/, "");
+  const c = {
+    id: "c_" + uid(), mediaId: m.id, kind, track: trackId,
+    start, in: 0, duration, name,
+    props: { ...DEFAULT_PROPS },
+  };
+  project.clips.push(c);
+  // Video+audio: picture on a V track; one linked stem per source channel on A-tracks.
+  // Mute the video clip so audio isn't doubled. If channel count isn't known yet,
+  // plant a stereo placeholder now (so the drop isn't picture-only, and so the
+  // next pushUndo snapshot includes the AV link); reconcileAudioChannels upgrades
+  // or trims once decodeAudioData reports the real count.
+  if (kind === "video") {
+    c.props.volume = 0;
+    c.linkGroup = "lg_" + uid();
+    const nCh = m.channels > 0 ? m.channels : 2;
+    const added = ensureAudioTrackCount(Math.min(nCh, MAX_TRACKS_PER_KIND));
+    if (added) {
+      toast(added === 1
+        ? `Added an audio track for ${nCh}-channel audio`
+        : `Added ${added} audio tracks for ${nCh}-channel audio`);
+    }
+    attachLinkedAudioChannels(c, m, nCh);
+    ensureWave(m);
+    reconcileAudioChannels(c);
+  }
+  selectClip(c.id); scheduleSave();
+  return c;
+}
+/** Source In→Out window for insert/replace (media-local seconds). Images/SVGs
+ *  use marks only as timeline duration (`in` stays 0). */
+function sourceInsertWindow() {
+  const m = sourceMedia();
+  if (!m) return null;
+  const mediaDur = sourceDur();
+  if (m.kind === "image" || m.kind === "svg") {
+    const a = state.source.in != null ? state.source.in : 0;
+    const b = state.source.out != null ? state.source.out : (m.duration || 5);
+    const duration = Math.max(MIN_DUR, b - a);
+    return { m, inn: 0, duration };
+  }
+  const inn = state.source.in != null ? state.source.in : 0;
+  let out = state.source.out != null ? state.source.out : mediaDur;
+  if (!(mediaDur > 0)) return null;
+  out = Math.min(out, mediaDur);
+  const innClamped = clamp(inn, 0, Math.max(0, mediaDur - MIN_DUR));
+  if (!(out > innClamped + MIN_DUR * 0.5)) return null;
+  return { m, inn: innClamped, duration: out - innClamped };
+}
+function toastSourceWindowMissing() {
+  if (!state.source.mediaId)
+    toast("Load Source first (double-click Project or a timeline clip)");
+  else
+    toast("Mark a Source range (I / O) — or load media with a known duration");
+}
+function toastNoSourceTarget() {
+  toast("No targeted track for this media — click a track name to target it (and unlock it)");
+}
+/** Premiere-style Insert: place Source In→Out at the timeline playhead and
+ *  ripple later clips on targeted tracks (EDIT.insertAt). */
+function insertSourceAtPlayhead() {
+  const win = sourceInsertWindow();
+  if (!win) { toastSourceWindowMissing(); return; }
+  const { m, inn, duration } = win;
+  if (!sourceEditTracks(m).some(Boolean)) { toastNoSourceTarget(); return; }
+  if (state.playing) pause();
+  if (state.source.playing) pauseSource();
+  pushUndo();
+  const { clip: c, at } = EDIT.insertAt(m, inn, duration, state.time);
+  if (c) selectClip(c.id);
+  state.time = +(at + duration).toFixed(4);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  ensurePlayheadVisible();
+}
+/** Premiere-style Overwrite / Replace: place Source In→Out at the playhead,
+ *  punching destination tracks (no ripple). When Source was loaded from a
+ *  timeline clip, instead retarget that instance's In/Out and ripple later
+ *  clips on its tracks by the duration delta. */
+function replaceSourceAtPlayhead() {
+  const win = sourceInsertWindow();
+  if (!win) { toastSourceWindowMissing(); return; }
+  if (state.source.fromClipId) {
+    const existing = getClip(state.source.fromClipId);
+    if (existing && existing.mediaId === win.m.id) {
+      if (isGroupLocked(existing)) { toastLocked(); return; }
+      applySourceWindowToClip(existing, win);
+      return;
+    }
+  }
+  const { m, inn, duration } = win;
+  if (!sourceEditTracks(m).some(Boolean)) { toastNoSourceTarget(); return; }
+  if (state.playing) pause();
+  if (state.source.playing) pauseSource();
+  pushUndo();
+  const { clip: c, at } = EDIT.overwriteAt(m, inn, duration, state.time);
+  pruneSelection();
+  if (c) selectClip(c.id);
+  state.time = +(at + duration).toFixed(4);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  ensurePlayheadVisible();
+}
+/** Apply Source In→Out to a timeline clip loaded into Source. Updates linked
+ *  stems, then ripples later clips on those tracks when duration changes. */
+function applySourceWindowToClip(c, win) {
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  const { inn, duration: mediaWin } = win;
+  const sp = clipSpeed(c);
+  if (hasSpeedRamp(c)) {
+    toast("Cannot retarget Source In/Out on a clip with a speed ramp");
+    return;
+  }
+  const newDur = Math.max(MIN_DUR, mediaWin / sp);
+  const oldEnd = clipEnd(c);
+  const delta = newDur - c.duration;
+  if (state.playing) pause();
+  if (state.source.playing) pauseSource();
+
+  pushUndo();
+  const group = withLinked([c]);
+  const groupIds = new Set(group.map((x) => x.id));
+  const tracks = new Set(group.map((x) => x.track));
+  const innR = +inn.toFixed(4);
+  const durR = +newDur.toFixed(4);
+  for (const x of group) {
+    x.in = innR;
+    x.duration = durR;
+    x.keyframes = shiftKF(x.keyframes, 0, x.duration);
+    if (x.transitionIn && x.transitionIn.duration > x.duration)
+      x.transitionIn.duration = +x.duration.toFixed(3);
+    if (x.transitionOut && x.transitionOut.duration > x.duration)
+      x.transitionOut.duration = +x.duration.toFixed(3);
+  }
+  if (Math.abs(delta) > 1e-6) {
+    const eps = 1e-6;
+    // Sync lock: linked partners ride along even on untargeted tracks.
+    const movers = withoutLocked(withLinked(project.clips.filter((x) =>
+      !groupIds.has(x.id) && tracks.has(x.track) && isEditTarget(x.track) && x.start >= oldEnd - eps
+    )));
+    for (const x of movers) x.start = Math.max(0, +(x.start + delta).toFixed(4));
+  }
+  selectClip(c.id);
+  state.time = +(c.start + newDur).toFixed(4);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  ensurePlayheadVisible();
+  renderInspector();
+}
+/* Resolve (and cache) a media's real channel count via Web Audio decode —
+   <video>/<audio> metadata (probeAV) doesn't expose it, only decodeAudioData
+   does. Shares the getAudioBuffer() cache, so this never decodes twice. */
+async function detectChannelCount(m) {
+  if (m.channels != null) return m.channels;
+  try {
+    const buf = await getAudioBuffer(m);
+    if (m.channels == null) m.channels = buf.numberOfChannels;
+  } catch { if (m.channels == null) m.channels = 2; }
+  return m.channels;
+}
+/* Keep a video clip's linked per-channel audio clips in sync with its
+   media's actual channel count. Channels 0/1 (A1/A2) are created
+   synchronously by addClipFromMedia; this handles channel 3+ once the async
+   channel-count decode resolves, growing the audio track set (A5, A6, …) via
+   ensureAudioTrackCount() for sources beyond 4 channels (5.1, 7.1…), and is
+   also re-run after replaceClipMedia swaps the source. Drops linked clips
+   for channels the (new) source no longer has, and warns only if a source
+   has more channels than MAX_TRACKS_PER_KIND. */
+async function reconcileAudioChannels(videoClip, onlyTargeted = false) {
+  if (videoClip.kind !== "video" || !videoClip.linkGroup) return;
+  const mediaId = videoClip.mediaId;
+  const m = getMedia(mediaId);
+  if (!m) return;
+  const chCount = await detectChannelCount(m);
+  const live = getClip(videoClip.id);
+  if (!live || live.mediaId !== mediaId) return; // superseded by a newer add/replace
+  const lg = live.linkGroup;
+  const tracksBefore = audioTrackIds().length;
+  if (chCount > tracksBefore) ensureAudioTrackCount(chCount);
+  const ids = audioTrackIds();
+  const newTracks = ids.length - tracksBefore;
+  const wantCh = Math.min(chCount, ids.length);
+  const have = project.clips.filter((c) => c.linkGroup === lg && c.kind === "audio");
+  let added = 0, removed = 0;
+  for (const c of have) {
+    if ((c.props?.audioChannel ?? 0) >= wantCh) {
+      releaseClipEl(c.id);
+      project.clips = project.clips.filter((x) => x !== c);
+      removed++;
+    }
+  }
+  for (let ch = 0; ch < wantCh; ch++) {
+    if (have.some((c) => c.props?.audioChannel === ch)) continue;
+    if (onlyTargeted && !isEditTarget(ids[ch])) continue;
+    project.clips.push({
+      id: "c_" + uid(), mediaId, kind: "audio", track: ids[ch],
+      start: live.start, in: live.in, duration: live.duration, name: live.name,
+      props: { ...DEFAULT_PROPS, audioChannel: ch, pan: defaultPanForChannel(ch) },
+      linkGroup: lg,
+    });
+    added++;
+  }
+  if (!added && !removed) {
+    if (newTracks > 0) scheduleSave();
+    return;
+  }
+  state.dirtyTimeline = true;
+  scheduleSave(); renderInspector();
+  if (chCount > ids.length)
+    toast(`${m.name}: ${chCount} audio channels, only ${MAX_TRACKS_PER_KIND} tracks supported — extra channel(s) dropped`);
+  else if (added)
+    toast(newTracks
+      ? `${m.name}: added ${newTracks} audio track${newTracks === 1 ? "" : "s"} and linked ${wantCh} channels`
+      : `Linked ${wantCh} audio channel${wantCh === 1 ? "" : "s"} from ${m.name}`);
+  else if (removed)
+    toast(`${m.name} has fewer channels — removed ${removed} linked audio clip(s)`);
+}
+/* Apply a named title style: reset the props a style owns, merge the style,
+   place it (canvas-aware), and make sure its fonts are loaded.
+   keepTransform: restyle the look only — x/y/scale/rotation/align stay as the
+   user set them. Used when switching styles on an existing clip; new titles
+   (keepTransform=false) still get the style's placement. */
+function applyTitleStyle(clip, name, { keepTransform = false } = {}) {
+  const st = TITLE_STYLES[name] || TITLE_STYLES.plain;
+  const P = clip.props;
+  const kept = keepTransform
+    ? { x: P.x, y: P.y, scale: P.scale, rotation: P.rotation, align: P.align }
+    : null;
+  Object.assign(P, STYLE_RESET, st.props);
+  if (kept) Object.assign(P, kept);
+  else {
+    const H = project.height || 720, W = project.width || 1280;
+    const place = st.place || "center";
+    P.x = 0;
+    P.y = place === "lower" ? Math.round(H * 0.30)
+      : place === "upper" ? -Math.round(H * 0.30)
+        : place === "lower-left" ? Math.round(H * 0.28) : 0;
+    if (place === "lower-left") { P.x = -Math.round(W * 0.18); P.align = "left"; }
+  }
+  ensureFont(P.font);
+  if (Array.isArray(P.fontCutSet)) P.fontCutSet.forEach(ensureFont);
+  clip.styleName = name;
+}
+/* Custom title-style dropdown: every entry renders in its own font, hovering
+   an entry live-previews the style on the canvas (transform kept — see
+   applyTitleStyle), moving away reverts, clicking commits. Nothing is saved
+   until a click. */
+function openStylePicker(anchor, c) {
+  const snap = { props: JSON.parse(JSON.stringify(c.props)), styleName: c.styleName };
+  let committed = false;
+  const rewind = () => {
+    if (committed) return;
+    c.props = JSON.parse(JSON.stringify(snap.props));
+    c.styleName = snap.styleName;
+  };
+  const menu = document.createElement("div");
+  menu.className = "style-menu";
+  for (const [k, v] of Object.entries(TITLE_STYLES)) {
+    ensureFont(v.props.font); // so the entry itself renders in the style's face
+    const it = document.createElement("div");
+    it.className = "style-opt" + (c.styleName === k ? " on" : "");
+    it.textContent = v.label;
+    it.style.fontFamily = `"${v.props.font}", sans-serif`;
+    if (v.props.uppercase) it.style.textTransform = "uppercase";
+    it.addEventListener("mouseenter", () => {
+      rewind(); // preview from the clip's real state, not a previous preview
+      applyTitleStyle(c, k, { keepTransform: true });
+    });
+    it.addEventListener("click", () => {
+      rewind();
+      pushUndo();
+      applyTitleStyle(c, k, { keepTransform: true });
+      committed = true;
+      close();
+      scheduleSave(); renderInspector();
+    });
+    menu.appendChild(it);
+  }
+  menu.addEventListener("mouseleave", rewind);
+  const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
+  function close() {
+    rewind();
+    menu.remove();
+    document.removeEventListener("pointerdown", onDoc, true);
+    runtime.styleMenu = null;
+  }
+  document.addEventListener("pointerdown", onDoc, true);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.round(Math.min(r.left, innerWidth - 220)) + "px";
+  menu.style.top = Math.round(Math.min(r.bottom + 4, innerHeight - 340)) + "px";
+  document.body.appendChild(menu);
+  runtime.styleMenu = { close };
+}
+function closeStylePicker() { if (runtime.styleMenu) runtime.styleMenu.close(); }
+/* Swap a clip's source media in place: position, trim, keyframes, transitions,
+   props and name are all untouched. If the clip is part of a linkGroup (video
+   + its L/R audio companions extracted from the same file), replacing the
+   video member cascades the new mediaId to those companions too, since they
+   represent channels of the same source. If the new source is shorter than
+   the clip's current in/duration window, the trim is clamped to fit. */
+function replaceClipMedia(clip, media) {
+  if (!media || (clip.mediaId === media.id)) return;
+  pushUndo();
+  const targets = (clip.kind === "video" && clip.linkGroup)
+    ? project.clips.filter((c) => c.linkGroup === clip.linkGroup)
+    : [clip];
+  let trimmed = false;
+  for (const c of targets) {
+    c.mediaId = media.id;
+    // the clip's cached <video>/<audio> element (and its Web Audio graph node)
+    // is keyed by clip id and still points at the old src — drop it so
+    // getClipEl() rebuilds it against the new media on the next sync/frame.
+    releaseClipEl(c.id);
+    if (media.duration == null) continue;
+    const speed = c.props?.speed || 1;
+    // in + duration×speed ≤ media.duration (see CLAUDE.md props reference)
+    const maxIn = Math.max(0, media.duration - 0.001);
+    if (c.in > maxIn) { c.in = maxIn; trimmed = true; }
+    const maxDur = Math.max(0.05, (media.duration - c.in) / speed);
+    if (c.duration > maxDur) { c.duration = maxDur; trimmed = true; }
+  }
+  if (media.kind === "video" || media.kind === "audio") ensureWave(media);
+  if (clip.kind === "video") reconcileAudioChannels(clip); // add/drop A3+ channel clips once decoded
+  state.dirtyTimeline = true;
+  scheduleSave(); renderInspector();
+  toast(trimmed ? "Media replaced — trimmed to fit shorter source" : "Media replaced");
+}
+/* A dedicated, lazily-created file input for the "Browse file…" replace
+   action — deliberately NOT the shared #fileInput (also driven by the global
+   "+ Import" button): that one carries no target-clip state of its own, so
+   if this flow set a pending-replace flag on it and the user then cancelled
+   the OS file dialog (no "change" event fires on cancel), the flag would
+   stay stuck and hijack the next *unrelated* normal import. This input's
+   pending target lives in its own closure instead, so it can never leak
+   into a different import path. */
+let replaceFileInput = null, replaceFileTargetId = null;
+function pickReplacementFile(clip) {
+  if (!replaceFileInput) {
+    replaceFileInput = document.createElement("input");
+    replaceFileInput.type = "file";
+    replaceFileInput.accept = els.fileInput.accept;
+    replaceFileInput.className = "sr-only";
+    document.body.appendChild(replaceFileInput);
+    replaceFileInput.addEventListener("change", async () => {
+      const files = replaceFileInput.files;
+      replaceFileInput.value = "";
+      const targetId = replaceFileTargetId;
+      replaceFileTargetId = null;
+      if (!files.length) return;
+      const added = await importFiles(files);
+      const c = getClip(targetId);
+      if (!c || !added.length) return;
+      const m = added.find((x) => x.kind === c.kind) || added[0];
+      if (m.kind === c.kind) replaceClipMedia(c, m);
+      else toast(`Imported, but can't replace a ${c.kind} clip with ${m.kind === "audio" ? "an" : "a"} ${m.kind}`);
+    });
+  }
+  replaceFileTargetId = clip.id;
+  replaceFileInput.click();
+}
+/* Media-replace dropdown for the Inspector's "Source" button — same widget
+   pattern as openStylePicker (floating menu, click outside to cancel). Lists
+   bin/library media of the same kind as the clip, plus a "Browse file…" entry
+   that imports a new file and replaces with it directly. */
+function openMediaPicker(anchor, c) {
+  const compatible = project.media.filter((m) => m.kind === c.kind && m.id !== c.mediaId);
+  const menu = document.createElement("div");
+  menu.className = "style-menu";
+  const browse = document.createElement("div");
+  browse.className = "style-opt media-opt";
+  browse.textContent = "📂 Browse file…";
+  browse.addEventListener("click", () => {
+    close();
+    pickReplacementFile(c);
+  });
+  menu.appendChild(browse);
+  if (compatible.length) {
+    const sep = document.createElement("div");
+    sep.style.cssText = "height:1px;background:var(--border);margin:4px 2px;";
+    menu.appendChild(sep);
+    for (const m of compatible) {
+      const it = document.createElement("div");
+      it.className = "style-opt media-opt";
+      it.textContent = m.name;
+      it.title = m.name;
+      it.addEventListener("click", () => { close(); replaceClipMedia(c, m); });
+      menu.appendChild(it);
+    }
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "style-opt media-opt";
+    empty.style.opacity = ".6";
+    empty.style.cursor = "default";
+    empty.textContent = `No other ${c.kind} in bin`;
+    menu.appendChild(empty);
+  }
+  const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
+  function close() {
+    menu.remove();
+    document.removeEventListener("pointerdown", onDoc, true);
+    runtime.mediaMenu = null;
+  }
+  document.addEventListener("pointerdown", onDoc, true);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.round(Math.min(r.left, innerWidth - 220)) + "px";
+  menu.style.top = Math.round(Math.min(r.bottom + 4, innerHeight - 340)) + "px";
+  document.body.appendChild(menu);
+  runtime.mediaMenu = { close };
+}
+function closeMediaPicker() { if (runtime.mediaMenu) runtime.mediaMenu.close(); }
+function addTitle() {
+  if (isTrackLocked("V2")) { toast("V2 is locked — unlock it to add a title"); return; }
+  pushUndo();
+  const c = {
+    id: "c_" + uid(), mediaId: null, kind: "text", track: "V2",
+    start: state.time, in: 0, duration: 4, name: "Title",
+    props: { ...DEFAULT_PROPS },
+  };
+  // interesting by default: rotate through the styles so titles vary
+  runtime.titleStyleIdx = ((runtime.titleStyleIdx || 0) + 1) % STYLE_CYCLE.length;
+  applyTitleStyle(c, STYLE_CYCLE[runtime.titleStyleIdx]);
+  project.clips.push(c);
+  selectClip(c.id); scheduleSave();
+}
+function addAdjust() {
+  if (isTrackLocked("V3")) { toast("V3 is locked — unlock it to add an adjustment layer"); return; }
+  pushUndo();
+  const c = {
+    id: "c_" + uid(), mediaId: null, kind: "adjust", track: "V3",
+    start: state.time, in: 0, duration: 4, name: "Adjust",
+    props: { ...DEFAULT_PROPS },
+  };
+  project.clips.push(c);
+  selectClip(c.id); scheduleSave();
+}
+function deleteSelected() {
+  const snap = undoSnapshot();
+  const { removed, blocked } = EDIT.removeClips(selectedClips());
+  if (blocked) toastLocked(removed.length > 0);
+  if (!removed.length) return;
+  pushUndo(snap);
+  setSelection([]);
+  scheduleSave(); renderInspector();
+}
+/** Delete selection and pull later clips left on targeted tracks (per-track ripple). */
+function rippleDeleteSelected() {
+  const snap = undoSnapshot();
+  const { removed, blocked } = EDIT.rippleDelete(selectedClips());
+  if (blocked) toastLocked(removed.length > 0);
+  if (!removed.length) return;
+  pushUndo(snap);
+  setSelection([]);
+  state.dirtyTimeline = true;
+  scheduleSave(); renderInspector();
+}
+const GAP_EPS = FableCutEdit.GAP_EPS;
+/* Sync-safe close (EDIT.closeGapAt): every targeted track must have a gap at
+   the playhead; their intersection closes. Locked clips stay put. */
+function closeGapAtPlayhead() {
+  const snap = undoSnapshot();
+  const G = EDIT.closeGapAt(state.time);
+  if (typeof G === "string") { toast(G); return; }
+  pushUndo(snap);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  const label = G >= 1 ? G.toFixed(2) : G.toFixed(3);
+  toast(`Closed ${label}s gap`);
+}
+function clearFocusedTransition() {
+  if (!state.transFocus || !state.selId) return false;
+  const c = getClip(state.selId);
+  if (!c) return false;
+  if (isGroupLocked(c)) { toastLocked(); return true; }
+  const key = state.transFocus === "in" ? "transitionIn" : "transitionOut";
+  if (!c[key]) return false;
+  pushUndo();
+  c[key] = undefined;
+  state.transFocus = null;
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  return true;
+}
+function loadLastTransition(side) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LAST_TRANS_KEY[side]) || "null");
+    if (raw?.type && raw.type !== "none" && TRANSITIONS.includes(raw.type)) {
+      const dur = +raw.duration;
+      return { type: raw.type, duration: isFinite(dur) && dur >= MIN_TRANS_DUR ? dur : 1 };
+    }
+  } catch {}
+  return { ...DEFAULT_LAST_TRANS };
+}
+function saveLastTransition(side, tr) {
+  if (!tr?.type || tr.type === "none") return;
+  try {
+    localStorage.setItem(LAST_TRANS_KEY[side], JSON.stringify({
+      type: tr.type,
+      duration: Math.max(MIN_TRANS_DUR, +tr.duration || 1),
+    }));
+  } catch {}
+}
+function addTransitionAtPlayhead() {
+  const c = getClip(state.selId);
+  if (!c) { toast("Select a clip first"); return; }
+  const t = state.time;
+  if (t < c.start || t >= clipEnd(c)) { toast("Move playhead over the selected clip"); return; }
+  const side = (t - c.start) / c.duration < 0.5 ? "in" : "out";
+  const key = side === "in" ? "transitionIn" : "transitionOut";
+  const preset = loadLastTransition(side);
+  const dur = Math.min(Math.max(MIN_TRANS_DUR, preset.duration), c.duration);
+  pushUndo();
+  c[key] = { type: preset.type, duration: +dur.toFixed(3) };
+  saveLastTransition(side, c[key]);
+  state.dirtyTimeline = true;
+  selectClip(c.id, { transFocus: side });
+  scheduleSave();
+}
+/* Search window: IN–OUT when both markers are set, else the full project span. */
+function gapSearchRange() {
+  if (project.inPoint != null && project.outPoint != null) {
+    return { t0: project.inPoint, t1: project.outPoint };
+  }
+  return { t0: 0, t1: Math.max(projDur(), 0) };
+}
+function ensurePlayheadVisible() {
+  const px = state.time * state.pps, sc = els.timelineScroll;
+  if (!sc) return;
+  if (px < sc.scrollLeft || px > sc.scrollLeft + sc.clientWidth - 40) {
+    sc.scrollLeft = Math.max(0, px - sc.clientWidth / 3);
+  }
+}
+/* Jump playhead to the middle of the next aligned gap (wraps). */
+function goToNextGap() {
+  const { t0, t1 } = gapSearchRange();
+  if (t1 - t0 <= GAP_EPS) { toast("No gaps found"); return; }
+  const gaps = listAlignedGaps(t0, t1);
+  if (!gaps.length) {
+    toast(project.inPoint != null && project.outPoint != null
+      ? "No gaps in IN/OUT range" : "No gaps found");
+    return;
+  }
+  const t = state.time;
+  let g = gaps.find((x) => (x.L + x.R) / 2 > t + GAP_EPS);
+  if (!g) g = gaps[0];
+  setTime((g.L + g.R) / 2);
+  ensurePlayheadVisible();
+}
+function splitAtPlayhead() {
+  // A selection splits wherever it sits; with none, the targeted tracks do.
+  const snap = undoSnapshot();
+  const { split, blocked } = EDIT.splitAt(state.time, state.selIds.size ? selectedClips() : null);
+  if (!split) { if (blocked) toastLocked(); return; }
+  pushUndo(snap);
+  scheduleSave();
+}
+/* Split every targeted-track clip that crosses IN and/or OUT (no head/tail removal). */
+function splitAtWorkArea() {
+  const cuts = [project.inPoint, project.outPoint].filter((t) => t != null);
+  if (!cuts.length) {
+    toast("Set an IN or OUT marker first (I / O)");
+    return;
+  }
+  const snap = undoSnapshot();
+  if (!EDIT.splitAtTimes(cuts)) { toast("Nothing to split at IN/OUT"); return; }
+  pushUndo(snap);
+  scheduleSave();
+}
+function trimToPlayhead(side) {
+  const c = getClip(state.selId);
+  if (!c) return;
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  const t = state.time;
+  if (t <= c.start && side === "in") return;
+  pushUndo();
+  if (side === "in" && t > c.start && t < clipEnd(c) - MIN_DUR) {
+    const d = t - c.start;
+    c.start = t; c.in += d * clipSpeed(c); c.duration -= d;
+  } else if (side === "out" && t > c.start + MIN_DUR && t < clipEnd(c)) {
+    c.duration = t - c.start;
+  }
+  syncLinkedTiming(c);
+  scheduleSave(); renderInspector();
+}
+/* Split at IN/OUT and discard clip heads before IN and tails after OUT.
+   Targets targeted tracks; linked partners get the identical trim (sync lock). */
+function trimToWorkArea() {
+  const inn = project.inPoint, out = project.outPoint;
+  if (inn == null && out == null) {
+    toast("Set an IN or OUT marker first (I / O)");
+    return;
+  }
+  const snap = undoSnapshot();
+  if (!EDIT.trimToRange(inn, out)) { toast("Nothing to trim"); return; }
+  pushUndo(snap);
+  pruneSelection();
+  scheduleSave();
+  renderInspector();
+}
+/** Lift (;) removes IN→OUT on the targeted tracks and leaves the gap.
+ *  Extract (') removes it and closes the gap. Linked partners are cut too,
+ *  locked clips stay whole, and IN / OUT clear afterwards (as in Premiere). */
+function liftExtract(extract) {
+  const t0 = project.inPoint, t1 = project.outPoint;
+  const snap = undoSnapshot();
+  const why = EDIT.liftRange(t0, t1, extract);
+  if (why) { toast(why); return; }
+  pushUndo(snap);
+  project.inPoint = project.outPoint = null;
+  updateWorkArea();
+  syncTrimIOButton();
+  pruneSelection();
+  setTime(t0);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  toast(`${extract ? "Extracted" : "Lifted"} ${(t1 - t0).toFixed(2)}s`);
+}
+/** Shift+D: crossfade the cuts of the selected audio clips, or — with no
+ *  selection — the audio cut nearest the playhead on each targeted track. */
+function crossfadeSelected(dur = FableCutEdit.CROSSFADE_DUR) {
+  const pairs = state.selIds.size ? crossfadeCuts(withLinked(selectedClips())) : EDIT.crossfadeCutsNear(state.time);
+  if (!pairs.length) {
+    toast(state.selIds.size ? "No audio cut next to the selection — clips must touch or overlap on one track"
+      : "No audio cut near the playhead on the targeted tracks");
+    return;
+  }
+  pushUndo();
+  const { done, why } = EDIT.crossfadePairs(pairs, dur);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  if (done) toast(`Crossfaded ${done} cut${done === 1 ? "" : "s"}` + (why.length ? ` · skipped: ${why.join(", ")}` : ""));
+  else toast(`Couldn't crossfade: ${why.join(", ")}`);
+}
+function hasWorkArea() {
+  return project.inPoint != null || project.outPoint != null;
+}
+/* Active work-area playback bounds. Missing IN → 0; missing OUT → project end. */
+function playRange() {
+  const start = project.inPoint != null ? project.inPoint : 0;
+  const end = project.outPoint != null ? project.outPoint : Math.max(projDur(), 0);
+  return { start, end: Math.max(end, start) };
+}
+/* Export window. IN/OUT are clamped to the content span so a marker past
+   the last clip cannot inflate a 0-length range into a 1-frame black file.
+   Mode comes from the Export dialog (Entire timeline / IN–OUT). */
+/** An agent's export job picks its range instead of the dialog. */
+let exportRangeForced = null;
+function exportRangeMode() {
+  const sel = $("exportRangeSel");
+  const v = exportRangeForced || (sel && sel.value === "in-out" ? "in-out" : "entire");
+  if (v === "in-out" && !hasWorkArea()) return "entire";
+  return v;
+}
+/** fps: the output's frame rate when it differs from the project's (delivery). */
+function exportRange(fpsOverride) {
+  const fps = fpsOverride || projectFps();
+  const span = Math.max(projDur(), 0);
+  let start = 0, end = span;
+  if (exportRangeMode() === "in-out") {
+    const r = playRange();
+    start = Math.min(Math.max(0, r.start), span);
+    end = Math.min(Math.max(0, r.end), span);
+    if (end < start) end = start;
+  }
+  const sec = Math.max(0, end - start);
+  let frames = Math.round(sec * fps);
+  if (exportRangeMode() === "entire") frames = Math.max(1, frames);
+  else frames = Math.max(0, frames);
+  const dur = frames / fps;
+  return { start, end: start + dur, dur, frames };
+}
+function playLimited() {
+  return state.workAreaPlay && !state.exporting && hasWorkArea();
+}
+/* Stop time while Limit is on. Playhead past OUT = manual override → full timeline.
+   `dur`, if given, is a precomputed projDur() (callers already looping every
+   clip once per frame can reuse it instead of triggering a second full scan). */
+function playStopAt(dur) {
+  const d = Math.max(dur ?? projDur(), 0);
+  if (!playLimited()) return d;
+  const { end } = playRange();
+  if (state.time > end + 1e-4) return d;
+  return end;
+}
+function gotoHome() {
+  setTime(playLimited() && project.inPoint != null ? project.inPoint : 0);
+}
+function gotoEnd() {
+  setTime(playLimited() && project.outPoint != null ? project.outPoint : projDur());
+}
+function setTcField(el, t) {
+  if (!el) return;
+  if (t == null) {
+    el.textContent = "00:00:00";
+    el.classList.add("unset");
+  } else {
+    el.textContent = fmt(t);
+    el.classList.remove("unset");
+  }
+}
+function updateTimecode(dur) {
+  if (isSourceMode()) {
+    els.tcCurrent.textContent = fmt(state.source.time);
+    els.tcTotal.textContent = fmt(sourceDur());
+    const inn = state.source.in, out = state.source.out;
+    const has = inn != null || out != null;
+    if (els.tcIo) {
+      els.tcIo.classList.toggle("idle", !has);
+      els.tcIo.setAttribute("aria-hidden", has ? "false" : "true");
+    }
+    setTcField(els.tcIn, inn);
+    setTcField(els.tcOut, out);
+    if (inn != null && out != null) setTcField(els.tcDur, Math.max(0, out - inn));
+    else setTcField(els.tcDur, null);
+    return;
+  }
+  const d = Math.max(dur ?? projDur(), 0);
+  els.tcCurrent.textContent = fmt(state.time);
+  els.tcTotal.textContent = fmt(d);
+  const has = hasWorkArea();
+  if (els.tcIo) {
+    els.tcIo.classList.toggle("idle", !has);
+    els.tcIo.setAttribute("aria-hidden", has ? "false" : "true");
+  }
+  setTcField(els.tcIn, project.inPoint);
+  setTcField(els.tcOut, project.outPoint);
+  if (has) {
+    const { start, end } = playRange();
+    setTcField(els.tcDur, Math.max(0, end - start));
+  } else {
+    setTcField(els.tcDur, null);
+  }
+}
+function syncTrimIOButton() {
+  const has = hasWorkArea();
+  const trim = $("btnTrimIO");
+  const lim = $("btnWorkAreaPlay");
+  if (trim) trim.classList.toggle("hidden", !has);
+  if (lim) {
+    lim.classList.toggle("hidden", !has);
+    lim.classList.toggle("on", state.workAreaPlay);
+  }
+}
+
+/* ═══════════════════════════ TIMELINE UI ═══════════════════════════ */
+const TRACK_LOCK_ICON =
+  `<svg class="track-ico" viewBox="0 0 16 16" aria-hidden="true">` +
+  `<path class="lock-shackle" fill="none" stroke="currentColor" stroke-width="1.6" d="M5 7V5a3 3 0 0 1 6 0v2"/>` +
+  `<rect x="3.5" y="7" width="9" height="7" rx="1.5" fill="currentColor"/></svg>`;
+function trackToggleIcon(kind) {
+  if (kind === "audio") {
+    // Speaker
+    return `<svg class="track-ico" viewBox="0 0 16 16" aria-hidden="true">` +
+      `<path fill="currentColor" d="M2.5 5.75h2.2L8.2 3.1v9.8L4.7 10.25H2.5V5.75zm7.15 1.05a2.1 2.1 0 0 1 0 2.4l.95.7a3.35 3.35 0 0 0 0-3.8l-.95.7zm1.55-2.2a4.6 4.6 0 0 1 0 6.8l.95.7a5.85 5.85 0 0 0 0-8.2l-.95.7z"/>` +
+      `<path class="track-ico-off" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M2.2 2.2l11.6 11.6"/>` +
+      `</svg>`;
+  }
+  // Screen / monitor
+  return `<svg class="track-ico" viewBox="0 0 16 16" aria-hidden="true">` +
+    `<path fill="currentColor" d="M1.75 3.25h12.5v8H9.6l.4 1.5h2.25v1.25H3.75V12.75H6l.4-1.5H1.75v-8zm1.25 1.25v5.5h10.0v-5.5H3z"/>` +
+    `<path class="track-ico-off" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M2.2 2.2l11.6 11.6"/>` +
+    `</svg>`;
+}
+function buildTrackDOM() {
+  let inner = $("trackHeadInner");
+  if (!inner) {
+    inner = document.createElement("div");
+    inner.id = "trackHeadInner";
+    els.trackHeaders.appendChild(inner);
+  }
+  inner.innerHTML = "";
+  els.tracks.innerHTML = "";
+  for (const t of TRACKS) {
+    const on = isTrackEnabled(t.id);
+    const solo = state.soloId === t.id;
+    const h = document.createElement("div");
+    h.className = "track-head" + (on ? "" : " disabled") + (solo ? " solo" : "");
+    h.dataset.track = t.id;
+    h.style.height = t.h + "px";
+    h.innerHTML =
+      `<button type="button" class="track-toggle" aria-pressed="${on}" ` +
+      `title="${on ? "Disable track" : "Enable track"}" style="color:${t.color}">` +
+      `${trackToggleIcon(t.kind)}</button>` +
+      `<button type="button" class="track-id">${escapeHtml(t.id)}</button>` +
+      `<button type="button" class="track-lock" aria-pressed="false">${TRACK_LOCK_ICON}</button>` +
+      `<button type="button" class="track-solo${solo ? " on" : ""}" aria-pressed="${solo}" ` +
+      `title="${solo ? "Unsolo track" : "Solo track (mute all others)"}">S</button>`;
+    h.querySelector(".track-toggle").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleTrackEnabled(t.id);
+    });
+    h.querySelector(".track-solo").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleTrackSolo(t.id);
+    });
+    h.querySelector(".track-id").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleTrackTargeted(t.id);
+    });
+    h.querySelector(".track-lock").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleTrackLocked(t.id);
+    });
+    h.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showTrackCtxMenu(ev.clientX, ev.clientY, t);
+    });
+    inner.appendChild(h);
+    const row = document.createElement("div");
+    row.className = "track" + (on ? "" : " disabled") + (solo ? " solo" : "");
+    row.dataset.track = t.id;
+    row.style.height = t.h + "px";
+    els.tracks.appendChild(row);
+  }
+  syncAllTrackDisabledUI(); // lock / target state on the fresh headers
+  renderMixer(); // strips follow the A-track list
+}
+/* keep track headers vertically aligned with the (scrollable) track rows */
+els.timelineScroll.addEventListener("scroll", () => {
+  const inner = $("trackHeadInner");
+  if (inner) inner.style.transform = `translateY(${-els.timelineScroll.scrollTop}px)`;
+});
+function contentWidth() {
+  const minSec = (els.timelineScroll.clientWidth || 800) / state.pps;
+  return Math.max(projDur() + TIMELINE_PAD_SEC, minSec) * state.pps;
+}
+function clipTransitionDur(tr) {
+  if (!tr || tr.type === "none") return 0;
+  const d = +tr.duration;
+  return isFinite(d) && d > 0 ? d : 0;
+}
+function clipBorderRadius() {
+  return state.trackSize === "s" ? 2 : 5;
+}
+/* Top-edge SVG wedges — width from transition duration × pps. */
+function transitionMarksHtml(c, trackH) {
+  let html = "";
+  const clipH = Math.max(8, trackH - 6);
+  const r = clipBorderRadius();
+  const wedge = (tr, side) => {
+    const dur = clipTransitionDur(tr);
+    if (!dur) return;
+    const w = Math.max(4, Math.min(dur, c.duration) * state.pps);
+    const bot = clipH - r;
+    const focused = state.selId === c.id && state.transFocus === side ? " focused" : "";
+    // Audio fades draw their real gain curve instead of a straight ramp.
+    if (c.kind === "audio" && tr.type === "fade") {
+      const N = 24, pts = [`0,0`, `${w},0`];
+      for (let i = N; i >= 0; i--) {
+        const u = side === "in" ? i / N : 1 - i / N;
+        const g = audioFadeGain(tr.curve, u) ?? EASE["ease-out"](u);
+        pts.push(`${(w * i / N).toFixed(1)},${(bot * (1 - g)).toFixed(1)}`);
+      }
+      html += `<div class="trans-mark ${side}${focused}" style="width:${w}px" data-side="${side}">` +
+        `<svg viewBox="0 0 ${w} ${clipH}" preserveAspectRatio="none" aria-hidden="true">` +
+        `<polygon points="${pts.join(" ")}"/></svg>` +
+        `<div class="trans-dur-handle" title="Drag to adjust duration"></div></div>`;
+      return;
+    }
+    if (side === "in") {
+      html += `<div class="trans-mark in${focused}" style="width:${w}px" data-side="in">` +
+        `<svg viewBox="0 0 ${w} ${clipH}" preserveAspectRatio="none" aria-hidden="true">` +
+        `<polygon points="0,0 ${w},0 0,${bot}"/></svg>` +
+        `<div class="trans-dur-handle" title="Drag to adjust duration"></div></div>`;
+    } else {
+      html += `<div class="trans-mark out${focused}" style="width:${w}px" data-side="out">` +
+        `<svg viewBox="0 0 ${w} ${clipH}" preserveAspectRatio="none" aria-hidden="true">` +
+        `<polygon points="0,0 ${w},0 ${w},${bot}"/></svg>` +
+        `<div class="trans-dur-handle" title="Drag to adjust duration"></div></div>`;
+    }
+  };
+  wedge(c.transitionIn, "in");
+  wedge(c.transitionOut, "out");
+  return html;
+}
+/* Group keyframes by clip-local time → [{ t, keys: ["opacity","scale"] }, …]. */
+function clipKeyframeGroups(c) {
+  if (!c?.keyframes) return [];
+  const byT = new Map();
+  for (const [channel, arr] of Object.entries(c.keyframes)) {
+    // Auto-duck can write dozens of keys; the dashed volume line shows them.
+    if (!Array.isArray(arr) || channel === "duck") continue;
+    for (const kf of arr) {
+      const t = +kf.t;
+      if (!Number.isFinite(t)) continue;
+      const key = t.toFixed(4);
+      let g = byT.get(key);
+      if (!g) { g = { t, keys: [] }; byT.set(key, g); }
+      if (!g.keys.includes(channel)) g.keys.push(channel);
+    }
+  }
+  return [...byT.values()].sort((a, b) => a.t - b.t);
+}
+const clipKeyframeLocalTimes = (c) => clipKeyframeGroups(c).map((g) => g.t);
+/* Diamond marks on the clip body — one per unique time; count badge if multi-channel. */
+function clipKeyframesHtml(c) {
+  const groups = clipKeyframeGroups(c);
+  if (!groups.length || !(c.duration > 0)) return "";
+  let html = `<div class="clip-kfs">`;
+  for (const { t, keys } of groups) {
+    if (t < -1e-6 || t > c.duration + 1e-6) continue;
+    const pct = Math.max(0, Math.min(100, (t / c.duration) * 100));
+    const label = keys.join(", ") + " @ " + fmt(c.start + t);
+    const badge = keys.length > 1 ? `<span class="clip-kf-n">${keys.length}</span>` : "";
+    const multi = keys.length > 1 ? " multi" : "";
+    html += `<div class="clip-kf${multi}" style="left:${pct}%" data-t="${t}" title="${label}">${badge}</div>`;
+  }
+  return html + `</div>`;
+}
+function rebuildClips() {
+  const w = contentWidth();
+  els.tracksContent.style.width = w + "px";
+  els.ruler.style.width = els.timelineScroll.clientWidth + "px";
+  for (const row of els.tracks.children) row.innerHTML = "";
+  const matted = project.clips.map((x) => [x, clipMatte(x)]).filter(([, m]) => m);
+  const isMatte = (c) => matted.some(([x, m]) => m.track === c.track && clipRenders(x) &&
+    x.start < c.start + c.duration && c.start < x.start + x.duration);   // hidden while it cuts that clip
+  for (const c of project.clips) {
+    const tr = trackOf(c); if (!tr) continue;
+    const row = els.tracks.querySelector(`[data-track="${c.track}"]`);
+    const div = document.createElement("div");
+    div.className = `clip c-${c.kind}` +
+      (state.selIds.has(c.id) ? " selected" : "") + (c.id === state.selId ? " primary" : "") +
+      (isClipLocked(c) ? " locked" : "") + (c.disabled === true ? " disabled" : "") +
+      (c.unlinked === true ? " unlinked" : "") + (c.kind !== "audio" && isMatte(c) ? " matte-src" : "") +
+      (isMediaOffline(c.mediaId) ? " offline" : "");
+    div.dataset.id = c.id;
+    div.style.left = c.start * state.pps + "px";
+    div.style.width = Math.max(8, c.duration * state.pps) + "px";
+    let body = "";
+    if (c.kind === "video" && trackSizeShowsThumbs()) {
+      const thumb = runtime.mediaAux.get(c.mediaId)?.thumb;
+      if (thumb) body += `<div class="thumbs" style="background-image:url('${thumb}')"></div>`;
+    }
+    const hasWave = c.kind === "audio" && !!wavePeaksFor(c);
+    if (hasWave) body += `<canvas class="wave"></canvas>`;
+    const badge = (isMediaOffline(c.mediaId) ? "⚠ Offline · " : "") + (c.keyframes && Object.keys(c.keyframes).length ? "◆ " : "") +
+                  (c.transitionIn || c.transitionOut ? "⇄ " : "") +
+                  (clipMatte(c) ? "◐ " : "");
+    const chTag = (() => {
+      const s = audioChannelShort(c.props?.audioChannel);
+      return s ? s + " · " : "";
+    })();
+    const label = c.kind === "text" ? "T · " + (c.props.text || "").split("\n")[0]
+      : c.kind === "adjust" ? "FX · " + (c.name || "")
+      : c.kind === "shape" ? "◆ · " + (c.name || "")
+      : c.kind === "null" ? "✥ · " + (c.name || "")
+      : c.kind === "comp" ? "▣ · " + ((getComp(c.compId) || {}).name || c.name || "missing comp")
+      : c.kind === "audio" ? chTag + (c.name || "")
+      : (c.name || "");
+    body += `<div class="fade"></div>
+      <div class="clip-label">${badge}${escapeHtml(label)}</div>`;
+    if (c.kind === "comp") {
+      // say on hover how to get inside (wide enough clips show it in the clip, every one in its tooltip)
+      const comp = getComp(c.compId);
+      div.title = comp ? `${comp.template ? "Template" : "Composition"} "${comp.name}" — double-click to open and edit${comp.template ? " · its fields are in the Inspector" : ""}` : "Its composition is missing";
+      if (comp && c.duration * state.pps >= label.length * 7 + 190) body += `<div class="comp-open-hint">Double-click to open</div>`;
+    }
+    body += clipKeyframesHtml(c);
+    let inner = `<div class="clip-body">${body}</div>`;
+    inner += transitionMarksHtml(c, tr.h);
+    if (c.kind === "audio") inner += volBandHtml(c, tr.h) + fadeGripsHtml(c);
+    inner += `<div class="handle l"></div><div class="handle r"></div>`;
+    div.innerHTML = inner;
+    if (hasWave) div.classList.add("has-wave");
+    row.appendChild(div);
+    if (hasWave) drawClipWave(div.querySelector(".wave"), c, tr.h);
+  }
+  paintAudioOverlaps();
+  paintSilences();
+  state.dirtyTimeline = false;
+  updateWorkArea();
+}
+/* The silences Find marked: a band on each lane of the clips that were listened to. */
+function paintSilences() {
+  const s = state.silence;
+  if (!s) return;
+  if (s.sig !== silenceSig()) { state.silence = null; return; }   // the timeline moved on: they no longer line up
+  const lanes = new Set(withLinked(project.clips.filter((c) => s.ids.includes(c.id))).map((c) => c.track));
+  for (const id of lanes) {
+    const row = els.tracks.querySelector(`[data-track="${id}"]`);
+    if (!row) continue;
+    for (const sp of s.spans) {
+      const el = document.createElement("div");
+      el.className = "silence-span";
+      el.style.left = (sp.from * state.pps) + "px";
+      el.style.width = Math.max(2, (sp.to - sp.from) * state.pps) + "px";
+      el.title = `Silence ${fmt(sp.from)} → ${fmt(sp.to)} (${(sp.to - sp.from).toFixed(2)} s) · Inspector → Silence → Cut`;
+      row.appendChild(el);
+    }
+  }
+}
+/* Hatched bands where two+ audio clips share a track (CSS draw, O(n²) per track). */
+function paintAudioOverlaps() {
+  const byTrack = new Map();
+  for (const c of project.clips) {
+    if (c.kind !== "audio") continue;
+    let list = byTrack.get(c.track);
+    if (!list) byTrack.set(c.track, list = []);
+    list.push(c);
+  }
+  for (const [trackId, clips] of byTrack) {
+    if (clips.length < 2) continue;
+    const row = els.tracks.querySelector(`[data-track="${trackId}"]`);
+    if (!row) continue;
+    const intervals = [];
+    for (let i = 0; i < clips.length; i++) {
+      for (let j = i + 1; j < clips.length; j++) {
+        const t0 = Math.max(clips[i].start, clips[j].start);
+        const t1 = Math.min(clipEnd(clips[i]), clipEnd(clips[j]));
+        if (t1 - t0 > 1e-4 && !isCrossfaded(clips[i], clips[j])) intervals.push([t0, t1]);
+      }
+    }
+    if (!intervals.length) continue;
+    intervals.sort((a, b) => a[0] - b[0]);
+    const merged = [[intervals[0][0], intervals[0][1]]];
+    for (let k = 1; k < intervals.length; k++) {
+      const last = merged[merged.length - 1];
+      const cur = intervals[k];
+      if (cur[0] <= last[1] + 1e-6) last[1] = Math.max(last[1], cur[1]);
+      else merged.push([cur[0], cur[1]]);
+    }
+    for (const [t0, t1] of merged) {
+      const el = document.createElement("div");
+      el.className = "track-overlap";
+      el.style.left = (t0 * state.pps) + "px";
+      el.style.width = Math.max(2, (t1 - t0) * state.pps) + "px";
+      el.title = "Overlapping audio";
+      row.appendChild(el);
+    }
+  }
+}
+
+/* Two overlapping audio clips whose fades cover the overlap are a crossfade,
+   not a mistake — no warning hatch. */
+function isCrossfaded(x, y) {
+  const [a, b] = x.start <= y.start ? [x, y] : [y, x];
+  const ov = Math.min(clipEnd(a), clipEnd(b)) - b.start - 1e-3;
+  return a.transitionOut?.type === "fade" && b.transitionIn?.type === "fade" &&
+    a.transitionOut.duration >= ov && b.transitionIn.duration >= ov;
+}
+
+/* ── Volume line (rubber band) + fade grips on audio clips ──
+   The line is the clip's volume over time on a dB taper (0 dB at 85%, +6 dB
+   on top). Drag it to change the level; with keyframes, dragging moves the
+   two around the pointer. Ctrl/Cmd-click the line adds a keyframe; drag a
+   point to move it; Alt-click or double-click a point removes it. A dashed
+   line shows the level after Auto-duck. Edits mirror onto linked stems. */
+const VOL_MAX = 2; // volume ceiling, +6.02 dB
+const VOL_TAPER = [[0, -60], [0.3, -30], [0.6, -12], [0.85, 0], [1, 20 * Math.log10(VOL_MAX)]];
+function taperPosToDb(taper, pos) {
+  pos = clamp(+pos || 0, 0, 1);
+  for (let i = 1; i < taper.length; i++) {
+    const [p1, d1] = taper[i], [p0, d0] = taper[i - 1];
+    if (pos <= p1) return d0 + (d1 - d0) * (pos - p0) / (p1 - p0);
+  }
+  return taper[taper.length - 1][1];
+}
+function taperDbToPos(taper, db) {
+  db = clamp(+db, taper[0][1], taper[taper.length - 1][1]);
+  for (let i = 1; i < taper.length; i++) {
+    const [p1, d1] = taper[i], [p0, d0] = taper[i - 1];
+    if (db <= d1) return p0 + (p1 - p0) * (db - d0) / (d1 - d0);
+  }
+  return 1;
+}
+function volToDb(v) { return v > 0 ? 20 * Math.log10(v) : FADER_DB_MIN; }
+function dbToVol(db) { return db <= FADER_DB_MIN ? 0 : Math.min(VOL_MAX, Math.pow(10, db / 20)); }
+function volToPos(v) { return taperDbToPos(VOL_TAPER, volToDb(v)); }
+function posToVol(pos) { return dbToVol(taperPosToDb(VOL_TAPER, pos)); }
+function volumeAtLocal(c, local) {
+  return clamp(kfChannel(c, "volume", local, +(c.props?.volume ?? 1)), 0, VOL_MAX);
+}
+function volBandHtml(c, trackH) {
+  const clipH = trackH - 6;
+  if (clipH < 24 || !(c.duration > 0)) return "";
+  const W = Math.max(8, c.duration * state.pps), H = clipH - 6;
+  const y = (v) => (3 + (1 - volToPos(v)) * H).toFixed(1);
+  const kfs = c.keyframes?.volume;
+  const pts = [];
+  if (!kfs?.length) pts.push(`0,${y(volumeAtLocal(c, 0))}`, `${W.toFixed(1)},${y(volumeAtLocal(c, 0))}`);
+  else {
+    pts.push(`0,${y(kfs[0].v)}`);
+    for (let i = 0; i < kfs.length; i++) {
+      const b = kfs[i], a = kfs[i - 1];
+      if (a && (b.ease || "ease-in-out") !== "linear") // eased segment: sample the curve
+        for (let s = 1; s < 12; s++) {
+          const lt = a.t + (b.t - a.t) * s / 12;
+          pts.push(`${(lt * state.pps).toFixed(1)},${y(volumeAtLocal(c, lt))}`);
+        }
+      pts.push(`${(b.t * state.pps).toFixed(1)},${y(b.v)}`);
+    }
+    pts.push(`${W.toFixed(1)},${y(kfs[kfs.length - 1].v)}`);
+  }
+  let duck = "";
+  if (c.keyframes?.duck?.length) {
+    const n = Math.min(600, Math.max(2, Math.ceil(W / 3)));
+    const dp = [];
+    for (let i = 0; i <= n; i++) {
+      const lt = c.duration * i / n;
+      const v = volumeAtLocal(c, lt) * dbToGain(kfChannel(c, "duck", lt, 0));
+      dp.push(`${(W * i / n).toFixed(1)},${y(v)}`);
+    }
+    duck = `<polyline class="vol-duck" points="${dp.join(" ")}"/>`;
+  }
+  const line = pts.join(" ");
+  let html = `<svg class="vol-band" width="${W.toFixed(1)}" height="${clipH}" aria-hidden="true">${duck}` +
+    `<polyline class="vol-line" points="${line}"/>` +
+    `<polyline class="vol-hit" points="${line}"><title>Volume — drag to change · Ctrl/Cmd-click: add keyframe</title></polyline></svg>`;
+  if (kfs?.length) for (let i = 0; i < kfs.length; i++) {
+    const k = kfs[i];
+    html += `<div class="vol-pt" data-i="${i}" style="left:${(k.t * state.pps).toFixed(1)}px;top:${y(k.v)}px" ` +
+      `title="${fmtDb(volToDb(k.v))} @ ${fmt(c.start + k.t)} — drag · Alt-click: remove"></div>`;
+  }
+  return html;
+}
+function fadeGripsHtml(c) {
+  const fin = c.transitionIn?.type === "fade" ? clipTransitionDur(c.transitionIn) : 0;
+  const fout = c.transitionOut?.type === "fade" ? clipTransitionDur(c.transitionOut) : 0;
+  return `<div class="fade-grip l" style="left:${(Math.min(fin, c.duration) * state.pps).toFixed(1)}px" title="Drag to fade in"></div>` +
+    `<div class="fade-grip r" style="right:${(Math.min(fout, c.duration) * state.pps).toFixed(1)}px" title="Drag to fade out"></div>`;
+}
+const volGroup = (c) => withLinked([c]).filter((x) => x.kind === "audio");
+/** Copy c's volume (static + keyframes) onto its linked stems. */
+function mirrorVolume(c) {
+  for (const x of volGroup(c)) {
+    if (x === c) continue;
+    x.props.volume = c.props.volume;
+    if (c.keyframes?.volume?.length) {
+      x.keyframes = x.keyframes || {};
+      x.keyframes.volume = c.keyframes.volume.map((k) => ({ ...k }));
+    } else if (x.keyframes?.volume) {
+      delete x.keyframes.volume;
+      if (!Object.keys(x.keyframes).length) x.keyframes = undefined;
+    }
+  }
+}
+function volBandRect(c) {
+  return els.tracks.querySelector(`.clip[data-id="${c.id}"] .vol-band`)?.getBoundingClientRect() || null;
+}
+function endVolEdit(c) {
+  hideTrimReadout();
+  state.gesture = false;
+  if (c.keyframes?.volume && !c.keyframes.volume.length) {
+    delete c.keyframes.volume;
+    if (!Object.keys(c.keyframes).length) c.keyframes = undefined;
+  }
+  mirrorVolume(c);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  refreshAudioHold();
+}
+function startVolBandGesture(e, c) {
+  e.preventDefault();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  if (!state.selIds.has(c.id)) selectClip(c.id);
+  const rect = volBandRect(c);
+  if (!rect) return;
+  const H = Math.max(1, rect.height - 6);
+  const local = clamp((e.clientX - rect.left) / state.pps, 0, c.duration);
+  pushUndo();
+  if (e.ctrlKey || e.metaKey) { // add a keyframe where the line is
+    const v = volumeAtLocal(c, local);
+    const t = +local.toFixed(4);
+    c.keyframes = c.keyframes || {};
+    const arr = (c.keyframes.volume || []).filter((k) => Math.abs(k.t - t) > 1e-3);
+    arr.push({ t, v: +v.toFixed(4), ease: "linear" });
+    arr.sort((a, b) => a.t - b.t);
+    c.keyframes.volume = arr;
+    mirrorVolume(c);
+    state.dirtyTimeline = true;
+    rebuildClips();
+    startVolPointGesture(e, c, arr.findIndex((k) => k.t === t), true);
+    return;
+  }
+  state.gesture = true;
+  const kfs = c.keyframes?.volume;
+  let idx = [];
+  if (kfs?.length) {
+    const j = kfs.findIndex((k) => k.t >= local);
+    idx = j < 0 ? [kfs.length - 1] : j === 0 ? [0] : [j - 1, j];
+  }
+  const orig = idx.map((i) => volToDb(kfs[i].v));
+  const v0 = volumeAtLocal(c, local), p0 = volToPos(v0), db0 = volToDb(v0);
+  const y0 = e.clientY;
+  const onMove = (ev) => {
+    const v = posToVol(p0 - (ev.clientY - y0) / H);
+    if (!idx.length) c.props.volume = +v.toFixed(4);
+    else {
+      const d = volToDb(v) - db0;
+      idx.forEach((i, n) => { kfs[i].v = +dbToVol(orig[n] + d).toFixed(4); });
+    }
+    mirrorVolume(c);
+    showTrimReadout(ev, fmtDb(volToDb(v)));
+    state.dirtyTimeline = true;
+    rebuildClips();
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    endVolEdit(c);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+function startVolPointGesture(e, c, i, undoDone = false, remove = e.altKey) {
+  e.preventDefault();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  const kfs = c.keyframes?.volume;
+  if (!kfs?.[i]) return;
+  if (!state.selIds.has(c.id)) selectClip(c.id);
+  if (!undoDone) pushUndo();
+  if (remove) { // the level it held stays as the clip's volume
+    if (kfs.length === 1) c.props.volume = kfs[0].v;
+    kfs.splice(i, 1);
+    endVolEdit(c);
+    return;
+  }
+  const rect = volBandRect(c);
+  const H = Math.max(1, (rect?.height || 30) - 6);
+  state.gesture = true;
+  const k = kfs[i];
+  const t0 = k.t, p0 = volToPos(k.v), x0 = e.clientX, y0 = e.clientY;
+  const lo = i > 0 ? kfs[i - 1].t + 0.001 : 0;
+  const hi = i < kfs.length - 1 ? kfs[i + 1].t - 0.001 : c.duration;
+  const onMove = (ev) => {
+    if (!ev.shiftKey) k.t = +clamp(t0 + (ev.clientX - x0) / state.pps, lo, hi).toFixed(4); // Shift: level only
+    k.v = +posToVol(p0 - (ev.clientY - y0) / H).toFixed(4);
+    mirrorVolume(c);
+    showTrimReadout(ev, `${fmtDb(volToDb(k.v))} · ${fmt(c.start + k.t)}`);
+    state.dirtyTimeline = true;
+    rebuildClips();
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    endVolEdit(c);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+/** Drag a fade grip: creates / resizes a constant-power fade on the clip and
+ *  its linked stems; dragging it back to the edge removes the fade. */
+function startFadeGripGesture(e, c, side) {
+  e.preventDefault();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  selectClip(c.id, { transFocus: side });
+  const key = side === "in" ? "transitionIn" : "transitionOut";
+  const group = volGroup(c);
+  const orig = c[key]?.type === "fade" ? clipTransitionDur(c[key]) : 0;
+  const x0 = e.clientX;
+  let moved = false;
+  state.gesture = true;
+  pushUndo();
+  const onMove = (ev) => {
+    const dx = ev.clientX - x0;
+    if (!moved && Math.abs(dx) < 2) return;
+    moved = true;
+    const dur = clamp(orig + (side === "in" ? dx : -dx) / state.pps, 0, c.duration);
+    for (const x of group) {
+      if (dur < MIN_TRANS_DUR) x[key] = undefined;
+      else x[key] = { type: "fade", duration: +dur.toFixed(3), curve: x[key]?.type === "fade" ? x[key].curve || "power" : "power" };
+    }
+    showTrimReadout(ev, dur < MIN_TRANS_DUR ? "no fade" : `fade ${side} ${dur.toFixed(2)}s`);
+    state.dirtyTimeline = true;
+    rebuildClips();
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    hideTrimReadout();
+    state.gesture = false;
+    if (moved) scheduleSave();
+    renderInspector();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+/* Render decoded peaks for the [in, in+duration] slice of the clip's media */
+function drawClipWave(cv, c, trackH) {
+  const peaks = wavePeaksFor(c);
+  if (!(peaks instanceof Float32Array)) return;
+  const w = Math.min(2400, Math.max(8, Math.round(c.duration * state.pps)));
+  const h = trackH - 8;
+  cv.width = w; cv.height = h;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#c9f29b";
+  g.globalAlpha = 0.75;
+  const mid = h / 2;
+  for (let x = 0; x < w; x++) {
+    const t = mediaTimeAt(c, c.start + (x / w) * c.duration);
+    const v = peaks[Math.min(peaks.length - 1, Math.floor(t * WAVE_PEAKS_PER_SEC))] || 0;
+    const bh = Math.max(1, v * (h - 2));
+    g.fillRect(x, mid - bh / 2, 1, bh);
+  }
+}
+
+/* ── Ruler ──
+   Pure vector 2D drawing with no <video>/DOM dependency (unlike the program
+   monitor), so it's a clean fit to move off the main thread: transfer the
+   canvas to a Worker once and post it a handful of numbers per frame instead
+   of running the drawing code here. Falls back to drawing directly on the
+   main thread (drawRulerMainThread) when OffscreenCanvas/
+   transferControlToOffscreen isn't available. */
+let rulerWorker = null, rulerWorkerTried = false;
+function ensureRulerWorker() {
+  if (rulerWorkerTried) return;
+  rulerWorkerTried = true;
+  try {
+    if (window.Worker && els.ruler.transferControlToOffscreen) {
+      const offscreen = els.ruler.transferControlToOffscreen();
+      const w = new Worker("ruler-worker.js");
+      w.postMessage({ type: "init", canvas: offscreen }, [offscreen]);
+      rulerWorker = w;
+    }
+  } catch { rulerWorker = null; }
+}
+function drawRuler() {
+  ensureRulerWorker();
+  const dpr = window.devicePixelRatio || 1;
+  const w = els.timelineScroll.clientWidth, h = RULER_H;
+  els.ruler.style.width = w + "px"; els.ruler.style.height = h + "px";
+  if (rulerWorker) {
+    rulerWorker.postMessage({
+      type: "draw", w, h, dpr,
+      sl: els.timelineScroll.scrollLeft, pps: state.pps,
+      markers: project.markers, markerColors: MARKER_COLORS,
+      inPoint: project.inPoint, outPoint: project.outPoint,
+      time: state.time, fps: projectFps(),
+    });
+    return;
+  }
+  drawRulerMainThread(w, h, dpr);
+}
+function drawRulerMainThread(w, h, dpr) {
+  const cv = els.ruler;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) {
+    cv.width = w * dpr; cv.height = h * dpr;
+  }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const sl = els.timelineScroll.scrollLeft, pps = state.pps;
+  const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
+  const step = steps.find((s) => s * pps >= 70) || 600;
+  const minor = step / 5;
+  const i0 = Math.max(0, Math.floor(sl / pps / minor));
+  // ticks + time labels first so IN/OUT can difference-blend over them
+  g.strokeStyle = "#4a4a55";
+  g.fillStyle = "#9a9aa6";
+  g.font = "10px Consolas, monospace";
+  g.beginPath();
+  for (let i = i0; i * minor * pps < sl + w; i++) {
+    const t = i * minor;
+    const x = Math.round(t * pps - sl) + 0.5;
+    const isMajor = i % 5 === 0;
+    g.moveTo(x, isMajor ? 8 : 17); g.lineTo(x, h);
+    if (isMajor) g.fillText(fmt(Math.round(t * 1000) / 1000).slice(0, 5), x + 4, 12);
+  }
+  g.stroke();
+  // dim timeline outside the IN–OUT work area
+  const inn = project.inPoint, out = project.outPoint;
+  if (inn != null && out != null && out > inn) {
+    const x0 = inn * pps - sl, x1 = out * pps - sl;
+    g.fillStyle = "#00000055";
+    if (x0 > 0) g.fillRect(0, 0, Math.min(w, x0), h);
+    if (x1 < w) g.fillRect(Math.max(0, x1), 0, w - Math.max(0, x1), h);
+  }
+  // beat/cue markers — coloured diamonds, name to the right (clipped at the next marker)
+  const mks = project.markers || [];
+  for (let i = 0; i < mks.length; i++) {
+    const mk = mks[i], x = mk.t * pps - sl;
+    if (x < -6 || x > w + 6) {
+      if (!mk.label || x > w) continue;
+    }
+    const col = markerColor(mk);
+    g.fillStyle = col;
+    g.beginPath();
+    g.moveTo(x, h - 9); g.lineTo(x + 4, h - 5); g.lineTo(x, h - 1); g.lineTo(x - 4, h - 5);
+    g.closePath(); g.fill();
+    if (mk.label) {
+      const next = mks[i + 1] ? mks[i + 1].t * pps - sl : w;
+      const room = Math.min(next - x - 10, 160);
+      if (room > 14) {
+        g.save();
+        g.beginPath(); g.rect(x + 6, h - 12, room, 12); g.clip();
+        g.font = "9px system-ui, sans-serif";
+        const tw = g.measureText(mk.label).width;
+        g.fillStyle = "#101014cc";
+        g.fillRect(x + 6, h - 11, Math.min(tw + 6, room), 10);
+        g.fillStyle = col;
+        g.fillText(mk.label, x + 9, h - 3);
+        g.restore();
+      }
+    }
+  }
+  // IN / OUT — bottom-aligned; `difference` keeps time glyphs readable where they overlap
+  // (true `xor` would punch transparent holes instead of showing the digits)
+  const mkH = (h - 4) * 0.75, bot = h - 1, top = bot - mkH, mid = (top + bot) / 2;
+  g.globalCompositeOperation = "difference";
+  if (inn != null) {
+    const x = inn * pps - sl;
+    if (x >= -10 && x <= w + 10) {
+      g.fillStyle = "#5eead4";
+      g.beginPath();
+      g.moveTo(x, top); g.lineTo(x, bot); g.lineTo(x + 8, mid);
+      g.closePath(); g.fill();
+    }
+  }
+  if (out != null) {
+    const x = out * pps - sl;
+    if (x >= -10 && x <= w + 10) {
+      g.fillStyle = "#fb923c";
+      g.beginPath();
+      g.moveTo(x, top); g.lineTo(x, bot); g.lineTo(x - 8, mid);
+      g.closePath(); g.fill();
+    }
+  }
+  g.globalCompositeOperation = "source-over";
+  // playhead marker on ruler
+  const px = state.time * pps - sl;
+  if (px >= -8 && px <= w + 8) {
+    g.fillStyle = "#ff4d6a";
+    g.beginPath();
+    g.moveTo(px - 6, 12); g.lineTo(px + 6, 12); g.lineTo(px + 6, 19); g.lineTo(px, 25); g.lineTo(px - 6, 19);
+    g.closePath(); g.fill();
+  }
+}
+
+/* ── Snapping ── */
+/* Which targets pull a dragged time in (the ▾ menu next to Snap). `frames`
+   is not a target: when nothing is in reach it rounds to the frame grid. */
+const SNAP_TARGET_LABELS = {
+  clips: "Clip edges", playhead: "Playhead", markers: "Markers",
+  inout: "IN / OUT", keyframes: "Keyframes", frames: "Frame grid",
+};
+function snapTargets() { return getSetting("snapTargets") || DEFAULT_SETTINGS.snapTargets; }
+/* → {t, hit}: `hit` is true when a target (not the frame grid) caught t.
+   ignore: clip id, Set of ids, or null. opts.skipMarker: a marker being dragged. */
+function snapInfo(t, ignore, opts = {}) {
+  if (!state.snap) return { t, hit: false };
+  const on = snapTargets();
+  const ign = ignore instanceof Set ? ignore : new Set(ignore ? [ignore] : []);
+  const tol = SNAP_PX / state.pps;
+  const cands = [0];
+  if (on.playhead) cands.push(state.time);
+  if (on.markers) for (const mk of project.markers || []) if (mk !== opts.skipMarker) cands.push(mk.t);
+  if (on.inout) {
+    if (project.inPoint != null) cands.push(project.inPoint);
+    if (project.outPoint != null) cands.push(project.outPoint);
+  }
+  if (on.clips || on.keyframes) {
+    for (const c of project.clips) {
+      if (ign.has(c.id)) continue;
+      if (on.clips) cands.push(c.start, clipEnd(c));
+      if (on.keyframes) for (const lt of clipKeyframeLocalTimes(c)) cands.push(c.start + lt);
+    }
+  }
+  let best = t, bd = tol, hit = false;
+  for (const s of cands) {
+    const d = Math.abs(s - t);
+    if (d < bd) { bd = d; best = s; hit = true; }
+  }
+  if (!hit && on.frames) {
+    const fps = projectFps();
+    best = Math.round(t * fps) / fps;
+  }
+  noteSnap(hit ? best : null);
+  return { t: best, hit };
+}
+function snapTime(t, ignore, opts) { return snapInfo(t, ignore, opts).t; }
+/* Vertical guide at the time a drag snapped to. Coalesced per frame so a
+   miss on one edge doesn't hide a hit on the other; pointerup clears it. */
+let snapLineT = null, snapLineRaf = 0;
+function noteSnap(hitT) {
+  if (hitT != null) snapLineT = hitT;
+  if (snapLineRaf) return;
+  snapLineRaf = requestAnimationFrame(() => {
+    snapLineRaf = 0;
+    const el = els.snapLine;
+    if (el) {
+      const show = snapLineT != null && state.gesture;
+      el.classList.toggle("hidden", !show);
+      if (show) el.style.left = Math.round(snapLineT * state.pps) + "px";
+    }
+    snapLineT = null;
+  });
+}
+window.addEventListener("pointerup", () => els.snapLine?.classList.add("hidden"), true);
+function toggleSnapTarget(key) {
+  setSetting("snapTargets", { ...snapTargets(), [key]: !snapTargets()[key] });
+}
+function openSnapMenu(anchor) {
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu snap-menu";
+  const on = snapTargets();
+  menu.innerHTML = `<div class="snap-menu-head dim">Snap to</div>` +
+    Object.entries(SNAP_TARGET_LABELS).map(([k, label]) =>
+      `<label class="ctx-item snap-opt"><input type="checkbox" data-snap="${k}"${on[k] ? " checked" : ""}> <span>${label}</span></label>`).join("");
+  menu.addEventListener("change", (e) => {
+    const k = e.target.dataset.snap;
+    if (k) toggleSnapTarget(k);
+  });
+  const r = anchor.getBoundingClientRect();
+  showPopover(menu, r.left, r.bottom + 4);
+}
+
+/* ── Pointer interactions on timeline ── */
+function timeAtEvent(e) {
+  const rect = els.timelineScroll.getBoundingClientRect();
+  return clamp((e.clientX - rect.left + els.timelineScroll.scrollLeft) / state.pps, 0, 1e6);
+}
+function trackAtEvent(e) {
+  for (const row of els.tracks.children) {
+    const r = row.getBoundingClientRect();
+    if (e.clientY >= r.top && e.clientY < r.bottom) return row.dataset.track;
+  }
+  return null;
+}
+
+/* ── Edit tools (V / B / R / Y / U) ──
+   Select drags and trims as always. Ripple and Roll act on clip edges (the
+   trim handles); Slip and Slide act on the whole clip. */
+const EDIT_TOOLS = {
+  select: { key: "V", label: "Selection" },
+  ripple: { key: "B", label: "Ripple edit" },
+  roll: { key: "R", label: "Rolling edit" },
+  slip: { key: "Y", label: "Slip" },
+  slide: { key: "U", label: "Slide" },
+};
+function setEditTool(name) {
+  if (!EDIT_TOOLS[name]) return;
+  state.tool = name;
+  els.tracksContent.dataset.tool = name;
+  for (const b of document.querySelectorAll("[data-edit-tool]")) {
+    const on = b.dataset.editTool === name;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+document.querySelectorAll("[data-edit-tool]").forEach((b) =>
+  b.addEventListener("click", () => setEditTool(b.dataset.editTool)));
+/* Live offset beside the pointer while a trim tool drags. */
+function showTrimReadout(ev, text) {
+  let el = runtime.trimReadout;
+  if (!el) {
+    el = runtime.trimReadout = document.createElement("div");
+    el.className = "trim-readout";
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.style.left = ev.clientX + 14 + "px";
+  el.style.top = ev.clientY + 18 + "px";
+  el.hidden = false;
+}
+function hideTrimReadout() { if (runtime.trimReadout) runtime.trimReadout.hidden = true; }
+function fmtTrimDelta(d) {
+  const f = Math.round(Math.abs(d) * projectFps());
+  return `${d < 0 ? "−" : "+"}${Math.abs(d).toFixed(2)}s · ${f}f`;
+}
+/* Drag with a trim tool. Snapshot at pointerdown, restore before every step,
+   then run the op with the total delta — so the drag can swing both ways. */
+function startTrimToolGesture(e, c, mode) {
+  e.preventDefault();
+  const [tool, s] = mode.split("-");
+  const side = s === "l" ? "in" : "out";
+  const run = (d) => tool === "ripple" ? rippleTrim(c, side, d)
+    : tool === "roll" ? rollEdit(c, side, d)
+      : tool === "slip" ? slipClip(c, d) : slideClip(c, d);
+  const probe = run(0); // delta 0 changes nothing — it only asks "may I?"
+  if (typeof probe === "string") { toast(probe); return; }
+  state.gesture = true;
+  const snapshot = JSON.stringify(project.clips);
+  const cloneTr = (tr) => (tr ? { ...tr } : tr);
+  const base = new Map(project.clips.map((x) => [x.id, {
+    start: x.start, in: x.in, duration: x.duration, keyframes: x.keyframes,
+    transitionIn: cloneTr(x.transitionIn), transitionOut: cloneTr(x.transitionOut),
+    masks: x.props && x.props.masks,   // head trims re-base mask keys: each step starts from the originals
+    tracks: x.props && x.props.tracks,
+    shapes: x.props && x.props.shapes,
+  }]));
+  const restore = () => {
+    for (const x of project.clips) {
+      const b = base.get(x.id);
+      if (!b) continue;
+      x.start = b.start; x.in = b.in; x.duration = b.duration; x.keyframes = b.keyframes;
+      x.transitionIn = cloneTr(b.transitionIn); x.transitionOut = cloneTr(b.transitionOut);
+      if (x.props) {
+        if (b.masks) x.props.masks = b.masks; else delete x.props.masks;
+        if (b.tracks) x.props.tracks = b.tracks; else delete x.props.tracks;
+        if (b.shapes) x.props.shapes = b.shapes; else delete x.props.shapes;
+      }
+    }
+  };
+  // Snap targets ignore everything this edit moves.
+  const ignore = new Set(withLinked([c]).map((x) => x.id));
+  for (const n of [adjacentClip(c, "in"), adjacentClip(c, "out")])
+    if (n) for (const x of withLinked([n])) ignore.add(x.id);
+  const t0 = timeAtEvent(e), x0 = e.clientX;
+  const label = EDIT_TOOLS[tool].label;
+  let moved = false, applied = 0;
+  const onMove = (ev) => {
+    if (!moved && Math.abs(ev.clientX - x0) <= 3) return;
+    moved = true;
+    restore();
+    let d = timeAtEvent(ev) - t0;
+    if (tool === "roll" || (tool === "ripple" && side === "out")) {
+      const edge = side === "out" ? clipEnd(c) : c.start;
+      d = snapTime(edge + d, ignore) - edge;
+    } else if (tool === "slide") {
+      const sa = snapInfo(c.start + d, ignore), sb = snapInfo(clipEnd(c) + d, ignore);
+      const a = sa.t - c.start, b = sb.t - clipEnd(c);
+      if (sb.hit && (!sa.hit || Math.abs(b - d) < Math.abs(a - d))) d = b; else d = a;
+    }
+    const r = run(d);
+    applied = typeof r === "number" ? r : 0;
+    state.dirtyTimeline = true;
+    renderInspector(true);
+    showTrimReadout(ev, `${label} ${fmtTrimDelta(applied)}`);
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    hideTrimReadout();
+    state.gesture = false;
+    if (moved && Math.abs(applied) > 1e-9) {
+      runtime.undo.push(snapshot);
+      if (runtime.undo.length > 100) runtime.undo.shift();
+      runtime.redo.length = 0;
+      scheduleSave();
+    } else if (moved) restore();
+    state.dirtyTimeline = true;
+    renderInspector();
+    if (runtime.pendingSync) syncFromServer();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+/* Right-click a clip: enable / lock / link menu. */
+els.tracksContent.addEventListener("contextmenu", (e) => {
+  const clipDiv = e.target.closest(".clip");
+  if (!clipDiv) return;
+  const c = getClip(clipDiv.dataset.id);
+  if (!c) return;
+  e.preventDefault();
+  showClipCtxMenu(e.clientX, e.clientY, c);
+});
+els.tracksContent.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  // Clicking the timeline should release inspector text fields so shortcuts (z, s, …) work
+  if (isTypingTarget(document.activeElement) && els.inspector.contains(document.activeElement))
+    document.activeElement.blur();
+  const clipDiv = e.target.closest(".clip");
+  if (!clipDiv) {
+    // empty track background: drag = marquee select, plain click = seek + deselect
+    startMarquee(e);
+    return;
+  }
+  const c = getClip(clipDiv.dataset.id);
+  if (!c) return;
+  if (c.kind === "audio" && (state.tool || "select") === "select") {
+    const grip = e.target.closest(".fade-grip");
+    if (grip) { startFadeGripGesture(e, c, grip.classList.contains("r") ? "out" : "in"); return; }
+    const pt = e.target.closest(".vol-pt");
+    if (pt) { startVolPointGesture(e, c, +pt.dataset.i); return; }
+    if (e.target.closest(".vol-hit")) { startVolBandGesture(e, c); return; }
+  }
+  const kfMark = e.target.closest(".clip-kf");
+  if (kfMark) {
+    e.preventDefault();
+    selectClip(c.id);
+    setTime(c.start + (+kfMark.dataset.t || 0));
+    return;
+  }
+  const transHandle = e.target.closest(".trans-dur-handle");
+  if (transHandle) {
+    const wrap = transHandle.closest(".trans-mark");
+    startTransDurGesture(e, c, wrap?.classList.contains("out") ? "out" : "in");
+    return;
+  }
+  const transMark = e.target.closest(".trans-mark");
+  if (transMark) {
+    e.preventDefault();
+    selectClip(c.id, { transFocus: transMark.classList.contains("out") ? "out" : "in" });
+    return;
+  }
+  const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+  if (additive) {
+    selectClip(c.id, { toggle: true });
+    if (!state.selIds.has(c.id)) return; // toggled off — nothing to drag
+  } else if (!state.selIds.has(c.id)) {
+    selectClip(c.id);
+  } else if (state.selId !== c.id) {
+    // grabbing inside an existing multi-selection: keep the group, retarget the inspector
+    // (bin link-select unchanged — same media set)
+    state.selId = c.id;
+    state.dirtyTimeline = true;
+    renderInspector();
+  }
+  const onHandle = e.target.classList.contains("handle");
+  const edge = e.target.classList.contains("l") ? "l" : "r";
+  const tool = state.tool || "select";
+  if ((tool === "ripple" || tool === "roll") && onHandle) { startTrimToolGesture(e, c, `${tool}-${edge}`); return; }
+  if (tool === "slip" || tool === "slide") { startTrimToolGesture(e, c, tool); return; }
+  const mode = onHandle ? (edge === "l" ? "trim-l" : "trim-r") : "move";
+  // a plain click (no drag) on a multi-selection collapses it to that clip on release
+  startClipGesture(e, c, mode, !additive && state.selIds.size > 1);
+});
+
+els.tracksContent.addEventListener("dblclick", (e) => {
+  const clipDiv = e.target.closest(".clip");
+  if (!clipDiv) return;
+  const c = getClip(clipDiv.dataset.id);
+  if (!c) return;
+  const pt = e.target.closest(".vol-pt");
+  if (pt) { // double-click a volume point: remove it
+    e.preventDefault();
+    startVolPointGesture(e, c, +pt.dataset.i, false, true);
+    return;
+  }
+  if (e.target.closest(".handle, .trans-mark, .trans-dur-handle, .clip-kf, .fade-grip, .vol-hit")) return;
+  e.preventDefault();
+  if (c.kind === "comp") { enterComp(c.compId, c); return; }   // a comp opens on the timeline
+  loadSourceFromClip(c, { timelineTime: timeAtEvent(e) });
+});
+
+const MIN_TRANS_DUR = 0.1;
+function startTransDurGesture(e, c, side) {
+  e.preventDefault();
+  if (isGroupLocked(c)) { selectClip(c.id, { transFocus: side }); toastLocked(); return; }
+  const key = side === "in" ? "transitionIn" : "transitionOut";
+  const tr = c[key];
+  if (!tr) return;
+  selectClip(c.id, { transFocus: side });
+  state.gesture = true;
+  const origDur = tr.duration;
+  const x0 = e.clientX;
+  let moved = false;
+  pushUndo();
+
+  const onMove = (ev) => {
+    const dx = ev.clientX - x0;
+    if (Math.abs(dx) < 2 && !moved) return;
+    moved = true;
+    const sign = side === "in" ? 1 : -1;
+    const dur = clamp(origDur + sign * dx / state.pps, MIN_TRANS_DUR, c.duration);
+    tr.duration = +dur.toFixed(3);
+    state.dirtyTimeline = true;
+    rebuildClips();
+    const durK = side === "in" ? "transInDur" : "transOutDur";
+    const inp = els.inspector.querySelector(`[data-k="${durK}"]`);
+    if (inp) inp.value = tr.duration;
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    state.gesture = false;
+    if (moved) {
+      scheduleSave();
+      saveLastTransition(side, c[key]);
+    }
+    renderInspector();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+function startClipGesture(e, c, mode, collapseOnClick) {
+  e.preventDefault();
+  state.gesture = true;
+  const media = getMedia(c.mediaId);
+  const orig = {
+    start: c.start, in: c.in, duration: c.duration, track: c.track,
+    keyframes: c.keyframes ? JSON.parse(JSON.stringify(c.keyframes)) : undefined,
+    masks: c.props.masks,
+    tracks: c.props.tracks,
+    shapes: c.props.shapes,
+  };
+  // moving a clip that belongs to a multi-selection drags the whole group;
+  // AV-linked partners (video+audio from one file) always move together
+  const group = withLinked(mode === "move" && state.selIds.has(c.id) ? selectedClips() : [c]);
+  if (group.some(isClipLocked)) { state.gesture = false; toastLocked(); return; }
+  const groupOrig = new Map(group.map((x) => [x.id, {
+    start: x.start, in: x.in, duration: x.duration,
+    keyframes: x.keyframes ? JSON.parse(JSON.stringify(x.keyframes)) : undefined,
+  }]));
+  const groupIds = new Set(group.map((x) => x.id));
+  const t0 = timeAtEvent(e);
+  const x0 = e.clientX, y0 = e.clientY;
+  let moved = false;
+  const snapshot = JSON.stringify(project.clips);
+
+  const onMove = (ev) => {
+    const dt = timeAtEvent(ev) - t0;
+    // Count vertical motion too — track changes are often pure Y drags
+    if (!moved && (Math.abs(ev.clientX - x0) > 3 || Math.abs(ev.clientY - y0) > 3)) moved = true;
+    if (!moved) return;
+    if (mode === "move") {
+      // Snap whichever edge is closer to a target. A non-snapping edge has
+      // distance 0, which must NOT beat a real snap on the other edge.
+      const rawStart = orig.start + dt;
+      const rawEnd = orig.start + orig.duration + dt;
+      // (A frame-grid rounding is not a snap: it only applies to the start.)
+      const sStart = snapInfo(rawStart, groupIds);
+      const sEnd = snapInfo(rawEnd, groupIds);
+      let ns = sStart.t;
+      if (sEnd.hit && (!sStart.hit || Math.abs(sEnd.t - rawEnd) < Math.abs(sStart.t - rawStart)))
+        ns = sEnd.t - orig.duration;
+      // one time-delta for the whole group, clamped so nothing crosses 0
+      let d = ns - orig.start;
+      d = Math.max(d, -Math.min(...group.map((x) => groupOrig.get(x.id).start)));
+      for (const x of group) x.start = groupOrig.get(x.id).start + d;
+      // Dragged clip may change track; its AV-linked partner stays on its own lane
+      const tk = trackAtEvent(ev);
+      if (tk) {
+        const trk = TRACKS.find((t) => t.id === tk);
+        if (trk && (c.kind === "audio") === (trk.kind === "audio") && !isTrackLocked(tk)) {
+          c.track = tk;
+          routeClipGain(c);
+        }
+      }
+    } else if (mode === "trim-l") {
+      let ns = snapTime(orig.start + dt, groupIds);
+      const sp = clipSpeed(c);
+      const maxShiftLeft = FableCutEdit.hasSourceTime(c) ? orig.in / sp : 1e6;
+      ns = clamp(ns, Math.max(0, orig.start - maxShiftLeft), orig.start + orig.duration - MIN_DUR);
+      const d = ns - orig.start;
+      c.start = ns;
+      c.in = FableCutEdit.hasSourceTime(c) ? orig.in + d * sp : 0;
+      c.duration = orig.duration - d;
+      c.keyframes = shiftKF(orig.keyframes, d, c.duration);
+      if (orig.masks) c.props.masks = Mask.shiftKeys(orig.masks, d);
+      if (orig.shapes) c.props.shapes = Motion.shiftKeys(orig.shapes, d);
+      if (orig.tracks) { const tr = Tracker.shiftTracks(orig.tracks, d); if (tr.length) c.props.tracks = tr; else delete c.props.tracks; }
+      syncLinkedTiming(c);
+    } else { // trim-r
+      let ne = snapTime(orig.start + orig.duration + dt, groupIds);
+      let maxDur = 1e6;
+      const srcLen = c.kind === "comp" ? (getComp(c.compId) || {}).duration : media?.duration;
+      if (FableCutEdit.hasSourceTime(c) && srcLen)
+        maxDur = Math.max(MIN_DUR, (srcLen - orig.in) / clipSpeed(c));
+      c.duration = clamp(ne - orig.start, MIN_DUR, maxDur);
+      c.keyframes = shiftKF(orig.keyframes, 0, c.duration);
+      syncLinkedTiming(c);
+    }
+    state.dirtyTimeline = true;
+    renderInspector(true);
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    state.gesture = false;
+    if (moved) {
+      runtime.undo.push(snapshot);
+      if (runtime.undo.length > 100) runtime.undo.shift();
+      runtime.redo.length = 0;
+      scheduleSave();
+    } else if (collapseOnClick) {
+      selectClip(c.id);
+    }
+    if (runtime.pendingSync) syncFromServer();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+/* ── Marquee (rubber-band) selection on empty timeline area ──
+   Drag draws a box in tracksContent space and selects every clip it touches
+   (ctrl/cmd/shift keeps the existing selection). A click without drag keeps
+   the old behavior: deselect + seek to the click point. */
+function startMarquee(e) {
+  e.preventDefault();
+  state.gesture = true;
+  const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+  const base = additive ? new Set(state.selIds) : new Set();
+  const rect0 = els.tracksContent.getBoundingClientRect();
+  const x0 = e.clientX - rect0.left, y0 = e.clientY - rect0.top;
+  const rows = new Map(); // track id -> vertical band inside tracksContent
+  for (const row of els.tracks.children)
+    rows.set(row.dataset.track, { top: row.offsetTop, h: row.offsetHeight });
+  let box = null, moved = false;
+
+  const onMove = (ev) => {
+    const r = els.tracksContent.getBoundingClientRect();
+    const x1 = ev.clientX - r.left, y1 = ev.clientY - r.top;
+    if (!moved && Math.hypot(x1 - x0, y1 - y0) < 4) return;
+    moved = true;
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "marquee";
+      els.tracksContent.appendChild(box);
+    }
+    const L = Math.min(x0, x1), T = Math.min(y0, y1);
+    const bw = Math.abs(x1 - x0), bh = Math.abs(y1 - y0);
+    Object.assign(box.style, { left: L + "px", top: T + "px", width: bw + "px", height: bh + "px" });
+    const hits = new Set(base);
+    for (const c of project.clips) {
+      const row = rows.get(c.track);
+      if (!row) continue;
+      const cx0 = c.start * state.pps, cx1 = cx0 + Math.max(8, c.duration * state.pps);
+      if (cx0 < L + bw && cx1 > L && row.top < T + bh && row.top + row.h > T) hits.add(c.id);
+    }
+    state.selIds = hits;
+    // cheap live highlight — no full timeline rebuild per pointermove
+    for (const div of els.tracks.querySelectorAll(".clip"))
+      div.classList.toggle("selected", hits.has(div.dataset.id));
+  };
+  const onUp = (ev) => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    state.gesture = false;
+    if (box) box.remove();
+    if (!moved) {
+      selectClip(null);
+      setTime(timeAtEvent(ev));
+    } else {
+      if (!state.selIds.has(state.selId)) state.selId = [...state.selIds].pop() ?? null;
+      state.dirtyTimeline = true;
+      renderInspector();
+      syncBinSelectionFromTimeline();
+    }
+    if (runtime.pendingSync) syncFromServer();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+/* ── Scrubbing ── */
+function startScrub(e) {
+  e.preventDefault();
+  if (isSourceMode()) setMonitorMode("program");
+  state.gesture = true;
+  const seek = (ev) => setTime(timeAtEvent(ev));
+  seek(e);
+  const onUp = () => {
+    window.removeEventListener("pointermove", seek);
+    window.removeEventListener("pointerup", onUp);
+    state.gesture = false;
+    if (runtime.pendingSync) syncFromServer();
+  };
+  window.addEventListener("pointermove", seek);
+  window.addEventListener("pointerup", onUp);
+}
+/* Marker under a ruler pointer event: the diamond row at the bottom, ±6 px. */
+function markerAtRulerEvent(e) {
+  const r = els.ruler.getBoundingClientRect();
+  if (e.clientY - r.top < RULER_H - 13) return null;
+  const x = e.clientX - els.timelineScroll.getBoundingClientRect().left + els.timelineScroll.scrollLeft;
+  let best = null, bd = 6;
+  for (const m of project.markers || []) {
+    const d = Math.abs(m.t * state.pps - x);
+    if (d <= bd) { bd = d; best = m; }
+  }
+  return best;
+}
+/* Ruler: drag a marker diamond to move it (snaps like a clip edge), click one
+   to park the playhead on it; anywhere else scrubs. */
+function onRulerPointerDown(e) {
+  const mk = e.button === 0 ? markerAtRulerEvent(e) : null;
+  if (!mk) { if (e.button === 0) startScrub(e); return; }
+  e.preventDefault();
+  if (isSourceMode()) setMonitorMode("program");
+  state.gesture = true;
+  const snapshot = undoSnapshot(), x0 = e.clientX, t0 = mk.t;
+  let moved = false;
+  const onMove = (ev) => {
+    if (!moved && Math.abs(ev.clientX - x0) <= 3) return;
+    moved = true;
+    const t = clamp(t0 + (ev.clientX - x0) / state.pps, 0, 1e6);
+    mk.t = +snapTime(t, null, { skipMarker: mk }).toFixed(3);
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    state.gesture = false;
+    if (moved && mk.t !== t0) {
+      runtime.undo.push(snapshot);
+      if (runtime.undo.length > 100) runtime.undo.shift();
+      runtime.redo.length = 0;
+      project.markers.sort((a, b) => a.t - b.t);
+      scheduleSave();
+    } else if (!moved) seekToMarker(mk);
+    if (runtime.pendingSync) syncFromServer();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+els.ruler.addEventListener("pointerdown", onRulerPointerDown);
+els.ruler.addEventListener("dblclick", (e) => {
+  const mk = markerAtRulerEvent(e);
+  if (mk) openMarkerEditor(mk, e.clientX - 20, e.clientY + 10);
+});
+els.ruler.addEventListener("contextmenu", (e) => {
+  const mk = markerAtRulerEvent(e);
+  if (!mk) return;
+  e.preventDefault();
+  openMarkerEditor(mk, e.clientX, e.clientY);
+});
+els.ruler.addEventListener("pointermove", (e) => {
+  if (state.gesture) return;
+  const mk = markerAtRulerEvent(e);
+  els.ruler.style.cursor = mk ? "ew-resize" : "";
+  els.ruler.title = mk
+    ? `${mk.label ? mk.label + " · " : ""}${fmt(mk.t)} — drag to move · double-click to name / colour`
+    : "";
+});
+
+function setTime(t) {
+  state.time = clamp(t, 0, Math.max(projDur(), 0));
+  seekMediaWhilePaused();
+  if (state.audioHold) scheduleAudioHoldRefresh();
+}
+
+/* Absolute timeline times of every keyframe on the given clips (deduped). */
+function keyframeTimelineTimes(clips) {
+  const seen = new Set();
+  const out = [];
+  for (const c of clips) {
+    for (const local of clipKeyframeLocalTimes(c)) {
+      const t = +(c.start + local).toFixed(4);
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  out.sort((a, b) => a - b);
+  return out;
+}
+/** Clip In/Out times used as edit points. Selection wins; otherwise targeted tracks. */
+function editPointTimes() {
+  const clips = state.selIds.size
+    ? selectedClips()
+    : project.clips.filter((c) => isTrackTargeted(c.track));
+  const seen = new Set();
+  const out = [];
+  for (const c of clips) {
+    for (const t of [c.start, clipEnd(c)]) {
+      const v = +(+t).toFixed(4);
+      if (!Number.isFinite(v) || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  out.sort((a, b) => a - b);
+  return out;
+}
+/** Source In/Out (and 0 / duration) as edit points while the Source monitor is active. */
+function sourceEditPointTimes() {
+  const dur = sourceDur();
+  const seen = new Set();
+  const out = [];
+  for (const t of [0, state.source.in, state.source.out, dur]) {
+    if (t == null || !Number.isFinite(+t)) continue;
+    const v = +clamp(+t, 0, Math.max(dur, 0)).toFixed(4);
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  out.sort((a, b) => a - b);
+  return out;
+}
+/** Premiere-style ↑ / ↓: previous / next edit. Selected clip → its In then Out. */
+function goToEditPoint(dir) {
+  const src = isSourceMode();
+  const times = src ? sourceEditPointTimes() : editPointTimes();
+  if (!times.length) { toast(src ? "No Source marks" : "No cuts"); return; }
+  const eps = kfTimeEps();
+  const now = src ? state.source.time : state.time;
+  if (dir > 0) {
+    const next = times.find((t) => t > now + eps);
+    if (next == null) { toast(src ? "Already at Source end" : "Already at last cut"); return; }
+    if (src) setSourceTime(next); else { setTime(next); ensurePlayheadVisible(); }
+  } else {
+    let prev = null;
+    for (const t of times) if (t < now - eps) prev = t;
+    if (prev == null) { toast(src ? "Already at Source start" : "Already at first cut"); return; }
+    if (src) setSourceTime(prev); else { setTime(prev); ensurePlayheadVisible(); }
+  }
+}
+
+/* Jump playhead to previous (−1) or next (+1) keyframe.
+   Prefers selected clips; falls back to clips under the playhead.
+   Keyboard counterpart to Avid’s Ctrl/Cmd-click snap-to-audio-keyframe. */
+function goToKeyframe(dir) {
+  let clips = state.selIds.size ? selectedClips() : [];
+  if (!clips.some((c) => clipKeyframeLocalTimes(c).length)) {
+    const t = state.time;
+    clips = project.clips.filter((c) =>
+      clipKeyframeLocalTimes(c).length &&
+      t >= c.start - 1e-6 && t <= c.start + c.duration + 1e-6);
+  }
+  const times = keyframeTimelineTimes(clips);
+  if (!times.length) { toast("No keyframes"); return; }
+  const eps = kfTimeEps();
+  if (dir > 0) {
+    const next = times.find((t) => t > state.time + eps);
+    if (next == null) { toast("No next keyframe"); return; }
+    setTime(next);
+  } else {
+    let prev = null;
+    for (const t of times) if (t < state.time - eps) prev = t;
+    if (prev == null) { toast("No previous keyframe"); return; }
+    setTime(prev);
+  }
+}
+
+/* Add a marker at the playhead, or remove one already there (M key).
+   Works while playing — tap M on the beat to lay down a beat grid. */
+function toggleMarker() {
+  const t = +state.time.toFixed(3);
+  const tol = Math.max(0.05, SNAP_PX / state.pps);
+  project.markers = project.markers || [];
+  const near = project.markers.findIndex((m) => Math.abs(m.t - t) < tol);
+  pushUndo();
+  if (near >= 0 && !state.playing) project.markers.splice(near, 1);
+  else { project.markers.push({ t }); project.markers.sort((a, b) => a.t - b.t); }
+  scheduleSave();
+}
+/* Shift+M / Alt+Shift+M — playhead to the next / previous marker. */
+function goToMarker(dir) {
+  // The playhead stops at the last clip, so markers past it are skipped —
+  // otherwise ⇧M would park at the end and silently repeat forever.
+  const end = projDur() + 1e-3;
+  const m = adjacentMarker((project.markers || []).filter((mk) => mk.t <= end), state.time, dir);
+  if (!m) { toast(dir > 0 ? "No marker after the playhead" : "No marker before the playhead"); return; }
+  seekToMarker(m);
+}
+/* Park the playhead on a marker (Program monitor). */
+function seekToMarker(m) {
+  if (m.t > projDur() + 1e-3) { toast("That marker is past the end of the timeline"); return; }
+  if (isSourceMode()) setMonitorMode("program");
+  setTime(m.t);
+  revealTime(m.t);
+}
+/* Scroll the timeline so time t is on screen (no-op when it already is). */
+function revealTime(t) {
+  const sc = els.timelineScroll, px = t * state.pps;
+  if (px < sc.scrollLeft || px > sc.scrollLeft + sc.clientWidth - 40)
+    sc.scrollLeft = Math.max(0, px - sc.clientWidth / 3);
+}
+/* Open a small popover at client (x, y), reusing the context-menu slot so the
+   outside-click / Escape handlers close it. */
+function showPopover(menu, clientX, clientY) {
+  hideTrackCtxMenu();
+  menu.id = "trackCtxMenu";
+  document.body.appendChild(menu);
+  trackCtxMenu = menu;
+  const pad = 6, w = menu.offsetWidth, h = menu.offsetHeight;
+  let x = clientX, y = clientY;
+  if (x + w + pad > window.innerWidth) x = window.innerWidth - w - pad;
+  if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
+  menu.style.left = Math.max(pad, x) + "px";
+  menu.style.top = Math.max(pad, y) + "px";
+}
+/* Name / colour / delete one marker. Edits apply live; the first change of
+   each kind takes one undo step. */
+function openMarkerEditor(mk, clientX, clientY) {
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu marker-pop";
+  const swatches = Object.entries(MARKER_COLORS).map(([name, hex]) =>
+    `<button type="button" class="marker-swatch" data-color="${name}" title="${name}" aria-label="${name}" style="--c:${hex}"></button>`).join("");
+  menu.innerHTML =
+    `<div class="marker-pop-head"><span class="timecode">${fmt(mk.t)}</span><span class="dim">Marker</span></div>` +
+    `<input type="text" class="marker-name" maxlength="80" placeholder="Name (optional)" spellcheck="false">` +
+    `<div class="marker-swatches">${swatches}</div>` +
+    `<button type="button" class="ctx-item marker-del"><span>Delete marker</span></button>`;
+  const input = menu.querySelector(".marker-name");
+  input.value = mk.label || "";
+  const syncSwatches = () => {
+    for (const b of menu.querySelectorAll(".marker-swatch"))
+      b.classList.toggle("on", b.dataset.color === (mk.color || "gold"));
+  };
+  syncSwatches();
+  let named = false;
+  input.addEventListener("input", () => {
+    if (!named) { pushUndo(); named = true; }
+    const label = input.value.trim().slice(0, 80);
+    if (label) mk.label = label; else delete mk.label;
+    scheduleSave();
+  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") hideTrackCtxMenu(); });
+  menu.querySelector(".marker-swatches").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-color]");
+    if (!b) return;
+    pushUndo();
+    if (b.dataset.color === "gold") delete mk.color; else mk.color = b.dataset.color;
+    syncSwatches();
+    scheduleSave();
+  });
+  menu.querySelector(".marker-del").addEventListener("click", () => {
+    const i = (project.markers || []).indexOf(mk);
+    if (i >= 0) { pushUndo(); project.markers.splice(i, 1); scheduleSave(); }
+    hideTrackCtxMenu();
+  });
+  showPopover(menu, clientX, clientY);
+  input.focus();
+  input.select();
+}
+/* Toolbar Markers list — click a row to jump, ✎ to rename / recolour. */
+function openMarkerList(anchor) {
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu marker-list";
+  const list = project.markers || [];
+  if (!list.length) {
+    menu.innerHTML = `<div class="marker-empty dim">No markers yet — press <kbd>M</kbd> at the playhead.</div>`;
+  } else {
+    menu.innerHTML = list.map((m, i) =>
+      `<div class="marker-row" data-i="${i}">` +
+      `<button type="button" class="ctx-item marker-go" data-i="${i}">` +
+      `<span class="marker-dot" style="--c:${markerColor(m)}"></span>` +
+      `<span class="timecode">${fmt(m.t)}</span>` +
+      `<span class="marker-label${m.label ? "" : " dim"}">${m.label ? escapeHtml(m.label) : "—"}</span></button>` +
+      `<button type="button" class="btn tiny marker-edit" data-i="${i}" title="Rename / colour">✎</button></div>`,
+    ).join("") +
+      `<button type="button" class="ctx-item marker-clear"><span>Clear all markers</span></button>`;
+  }
+  menu.addEventListener("click", (e) => {
+    const go = e.target.closest(".marker-go"), ed = e.target.closest(".marker-edit");
+    if (go) {
+      const m = list[+go.dataset.i];
+      hideTrackCtxMenu();
+      seekToMarker(m);
+    } else if (ed) {
+      const r = ed.getBoundingClientRect();
+      openMarkerEditor(list[+ed.dataset.i], r.left, r.bottom + 4);
+    } else if (e.target.closest(".marker-clear")) {
+      pushUndo();
+      project.markers = [];
+      scheduleSave();
+      hideTrackCtxMenu();
+    }
+  });
+  const r = anchor.getBoundingClientRect();
+  showPopover(menu, r.left, r.bottom + 4);
+}
+/* Work-area IN/OUT markers (I / O). Shift+I / Shift+O clear them. */
+function workAreaTime() {
+  return Math.max(TIMELINE_START_TIME, +state.time.toFixed(3));
+}
+function setInPoint(at) {
+  const t = at == null ? workAreaTime() : Math.max(TIMELINE_START_TIME, +at.toFixed(3));
+  const prevOut = project.outPoint;
+  const { inPoint, outPoint } = normalizeWorkArea(t, prevOut);
+  if (prevOut != null && inPoint == null && outPoint == null) {
+    toast(Math.abs(t - prevOut) < 1e-6 ? "IN and OUT must be at different times" : "IN must be before OUT");
+  }
+  project.inPoint = inPoint;
+  project.outPoint = outPoint;
+  updateWorkArea();
+  syncTrimIOButton();
+  scheduleSave();
+}
+function setOutPoint(at) {
+  const t = at == null ? workAreaTime() : Math.max(TIMELINE_START_TIME, +at.toFixed(3));
+  const prevIn = project.inPoint;
+  const { inPoint, outPoint } = normalizeWorkArea(prevIn, t);
+  if (prevIn != null && inPoint == null && outPoint == null) {
+    toast(Math.abs(t - prevIn) < 1e-6 ? "IN and OUT must be at different times" : "OUT must be after IN");
+  }
+  project.inPoint = inPoint;
+  project.outPoint = outPoint;
+  updateWorkArea();
+  syncTrimIOButton();
+  scheduleSave();
+}
+function clearInPoint() {
+  if (project.inPoint == null) return;
+  project.inPoint = null;
+  updateWorkArea();
+  syncTrimIOButton();
+  scheduleSave();
+}
+function clearOutPoint() {
+  if (project.outPoint == null) return;
+  project.outPoint = null;
+  updateWorkArea();
+  syncTrimIOButton();
+  scheduleSave();
+}
+function updateWorkArea() {
+  const left = $("workDimL"), right = $("workDimR");
+  if (!left || !right) return;
+  const a = project.inPoint, b = project.outPoint;
+  const contentW = els.tracksContent.offsetWidth || contentWidth();
+  if (a == null || b == null || b <= a) {
+    left.classList.add("hidden");
+    right.classList.add("hidden");
+    return;
+  }
+  const x0 = a * state.pps, x1 = b * state.pps;
+  left.classList.remove("hidden");
+  right.classList.remove("hidden");
+  left.style.width = Math.max(0, x0) + "px";
+  right.style.left = x1 + "px";
+  right.style.width = Math.max(0, contentW - x1) + "px";
+}
+
+/* ── Drag & drop: bin → timeline, files → window ── */
+els.timelineScroll.addEventListener("dragover", (e) => {
+  if (["text/fablecut-media", "text/fablecut-comp", "text/fablecut-template"].some((t) => e.dataTransfer.types.includes(t))) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    for (const row of els.tracks.children)
+      row.classList.toggle("drop-hint", row.dataset.track === trackAtEvent(e));
+  }
+});
+els.timelineScroll.addEventListener("dragleave", () => {
+  for (const row of els.tracks.children) row.classList.remove("drop-hint");
+});
+els.timelineScroll.addEventListener("drop", (e) => {
+  for (const row of els.tracks.children) row.classList.remove("drop-hint");
+  const cid = e.dataTransfer.getData("text/fablecut-comp");
+  if (cid) { e.preventDefault(); const comp = getComp(cid); if (comp) addCompClip(comp, trackAtEvent(e), snapTime(timeAtEvent(e), null)); return; }
+  const tid = e.dataTransfer.getData("text/fablecut-template");
+  if (tid) { e.preventDefault(); const t = findTemplate(tid); if (t) addTemplateClip(t, trackAtEvent(e), snapTime(timeAtEvent(e), null)); return; }
+  const mid = e.dataTransfer.getData("text/fablecut-media");
+  if (!mid) return;
+  e.preventDefault();
+  const m = getMedia(mid); if (!m) return;
+  const track = trackAtEvent(e), at = snapTime(timeAtEvent(e), null);
+  // library assets may not be probed yet — addLibraryItem fills metadata first
+  if ((m.duration == null && m.kind !== "image" && m.kind !== "svg") ||
+    (m.kind === "svg" && !runtime.mediaAux.get(m.id)?.svgText))
+    addLibraryItem({ name: m.name, src: m.src }, track, at);
+  else
+    addClipFromMedia(m, track, at);
+});
+
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (e.dataTransfer?.types.includes("Files")) { dragDepth++; document.body.classList.add("file-drag"); }
+});
+window.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("file-drag"); }
+});
+window.addEventListener("dragover", (e) => {
+  if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+  dragDepth = 0; document.body.classList.remove("file-drag");
+  if (e.dataTransfer?.files.length) { e.preventDefault(); importFiles(e.dataTransfer.files); }
+});
+
+/* ── Zoom ── */
+function setZoom(pps, anchorClientX) {
+  const scroller = els.timelineScroll;
+  const rect = scroller.getBoundingClientRect();
+  const ax = anchorClientX != null ? anchorClientX - rect.left : rect.width / 2;
+  const tAtAnchor = (scroller.scrollLeft + ax) / state.pps;
+  state.pps = clamp(pps, ZOOM_MIN, ZOOM_MAX);
+  els.zoomSlider.value = state.pps;
+  state.dirtyTimeline = true;
+  rebuildClips();
+  scroller.scrollLeft = Math.max(0, tAtAnchor * state.pps - ax);
+}
+/* Fit clip content into 95% of the viewport, then scroll to the start.
+   TIMELINE_PAD_SEC is scroll room added by contentWidth(), not part of the fit. */
+function zoomToFit() {
+  const w = els.timelineScroll.clientWidth || 800;
+  const span = Math.max(projDur(), 1);
+  setZoom((TIMELINE_FIT_FILL * w) / span);
+  els.timelineScroll.scrollLeft = 0;
+}
+/* Zoom so the selection fills 90% of the timeline width and is centered.
+   One clip → that clip; multiple → the time range covering all of them. */
+function zoomToSelection() {
+  const clips = selectedClips();
+  if (!clips.length) { toast("Select a clip to zoom to"); return; }
+  const t0 = Math.min(...clips.map((c) => c.start));
+  const t1 = Math.max(...clips.map((c) => c.start + c.duration));
+  zoomToRange(t0, t1);
+}
+/* Zoom so the IN–OUT work area fills 90% of the timeline width and is centered. */
+function zoomToWorkArea() {
+  const t0 = project.inPoint, t1 = project.outPoint;
+  if (t0 == null || t1 == null || t1 <= t0) {
+    toast("Set IN and OUT markers first (I / O)");
+    return;
+  }
+  zoomToRange(t0, t1);
+}
+function zoomToRange(t0, t1) {
+  const dur = Math.max(t1 - t0, MIN_DUR);
+  const w = els.timelineScroll.clientWidth || 800;
+  const pps = clamp((0.9 * w) / dur, ZOOM_MIN, ZOOM_MAX);
+  state.pps = pps;
+  els.zoomSlider.value = pps;
+  rebuildClips();
+  const center = (t0 + t1) / 2;
+  const maxScroll = Math.max(0, contentWidth() - w);
+  els.timelineScroll.scrollLeft = clamp(center * pps - w / 2, 0, maxScroll);
+}
+els.zoomSlider.addEventListener("input", () => setZoom(+els.zoomSlider.value));
+$("btnZoomFit").addEventListener("click", zoomToFit);
+$("btnAddV").addEventListener("click", () => addTimelineTrack("video"));
+$("btnAddA").addEventListener("click", () => addTimelineTrack("audio"));
+els.timelineScroll.addEventListener("wheel", (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    setZoom(state.pps * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX);
+  }
+}, { passive: false });
+
+/* ═══════════════════════════ SELECTION & INSPECTOR ═══════════════════════ */
+function selectedMediaIds() {
+  const ids = new Set();
+  for (const c of selectedClips()) {
+    if (c.mediaId) ids.add(c.mediaId);
+  }
+  return ids;
+}
+/** Clear Project-bin link-select highlights (used when the setting turns off). */
+function clearBinSelectionHighlight() {
+  if (!els.binList) return;
+  for (const item of els.binList.querySelectorAll(".bin-item.selected"))
+    item.classList.remove("selected");
+}
+/** Highlight Project-bin items that match the timeline selection (when linkSelect is on). */
+function syncBinSelectionFromTimeline() {
+  if (!els.binList || !getSetting("linkSelect")) return; // no-op when off — avoids DOM work on every selection
+  const mediaIds = selectedMediaIds();
+  for (const item of els.binList.querySelectorAll(".bin-item[data-media-id]")) {
+    item.classList.toggle("selected", mediaIds.has(item.dataset.mediaId));
+  }
+}
+/** Select every timeline clip that uses this media (video primary when present). */
+function selectClipsByMediaId(mediaId) {
+  const clips = project.clips.filter((c) => c.mediaId === mediaId);
+  if (!clips.length) {
+    setSelection([]);
+    toast("No clips on the timeline use this media");
+    return;
+  }
+  clips.sort((a, b) => a.start - b.start || String(a.id).localeCompare(String(b.id)));
+  const primary = clips.find((c) => c.kind === "video") || clips[0];
+  if (state.binTab !== "project") setBinTab("project");
+  setSelection(clips.map((c) => c.id), primary.id);
+}
+function setSelection(ids, primary) {
+  state.selIds = new Set(ids);
+  state.selId = primary !== undefined ? primary : ([...state.selIds].pop() ?? null);
+  if (state.selId && !state.selIds.has(state.selId)) state.selIds.add(state.selId);
+  state.dirtyTimeline = true;
+  renderInspector();
+  syncBinSelectionFromTimeline();
+}
+/* Plain call replaces the selection; {toggle:true} (ctrl/cmd/shift+click)
+   adds/removes the clip from it. */
+function selectClip(id, opts) {
+  if (opts && opts.toggle && id != null) {
+    const s = new Set(state.selIds);
+    state.transFocus = null;
+    if (s.has(id)) { s.delete(id); setSelection([...s]); }
+    else { s.add(id); setSelection([...s], id); }
+    return;
+  }
+  const nextFocus = id == null ? null : (opts?.transFocus ?? null);
+  if (state.selId === id && state.selIds.size <= 1 && nextFocus === state.transFocus) return;
+  state.transFocus = nextFocus;
+  setSelection(id == null ? [] : [id], id ?? null);
+}
+/* Drop selected ids whose clips no longer exist (undo/redo, external reload) */
+function pruneSelection() {
+  state.selIds = new Set([...state.selIds].filter((id) => getClip(id)));
+  if (!state.selIds.has(state.selId)) state.selId = [...state.selIds].pop() ?? null;
+  syncBinSelectionFromTimeline();
+}
+const selectedClips = () => project.clips.filter((c) => state.selIds.has(c.id));
+/* Enable / lock / link toggles at the top of the inspector. They stay live
+   while the clip is locked — this is where you unlock it. */
+function clipStatusBar(c) {
+  const locked = isGroupLocked(c), disabled = c.disabled === true;
+  const linked = !!(c.linkGroup || c.linkedId);
+  const canLink = !linked && (c.kind === "video" || c.kind === "audio") && c.unlinked === true;
+  const b = (cmd, on, label, title, extra = "") =>
+    `<button type="button" class="clip-flag${on ? " on" : ""}" data-clip-cmd="${cmd}" aria-pressed="${on}" title="${title}"${extra}>${label}</button>`;
+  return `<div class="clip-flags">` +
+    b("disable", disabled, disabled ? "Disabled" : "Enabled",
+      disabled ? "Hidden from preview and export — click to enable (Shift+E)" : "Click to disable: hide from preview and export without deleting (Shift+E)") +
+    b("lock", locked, locked ? "Locked" : "Unlocked",
+      locked ? (c.locked === true ? "Click to unlock" : `Locked by track ${c.track} or a linked clip`) : "Click to lock — nothing can move or change it") +
+    ((linked || canLink) ? b("link", linked, linked ? "Linked" : "Unlinked",
+      linked ? "Video and audio move together — click to unlink (Ctrl/Cmd+L)" : "Click to relink with its audio (select both, Ctrl/Cmd+L)") : "") +
+    `</div>`;
+}
+function renderInspector(lite) {
+  if (colorState.open && !lite) renderColorPage();
+  const c = getClip(state.selId);
+  if (!c) {
+    els.inspector.innerHTML = `<div class="inspector-empty">Select a clip to edit its<br>transform, effects &amp; audio.</div>`;
+    renderKfGraphsPanel();
+    return;
+  }
+  if (lite) { // during gestures, just refresh timing numbers if present
+    const s = els.inspector.querySelector("[data-k=start]"), d = els.inspector.querySelector("[data-k=duration]");
+    if (s) s.value = c.start.toFixed(2);
+    if (d) d.value = c.duration.toFixed(2);
+    syncInspectorPlayhead(); // start/duration are in the stamp — refresh keyed fields + off-clip lock
+    return;
+  }
+  const p = propsAtPlayhead(c);
+  const kfCount = (k) => (c.keyframes && c.keyframes[k] ? c.keyframes[k].length : 0);
+  const kfCtl = (k) => {
+    if (!ANIMATABLE.includes(k)) return "";
+    const n = kfCount(k), on = !!kfAtPlayhead(c, k);
+    return `<span class="kf-ctl"><button class="kf-btn${n ? " has" : ""}${on ? " on" : ""}" data-kf="${k}" title="${on ? "Remove keyframe at playhead" : "Set keyframe at playhead"}">◆${n || ""}</button>${n ? `<button class="kf-btn" data-kfclear="${k}" title="Clear keyframes">✕</button>` : ""}</span>`;
+  };
+  /* Label carries two affordances that key off different click modifiers:
+     plain click toggles the keyframe graph (animatable props), Ctrl/Cmd-click
+     resets the whole channel, Shift-click resets at the playhead / removes
+     that keyframe. `reset` overrides which keys reset; defaults to k. */
+  const propLabel = (label, k = "", reset) => {
+    const keys = reset !== undefined ? reset : k;
+    const list = (Array.isArray(keys) ? keys : String(keys || "").split(",")).map((s) => s.trim()).filter(Boolean);
+    const canReset = list.some((rk) => Object.hasOwn(DEFAULT_PROPS, rk) || rk === "transIn" || rk === "transOut");
+    const isGraph = !!k && ANIMATABLE.includes(k);
+    if (!isGraph && !canReset) return `<label>${label}</label>`;
+    const cls = [
+      isGraph ? "kf-graph-toggle" : "",
+      isGraph && state.kfGraphs.has(k) ? "on" : "",
+      isGraph && kfCount(k) ? "has-kf" : "",
+      canReset ? "insp-reset" : "",
+    ].filter(Boolean).join(" ");
+    const attrs = (isGraph ? ` data-kfgraph="${k}"` : "") + (canReset ? ` data-reset="${list.join(",")}"` : "");
+    const title = isGraph && canReset
+      ? "Click: keyframe graph · Ctrl-click: reset channel · Shift-click: reset at playhead / remove keyframe"
+      : isGraph ? "Show / hide keyframe graph"
+        : "Ctrl-click: reset channel · Shift-click: reset at playhead / remove keyframe";
+    return `<label class="${cls}"${attrs} title="${title}">${label}</label>`;
+  };
+  const row = (label, inner, k = "", reset) =>
+    `<div class="insp-row">${propLabel(label, k, reset)}${inner}${k ? kfCtl(k) : ""}</div>`;
+  const slider = (k, min, max, step, val, unit = "") => {
+    const shown = fmtInspNum(val, step);
+    return row(k[0].toUpperCase() + k.slice(1),
+      `<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${shown}" title="Ctrl/Cmd-click: reset to default">
+       <span class="val" data-val="${k}" data-unit="${unit}">${shown}${unit}</span>`, k);
+  };
+  let html = (state.selIds.size > 1
+    ? `<div class="insp-multi">${state.selIds.size} clips selected — drag moves them together, Del deletes all. Fields below edit the primary (white-outlined) clip.</div>`
+    : "") + clipStatusBar(c) + `<div class="insp-section"><h3>Clip — ${c.kind}</h3>
+    ${row("Name", `<input type="text" data-k="name" value="${escapeHtml(c.name || "")}">`)}
+    ${c.mediaId ? row("Source", `<button type="button" class="btn tiny style-picker-btn" data-media-open title="Replace this clip's media — keeps position, trim, keyframes and effects">${escapeHtml((getMedia(c.mediaId) || {}).name || "Missing media")} ▾</button>`) : ""}
+    ${row("Start (s)", `<input type="number" data-k="start" step="0.01" value="${c.start.toFixed(2)}">`)}
+    ${row("Length (s)", `<input type="number" data-k="duration" step="0.01" value="${c.duration.toFixed(2)}">`)}
+  </div>`;
+  const sel = (label, k, opts, cur) => row(label,
+    `<select data-k="${k}">${opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${o}</option>`).join("")}</select>`, k);
+  const check = (label, k, on) => row(label, `<input type="checkbox" data-k="${k}" ${on ? "checked" : ""}>`, k);
+  // track matte: the mode, and the track it comes from (auto = the video track above)
+  const matteRows = () => {
+    const others = videoTrackIds().filter((id) => id !== c.track), auto = Mask.matteTrackFor({ ...c, props: { matte: "alpha" } }, videoTrackIds());
+    const opts = (cur) => [`<option value="" ${!cur ? "selected" : ""}>Above (${auto || "none"})</option>`, ...others.map((id) => `<option value="${id}" ${cur === id ? "selected" : ""}>${id}</option>`)].join("");
+    return row("Track matte", `<select data-k="matte">${["none", ...Mask.MATTES].map((o) => `<option value="${o}" ${(p.matte || "none") === o ? "selected" : ""}>${o.replace("-", " ")}</option>`).join("")}</select>`, "matte")
+      + (p.matte ? row("Matte track", `<select data-k="matteTrack">${opts(p.matteTrack)}</select>`, "matteTrack")
+        + (clipMatte(c) ? "" : `<div class="insp-note">No video track above to take the matte from — pick one.</div>`) : "");
+  };
+  if (c.kind === "adjust") {
+    html += `<div class="insp-section"><h3>Adjustment layer</h3>
+      ${slider("opacity", 0, 1, 0.01, p.opacity)}
+      ${matteRows()}
+    </div>`;
+  } else if (c.kind === "null") {
+    html += `<div class="insp-section"><h3>Null object</h3>
+      <p class="cl-note">A null never shows in the picture. Parent clips to it (their Parent field), then move, turn or scale the null to move them together.</p>
+      ${row("Position X", `<input type="number" data-k="x" value="${fmtInspNum(p.x)}">`, "x")}
+      ${row("Position Y", `<input type="number" data-k="y" value="${fmtInspNum(p.y)}">`, "y")}
+      ${slider("scale", 0.1, 4, 0.01, p.scale)}
+      ${slider("rotation", -180, 180, 1, p.rotation, "°")}
+      ${anchorRowsHtml(c, p, row)}
+      ${parentRowHtml(c)}
+    </div>`;
+  } else if (c.kind !== "audio") {
+    html += `<div class="insp-section"><h3>Transform</h3>
+      ${row("Position X", `<input type="number" data-k="x" value="${fmtInspNum(p.x)}">`, "x")}
+      ${row("Position Y", `<input type="number" data-k="y" value="${fmtInspNum(p.y)}">`, "y")}
+      ${slider("scale", 0.1, 4, 0.01, p.scale)}
+      ${slider("rotation", -180, 180, 1, p.rotation, "°")}
+      ${slider("opacity", 0, 1, 0.01, p.opacity)}
+      ${anchorRowsHtml(c, p, row)}
+      ${parentRowHtml(c)}
+      ${sel("Blend", "blend", BLEND_MODES, p.blend)}
+      ${matteRows()}
+    </div>`;
+  }
+  if (c.kind === "shape") html += shapeSectionHtml(c, p, row) + `<div class="insp-section"><h3>Look</h3>${slider("blur", 0, 40, 0.5, p.blur, "px")}${slider("shake", 0, 40, 0.5, p.shake, "px")}${slider("shakeSpeed", 1, 30, 0.5, p.shakeSpeed)}</div>`;
+  if (c.kind === "comp") html += templateSectionHtml(c, row) + compSectionHtml(c, row);
+  if (c.kind === "video" || c.kind === "image" || c.kind === "svg" || c.kind === "comp") {
+    html += `<div class="insp-section"><h3>Layout</h3>
+      ${sel("Fit", "fit", ["contain", "cover", "stretch", "none"], p.fit)}
+      ${row("Crop L/R %", `<input type="number" data-k="cropL" min="0" max="95" value="${p.cropL}" style="max-width:58px">
+                           <input type="number" data-k="cropR" min="0" max="95" value="${p.cropR}" style="max-width:58px">`, "", "cropL,cropR")}
+      ${row("Crop T/B %", `<input type="number" data-k="cropT" min="0" max="95" value="${p.cropT}" style="max-width:58px">
+                           <input type="number" data-k="cropB" min="0" max="95" value="${p.cropB}" style="max-width:58px">`, "", "cropT,cropB")}
+      ${slider("cornerRadius", 0, 300, 1, p.cornerRadius, "px")}
+      ${check("Flip H", "flipH", p.flipH)}
+      ${check("Flip V", "flipV", p.flipV)}
+    </div>`;
+  }
+  if (c.kind === "video" || c.kind === "image" || c.kind === "svg" || c.kind === "adjust" || c.kind === "comp") {
+    html += `<div class="insp-section"><h3>Filter / Color</h3>
+      ${sel("Preset", "filterPreset", Object.keys(FILTER_PRESETS), p.filterPreset)}
+      ${slider("brightness", 0, 200, 1, p.brightness, "%")}
+      ${slider("contrast", 0, 200, 1, p.contrast, "%")}
+      ${slider("saturation", 0, 200, 1, p.saturation, "%")}
+      ${slider("hue", -180, 180, 1, p.hue, "°")}
+      ${slider("temperature", -100, 100, 1, p.temperature)}
+      ${slider("tint", -100, 100, 1, p.tint)}
+      ${slider("blur", 0, 20, 0.5, p.blur, "px")}
+      ${slider("grayscale", 0, 100, 1, p.grayscale, "%")}
+      ${slider("sepia", 0, 100, 1, p.sepia, "%")}
+      ${slider("invert", 0, 100, 1, p.invert, "%")}
+      ${slider("vignette", 0, 100, 1, p.vignette, "%")}
+    </div>
+    <div class="insp-section"><h3>Motion FX</h3>
+      ${slider("shake", 0, 40, 0.5, p.shake, "px")}
+      ${slider("shakeSpeed", 1, 30, 0.5, p.shakeSpeed)}
+      ${slider("rgbSplit", 0, 30, 0.5, p.rgbSplit, "px")}
+      ${slider("grain", 0, 100, 1, p.grain, "%")}
+    </div>`;
+  }
+  if (c.kind === "video" || c.kind === "image") {
+    html += `<div class="insp-section"><h3>Keying / Cut-out</h3>
+      ${row("Key color", `<input type="color" data-k="chromaKey" value="${p.chromaKey || "#00ff00"}">
+        <button class="btn tiny${p.chromaKey ? "" : " toggle on"}" data-action="keyoff" title="Disable chroma key">off</button>`, "", "chromaKey")}
+      ${slider("chromaTolerance", 0, 100, 1, p.chromaTolerance)}
+      ${slider("chromaSoftness", 0, 100, 1, p.chromaSoftness)}
+      ${check("AI bg remove", "bgRemove", p.bgRemove)}
+    </div>`;
+  }
+  if (c.kind === "video" || c.kind === "audio") {
+    const chLabel = audioChannelLong(c.props?.audioChannel);
+    const nt = normalizeTarget();
+    html += `<div class="insp-section"><h3>Audio / Time</h3>
+      ${chLabel ? row("Channel", `<span style="opacity:.75">${chLabel}</span>`)
+        : row("Channels", `<select data-k="channelMode" title="Stereo: as recorded · Mono: fold L+R to one channel · Left / Right: use one side only · Swap: exchange L and R">${CHANNEL_MODES.map((o) =>
+          `<option value="${o}" ${o === clipChannelMode(c) ? "selected" : ""}>${o[0].toUpperCase() + o.slice(1)}</option>`).join("")}</select>`, "", "channelMode")}
+      ${row("Gain", `<input type="range" data-k="gain" min="-24" max="24" step="0.1" value="${fmtInspNum(clipGainDb(c), 0.1)}" title="Clip gain, applied before volume — Ctrl/Cmd-click: reset">
+         <span class="val" data-val="gain" data-unit=" dB">${fmtInspNum(clipGainDb(c), 0.1)} dB</span>`, "", "gain")}
+      ${row("Normalize", `<span class="insp-ctrls"><select data-norm-target title="Loudness target">${NORMALIZE_TARGETS.map((t) =>
+        `<option value="${t.id}" ${t.id === nt.id ? "selected" : ""}>${t.label}</option>`).join("")}</select>
+        <button type="button" class="btn tiny" data-norm-run title="Measure the selected clips and set their gain to hit this target (linked stems share one gain)">Apply</button></span>`)}
+      ${row("Noise", `<span class="insp-ctrls"><select data-denoise title="${state.connected && state.ffmpeg
+        ? "Noise reduction (ffmpeg FFT denoiser) — renders a cleaned copy of the file; Off switches back to the original"
+        : "Noise reduction needs the server with ffmpeg on PATH"}" ${state.connected && state.ffmpeg ? "" : "disabled"}>${["off", ...DENOISE_LEVELS].map((v) =>
+        `<option value="${v}" ${v === clipDenoise(c) ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></span>`)}
+      ${slider("volume", 0, 2, 0.01, p.volume)}
+      ${slider("pan", -1, 1, 0.01, p.pan)}
+      ${slider("speed", 0.25, 4, 0.05, p.speed, "×")}
+    </div>`;
+  }
+  if ((c.kind === "video" || c.kind === "audio") && typeof FableCutSilence !== "undefined") {
+    const so = silenceOptions(), found = state.silence;
+    const num = (k, lo, hi, step, unit, title) => `<span class="insp-ctrls"><input type="number" data-sil="${k}" min="${lo}" max="${hi}" step="${step}" value="${so[k]}" title="${title}" style="max-width:64px"> ${unit}</span>`;
+    html += `<div class="insp-section"><h3>Silence</h3>
+      ${row("Below", num("threshold", -80, -10, 1, "dB", "Quieter than this counts as silence (dBFS). Raise it toward −30 in a noisy room"))}
+      ${row("At least", num("minSilence", 0.1, 10, 0.1, "s", "Shorter pauses are left alone"))}
+      ${row("Keep", num("padding", 0, 2, 0.05, "s beside speech", "Quiet kept before and after each phrase, so words aren't clipped"))}
+      ${row("", state.silenceBusy
+        ? `<span class="insp-ctrls"><span style="opacity:.75">Listening…</span>
+        <button type="button" class="btn tiny" data-sil-clear title="Stop listening">Cancel</button></span>`
+        : `<span class="insp-ctrls"><button type="button" class="btn tiny" data-sil-find title="Listen to the selected clips and mark their silences on the timeline">Find</button>
+        ${found ? `<button type="button" class="btn tiny" data-sil-cut title="Extract every marked silence on the targeted tracks (one undo step)">Cut ${found.spans.length}</button>
+        <button type="button" class="btn tiny" data-sil-clear title="Remove the marks">Clear</button>` : ""}</span>`)}
+      ${found ? `<div class="insp-note">${found.spans.length} silence${found.spans.length === 1 ? "" : "s"}, ${FableCutSilence.total(found.spans).toFixed(1)} s, marked on the timeline. Cut extracts them on the targeted tracks — lock the music bed first to keep it running.</div>` : ""}
+    </div>`;
+  }
+  if (c.kind === "audio" && typeof FableCutFx !== "undefined") {
+    html += `<div class="insp-section" data-fx-section><h3>Audio effects</h3>${fxEditorHtml(c.fx, playheadOverClip(c) ? state.time - c.start : null)}</div>`;
+  }
+  if (c.kind === "audio") {
+    const duckN = c.keyframes?.duck?.length || 0;
+    const lanes = audioTrackIds().filter((id) => id !== c.track);
+    html += `<div class="insp-section"><h3>Auto-duck</h3>
+      ${row("Under", `<select data-duck-under title="Lower this clip wherever there is sound on these tracks (dialogue / VO)">
+        <option value="">All other audio tracks</option>${lanes.map((id) => `<option value="${id}">${id}</option>`).join("")}</select>`)}
+      ${row("Amount", `<span class="insp-ctrls"><input type="number" data-duck-amount min="-40" max="-1" step="1" value="${duckAmount()}" title="How far to dip, dB" style="max-width:64px"> dB
+        <button type="button" class="btn tiny" data-duck-run title="Write duck keyframes on the selected clips">Apply</button>
+        ${duckN ? `<button type="button" class="btn tiny" data-duck-clear title="Remove the ducking">Clear</button>` : ""}</span>`)}
+      ${duckN ? `<div class="insp-note">${duckN} duck keyframe${duckN === 1 ? "" : "s"} — the dashed line on the clip shows the ducked level.</div>` : ""}
+    </div>`;
+  }
+  const tsel = (label, key, tr) => {
+    const active = state.transFocus === (key === "transIn" ? "in" : "out");
+    return `<div class="insp-row${active ? " trans-active" : ""}"><label class="insp-reset" data-reset="${key}" title="Ctrl-click: reset · Shift-click: reset">${label}</label>
+      <span class="insp-ctrls"><select data-k="${key}">${TRANSITIONS.map((x) => `<option ${x === (tr?.type || "none") ? "selected" : ""}>${x}</option>`).join("")}</select>
+       <input type="number" class="insp-dur" data-k="${key}Dur" step="0.1" min="0.1" value="${tr?.duration ?? 1}"></span></div>`;
+  };
+  const curveSel = (label, k, tr) => tr?.type === "fade" && c.kind === "audio"
+    ? row(label, `<select data-k="${k}" title="Fade shape (audio)">${[["", "Smooth (eased)"], ...Object.entries(AUDIO_FADE_CURVES)].map(([v, l]) =>
+      `<option value="${v}" ${(tr.curve || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>`) : "";
+  if (c.kind === "text") html += textPathSectionHtml(c, p, row);
+  if (isVisualClip(c)) html += motionSectionHtml(c, p, row);
+  if (c.kind !== "audio" && c.kind !== "null") html += maskSectionHtml(c);
+  if (c.kind === "video") html += trackSectionHtml(c);
+  html += `<div class="insp-section"><h3>Transition</h3>
+    ${tsel("In", "transIn", c.transitionIn)}
+    ${curveSel("In curve", "curveIn", c.transitionIn)}
+    ${tsel("Out", "transOut", c.transitionOut)}
+    ${curveSel("Out curve", "curveOut", c.transitionOut)}
+  </div>`;
+  if (c.kind === "text") {
+    const fontGroup = (label, fonts) => fonts.length
+      ? `<optgroup label="${label}">${fonts.map((f) => `<option ${f === p.font ? "selected" : ""}>${f}</option>`).join("")}</optgroup>` : "";
+    const known = [...SYSTEM_FONTS, ...runtime.customFonts, ...GOOGLE_FONTS, ...runtime.googleLoaded];
+    html += `<div class="insp-section"><h3>Text</h3>
+      ${row("Content", `<textarea data-k="text">${p.text}</textarea>`, "", "text")}
+      ${row(hasTextBox(p) && p.boxFit ? "Max size" : "Font size",
+        `<input type="range" data-k="fontSize" min="12" max="300" step="1" value="${fmtInspNum(p.fontSize, 1)}" title="Ctrl/Cmd-click: reset to default">
+         <span class="val" data-val="fontSize" data-unit="px">${fmtInspNum(p.fontSize, 1)}px</span>`, "fontSize")}
+      ${row("Box W/H", `<span class="insp-ctrls">
+        <input type="number" data-k="boxW" min="0" step="1" value="${p.boxW || 0}" title="Width in px (0 = no box — hug content)" style="max-width:64px">
+        <input type="number" data-k="boxH" min="0" step="1" value="${p.boxH || 0}" title="Height in px (0 = no box — hug content)" style="max-width:64px">
+      </span>`, "", "boxW,boxH")}
+      ${hasTextBox(p) ? check("Scale to fit", "boxFit", !!p.boxFit) : ""}
+      ${row("Color", `<span class="insp-ctrls"><input type="color" data-k="color" value="${p.color}">
+                      <input type="color" data-k="color2" value="${p.color2 || p.color}" title="Gradient bottom color">
+                      <button class="btn tiny${p.color2 ? "" : " toggle on"}" data-action="grad-off" title="Disable gradient">flat</button></span>`, "", "color,color2")}
+      ${sel("Align", "align", ["left", "center", "right", "justify"], p.align)}
+      ${hasTextBox(p) ? sel("V-align", "vAlign", ["top", "middle", "bottom"], p.vAlign || "middle") : ""}
+      ${sel("Direction", "direction", ["auto", "ltr", "rtl"], p.direction || "auto")}
+    </div>
+    <div class="insp-section"><h3>Font</h3>
+      ${row("Family", `<select data-k="font">
+        ${fontGroup("System", SYSTEM_FONTS)}
+        ${fontGroup("Library fonts", runtime.customFonts)}
+        ${fontGroup("Google fonts", [...new Set([...GOOGLE_FONTS, ...runtime.googleLoaded])])}
+        ${known.includes(p.font) ? "" : `<option selected>${p.font}</option>`}
+      </select>`, "", "font")}
+      ${row("Google font", `<input type="text" data-gfont placeholder="Type any Google Font name…">
+        <button class="btn tiny" data-action="gfont-load">Load</button>`)}
+      ${sel("Weight", "weight", [0, 300, 400, 500, 600, 700, 800, 900], p.weight)}
+      ${check("Bold", "bold", p.bold)}
+      ${check("Italic", "italic", p.italic)}
+      ${check("Uppercase", "uppercase", p.uppercase)}
+      ${slider("letterSpacing", -10, 60, 0.5, p.letterSpacing, "px")}
+      ${slider("lineHeight", 0.7, 2.5, 0.05, p.lineHeight)}
+    </div>
+    <div class="insp-section"><h3>Text style</h3>
+      ${slider("strokeWidth", 0, 20, 0.5, p.strokeWidth, "px")}
+      ${row("Stroke col.", `<input type="color" data-k="strokeColor" value="${p.strokeColor}">`, "", "strokeColor")}
+      ${row("Bg color", `<input type="color" data-k="bgColor" value="${p.bgColor}">`, "", "bgColor")}
+      ${slider("bgOpacity", 0, 1, 0.05, p.bgOpacity)}
+      ${slider("textShadow", 0, 40, 1, p.textShadow)}
+      ${slider("glow", 0, 100, 1, p.glow)}
+      ${row("Glow color", `<input type="color" data-k="glowColor" value="${p.glowColor || p.color}">
+        <button class="btn tiny${p.glowColor ? "" : " toggle on"}" data-action="glow-auto" title="Glow uses the text color">auto</button>`, "", "glowColor")}
+    </div>
+    <div class="insp-section"><h3>Title &amp; caption</h3>
+      ${row("Title style", `<button type="button" class="btn tiny style-picker-btn" data-style-open title="Pick a style — hover to preview it live">${(TITLE_STYLES[c.styleName] || {}).label || "Choose…"} ▾</button>
+        <button class="btn tiny" data-action="title-shuffle" title="Random style">Shuffle</button>`)}
+      ${row("Animation", `<select data-k="textAnim">${TEXT_ANIMS.map((a) => `<option ${a === p.textAnim ? "selected" : ""}>${a}</option>`).join("")}</select>`, "", "textAnim")}
+      ${slider("wordRate", 0.05, 0.6, 0.01, p.wordRate, "s")}
+    </div>`;
+  }
+  els.inspector.innerHTML = html;
+  inspSyncStamp = inspStampNow(); // full rebuild already reflects this state
+  els.inspector.querySelectorAll("label.insp-reset[data-reset]").forEach((lab) => {
+    lab.addEventListener("click", (e) => {
+      const all = e.ctrlKey || e.metaKey;
+      const local = e.shiftKey && !all;
+      if (!all && !local) return;
+      e.preventDefault();
+      if (isGroupLocked(c)) { toastLocked(); return; }
+      applyInspectorReset(lab.dataset.reset.split(",").map((s) => s.trim()).filter(Boolean), all);
+    });
+  });
+  els.inspector.querySelectorAll("[data-k]").forEach((input) => {
+    const k = input.dataset.k;
+    input.addEventListener("input", (e) => {
+      if (!input.isConnected) return;
+      if (input.type === "range" && (e.ctrlKey || e.metaKey)) return;
+      let v = input.type === "checkbox" ? input.checked
+        : input.type === "range" || input.type === "number" ? parseFloat(input.value)
+          : input.value;
+      if (k === "weight") v = +v || 0;
+      if (k === "font") ensureFont(String(v));
+      if (k === "name") { c.name = String(v); state.dirtyTimeline = true; }
+      else if (k === "start") { c.start = Math.max(0, +v || 0); state.dirtyTimeline = true; inspPropGen++; }
+      else if (k === "duration") { c.duration = Math.max(MIN_DUR, +v || MIN_DUR); state.dirtyTimeline = true; inspPropGen++; }
+      else if (k === "transIn" || k === "transOut") {
+        const key = k === "transIn" ? "transitionIn" : "transitionOut";
+        const side = k === "transIn" ? "in" : "out";
+        const dur = Math.max(MIN_TRANS_DUR, parseFloat(els.inspector.querySelector(`[data-k="${k}Dur"]`)?.value) || 1);
+        c[key] = v === "none" ? undefined : { type: String(v), duration: dur };
+        if (c[key]) saveLastTransition(side, c[key]);
+        state.dirtyTimeline = true;
+      }
+      else if (k === "curveIn" || k === "curveOut") {
+        const tr = k === "curveIn" ? c.transitionIn : c.transitionOut;
+        if (tr) {
+          if (v) tr.curve = String(v); else delete tr.curve;
+          for (const x of volGroup(c)) { // stems fade together
+            const xt = k === "curveIn" ? x.transitionIn : x.transitionOut;
+            if (x !== c && xt?.type === "fade") { if (v) xt.curve = String(v); else delete xt.curve; }
+          }
+          state.dirtyTimeline = true;
+        }
+      }
+      else if (k === "transInDur" || k === "transOutDur") {
+        const key = k === "transInDur" ? "transitionIn" : "transitionOut";
+        const side = k === "transInDur" ? "in" : "out";
+        if (c[key]) {
+          c[key].duration = Math.max(MIN_TRANS_DUR, +v || 1);
+          saveLastTransition(side, c[key]);
+          state.dirtyTimeline = true;
+        }
+      }
+      else if (ANIMATABLE.includes(k)) {
+        if (!setAnimProp(c, k, v))
+          toast("Move the playhead over the clip to edit its keyframes");
+      }
+      else if (k === "matte" || k === "matteTrack") {   // "none" / "" (= the track above) clear the prop
+        if (v === "none" || v === "") delete c.props[k]; else c.props[k] = String(v);
+        if (!c.props.matte) delete c.props.matteTrack;
+        state.dirtyTimeline = true; inspPropGen++;
+        if (k === "matte") renderInspector();
+      }
+      else { c.props[k] = v; if (k === "text") state.dirtyTimeline = true; }
+      const valEl = els.inspector.querySelector(`[data-val="${k}"]`);
+      if (valEl) valEl.textContent = input.value + (valEl.dataset.unit || "");
+      scheduleSave();
+      if (ANIMATABLE.includes(k)) syncInspectorPlayhead();
+    });
+    input.addEventListener("focus", () => {
+      pushUndo();
+      if (ANIMATABLE.includes(k) && state.playing) pause();
+    }, { once: true });
+  });
+  els.inspector.querySelectorAll("[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const a = btn.dataset.action;
+      pushUndo();
+      if (a === "keyoff") c.props.chromaKey = "";
+      else if (a === "grad-off") c.props.color2 = "";
+      else if (a === "glow-auto") c.props.glowColor = "";
+      else if (a === "gfont-load") {
+        const name = els.inspector.querySelector("[data-gfont]")?.value.trim();
+        if (!name) return;
+        ensureFont(name).then((ok) => { if (!ok) toast(`Couldn't load "${name}" from Google Fonts`); });
+        c.props.font = name;
+        toast(`Loading Google font "${name}"…`);
+      }
+      else if (a === "title-shuffle") {
+        const keys = Object.keys(TITLE_STYLES).filter((k) => k !== "plain" && k !== c.styleName);
+        applyTitleStyle(c, keys[Math.floor(Math.random() * keys.length)], { keepTransform: true });
+      }
+      scheduleSave(); renderInspector();
+    });
+  });
+  const fxSection = els.inspector.querySelector("[data-fx-section]");
+  if (fxSection) {
+    let undone = false;
+    bindFxEditor(fxSection, () => c.fx, (fx) => {
+      if (!undone) { pushUndo(); undone = true; } // one undo step per edit burst
+      for (const x of volGroup(c)) { // a stereo pair shares one chain
+        if (fx?.length) x.fx = fx.map((e) => ({ ...e })); else delete x.fx;
+      }
+      c.fx = fx; // keep c's array identity = what was just set
+      if (!fx?.length) delete c.fx;
+      scheduleSave();
+      refreshAudioHold();
+    }, () => renderInspector(), () => playheadOverClip(c) ? state.time - c.start : null);
+  }
+  els.inspector.querySelector("[data-duck-amount]")?.addEventListener("change", (e) => {
+    try { localStorage.setItem(DUCK_KEY, String(clamp(+e.target.value || -12, -40, -1))); } catch { }
+  });
+  els.inspector.querySelector("[data-duck-run]")?.addEventListener("click", () => {
+    const sel = selectedClips();
+    autoDuckClips(sel.length ? sel : [c], {
+      under: els.inspector.querySelector("[data-duck-under]")?.value || null,
+      amount: clamp(+els.inspector.querySelector("[data-duck-amount]")?.value || -12, -40, -1),
+    });
+  });
+  els.inspector.querySelector("[data-duck-clear]")?.addEventListener("click", () => {
+    const sel = selectedClips();
+    clearDuck(sel.length ? sel : [c]);
+  });
+  els.inspector.querySelectorAll("[data-sil]").forEach((inp) => inp.addEventListener("change", () => {
+    const o = silenceOptions(), [lo, hi] = FableCutSilence.LIMITS[inp.dataset.sil];
+    o[inp.dataset.sil] = clamp(+inp.value || 0, lo, hi);
+    inp.value = o[inp.dataset.sil];
+    try { localStorage.setItem(SILENCE_KEY, JSON.stringify(o)); } catch { }
+  }));
+  els.inspector.querySelector("[data-sil-find]")?.addEventListener("click", () => {
+    const sel = selectedClips();
+    findSilences(sel.length ? sel : [c]);
+  });
+  els.inspector.querySelector("[data-sil-cut]")?.addEventListener("click", cutSilences);
+  els.inspector.querySelector("[data-sil-clear]")?.addEventListener("click", clearSilences);
+  els.inspector.querySelector("[data-norm-target]")?.addEventListener("change", (e) => {
+    try { localStorage.setItem(NORMALIZE_KEY, e.target.value); } catch { }
+  });
+  els.inspector.querySelector("[data-denoise]")?.addEventListener("change", (e) => {
+    const sel = selectedClips();
+    denoiseClips(sel.length ? sel : [c], e.target.value);
+  });
+  els.inspector.querySelector("[data-norm-run]")?.addEventListener("click", () => {
+    const sel = selectedClips();
+    normalizeClips(sel.length ? sel : [c]);
+  });
+  els.inspector.querySelectorAll("[data-style-open]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (runtime.styleMenu) { closeStylePicker(); return; }
+      openStylePicker(btn, c);
+    });
+  });
+  els.inspector.querySelectorAll("[data-media-open]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (runtime.mediaMenu) { closeMediaPicker(); return; }
+      openMediaPicker(btn, c);
+    });
+  });
+  els.inspector.querySelectorAll("[data-kf]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      pushUndo();
+      if (!toggleKfAtPlayhead(c, btn.dataset.kf)) // owns dirtyTimeline on success
+        toast("Move the playhead over the clip to add or remove keyframes");
+      scheduleSave(); renderInspector();
+    });
+  });
+  els.inspector.querySelectorAll("[data-kfclear]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      pushUndo();
+      delete c.keyframes[btn.dataset.kfclear]; // raw mutation — owns its own side effects
+      refreshAudioHoldFor(btn.dataset.kfclear);
+      if (!Object.keys(c.keyframes).length) c.keyframes = undefined;
+      state.dirtyTimeline = true;
+      scheduleSave(); renderInspector();
+    });
+  });
+  if (state.transFocus) {
+    const k = state.transFocus === "in" ? "transIn" : "transOut";
+    const row = els.inspector.querySelector(`[data-k="${k}"]`)?.closest(".insp-row");
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  els.inspector.querySelectorAll("[data-clip-cmd]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const cmd = btn.dataset.clipCmd;
+      if (!state.selIds.has(c.id)) selectClip(c.id);
+      if (cmd === "disable") toggleClipsDisabled();
+      else if (cmd === "lock") toggleClipsLocked();
+      else if (cmd === "link") {
+        // Relinking from the inspector pairs the clip with its aligned partners.
+        if (!c.linkGroup && !c.linkedId) {
+          const near = (a, b) => Math.abs(a - b) < 1e-3;
+          const mates = project.clips.filter((x) => x.mediaId === c.mediaId &&
+            near(x.start, c.start) && near(x.in, c.in) && near(x.duration, c.duration));
+          setSelection(mates.map((x) => x.id));
+        }
+        toggleLinkSelected();
+      }
+    });
+  });
+  els.inspector.querySelectorAll("[data-kfgraph]").forEach((lab) => {
+    lab.addEventListener("click", (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return; // modifiers reserved for prop reset
+      e.preventDefault();
+      toggleKfGraph(lab.dataset.kfgraph);
+    });
+  });
+  bindMaskControls(c);
+  bindTrackControls(c);
+  bindParentAnchorControls(c);
+  bindShapeControls(c);
+  bindMotionControls(c);
+  bindTextPathControls(c);
+  bindCompControls(c);
+  bindTemplateControls(c);
+  bindPresetControls(c);
+  syncInspectorOffClip(c);
+  renderKfGraphsPanel();
+}
+/* One listener for every slider: capture so preventDefault runs before the
+   range jumps the thumb to the click. */
+els.inspector.addEventListener("pointerdown", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const input = e.target.closest?.("input[type=range][data-k]");
+  if (!input || !els.inspector.contains(input)) return;
+  e.preventDefault();
+  if (isGroupLocked(getClip(state.selId))) { toastLocked(); return; }
+  const k = input.dataset.k;
+  if (!k || !Object.hasOwn(DEFAULT_PROPS, k)) return;
+  applyInspectorReset([k], true);
+}, true);
+els.inspector.addEventListener("contextmenu", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!e.target.closest?.("input[type=range][data-k]")) return;
+  e.preventDefault();
+});
+
+/* Off the clip, keyframed fields show their edge value but must not be
+   editable — a write would land clamped on the clip's edge. Disables those
+   inputs and the ◆ buttons. Called on every inspector sync and after each
+   full renderInspector rebuild. */
+function syncInspectorOffClip(c) {
+  const off = !playheadOverClip(c);
+  const locked = isGroupLocked(c); // a locked clip is read-only
+  const active = document.activeElement;
+  els.inspector.classList.toggle("locked", locked);
+  for (const input of els.inspector.querySelectorAll("[data-k]")) {
+    const k = input.dataset.k;
+    if (input === active) continue; // don't yank focus mid-edit
+    input.disabled = locked || (ANIMATABLE.includes(k) && off && !!(c.keyframes?.[k]?.length));
+  }
+  for (const btn of els.inspector.querySelectorAll("[data-kfclear], [data-action], [data-style-open], [data-media-open], [data-norm-run], [data-duck-run], [data-duck-clear]"))
+    btn.disabled = locked;
+  for (const btn of els.inspector.querySelectorAll("[data-kf]")) {
+    btn.disabled = off || locked;
+    btn.title = off ? "Move the playhead over the clip to add or remove keyframes"
+      : btn.classList.contains("on") ? "Remove keyframe at playhead" : "Set keyframe at playhead";
+  }
+}
+/* Patch inspector fields to the playhead (no innerHTML rebuild — keeps focus).
+   Runs every rAF tick but exits early unless time, selection, or keyed values
+   actually changed since the last sync. */
+function syncInspectorPlayhead() {
+  const root = els && els.inspector;
+  if (!root) return;
+  const c = getClip(state.selId);
+  if (!c) return;
+  const stamp = inspStampNow();
+  if (stamp === inspSyncStamp) return;
+  inspSyncStamp = stamp;
+  const p = propsAtPlayhead(c);
+  const active = document.activeElement;
+  for (const input of root.querySelectorAll("[data-k]")) {
+    const k = input.dataset.k;
+    if (!ANIMATABLE.includes(k)) continue;
+    if (active === input) continue;
+    const v = p[k];
+    if (typeof v !== "number" || isNaN(v)) continue;
+    const next = fmtInspNum(v, input.type === "range" ? input.step : undefined);
+    if (input.type === "range") {
+      // Thumb saturates at the slider's ends; the label keeps the true value,
+      // so an out-of-range keyframe doesn't churn the input every frame.
+      const mn = +input.min, mx = +input.max;
+      const shown = Number.isFinite(mn) && +next < mn ? input.min
+        : Number.isFinite(mx) && +next > mx ? input.max : next;
+      if (Math.abs(+input.value - +shown) > 1e-6) input.value = shown;
+    } else if (Math.abs(+input.value - +next) > 1e-6) input.value = next;
+    const valEl = root.querySelector(`[data-val="${k}"]`);
+    if (valEl) {
+      const text = next + (valEl.dataset.unit || "");
+      if (valEl.textContent !== text) valEl.textContent = text;
+    }
+  }
+  for (const btn of root.querySelectorAll("[data-kf]")) {
+    const k = btn.dataset.kf;
+    const n = (c.keyframes?.[k] && c.keyframes[k].length) || 0;
+    const on = !!kfAtPlayhead(c, k);
+    btn.classList.toggle("has", n > 0);
+    btn.classList.toggle("on", on);
+    const label = "◆" + (n || "");
+    if (btn.textContent !== label) btn.textContent = label;
+  }
+  syncMaskInspector(c);
+  syncShapeInspector(c);
+  syncInspectorOffClip(c); // after the class pass, so ◆ titles read the fresh "on" state
+}
+
+/* ── Keyframe graphs (program-monitor left gutter) ── */
+const KF_GRAPH_LABEL = {
+  x: "Pos X", y: "Pos Y", scale: "Scale", rotation: "Rotation", opacity: "Opacity",
+  volume: "Volume", pan: "Pan", duck: "Duck", speed: "Speed", brightness: "Bright", contrast: "Contrast",
+  saturation: "Sat", hue: "Hue", blur: "Blur", grayscale: "Gray", sepia: "Sepia",
+  invert: "Invert", temperature: "Temp", tint: "Tint", vignette: "Vignette",
+  cornerRadius: "Radius", shake: "Shake", rgbSplit: "RGB", grain: "Grain",
+  fontSize: "Size", letterSpacing: "Track", glow: "Glow",
+  anchorX: "Anchor X", anchorY: "Anchor Y", trimStart: "Trim start", trimEnd: "Trim end", trimOffset: "Trim offset", pathOffset: "Path offset",
+};
+function toggleKfGraph(key) {
+  if (!ANIMATABLE.includes(key)) return;
+  if (state.kfGraphs.has(key)) state.kfGraphs.delete(key);
+  else state.kfGraphs.add(key);
+  renderInspector(); // refresh label .on state + panel
+}
+function renderKfGraphsPanel() {
+  const root = els.kfGraphs;
+  if (!root) return;
+  const c = getClip(state.selId);
+  const keys = [...state.kfGraphs].filter((k) => ANIMATABLE.includes(k));
+  if (!c || !keys.length) {
+    root.innerHTML = "";
+    root.hidden = true;
+    return;
+  }
+  root.hidden = false;
+  root.innerHTML = keys.map((k) => {
+    const label = KF_GRAPH_LABEL[k] || k;
+    return `<div class="kf-graph" data-kfgraph-card="${k}">
+      <div class="kf-graph-head"><span>${label}</span>
+        <button type="button" data-kfgraph-close="${k}" title="Close graph">✕</button></div>
+      <canvas width="160" height="52"></canvas>
+    </div>`;
+  }).join("");
+  root.querySelectorAll("[data-kfgraph-close]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.kfGraphs.delete(btn.dataset.kfgraphClose);
+      renderInspector();
+    });
+  });
+  root.querySelectorAll(".kf-graph canvas").forEach((cv) => {
+    const key = cv.closest("[data-kfgraph-card]")?.dataset.kfgraphCard;
+    cv.addEventListener("pointerdown", (e) => seekKfGraph(e, cv, key));
+  });
+  updateKfGraphs();
+}
+function seekKfGraph(e, cv, key) {
+  const c = getClip(state.selId);
+  if (!c || !key) return;
+  const { t0, t1 } = kfGraphRange(c, key);
+  const rect = cv.getBoundingClientRect();
+  const u = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+  setTime(c.start + t0 + u * Math.max(1e-6, t1 - t0));
+  updateKfGraphs();
+}
+/* Value + time window for a graph. When keyframes exist, zoom X to their span
+   (with padding) instead of the full clip duration. */
+function kfGraphRange(c, key) {
+  const fallback = +(c.props?.[key] ?? DEFAULT_PROPS[key] ?? 0);
+  const dur = Math.max(MIN_DUR, c.duration);
+  const kfs = Array.isArray(c.keyframes?.[key]) ? c.keyframes[key] : [];
+  const vals = kfs.length ? kfs.map((kf) => +kf.v) : [fallback];
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+  if (Math.abs(hi - lo) < 1e-6) {
+    const pad = Math.max(0.05, Math.abs(lo) * 0.1 || 0.5);
+    lo -= pad; hi += pad;
+  } else {
+    const pad = (hi - lo) * 0.12;
+    lo -= pad; hi += pad;
+  }
+
+  let t0 = 0, t1 = dur;
+  if (kfs.length === 1) {
+    const t = clamp(+kfs[0].t || 0, 0, dur);
+    const half = Math.max(0.15, dur * 0.08);
+    t0 = Math.max(0, t - half);
+    t1 = Math.min(dur, t + half);
+  } else if (kfs.length >= 2) {
+    const ts = kfs.map((kf) => +kf.t || 0);
+    const a = Math.min(...ts), b = Math.max(...ts);
+    const pad = Math.max(0.05, (b - a) * 0.1, dur * 0.02);
+    t0 = Math.max(0, a - pad);
+    t1 = Math.min(dur, b + pad);
+  }
+  if (t1 - t0 < 1e-3) { t0 = 0; t1 = dur; }
+  return { lo, hi, fallback, t0, t1, dur };
+}
+function updateKfGraphs() {
+  const root = els.kfGraphs;
+  if (!root || root.hidden) return;
+  const c = getClip(state.selId);
+  if (!c) return;
+  root.querySelectorAll(".kf-graph").forEach((card) => {
+    const key = card.dataset.kfgraphCard;
+    const cv = card.querySelector("canvas");
+    if (key && cv) drawKfGraph(cv, c, key);
+  });
+}
+function drawKfGraph(cv, c, key) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth || 160, cssH = cv.clientHeight || 52;
+  if (cv.width !== Math.round(cssW * dpr) || cv.height !== Math.round(cssH * dpr)) {
+    cv.width = Math.round(cssW * dpr);
+    cv.height = Math.round(cssH * dpr);
+  }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cssW, H = cssH;
+  g.clearRect(0, 0, W, H);
+  const { lo, hi, fallback, t0, t1 } = kfGraphRange(c, key);
+  const span = Math.max(1e-6, t1 - t0);
+  const yAt = (v) => H - 4 - ((v - lo) / (hi - lo)) * (H - 8);
+  const xAt = (t) => 3 + ((t - t0) / span) * (W - 6);
+
+  // mid / zero guide
+  g.strokeStyle = "#ffffff10";
+  g.lineWidth = 1;
+  g.beginPath();
+  const y0 = yAt(0);
+  if (y0 > 4 && y0 < H - 4) { g.moveTo(3, y0); g.lineTo(W - 3, y0); g.stroke(); }
+
+  // interpolated curve (only the zoomed window)
+  g.strokeStyle = "#7b6cff";
+  g.lineWidth = 1.5;
+  g.beginPath();
+  const steps = Math.max(24, Math.floor(W));
+  for (let i = 0; i <= steps; i++) {
+    const t = t0 + (i / steps) * span;
+    const v = kfChannel(c, key, t, fallback);
+    const x = xAt(t), y = yAt(v);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+
+  // keyframe diamonds
+  const kfs = c.keyframes?.[key];
+  if (Array.isArray(kfs)) {
+    g.fillStyle = "#ffd166";
+    for (const kf of kfs) {
+      const x = xAt(kf.t), y = yAt(kf.v);
+      g.beginPath();
+      g.moveTo(x, y - 3.5); g.lineTo(x + 3.5, y); g.lineTo(x, y + 3.5); g.lineTo(x - 3.5, y);
+      g.closePath(); g.fill();
+    }
+  }
+
+  // playhead (drawn only when inside the zoomed window)
+  const lt = state.time - c.start;
+  if (lt >= t0 - 1e-6 && lt <= t1 + 1e-6) {
+    const px = xAt(clamp(lt, t0, t1));
+    g.strokeStyle = "#ff4d6a";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(px, 1); g.lineTo(px, H - 1);
+    g.stroke();
+    const cur = kfChannel(c, key, clamp(lt, t0, t1), fallback);
+    g.fillStyle = "#ff4d6a";
+    g.beginPath();
+    g.arc(px, yAt(cur), 2.5, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+/* ═══════════════════════════ SOURCE MONITOR ═══════════════════════════
+   Single-viewer Avid NewsCutter layout: one canvas toggles Source ↔ Program.
+   Source holds a media-local playhead + In/Out marks (not timeline work area).
+   Double-click Project media or a timeline clip to load Source. */
+function isSourceMode() { return state.monitorMode === "source"; }
+function sourceMedia() { return state.source.mediaId ? getMedia(state.source.mediaId) : null; }
+function sourceDur() {
+  const m = sourceMedia();
+  if (!m) return 0;
+  if (m.kind === "image" || m.kind === "svg") return Math.max(m.duration || 5, 0.1);
+  return Math.max(+m.duration || 0, 0);
+}
+function persistSourceMarks() {
+  const id = state.source.mediaId;
+  if (!id) return;
+  runtime.sourceMarks.set(id, { in: state.source.in, out: state.source.out });
+}
+/** Unload the Source monitor — its media was deleted or vanished on reload. */
+function clearSource() {
+  if (state.source.mediaId) runtime.sourceMarks.delete(state.source.mediaId);
+  pauseSource();
+  releaseSourceEl();
+  state.source.mediaId = null;
+  state.source.fromClipId = null;
+  state.source.in = state.source.out = null;
+  state.source.time = 0;
+  if (isSourceMode()) setMonitorMode("program");
+  else syncMonitorModeUI();
+}
+/** Rebuild the Source element after a project reload without losing the
+ *  Source playhead or marks (clamped if the media got shorter). */
+function restoreSourceAfterReload() {
+  const m = sourceMedia();
+  if (!m) return;
+  if (state.source.fromClipId && !getClip(state.source.fromClipId)) state.source.fromClipId = null;
+  const dur = sourceDur();
+  if (dur > 0) {
+    if (state.source.in != null) state.source.in = clamp(state.source.in, 0, dur);
+    if (state.source.out != null) state.source.out = clamp(state.source.out, 0, dur);
+    state.source.time = clamp(state.source.time, 0, dur);
+  }
+  pauseSource(); // adopt the decoded playhead before the element goes away
+  releaseSourceEl(); // force rebuild against possibly new src
+  const el = ensureSourceEl(m);
+  if (el) {
+    const seek = () => seekSourceEl(state.source.time);
+    if (el.readyState >= 1) seek();
+    else el.addEventListener("loadedmetadata", seek, { once: true });
+  }
+  syncMonitorModeUI();
+}
+function syncMonitorModeUI() {
+  const src = isSourceMode();
+  if (els.monitorPanel) els.monitorPanel.dataset.mode = state.monitorMode;
+  for (const b of document.querySelectorAll("[data-monitor-mode]"))
+    b.classList.toggle("on", b.dataset.monitorMode === state.monitorMode);
+  if (els.sourceScrub) els.sourceScrub.classList.toggle("hidden", !src || !state.source.mediaId);
+  const m = sourceMedia();
+  if (els.monitorClipName) {
+    els.monitorClipName.textContent = src && m ? m.name : "";
+    els.monitorClipName.title = src && m ? m.name : "";
+  }
+  // Safe-area guides are sequence-relative — hide overlay chrome in Source
+  if (els.btnGuides) els.btnGuides.classList.toggle("hidden", src);
+  if (els.aspectSel) els.aspectSel.classList.toggle("hidden", src);
+  if (els.kfGraphs) els.kfGraphs.classList.toggle("source-hidden", src);
+  if (src && els.safeOverlay) els.safeOverlay.classList.add("hidden");
+  else if (!src && els.safeOverlay) {
+    els.safeOverlay.classList.toggle("hidden", !state.guides);
+    updateSafeOverlay();
+  }
+  updateSourceScrub();
+  syncPlayButton();
+  if (els.btnInsert) {
+    els.btnInsert.classList.toggle("hidden", !src);
+    els.btnInsert.disabled = !state.source.mediaId;
+  }
+  if (els.btnReplace) {
+    els.btnReplace.classList.toggle("hidden", !src);
+    els.btnReplace.disabled = !state.source.mediaId;
+    const fromClip = state.source.fromClipId && getClip(state.source.fromClipId);
+    els.btnReplace.title = fromClip
+      ? "Apply Source In→Out to the timeline clip (.) — ripples later clips if duration changes"
+      : "Replace (overwrite) Source In→Out at the timeline playhead (.)";
+  }
+}
+function setMonitorMode(mode) {
+  if (mode !== "source" && mode !== "program") return;
+  if (mode === state.monitorMode) {
+    syncMonitorModeUI();
+    return;
+  }
+  if (mode === "program") {
+    pauseSource();
+  } else {
+    // Leaving Program for Source — stop sequence playback
+    if (state.playing) pause();
+  }
+  state.monitorMode = mode;
+  syncMonitorModeUI();
+  scheduleAudioHoldRefresh();
+}
+function releaseSourceEl() {
+  const el = runtime.sourceEl;
+  if (el) {
+    try { el.pause(); el.removeAttribute("src"); el.load(); } catch { }
+    if (el._fcNodes) {
+      for (const n of el._fcNodes) { try { n.disconnect(); } catch { } }
+    }
+    if (el._fcSrc) { try { el._fcSrc.disconnect(); } catch { } }
+  }
+  runtime.sourceEl = null;
+  runtime.sourceHold = null;
+  runtime.sourceHoldOk = false;
+  runtime.sourceSeekPending = null;
+  runtime.sourceSeekBusy = false;
+}
+function ensureSourceEl(m) {
+  if (!m || (m.kind !== "video" && m.kind !== "audio")) {
+    releaseSourceEl();
+    return null;
+  }
+  let el = runtime.sourceEl;
+  if (!el || el.tagName.toLowerCase() !== (m.kind === "audio" ? "audio" : "video")) {
+    releaseSourceEl();
+    el = document.createElement(m.kind === "audio" ? "audio" : "video");
+    el.preload = "auto";
+    el.playsInline = true;
+    el.volume = 1;
+    // After each seek settles, apply any newer scrub target (coalesced seeks).
+    el.addEventListener("seeked", () => {
+      runtime.sourceSeekBusy = false;
+      flushSourceSeek();
+    });
+    runtime.sourceEl = el;
+  }
+  const want = mediaPlaySrc(m);
+  if (el.dataset.src !== want) {
+    el.src = want;
+    el.dataset.src = want;
+    runtime.sourceHold = null;
+    runtime.sourceHoldOk = false;
+    runtime.sourceSeekPending = null;
+    runtime.sourceSeekBusy = false;
+    // a new file (proxy ↔ original) loads at 0 — put it back on the Source playhead
+    el.addEventListener("loadedmetadata", () => {
+      if (runtime.sourceEl === el && el.dataset.src === want && !state.source.playing) seekSourceEl(state.source.time);
+    }, { once: true });
+  }
+  return el;
+}
+/** Queue a Source media seek. HTMLVideoElement blanks while seeking; we only
+ *  keep one in-flight seek and always show the last good hold frame. */
+function flushSourceSeek() {
+  const el = runtime.sourceEl;
+  if (!el || state.source.playing) {
+    runtime.sourceSeekPending = null;
+    runtime.sourceSeekBusy = false;
+    return;
+  }
+  const t = runtime.sourceSeekPending;
+  if (t == null) return;
+  if (runtime.sourceSeekBusy || el.seeking) return;
+  if (Math.abs(el.currentTime - t) <= 1 / Math.max(1, project.fps || 30)) {
+    runtime.sourceSeekPending = null;
+    return;
+  }
+  runtime.sourceSeekPending = null;
+  runtime.sourceSeekBusy = true;
+  try { el.currentTime = t; } catch { runtime.sourceSeekBusy = false; }
+}
+function seekSourceEl(t) {
+  const el = runtime.sourceEl;
+  if (!el) return;
+  runtime.sourceSeekPending = t;
+  flushSourceSeek();
+}
+function setSourceTime(t) {
+  const dur = sourceDur();
+  state.source.time = clamp(t, 0, Math.max(dur, 0));
+  const m = sourceMedia();
+  if (m && (m.kind === "video" || m.kind === "audio") && !state.source.playing) {
+    seekSourceEl(state.source.time);
+  }
+  updateSourceScrub();
+  scheduleAudioHoldRefresh();
+}
+function updateSourceScrub() {
+  if (!els.sourceScrubHead) return;
+  const track = els.sourceScrubTrack;
+  const dur = sourceDur();
+  const w = track ? track.clientWidth : 0;
+  const xAt = (t) => (dur > 0 && w > 0 ? clamp(t / dur, 0, 1) * w : 0);
+  // Pixel + translate3d (like the timeline playhead) — smoother than % left.
+  const hx = xAt(state.source.time);
+  els.sourceScrubHead.style.transform = `translate3d(${hx}px,0,0)`;
+  const a = state.source.in, b = state.source.out;
+  if (els.sourceScrubIn) {
+    const show = a != null;
+    els.sourceScrubIn.hidden = !show;
+    if (show) els.sourceScrubIn.style.transform = `translate3d(${xAt(a)}px,0,0)`;
+  }
+  if (els.sourceScrubOut) {
+    const show = b != null;
+    els.sourceScrubOut.hidden = !show;
+    if (show) els.sourceScrubOut.style.transform = `translate3d(${xAt(b)}px,0,0)`;
+  }
+  if (els.sourceScrubRange) {
+    if (a != null && b != null && b > a && dur > 0) {
+      const x0 = xAt(a), x1 = xAt(b);
+      els.sourceScrubRange.style.transform = `translate3d(${x0}px,0,0)`;
+      els.sourceScrubRange.style.width = Math.max(0, x1 - x0) + "px";
+    } else {
+      els.sourceScrubRange.style.transform = "translate3d(0,0,0)";
+      els.sourceScrubRange.style.width = "0px";
+    }
+  }
+}
+function syncPlayButton() {
+  const on = isSourceMode() ? state.source.playing : state.playing;
+  els.btnPlay.textContent = on ? "⏸" : "▶";
+  els.btnPlay.classList.toggle("on", on);
+}
+/** Brief white border flash over the canvas (Project → Source feedback). */
+function flashMonitorAttention() {
+  const cv = els.preview;
+  const inner = els.monitorZoomInner;
+  if (!cv || !inner) return;
+  let ring = $("monitorFlashRing");
+  if (!ring) {
+    ring = document.createElement("div");
+    ring.id = "monitorFlashRing";
+    ring.className = "monitor-flash-ring";
+    inner.appendChild(ring);
+  }
+  ring.style.left = cv.offsetLeft + "px";
+  ring.style.top = cv.offsetTop + "px";
+  ring.style.width = cv.offsetWidth + "px";
+  ring.style.height = cv.offsetHeight + "px";
+  ring.classList.remove("on");
+  void ring.offsetWidth;
+  ring.classList.add("on");
+  const done = () => {
+    ring.classList.remove("on");
+    ring.removeEventListener("animationend", done);
+  };
+  ring.addEventListener("animationend", done);
+}
+function pauseSource() {
+  const wasPlaying = state.source.playing;
+  state.source.playing = false;
+  const el = runtime.sourceEl;
+  if (el) {
+    // Adopt the decoded playhead — never seek the element to the RAF clock.
+    // Seeking a paused HTMLVideoElement clears the frame (black flash) until
+    // the decoder catches up.
+    if (wasPlaying && Number.isFinite(el.currentTime)) {
+      state.source.time = clamp(el.currentTime, 0, Math.max(sourceDur(), 0));
+    }
+    if (!el.paused) el.pause();
+  }
+  syncPlayButton();
+  updateSourceScrub();
+}
+/** Route a Source node's channels to per-track buses for metering.
+ *  audio → the first Source track's bus (or master); video → mono-split each
+ *  channel through gain → panner (default L/R) into the matching A-track bus.
+ *  `collect(node, role)` receives every created node ("splitter"|"gain"|"panner")
+ *  so callers can track them for disposal. Shared by live playback (hookSourceAudio)
+ *  and Source audio-hold (refreshAudioHold). */
+function routeSourceChannels(ctx, src, m, nCh, audio, collect) {
+  if (m.kind === "audio") {
+    const bus = audio.trackBus[sourceEditTracks(m)[0]] || audio.master;
+    src.connect(bus);
+    return;
+  }
+  const splitter = ctx.createChannelSplitter(nCh);
+  src.connect(splitter);
+  collect(splitter, "splitter");
+  const stemTracks = sourceEditTracks(m).slice(1);
+  for (let ch = 0; ch < nCh; ch++) {
+    const trackId = ch < stemTracks.length ? stemTracks[ch] : `A${ch + 1}`;
+    const bus = audio.trackBus[trackId];
+    if (!bus) continue;
+
+    const g = ctx.createGain();
+    splitter.connect(g, ch);
+    collect(g, "gain");
+
+    const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.value = defaultPanForChannel(ch);
+      g.connect(panner);
+      panner.connect(bus);
+      collect(panner, "panner");
+    } else {
+      g.connect(bus);
+    }
+  }
+}
+function hookSourceAudio(m, el, audio) {
+  if (el._fcSrc) return;
+  try {
+    const ctx = audio.ctx;
+    const src = ctx.createMediaElementSource(el);
+    el._fcSrc = src;
+    el._fcNodes = [];
+    if (m.kind !== "audio" && m.kind !== "video") return;
+    if (m.kind === "video") { try { src.channelInterpretation = "discrete"; } catch { } }
+    const nCh = m.channels > 0 ? m.channels : 2;
+    routeSourceChannels(ctx, src, m, nCh, audio, (n) => el._fcNodes.push(n));
+  } catch (e) {
+    el.volume = 1;
+  }
+}
+
+async function playSource() {
+  if (!state.source.mediaId) {
+    toast("Double-click a clip in Project or the timeline to load Source");
+    return;
+  }
+  if (state.playing) pause();
+  if (state.audioHold) setAudioHold(false);
+  const dur = sourceDur();
+  const end = state.source.out != null ? Math.min(state.source.out, dur) : dur;
+  const start = state.source.in != null ? state.source.in : 0;
+  if (playRate() >= 0 && state.source.time >= end - 0.01) setSourceTime(start);
+  const m = sourceMedia();
+  const el = ensureSourceEl(m);
+  const audio = ensureAudio();
+  if (el) {
+    if (m.kind === "video" && m.channels == null) {
+      // Resolve channels before hooking so the graph has the right count
+      await detectChannelCount(m);
+    }
+    hookSourceAudio(m, el, audio);
+  }
+  audio.ctx.resume();
+  state.source.playing = true;
+  syncPlayButton();
+  noteActivity();
+}
+function toggleTransportPlay() {
+  // Space always resumes forward — drop a reverse / crawl rate left by J or K+L
+  if (!transportPlaying() && state.previewRate < 1) setPreviewRate(1);
+  if (isSourceMode()) {
+    state.source.playing ? pauseSource() : playSource();
+  } else {
+    state.playing ? pause() : play();
+  }
+}
+function sourceStopAt() {
+  const dur = sourceDur();
+  if (state.source.out != null) return Math.min(state.source.out, dur);
+  return dur;
+}
+function loadSourceFromMedia(m, opts = {}) {
+  if (!m) return;
+  // text/adjust aren't media — ignore
+  if (m.kind === "text" || m.kind === "adjust") return;
+  if (state.playing) pause();
+  pauseSource();
+  const prevId = state.source.mediaId;
+  if (prevId && prevId !== m.id) persistSourceMarks();
+  state.source.mediaId = m.id;
+  state.source.fromClipId = opts.fromClipId || null;
+  const marks = runtime.sourceMarks.get(m.id);
+  if (opts.in != null || opts.out != null) {
+    state.source.in = opts.in != null ? +opts.in : null;
+    state.source.out = opts.out != null ? +opts.out : null;
+  } else if (marks) {
+    state.source.in = marks.in;
+    state.source.out = marks.out;
+  } else {
+    state.source.in = null;
+    state.source.out = null;
+  }
+  const dur = Math.max(+m.duration || (m.kind === "image" || m.kind === "svg" ? 5 : 0), 0);
+  // Re-opening the same media without an explicit time keeps the Source playhead.
+  let t;
+  if (opts.time != null) t = +opts.time;
+  else if (prevId === m.id) t = state.source.time;
+  else if (state.source.in != null) t = state.source.in;
+  else t = 0;
+  state.source.time = clamp(t, 0, Math.max(dur, 0));
+  ensureSourceEl(m);
+  if (m.kind === "image") {
+    const aux = runtime.mediaAux.get(m.id);
+    if (!aux?.img) loadMediaMetadata(m).catch(() => {});
+  }
+  if (m.kind === "svg") loadSvgMedia(m).catch(() => {});
+  setMonitorMode("source");
+  updateSourceScrub();
+  // Seek decode head once loaded (coalesced — hold frame covers the blank)
+  const el = runtime.sourceEl;
+  if (el) {
+    const seek = () => seekSourceEl(state.source.time);
+    if (el.readyState >= 1) seek();
+    else el.addEventListener("loadedmetadata", seek, { once: true });
+  }
+}
+function loadSourceFromClip(c, opts = {}) {
+  if (!c || !c.mediaId) {
+    if (c && (c.kind === "text" || c.kind === "adjust" || c.kind === "shape" || c.kind === "null" || c.kind === "comp"))
+      toast("Titles, shapes, nulls and adjustment layers have no source media");
+    return;
+  }
+  const m = getMedia(c.mediaId);
+  if (!m) return;
+  const sp = clipSpeed(c);
+  // Source In/Out = the instance's source window (Premiere/Avid-like)
+  const inn = +c.in || 0;
+  const out = inn + c.duration * sp;
+  let time = opts.time;
+  if (time == null && opts.timelineTime != null)
+    time = mediaTimeAt(c, opts.timelineTime);
+  if (time == null) time = inn;
+  loadSourceFromMedia(m, {
+    in: inn,
+    out: out,
+    time,
+    fromClipId: c.id,
+  });
+  persistSourceMarks();
+}
+function setSourceInMark(at) {
+  if (!state.source.mediaId) return;
+  const t = +clamp(at ?? state.source.time, 0, Math.max(sourceDur(), 0)).toFixed(3);
+  const out = state.source.out;
+  if (out != null && t >= out) {
+    toast("IN must be before OUT");
+    return;
+  }
+  state.source.in = t;
+  persistSourceMarks();
+  updateSourceScrub();
+}
+function setSourceOutMark(at) {
+  if (!state.source.mediaId) return;
+  const t = +clamp(at ?? state.source.time, 0, Math.max(sourceDur(), 0)).toFixed(3);
+  const inn = state.source.in;
+  if (inn != null && t <= inn) {
+    toast("OUT must be after IN");
+    return;
+  }
+  state.source.out = t;
+  persistSourceMarks();
+  updateSourceScrub();
+}
+function clearSourceInMark() {
+  if (state.source.in == null) return;
+  state.source.in = null;
+  persistSourceMarks();
+  updateSourceScrub();
+}
+function clearSourceOutMark() {
+  if (state.source.out == null) return;
+  state.source.out = null;
+  persistSourceMarks();
+  updateSourceScrub();
+}
+function markIn() {
+  if (isSourceMode()) setSourceInMark();
+  else setInPoint();
+}
+function markOut() {
+  if (isSourceMode()) setSourceOutMark();
+  else setOutPoint();
+}
+function clearMarkIn() {
+  if (isSourceMode()) clearSourceInMark();
+  else clearInPoint();
+}
+function clearMarkOut() {
+  if (isSourceMode()) clearSourceOutMark();
+  else clearOutPoint();
+}
+/* ── Typed timecode: click the playhead / IN / OUT readout (or type a digit)
+   and enter a time — see parseTimecode for the accepted forms. ── */
+function tcEntryTarget(kind) {
+  const src = isSourceMode();
+  if (kind === "time") return src ? state.source.time : state.time;
+  if (kind === "in") return src ? state.source.in : project.inPoint;
+  return src ? state.source.out : project.outPoint;
+}
+function applyTcEntry(kind, t) {
+  const src = isSourceMode();
+  if (kind === "time") {
+    if (src) setSourceTime(t);
+    else { setTime(t); revealTime(state.time); }
+  } else if (kind === "in") src ? setSourceInMark(t) : setInPoint(t);
+  else src ? setSourceOutMark(t) : setOutPoint(t);
+}
+function beginTcEntry(el, kind, initial) {
+  if (!el || document.querySelector(".tc-input")) return;
+  if (kind !== "time" && isSourceMode() && !state.source.mediaId) return;
+  const cur = tcEntryTarget(kind);
+  const base = cur ?? tcEntryTarget("time");
+  const r = el.getBoundingClientRect();
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "tc-input";
+  input.spellcheck = false;
+  input.autocomplete = "off";
+  input.title = "Enter to go · Esc to cancel (see ? for formats)";
+  input.value = initial ?? fmt(base);
+  // Sit exactly over the readout it replaces: same font, a hair of padding
+  // for relative "+30" entries, no taller than the line (IN/OUT rows stack).
+  const cs = getComputedStyle(el);
+  Object.assign(input.style, {
+    font: cs.font, left: r.left - 3 + "px", top: r.top - 2 + "px",
+    width: r.width + 14 + "px", height: r.height + 4 + "px",
+  });
+  document.body.appendChild(input);
+  el.classList.add("editing");
+  let done = false;
+  const close = (commit) => {
+    if (done) return;
+    done = true;
+    if (commit) {
+      const t = parseTimecode(input.value, projectFps(), base);
+      if (t == null) toast("Couldn't read that time — try 01:15:00, 1500, +30 or 12.5s");
+      else if (input.value.trim() !== fmt(base)) applyTcEntry(kind, t);
+    }
+    input.remove();
+    el.classList.remove("editing");
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); close(true); }
+    else if (e.key === "Escape") { e.preventDefault(); close(false); }
+  });
+  input.addEventListener("blur", () => close(true));
+  input.focus();
+  if (initial == null) input.select();
+  else input.setSelectionRange(input.value.length, input.value.length);
+}
+els.tcCurrent.addEventListener("click", () => beginTcEntry(els.tcCurrent, "time"));
+els.tcIn?.addEventListener("click", () => beginTcEntry(els.tcIn, "in"));
+els.tcOut?.addEventListener("click", () => beginTcEntry(els.tcOut, "out"));
+function gotoTransportHome() {
+  if (isSourceMode()) {
+    setSourceTime(state.source.in != null ? state.source.in : 0);
+  } else gotoHome();
+}
+function gotoTransportEnd() {
+  if (isSourceMode()) {
+    const dur = sourceDur();
+    setSourceTime(state.source.out != null ? state.source.out : dur);
+  } else gotoEnd();
+}
+function stepTransport(dir) {
+  const dt = dir * (1 / projectFps());
+  if (isSourceMode()) setSourceTime(state.source.time + dt);
+  else setTime(state.time + dt);
+}
+function syncSourceMedia() {
+  const m = sourceMedia();
+  if (!m || (m.kind !== "video" && m.kind !== "audio")) return;
+  const el = ensureSourceEl(m);
+  if (!el) return;
+  const mt = state.source.time;
+  const rate = playRate();
+  if (state.source.playing) {
+    if (rate < 0) { // media can't play backwards — park paused and seek frame by frame
+      if (!el.paused) el.pause();
+      if (!el.seeking && Math.abs(el.currentTime - mt) > 1 / projectFps()) {
+        try { el.currentTime = mt; } catch { }
+      }
+      return;
+    }
+    if (el.playbackRate !== rate) { try { el.playbackRate = rate; } catch { } }
+    if (el.paused) el.play().catch(() => {});
+    // Only hard-seek on large drift (start/scrub resume). Tiny RAF vs decode
+    // skew is corrected by driving state.source.time from el in the loop.
+    if (Math.abs(el.currentTime - mt) > 0.35 * rate) {
+      try { el.currentTime = mt; } catch { }
+    }
+  } else if (!el.paused) {
+    el.pause();
+  }
+  // Paused: do not seek here. setSourceTime() handles user scrubs; seeking on
+  // every post-pause drift flash-blacks the video frame.
+}
+function drawSourceContain(ctx, src, sw, sh, W, H) {
+  if (!src || !(sw > 0) || !(sh > 0)) return false;
+  const scale = Math.min(W / sw, H / sh);
+  const dw = sw * scale, dh = sh * scale;
+  try {
+    ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function ensureSourceHold(W, H) {
+  let cv = runtime.sourceHold;
+  if (!cv) {
+    cv = document.createElement("canvas");
+    runtime.sourceHold = cv;
+  }
+  if (cv.width !== W || cv.height !== H) {
+    cv.width = W;
+    cv.height = H;
+    runtime.sourceHoldOk = false;
+  }
+  return cv;
+}
+/** Snapshot a decoded video frame into the hold canvas (used while seeking). */
+function captureSourceVideoFrame(el, m, W, H) {
+  if (!el || el.seeking || el.readyState < 2 || !(el.videoWidth > 0)) return false;
+  const hold = ensureSourceHold(W, H);
+  const g = hold.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, W, H);
+  const ok = drawSourceContain(
+    g, el,
+    el.videoWidth || m.width || W,
+    el.videoHeight || m.height || H,
+    W, H
+  );
+  if (ok) runtime.sourceHoldOk = true;
+  return ok;
+}
+function getSourceSvgImage(m, t) {
+  const aux = runtime.mediaAux.get(m.id);
+  if (!aux || !aux.svgText) return null;
+  if (!aux.svgAnimated) return aux.img || null;
+  const q = Math.round(Math.max(0, t) * projectFps()) / projectFps();
+  const hit = aux.svgFrames.get(q);
+  if (hit) return hit;
+  if (!aux.svgPending) {
+    aux.svgPending = renderSvgFrame(aux, q).then((img) => {
+      aux.svgFrames.set(q, img);
+      pruneSvgFrames(aux);
+      aux.lastImg = img;
+    }).catch(() => { }).finally(() => { aux.svgPending = null; });
+  }
+  return aux.lastImg || null;
+}
+function drawSourceFrame() {
+  const W = els.preview.width, H = els.preview.height;
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.filter = "none"; ctx2d.globalAlpha = 1;
+  ctx2d.fillStyle = "#000"; ctx2d.fillRect(0, 0, W, H);
+  const m = sourceMedia();
+  if (!m) {
+    ctx2d.fillStyle = "#8a8698";
+    ctx2d.font = `600 ${Math.round(H * 0.045)}px "Segoe UI", sans-serif`;
+    ctx2d.textAlign = "center";
+    ctx2d.textBaseline = "middle";
+    ctx2d.fillText("Double-click a clip to load Source", W / 2, H / 2);
+    return;
+  }
+  const t = state.source.time;
+  if (m.kind === "video") {
+    const el = ensureSourceEl(m);
+    // Prefer a fresh decode into the hold canvas; while seeking / not ready the
+    // previous hold stays, so scrubbing doesn't flash black.
+    captureSourceVideoFrame(el, m, W, H);
+    if (runtime.sourceHoldOk && runtime.sourceHold)
+      ctx2d.drawImage(runtime.sourceHold, 0, 0);
+  } else if (m.kind === "image") {
+    const img = runtime.mediaAux.get(m.id)?.img;
+    if (img) drawSourceContain(ctx2d, img, img.naturalWidth || m.width || W, img.naturalHeight || m.height || H, W, H);
+  } else if (m.kind === "svg") {
+    const img = getSourceSvgImage(m, t);
+    if (img) drawSourceContain(ctx2d, img, img.naturalWidth || m.width || W, img.naturalHeight || m.height || H, W, H);
+  } else if (m.kind === "audio") {
+    ctx2d.fillStyle = "#1a1a22";
+    ctx2d.fillRect(0, 0, W, H);
+    ctx2d.fillStyle = "#cfc8ff";
+    ctx2d.font = `700 ${Math.round(H * 0.08)}px "Segoe UI", sans-serif`;
+    ctx2d.textAlign = "center";
+    ctx2d.textBaseline = "middle";
+    ctx2d.fillText("♪", W / 2, H * 0.42);
+    ctx2d.fillStyle = "#e8e6f0";
+    ctx2d.font = `600 ${Math.round(H * 0.04)}px "Segoe UI", sans-serif`;
+    ctx2d.fillText(m.name || "Audio", W / 2, H * 0.55);
+    // Simple progress bar
+    const dur = sourceDur();
+    if (dur > 0) {
+      const bw = W * 0.5, bh = Math.max(4, H * 0.01);
+      const bx = (W - bw) / 2, by = H * 0.66;
+      ctx2d.fillStyle = "#2a2a33";
+      ctx2d.fillRect(bx, by, bw, bh);
+      ctx2d.fillStyle = "#7b6cff";
+      ctx2d.fillRect(bx, by, bw * clamp(t / dur, 0, 1), bh);
+    }
+  }
+  // Draw In/Out labels on frame edge
+  if (state.source.in != null || state.source.out != null) {
+    ctx2d.font = `600 ${Math.max(11, Math.round(H * 0.028))}px "Segoe UI", sans-serif`;
+    ctx2d.textBaseline = "top";
+    if (state.source.in != null) {
+      ctx2d.fillStyle = "#ffd166";
+      ctx2d.textAlign = "left";
+      ctx2d.fillText("IN " + fmt(state.source.in), 10, 10);
+    }
+    if (state.source.out != null) {
+      ctx2d.fillStyle = "#ff8a65";
+      ctx2d.textAlign = "right";
+      ctx2d.fillText("OUT " + fmt(state.source.out), W - 10, 10);
+    }
+  }
+}
+
+/* ═══════════════════════════ PLAYBACK ENGINE ═══════════════════════════ */
+function getClipEl(c) {
+  let el = runtime.clipEls.get(c.id);
+  const m = getMedia(c.mediaId);
+  // video plays its proxy while editing (never during export); audio always the original
+  const src = c.kind === "video" ? mediaPlaySrc(m) : m && m.src;
+  // The clip now plays another file (noise reduction or undoing it, a relink, proxies on / off): rebuild.
+  if (el && m && el._fcSrc !== src) { releaseClipEl(c.id); el = null; }
+  if (el) return el;
+  if (!m) return null;
+  el = document.createElement(c.kind === "audio" ? "audio" : "video");
+  el.preload = "auto"; el.src = src; el.playsInline = true;
+  el._fcSrc = src;
+  // a proxy is smaller than the original: fit "none" (native pixels) scales it back up
+  el._fcScale = src !== m.src && m.height > 0 ? (proxyOf(m)?.height || m.height) / m.height : 1;
+  runtime.clipEls.set(c.id, el);
+  hookAudio(c, el);
+  return el;
+}
+function releaseClipEl(id) {
+  const el = runtime.clipEls.get(id);
+  if (el) { try { el.pause(); el.src = ""; } catch { } runtime.clipEls.delete(id); }
+  const chain = runtime.clipGain.get(id);
+  if (chain) {
+    disposeClipChain(chain);
+    runtime.clipGain.delete(id);
+  }
+}
+
+/* ═══ Audio mixer — one graph for preview and export ═══
+   clip:   src → [channel routing] → trim (clip gain) → vol (volume, fades,
+           keyframes) → pan ─→ its A-track bus (V-track audio → master sum)
+   track:  bus (fader) → pan ─→ meter worklet input, or the master sum
+   master: sum → masterOut (fader) → speakers + recorder
+   Preview (AudioContext) and the export mix (OfflineAudioContext) are built
+   from these same helpers, so what plays is what renders. */
+
+/** Configure a bus so stereo panner output stays L/R through the meter. */
+function configureTrackBus(g) {
+  g.channelCount = 2;
+  g.channelCountMode = "explicit";
+  g.channelInterpretation = "discrete";
+}
+/** Master sum / fader — same stereo rules as the A-buses. */
+function configureMasterBus(g) {
+  configureTrackBus(g);
+}
+/** Route `src` into `dest` per the clip's channel settings and return the
+ *  routing nodes created (for disposal). An isolated stem (audioChannel) or a
+ *  mono mode feeds `dest` one channel, so the clip's pan places it with equal
+ *  power; stereo passes through and swap crosses L/R. */
+function wireClipInput(ctx, src, dest, c, nCh) {
+  const ch = c.props?.audioChannel;
+  const mode = clipChannelMode(c);
+  const stem = Number.isInteger(ch) && ch >= 0;
+  // left/right on a mono source would pick a silent channel — play it as is.
+  const iso = stem ? ch : nCh >= 2 && mode === "left" ? 0 : nCh >= 2 && mode === "right" ? 1 : -1;
+  if (iso >= 0) {
+    try { src.channelInterpretation = "discrete"; } catch { }
+    const split = ctx.createChannelSplitter(Math.max(2, nCh | 0, iso + 1));
+    src.connect(split);
+    split.connect(dest, iso);
+    return [split];
+  }
+  if (!stem && mode === "mono") {
+    const down = ctx.createGain(); // speakers downmix: stereo → ½(L+R)
+    down.channelCount = 1;
+    down.channelCountMode = "explicit";
+    down.channelInterpretation = "speakers";
+    src.connect(down);
+    down.connect(dest);
+    return [down];
+  }
+  if (!stem && mode === "swap" && nCh >= 2) {
+    const split = ctx.createChannelSplitter(Math.max(2, nCh | 0));
+    const merge = ctx.createChannelMerger(2);
+    src.connect(split);
+    split.connect(merge, 0, 1);
+    split.connect(merge, 1, 0);
+    merge.connect(dest);
+    return [split, merge];
+  }
+  src.connect(dest);
+  return [];
+}
+function clipWiringKey(c) { return `${c.props?.audioChannel ?? ""}|${clipChannelMode(c)}`; }
+/** One clip's chain: src → routing → trim → vol → pan. `out` goes to a bus;
+ *  vol and pan are driven per frame (preview) or by curves (export). */
+function buildClipChain(ctx, src, c, nCh) {
+  const trim = ctx.createGain();
+  const vol = ctx.createGain();
+  const chain = { ctx, src, trim, vol, pan: null, out: vol, inNodes: [], nCh, wiring: "", bus: null };
+  chain.inNodes = wireClipInput(ctx, src, trim, c, nCh);
+  chain.wiring = clipWiringKey(c);
+  trim.gain.value = dbToGain(clipGainDb(c));
+  chain.fxSlot = makeFxSlot(ctx, trim, vol); // clip effects sit between gain and volume
+  syncFxSlot(chain.fxSlot, c.fx);
+  try {
+    chain.pan = ctx.createStereoPanner();
+    vol.connect(chain.pan);
+    chain.out = chain.pan;
+  } catch { chain.pan = null; } // no StereoPanner: vol is the output
+  return chain;
+}
+/** Re-route a live chain after the clip's audioChannel / channelMode changed. */
+function rewireClipChain(chain, c) {
+  if (!chain || !chain.trim || chain.wiring === clipWiringKey(c)) return;
+  try { chain.src.disconnect(); } catch { }
+  for (const n of chain.inNodes) { try { n.disconnect(); } catch { } }
+  chain.inNodes = wireClipInput(chain.ctx, chain.src, chain.trim, c, chain.nCh);
+  chain.wiring = clipWiringKey(c);
+}
+function disposeClipChain(chain) {
+  if (!chain) return;
+  for (const n of [chain.out, chain.pan, chain.vol, chain.trim, ...(chain.inNodes || []), chain.src]) {
+    if (n) { try { n.disconnect(); } catch { } }
+  }
+  disposeFxChain(chain.fxSlot?.chain);
+  chain.bus = null;
+}
+/* ── Audio effects: the node side. A chain (audio-fx.js data) becomes a run
+   of Web Audio nodes between two fixed points — an "fx slot". Clips have a
+   slot between gain and volume, tracks between their input and fader, the
+   master between its sum and fader. A slot rebuilds only when the chain's
+   shape changes; parameter tweaks update the live nodes in place. Gate and
+   limiter come from fx-worklet.js and pass audio through until it loads. */
+const fxWorklets = new WeakMap(); // ctx → Promise (resolved = loaded)
+const fxWorkletReady = new WeakSet();
+function loadFxWorklet(ctx) {
+  if (!ctx.audioWorklet) return Promise.resolve(false);
+  let p = fxWorklets.get(ctx);
+  if (!p) {
+    p = ctx.audioWorklet.addModule("fx-worklet.js?v=2")
+      .then(() => { fxWorkletReady.add(ctx); return true; })
+      .catch((err) => { console.warn("[FableCut] fx worklet unavailable:", err); return false; });
+    fxWorklets.set(ctx, p);
+  }
+  return p;
+}
+const FX_WORKLET_TYPES = { limiter: "fablecut-limiter", gate: "fablecut-gate", pitch: "fablecut-pitch" };
+function normFx(list) {
+  if (!Array.isArray(list) || !list.length) return undefined;
+  const out = typeof FableCutFx !== "undefined" ? FableCutFx.normalizeFx(list) : list;
+  return out.length ? out : undefined;
+}
+/** Seeded so preview and every export get the same impulse response. */
+function reverbIR(ctx, decay) {
+  const cache = reverbIR.cache || (reverbIR.cache = new WeakMap());
+  let byDecay = cache.get(ctx);
+  if (!byDecay) cache.set(ctx, byDecay = new Map());
+  const key = decay.toFixed(2);
+  if (byDecay.has(key)) return byDecay.get(key);
+  const sr = ctx.sampleRate, n = Math.max(1, Math.round(sr * decay));
+  const buf = ctx.createBuffer(2, n, sr);
+  let s = Math.round(decay * 1000) >>> 0;
+  const rnd = () => { // mulberry32
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < n; i++) d[i] = (rnd() * 2 - 1) * Math.exp(-6.91 * i / n); // −60 dB at `decay`
+  }
+  byDecay.set(key, buf);
+  return buf;
+}
+function shaperCurve(drive) {
+  const k = drive * 40, n = 1024, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = i * 2 / (n - 1) - 1;
+    curve[i] = (1 + k) * x / (1 + k * Math.abs(x));
+  }
+  return curve;
+}
+/** One effect as {input, output, nodes, set(e, smooth)}. `smooth` glides each
+ *  parameter (automation runs ~50 times a second); otherwise it jumps. */
+function makeFxUnit(ctx, e) {
+  const g = (v = 1) => { const n = ctx.createGain(); n.gain.value = v; return n; };
+  let smooth = false;
+  const sv = (param, v) => {
+    if (!Number.isFinite(v)) return;
+    if (smooth) param.setTargetAtTime(v, ctx.currentTime, 0.012);
+    else param.value = v;
+  };
+  const unit = (u) => { const set = u.set; u.set = (p, sm = false) => { smooth = sm; set(p); }; return u; };
+  const bq = (type) => { const n = ctx.createBiquadFilter(); n.type = type; return n; };
+  const eqPow = (mix) => [Math.cos(mix * Math.PI / 2), Math.sin(mix * Math.PI / 2)];
+  switch (e.type) {
+    case "eq": {
+      const lo = bq("lowshelf"), mid = bq("peaking"), hi = bq("highshelf");
+      lo.connect(mid); mid.connect(hi);
+      return unit({ input: lo, output: hi, nodes: [lo, mid, hi], set(p) {
+        sv(lo.frequency, p.lowFreq); sv(lo.gain, p.lowGain);
+        sv(mid.frequency, p.midFreq); sv(mid.gain, p.midGain); sv(mid.Q, p.midQ);
+        sv(hi.frequency, p.highFreq); sv(hi.gain, p.highGain);
+      } });
+    }
+    case "highpass": case "lowpass": {
+      const f = bq(e.type);
+      return unit({ input: f, output: f, nodes: [f], set(p) { sv(f.frequency, p.freq); sv(f.Q, p.q); } });
+    }
+    case "compressor": {
+      const c = ctx.createDynamicsCompressor(), mk = g();
+      c.connect(mk);
+      return unit({ input: c, output: mk, nodes: [c, mk], set(p) {
+        sv(c.threshold, p.threshold); sv(c.ratio, p.ratio); sv(c.knee, p.knee);
+        sv(c.attack, p.attack / 1000); sv(c.release, p.release / 1000);
+        sv(mk.gain, dbToGain(p.makeup));
+      } });
+    }
+    case "limiter": case "gate": case "pitch": {
+      if (!fxWorkletReady.has(ctx)) { const pass = g(); return unit({ input: pass, output: pass, nodes: [pass], pending: true, set() { } }); }
+      const w = new AudioWorkletNode(ctx, FX_WORKLET_TYPES[e.type]);
+      return unit({ input: w, output: w, nodes: [w], set(p) {
+        for (const k of Object.keys(FableCutFx.FX_DEFS[e.type].params)) sv(w.parameters.get(k), p[k]);
+      } });
+    }
+    case "delay": {
+      const inp = g(), out = g(), dry = g(1), wet = g(), fb = g(), d = ctx.createDelay(2);
+      inp.connect(dry); dry.connect(out);
+      inp.connect(d); d.connect(wet); wet.connect(out); d.connect(fb); fb.connect(d);
+      return unit({ input: inp, output: out, nodes: [inp, out, dry, wet, fb, d], set(p) {
+        sv(d.delayTime, p.time); sv(fb.gain, p.feedback); sv(wet.gain, p.mix);
+      } });
+    }
+    case "reverb": {
+      const inp = g(), out = g(), dry = g(), wet = g(), pre = ctx.createDelay(0.5), conv = ctx.createConvolver();
+      inp.connect(dry); dry.connect(out);
+      inp.connect(pre); pre.connect(conv); conv.connect(wet); wet.connect(out);
+      let decay = null;
+      return unit({ input: inp, output: out, nodes: [inp, out, dry, wet, pre, conv], set(p) {
+        const [d, w] = eqPow(p.mix);
+        sv(dry.gain, d); sv(wet.gain, w); sv(pre.delayTime, p.predelay / 1000);
+        if (decay !== p.decay) { decay = p.decay; conv.buffer = reverbIR(ctx, p.decay); }
+      } });
+    }
+    case "distortion": {
+      const inp = g(), out = g(), dry = g(), wet = g(), sh = ctx.createWaveShaper();
+      sh.oversample = "4x";
+      inp.connect(dry); dry.connect(out); inp.connect(sh); sh.connect(wet); wet.connect(out);
+      let drive = null;
+      return unit({ input: inp, output: out, nodes: [inp, out, dry, wet, sh], set(p) {
+        const [d, w] = eqPow(p.mix);
+        sv(dry.gain, d); sv(wet.gain, w);
+        if (drive !== p.drive) { drive = p.drive; sh.curve = shaperCurve(p.drive); }
+      } });
+    }
+    case "widener": { // mid/side width: 0 = mono, 1 = as is, 2 = twice the side
+      const up = g(); // mono in → both sides, so a mono clip widens sanely
+      up.channelCount = 2; up.channelCountMode = "explicit"; up.channelInterpretation = "speakers";
+      const sp = ctx.createChannelSplitter(2), mg = ctx.createChannelMerger(2);
+      const ll = g(), lr = g(), rr = g(), rl = g();
+      up.connect(sp);
+      sp.connect(ll, 0); sp.connect(rl, 0); sp.connect(rr, 1); sp.connect(lr, 1);
+      ll.connect(mg, 0, 0); lr.connect(mg, 0, 0); rr.connect(mg, 0, 1); rl.connect(mg, 0, 1);
+      return unit({ input: up, output: mg, nodes: [up, sp, mg, ll, lr, rr, rl], set(p) {
+        const a = (1 + p.width) / 2, b = (1 - p.width) / 2;
+        sv(ll.gain, a); sv(rr.gain, a); sv(lr.gain, b); sv(rl.gain, b);
+      } });
+    }
+  }
+  const pass = g();
+  return unit({ input: pass, output: pass, nodes: [pass], set() { } });
+}
+function buildFxChain(ctx, fx) {
+  const units = fx.map((e) => { const u = makeFxUnit(ctx, e); u.set(e); return u; });
+  for (let i = 1; i < units.length; i++) units[i - 1].output.connect(units[i].input);
+  return { units, input: units[0].input, output: units[units.length - 1].output, pending: units.some((u) => u.pending) };
+}
+function disposeFxChain(chain) {
+  if (!chain) return;
+  for (const u of chain.units) for (const n of u.nodes) { try { n.disconnect(); } catch { } }
+}
+/** An fx insert between `from` and `to`; `from` must feed nothing else. */
+function makeFxSlot(ctx, from, to) {
+  from.connect(to);
+  return { ctx, from, to, chain: null, ref: null, shape: "" };
+}
+/** Bring a slot in line with an effects list (bypassed effects left out). */
+function syncFxSlot(slot, list) {
+  if (!slot) return;
+  if (slot.ref === list && !slot.chain?.pending) return;
+  slot.ref = list;
+  const fx = (list || []).filter((e) => e && e.on !== false);
+  const shape = fx.map((e) => e.type).join(",");
+  if (slot.chain && shape === slot.shape && !slot.chain.pending) {
+    fx.forEach((e, i) => slot.chain.units[i].set(e));
+    return;
+  }
+  try { slot.from.disconnect(); } catch { }
+  disposeFxChain(slot.chain);
+  slot.chain = null;
+  slot.shape = shape;
+  if (!fx.length) { slot.from.connect(slot.to); return; }
+  slot.chain = buildFxChain(slot.ctx, fx);
+  slot.from.connect(slot.chain.input);
+  slot.chain.output.connect(slot.to);
+}
+/** Apply automation (`keys`) to a live slot at time t — clip-local for a
+ *  clip's effects, timeline time for a track's, a bus's or the master's. */
+function animateFxSlot(slot, t, smooth = true) {
+  const chain = slot?.chain;
+  if (!chain || chain.pending || !FableCutFx.hasKeys(slot.ref)) return;
+  const fx = slot.ref.filter((e) => e && e.on !== false);
+  fx.forEach((e, i) => { if (e.keys && chain.units[i]) chain.units[i].set(FableCutFx.evalEffect(e, t), smooth); });
+}
+function trackFx(id) { return TRACKS.find((t) => t.id === id)?.fx; }
+function masterFx() { return project.master?.fx; }
+/** An A-track bus: clips connect to the bus (its input sum), then fx →
+ *  fader (`_fcFader`) → pan (`_fcPan`); `_fcOut` feeds the master sum. */
+function makeTrackBus(ctx) {
+  const bus = ctx.createGain();
+  configureTrackBus(bus);
+  const fader = ctx.createGain();
+  configureTrackBus(fader);
+  bus._fcFx = makeFxSlot(ctx, bus, fader);
+  let pan = null;
+  try { pan = ctx.createStereoPanner(); fader.connect(pan); } catch { pan = null; }
+  bus._fcFader = fader;
+  bus._fcPan = pan;
+  bus._fcOut = pan || fader;
+  return bus;
+}
+function busOut(bus) { return bus._fcOut || bus; }
+function disposeTrackBus(bus) {
+  for (const n of [busOut(bus), bus._fcFader, bus]) { try { n.disconnect(); } catch { } }
+  disposeFxChain(bus._fcFx?.chain);
+}
+/** Track buses (→ a submix bus or the master) + submix buses (→ master) +
+ *  master sum → master fx → master fader. */
+function buildMixBuses(ctx, ids, busIds = busIdsNow()) {
+  const master = ctx.createGain();
+  configureMasterBus(master);
+  const masterOut = ctx.createGain();
+  configureMasterBus(masterOut);
+  const masterFxSlot = makeFxSlot(ctx, master, masterOut);
+  const subBus = {};
+  for (const id of busIds) {
+    subBus[id] = makeTrackBus(ctx);
+    busOut(subBus[id]).connect(master);
+  }
+  const trackBus = {};
+  for (const id of ids) {
+    trackBus[id] = makeTrackBus(ctx);
+    busOut(trackBus[id]).connect(master);
+    trackBus[id]._fcDest = master;
+  }
+  return { ctx, master, masterOut, masterFxSlot, trackBus, subBus };
+}
+/** Point each track bus at its submix bus (tracks[].out) or the master.
+ *  Disconnects only that one edge, so meter taps stay. */
+function routeTrackBuses(mix) {
+  for (const [id, bus] of Object.entries(mix.trackBus)) {
+    const dest = mix.subBus?.[trackOut(id)] || mix.master;
+    if (bus._fcDest === dest) continue;
+    if (bus._fcDest) { try { busOut(bus).disconnect(bus._fcDest); } catch { } }
+    busOut(bus).connect(dest);
+    bus._fcDest = dest;
+  }
+}
+/** Track / master effect automation at timeline time t. */
+function animateMixFx(mix, t, smooth = true) {
+  for (const bus of Object.values(mix.trackBus || {})) animateFxSlot(bus._fcFx, t, smooth);
+  for (const bus of Object.values(mix.subBus || {})) animateFxSlot(bus._fcFx, t, smooth);
+  animateFxSlot(mix.masterFxSlot, t, smooth);
+}
+/** Push track / master faders, pans and effects into a mix. `smooth` glides
+ *  live fader moves (no zipper noise); export sets them flat. */
+function applyMixLevels(mix, smooth = false) {
+  if (!mix) return;
+  const set = (param, v) => {
+    if (smooth && mix.ctx) param.setTargetAtTime(v, mix.ctx.currentTime, 0.015);
+    else param.value = v;
+  };
+  for (const [id, bus] of Object.entries(mix.trackBus)) {
+    set((bus._fcFader || bus).gain, dbToGain(trackGainDb(id)));
+    if (bus._fcPan) set(bus._fcPan.pan, trackPanValue(id));
+    syncFxSlot(bus._fcFx, trackFx(id));
+  }
+  for (const [id, bus] of Object.entries(mix.subBus || {})) {
+    const b = busById(id);
+    set(bus._fcFader.gain, b?.mute ? 0 : dbToGain(clampFaderDb(b?.gain)));
+    if (bus._fcPan) set(bus._fcPan.pan, clipPan(b?.pan));
+    syncFxSlot(bus._fcFx, b?.fx);
+  }
+  routeTrackBuses(mix);
+  if (mix.masterOut) set(mix.masterOut.gain, dbToGain(masterGainDb()));
+  syncFxSlot(mix.masterFxSlot, masterFx());
+}
+function ensureAudio() {
+  if (runtime.audio) return runtime.audio;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const ids = audioTrackIds();
+  const mix = buildMixBuses(ctx, ids);
+  const recDest = ctx.createMediaStreamDestination();
+  // Until the meter worklet is ready the master fader feeds the speakers directly.
+  mix.masterOut.connect(ctx.destination);
+  mix.masterOut.connect(recDest);
+  runtime.audio = {
+    ctx, master: mix.master, masterOut: mix.masterOut, masterFxSlot: mix.masterFxSlot, recDest,
+    trackBus: mix.trackBus, audioTrackIds: ids.slice(), subBus: mix.subBus, busIds: busIdsNow(),
+    meter: null, meterReady: false,
+  };
+  applyMixLevels(runtime.audio);
+  // Gate / limiter slots built before the worklet loaded pass audio through;
+  // rebuild them once it is in (clip slots catch up on their next frame).
+  loadFxWorklet(ctx).then(() => { if (runtime.audio?.ctx === ctx) applyMixLevels(runtime.audio); });
+  installMeterWorklet(runtime.audio).catch(() => {});
+  for (const [id, el] of runtime.clipEls) {
+    const c = getClip(id);
+    if (c) hookAudio(c, el);
+  }
+  return runtime.audio;
+}
+/** Create missing A-track buses and rebuild the meter when the track list changes. */
+function syncAudioGraphTracks() {
+  const audio = runtime.audio;
+  if (!audio) return;
+  const ids = audioTrackIds();
+  const idSet = new Set(ids);
+  // Drop buses for removed A-tracks (independent of meter state).
+  for (const id of Object.keys(audio.trackBus)) {
+    if (idSet.has(id)) continue;
+    disposeTrackBus(audio.trackBus[id]);
+    delete audio.trackBus[id];
+  }
+  for (const id of ids) {
+    if (!audio.trackBus[id]) audio.trackBus[id] = makeTrackBus(audio.ctx);
+  }
+  audio.audioTrackIds = ids.slice();
+  // Submix buses follow project.buses the same way.
+  audio.subBus = audio.subBus || {};
+  const busIds = busIdsNow();
+  for (const id of Object.keys(audio.subBus)) {
+    if (busIds.includes(id)) continue;
+    disposeTrackBus(audio.subBus[id]);
+    delete audio.subBus[id];
+  }
+  for (const id of busIds) {
+    if (!audio.subBus[id]) audio.subBus[id] = makeTrackBus(audio.ctx);
+    const out = busOut(audio.subBus[id]);
+    try { out.disconnect(); } catch { }
+    try { out.connect(audio.master); } catch { }
+  }
+  audio.busIds = busIds;
+  // Tear down meter so installMeterWorklet can rebuild with the new input count.
+  if (audio.meter) {
+    teardownMeterNode(audio);
+    audio.meter = null;
+  }
+  audio.meterReady = false;
+  // Allow a new install even if a previous addModule is still in flight — that
+  // call's finally will see _reloadMeter and run again.
+  meterState._reloadMeter = true;
+  // Always wire current buses → master so re-added tracks stay audible if meter install fails.
+  for (const id of ids) {
+    const out = busOut(audio.trackBus[id]);
+    try { out.disconnect(); } catch { }
+    try { out.connect(audio.master); } catch { }
+    audio.trackBus[id]._fcDest = audio.master;
+  }
+  applyMixLevels(audio); // routes tracks into their submix buses
+  installMeterWorklet(audio).catch(() => {});
+  // Re-route clip chains onto (possibly new) buses
+  for (const c of project.clips) {
+    if (c.kind === "audio" || c.kind === "video") routeClipGain(c);
+  }
+}
+function hookAudio(c, el) {
+  if (!runtime.audio || runtime.clipGain.has(c.id)) return;
+  if (c.kind !== "video" && c.kind !== "audio") return;
+  const ctx = runtime.audio.ctx;
+  // createMediaElementSource irreversibly diverts element audio into the
+  // graph — register a stub first so releaseClipEl can always tear it down
+  // even if building the chain throws.
+  let src;
+  try { src = ctx.createMediaElementSource(el); } catch { return; }
+  runtime.clipGain.set(c.id, { src, inNodes: [] });
+  try {
+    const m = getMedia(c.mediaId);
+    const ch = c.props?.audioChannel;
+    const nCh = Math.max(m?.channels > 0 ? m.channels : 2, Number.isInteger(ch) ? ch + 1 : 0);
+    runtime.clipGain.set(c.id, buildClipChain(ctx, src, c, nCh));
+    routeClipGain(c);
+  } catch { }
+}
+/** Reconnect a clip's chain to the correct track bus (or master for video tracks). */
+function routeClipGain(c) {
+  const chain = runtime.clipGain.get(c.id);
+  if (!chain?.out || !runtime.audio) return;
+  const bus = runtime.audio.trackBus[c.track] || runtime.audio.master;
+  if (chain.bus === bus) return;
+  try { chain.out.disconnect(); } catch { }
+  chain.bus = null;
+  chain.out.connect(bus);
+  chain.bus = bus;
+}
+/** Drive a live clip chain from the clip's evaluated props at timeline time t. */
+function driveClipChain(chain, c, p, t) {
+  if (!chain?.vol) return;
+  // The element may have been hooked before its channel count was probed.
+  const nCh = getMedia(c.mediaId)?.channels;
+  if (nCh > 0 && nCh !== chain.nCh && !Number.isInteger(c.props?.audioChannel)) {
+    chain.nCh = nCh;
+    chain.wiring = "";
+  }
+  rewireClipChain(chain, c);
+  syncFxSlot(chain.fxSlot, c.fx);
+  if (t != null) animateFxSlot(chain.fxSlot, t - c.start);
+  chain.trim.gain.value = dbToGain(clipGainDb(c));
+  chain.vol.gain.value = clipAudioGain(p);
+  if (chain.pan) chain.pan.pan.value = clipPan(p.pan);
+}
+function muteClipChain(chain) {
+  if (chain?.vol) chain.vol.gain.value = 0;
+}
+
+/* ── Normalize: measure what each clip feeds its gain stage over its source
+   window (loudness.js — same math as fablecut_normalize_audio) and set clip
+   gain to hit the target. Linked stems are measured together and share one
+   gain, so a stereo pair stays balanced. Volume keyframes are left alone. ── */
+const NORMALIZE_TARGETS = [
+  { id: "lufs-14", label: "−14 LUFS (streaming)", mode: "lufs", value: -14 },
+  { id: "lufs-16", label: "−16 LUFS (podcast)", mode: "lufs", value: -16 },
+  { id: "lufs-23", label: "−23 LUFS (broadcast)", mode: "lufs", value: -23 },
+  { id: "peak-1", label: "−1 dBFS peak", mode: "peak", value: -1 },
+];
+const NORMALIZE_KEY = "fablecut-normalize-target";
+function normalizeTarget() {
+  let id = null;
+  try { id = localStorage.getItem(NORMALIZE_KEY); } catch { }
+  return NORMALIZE_TARGETS.find((t) => t.id === id) || NORMALIZE_TARGETS[0];
+}
+/** Clips that actually sound for this selection: a linked group's audio stems
+ *  (its picture is muted), or the clip itself. One array per gain decision. */
+function normalizeGroups(clips) {
+  const groups = new Map();
+  for (const c of withLinked(clips)) {
+    if (c.kind !== "audio" && c.kind !== "video") continue;
+    const key = c.linkGroup || c.linkedId && [c.id, c.linkedId].sort().join("|") || c.id;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  const out = [];
+  for (const list of groups.values()) {
+    const stems = list.filter((c) => c.kind === "audio");
+    out.push(stems.length ? stems : list);
+  }
+  return out;
+}
+/** Integrated loudness + sample peak of a group of clips, played together. */
+async function measureClipGroup(clips) {
+  const chans = [];
+  let sr = 0;
+  for (const c of clips) {
+    const m = getMedia(c.mediaId);
+    if (!m) continue;
+    const buf = await getAudioBuffer(m);
+    sr = sr || buf.sampleRate;
+    const a = clamp(Math.floor(c.in * buf.sampleRate), 0, buf.length);
+    const b = clamp(Math.ceil(mediaTimeAt(c, c.start + c.duration) * buf.sampleRate), a, buf.length);
+    const src = [];
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) src.push(buf.getChannelData(ch).subarray(a, b));
+    chans.push(...FableCutLoudness.routeChannels(src, c.props || {}));
+  }
+  if (!chans.length) return null;
+  const n = Math.min(...chans.map((x) => x.length));
+  return FableCutLoudness.measure(chans.map((x) => x.subarray(0, n)), sr);
+}
+async function normalizeClips(clips, target = normalizeTarget()) {
+  if (typeof FableCutLoudness === "undefined") { toast("Loudness module missing — reload the editor"); return; }
+  const groups = normalizeGroups(clips).filter((g) => !g.some(isGroupLocked));
+  if (!groups.length) { toast("Select an audio or video clip to normalize"); return; }
+  toast(`Measuring ${groups.length} clip${groups.length > 1 ? "s" : ""}…`);
+  const results = [];
+  for (const g of groups) {
+    try { results.push({ g, m: await measureClipGroup(g) }); } catch { results.push({ g, m: null }); }
+  }
+  pushUndo();
+  let done = 0, silent = 0;
+  for (const { g, m } of results) {
+    const db = m && FableCutLoudness.normalizeGainDb(m, target);
+    if (db == null) { silent++; continue; }
+    const gain = Math.round(clamp(db, CLIP_GAIN_MIN, CLIP_GAIN_MAX) * 10) / 10;
+    for (const c of g) { if (getClip(c.id)) c.props.gain = gain; }
+    done++;
+  }
+  scheduleSave();
+  renderInspector();
+  refreshAudioHold();
+  const what = done === 1 && results.length === 1
+    ? `gain ${fmtDb(results[0].g[0].props.gain)}` : `${done} clip${done === 1 ? "" : "s"}`;
+  toast(`Normalized to ${target.label}: ${what}${silent ? ` · ${silent} silent, skipped` : ""}`);
+}
+/* ── Noise reduction: render and replace (denoise.js on the server). The
+   server writes a cleaned FLAC of the clip's whole source file; the clip's
+   audio stems switch to it (media.derivedFrom points back, so links and
+   "Off" still find the original). The picture keeps its own file. ── */
+const DENOISE_LEVELS = ["light", "medium", "strong"];
+function baseMediaId(id) { return getMedia(id)?.derivedFrom || id; }
+/** The stems a selection's noise reduction applies to (see denoise.js). */
+function denoiseTargets(clips) {
+  const out = new Map();
+  for (const c of clips) {
+    const stems = (c.linkGroup ? withLinked([c]) : [c]).filter((x) => x.kind === "audio" && x.mediaId);
+    for (const s of stems) out.set(s.id, s);
+  }
+  return [...out.values()];
+}
+/** The level the clip plays at now: "off" or a DENOISE_LEVELS entry. */
+function clipDenoise(c) {
+  const stem = denoiseTargets([c])[0];
+  return (stem && getMedia(stem.mediaId)?.denoise) || "off";
+}
+async function denoiseClips(clips, level) {
+  const picked = denoiseTargets(clips);
+  const targets = picked.filter((x) => !isGroupLocked(x));
+  if (!picked.length) { toast("Noise reduction works on audio — this picture has no linked audio stems"); renderInspector(); return; }
+  if (!targets.length) { toastLocked(); renderInspector(); return; }
+  const swap = new Map(); // base media id → the media to play
+  if (level === "off") for (const t of targets) swap.set(baseMediaId(t.mediaId), baseMediaId(t.mediaId));
+  else {
+    const bases = [...new Set(targets.map((t) => baseMediaId(t.mediaId)))];
+    toast(`Reducing noise (${level})…`);
+    for (const id of bases) {
+      const base = getMedia(id);
+      try {
+        const r = await fetch("/api/denoise", { method: "POST", body: JSON.stringify({ src: base.src, amount: level }) })
+          .then(async (x) => { const j = await x.json(); if (!x.ok) throw new Error(j.error || x.status); return j; });
+        let m = project.media.find((x) => x.src === r.src);
+        if (!m) {
+          m = { id: "m_" + uid(), name: r.name, kind: "audio", src: r.src, duration: r.duration, folderId: base.folderId || null,
+            derivedFrom: base.id, denoise: level };
+          if (r.channels) m.channels = r.channels;
+          project.media.push(m);
+        }
+        swap.set(id, m.id);
+      } catch (err) {
+        toast(`Noise reduction failed: ${err.message || err}`);
+        renderInspector();
+        return;
+      }
+    }
+  }
+  pushUndo();
+  for (const t of targets) {
+    const next = swap.get(baseMediaId(t.mediaId));
+    if (!next || next === t.mediaId) continue;
+    t.mediaId = next;
+    releaseClipEl(t.id); // its player and audio chain rebuild on the new file
+    const m = getMedia(next);
+    if (m) ensureWave(m);
+  }
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  renderBin();
+  refreshAudioHold();
+  toast(level === "off" ? "Noise reduction off — playing the original" : `Noise reduction: ${level}`);
+}
+/* ── Auto-duck: find where the voice tracks have sound (ducking.js) and
+   write `duck` keyframes on the selected music clips — the same pipeline as
+   fablecut_auto_duck. The duck rides on top of volume, so the music's own
+   level and fades are left alone and a re-run simply replaces the dips. ── */
+const DUCK_KEY = "fablecut-duck-amount";
+function duckAmount() {
+  let v = -12;
+  try { v = +localStorage.getItem(DUCK_KEY) || -12; } catch { }
+  return clamp(v, -40, -1);
+}
+function setDuckKeys(c, keys) {
+  for (const x of volGroup(c)) {
+    if (keys.length) {
+      x.keyframes = x.keyframes || {};
+      x.keyframes.duck = keys.map((k) => ({ ...k }));
+    } else if (x.keyframes?.duck) {
+      delete x.keyframes.duck;
+      if (!Object.keys(x.keyframes).length) x.keyframes = undefined;
+    }
+  }
+}
+/** Timeline spans with sound on the voice clips (each measured after its
+ *  channel routing, scaled by its clip gain and static volume). */
+async function voiceRegions(voices, threshold, minLen, heard) {
+  const lists = [];
+  for (const v of voices) {
+    const m = getMedia(v.mediaId);
+    if (!m) continue;
+    let buf;
+    try { buf = await getAudioBuffer(m); } catch { continue; }
+    heard?.add(v.id);   // read and measured: its quiet is real quiet, not a file that failed to decode
+    const a = clamp(Math.floor(v.in * buf.sampleRate), 0, buf.length);
+    const b = clamp(Math.ceil(mediaTimeAt(v, clipEnd(v)) * buf.sampleRate), a, buf.length);
+    const src = [];
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) src.push(buf.getChannelData(ch).subarray(a, b));
+    const env = FableCutDucking.rmsEnvelope(FableCutLoudness.routeChannels(src, v.props || {}), buf.sampleRate);
+    lists.push(FableCutDucking.activeRegions(env, {
+      t0: v.start, speed: clipSpeed(v), threshold,
+      gain: dbToGain(clipGainDb(v)) * clamp(+(v.props?.volume ?? 1), 0, VOL_MAX),
+      ...(minLen != null ? { minLen } : {}),
+    }));
+  }
+  // silence wants every pause, so nothing is bridged there; ducking bridges short gaps
+  return FableCutDucking.mergeRegions(lists, minLen != null ? 0 : undefined);
+}
+
+/* ── Silence (silence.js): find the pauses in speech, mark them on the
+   timeline, cut them out with Extract — the same spans and ops as
+   fablecut_silence. ── */
+const SILENCE_KEY = "fablecut-silence";
+function silenceOptions() {
+  try { return FableCutSilence.options(JSON.parse(localStorage.getItem(SILENCE_KEY) || "{}")); }
+  catch { return { ...FableCutSilence.DEFAULTS }; }
+}
+/** Each linked group's audio stems, else the clip itself (audio, or a video without stems). */
+function speechGroups(clips) {
+  const groups = new Map();
+  for (const c of clips) {
+    if (c.kind !== "audio" && c.kind !== "video") continue;
+    const key = c.linkGroup || c.id;
+    if (groups.has(key)) continue;
+    const stems = withLinked([c]).filter((x) => x.kind === "audio");
+    groups.set(key, stems.length ? stems : [c]);
+  }
+  return [...groups.values()];
+}
+/** Everything the marks were found from — where each clip sits, its file, speed, level and switches, the
+ *  frame rate: marked silences only stand while this is unchanged. */
+function silenceSig() {
+  return project.fps + "#" + project.clips.map((c) => JSON.stringify([c.id, c.track, c.start, c.in, c.duration, c.mediaId,
+    getMedia(c.mediaId)?.src ?? null, c.linkGroup ?? null, c.props?.speed ?? 1, c.keyframes?.speed ?? null,
+    c.props?.gain ?? 0, c.props?.volume ?? 1, c.props?.audioChannel ?? null, c.props?.channelMode ?? null,
+    clipRenders(c) ? 1 : 0])).join("|");
+}
+let silenceGen = 0;   // the newest Find: an older one still decoding never replaces its result
+async function findSilences(clips, opts = silenceOptions()) {
+  if (typeof FableCutSilence === "undefined") { toast("Silence module missing — reload the editor"); return; }
+  // a new Find replaces the old marks whatever it finds, so Cut never acts on another clip's result
+  const gen = ++silenceGen;
+  if (state.silence) { state.silence = null; state.dirtyTimeline = true; renderInspector(); }
+  const all = speechGroups(clips).map((g) => g.filter(clipRenders)).filter((g) => g.length);
+  if (!all.length) { toast("Select a clip with sound to find its silences"); return; }
+  // a speed ramp moves the sound along the timeline unevenly: those clips are left alone
+  const groups = all.filter((g) => !g.some(FableCutSilence.ramped));
+  if (!groups.length) { toast("These clips have a speed ramp — silence removal works on clips at a steady speed"); return; }
+  toast("Listening for silences…");
+  const sig = silenceSig(), heard = new Set();
+  state.silenceBusy = true;   // the Inspector shows Listening… with Cancel meanwhile
+  renderInspector();
+  let sound;
+  try { sound = await voiceRegions(groups.flat(), opts.threshold, FableCutSilence.MIN_SOUND, heard); }
+  finally { if (gen === silenceGen) state.silenceBusy = false; }
+  if (gen !== silenceGen) return;   // a newer Find took over, or Cancel
+  renderInspector();   // Listening… → Find again, whatever comes next
+  // the timeline moved while it listened: these spans belong to the old one
+  if (silenceSig() !== sig) { toast("The timeline changed while listening — find the silences again"); return; }
+  // a clip whose audio couldn't be read is not silent: leave its time alone
+  const usable = groups.filter((g) => g.every((x) => heard.has(x.id)));
+  if (!usable.length) { toast("Couldn't read the audio of these clips — nothing marked"); return; }
+  const ranges = usable.map((g) => [Math.min(...g.map((x) => x.start)), Math.max(...g.map(clipEnd))]);
+  const spans = FableCutSilence.silentSpans(sound, ranges, { ...opts, fps: project.fps });
+  state.silence = spans.length ? { ids: usable.flat().map((x) => x.id), spans, sig } : null;
+  state.dirtyTimeline = true;
+  renderInspector();
+  toast((spans.length
+    ? `${spans.length} silence${spans.length === 1 ? "" : "s"}, ${FableCutSilence.total(spans).toFixed(1)} s — marked on the timeline`
+    : "No silences that long — try a higher threshold or a shorter minimum") +
+    (usable.length < groups.length ? " · some clips' audio couldn't be read, so their time is left alone" : "") +
+    (groups.length < all.length ? " · clips with a speed ramp are left alone" : ""));
+}
+/** Extract every marked silence on the targeted tracks, last first: one undo step. */
+function cutSilences() {
+  const s = state.silence;
+  // the marks dropped when the timeline changed (the button can outlive them until the Inspector redraws)
+  if (!s) { renderInspector(); toast("The timeline changed — find the silences again"); return; }
+  if (s.sig !== silenceSig()) { state.silence = null; renderInspector(); toast("The timeline changed — find the silences again"); return; }
+  const snap = undoSnapshot();
+  let cut = 0, secs = 0;
+  for (const sp of s.spans.slice().sort((a, b) => b.from - a.from)) {
+    if (!EDIT.liftRange(sp.from, sp.to, true)) { cut++; secs += sp.to - sp.from; }
+  }
+  state.silence = null;
+  if (!cut) { state.dirtyTimeline = true; renderInspector(); toast("Nothing was cut — target the clip's tracks first"); return; }
+  pushUndo(snap);
+  pruneSelection();
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  toast(`Cut ${cut} silence${cut === 1 ? "" : "s"} · ${secs.toFixed(1)} s shorter`);
+}
+function clearSilences() {
+  silenceGen++;   // a Find still listening doesn't bring the marks back
+  state.silence = null;
+  state.silenceBusy = false;
+  state.dirtyTimeline = true;
+  renderInspector();
+}
+async function autoDuckClips(clips, { under = null, amount = duckAmount(), threshold = -40 } = {}) {
+  if (typeof FableCutDucking === "undefined") { toast("Ducking module missing — reload the editor"); return; }
+  const music = withLinked(clips).filter((x) => x.kind === "audio" && !isGroupLocked(x));
+  if (!music.length) { toast("Select the music clip(s) to duck"); return; }
+  const musicIds = new Set(music.map((x) => x.id));
+  const own = new Set(music.map((x) => x.track));
+  const lanes = under ? [under] : audioTrackIds().filter((id) => !own.has(id));
+  const t0 = Math.min(...music.map((x) => x.start)), t1 = Math.max(...music.map(clipEnd));
+  const voices = project.clips.filter((x) => x.kind === "audio" && lanes.includes(x.track) &&
+    !musicIds.has(x.id) && clipRenders(x) && clipEnd(x) > t0 && x.start < t1);
+  if (!voices.length) {
+    toast(`No audio on ${under || "the other audio tracks"} under these clips to duck for`);
+    return;
+  }
+  toast("Listening for voice…");
+  const regions = await voiceRegions(voices, threshold);
+  pushUndo();
+  let dips = 0;
+  const done = new Set();
+  for (const c of music) {
+    if (done.has(c.linkGroup || c.id)) continue;
+    done.add(c.linkGroup || c.id);
+    const keys = FableCutDucking.duckKeyframes(regions, c, { amount });
+    setDuckKeys(c, keys);
+    dips += keys.filter((k, i) => k.v === amount && (i === 0 || keys[i - 1].v !== amount)).length;
+  }
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  refreshAudioHold();
+  toast(regions.length ? `Ducked ${amount} dB under ${lanes.join(", ")} — ${dips} dip${dips === 1 ? "" : "s"}`
+    : `No voice found on ${lanes.join(", ")} — nothing ducked`);
+}
+function clearDuck(clips) {
+  const list = withLinked(clips).filter((x) => x.kind === "audio" && x.keyframes?.duck && !isGroupLocked(x));
+  if (!list.length) return;
+  pushUndo();
+  for (const c of list) setDuckKeys(c, []);
+  state.dirtyTimeline = true;
+  scheduleSave();
+  renderInspector();
+  refreshAudioHold();
+}
+function fmtDb(db) {
+  if (!Number.isFinite(db) || db <= FADER_DB_MIN) return "−∞ dB";
+  const v = Math.round(db * 10) / 10;
+  return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1) + " dB";
+}
+
+/* ── Mixer (side-panel tab): a strip per A-track — fader, pan, mute, solo,
+   meter — plus the master fader. Faders live on project.tracks[].gain/pan and
+   project.master.gain; meters read the same ballistics as the monitor VU. ── */
+const SIDE_TAB_KEY = "fablecut-side-tab";
+const MIXER_MASTER = "master";
+const mixerState = { open: false, strips: {} };
+/* Console-style taper: unity sits at 3/4 of the throw, the bottom is −∞. */
+const FADER_TAPER = [[0, FADER_DB_MIN], [0.25, -30], [0.5, -12], [0.75, 0], [1, FADER_DB_MAX]];
+function faderPosToDb(pos) {
+  pos = clamp(+pos || 0, 0, 1);
+  for (let i = 1; i < FADER_TAPER.length; i++) {
+    const [p1, d1] = FADER_TAPER[i], [p0, d0] = FADER_TAPER[i - 1];
+    if (pos <= p1) return d0 + (d1 - d0) * (pos - p0) / (p1 - p0);
+  }
+  return FADER_DB_MAX;
+}
+function faderDbToPos(db) {
+  db = clampFaderDb(db);
+  for (let i = 1; i < FADER_TAPER.length; i++) {
+    const [p1, d1] = FADER_TAPER[i], [p0, d0] = FADER_TAPER[i - 1];
+    if (db <= d1) return p0 + (p1 - p0) * (db - d0) / (d1 - d0);
+  }
+  return 1;
+}
+function fmtPan(v) {
+  const n = Math.round(clipPan(v) * 100);
+  return n === 0 ? "C" : n < 0 ? `L${-n}` : `R${n}`;
+}
+/** Parse a typed fader value: "-6", "+3.5 dB", "-inf". */
+function parseDbInput(s) {
+  const t = String(s).trim().toLowerCase().replace("−", "-");
+  if (/^-?∞|^-?inf/.test(t)) return FADER_DB_MIN;
+  const v = parseFloat(t);
+  return Number.isFinite(v) ? clampFaderDb(v) : null;
+}
+function setSideTab(tab) {
+  const mixer = tab === "mixer", color = tab === "color";
+  mixerState.open = mixer;
+  colorState.open = color;
+  for (const b of els.sideTabs.querySelectorAll("[data-side]"))
+    b.classList.toggle("on", b.dataset.side === tab);
+  els.inspector.classList.toggle("hidden", mixer || color);
+  els.mixer.classList.toggle("hidden", !mixer);
+  els.colorPage.classList.toggle("hidden", !color);
+  try { localStorage.setItem(SIDE_TAB_KEY, tab); } catch { }
+  if (mixer) renderMixer();
+  else if (color) renderColorPage(true);
+  else renderInspector();
+}
+/** Write a track's fader / pan, push it into the live graph, persist. */
+function setTrackMix(id, { gain, pan } = {}) {
+  const t = TRACKS.find((x) => x.id === id && x.kind === "audio");
+  if (!t) return;
+  if (gain !== undefined) { const g = Math.round(clampFaderDb(gain) * 10) / 10; if (g) t.gain = g; else delete t.gain; }
+  if (pan !== undefined) { const p = clipPan(pan); if (p) t.pan = p; else delete t.pan; }
+  project.tracks = serializeTracks();
+  if (runtime.audio) applyMixLevels(runtime.audio, true);
+  scheduleSave();
+  syncMixerStrip(id);
+}
+function setMasterGain(db) {
+  project.master = normalizeMaster({ gain: Math.round(clampFaderDb(db) * 10) / 10 });
+  if (runtime.audio) applyMixLevels(runtime.audio, true);
+  scheduleSave();
+  syncMixerStrip(MIXER_MASTER);
+}
+function mixerStripDb(id) {
+  if (id === MIXER_MASTER) return masterGainDb();
+  const b = busById(id);
+  return b ? clampFaderDb(b.gain) : trackGainDb(id);
+}
+/** Apply a bus list change (add / remove) to the live graph and the panel. */
+function busesChanged() {
+  project.tracks = serializeTracks();
+  if (runtime.audio) syncAudioGraphTracks();
+  scheduleSave();
+  renderMixer();
+}
+function addBus() {
+  const buses = project.buses || (project.buses = []);
+  if (buses.length >= BUS_MAX) { toast(`Up to ${BUS_MAX} buses`); return; }
+  let n = 1;
+  while (buses.some((b) => b.id === "B" + n)) n++;
+  buses.push({ id: "B" + n });
+  project.buses = normalizeBuses(buses);
+  busesChanged();
+}
+function removeBus(id) {
+  project.buses = (project.buses || []).filter((b) => b.id !== id);
+  for (const t of TRACKS) if (t.out === id) delete t.out; // its tracks go back to the master
+  busesChanged();
+}
+/** Write a bus's fader / pan / mute / name and push it into the live graph. */
+function setBusMix(id, patch) {
+  const b = busById(id);
+  if (!b) return;
+  Object.assign(b, patch);
+  project.buses = normalizeBuses(project.buses);
+  if (runtime.audio) applyMixLevels(runtime.audio, true);
+  scheduleSave();
+  syncMixerStrip(id);
+}
+function setTrackOut(id, out) {
+  const t = TRACKS.find((x) => x.id === id && x.kind === "audio");
+  if (!t) return;
+  if (out && busById(out)) t.out = out; else delete t.out;
+  project.tracks = serializeTracks();
+  if (runtime.audio) applyMixLevels(runtime.audio, true);
+  scheduleSave();
+}
+function renderMixer() {
+  if (!mixerState.open || !els.mixer) return;
+  const root = els.mixer;
+  root.innerHTML = "";
+  mixerState.strips = {};
+  if (mixerState.fxTarget) { renderMixerFx(root, mixerState.fxTarget); return; }
+  const row = document.createElement("div");
+  row.className = "mixer-strips";
+  const buses = project.buses || [];
+  const strip = (id, label, color, isMaster, isBus = false) => {
+    const s = document.createElement("div");
+    s.className = "mix-strip" + (isMaster ? " master" : "") + (isBus ? " bus" : "");
+    s.dataset.strip = id;
+    if (color) s.style.setProperty("--strip-color", color);
+    s.innerHTML = `
+      <div class="mix-name" title="${isMaster ? "Master bus — everything you hear and export" : isBus ? `Submix bus ${id} — double-click to rename` : `Track ${id}`}">${escapeHtml(label)}</div>
+      ${!isMaster && !isBus ? `<select class="mix-out" title="Where this track goes: the master, or a submix bus"><option value="">→ Master</option>${buses.map((b) =>
+        `<option value="${b.id}">→ ${escapeHtml(busLabel(b))}</option>`).join("")}</select>` : ""}
+      ${isMaster ? `<div class="mix-pan-row mix-lufs" title="Momentary loudness of the mix (post-fader)">— LUFS</div>`
+        : `<div class="mix-pan-row"><input type="range" class="mix-pan" min="-1" max="1" step="0.01" title="Track pan — double-click: center"><span class="mix-pan-val"></span></div>`}
+      <div class="mix-body">
+        <canvas class="mix-meter"></canvas>
+        <input type="range" class="mix-fader" min="0" max="1" step="0.001" title="${isMaster ? "Master" : "Track"} fader — double-click: 0 dB">
+      </div>
+      <input type="text" class="mix-db" spellcheck="false" title="Type a level in dB (e.g. -6, +2, -inf)">
+      <button type="button" class="mix-fx" title="${isMaster ? "Master" : isBus ? `Bus ${id}` : `Track ${id}`} effects">FX</button>
+      ${isMaster ? "" : isBus ? `<div class="mix-btns"><button type="button" class="mix-m" title="Mute the bus">M</button><button type="button" class="mix-x" title="Remove the bus — its tracks go back to the master">✕</button></div>`
+        : `<div class="mix-btns"><button type="button" class="mix-m" title="Mute (track output on/off)">M</button><button type="button" class="mix-s" title="Solo">S</button></div>`}`;
+    s.querySelector(".mix-fx").addEventListener("click", () => { mixerState.fxTarget = id; renderMixer(); });
+    const fader = s.querySelector(".mix-fader");
+    const dbIn = s.querySelector(".mix-db");
+    const setDb = (db) => isMaster ? setMasterGain(db) : isBus ? setBusMix(id, { gain: db }) : setTrackMix(id, { gain: db });
+    fader.addEventListener("input", () => setDb(faderPosToDb(fader.value)));
+    fader.addEventListener("dblclick", () => setDb(0));
+    dbIn.addEventListener("change", () => {
+      const v = parseDbInput(dbIn.value);
+      if (v == null) syncMixerStrip(id); else setDb(v);
+    });
+    dbIn.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") dbIn.blur(); });
+    if (isBus) {
+      const pan = s.querySelector(".mix-pan");
+      pan.addEventListener("input", () => setBusMix(id, { pan: +pan.value }));
+      pan.addEventListener("dblclick", () => setBusMix(id, { pan: 0 }));
+      s.querySelector(".mix-m").addEventListener("click", () => setBusMix(id, { mute: !busById(id)?.mute }));
+      s.querySelector(".mix-x").addEventListener("click", () => removeBus(id));
+      const nameEl = s.querySelector(".mix-name");
+      nameEl.addEventListener("dblclick", () => {
+        const inp = document.createElement("input");
+        inp.className = "mix-rename";
+        inp.value = busById(id)?.name || "";
+        inp.placeholder = id;
+        nameEl.replaceWith(inp);
+        inp.focus(); inp.select();
+        const done = () => { setBusMix(id, { name: inp.value }); renderMixer(); };
+        inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = busById(id)?.name || ""; inp.blur(); } });
+        inp.addEventListener("blur", done, { once: true });
+      });
+    } else if (!isMaster) {
+      const pan = s.querySelector(".mix-pan");
+      pan.addEventListener("input", () => setTrackMix(id, { pan: +pan.value }));
+      pan.addEventListener("dblclick", () => setTrackMix(id, { pan: 0 }));
+      s.querySelector(".mix-m").addEventListener("click", () => toggleTrackEnabled(id));
+      s.querySelector(".mix-s").addEventListener("click", () => toggleTrackSolo(id));
+      const out = s.querySelector(".mix-out");
+      out.value = trackOut(id) || "";
+      out.addEventListener("change", () => setTrackOut(id, out.value || null));
+    }
+    row.appendChild(s);
+    const cv = s.querySelector(".mix-meter");
+    mixerState.strips[id] = { el: s, cv, ctx: cv.getContext("2d"), w: 0, h: 0, master: isMaster, bus: isBus };
+  };
+  for (const t of TRACKS) if (t.kind === "audio") strip(t.id, t.id, t.color, false);
+  for (const b of buses) strip(b.id, busLabel(b), BUS_COLOR, false, true);
+  if (buses.length < BUS_MAX) {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "mix-add";
+    add.title = "Add a submix bus — route tracks into it to process and level them together";
+    add.textContent = "+ Bus";
+    add.addEventListener("click", addBus);
+    row.appendChild(add);
+  }
+  strip(MIXER_MASTER, "Master", null, true);
+  root.appendChild(row);
+  for (const id of Object.keys(mixerState.strips)) syncMixerStrip(id);
+  sizeMixerMeters();
+}
+/** Size meter canvases to their laid-out box (device pixels). */
+function sizeMixerMeters() {
+  const dpr = window.devicePixelRatio || 1;
+  for (const st of Object.values(mixerState.strips)) {
+    const w = st.cv.clientWidth, h = st.cv.clientHeight;
+    if (!w || !h || (st.w === w && st.h === h)) continue;
+    st.w = w; st.h = h;
+    st.cv.width = Math.round(w * dpr);
+    st.cv.height = Math.round(h * dpr);
+    st.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  paintMixerMeters();
+}
+function syncMixerStrip(id) {
+  const st = mixerState.strips[id];
+  if (!st) return;
+  const s = st.el;
+  const db = mixerStripDb(id);
+  const fader = s.querySelector(".mix-fader");
+  // Leave a fader being dragged alone (the taper round-trip would nudge it).
+  if (document.activeElement !== fader || Math.abs(+fader.value - faderDbToPos(db)) > 0.002) fader.value = faderDbToPos(db);
+  const dbIn = s.querySelector(".mix-db");
+  if (document.activeElement !== dbIn) dbIn.value = fmtDb(db);
+  const nFx = ((st.master ? masterFx() : st.bus ? busById(id)?.fx : trackFx(id)) || []).filter((e) => e.on !== false).length;
+  const fxBtn = s.querySelector(".mix-fx");
+  fxBtn.textContent = nFx ? `FX ${nFx}` : "FX";
+  fxBtn.classList.toggle("on", nFx > 0);
+  if (st.master) return;
+  if (st.bus) {
+    const b = busById(id);
+    const pan = s.querySelector(".mix-pan");
+    if (document.activeElement !== pan) pan.value = clipPan(b?.pan);
+    s.querySelector(".mix-pan-val").textContent = fmtPan(b?.pan);
+    s.classList.toggle("muted", !!b?.mute);
+    s.querySelector(".mix-m").classList.toggle("on", !!b?.mute);
+    s.querySelector(".mix-m").setAttribute("aria-pressed", b?.mute ? "true" : "false");
+    return;
+  }
+  const pan = s.querySelector(".mix-pan");
+  pan.value = trackPanValue(id);
+  s.querySelector(".mix-pan-val").textContent = fmtPan(trackPanValue(id));
+  const on = isTrackEnabled(id), solo = state.soloId === id;
+  s.classList.toggle("muted", !on);
+  s.querySelector(".mix-m").classList.toggle("on", !on);
+  s.querySelector(".mix-m").setAttribute("aria-pressed", on ? "false" : "true");
+  s.querySelector(".mix-s").classList.toggle("on", solo);
+  s.querySelector(".mix-s").setAttribute("aria-pressed", solo ? "true" : "false");
+}
+/* ── Effects panel: the same editor for a clip (inspector), a track and the
+   master (mixer). `get` returns the current chain, `set` applies a new one
+   (always a fresh array, so live audio slots notice the change). ── */
+function fxFmt(v, d) {
+  if (d.unit === "Hz") return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} kHz` : `${Math.round(v)} Hz`;
+  if (d.unit === "") return d.max <= 1 ? `${Math.round(v * 100)}%` : (+v).toFixed(2);
+  if (d.unit === "ms") return `${Math.round(v)} ms`;
+  if (d.unit === "s") return `${(+v).toFixed(2)} s`;
+  if (d.unit === ":1") return `${(+v).toFixed(1)}:1`;
+  if (d.unit === "×") return `${(+v).toFixed(2)}×`;
+  return `${(+v).toFixed(1)} ${d.unit}`;
+}
+/* Frequency sliders move on a log scale (0…1000 ↔ min…max Hz). */
+const fxToSlider = (v, d) => d.unit === "Hz" ? Math.round(1000 * Math.log(v / d.min) / Math.log(d.max / d.min)) : v;
+const fxFromSlider = (s, d) => d.unit === "Hz" ? d.min * Math.pow(d.max / d.min, s / 1000) : +s;
+/** The effects editor. `at` is the time keys are read and written at — the
+ *  playhead in clip-local seconds for a clip's chain, timeline seconds for a
+ *  track's, a bus's or the master's; null while the playhead is off the clip
+ *  (automation is then shown but not editable). */
+function fxEditorHtml(list, at = null) {
+  const F = FableCutFx;
+  const groups = {};
+  for (const [id, p] of Object.entries(F.PRESETS)) (groups[p.group] = groups[p.group] || []).push([id, p.label]);
+  let html = `<div class="fx-tools-row">
+    <select data-fx-preset title="Replace the chain with a preset — tweak it afterwards"><option value="">Preset…</option>${Object.entries(groups).map(([g, items]) =>
+      `<optgroup label="${g}">${items.map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</optgroup>`).join("")}</select>
+    <select data-fx-add title="Add an effect to the end of the chain"><option value="">+ Add effect…</option>${F.FX_TYPES.map((t) =>
+      `<option value="${t}">${F.FX_DEFS[t].label}</option>`).join("")}</select>
+    ${list?.length ? `<button type="button" class="btn tiny" data-fx-clear title="Remove every effect">Clear</button>` : ""}
+  </div>`;
+  if (!list?.length) return html + `<div class="insp-note">No effects. Pick a preset or add one.</div>`;
+  list.forEach((e, i) => {
+    const def = F.FX_DEFS[e.type];
+    const ev = at != null ? F.evalEffect(e, at) : e;
+    html += `<div class="fx-card${e.on === false ? " off" : ""}" data-fx-i="${i}">
+      <div class="fx-head"><label title="On / bypass"><input type="checkbox" data-fx-on ${e.on === false ? "" : "checked"}> ${def.label}</label>
+        <span class="fx-btns"><button type="button" data-fx-move="-1" title="Earlier in the chain" ${i ? "" : "disabled"}>▲</button><button type="button" data-fx-move="1" title="Later in the chain" ${i < list.length - 1 ? "" : "disabled"}>▼</button><button type="button" data-fx-del title="Remove">✕</button></span></div>
+      ${Object.entries(def.params).map(([k, d]) => `<div class="fx-param"><span>${d.label}</span>
+        <input type="range" data-fx-p="${k}" min="${d.unit === "Hz" ? 0 : d.min}" max="${d.unit === "Hz" ? 1000 : d.max}" step="${d.unit === "Hz" ? 1 : d.step}" value="${fxToSlider(ev[k], d)}" title="Double-click: default">
+        <span class="fx-val">${fxFmt(ev[k], d)}</span>${d.fixed ? "<span></span>" : fxKeyBtn(e, k, at)}</div>`).join("")}
+    </div>`;
+  });
+  return html;
+}
+/** The ◆ beside an automatable effect parameter (count of keys; lit on one at `at`). */
+function fxKeyBtn(e, k, at) {
+  const ks = e.keys?.[k] || [], n = ks.length;
+  const on = at != null && ks.some((x) => Math.abs(x.t - at) < kfTimeEps());
+  const title = at == null ? "Move the playhead over the clip to automate this"
+    : on ? "Remove the key at the playhead" : "Set a key at the playhead";
+  return `<button type="button" class="kf-btn fx-kf${n ? " has" : ""}${on ? " on" : ""}" data-fx-kf="${k}" title="${title}"${at == null ? " disabled" : ""}>◆${n || ""}</button>`;
+}
+/* Live effects editors, so automated sliders follow the playhead. */
+const fxEditors = new Set();
+let fxEditorsAt = NaN;
+function syncFxEditors() {
+  if (state.time === fxEditorsAt) return;
+  fxEditorsAt = state.time;
+  for (const ed of fxEditors) { if (ed.root.isConnected) ed.sync(); else fxEditors.delete(ed); }
+}
+function bindFxEditor(root, get, set, onStructure, timeOf = () => null) {
+  const F = FableCutFx;
+  const list = () => (get() || []).map((e) => ({ ...e }));
+  const restructure = (next) => { set(next.length ? next : undefined); onStructure(); };
+  const near = (x, at) => Math.abs(x.t - at) < kfTimeEps();
+  /** Put v at time `at` on parameter k of effect i (replacing a key there). */
+  const withKey = (e, k, at, v) => {
+    const arr = (e.keys?.[k] || []).filter((x) => !near(x, at));
+    arr.push({ t: Math.round(at * 1e4) / 1e4, v });
+    arr.sort((a, b) => a.t - b.t);
+    return { ...(e.keys || {}), [k]: arr };
+  };
+  fxEditors.add({ root, sync() {
+    const at = timeOf(), cur = get() || [];
+    for (const card of root.querySelectorAll(".fx-card")) {
+      const e = cur[+card.dataset.fxI];
+      if (!e) continue;
+      const ev = at != null ? F.evalEffect(e, at) : e;
+      for (const inp of card.querySelectorAll("[data-fx-p]")) {
+        const k = inp.dataset.fxP, d = F.FX_DEFS[e.type].params[k];
+        if (!e.keys?.[k] || document.activeElement === inp) continue;
+        inp.value = fxToSlider(ev[k], d);
+        inp.nextElementSibling.textContent = fxFmt(ev[k], d);
+      }
+      for (const btn of card.querySelectorAll("[data-fx-kf]")) {
+        const tmp = document.createElement("span");
+        tmp.innerHTML = fxKeyBtn(e, btn.dataset.fxKf, at);
+        const fresh = tmp.firstElementChild;
+        if (btn.className !== fresh.className || btn.textContent !== fresh.textContent || btn.disabled !== fresh.disabled) {
+          btn.className = fresh.className; btn.textContent = fresh.textContent;
+          btn.disabled = fresh.disabled; btn.title = fresh.title;
+        }
+      }
+    }
+  } });
+  root.querySelector("[data-fx-preset]")?.addEventListener("change", (ev) => {
+    if (ev.target.value) restructure(F.presetChain(ev.target.value));
+  });
+  root.querySelector("[data-fx-add]")?.addEventListener("change", (ev) => {
+    if (ev.target.value) restructure([...list(), F.normalizeEffect({ type: ev.target.value })]);
+  });
+  root.querySelector("[data-fx-clear]")?.addEventListener("click", () => restructure([]));
+  for (const card of root.querySelectorAll(".fx-card")) {
+    const i = +card.dataset.fxI;
+    card.querySelector("[data-fx-on]").addEventListener("change", (ev) => {
+      const next = list();
+      if (ev.target.checked) delete next[i].on; else next[i].on = false;
+      restructure(next);
+    });
+    card.querySelector("[data-fx-del]").addEventListener("click", () => restructure(list().filter((_, j) => j !== i)));
+    for (const b of card.querySelectorAll("[data-fx-move]")) b.addEventListener("click", () => {
+      const next = list(), j = i + +b.dataset.fxMove;
+      if (j < 0 || j >= next.length) return;
+      [next[i], next[j]] = [next[j], next[i]];
+      restructure(next);
+    });
+    for (const btn of card.querySelectorAll("[data-fx-kf]")) btn.addEventListener("click", () => {
+      const at = timeOf();
+      if (at == null) return;
+      const next = list(), e = next[i], k = btn.dataset.fxKf;
+      const here = (e.keys?.[k] || []).find((x) => near(x, at));
+      let keys;
+      if (here) {
+        keys = { ...e.keys, [k]: e.keys[k].filter((x) => x !== here) };
+        if (!keys[k].length) delete keys[k];
+      } else keys = withKey(e, k, at, F.evalEffect(e, at)[k]);
+      if (Object.keys(keys).length) e.keys = keys; else delete e.keys;
+      restructure(next);
+    });
+    for (const inp of card.querySelectorAll("[data-fx-p]")) {
+      const k = inp.dataset.fxP;
+      const d = F.FX_DEFS[list()[i].type].params[k];
+      const apply = (v) => {
+        const next = list(), e = next[i];
+        v = Math.round(v * 1000) / 1000;
+        if (e.keys?.[k]?.length) { // automated: the slider edits the key at the playhead
+          const at = timeOf();
+          if (at == null) return;
+          e.keys = withKey(e, k, at, v);
+        } else e[k] = v;
+        set(next);
+        inp.nextElementSibling.textContent = fxFmt(v, d);
+        const b = card.querySelector(`[data-fx-kf="${k}"]`);
+        if (b && e.keys?.[k]) { b.classList.add("has", "on"); b.textContent = "◆" + e.keys[k].length; }
+      };
+      inp.addEventListener("input", () => apply(fxFromSlider(inp.value, d)));
+      inp.addEventListener("dblclick", () => { inp.value = fxToSlider(d.def, d); apply(d.def); });
+    }
+  }
+}
+/** Mixer: the effects of one track (or the master), replacing the strips. */
+function renderMixerFx(root, id) {
+  const isMaster = id === MIXER_MASTER;
+  const bus = busById(id);
+  if (bus) return renderBusFx(root, bus);
+  const t = TRACKS.find((x) => x.id === id);
+  if (!isMaster && !t) { mixerState.fxTarget = null; renderMixer(); return; }
+  root.innerHTML = `<div class="mixer-fx">
+    <div class="mixer-fx-head"><button type="button" class="btn tiny" data-fx-back>← Mixer</button>
+      <span>${isMaster ? "Master" : id} effects</span></div>
+    <div class="mixer-fx-body">${fxEditorHtml(isMaster ? masterFx() : t.fx, state.time)}</div></div>`;
+  root.querySelector("[data-fx-back]").addEventListener("click", () => { mixerState.fxTarget = null; renderMixer(); });
+  bindFxEditor(root, () => isMaster ? masterFx() : t.fx, (fx) => {
+    if (isMaster) project.master = normalizeMaster({ ...(project.master || {}), fx });
+    else { if (fx?.length) t.fx = fx; else delete t.fx; project.tracks = serializeTracks(); }
+    if (runtime.audio) applyMixLevels(runtime.audio, true);
+    scheduleSave();
+  }, () => renderMixer(), () => state.time);
+}
+function renderBusFx(root, bus) {
+  const id = bus.id;
+  root.innerHTML = `<div class="mixer-fx">
+    <div class="mixer-fx-head"><button type="button" class="btn tiny" data-fx-back>← Mixer</button>
+      <span>${escapeHtml(busLabel(bus))} effects</span></div>
+    <div class="mixer-fx-body">${fxEditorHtml(bus.fx, state.time)}</div></div>`;
+  root.querySelector("[data-fx-back]").addEventListener("click", () => { mixerState.fxTarget = null; renderMixer(); });
+  bindFxEditor(root, () => busById(id)?.fx, (fx) => {
+    const b = busById(id);
+    if (!b) return;
+    if (fx?.length) b.fx = fx; else delete b.fx;
+    if (runtime.audio) applyMixLevels(runtime.audio, true);
+    scheduleSave();
+  }, () => renderMixer(), () => state.time);
+}
+function paintMixerBar(ctx, x, w, h, db, holdDb) {
+  const frac = (v) => clamp((v - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN), 0, 1);
+  ctx.fillStyle = "#2a2a33";
+  ctx.fillRect(x, 0, w, h);
+  const f = frac(db);
+  if (f > 0) {
+    const g = ctx.createLinearGradient(0, h, 0, 0);
+    g.addColorStop(0, "#3dd68c"); g.addColorStop(0.6, "#3dd68c");
+    g.addColorStop(0.75, "#f0c14a"); g.addColorStop(0.9, "#e5484d");
+    ctx.fillStyle = g;
+    ctx.fillRect(x, h * (1 - f), w, h * f);
+  }
+  const hf = frac(holdDb);
+  if (hf > 0 && f > 0) {
+    ctx.fillStyle = hf > 0.9 ? "#e5484d" : "#d7d7dc";
+    ctx.fillRect(x, Math.max(0, h * (1 - hf) - 1), w, 2);
+  }
+}
+function paintMixerMeters() {
+  for (const [id, st] of Object.entries(mixerState.strips)) {
+    if (!st.w || !st.h) continue;
+    const { ctx, w, h } = st;
+    ctx.clearRect(0, 0, w, h);
+    if (st.master) {
+      const m = meterState.master, half = (w - 2) / 2;
+      paintMixerBar(ctx, 0, half, h, m.dispL, m.peakHoldL);
+      paintMixerBar(ctx, half + 2, half, h, m.dispR, m.peakHoldR);
+      const lufs = st.el.querySelector(".mix-lufs");
+      const playing = state.playing || state.source.playing || state.audioHold;
+      const txt = playing && m.lufs > -70 ? `${m.lufs.toFixed(1)} LUFS` : "— LUFS";
+      if (lufs.textContent !== txt) lufs.textContent = txt;
+    } else {
+      paintMixerBar(ctx, 0, w, h, meterState.disp[id] ?? METER_DB_MIN, meterState.peakHold[id] ?? METER_DB_MIN);
+    }
+  }
+}
+
+/* ── Per-track meters: RMS / LUFS-M / Peak (AudioWorklet) ── */
+const METER_SEGS = 20;
+const METER_DB_MIN = -48;
+const METER_DB_MAX = 0;
+/** Scale tick marks shown beside the meter bars (dBFS). */
+const METER_DB_MARKS = [0, -6, -12, -24, -36, -48];
+function meterMarkTopPct(db) {
+  return ((METER_DB_MAX - db) / (METER_DB_MAX - METER_DB_MIN)) * 100;
+}
+const METER_MODES = ["rms", "lufs", "peak"];
+const METER_MODE_LABEL = { rms: "RMS", lufs: "LUFS", peak: "PEAK" };
+/* Each channel's segment ladder is one <canvas>  - index 0 = bottom = quietest. */
+const METER_SEG_W = 10, METER_SEG_H = 10, METER_SEG_GAP = 1;
+const METER_COL_W = METER_SEG_W;
+const METER_COL_H = METER_SEGS * METER_SEG_H + (METER_SEGS - 1) * METER_SEG_GAP;
+function makeMeterCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.style.width = METER_COL_W + "px";
+  cv.style.height = METER_COL_H + "px";
+  cv.width = Math.round(METER_COL_W * dpr);
+  cv.height = Math.round(METER_COL_H * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { canvas: cv, ctx };
+}
+/** Paint the full 16-segment ladder for one channel in a single pass. `hold`
+ * is the peak-hold tick's segment index (-1 = none). */
+function paintMeterSegs(entry, lit, hold) {
+  const ctx = entry.ctx;
+  ctx.clearRect(0, 0, METER_COL_W, METER_COL_H);
+  for (let i = 0; i < METER_SEGS; i++) {
+    const y = METER_COL_H - (i + 1) * METER_SEG_H - i * METER_SEG_GAP;
+    const on = i < lit || i === hold;
+    const u = i / (METER_SEGS - 1);
+    ctx.beginPath();
+    ctx.roundRect(0, y, METER_SEG_W, METER_SEG_H, 1);
+    if (on) {
+      ctx.fillStyle = u < 0.6 ? "#3dd68c" : u < 0.85 ? "#f0c14a" : "#e5484d";
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "#2a2a33";
+      ctx.fill();
+      ctx.strokeStyle = "#0006"; ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+}
+const MASTER_METER_L = "M:L";
+const MASTER_METER_R = "M:R";
+const MASTER_METER_IDS = [MASTER_METER_L, MASTER_METER_R];
+function resetMasterMeterBallistics() {
+  meterState.master.dispL = meterState.master.dispR = METER_DB_MIN;
+  meterState.master.peakHoldL = meterState.master.peakHoldR = METER_DB_MIN;
+  meterState.master.peakHoldTL = meterState.master.peakHoldTR = 0;
+  meterState.master.lufs = -70;
+  meterState.lastLit[MASTER_METER_L] = meterState.lastLit[MASTER_METER_R] = -1;
+  meterState.lastHold[MASTER_METER_L] = meterState.lastHold[MASTER_METER_R] = -1;
+}
+/** Tap the post-meter stereo bus for true L/R master readings (matches headphones). */
+function disposeMasterAnalysers(audio) {
+  if (!audio?.masterSplit) return;
+  try { audio.masterOut.disconnect(audio.masterSplit); } catch {}
+  try { audio.masterSplit.disconnect(); } catch {}
+  audio.masterSplit = null;
+  audio.masterAnalysers = null;
+}
+/** Disconnect meter + analysers; the master fader feeds the speakers again.
+ *  (Bus taps into the old meter are rewired by syncAudioGraphTracks.) */
+function teardownMeterNode(audio) {
+  if (!audio) return;
+  disposeMasterAnalysers(audio);
+  if (audio.meter) {
+    try { audio.meter.port.onmessage = null; } catch {}
+    try { audio.meter.disconnect(); } catch {}
+  }
+  try { audio.masterOut.disconnect(); } catch {}
+  try { audio.masterOut.connect(audio.ctx.destination); } catch {}
+  try { audio.masterOut.connect(audio.recDest); } catch {}
+}
+function installMasterAnalysers(audio, meterNode) {
+  disposeMasterAnalysers(audio);
+  const meter = meterNode || audio?.meter;
+  if (!meter) return;
+  const ctx = audio.ctx;
+  const split = ctx.createChannelSplitter(2);
+  const aL = ctx.createAnalyser();
+  const aR = ctx.createAnalyser();
+  const n = 2048;
+  aL.fftSize = n;
+  aR.fftSize = n;
+  aL.smoothingTimeConstant = 0;
+  aR.smoothingTimeConstant = 0;
+  audio.masterOut.connect(split); // post-fader: the meter shows what leaves the mix
+  split.connect(aL, 0);
+  split.connect(aR, 1);
+  audio.masterSplit = split;
+  audio.masterAnalysers = { L: aL, R: aR, bufL: new Float32Array(n), bufR: new Float32Array(n) };
+}
+function sampleMasterAnalysers() {
+  const a = runtime.audio?.masterAnalysers;
+  if (!a) return;
+  a.L.getFloatTimeDomainData(a.bufL);
+  a.R.getFloatTimeDomainData(a.bufR);
+  let sumL = 0, sumR = 0, pkL = 0, pkR = 0;
+  const n = a.bufL.length;
+  for (let i = 0; i < n; i++) {
+    const l = a.bufL[i], r = a.bufR[i];
+    sumL += l * l;
+    sumR += r * r;
+    const al = l >= 0 ? l : -l, ar = r >= 0 ? r : -r;
+    if (al > pkL) pkL = al;
+    if (ar > pkR) pkR = ar;
+  }
+  const inv = 1 / Math.max(1, n);
+  meterState.master.rmsL = Math.sqrt(sumL * inv);
+  meterState.master.rmsR = Math.sqrt(sumR * inv);
+  meterState.master.peakL = pkL;
+  meterState.master.peakR = pkR;
+}
+const meterState = {
+  mode: (() => {
+    try {
+      const m = localStorage.getItem("fablecut-meter-mode");
+      return METER_MODES.includes(m) ? m : "rms";
+    } catch { return "rms"; }
+  })(),
+  trackIds: [],
+  rms: {},
+  peak: {},
+  lufs: {},
+  disp: {},
+  peakHold: {},
+  peakHoldT: {},
+  segs: {},
+  lastLit: {},   // id -> last-painted lit/hold seg indices, to skip redundant DOM writes
+  lastHold: {},
+  modeBtn: null,
+  tracksToggleBtn: null,
+  tracksExpanded: (() => {
+    try { return localStorage.getItem("fablecut-meter-tracks-expanded") !== "0"; }
+    catch { return true; }
+  })(),
+  master: { rmsL: 0, rmsR: 0, peakL: 0, peakR: 0, lufs: -70,
+    dispL: METER_DB_MIN, dispR: METER_DB_MIN,
+    peakHoldL: METER_DB_MIN, peakHoldR: METER_DB_MIN,
+    peakHoldTL: 0, peakHoldTR: 0 },
+};
+function audioMeterTracks() {
+  return TRACKS.filter((t) => t.kind === "audio");
+}
+function cycleMeterMode(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const i = METER_MODES.indexOf(meterState.mode);
+  meterState.mode = METER_MODES[(i + 1) % METER_MODES.length];
+  try { localStorage.setItem("fablecut-meter-mode", meterState.mode); } catch {}
+  if (meterState.modeBtn) meterState.modeBtn.textContent = METER_MODE_LABEL[meterState.mode];
+  const root = $("vuMeter");
+  if (root) root.title = `Mode: ${METER_MODE_LABEL[meterState.mode]} — click to switch`;
+  // Reset ballistics so the bar doesn't linger from the previous scale reading
+  for (const id of meterState.trackIds) {
+    meterState.disp[id] = METER_DB_MIN;
+    meterState.peakHold[id] = METER_DB_MIN;
+    meterState.peakHoldT[id] = 0;
+  }
+  resetMasterMeterBallistics();
+}
+function syncMeterTracksExpandedUI() {
+  const root = $("vuMeter");
+  if (!root) return;
+  root.classList.toggle("vu-tracks-open", meterState.tracksExpanded);
+  const btn = meterState.tracksToggleBtn;
+  if (btn) {
+    btn.textContent = meterState.tracksExpanded ? "▸" : "◂";
+    btn.title = meterState.tracksExpanded ? "Hide track meters" : "Show track meters";
+    btn.setAttribute("aria-expanded", meterState.tracksExpanded ? "true" : "false");
+  }
+  if (meterState.tracksExpanded) {
+    for (const id of meterState.trackIds) {
+      meterState.lastLit[id] = -1;
+      meterState.lastHold[id] = -1;
+    }
+  }
+  fitVuMeter();
+}
+function toggleMeterTracksExpanded(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  meterState.tracksExpanded = !meterState.tracksExpanded;
+  try { localStorage.setItem("fablecut-meter-tracks-expanded", meterState.tracksExpanded ? "1" : "0"); } catch {}
+  syncMeterTracksExpandedUI();
+}
+async function installMeterWorklet(audio) {
+  if (audio.meterReady || !audio.ctx.audioWorklet) return;
+  if (meterState._loading) {
+    meterState._reloadMeter = true; // sync tore down mid-install — retry in finally
+    return;
+  }
+  meterState._loading = true;
+  meterState._reloadMeter = false;
+  const trackIds = audio.audioTrackIds.slice();
+  const busIds = (audio.busIds || []).filter((id) => audio.subBus?.[id]);
+  const meterIds = [...trackIds, ...busIds];
+  const nAudio = meterIds.length;
+  const nInputs = Math.max(1, nAudio + 1); // +1 = the finished program
+  let meter = null;
+  try {
+    await audio.ctx.audioWorklet.addModule("meter-worklet.js?v=9");
+    // Aborted by syncAudioGraphTracks while we were loading — retry fresh.
+    if (meterState._reloadMeter) return;
+    meter = new AudioWorkletNode(audio.ctx, "fablecut-meter", {
+      numberOfInputs: nInputs,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+      channelCount: 2,
+      channelCountMode: "explicit",
+      channelInterpretation: "discrete",
+      // The last input is the finished program (after master fx and fader):
+      // it alone is passed through and measured for master loudness.
+      processorOptions: { hopBlocks: 8, nTracks: nInputs, nAudioTracks: nAudio, trackIds: meterIds, programInput: nAudio },
+    });
+    meter.port.onmessage = (ev) => {
+      const msg = ev.data;
+      if (!msg || msg.type !== "meter") return;
+      for (let i = 0; i < nAudio; i++) {
+        const id = meterIds[i];
+        if (!id) continue;
+        meterState.rms[id] = msg.rms[i] || 0;
+        meterState.peak[id] = msg.peak[i] || 0;
+        meterState.lufs[id] = msg.lufs[i] != null ? msg.lufs[i] : -70;
+      }
+      if (msg.masterLufs != null) meterState.master.lufs = msg.masterLufs;
+    };
+
+    // Connect the output first so a wiring error never leaves the graph silent.
+    meter.connect(audio.ctx.destination);
+    meter.connect(audio.recDest);
+
+    // Each A-bus is tapped for its own meter (it keeps feeding the master sum);
+    // the program after master fx + fader goes through the meter to the speakers.
+    for (let i = 0; i < meterIds.length; i++) {
+      const bus = audio.trackBus[meterIds[i]] || audio.subBus?.[meterIds[i]];
+      if (bus) busOut(bus).connect(meter, 0, i);
+    }
+    try { audio.masterOut.disconnect(audio.ctx.destination); } catch {}
+    try { audio.masterOut.disconnect(audio.recDest); } catch {}
+    audio.masterOut.connect(meter, 0, nAudio);
+
+    installMasterAnalysers(audio, meter);
+
+    audio.meter = meter;
+    meter = null; // ownership transferred — catch must not tear down live node
+    audio.meterReady = true;
+    meterState.trackIds = trackIds;
+    meterState.busIds = busIds;
+    for (const id of meterIds) {
+      meterState.rms[id] = 0;
+      meterState.peak[id] = 0;
+      meterState.lufs[id] = -70;
+      meterState.disp[id] = METER_DB_MIN;
+      meterState.peakHold[id] = METER_DB_MIN;
+      meterState.peakHoldT[id] = 0;
+    }
+    resetMasterMeterBallistics();
+    buildMeterDOM();
+  } catch (err) {
+    console.warn("[FableCut] meter worklet unavailable:", err);
+    if (meter) {
+      try { meter.port.onmessage = null; } catch {}
+      try { meter.disconnect(); } catch {}
+    }
+    // Drop any meter taps and send the master fader straight to the speakers.
+    for (const id of trackIds) {
+      const bus = audio.trackBus[id];
+      if (!bus) continue;
+      try { busOut(bus).disconnect(); } catch {}
+      try { busOut(bus).connect(audio.master); } catch {}
+    }
+    try { audio.masterOut.disconnect(); } catch {}
+    try { audio.masterOut.connect(audio.ctx.destination); } catch {}
+    try { audio.masterOut.connect(audio.recDest); } catch {}
+  } finally {
+    meterState._loading = false;
+    if (meterState._reloadMeter && !audio.meterReady) {
+      meterState._reloadMeter = false;
+      installMeterWorklet(audio).catch(() => {});
+    }
+  }
+}
+function buildMeterDOM() {
+  const root = $("vuMeter");
+  if (!root) return;
+  const tracks = audioMeterTracks();
+  root.innerHTML = "";
+  root.classList.toggle("vu-tracks-open", meterState.tracksExpanded);
+
+  const row = document.createElement("div");
+  row.className = "vu-channels";
+
+  const tracksWrap = document.createElement("div");
+  tracksWrap.className = "vu-tracks-wrap";
+
+  meterState.segs = {};
+  meterState.lastLit = {};
+  meterState.lastHold = {};
+  meterState.trackIds = tracks.map((t) => t.id);
+
+  for (const t of tracks) {
+    if (meterState.disp[t.id] == null) {
+      meterState.disp[t.id] = METER_DB_MIN;
+      meterState.peakHold[t.id] = METER_DB_MIN;
+      meterState.peakHoldT[t.id] = 0;
+      meterState.rms[t.id] = 0;
+      meterState.peak[t.id] = 0;
+      meterState.lufs[t.id] = -70;
+    }
+    const col = document.createElement("div");
+    col.className = "vu-channel";
+    col.dataset.track = t.id;
+    const segsCv = document.createElement("canvas");
+    segsCv.className = "vu-segs";
+    const entry = makeMeterCanvas(segsCv);
+    meterState.segs[t.id] = entry;
+    paintMeterSegs(entry, 0, -1); // start fully off
+    const label = document.createElement("span");
+    label.className = "vu-label";
+    label.textContent = t.id;
+    col.appendChild(segsCv);
+    col.appendChild(label);
+    tracksWrap.appendChild(col);
+  }
+  row.appendChild(tracksWrap);
+
+  const scaleMaster = document.createElement("div");
+  scaleMaster.className = "vu-scale-master";
+
+  const scale = document.createElement("div");
+  scale.className = "vu-scale";
+  for (const db of METER_DB_MARKS) {
+    const tick = document.createElement("span");
+    tick.className = "vu-scale-tick";
+    tick.textContent = db === 0 ? "0" : String(db);
+    tick.style.top = meterMarkTopPct(db) + "%";
+    scale.appendChild(tick);
+  }
+
+  const masterStack = document.createElement("div");
+  masterStack.className = "vu-master-stack";
+
+  if (tracks.length) {
+    const tracksBtn = document.createElement("button");
+    tracksBtn.type = "button";
+    tracksBtn.className = "vu-tracks-toggle";
+    tracksBtn.addEventListener("click", toggleMeterTracksExpanded);
+    masterStack.appendChild(tracksBtn);
+    meterState.tracksToggleBtn = tracksBtn;
+  } else {
+    meterState.tracksToggleBtn = null;
+  }
+
+  const modeBtn = document.createElement("button");
+  modeBtn.type = "button";
+  modeBtn.className = "vu-mode";
+  modeBtn.textContent = METER_MODE_LABEL[meterState.mode];
+  modeBtn.title = "Cycle RMS → LUFS → Peak";
+  modeBtn.addEventListener("click", cycleMeterMode);
+  masterStack.appendChild(modeBtn);
+  meterState.modeBtn = modeBtn;
+
+  const masterWrap = document.createElement("div");
+  masterWrap.className = "vu-master";
+  for (const ch of ["L", "R"]) {
+    const id = ch === "L" ? MASTER_METER_L : MASTER_METER_R;
+    const col = document.createElement("div");
+    col.className = "vu-channel vu-master-ch";
+    col.dataset.track = id;
+    const segsCv = document.createElement("canvas");
+    segsCv.className = "vu-segs";
+    const entry = makeMeterCanvas(segsCv);
+    meterState.segs[id] = entry;
+    paintMeterSegs(entry, 0, -1);
+    const label = document.createElement("span");
+    label.className = "vu-label";
+    label.textContent = ch;
+    col.appendChild(segsCv);
+    col.appendChild(label);
+    masterWrap.appendChild(col);
+  }
+  masterStack.appendChild(masterWrap);
+  scaleMaster.appendChild(masterStack);
+  scaleMaster.appendChild(scale);
+  row.appendChild(scaleMaster);
+  if (!tracks.length) masterStack.classList.add("vu-master-only");
+  root.appendChild(row);
+  syncMeterTracksExpandedUI();
+}
+let vuMeterScale = 1;
+/** Fit the VU overlay to the stage with a compositor scale — no canvas resize. */
+function fitVuMeter() {
+  const meter = els.vuMeter;
+  const stage = els.monitorStage;
+  if (!meter || !stage) return;
+  const naturalH = meter.offsetHeight;
+  const naturalW = meter.offsetWidth;
+  if (!naturalH || !naturalW) {
+    if (vuMeterScale !== 1) {
+      vuMeterScale = 1;
+      meter.style.transform = "";
+    }
+    return;
+  }
+  const sx = (stage.clientWidth - 4) / naturalW;
+  const sy = (stage.clientHeight - 12) / naturalH;
+  const next = Math.max(0, Math.min(1, sx, sy));
+  if (Math.abs(next - vuMeterScale) < 0.001) return;
+  vuMeterScale = next;
+  meter.style.transform = next >= 0.999 ? "" : "scale(" + next + ")";
+}
+
+function rmsToDb(rms) {
+  return rms > 1e-8 ? 20 * Math.log10(rms) : METER_DB_MIN;
+}
+function meterReadingDb(id) {
+  const mode = meterState.mode;
+  if (id === MASTER_METER_L || id === MASTER_METER_R) {
+    const m = meterState.master;
+    const isL = id === MASTER_METER_L;
+    if (mode === "peak") return rmsToDb(isL ? m.peakL : m.peakR);
+    if (mode === "lufs") {
+      // Master LUFS is a single program value; both L/R bars display it.
+      const v = m.lufs;
+      return v == null || v < METER_DB_MIN ? METER_DB_MIN : Math.min(METER_DB_MAX, v);
+    }
+    return rmsToDb(isL ? m.rmsL : m.rmsR);
+  }
+  if (mode === "peak") return rmsToDb(meterState.peak[id] || 0);
+  if (mode === "lufs") {
+    const v = meterState.lufs[id];
+    return v == null || v < METER_DB_MIN ? METER_DB_MIN : Math.min(METER_DB_MAX, v);
+  }
+  return rmsToDb(meterState.rms[id] || 0);
+}
+function updateMeterChannel(id, target, dt, attack, release, now) {
+  const floorEps = (METER_DB_MAX - METER_DB_MIN) / (METER_SEGS * 2);
+  const curKey = id === MASTER_METER_L ? "dispL" : id === MASTER_METER_R ? "dispR" : null;
+  const holdKey = id === MASTER_METER_L ? "peakHoldL" : id === MASTER_METER_R ? "peakHoldR" : null;
+  const holdTKey = id === MASTER_METER_L ? "peakHoldTL" : id === MASTER_METER_R ? "peakHoldTR" : null;
+  let cur, peakHold, peakHoldT;
+  if (curKey) {
+    cur = meterState.master[curKey] ?? METER_DB_MIN;
+    peakHold = meterState.master[holdKey] ?? METER_DB_MIN;
+    peakHoldT = meterState.master[holdTKey] || 0;
+  } else {
+    cur = meterState.disp[id] ?? METER_DB_MIN;
+    peakHold = meterState.peakHold[id] ?? METER_DB_MIN;
+    peakHoldT = meterState.peakHoldT[id] || 0;
+  }
+  const a = target > cur ? attack : release;
+  let next = cur + (target - cur) * a;
+  if (next <= METER_DB_MIN + floorEps) next = METER_DB_MIN;
+  if (curKey) meterState.master[curKey] = next;
+  else meterState.disp[id] = next;
+
+  const pk = target;
+  if (pk > peakHold) {
+    peakHold = pk;
+    peakHoldT = now;
+    if (curKey) {
+      meterState.master[holdKey] = pk;
+      meterState.master[holdTKey] = now;
+    } else {
+      meterState.peakHold[id] = pk;
+      meterState.peakHoldT[id] = now;
+    }
+  } else if (now - peakHoldT > 800) {
+    peakHold += (METER_DB_MIN - peakHold) * release;
+    if (peakHold <= METER_DB_MIN + floorEps) peakHold = METER_DB_MIN;
+    if (curKey) meterState.master[holdKey] = peakHold;
+    else meterState.peakHold[id] = peakHold;
+  }
+
+  const segs = meterState.segs[id];
+  if (!segs) return;
+  const isMaster = id === MASTER_METER_L || id === MASTER_METER_R;
+  if (!isMaster && !meterState.tracksExpanded) return;
+  const level = (next - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
+  const lit = next <= METER_DB_MIN ? 0 : Math.round(clamp(level, 0, 1) * METER_SEGS);
+  const holdN = clamp((peakHold - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN), 0, 1);
+  let hold = holdN <= 0 ? -1 : Math.round(holdN * (METER_SEGS - 1));
+  if (lit === 0) hold = -1;
+  if (meterState.lastLit[id] === lit && meterState.lastHold[id] === hold) return;
+  meterState.lastLit[id] = lit;
+  meterState.lastHold[id] = hold;
+  paintMeterSegs(segs, lit, hold);
+}
+function updateMeterUI(dt) {
+  const metering = (state.playing || state.source.playing || state.audioHold) && runtime.audio?.meterReady;
+  if (metering) sampleMasterAnalysers();
+  const mode = meterState.mode;
+  // Peak: snappy; LUFS already smoothed in-worklet (400 ms); RMS: classic VU feel
+  const atkMs = mode === "peak" ? 0.005 : mode === "lufs" ? 0.04 : 0.015;
+  const relMs = mode === "peak" ? 0.35 : mode === "lufs" ? 0.12 : 0.18;
+  const attack = 1 - Math.exp(-dt / atkMs);
+  const release = 1 - Math.exp(-dt / relMs);
+  const now = performance.now();
+  const floor = METER_DB_MIN;
+  for (const id of [...meterState.trackIds, ...(meterState.busIds || []), ...MASTER_METER_IDS]) {
+    const target = metering ? meterReadingDb(id) : floor;
+    updateMeterChannel(id, target, dt, attack, release, now);
+  }
+  if (mixerState.open) paintMixerMeters();
+}
+
+function play() {
+  if (state.audioHold) setAudioHold(false);
+  if (state.playing) return;
+  pauseSource();
+  if (isSourceMode()) setMonitorMode("program");
+  ensureAudio();
+  runtime.audio.ctx.resume();
+  if (playRate() < 0) {
+    // reverse from where the playhead is — no wrap
+  } else if (playLimited()) {
+    const { start, end } = playRange();
+    // Parked at OUT after a limited play → restart at IN. Playhead before IN or
+    // past OUT is a manual override: leave it and play from there.
+    if (state.time >= end - 0.01 && state.time <= end + 0.02) state.time = start;
+  } else if (state.time >= projDur() - 0.01) {
+    state.time = 0;
+  }
+  state.playing = true;
+  syncPlayButton();
+  noteActivity();
+  syncMedia(); // start active seeks + cut lookahead without waiting a RAF
+}
+function pause() {
+  if (state.audioHold) setAudioHold(false);
+  state.playing = false;
+  syncPlayButton();
+  for (const el of runtime.clipEls.values()) { if (!el.paused) el.pause(); }
+  if (state.exporting) finishExport(false);
+}
+
+/* ── Audio Hold: while paused, loop one project-frame of audio at the playhead ── */
+let audioHoldGen = 0;
+let audioHoldNodes = [];
+let audioHoldRaf = 0;
+function disposeAudioHoldNode(n) {
+  if (!n) return;
+  try { n.src.stop(); } catch { }
+  try { n.src.disconnect(); } catch { }
+  try { if (n.src) n.src.buffer = null; } catch { }
+  if (n.gain) { try { n.gain.disconnect(); } catch { } }
+  if (n.gains) { for (const g of n.gains) try { g.disconnect(); } catch { } }
+  if (n.panner) { try { n.panner.disconnect(); } catch { } }
+  if (n.panners) { for (const p of n.panners) try { p.disconnect(); } catch { } }
+  if (n.split) { try { n.split.disconnect(); } catch { } }
+  if (n.chain) disposeClipChain(n.chain);
+}
+function stopAudioHoldNodes() {
+  audioHoldGen++;
+  if (audioHoldRaf) { cancelAnimationFrame(audioHoldRaf); audioHoldRaf = 0; }
+  for (const n of audioHoldNodes) disposeAudioHoldNode(n);
+  audioHoldNodes = [];
+}
+/** An in-flight audio-hold build is stale once a newer refresh ran (`gen`),
+ *  hold turned off, or the relevant transport (`playing`) started. */
+function audioHoldStale(gen, playing) {
+  return gen !== audioHoldGen || !state.audioHold || playing;
+}
+/** start() a hold voice, then keep it only if the build is still current —
+ *  a newer refresh/stop or playback may have run while the graph was built. */
+function commitAudioHoldNode(node, gen, playing) {
+  try { node.src.start(0); } catch { disposeAudioHoldNode(node); return; }
+  if (audioHoldStale(gen, playing)) { disposeAudioHoldNode(node); return; }
+  audioHoldNodes.push(node);
+}
+function scheduleAudioHoldRefresh() {
+  if (!state.audioHold || state.playing || state.source.playing) return;
+  if (audioHoldRaf) return;
+  audioHoldRaf = requestAnimationFrame(() => {
+    audioHoldRaf = 0;
+    refreshAudioHold();
+  });
+}
+/** Copy one timeline-frame of samples from `buf` starting at `startSec`. */
+function sliceAudioFrame(ctx, buf, startSec, durSec) {
+  const sr = buf.sampleRate;
+  const start = clamp(Math.floor(startSec * sr), 0, Math.max(0, buf.length - 1));
+  const n = Math.max(1, Math.min(buf.length - start, Math.round(durSec * sr)));
+  const out = ctx.createBuffer(buf.numberOfChannels, n, sr);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    out.getChannelData(ch).set(buf.getChannelData(ch).subarray(start, start + n));
+  }
+  return out;
+}
+function refreshAudioHold() {
+  if (!state.audioHold || state.playing || state.source.playing || state.exporting || state.rendering) {
+    stopAudioHoldNodes();
+    return;
+  }
+  const audio = ensureAudio();
+  try { audio.ctx.resume(); } catch { }
+  const t = isSourceMode() ? state.source.time : state.time;
+  const frameDur = 1 / projectFps();
+  const gen = ++audioHoldGen;
+  // Stop previous voices before starting the new slice
+  for (const n of audioHoldNodes) disposeAudioHoldNode(n);
+  audioHoldNodes = [];
+
+  if (isSourceMode()) {
+    if (runtime.sourceEl && !runtime.sourceEl.paused) runtime.sourceEl.pause();
+    const m = sourceMedia();
+    if (!m || (m.kind !== "audio" && m.kind !== "video")) return;
+    getAudioBuffer(m).then((buf) => {
+      if (audioHoldStale(gen, state.source.playing)) return;
+      if (!(buf.duration > 0) || t >= buf.duration) return;
+      const slice = sliceAudioFrame(audio.ctx, buf, t, frameDur);
+      const src = audio.ctx.createBufferSource();
+      src.buffer = slice;
+      src.loop = true;
+      const nCh = Math.max(buf.numberOfChannels, 2);
+      const node = { src, split: null, gains: [], panners: [] };
+      routeSourceChannels(audio.ctx, src, m, nCh, audio, (n, role) => {
+        if (role === "splitter") node.split = n;
+        else if (role === "gain") node.gains.push(n);
+        else if (role === "panner") node.panners.push(n);
+      });
+      commitAudioHoldNode(node, gen, state.source.playing);
+    }).catch(() => { });
+    return;
+  }
+
+  // Keep media-element preview silent while holding (BufferSource owns the sound).
+  for (const el of runtime.clipEls.values()) { if (!el.paused) el.pause(); }
+  for (const chain of runtime.clipGain.values()) muteClipChain(chain);
+
+  for (const c of mediaClips()) {
+    if (c.kind !== "audio" && c.kind !== "video") continue;
+    if (!clipRenders(c) || !activeAt(c, t)) continue;
+    const m = getMedia(c.mediaId);
+    if (!m || (m.kind !== "audio" && m.kind !== "video")) continue;
+    const p = evalProps(c, t);
+    const vol = clipAudioGain(p);
+    if (vol <= 1e-4) continue; // skip muted picture track (linked stems carry the sound)
+    getAudioBuffer(m).then((buf) => {
+      if (audioHoldStale(gen, state.playing)) return;
+      const mt = mediaTimeAt(c, t);
+      if (!(buf.duration > 0) || mt >= buf.duration) return;
+      // Slice exactly one frame — looping the whole short buffer (not loopStart on
+      // the full file, which would play from 0 until the loop region first).
+      const slice = sliceAudioFrame(audio.ctx, buf, mt, frameDur);
+      const src = audio.ctx.createBufferSource();
+      src.buffer = slice;
+      src.loop = true;
+      const chain = buildClipChain(audio.ctx, src, c, buf.numberOfChannels);
+      driveClipChain(chain, c, p, t);
+      chain.out.connect(audio.trackBus[c.track] || audio.master);
+      commitAudioHoldNode({ src, chain }, gen, state.playing);
+    }).catch(() => { });
+  }
+}
+function setAudioHold(on) {
+  on = !!on;
+  if (on) {
+    if (state.exporting || state.rendering) return;
+    if (state.playing || state.source.playing) {
+      // Pause without going through pause() (that would clear hold).
+      state.playing = false;
+      pauseSource();
+      syncPlayButton();
+      for (const el of runtime.clipEls.values()) { if (!el.paused) el.pause(); }
+    }
+    state.audioHold = true;
+    if (els.btnAudioHold) els.btnAudioHold.classList.add("on");
+    refreshAudioHold();
+  } else {
+    state.audioHold = false;
+    if (els.btnAudioHold) els.btnAudioHold.classList.remove("on");
+    stopAudioHoldNodes();
+  }
+}
+
+/* ── Preview playback speed — affects the PREVIEW player only, never the export ── */
+const PREVIEW_RATES = [1, 1.5, 2, 4];
+// Effective preview rate: forced to 1 during any export so renders/captures stay real-time.
+function playRate() { return state.exporting ? 1 : state.previewRate; }
+// Negative = reverse (J). Reverse playback seeks frame by frame and is silent.
+function setPreviewRate(r) {
+  state.previewRate = r;
+  els.btnSpeed.textContent = (r < 0 ? "◀" + -r : r) + "×";
+  els.btnSpeed.classList.toggle("on", r !== 1);
+}
+function cyclePreviewRate(dir) { // wrap around — for the toolbar button
+  const i = Math.max(0, PREVIEW_RATES.indexOf(state.previewRate));
+  setPreviewRate(PREVIEW_RATES[(i + dir + PREVIEW_RATES.length) % PREVIEW_RATES.length]);
+}
+/* J / L shuttle step: another tap in the current direction speeds up
+   (1 → 1.5 → 2 → 4×); the opposite key turns around at 1×. */
+function shuttleRate(cur, dir, playing) {
+  if (!playing || Math.sign(cur) !== dir || Math.abs(cur) < 1) return dir;
+  const i = PREVIEW_RATES.indexOf(Math.abs(cur));
+  return dir * PREVIEW_RATES[clamp(i < 0 ? 0 : i + 1, 0, PREVIEW_RATES.length - 1)];
+}
+const INCH_RATE = 0.25; // K held + J/L held: slow crawl
+function transportPlaying() { return isSourceMode() ? state.source.playing : state.playing; }
+function transportStop() { isSourceMode() ? pauseSource() : pause(); }
+function transportStart() { isSourceMode() ? playSource() : play(); }
+function shuttle(dir) {
+  setPreviewRate(shuttleRate(state.previewRate, dir, transportPlaying()));
+  if (!transportPlaying()) transportStart();
+}
+
+function activeAt(c, t) { return t >= c.start && t < clipEnd(c); }
+
+/* Wall-clock seconds to pre-seek the next clip's In before a cut. Without this,
+   syncMedia only seeks when the clip becomes active — HTMLVideoElement seek is
+   async, so the first painted frame(s) of a hard cut often show media t≈0 (or a
+   stale frame) until `seeked`. Frame-step hides it because pause seeks settle. */
+const VIDEO_PREFETCH_SEC = 0.85;
+
+function syncMedia() {
+  const t = state.time;
+  const rate = playRate();
+  if (runtime.audio) animateMixFx(runtime.audio, t);
+  // Reverse (J): media can't play backwards, so every clip is parked paused
+  // and the one under the playhead is seeked frame by frame, like a scrub.
+  const reversing = state.playing && rate < 0;
+  // Timeline lookahead grows with preview rate so wall-clock budget stays ≈VIDEO_PREFETCH_SEC.
+  const prefetchTl = VIDEO_PREFETCH_SEC * Math.max(rate, 1);
+  for (const c of mediaClips()) {
+    if (c.kind === "text" || c.kind === "image" || c.kind === "svg" || c.kind === "adjust") continue;
+    const el = getClipEl(c); if (!el) continue;
+    const enabled = clipRenders(c);
+    const mt = mediaTimeAt(c, t);
+    if (state.playing && !reversing && enabled && activeAt(c, t)) {
+      // Only the active-under-playhead branch needs the full evaluated props
+      // (speed/volume incl. keyframes+transitions) — skip that work for every
+      // other clip on the timeline, which is the common case each frame.
+      const p = evalProps(c, t);
+      const sp = clamp(+p.speed || 1, 0.1, 8);
+      const eff = clamp(sp * playRate(), 0.0625, 16); // preview speed rides on top of clip speed
+      if (el.playbackRate !== eff) { try { el.playbackRate = eff; } catch {} }
+      // Settle a new clip's source In before playing; otherwise HTMLMediaElement
+      // briefly emits the beginning of the file while its async seek completes.
+      const tolerance = el.paused ? 0.04 : 0.25 * eff;
+      if (!el.seeking && Math.abs(el.currentTime - mt) > tolerance) {
+        el.pause();
+        try { el.currentTime = mt; } catch {}
+      }
+      if (el.seeking || el.readyState < 2) {
+        muteClipChain(runtime.clipGain.get(c.id));
+        el.volume = 0;
+        continue;
+      }
+      const chain = runtime.clipGain.get(c.id);
+      if (chain?.vol) {
+        // Web Audio owns clip gain; undo the temporary element-level mute
+        // before playback resumes, otherwise the entire chain stays silent.
+        el.volume = 1;
+        driveClipChain(chain, c, p, t);
+      } else el.volume = clamp(clipAudioGain(p), 0, 1);
+      if (el.paused) el.play().catch(() => {});
+    } else {
+      if (!el.paused) el.pause();
+      muteClipChain(runtime.clipGain.get(c.id));
+      // Paused preview: keep decode head on the frame under the playhead.
+      // Needed when clips move/trim without setTime (drag does not scrub time).
+      if ((!state.playing || reversing) && enabled && c.kind === "video" && activeAt(c, t) &&
+          Math.abs(el.currentTime - mt) > 0.04 && !(reversing && el.seeking)) {
+        try { el.currentTime = mt; } catch {}
+      } else if (state.playing && !reversing && enabled && (c.kind === "video" || c.kind === "audio")) {
+        // Approach a cut: park decode head on this clip's In so the first
+        // drawn frame after activeAt flips is already the correct picture.
+        const until = c.start - t;
+        if (until > 0 && until <= prefetchTl && !el.seeking) {
+          const inMt = mediaTimeAt(c, c.start);
+          if (Math.abs(el.currentTime - inMt) > 0.04) {
+            try { el.currentTime = inMt; } catch {}
+          }
+        }
+      }
+    }
+  }
+}
+function seekMediaWhilePaused() {
+  if (state.playing) return;
+  const t = state.time;
+  for (const c of mediaClips()) {
+    if (c.kind !== "video") continue;
+    if (!clipRenders(c)) continue;
+    if (!activeAt(c, t)) continue;
+    const el = getClipEl(c); if (!el) continue;
+    const mt = mediaTimeAt(c, t);
+    if (Math.abs(el.currentTime - mt) > 0.04) { try { el.currentTime = mt; } catch { } }
+  }
+}
+
+/* ── Keyframes & transitions ── */
+const EASE = {
+  linear: (u) => u,
+  "ease-in": (u) => u * u,
+  "ease-out": (u) => 1 - (1 - u) * (1 - u),
+  "ease-in-out": (u) => (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2),
+};
+/* Effective properties of a clip at timeline time t: static props, overridden by
+   keyframe curves, then shaped by in/out transition envelopes. */
+function evalProps(c, t) {
+  // c.props is always fully populated with DEFAULT_PROPS's keys already (on
+  // load and at every clip-creation site), so a plain shallow clone suffices —
+  // merging DEFAULT_PROPS in again here would just double the copy work.
+  const p = { ...c.props };
+  const local = t - c.start;
+  if (c.keyframes) {
+    for (const [k, kfs] of Object.entries(c.keyframes)) {
+      if (!Array.isArray(kfs) || !kfs.length) continue;
+      let v;
+      if (local <= kfs[0].t) v = kfs[0].v;
+      else if (local >= kfs[kfs.length - 1].t) v = kfs[kfs.length - 1].v;
+      else for (let i = 0; i < kfs.length - 1; i++) {
+        const a = kfs[i], b = kfs[i + 1];
+        if (local >= a.t && local <= b.t) {
+          const u = (local - a.t) / Math.max(1e-6, b.t - a.t);
+          const ez = EASE[b.ease || "ease-in-out"] || EASE.linear;
+          v = a.v + (b.v - a.v) * ez(u);
+          break;
+        }
+      }
+      if (typeof v === "number" && !isNaN(v)) p[k] = v;
+    }
+    applyMotionPath(c, p, local, true);
+  }
+  applyFilterPreset(p);
+  const W = els.preview.width, H = els.preview.height;
+  const tin = c.transitionIn, tout = c.transitionOut;
+  if (tin && tin.duration > 0 && local < tin.duration) {
+    const u = clamp(local / tin.duration, 0, 1);
+    applyTransition(p, tin.type, 1 - EASE["ease-out"](u), W, H, -1, audioFadeGain(tin.curve, u));
+  }
+  if (tout && tout.duration > 0 && local > c.duration - tout.duration) {
+    const u = clamp((local - (c.duration - tout.duration)) / tout.duration, 0, 1);
+    applyTransition(p, tout.type, EASE["ease-in"](u), W, H, 1, audioFadeGain(tout.curve, 1 - u));
+  }
+  return p;
+}
+/* Audio fade shapes. `u` runs 0 (silent edge) → 1 (full level). A fade with
+   no `curve` keeps the original eased shape (applyTransition's 1 − k), so
+   older projects sound the same. Two "power" fades crossing sum to constant
+   power (cos² + sin² = 1): no dip in the middle of a crossfade. */
+const AUDIO_FADE_CURVES = { power: "Constant power", linear: "Constant gain", exp: "Exponential" };
+function audioFadeGain(curve, u) {
+  u = clamp(u, 0, 1);
+  if (curve === "power") return Math.sin(u * Math.PI / 2);
+  if (curve === "linear") return u;
+  if (curve === "exp") return (Math.pow(10, 2 * u) - 1) / 99; // slow start, smooth into full
+  return null;
+}
+/* Merge a named look into evaluated props: % props scale, additive props add. */
+function applyFilterPreset(p) {
+  const fp = FILTER_PRESETS[p.filterPreset];
+  if (!fp || p.filterPreset === "none") return;
+  for (const [k, v] of Object.entries(fp)) {
+    if (k === "brightness" || k === "contrast" || k === "saturation")
+      p[k] = (+p[k] || 100) * v / 100;
+    else if (k === "grayscale" || k === "sepia" || k === "vignette" || k === "invert")
+      p[k] = clamp((+p[k] || 0) + v, 0, 100);
+    else p[k] = (+p[k] || 0) + v;   // hue, temperature, tint, blur
+  }
+}
+/* k: 0 = fully visible … 1 = fully transitioned away; dir: -1 = in, +1 = out.
+   audioG: the fade's own audio gain when it has a `curve` (else 1 − k). */
+function applyTransition(p, type, k, W, H, dir, audioG = null) {
+  if (!(k > 0)) return;
+  switch (type) {
+    case "fade": case "dissolve":
+      p.opacity *= 1 - k; p.volume *= audioG ?? 1 - k; break;
+    case "slide-left": p.x = (+p.x || 0) - dir * k * W; break;
+    case "slide-right": p.x = (+p.x || 0) + dir * k * W; break;
+    case "slide-up": p.y = (+p.y || 0) - dir * k * H; break;
+    case "slide-down": p.y = (+p.y || 0) + dir * k * H; break;
+    case "zoom":
+      p.scale = (+p.scale || 1) * (1 - 0.6 * k); p.opacity *= 1 - k; break;
+    case "wipe": case "wipe-left": p._wipe = k; p._wipeDir = "left"; break;
+    case "wipe-right": p._wipe = k; p._wipeDir = "right"; break;
+    case "wipe-up": p._wipe = k; p._wipeDir = "up"; break;
+    case "wipe-down": p._wipe = k; p._wipeDir = "down"; break;
+    case "iris": p._iris = k; break;
+    case "spin":
+      p.rotation = (+p.rotation || 0) + dir * k * 200;
+      p.scale = (+p.scale || 1) * (1 - 0.4 * k);
+      p.opacity *= 1 - k; break;
+    case "blur":
+      p.blur = (+p.blur || 0) + k * 24;
+      p.opacity *= 1 - k * k; p.volume *= 1 - k; break;
+    case "whip":
+      p.x = (+p.x || 0) - dir * EASE["ease-in"](k) * W * 1.4;
+      p.blur = (+p.blur || 0) + k * 16; break;
+    case "glitch": { // RGB split + horizontal jitter, deterministic
+      const j = Math.sin(k * 61.7) * Math.sin(k * 23.3);
+      p.rgbSplit = (+p.rgbSplit || 0) + k * 14;
+      p.x = (+p.x || 0) + j * k * W * 0.06;
+      p.opacity *= 1 - k * k;
+      break;
+    }
+    case "pop": // overshoot scale (backOut) — sticker/caption entrance
+      p.scale = (+p.scale || 1) * Math.max(0.001, backOut(1 - k));
+      p.opacity *= Math.min(1, (1 - k) * 2.5);
+      break;
+  }
+}
+/* Translation the in/out transition envelopes add on top of the keyframed
+   props at timeline time t — probed through applyTransition itself, so it can
+   never disagree with the compositor. Canvas box drags write resting
+   (envelope-free) geometry, so displayed-space results must have this
+   subtracted back out. */
+function transOffsetAt(c, t) {
+  const p = { x: 0, y: 0, scale: 1, opacity: 1, volume: 1, rotation: 0, blur: 0, rgbSplit: 0 };
+  const local = t - c.start, W = els.preview.width, H = els.preview.height;
+  const tin = c.transitionIn, tout = c.transitionOut;
+  if (tin && tin.duration > 0 && local < tin.duration)
+    applyTransition(p, tin.type, 1 - EASE["ease-out"](clamp(local / tin.duration, 0, 1)), W, H, -1);
+  if (tout && tout.duration > 0 && local > c.duration - tout.duration)
+    applyTransition(p, tout.type,
+      EASE["ease-in"](clamp((local - (c.duration - tout.duration)) / tout.duration, 0, 1)), W, H, 1);
+  return { x: +p.x || 0, y: +p.y || 0 };
+}
+/* Rebase clip-local keyframe times by -offset, dropping ones outside [0, dur] */
+const shiftKF = FableCutEdit.shiftKF;
+
+/* ═════════════════ SVG CLIPS (Claude-authored animated vectors) ═════════════
+   Animated SVGs use CSS @keyframes. The compositor freezes them at any time t
+   by injecting `animation-play-state:paused` + a negative animation-delay,
+   then rasterizing through an <img>. Convention for staggered starts:
+   authors set `--d: 0.4s` on an element instead of a literal animation-delay. */
+function parseSvgSize(txt) {
+  const num = (s) => { const v = parseFloat(s); return isFinite(v) && v > 0 ? v : 0; };
+  const attr = (name) => (txt.match(new RegExp(`<svg[^>]*\\s${name}="([^"%]+)"`, "i")) || [])[1];
+  let w = num(attr("width")), h = num(attr("height"));
+  if (!w || !h) {
+    const vb = (txt.match(/<svg[^>]*\sviewBox="([^"]+)"/i) || [])[1];
+    if (vb) { const p = vb.trim().split(/[\s,]+/); w = num(p[2]); h = num(p[3]); }
+  }
+  return { width: w || 800, height: h || 600 };
+}
+async function loadSvgMedia(m) {
+  const gen = runtime.projectGen;
+  const txt = await (await fetch(m.src)).text();
+  if (gen !== runtime.projectGen) return;   // another project was opened meanwhile
+  const { width, height } = parseSvgSize(txt);
+  m.width = width; m.height = height;
+  const aux = runtime.mediaAux.get(m.id) || {};
+  aux.svgText = txt;
+  aux.svgAnimated = /@keyframes|animation\s*:/i.test(txt);
+  aux.svgFrames = new Map(); // quantized t -> HTMLImageElement (small LRU)
+  aux.svgPending = null;
+  runtime.mediaAux.set(m.id, aux);
+  if (!aux.svgAnimated) { const img = await rasterizeSvgMarkup(txt); if (gen === runtime.projectGen) aux.img = img; }
+  state.dirtyTimeline = true;
+}
+function svgMarkupAt(aux, t) {
+  if (!aux.svgAnimated) return aux.svgText;
+  const style = `<style>*{animation-play-state:paused!important;` +
+    `animation-delay:calc(var(--d,0s) - ${t.toFixed(4)}s)!important}</style>`;
+  return aux.svgText.replace(/(<svg[^>]*>)/i, `$1${style}`);
+}
+function closeSvgFrame(img) {
+  if (img && typeof img.close === "function") try { img.close(); } catch { }
+}
+function pruneSvgFrames(aux) {
+  if (!aux.svgFrames || aux.svgFrames.size <= 90) return;
+  const k = aux.svgFrames.keys().next().value;
+  closeSvgFrame(aux.svgFrames.get(k));
+  aux.svgFrames.delete(k);
+}
+/** Rasterize SVG markup without tainting the compositor canvas.
+ *  data: URLs (and <img src="*.svg"> in some browsers) mark the bitmap dirty
+ *  so toBlob throws. A same-origin blob + createImageBitmap stays origin-clean. */
+async function rasterizeSvgMarkup(markup) {
+  const blob = new Blob([markup], { type: "image/svg+xml;charset=utf-8" });
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bmp = await createImageBitmap(blob);
+      if (bmp.width && bmp.height) return bmp;
+      try { bmp.close(); } catch { }
+    } catch { /* Safari / empty SVG bitmaps */ }
+  }
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("svg raster failed")); };
+    img.src = url;
+  });
+}
+function renderSvgFrame(aux, t) {
+  return rasterizeSvgMarkup(svgMarkupAt(aux, t));
+}
+/* Preview path: returns the best already-rasterized frame and schedules the
+   exact one; export path awaits prepareSvgFrame() instead. */
+function getSvgImage(c, t) {
+  const aux = runtime.mediaAux.get(c.mediaId);
+  if (!aux || !aux.svgText) return null;
+  if (!aux.svgAnimated) return aux.img || null;
+  const local = Math.max(0, mediaTimeAt(c, t));
+  const q = Math.round(local * projectFps()) / projectFps();
+  const hit = aux.svgFrames.get(q);
+  if (hit) return hit;
+  if (!aux.svgPending) {
+    aux.svgPending = renderSvgFrame(aux, q).then((img) => {
+      aux.svgFrames.set(q, img);
+      pruneSvgFrames(aux);
+      aux.lastImg = img;
+    }).catch(() => { }).finally(() => { aux.svgPending = null; });
+  }
+  return aux.lastImg || null; // may be one frame stale during preview
+}
+async function prepareSvgFrame(c, t) {
+  const aux = runtime.mediaAux.get(c.mediaId);
+  if (!aux) return;
+  if (!aux.svgText) { try { await loadSvgMedia(getMedia(c.mediaId)); } catch { return; } }
+  if (!aux.svgAnimated) return;
+  const local = Math.max(0, mediaTimeAt(c, t));
+  const q = Math.round(local * projectFps()) / projectFps();
+  if (aux.svgFrames.get(q)) return;
+  try {
+    const img = await renderSvgFrame(aux, q);
+    aux.svgFrames.set(q, img);
+    pruneSvgFrames(aux);
+    aux.lastImg = img;
+  } catch { }
+}
+
+/* ═════════════ AI BACKGROUND REMOVAL (MediaPipe selfie segmentation) ════════
+   Loaded lazily from CDN the first time a clip sets props.bgRemove. Produces a
+   per-clip person mask consumed by the pixel pipeline below. Degrades politely
+   when offline. */
+const bgSeg = { seg: null, loading: null, failed: false, queue: Promise.resolve(), masks: new Map() };
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.onload = res; s.onerror = () => rej(new Error("script load failed: " + src));
+    document.head.appendChild(s);
+  });
+}
+function ensureBgSeg() {
+  if (bgSeg.seg || bgSeg.failed) return bgSeg.loading || Promise.resolve();
+  if (!bgSeg.loading) {
+    const base = "https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation";
+    bgSeg.loading = loadScript(`${base}/selfie_segmentation.js`).then(() => {
+      const seg = new SelfieSegmentation({ locateFile: (f) => `${base}/${f}` });
+      seg.setOptions({ modelSelection: 1 });
+      seg.onResults((r) => {
+        if (!bgSeg.currentClip) return;
+        let cv = bgSeg.masks.get(bgSeg.currentClip);
+        if (!cv) { cv = document.createElement("canvas"); bgSeg.masks.set(bgSeg.currentClip, cv); }
+        cv.width = r.segmentationMask.width; cv.height = r.segmentationMask.height;
+        cv.getContext("2d").drawImage(r.segmentationMask, 0, 0);
+      });
+      bgSeg.seg = seg;
+    }).catch(() => {
+      bgSeg.failed = true;
+      toast("Background removal unavailable — couldn't load MediaPipe (offline?). Using chroma key still works.");
+    });
+  }
+  return bgSeg.loading;
+}
+/* Serialize sends; returns a promise that resolves once the mask is refreshed.
+   Preview calls are dropped while one is in flight (masks lag a frame at most);
+   the exporter passes force=true and awaits the exact mask. */
+bgSeg.pending = 0;
+function requestMask(clipId, el, force = false) {
+  ensureBgSeg();
+  if (!bgSeg.seg) return bgSeg.loading || Promise.resolve();
+  if (!force && bgSeg.pending > 0) return Promise.resolve();
+  bgSeg.pending++;
+  bgSeg.queue = bgSeg.queue.then(async () => {
+    if ((el.videoWidth || el.naturalWidth || 0) === 0) return;
+    bgSeg.currentClip = clipId;
+    try { await bgSeg.seg.send({ image: el }); } catch { }
+  }).finally(() => { bgSeg.pending--; });
+  return bgSeg.queue;
+}
+
+/* ═══════════ PIXEL PIPELINE (chroma key · temperature · tint · mask) ═══════
+   Only used when a clip needs per-pixel work; everything else stays on the
+   fast CSS-filter path. Renders into a reusable scratch canvas at destination
+   resolution (capped), applies the mask + one pixel loop, hands back a canvas. */
+const scratch = document.createElement("canvas");
+const scratchCtx = scratch.getContext("2d", { willReadFrequently: true });
+/* film-grain tile, generated once */
+let grainTile = null;
+function getGrainTile() {
+  if (grainTile) return grainTile;
+  grainTile = document.createElement("canvas");
+  grainTile.width = grainTile.height = 256;
+  const g = grainTile.getContext("2d");
+  const img = g.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 90 + Math.random() * 130;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return grainTile;
+}
+/* Draw a tiled grain overlay over a rect in the CURRENT transform space.
+   Phase jumps per frame so grain "boils" like film. */
+function drawGrain(amount, x, y, w, h, t) {
+  const keepA = ctx2d.globalAlpha, keepC = ctx2d.globalCompositeOperation;
+  const off = (Math.floor(t * projectFps()) * 7919) % 256;
+  ctx2d.globalCompositeOperation = "overlay";
+  ctx2d.globalAlpha = keepA * clamp(amount / 100, 0, 1) * 0.55;
+  ctx2d.save();
+  ctx2d.translate(-off, off);
+  ctx2d.fillStyle = ctx2d.createPattern(getGrainTile(), "repeat");
+  ctx2d.fillRect(x + off, y - off, w, h);
+  ctx2d.restore();
+  ctx2d.globalAlpha = keepA;
+  ctx2d.globalCompositeOperation = keepC;
+}
+/* Adjustment layers: snapshot everything drawn so far, re-draw it through this
+   clip's filter stack (Premiere-style). */
+const adjScratch = document.createElement("canvas");
+function drawAdjust(c, W, H, t) {
+  const p = evalProps(c, t);
+  if (adjScratch.width !== W) adjScratch.width = W;
+  if (adjScratch.height !== H) adjScratch.height = H;
+  const a = adjScratch.getContext("2d");
+  a.clearRect(0, 0, W, H);
+  a.drawImage(runtime.adjSource || els.preview, 0, 0);   // inside a comp: the comp's own layers below
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  if (p.shake > 0) { // whole-frame impact shake
+    const s = +p.shake, tt = t * clamp(+p.shakeSpeed || 8, 0.5, 40) * Math.PI * 2;
+    ctx2d.translate(
+      Math.sin(tt * 1.3) * s * 0.6 + Math.sin(tt * 2.71) * s * 0.4,
+      Math.cos(tt * 1.7) * s * 0.5 + Math.sin(tt * 3.13) * s * 0.35);
+  }
+  ctx2d.globalAlpha = clamp(p.opacity, 0, 1);
+  ctx2d.filter = buildFilter(p);
+  let src = adjScratch;
+  if (p.temperature || p.tint || p.rgbSplit > 0)
+    src = pixelPass(c, { ...p, chromaKey: "", bgRemove: false }, adjScratch, 0, 0, W, H, W, H);
+  const grade = activeGrade(c, p, t);
+  captureGradeInput(c, [src, 0, 0, src.width, src.height, src.width, src.height, W, H]);
+  if (grade) src = gradeSource(src, 0, 0, src.width, src.height, src.width, src.height, W, H, grade, gradeMatte(c)) || src;
+  noteGradeGeom(c, ctx2d.getTransform(), W, H, 0, 0);
+  ctx2d.drawImage(src, 0, 0, src.width, src.height, 0, 0, W, H);
+  ctx2d.filter = "none";
+  if (p.vignette > 0) {
+    const g = ctx2d.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) * 0.55);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, `rgba(0,0,0,${clamp(p.vignette / 100, 0, 1) * 0.9})`);
+    ctx2d.fillStyle = g;
+    ctx2d.fillRect(0, 0, W, H);
+  }
+  if (p.grain > 0) drawGrain(p.grain, 0, 0, W, H, t);
+  ctx2d.restore();
+  return p;
+}
+function needsPixelPass(p, c) {
+  return !!(p.chromaKey || p.temperature || p.tint || p.rgbSplit > 0 ||
+    (p.bgRemove && bgSeg.masks.get(c.id)));
+}
+function hexToRgb(hex) {
+  const n = parseInt(String(hex).replace("#", ""), 16) || 0;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+/* The same pixel loop as a WebGL2 shader: no getImageData read-back and no
+   per-pixel JS, so a keyed or tinted 1080p layer costs a draw call, not ~20 ms
+   of main thread. The input is staged through a 2D canvas exactly as the CPU
+   path draws it (same resize, same cut-out mask, unpremultiplied on upload
+   like getImageData), so both paths see the same pixels; the CPU loop below
+   stays as the fallback when WebGL2 is unavailable. */
+const pixGL = { tried: false, gl: null, canvas: null, loc: null, stage: null, stageCtx: null, outs: new Map() };
+const PIX_VERT = `#version 300 es
+in vec2 aPos;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
+const PIX_FRAG = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform ivec2 uSize;       // picture size: the buffers only grow, so it sits in their top-left corner
+uniform int uSplit;        // RGB split in pixels (R from x+split, B from x−split)
+uniform int uKey;
+uniform vec2 uKeyC;        // key colour Cb, Cr (0…255)
+uniform vec2 uKeyT;        // tolerance t0, t1 (CbCr distance)
+uniform vec2 uShift;       // temperature (R+, B−), tint (G+), in 0…255 units
+out vec4 o;
+void main() {
+  ivec2 sz = uSize;
+  ivec2 q = ivec2(int(gl_FragCoord.x), sz.y - 1 - int(gl_FragCoord.y));   // texture row 0 = top
+  vec4 c = texelFetch(uTex, q, 0);
+  vec3 rgb = c.rgb * 255.0;
+  float a = c.a;
+  if (uSplit > 0) {
+    rgb.r = texelFetch(uTex, ivec2(min(sz.x - 1, q.x + uSplit), q.y), 0).r * 255.0;
+    rgb.b = texelFetch(uTex, ivec2(max(0, q.x - uSplit), q.y), 0).b * 255.0;
+  }
+  if (uKey == 1) {
+    float cb = 128.0 - 0.168736 * rgb.r - 0.331264 * rgb.g + 0.5 * rgb.b;
+    float cr = 128.0 + 0.5 * rgb.r - 0.418688 * rgb.g - 0.081312 * rgb.b;
+    float dist = distance(vec2(cb, cr), uKeyC);
+    if (dist < uKeyT.x) { o = vec4(0.0); return; }
+    if (dist < uKeyT.y) {
+      float k = (dist - uKeyT.x) / (uKeyT.y - uKeyT.x);
+      a *= k;
+      float avg = (rgb.r + rgb.b) * 0.5;   // spill suppression
+      if (rgb.g > avg) rgb.g = rgb.g * k + avg * (1.0 - k);
+    }
+  }
+  rgb += vec3(uShift.x, uShift.y, -uShift.x);
+  rgb = clamp(rgb, 0.0, 255.0) / 255.0;
+  o = vec4(rgb * a, a);
+}`;
+function initPixGL() {
+  if (pixGL.tried) return pixGL.gl;
+  pixGL.tried = true;
+  try {
+    const cv = document.createElement("canvas");
+    const gl = cv.getContext("webgl2", { premultipliedAlpha: true, preserveDrawingBuffer: true, antialias: false, alpha: true });
+    if (!gl) return null;
+    // A software rasterizer (SwiftShader in headless Chrome, llvmpipe) runs the
+    // shader on the CPU anyway, no faster than the loop: keep the loop there.
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    if (info && /swiftshader|llvmpipe|softpipe|software/i.test(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))) return null;
+    const sh = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, PIX_VERT));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, PIX_FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, "aPos");
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);   // straight alpha, as getImageData returns it
+    const loc = {};
+    for (const n of ["uTex", "uSize", "uSplit", "uKey", "uKeyC", "uKeyT", "uShift"]) loc[n] = gl.getUniformLocation(prog, n);
+    gl.uniform1i(loc.uTex, 0);
+    cv.addEventListener("webglcontextlost", (e) => { e.preventDefault(); pixGL.gl = null; });
+    cv.addEventListener("webglcontextrestored", () => { pixGL.tried = false; });
+    const stage = document.createElement("canvas");   // GPU-backed: no willReadFrequently
+    Object.assign(pixGL, { gl, canvas: cv, loc, stage, stageCtx: stage.getContext("2d") });
+    return gl;
+  } catch (err) {
+    console.warn("[FableCut] WebGL2 pixel pass unavailable, using the CPU path:", err && err.message);
+    return null;
+  }
+}
+/** pixelPass on the GPU; null when WebGL2 isn't usable (the caller falls back). */
+function pixelPassGL(c, p, src, sx, sy, sw, sh, w, h, dw) {
+  const gl = initPixGL();
+  if (!gl) return null;
+  const { stage, stageCtx: g, canvas: cv, loc } = pixGL;
+  // Resizing a canvas reallocates it, and the layers of one frame differ in
+  // size, so the stage and the GL buffer only grow; each clip gets its own
+  // output canvas at its own size, which keeps its size from frame to frame.
+  if (stage.width < w) stage.width = w;
+  if (stage.height < h) stage.height = h;
+  g.clearRect(0, 0, w, h);
+  g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  const mask = p.bgRemove ? bgSeg.masks.get(c.id) : null;
+  if (mask && mask.width) {
+    g.globalCompositeOperation = "destination-in";
+    g.drawImage(mask, 0, 0, w, h);
+    g.globalCompositeOperation = "source-over";
+  }
+  const doKey = !!p.chromaKey, temp = +p.temperature || 0, tint = +p.tint || 0;
+  const split = Math.round(clamp(+p.rgbSplit || 0, 0, 60) * (w / Math.max(1, dw)));
+  const run = doKey || temp || tint || split > 0;
+  let out = pixGL.outs.get(c.id);
+  if (!out) {
+    if (pixGL.outs.size >= 32) pixGL.outs.delete(pixGL.outs.keys().next().value);
+    out = document.createElement("canvas");
+    pixGL.outs.set(c.id, out);
+  }
+  if (out.width !== w) out.width = w;
+  if (out.height !== h) out.height = h;
+  const o = out.getContext("2d");
+  o.clearRect(0, 0, w, h);
+  if (!run) { o.drawImage(stage, 0, 0, w, h, 0, 0, w, h); return out; }
+  try {
+    if (cv.width < w) cv.width = w;
+    if (cv.height < h) cv.height = h;
+    gl.viewport(0, 0, w, h);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, stage);
+    gl.uniform2i(loc.uSize, w, h);
+    gl.uniform1i(loc.uSplit, split);
+    gl.uniform1i(loc.uKey, doKey ? 1 : 0);
+    if (doKey) {
+      const [kr, kg, kb] = hexToRgb(p.chromaKey);
+      const t0 = clamp(+p.chromaTolerance || 0, 0, 100) * 1.2;
+      gl.uniform2f(loc.uKeyC, 128 - 0.168736 * kr - 0.331264 * kg + 0.5 * kb, 128 + 0.5 * kr - 0.418688 * kg - 0.081312 * kb);
+      gl.uniform2f(loc.uKeyT, t0, t0 + Math.max(1, clamp(+p.chromaSoftness || 0, 0, 100) * 1.2));
+    }
+    gl.uniform2f(loc.uShift, temp * 0.6, tint * 0.5);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    o.drawImage(cv, 0, cv.height - h, w, h, 0, 0, w, h);   // the viewport is the buffer's bottom-left
+    return out;
+  } catch (err) {
+    if (err && err.name === "SecurityError") throw err;   // tainted source: same as getImageData on the CPU path
+    console.warn("[FableCut] pixel pass failed, using the CPU path:", err && err.message);
+    pixGL.gl = null;
+    return null;
+  }
+}
+function pixelPass(c, p, src, sx, sy, sw, sh, dw, dh) {
+  const w = Math.max(2, Math.min(Math.round(dw), 1920));
+  const h = Math.max(2, Math.min(Math.round(dh), 1920));
+  const viaGL = pixelPassGL(c, p, src, sx, sy, sw, sh, w, h, dw);
+  if (viaGL) return viaGL;
+  if (scratch.width !== w) scratch.width = w;
+  if (scratch.height !== h) scratch.height = h;
+  scratchCtx.clearRect(0, 0, w, h);
+  scratchCtx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  const mask = p.bgRemove ? bgSeg.masks.get(c.id) : null;
+  if (mask && mask.width) {
+    scratchCtx.globalCompositeOperation = "destination-in";
+    scratchCtx.drawImage(mask, 0, 0, w, h);
+    scratchCtx.globalCompositeOperation = "source-over";
+  }
+  const doKey = !!p.chromaKey, temp = +p.temperature || 0, tint = +p.tint || 0;
+  const split = Math.round(clamp(+p.rgbSplit || 0, 0, 60) * (w / Math.max(1, dw)));
+  if (doKey || temp || tint || split > 0) {
+    const img = scratchCtx.getImageData(0, 0, w, h);
+    const d = img.data;
+    if (split > 0) { // chromatic aberration: shift R left→, B →right
+      const src2 = new Uint8ClampedArray(d);
+      for (let y = 0; y < h; y++) {
+        const rowOff = y * w * 4;
+        for (let x = 0; x < w; x++) {
+          const i = rowOff + x * 4;
+          d[i] = src2[rowOff + Math.min(w - 1, x + split) * 4];
+          d[i + 2] = src2[rowOff + Math.max(0, x - split) * 4 + 2];
+        }
+      }
+    }
+    let kcb = 0, kcr = 0, t0 = 0, t1 = 1;
+    if (doKey) {
+      const [kr, kg, kb] = hexToRgb(p.chromaKey);
+      kcb = 128 - 0.168736 * kr - 0.331264 * kg + 0.5 * kb;
+      kcr = 128 + 0.5 * kr - 0.418688 * kg - 0.081312 * kb;
+      t0 = clamp(+p.chromaTolerance || 0, 0, 100) * 1.2;
+      t1 = t0 + Math.max(1, clamp(+p.chromaSoftness || 0, 0, 100) * 1.2);
+    }
+    const tShift = temp * 0.6, gShift = tint * 0.5;
+    for (let i = 0; i < d.length; i += 4) {
+      let r = d[i], g = d[i + 1], b = d[i + 2];
+      if (doKey) {
+        const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+        const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+        const dist = Math.sqrt((cb - kcb) * (cb - kcb) + (cr - kcr) * (cr - kcr));
+        if (dist < t0) { d[i + 3] = 0; continue; }
+        if (dist < t1) {
+          const a = (dist - t0) / (t1 - t0);
+          d[i + 3] = Math.round(d[i + 3] * a);
+          // spill suppression: pull the keyed hue's dominant channel down
+          const avg = (r + b) / 2;
+          if (g > avg) g = g * a + avg * (1 - a);
+        }
+      }
+      if (tShift) { r += tShift; b -= tShift; }
+      if (gShift) { g += gShift; }
+      d[i] = clamp(r, 0, 255); d[i + 1] = clamp(g, 0, 255); d[i + 2] = clamp(b, 0, 255);
+    }
+    scratchCtx.putImageData(img, 0, 0);
+  }
+  return scratch;
+}
+
+/* ═══════════ COLOR GRADE (props.grade — math in color.js) ═══════════
+   One WebGL2 pass grades a clip's pixels before they are composited, in
+   preview and export alike. Without WebGL2 the same math runs on the CPU
+   (color.js gradeImageData). The legacy CSS filter sliders still apply on
+   top when the graded frame is drawn. */
+const Color = self.FableCutColor;
+const gradeGL = { tried: false, gl: null, canvas: null, loc: null };
+const gradeCpu = document.createElement("canvas");
+const gradeCpuCtx = gradeCpu.getContext("2d", { willReadFrequently: true });
+const GRADE_MAX_PX = 4096;
+/** The clip's grade at timeline time t when it changes anything, else null.
+ *  Pickers swap in the grade up to what they edit (runtime.gradeOverride). */
+function activeGrade(c, p, t) {
+  const o = runtime.gradeOverride;
+  const g0 = o && o.id === c.id ? o.grade : p.grade;
+  const g = g0 && t != null ? Color.gradeAt(g0, t - c.start) : g0;   // animated masks
+  if (g && gradeMatte(c) >= 0) return g;   // matte view shows even a neutral layer
+  return g && !Color.isNeutral(g) ? g : null;
+}
+/** Where the clip's picture landed on the monitor (masks are drawn and
+ *  dragged in its 0…1 space): canvas transform + the drawn rect. */
+/** fablecut_scopes matte: the clip's own picture as the compositor grades it,
+ *  so the matte is measured alone (no other clips, adjustments or transforms). */
+function captureGradeInput(c, args) {
+  const cap = runtime.gradeCapture;
+  if (cap && cap.id === c.id && !cap.args) cap.args = args;
+}
+function noteGradeGeom(c, m, w, h, x0, y0) {
+  if (state.exporting || runtime.sampling) return;
+  (runtime.gradeGeom ||= new Map()).set(c.id, { m, w, h, x0, y0 });
+}
+/** The layer whose matte the monitor shows for this clip, else −1 (preview only). */
+function gradeMatte(c) {
+  const m = runtime.matte;
+  return m && m.id === c.id && !state.exporting && !runtime.gradeOverride ? m.layer : -1;
+}
+function initGradeGL() {
+  if (gradeGL.tried) return gradeGL.gl;
+  gradeGL.tried = true;
+  try {
+    const cv = document.createElement("canvas");
+    const gl = cv.getContext("webgl2", { premultipliedAlpha: true, preserveDrawingBuffer: true, antialias: false, alpha: true });
+    if (!gl) return null;
+    const sh = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, Color.GRADE_VERT));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, Color.GRADE_FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, "aPos");
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    const loc = {};
+    for (const n of ["uRect", "uTex", "uMul", "uLinear", "uOff", "uLift", "uGain", "uGam", "uContrast", "uPivot", "uTone", "uSoft", "uSat",
+      "uCurveLut", "uHueLut", "uCurves", "uHueCurves", "uLayer", "uMatte", "uPremul", "uQOn", "uQInv", "uQUse", "uQHue", "uQSat", "uQLuma",
+      "uMShape", "uMInv", "uMN", "uMC", "uMW", "uMRot", "uMFeather", "uAspect", "uMPts"])
+      loc[n] = gl.getUniformLocation(prog, n);
+    gl.uniform1i(loc.uTex, 0);
+    // curve tables (color.js bakes them): float, read with texelFetch, so no filtering extension needed
+    const lutTex = (unit, n) => {
+      const t = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, n, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(n * 4));
+      gl.activeTexture(gl.TEXTURE0);
+      return t;
+    };
+    const curveTex = lutTex(1, Color.CURVE_N), hueTex = lutTex(2, Color.HUE_N);
+    gl.uniform1i(loc.uCurveLut, 1); gl.uniform1i(loc.uHueLut, 2);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    cv.addEventListener("webglcontextlost", (e) => { e.preventDefault(); gradeGL.gl = null; });
+    cv.addEventListener("webglcontextrestored", () => { gradeGL.tried = false; });
+    // layers render pass by pass through two framebuffers (half-float when the GPU can draw into it)
+    const floatFbo = !!gl.getExtension("EXT_color_buffer_float");
+    Object.assign(gradeGL, { gl, canvas: cv, loc, tex, curveTex, hueTex, curveRef: null, hueRef: null, fbos: [], floatFbo });
+    return gl;
+  } catch (err) {
+    console.warn("[FableCut] WebGL2 grade unavailable, using the CPU path:", err && err.message);
+    return null;
+  }
+}
+/** Grade the (sx, sy, sw, sh) rect of `src` into a canvas about dw×dh.
+ *  Null when the pixels can't be read (a cross-origin source without CORS):
+ *  the caller draws the clip ungraded. */
+/** One of the two framebuffers the layer passes ping-pong between, w × h. */
+function gradeFbo(i, w, h) {
+  const gl = gradeGL.gl;
+  let f = gradeGL.fbos[i];
+  if (!f) {
+    f = gradeGL.fbos[i] = { fb: gl.createFramebuffer(), tex: gl.createTexture(), w: 0, h: 0 };
+    gl.bindTexture(gl.TEXTURE_2D, f.tex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+  }
+  if (f.w !== w || f.h !== h) {
+    gl.bindTexture(gl.TEXTURE_2D, f.tex);
+    if (gradeGL.floatFbo) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, f.tex, 0);
+    f.w = w; f.h = h;
+  }
+  return f;
+}
+function gradeSource(src, sx, sy, sw, sh, srcW, srcH, dw, dh, grade, matte = -1) {
+  let w = Math.max(2, Math.round(Math.min(dw, sw * 2, GRADE_MAX_PX)));
+  let h = Math.max(2, Math.round(w * dh / Math.max(1, dw)));
+  if (h > GRADE_MAX_PX) { w = Math.max(2, Math.round(w * GRADE_MAX_PX / h)); h = GRADE_MAX_PX; }
+  const gl = initGradeGL();
+  if (gl) {
+    try {
+      const { canvas: cv, loc } = gradeGL;
+      if (cv.width !== w) cv.width = w;
+      if (cv.height !== h) cv.height = h;
+      gl.viewport(0, 0, w, h);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, gradeGL.tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+      gl.uniform1f(loc.uAspect, w / h);
+      const passes = Color.gradePasses(grade, matte);
+      passes.forEach((u, i) => {
+      const last = i === passes.length - 1;
+      if (i === 0) gl.uniform4f(loc.uRect, sx / srcW, sy / srcH, sw / srcW, sh / srcH);
+      else { // the previous pass's framebuffer, read bottom-up
+        gl.bindTexture(gl.TEXTURE_2D, gradeFbo((i - 1) % 2, w, h).tex);
+        gl.uniform4f(loc.uRect, 0, 1, 1, -1);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, last ? null : gradeFbo(i % 2, w, h).fb);
+      gl.bindTexture(gl.TEXTURE_2D, i === 0 ? gradeGL.tex : gradeGL.fbos[(i - 1) % 2].tex);
+      gl.uniform1i(loc.uLayer, i > 0 ? 1 : 0); gl.uniform1i(loc.uPremul, last ? 1 : 0);
+      if (i > 0) {
+        gl.uniform1i(loc.uMatte, u.uMatte); gl.uniform1i(loc.uQOn, u.uQOn); gl.uniform1i(loc.uQInv, u.uQInv);
+        gl.uniform3iv(loc.uQUse, u.uQUse); gl.uniform3fv(loc.uQHue, u.uQHue); gl.uniform3fv(loc.uQSat, u.uQSat); gl.uniform3fv(loc.uQLuma, u.uQLuma);
+        gl.uniform1i(loc.uMShape, u.uMShape); gl.uniform1i(loc.uMInv, u.uMInv); gl.uniform1i(loc.uMN, u.uMN);
+        gl.uniform2fv(loc.uMC, u.uMC); gl.uniform2fv(loc.uMW, u.uMW); gl.uniform1f(loc.uMRot, u.uMRot);
+        gl.uniform1f(loc.uMFeather, u.uMFeather); gl.uniform2fv(loc.uMPts, u.uMPts);
+      }
+      gl.uniform3fv(loc.uMul, u.uMul); gl.uniform1i(loc.uLinear, u.uLinear);
+      gl.uniform3fv(loc.uOff, u.uOff); gl.uniform3fv(loc.uLift, u.uLift);
+      gl.uniform3fv(loc.uGain, u.uGain); gl.uniform3fv(loc.uGam, u.uGam);
+      gl.uniform1f(loc.uContrast, u.uContrast); gl.uniform1f(loc.uPivot, u.uPivot);
+      gl.uniform1fv(loc.uTone, u.uTone); gl.uniform2fv(loc.uSoft, u.uSoft); gl.uniform1f(loc.uSat, u.uSat);
+      const upload = (unit, texObj, ref, data, n) => {
+        if (!data || gradeGL[ref] === data) return; // tables are cached per curve set — upload on change only
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, texObj);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, 1, gl.RGBA, gl.FLOAT, data);
+        gl.activeTexture(gl.TEXTURE0);
+        gradeGL[ref] = data;
+      };
+      upload(1, gradeGL.curveTex, "curveRef", u.curveLut, u.CURVE_N);
+      upload(2, gradeGL.hueTex, "hueRef", u.hueLut, u.HUE_N);
+      gl.uniform1i(loc.uCurves, u.curveLut ? 1 : 0); gl.uniform1i(loc.uHueCurves, u.hueLut ? 1 : 0);
+      gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      });
+      gl.bindTexture(gl.TEXTURE_2D, gradeGL.tex);
+      return cv;
+    } catch (err) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (err && err.name === "SecurityError") return null; // this source only — keep the GPU path
+      console.warn("[FableCut] grade pass failed, using the CPU path:", err && err.message);
+      gradeGL.gl = null;
+    }
+  }
+  w = Math.min(w, 1920); h = Math.max(2, Math.round(w * dh / Math.max(1, dw)));
+  if (gradeCpu.width !== w) gradeCpu.width = w;
+  if (gradeCpu.height !== h) gradeCpu.height = h;
+  gradeCpuCtx.clearRect(0, 0, w, h);
+  gradeCpuCtx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  let img;
+  try { img = gradeCpuCtx.getImageData(0, 0, w, h); } catch { return null; }
+  Color.gradeImageData(img.data, grade, w, h, matte);
+  gradeCpuCtx.putImageData(img, 0, 0);
+  return gradeCpu;
+}
+
+/* ── Compositor ── */
+function buildFilter(p) {
+  const parts = [];
+  if (p.brightness !== 100) parts.push(`brightness(${p.brightness}%)`);
+  if (p.contrast !== 100) parts.push(`contrast(${p.contrast}%)`);
+  if (p.saturation !== 100) parts.push(`saturate(${p.saturation}%)`);
+  if (p.hue) parts.push(`hue-rotate(${p.hue}deg)`);
+  if (p.blur) parts.push(`blur(${p.blur}px)`);
+  if (p.grayscale) parts.push(`grayscale(${p.grayscale}%)`);
+  if (p.sepia) parts.push(`sepia(${p.sepia}%)`);
+  if (p.invert) parts.push(`invert(${p.invert}%)`);
+  return parts.length ? parts.join(" ") : "none";
+}
+/** Active, enabled clips across enabled video tracks at time `t`, in compositing order
+ * (bottom-to-top: V1 first, then V2, V3), each track's clips sorted by
+ * `start`. Shared by drawFrame (renders it as-is) and pickClipAt (hit-tests
+ * it top-down, filtered to visual clips only). */
+function visibleClipsAt(t) {
+  const out = [];
+  const videoTracks = TRACKS.filter((tr) => tr.kind === "video" && isTrackEnabled(tr.id)).reverse();
+  for (const tr of videoTracks) {
+    out.push(...project.clips
+      .filter((c) => c.track === tr.id && c.disabled !== true && activeAt(c, t))
+      .sort((a, b) => a.start - b.start));
+  }
+  return out;
+}
+function drawFrame(t = state.time) {
+  const W = els.preview.width, H = els.preview.height;
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.filter = "none"; ctx2d.globalAlpha = 1;
+  ctx2d.fillStyle = project.background || "#000"; ctx2d.fillRect(0, 0, W, H);
+  // render video tracks bottom-up (V1 under V2)
+  if (runtime.maskView) runtime.maskView.ready = false;
+  const clips = visibleClipsAt(t), mattes = matteTracksAt(clips);
+  for (const c of clips) if (!mattes.has(c.track)) drawClip(c, W, H, t);   // a matte track only cuts
+  if (!state.exporting && !runtime.sampling) drawMaskView(W, H);
+  if (!runtime.sampling) updateScopes(); // before the handles, so they never reach the scopes
+  // on-canvas selection handles (never during export or playback)
+  if (!state.exporting && !state.playing && !runtime.sampling) { drawNullGuides(clips, W, H, t); drawSelectionOverlay(W, H, t); }
+}
+/** Nulls never render; the monitor shows where they are (never in export or the scopes). */
+function drawNullGuides(clips, W, H, t) {
+  for (const c of clips) {
+    if (c.kind !== "null" || c.id === state.selId) continue;
+    drawNullMark(clipBounds(c, evalProps(c, t), W, H), W, 0.45);
+  }
+}
+function drawNullMark(b, W, alpha) {
+  const lw = Math.max(1.5, W / 800);
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.globalAlpha = alpha; ctx2d.globalCompositeOperation = "source-over"; ctx2d.filter = "none";
+  ctx2d.translate(b.cx, b.cy); ctx2d.rotate(b.rot);
+  ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#ff6b6b";
+  ctx2d.strokeRect(-b.hw, -b.hh, b.hw * 2, b.hh * 2);
+  ctx2d.beginPath(); ctx2d.moveTo(-b.hw * 0.4, 0); ctx2d.lineTo(b.hw * 0.4, 0); ctx2d.moveTo(0, -b.hh * 0.4); ctx2d.lineTo(0, b.hh * 0.4); ctx2d.stroke();
+  ctx2d.restore();
+}
+/** Where the clip's anchor point is on screen (its x / y in its parents' space). */
+function anchorScreenPt(c, p, W, H, t = state.time) {
+  const q = parentScreenMatrix(c, W, H, t).transformPoint(new DOMPoint(+p.x || 0, +p.y || 0));
+  return { x: q.x, y: q.y };
+}
+
+/* ═══════════ Direct manipulation on the program monitor ═══════════
+   Drag a clip to move it, corner handles to resize (scale), the top
+   handle to rotate. Maps gestures straight onto props.x/y/scale/rotation. */
+function clipBounds(c, p, W, H, t = state.time) {
+  const box = layerBox(c, p, W, H, t), m = layerScreenMatrix(c, p, W, H, t);
+  const o = m.transformPoint(new DOMPoint(box.ox, box.oy)), k = Math.hypot(m.a, m.b) || 1;
+  return { cx: o.x, cy: o.y, hw: box.hw * k, hh: box.hh * k, rot: Math.atan2(m.b, m.a) };
+}
+/** The picture's box in its drawn space (content scale applied): centre offset and half size. */
+const NULL_HALF = 40;
+function layerBox(c, p, W, H, t) {
+  const sc = +p.scale || 1;
+  if (c.kind === "text") {
+    const tb = p.textPath ? textPathBox(c, p, t) : null;
+    if (tb) return tb;
+    if (hasTextBox(p)) return { ox: 0, oy: 0, hw: +p.boxW / 2, hh: +p.boxH / 2 };
+    const half = measureTextHalfSize(p);
+    return { ox: 0, oy: 0, hw: half.hw, hh: half.hh };
+  }
+  if (c.kind === "null") return { ox: 0, oy: 0, hw: NULL_HALF * sc, hh: NULL_HALF * sc };
+  if (c.kind === "shape") {
+    const b = Motion.bounds(shapeItemsAt(c, t));
+    if (!b) return { ox: 0, oy: 0, hw: NULL_HALF * sc, hh: NULL_HALF * sc };
+    return { ox: (b.x0 + b.x1) / 2 * sc, oy: (b.y0 + b.y1) / 2 * sc, hw: Math.max(4, (b.x1 - b.x0) / 2) * sc, hh: Math.max(4, (b.y1 - b.y0) / 2) * sc };
+  }
+  if (c.kind === "comp") {   // a comp clip's box is the comp's own size (fit none) or fitted like a picture
+    const comp = getComp(c.compId);
+    if (comp) {
+      const cw = comp.width, ch = comp.height;
+      const f = p.fit === "none" ? 1 : p.fit === "cover" ? Math.max(W / cw, H / ch) : p.fit === "stretch" ? null : Math.min(W / cw, H / ch);
+      return f == null ? { ox: 0, oy: 0, hw: (W / 2) * sc, hh: (H / 2) * sc } : { ox: 0, oy: 0, hw: cw * f / 2 * sc, hh: ch * f / 2 * sc };
+    }
+  }
+  return { ox: 0, oy: 0, hw: (W / 2) * sc, hh: (H / 2) * sc };   // media/svg: canvas-sized base box, scaled
+}
+/* ── Layer transforms (motion.js): the anchor point and parenting ──
+   A clip draws at canvas centre · its parents · translate(x, y) · rotate ·
+   (its picture at its scale, shifted so the anchor point sits at x / y). */
+const Motion = self.FableCutMotion;
+function parentM(c, t) { return c.parent ? Motion.parentMatrix(c, anyClip, t) : null; }
+/** Canvas centre and the parents: the space a clip's x / y live in. */
+function parentScreenMatrix(c, W, H, t) {
+  const m = new DOMMatrix().translate(W / 2, H / 2), pm = parentM(c, t);
+  return pm ? m.multiply(new DOMMatrix(pm)) : m;
+}
+/** Canvas px of the clip's drawn space, before its content scale (shake left out). */
+function layerScreenMatrix(c, p, W, H, t) {
+  const as = Motion.contentScale(c, p);
+  return parentScreenMatrix(c, W, H, t).translate(+p.x || 0, +p.y || 0).rotate(+p.rotation || 0)
+    .translate(-(+p.anchorX || 0) * as, -(+p.anchorY || 0) * as);
+}
+/** How much the clip's parents scale it (1 without a parent). */
+function parentScaleAt(c, t = state.time) { const m = parentScreenMatrix(c, 0, 0, t); return Math.hypot(m.a, m.b) || 1; }
+/** The x / y that put the centre of the clip's (unshifted) picture at screen (sx, sy). */
+function posForScreenCentre(c, p, sx, sy, W, H, t = state.time) {
+  const q = parentScreenMatrix(c, W, H, t).inverse().transformPoint(new DOMPoint(sx, sy));
+  const th = (+p.rotation || 0) * Math.PI / 180, as = Motion.contentScale(c, p), ax = (+p.anchorX || 0) * as, ay = (+p.anchorY || 0) * as;
+  return { x: q.x + ax * Math.cos(th) - ay * Math.sin(th), y: q.y + ax * Math.sin(th) + ay * Math.cos(th) };
+}
+/** A screen-space drag delta in the clip's x / y space (its parents undone). */
+function screenDeltaToParent(c, dx, dy, t = state.time) {
+  const m = parentScreenMatrix(c, els.preview.width, els.preview.height, t), det = m.a * m.d - m.b * m.c || 1;
+  return { x: (m.d * dx - m.c * dy) / det, y: (-m.b * dx + m.a * dy) / det };
+}
+/* ═══════════ COMPOSITIONS (comp.js) ═══════════
+   project.comps holds nested sequences; a "comp" clip places one. The media
+   inside comps is flattened into virtual clips (mediaClips) so playback,
+   export seeking and the audio mix treat it like timeline media; the comp
+   clip draws its comp's frame like a picture (renderComp). Opening a comp
+   loads it as a stand-in project, so the whole timeline edits it; saves write
+   it back into the root document. */
+const CompLib = self.FableCutComp;
+function compCtxId() { const x = state.compCtx; return x ? x.path[x.path.length - 1] : null; }
+function getComp(id) { return CompLib.getComp(project, id); }
+let flatMemo = null;
+/** Timeline clips plus the clips every comp clip brings in (virtual, at timeline times). */
+function mediaClips() {
+  const now = performance.now();
+  if (flatMemo && flatMemo.clips === project.clips && flatMemo.comps === project.comps && flatMemo.gen === runtime.compGen && now - flatMemo.at < 4) return flatMemo.list;
+  const virt = project.comps && project.comps.length && project.clips.some((c) => c.kind === "comp")
+    ? CompLib.flatten(project, project.clips, { inComp: compCtxId(), renders: (c) => clipRenders(c) }) : [];
+  const list = virt.length ? project.clips.concat(virt) : project.clips;
+  flatMemo = { at: now, clips: project.clips, comps: project.comps, gen: runtime.compGen, list, virt, byId: new Map(virt.map((v) => [v.id, v])) };
+  return list;
+}
+function virtualClip(id) { mediaClips(); return (flatMemo && flatMemo.byId.get(id)) || null; }
+/** The clips a comp clip (or virtual comp clip) shows directly. */
+function compChildren(c) { mediaClips(); return flatMemo ? flatMemo.virt.filter((v) => v._comp === c.id) : []; }
+/** The comp's frame at timeline time t, as a canvas of the comp's size (null when it has none). */
+function renderComp(c, t) {
+  const comp = getComp(c.compId);
+  const depth = (runtime.compDepth || 0) + 1;
+  if (!comp || depth > CompLib.MAX_DEPTH) return null;
+  const W2 = comp.width, H2 = comp.height;
+  const prev = { ctx: ctx2d, scope: runtime.scope, depth: runtime.compDepth, adj: runtime.adjSource };
+  runtime.compDepth = depth;   // every scratch buffer below gets this depth's own copy
+  const cv = maskCtx("comp", W2, H2);
+  cv.setTransform(1, 0, 0, 1, 0, 0); cv.globalAlpha = 1; cv.globalCompositeOperation = "source-over"; cv.filter = "none";
+  cv.clearRect(0, 0, W2, H2);
+  if (comp.background) { cv.fillStyle = comp.background; cv.fillRect(0, 0, W2, H2); }
+  const kids = compChildren(c), order = CompLib.drawOrder(comp).video;
+  const on = kids.filter((v) => v._on && v.kind !== "audio" && activeAt(v, t))
+    .sort((a, b) => (order.indexOf(a.track) - order.indexOf(b.track)) || (a.start - b.start));
+  runtime.scope = { clips: kids, videoTracks: order };
+  ctx2d = cv; runtime.adjSource = cv.canvas;
+  try {
+    const mattes = matteTracksAt(on);
+    for (const v of on) if (!mattes.has(v.track)) drawClip(v, W2, H2, t);
+  } finally { ctx2d = prev.ctx; runtime.scope = prev.scope; runtime.compDepth = prev.depth; runtime.adjSource = prev.adj; }
+  return cv.canvas;
+}
+const anyClip = (id) => getClip(id) || virtualClip(id);
+
+/* ── Opening a comp: it becomes the timeline until you go back ── */
+function compSyntheticDoc(root, path) {
+  const comp = CompLib.getComp(root, path[path.length - 1]);
+  if (!comp) return null;
+  const names = path.map((id) => (CompLib.getComp(root, id) || { name: id }).name);
+  return {
+    ...root, name: `${root.name} › ${names.join(" › ")}`,
+    width: comp.width, height: comp.height, background: comp.background || "#000000",
+    clips: comp.clips, tracks: CompLib.compTracks(comp), markers: comp.markers || [], inPoint: null, outPoint: null,
+    disabledTracks: comp.disabledTracks || [], lockedTracks: [], untargetedTracks: [], exportFrame: null,
+  };
+}
+/** Write the open comp's clips and tracks back into the root document (and return it). */
+function commitCompCtx() {
+  const x = state.compCtx;
+  if (!x) return null;
+  const cur = projectJSONHere();
+  const id = compCtxId();
+  const comps = (cur.comps || []).map((c) => (c.id === id
+    ? { ...c, clips: cur.clips, tracks: cur.tracks, disabledTracks: cur.disabledTracks && cur.disabledTracks.length ? cur.disabledTracks : undefined, markers: cur.markers && cur.markers.length ? cur.markers : undefined, background: c.background }
+    : c));
+  x.root = { ...x.root, media: cur.media, folders: cur.folders, collections: cur.collections, fps: cur.fps, master: cur.master, buses: cur.buses, revision: cur.revision, comps };
+  return x.root;
+}
+function enterComp(compId, viaClip) {
+  if (state.exporting) return;
+  if (state.playing) pause();
+  const comp = getComp(compId);
+  if (!comp) { toast("That composition is missing"); return; }
+  const here = compCtxId();
+  if (here && CompLib.wouldCycle(state.compCtx.root, here, compId) && here === compId) return;
+  const root = state.compCtx ? commitCompCtx() : projectJSONHere();
+  const t = viaClip && activeAt(viaClip, state.time) ? state.time - viaClip.start + (viaClip.in || 0) : 0;
+  const frame = { undo: runtime.undo.slice(), redo: runtime.redo.slice(), time: state.time, sel: state.selId };
+  state.compCtx = { root, path: [...(state.compCtx ? state.compCtx.path : []), compId], frames: [...(state.compCtx ? state.compCtx.frames : []), frame] };
+  runtime.undo.length = 0; runtime.redo.length = 0;
+  applyProject(compSyntheticDoc(root, state.compCtx.path), { ctx: true });
+  setSelection([]);
+  setTime(clamp(t, 0, comp.duration));
+  syncCompCrumb();
+}
+function exitComp(levels = 1) {
+  const x = state.compCtx;
+  if (!x) return;
+  const root = commitCompCtx();
+  let frame = null;
+  for (let i = 0; i < levels && x.path.length; i++) { x.path.pop(); frame = x.frames.pop(); }
+  if (!x.path.length) { state.compCtx = null; applyProject(root, { ctx: true }); }
+  else applyProject(compSyntheticDoc(root, x.path), { ctx: true });
+  if (frame) {
+    runtime.undo.splice(0, runtime.undo.length, ...frame.undo); runtime.redo.splice(0, runtime.redo.length, ...frame.redo);
+    setSelection(frame.sel && getClip(frame.sel) ? [frame.sel] : []);
+    setTime(frame.time);
+  }
+  syncCompCrumb();
+  scheduleSave();
+}
+function syncCompCrumb() {
+  syncSequenceButton();
+  if (els.projectName) els.projectName.textContent = project.name + (state.connected ? "  ·  🟢 connected" : "  ·  ⚪ local session");
+  const el = document.getElementById("compCrumb");
+  if (!el) return;
+  const x = state.compCtx;
+  el.classList.toggle("hidden", !x);
+  if (!x) { el.innerHTML = ""; return; }
+  const names = x.path.map((id) => (CompLib.getComp(x.root, id) || { name: id }).name);
+  el.innerHTML = `<button type="button" class="btn tiny" data-crumb="${x.path.length}" title="Back to the timeline">◀ ${escapeHtml(openSequenceName())}</button>` +
+    names.map((n, i) => `<span class="crumb-sep">›</span>` + (i < names.length - 1
+      ? `<button type="button" class="btn tiny" data-crumb="${x.path.length - 1 - i}">${escapeHtml(n)}</button>`
+      : `<b title="You are editing this composition — Esc or ◀ goes back">${escapeHtml(n)}</b>`)).join("");
+  for (const b of el.querySelectorAll("[data-crumb]")) b.addEventListener("click", () => exitComp(+b.dataset.crumb));
+}
+
+/* ═══════════════════════════ SEQUENCES ═══════════════════════════
+   Several timelines in one project (sequences.js). The open one is `project`
+   itself — clips, tracks, canvas, frame rate, mix, delivery — and the others
+   wait in project.sequences. Opening one parks this timeline in its entry and
+   loads the other, like a reload. For the session each sequence keeps its own
+   undo history, playhead and selection. */
+const SeqLib = self.FableCutSeq;
+/** The document that holds the sequences (the root while a comp is open). */
+function seqRoot() { return state.compCtx ? state.compCtx.root : project; }
+function openSequenceName() { const r = seqRoot(); return (SeqLib.find(r, SeqLib.activeId(r)) || SeqLib.MAIN).name; }
+/** A document is about to be shown: when it opens another sequence, the undo steps,
+ *  playhead and selection go with the one that was open, and the other's come back. */
+function noteOpenSequence(data) {
+  const next = SeqLib.activeId(data), prev = runtime.seqOpen;
+  runtime.seqOpen = next;
+  runtime.seqBack = null;
+  if (!prev || prev === next) return;
+  // the steps only fit the state they were taken on: its timeline, and the comps and media every sequence
+  // shares (undo puts those back too). An agent or the other sequence may change them meanwhile.
+  // A relink / replace step also holds the other sequences' clips: then those must be as they were too.
+  const here = projectJSONHere();
+  const withOthers = [...runtime.undo, ...runtime.redo].some(hasSeqClips);
+  runtime.seqUndo.set(prev, { undo: runtime.undo.slice(), redo: runtime.redo.slice(), time: state.time, sel: state.selId,
+    fp: seqUndoPrint(here, withOthers), withOthers });
+  const back = runtime.seqUndo.get(next);
+  const fits = back && back.fp === seqUndoPrint(data, back.withOthers);
+  runtime.undo.splice(0, runtime.undo.length, ...(fits ? back.undo : []));
+  runtime.redo.splice(0, runtime.redo.length, ...(fits ? back.redo : []));
+  runtime.seqBack = back || null;
+}
+/** What a sequence's undo steps rely on: its timeline, the shared comps and media, and (for relink /
+ *  replace steps) the clips of the other sequences — in the saved form, so both sides compare alike. */
+function seqUndoPrint(d, withOthers) {
+  return JSON.stringify([d.clips || [], d.comps || [], (d.media || []).filter((m) => !m.transient),
+    ...(withOthers ? [SeqLib.others(d).map((sq) => [sq.id, sq.clips || []])] : [])]);
+}
+/** Open sequence `id` in the editor. False when it can't be opened now. */
+function openSequence(id) {
+  if (state.exporting) { toast("Wait for the export to finish before opening another sequence"); return false; }
+  if (state.gesture) return false;
+  if (state.compCtx) exitComp(state.compCtx.path.length);
+  if (SeqLib.activeId(project) === id) return true;
+  if (state.playing) pause();
+  const doc = projectJSONHere();
+  try { SeqLib.open(doc, id); } catch (e) { toast(e.message); return false; }
+  applyProject(doc);
+  const back = runtime.seqBack;
+  runtime.seqBack = null;
+  const sel = back && back.sel && getClip(back.sel);
+  setSelection(sel ? [...withLinked([sel])].map((c) => c.id) : []);
+  setTime(back ? back.time : 0);
+  syncCompCrumb();
+  scheduleSave();
+  return true;
+}
+/** Add a sequence ({name?, from?, width?, height?}) and open it. */
+function newSequence(opts) {
+  if (state.exporting) { toast("Wait for the export to finish"); return; }
+  if (state.compCtx) exitComp(state.compCtx.path.length);
+  const doc = projectJSONHere();
+  let s;
+  try { s = SeqLib.add(doc, opts); } catch (e) { toast(e.message); return; }
+  project.sequences = doc.sequences; project.sequence = doc.sequence;
+  if (openSequence(s.id)) toast(`New sequence “${s.name}” · ${s.width}×${s.height}`);
+  else { scheduleSave(); syncCompCrumb(); toast(`New sequence “${s.name}” added — open it from the sequence menu`); }
+}
+function renameSequence(id, name) {
+  const r = seqRoot();
+  try { SeqLib.rename(r, id, name); } catch (e) { toast(e.message); return; }
+  if (!r.sequences) { r.sequences = null; r.sequence = null; }
+  syncCompCrumb(); scheduleSave();
+}
+/** Delete a sequence — after keeping the project as it is now as a version, when the server is there. */
+async function deleteSequence(id) {
+  const r = seqRoot(), s = SeqLib.find(r, id);
+  if (!s || SeqLib.entries(r).length < 2) return;
+  if (state.exporting) { toast("Wait for the export to finish"); return; }
+  if (state.compCtx) exitComp(state.compCtx.path.length);
+  let kept = null;
+  if (state.connected) {
+    const projectId = runtime.projectId;   // the version is of this project, whatever another tab opens meanwhile
+    if (!(await flushSaveForVersion("the sequence was not deleted"))) return;
+    try {
+      const res = await fetch("/api/versions", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", name: `Before deleting the sequence “${s.name}”`.slice(0, 120), ...(projectId && projectId !== "?" ? { project: projectId } : {}) }) });
+      if (res.ok) kept = (await res.json()).version;
+    } catch { }
+    // the delete has no undo: without that version it doesn't happen
+    if (!kept) { toast(`Couldn't keep a version of the project, so “${s.name}” was not deleted. Try again in a moment.`); return; }
+  }
+  // the editor may have moved on while the version was saved
+  if (state.exporting) { toast("Wait for the export to finish"); return; }
+  if (state.compCtx) exitComp(state.compCtx.path.length);
+  if (!SeqLib.find(project, id) || SeqLib.entries(project).length < 2) return;   // deleted or changed meanwhile (another tab, an agent)
+  const wasOpen = SeqLib.activeId(project) === id;
+  const doc = projectJSONHere();
+  try { SeqLib.remove(doc, id); } catch (e) { toast(e.message); return; }
+  if (wasOpen) {
+    applyProject(doc);
+    const back = runtime.seqBack;
+    runtime.seqBack = null;
+    setSelection([]);
+    setTime(back ? back.time : 0);
+  } else { project.sequences = doc.sequences || null; project.sequence = doc.sequence || null; }
+  runtime.seqUndo.delete(id);
+  syncCompCrumb(); scheduleSave();
+  toast(`Deleted the sequence “${s.name}”` + (kept ? ` · it is kept in version v${kept.v} (Projects → Versions)` : ""));
+}
+function syncSequenceButton() {
+  const b = $("btnSequences");
+  if (!b) return;
+  const n = SeqLib.entries(seqRoot()).length;
+  b.querySelector(".seq-name").textContent = openSequenceName();
+  b.querySelector(".seq-count").textContent = n > 1 ? String(n) : "";
+  b.title = `Sequence: ${openSequenceName()}${n > 1 ? ` (one of ${n})` : ""} — open another one, or add, duplicate, rename`;
+}
+/** The sequence menu: the project's sequences (click one to open it), then what to do with them. */
+function showSequenceMenu(x, y) {
+  hideTrackCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu seq-menu";
+  const r = seqRoot(), openId = SeqLib.activeId(r);
+  const rows = SeqLib.list(r), open = rows.find((row) => row.active);
+  const item = (html, run, why, keepOpen) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ctx-item"; b.innerHTML = html;
+    if (why) { b.disabled = true; b.title = why; } else b.addEventListener("click", () => { if (!keepOpen) hideTrackCtxMenu(); run(b); });
+    menu.appendChild(b);
+    return b;
+  };
+  const sep = () => { const d = document.createElement("div"); d.className = "ctx-sep"; menu.appendChild(d); };
+  for (const row of rows) {
+    // the open one's live numbers are on the timeline (or the root, while a comp is open)
+    const w = row.active ? r.width : row.width, h = row.active ? r.height : row.height;
+    const len = row.active ? (state.compCtx ? row.duration : projDur()) : row.duration;
+    const b = item(`<span class="seq-check">${row.active ? "✓" : ""}</span><span class="seq-row-name">${escapeHtml(row.name)}</span><kbd>${w}×${h} · ${fmt(len)}</kbd>`,
+      () => openSequence(row.id));
+    if (row.active) b.classList.add("on");
+  }
+  sep();
+  item(`<span>New sequence…</span>`, () => promptNewSequence(x, y));
+  item(`<span>Duplicate “${escapeHtml(open.name)}”</span>`, () => newSequence({ from: "open" }));
+  item(`<span>Rename “${escapeHtml(open.name)}”…</span>`, () => promptBinText(x, y, "Sequence name", open.name, (v) => renameSequence(openId, v), { max: 120, ok: "Rename" }));
+  item(`<span>Delete “${escapeHtml(open.name)}”…</span>`, (b) => {
+    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.querySelector("span").textContent = "Click again to delete it"; return; }
+    hideTrackCtxMenu();
+    deleteSequence(openId);
+  }, rows.length < 2 ? "A project keeps at least one sequence" : null, true);
+  showPopover(menu, x, y);
+}
+/** New sequence: a name, a canvas, and whether it starts empty or as a copy of the open one. */
+function promptNewSequence(x, y) {
+  const pop = document.createElement("div");
+  pop.className = "ctx-menu bin-pop seq-new";
+  const n = SeqLib.entries(seqRoot()).length + 1;
+  const sizes = [{ label: `Same as “${openSequenceName()}” · ${project.width}×${project.height}`, w: 0, h: 0 }, ...ASPECT_PRESETS];
+  pop.innerHTML = `<label class="bin-pop-label" for="seqNewName">New sequence</label>
+    <input type="text" class="bin-pop-input" id="seqNewName" maxlength="120" spellcheck="false">
+    <label class="bin-pop-label" for="seqNewSize">Canvas</label>
+    <select id="seqNewSize" class="bin-pop-input">${sizes.map((s, i) => `<option value="${i}">${escapeHtml(s.label)}</option>`).join("")}</select>
+    <label class="seq-new-copy"><input type="checkbox" id="seqNewCopy"> Start from a copy of “${escapeHtml(openSequenceName())}”</label>
+    <div class="bin-pop-hint">Media and compositions are shared by every sequence. Each has its own timeline, canvas, frame rate, mix and delivery settings.</div>
+    <div class="bin-pop-btns"><button type="button" class="btn tiny" data-cancel>Cancel</button><button type="button" class="btn tiny accent" data-ok>Create</button></div>`;
+  pop.querySelector("#seqNewName").value = `Sequence ${n}`;
+  const ok = () => {
+    const name = pop.querySelector("#seqNewName").value.trim();
+    const size = sizes[+pop.querySelector("#seqNewSize").value] || sizes[0];
+    const copy = pop.querySelector("#seqNewCopy").checked;
+    hideTrackCtxMenu();
+    newSequence({ name: name || undefined, from: copy ? "open" : "empty", ...(size.w ? { width: size.w, height: size.h } : {}) });
+  };
+  pop.querySelector("[data-ok]").addEventListener("click", ok);
+  pop.querySelector("[data-cancel]").addEventListener("click", () => hideTrackCtxMenu());
+  pop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.tagName !== "SELECT") { e.preventDefault(); ok(); }
+    else if (e.key === "Escape") { e.preventDefault(); hideTrackCtxMenu(); }
+    e.stopPropagation();
+  });
+  showPopover(pop, x, y);
+  const input = pop.querySelector("#seqNewName");
+  input.focus(); input.select();
+}
+function initSequencesUi() {
+  const b = $("btnSequences");
+  if (!b || b.dataset.wired) return;
+  b.dataset.wired = "1";
+  b.addEventListener("click", () => { const rc = b.getBoundingClientRect(); showSequenceMenu(rc.left, rc.bottom + 4); });
+  syncSequenceButton();
+}
+
+/* ── Making comps ── */
+function newCompId() { let id; do id = "comp_" + uid(); while (getComp(id)); return id; }
+/** Precompose the selection: the clips move into a new comp, a comp clip takes their place. */
+function precomposeSelection() {
+  const sel = withLinked(selectedClips());
+  if (!sel.length) { toast("Select the clips to put in a composition"); return; }
+  if (sel.some(isClipLocked)) { toastLocked(); return; }
+  pushUndo();
+  const doc = { clips: project.clips, comps: project.comps || [], tracks: project.tracks, width: project.width, height: project.height, disabledTracks: project.disabledTracks || [] };
+  const { comp, clip } = CompLib.precompose(doc, sel.map((c) => c.id), { id: newCompId(), name: "Comp " + ((project.comps || []).length + 1) });
+  project.clips = doc.clips; project.comps = doc.comps;
+  clip.id = "c_" + uid(); clip.props = { ...DEFAULT_PROPS, fit: "none" };
+  for (const c of comp.clips) c.props = { ...DEFAULT_PROPS, ...(c.props || {}) };
+  runtime.compGen = (runtime.compGen || 0) + 1;
+  setSelection([clip.id]);
+  state.dirtyTimeline = true;
+  scheduleSave(); renderBin(); renderInspector();
+  toast(`${sel.length} clip${sel.length > 1 ? "s" : ""} now live in "${comp.name}" — double-click it to open`);
+}
+function addNewComp() {
+  project.comps = project.comps || [];
+  pushUndo();
+  const comp = { id: newCompId(), name: "Comp " + (project.comps.length + 1), width: project.width, height: project.height, duration: 5, clips: [], tracks: CompLib.DEFAULT_TRACKS.map((t) => ({ ...t })) };
+  project.comps.push(comp);
+  runtime.compGen = (runtime.compGen || 0) + 1;
+  scheduleSave(); renderBin();
+  return comp;
+}
+function addCompClip(comp, trackId, at) {
+  const track = trackId && TRACKS.some((t) => t.id === trackId && t.kind === "video") ? trackId : "V1";
+  if (isTrackLocked(track)) { toast(`${track} is locked`); return; }
+  const here = compCtxId();
+  if (here && CompLib.wouldCycle(state.compCtx ? state.compCtx.root : project, here, comp.id)) { toast("A composition can't contain itself"); return; }
+  pushUndo();
+  const c = { id: "c_" + uid(), mediaId: null, kind: "comp", compId: comp.id, track, start: Math.max(0, at), in: 0, duration: comp.duration, name: comp.name, props: { ...DEFAULT_PROPS, fit: "none" } };
+  project.clips.push(c);
+  runtime.compGen = (runtime.compGen || 0) + 1;
+  selectClip(c.id); scheduleSave(); renderInspector();
+}
+/** The Project tab's compositions: drag one onto the timeline, double-click to open it. */
+function makeCompItem(comp) {
+  const item = document.createElement("div");
+  item.className = "bin-item comp-item";
+  item.dataset.compId = comp.id;
+  item.draggable = true;
+  const used = CompLib.usages(state.compCtx ? state.compCtx.root : project, comp.id).length;
+  item.innerHTML = `<div class="bin-thumb comp-thumb">▣</div>
+    <div class="bin-meta"><div class="bin-name"></div><div class="bin-sub">Composition · ${comp.width}×${comp.height} · ${comp.duration}s${used ? ` · used ${used}×` : ""}</div></div>
+    <button class="btn tiny accent lib-add" title="Add at the playhead">＋</button>`;
+  item.querySelector(".bin-name").textContent = comp.name;
+  item.title = "Drag onto the timeline · double-click to open and edit";
+  item.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/fablecut-comp", comp.id); e.dataTransfer.effectAllowed = "copy"; });
+  item.addEventListener("dblclick", () => enterComp(comp.id));
+  item.querySelector(".lib-add").addEventListener("click", (e) => { e.stopPropagation(); addCompClip(comp, "V1", state.time); });
+  item.addEventListener("contextmenu", (e) => { e.preventDefault(); showCompMenu(e.clientX, e.clientY, comp); });
+  return item;
+}
+function showCompMenu(x, y, comp) {
+  hideTrackCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu"; menu.id = "trackCtxMenu";
+  const item = (label, run, why) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ctx-item"; b.innerHTML = `<span>${escapeHtml(label)}</span>`;
+    if (why) { b.disabled = true; b.title = why; } else b.addEventListener("click", () => { hideTrackCtxMenu(); run(); });
+    menu.appendChild(b);
+  };
+  item("Open", () => enterComp(comp.id));
+  item("Duplicate", () => {
+    pushUndo();
+    const copy = JSON.parse(JSON.stringify(comp)); copy.id = newCompId(); copy.name = `${comp.name} copy`.slice(0, 80);
+    project.comps.push(copy); runtime.compGen = (runtime.compGen || 0) + 1; scheduleSave(); renderBin();
+  });
+  // an open comp's live clips are on the timeline, not yet in its entry
+  item("Save as template", () => saveCompAsTemplate(comp.id === compCtxId() ? { ...comp, clips: project.clips, tracks: project.tracks } : comp));
+  const used = CompLib.usages(state.compCtx ? state.compCtx.root : project, comp.id).length;
+  item("Delete", () => {
+    pushUndo();
+    project.comps = project.comps.filter((c) => c.id !== comp.id);
+    runtime.compGen = (runtime.compGen || 0) + 1; scheduleSave(); renderBin();
+  }, used ? `Used ${used}× — remove its clips first` : state.compCtx && state.compCtx.path.includes(comp.id) ? "It is open" : null);
+  document.body.appendChild(menu);
+  trackCtxMenu = menu;
+  menu.style.left = Math.max(6, Math.min(x, innerWidth - menu.offsetWidth - 6)) + "px";
+  menu.style.top = Math.max(6, Math.min(y, innerHeight - menu.offsetHeight - 6)) + "px";
+}
+function compSectionHtml(c, row) {
+  const comp = getComp(c.compId);
+  if (!comp) return `<div class="insp-section"><h3>Composition</h3><p class="cl-note">Its composition (${escapeHtml(c.compId || "?")}) is missing.</p></div>`;
+  return `<div class="insp-section" data-comp-section><h3>Composition</h3>
+    ${row("Comp", `<span class="insp-ctrls"><input type="text" data-comp-name value="${escapeHtml(comp.name)}" maxlength="80" title="The composition's name (every clip using it shows it)"> <button type="button" class="btn tiny" data-comp-open title="Open it on the timeline (or double-click the clip)">Open</button></span>`)}
+    ${row("Size", `<span class="insp-ctrls"><input type="number" data-comp-w min="16" max="8192" value="${comp.width}" style="max-width:72px"> × <input type="number" data-comp-h min="16" max="8192" value="${comp.height}" style="max-width:72px"></span>`)}
+    ${row("Length (s)", `<input type="number" data-comp-dur min="0.05" step="0.01" value="${comp.duration}">`)}
+    ${row("Background", `<span class="insp-ctrls"><input type="color" data-comp-bg value="${comp.background || "#000000"}"><button type="button" class="btn tiny${comp.background ? "" : " toggle on"}" data-comp-bgoff title="Transparent: what is under the comp clip shows through">None</button></span>`)}
+    <p class="cl-note">The clip shows the comp from its In point (${(+c.in || 0).toFixed(2)} s). Every clip using this comp changes when you edit it.</p>
+  </div>`;
+}
+function bindCompControls(c) {
+  const root = els.inspector.querySelector("[data-comp-section]");
+  const comp = root && getComp(c.compId);
+  if (!comp) return;
+  const edit = (fn) => { pushUndo(); fn(); runtime.compGen = (runtime.compGen || 0) + 1; state.dirtyTimeline = true; scheduleSave(); renderBin(); renderInspector(); };
+  root.querySelector("[data-comp-open]")?.addEventListener("click", () => enterComp(comp.id, c));
+  root.querySelector("[data-comp-name]")?.addEventListener("change", (e) => { const n = e.target.value.trim(); if (n) edit(() => { comp.name = n.slice(0, 80); }); });
+  root.querySelector("[data-comp-w]")?.addEventListener("change", (e) => { const v = Math.round(+e.target.value); if (v >= 16 && v <= 8192) edit(() => { comp.width = v; }); });
+  root.querySelector("[data-comp-h]")?.addEventListener("change", (e) => { const v = Math.round(+e.target.value); if (v >= 16 && v <= 8192) edit(() => { comp.height = v; }); });
+  root.querySelector("[data-comp-dur]")?.addEventListener("change", (e) => { const v = +e.target.value; if (v > 0.05) edit(() => { comp.duration = +v.toFixed(3); }); });
+  root.querySelector("[data-comp-bg]")?.addEventListener("change", (e) => edit(() => { comp.background = e.target.value; }));
+  root.querySelector("[data-comp-bgoff]")?.addEventListener("click", () => edit(() => { delete comp.background; }));
+}
+
+/* ── Animation presets and templates (the data and the maths live in templates.js) ── */
+const Tpl = self.FableCutTemplates;
+const savedLib = { presets: [], templates: [] };   // the user's own, from library/presets and library/templates
+async function fetchSaved(kind) {
+  try { const r = await fetch("/api/" + kind, { cache: "no-store" }); savedLib[kind] = r.ok ? await r.json() : []; }
+  catch { savedLib[kind] = []; }
+  return savedLib[kind];
+}
+const findTemplate = (id) => Tpl.findTemplate(id, savedLib.templates);
+const TEMPLATE_ICONS = {
+  "Lower thirds": '<rect x="2" y="13" width="14" height="5" rx="1" fill="#ffd166"/><rect x="2" y="13" width="2" height="5" fill="#fff"/><rect x="6" y="15" width="7" height="1.4" rx=".7" fill="#111"/>',
+  "Logo animations": '<circle cx="12" cy="11" r="7" fill="none" stroke="#7b6cff" stroke-width="2.2"/><rect x="9" y="8" width="6" height="6" rx="1.5" fill="#ff7ac8"/>',
+  Social: '<rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="#22d3ee" stroke-width="2"/><rect x="9" y="8" width="6" height="2" rx="1" fill="#fff"/><rect x="9" y="12" width="4" height="1.5" rx=".7" fill="#fff"/>',
+  Saved: '<path d="M6 3h12v18l-6-4-6 4z" fill="#ffd166"/>',
+};
+/* The bin's Templates tab: lower thirds, logo animations and social layouts, then the user's own. */
+function renderTemplatesTab() {
+  els.libList.innerHTML = "";
+  let group = null;
+  for (const t of [...Tpl.TEMPLATES, ...savedLib.templates]) {
+    if (t.group !== group) {
+      group = t.group;
+      const h = document.createElement("div");
+      h.className = "lib-group";
+      h.textContent = group;
+      els.libList.appendChild(h);
+    }
+    const item = document.createElement("div");
+    item.className = "bin-item lib-item";
+    item.draggable = true;
+    item.title = "Drag onto the timeline or click ＋ — then edit its fields in the Inspector";
+    item.innerHTML = `<div class="bin-thumb shape-thumb"><svg viewBox="0 0 24 24" aria-hidden="true">${TEMPLATE_ICONS[t.group] || TEMPLATE_ICONS.Saved}</svg></div>
+      <div class="bin-meta"><div class="bin-name"></div><div class="bin-sub"></div></div>
+      <button class="btn tiny accent lib-add" title="Add at the playhead">＋</button>`;
+    item.querySelector(".bin-name").textContent = t.name;
+    item.querySelector(".bin-sub").textContent = `${t.width}×${t.height} · ${t.duration}s · ${t.fields.map((f) => f.label).join(", ") || "no fields"}`;
+    item.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/fablecut-template", t.id); e.dataTransfer.effectAllowed = "copy"; });
+    item.addEventListener("dblclick", () => addTemplateClip(t, null, state.time));
+    item.querySelector(".lib-add").addEventListener("click", (e) => { e.stopPropagation(); addTemplateClip(t, null, state.time); });
+    els.libList.appendChild(item);
+  }
+  if (!savedLib.templates.length) {
+    const p = document.createElement("p");
+    p.className = "lib-hint";
+    p.textContent = "Right-click a composition in the Project tab → Save as template to keep your own here.";
+    els.libList.appendChild(p);
+  }
+}
+/** Place a template: its own comp (so its fields are this copy's alone) and a comp clip at `at`. */
+function addTemplateClip(t, trackId, at) {
+  const track = trackId && TRACKS.some((x) => x.id === trackId && x.kind === "video") ? trackId : shapeTrack();
+  if (!track || isTrackLocked(track)) { toast(track ? `${track} is locked` : "V1–V3 are locked — unlock a video track to add a template"); return; }
+  const snap = JSON.stringify({ clips: project.clips, markers: project.markers || [], comps: project.comps || [], media: project.media });
+  const had = new Set(project.media.map((m) => m.id));
+  project.comps = project.comps || [];
+  let r;
+  try { r = Tpl.instantiate(project, t, { compId: newCompId(), start: Math.max(0, at), track }); }
+  catch (err) { restoreSnapshot(snap); toast(err.message); return; }   // put back any media it added; history untouched
+  pushUndo(snap);
+  const { comp, clip } = r;
+  for (const x of comp.clips) {
+    x.props = { ...DEFAULT_PROPS, ...(x.kind === "comp" ? { fit: "none" } : {}), ...(x.props || {}) };
+    if (x.kind === "text") ensureFont(x.props.font);
+  }
+  clip.id = "c_" + uid();
+  clip.props = { ...DEFAULT_PROPS, ...clip.props };
+  project.clips.push(clip);
+  for (const m of project.media) if (!had.has(m.id)) loadMediaMetadata(m).then(() => { state.dirtyTimeline = true; }).catch(() => { });
+  runtime.compGen = (runtime.compGen || 0) + 1;
+  selectClip(clip.id); scheduleSave(); renderBin(); renderInspector();
+  toast(`${comp.name} placed — edit its fields in the Inspector`);
+}
+/** Set the canvas size (the aspect menu and a template's "Use … canvas" button). */
+function setCanvasSize(w, h) {
+  project.width = w; project.height = h;
+  els.preview.width = w; els.preview.height = h;
+  if (project.exportFrame) project.exportFrame = normalizeExportFrame(project.exportFrame, w, h);
+  updateMonitorRes();
+  syncAspectSel();
+  syncExportFrameSel();
+  updateExportFrameOverlay();
+  seekMediaWhilePaused();
+  scheduleSave();
+}
+/** The Inspector's Template section on a placed template: its fields, its length, and the canvas it was made for. */
+function templateSectionHtml(c, row) {
+  const comp = getComp(c.compId), tpl = comp && comp.template;
+  if (!tpl) return "";
+  const pics = project.media.filter((m) => m.kind === "image" || m.kind === "svg" || m.kind === "video");
+  const fields = (tpl.fields || []).map((f) => {
+    const v = Tpl.fieldValue(comp, f), label = escapeHtml(f.label);
+    if (f.type === "text") return row(label, `<textarea data-tf="${escapeHtml(f.key)}" rows="${String(v || "").length > 28 ? 2 : 1}" maxlength="2000">${escapeHtml(v || "")}</textarea>`);
+    if (f.type === "color") return row(label, `<input type="color" data-tf="${escapeHtml(f.key)}" value="${/^#[0-9a-f]{6}/i.test(v || "") ? v.slice(0, 7) : "#ffffff"}">`);
+    return row(label, `<select data-tf="${escapeHtml(f.key)}" title="Import your picture (or drop it in the bin), then pick it here">${pics.map((m) => `<option value="${m.id}" ${m.id === v ? "selected" : ""}>${escapeHtml(m.name)}</option>`).join("")}</select>`);
+  }).join("");
+  const sameShape = Math.abs(comp.width / comp.height - project.width / project.height) < 0.01;
+  return `<div class="insp-section" data-tpl-section><h3>Template</h3>
+    ${fields}
+    ${row("Length (s)", `<input type="number" data-tf-dur min="0.5" step="0.1" value="${comp.duration}" title="Longer holds longer — the exit keeps its timing at the end">`)}
+    ${sameShape || state.compCtx ? "" : row("Canvas", `<button type="button" class="btn tiny" data-tf-canvas title="Make the project canvas ${comp.width}×${comp.height}, the size this template was made for">Use ${comp.width}×${comp.height}</button>`)}
+    <p class="cl-note">These fields belong to this copy (its comp "${escapeHtml(comp.name)}"). Open it to change anything else.</p>
+  </div>`;
+}
+function bindTemplateControls(c) {
+  const root = els.inspector.querySelector("[data-tpl-section]");
+  const comp = root && getComp(c.compId);
+  if (!comp || !comp.template) return;
+  let undoTaken = false;
+  const refresh = () => { runtime.compGen = (runtime.compGen || 0) + 1; state.dirtyTimeline = true; scheduleSave(); };
+  const set = (key, value) => {
+    if (!undoTaken) { pushUndo(); undoTaken = true; }
+    try { Tpl.setField(comp, key, value, project); } catch (err) { toast(err.message); return; }
+    refresh();
+  };
+  for (const el of root.querySelectorAll("[data-tf]")) {
+    const key = el.dataset.tf;
+    if (el.tagName === "SELECT") el.addEventListener("change", () => {
+      const m = getMedia(el.value);
+      set(key, el.value);
+      if (m && !runtime.mediaAux.get(m.id)?.svgText && !runtime.mediaAux.get(m.id)?.img) loadMediaMetadata(m).then(refresh).catch(() => { });
+    });
+    else el.addEventListener("input", () => set(key, el.value));
+    el.addEventListener("change", () => { undoTaken = false; renderBin(); });
+  }
+  root.querySelector("[data-tf-dur]")?.addEventListener("change", (e) => {
+    const v = +e.target.value, old = comp.duration;
+    const snap = undoSnapshot();   // recorded only once the new length is accepted
+    try { Tpl.retime(comp, +v.toFixed(3)); } catch (err) { toast(err.message); renderInspector(); return; }
+    pushUndo(snap);
+    // clips that showed the comp to its end keep doing so
+    for (const x of project.clips) if (x.kind === "comp" && x.compId === comp.id && Math.abs((+x.in || 0) + x.duration - old) < 1e-3) x.duration = +(comp.duration - (+x.in || 0)).toFixed(4);
+    refresh(); renderBin(); renderInspector();
+  });
+  root.querySelector("[data-tf-canvas]")?.addEventListener("click", () => { setCanvasSize(comp.width, comp.height); renderInspector(); toast(`Canvas is now ${comp.width}×${comp.height}`); });
+}
+/** Save comp `comp` to library/templates as a template (its titles' text and its pictures become fields). */
+async function saveCompAsTemplate(comp) {
+  let template;
+  try { template = Tpl.templateFromComp(comp, { media: project.media }); } catch (err) { toast(err.message); return; }
+  try {
+    const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    toast(`Saved "${j.name}" to ${j.file}`);
+  } catch (err) { toast("Couldn't save the template: " + err.message); return; }
+  await fetchSaved("templates");
+  if (state.binTab === "templates") renderTemplatesTab();
+}
+
+/** Inspector rows (in Motion): put a preset on the selected clips, or save this clip's animation as one. */
+function presetRowsHtml(c, row) {
+  const opts = (anchor, first) => {
+    const own = savedLib.presets.filter((p) => p.anchor === anchor);
+    const list = (l) => l.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+    return `<select data-preset="${anchor}"><option value="">${first}</option>${list(Tpl.PRESETS.filter((p) => p.anchor === anchor))}${own.length ? `<optgroup label="Saved">${list(own)}</optgroup>` : ""}</select>`;
+  };
+  return row("Presets", `<span class="insp-ctrls">${opts("in", "In…")}${opts("out", "Out…")}</span>`)
+    + row("", `<span class="insp-ctrls">${opts("at", "At playhead…")}${opts("whole", "Loop…")}</span>`)
+    + row("Save as preset", `<span class="insp-ctrls"><input type="text" data-preset-name maxlength="60" placeholder="Name" style="max-width:110px">
+      <select data-preset-anchor title="In: from the clip's start · Out: up to its end · Loop: the whole clip"><option value="in">In</option><option value="out">Out</option><option value="whole">Loop</option></select>
+      <button type="button" class="btn tiny" data-preset-save title="Save this clip's keyframes to library/presets — every project can use it">Save</button></span>`);
+}
+function bindPresetControls(c) {
+  for (const s of els.inspector.querySelectorAll("[data-preset]")) s.addEventListener("change", () => {
+    const p = Tpl.findPreset(s.value, savedLib.presets);
+    s.value = "";
+    if (!p) return;
+    const clips = selectedClips().filter(isVisualClip);
+    const targets = clips.length ? clips : [c];
+    if (targets.some(isGroupLocked)) { toastLocked(); return; }
+    pushUndo();
+    for (const x of targets) Tpl.applyPreset(x, p, { at: state.time - x.start });
+    inspPropGen++; state.dirtyTimeline = true;
+    scheduleSave(); renderInspector();
+    toast(`${p.name} on ${targets.length} clip${targets.length > 1 ? "s" : ""}`);
+  });
+  els.inspector.querySelector("[data-preset-save]")?.addEventListener("click", async () => {
+    const name = els.inspector.querySelector("[data-preset-name]").value.trim();
+    const anchor = els.inspector.querySelector("[data-preset-anchor]").value;
+    if (!name) { toast("Name the preset first"); return; }
+    const times = Object.values(c.keyframes || {}).flat().map((x) => x.t);
+    if (!times.length) { toast("This clip has no keyframes to save"); return; }
+    const from = anchor === "out" ? Math.min(...times) : 0, to = anchor === "in" ? Math.max(...times) : c.duration;
+    let preset;
+    try { preset = Tpl.presetFromClip(c, { name, anchor, from, to }); } catch (err) { toast(err.message); return; }
+    try {
+      const r = await fetch("/api/presets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preset }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      toast(`Saved "${j.name}" to ${j.file}`);
+    } catch (err) { toast("Couldn't save the preset: " + err.message); return; }
+    await fetchSaved("presets");
+    renderInspector();
+  });
+}
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !state.compCtx) return;
+  const tg = e.target;
+  if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT" || tg.isContentEditable)) return;
+  if (state.selIds.size || shapeUi.sel || shapeUi.tool || maskUi.sel >= 0 || maskUi.tool || runtime.anchorTool) return;   // Esc steps back through those first
+  e.preventDefault(); exitComp();
+});
+
+/* ── Shape layers (props.shapes — math in motion.js) ── */
+const shapeNorm = new WeakMap();   // stored list → validated list
+function clipShapes(c) {
+  const list = c && c.props && c.props.shapes;
+  if (!Array.isArray(list) || !list.length) return null;
+  let n = shapeNorm.get(list);
+  if (n === undefined) { n = Motion.normalizeShapes(list); shapeNorm.set(list, n); }
+  return n;
+}
+/** The shape layer's items at timeline time t (keys resolved). */
+function shapeItemsAt(c, t) { const l = clipShapes(c); return l ? Motion.shapesAt(l, t - c.start) : null; }
+function isVisualClip(c) { return c && c.kind !== "adjust" && c.kind !== "audio"; }
+/* Screen-space handle positions for the selection overlay. Each handle is
+   clamped into the visible canvas (inset by its own size) so it stays visible
+   and grabbable when the clip's box extends past the frame. Drawing and
+   hit-testing both use these, so they can never disagree. */
+function overlayHandles(b, W, H) {
+  const cs = Math.cos(b.rot), sn = Math.sin(b.rot);
+  const toScreen = (lx, ly) => ({ x: b.cx + lx * cs - ly * sn, y: b.cy + lx * sn + ly * cs });
+  const hs = Math.max(6, W / 150), gap = Math.max(24, W / 34), m = hs * 1.4;
+  const cl = (p) => ({ x: clamp(p.x, m, W - m), y: clamp(p.y, m, H - m) });
+  return {
+    hs,
+    corners: [[-b.hw, -b.hh], [b.hw, -b.hh], [b.hw, b.hh], [-b.hw, b.hh]].map(([x, y]) => cl(toScreen(x, y))),
+    topMid: cl(toScreen(0, -b.hh)),
+    rotate: cl(toScreen(0, -b.hh - gap)),
+  };
+}
+function drawSelectionOverlay(W, H, t) {
+  const c = getClip(state.selId);
+  if (drawingLayerMask(c)) { drawLayerStroke(c, W); if (!maskEditing(c)) return; }
+  if (maskEditing(c) && drawMaskOverlay(c, W)) return;   // a layer's mask replaces the box
+  if (maskEditActive(c) && drawClipMaskOverlay(c, W)) return;   // so does a clip mask being edited
+  drawTrackOverlay(c, W);
+  if (!isVisualClip(c) || !activeAt(c, t) || !clipRenders(c)) return;
+  if (shapeEditActive(c) && drawShapeOverlay(c, W, H, t)) return;   // a picked shape item replaces the box
+  drawMotionPathOverlay(c, W, H, t);
+  const ep = evalProps(c, t), b = clipBounds(c, ep, W, H, t);
+  if (c.kind === "null") drawNullMark(b, W, 1);
+  const lw = Math.max(2, W / 640);
+  const hd = overlayHandles(b, W, H), hs = hd.hs;
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.save();
+  ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#4f8cff";
+  ctx2d.save();
+  ctx2d.translate(b.cx, b.cy); ctx2d.rotate(b.rot);
+  ctx2d.setLineDash([lw * 4, lw * 3]);
+  ctx2d.strokeRect(-b.hw, -b.hh, b.hw * 2, b.hh * 2);
+  ctx2d.restore();
+  ctx2d.setLineDash([]);
+  ctx2d.beginPath(); ctx2d.moveTo(hd.topMid.x, hd.topMid.y); ctx2d.lineTo(hd.rotate.x, hd.rotate.y); ctx2d.stroke();
+  ctx2d.fillStyle = "#ffffff";
+  for (const h of hd.corners) {
+    ctx2d.beginPath(); ctx2d.rect(h.x - hs, h.y - hs, hs * 2, hs * 2); ctx2d.fill(); ctx2d.stroke();
+  }
+  ctx2d.beginPath(); ctx2d.arc(hd.rotate.x, hd.rotate.y, hs * 1.1, 0, Math.PI * 2);
+  ctx2d.fillStyle = "#ffce5c"; ctx2d.fill(); ctx2d.stroke();
+  // the anchor point: what x / y place and what rotation and scale turn around
+  const ap = anchorScreenPt(c, ep, W, H, t), ar = hs * (runtime.anchorTool ? 1.3 : 0.9);
+  ctx2d.lineWidth = lw; ctx2d.strokeStyle = runtime.anchorTool ? "#ffce5c" : "#ffffff";
+  ctx2d.beginPath(); ctx2d.arc(ap.x, ap.y, ar, 0, Math.PI * 2);
+  ctx2d.moveTo(ap.x - ar * 1.7, ap.y); ctx2d.lineTo(ap.x + ar * 1.7, ap.y);
+  ctx2d.moveTo(ap.x, ap.y - ar * 1.7); ctx2d.lineTo(ap.x, ap.y + ar * 1.7); ctx2d.stroke();
+  ctx2d.restore();
+}
+function canvasPt(e) {
+  const r = els.preview.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (els.preview.width / r.width),
+    y: (e.clientY - r.top) * (els.preview.height / r.height)
+  };
+}
+function toLocal(pt, b) {
+  const dx = pt.x - b.cx, dy = pt.y - b.cy, cs = Math.cos(-b.rot), sn = Math.sin(-b.rot);
+  return { x: dx * cs - dy * sn, y: dx * sn + dy * cs };
+}
+function pickClipAt(pt, W, H) {
+  const all = visibleClipsAt(state.time), mattes = matteTracksAt(all);
+  const seq = all.filter((c) => isVisualClip(c) && !mattes.has(c.track));
+  for (const nulls of [false, true]) {   // a null (invisible) is picked only where nothing else is
+    for (let i = seq.length - 1; i >= 0; i--) {
+      const c = seq[i];
+      if ((c.kind === "null") !== nulls) continue;
+      const b = clipBounds(c, evalProps(c, state.time), W, H), lp = toLocal(pt, b);
+      if (Math.abs(lp.x) <= b.hw && Math.abs(lp.y) <= b.hh) return c;
+    }
+  }
+  return null;
+}
+let canvasDrag = null, canvasDidMove = false;
+els.preview.style.touchAction = "none";
+els.preview.addEventListener("pointerdown", (e) => {
+  if (e.altKey || e.button === 1) return; // leave to monitor pan
+  // Source mode: drag on the frame scrubs media time (no clip transforms)
+  if (isSourceMode()) {
+    if (!state.source.mediaId) return;
+    e.preventDefault();
+    pauseSource();
+    const r = els.preview.getBoundingClientRect();
+    const scrub = (ev) => {
+      const u = clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
+      setSourceTime(u * sourceDur());
+    };
+    scrub(e);
+    const onMove = (ev) => scrub(ev);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return;
+  }
+  const W = els.preview.width, H = els.preview.height, pt = canvasPt(e);
+  const cur = getClip(state.selId);
+  canvasDrag = null;
+  if (isVisualClip(cur) && activeAt(cur, state.time)) {
+    const b = clipBounds(cur, evalProps(cur, state.time), W, H), lp = toLocal(pt, b);
+    const hd = overlayHandles(b, W, H), grab = hd.hs * 1.8;
+    if (runtime.anchorTool) {   // Anchor tool: the anchor point follows the pointer, the picture stays put
+      const p0 = propsAtPlayhead(cur);
+      canvasDrag = { mode: "anchor", id: cur.id, p0, m: layerScreenMatrix(cur, p0, W, H, state.time).scale(Motion.contentScale(cur, p0)).inverse() };
+    } else if (Math.hypot(pt.x - hd.rotate.x, pt.y - hd.rotate.y) <= grab) {
+      const ep = propsAtPlayhead(cur);
+      canvasDrag = { mode: "rotate", id: cur.id, startRot: +ep.rotation || 0, startAng: Math.atan2(pt.y - b.cy, pt.x - b.cx), cx: b.cx, cy: b.cy };
+    } else if (hd.corners.some((h) => Math.abs(pt.x - h.x) <= grab && Math.abs(pt.y - h.y) <= grab)) {
+      if (cur.kind === "text" && !cur.props.textPath) {   // a title on a path scales; its box is the path's
+        canvasDrag = {
+          ...beginTextBoxDrag(cur, pt, W, H),
+          seedBox: !hasTextBox(cur.props),
+          startClient: { x: e.clientX, y: e.clientY },
+        };
+      } else {
+        canvasDrag = { mode: "scale", id: cur.id, startScale: +(propsAtPlayhead(cur).scale) || 1, startDist: Math.hypot(lp.x, lp.y) || 1 };
+      }
+    } else if (Math.abs(lp.x) <= b.hw && Math.abs(lp.y) <= b.hh) {
+      const ep = propsAtPlayhead(cur);
+      canvasDrag = { mode: "move", id: cur.id, startX: +ep.x || 0, startY: +ep.y || 0, startPt: pt };
+    }
+  }
+  if (!canvasDrag) {
+    const hit = pickClipAt(pt, W, H);
+    if (!hit) return;
+    if (hit.id !== state.selId) { selectClip(hit.id); renderInspector(); }
+    const ep = propsAtPlayhead(hit);
+    canvasDrag = { mode: "move", id: hit.id, startX: +ep.x || 0, startY: +ep.y || 0, startPt: pt };
+  }
+  if (isGroupLocked(getClip(canvasDrag.id))) { canvasDrag = null; toastLocked(); return; }
+  canvasDidMove = false;
+  if (canvasDrag.mode === "move") els.preview.style.cursor = "move";
+  else if (canvasDrag.mode === "rotate") els.preview.style.cursor = ROTATE_CURSOR;
+  els.preview.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+/* ── Hover cursor feedback: rotate knob → rotate cursor, corner handles →
+   directional resize arrows (by the handle's on-screen angle, so rotation-
+   aware), clip body → move, other pickable clip → pointer. ── */
+const ROTATE_CURSOR = (() => {
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'>" +
+    "<path d='M10 3a7 7 0 1 1-6.7 9' fill='none' stroke='black' stroke-width='4.5' stroke-linecap='round'/>" +
+    "<path d='M10 3a7 7 0 1 1-6.7 9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/>" +
+    "<path d='M10.5 0.5L14.5 3L10.5 5.5Z' fill='white' stroke='black'/></svg>";
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 10 10, crosshair`;
+})();
+function cursorForHandleAngle(deg) {
+  const i = ((Math.round(deg / 45) % 4) + 4) % 4;
+  return ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"][i];
+}
+function updateCanvasCursor(e) {
+  if (isSourceMode()) {
+    els.preview.style.cursor = state.source.mediaId ? "ew-resize" : "default";
+    return;
+  }
+  const W = els.preview.width, H = els.preview.height, pt = canvasPt(e);
+  const cur = getClip(state.selId);
+  let cursor = "default";
+  if (runtime.anchorTool && isVisualClip(cur) && activeAt(cur, state.time) && !state.playing && !state.exporting) cursor = "crosshair";
+  else if (isVisualClip(cur) && activeAt(cur, state.time) && !state.playing && !state.exporting) {
+    const b = clipBounds(cur, evalProps(cur, state.time), W, H);
+    const hd = overlayHandles(b, W, H), grab = hd.hs * 1.8;
+    const corner = hd.corners.find((h) => Math.abs(pt.x - h.x) <= grab && Math.abs(pt.y - h.y) <= grab);
+    const lp = toLocal(pt, b);
+    if (Math.hypot(pt.x - hd.rotate.x, pt.y - hd.rotate.y) <= grab) cursor = ROTATE_CURSOR;
+    else if (corner) cursor = cursorForHandleAngle(Math.atan2(corner.y - b.cy, corner.x - b.cx) * 180 / Math.PI);
+    else if (Math.abs(lp.x) <= b.hw && Math.abs(lp.y) <= b.hh) cursor = "move";
+    else if (pickClipAt(pt, W, H)) cursor = "pointer";
+  } else if (pickClipAt(pt, W, H)) cursor = "pointer";
+  els.preview.style.cursor = cursor;
+}
+els.preview.addEventListener("pointermove", (e) => {
+  if (!canvasDrag) { updateCanvasCursor(e); return; }
+  const c = getClip(canvasDrag.id); if (!c) return;
+  const W = els.preview.width, H = els.preview.height, pt = canvasPt(e);
+  // Hug-content titles: don't seed a box until the pointer actually moves
+  // (same ~3px deadzone as clip drags), so a click-release is a no-op.
+  if (canvasDrag.seedBox && !canvasDidMove) {
+    const s = canvasDrag.startClient;
+    if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) < 3) return;
+  }
+  if (!canvasDidMove) {
+    pushUndo(); // snapshot includes hug-content, before any box seed
+    canvasDidMove = true;
+    if (canvasDrag.seedBox) {
+      ensureTextBox(c);
+      Object.assign(canvasDrag, beginTextBoxDrag(c, pt, W, H), { seedBox: false });
+    }
+  }
+  if (canvasDrag.mode === "move") {
+    const d = screenDeltaToParent(c, pt.x - canvasDrag.startPt.x, pt.y - canvasDrag.startPt.y);
+    setAnimProp(c, "x", Math.round(canvasDrag.startX + d.x));
+    setAnimProp(c, "y", Math.round(canvasDrag.startY + d.y));
+  } else if (canvasDrag.mode === "box") {
+    const aspect = canvasDrag.aspect || 1;
+    const lockAR = e.shiftKey;
+    // The displayed box is the resting box plus the transition envelope; the
+    // writes below target the resting geometry, so strip the envelope's
+    // translation back out (boxed text ignores scale, and the center midpoint
+    // is rotation-invariant — translation is the only component that leaks).
+    const env = transOffsetAt(c, state.time);
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd: resize from center (all corners move).
+      const b = clipBounds(c, evalProps(c, state.time), W, H), lp = toLocal(pt, b), pk = parentScaleAt(c);
+      let bw = Math.abs(lp.x) * 2 / pk, bh = Math.abs(lp.y) * 2 / pk;
+      if (lockAR) {
+        if (bw / aspect >= bh) bh = bw / aspect;
+        else bw = bh * aspect;
+      }
+      c.props.boxW = +clamp(bw, 20, W * 3).toFixed(1);
+      c.props.boxH = +clamp(bh, 16, H * 3).toFixed(1);
+    } else {
+      // Default: opposite corner stays fixed; dragged corner follows the pointer.
+      const fix = canvasDrag.fix, rot = canvasDrag.rot;
+      let dx = pt.x - fix.x, dy = pt.y - fix.y;
+      const cs = Math.cos(-rot), sn = Math.sin(-rot);
+      let ldx = dx * cs - dy * sn, ldy = dx * sn + dy * cs;
+      if (lockAR) {
+        const aw = Math.abs(ldx), ah = Math.abs(ldy);
+        if (aw / aspect >= ah) {
+          ldy = (Math.sign(ldy) || canvasDrag.dragSY) * (aw / aspect);
+        } else {
+          ldx = (Math.sign(ldx) || canvasDrag.dragSX) * (ah * aspect);
+        }
+      }
+      const minW = 20, minH = 16;
+      if (Math.abs(ldx) < minW) ldx = (Math.sign(ldx) || canvasDrag.dragSX) * minW;
+      if (Math.abs(ldy) < minH) ldy = (Math.sign(ldy) || canvasDrag.dragSY) * minH;
+      if (lockAR) {
+        // Re-sync after min clamp so aspect stays locked.
+        if (Math.abs(ldx) / aspect >= Math.abs(ldy)) {
+          ldy = (Math.sign(ldy) || canvasDrag.dragSY) * (Math.abs(ldx) / aspect);
+        } else {
+          ldx = (Math.sign(ldx) || canvasDrag.dragSX) * (Math.abs(ldy) * aspect);
+        }
+      }
+      ldx = clamp(ldx, -W * 3, W * 3);
+      ldy = clamp(ldy, -H * 3, H * 3);
+      const c2 = Math.cos(rot), s2 = Math.sin(rot);
+      const freeX = fix.x + ldx * c2 - ldy * s2;
+      const freeY = fix.y + ldx * s2 + ldy * c2;
+      // the box's centre on screen → the clip's x / y (its parents and anchor undone)
+      const pos = posForScreenCentre(c, propsAtPlayhead(c), (fix.x + freeX) / 2, (fix.y + freeY) / 2, W, H);
+      setAnimProp(c, "x", Math.round(pos.x - env.x));
+      setAnimProp(c, "y", Math.round(pos.y - env.y));
+      const pk = parentScaleAt(c);
+      c.props.boxW = +(Math.abs(ldx) / pk).toFixed(1);
+      c.props.boxH = +(Math.abs(ldy) / pk).toFixed(1);
+    }
+  } else if (canvasDrag.mode === "anchor") {
+    let q = canvasDrag.m.transformPoint(new DOMPoint(pt.x, pt.y));
+    const box = layerBox(c, canvasDrag.p0, W, H, state.time), as = Motion.contentScale(c, canvasDrag.p0);
+    const snap = Math.max(6, W / 120) * Math.hypot(canvasDrag.m.a, canvasDrag.m.b);   // screen px → layer px
+    const cx = box.ox / as, cy = box.oy / as;
+    if (e.shiftKey || Math.hypot(q.x - cx, q.y - cy) < snap) q = { x: cx, y: cy };   // snaps to the picture's centre
+    const v = Motion.anchorMoveValues(c, canvasDrag.p0, Math.round(q.x), Math.round(q.y));
+    for (const k of ["anchorX", "anchorY", "x", "y"]) setAnimProp(c, k, v[k]);
+  } else if (canvasDrag.mode === "scale") {
+    const b = clipBounds(c, evalProps(c, state.time), W, H), lp = toLocal(pt, b);
+    setAnimProp(c, "scale", clamp(+(canvasDrag.startScale * (Math.hypot(lp.x, lp.y) / canvasDrag.startDist)).toFixed(3), 0.05, 12));
+  } else {
+    const cx = canvasDrag.cx, cy = canvasDrag.cy;
+    let deg = canvasDrag.startRot + (Math.atan2(pt.y - cy, pt.x - cx) - canvasDrag.startAng) * 180 / Math.PI;
+    if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+    setAnimProp(c, "rotation", Math.round(deg));
+  }
+});
+function endCanvasDrag(e) {
+  if (!canvasDrag) return;
+  canvasDrag = null;
+  try { els.preview.releasePointerCapture(e.pointerId); } catch { }
+  if (canvasDidMove) { scheduleSave(); renderInspector(); } // no-op on a pure click
+  updateCanvasCursor(e); // re-derive hover cursor at the release point
+}
+els.preview.addEventListener("pointerup", endCanvasDrag);
+els.preview.addEventListener("pointercancel", endCanvasDrag);
+
+function drawClip(c, W, H, t, asMatte = false) {
+  if (c.kind === "null") return;   // a null only carries a transform for its children
+  if (+c.props.motionBlur > 0 && c.kind !== "adjust" && drawMotionBlurred(c, W, H, t, asMatte)) return;
+  drawClipCut(c, W, H, t, asMatte, false);
+}
+/** The clip cut by its masks / matte. raw: no opacity or blend (a motion-blur sample). */
+function drawClipCut(c, W, H, t, asMatte, raw) {
+  const masks = clipMasksAt(c, t), matte = asMatte ? null : clipMatte(c);
+  if (masks || matte) drawMaskedClip(c, W, H, t, masks, matte, raw);
+  else drawClipPicture(c, W, H, t, raw);
+}
+/* ── Motion blur: the clip drawn at sub-frame times across the shutter and
+   averaged (premultiplied, "lighter" at 1/n each), then composited once with its
+   opacity and blend. Preview and export share it; preview playback uses fewer samples. */
+function drawMotionBlurred(c, W, H, t, asMatte) {
+  const fps = projectFps() || 30, span = clamp(+c.props.motionBlur, 0, 720) / 360 / fps;
+  let n = clamp(Math.round(+c.props.motionBlurSamples || 8), 2, 32);
+  // playback: as many samples as fit in ~12 ms (all of them on a fast machine); a paused frame and export use them all
+  const live = state.playing && !state.exporting, cost = live && (runtime.mbCost ||= new Map()).get(c.id);
+  if (cost) n = clamp(Math.floor(12 / cost), 2, n);
+  const began = live ? performance.now() : 0;
+  const lo = c.start, hi = clipEnd(c) - 1e-4;
+  const t0 = clamp(t - span / 2, lo, hi), t1 = clamp(t + span / 2, lo, hi);
+  if (t1 - t0 < 1e-6 || !clipMovesBetween(c, t0, t1, W, H)) return false;
+  // a blurred clip on a matte track blurs inside this one's samples: each depth has its own buffers
+  const depth = runtime.mbDepth = (runtime.mbDepth || 0) + 1;
+  const acc = maskCtx("mbAcc" + depth, W, H), smp = maskCtx("mbSmp" + depth, W, H);
+  const main = ctx2d;
+  try {
+    acc.setTransform(1, 0, 0, 1, 0, 0); acc.globalAlpha = 1; acc.globalCompositeOperation = "source-over"; acc.filter = "none";
+    acc.clearRect(0, 0, W, H);
+    acc.fillStyle = "#000";
+    for (let i = 0; i < n; i++) {
+      const ts = t0 + (t1 - t0) * i / (n - 1);
+      smp.setTransform(1, 0, 0, 1, 0, 0); smp.globalAlpha = 1; smp.globalCompositeOperation = "source-over"; smp.filter = "none";
+      smp.clearRect(0, 0, W, H);
+      ctx2d = smp;
+      try { drawClipCut(c, W, H, ts, asMatte, true); } finally { ctx2d = main; }
+      // running average, exact in transparent areas too: acc = acc·(1−a) + sample·a with a = 1/(i+1).
+      // (Adding every sample at 1/n instead rounds each 8-bit contribution and bands the result.)
+      const a = 1 / (i + 1);
+      if (i > 0) { acc.globalCompositeOperation = "destination-in"; acc.globalAlpha = 1 - a; acc.fillRect(0, 0, W, H); }
+      acc.globalCompositeOperation = "lighter"; acc.globalAlpha = a;
+      acc.drawImage(smp.canvas, 0, 0);
+    }
+  } finally { runtime.mbDepth = depth - 1; ctx2d = main; }
+  acc.globalCompositeOperation = "source-over"; acc.globalAlpha = 1;
+  if (live) { const per = (performance.now() - began) / n, prev = runtime.mbCost.get(c.id); runtime.mbCost.set(c.id, prev ? prev * 0.7 + per * 0.3 : per); }
+  const p = evalProps(c, t);
+  main.save();
+  main.setTransform(1, 0, 0, 1, 0, 0);
+  main.globalAlpha = clamp(p.opacity, 0, 1);
+  main.globalCompositeOperation = p.blend && p.blend !== "normal" && BLEND_MODES.includes(p.blend) ? p.blend : "source-over";
+  main.filter = "none";
+  main.drawImage(acc.canvas, 0, 0);
+  main.restore();
+  return true;
+}
+/** Does the clip move (or its shapes change) between t0 and t1? Still clips draw once. */
+function clipMovesBetween(c, t0, t1, W, H) {
+  if (c.kind === "shape" && (shapeKeyed(c) || c.keyframes?.trimStart || c.keyframes?.trimEnd || c.keyframes?.trimOffset)) return true;
+  const a = clipBounds(c, evalProps(c, t0), W, H, t0), b = clipBounds(c, evalProps(c, t1), W, H, t1);
+  const corners = (q) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+    const cs = Math.cos(q.rot), sn = Math.sin(q.rot), x = sx * q.hw, y = sy * q.hh;
+    return [q.cx + x * cs - y * sn, q.cy + x * sn + y * cs];
+  });
+  const A = corners(a), B = corners(b);
+  return A.some((p, i) => Math.hypot(p[0] - B[i][0], p[1] - B[i][1]) > 0.5);
+}
+function shapeKeyed(c) {
+  const any = (list) => (list || []).some((it) => (it.keys && it.keys.length) || (it.type === "group" && any(it.items)));
+  return any(c.props.shapes);
+}
+/** A missing file's picture: the box it would fill, marked "Media offline" (preview and export). */
+function drawOfflineSlate(c, p, W, H) {
+  const m = getMedia(c.mediaId);
+  const mw = m && m.width > 0 ? m.width : W, mh = m && m.height > 0 ? m.height : H, sc = p.scale || 1;
+  let dw, dh;
+  if (p.fit === "cover") { const f = Math.max(W / mw, H / mh) * sc; dw = mw * f; dh = mh * f; }
+  else if (p.fit === "stretch") { dw = W * sc; dh = H * sc; }
+  else if (p.fit === "none") { dw = mw * sc; dh = mh * sc; }
+  else { const f = Math.min(W / mw, H / mh) * sc; dw = mw * f; dh = mh * f; }
+  ctx2d.fillStyle = "#3a0d10";
+  ctx2d.fillRect(-dw / 2, -dh / 2, dw, dh);
+  ctx2d.strokeStyle = "#e5484d"; ctx2d.lineWidth = Math.max(2, dh / 120);
+  ctx2d.strokeRect(-dw / 2, -dh / 2, dw, dh);
+  const fs = Math.max(9, Math.min(dw / 20, dh / 9));
+  ctx2d.fillStyle = "#ff8a8d";
+  ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+  ctx2d.fillText("Media offline", 0, -fs * 0.35, dw * 0.9);
+  ctx2d.font = `400 ${fs * 0.42}px "Segoe UI", system-ui, sans-serif`;
+  ctx2d.fillStyle = "#f2c4c5";
+  ctx2d.fillText(m ? m.name : "", 0, fs * 0.55, dw * 0.9);
+}
+/** Draw one clip. `layered`: into a mask layer — opacity and blend wait for
+ *  the composite. Returns { p, geom } — geom = where the clip's picture landed
+ *  (canvas transform + its box), the space its masks live in. */
+function drawClipPicture(c, W, H, t, layered) {
+  if (c.kind === "adjust") {
+    const p = drawAdjust(c, W, H, t);
+    return { p, geom: noteMaskGeom(c, new DOMMatrix(), 0, 0, W, H) };
+  }
+  const p = evalProps(c, t);
+  let geom = null;
+  ctx2d.save();
+  if (p._wipe) {
+    ctx2d.beginPath();
+    const k = p._wipe;
+    if (p._wipeDir === "right") ctx2d.rect(W * k, 0, W * (1 - k), H);
+    else if (p._wipeDir === "up") ctx2d.rect(0, 0, W, H * (1 - k));
+    else if (p._wipeDir === "down") ctx2d.rect(0, H * k, W, H * (1 - k));
+    else ctx2d.rect(0, 0, W * (1 - k), H);
+    ctx2d.clip();
+  }
+  if (p._iris != null) {
+    ctx2d.beginPath();
+    ctx2d.arc(W / 2, H / 2, Math.max(0.01, (1 - p._iris)) * Math.hypot(W, H) * 0.55, 0, Math.PI * 2);
+    ctx2d.clip();
+  }
+  if (!layered) {
+    ctx2d.globalAlpha = clamp(p.opacity, 0, 1);
+    if (p.blend && p.blend !== "normal" && BLEND_MODES.includes(p.blend)) ctx2d.globalCompositeOperation = p.blend;
+  }
+  ctx2d.translate(W / 2, H / 2);
+  const pm = parentM(c, t);
+  if (pm) ctx2d.transform(pm[0], pm[1], pm[2], pm[3], pm[4], pm[5]);
+  ctx2d.translate(+p.x || 0, +p.y || 0);
+  ctx2d.rotate((p.rotation || 0) * Math.PI / 180);
+  if (p.shake > 0) { // deterministic multi-sine handheld/impact shake
+    const a = +p.shake, tt = t * clamp(+p.shakeSpeed || 8, 0.5, 40) * Math.PI * 2;
+    ctx2d.translate(
+      Math.sin(tt * 1.3) * a * 0.6 + Math.sin(tt * 2.71) * a * 0.4,
+      Math.cos(tt * 1.7) * a * 0.5 + Math.sin(tt * 3.13) * a * 0.35);
+    ctx2d.rotate(Math.sin(tt * 0.9) * a * 0.0022);
+  }
+  if (+p.anchorX || +p.anchorY) {   // the anchor point sits at x / y; rotation and scale turn around it
+    const as = Motion.contentScale(c, p);
+    ctx2d.translate(-(+p.anchorX || 0) * as, -(+p.anchorY || 0) * as);
+  }
+  if (c.kind === "shape") {
+    const s = +p.scale || 1;
+    ctx2d.scale(s, s);
+    geom = noteMaskGeom(c, ctx2d.getTransform(), -W / 2, -H / 2, W, H);   // masks live in the canvas-sized layer box
+    ctx2d.filter = buildFilter(p);
+    Motion.draw(ctx2d, shapeItemsAt(c, t), [+p.trimStart || 0, p.trimEnd == null ? 100 : +p.trimEnd, +p.trimOffset || 0]);
+    ctx2d.filter = "none";
+    ctx2d.restore();
+    return { p, geom };
+  }
+  if (c.kind === "text") {
+    const b = layerBox(c, p, W, H, t);   // a path's box is usually off the origin (ox / oy)
+    geom = noteMaskGeom(c, ctx2d.getTransform(), (b.ox || 0) - b.hw, (b.oy || 0) - b.hh, b.hw * 2, b.hh * 2);
+    drawText(c, p, t - c.start);
+    ctx2d.restore();
+    return { p, geom };
+  }
+  let src = null, sw = 0, sh = 0;
+  if (c.kind === "image") {
+    const aux = runtime.mediaAux.get(c.mediaId), im = aux?.imgSrc && getMedia(c.mediaId);
+    if (im && aux.imgSrc !== im.src && !aux.reloading) { aux.reloading = true; reloadMediaSource(im); }   // relinked / undone
+    src = aux?.img;
+    if (src) { sw = src.naturalWidth; sh = src.naturalHeight; }
+  } else if (c.kind === "svg") {
+    src = getSvgImage(c, t);
+    if (src) { sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height; }
+  } else if (c.kind === "video") {
+    const frame = runtime.exportFrames && runtime.exportFrames.get(c.id);
+    src = frame || getClipEl(c);
+    if (frame) { sw = frame.displayWidth; sh = frame.displayHeight; }
+    else if (src) { sw = src.videoWidth; sh = src.videoHeight; }
+  } else if (c.kind === "comp") {
+    src = renderComp(c, t);
+    if (src) { sw = src.width; sh = src.height; }
+  }
+  if ((!src || !sw || !sh) && isMediaOffline(c.mediaId)) drawOfflineSlate(c, p, W, H);
+  if (src && sw && sh) {
+    // source crop (percent per edge)
+    const sx = sw * clamp(+p.cropL || 0, 0, 95) / 100;
+    const sy = sh * clamp(+p.cropT || 0, 0, 95) / 100;
+    const cw = Math.max(1, sw - sx - sw * clamp(+p.cropR || 0, 0, 95) / 100);
+    const ch = Math.max(1, sh - sy - sh * clamp(+p.cropB || 0, 0, 95) / 100);
+    // fit → destination size
+    const sc = p.scale || 1;
+    let dw, dh;
+    if (p.fit === "cover") { const f = Math.max(W / cw, H / ch) * sc; dw = cw * f; dh = ch * f; }
+    else if (p.fit === "stretch") { dw = W * sc; dh = H * sc; }
+    else if (p.fit === "none") { const k = src._fcScale || 1; dw = cw * sc / k; dh = ch * sc / k; }
+    else { const f = Math.min(W / cw, H / ch) * sc; dw = cw * f; dh = ch * f; }
+    if (p.flipH || p.flipV) ctx2d.scale(p.flipH ? -1 : 1, p.flipV ? -1 : 1);
+    if (p.cornerRadius > 0) {
+      ctx2d.beginPath();
+      ctx2d.roundRect(-dw / 2, -dh / 2, dw, dh, Math.min(+p.cornerRadius, dw / 2, dh / 2));
+      ctx2d.clip();
+    }
+    if (p.bgRemove && c.kind === "video") requestMask(c.id, src); // refresh person mask
+    if (p.bgRemove && c.kind === "image" && !bgSeg.masks.get(c.id)) requestMask(c.id, src);
+    ctx2d.filter = buildFilter(p);
+    const grade = activeGrade(c, p, t), matte = gradeMatte(c);
+    let graded = null;
+    noteGradeGeom(c, ctx2d.getTransform(), dw, dh, -dw / 2, -dh / 2);
+    geom = noteMaskGeom(c, ctx2d.getTransform(), -dw / 2, -dh / 2, dw, dh);
+    if (needsPixelPass(p, c)) { // key / cut-out first, so the grade never shifts the key colour
+      let processed = pixelPass(c, p, src, sx, sy, cw, ch, dw, dh);
+      if (runtime.gradeCapture) { // pixelPass reuses its canvas — keep a copy
+        const cp = document.createElement("canvas"); cp.width = processed.width; cp.height = processed.height;
+        cp.getContext("2d").drawImage(processed, 0, 0);
+        captureGradeInput(c, [cp, 0, 0, cp.width, cp.height, cp.width, cp.height, dw, dh]);
+      }
+      if (grade) processed = gradeSource(processed, 0, 0, processed.width, processed.height, processed.width, processed.height, dw, dh, grade, matte) || processed;
+      ctx2d.drawImage(processed, 0, 0, processed.width, processed.height, -dw / 2, -dh / 2, dw, dh);
+    } else if (captureGradeInput(c, [src, sx, sy, cw, ch, sw, sh, dw, dh]), grade && (graded = gradeSource(src, sx, sy, cw, ch, sw, sh, dw, dh, grade, matte))) {
+      ctx2d.drawImage(graded, 0, 0, graded.width, graded.height, -dw / 2, -dh / 2, dw, dh);
+    } else {
+      ctx2d.drawImage(src, sx, sy, cw, ch, -dw / 2, -dh / 2, dw, dh);
+    }
+    ctx2d.filter = "none";
+    if (p.vignette > 0) {
+      const g = ctx2d.createRadialGradient(0, 0, Math.min(dw, dh) * 0.35, 0, 0, Math.hypot(dw, dh) * 0.55);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(1, `rgba(0,0,0,${clamp(p.vignette / 100, 0, 1) * 0.9})`);
+      ctx2d.fillStyle = g;
+      ctx2d.fillRect(-dw / 2, -dh / 2, dw, dh);
+    }
+    if (p.grain > 0) drawGrain(p.grain, -dw / 2, -dh / 2, dw, dh, t);
+  }
+  ctx2d.restore();
+  return { p, geom };
+}
+
+/* ═══════════ MASKS (props.masks — math in mask.js) ═══════════
+   A masked clip draws into an offscreen layer instead of the program canvas;
+   the layer is cut by the masks' matte (destination-in), then composited with
+   the clip's opacity and blend. Preview and export share this path. */
+const Mask = self.FableCutMask;
+const maskCv = {};
+function maskCtx(key, W, H) {
+  if (runtime.compDepth) key += ":" + runtime.compDepth;
+  let cv = maskCv[key];
+  if (!cv) cv = maskCv[key] = document.createElement("canvas");
+  if (cv.width !== W) cv.width = W;
+  if (cv.height !== H) cv.height = H;
+  return cv.getContext("2d", { willReadFrequently: false });
+}
+const maskNorm = new WeakMap();   // stored list → validated list (hand-written JSON gets defaults once)
+function clipMasks(c) {
+  const list = c.props && c.props.masks;
+  if (!Array.isArray(list) || !list.length) return null;
+  let n = maskNorm.get(list);
+  if (n === undefined) { n = Mask.normalizeMasks(list); maskNorm.set(list, n); }
+  return n;
+}
+/** The masks cutting clip c at timeline time t (keys resolved), or null. */
+function clipMasksAt(c, t) {
+  if (c.kind === "audio") return null;
+  const list = clipMasks(c);
+  return list ? Mask.masksAt(list, t - c.start) : null;
+}
+/** Remember where the clip's picture landed (the monitor's mask editor maps through it). */
+function noteMaskGeom(c, m, x0, y0, w, h) {
+  const g = { m, x0, y0, w, h };
+  if (!state.exporting && !runtime.sampling) (runtime.maskGeom ||= new Map()).set(c.id, g);
+  return g;
+}
+/* ── Track mattes ──
+   A clip with props.matte is cut by the picture on its matte track (the video
+   track above unless props.matteTrack names one): by that picture's alpha, or
+   by its luma (white = shows), each optionally inverted. The matte track does
+   not draw into the frame while a clip on screen uses it. */
+const videoTrackIds = () => TRACKS.filter((tr) => tr.kind === "video").map((tr) => tr.id);
+/** { mode, track } when the clip has a track matte with a track to take it from. */
+function clipMatte(c) {
+  if (c.kind === "audio" || !c.props || !c.props.matte) return null;
+  const track = Mask.matteTrackFor(c, runtime.scope ? runtime.scope.videoTracks : videoTrackIds());
+  return track ? { mode: c.props.matte, track } : null;
+}
+/** The tracks that are mattes for clips in `clips` (the frame's clips): they only cut. */
+function matteTracksAt(clips) {
+  const out = new Set();
+  for (const c of clips) { const m = clipMatte(c); if (m) out.add(m.track); }
+  return out;
+}
+/** The matte track's picture at t as an alpha matte: { canvas, empty }. A luma matte
+ *  turns brightness into alpha (over black, so transparent = black). */
+function trackMatteAt(matte, W, H, t) {
+  const src = maskCtx("tmSrc", W, H), luma = matte.mode.startsWith("luma");
+  src.setTransform(1, 0, 0, 1, 0, 0);
+  src.globalAlpha = 1; src.globalCompositeOperation = "source-over"; src.filter = "none";
+  src.clearRect(0, 0, W, H);
+  const clips = (runtime.scope ? runtime.scope.clips : project.clips).filter((x) => x.track === matte.track && clipRenders(x) && x.kind !== "audio" &&
+    x.kind !== "adjust" && activeAt(x, t)).sort((a, b) => a.start - b.start);
+  if (!clips.length) return { canvas: src.canvas, empty: true };
+  if (luma) { src.fillStyle = "#000"; src.fillRect(0, 0, W, H); }
+  const main = ctx2d;
+  ctx2d = src;
+  try { for (const x of clips) drawClip(x, W, H, t, true); } finally { ctx2d = main; }
+  if (!luma) return { canvas: src.canvas, empty: false };
+  return { canvas: lumaToAlpha(src.canvas, maskCtx("tmOut", W, H), W, H), empty: false };
+}
+/** Brightness → alpha (Rec. 709 weights): an SVG luminanceToAlpha filter on the
+ *  canvas, or a pixel loop where canvas filters are missing. */
+let lumaFilter = null;
+function lumaToAlpha(srcCanvas, out, W, H) {
+  out.setTransform(1, 0, 0, 1, 0, 0);
+  out.globalAlpha = 1; out.globalCompositeOperation = "source-over";
+  out.clearRect(0, 0, W, H);
+  if (lumaFilter == null) lumaFilter = makeLumaFilter();
+  if (lumaFilter) {
+    out.filter = lumaFilter; out.drawImage(srcCanvas, 0, 0); out.filter = "none";
+    return out.canvas;
+  }
+  out.drawImage(srcCanvas, 0, 0);
+  const img = out.getImageData(0, 0, W, H), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i + 3] = Math.round(0.2125 * d[i] + 0.7154 * d[i + 1] + 0.0721 * d[i + 2]);
+    d[i] = d[i + 1] = d[i + 2] = 0;
+  }
+  out.putImageData(img, 0, 0);
+  return out.canvas;
+}
+/** "url(#…)" for the luma filter, or "" when the canvas can't apply it (checked once on a pixel). */
+function makeLumaFilter() {
+  try {
+    const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("width", "0"); svg.setAttribute("height", "0"); svg.setAttribute("aria-hidden", "true");
+    svg.style.cssText = "position:absolute;width:0;height:0;overflow:hidden";
+    svg.innerHTML = '<filter id="fcLumaAlpha" color-interpolation-filters="sRGB"><feColorMatrix type="luminanceToAlpha"/></filter>';
+    document.body.appendChild(svg);
+    const a = document.createElement("canvas"), b = document.createElement("canvas");
+    a.width = b.width = a.height = b.height = 1;
+    const x = a.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, 1, 1);
+    const y = b.getContext("2d", { willReadFrequently: true });
+    y.filter = "url(#fcLumaAlpha)"; y.drawImage(a, 0, 0);
+    const px = y.getImageData(0, 0, 1, 1).data;
+    return px[3] > 250 && px[0] < 5 ? "url(#fcLumaAlpha)" : "";
+  } catch { return ""; }
+}
+/** A clip that is cut before it composites: by its masks, by a track matte, or both. */
+function drawMaskedClip(c, W, H, t, masks, matte = null, raw = false) {
+  const tm = matte ? trackMatteAt(matte, W, H, t) : null;   // first: the matte's clips use the layer buffers too
+  const layer = maskCtx("layer", W, H);
+  layer.setTransform(1, 0, 0, 1, 0, 0);
+  layer.globalAlpha = 1; layer.globalCompositeOperation = "source-over"; layer.filter = "none";
+  layer.clearRect(0, 0, W, H);
+  const main = ctx2d;
+  let r;
+  ctx2d = layer;
+  try { r = drawClipPicture(c, W, H, t, true); } finally { ctx2d = main; }
+  if (!r || !r.geom) return;
+  layer.setTransform(1, 0, 0, 1, 0, 0);
+  if (tm) {
+    layer.globalCompositeOperation = matte.mode.endsWith("-inverted") ? "destination-out" : "destination-in";
+    if (tm.empty) { if (!matte.mode.endsWith("-inverted")) layer.clearRect(0, 0, W, H); }   // nothing on the matte track: alpha hides all
+    else layer.drawImage(tm.canvas, 0, 0);
+    layer.globalCompositeOperation = "source-over";
+  }
+  if (masks) cutByMasks(c, layer, r.geom, masks, W, H);
+  main.save();
+  main.setTransform(1, 0, 0, 1, 0, 0);
+  const p = r.p;
+  if (c.kind !== "adjust" && !raw) {   // an adjustment layer already drew at its own opacity; a raw sample composites later
+    main.globalAlpha = clamp(p.opacity, 0, 1);
+    if (p.blend && p.blend !== "normal" && BLEND_MODES.includes(p.blend)) main.globalCompositeOperation = p.blend;
+  }
+  main.drawImage(layer.canvas, 0, 0);
+  main.restore();
+}
+function cutByMasks(c, layer, g, masks, W, H) {
+  const matte = maskCtx("matte", W, H);
+  Mask.rasterize(matte, maskCtx("tmp", W, H), maskCtx("tmp2", W, H), masks,
+    g.m.translate(g.x0, g.y0), g.w, g.h, W / Math.max(1, project.width));
+  layer.setTransform(1, 0, 0, 1, 0, 0);
+  layer.globalCompositeOperation = "destination-in";
+  layer.drawImage(matte.canvas, 0, 0);
+  layer.globalCompositeOperation = "source-over";
+  const cap = runtime.maskCapture;
+  if (cap && cap.id === c.id && cap.coverage == null) measureMaskCoverage(cap, masks, g, layer.canvas, W, H);
+  const view = runtime.maskView;
+  if (view && view.id === c.id && state.selId === c.id && !state.exporting) {   // the monitor shows the selected clip's matte
+    const v = maskCtx("view", W, H);
+    v.setTransform(1, 0, 0, 1, 0, 0);
+    v.globalCompositeOperation = "source-over"; v.clearRect(0, 0, W, H);
+    v.fillStyle = "#fff"; v.fillRect(0, 0, W, H);
+    v.globalCompositeOperation = "destination-in"; v.drawImage(matte.canvas, 0, 0);
+    v.globalCompositeOperation = "source-over";
+    view.ready = true;
+  }
+}
+/** fablecut_scopes mask: how much of the clip's own picture its masks keep
+ *  (rasterized alone, box-aligned) and how much of the frame the cut clip covers. */
+function measureMaskCoverage(cap, masks, g, layerCanvas, W, H) {
+  const mean = (cv, w, h) => {
+    const s = document.createElement("canvas"); s.width = w; s.height = h;
+    const x = s.getContext("2d", { willReadFrequently: true });
+    x.drawImage(cv, 0, 0, w, h);
+    const d = x.getImageData(0, 0, w, h).data;
+    let sum = 0;
+    for (let i = 3; i < d.length; i += 4) sum += d[i];
+    return sum / 255 / (w * h);
+  };
+  const bw = Math.max(1, g.w), bh = Math.max(1, g.h), k = Math.min(1, 480 / Math.max(bw, bh));
+  const mw = Math.max(2, Math.round(bw * k)), mh = Math.max(2, Math.round(bh * k));
+  const out = maskCtx("cap", mw, mh);
+  Mask.rasterize(out, maskCtx("cap1", mw, mh), maskCtx("cap2", mw, mh), masks, new DOMMatrix([mw / bw, 0, 0, mh / bh, 0, 0]), bw, bh,
+    W / Math.max(1, project.width) * mw / bw);
+  cap.coverage = +(100 * mean(out.canvas, mw, mh)).toFixed(2);
+  const fw = Math.max(2, Math.min(480, W)), fh = Math.max(2, Math.round(fw * H / W));
+  cap.frameCoverage = +(100 * mean(layerCanvas, fw, fh)).toFixed(2);
+}
+/** Matte view: the selected clip's mask matte, white on black, over the frame. */
+function drawMaskView(W, H) {
+  const view = runtime.maskView;
+  if (!view || !view.ready || state.selId !== view.id) return;   // off once the clip is deselected
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.globalAlpha = 1; ctx2d.globalCompositeOperation = "source-over"; ctx2d.filter = "none";
+  ctx2d.fillStyle = "#000"; ctx2d.fillRect(0, 0, W, H);
+  ctx2d.drawImage(maskCv.view, 0, 0);
+  ctx2d.restore();
+}
+
+/* ── Masks in the Inspector and on the monitor ──
+   The Masks section lists the clip's masks; picking one shows its outline and
+   handles on the monitor. Pen: click to place points (drag pulls handles),
+   click the first point or press Enter to close. Draw: drag a free-hand
+   outline, fitted into an editable bezier. */
+const maskUi = { clip: null, sel: -1, pt: -1, tool: null, pen: null, stroke: null, drag: null };
+const MASK_ROWS_UI = {
+  opacity: ["Opacity", 0, 1, 0.01], feather: ["Feather", 0, 300, 1], expand: ["Expand", -200, 200, 1],
+  x: ["X", -0.5, 1.5, 0.001], y: ["Y", -0.5, 1.5, 0.001], w: ["Width", 0.01, 2, 0.001], h: ["Height", 0.01, 2, 0.001],
+  scale: ["Scale", 0.05, 4, 0.01], rotation: ["Rotation", -180, 180, 0.5],
+};
+const MASK_MODE_LABEL = { add: "Add", subtract: "Subtract", intersect: "Intersect", difference: "Difference" };
+function maskList(c) { return clipMasks(c) || []; }
+function maskUiFor(c) {
+  if (!c || maskUi.clip !== c.id) { Object.assign(maskUi, { clip: c ? c.id : null, sel: -1, pt: -1, tool: null, pen: null, stroke: null, drag: null }); if (runtime.maskView) runtime.maskView = null; }
+  const n = maskList(c).length;
+  if (maskUi.sel >= n) maskUi.sel = n - 1;
+  return maskUi;
+}
+function writeMasks(c, list) {
+  const n = list.length ? Mask.normalizeMasks(list) : null;
+  if (n) c.props.masks = n; else delete c.props.masks;
+  state.dirtyTimeline = true;
+}
+const maskLocalT = (c) => state.time - c.start;
+/** Mask i as it is at the playhead. */
+function maskNowAt(c, i) { const m = maskList(c)[i]; return m ? Mask.maskAt(m, maskLocalT(c)) : null; }
+function maskKeyIndex(m, t) {
+  const tol = 0.5 / (projectFps() || 30);
+  return m && m.keys ? m.keys.findIndex((k) => Math.abs(k.t - t) < tol) : -1;
+}
+function maskSnapshotKey(now, t) {
+  const k = { t: +Math.max(0, t).toFixed(4) };
+  for (const p of Mask.KEYED) if (now[p] != null) k[p] = p === "points" ? now.points.map((q) => q.slice()) : now[p];
+  return k;
+}
+/** Change mask i; once it has keys, keyed params land in a key at the playhead. */
+function writeMaskSet(c, i, set) {
+  const list = maskList(c).map((m) => m), m = list[i];
+  if (!m) return;
+  if (!m.keys || !m.keys.length || !Mask.KEYED.some((p) => p in set)) { list[i] = Mask.mergeMask(m, set) || m; writeMasks(c, list); return; }
+  const t = maskLocalT(c), keys = m.keys.map((k) => ({ ...k })), now = Mask.maskAt(m, t), statics = {};
+  for (const [p, v] of Object.entries(set)) if (!Mask.KEYED.includes(p)) statics[p] = v;
+  let j = maskKeyIndex(m, t);
+  if (j < 0) { const k = maskSnapshotKey(now, t); keys.push(k); keys.sort((a, b) => a.t - b.t); j = keys.indexOf(k); }
+  for (const p of Mask.KEYED) if (p in set) keys[j][p] = set[p];
+  list[i] = Mask.mergeMask(m, { ...statics, keys }) || m;
+  writeMasks(c, list);
+}
+/* ── Tracking ──
+   tracker.js follows a region of the clip's own video frame by frame. The
+   frames come from a private <video> (the monitor never moves), drawn small
+   enough that the region is ~56 px across. A track is stored on its clip as
+   picture fractions (props.tracks); masks and other clips follow it by having
+   it baked into their keys, so rendering never depends on it. */
+const Tracker = self.FableCutTracker;
+const trackUi = { clip: null, sel: -1, tool: null, size: 0.08, scale: false, rotation: false, run: null };
+const trackNorm = new WeakMap();
+function clipTracks(c) {
+  const list = c && c.props && c.props.tracks;
+  if (!Array.isArray(list) || !list.length) return [];
+  let n = trackNorm.get(list);
+  if (n === undefined) { n = Tracker.normalizeTracks(list) || []; trackNorm.set(list, n); }
+  return n;
+}
+function writeTracks(c, list) {
+  const n = list.length ? Tracker.normalizeTracks(list) : null;
+  if (n) c.props.tracks = n; else delete c.props.tracks;
+  state.dirtyTimeline = true;
+}
+/** Crop as fractions; picture (u, v) ↔ media (x, y), both 0…1. */
+function cropFrac(p) {
+  const k = (v) => clamp(+v || 0, 0, 95) / 100;
+  return { l: k(p.cropL), t: k(p.cropT), r: k(p.cropR), b: k(p.cropB) };
+}
+function picToMedia(p, u, v) { const k = cropFrac(p); return { x: k.l + u * (1 - k.l - k.r), y: k.t + v * (1 - k.t - k.b) }; }
+function mediaToPic(p, x, y) { const k = cropFrac(p); return { u: (x - k.l) / Math.max(1e-6, 1 - k.l - k.r), v: (y - k.t) / Math.max(1e-6, 1 - k.t - k.b) }; }
+function seekFrame(el, t) {
+  return new Promise((res, rej) => {
+    const done = () => { el.removeEventListener("seeked", done); clearTimeout(tm); res(); };
+    const tm = setTimeout(() => { el.removeEventListener("seeked", done); rej(new Error(`the video did not seek to ${t.toFixed(2)} s`)); }, 4000);
+    el.addEventListener("seeked", done);
+    el.currentTime = t;
+  });
+}
+/**
+ * Follow `box` (picture fractions {x, y, w, h}) through clip c from clip-local
+ * `from` towards `to` (dir ±1), one sample per project frame. Returns
+ * { samples: [[t, x, y, s, r, q], …] in time order, lostAt, cancelled }.
+ */
+async function runTrack(c, { box, from, to, dir, scale = false, rotation = false, onProgress, run = {} }) {
+  const m = getMedia(c.mediaId);
+  if (c.kind !== "video" || !m) throw new Error("tracking needs a video clip");
+  const el = document.createElement("video");
+  el.muted = true; el.preload = "auto"; el.playsInline = true; el.src = m.src;
+  try {
+    await new Promise((res, rej) => {
+      const tm = setTimeout(() => rej(new Error("the video did not load")), 15000);
+      el.addEventListener("loadeddata", () => { clearTimeout(tm); res(); }, { once: true });
+      el.addEventListener("error", () => { clearTimeout(tm); rej(new Error("the video could not be read")); }, { once: true });
+    });
+    const vw = el.videoWidth, vh = el.videoHeight, p0 = evalProps(c, c.start + from), k = cropFrac(p0);
+    const bw = Math.max(4, box.w * (1 - k.l - k.r) * vw), bh = Math.max(4, box.h * (1 - k.t - k.b) * vh);
+    const sc = clamp(56 / Math.max(bw, bh), 160 / vw, Math.min(1, 1280 / vw));
+    const aw = Math.max(16, Math.round(vw * sc)), ah = Math.max(16, Math.round(vh * sc));
+    const cv = document.createElement("canvas"); cv.width = aw; cv.height = ah;
+    const x = cv.getContext("2d", { willReadFrequently: true });
+    const grab = async (local) => {
+      await seekFrame(el, Math.max(0, mediaTimeAt(c, c.start + local)) + 0.001);
+      x.drawImage(el, 0, 0, aw, ah);
+      return Tracker.toGray(x.getImageData(0, 0, aw, ah).data, aw, ah);
+    };
+    const mc = picToMedia(p0, box.x, box.y);
+    const tr = Tracker.createTracker(await grab(from), aw, ah, { cx: mc.x * aw, cy: mc.y * ah, w: bw * sc, h: bh * sc }, { scale, rotation });
+    if (tr.flat) throw new Error("that region has no detail to follow — pick a spot with texture or edges");
+    const dt = 1 / (projectFps() || 30), end = clamp(to, 0, c.duration);
+    const n = Math.floor(Math.abs(end - from) / dt + 1e-6);
+    const samples = [[+from.toFixed(4), box.x, box.y, 1, 0, 1]];
+    let lostAt = null;
+    for (let i = 1; i <= n; i++) {
+      if (run.cancel) break;
+      const t = from + dir * i * dt, r = tr.step(await grab(t));
+      if (r.lost) { lostAt = t; break; }
+      const pic = mediaToPic(p0, r.cx / aw, r.cy / ah);
+      samples.push([+t.toFixed(4), pic.u, pic.v, r.s, r.r, r.q]);
+      if (onProgress) onProgress(i / n, t);
+    }
+    if (dir < 0) samples.reverse();
+    return { samples, lostAt, cancelled: !!run.cancel };
+  } finally { el.removeAttribute("src"); el.load(); }
+}
+/** What a tracking result was measured against: the clip object and its timing. */
+function trackStamp(c) {
+  if (!c) return "";
+  const p = c.props || {}, k = c.keyframes || {};
+  return JSON.stringify([c.mediaId, c.start, c.in, c.duration, clipSpeed(c), k.speed || null,
+    p.cropL, p.cropR, p.cropT, p.cropB, k.cropL || null, k.cropR || null, k.cropT || null, k.cropB || null]);
+}
+/** Merge new samples into track `name` (replacing the old ones in their time range). */
+function storeTrack(c, name, kind, w, h, samples) {
+  const list = clipTracks(c).map((x) => ({ ...x })), t0 = samples[0][0], t1 = samples[samples.length - 1][0];
+  const i = list.findIndex((x) => x.name === name);
+  const keep = i >= 0 ? list[i].samples.filter((s) => s[0] < t0 - 1e-4 || s[0] > t1 + 1e-4) : [];
+  const fresh = kind === "box" ? Tracker.smooth(samples) : samples;   // scale / rotation steadied once, for every use
+  const tr = { name, kind, w: i >= 0 ? list[i].w : w, h: i >= 0 ? list[i].h : h, samples: [...keep, ...fresh].sort((a, b) => a[0] - b[0]) };
+  if (i >= 0) list[i] = tr; else list.push(tr);
+  writeTracks(c, list.slice(-Tracker.MAX_TRACKS));
+  return clipTracks(c).find((x) => x.name === name);
+}
+/** Bake samples into mask i's keys: x / y (and scale / rotation) move by what the samples moved. */
+function bakeTrackIntoMask(c, i, samples, { scale, rotation }, from = samples[0][0]) {
+  const list = maskList(c).slice(), raw = list[i];
+  if (!raw || samples.length < 2) return 0;
+  const g = pictureRect(c, evalProps(c, c.start + samples[0][0]));
+  // the mask is where it was drawn at `from` (where tracking started): motion is measured from there, on the
+  // smoothed path, and a key stays at `from` — so a backward or two-way track keeps it exactly at the playhead
+  const sm3 = Tracker.smooth(samples, 3, 1);
+  const anchor = sm3.find((sm) => Math.abs(sm[0] - from) < 1e-4) || (() => { const q = Tracker.trackAt({ samples: sm3 }, from); return [from, q.x, q.y, q.s, q.r, q.q]; })();
+  const S = Tracker.simplify(sm3, 1.5 / Math.max(1, g ? g.dw : 1000));   // keys within ~1.5 px
+  if (from >= samples[0][0] && from <= samples[samples.length - 1][0] && !S.some((sm) => Math.abs(sm[0] - from) < 1e-4)) {
+    S.push(anchor); S.sort((a, b) => a[0] - b[0]);
+  }
+  const first = samples[0], base = Mask.maskAt(raw, from);
+  const motion = ["x", "y", ...(scale ? ["scale"] : []), ...(rotation ? ["rotation"] : [])];
+  const t0 = first[0] - 1e-4, t1 = samples[samples.length - 1][0] + 1e-4;
+  let keys = (raw.keys || []).map((k) => ({ ...k }));
+  for (const k of keys) if (k.t >= t0 && k.t <= t1) for (const p of motion) delete k[p];
+  keys = keys.filter((k) => Object.keys(k).some((p) => p !== "t" && p !== "ease"));
+  for (const sm of S) {
+    const v = { x: +(base.x + sm[1] - anchor[1]).toFixed(4), y: +(base.y + sm[2] - anchor[2]).toFixed(4) };
+    if (scale) v.scale = +(base.scale * sm[3] / (anchor[3] || 1)).toFixed(4);
+    if (rotation) v.rotation = +(base.rotation + sm[4] - anchor[4]).toFixed(3);
+    const at = keys.find((k) => Math.abs(k.t - sm[0]) < 1e-4);
+    if (at) Object.assign(at, v, { ease: "linear" }); else keys.push({ t: sm[0], ease: "linear", ...v });
+  }
+  keys.sort((a, b) => a.t - b.t);
+  list[i] = Mask.mergeMask(raw, { keys }) || raw;
+  writeMasks(c, list);
+  return S.length;
+}
+/** Where the clip's video is drawn at props p: centre, size, rotation, flips (project px). */
+function pictureRect(c, p) {
+  const el = c.kind === "video" ? getClipEl(c) : null, W = project.width, H = project.height;
+  const sw = el && el.videoWidth, sh = el && el.videoHeight;
+  if (!sw || !sh) return null;
+  const k = cropFrac(p), cw = Math.max(1, sw * (1 - k.l - k.r)), ch = Math.max(1, sh * (1 - k.t - k.b)), sc = p.scale || 1;
+  let dw, dh;
+  if (p.fit === "cover") { const f = Math.max(W / cw, H / ch) * sc; dw = cw * f; dh = ch * f; }
+  else if (p.fit === "stretch") { dw = W * sc; dh = H * sc; }
+  else if (p.fit === "none") { const ps = el._fcScale || 1; dw = cw * sc / ps; dh = ch * sc / ps; }   // a proxy is drawn at the original's size
+  else { const f = Math.min(W / cw, H / ch) * sc; dw = cw * f; dh = ch * f; }
+  return { cx: W / 2 + (+p.x || 0), cy: H / 2 + (+p.y || 0), dw, dh, rot: (p.rotation || 0) * Math.PI / 180, fx: p.flipH ? -1 : 1, fy: p.flipV ? -1 : 1 };
+}
+/** A track's point on the frame at timeline time T (project px), with its scale and rotation there. */
+function trackOnFrame(c, tr, T) {
+  const s = Tracker.trackAt(tr, T - c.start), p = evalProps(c, T), g = pictureRect(c, p);
+  if (!g) return null;
+  const lx = (s.x - 0.5) * g.dw * g.fx, ly = (s.y - 0.5) * g.dh * g.fy, cs = Math.cos(g.rot), sn = Math.sin(g.rot);
+  return { x: g.cx + lx * cs - ly * sn, y: g.cy + lx * sn + ly * cs, s: s.s * (p.scale || 1), r: (g.fx * g.fy < 0 ? -s.r : s.r) + (p.rotation || 0) };
+}
+/** Bake clip c's track into clip b's x / y (and scale / rotation) keyframes so b rides on it. */
+function attachToTrack(c, track, b, { scale, rotation, at = state.time }) {
+  const tr = { ...track, samples: Tracker.smooth(track.samples, 3, 1) }, S = tr.samples, a = Math.max(c.start + S[0][0], b.start), z = Math.min(c.start + S[S.length - 1][0], b.start + b.duration);
+  if (z - a < 1e-3) return 0;
+  const tRef = clamp(at, a, z), ref = trackOnFrame(c, tr, tRef);
+  if (!ref) return 0;
+  const pb = evalProps(b, tRef), W = project.width, H = project.height;
+  const off = { x: (+pb.x || 0) - (ref.x - W / 2), y: (+pb.y || 0) - (ref.y - H / 2) };
+  const g = pictureRect(c, evalProps(c, tRef));
+  // the samples inside the overlap, plus the track at its edges and at the reference (between samples, too)
+  const edge = (T) => { const q = Tracker.trackAt(tr, T - c.start); return [+(T - c.start).toFixed(4), q.x, q.y, q.s, q.r, q.q]; };
+  const inRange = S.filter((sm) => c.start + sm[0] > a + 1e-4 && c.start + sm[0] < z - 1e-4);
+  for (const T of [a, z, tRef]) if (!inRange.some((sm) => Math.abs(c.start + sm[0] - T) < 1e-4)) inRange.push(edge(T));
+  inRange.sort((p, q) => p[0] - q[0]);
+  const pts = Tracker.simplify(inRange, 1.5 / Math.max(1, g ? g.dw : 1000));
+  const props = ["x", "y", ...(scale ? ["scale"] : []), ...(rotation ? ["rotation"] : [])];
+  b.keyframes = b.keyframes || {};
+  const l0 = a - b.start - 1e-4, l1 = z - b.start + 1e-4;
+  for (const k of props) b.keyframes[k] = (b.keyframes[k] || []).filter((kf) => kf.t < l0 || kf.t > l1);
+  for (const sm of pts) {
+    const T = c.start + sm[0], v = trackOnFrame(c, tr, T), t = +(T - b.start).toFixed(4);
+    if (!v) continue;
+    const vals = { x: v.x - W / 2 + off.x, y: v.y - H / 2 + off.y, scale: (+pb.scale || 1) * v.s / ref.s, rotation: (+pb.rotation || 0) + v.r - ref.r };
+    for (const k of props) b.keyframes[k].push({ t, v: +vals[k].toFixed(k === "scale" ? 4 : 2), ease: "linear" });
+  }
+  for (const k of props) { b.keyframes[k].sort((p, q) => p.t - q.t); if (!b.keyframes[k].length) delete b.keyframes[k]; }
+  if (!Object.keys(b.keyframes).length) delete b.keyframes;
+  state.dirtyTimeline = true; inspPropGen++;
+  return pts.length;
+}
+/** The mask's outline bounds at clip-local t, as picture fractions (clamped into the picture). */
+function maskBoundsAt(c, raw, t) {
+  const g = pictureRect(c, evalProps(c, c.start + t)), m = Mask.maskAt(raw, t);
+  if (!g) return null;
+  const B = { bw: g.dw, bh: g.dh };
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const a of Mask.anchors(m, B.bw, B.bh)) { x0 = Math.min(x0, a.x); y0 = Math.min(y0, a.y); x1 = Math.max(x1, a.x); y1 = Math.max(y1, a.y); }
+  x0 = clamp(x0 / B.bw, 0, 1); x1 = clamp(x1 / B.bw, 0, 1); y0 = clamp(y0 / B.bh, 0, 1); y1 = clamp(y1 / B.bh, 0, 1);
+  if (x1 - x0 < 0.01 || y1 - y0 < 0.01) return null;
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+}
+/** Run a track from the playhead with progress in the Inspector; Esc stops it. */
+async function trackWithUi(c, label, job, after) {
+  if (trackUi.run) { toast("Already tracking — wait, or press Esc to stop"); return null; }
+  if (state.playing) pause();
+  const run = trackUi.run = { cancel: false, clip: c.id, label, pct: 0 };
+  const stamp = trackStamp(c), maskStamp = job.mask != null ? JSON.stringify(maskList(c)[job.mask] ?? null) : null;
+  renderInspector();
+  try {
+    const r = await runTrack(c, { ...job, run, onProgress: (f) => {
+      run.pct = f;
+      for (const el of els.inspector.querySelectorAll("[data-track-progress]")) el.textContent = `${label}: ${Math.round(f * 100)}% — Esc stops`;
+    } });
+    if (r.samples.length < 2) { toast(r.lostAt != null ? "Lost the region on the next frame — try a spot with more detail, or a bigger region" : "Nothing to track there"); return r; }
+    if (getClip(c.id) !== c || trackStamp(c) !== stamp || (maskStamp != null && JSON.stringify(maskList(c)[job.mask] ?? null) !== maskStamp)) {
+      toast("The clip changed while tracking — nothing was applied; track it again");
+      return null;
+    }
+    pushUndo();
+    after(r);
+    scheduleSave();
+    const span = Math.abs(r.samples[r.samples.length - 1][0] - r.samples[0][0]);
+    toast(r.cancelled ? `Stopped — kept ${span.toFixed(2)} s` : r.lostAt != null ? `Lost the region at ${fmt(c.start + r.lostAt)} — kept ${span.toFixed(2)} s up to there` : `Tracked ${span.toFixed(2)} s (${r.samples.length} frames)`);
+    return r;
+  } catch (err) {
+    toast("Tracking failed: " + (err && err.message || err));
+    return null;
+  } finally {
+    trackUi.run = null;
+    state.dirtyTimeline = true;
+    renderInspector(); drawFrame();
+  }
+}
+function trackMaskFromPlayhead(c, i, dir) {
+  const raw = maskList(c)[i], t = maskLocalT(c);
+  if (!raw || !activeAt(c, state.time)) { toast("Move the playhead over the clip first"); return; }
+  const box = maskBoundsAt(c, raw, t);
+  if (!box) { toast("The mask is outside the picture here"); return; }
+  const name = raw.name || `Mask ${i + 1}`, opts = { scale: trackUi.scale, rotation: trackUi.rotation };
+  trackWithUi(c, `Tracking ${name}`, { box, from: t, to: dir > 0 ? c.duration : 0, dir, mask: i, ...opts }, (r) => {
+    storeTrack(c, name, "box", box.w, box.h, r.samples);
+    bakeTrackIntoMask(c, i, r.samples, opts, t);
+  });
+}
+function trackPointFromPlayhead(c, name, box, dir) {
+  const t = clamp(state.time - c.start, 0, c.duration);
+  trackWithUi(c, `Tracking ${name}`, { box, from: t, to: dir > 0 ? c.duration : 0, dir, scale: trackUi.scale, rotation: trackUi.rotation }, (r) => {
+    storeTrack(c, name, trackUi.scale || trackUi.rotation ? "box" : "point", box.w, box.h, r.samples);
+    trackUi.sel = clipTracks(c).findIndex((x) => x.name === name);
+  });
+}
+/** The region a track continues from at the playhead: its position there, its size. */
+function trackBoxAt(c, tr) {
+  const s = Tracker.trackAt(tr, state.time - c.start);
+  return { x: s.x, y: s.y, w: tr.w * s.s, h: tr.h * s.s };
+}
+function trackSectionHtml(c) {
+  if (trackUi.clip !== c.id) Object.assign(trackUi, { clip: c.id, sel: -1, tool: null });
+  const list = clipTracks(c), tr = list[trackUi.sel], run = trackUi.run && trackUi.run.clip === c.id ? trackUi.run : null;
+  const others = project.clips.filter((x) => x.id !== c.id && isVisualClip(x) && x.start < c.start + c.duration && c.start < x.start + x.duration);
+  const chips = list.map((x, j) => `<button type="button" class="btn tiny cl-chip${j === trackUi.sel ? " toggle on" : ""}" data-tsel="${j}" title="${escapeHtml(Tracker.describe([x]))}">${escapeHtml(x.name)}</button>`).join("");
+  let html = `<div class="insp-section" data-track-section><h3>Tracking</h3>
+    <div class="cl-row"><button type="button" class="btn tiny${trackUi.tool === "point" ? " toggle on" : ""}" data-tact="point" ${run ? "disabled" : ""} title="Click a spot on the monitor to follow it from the playhead to the clip's end">+ Track point</button>
+      <button type="button" class="btn tiny${trackUi.scale ? " toggle on" : ""}" data-tact="scale" title="Also follow the region's size (tracking, and attaching)">Scale</button>
+      <button type="button" class="btn tiny${trackUi.rotation ? " toggle on" : ""}" data-tact="rotation" title="Also follow the region's rotation (tracking, and attaching)">Rotate</button></div>
+    <div class="insp-row cp-row"><label class="cp-label" title="The area matched around a picked point, % of the picture's width">Region %</label>
+      <input type="number" class="cp-num" data-tsize min="2" max="40" step="1" value="${Math.round(trackUi.size * 100)}"></div>
+    ${run ? `<p class="cl-note" data-track-progress>${escapeHtml(run.label)}: ${Math.round(run.pct * 100)}% — Esc stops</p>` : ""}
+    ${trackUi.tool === "point" ? `<p class="cl-note">Click the spot to follow on the monitor — something with detail: a corner, a logo, an eye. Esc cancels.</p>` : ""}
+    ${list.length ? `<div class="cl-row">${chips}</div>` : trackUi.tool || run ? "" : `<p class="cl-note">Follow a spot in the video, then pin a title, sticker or another clip to it. A mask tracks from the Masks section.</p>`}`;
+  if (tr) {
+    const S = tr.samples;
+    html += `<div class="cl-row"><button type="button" class="btn tiny" data-tact="back" ${run ? "disabled" : ""} title="Track from the playhead back to the clip's start">◀ Track back</button>
+        <button type="button" class="btn tiny" data-tact="fwd" ${run ? "disabled" : ""} title="Track from the playhead to the clip's end">Track on ▶</button>
+        <button type="button" class="btn tiny" data-tact="del" title="Delete this track (what follows it keeps its keys)">Delete</button></div>
+      <div class="insp-row"><label title="A clip to pin to this track">Attach</label><select data-tattach title="A clip to pin to this track"><option value="">Pick a clip…</option>${others.map((x) => `<option value="${x.id}">${escapeHtml(x.track + " · " + (x.kind === "text" ? (x.props.text || "").split("\n")[0] : x.name || x.kind))}</option>`).join("")}</select></div>
+      <div class="cl-row"><button type="button" class="btn tiny" data-tact="attach" ${others.length ? "" : "disabled"} title="Key the clip's position (and scale / rotation when those are on) so it rides on the track, keeping where it is at the playhead">Attach to the track</button></div>
+      <p class="cl-note">${S.length} samples, ${S[0][0].toFixed(2)}–${S[S.length - 1][0].toFixed(2)} s of the clip. Attaching writes keyframes — edit them like any others.</p>`;
+  }
+  return html + `</div>`;
+}
+function bindTrackControls(c) {
+  const root = els.inspector.querySelector("[data-track-section]");
+  if (!root) return;
+  const guard = () => { if (isGroupLocked(c)) { toastLocked(); return false; } return true; };
+  const size = root.querySelector("[data-tsize]");
+  if (size) size.addEventListener("change", () => { trackUi.size = clamp((+size.value || 8) / 100, 0.02, 0.4); size.blur(); });
+  for (const b of root.querySelectorAll("[data-tsel]")) b.addEventListener("click", () => {
+    const j = +b.dataset.tsel;
+    trackUi.sel = trackUi.sel === j ? -1 : j; trackUi.tool = null;
+    renderInspector(); drawFrame();
+  });
+  for (const b of root.querySelectorAll("[data-tact]")) b.addEventListener("click", () => {
+    const a = b.dataset.tact, tr = clipTracks(c)[trackUi.sel];
+    if (a === "scale" || a === "rotation") { trackUi[a] = !trackUi[a]; renderInspector(); return; }
+    if (!guard()) return;
+    if (a === "point") {
+      trackUi.tool = trackUi.tool === "point" ? null : "point";
+      if (trackUi.tool && !activeAt(c, state.time)) toast("Move the playhead over the clip, then click the spot to follow");
+      renderInspector(); return;
+    }
+    if (!tr) return;
+    if (a === "del") { pushUndo(); writeTracks(c, clipTracks(c).filter((x) => x !== tr)); trackUi.sel = -1; scheduleSave(); renderInspector(); drawFrame(); return; }
+    if (a === "back" || a === "fwd") {
+      if (!activeAt(c, state.time)) { toast("Move the playhead over the clip first"); return; }
+      trackPointFromPlayhead(c, tr.name, trackBoxAt(c, tr), a === "fwd" ? 1 : -1);
+      return;
+    }
+    if (a === "attach") {
+      const other = getClip(root.querySelector("[data-tattach]").value);
+      if (!other) { toast("Pick a clip to attach first"); return; }
+      if (isGroupLocked(other)) { toastLocked(); return; }
+      pushUndo();
+      const n = attachToTrack(c, tr, other, { scale: trackUi.scale, rotation: trackUi.rotation });
+      scheduleSave(); renderInspector(); drawFrame();
+      toast(n ? `${other.name || other.kind} follows ${tr.name} (${n} keys)` : "That clip and the track don't overlap in time");
+    }
+  });
+}
+/** Monitor: the selected track's path, and its region at the playhead. */
+function drawTrackOverlay(c, W) {
+  if (!c || trackUi.clip !== c.id || !els.inspector.querySelector("[data-track-section]")) return;
+  const tr = clipTracks(c)[trackUi.sel], B = maskBox(c);
+  if (!tr || !B || !activeAt(c, state.time)) return;
+  const lw = Math.max(1.5, W / 900), S = tr.samples, step = Math.max(1, Math.floor(S.length / 400));
+  ctx2d.save(); ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.lineWidth = lw; ctx2d.strokeStyle = "rgba(255, 196, 64, .8)";
+  ctx2d.beginPath();
+  for (let i = 0; i < S.length; i += step) { const p = B.toCanvas(S[i][1] * B.bw, S[i][2] * B.bh); if (i) ctx2d.lineTo(p.x, p.y); else ctx2d.moveTo(p.x, p.y); }
+  ctx2d.stroke();
+  const s = Tracker.trackAt(tr, state.time - c.start), p = B.toCanvas(s.x * B.bw, s.y * B.bh);
+  const q = B.toCanvas((s.x + tr.w * s.s / 2) * B.bw, s.y * B.bh), r = Math.max(6, Math.hypot(q.x - p.x, q.y - p.y));
+  ctx2d.strokeStyle = s.inside ? "#ffc440" : "rgba(255, 196, 64, .45)";
+  ctx2d.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+  ctx2d.beginPath(); ctx2d.moveTo(p.x - r * 0.5, p.y); ctx2d.lineTo(p.x + r * 0.5, p.y); ctx2d.moveTo(p.x, p.y - r * 0.5); ctx2d.lineTo(p.x, p.y + r * 0.5); ctx2d.stroke();
+  ctx2d.restore();
+}
+els.preview.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || trackUi.tool !== "point" || isSourceMode()) return;
+  const c = getClip(state.selId);
+  if (!c || c.id !== trackUi.clip || !activeAt(c, state.time)) return;
+  const B = maskBox(c);
+  if (!B) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const bp = B.toBox(canvasPt(e)), u = bp.x / B.bw, v = bp.y / B.bh;
+  if (u < 0 || u > 1 || v < 0 || v > 1) { toast("Click inside the clip's picture"); return; }
+  const used = new Set(clipTracks(c).map((x) => x.name));
+  let n = 1;
+  while (used.has(`Track ${n}`)) n++;
+  trackUi.tool = null;
+  trackPointFromPlayhead(c, `Track ${n}`, { x: u, y: v, w: trackUi.size, h: trackUi.size * B.bw / B.bh }, 1);
+}, true);
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || (!trackUi.run && trackUi.tool !== "point")) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (trackUi.run) trackUi.run.cancel = true;
+  else { trackUi.tool = null; renderInspector(); }
+}, true);
+function maskSectionHtml(c) {
+  const ui = maskUiFor(c), list = maskList(c), i = ui.sel, m = i >= 0 ? maskNowAt(c, i) : null, raw = list[i];
+  const tool = (k, label, title) => `<button type="button" class="btn tiny${ui.tool === k ? " toggle on" : ""}" data-mtool="${k}" title="${title}" ${list.length >= Mask.MAX_MASKS ? "disabled" : ""}>${label}</button>`;
+  const chips = list.map((mk, j) => `<button type="button" class="btn tiny cl-chip${j === i ? " toggle on" : ""}${mk.on === false ? " off" : ""}" data-msel="${j}"
+    title="${escapeHtml(mk.shape + (mk.mode !== "add" ? " · " + mk.mode : "") + (mk.invert ? " · inverted" : ""))} — click to edit on the monitor">${escapeHtml(mk.name || `Mask ${j + 1}`)}</button>`).join("");
+  let html = `<div class="insp-section" data-mask-section><h3>Masks</h3>
+    <div class="cl-row">${tool("rect", "+ Rect", "Add a rectangle mask")}${tool("ellipse", "+ Ellipse", "Add an ellipse mask")}${tool("pen", "Pen", "Click points on the monitor (drag to pull curve handles); click the first point or press Enter to close")}${tool("draw", "Draw", "Drag a free-hand outline on the monitor — it becomes an editable bezier")}
+      ${list.length ? `<button type="button" class="btn tiny${runtime.maskView ? " toggle on" : ""}" data-mact="view" title="Show the matte in the monitor (white = visible)">Matte</button>` : ""}</div>
+    ${ui.tool === "pen" ? `<p class="cl-note">Pen: click to add points, drag to curve. Click the first point or press Enter to close. Ctrl+Z / Backspace removes the last point, Ctrl+Shift+Z puts it back, Esc cancels.</p>` : ""}
+    ${ui.tool === "draw" ? `<p class="cl-note">Draw: drag around what to keep. Esc cancels.</p>` : ""}
+    ${list.length ? `<div class="cl-row">${chips}</div>` : ui.tool ? "" : `<p class="cl-note">No masks: the whole clip shows. Masks keep (add), cut (subtract) or intersect parts of the picture and move with the clip.</p>`}`;
+  if (m) {
+    const keyed = raw.keys ? raw.keys.length : 0, onKey = maskKeyIndex(raw, maskLocalT(c)) >= 0;
+    const mrow = (p) => {
+      const [lab, min, max, step] = MASK_ROWS_UI[p];
+      return `<div class="insp-row cp-row"><label class="cp-label">${lab}</label>
+        <input type="range" data-mk="${p}" min="${min}" max="${max}" step="${step}" value="${m[p]}">
+        <input type="number" class="cp-num" data-mknum="${p}" step="${step}" value="${fmtG(m[p], step)}"></div>`;
+    };
+    html += `<div class="cl-row"><input type="text" class="cl-name" data-mname value="${escapeHtml(raw.name || "")}" placeholder="Mask ${i + 1}" maxlength="40" title="Mask name">
+        <button type="button" class="btn tiny${raw.on === false ? "" : " toggle on"}" data-mact="on" title="Mask on / off">${raw.on === false ? "Off" : "On"}</button>
+        <button type="button" class="btn tiny" data-mact="up" ${i === 0 ? "disabled" : ""} title="Move down the stack (combined earlier)">↑</button>
+        <button type="button" class="btn tiny" data-mact="down" ${i >= list.length - 1 ? "disabled" : ""} title="Move up the stack (combined later)">↓</button>
+        <button type="button" class="btn tiny" data-mact="dup" ${list.length >= Mask.MAX_MASKS ? "disabled" : ""} title="Duplicate">Copy</button>
+        <button type="button" class="btn tiny" data-mact="del" title="Delete this mask">Delete</button></div>
+      <div class="cl-row"><select data-mmode title="How this mask combines with the masks before it">${Mask.MODES.map((md) => `<option value="${md}" ${raw.mode === md ? "selected" : ""}>${MASK_MODE_LABEL[md]}</option>`).join("")}</select>
+        <button type="button" class="btn tiny${raw.invert ? " toggle on" : ""}" data-mact="invert" title="Use everything outside the shape">Invert</button>
+        <button type="button" class="btn tiny${onKey ? " toggle on" : ""}" data-mact="key" title="${onKey ? "Remove the key at the playhead" : "Key the mask at the playhead — with keys, every change keys"}">◆ Key</button>
+        <span class="cl-note">${keyed ? `${keyed} key${keyed > 1 ? "s" : ""}` : ""}</span>
+        ${keyed ? `<button type="button" class="btn tiny" data-mact="clearkeys" title="Remove every key (keeps the mask as it is at the playhead)">Clear keys</button>` : ""}</div>
+      ${c.kind === "video" ? `<div class="cl-row"><span class="cl-note">Track</span>
+        <button type="button" class="btn tiny" data-mtrack="-1" ${trackUi.run ? "disabled" : ""} title="Follow what the mask covers from the playhead back to the clip's start — keys its position">◀ Back</button>
+        <button type="button" class="btn tiny" data-mtrack="1" ${trackUi.run ? "disabled" : ""} title="Follow what the mask covers from the playhead to the clip's end — keys its position">On ▶</button>
+        <button type="button" class="btn tiny${trackUi.scale ? " toggle on" : ""}" data-mtrackopt="scale" title="Also key its scale">Scale</button>
+        <button type="button" class="btn tiny${trackUi.rotation ? " toggle on" : ""}" data-mtrackopt="rotation" title="Also key its rotation">Rotate</button></div>
+        ${trackUi.run && trackUi.run.clip === c.id ? `<p class="cl-note" data-track-progress>${escapeHtml(trackUi.run.label)}: ${Math.round(trackUi.run.pct * 100)}% — Esc stops</p>` : ""}` : ""}
+      ${mrow("opacity")}${mrow("feather")}${mrow("expand")}${mrow("x")}${mrow("y")}${m.shape !== "bezier" ? mrow("w") + mrow("h") : ""}${mrow("scale")}${mrow("rotation")}
+      <p class="cl-note">On the monitor: drag inside to move, the knob rotates (Shift: 15° steps)${m.shape === "bezier"
+        ? "; drag a point to move it, its handles to curve it (Alt: break the pair), Alt-drag a point to pull new handles, Ctrl-click the outline to add a point, double-click a point to remove it"
+        : ", the edge handles resize"}. Esc deselects. Every change undoes with Ctrl+Z (redo: Ctrl+Shift+Z or Ctrl+Y).</p>`;
+  }
+  return html + `</div>`;
+}
+function bindMaskControls(c) {
+  const root = els.inspector.querySelector("[data-mask-section]");
+  if (!root) return;
+  const guard = () => { if (isGroupLocked(c)) { toastLocked(); return false; } return true; };
+  const rerender = () => { state.dirtyTimeline = true; renderInspector(); };
+  for (const b of root.querySelectorAll("[data-mtool]")) b.addEventListener("click", () => {
+    const k = b.dataset.mtool;
+    if (!guard()) return;
+    if (k === "rect" || k === "ellipse") {
+      pushUndo();
+      const list = maskList(c).slice();
+      list.push({ shape: k, x: 0.5, y: 0.5, w: k === "rect" ? 0.5 : 0.45, h: k === "rect" ? 0.5 : 0.6 });
+      writeMasks(c, list); maskUi.sel = list.length - 1; maskUi.tool = null; maskUi.pt = -1;
+      scheduleSave(); rerender();
+      if (!activeAt(c, state.time)) toast("Move the playhead over the clip to see the mask on the monitor");
+      return;
+    }
+    maskUi.tool = maskUi.tool === k ? null : k; maskUi.pen = null; maskUi.stroke = null;
+    if (maskUi.tool) { maskUi.sel = -1; if (state.playing) pause(); if (!activeAt(c, state.time)) toast("Move the playhead over the clip, then draw on the monitor"); }
+    rerender();
+  });
+  for (const b of root.querySelectorAll("[data-mtrackopt]")) b.addEventListener("click", () => { trackUi[b.dataset.mtrackopt] = !trackUi[b.dataset.mtrackopt]; rerender(); });
+  for (const b of root.querySelectorAll("[data-mtrack]")) b.addEventListener("click", () => {
+    if (!guard() || maskUi.sel < 0) return;
+    trackMaskFromPlayhead(c, maskUi.sel, +b.dataset.mtrack);
+  });
+  for (const b of root.querySelectorAll("[data-msel]")) b.addEventListener("click", () => {
+    const j = +b.dataset.msel;
+    maskUi.sel = maskUi.sel === j ? -1 : j; maskUi.pt = -1; maskUi.tool = null;
+    if (maskUi.sel >= 0) { shapeUi.sel = null; shapeUi.tool = null; }
+    rerender();
+  });
+  for (const b of root.querySelectorAll("[data-mact]")) b.addEventListener("click", () => {
+    const a = b.dataset.mact, i = maskUi.sel;
+    if (a === "view") { runtime.maskView = runtime.maskView ? null : { id: c.id }; rerender(); return; }
+    const list = maskList(c).slice(), m = list[i];
+    if (!m || !guard()) return;
+    pushUndo();
+    if (a === "on") list[i] = Mask.mergeMask(m, { on: m.on === false ? null : false });
+    else if (a === "invert") list[i] = Mask.mergeMask(m, { invert: m.invert ? null : true });
+    else if (a === "del") { list.splice(i, 1); maskUi.sel = Math.min(i, list.length - 1); maskUi.pt = -1; }
+    else if (a === "dup") { list.splice(i + 1, 0, JSON.parse(JSON.stringify({ ...m, name: m.name ? `${m.name} copy`.slice(0, 40) : undefined }))); maskUi.sel = i + 1; }
+    else if (a === "up" || a === "down") { const j = a === "up" ? i - 1 : i + 1; [list[i], list[j]] = [list[j], list[i]]; maskUi.sel = j; }
+    else if (a === "clearkeys") { const now = Mask.maskAt(m, maskLocalT(c)); list[i] = Mask.mergeMask(m, { ...maskSnapshotKey(now, 0), t: null, keys: null }); }
+    else if (a === "key") {
+      const t = maskLocalT(c), j = maskKeyIndex(m, t), now = Mask.maskAt(m, t);
+      const keys = (m.keys || []).map((k) => ({ ...k }));
+      if (j >= 0) keys.splice(j, 1); else keys.push(maskSnapshotKey(now, t));
+      const set = { keys: keys.length ? keys : null };
+      if (!keys.length) Object.assign(set, maskSnapshotKey(now, 0), { t: null });
+      list[i] = Mask.mergeMask(m, set);
+    }
+    writeMasks(c, list); scheduleSave(); rerender();
+  });
+  const mode = root.querySelector("[data-mmode]");
+  if (mode) mode.addEventListener("change", () => {
+    if (!guard()) return;
+    pushUndo(); writeMaskSet(c, maskUi.sel, { mode: mode.value }); scheduleSave(); rerender();
+    document.activeElement?.blur?.();   // hand Ctrl+Z back to the editor
+  });
+  const name = root.querySelector("[data-mname]");
+  if (name) name.addEventListener("change", () => {
+    if (!guard()) return;
+    pushUndo(); writeMaskSet(c, maskUi.sel, { name: name.value.trim() || null }); scheduleSave(); rerender();
+  });
+  for (const r of root.querySelectorAll("[data-mk]")) {
+    const p = r.dataset.mk;
+    r.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    r.addEventListener("input", () => {
+      if (isGroupLocked(c)) return;
+      writeMaskSet(c, maskUi.sel, { [p]: +r.value }); scheduleSave();
+      const n = root.querySelector(`[data-mknum="${p}"]`); if (n) n.value = fmtG(+r.value, MASK_ROWS_UI[p][3]);
+    });
+  }
+  for (const n of root.querySelectorAll("[data-mknum]")) {
+    const p = n.dataset.mknum;
+    n.addEventListener("change", () => {
+      const x = parseFloat(n.value);
+      if (!Number.isFinite(x) || !guard()) return;
+      pushUndo(); writeMaskSet(c, maskUi.sel, { [p]: x }); scheduleSave(); rerender();
+      document.activeElement?.blur?.();
+    });
+  }
+}
+/** Keyed masks: the sliders and ◆ follow the playhead (called from the inspector sync). */
+function syncMaskInspector(c) {
+  const root = els.inspector.querySelector("[data-mask-section]");
+  if (!root || maskUi.clip !== c.id || maskUi.sel < 0 || maskUi.drag) return;
+  const raw = maskList(c)[maskUi.sel], m = maskNowAt(c, maskUi.sel);
+  if (!m) return;
+  const active = document.activeElement;
+  for (const p of Object.keys(MASK_ROWS_UI)) {
+    const r = root.querySelector(`[data-mk="${p}"]`), n = root.querySelector(`[data-mknum="${p}"]`);
+    if (r && r !== active) r.value = m[p];
+    if (n && n !== active) n.value = fmtG(m[p], MASK_ROWS_UI[p][3]);
+  }
+  const k = root.querySelector("[data-mact=key]"), on = maskKeyIndex(raw, maskLocalT(c)) >= 0;
+  if (k) { k.classList.toggle("on", on); k.classList.toggle("toggle", on); }
+}
+
+/* Monitor geometry: the picture box (bw × bh px, origin top-left) ↔ canvas px. */
+function maskBox(c) {
+  const g = runtime.maskGeom && runtime.maskGeom.get(c.id);
+  if (!g) return null;
+  const M = g.m.translate(g.x0, g.y0), inv = M.inverse();
+  return {
+    bw: g.w, bh: g.h,
+    toCanvas: (x, y) => { const p = M.transformPoint(new DOMPoint(x, y)); return { x: p.x, y: p.y }; },
+    toBox: (pt) => { const p = inv.transformPoint(new DOMPoint(pt.x, pt.y)); return { x: p.x, y: p.y }; },
+  };
+}
+/** Box px ↔ a mask's own frame (fractions of the picture, before its scale / rotation). */
+function maskBoxToLocal(m, B, bx, by, vector = false) {
+  const th = (m.rotation || 0) * Math.PI / 180, s = m.scale || 1, cs = Math.cos(th), sn = Math.sin(th);
+  const dx = bx - (vector ? 0 : m.x * B.bw), dy = by - (vector ? 0 : m.y * B.bh);
+  return { x: (dx * cs + dy * sn) / s / B.bw, y: (-dx * sn + dy * cs) / s / B.bh };
+}
+function maskLocalToBox(m, B, lx, ly) {
+  const th = (m.rotation || 0) * Math.PI / 180, s = m.scale || 1, cs = Math.cos(th), sn = Math.sin(th);
+  const px = lx * B.bw * s, py = ly * B.bh * s;
+  return { x: m.x * B.bw + px * cs - py * sn, y: m.y * B.bh + px * sn + py * cs };
+}
+function maskEditActive(c) {
+  return !!c && maskUi.clip === c.id && state.selId === c.id && (maskUi.sel >= 0 || !!maskUi.tool) &&
+    activeAt(c, state.time) && !!maskBox(c) && !state.playing;
+}
+/** Handles for the selected mask, in canvas px. */
+function clipMaskHandles(c) {
+  const m = maskNowAt(c, maskUi.sel), B = m && maskBox(c);
+  if (!B) return null;
+  const at = (lx, ly) => { const q = maskLocalToBox(m, B, lx, ly); return B.toCanvas(q.x, q.y); };
+  const A = Mask.anchors(m, B.bw, B.bh).map((a) => ({ a: B.toCanvas(a.x, a.y), i: B.toCanvas(a.ix, a.iy), o: B.toCanvas(a.ox, a.oy) }));
+  const top = m.shape === "bezier" ? Math.min(...m.points.map((p) => p[1])) : -m.h / 2;
+  const base = at(0, top), up = at(0, top - 0.01), d = Math.hypot(up.x - base.x, up.y - base.y) || 1;
+  const W = els.preview.width, H = els.preview.height, gap = Math.max(24, W / 34), inset = Math.max(8, W / 110);
+  const knob = { x: clamp(base.x + (up.x - base.x) / d * gap, inset, W - inset), y: clamp(base.y + (up.y - base.y) / d * gap, inset, H - inset) };
+  const edges = m.shape === "bezier" ? [] : [["w", m.w / 2, 0], ["w", -m.w / 2, 0], ["h", 0, m.h / 2], ["h", 0, -m.h / 2]].map(([k, x, y]) => ({ k, ...at(x, y) }));
+  return { m, B, A, centre: at(0, 0), knob, knobBase: base, edges };
+}
+function strokeOutline(ctx, pts, closed) {
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+  if (closed) ctx.closePath();
+  ctx.stroke();
+}
+/** Drawn instead of the selection box while a mask is picked or a mask tool is on. */
+function drawClipMaskOverlay(c, W) {
+  const B = maskBox(c);
+  if (!B) return false;
+  const lw = Math.max(1.5, W / 800), hs = Math.max(5, W / 170);
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.lineJoin = "round";
+  const outline = (m) => Mask.flatten(Mask.anchors(m, B.bw, B.bh), 24).map(([x, y]) => { const q = B.toCanvas(x, y); return [q.x, q.y]; });
+  maskList(c).forEach((raw, j) => {   // the other masks, faint
+    if (j === maskUi.sel) return;
+    ctx2d.setLineDash([lw * 3, lw * 3]); ctx2d.lineWidth = lw; ctx2d.strokeStyle = "rgba(255,210,90,0.45)";
+    strokeOutline(ctx2d, outline(Mask.maskAt(raw, maskLocalT(c))), true);
+  });
+  ctx2d.setLineDash([]);
+  const dot = (p, r, fill, square) => {
+    ctx2d.beginPath();
+    if (square) ctx2d.rect(p.x - r, p.y - r, r * 2, r * 2); else ctx2d.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx2d.fillStyle = fill; ctx2d.fill(); ctx2d.lineWidth = lw; ctx2d.strokeStyle = "rgba(0,0,0,0.7)"; ctx2d.stroke();
+  };
+  const h = maskUi.sel >= 0 ? clipMaskHandles(c) : null;
+  if (h) {
+    const pts = outline(h.m);
+    ctx2d.lineWidth = lw * 2.2; ctx2d.strokeStyle = "rgba(0,0,0,0.55)"; strokeOutline(ctx2d, pts, true);
+    ctx2d.lineWidth = lw; ctx2d.strokeStyle = h.m.invert ? "#ff9f5a" : "#ffd25a"; strokeOutline(ctx2d, pts, true);
+    ctx2d.beginPath(); ctx2d.moveTo(h.knobBase.x, h.knobBase.y); ctx2d.lineTo(h.knob.x, h.knob.y); ctx2d.stroke();
+    for (const e of h.edges) dot(e, hs * 0.8, "#fff");
+    if (h.m.shape === "bezier") {
+      const sp = h.A[maskUi.pt];
+      if (sp) {
+        ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#9fd0ff";
+        for (const q of [sp.i, sp.o]) { ctx2d.beginPath(); ctx2d.moveTo(sp.a.x, sp.a.y); ctx2d.lineTo(q.x, q.y); ctx2d.stroke(); }
+        dot(sp.i, hs * 0.6, "#9fd0ff"); dot(sp.o, hs * 0.6, "#9fd0ff");
+      }
+      h.A.forEach((p, j) => dot(p.a, hs * 0.62, j === maskUi.pt ? "#ffd25a" : "#fff", true));
+    }
+    dot(h.centre, hs * 0.5, "#ffd25a");
+    dot(h.knob, hs * 0.9, "#ffce5c");
+  }
+  if (maskUi.tool === "pen" && maskUi.pen && maskUi.pen.pts.length) {
+    const P = maskUi.pen.pts, A = P.map((p) => ({ x: p[0], y: p[1], ix: p[0] + p[2], iy: p[1] + p[3], ox: p[0] + p[4], oy: p[1] + p[5] }));
+    const open = Mask.flatten(A, 24).slice(0, (A.length - 1) * 24 + 1).map(([x, y]) => { const q = B.toCanvas(x, y); return [q.x, q.y]; });
+    ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#ffd25a";
+    if (A.length > 1) strokeOutline(ctx2d, open, false);
+    A.forEach((a, j) => dot(B.toCanvas(a.x, a.y), hs * (j === 0 && A.length >= 3 ? 0.9 : 0.62), j === 0 ? "#ffd25a" : "#fff", true));
+  }
+  if (maskUi.tool === "draw" && maskUi.stroke && maskUi.stroke.length > 1) {
+    ctx2d.lineWidth = lw * 1.5; ctx2d.strokeStyle = "#ffd25a";
+    strokeOutline(ctx2d, maskUi.stroke.map(([u, v]) => { const q = B.toCanvas(u * B.bw, v * B.bh); return [q.x, q.y]; }), false);
+  }
+  ctx2d.restore();
+  return true;
+}
+function addMaskFrom(c, mask) {
+  const list = maskList(c).slice();
+  if (list.length >= Mask.MAX_MASKS) { toast(`A clip has at most ${Mask.MAX_MASKS} masks`); return; }
+  const m = Mask.normalizeMask(mask);
+  if (!m) return;
+  pushUndo();
+  list.push(m); writeMasks(c, list);
+  maskUi.sel = list.length - 1; maskUi.pt = -1; maskUi.tool = null; maskUi.pen = null; maskUi.stroke = null;
+  scheduleSave(); renderInspector();
+}
+function finishPen(c) {
+  const B = maskBox(c), P = maskUi.pen && maskUi.pen.pts;
+  if (!B || !P || P.length < 3) { toast("A pen mask needs at least 3 points"); return; }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  addMaskFrom(c, {
+    shape: "bezier", x: cx / B.bw, y: cy / B.bh,
+    points: P.slice(0, Mask.MAX_POINTS).map(([x, y, ix, iy, ox, oy]) => [(x - cx) / B.bw, (y - cy) / B.bh, ix / B.bw, iy / B.bh, ox / B.bw, oy / B.bh]),
+  });
+}
+/** The segment and parameter of the selected bezier's outline nearest `bp` (box px). */
+function nearestMaskSegment(m, B, bp) {
+  const A = Mask.anchors(m, B.bw, B.bh);
+  let best = null;
+  for (let i = 0; i < A.length; i++) {
+    const a = A[i], b = A[(i + 1) % A.length];
+    for (let k = 1; k < 24; k++) {
+      const t = k / 24, u = 1 - t;
+      const x = u * u * u * a.x + 3 * u * u * t * a.ox + 3 * u * t * t * b.ix + t * t * t * b.x;
+      const y = u * u * u * a.y + 3 * u * u * t * a.oy + 3 * u * t * t * b.iy + t * t * t * b.y;
+      const d = Math.hypot(x - bp.x, y - bp.y);
+      if (!best || d < best.d) best = { d, i, t };
+    }
+  }
+  return best;
+}
+/** Add or remove bezier points on mask i: the base outline and every keyed outline change together. */
+function writeMaskTopology(c, i, edit) {
+  const list = maskList(c).slice();
+  if (!list[i]) return;
+  list[i] = Mask.mergeMask(list[i], Mask.editTopology(list[i], edit)) || list[i];
+  writeMasks(c, list);
+}
+els.preview.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || isSourceMode()) return;
+  const c = getClip(state.selId);
+  if (!maskEditActive(c)) return;
+  const B = maskBox(c), pt = canvasPt(e), bp = B.toBox(pt), W = els.preview.width, grab = Math.max(8, W / 110);
+  const near = (p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= grab;
+  if (maskUi.tool) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    if (maskUi.tool === "draw") maskUi.stroke = [[bp.x / B.bw, bp.y / B.bh]];
+    else if (maskUi.tool === "pen") {
+      const P = (maskUi.pen ||= { pts: [] }).pts;
+      if (P.length >= 3 && near(B.toCanvas(P[0][0], P[0][1]))) { finishPen(c); return; }
+      if (P.length >= Mask.MAX_POINTS) { toast(`A mask has at most ${Mask.MAX_POINTS} points`); return; }
+      P.push([bp.x, bp.y, 0, 0, 0, 0]);
+      maskUi.pen.redo = [];
+      maskUi.pen.dragging = true;
+    } else return;
+    maskUi.drag = { tool: true };
+    els.preview.setPointerCapture(e.pointerId);
+    state.dirtyTimeline = true;
+    return;
+  }
+  const h = clipMaskHandles(c);
+  if (!h) return;
+  const { m } = h;
+  let drag = null;
+  const sp = m.shape === "bezier" ? h.A[maskUi.pt] : null;
+  if (near(h.knob)) drag = { mode: "rotate" };
+  else if (sp && near(sp.o)) drag = { mode: "handle", side: "o" };
+  else if (sp && near(sp.i)) drag = { mode: "handle", side: "i" };
+  else if (m.shape === "bezier" && h.A.some((p) => near(p.a))) {
+    maskUi.pt = h.A.findIndex((p) => near(p.a));
+    drag = { mode: e.altKey ? "pull" : "point" };
+  } else if (h.edges.some(near)) drag = { mode: h.edges.find(near).k };
+  else if (m.shape === "bezier" && (e.ctrlKey || e.metaKey)) {
+    if (m.points.length >= Mask.MAX_POINTS) { toast(`A mask has at most ${Mask.MAX_POINTS} points`); e.stopImmediatePropagation(); return; }
+    if (isGroupLocked(c)) { toastLocked(); e.stopImmediatePropagation(); return; }
+    const r = nearestMaskSegment(m, h.B, bp);
+    if (!r) return;
+    pushUndo(); writeMaskTopology(c, maskUi.sel, (pts) => Mask.splitPoints(pts, r.i, r.t)); scheduleSave();
+    maskUi.pt = r.i + 1;
+    drag = { mode: "point", pushed: true };
+  } else if (Mask.matteAt([{ ...m, mode: "add", invert: false, feather: 0, opacity: 1 }], bp.x, bp.y, h.B.bw, h.B.bh, 0) > 0.5) drag = { mode: "move" };
+  if (!drag) return;     // outside the mask: the monitor's usual clicks
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  if (!drag.pushed) pushUndo();
+  maskUi.drag = { ...drag, id: c.id, start: bp, m0: JSON.parse(JSON.stringify(maskNowAt(c, maskUi.sel))) };
+  els.preview.setPointerCapture(e.pointerId);
+  state.dirtyTimeline = true;
+}, true);
+els.preview.addEventListener("pointermove", (e) => {
+  const d = maskUi.drag;
+  if (!d) return;
+  e.stopImmediatePropagation();
+  const c = getClip(state.selId), B = c && maskBox(c);
+  if (!B) return;
+  const bp = B.toBox(canvasPt(e));
+  if (d.tool) {
+    if (maskUi.tool === "draw" && maskUi.stroke) {
+      const last = maskUi.stroke[maskUi.stroke.length - 1], u = bp.x / B.bw, v = bp.y / B.bh;
+      if (Math.hypot((u - last[0]) * B.bw, (v - last[1]) * B.bh) > 2) maskUi.stroke.push([u, v]);
+    } else if (maskUi.tool === "pen" && maskUi.pen && maskUi.pen.dragging) {
+      const p = maskUi.pen.pts[maskUi.pen.pts.length - 1], ox = bp.x - p[0], oy = bp.y - p[1];
+      if (Math.hypot(ox, oy) > 3) { p[2] = -ox; p[3] = -oy; p[4] = ox; p[5] = oy; }
+    }
+    state.dirtyTimeline = true;
+    return;
+  }
+  const m0 = d.m0;
+  let set;
+  if (d.mode === "move") set = { x: +(m0.x + (bp.x - d.start.x) / B.bw).toFixed(4), y: +(m0.y + (bp.y - d.start.y) / B.bh).toFixed(4) };
+  else if (d.mode === "w" || d.mode === "h") {
+    const l = maskBoxToLocal(m0, B, bp.x, bp.y);
+    set = d.mode === "w" ? { w: +clamp(Math.abs(l.x) * 2, 0.01, 8).toFixed(4) } : { h: +clamp(Math.abs(l.y) * 2, 0.01, 8).toFixed(4) };
+  } else if (d.mode === "rotate") {
+    let r = Math.atan2(bp.x - m0.x * B.bw, -(bp.y - m0.y * B.bh)) * 180 / Math.PI;
+    if (e.shiftKey) r = Math.round(r / 15) * 15;
+    set = { rotation: +r.toFixed(1) };
+  } else if (m0.shape === "bezier") {
+    const pts = m0.points.map((p) => [p[0], p[1], p[2] || 0, p[3] || 0, p[4] || 0, p[5] || 0]), p = pts[maskUi.pt];
+    if (!p) return;
+    const l = maskBoxToLocal(m0, B, bp.x, bp.y);
+    if (d.mode === "point") { p[0] = l.x; p[1] = l.y; }
+    else if (d.mode === "pull") { const ox = l.x - p[0], oy = l.y - p[1]; p[2] = -ox; p[3] = -oy; p[4] = ox; p[5] = oy; }
+    else if (d.mode === "handle") {
+      const hx = l.x - p[0], hy = l.y - p[1], o = d.side === "o" ? 4 : 2, q = d.side === "o" ? 2 : 4;
+      p[o] = hx; p[o + 1] = hy;
+      if (!e.altKey) {   // keep the pair smooth: the other handle mirrors the direction, keeps its length
+        const len = Math.hypot(p[q], p[q + 1]) || Math.hypot(hx, hy), k = Math.hypot(hx, hy) || 1;
+        p[q] = -hx / k * len; p[q + 1] = -hy / k * len;
+      }
+    }
+    set = { points: pts.map((r) => r.map((v) => +v.toFixed(4))) };
+  }
+  if (set) { writeMaskSet(c, maskUi.sel, set); syncMaskInspector(c); }
+}, true);
+const endClipMaskDrag = (e) => {
+  const d = maskUi.drag;
+  if (!d) return;
+  e.stopImmediatePropagation();
+  maskUi.drag = null;
+  const c = getClip(state.selId);
+  if (d.tool) {
+    if (maskUi.tool === "draw" && maskUi.stroke) {
+      const B = c && maskBox(c), st = maskUi.stroke;
+      maskUi.stroke = null;
+      if (c && B && st.length >= 6) addMaskFrom(c, { shape: "freehand", stroke: st, aspect: B.bw / B.bh });
+      else toast("Drag around what the mask should keep");
+    } else if (maskUi.pen) maskUi.pen.dragging = false;
+    state.dirtyTimeline = true;
+    return;
+  }
+  scheduleSave(); renderInspector();
+};
+els.preview.addEventListener("pointerup", endClipMaskDrag, true);
+els.preview.addEventListener("pointercancel", endClipMaskDrag, true);
+els.preview.addEventListener("dblclick", (e) => {
+  const c = getClip(state.selId);
+  if (!maskEditActive(c) || maskUi.tool) return;
+  const h = clipMaskHandles(c), pt = canvasPt(e), grab = Math.max(8, els.preview.width / 110);
+  if (!h || h.m.shape !== "bezier") return;
+  const i = h.A.findIndex((p) => Math.hypot(p.a.x - pt.x, p.a.y - pt.y) <= grab);
+  if (i < 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (h.m.points.length <= 3) { toast("A mask needs at least 3 points"); return; }
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  pushUndo();
+  writeMaskTopology(c, maskUi.sel, (pts) => pts.filter((_, j) => j !== i));
+  maskUi.pt = -1; scheduleSave(); renderInspector();
+}, true);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && colorState.maskDraw) {   // the Color tab's Draw
+    e.preventDefault(); e.stopImmediatePropagation();
+    colorState.maskDraw = false; colorState.maskStroke = null; state.dirtyTimeline = true; renderColorPage(true);
+    return;
+  }
+  if (!maskUi.clip || (maskUi.sel < 0 && !maskUi.tool)) return;
+  const tg = e.target;
+  if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT" || tg.isContentEditable)) return;
+  const c = getClip(state.selId);
+  if (!c || c.id !== maskUi.clip) return;
+  if (e.key === "Escape") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (maskUi.tool) { maskUi.tool = null; maskUi.pen = null; maskUi.stroke = null; }
+    else if (maskUi.pt >= 0) maskUi.pt = -1;
+    else maskUi.sel = -1;
+    state.dirtyTimeline = true; renderInspector();
+  } else if (e.key === "Enter" && maskUi.tool === "pen") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    finishPen(c);
+  } else if (maskUi.tool === "pen" && maskUi.pen && !maskUi.drag) {
+    // while placing points the outline is not in the project yet: undo / redo step through the points
+    const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    const back = (mod && k === "z" && !e.shiftKey) || ((e.key === "Backspace" || e.key === "Delete") && !mod);
+    const fwd = mod && ((k === "z" && e.shiftKey) || k === "y");
+    if (!back && !fwd) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    const P = maskUi.pen.pts, R = (maskUi.pen.redo ||= []);
+    if (back && P.length) R.push(P.pop());
+    else if (fwd && R.length) P.push(R.pop());
+    state.dirtyTimeline = true;
+  }
+}, true);
+
+/* ── Shape layers, nulls and parenting in the editor ──
+   A shape clip draws props.shapes (motion.js). The Shape layer section lists
+   its items; picking one shows its box, knob and points on the monitor. Pen:
+   click to place points (drag pulls handles), click the first point to close,
+   Enter to finish an open path. Item values with ◆ keys animate per value. */
+const SHAPE_PRESETS = {
+  rect: { label: "Rectangle", item: { type: "rect", w: 420, h: 240, radius: 24, fill: "#ffd166" } },
+  ellipse: { label: "Ellipse", item: { type: "ellipse", w: 260, h: 260, fill: "#7b6cff" } },
+  polygon: { label: "Polygon", item: { type: "polygon", sides: 6, w: 260, h: 260, fill: "#22d3ee" } },
+  star: { label: "Star", item: { type: "star", sides: 5, inner: 0.45, w: 280, h: 280, fill: "#ff7ac8" } },
+  line: { label: "Line", item: { type: "line", points: [[-220, 0], [220, 0]], stroke: "#ffffff", strokeWidth: 10 } },
+};
+const shapeUi = { clip: null, sel: null, pt: -1, tool: null, pen: null, drag: null };
+const SHAPE_ROWS_UI = {
+  x: ["X", -2000, 2000, 1], y: ["Y", -2000, 2000, 1], rotation: ["Rotation", -360, 360, 0.5], scale: ["Scale", 0.05, 6, 0.01],
+  opacity: ["Opacity", 0, 1, 0.01], w: ["Width", 0, 2000, 1], h: ["Height", 0, 2000, 1], radius: ["Radius", 0, 500, 1],
+  inner: ["Inner", 0.05, 1, 0.01], strokeWidth: ["Stroke px", 0, 100, 0.5],
+  trimStart: ["Trim start", 0, 100, 0.5], trimEnd: ["Trim end", 0, 100, 0.5], trimOffset: ["Trim offset", -100, 100, 0.5],
+};
+const pathKey = (path) => (path || []).join(".");
+const samePath = (a, b) => !!a && !!b && pathKey(a) === pathKey(b);
+function trackFree(id) { return !isTrackLocked(id); }
+function shapeTrack() { return ["V2", "V3", "V1"].find((id) => TRACKS.some((tr) => tr.id === id) && trackFree(id)) || null; }
+function newVisualClip(kind, name, track, props = {}) {
+  return { id: "c_" + uid(), mediaId: null, kind, track, start: state.time, in: 0, duration: 4, name, props: { ...DEFAULT_PROPS, ...props } };
+}
+function addShapeLayer(kind) {
+  const track = shapeTrack();
+  if (!track) { toast("V1–V3 are locked — unlock a video track to add a shape"); return; }
+  pushUndo();
+  const pre = SHAPE_PRESETS[kind];
+  const c = newVisualClip("shape", pre ? pre.label : "Shape", track);
+  const list = pre ? Motion.normalizeShapes([pre.item]) : null;
+  if (list) c.props.shapes = list;
+  project.clips.push(c);
+  selectClip(c.id);
+  Object.assign(shapeUi, { clip: c.id, sel: list ? [0] : null, pt: -1, tool: pre ? null : "pen", pen: null, drag: null });
+  if (!pre && state.playing) pause();
+  scheduleSave(); renderInspector();
+  if (!pre) toast("Pen: click points on the monitor (drag to curve); click the first point to close, Enter for an open path");
+}
+function addNull() {
+  const track = ["V3", "V2", "V1"].find((id) => TRACKS.some((tr) => tr.id === id) && trackFree(id));
+  if (!track) { toast("V1–V3 are locked — unlock a video track to add a null"); return; }
+  pushUndo();
+  const c = newVisualClip("null", "Null", track);
+  project.clips.push(c);
+  selectClip(c.id); scheduleSave(); renderInspector();
+}
+/* The bin's Shapes tab: each row adds a new layer at the playhead (a selected
+   shape layer takes more items from its own Shape layer section). */
+const SHAPE_ICONS = {
+  rect: '<rect x="3" y="6" width="18" height="12" rx="2" fill="#ffd166"/>',
+  ellipse: '<circle cx="12" cy="12" r="8" fill="#7b6cff"/>',
+  polygon: '<polygon points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5" fill="#22d3ee"/>',
+  star: '<polygon points="12,2.5 14.6,9 21.5,9.3 16.1,13.6 18,20.3 12,16.4 6,20.3 7.9,13.6 2.5,9.3 9.4,9" fill="#ff7ac8"/>',
+  line: '<line x1="4" y1="18" x2="20" y2="6" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>',
+  pen: '<path d="M4 18 C 8 4, 16 4, 20 16" fill="none" stroke="#5ad1ff" stroke-width="2.5" stroke-linecap="round"/><rect x="2.5" y="16.5" width="3" height="3" fill="#fff"/><rect x="18.5" y="14.5" width="3" height="3" fill="#fff"/>',
+  null: '<rect x="5" y="5" width="14" height="14" fill="none" stroke="#ff6b6b" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="#ff6b6b" stroke-width="2"/>',
+};
+function renderShapesTab() {
+  const rows = [
+    ...Object.entries(SHAPE_PRESETS).map(([k, pre]) => ({ k, name: pre.label, sub: "Shape layer", run: () => addShapeLayer(k) })),
+    { k: "pen", name: "Pen path", sub: "Click points on the monitor", run: () => addShapeLayer("pen") },
+    { k: "null", name: "Null object", sub: "Invisible parent for other clips", run: addNull },
+  ];
+  els.libList.innerHTML = "";
+  for (const r of rows) {
+    const item = document.createElement("div");
+    item.className = "bin-item lib-item";
+    item.title = r.k === "null" ? "Add a null object at the playhead — parent clips to it to move them together" : `Add a ${r.name.toLowerCase()} layer at the playhead`;
+    item.innerHTML = `<div class="bin-thumb shape-thumb"><svg viewBox="0 0 24 24" aria-hidden="true">${SHAPE_ICONS[r.k]}</svg></div>
+      <div class="bin-meta"><div class="bin-name">${escapeHtml(r.name)}</div><div class="bin-sub">${escapeHtml(r.sub)}</div></div>
+      <button class="btn tiny accent lib-add" title="Add at playhead">＋</button>`;
+    item.addEventListener("dblclick", r.run);
+    item.querySelector(".lib-add").addEventListener("click", r.run);
+    els.libList.appendChild(item);
+  }
+}
+/** Parent the selected visual clips to a new null at their centre (a layer group). */
+function parentSelectionToNull() {
+  const sel = selectedClips().filter((x) => isVisualClip(x) && x.kind !== "null");
+  if (!sel.length) return;
+  if (sel.some(isGroupLocked)) { toastLocked(); return; }
+  const track = ["V3", "V2", "V1"].find((id) => TRACKS.some((tr) => tr.id === id) && trackFree(id));
+  if (!track) { toast("V1–V3 are locked — unlock a video track for the null"); return; }
+  pushUndo();
+  const W = els.preview.width, H = els.preview.height;
+  let sx = 0, sy = 0;
+  for (const x of sel) { const b = clipBounds(x, evalProps(x, clamp(state.time, x.start, x.start + x.duration - 1e-3)), W, H); sx += b.cx; sy += b.cy; }
+  const start = Math.min(...sel.map((x) => x.start)), end = Math.max(...sel.map((x) => x.start + x.duration));
+  const n = { ...newVisualClip("null", "Null", track, { x: Math.round(sx / sel.length - W / 2), y: Math.round(sy / sel.length - H / 2) }), start, duration: +(end - start).toFixed(4) };
+  project.clips.push(n);
+  for (const x of sel) setClipParent(x, n.id);
+  selectClip(n.id); scheduleSave(); renderInspector();
+  toast(`${sel.length} clip${sel.length > 1 ? "s" : ""} now follow the null — move, turn or scale it`);
+}
+/** Change a clip's parent, keeping it where it is at the playhead (static values; keyed ones get a key). */
+function setClipParent(c, parentId) {
+  if (parentId && Motion.wouldCycle(c.id, parentId, getClip)) { toast("That would parent the clip to itself"); return false; }
+  const t = clamp(state.time, c.start, c.start + c.duration);
+  const v = Motion.reparentValues(c, parentId || null, getClip, t);
+  if (parentId) c.parent = parentId; else delete c.parent;
+  for (const [k, val] of Object.entries(v)) {
+    if (c.keyframes?.[k]?.length && playheadOverClip(c)) setAnimProp(c, k, val);
+    else if (!c.keyframes?.[k]?.length) c.props[k] = val;
+  }
+  state.dirtyTimeline = true; inspPropGen++;
+  return true;
+}
+/** Clips this clip may be parented to: other visual clips that are not its children. */
+function parentCandidates(c) {
+  return project.clips.filter((x) => x.id !== c.id && isVisualClip(x) && !Motion.wouldCycle(c.id, x.id, getClip));
+}
+const clipShortLabel = (x) => x.track + " · " + (x.kind === "text" ? (x.props.text || "").split("\n")[0] : x.name || x.kind);
+function parentRowHtml(c) {
+  const cands = parentCandidates(c), cur = c.parent && getClip(c.parent);
+  const opts = [`<option value="">None</option>`, ...cands.map((x) => `<option value="${x.id}" ${x.id === c.parent ? "selected" : ""}>${escapeHtml(clipShortLabel(x))}${x.kind === "null" ? " (null)" : ""}</option>`)];
+  if (c.parent && !cur) opts.push(`<option value="${escapeHtml(c.parent)}" selected>Missing clip</option>`);
+  return `<div class="insp-row"><label title="Move, turn and scale with another clip (its opacity and effects are not inherited)">Parent</label><select data-parent>${opts.join("")}</select></div>`;
+}
+function anchorRowsHtml(c, p, row) {
+  return `<div class="insp-row"><label>Anchor</label><span class="insp-ctrls">
+      <button type="button" class="btn tiny${runtime.anchorTool ? " toggle on" : ""}" data-anchor-tool title="Drag on the monitor to move the anchor point — the picture stays put (Shift: snap to its centre)">✥ Move</button>
+      <button type="button" class="btn tiny" data-anchor-centre title="Put the anchor point back on the picture's centre, keeping the picture where it is">Centre</button></span></div>
+    ${row("Anchor X", `<input type="number" data-k="anchorX" value="${fmtInspNum(p.anchorX)}">`, "anchorX")}
+    ${row("Anchor Y", `<input type="number" data-k="anchorY" value="${fmtInspNum(p.anchorY)}">`, "anchorY")}`;
+}
+function bindParentAnchorControls(c) {
+  const root = els.inspector;
+  root.querySelector("[data-parent]")?.addEventListener("change", (e) => {
+    if (isGroupLocked(c)) { toastLocked(); renderInspector(); return; }
+    pushUndo();
+    setClipParent(c, e.target.value || null);
+    scheduleSave(); renderInspector();
+  });
+  root.querySelector("[data-anchor-tool]")?.addEventListener("click", () => { runtime.anchorTool = !runtime.anchorTool; state.dirtyTimeline = true; renderInspector(); });
+  root.querySelector("[data-anchor-centre]")?.addEventListener("click", () => {
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    if (!playheadOverClip(c)) { toast("Move the playhead over the clip"); return; }
+    pushUndo();
+    const p = propsAtPlayhead(c), box = layerBox(c, p, els.preview.width, els.preview.height, state.time), as = Motion.contentScale(c, p);
+    const v = Motion.anchorMoveValues(c, p, Math.round(box.ox / as), Math.round(box.oy / as));
+    for (const k of ["anchorX", "anchorY", "x", "y"]) setAnimProp(c, k, v[k]);
+    scheduleSave(); renderInspector();
+  });
+}
+
+/* ── The Shape layer section ── */
+function shapeList(c) { return clipShapes(c) || []; }
+function shapeUiFor(c) {
+  if (!c || shapeUi.clip !== c.id) Object.assign(shapeUi, { clip: c ? c.id : null, sel: null, pt: -1, tool: null, pen: null, drag: null });
+  if (shapeUi.sel && !Motion.getItem(editList(c), shapeUi.sel)) { shapeUi.sel = null; shapeUi.pt = -1; }
+  return shapeUi;
+}
+function writeShapes(c, list) {
+  const n = list && list.length ? Motion.normalizeShapes(list) : null;
+  if (n) c.props.shapes = n; else delete c.props.shapes;
+  state.dirtyTimeline = true; inspPropGen++;
+}
+const shapeLocalT = (c) => state.time - c.start;
+function shapeKeyIndex(keys, t) {
+  const tol = 0.5 / (projectFps() || 30);
+  return keys ? keys.findIndex((k) => Math.abs(k.t - t) < tol) : -1;
+}
+const isAnimated = (it, k) => !!(it.keys && it.keys.some((x) => x[k] != null));
+/** The selected item as it is at the playhead. */
+function shapeNow(c, path = shapeUi.sel) { return path ? Motion.getItem(editItemsAt(c, state.time), path) : null; }
+/** Change item `path`; values that are animated land in a key at the playhead. */
+function writeShapeSet(c, path, set) {
+  const list = editList(c), it = Motion.getItem(list, path);
+  if (!it) return;
+  const t = shapeLocalT(c), statics = {}, keyed = {};
+  for (const [k, v] of Object.entries(set)) (Motion.KEYED.includes(k) && isAnimated(it, k) ? keyed : statics)[k] = v;
+  const next = { ...statics };
+  if (Object.keys(keyed).length) {
+    // like setAnimProp: off the clip there is no "at the playhead" to key
+    if (!playheadOverClip(c)) { toast("Move the playhead over the clip to edit its keyframes"); return false; }
+    const keys = it.keys.map((k) => ({ ...k })), kt = +clamp(t, 0, c.duration).toFixed(4);
+    let j = shapeKeyIndex(keys, kt);
+    if (j < 0) { keys.push({ t: kt }); keys.sort((a, b) => a.t - b.t); j = shapeKeyIndex(keys, kt); }
+    Object.assign(keys[j], keyed);
+    next.keys = keys;
+  }
+  writeEditList(c, Motion.updateItem(list, path, (x) => Motion.mergeItem(x, next) || x));
+}
+/** ◆ on an item value: key it at the playhead, or remove the key there. */
+function toggleShapeKey(c, path, k) {
+  const list = editList(c), it = Motion.getItem(list, path), now = shapeNow(c, path);
+  if (!it || !now || now[k] == null) return;
+  const t = shapeLocalT(c), keys = (it.keys || []).map((x) => ({ ...x })), j = shapeKeyIndex(keys, t);
+  const set = {};
+  if (j >= 0 && keys[j][k] != null) {
+    delete keys[j][k];
+    if (!Object.keys(keys[j]).some((p) => Motion.KEYED.includes(p))) keys.splice(j, 1);
+    if (!keys.some((x) => x[k] != null)) set[k] = k === "points" ? now.points.map((q) => q.map((v) => +v.toFixed(3))) : now[k];   // last key gone: keep the value
+  } else {
+    const v = k === "points" ? now.points.map((q) => q.map((x) => +x.toFixed(3))) : typeof now[k] === "number" ? +now[k].toFixed(4) : now[k];
+    if (j >= 0) keys[j][k] = v; else { keys.push({ t: +clamp(t, 0, c.duration).toFixed(4), [k]: v }); keys.sort((a, b) => a.t - b.t); }
+  }
+  set.keys = keys.length ? keys : null;
+  writeEditList(c, Motion.updateItem(list, path, (x) => Motion.mergeItem(x, set) || x));
+}
+function shapeItemLabel(it, path) { return it.name || `${it.type[0].toUpperCase() + it.type.slice(1)} ${path.map((i) => i + 1).join(".")}`; }
+function shapeSectionHtml(c, p, row) {
+  const ui = shapeUiFor(c), list = shapeList(c), full = Motion.countItems(list) >= Motion.MAX_ITEMS;
+  const btn = (attr, label, title, on, dis) => `<button type="button" class="btn tiny${on ? " toggle on" : ""}" ${attr} title="${title}" ${dis ? "disabled" : ""}>${label}</button>`;
+  const chips = Motion.itemPaths(list).map((path) => {
+    const it = Motion.getItem(list, path);
+    return `<button type="button" class="btn tiny cl-chip${samePath(path, ui.sel) ? " toggle on" : ""}${it.on === false ? " off" : ""}" data-ssel="${pathKey(path)}"
+      title="${escapeHtml(it.type)} — click to edit on the monitor">${"› ".repeat(path.length - 1)}${escapeHtml(shapeItemLabel(it, path))}</button>`;
+  }).join("");
+  const slider = (k, min, max, step, unit = "") => {
+    const shown = fmtInspNum(p[k], step);
+    return row(KF_GRAPH_LABEL[k], `<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${shown}" title="Ctrl/Cmd-click: reset to default">
+      <span class="val" data-val="${k}" data-unit="${unit}">${shown}${unit}</span>`, k);
+  };
+  let html = `<div class="insp-section" data-shape-section><h3>Shape layer</h3>
+    <div class="cl-row">${Object.entries(SHAPE_PRESETS).map(([k, pre]) => btn(`data-sadd="${k}"`, "+ " + pre.label, `Add a ${pre.label.toLowerCase()} to this layer`, false, full)).join("")}
+      ${btn('data-stool="pen"', "Pen", "Click points on the monitor (drag to curve); click the first point to close, Enter for an open path", ui.tool === "pen", full)}</div>
+    ${ui.tool === "pen" ? `<p class="cl-note">Pen: click to add points, drag to curve. Click the first point to close, Enter keeps the path open. Backspace / Ctrl+Z removes the last point, Esc cancels.</p>` : ""}
+    ${list.length ? `<div class="cl-row shape-items">${chips}</div>` : ui.tool ? "" : `<p class="cl-note">No shapes yet — add one above.</p>`}
+    ${slider("trimStart", 0, 100, 0.5, "%")}${slider("trimEnd", 0, 100, 0.5, "%")}${slider("trimOffset", -100, 100, 0.5, "%")}`;
+  const raw = ui.sel && Motion.getItem(list, ui.sel), now = raw && shapeNow(c);
+  if (raw && now) {
+    const t = shapeLocalT(c), j = shapeKeyIndex(raw.keys, t);
+    const kbtn = (k) => `<button type="button" class="kf-btn${isAnimated(raw, k) ? " has" : ""}${j >= 0 && raw.keys[j][k] != null ? " on" : ""}" data-skey="${k}" title="Key this value at the playhead / remove the key there">◆</button>`;
+    const srow = (k) => {
+      const [lab, min, max, step] = SHAPE_ROWS_UI[k];
+      return `<div class="insp-row cp-row"><label class="cp-label">${lab}</label>
+        <input type="range" data-sk="${k}" min="${min}" max="${max}" step="${step}" value="${now[k]}">
+        <input type="number" class="cp-num" data-sknum="${k}" step="${step}" value="${fmtG(now[k], step)}">${kbtn(k)}</div>`;
+    };
+    const color = (k, lab) => `<div class="insp-row"><label>${lab}</label><span class="insp-ctrls">
+        <input type="color" data-scolor="${k}" value="${now[k] && now[k] !== "none" ? now[k].slice(0, 7) : "#ffffff"}">
+        ${btn(`data-snone="${k}"`, "None", `No ${lab.toLowerCase()}`, now[k] === "none")}${kbtn(k)}</span></div>`;
+    const path = ui.sel, inGroup = path.length > 1, siblings = inGroup ? Motion.getItem(list, path.slice(0, -1)).items : list, i = path[path.length - 1];
+    const own = Motion.OWN[raw.type];
+    html += `<div class="cl-row"><input type="text" class="cl-name" data-sname value="${escapeHtml(raw.name || "")}" placeholder="${escapeHtml(shapeItemLabel({ type: raw.type }, path))}" maxlength="40" title="Item name">
+        ${btn('data-sact="on"', raw.on === false ? "Off" : "On", "Item on / off", raw.on !== false)}
+        ${btn('data-sact="up"', "↑", "Move down the stack (drawn earlier)", false, i === 0)}
+        ${btn('data-sact="down"', "↓", "Move up the stack (drawn later)", false, i >= siblings.length - 1)}
+        ${btn('data-sact="dup"', "Copy", "Duplicate", false, full)}
+        ${btn('data-sact="group"', "Group", "Put this item in a new group (move, turn, scale and trim them together)", false, full || path.length >= Motion.MAX_DEPTH)}
+        ${raw.type === "group" ? btn('data-sact="ungroup"', "Ungroup", "Take the items out of this group") : ""}
+        ${inGroup ? btn('data-sact="out"', "Out", "Move this item out of its group") : ""}
+        ${btn('data-sact="del"', "Delete", "Delete this item")}
+        ${raw.keys ? btn('data-sact="clearkeys"', "Clear keys", "Remove every key (keeps the item as it is at the playhead)") : ""}</div>
+      ${srow("x")}${srow("y")}${srow("rotation")}${srow("scale")}${srow("opacity")}
+      ${own.includes("w") ? srow("w") + srow("h") : ""}${own.includes("radius") ? srow("radius") : ""}
+      ${own.includes("sides") ? `<div class="insp-row"><label>Points</label><input type="number" data-ssides min="3" max="64" step="1" value="${raw.sides}"></div>` : ""}
+      ${own.includes("inner") ? srow("inner") : ""}
+      ${raw.type === "path" ? `<div class="insp-row"><label>Closed</label><input type="checkbox" data-sclosed ${raw.closed !== false ? "checked" : ""}>${kbtn("points")}</div>` : ""}
+      ${raw.type !== "group" ? color("fill", "Fill") + color("stroke", "Stroke") + srow("strokeWidth") +
+        `<div class="insp-row"><label>Ends / joins</label><span class="insp-ctrls"><select data-scap>${Motion.CAPS.map((v) => `<option ${raw.lineCap === v ? "selected" : ""}>${v}</option>`).join("")}</select>
+          <select data-sjoin>${Motion.JOINS.map((v) => `<option ${raw.lineJoin === v ? "selected" : ""}>${v}</option>`).join("")}</select></span></div>` : ""}
+      ${srow("trimStart")}${srow("trimEnd")}${srow("trimOffset")}
+      <p class="cl-note">On the monitor: drag the item to move it, the knob turns it (Shift: 15° steps), the corners resize it${raw.type === "line" || raw.type === "path"
+        ? "; drag a point to move it, its handles to curve it (Alt: break the pair), Alt-drag a point to pull new handles" + (raw.type === "path" ? ", Ctrl-click the outline to add a point, double-click a point to remove it" : "")
+        : ""}. Esc deselects.</p>`;
+  }
+  return html + `</div>`;
+}
+function bindShapeControls(c) {
+  const root = els.inspector.querySelector("[data-shape-section]");
+  if (!root) return;
+  const guard = () => { if (isGroupLocked(c)) { toastLocked(); return false; } return true; };
+  const rerender = () => { state.dirtyTimeline = true; renderInspector(); };
+  const sel = () => shapeUi.sel;
+  const edit = (set) => { writeShapeSet(c, sel(), set); scheduleSave(); };
+  for (const b of root.querySelectorAll("[data-sadd]")) b.addEventListener("click", () => {
+    if (!guard()) return;
+    pushUndo();
+    const list = shapeList(c).slice();
+    list.push(SHAPE_PRESETS[b.dataset.sadd].item);
+    writeShapes(c, list);
+    Object.assign(shapeUi, { sel: [shapeList(c).length - 1], pt: -1, tool: null, pen: null });
+    maskUi.sel = -1;
+    scheduleSave(); rerender();
+  });
+  root.querySelector('[data-stool="pen"]')?.addEventListener("click", () => {
+    if (!guard()) return;
+    shapeUi.tool = shapeUi.tool === "pen" ? null : "pen"; shapeUi.pen = null; shapeUi.sel = null; maskUi.sel = -1; maskUi.tool = null;
+    if (shapeUi.tool && state.playing) pause();
+    if (shapeUi.tool && !activeAt(c, state.time)) toast("Move the playhead over the clip, then draw on the monitor");
+    rerender();
+  });
+  for (const b of root.querySelectorAll("[data-ssel]")) b.addEventListener("click", () => {
+    const path = b.dataset.ssel.split(".").map(Number);
+    shapeUi.sel = samePath(shapeUi.sel, path) ? null : path; shapeUi.pt = -1; shapeUi.tool = null;
+    if (shapeUi.sel) { maskUi.sel = -1; maskUi.tool = null; }
+    rerender();
+  });
+  for (const b of root.querySelectorAll("[data-sact]")) b.addEventListener("click", () => {
+    const a = b.dataset.sact, path = sel(), list = shapeList(c), it = path && Motion.getItem(list, path);
+    if (!it || !guard()) return;
+    pushUndo();
+    const parentPath = path.slice(0, -1), i = path[path.length - 1];
+    const withSiblings = (fn) => parentPath.length
+      ? Motion.updateItem(list, parentPath, (g) => ({ ...g, items: fn(g.items.slice()) }))
+      : fn(list.slice());
+    let next = list;
+    if (a === "on") next = Motion.updateItem(list, path, (x) => Motion.mergeItem(x, { on: x.on === false ? null : false }));
+    else if (a === "del") { next = Motion.updateItem(list, path, () => null); shapeUi.sel = null; }
+    else if (a === "dup") { next = withSiblings((s) => { s.splice(i + 1, 0, JSON.parse(JSON.stringify({ ...it, name: it.name ? `${it.name} copy`.slice(0, 40) : undefined }))); return s; }); shapeUi.sel = [...parentPath, i + 1]; }
+    else if (a === "up" || a === "down") {
+      const j = a === "up" ? i - 1 : i + 1;
+      next = withSiblings((s) => { [s[i], s[j]] = [s[j], s[i]]; return s; });
+      shapeUi.sel = [...parentPath, j];
+    } else if (a === "group") next = Motion.updateItem(list, path, (x) => ({ type: "group", x: x.x, y: x.y, items: [{ ...x, x: 0, y: 0 }] }));
+    else if (a === "ungroup") {
+      // the children keep their place: fold the group's transform into each (position, rotation, scale)
+      const M = Motion.itemMatrix(it);
+      const kids = (it.items || []).map((k) => {
+        const m = Motion.mul(M, Motion.itemMatrix(k));
+        return { ...k, x: +m[4].toFixed(3), y: +m[5].toFixed(3), rotation: +(Math.atan2(m[1], m[0]) * 180 / Math.PI).toFixed(3),
+          scale: +Math.hypot(m[0], m[1]).toFixed(4), opacity: +((k.opacity ?? 1) * (it.opacity ?? 1)).toFixed(4) };
+      });
+      next = withSiblings((s) => { s.splice(i, 1, ...kids); return s; });
+      shapeUi.sel = kids.length ? [...parentPath, i] : null;
+    } else if (a === "out") {
+      const gm = Motion.itemMatrix(Motion.getItem(list, parentPath)), m = Motion.mul(gm, Motion.itemMatrix(it));
+      const moved = { ...it, x: +m[4].toFixed(3), y: +m[5].toFixed(3), rotation: +(Math.atan2(m[1], m[0]) * 180 / Math.PI).toFixed(3), scale: +Math.hypot(m[0], m[1]).toFixed(4) };
+      const gp = parentPath.slice(0, -1), gi = parentPath[parentPath.length - 1];
+      next = Motion.updateItem(list, path, () => null);
+      next = gp.length ? Motion.updateItem(next, gp, (g) => { const s = g.items.slice(); s.splice(gi + 1, 0, moved); return { ...g, items: s }; })
+        : (() => { const s = next.slice(); s.splice(gi + 1, 0, moved); return s; })();
+      shapeUi.sel = [...gp, gi + 1];
+    } else if (a === "clearkeys") {
+      const now = shapeNow(c, path), set = { keys: null };
+      for (const k of Motion.KEYED) if (isAnimated(it, k)) set[k] = k === "points" ? now.points.map((q) => q.map((v) => +v.toFixed(3))) : now[k];
+      next = Motion.updateItem(list, path, (x) => Motion.mergeItem(x, set));
+    }
+    writeShapes(c, next); shapeUi.pt = -1; scheduleSave(); rerender();
+  });
+  for (const b of root.querySelectorAll("[data-skey]")) b.addEventListener("click", () => {
+    if (!guard() || !sel()) return;
+    if (!playheadOverClip(c)) { toast("Move the playhead over the clip to key it"); return; }
+    pushUndo(); toggleShapeKey(c, sel(), b.dataset.skey); scheduleSave(); rerender();
+  });
+  root.querySelector("[data-sname]")?.addEventListener("change", (e) => { if (!guard()) return; pushUndo(); edit({ name: e.target.value.trim() || null }); rerender(); });
+  root.querySelector("[data-ssides]")?.addEventListener("change", (e) => { const v = Math.round(+e.target.value); if (!guard() || !(v >= 3 && v <= 64)) return; pushUndo(); edit({ sides: v }); rerender(); });
+  root.querySelector("[data-sclosed]")?.addEventListener("change", (e) => { if (!guard()) return; pushUndo(); edit({ closed: e.target.checked ? null : false }); rerender(); });
+  root.querySelector("[data-scap]")?.addEventListener("change", (e) => { if (!guard()) return; pushUndo(); edit({ lineCap: e.target.value }); rerender(); });
+  root.querySelector("[data-sjoin]")?.addEventListener("change", (e) => { if (!guard()) return; pushUndo(); edit({ lineJoin: e.target.value }); rerender(); });
+  for (const inp of root.querySelectorAll("[data-scolor]")) {
+    const k = inp.dataset.scolor;
+    inp.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    inp.addEventListener("input", () => {
+      if (isGroupLocked(c)) return;
+      const set = { [k]: inp.value };
+      if (k === "stroke" && !(shapeNow(c)?.strokeWidth > 0)) set.strokeWidth = 6;
+      edit(set);
+    });
+    inp.addEventListener("change", rerender);
+  }
+  for (const b of root.querySelectorAll("[data-snone]")) b.addEventListener("click", () => {
+    if (!guard()) return;
+    pushUndo(); edit({ [b.dataset.snone]: "none" }); rerender();
+  });
+  for (const r of root.querySelectorAll("[data-sk]")) {
+    const k = r.dataset.sk;
+    r.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    r.addEventListener("input", () => {
+      if (isGroupLocked(c)) return;
+      edit({ [k]: +r.value });
+      const n = root.querySelector(`[data-sknum="${k}"]`); if (n) n.value = fmtG(+r.value, SHAPE_ROWS_UI[k][3]);
+    });
+  }
+  for (const n of root.querySelectorAll("[data-sknum]")) {
+    const k = n.dataset.sknum;
+    n.addEventListener("change", () => {
+      const x = parseFloat(n.value);
+      if (!Number.isFinite(x) || !guard()) return;
+      pushUndo(); edit({ [k]: x }); rerender();
+      document.activeElement?.blur?.();
+    });
+  }
+}
+/** Animated items: the rows and ◆ follow the playhead (called from the inspector sync). */
+function syncShapeInspector(c) {
+  const root = els.inspector.querySelector("[data-shape-section]");
+  if (!root || shapeUi.clip !== c.id || !shapeUi.sel || shapeUi.drag) return;
+  const raw = Motion.getItem(editList(c), shapeUi.sel), now = shapeNow(c);
+  if (!raw || !now) return;
+  const active = document.activeElement, j = shapeKeyIndex(raw.keys, shapeLocalT(c));
+  for (const k of Object.keys(SHAPE_ROWS_UI)) {
+    const r = root.querySelector(`[data-sk="${k}"]`), n = root.querySelector(`[data-sknum="${k}"]`);
+    if (r && r !== active) r.value = now[k];
+    if (n && n !== active) n.value = fmtG(now[k], SHAPE_ROWS_UI[k][3]);
+  }
+  for (const b of root.querySelectorAll("[data-skey]")) b.classList.toggle("on", j >= 0 && raw.keys[j][b.dataset.skey] != null);
+  for (const inp of root.querySelectorAll("[data-scolor]")) {
+    const v = now[inp.dataset.scolor];
+    if (inp !== active && v && v !== "none") inp.value = v.slice(0, 7);
+  }
+}
+
+/* ── Shape items on the monitor ── */
+function shapeEditActive(c) {
+  return !!c && (c.kind === "shape" || (c.kind === "text" && !!clipTextPath(c)) || (c.kind === "text" && shapeUi.tool === "pen")) && shapeUi.clip === c.id && state.selId === c.id && (!!shapeUi.sel || !!shapeUi.tool) &&
+    activeAt(c, state.time) && !state.playing && !maskEditActive(c);
+}
+/** Layer px → canvas px for a shape clip at the playhead. */
+function shapeLayerMatrix(c, W, H, t = state.time) {
+  const p = evalProps(c, t);
+  return layerScreenMatrix(c, p, W, H, t).scale(Motion.contentScale(c, p));
+}
+/* The item list the editor works on: a shape layer's items, or a title's path as a one-item list. */
+function editList(c) { return c.kind === "text" ? (clipTextPath(c) ? [clipTextPath(c)] : []) : shapeList(c); }
+function editItemsAt(c, t) { return c.kind === "text" ? (clipTextPath(c) ? [textPathAt(c, t)] : null) : shapeItemsAt(c, t); }
+function writeEditList(c, list) {
+  if (c.kind !== "text") { writeShapes(c, list); return; }
+  const n = list && list[0] ? Motion.normalizeTextPath(list[0]) : null;
+  if (n) c.props.textPath = n; else delete c.props.textPath;
+  state.dirtyTimeline = true; inspPropGen++;
+}
+/** The picked item's frames and handles in canvas px. */
+function shapeHandles(c, W, H) {
+  const items = editItemsAt(c, state.time), path = shapeUi.sel, it = path && Motion.getItem(items, path);
+  if (!it) return null;
+  const L = shapeLayerMatrix(c, W, H);
+  const F = L.multiply(new DOMMatrix(Motion.itemFrame(items, path.slice(0, -1))));   // the space the item's x / y live in
+  const I = F.multiply(new DOMMatrix(Motion.itemMatrix(it)));                          // the item's own frame
+  const own = it.type === "group" ? Motion.bounds(it.items) : Motion.bounds([{ ...it, x: 0, y: 0, rotation: 0, scale: 1, opacity: 1, on: true }]);
+  const b = own || { x0: -20, y0: -20, x1: 20, y1: 20 };
+  const at = (x, y) => { const q = I.transformPoint(new DOMPoint(x, y)); return { x: q.x, y: q.y }; };
+  const corners = [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]].map(([x, y]) => ({ ...at(x, y), lx: x, ly: y }));
+  const topMid = at((b.x0 + b.x1) / 2, b.y0), up = at((b.x0 + b.x1) / 2, b.y0 - 1), d = Math.hypot(up.x - topMid.x, up.y - topMid.y) || 1;
+  const gap = Math.max(24, W / 34), inset = Math.max(8, W / 110);
+  const knob = { x: clamp(topMid.x + (up.x - topMid.x) / d * gap, inset, W - inset), y: clamp(topMid.y + (up.y - topMid.y) / d * gap, inset, H - inset) };
+  const ol = it.type === "group" ? null : Motion.outline(it);
+  const A = ol ? ol.A.map((a) => ({ a: at(a.x, a.y), i: at(a.ix, a.iy), o: at(a.ox, a.oy) })) : [];
+  return { it, F, I, corners, topMid, knob, centre: at(0, 0), outline: ol, A, editable: it.type === "line" || it.type === "path" };
+}
+function drawShapeOverlay(c, W, H) {
+  const lw = Math.max(1.5, W / 800), hs = Math.max(5, W / 170);
+  const L = shapeLayerMatrix(c, W, H);
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.lineJoin = "round";
+  const dot = (p, r, fill, square) => {
+    ctx2d.beginPath();
+    if (square) ctx2d.rect(p.x - r, p.y - r, r * 2, r * 2); else ctx2d.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx2d.fillStyle = fill; ctx2d.fill(); ctx2d.lineWidth = lw; ctx2d.strokeStyle = "rgba(0,0,0,0.7)"; ctx2d.stroke();
+  };
+  const h = shapeUi.sel ? shapeHandles(c, W, H) : null;
+  if (h) {
+    if (h.outline) {
+      const pts = Motion.flatten(h.outline.A, h.outline.closed, 24).map(([x, y]) => { const q = h.I.transformPoint(new DOMPoint(x, y)); return [q.x, q.y]; });
+      ctx2d.lineWidth = lw * 2.2; ctx2d.strokeStyle = "rgba(0,0,0,0.55)"; strokeOutline(ctx2d, pts, h.outline.closed);
+      ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#5ad1ff"; strokeOutline(ctx2d, pts, h.outline.closed);
+    }
+    ctx2d.setLineDash([lw * 4, lw * 3]); ctx2d.strokeStyle = "#4f8cff";
+    strokeOutline(ctx2d, h.corners.map((q) => [q.x, q.y]), true);
+    ctx2d.setLineDash([]);
+    ctx2d.beginPath(); ctx2d.moveTo(h.topMid.x, h.topMid.y); ctx2d.lineTo(h.knob.x, h.knob.y); ctx2d.stroke();
+    for (const q of h.corners) dot(q, hs * 0.8, "#fff", true);
+    if (h.editable) {
+      const sp = h.A[shapeUi.pt];
+      if (sp) {
+        ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#9fd0ff";
+        for (const q of [sp.i, sp.o]) { ctx2d.beginPath(); ctx2d.moveTo(sp.a.x, sp.a.y); ctx2d.lineTo(q.x, q.y); ctx2d.stroke(); }
+        dot(sp.i, hs * 0.6, "#9fd0ff"); dot(sp.o, hs * 0.6, "#9fd0ff");
+      }
+      h.A.forEach((p, j) => dot(p.a, hs * 0.62, j === shapeUi.pt ? "#5ad1ff" : "#fff", true));
+    }
+    dot(h.centre, hs * 0.5, "#5ad1ff");
+    dot(h.knob, hs * 0.9, "#ffce5c");
+  }
+  if (shapeUi.tool === "pen" && shapeUi.pen && shapeUi.pen.pts.length) {
+    const P = shapeUi.pen.pts, A = P.map((p) => ({ x: p[0], y: p[1], ix: p[0] + p[2], iy: p[1] + p[3], ox: p[0] + p[4], oy: p[1] + p[5] }));
+    const open = Motion.flatten(A, false, 24).map(([x, y]) => { const q = L.transformPoint(new DOMPoint(x, y)); return [q.x, q.y]; });
+    ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#5ad1ff";
+    if (A.length > 1) strokeOutline(ctx2d, open, false);
+    A.forEach((a, j) => { const q = L.transformPoint(new DOMPoint(a.x, a.y)); dot(q, hs * (j === 0 && A.length >= 3 ? 0.9 : 0.62), j === 0 ? "#5ad1ff" : "#fff", true); });
+  }
+  ctx2d.restore();
+  return true;
+}
+/** Finish the pen: a path item around the points' centre (closed when it was closed on the first point). */
+function finishShapePen(c, closed) {
+  const P = shapeUi.pen && shapeUi.pen.pts;
+  if (!P || P.length < (closed ? 3 : 2)) { toast(closed ? "A closed path needs at least 3 points" : "A path needs at least 2 points"); return; }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const cx = Math.round((x0 + x1) / 2), cy = Math.round((y0 + y1) / 2);
+  const item = { type: "path", x: cx, y: cy, points: P.slice(0, Motion.MAX_POINTS).map(([x, y, ix, iy, ox, oy]) => [x - cx, y - cy, ix, iy, ox, oy].map((v) => +v.toFixed(2))) };
+  if (c.kind === "text") { if (!closed) item.closed = false; }
+  else if (closed) Object.assign(item, { fill: "#ffffff" }); else Object.assign(item, { closed: false, stroke: "#ffffff", strokeWidth: 8 });
+  pushUndo();
+  const list = c.kind === "text" ? [] : editList(c).slice();
+  list.push(item);
+  writeEditList(c, list);
+  Object.assign(shapeUi, { sel: [editList(c).length - 1], pt: -1, tool: null, pen: null });
+  scheduleSave(); renderInspector();
+}
+function nearestShapeSegment(h, pt) {
+  let best = null;
+  Motion.segments(h.outline.A, h.outline.closed).forEach(([a, b], i) => {
+    for (let k = 1; k < 24; k++) {
+      const t = k / 24, u = 1 - t;
+      const x = u * u * u * a.x + 3 * u * u * t * a.ox + 3 * u * t * t * b.ix + t * t * t * b.x;
+      const y = u * u * u * a.y + 3 * u * u * t * a.oy + 3 * u * t * t * b.iy + t * t * t * b.y;
+      const q = h.I.transformPoint(new DOMPoint(x, y)), d = Math.hypot(q.x - pt.x, q.y - pt.y);
+      if (!best || d < best.d) best = { d, i, t };
+    }
+  });
+  return best;
+}
+/** Add or remove points of a path: the base points and every keyed outline change together. */
+function writeShapeTopology(c, path, edit) {
+  writeEditList(c, Motion.updateItem(editList(c), path, (it) => Motion.mergeItem(it, {
+    points: edit(it.points), keys: it.keys ? it.keys.map((k) => (k.points ? { ...k, points: edit(k.points) } : k)) : null,
+  }) || it));
+}
+els.preview.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || isSourceMode()) return;
+  const c = getClip(state.selId);
+  if (!shapeEditActive(c)) return;
+  const W = els.preview.width, H = els.preview.height, pt = canvasPt(e), grab = Math.max(8, W / 110);
+  const near = (p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= grab;
+  if (shapeUi.tool === "pen") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    const L = shapeLayerMatrix(c, W, H), lp = L.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
+    const P = (shapeUi.pen ||= { pts: [] }).pts;
+    if (P.length >= 3 && near(L.transformPoint(new DOMPoint(P[0][0], P[0][1])))) { finishShapePen(c, true); return; }
+    if (P.length >= Motion.MAX_POINTS) { toast(`A path has at most ${Motion.MAX_POINTS} points`); return; }
+    P.push([lp.x, lp.y, 0, 0, 0, 0]);
+    shapeUi.pen.redo = []; shapeUi.pen.dragging = true;
+    shapeUi.drag = { tool: true, L };
+    els.preview.setPointerCapture(e.pointerId);
+    state.dirtyTimeline = true;
+    return;
+  }
+  const h = shapeHandles(c, W, H);
+  if (!h) return;
+  const it = h.it, sp = h.editable ? h.A[shapeUi.pt] : null;
+  const lp = h.I.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
+  let drag = null;
+  if (near(h.knob)) drag = { mode: "rotate", a0: Math.atan2(pt.y - h.centre.y, pt.x - h.centre.x) };
+  else if (sp && near(sp.o)) drag = { mode: "handle", side: "o" };
+  else if (sp && near(sp.i)) drag = { mode: "handle", side: "i" };
+  else if (h.editable && h.A.some((p) => near(p.a))) { shapeUi.pt = h.A.findIndex((p) => near(p.a)); drag = { mode: e.altKey ? "pull" : "point" }; }
+  else if (h.corners.some(near)) { const q = h.corners.find(near); drag = { mode: "size", lx0: q.lx, ly0: q.ly, d0: Math.hypot(pt.x - h.centre.x, pt.y - h.centre.y) || 1 }; }
+  else if (it.type === "path" && (e.ctrlKey || e.metaKey)) {
+    if (it.points.length >= Motion.MAX_POINTS) { toast(`A path has at most ${Motion.MAX_POINTS} points`); e.stopImmediatePropagation(); return; }
+    if (isGroupLocked(c)) { toastLocked(); e.stopImmediatePropagation(); return; }
+    const r = nearestShapeSegment(h, pt);
+    if (!r || r.d > grab * 3) return;
+    pushUndo(); writeShapeTopology(c, shapeUi.sel, (pts) => Mask.splitPoints(pts, r.i, r.t)); scheduleSave();
+    shapeUi.pt = r.i + 1;
+    drag = { mode: "point", pushed: true };
+  } else {
+    const xs = h.corners.map((q) => q.lx), ys = h.corners.map((q) => q.ly);
+    if (lp.x >= Math.min(...xs) && lp.x <= Math.max(...xs) && lp.y >= Math.min(...ys) && lp.y <= Math.max(...ys)) drag = { mode: "move" };
+  }
+  if (!drag) return;   // outside the item: the monitor's usual clicks
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  if (!drag.pushed) pushUndo();
+  shapeUi.drag = { ...drag, start: pt, it0: JSON.parse(JSON.stringify(shapeNow(c))), F: h.F, I: h.I };
+  els.preview.setPointerCapture(e.pointerId);
+  state.dirtyTimeline = true;
+}, true);
+els.preview.addEventListener("pointermove", (e) => {
+  const d = shapeUi.drag;
+  if (!d) return;
+  e.stopImmediatePropagation();
+  const c = getClip(state.selId);
+  if (!c) return;
+  const pt = canvasPt(e);
+  if (d.tool) {
+    const P = shapeUi.pen && shapeUi.pen.pts, p = P && P[P.length - 1];
+    if (p && shapeUi.pen.dragging) {
+      const q = d.L.inverse().transformPoint(new DOMPoint(pt.x, pt.y)), ox = q.x - p[0], oy = q.y - p[1];
+      if (Math.hypot(ox, oy) > 3) { p[2] = -ox; p[3] = -oy; p[4] = ox; p[5] = oy; }
+    }
+    state.dirtyTimeline = true;
+    return;
+  }
+  const it0 = d.it0, r3 = (v) => +v.toFixed(3);
+  let set = null;
+  if (d.mode === "move") {
+    const Fi = d.F.inverse(), a = Fi.transformPoint(new DOMPoint(d.start.x, d.start.y)), b = Fi.transformPoint(new DOMPoint(pt.x, pt.y));
+    set = { x: Math.round(it0.x + b.x - a.x), y: Math.round(it0.y + b.y - a.y) };
+  } else if (d.mode === "rotate") {
+    const c0 = d.I.transformPoint(new DOMPoint(0, 0));
+    let r = it0.rotation + (Math.atan2(pt.y - c0.y, pt.x - c0.x) - d.a0) * 180 / Math.PI;
+    if (e.shiftKey) r = Math.round(r / 15) * 15;
+    set = { rotation: r3(r) };
+  } else if (d.mode === "size") {
+    const l = d.I.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
+    if (Motion.OWN[it0.type].includes("w")) {
+      let kx = Math.abs(l.x) / Math.max(1e-6, Math.abs(d.lx0)), ky = Math.abs(l.y) / Math.max(1e-6, Math.abs(d.ly0));
+      if (e.shiftKey) kx = ky = Math.max(kx, ky);
+      set = { w: Math.round(clamp(it0.w * kx, 1, 20000)), h: Math.round(clamp(it0.h * ky, 1, 20000)) };
+    } else {
+      const c0 = d.I.transformPoint(new DOMPoint(0, 0));
+      set = { scale: +clamp(it0.scale * Math.hypot(pt.x - c0.x, pt.y - c0.y) / d.d0, 0.01, 100).toFixed(4) };
+    }
+  } else if (it0.points) {
+    const pts = it0.points.map((p) => [p[0], p[1], p[2] || 0, p[3] || 0, p[4] || 0, p[5] || 0]), p = pts[shapeUi.pt];
+    if (!p) return;
+    const l = d.I.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
+    if (d.mode === "point") { p[0] = l.x; p[1] = l.y; }
+    else if (d.mode === "pull") { const ox = l.x - p[0], oy = l.y - p[1]; p[2] = -ox; p[3] = -oy; p[4] = ox; p[5] = oy; }
+    else if (d.mode === "handle") {
+      const hx = l.x - p[0], hy = l.y - p[1], o = d.side === "o" ? 4 : 2, q = d.side === "o" ? 2 : 4;
+      p[o] = hx; p[o + 1] = hy;
+      if (!e.altKey) {   // keep the pair smooth: the other handle mirrors the direction, keeps its length
+        const len = Math.hypot(p[q], p[q + 1]) || Math.hypot(hx, hy), k = Math.hypot(hx, hy) || 1;
+        p[q] = -hx / k * len; p[q + 1] = -hy / k * len;
+      }
+    }
+    set = { points: pts.map((r) => r.map(r3)) };
+  }
+  if (set) { writeShapeSet(c, shapeUi.sel, set); syncShapeInspector(c); }
+}, true);
+const endShapeDrag = (e) => {
+  const d = shapeUi.drag;
+  if (!d) return;
+  e.stopImmediatePropagation();
+  shapeUi.drag = null;
+  if (d.tool) { if (shapeUi.pen) shapeUi.pen.dragging = false; state.dirtyTimeline = true; return; }
+  scheduleSave(); renderInspector();
+};
+els.preview.addEventListener("pointerup", endShapeDrag, true);
+els.preview.addEventListener("pointercancel", endShapeDrag, true);
+els.preview.addEventListener("dblclick", (e) => {
+  const c = getClip(state.selId);
+  if (!shapeEditActive(c) || shapeUi.tool) return;
+  const h = shapeHandles(c, els.preview.width, els.preview.height), pt = canvasPt(e), grab = Math.max(8, els.preview.width / 110);
+  if (!h || h.it.type !== "path") return;
+  const i = h.A.findIndex((p) => Math.hypot(p.a.x - pt.x, p.a.y - pt.y) <= grab);
+  if (i < 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (h.it.points.length <= (h.it.closed === false ? 2 : 3)) { toast("The path needs the points it has"); return; }
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  pushUndo();
+  writeShapeTopology(c, shapeUi.sel, (pts) => pts.filter((_, j) => j !== i));
+  shapeUi.pt = -1; scheduleSave(); renderInspector();
+}, true);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && runtime.anchorTool && !shapeUi.sel && !shapeUi.tool) {
+    const tg0 = e.target;
+    if (!(tg0 && (tg0.tagName === "INPUT" || tg0.tagName === "TEXTAREA" || tg0.tagName === "SELECT"))) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      runtime.anchorTool = false; state.dirtyTimeline = true; renderInspector();
+      return;
+    }
+  }
+  if (!shapeUi.clip || (!shapeUi.sel && !shapeUi.tool)) return;
+  const tg = e.target;
+  if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT" || tg.isContentEditable)) return;
+  const c = getClip(state.selId);
+  if (!c || c.id !== shapeUi.clip) return;
+  if (e.key === "Escape") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (shapeUi.tool) { shapeUi.tool = null; shapeUi.pen = null; }
+    else if (shapeUi.pt >= 0) shapeUi.pt = -1;
+    else shapeUi.sel = null;
+    state.dirtyTimeline = true; renderInspector();
+  } else if (e.key === "Enter" && shapeUi.tool === "pen") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    finishShapePen(c, false);
+  } else if (shapeUi.tool === "pen" && shapeUi.pen && !shapeUi.drag) {
+    // while placing points the path is not in the project yet: undo / redo step through the points
+    const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    const back = (mod && k === "z" && !e.shiftKey) || ((e.key === "Backspace" || e.key === "Delete") && !mod);
+    const fwd = mod && ((k === "z" && e.shiftKey) || k === "y");
+    if (!back && !fwd) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    const P = shapeUi.pen.pts, R = (shapeUi.pen.redo ||= []);
+    if (back && P.length) R.push(P.pop());
+    else if (fwd && R.length) P.push(R.pop());
+    state.dirtyTimeline = true;
+  }
+}, true);
+
+/* ── Text on a path ──
+   props.textPath is one shape item (motion.js): its outline is the baseline the
+   title's letters sit on, one line, each letter turned with the path.
+   props.pathOffset (%, keyable) slides the text along it; props.pathAlign says
+   which end of the text sits at the offset. The path is edited on the monitor
+   with the shape editor (its points, handles, move, turn, size and pen). */
+const TEXT_PATH_PRESETS = {
+  line: { label: "Line", item: Motion.TEXT_PATH_PRESETS.line },
+  arc: { label: "Arc", item: Motion.TEXT_PATH_PRESETS.arc },
+  circle: { label: "Circle", item: Motion.TEXT_PATH_PRESETS.circle },
+  wave: { label: "Wave", item: Motion.TEXT_PATH_PRESETS.wave },
+};
+const textPathNorm = new WeakMap();
+function clipTextPath(c) {
+  const v = c && c.kind === "text" && c.props && c.props.textPath;
+  if (!v || typeof v !== "object") return null;
+  let n = textPathNorm.get(v);
+  if (n === undefined) { n = Motion.normalizeTextPath(v); textPathNorm.set(v, n); }
+  return n;
+}
+/** The title's path at timeline t (keys resolved). */
+function textPathAt(c, t) { const n = clipTextPath(c); return n ? Motion.itemAt(n, t - c.start) : null; }
+/** The box of the text on its path, in the title's own px (for the selection box and masks). */
+function textPathBox(c, p, t) {
+  const it = textPathAt(c, t);
+  if (!it) return null;
+  const lines = Math.max(1, String(p.text || "").split("\n").length), size = +p.fontSize || 72, lh = size * lineHeightOf(p);
+  const { A, closed } = Motion.outline(it), m = Motion.itemMatrix(it);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const off of lines > 1 ? [0, (lines - 1) * lh] : [0]) {   // the first and the last line's tracks
+    for (const [x, y] of Motion.pathSampler(A, closed, off).points) {
+      const [px, py] = Motion.apply(m, x, y);
+      x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py);
+    }
+  }
+  if (!(x1 >= x0)) return null;
+  const pad = size * 0.8, s = Motion.contentScale(c, p);
+  return { ox: (x0 + x1) / 2 * s, oy: (y0 + y1) / 2 * s, hw: ((x1 - x0) / 2 + pad) * s, hh: ((y1 - y0) / 2 + pad) * s };
+}
+function drawTextOnPath(c, p, local) {
+  const it = textPathAt(c, c.start + local);
+  if (!it) return;
+  const sc = +p.scale || 1, size = +p.fontSize || 72, lh = size * lineHeightOf(p);
+  ctx2d.scale(sc, sc);
+  const m = Motion.itemMatrix(it);
+  ctx2d.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+  const anim = TEXT_ANIMS.includes(p.textAnim) ? p.textAnim : "none";
+  const rate = clamp(+p.wordRate || 0.15, 0.03, 2);
+  let fam = p.font || "Segoe UI";
+  if (anim === "font-cut") {   // swap the typeface rhythmically, then settle
+    const setF = (Array.isArray(p.fontCutSet) && p.fontCutSet.length) ? p.fontCutSet : FONT_CUT_DEFAULT;
+    setF.forEach(ensureFont);
+    if (local < 0.6) fam = setF[Math.floor(local / 0.06) % setF.length];
+  }
+  setTextFont(ctx2d, { ...p, font: fam }, size);
+  try { ctx2d.letterSpacing = "0px"; } catch { }   // spacing is laid out by hand along the path
+  ctx2d.textBaseline = "alphabetic"; ctx2d.textAlign = "center";
+  const { A, closed } = Motion.outline(it), ls = +p.letterSpacing || 0;
+  const tracks = [];   // line i runs on a parallel curve i line-heights below the path
+  const track = (i) => tracks[i] || (tracks[i] = Motion.pathSampler(A, closed, i * lh));
+  const shadowBlur = (p.textShadow === 0 ? 0 : (+p.textShadow || 12)) * size / 100;
+  const fill = () => {
+    if (!p.color2) return p.color || "#fff";
+    const g = ctx2d.createLinearGradient(0, -size * 0.8, 0, size * 0.1);
+    g.addColorStop(0, p.color || "#fff"); g.addColorStop(1, p.color2);
+    return g;
+  };
+  // Lay out every line along the path (line i sits i line-heights below it), glyph by glyph,
+  // remembering the glyph's word and line so the animations can group them.
+  const lines = textSourceString(p).split("\n");
+  const glyphs = [];   // {g, w, d (centre along the path), line, word, ci (letter index), gi}
+  const lineRuns = [];   // {from, to} along the path, per line
+  let wi = 0, ci = 0, gi = 0;
+  lines.forEach((ln, line) => {
+    const gs = graphemeSegments(ln), ws = gs.map((g) => ctx2d.measureText(g).width);
+    const total = ws.reduce((a, b) => a + b, 0) + ls * Math.max(0, gs.length - 1);
+    const base = (+p.pathOffset || 0) / 100 * track(line).length;
+    let d = p.pathAlign === "center" ? base - total / 2 : p.pathAlign === "end" ? base - total : base;
+    lineRuns.push({ from: d, to: d + total });
+    let inWord = false;
+    gs.forEach((g, j) => {
+      const space = !g.trim();
+      if (!space && !inWord) { inWord = true; } else if (space && inWord) { inWord = false; wi++; }
+      glyphs.push({ g, w: ws[j], d: d + ws[j] / 2, line, word: wi, ci: space ? -1 : ci, gi, space });
+      if (!space) ci++;
+      gi++;
+      d += ws[j] + ls;
+    });
+    if (inWord) wi++;
+  });
+  // group centres (for word-pop / zoom-in, which scale a word or a line about its middle)
+  const centre = (key) => {
+    const out = new Map();
+    for (const q of glyphs) { if (q.space) continue; const k = q[key], o = out.get(k) || { a: Infinity, b: -Infinity }; o.a = Math.min(o.a, q.d - q.w / 2); o.b = Math.max(o.b, q.d + q.w / 2); out.set(k, o); }
+    return out;
+  };
+  const words = anim === "word-pop" ? centre("word") : null, lineBox = anim === "zoom-in" ? centre("line") : null;
+  const shown = anim === "typewriter" ? Math.floor(local / (rate / 4)) : Infinity;
+  const ease = EASE["ease-out"];
+  for (const q of glyphs) {
+    if (q.space || q.gi >= shown) continue;
+    let d = q.d, scale = 1, alpha = 1, dx = 0, dy = 0, clipL = null, clipR = null, rise = null;
+    const uw = clamp((local - q.word * rate) / 0.25, 0, 1);         // per word
+    const ul = (dur) => clamp((local - q.line * rate) / dur, 0, 1);  // per line
+    if (anim === "letter-pop") {
+      const u = clamp((local - q.ci * rate / 3) / 0.18, 0, 1);
+      if (u <= 0) continue;
+      scale = Math.max(0.001, backOut(u)); alpha = Math.min(1, u * 2.5);
+    } else if (anim === "wave") dy += Math.sin(local * 4 + q.ci * 0.55) * size * 0.12;
+    else if (anim === "word-pop") {
+      if (uw <= 0) continue;
+      scale = Math.max(0.001, backOut(uw)); alpha = Math.min(1, uw * 2.5);
+      const o = words.get(q.word), mid = (o.a + o.b) / 2;
+      d = mid + (d - mid) * scale;
+    } else if (anim === "word-slide") {
+      if (uw <= 0) continue;
+      dy += (1 - ease(uw)) * size * 0.7; alpha = uw;
+    } else if (anim === "bounce") dy -= Math.abs(Math.sin(local * 3.2 + q.word * 0.9)) * size * 0.18;
+    else if (anim === "shake") { dx += Math.sin(local * 31 + q.word * 7.3) * size * 0.035; dy += Math.cos(local * 27 + q.word * 3.1) * size * 0.035; }
+    else if (anim === "karaoke") alpha = uw >= 1 ? 1 : 0.3 + uw * 0.7;
+    else if (anim === "clip-reveal") {   // a wipe runs along each line in reading order
+      const u = ul(0.5);
+      if (u <= 0) continue;
+      const run = lineRuns[q.line], edge = run.from + (run.to - run.from) * ease(u);
+      if (edge <= d - q.w / 2) continue;
+      if (edge < d + q.w / 2) clipR = edge - d;
+    } else if (anim === "zoom-in") {
+      const u = ul(0.45);
+      if (u <= 0) continue;
+      scale = 1.35 - 0.35 * ease(u); alpha = Math.min(1, u * 1.6);
+      const o = lineBox.get(q.line), mid = (o.a + o.b) / 2;
+      d = mid + (d - mid) * scale;
+    } else if (anim === "rise-mask") {   // each line rises from behind its own baseline
+      const u = ul(0.5);
+      if (u <= 0) continue;
+      rise = (1 - ease(u)) * lh;
+    }
+    const at = track(q.line).at(d);
+    ctx2d.save();
+    ctx2d.translate(at.x, at.y);
+    ctx2d.rotate(at.angle * Math.PI / 180);
+    ctx2d.translate(dx, dy);
+    if (clipL != null || clipR != null || rise != null) {
+      ctx2d.beginPath();
+      const x0 = clipL ?? -q.w / 2 - size, x1 = clipR ?? q.w / 2 + size;
+      ctx2d.rect(x0, -size * 1.1, x1 - x0, size * 1.4);   // the glyph's line box: ascenders to descenders
+      ctx2d.clip();
+      if (rise != null) ctx2d.translate(0, rise);
+    }
+    if (scale !== 1) ctx2d.scale(scale, scale);
+    const keep = ctx2d.globalAlpha;
+    ctx2d.globalAlpha = keep * clamp(alpha, 0, 1);
+    if (p.strokeWidth > 0) {
+      ctx2d.lineJoin = "round"; ctx2d.miterLimit = 2; ctx2d.lineWidth = p.strokeWidth; ctx2d.strokeStyle = p.strokeColor || "#000";
+      ctx2d.strokeText(q.g, 0, 0);
+    }
+    if (p.glow > 0) { ctx2d.shadowColor = p.glowColor || p.color || "#fff"; ctx2d.shadowBlur = (+p.glow) * size / 40; }
+    else if (shadowBlur > 0) { ctx2d.shadowColor = "rgba(0,0,0,.7)"; ctx2d.shadowBlur = shadowBlur; ctx2d.shadowOffsetY = shadowBlur / 3; }
+    ctx2d.fillStyle = fill();
+    ctx2d.fillText(q.g, 0, 0);
+    if (p.glow > 0) ctx2d.fillText(q.g, 0, 0);
+    ctx2d.globalAlpha = keep;
+    ctx2d.restore();
+  }
+}
+function textPathSectionHtml(c, p, row) {
+  const has = !!clipTextPath(c), editing = has && shapeUi.clip === c.id && samePath(shapeUi.sel, [0]);
+  const btn = (attr, label, title, on, dis) => `<button type="button" class="btn tiny${on ? " toggle on" : ""}" ${attr} title="${title}" ${dis ? "disabled" : ""}>${label}</button>`;
+  return `<div class="insp-section" data-textpath-section><h3>Text path</h3>
+    <div class="cl-row">${Object.entries(TEXT_PATH_PRESETS).map(([k, pre]) => btn(`data-tpath="${k}"`, pre.label, `Set the title on a ${pre.label.toLowerCase()}`)).join("")}
+      ${btn('data-tpath="pen"', "Pen", "Draw the path on the monitor: click points (drag to curve), Enter to finish, click the first point to close it", shapeUi.clip === c.id && shapeUi.tool === "pen")}</div>
+    ${has ? `<div class="cl-row">${btn('data-tpath="edit"', "Edit path", "Show the path's points and handles on the monitor", editing)}${btn('data-tpath="off"', "Remove", "Back to a normal title")}</div>
+      ${row("Offset", `<input type="range" data-k="pathOffset" min="-100" max="200" step="0.5" value="${fmtInspNum(p.pathOffset, 0.5)}" title="Slide the text along the path, % of its length — key it to make the text travel">
+        <span class="val" data-val="pathOffset" data-unit="%">${fmtInspNum(p.pathOffset, 0.5)}%</span>`, "pathOffset")}
+      ${row("Align", `<select data-k="pathAlign">${["start", "center", "end"].map((v) => `<option value="${v}" ${(p.pathAlign || "start") === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, "pathAlign")}
+      <p class="cl-note">Each line runs along the path, the next one a line below it. Every text animation plays along the path.</p>`
+    : `<p class="cl-note">Set the title along a line, an arc, a circle, a wave or a path you draw.</p>`}
+  </div>`;
+}
+function bindTextPathControls(c) {
+  for (const b of els.inspector.querySelectorAll("[data-tpath]")) b.addEventListener("click", () => {
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    const k = b.dataset.tpath;
+    if (k === "edit") {
+      const on = shapeUi.clip === c.id && samePath(shapeUi.sel, [0]);
+      Object.assign(shapeUi, { clip: c.id, sel: on ? null : [0], pt: -1, tool: null, pen: null });
+      if (!on) { maskUi.sel = -1; maskUi.tool = null; }
+      state.dirtyTimeline = true; renderInspector();
+      return;
+    }
+    if (k === "pen") {
+      const on = shapeUi.clip === c.id && shapeUi.tool === "pen";
+      Object.assign(shapeUi, { clip: c.id, sel: null, pt: -1, tool: on ? null : "pen", pen: null });
+      if (!on && state.playing) pause();
+      if (!on && !activeAt(c, state.time)) toast("Move the playhead over the title, then draw on the monitor");
+      state.dirtyTimeline = true; renderInspector();
+      return;
+    }
+    pushUndo();
+    if (k === "off") { delete c.props.textPath; shapeUi.sel = null; }
+    else {
+      c.props.textPath = Motion.normalizeTextPath(TEXT_PATH_PRESETS[k].item);
+      Object.assign(shapeUi, { clip: c.id, sel: [0], pt: -1, tool: null, pen: null });
+    }
+    state.dirtyTimeline = true; inspPropGen++;
+    scheduleSave(); renderInspector();
+  });
+}
+/* ── Motion paths on the monitor ──
+   With two or more position keys (x and y keyed at the same time) the selected
+   clip's path shows over the picture: the curve, a dot per frame (their spacing
+   is the speed), a square per key and the keys' curve handles. Drag a key to move
+   it, its handles to bend the path (Alt breaks the pair), Alt-drag a key to pull
+   new handles, double-click a key to make it a corner again. */
+const pathUi = { clip: null, key: -1, drag: null };
+function motionPathActive(c) {
+  return !!c && isVisualClip(c) && !state.playing && !state.exporting && !runtime.anchorTool && !shapeUi.tool &&
+    Motion.posKeys(c).length >= 2 && activeAt(c, state.time);
+}
+/** Screen geometry of the path: the curve, frame dots and keys with their handles, in canvas px. */
+function motionPathGeom(c, W, H, t) {
+  const P = Motion.posKeys(c);
+  const M = parentScreenMatrix(c, W, H, t);
+  const scr = (x, y) => { const q = M.transformPoint(new DOMPoint(x, y)); return { x: q.x, y: q.y }; };
+  const t0 = P[0].t, t1 = P[P.length - 1].t, step = 1 / (projectFps() || 30);
+  const dots = [];
+  for (let u = t0; u <= t1 + 1e-9; u += step) { const q = Motion.positionAt(c, u); dots.push(scr(q.x, q.y)); }
+  const keys = P.map((k) => ({ k, a: scr(k.x, k.y), i: scr(k.x + k.ix, k.y + k.iy), o: scr(k.x + k.ox, k.y + k.oy), hasIn: !!(k.ix || k.iy), hasOut: !!(k.ox || k.oy) }));
+  return { P, M, dots, keys };
+}
+function drawMotionPathOverlay(c, W, H, t) {
+  if (!motionPathActive(c)) return;
+  if (pathUi.clip !== c.id) Object.assign(pathUi, { clip: c.id, key: -1, drag: null });
+  const g = motionPathGeom(c, W, H, t), lw = Math.max(1.5, W / 800), hs = Math.max(5, W / 170);
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.globalAlpha = 1; ctx2d.globalCompositeOperation = "source-over"; ctx2d.filter = "none";
+  ctx2d.lineJoin = "round";
+  const line = g.dots.map((q) => [q.x, q.y]);
+  ctx2d.lineWidth = lw * 2.4; ctx2d.strokeStyle = "rgba(0,0,0,0.5)"; strokeOutline(ctx2d, line, false);
+  ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#c084fc"; strokeOutline(ctx2d, line, false);
+  ctx2d.fillStyle = "#e9d5ff";
+  for (const q of g.dots) { ctx2d.beginPath(); ctx2d.arc(q.x, q.y, lw * 1.1, 0, Math.PI * 2); ctx2d.fill(); }
+  const dot = (p, r, fill, square) => {
+    ctx2d.beginPath();
+    if (square) ctx2d.rect(p.x - r, p.y - r, r * 2, r * 2); else ctx2d.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx2d.fillStyle = fill; ctx2d.fill(); ctx2d.lineWidth = lw; ctx2d.strokeStyle = "rgba(0,0,0,0.75)"; ctx2d.stroke();
+  };
+  g.keys.forEach((k, j) => {
+    const show = j === pathUi.key || k.hasIn || k.hasOut;
+    if (show) {
+      ctx2d.lineWidth = lw; ctx2d.strokeStyle = "#c084fc";
+      for (const [q, on] of [[k.i, j > 0], [k.o, j < g.keys.length - 1]]) {
+        if (!on || (!(j === pathUi.key) && !(q === k.i ? k.hasIn : k.hasOut))) continue;
+        ctx2d.beginPath(); ctx2d.moveTo(k.a.x, k.a.y); ctx2d.lineTo(q.x, q.y); ctx2d.stroke();
+        dot(q, hs * 0.55, "#c084fc");
+      }
+    }
+    dot(k.a, hs * 0.7, j === pathUi.key ? "#c084fc" : "#ffffff", true);
+  });
+  ctx2d.restore();
+}
+/** Write a position key's value / handles (pin / pout on the x and y keys). */
+function setPathKey(k, set) {
+  const put = (kf, prop, v) => { if (v == null || Math.abs(v) < 1e-3) delete kf[prop]; else kf[prop] = +v.toFixed(3); };
+  if ("x" in set) k.xk.v = +set.x.toFixed(3);
+  if ("y" in set) k.yk.v = +set.y.toFixed(3);
+  if ("ix" in set) { put(k.xk, "pin", set.ix); put(k.yk, "pin", set.iy); }
+  if ("ox" in set) { put(k.xk, "pout", set.ox); put(k.yk, "pout", set.oy); }
+  inspPropGen++; state.dirtyTimeline = true;
+}
+els.preview.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || isSourceMode()) return;
+  const c = getClip(state.selId);
+  if (!motionPathActive(c) || maskEditActive(c) || shapeEditActive(c)) return;
+  const W = els.preview.width, H = els.preview.height, pt = canvasPt(e), grab = Math.max(8, W / 110);
+  const g = motionPathGeom(c, W, H, state.time);
+  const near = (q) => Math.hypot(q.x - pt.x, q.y - pt.y) <= grab;
+  let drag = null;
+  // handles first (the picked key's, then any shown), then the keys themselves
+  const last = g.keys.length - 1, order = [pathUi.key, ...g.keys.map((_, j) => j).filter((j) => j !== pathUi.key)].filter((j) => j >= 0);
+  for (const j of order) {
+    const k = g.keys[j], shown = (has) => j === pathUi.key || has;
+    if (j < last && shown(k.hasOut) && near(k.o)) { drag = { mode: "handle", side: "o", j }; break; }
+    if (j > 0 && shown(k.hasIn) && near(k.i)) { drag = { mode: "handle", side: "i", j }; break; }
+  }
+  if (!drag) {
+    const j = g.keys.findIndex((k) => near(k.a));
+    if (j >= 0) drag = { mode: e.altKey ? "pull" : "key", j };
+  }
+  if (!drag) return;   // not on the path: the monitor's usual clicks
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  pushUndo();
+  pathUi.key = drag.j;
+  const k = g.P[drag.j];
+  pathUi.drag = { ...drag, inv: g.M.inverse(), k0: { x: k.x, y: k.y, ix: k.ix, iy: k.iy, ox: k.ox, oy: k.oy }, start: pt };
+  els.preview.setPointerCapture(e.pointerId);
+  state.dirtyTimeline = true;
+}, true);
+els.preview.addEventListener("pointermove", (e) => {
+  const d = pathUi.drag;
+  if (!d) return;
+  e.stopImmediatePropagation();
+  const c = getClip(state.selId), k = c && Motion.posKeys(c)[d.j];
+  if (!k) return;
+  const pt = canvasPt(e), q = d.inv.transformPoint(new DOMPoint(pt.x, pt.y)), k0 = d.k0;
+  if (d.mode === "key") {
+    const a = d.inv.transformPoint(new DOMPoint(d.start.x, d.start.y));
+    setPathKey(k, { x: k0.x + q.x - a.x, y: k0.y + q.y - a.y });
+  } else if (d.mode === "pull") {
+    const ox = q.x - k0.x, oy = q.y - k0.y;
+    if (Math.hypot(ox, oy) > 2) setPathKey(k, { ox, oy, ix: -ox, iy: -oy });
+  } else {
+    const hx = q.x - k0.x, hy = q.y - k0.y;
+    const mine = d.side === "o" ? { ox: hx, oy: hy } : { ix: hx, iy: hy };
+    if (!e.altKey) {   // keep the key smooth: the other handle mirrors the direction, keeps its length
+      const ol = d.side === "o" ? Math.hypot(k0.ix, k0.iy) : Math.hypot(k0.ox, k0.oy);
+      const len = ol || Math.hypot(hx, hy), m = Math.hypot(hx, hy) || 1;
+      if (d.side === "o") Object.assign(mine, { ix: -hx / m * len, iy: -hy / m * len });
+      else Object.assign(mine, { ox: -hx / m * len, oy: -hy / m * len });
+    } else if (d.side === "o") Object.assign(mine, { ix: k0.ix, iy: k0.iy });
+    else Object.assign(mine, { ox: k0.ox, oy: k0.oy });
+    const P = Motion.posKeys(c);
+    if (d.j === 0) { mine.ix = 0; mine.iy = 0; }
+    if (d.j === P.length - 1) { mine.ox = 0; mine.oy = 0; }
+    setPathKey(k, { ix: mine.ix ?? k0.ix, iy: mine.iy ?? k0.iy, ox: mine.ox ?? k0.ox, oy: mine.oy ?? k0.oy });
+  }
+  syncInspectorPlayhead();
+}, true);
+const endPathDrag = (e) => {
+  if (!pathUi.drag) return;
+  e.stopImmediatePropagation();
+  pathUi.drag = null;
+  scheduleSave(); renderInspector();
+};
+els.preview.addEventListener("pointerup", endPathDrag, true);
+els.preview.addEventListener("pointercancel", endPathDrag, true);
+els.preview.addEventListener("dblclick", (e) => {
+  const c = getClip(state.selId);
+  if (!motionPathActive(c) || maskEditActive(c) || shapeEditActive(c)) return;
+  const W = els.preview.width, H = els.preview.height, pt = canvasPt(e), grab = Math.max(8, W / 110);
+  const g = motionPathGeom(c, W, H, state.time), j = g.keys.findIndex((k) => Math.hypot(k.a.x - pt.x, k.a.y - pt.y) <= grab);
+  if (j < 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  pushUndo();
+  setPathKey(g.P[j], { ix: 0, iy: 0, ox: 0, oy: 0 });
+  scheduleSave(); renderInspector();
+}, true);
+/** The Inspector's Motion section: motion path, auto-orient and motion blur. */
+function motionSectionHtml(c, p, row) {
+  const keys = Motion.posKeys(c).length, curved = Motion.hasPathHandles(c);
+  const btn = (attr, label, title, dis) => `<button type="button" class="btn tiny" ${attr} title="${title}" ${dis ? "disabled" : ""}>${label}</button>`;
+  return `<div class="insp-section" data-motion-section><h3>Motion</h3>
+    <div class="insp-row"><label title="Position keys (X and Y keyed at the same time) make a path you can bend on the monitor">Path</label><span class="insp-ctrls">
+      ${btn("data-path-act=\"smooth\"", "Smooth", "Curve the path smoothly through every position key", keys < 2)}
+      ${btn("data-path-act=\"straight\"", "Straight", "Straight lines between the position keys", !curved)}
+      <span class="cl-note">${keys >= 2 ? `${keys} position keys${curved ? ", curved" : ""}` : "key X and Y at two times"}</span></span></div>
+    ${row("Auto-orient", `<input type="checkbox" data-k="autoOrient" ${p.autoOrient ? "checked" : ""} title="Turn the clip with its direction of travel (its Rotation adds on top)">`, "autoOrient")}
+    ${c.kind !== "null" ? row("Motion blur", `<input type="range" data-k="motionBlur" min="0" max="720" step="15" value="${+p.motionBlur || 0}" title="Shutter angle — 180° is the film look, 0 is off">
+      <span class="val" data-val="motionBlur" data-unit="°">${+p.motionBlur || 0}°</span>`, "motionBlur")
+      + row("Blur samples", `<input type="range" data-k="motionBlurSamples" min="2" max="32" step="1" value="${+p.motionBlurSamples || 8}" title="Sub-frame samples per frame — more is smoother and slower (playback uses as many as fit in the frame time; a paused frame and export use them all)">
+      <span class="val" data-val="motionBlurSamples" data-unit="">${+p.motionBlurSamples || 8}</span>`, "motionBlurSamples") : ""}
+    ${presetRowsHtml(c, row)}
+  </div>`;
+}
+function bindMotionControls(c) {
+  for (const b of els.inspector.querySelectorAll("[data-path-act]")) b.addEventListener("click", () => {
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    pushUndo();
+    c.keyframes = b.dataset.pathAct === "smooth" ? Motion.smoothPath(c.keyframes) : Motion.straightPath(c.keyframes);
+    inspPropGen++; state.dirtyTimeline = true;
+    scheduleSave(); renderInspector();
+  });
+}
+
+/* ── Text direction (LTR / RTL) — per-line when direction is "auto".
+   Auto-detect uses a DOM probe + getComputedStyle; cache by line text so
+   preview/export frames don't re-resolve style every tick. ── */
+let _textDirProbe;
+const _textDirCache = new Map(); // line text → "ltr" | "rtl"
+const TEXT_DIR_CACHE_MAX = 256;
+function detectTextDirection(text) {
+  const key = (text && String(text).trim()) ? String(text) : " ";
+  const hit = _textDirCache.get(key);
+  if (hit) return hit;
+  if (!_textDirProbe) {
+    _textDirProbe = document.createElement("p");
+    _textDirProbe.style.cssText = "position:fixed;left:-9999px;visibility:hidden;white-space:nowrap";
+    document.body.appendChild(_textDirProbe);
+  }
+  _textDirProbe.dir = "auto";
+  _textDirProbe.textContent = key;
+  const dir = getComputedStyle(_textDirProbe).direction === "rtl" ? "rtl" : "ltr";
+  if (_textDirCache.size >= TEXT_DIR_CACHE_MAX) _textDirCache.clear();
+  _textDirCache.set(key, dir);
+  return dir;
+}
+function lineDirections(p, lines) {
+  if (p.direction === "rtl" || p.direction === "ltr") {
+    const forced = p.direction;
+    return lines.map(() => forced);
+  }
+  return lines.map((ln) => detectTextDirection(ln));
+}
+function revealWipeRect(cx, w, lh, y, e, rtl, pad = 6) {
+  const clipW = (w + pad * 2) * e;
+  const x0 = rtl ? cx + w / 2 + pad - clipW : cx - w / 2 - pad;
+  ctx2d.rect(x0, y - lh / 2, clipW, lh);
+}
+function typewriterX(cx, fullW, shownW, rtl) {
+  const dx = (fullW - shownW) / 2;
+  return rtl ? cx + dx : cx - dx;
+}
+function runOrigin(cx, totalW, rtl) {
+  return rtl ? cx + totalW / 2 : cx - totalW / 2;
+}
+// Arabic/Indic letters change shape when drawn in isolation — letter-pop/wave must
+// paint shaped clusters (whole words), not individual code points.
+const SHAPING_SCRIPT_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]/;
+function needsContextualShaping(text) {
+  return SHAPING_SCRIPT_RE.test(text);
+}
+let _graphemeSeg;
+const _graphemeCache = new Map(); // line text → string[]
+const _letterAnimCache = new Map(); // line text → {text, animate}[]
+const TEXT_SEG_CACHE_MAX = 256;
+function graphemeSegments(text) {
+  const key = String(text ?? "");
+  const hit = _graphemeCache.get(key);
+  if (hit) return hit;
+  let segs;
+  if (typeof Intl !== "undefined" && Intl.Segmenter) {
+    if (!_graphemeSeg) _graphemeSeg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    segs = [..._graphemeSeg.segment(key)].map((s) => s.segment);
+  } else {
+    segs = [...key];
+  }
+  if (_graphemeCache.size >= TEXT_SEG_CACHE_MAX) _graphemeCache.clear();
+  _graphemeCache.set(key, segs);
+  return segs;
+}
+function letterAnimSegments(line) {
+  const key = String(line ?? "");
+  const hit = _letterAnimCache.get(key);
+  if (hit) return hit;
+  let segs;
+  if (needsContextualShaping(key)) {
+    segs = [];
+    const re = /(\s+|[^\s]+)/g;
+    let m;
+    while ((m = re.exec(key))) segs.push({ text: m[0], animate: !!m[0].trim() });
+  } else {
+    segs = graphemeSegments(key).map((text) => ({ text, animate: !!text.trim() }));
+  }
+  if (_letterAnimCache.size >= TEXT_SEG_CACHE_MAX) _letterAnimCache.clear();
+  _letterAnimCache.set(key, segs);
+  return segs;
+}
+
+/* ── Text rendering: styling (stroke / background pill) + kinetic animations.
+   `local` is clip-local time in seconds. Word timing: word i enters at
+   i * wordRate; each entrance animation lasts ~0.25 s. ── */
+const backOut = (u) => { const c1 = 1.70158, c3 = c1 + 1; const v = u - 1; return 1 + c3 * v * v * v + c1 * v * v; };
+function hexToRgba(hex, a) {
+  const n = parseInt(String(hex).replace("#", ""), 16) || 0;
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function hasTextBox(p) { return +p.boxW > 0 && +p.boxH > 0; }
+/* Target width for justify: text box width when set, else max(natural, ~85% canvas). */
+function textJustifyTarget(p, naturalBlockW) {
+  if (+p.boxW > 0) return +p.boxW;
+  const sc = Math.max(0.001, +p.scale || 1);
+  return Math.max(naturalBlockW, project.width / sc * 0.85);
+}
+/* Expand a line to ≈ targetW by inserting whole spaces between words. */
+function justifyLineBySpaces(ctx, ln, targetW) {
+  const words = String(ln).split(/\s+/).filter(Boolean);
+  if (words.length < 2) return ln;
+  const natural = words.join(" ");
+  if (ctx.measureText(natural).width >= targetW - 0.5) return natural;
+  let lo = 1, hi = 2, best = natural;
+  while (hi < 160 && ctx.measureText(words.join(" ".repeat(hi))).width < targetW) hi *= 2;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const s = words.join(" ".repeat(mid));
+    if (ctx.measureText(s).width <= targetW) { best = s; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return best;
+}
+function textFontWeight(p) {
+  return +p.weight || (p.bold ? 700 : 400);
+}
+function setTextFont(ctx, p, size) {
+  const weight = textFontWeight(p);
+  ctx.font = `${p.italic ? "italic " : ""}${weight} ${size}px "${p.font || "Segoe UI"}", sans-serif`;
+  try { ctx.letterSpacing = `${+p.letterSpacing || 0}px`; } catch { }
+}
+function textSourceString(p) {
+  let t = String(p.text || "");
+  if (p.uppercase) t = t.split("\n").map((l) => l.toUpperCase()).join("\n");
+  return t;
+}
+/* Word-wrap paragraphs to maxW (hard newlines preserved as paragraph breaks). */
+function wrapTextToWidth(ctx, text, maxW) {
+  const out = [];
+  const width = Math.max(1, maxW);
+  for (const para of String(text).split("\n")) {
+    if (!para) { out.push(""); continue; }
+    const words = para.split(/\s+/).filter(Boolean);
+    if (!words.length) { out.push(""); continue; }
+    let line = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const trial = line + " " + words[i];
+      if (ctx.measureText(trial).width <= width) line = trial;
+      else { out.push(line); line = words[i]; }
+    }
+    out.push(line);
+  }
+  return out.length ? out : [""];
+}
+const lineHeightOf = (p) => clamp(+p.lineHeight || 1.2, 0.6, 3);
+/* Largest font size ≤ maxSize that wraps into boxW×boxH. */
+function fitFontSizeToBox(ctx, p, boxW, boxH, maxSize) {
+  const lhMul = lineHeightOf(p);
+  const justify = p.align === "justify";
+  const src = textSourceString(p);
+  let lo = 8, hi = Math.max(8, Math.round(maxSize || 72)), best = 8;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    setTextFont(ctx, p, mid);
+    let lines = wrapTextToWidth(ctx, src, boxW);
+    if (justify) lines = lines.map((ln) => justifyLineBySpaces(ctx, ln, boxW));
+    const totalH = Math.max(1, lines.length) * mid * lhMul;
+    if (totalH <= boxH + 0.5) { best = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return best;
+}
+/* Measure content-sized text bounds (half-width / half-height) at current props. */
+function measureTextHalfSize(p) {
+  ctx2d.save();
+  const size = p.fontSize || 72;
+  setTextFont(ctx2d, p, size);
+  let lines = textSourceString(p).split("\n");
+  if (p.align === "justify") {
+    const nat = Math.max(1, ...lines.map((l) => ctx2d.measureText(l).width));
+    const target = textJustifyTarget(p, nat);
+    lines = lines.map((l) => justifyLineBySpaces(ctx2d, l, target));
+  }
+  const tw = Math.max(1, ...lines.map((l) => ctx2d.measureText(l).width));
+  const lh = size * lineHeightOf(p);
+  ctx2d.restore();
+  const sc = +p.scale || 1;
+  return { hw: (tw / 2 + size * 0.25) * sc, hh: (lines.length * lh / 2 + size * 0.14) * sc };
+}
+/* First corner-drag on a hug-content title: create a box from current bounds. */
+function ensureTextBox(c) {
+  if (c.kind !== "text" || hasTextBox(c.props)) return;
+  const p = propsAtPlayhead(c);
+  const half = measureTextHalfSize(p);
+  const sc = +p.scale || 1;
+  if (Math.abs(sc - 1) > 0.01) {
+    setAnimProp(c, "fontSize", Math.round((+p.fontSize || 72) * sc));
+    setAnimProp(c, "scale", 1);
+  }
+  c.props.boxW = Math.max(40, +(half.hw * 2).toFixed(1));
+  c.props.boxH = Math.max(24, +(half.hh * 2).toFixed(1));
+}
+/* Pin the opposite corner for a boxed-text resize (call after any seed). */
+function beginTextBoxDrag(c, pt, W, H) {
+  const b2 = clipBounds(c, evalProps(c, state.time), W, H);
+  const hd2 = overlayHandles(b2, W, H);
+  const grab = hd2.hs * 1.8;
+  const ci = hd2.corners.findIndex((h) => Math.abs(pt.x - h.x) <= grab && Math.abs(pt.y - h.y) <= grab);
+  const signs = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  const [dsx, dsy] = signs[ci >= 0 ? ci : 0];
+  const cs = Math.cos(b2.rot), sn = Math.sin(b2.rot);
+  const ox = -dsx * b2.hw, oy = -dsy * b2.hh;
+  return {
+    mode: "box", id: c.id, rot: b2.rot, dragSX: dsx, dragSY: dsy,
+    fix: { x: b2.cx + ox * cs - oy * sn, y: b2.cy + ox * sn + oy * cs },
+    aspect: Math.max(0.05, (b2.hw * 2) / Math.max(1e-6, b2.hh * 2)),
+  };
+}
+function drawText(c, p, local) {
+  if (p.textPath && clipTextPath(c)) { drawTextOnPath(c, p, local); return; }
+  const useBox = hasTextBox(p);
+  const boxW = +p.boxW, boxH = +p.boxH;
+  const scaleToFit = useBox && !!p.boxFit;
+  const src = textSourceString(p);
+  const weight = textFontWeight(p);
+  let size = p.fontSize || 72;
+  if (useBox) {
+    if (scaleToFit) size = fitFontSizeToBox(ctx2d, p, boxW, boxH, p.fontSize || 72);
+  } else {
+    ctx2d.scale(p.scale || 1, p.scale || 1);
+  }
+  setTextFont(ctx2d, p, size);
+  ctx2d.textBaseline = "middle";
+  let rawLines = useBox ? wrapTextToWidth(ctx2d, src, boxW) : src.split("\n");
+  const justify = p.align === "justify";
+  if (justify) {
+    const target = useBox ? boxW : textJustifyTarget(p, Math.max(1, ...rawLines.map((ln) => ctx2d.measureText(ln).width)));
+    rawLines = rawLines.map((ln) => justifyLineBySpaces(ctx2d, ln, target));
+  }
+  const lh = size * lineHeightOf(p);
+  const nLines = Math.max(1, rawLines.length);
+  const vAlign = p.vAlign === "top" || p.vAlign === "bottom" ? p.vAlign : "middle";
+  // y0 = first line center. With a box, place the whole block by vAlign; without, center on clip origin.
+  let y0;
+  if (useBox) {
+    if (vAlign === "top") y0 = -boxH / 2 + lh / 2;
+    else if (vAlign === "bottom") y0 = boxH / 2 - lh / 2 - (nLines - 1) * lh;
+    else y0 = -((nLines - 1) * lh) / 2;
+  } else {
+    y0 = -((nLines - 1) * lh) / 2;
+  }
+  const anim = TEXT_ANIMS.includes(p.textAnim) ? p.textAnim : "none";
+  const rate = clamp(+p.wordRate || 0.15, 0.03, 2);
+  const align = p.align === "left" || p.align === "right" ? p.align : "center";
+  const lineWidths = rawLines.map((ln) => ctx2d.measureText(ln).width);
+  const blockW = useBox ? boxW : Math.max(1, ...lineWidths);
+  const lineDirs = lineDirections(p, rawLines);
+  // anchor x of each line's center, honoring block alignment
+  const lineCx = (i) => align === "left" ? -blockW / 2 + lineWidths[i] / 2
+    : align === "right" ? blockW / 2 - lineWidths[i] / 2 : 0;
+  if (useBox) {
+    ctx2d.beginPath();
+    ctx2d.rect(-boxW / 2, -boxH / 2, boxW, boxH);
+    ctx2d.clip();
+  }
+  const shadowBlur = (p.textShadow === 0 ? 0 : (+p.textShadow || 12)) * size / 100;
+
+  // background pill per line (static — anchors the animated words)
+  if (p.bgOpacity > 0) {
+    ctx2d.fillStyle = hexToRgba(p.bgColor || "#000", clamp(p.bgOpacity, 0, 1));
+    const padX = size * 0.4, padY = size * 0.18, r = size * 0.28;
+    rawLines.forEach((ln, i) => {
+      if (!ln.trim()) return;
+      const w = lineWidths[i];
+      const y = y0 + i * lh;
+      ctx2d.beginPath();
+      ctx2d.roundRect(lineCx(i) - w / 2 - padX, y - lh / 2 - padY + lh * 0.08, w + padX * 2, lh + padY * 2 - lh * 0.16, r);
+      ctx2d.fill();
+    });
+  }
+
+  const fillFor = (y) => {
+    if (!p.color2) return p.color || "#fff";
+    const g = ctx2d.createLinearGradient(0, y - size * 0.55, 0, y + size * 0.55);
+    g.addColorStop(0, p.color || "#fff");
+    g.addColorStop(1, p.color2);
+    return g;
+  };
+  const paint = (str, x, y, alpha = 1, rtl = false) => {
+    if (alpha <= 0) return;
+    const keep = ctx2d.globalAlpha;
+    const prevDir = ctx2d.direction;
+    ctx2d.globalAlpha = keep * clamp(alpha, 0, 1);
+    ctx2d.direction = rtl ? "rtl" : "ltr";
+    ctx2d.textAlign = "center";
+    if (p.strokeWidth > 0) {
+      ctx2d.shadowColor = "transparent";
+      ctx2d.lineJoin = "round"; ctx2d.miterLimit = 2;
+      ctx2d.lineWidth = p.strokeWidth;
+      ctx2d.strokeStyle = p.strokeColor || "#000";
+      ctx2d.strokeText(str, x, y);
+    }
+    if (p.glow > 0) { // neon: colored halo, double-fill for intensity
+      ctx2d.shadowColor = p.glowColor || p.color || "#fff";
+      ctx2d.shadowBlur = (+p.glow) * size / 40;
+      ctx2d.fillStyle = fillFor(y);
+      ctx2d.fillText(str, x, y);
+      ctx2d.fillText(str, x, y);
+    } else if (shadowBlur > 0) {
+      ctx2d.shadowColor = "rgba(0,0,0,.7)"; ctx2d.shadowBlur = shadowBlur; ctx2d.shadowOffsetY = shadowBlur / 3;
+      ctx2d.fillStyle = fillFor(y);
+      ctx2d.fillText(str, x, y);
+    } else {
+      ctx2d.fillStyle = fillFor(y);
+      ctx2d.fillText(str, x, y);
+    }
+    ctx2d.shadowColor = "transparent"; ctx2d.shadowBlur = 0; ctx2d.shadowOffsetY = 0;
+    ctx2d.direction = prevDir;
+    ctx2d.globalAlpha = keep;
+  };
+
+  if (anim === "none") {
+    rawLines.forEach((ln, i) => paint(ln, lineCx(i), y0 + i * lh, 1, lineDirs[i] === "rtl"));
+    return;
+  }
+  // clip-reveal: wipe mask sweeps each line in reading direction
+  if (anim === "clip-reveal") {
+    rawLines.forEach((ln, i) => {
+      if (!ln.trim()) return;
+      const u = clamp((local - i * rate) / 0.5, 0, 1);
+      if (u <= 0) return;
+      const e = EASE["ease-out"](u), w = lineWidths[i], cx = lineCx(i), y = y0 + i * lh;
+      const rtl = lineDirs[i] === "rtl";
+      ctx2d.save();
+      ctx2d.beginPath();
+      revealWipeRect(cx, w, lh, y, e, rtl);
+      ctx2d.clip();
+      paint(ln, cx, y, 1, rtl);
+      ctx2d.restore();
+    });
+    return;
+  }
+  // zoom-in: text scales down into place with an opacity settle
+  if (anim === "zoom-in") {
+    rawLines.forEach((ln, i) => {
+      if (!ln.trim()) return;
+      const u = clamp((local - i * rate) / 0.45, 0, 1);
+      if (u <= 0) return;
+      const e = EASE["ease-out"](u), s = 1.35 - 0.35 * e;
+      const rtl = lineDirs[i] === "rtl";
+      ctx2d.save();
+      ctx2d.translate(lineCx(i), y0 + i * lh);
+      ctx2d.scale(s, s);
+      paint(ln, 0, 0, Math.min(1, u * 1.6), rtl);
+      ctx2d.restore();
+    });
+    return;
+  }
+  // rise-mask: each line rises from behind its own baseline (lower-third reveal)
+  if (anim === "rise-mask") {
+    rawLines.forEach((ln, i) => {
+      if (!ln.trim()) return;
+      const u = clamp((local - i * rate) / 0.5, 0, 1);
+      if (u <= 0) return;
+      const e = EASE["ease-out"](u), cx = lineCx(i), y = y0 + i * lh;
+      const rtl = lineDirs[i] === "rtl";
+      ctx2d.save();
+      ctx2d.beginPath();
+      ctx2d.rect(cx - blockW / 2 - 24, y - lh / 2, blockW + 48, lh);
+      ctx2d.clip();
+      paint(ln, cx, y + (1 - e) * lh, 1, rtl);
+      ctx2d.restore();
+    });
+    return;
+  }
+  // font-cut: rhythmically swap the typeface, then settle (speed cuts)
+  if (anim === "font-cut") {
+    const setF = (Array.isArray(p.fontCutSet) && p.fontCutSet.length) ? p.fontCutSet : FONT_CUT_DEFAULT;
+    setF.forEach(ensureFont);
+    const cutDur = 0.6, interval = 0.06;
+    let fam = p.font || "Segoe UI";
+    if (local < cutDur) fam = setF[Math.floor(local / interval) % setF.length];
+    ctx2d.font = `${p.italic ? "italic " : ""}${weight} ${size}px "${fam}", sans-serif`;
+    const lw = rawLines.map((ln) => ctx2d.measureText(ln).width);
+    const bw = Math.max(1, ...lw);
+    const lcx = (i) => align === "left" ? -bw / 2 + lw[i] / 2
+                     : align === "right" ? bw / 2 - lw[i] / 2 : 0;
+    rawLines.forEach((ln, i) => { if (ln.trim()) paint(ln, lcx(i), y0 + i * lh, 1, lineDirs[i] === "rtl"); });
+    return;
+  }
+  if (anim === "typewriter") {
+    let budget = Math.floor(local / (rate / 4)); // rate/4 s per grapheme cluster
+    rawLines.forEach((ln, i) => {
+      const rtl = lineDirs[i] === "rtl";
+      const graphemes = graphemeSegments(ln);
+      const shown = graphemes.slice(0, Math.max(0, budget)).join("");
+      budget -= graphemes.length;
+      if (shown) {
+        const shownW = ctx2d.measureText(shown).width;
+        paint(shown, typewriterX(lineCx(i), lineWidths[i], shownW, rtl), y0 + i * lh, 1, rtl);
+      }
+    });
+    return;
+  }
+  // per-character animations (TikTok style); Arabic/Indic fall back to word clusters
+  if (anim === "letter-pop" || anim === "wave") {
+    let ci = 0;
+    rawLines.forEach((ln, i) => {
+      const y = y0 + i * lh;
+      const rtl = lineDirs[i] === "rtl";
+      const shaped = needsContextualShaping(ln);
+      const segs = letterAnimSegments(ln);
+      const stagger = shaped ? rate : rate / 3;
+      const widths = segs.map((s) => ctx2d.measureText(s.text).width);
+      const total = widths.reduce((a, b) => a + b, 0);
+      let x = runOrigin(lineCx(i), total, rtl);
+      segs.forEach((seg, j) => {
+        const w = widths[j];
+        const cx = rtl ? x - w / 2 : x + w / 2;
+        if (seg.animate) {
+          if (anim === "letter-pop") {
+            const u = clamp((local - ci * stagger) / 0.18, 0, 1);
+            if (u > 0) {
+              ctx2d.save();
+              ctx2d.translate(cx, y);
+              const s = Math.max(0.001, backOut(u));
+              ctx2d.scale(s, s);
+              paint(seg.text, 0, 0, Math.min(1, u * 2.5), rtl);
+              ctx2d.restore();
+            }
+          } else { // wave: continuous per-segment sine ride
+            paint(seg.text, cx, y + Math.sin(local * 4 + ci * 0.55) * size * 0.12, 1, rtl);
+          }
+          ci++;
+        }
+        x += rtl ? -w : w;
+      });
+    });
+    return;
+  }
+  // word-based animations: lay words out manually, per-line, honoring alignment + direction
+  const spaceW = ctx2d.measureText(" ").width;
+  let wi = 0;
+  rawLines.forEach((ln, i) => {
+    const y = y0 + i * lh;
+    const rtl = lineDirs[i] === "rtl";
+    const words = ln.split(/\s+/).filter(Boolean);
+    const widths = words.map((w) => ctx2d.measureText(w).width);
+    const wordsW = widths.reduce((a, b) => a + b, 0);
+    const gapN = Math.max(0, words.length - 1);
+    // After justify, ln already has expanded spaces — recreate that gap so word anims stay spread
+    const total = justify && gapN
+      ? lineWidths[i]
+      : wordsW + spaceW * gapN;
+    const gap = gapN ? (total - wordsW) / gapN : spaceW;
+    let x = runOrigin(lineCx(i), total, rtl);
+    words.forEach((word, j) => {
+      const w = widths[j];
+      const cx = rtl ? x - w / 2 : x + w / 2;
+      const u = clamp((local - wi * rate) / 0.25, 0, 1);
+      if (anim === "word-pop") {
+        if (u > 0) {
+          ctx2d.save();
+          ctx2d.translate(cx, y);
+          const s = Math.max(0.001, backOut(u));
+          ctx2d.scale(s, s);
+          paint(word, 0, 0, Math.min(1, u * 2.5), rtl);
+          ctx2d.restore();
+        }
+      } else if (anim === "word-slide") {
+        if (u > 0) paint(word, cx, y + (1 - EASE["ease-out"](u)) * size * 0.7, u, rtl);
+      } else if (anim === "bounce") { // continuous per-word hop
+        paint(word, cx, y - Math.abs(Math.sin(local * 3.2 + wi * 0.9)) * size * 0.18, 1, rtl);
+      } else if (anim === "shake") { // continuous nervous jitter
+        paint(word, cx + Math.sin(local * 31 + wi * 7.3) * size * 0.035,
+                    y + Math.cos(local * 27 + wi * 3.1) * size * 0.035, 1, rtl);
+      } else { // karaoke: everything visible dim, spoken words at full strength
+        paint(word, cx, y, u >= 1 ? 1 : 0.3 + u * 0.7, rtl);
+      }
+      x += rtl ? -(w + gap) : (w + gap);
+      wi++;
+    });
+  });
+}
+
+/* ═══════════════════════════ FONTS ═══════════════════════════ */
+/* Custom fonts: any .ttf/.otf/.woff/.woff2 in ./library/fonts is registered
+   under its file name (sans extension). Google fonts load on demand by name. */
+/* The shipped fonts carry portable file names in this package (a Mini App
+   package path may not contain a space), but the family name stays the one
+   the templates and the text presets ask for. */
+const SHIPPED_FONT_FAMILIES = {
+  "Abril-Fatface": "Abril Fatface",
+  "Archivo-Black": "Archivo Black",
+  "Bebas-Neue": "Bebas Neue",
+  "DM-Sans": "DM Sans",
+  "Playfair-Display": "Playfair Display",
+};
+function shippedFontFamily(fileName) {
+  const stem = fileName.replace(/\.[^.]+$/, "");
+  return SHIPPED_FONT_FAMILIES[stem] || stem;
+}
+let libraryFontsReady = null; // the first library pass; ensureFont waits on it
+function loadLibraryFonts() {
+  const pass = (async () => {
+    try {
+      const files = await (await fetch("/api/library?dir=fonts")).json();
+      await Promise.all(files.map(async (f) => {
+        if (!/\.(ttf|otf|woff2?)$/i.test(f.name)) return;
+        const family = shippedFontFamily(f.name);
+        // claimed before the first await: every sync runs this, and passes
+        // that overlapped used to list the same family twice
+        if (runtime.libraryFontReq.has(family)) return;
+        runtime.libraryFontReq.add(family);
+        try {
+          const buf = await (await fetch(f.src)).arrayBuffer();
+          // a variable font draws every weight itself; a static one keeps the
+          // default descriptor so bold is still synthesized from it
+          const face = new FontFace(family, buf, fontIsVariable(buf) ? { weight: "1 1000" } : {});
+          await face.load();
+          document.fonts.add(face);
+          runtime.customFonts.push(family);
+          runtime.customFonts.sort();
+        } catch { runtime.libraryFontReq.delete(family); }
+      }));
+    } catch { }
+  })();
+  libraryFontsReady ??= pass;
+  return pass;
+}
+/* True when a font file has an fvar table. Reads only the table directory,
+   of an sfnt (TTF/OTF), a WOFF or a WOFF2. */
+function fontIsVariable(buf) {
+  const FVAR = 0x66766172;
+  try {
+    const v = new DataView(buf);
+    const sig = v.getUint32(0);
+    if (sig === 0x774f4632) { // wOF2: flags, optional tag, UIntBase128 lengths
+      let o = 48;
+      const skip128 = () => { while (v.getUint8(o++) & 128); };
+      for (let i = 0, n = v.getUint16(12); i < n; i++) {
+        const flags = v.getUint8(o++), known = flags & 63;
+        if (known === 47) return true; // 47 = fvar in the WOFF2 known-tag table
+        if (known === 63 && v.getUint32((o += 4) - 4) === FVAR) return true;
+        skip128(); // origLength
+        const xform = flags >> 6; // glyf/loca: 3 is the null transform, others: 0
+        if (known === 10 || known === 11 ? xform !== 3 : xform !== 0) skip128();
+      }
+      return false;
+    }
+    const woff = sig === 0x774f4646;
+    for (let i = 0, n = v.getUint16(woff ? 12 : 4); i < n; i++)
+      if (v.getUint32(woff ? 44 + i * 20 : 12 + i * 16) === FVAR) return true;
+  } catch { }
+  return false;
+}
+/* Every weight, upright and italic, in one request: the API leaves out the
+   styles a family doesn't have, and answers 400 for a name it doesn't know. */
+const GOOGLE_FONT_STYLES = "ital,wght@" + [0, 1].flatMap((i) =>
+  [100, 200, 300, 400, 500, 600, 700, 800, 900].map((w) => `${i},${w}`)).join(";");
+const FONT_READY = Promise.resolve(true);
+let fontProbe = null;
+/* Installed on this machine? A known face measures differently from the
+   generic fallback it would otherwise get. */
+function fontInstalled(name) {
+  fontProbe ||= document.createElement("canvas").getContext("2d");
+  const s = "mmmmmmmmmmlli1WQ@#";
+  return ["monospace", "serif"].some((generic) => {
+    fontProbe.font = `72px ${generic}`;
+    const base = fontProbe.measureText(s).width;
+    fontProbe.font = `72px "${name}", ${generic}`;
+    return fontProbe.measureText(s).width !== base;
+  });
+}
+function fontRegistered(name) {
+  for (const f of document.fonts) if (f.family.replace(/^["']|["']$/g, "") === name) return true;
+  return false;
+}
+/* Make `name` drawable: system and library fonts already are, anything else
+   comes from Google Fonts. Resolves false when there is no such font. Cheap
+   to call every frame (font-cut does): one request per name, ever. */
+function ensureFont(name) {
+  if (!name || SYSTEM_FONTS.includes(name)) return FONT_READY;
+  let req = runtime.fontReq.get(name);
+  if (req) return req;
+  req = (async () => {
+    await (libraryFontsReady || loadLibraryFonts());
+    if (runtime.customFonts.includes(name) || fontRegistered(name) || fontInstalled(name)) return true;
+    const ok = await new Promise((resolve) => {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      // CORS mode so @font-face files stay origin-clean when fillText hits the canvas.
+      link.crossOrigin = "anonymous";
+      link.href = "https://fonts.googleapis.com/css2?family=" +
+        encodeURIComponent(name).replace(/%20/g, "+") + ":" + GOOGLE_FONT_STYLES + "&display=swap";
+      link.onload = () => resolve(true);
+      link.onerror = () => { link.remove(); resolve(false); };
+      document.head.appendChild(link);
+    });
+    if (!ok) return false;
+    runtime.googleLoaded.add(name);
+    // fetch the usual faces now instead of on the first frame that draws them
+    await Promise.all(["400", "700"].map((w) => document.fonts.load(`${w} 64px "${name}"`).catch(() => { })));
+    return true;
+  })();
+  runtime.fontReq.set(name, req);
+  return req;
+}
+/* Before an export: every face the titles draw with, loaded. A frame drawn
+   while its face is still in flight comes out in the fallback font, and in
+   an export that frame is final. Bounded so a dead network can't stall it. */
+async function loadProjectFonts() {
+  const faces = new Map(); // "italic 700 64px "Anton"" -> "Anton"
+  for (const c of mediaClips()) {
+    if (c.kind !== "text" || c.disabled) continue;
+    const p = c.props || {};
+    const fams = [p.font || "Segoe UI"];
+    if (p.textAnim === "font-cut")
+      fams.push(...(Array.isArray(p.fontCutSet) && p.fontCutSet.length ? p.fontCutSet : FONT_CUT_DEFAULT));
+    for (const fam of fams) faces.set(`${p.italic ? "italic " : ""}${textFontWeight(p)} 64px "${fam}"`, fam);
+  }
+  const load = Promise.all([...faces].map(async ([spec, fam]) => {
+    if (await ensureFont(fam)) await document.fonts.load(spec).catch(() => { });
+  }));
+  await Promise.race([load, new Promise((r) => setTimeout(r, 8000))]);
+  try { await document.fonts.ready; } catch { }
+}
+
+/* ── Main loop ── */
+let lastTs = null;
+let exportWindow = null;
+let playheadPx = -1;
+/* The loop runs at the display's refresh rate (240 Hz on some laptops), but
+   the picture only changes once per project frame. Redraw the program
+   monitor and the playhead-driven panels when the playhead reaches a new
+   frame; while paused, at the project rate for a moment after any input
+   (sliders, drags, hover handles) and at 4 fps otherwise, which still picks
+   up late seeks, font loads and agent edits. */
+let lastDrawKey = null, lastDrawAt = 0, lastActivity = 0, lastRulerKey = "";
+/* An idle editor doesn't need a callback per display refresh either: even an
+   empty requestAnimationFrame loop keeps the compositor ticking at 240 Hz.
+   When nothing moves the loop sleeps on a 4 fps timer, and any input or
+   server event wakes it at once. */
+let loopSleep = 0;
+const IDLE_MS = 250, ACTIVE_MS = 1500, AUDIO_IDLE_MS = 3000;
+function noteActivity() {
+  lastActivity = performance.now();
+  if (loopSleep) { clearTimeout(loopSleep); loopSleep = 0; lastTs = null; requestAnimationFrame(loop); }
+}
+function loopBusy(now) {
+  return state.playing || state.source.playing || state.exporting || state.rendering || state.audioHold ||
+    state.gesture || state.dirtyTimeline || now - lastActivity < ACTIVE_MS;
+}
+/* The audio graph (fx worklets, meter, convolvers) renders silence for as long
+   as its context runs, which costs a realtime thread a quarter of a core.
+   Suspend it a few seconds after the last sound — reverb and delay tails
+   finish first — and let every play path resume it as it already does. */
+let audioIdleSince = 0;
+function idleAudio(now) {
+  const au = runtime.audio;
+  if (!au || au.ctx.state !== "running") { audioIdleSince = 0; return; }
+  let sounding = state.playing || state.source.playing || state.exporting || state.rendering || state.audioHold;
+  if (!sounding) for (const el of runtime.clipEls.values()) if (!el.paused) { sounding = true; break; }
+  if (sounding) { audioIdleSince = 0; return; }
+  if (!audioIdleSince) audioIdleSince = now;
+  else if (now - audioIdleSince > AUDIO_IDLE_MS) { audioIdleSince = 0; au.ctx.suspend().catch(() => { }); }
+}
+for (const ev of ["pointerdown", "pointermove", "pointerup", "wheel", "keydown", "keyup", "input", "change", "dragover", "drop", "resize"])
+  window.addEventListener(ev, noteActivity, { capture: true, passive: true });
+function frameDue(now) {
+  if (state.exporting) return true;
+  const src = isSourceMode(), fps = projectFps();
+  const key = (src ? "s" : "p") + Math.floor((src ? state.source.time : state.time) * fps + 1e-6);
+  const gap = now - lastActivity < ACTIVE_MS ? 1000 / fps : IDLE_MS;
+  if (key === lastDrawKey && now - lastDrawAt < gap - 1) return false;
+  lastDrawKey = key; lastDrawAt = now;
+  return true;
+}
+function loop(ts) {
+  if (lastTs == null) lastTs = ts;
+  const dt = Math.min(0.1, (ts - lastTs) / 1000);
+  lastTs = ts;
+  // projDur() is an O(clips) scan — compute it once per tick and reuse below
+  // instead of the 2-4 independent recomputations this loop used to trigger.
+  const dur = projDur();
+  if (state.source.playing) {
+    // Same RAF clock as the timeline playhead — video.currentTime only steps at
+    // decode cadence and makes the scrub head stutter.
+    const rate = playRate();
+    if (rate < 0) { // reverse: stop at Source In (if the head is past it) or 0
+      const inn = state.source.in;
+      const floor = inn != null && state.source.time >= inn - 1e-4 ? inn : 0;
+      state.source.time += dt * rate;
+      if (state.source.time <= floor) {
+        state.source.time = floor;
+        pauseSource();
+      }
+    } else {
+      state.source.time += dt * rate;
+      const end = sourceStopAt();
+      if (state.source.time >= end) {
+        state.source.time = end;
+        pauseSource();
+      }
+    }
+  } else if (state.playing) {
+    const rate = playRate();
+    if (rate < 0) { // reverse: stop at IN under Limit (if the playhead is past it) or 0
+      const floor = playLimited() && project.inPoint != null && state.time >= project.inPoint - 1e-4
+        ? project.inPoint : 0;
+      state.time += dt * rate;
+      if (state.time <= floor) {
+        state.time = floor;
+        pause();
+      }
+    } else {
+      state.time += dt * rate;
+      let end = playStopAt(dur);
+      if (state.exporting && !state.rendering && exportWindow) end = exportWindow.end;
+      if (state.time >= end) {
+        state.time = end;
+        if (state.exporting) finishExport(true);
+        else pause();
+      }
+    }
+    // keep playhead visible
+    const px = state.time * state.pps, sc = els.timelineScroll;
+    if (px < sc.scrollLeft || px > sc.scrollLeft + sc.clientWidth - 40)
+      sc.scrollLeft = Math.max(0, px - 60);
+  }
+  const draw = frameDue(ts);
+  if (!state.rendering) { // fast export owns media seeking + the canvas
+    if (isSourceMode()) {
+      syncSourceMedia();
+      if (draw) drawSourceFrame();
+    } else {
+      syncMedia();
+      if (draw) drawFrame();
+    }
+  }
+  if (state.dirtyTimeline) rebuildClips();
+  const phX = Math.round(state.time * state.pps);
+  if (phX !== playheadPx) {
+    playheadPx = phX;
+    els.playhead.style.left = phX + "px";
+  }
+  const rulerKey = `${els.timelineScroll.scrollLeft} ${els.timelineScroll.clientWidth} ${state.pps}`;
+  if (draw || rulerKey !== lastRulerKey) { lastRulerKey = rulerKey; drawRuler(); }
+  if (draw) {
+    if (!isSourceMode()) updateSafeOverlay();
+    updateKfGraphs();
+    syncInspectorPlayhead();
+    syncFxEditors();
+    syncColorPlayhead();
+    updateTimecode(dur);
+  }
+  updateMeterUI(dt);
+  if (isSourceMode()) updateSourceScrub();
+  if (state.exporting && !state.rendering) {
+    const w = exportWindow;
+    const span = w ? w.dur : dur;
+    const t0 = w ? w.start : 0;
+    const pct = span ? ((state.time - t0) / span) * 100 : 0;
+    els.exportProgress.style.width = pct.toFixed(1) + "%";
+    els.exportTitle.textContent = `Exporting… ${pct.toFixed(0)}%`;
+  }
+  idleAudio(ts);
+  if (loopBusy(ts)) requestAnimationFrame(loop);
+  else loopSleep = setTimeout(() => { loopSleep = 0; lastTs = null; requestAnimationFrame(loop); }, IDLE_MS);   // a nap is not playback time
+}
+
+/* ═══════════════════════════ EXPORT ═══════════════════════════ */
+/* Three engines:
+   – fast: the browser renders every frame with the normal compositor
+     (frame-accurate, works unfocused) and streams JPEGs + an offline audio
+     mix to the server, where ffmpeg encodes via an encoding profile.
+   – webcodecs: VideoEncoder Annex-B H.264 → server stream-copy mux
+   – realtime: MediaRecorder HW-encode H.264 → server stream-copy mux
+     server/ffmpeg is unavailable. */
+
+/* Placeholder until /api/export/profiles answers — the real list (and the real
+   ffmpeg args) always comes from encoding-profiles.json on the server. */
+let encodeProfiles = {
+  default: "delivery",
+  profiles: {
+    draft: {
+      label: "Draft · H.264 fast",
+      description: "Quick preview — smaller file, faster encode.",
+      summary: "-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k",
+      jpegQuality: 0.85,
+    },
+    delivery: {
+      label: "Delivery · H.264 balanced",
+      description: "Default export — good quality and compatibility.",
+      summary: "-c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k",
+      jpegQuality: 0.95,
+    },
+    hq: {
+      label: "High quality · H.264 slow",
+      description: "Best H.264 quality — slower encode, larger file.",
+      summary: "-c:v libx264 -preset slow -crf 16 -c:a aac -b:a 256k",
+      jpegQuality: 0.98,
+    },
+  },
+};
+
+async function fetchEncodeProfiles() {
+  if (!state.connected) return;
+  try {
+    const r = await fetch("/api/export/profiles", { cache: "no-store" });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data?.profiles && Object.keys(data.profiles).length) encodeProfiles = data;
+  } catch { }
+}
+function effectiveEncodeProfileId() {
+  return project.encodeProfile || getSetting("encodeProfile") || encodeProfiles.default || "delivery";
+}
+function exportProfileMeta(id) {
+  return encodeProfiles.profiles[id] || { label: id, summary: id, jpegQuality: 0.95 };
+}
+function updateExportProfileNote(id) {
+  const known = Object.hasOwn(encodeProfiles.profiles, id);
+  const p = exportProfileMeta(id);
+  if (els.exportProfileNote) {
+    els.exportProfileNote.textContent = known
+      ? [p.description, p.summary].filter(Boolean).join(" — ")
+      : `"${id}" is not defined in encoding-profiles.json — the export will fail until it is added or another profile is picked.`;
+  }
+  if (els.exportProfileHint) {
+    if (project.encodeProfile) {
+      els.exportProfileHint.textContent =
+        "Project default (encodeProfile in project.json). Pick another profile here for a one-off export.";
+    } else if (getSetting("encodeProfile")) {
+      els.exportProfileHint.textContent = "Browser default — saved when you change this dropdown.";
+    } else {
+      els.exportProfileHint.textContent = "Raw ffmpeg arguments from encoding-profiles.json.";
+    }
+  }
+}
+
+/* ── Delivery presets (delivery.js) ──
+   The Preset dropdown lists the delivery presets (YouTube, Reels, Broadcast…,
+   saved ones, Custom) and, last, the raw encoding profiles. A delivery preset
+   fills the controls below it; any change makes it "modified" and is kept as
+   the browser's last settings. Values: "d:<preset id>" / "p:<profile id>". */
+const Delivery = window.FableCutDelivery;
+let deliveryInfo = { encoders: null, saved: {} };
+let dlvSpec = null;
+let dlvNotes = [];
+async function fetchDeliveryInfo() {
+  if (!state.connected) return;
+  try {
+    const r = await fetch("/api/export/presets", { cache: "no-store" });
+    if (!r.ok) return;
+    const d = await r.json();
+    deliveryInfo = { encoders: Array.isArray(d.encoders) ? d.encoders : null, saved: d.saved && typeof d.saved === "object" ? d.saved : {} };
+  } catch { }
+}
+function deliveryOpts() {
+  return { available: deliveryInfo.encoders ? new Set(deliveryInfo.encoders) : null, presets: deliveryInfo.saved };
+}
+function normalizeDelivery(input) { return Delivery.normalize(input, deliveryOpts()); }
+/** What an export uses when nobody picks: the project's pin, else this browser's last choice. */
+function exportChoice() {
+  if (project.delivery) return { kind: "delivery", spec: project.delivery, source: "project" };
+  if (project.encodeProfile) return { kind: "profile", id: project.encodeProfile, source: "project" };
+  const kind = getSetting("exportKind") || (getSetting("encodeProfile") ? "profile" : "delivery");
+  if (kind === "profile") return { kind, id: effectiveEncodeProfileId(), source: "browser" };
+  const last = getSetting("delivery");
+  return { kind: "delivery", spec: last && typeof last === "object" ? last : Delivery.DEFAULT_PRESET, source: last ? "browser" : "default" };
+}
+function selectedExportChoice() {
+  const v = els.exportProfileSel?.value || "";
+  return v.startsWith("p:") ? { kind: "profile", id: v.slice(2) } : { kind: "delivery", id: v.slice(2) || Delivery.DEFAULT_PRESET };
+}
+function populateExportProfileSelect() {
+  const sel = els.exportProfileSel;
+  if (!sel) return;
+  const choice = exportChoice();
+  let cur;
+  if (choice.kind === "delivery") {
+    const n = normalizeDelivery(choice.spec);
+    dlvSpec = n.spec; dlvNotes = n.notes;
+    cur = "d:" + dlvSpec.preset;
+  } else cur = "p:" + choice.id;
+  const opt = (v, label) => `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`;
+  let html = Delivery.presetGroups(deliveryInfo.saved).map((g) =>
+    `<optgroup label="${escapeHtml(g.group)}">${g.items.map((it) => opt("d:" + it.id, it.label)).join("")}</optgroup>`).join("");
+  const ids = Object.keys(encodeProfiles.profiles);
+  // a project/browser default naming a deleted profile must stay visible rather
+  // than silently falling through to whichever option happens to be first
+  if (choice.kind === "profile" && !ids.includes(choice.id)) ids.unshift(choice.id);
+  html += `<optgroup label="Encoding profiles (encoding-profiles.json)">${ids.map((id) => {
+    const p = encodeProfiles.profiles[id];
+    return opt("p:" + id, p ? (p.label || id) : `${id} (not defined on the server)`);
+  }).join("")}</optgroup>`;
+  sel.innerHTML = html;
+  sel.value = cur;
+  if (sel.value !== cur) sel.value = "d:" + Delivery.DEFAULT_PRESET;
+  syncExportChoiceUi(choice.source);
+}
+/** source: where the current settings came from, for the hint line. */
+function syncExportChoiceUi(source) {
+  const c = selectedExportChoice();
+  const isD = c.kind === "delivery";
+  $("dlvBody")?.classList.toggle("hidden", !isD);
+  $("dlvSaveBtn")?.classList.toggle("hidden", !isD);
+  $("dlvDeleteBtn")?.classList.toggle("hidden", !(isD && deliveryInfo.saved[c.id]));
+  $("dlvSaveRow")?.classList.add("hidden");
+  if (!isD) {
+    updateExportProfileNote(c.id);
+    const w = $("dlvWarn"); if (w) { w.textContent = ""; w.classList.add("hidden"); }
+    return;
+  }
+  if (!dlvSpec || dlvSpec.preset !== c.id) {
+    const n = normalizeDelivery(c.id);
+    dlvSpec = n.spec; dlvNotes = n.notes;
+    source = "preset";
+  }
+  dlvSource = source || dlvSource;
+  fillDeliveryControls();
+  refreshDeliveryNotes();
+}
+let dlvSource = "default";
+function deliveryCanvas() {
+  return { w: els.preview?.width || project.width, h: els.preview?.height || project.height, region: getExportFrame() };
+}
+function deliveryFrame(spec) {
+  const cv = deliveryCanvas();
+  return Delivery.reframe(spec, cv.w, cv.h, cv.region);
+}
+function deliveryFileName(spec, fps) {
+  const fr = deliveryFrame(spec);
+  return Delivery.renderFilename(spec.filename, spec, {
+    project: project.name.replace(/[^\w\- ]+/g, "").trim() || "export",
+    width: fr.outW, height: fr.outH, fps: fps || spec.fps || projectFps(), range: exportRangeMode(),
+  });
+}
+const dlvVal = (id) => $(id)?.value ?? "";
+function setOptions(sel, items, value) {
+  if (!sel) return;
+  sel.innerHTML = items.map(([v, label, disabled]) =>
+    `<option value="${escapeHtml(String(v))}"${disabled ? " disabled" : ""}>${escapeHtml(label)}</option>`).join("");
+  sel.value = String(value);
+}
+function showField(id, on) { $(id)?.classList.toggle("hidden", !on); }
+function fillDeliveryControls() {
+  const sp = dlvSpec, v = sp.video, a = sp.audio, C = Delivery.CODECS[v.codec];
+  const fr = deliveryFrame({ ...sp, width: null, height: null });
+  const avail = deliveryOpts().available;
+  // resolution
+  const res = [["", `Picture size (${fr.outW} × ${fr.outH})`]];
+  for (const [w, h, label] of Delivery.RESOLUTIONS) res.push([`${w}x${h}`, `${w} × ${h} · ${label}`]);
+  res.push(["custom", "Custom…"]);
+  let rv = sp.width ? `${sp.width}x${sp.height}` : "";
+  if (rv && !res.some((r) => r[0] === rv)) rv = "custom";
+  if (dlvCustomRes && sp.width) rv = "custom";
+  setOptions($("dlvRes"), res, rv);
+  showField("dlvWhField", rv === "custom");
+  if (rv === "custom") { $("dlvW").value = sp.width; $("dlvH").value = sp.height; }
+  showField("dlvReframeField", !!sp.width);
+  $("dlvReframe").value = sp.reframe;
+  setOptions($("dlvFps"), [["", `Project (${projectFps()} fps)`], ...Delivery.FPS_CHOICES.map((f) => [f, `${f} fps`])], sp.fps ?? "");
+  setOptions($("dlvCodec"), Object.entries(Delivery.CODECS).map(([k, c]) => {
+    const none = avail && !Delivery.encodersFor(k, avail).length;
+    return [k, c.label + (none ? " — not in this ffmpeg" : ""), none && k !== v.codec];
+  }), v.codec);
+  const encs = Delivery.encodersFor(v.codec, avail);
+  setOptions($("dlvEncoder"), (encs.length ? encs : [v.encoder]).map((e) => [e, Delivery.ENCODERS[e]?.label || e]), v.encoder);
+  showField("dlvEncoderField", encs.length > 1);
+  showField("dlvProfileField", !!C.profiles);
+  if (C.profiles) setOptions($("dlvProfile"), Object.entries(C.profiles), v.profile);
+  const fixed = v.rate === "fixed";
+  showField("dlvRateField", !fixed);
+  if (!fixed) setOptions($("dlvRate"), C.rate.map((r) => [r, { crf: "CRF (constant quality)", vbr: "VBR (variable bitrate)", cbr: "CBR (constant bitrate)" }[r]]), v.rate);
+  showField("dlvCrfField", v.rate === "crf");
+  showField("dlvBitrateField", v.rate === "vbr" || v.rate === "cbr");
+  showField("dlvMaxrateField", v.rate === "crf" || v.rate === "vbr");
+  for (const f of ["dlvKeyintField", "dlvSpeedField"]) showField(f, !fixed);
+  if (!fixed) {
+    const crf = $("dlvCrf"); crf.min = C.crf[0]; crf.max = C.crf[1];
+    if (document.activeElement !== crf) crf.value = v.crf;
+    if (document.activeElement !== $("dlvBitrate")) $("dlvBitrate").value = +(v.bitrate / 1000).toFixed(2);
+    if (document.activeElement !== $("dlvMaxrate")) $("dlvMaxrate").value = v.maxrate ? +(v.maxrate / 1000).toFixed(2) : "";
+    if (document.activeElement !== $("dlvKeyint")) $("dlvKeyint").value = v.keyint;
+    $("dlvSpeed").value = v.speed;
+  }
+  const E = Delivery.ENCODERS[v.encoder] || {};
+  const pix = C.pixFmts.filter((f) => !E.pix || E.pix.includes(f));
+  const PIX = { yuv420p: "4:2:0 8-bit", yuv422p: "4:2:2 8-bit", yuv444p: "4:4:4 8-bit", yuv420p10le: "4:2:0 10-bit", yuv422p10le: "4:2:2 10-bit", yuv444p10le: "4:4:4 10-bit" };
+  setOptions($("dlvPixFmt"), (pix.includes(v.pixFmt) ? pix : [v.pixFmt, ...pix]).map((f) => [f, `${PIX[f] || f} (${f})`]), v.pixFmt);
+  $("dlvPixFmt").disabled = v.codec === "prores" || v.codec === "dnxhr" || pix.length < 2;
+  setOptions($("dlvColor"), Object.entries(Delivery.COLORS).map(([k, c]) => [k, c.label]), sp.color);
+  setOptions($("dlvContainer"), C.containers.map((k) => [k, Delivery.CONTAINERS[k].label]), sp.container);
+  // audio
+  setOptions($("dlvACodec"), Object.entries(Delivery.AUDIO).filter(([, A]) => A.containers.includes(sp.container)).map(([k, A]) => [k, A.label]), a.codec);
+  const A = Delivery.AUDIO[a.codec];
+  showField("dlvABitrateField", !!A.bitrate);
+  if (A.bitrate) {
+    const steps = [64, 96, 128, 160, 192, 256, 320, 384, 448, 512].filter((k) => k >= A.bitrate[0] && k <= A.bitrate[1]);
+    if (!steps.includes(a.bitrate)) steps.push(a.bitrate), steps.sort((x, y) => x - y);
+    setOptions($("dlvABitrate"), steps.map((k) => [k, `${k} kb/s`]), a.bitrate);
+  }
+  showField("dlvARateField", a.codec !== "none" && a.codec !== "opus");
+  showField("dlvAChField", a.codec !== "none");
+  if (a.codec !== "none") { $("dlvARate").value = a.sampleRate; $("dlvACh").value = a.channels; }
+  showField("dlvLoudField", a.codec !== "none");
+  showField("dlvTpField", a.codec !== "none" && a.loudness != null);
+  if (a.codec !== "none") {
+    const opts = [["off", "Off — as mixed"], ...Delivery.LOUDNESS_TARGETS];
+    if (a.loudness != null && !opts.some((o) => +o[0] === a.loudness)) opts.push([a.loudness, `${a.loudness} LUFS`]);
+    setOptions($("dlvLoud"), opts, a.loudness == null ? "off" : a.loudness);
+    if (a.loudness != null && document.activeElement !== $("dlvTp")) $("dlvTp").value = a.truePeak;
+  }
+  // file name + metadata (left alone while typing)
+  const fn = $("dlvFilename");
+  if (document.activeElement !== fn) fn.value = sp.filename;
+  for (const k of Delivery.META_KEYS) {
+    const el = $("dlvMeta" + k[0].toUpperCase() + k.slice(1));
+    if (el && document.activeElement !== el) el.value = sp.metadata[k] || "";
+  }
+  $("dlvTokens").textContent = "Tokens: " + Delivery.FILENAME_TOKENS.map((t) => `{${t}}`).join(" ");
+}
+let dlvCustomRes = false;
+/** The controls → a spec. `changed`: the control the user touched. */
+function readDeliveryControls(changed) {
+  const sp = dlvSpec;
+  const raw = { preset: sp.preset, video: { ...sp.video }, audio: { ...sp.audio }, metadata: {} };
+  const r = dlvVal("dlvRes");
+  dlvCustomRes = r === "custom";
+  if (r === "") { raw.width = null; raw.height = null; }
+  else if (r === "custom") {
+    if (changed === "dlvRes") { const fr = deliveryFrame(sp); raw.width = fr.outW; raw.height = fr.outH; }
+    else { raw.width = +dlvVal("dlvW") || null; raw.height = +dlvVal("dlvH") || null; }
+  } else { const [w, h] = r.split("x").map(Number); raw.width = w; raw.height = h; }
+  raw.reframe = dlvVal("dlvReframe");
+  raw.fps = dlvVal("dlvFps") === "" ? null : +dlvVal("dlvFps");
+  raw.container = dlvVal("dlvContainer");
+  raw.color = dlvVal("dlvColor");
+  if (changed === "dlvCodec") raw.video = { codec: dlvVal("dlvCodec"), speed: sp.video.speed, keyint: sp.video.keyint, maxrate: sp.video.maxrate, bitrate: sp.video.bitrate };
+  else {
+    const v = raw.video;
+    v.encoder = dlvVal("dlvEncoder") || v.encoder;
+    if (!$("dlvProfileField").classList.contains("hidden")) v.profile = dlvVal("dlvProfile");
+    if (v.rate !== "fixed") {
+      v.rate = dlvVal("dlvRate") || v.rate;
+      v.crf = +dlvVal("dlvCrf");
+      v.bitrate = Math.round(+dlvVal("dlvBitrate") * 1000) || v.bitrate;
+      v.maxrate = dlvVal("dlvMaxrate") === "" ? null : Math.round(+dlvVal("dlvMaxrate") * 1000);
+      v.keyint = +dlvVal("dlvKeyint");
+      v.speed = dlvVal("dlvSpeed");
+    }
+    v.pixFmt = dlvVal("dlvPixFmt");
+  }
+  const a = raw.audio;
+  a.codec = dlvVal("dlvACodec") || a.codec;
+  if (changed !== "dlvACodec") {
+    if (!$("dlvABitrateField").classList.contains("hidden")) a.bitrate = +dlvVal("dlvABitrate");
+    a.sampleRate = +dlvVal("dlvARate") || a.sampleRate;
+    a.channels = +dlvVal("dlvACh") || a.channels;
+    a.loudness = dlvVal("dlvLoud") === "off" || dlvVal("dlvLoud") === "" ? null : +dlvVal("dlvLoud");
+    if (dlvVal("dlvTp") !== "") a.truePeak = +dlvVal("dlvTp");
+  } else delete a.bitrate;
+  raw.filename = dlvVal("dlvFilename");
+  for (const k of Delivery.META_KEYS) raw.metadata[k] = dlvVal("dlvMeta" + k[0].toUpperCase() + k.slice(1));
+  return raw;
+}
+function onDeliveryControl(e) {
+  const id = e.target?.id || "";
+  if (!id.startsWith("dlv") || id === "dlvSaveName") return;
+  const n = normalizeDelivery(readDeliveryControls(id));
+  dlvSpec = n.spec; dlvNotes = n.notes;
+  dlvSource = "edited";
+  // text fields refresh the preview only; everything else may move other controls
+  if (e.type === "change") fillDeliveryControls();
+  refreshDeliveryNotes();
+}
+function deliveryModified() {
+  if (!dlvSpec) return false;
+  const base = normalizeDelivery(dlvSpec.preset).spec;
+  const strip = (x) => JSON.stringify({ ...x, metadata: null });
+  return strip(base) !== strip(dlvSpec);
+}
+function refreshDeliveryNotes() {
+  if (!dlvSpec) return;
+  const sp = dlvSpec, fr = deliveryFrame(sp), fps = sp.fps || projectFps();
+  const preset = Delivery.PRESETS[sp.preset] || deliveryInfo.saved[sp.preset];
+  const modified = deliveryModified();
+  if (els.exportProfileNote) els.exportProfileNote.textContent = preset?.note || "";
+  if (els.exportProfileHint) {
+    els.exportProfileHint.textContent = dlvSource === "project"
+      ? "Project default (delivery in project.json) — agents export with it too."
+      : modified ? `${preset?.label || "Preset"} · modified — Save preset… keeps these settings for every project.`
+        : dlvSource === "browser" ? "Your last settings in this browser." : "";
+  }
+  const range = exportRange(fps);
+  const size = Delivery.estimateSize(sp, { duration: range.dur, width: fr.outW, height: fr.outH, fps });
+  $("dlvSummary").textContent = `${Delivery.describe(sp, { width: fr.outW, height: fr.outH, fps })}` +
+    (size ? ` · about ${Delivery.fmtBytes(size)}` : "");
+  $("dlvFilePreview").textContent = "→ exports/" + deliveryFileName(sp, fps) + Delivery.CONTAINERS[sp.container].ext;
+  const cv = deliveryCanvas();
+  const warn = [...dlvNotes.map((n) => n[0].toUpperCase() + n.slice(1)),
+    ...Delivery.checks(sp, { duration: range.dur, fps, canvasW: cv.w, canvasH: cv.h, region: cv.region })];
+  const w = $("dlvWarn");
+  if (w) { w.textContent = warn.join(" · "); w.classList.toggle("hidden", !warn.length); }
+}
+async function saveDeliveryPreset() {
+  const name = $("dlvSaveName").value.trim();
+  if (!name) { $("dlvSaveName").focus(); return; }
+  const r = await fetch("/api/export/presets", { method: "POST", body: JSON.stringify({ name, spec: dlvSpec }) })
+    .then((x) => x.json()).catch((e) => ({ error: String(e) }));
+  if (!r.ok) { alert("Could not save the preset: " + (r.error || "unknown error")); return; }
+  await fetchDeliveryInfo();
+  setSetting("exportKind", "delivery");
+  setSetting("delivery", { ...dlvSpec, preset: r.id });
+  if (!project.delivery) populateExportProfileSelect();
+  else { els.exportProfileSel.value = "d:" + r.id; dlvSpec = null; syncExportChoiceUi("preset"); }
+}
+async function deleteDeliveryPreset() {
+  const c = selectedExportChoice();
+  if (c.kind !== "delivery" || !deliveryInfo.saved[c.id]) return;
+  const r = await fetch("/api/export/presets/delete", { method: "POST", body: JSON.stringify({ id: c.id }) }).then((x) => x.json()).catch(() => ({}));
+  if (!r.ok) { alert("Could not delete the preset: " + (r.error || "unknown error")); return; }
+  await fetchDeliveryInfo();
+  els.exportProfileSel.value = "d:" + Delivery.DEFAULT_PRESET;
+  dlvSpec = null;
+  populateExportProfileSelect();
+  els.exportProfileSel.value = "d:" + Delivery.DEFAULT_PRESET;
+  syncExportChoiceUi("preset");
+}
+function syncExportProfileVisibility() {
+  const show = els.engineFast.checked && !els.engineFast.disabled;
+  els.exportProfileRow?.classList.toggle("hidden", !show);
+  // the batch list and the queue are Fast export (ffmpeg) only
+  for (const id of ["dlvBatch", "btnQueueExport", "btnBatchExport"]) $(id)?.classList.toggle("hidden", !show);
+  if (!show) { const w = $("dlvWarn"); if (w) w.classList.add("hidden"); }
+  else if (selectedExportChoice().kind === "delivery") refreshDeliveryNotes();
+}
+
+function syncExportWcOpts() {
+  const opts = $("exportWcOpts");
+  if (!opts) return;
+  const show = !!(els.engineRealtime?.checked && state.webCodecs
+    && state.connected && state.ffmpeg && !els.engineRealtime.disabled);
+  opts.classList.toggle("hidden", !show);
+}
+function fillExportWcOpts() {
+  const br = $("exportWcBitrate");
+  const mode = $("exportWcMode");
+  if (br) {
+    const mbps = getSetting("webCodecsBitrateMbps");
+    const want = mbps == null ? "auto" : String(Math.round(Number(mbps)));
+    br.value = [...br.options].some((o) => o.value === want) ? want : "auto";
+  }
+  if (mode) {
+    const m = getSetting("webCodecsBitrateMode");
+    mode.value = m === "constant" ? "constant" : "variable";
+  }
+}
+function persistExportWcOpts() {
+  const br = $("exportWcBitrate");
+  const mode = $("exportWcMode");
+  if (br) {
+    setSetting("webCodecsBitrateMbps", br.value === "auto" ? null : Number(br.value));
+  }
+  if (mode) {
+    setSetting("webCodecsBitrateMode", mode.value === "constant" ? "constant" : "variable");
+  }
+}
+/** Bitrate for VideoEncoder.configure — no CRF in WebCodecs; only bitrate (+ CBR/VBR). */
+function webCodecsBitrate(w, h, fps) {
+  const mbps = getSetting("webCodecsBitrateMbps");
+  if (mbps != null && Number.isFinite(+mbps) && +mbps > 0) {
+    return Math.round(Math.min(100, Math.max(0.5, +mbps)) * 1_000_000);
+  }
+  // ~0.1 bit/pixel/frame, clamped — same heuristic as before
+  return Math.min(20_000_000, Math.max(2_000_000, Math.round(w * h * fps * 0.1)));
+}
+async function openExportSetup() {
+  if (state.exporting) return;
+  if (!project.clips.length) { alert("Timeline is empty — add some clips first."); return; }
+  await detectWebCodecs();
+  const ef = getExportFrame();
+  const fastOk = state.connected && state.ffmpeg;
+  // WebCodecs and MediaRecorder encode the full canvas — only Fast crops.
+  const wcOk = fastOk && state.webCodecs && !ef;
+  const recOk = !ef && !!(window.MediaRecorder && pickMime());
+  els.engineFast.disabled = !fastOk;
+  els.engineRealtime.disabled = !wcOk && !recOk;
+  // Prefer Fast, then WebCodecs, then MediaRecorder
+  if (fastOk) {
+    els.engineFast.checked = true;
+    els.engineRealtime.checked = false;
+  } else if (wcOk || recOk) {
+    els.engineFast.checked = false;
+    els.engineRealtime.checked = true;
+  } else {
+    // Frame set but no ffmpeg — neither engine can run; prefer Fast in the UI.
+    els.engineFast.checked = true;
+    els.engineRealtime.checked = false;
+  }
+  $("engineFastNote").textContent = fastOk
+    ? (ef ? "Exports the " + ef.w + "×" + ef.h + " delivery frame (cropped). Keeps rendering if you switch tabs."
+      : "Frame-accurate. Server encodes from JPEG frames. Keeps going if you switch tabs.")
+    : (ef
+      ? "Needs the server + ffmpeg on PATH to export a cropped delivery frame."
+      : "Needs the server + ffmpeg on PATH.");
+  const wcNote = $("engineWebCodecsNote");
+  if (wcNote) {
+    if (wcOk) wcNote.textContent = "Frame-accurate. Browser HW-encodes H.264; server muxes with audio. Faster upload than Fast.";
+    else if (ef) wcNote.textContent = fastOk
+      ? "Unavailable while an export frame is set — use Fast export."
+      : "Unavailable while an export frame is set. Install ffmpeg, or clear the export frame to use Realtime.";
+    else if (!state.connected || !state.ffmpeg) wcNote.textContent = "Needs the server + ffmpeg. Falling back to in-browser MediaRecorder when selected.";
+    else wcNote.textContent = "This browser does not support VideoEncoder Annex-B H.264. Falling back to MediaRecorder when selected.";
+  }
+  // Relabel the radio when WebCodecs is unavailable but MediaRecorder still works
+  const label = els.engineRealtime?.closest("label")?.querySelector("b");
+  if (label) label.textContent = wcOk ? "WebCodecs (HW encode)" : "Realtime (in-browser)";
+  fillExportWcOpts();
+  syncExportWcOpts();
+  const warn = $("exportTrackWarn");
+  const disabled = TRACKS.filter((t) =>
+    !isTrackEnabled(t.id) && project.clips.some((c) => c.track === t.id)
+  ).map((t) => t.id);
+  if (disabled.length && warn) {
+    const list = disabled.join(", ");
+    warn.textContent = disabled.length === 1
+      ? `Track ${list} is disabled and will be omitted from the export.`
+      : `Tracks ${list} are disabled and will be omitted from the export.`;
+    warn.classList.remove("hidden");
+  } else if (warn) {
+    warn.textContent = "";
+    warn.classList.add("hidden");
+  }
+  // missing files export as their "Media offline" slate — say so before the render
+  const offUsed = project.media.filter((m) => isMediaOffline(m.id) && MediaLib.placements(usageDoc(), m.id).length);
+  if (offUsed.length && warn) {
+    warn.textContent = (warn.textContent ? warn.textContent + " " : "") +
+      `${offUsed.length === 1 ? `“${offUsed[0].name}” is` : offUsed.length + " files are"} offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).`;
+    warn.classList.remove("hidden");
+  }
+  fillExportRangeSelect();
+  syncExportRangeUi();
+  syncExportProfileVisibility();
+  Promise.all([fetchEncodeProfiles(), fetchDeliveryInfo()]).then(() => {
+    populateExportProfileSelect();
+    syncExportProfileVisibility();
+    renderBatchList();
+    renderQueue();
+    els.exportSetup.classList.remove("hidden");
+    // aria-modal hides what is behind — focus has to come inside
+    if (!els.exportSetup.contains(document.activeElement)) $("exportRangeSel")?.focus();
+  });
+}
+function closeExportSetup() {
+  els.exportSetup.classList.add("hidden");
+  $("btnExport")?.focus();
+}
+function startChosenExport() {
+  persistExportWcOpts();
+  const useFast = els.engineFast.checked && !els.engineFast.disabled;
+  const useSecond = els.engineRealtime.checked && !els.engineRealtime.disabled;
+  if (!useFast && !useSecond) {
+    const ef = getExportFrame();
+    if (ef && !(state.connected && state.ffmpeg)) {
+      alert("Export frame cropping needs Fast export (server + ffmpeg). Clear the export frame, or install ffmpeg and try again.");
+      return;
+    }
+    alert("No export engine is available.");
+    return;
+  }
+  if (exportRange().frames < 1) {
+    alert("Export range is empty — IN/OUT is at or past the end of the timeline. Choose Entire timeline, or move the markers.");
+    return;
+  }
+  closeExportSetup();
+  if (useFast) {
+    const c = selectedExportChoice();
+    setSetting("exportKind", c.kind);
+    if (c.kind === "delivery") {
+      setSetting("delivery", dlvSpec);
+      fastExport({ delivery: dlvSpec });
+    } else fastExport({ profile: c.id });
+  }
+  else if (useSecond && state.connected && state.ffmpeg && state.webCodecs && !getExportFrame()) webCodecsExport();
+  else startExport();
+}
+
+/* Keep Range's IN–OUT option in sync with marker presence without clobbering
+   a deliberate "entire" choice. Invalid "in-out" (no work area) snaps to entire
+   so the displayed value matches exportRangeMode(). */
+function syncExportRangeSelect() {
+  const sel = $("exportRangeSel");
+  if (!sel) return;
+  const opt = sel.querySelector('option[value="in-out"]');
+  const has = hasWorkArea();
+  if (opt) opt.disabled = !has;
+  if (!has && sel.value === "in-out") sel.value = "entire";
+}
+function fillExportRangeSelect() {
+  syncExportRangeSelect();
+  const sel = $("exportRangeSel");
+  if (sel) sel.value = hasWorkArea() ? "in-out" : "entire";
+}
+function exportRangeNoteText() {
+  const mode = exportRangeMode();
+  const { start, dur, frames } = exportRange();
+  const end = start + dur;
+  if (mode === "entire") return `Full timeline · ${fmt(start)} → ${fmt(end)}`;
+  if (frames < 1) return "IN–OUT is empty — markers are at or past the end of the timeline.";
+  const inn = project.inPoint != null, out = project.outPoint != null;
+  if (inn && out) return `IN–OUT · ${fmt(start)} → ${fmt(end)}`;
+  if (inn) return `IN to end · ${fmt(start)} → ${fmt(end)}`;
+  return `Start to OUT · ${fmt(start)} → ${fmt(end)}`;
+}
+function syncExportRangeUi() {
+  const note = $("exportRangeNote");
+  if (note) note.textContent = exportRangeNoteText();
+  const btn = $("btnStartExport");
+  if (btn) btn.disabled = exportRange().frames < 1;
+}
+
+/* ── Fast export ── */
+let renderCancelled = false;
+let exportAbort = null;
+function beginExportWindow(fps) {
+  exportWindow = exportRange(fps);
+  return exportWindow;
+}
+function endExportWindow() {
+  exportWindow = null;
+}
+let exportCropCanvas = null;
+let exportCropCtx = null;
+/* A delivery export sends the whole canvas; ffmpeg crops the export frame
+   (and reframes) itself, so one stream can feed any output shape. */
+let exportFullCanvas = false;
+function canvasTaintError(e) {
+  const tainted = e && (e.name === "SecurityError" || /taint/i.test(String(e.message || e)));
+  return tainted
+    ? new Error("Tainted canvas — a clip is from another origin (not /media or /library) without CORS, or an SVG could not be rasterized cleanly. Import the file into the project, or serve it with Access-Control-Allow-Origin.")
+    : (e || new Error("frame encode failed"));
+}
+function exportSourceCanvas() {
+  const ef = getExportFrame();
+  if (!ef || exportFullCanvas) return els.preview;
+  if (!exportCropCanvas) exportCropCanvas = document.createElement("canvas");
+  if (exportCropCanvas.width !== ef.w) exportCropCanvas.width = ef.w;
+  if (exportCropCanvas.height !== ef.h) exportCropCanvas.height = ef.h;
+  if (!exportCropCtx) exportCropCtx = exportCropCanvas.getContext("2d", { alpha: false });
+  exportCropCtx.drawImage(els.preview, ef.x, ef.y, ef.w, ef.h, 0, 0, ef.w, ef.h);
+  return exportCropCanvas;
+}
+let exportSnapOff = null, exportSnapCtx = null;
+/** Synchronous snapshot so the compositor can draw the next frame immediately.
+ *  JPEG encode runs off-thread from the ImageBitmap. */
+function snapshotExportFrame() {
+  const src = exportSourceCanvas();
+  try {
+    if (typeof OffscreenCanvas === "function") {
+      if (!exportSnapOff || exportSnapOff.width !== src.width || exportSnapOff.height !== src.height) {
+        exportSnapOff = new OffscreenCanvas(src.width, src.height);
+        exportSnapCtx = exportSnapOff.getContext("2d", { alpha: false });
+      }
+      exportSnapCtx.drawImage(src, 0, 0);
+      if (typeof exportSnapOff.transferToImageBitmap === "function")
+        return { kind: "bmp", bmp: exportSnapOff.transferToImageBitmap() };
+    }
+    const img = src.getContext("2d").getImageData(0, 0, src.width, src.height);
+    return { kind: "rgba", data: img.data, w: src.width, h: src.height };
+  } catch (e) { throw canvasTaintError(e); }
+}
+let exportRgbaOff = null, exportRgbaCtx = null;
+/** Raw RGBA of the frame, for outputs that keep more than JPEG's 4:2:0 8-bit
+ *  (ProRes, DNxHR, FFV1, 10-bit, 4:2:2 / 4:4:4). */
+function snapshotExportRgba() {
+  const src = exportSourceCanvas();
+  try {
+    if (!exportRgbaOff || exportRgbaOff.width !== src.width || exportRgbaOff.height !== src.height) {
+      exportRgbaOff = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(src.width, src.height)
+        : Object.assign(document.createElement("canvas"), { width: src.width, height: src.height });
+      exportRgbaCtx = exportRgbaOff.getContext("2d", { alpha: false, willReadFrequently: true });
+    }
+    exportRgbaCtx.drawImage(src, 0, 0);
+    const img = exportRgbaCtx.getImageData(0, 0, src.width, src.height);
+    return new Uint8Array(img.data.buffer, img.data.byteOffset, img.data.byteLength);
+  } catch (e) { throw canvasTaintError(e); }
+}
+const JPEG_WORKER_SRC = `"use strict";
+self.onmessage = async (e) => {
+  const { id, bmp, quality } = e.data;
+  try {
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext("2d", { alpha: false });
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+    const blob = await c.convertToBlob({ type: "image/jpeg", quality: quality || 0.92 });
+    const buf = await blob.arrayBuffer();
+    self.postMessage({ id, buf }, [buf]);
+  } catch (err) {
+    try { bmp.close(); } catch {}
+    self.postMessage({ id, error: String(err && err.message || err) });
+  }
+};
+`;
+function createJpegWorkers(n) {
+  if (typeof Worker !== "function" || typeof OffscreenCanvas !== "function") return null;
+  let url;
+  try { url = URL.createObjectURL(new Blob([JPEG_WORKER_SRC], { type: "text/javascript" })); }
+  catch { return null; }
+  const workers = [];
+  try {
+    for (let i = 0; i < n; i++) workers.push(new Worker(url));
+  } catch {
+    for (const w of workers) try { w.terminate(); } catch { }
+    URL.revokeObjectURL(url);
+    return null;
+  }
+  URL.revokeObjectURL(url);
+  const pending = new Map();
+  let nextId = 0, rr = 0;
+  for (const w of workers) {
+    w.onmessage = (e) => {
+      const rec = pending.get(e.data.id);
+      if (!rec) return;
+      pending.delete(e.data.id);
+      if (e.data.error) rec.reject(new Error(e.data.error));
+      else rec.resolve(e.data.buf);
+    };
+    w.onerror = () => {};
+  }
+  return {
+    encode(bmp, quality) {
+      const id = nextId++;
+      const w = workers[rr++ % workers.length];
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        try { w.postMessage({ id, bmp, quality }, [bmp]); }
+        catch (e) { pending.delete(id); reject(e); }
+      });
+    },
+    terminate() {
+      for (const rec of pending.values()) rec.reject(new Error("cancelled"));
+      pending.clear();
+      for (const w of workers) try { w.terminate(); } catch { }
+    },
+  };
+}
+function jpegFromBitmap(bmp, quality) {
+  const c = document.createElement("canvas");
+  c.width = bmp.width; c.height = bmp.height;
+  c.getContext("2d", { alpha: false }).drawImage(bmp, 0, 0);
+  try { bmp.close(); } catch { }
+  return new Promise((res, rej) => {
+    try {
+      c.toBlob((b) => {
+        if (!b) return rej(new Error("frame encode failed"));
+        b.arrayBuffer().then(res, rej);
+      }, "image/jpeg", quality);
+    } catch (e) { rej(canvasTaintError(e)); }
+  });
+}
+/** Preview may already be tainted (cross-origin PiP, old data: SVG). Resetting
+ *  width clears the bitmap and the origin-clean flag; export redraws each frame. */
+function resetExportCanvases() {
+  els.preview.width = els.preview.width;
+  if (exportCropCanvas) {
+    exportCropCanvas.width = exportCropCanvas.width;
+    exportCropCtx = null;
+  }
+  adjScratch.width = adjScratch.width;
+  scratch.width = scratch.width;
+  if (pixGL.stage) pixGL.stage.width = pixGL.stage.width;   // the GPU pixel pass keeps these between frames
+  pixGL.outs.clear();
+  exportSnapOff = null;
+  exportSnapCtx = null;
+}
+function waitMediaEl(el, ms = 2500) {
+  if (el.readyState >= 2 && !(el.error)) return Promise.resolve();
+  return new Promise((res) => {
+    const done = () => {
+      clearTimeout(tm);
+      el.removeEventListener("loadeddata", done);
+      el.removeEventListener("error", done);
+      res();
+    };
+    const tm = setTimeout(done, ms);
+    el.addEventListener("loadeddata", done);
+    el.addEventListener("error", done);
+  });
+}
+/** Reload other-origin video/images with crossOrigin=anonymous for the export
+ *  compositor. Preview leaves them no-cors so a stream without ACAO still plays. */
+async function armExportCors() {
+  const jobs = [];
+  for (const c of mediaClips()) {
+    if (c.kind !== "video" || !clipRenders(c)) continue;
+    const m = getMedia(c.mediaId);
+    if (!m || !isCrossOriginSrc(m.src)) continue;
+    const el = getClipEl(c);
+    if (!el || el.crossOrigin === "anonymous") continue;
+    const t = el.currentTime;
+    el.crossOrigin = "anonymous";
+    el.src = m.src;
+    jobs.push(waitMediaEl(el).then(() => {
+      try { if (Number.isFinite(t)) el.currentTime = t; } catch { }
+    }));
+  }
+  for (const m of project.media) {
+    if (m.kind !== "image" || !isCrossOriginSrc(m.src)) continue;
+    const aux = runtime.mediaAux.get(m.id);
+    if (!aux?.img || aux.img.crossOrigin === "anonymous") continue;
+    jobs.push(loadImage(m.src).then((img) => {
+      runtime.mediaAux.set(m.id, { ...aux, img });
+    }).catch(() => { }));
+  }
+  await Promise.all(jobs);
+  const missing = [];
+  for (const c of mediaClips()) {
+    if (c.kind !== "video" || !clipRenders(c)) continue;
+    const m = getMedia(c.mediaId);
+    if (!m || !isCrossOriginSrc(m.src)) continue;
+    const el = runtime.clipEls.get(c.id);
+    if (el && (el.error || el.readyState < 2)) missing.push(m.name || m.src);
+  }
+  if (missing.length)
+    toast("No CORS on " + missing.join(", ") + " — blank in the export. Import into the project or add Access-Control-Allow-Origin.");
+}
+/* Sequential /frame POSTs, batched. Concurrent bodies can still race on ffmpeg
+   stdin if they complete out of order, so the client starts each fetch only
+   after the previous one settles; rendering runs ahead under backpressure.
+   JPEG Fast and WebCodecs Annex-B both concatenate on this path. */
+function createExportUploader(sessId, { batchItems, batchBytes, signal, getError, setError }) {
+  let batch = [];
+  let packed = 0;
+  let sentFirst = false;
+  let uploadTail = Promise.resolve();
+  let uploadsInFlight = 0;
+  const cancelled = () => renderCancelled || !!(signal && signal.aborted);
+  const concatChunks = (parts, n) => {
+    if (parts.length === 1) return parts[0];
+    if (parts[0] instanceof Uint8Array) {
+      const out = new Uint8Array(n);
+      let o = 0;
+      for (const p of parts) { out.set(p, o); o += p.byteLength; }
+      return out;
+    }
+    return new Blob(parts);
+  };
+  const enqueueUpload = (body) => {
+    uploadsInFlight++;
+    const p = uploadTail.catch(() => {}).then(async () => {
+      if (cancelled()) throw new Error("cancelled");
+      const err = getError();
+      if (err) throw err;
+      const r = await fetch("/api/export/frame?id=" + sessId, {
+        method: "POST", body, signal,
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "frame upload failed");
+    });
+    uploadTail = p.catch((err) => {
+      if (!getError()) setError(err);
+    }).finally(() => { uploadsInFlight--; });
+    return p;
+  };
+  const flush = (force) => {
+    if (!batch.length) return;
+    const first = !sentFirst;
+    if (!force && !first && packed < batchBytes && batch.length < batchItems) return;
+    sentFirst = true;
+    const parts = batch, n = packed;
+    batch = [];
+    packed = 0;
+    enqueueUpload(concatChunks(parts, n));
+  };
+  return {
+    push(chunk) {
+      const size = chunk.size ?? chunk.byteLength ?? 0;
+      batch.push(chunk);
+      packed += size;
+      flush(false);
+    },
+    flush,
+    inFlight() { return uploadsInFlight; },
+    done() { flush(true); return uploadTail; },
+    waitBackpressure(max = 2) {
+      return new Promise((res, rej) => {
+        const tick = () => {
+          if (cancelled()) { clearInterval(poll); rej(new Error("cancelled")); }
+          else {
+            const err = getError();
+            if (err) { clearInterval(poll); rej(err); }
+            else if (uploadsInFlight <= max) { clearInterval(poll); res(); }
+          }
+        };
+        const poll = setInterval(tick, 20);
+        tick();
+      });
+    },
+  };
+}
+/* ── Fast / WebCodecs frame sync ──
+   HTMLVideoElement has no “step one frame” API — assigning currentTime always
+   seeks. On the export hot path a seek-per-frame is the dominant cost, so:
+     • already showing the target (requestVideoFrameCallback mediaTime) → no-op
+     • forward through a shot, buffered → play + requestVideoFrameCallback.
+       Settle on the *presented* frame, not currentTime (the clock runs ahead of
+       the picture). If the last compositor tick was fast and the encode queue is
+       not deep, leave the element playing. A slow tick or a backed-up queue
+       pauses after the hit so the decoder cannot overrun during JPEG/encode wait.
+     • reverse / large jump / unbuffered / overshoot → hard seek (currentTime,
+       never fastSeek: fastSeek snaps to a nearby keyframe and repeats frames)
+   Incoming clips are seek-prefetched ~1 s before they become active. */
+let exportSeekClock = 0;
+function restoreExportVideoState() {
+  exportSeekClock = 0;
+  pauseExportVideos();
+  for (const el of runtime.clipEls.values()) {
+    if (el._fcPrevMuted != null) {
+      try { el.muted = el._fcPrevMuted; } catch { }
+      el._fcPrevMuted = null;
+    }
+  }
+}
+function pauseExportVideos() {
+  for (const el of runtime.clipEls.values()) {
+    try { if (!el.paused) el.pause(); } catch { }
+  }
+}
+/** How long the prior export tick took (seek → draw). Used to decide play-ahead. */
+function exportLoopLag(frameMs) {
+  const now = performance.now();
+  if (exportSeekClock <= 0) return { lagMs: 0, fast: true, behind: false };
+  const lagMs = now - exportSeekClock;
+  return {
+    lagMs,
+    fast: lagMs < frameMs * 2,
+    behind: lagMs > frameMs * 3,
+  };
+}
+function videoRangeBuffered(el, from, to) {
+  try {
+    const b = el.buffered;
+    const a = Math.min(from, to), z = Math.max(from, to);
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) <= a + 0.05 && b.end(i) >= z - 0.05) return true;
+    }
+  } catch { }
+  return el.readyState >= 3;
+}
+function notePresented(el, mediaTime) {
+  if (!Number.isFinite(mediaTime)) return;
+  // learn the source's frame duration from consecutive presented frames (the smallest
+  // step seen: playback can drop frames, never split one)
+  const prev = el._fcLastShown;
+  if (prev != null) {
+    const d = mediaTime - prev;
+    if (d > 1 / 240 && d < 0.1) { el._fcFrameDur = Math.min(el._fcFrameDur || Infinity, d); el._fcFrameSeen = (el._fcFrameSeen || 0) + 1; }
+  }
+  el._fcLastShown = mediaTime;
+  el._fcPresentedTime = mediaTime;
+}
+function presentedClose(el, mt, eps) {
+  return el._fcPresentedTime != null && Math.abs(el._fcPresentedTime - mt) <= eps;
+}
+function waitForPresentedFrame(el, timeoutMs = 80) {
+  return new Promise((res, rej) => {
+    if (typeof el.requestVideoFrameCallback !== "function") {
+      notePresented(el, el.currentTime);
+      res();
+      return;
+    }
+    let done = false;
+    const finishOk = (meta) => {
+      const mediaTime = meta?.mediaTime;
+      if (!Number.isFinite(mediaTime)) return;
+      if (done) return;
+      done = true;
+      clearTimeout(tm);
+      notePresented(el, mediaTime);
+      res();
+    };
+    const tm = setTimeout(() => {
+      if (done) return;
+      done = true;
+      rej(new Error("presented frame timeout"));
+    }, timeoutMs);
+    el.requestVideoFrameCallback((_n, meta) => finishOk(meta));
+  });
+}
+function assignVideoTime(el, mt, accurate) {
+  if (!accurate) el._fcPresentedTime = null;
+  if (!accurate && typeof el.fastSeek === "function") {
+    try { el.fastSeek(mt); return; } catch { }
+  }
+  el.currentTime = mt;
+}
+/** A finished seek to mt still shows the frame presented at `shown`: mt lies inside that one
+ *  source frame, by the frame duration learned from presented frames (unknown → no). */
+function sameSourceFrame(el, mt, shown) {
+  const dur = el._fcFrameDur;
+  if (shown == null || !(el._fcFrameSeen >= 3) || !(dur > 0)) return false;
+  return el.readyState >= 2 && !el.seeking && Math.abs(el.currentTime - mt) < 0.002 &&
+    mt >= shown - 1e-4 && mt < shown + dur - 1e-4;
+}
+function hardSeekVideo(el, mt, attempt = 0, shown = el._fcPresentedTime) {
+  const hasRvfc = typeof el.requestVideoFrameCallback === "function";
+  const maxAttempts = 3;
+  return new Promise((res, rej) => {
+    // a busy frame (grades, masks, blur) can present late: each retry waits longer
+    const after = () => waitForPresentedFrame(el, [80, 250, 600][attempt] || 600)
+      .then(res)
+      .catch((err) => {
+        // Slow motion lands several output frames on one source frame: seeking within the
+        // frame already on screen presents nothing new, so no frame callback ever comes.
+        // The seek finished on mt and the frame shown just before is within one source frame
+        // of it (≥ 20 fps footage): that frame is the right picture.
+        if (sameSourceFrame(el, mt, shown)) { notePresented(el, shown); res(); return; }
+        if (attempt + 1 < maxAttempts) { hardSeekVideo(el, mt, attempt + 1, shown).then(res, rej); return; }
+        // Last try: the seek finished on mt with the frame's data loaded, so the element holds
+        // that frame even though no callback reported it. Better than failing the whole export.
+        if (el.readyState >= 2 && !el.seeking && Math.abs(el.currentTime - mt) < 0.002) { notePresented(el, mt); res(); return; }
+        rej(err);
+      });
+    if (presentedClose(el, mt, 0.002) && el.readyState >= 2) {
+      res();
+      return;
+    }
+    // No rvfc — paused on the right clock is the only signal we have.
+    if (!hasRvfc && el._fcPresentedTime == null && el.paused && el.readyState >= 2
+        && Math.abs(el.currentTime - mt) < 1e-4) {
+      notePresented(el, el.currentTime);
+      res();
+      return;
+    }
+    el._fcPresentedTime = null;
+    const done = () => {
+      clearTimeout(tm);
+      el.removeEventListener("seeked", done);
+      after();
+    };
+    const tm = setTimeout(done, 1500);
+    el.addEventListener("seeked", done);
+    try {
+      if (!el.paused) el.pause();
+      // Same currentTime does not fire seeked — nudge so the decoder must present mt.
+      if (Math.abs(el.currentTime - mt) < 1e-4) {
+        const nudge = mt >= 0.001 ? mt - 0.001 : mt + 0.001;
+        try { el.currentTime = nudge; } catch { }
+      }
+      assignVideoTime(el, mt, true);
+    } catch { done(); }
+  });
+}
+/** Play forward until a *presented* frame reaches mt. Pause afterwards unless
+    keepPlaying — a free-running element overruns while JPEG encode/HTTP stalls. */
+function playAdvanceVideo(el, mt, eps, rate, { keepPlaying } = {}) {
+  return new Promise((res, rej) => {
+    let settled = false;
+    let rvfcId = null;
+    let poll = null;
+    if (el._fcPrevMuted == null) el._fcPrevMuted = el.muted;
+    const wasPlaying = !el.paused;
+    const slop = Math.min(eps, 0.002);
+    const cleanup = () => {
+      clearTimeout(tm);
+      if (poll) { clearInterval(poll); poll = null; }
+      if (rvfcId != null && typeof el.cancelVideoFrameCallback === "function") {
+        try { el.cancelVideoFrameCallback(rvfcId); } catch { }
+        rvfcId = null;
+      }
+      if (!keepPlaying) {
+        try { el.pause(); } catch { }
+      }
+    };
+    const finish = (presented) => {
+      if (settled) return;
+      if (!Number.isFinite(presented)) return;
+      settled = true;
+      notePresented(el, presented);
+      cleanup();
+      // Presented picture is authoritative — currentTime often runs ahead of
+      // the displayed frame. Accept when within [mt-slop, mt]; hard-seek when
+      // play-ahead overshoots past mt or the picture is still short.
+      const pictureShort = presented < mt - slop * 2;
+      const pictureOvershoot = presented > mt;
+      if (pictureOvershoot
+        || (pictureShort && Math.abs(el.currentTime - mt) > Math.max(eps * 2, 0.008)))
+        hardSeekVideo(el, mt).then(res, rej);
+      else res();
+    };
+    if (presentedClose(el, mt, slop) && el.readyState >= 2) {
+      if (!keepPlaying) { try { el.pause(); } catch { } }
+      res();
+      return;
+    }
+    const remain = Math.max(0, mt - el.currentTime);
+    const tm = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      hardSeekVideo(el, mt).then(res, rej);
+    }, Math.min(3000, 400 + (remain * 1000) / Math.max(0.1, rate) * 2.5));
+    const check = (mediaTime) => {
+      // Presented frame only — currentTime finishes half a frame early and
+      // canvas still holds the previous picture (duplicate Fast frames).
+      if (mediaTime != null && mediaTime >= mt - slop) finish(mediaTime);
+    };
+    try { el.playbackRate = clamp(rate, 0.1, 8); } catch { }
+    // muted → autoplay-friendly after async export setup (user-gesture may be gone)
+    el.muted = true;
+    if (typeof el.requestVideoFrameCallback === "function") {
+      const onFrame = (_now, meta) => {
+        if (settled) return;
+        check(meta?.mediaTime);
+        if (!settled) rvfcId = el.requestVideoFrameCallback(onFrame);
+      };
+      rvfcId = el.requestVideoFrameCallback(onFrame);
+    } else {
+      poll = setInterval(() => check(el.currentTime), 4);
+    }
+    if (wasPlaying) return;
+    const p = el.play();
+    if (p && typeof p.catch === "function") {
+      p.catch(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        hardSeekVideo(el, mt).then(res, rej);
+      });
+    }
+  });
+}
+const EXPORT_PREFETCH_S = 1.25;
+function prefetchExportVideos(t) {
+  for (const c of mediaClips()) {
+    if (c.kind !== "video" || !clipRenders(c)) continue;
+    if (activeAt(c, t)) continue;
+    if (c.start > t + EXPORT_PREFETCH_S || clipEnd(c) <= t) continue;
+    const el = getClipEl(c);
+    if (!el) continue;
+    const mt = mediaTimeAt(c, Math.max(t, c.start));
+    if (Math.abs(el.currentTime - mt) < 0.08) continue;
+    try {
+      if (!el.paused) el.pause();
+      assignVideoTime(el, mt);
+    } catch { }
+  }
+}
+/* ── Export decode: frames straight from WebCodecs ──
+   Seeking <video> per frame is slow and not frame-exact, so export decodes
+   MP4 / MOV clips itself (mp4-demux.js + VideoDecoder). Clips it can't take
+   stay on the <video> path. */
+const Mp4 = self.FableCutMp4;
+class ExportFrameSource {
+  static async open(src) {
+    if (typeof VideoDecoder !== "function" || !Mp4) return null;
+    try {
+      const probe = await fetch(src, { headers: { Range: "bytes=0-0" } });
+      if (probe.status !== 206) { try { await probe.body?.cancel(); } catch { } return null; }
+      const size = Number((probe.headers.get("content-range") || "").split("/")[1]);
+      await probe.arrayBuffer();
+      if (!(size > 0)) return null;
+      const read = async (a, b) => {
+        const r = await fetch(src, { headers: { Range: `bytes=${a}-${b - 1}` } });
+        if (r.status !== 206) throw new Error("range request refused");
+        return new Uint8Array(await r.arrayBuffer());
+      };
+      const moov = await Mp4.findMoov(read, size);
+      const mv = moov && Mp4.parseMovie(moov);
+      if (!mv || !mv.samples.length) return null;
+      const cfg = { codec: mv.codec, codedWidth: mv.width, codedHeight: mv.height };
+      if (mv.description) cfg.description = mv.description;
+      if (mv.displayWidth !== mv.width) Object.assign(cfg, { displayAspectWidth: mv.displayWidth, displayAspectHeight: mv.displayHeight });
+      const ok = await VideoDecoder.isConfigSupported(cfg).catch(() => null);
+      return ok && ok.supported ? new ExportFrameSource(read, size, mv, cfg) : null;
+    } catch { return null; }
+  }
+  constructor(read, size, mv, cfg) {
+    Object.assign(this, { read, size, cfg, samples: mv.samples, order: Mp4.presentationOrder(mv.samples) });
+    this.dec = null; this.pos = 0; this.out = []; this.cur = null; this.win = null; this.err = null; this.wake = null;
+  }
+  restart(from) {
+    this.dropQueue();
+    if (this.dec && this.dec.state !== "closed") this.dec.close();
+    this.err = null;
+    this.dec = new VideoDecoder({
+      output: (f) => { this.out.push(f); this.poke(); },
+      error: (e) => { this.err = e; this.poke(); },
+    });
+    this.dec.ondequeue = () => this.poke();
+    this.dec.configure(this.cfg);
+    this.pos = from;
+  }
+  poke() { const w = this.wake; this.wake = null; if (w) w(); }
+  dropQueue() { for (const f of this.out) f.close(); this.out = []; }
+  /** The bytes of one sample, read through a 4 MB window (samples are mostly
+   *  contiguous, so one range request covers many frames). */
+  async bytes(s) {
+    const w = this.win;
+    if (!w || s.offset < w.at || s.offset + s.size > w.at + w.data.length) {
+      const end = Math.min(this.size, s.offset + Math.max(s.size, 4 << 20));
+      this.win = { at: s.offset, data: await this.read(s.offset, end) };
+    }
+    const o = s.offset - this.win.at;
+    return this.win.data.subarray(o, o + s.size);
+  }
+  /** The frame a player shows at media time t (a VideoFrame owned by this
+   *  source: valid until the next call or close()). */
+  async frameAt(t) {
+    const k = Mp4.frameAt(this.samples, this.order, t), ts = Math.round(this.samples[k].pts * 1e6);
+    if (this.cur && this.cur.timestamp === ts) return this.cur;
+    const sync = Mp4.syncBefore(this.samples, k);
+    const passed = this.out.length > 0 && this.out[0].timestamp > ts;
+    if (!this.dec || this.dec.state === "closed" || (this.cur && this.cur.timestamp > ts)
+      || (k < this.pos && passed) || sync > this.pos) this.restart(sync);
+    const n = this.samples.length;
+    for (;;) {
+      while (this.out.length && this.out[0].timestamp < ts) this.out.shift().close();
+      if (this.out.length) {   // the target, or (a frame the decoder dropped) the next one
+        if (this.cur) this.cur.close();
+        this.cur = this.out.shift();
+        return this.cur;
+      }
+      if (this.err) throw this.err;
+      let fed = false;
+      while (this.pos < n && this.dec.decodeQueueSize < 8 && this.out.length < 3) {
+        const s = this.samples[this.pos++];
+        this.dec.decode(new EncodedVideoChunk({
+          type: s.key ? "key" : "delta", timestamp: Math.round(s.pts * 1e6),
+          duration: Math.round(s.dur * 1e6), data: await this.bytes(s),
+        }));
+        fed = true;
+      }
+      if (!fed && this.pos >= n && this.dec.decodeQueueSize === 0) {
+        await this.dec.flush().catch((e) => { this.err = this.err || e; });
+        this.pos = n + 1;   // after a flush the decoder needs a sync sample again
+        if (!this.out.length) { if (this.err) throw this.err; return this.cur; }
+        continue;
+      }
+      await new Promise((res) => { this.wake = res; setTimeout(res, 50); });
+    }
+  }
+  close() {
+    this.dropQueue();
+    if (this.cur) { this.cur.close(); this.cur = null; }
+    if (this.dec && this.dec.state !== "closed") this.dec.close();
+    this.dec = null; this.win = null;
+  }
+}
+/** Export-time decode state: clip id → source (or null: use the element). */
+function exportDecodeBegin() {
+  runtime.exportDecode = runtime.noExportDecode ? null : { sources: new Map(), opening: new Map() };
+  runtime.exportFrames = new Map();
+}
+function exportDecodeEnd() {
+  const d = runtime.exportDecode;
+  if (d) for (const s of d.sources.values()) s?.close();
+  runtime.exportDecode = null;
+  runtime.exportFrames = null;
+}
+/** Decode the frame of video clip c for timeline time t; false when the clip
+ *  stays on the <video> path. Frames go to runtime.exportFrames for drawing. */
+async function exportDecodeFrame(c, t) {
+  const d = runtime.exportDecode;
+  if (!d || c.kind !== "video" || evalProps(c, t).bgRemove) return false;
+  let src = d.sources.get(c.id);
+  if (src === undefined) {
+    const m = getMedia(c.mediaId);
+    if (!m || !m.src) { d.sources.set(c.id, null); return false; }
+    if (!d.opening.has(c.id)) d.opening.set(c.id, ExportFrameSource.open(m.src));
+    src = await d.opening.get(c.id);
+    d.sources.set(c.id, src);
+  }
+  if (!src) return false;
+  try {
+    runtime.exportFrames.set(c.id, await src.frameAt(mediaTimeAt(c, t)));
+    return true;
+  } catch (e) {   // a decode error: this clip falls back to its element for the rest of the export
+    console.warn("[FableCut] export decode failed, using the video element:", e && e.message);
+    src.close(); d.sources.set(c.id, null); runtime.exportFrames.delete(c.id);
+    return false;
+  }
+}
+async function seekVideosTo(t, { queueBusy } = {}) {
+  const fps = projectFps();
+  const frameMs = 1000 / fps;
+  const { fast, behind } = exportLoopLag(frameMs);
+  exportSeekClock = performance.now();
+  // Stay in play() only when the last tick was fast, the encode queue is not
+  // deep, and we are not falling behind — avoids random mid-shot seek hitches
+  // from pausing on every JPEG/upload blip.
+  const keepPlaying = fast && !behind && !queueBusy;
+  const waits = [];
+  const restoreGain = [];
+  const decoded = new Set();
+  const dec = runtime.exportDecode;
+  if (dec) {
+    const jobs = [];
+    for (const c of mediaClips()) {
+      if (c.kind !== "video" || !clipRenders(c)) continue;
+      if (!activeAt(c, t)) {   // export runs forward: past its end, free the clip's decoder
+        const s = dec.sources.get(c.id);
+        if (s && t > c.start + c.duration) { s.close(); dec.sources.delete(c.id); dec.opening.delete(c.id); }
+        runtime.exportFrames.delete(c.id);
+        continue;
+      }
+      jobs.push(exportDecodeFrame(c, t).then((ok) => { if (ok) decoded.add(c.id); }));
+    }
+    await Promise.all(jobs);
+  }
+  for (const c of mediaClips()) {
+    if (c.kind !== "video") continue;
+    if (!clipRenders(c)) continue;
+    if (decoded.has(c.id)) continue;
+    const el = getClipEl(c); if (!el) continue;
+    if (!activeAt(c, t)) {
+      if (!el.paused) el.pause();
+      if (el._fcPrevMuted != null) {
+        try { el.muted = el._fcPrevMuted; } catch { }
+        el._fcPrevMuted = null;
+      }
+      const chain = runtime.clipGain.get(c.id);
+      if (chain?.vol) driveClipChain(chain, c, evalProps(c, t), t);
+      continue;
+    }
+    const mt = mediaTimeAt(c, t);
+    const local = clamp(t - c.start, 0, c.duration);
+    const sp = clamp(kfChannel(c, "speed", local, clipSpeed(c)), 0.1, 8);
+    // One timeline frame in media-time
+    const mediaFrame = sp / fps;
+    const eps = 0.5 * mediaFrame;
+    const slop = Math.min(eps, 0.002);
+    // Skip only when the *presented* picture is already the target. currentTime
+    // within ½ frame is not enough — Fast export used to snapshot the previous
+    // decoded frame twice while the clock had already ticked.
+    if (el.readyState >= 2 && presentedClose(el, mt, slop)) {
+      if (keepPlaying && !el.paused) {
+        try { el.playbackRate = sp; } catch { }
+      }
+      continue;
+    }
+
+    const chain = runtime.clipGain.get(c.id);
+    if (chain?.vol) {
+      muteClipChain(chain);
+      restoreGain.push(c);
+    }
+
+    const delta = mt - el.currentTime;
+    const alreadyPlaying = !el.paused;
+    const maxPlay = alreadyPlaying || keepPlaying
+      ? Math.min(3, Math.max(2, mediaFrame * 60))
+      : Math.min(1, Math.max(0.5, mediaFrame * 16));
+    const canPlayFwd = delta > eps && delta <= maxPlay
+      && (alreadyPlaying || (el.readyState >= 2 && videoRangeBuffered(el, el.currentTime, mt)));
+    if (canPlayFwd) {
+      waits.push(playAdvanceVideo(el, mt, eps, sp, { keepPlaying }));
+    } else {
+      waits.push(hardSeekVideo(el, mt));
+    }
+  }
+  await Promise.all(waits);
+  for (const c of restoreGain) {
+    const chain = runtime.clipGain.get(c.id);
+    if (chain?.vol) driveClipChain(chain, c, evalProps(c, t), t);
+  }
+  prefetchExportVideos(t);
+}
+function encodeWAV(buf) {
+  const ch = buf.numberOfChannels, len = buf.length, sr = buf.sampleRate;
+  const bytes = 44 + len * ch * 2;
+  const ab = new ArrayBuffer(bytes), v = new DataView(ab);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, "RIFF"); v.setUint32(4, bytes - 8, true); wstr(8, "WAVE");
+  wstr(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * ch * 2, true); v.setUint16(32, ch * 2, true); v.setUint16(34, 16, true);
+  wstr(36, "data"); v.setUint32(40, len * ch * 2, true);
+  const chans = []; for (let c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < ch; c++) {
+    const s = clamp(chans[c][i], -1, 1);
+    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2;
+  }
+  return new Blob([ab], { type: "audio/wav" });
+}
+/* Mix all audio-bearing clips offline through the same graph as preview
+   (clip chains → track buses → master fader), honoring volume / pan keyframes
+   and fades. t0/t1 are timeline seconds (export window); mix time 0 is t0. */
+const FX_AUTOMATION_STEP = 0.02; // export automation resolution, seconds
+async function renderAudioMix(t0, t1) {
+  const jobs = [];
+  for (const c of mediaClips()) {
+    if (c.kind !== "audio" && c.kind !== "video") continue;
+    if (!clipRenders(c)) continue;
+    const m = getMedia(c.mediaId); if (!m) continue;
+    jobs.push(getAudioBuffer(m).then((buf) => ({ c, buf })).catch(() => null));
+  }
+  const sources = (await Promise.all(jobs)).filter(Boolean);
+  if (!sources.length) return null;
+  const dur = Math.max(0, t1 - t0);
+  if (dur <= 0) return null;
+  const sr = 48000;
+  const off = new OfflineAudioContext(2, Math.ceil(dur * sr) + 1, sr);
+  await loadFxWorklet(off); // gate / limiter render in the export too
+  const mix = buildMixBuses(off, audioTrackIds(), busIdsNow());
+  applyMixLevels(mix);
+  mix.masterOut.connect(off.destination);
+  let scheduled = false;
+  const exportChains = [];
+  for (const { c, buf } of sources) {
+    const a = Math.max(c.start, t0), b = Math.min(c.start + c.duration, t1);
+    if (b - a <= 1e-6) continue;
+    const mixWhen = Math.max(0, a - t0);
+    const mixDur = b - a;
+    const local0 = a - c.start;
+    const src = off.createBufferSource(); src.buffer = buf;
+    const chain = buildClipChain(off, src, c, buf.numberOfChannels);
+    exportChains.push({ chain, c });
+    const n = Math.max(2, Math.ceil(mixDur * 30));
+    const volCurve = new Float32Array(n);
+    const panCurve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const ep = evalProps(c, a + (i / (n - 1)) * mixDur);
+      volCurve[i] = clipAudioGain(ep);
+      panCurve[i] = clipPan(ep.pan);
+    }
+    chain.vol.gain.setValueCurveAtTime(volCurve, mixWhen, Math.max(0.01, mixDur));
+    if (chain.pan) {
+      try {
+        chain.pan.pan.setValueCurveAtTime(panCurve, mixWhen, Math.max(0.01, mixDur));
+      } catch {
+        chain.pan.pan.value = panCurve[0] ?? 0;
+      }
+    }
+    chain.out.connect(mix.trackBus[c.track] || mix.master);
+    if (hasSpeedRamp(c)) {
+      const rc = new Float32Array(n);
+      for (let i = 0; i < n; i++)
+        rc[i] = clamp(kfChannel(c, "speed", local0 + (i / (n - 1)) * mixDur, clipSpeed(c)), 0.1, 8);
+      src.playbackRate.setValueCurveAtTime(rc, mixWhen, Math.max(0.01, mixDur));
+      src.start(mixWhen, Math.max(0, mediaTimeAt(c, a)));
+      src.stop(mixWhen + mixDur);
+    } else {
+      const sp = clipSpeed(c);
+      src.playbackRate.value = sp;
+      src.start(mixWhen, Math.max(0, c.in + local0 * sp), mixDur * sp);
+    }
+    scheduled = true;
+  }
+  if (!scheduled) return null;
+  // Effect automation: step the offline render and glide each keyed
+  // parameter, the same way preview drives it every frame.
+  const animated = [];
+  for (const { chain, c } of exportChains) if (FableCutFx.hasKeys(c.fx)) animated.push((t) => animateFxSlot(chain.fxSlot, t - c.start));
+  if (FableCutFx.hasKeys(masterFx()) || Object.keys(mix.trackBus).some((id) => FableCutFx.hasKeys(trackFx(id))) ||
+      (project.buses || []).some((b) => FableCutFx.hasKeys(b.fx)))
+    animated.push((t) => animateMixFx(mix, t));
+  if (animated.length) {
+    for (const run of animated) run(t0);
+    // jump to the first values, then glide
+    for (const { chain, c } of exportChains) if (FableCutFx.hasKeys(c.fx)) animateFxSlot(chain.fxSlot, t0 - c.start, false);
+    animateMixFx(mix, t0, false);
+    const step = FX_AUTOMATION_STEP;
+    for (let k = 1; k * step < dur; k++) {
+      const when = k * step;
+      off.suspend(when).then(() => { for (const run of animated) run(t0 + when); off.resume(); });
+    }
+  }
+  return encodeWAV(await off.startRendering());
+}
+/* Frame-exact asset prep for the fast exporter: rasterize the SVG frame for
+   this exact time, and refresh AI person masks synchronously. */
+async function prepareFrameAssets(t) {
+  for (const c of mediaClips()) {
+    if (!activeAt(c, t) || !clipRenders(c)) continue;
+    if (c.kind === "svg") await prepareSvgFrame(c, t);
+    if (c.props?.bgRemove && (c.kind === "video" || c.kind === "image")) {
+      const el = c.kind === "video" ? getClipEl(c) : runtime.mediaAux.get(c.mediaId)?.img;
+      if (el) { try { await requestMask(c.id, el, true); } catch { } }
+    }
+  }
+}
+/** opts.job: an agent's export job id — progress and the result go back to
+ *  the server instead of an alert / download (nobody may be watching).
+ *  opts.profile: encoding profile id for this run.
+ *  opts.delivery: a delivery spec (delivery.js) instead of a profile.
+ *  opts.deliveries: [{delivery, name?}] — several files from one render (same fps).
+ *  opts.silent: no overlay, alert or download (the export queue shows it);
+ *  opts.onProgress(0…1). Resolves {outputs:[{file, ok, src?, error?}]} or {error, cancelled}. */
+async function fastExport(opts = {}) {
+  if (state.exporting) return { error: "an export is already running" };
+  const job = opts.job || null;
+  pause();
+  state.exporting = true; state.rendering = true; renderCancelled = false;
+  exportAbort = new AbortController();
+  const signal = exportAbort.signal;
+  if (!opts.silent) els.exportOverlay.classList.remove("hidden");
+  els.exportProgress.style.width = "0%";
+  els.exportNote.textContent = "Rendering frames → ffmpeg. You can switch tabs; export continues.";
+  restoreExportVideoState();
+  const deliveries = opts.deliveries || (opts.delivery ? [{ delivery: opts.delivery }] : null);
+  const delivery = deliveries ? deliveries[0].delivery : null;
+  const fps = (delivery && delivery.fps) || projectFps();
+  let result = null;
+  const { start: t0, end: t1, frames } = beginExportWindow(fps);
+  let sessId = null;
+  let uploadError = null;
+  const setError = (err) => { if (!uploadError) uploadError = err; };
+  try {
+    els.exportTitle.textContent = "Mixing audio…";
+    const wav = await renderAudioMix(t0, t1);
+    if (renderCancelled) throw new Error("cancelled");
+    const profileId = opts.profile || effectiveEncodeProfileId();
+    const cv = deliveryCanvas();
+    const begin = await fetch("/api/export/begin", {
+      method: "POST",
+      body: JSON.stringify(delivery ? {
+        fps, duration: frames / fps,
+        deliveries: deliveries.map((d) => ({ delivery: d.delivery, name: d.name || deliveryFileName(d.delivery, fps) })),
+        canvasW: cv.w, canvasH: cv.h, region: cv.region, hasAudio: !!wav,
+      } : {
+        fps,
+        name: project.name.replace(/[^\w\- ]+/g, "") || "export",
+        profile: profileId,
+        hasAudio: !!wav,
+      }),
+      signal,
+    }).then((r) => r.json());
+    if (!begin.id) throw new Error(begin.error || "export begin failed");
+    sessId = begin.id;
+    const jpegQ = delivery ? begin.jpegQuality ?? 0.95 : exportProfileMeta(profileId).jpegQuality ?? 0.95;
+    const rgba = begin.input === "rgba";
+    exportFullCanvas = !!delivery;
+    if (wav) {
+      const r = await fetch("/api/export/audio?id=" + sessId, { method: "POST", body: wav, signal });
+      if (!r.ok) throw new Error("audio upload failed");
+    }
+    await loadProjectFonts();
+    resetExportCanvases();
+    await armExportCors();
+    await useOriginalPlayers();   // proxies are for editing — export reads the originals
+    exportDecodeBegin();
+    // JPEG off the compositor thread: snapshot is sync, encode/upload run ahead
+    // under backpressure. Awaiting toBlob every frame was slower than ffmpeg.
+    const up = createExportUploader(sessId, {
+      batchItems: 8, batchBytes: 512 * 1024, signal,
+      getError: () => uploadError, setError,
+    });
+    const workers = createJpegWorkers(Math.min(3, Math.max(1, (navigator.hardwareConcurrency || 2) - 1)));
+    let pixelChain = Promise.resolve();
+    let pixelsInflight = 0;
+    const waitPixels = (max) => new Promise((res, rej) => {
+      const tick = () => {
+        if (renderCancelled || signal.aborted) { clearInterval(poll); rej(new Error("cancelled")); }
+        else if (uploadError) { clearInterval(poll); rej(uploadError); }
+        else if (pixelsInflight <= max) { clearInterval(poll); res(); }
+      };
+      const poll = setInterval(tick, 4);
+      tick();
+    });
+    try {
+    for (let f = 0; f < frames; f++) {
+      if (renderCancelled || signal.aborted) throw new Error("cancelled");
+      if (uploadError) throw uploadError;
+      // Let workers run ahead; only pause the decoder when the queue is deep
+      // enough that play-ahead would overrun during the wait (not on every blip).
+      const queueBusy = pixelsInflight > 6 || up.inFlight() > 4;
+      if (pixelsInflight > 4) pauseExportVideos();
+      await waitPixels(6);
+      await up.waitBackpressure(4);
+      const t = t0 + f / fps;
+      state.time = t;
+      await seekVideosTo(t, { queueBusy });
+      await prepareFrameAssets(t);
+      drawFrame(t);
+      const snap = rgba ? { kind: "raw", px: snapshotExportRgba() } : snapshotExportFrame();
+      pixelsInflight++;
+      let jpegP;
+      if (snap.kind === "raw") jpegP = Promise.resolve(snap.px);
+      else if (snap.kind === "bmp") {
+        jpegP = workers ? workers.encode(snap.bmp, jpegQ) : jpegFromBitmap(snap.bmp, jpegQ);
+      } else {
+        const c = document.createElement("canvas");
+        c.width = snap.w; c.height = snap.h;
+        c.getContext("2d", { alpha: false }).putImageData(new ImageData(snap.data, snap.w, snap.h), 0, 0);
+        jpegP = new Promise((res, rej) => {
+          try {
+            c.toBlob((b) => {
+              if (!b) return rej(new Error("frame encode failed"));
+              b.arrayBuffer().then(res, rej);
+            }, "image/jpeg", jpegQ);
+          } catch (e) { rej(canvasTaintError(e)); }
+        });
+      }
+      pixelChain = pixelChain.then(async () => {
+        if (renderCancelled || signal.aborted) throw new Error("cancelled");
+        if (uploadError) throw uploadError;
+        const buf = await jpegP;
+        if (!buf || !(buf.byteLength || buf.size || buf.length)) throw new Error("frame encode failed");
+        up.push(buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf);
+      }).catch((err) => { setError(err); throw err; }).finally(() => { pixelsInflight--; });
+      const pct = ((f + 1) / frames) * 100;
+      els.exportProgress.style.width = pct.toFixed(1) + "%";
+      els.exportTitle.textContent = `Rendering… ${pct.toFixed(0)}%`;
+      if (opts.onProgress) opts.onProgress(0.97 * (f + 1) / frames);
+      if (job) reportExportJob(job, { progress: 0.97 * (f + 1) / frames });
+    }
+    await pixelChain;
+    if (uploadError) throw uploadError;
+    els.exportTitle.textContent = "Encoding…";
+    await up.done();
+    if (uploadError) throw uploadError;
+    } finally {
+      try { workers?.terminate(); } catch { }
+    }
+    const end = await fetch("/api/export/end?id=" + sessId, { method: "POST", signal }).then((r) => r.json());
+    if (!end.src) throw new Error(end.error || "encode failed");
+    const outs = end.outputs || [{ file: decodeURIComponent(end.src.split("/").pop()), ok: true, src: end.src }];
+    // what each output was asked to be, beside what came out
+    result = { outputs: outs.map((o, i) => ({ ...o, ...(begin.outputs && begin.outputs[i] ? { summary: begin.outputs[i].summary, notes: begin.outputs[i].notes } : {}) })) };
+    if (job) await reportExportJob(job, { status: "done", src: end.src, ...(delivery ? { result: { summary: begin.summary, notes: begin.notes || [], outputs: result.outputs } } : {}) }, true);
+    else if (opts.silent) { /* the queue lists the files */ }
+    else if (delivery && result.outputs[0]) {
+      const o = result.outputs[0];
+      exportQueue.push({ id: "q" + Math.random().toString(36).slice(2, 8), label: queueLabel(delivery), spec: delivery,
+        name: String(o.file || "").replace(/\.[^.]+$/, ""), range: exportRangeMode(), status: "done", progress: 1,
+        src: o.src, file: o.file, report: o.report || null });
+      renderQueue();
+      toast(o.report && !o.report.ok ? `Exported ${o.file} — check: ${o.report.checks.filter((c) => !c.ok).map((c) => c.text).join("; ")} (Export → Queue)` : `Exported ${o.file}${o.report ? " — checks passed" : ""}`);
+      const a = document.createElement("a");
+      a.href = end.src;
+      a.download = decodeURIComponent(end.src.split("/").pop());
+      a.click();
+    }
+    else {
+      const a = document.createElement("a");
+      a.href = end.src;
+      a.download = decodeURIComponent(end.src.split("/").pop());
+      a.click();
+    }
+  } catch (e) {
+    if (sessId) fetch("/api/export/end?id=" + sessId + "&discard=1", { method: "POST" }).catch(() => { });
+    const msg = e?.name === "AbortError" ? "cancelled" : String(e.message || e);
+    result = { error: msg, cancelled: msg === "cancelled" };
+    if (job) await reportExportJob(job, { status: "failed", error: msg }, true);
+    else if (msg !== "cancelled" && !opts.silent) alert("Export failed: " + msg);
+  } finally {
+    exportAbort = null;
+    exportFullCanvas = false;
+    exportDecodeEnd();
+    restoreExportVideoState();
+    endExportWindow();
+    state.exporting = false; state.rendering = false;
+    releaseOriginalPlayers();
+    els.exportOverlay.classList.add("hidden");
+    els.exportNote.textContent = "Rendering your sequence in real time. Keep this tab focused.";
+    if (runtime.pendingSync) syncFromServer();
+  }
+  return result;
+}
+
+/* ── Export queue ──
+   Renders waiting outputs back to back. Outputs that share a frame rate and a
+   range go out in ONE render: the frames are drawn once and every output's
+   ffmpeg encodes them (up to 8 at a time). Lives in this tab only. */
+const exportQueue = [];
+let queueRunning = false, queueStop = false;
+function queueLabel(spec) {
+  const p = Delivery.PRESETS[spec.preset] || deliveryInfo.saved[spec.preset];
+  return p ? p.label : "Custom";
+}
+function queueAdd(spec, name) {
+  const fps = spec.fps || projectFps();
+  exportQueue.push({
+    id: "q" + Math.random().toString(36).slice(2, 8), label: queueLabel(spec), spec,
+    name: name || deliveryFileName(spec, fps), range: exportRangeMode(), status: "pending", progress: 0,
+  });
+  renderQueue();
+}
+function openQueue() {
+  renderQueue();
+  $("exportQueue").classList.remove("hidden");
+  ($("btnQueueStart").disabled ? $("btnQueueClose") : $("btnQueueStart")).focus();
+}
+function closeQueue() {
+  if (queueRunning) return;
+  $("exportQueue").classList.add("hidden");
+  $("btnExport")?.focus();
+}
+function renderQueue() {
+  const list = $("exportQueueList");
+  if (!list) return;
+  const pending = exportQueue.filter((q) => q.status === "pending").length;
+  const done = exportQueue.filter((q) => q.status === "done").length;
+  $("exportQueueNote").textContent = queueRunning
+    ? "Exporting — outputs with the same frame rate and range share one render."
+    : exportQueue.length ? `${pending} waiting · ${done} done` : "Nothing queued — pick settings in Export and press Add to queue.";
+  const btnOpen = $("btnOpenQueue");
+  if (btnOpen) btnOpen.textContent = exportQueue.length ? `Queue · ${pending || exportQueue.length}` : "Queue";
+  const start = $("btnQueueStart");
+  start.textContent = queueRunning ? "Stop" : "Start";
+  start.disabled = !queueRunning && !pending;
+  $("btnQueueClose").disabled = queueRunning;
+  $("btnQueueClear").disabled = queueRunning || !exportQueue.some((q) => q.status !== "pending" && q.status !== "running");
+  if (!exportQueue.length) { list.innerHTML = `<li class="xq-empty">The queue is empty</li>`; return; }
+  list.innerHTML = exportQueue.map((q) => {
+    const ext = Delivery.CONTAINERS[q.spec.container].ext;
+    const fr = deliveryFrame(q.spec), fps = q.spec.fps || projectFps();
+    const status = q.status === "running" ? `Rendering… ${Math.round(q.progress * 100)}%`
+      : q.status === "done" ? `Done → exports/${q.file || q.name + ext}`
+        : q.status === "failed" ? `Failed: ${q.error || "unknown error"}`
+          : q.status === "cancelled" ? "Stopped" : "Waiting";
+    const actions = [
+      q.status === "done" && q.src ? `<a class="btn tiny" href="${escapeHtml(q.src)}" target="_blank" rel="noopener" download>Open</a>` : "",
+      q.status === "failed" || q.status === "cancelled" ? `<button type="button" class="btn tiny" data-q-retry="${q.id}">Retry</button>` : "",
+      q.status !== "running" ? `<button type="button" class="btn tiny" data-q-remove="${q.id}" title="Remove from the queue">✕</button>` : "",
+    ].join("");
+    return `<li class="${q.status}" data-q="${q.id}"><div class="xq-main"><b>${escapeHtml(q.label)} — ${escapeHtml(q.name + ext)}</b>` +
+      `<span class="xq-sub">${escapeHtml(Delivery.describe(q.spec, { width: fr.outW, height: fr.outH, fps }))} · ${q.range === "in-out" ? "IN–OUT" : "entire timeline"}</span>` +
+      (q.status === "running" ? `<div class="progress"><div class="progress-fill" style="width:${(q.progress * 100).toFixed(1)}%"></div></div>` : "") +
+      `<span class="xq-status">${escapeHtml(status)}</span>` +
+      (q.report ? `<span class="xq-report${q.report.ok ? "" : " warn"}">${q.report.ok ? "✓ " : ""}${escapeHtml(q.report.line)}</span>` : "") +
+      `</div><div class="xq-actions">${actions}</div></li>`;
+  }).join("");
+}
+function renderQueueProgress() {
+  for (const q of exportQueue) {
+    if (q.status !== "running") continue;
+    const li = document.querySelector(`#exportQueueList li[data-q="${q.id}"]`);
+    if (!li) continue;
+    const fill = li.querySelector(".progress-fill"), st = li.querySelector(".xq-status");
+    if (fill) fill.style.width = (q.progress * 100).toFixed(1) + "%";
+    if (st) st.textContent = `Rendering… ${Math.round(q.progress * 100)}%`;
+  }
+}
+async function runQueue() {
+  if (queueRunning || state.exporting) return;
+  if (!(state.connected && state.ffmpeg)) { alert("The export queue needs the server and ffmpeg (Fast export)."); return; }
+  queueRunning = true; queueStop = false;
+  renderQueue();
+  try {
+    while (!queueStop) {
+      const first = exportQueue.find((q) => q.status === "pending");
+      if (!first) break;
+      const fps = first.spec.fps || projectFps();
+      const group = exportQueue.filter((q) => q.status === "pending" && (q.spec.fps || projectFps()) === fps && q.range === first.range).slice(0, 8);
+      for (const q of group) { q.status = "running"; q.progress = 0; q.error = null; }
+      renderQueue();
+      exportRangeForced = first.range === "in-out" && hasWorkArea() ? "in-out" : "entire";
+      let res;
+      try {
+        res = await fastExport({
+          deliveries: group.map((q) => ({ delivery: q.spec, name: q.name })), silent: true,
+          onProgress: (f) => { for (const q of group) q.progress = f; renderQueueProgress(); },
+        });
+      } finally { exportRangeForced = null; }
+      group.forEach((q, i) => {
+        const o = res && res.outputs && res.outputs[i];
+        if (o && o.ok) Object.assign(q, { status: "done", src: o.src, file: o.file, progress: 1, report: o.report || null });
+        else if (res && res.cancelled) q.status = "cancelled";
+        else Object.assign(q, { status: "failed", error: (o && o.error) || (res && res.error) || "export failed" });
+      });
+      renderQueue();
+    }
+  } finally {
+    queueRunning = false;
+    renderQueue();
+  }
+  const done = exportQueue.filter((q) => q.status === "done").length, failed = exportQueue.filter((q) => q.status === "failed").length;
+  const warned = exportQueue.filter((q) => q.status === "done" && q.report && !q.report.ok).length;
+  if (done || failed) toast(`Export queue: ${done} done${failed ? `, ${failed} failed` : ""}${warned ? ` — ${warned} with warnings` : ""}`);
+}
+function stopQueue() {
+  queueStop = true;
+  renderCancelled = true;
+  try { exportAbort?.abort(); } catch { }
+}
+
+/* ── Batch outputs (project.outputs) ──
+   The project's list of files to make from one timeline. Each entry is a
+   delivery spec plus {id, on}; "Export checked" queues the checked ones. */
+function projectOutputs() { return Array.isArray(project.outputs) ? project.outputs : []; }
+function setProjectOutputs(list) {
+  project.outputs = list.length ? list : null;
+  scheduleSave();
+  renderBatchList();
+}
+function addBatchOutput(spec) {
+  const list = projectOutputs().slice();
+  if (list.length >= 16) { toast("At most 16 batch outputs"); return; }
+  list.push({ id: "o_" + Math.random().toString(36).slice(2, 8), on: true, ...spec });
+  setProjectOutputs(list);
+}
+const TYPICAL_SET = [
+  { preset: "master", filename: "{project}_master_{res}" },
+  { preset: "youtube", filename: "{project}_youtube_{res}" },
+  { preset: "instagram-reels", filename: "{project}_reel_{res}" },
+  { preset: "custom", width: 1080, height: 1080, filename: "{project}_square_{res}" },
+  { preset: "web", filename: "{project}_preview_{res}" },
+];
+function renderBatchList() {
+  const ul = $("dlvBatchList");
+  if (!ul) return;
+  const list = projectOutputs();
+  const on = list.filter((o) => o.on !== false).length;
+  $("dlvBatchCount").textContent = list.length ? `· ${on} of ${list.length} checked` : "";
+  const be = $("btnBatchExport");
+  if (be) { be.disabled = !on; be.textContent = on ? `Export checked (${on})` : "Export checked"; }
+  if (!list.length) { ul.innerHTML = `<li class="bo-empty">No batch outputs yet — add the settings above, or a typical set</li>`; return; }
+  ul.innerHTML = list.map((o) => {
+    const sp = normalizeDelivery(o).spec, fr = deliveryFrame(sp), fps = sp.fps || projectFps();
+    return `<li class="${o.on === false ? "off" : ""}" data-o="${escapeHtml(o.id)}">` +
+      `<input type="checkbox" data-o-on="${escapeHtml(o.id)}"${o.on === false ? "" : " checked"} aria-label="Include ${escapeHtml(queueLabel(sp))}">` +
+      `<div class="bo-main"><b>${escapeHtml(deliveryFileName(sp, fps) + Delivery.CONTAINERS[sp.container].ext)}</b>` +
+      `<span>${escapeHtml(queueLabel(sp))} · ${escapeHtml(Delivery.describe(sp, { width: fr.outW, height: fr.outH, fps }))}</span></div>` +
+      `<button type="button" class="btn tiny" data-o-load="${escapeHtml(o.id)}" title="Show these settings above">Load</button>` +
+      `<button type="button" class="btn tiny" data-o-remove="${escapeHtml(o.id)}" title="Remove">✕</button></li>`;
+  }).join("");
+}
+function onBatchListClick(e) {
+  const t = e.target;
+  const id = t.dataset.oOn || t.dataset.oLoad || t.dataset.oRemove;
+  if (!id) return;
+  const list = projectOutputs().slice();
+  const i = list.findIndex((o) => o.id === id);
+  if (i < 0) return;
+  if (t.dataset.oOn) { list[i] = { ...list[i], on: t.checked }; setProjectOutputs(list); }
+  else if (t.dataset.oRemove) { list.splice(i, 1); setProjectOutputs(list); }
+  else if (t.dataset.oLoad) {
+    const { id: _id, on: _on, ...spec } = list[i];
+    const n = normalizeDelivery(spec);
+    els.exportProfileSel.value = "d:" + n.spec.preset;
+    if (els.exportProfileSel.value !== "d:" + n.spec.preset) els.exportProfileSel.value = "d:custom";
+    dlvSpec = n.spec; dlvNotes = n.notes;
+    syncExportChoiceUi("edited");
+  }
+}
+
+/* ── Agent-requested export (fablecut_export · POST /api/export/request) ──
+   The server hands a job to an open tab over SSE, or opens a headless one on
+   ?exportJob=<id>. The first tab to claim it waits until it has loaded the
+   revision the agent asked for, then runs Fast export with the job's range
+   and profile and reports back. A cancel from the agent arrives as the reply
+   to a progress report. */
+let exportJobReportAt = 0;
+async function reportExportJob(id, body, force = false) {
+  const now = performance.now();
+  if (!force && now - exportJobReportAt < 1000) return; // a heartbeat, not a stream
+  exportJobReportAt = now;
+  try {
+    const r = await fetch("/api/export/job/report?id=" + encodeURIComponent(id), {
+      method: "POST", body: JSON.stringify(body),
+    }).then((x) => x.json());
+    if (r?.cancel) { renderCancelled = true; exportAbort?.abort(); }
+  } catch { }
+}
+async function runExportJob(ticket) {
+  if (!ticket?.id || state.exporting) return; // a busy tab leaves it for another
+  const claimed = await fetch("/api/export/job/claim?id=" + encodeURIComponent(ticket.id), { method: "POST" })
+    .then((r) => r.ok).catch(() => false);
+  if (!claimed) return;
+  const fail = (error) => reportExportJob(ticket.id, { status: "failed", error }, true);
+  // The agent's last edit may still be on its way here over SSE.
+  for (let i = 0; i < 150 && ticket.revision != null && (project.revision || 0) < ticket.revision; i++)
+    await new Promise((r) => setTimeout(r, 100));
+  if (ticket.revision != null && (project.revision || 0) < ticket.revision) await syncFromServer();
+  if (ticket.kind === "scopes") return runScopesJob(ticket, fail);
+  if (ticket.kind === "track") return runTrackJob(ticket, fail);
+  if (!state.ffmpeg) {
+    const j = await fetch("/api/export/ffmpeg").then((r) => r.json()).catch(() => ({}));
+    state.ffmpeg = !!j.available;
+  }
+  if (!state.ffmpeg) return fail("ffmpeg not found on PATH — export needs it");
+  if (!project.clips.length) return fail("the timeline is empty");
+  await fetchEncodeProfiles();
+  await probeMissingMeta();
+  if (ticket.range === "in-out" && !hasWorkArea())
+    return fail("range in-out needs the project's inPoint and/or outPoint — set them, or export the entire timeline");
+  exportRangeForced = ticket.range || (hasWorkArea() ? "in-out" : "entire");
+  try {
+    if (exportRange().frames < 1) return fail("the export range is empty — IN/OUT is at or past the end of the timeline");
+    reportExportJob(ticket.id, { progress: 0 }, true);
+    // an explicit profile wins; then the job's delivery spec, the project's, else the raw default
+    const want = ticket.profile || ticket.deliveries ? null : ticket.delivery || project.delivery || null;
+    if (want || ticket.deliveries) await fetchDeliveryInfo();
+    if (ticket.deliveries) {
+      // one render per frame rate; the job reports every file at the end
+      const specs = ticket.deliveries.map((d) => normalizeDelivery(d).spec);
+      const groups = new Map();
+      for (const sp of specs) { const k = sp.fps || projectFps(); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(sp); }
+      if (groups.size === 1) await fastExport({ job: ticket.id, deliveries: specs.map((delivery) => ({ delivery })) });
+      else {
+        const all = [];
+        let i = 0;
+        for (const group of groups.values()) {
+          const res = await fastExport({ deliveries: group.map((delivery) => ({ delivery })), silent: true,
+            onProgress: (f) => reportExportJob(ticket.id, { progress: (i + f) / groups.size }) });
+          i++;
+          if (res && res.cancelled) return reportExportJob(ticket.id, { status: "failed", error: "cancelled" }, true);
+          if (res && res.outputs) all.push(...res.outputs);
+          else all.push(...group.map((sp) => ({ file: deliveryFileName(sp), ok: false, error: (res && res.error) || "export failed" })));
+        }
+        const ok = all.find((o) => o.ok);
+        if (!ok) return fail(all.map((o) => o.error).join(" · "));
+        await reportExportJob(ticket.id, { status: "done", src: ok.src, result: { outputs: all } }, true);
+      }
+    } else await fastExport(want ? { job: ticket.id, delivery: normalizeDelivery(want).spec } : { job: ticket.id, profile: ticket.profile });
+  } finally {
+    exportRangeForced = null;
+  }
+}
+/* fablecut_track: follow a region of a clip in this tab, store the track,
+   optionally bake it into a mask or another clip, save, and report. */
+async function runTrackJob(ticket, fail) {
+  const spec = ticket.track || {}, c = getClip(spec.clip);
+  if (!c) return fail(`no clip ${spec.clip}`);
+  if (c.kind !== "video") return fail(`${c.id} is a ${c.kind} clip — tracking follows a video clip's picture`);
+  if (isGroupLocked(c) && spec.force !== true) return fail(`${c.id} is locked — pass force:true only if the user asked to change it`);
+  const el = getClipEl(c);
+  if (el && !el.videoWidth) await new Promise((r) => { el.addEventListener("loadedmetadata", r, { once: true }); setTimeout(r, 15000); });
+  if (!pictureRect(c, evalProps(c, c.start))) return fail("the clip's video did not load");
+  const list = maskList(c), tracks = clipTracks(c), ap = spec.apply || null;
+  let maskIdx = -1, other = null;
+  if (ap && ap.mask != null) {
+    maskIdx = typeof ap.mask === "string" ? list.findIndex((m) => m.name === ap.mask) : ap.mask;
+    if (!list[maskIdx]) return fail(`${c.id} has no mask ${JSON.stringify(ap.mask)}${list.length ? ` (it has ${Mask.describe(list)})` : " — add one with setMask first"}`);
+  } else if (ap && ap.clip != null) {
+    other = getClip(ap.clip);
+    if (!other || !isVisualClip(other) || other.id === c.id) return fail(`apply.clip must be another visual clip (${ap.clip} is not)`);
+    if (isGroupLocked(other) && spec.force !== true) return fail(`${other.id} is locked`);
+  }
+  const at = clamp(Number.isFinite(spec.at) ? spec.at : c.start, c.start, c.start + c.duration), from = at - c.start;
+  let name = typeof spec.name === "string" && spec.name.trim() ? spec.name.trim().slice(0, 60) : null;
+  if (!name && maskIdx >= 0) name = list[maskIdx].name || `Mask ${maskIdx + 1}`;
+  if (!name) { let n = 1; while (tracks.some((x) => x.name === `Track ${n}`)) n++; name = `Track ${n}`; }
+  const g = pictureRect(c, evalProps(c, at)) || pictureRect(c, evalProps(c, c.start));
+  let box = null;
+  if (spec.region) box = { x: +spec.region.x, y: +spec.region.y, w: +spec.region.w, h: +spec.region.h };
+  else if (spec.point) { const sz = clamp(+spec.size || 0.08, 0.02, 0.4); box = { x: +spec.point.x, y: +spec.point.y, w: sz, h: sz * g.dw / g.dh }; }
+  else if (maskIdx >= 0 && !tracks.some((x) => x.name === name)) box = maskBoundsAt(c, list[maskIdx], from);
+  const existing = tracks.find((x) => x.name === name);
+  if (!box && !existing) return fail("say what to follow: region {x, y, w, h} or point {x, y} (fractions of the clip's picture), or a mask to apply it to");
+  if (box && !(box.x >= 0 && box.x <= 1 && box.y >= 0 && box.y <= 1 && box.w > 0 && box.h > 0)) return fail("region / point must lie inside the clip's picture (x, y in 0…1)");
+  const opts = { scale: spec.scale === true, rotation: spec.rotation === true };
+  const dirs = spec.direction === "backward" ? [-1] : spec.direction === "both" ? [-1, 1] : [1];
+  const to = Number.isFinite(spec.to) ? clamp(spec.to - c.start, 0, c.duration) : null;
+  if (state.playing) pause();
+  renderCancelled = false;
+  const stamp = trackStamp(c), otherStamp = other ? trackStamp(other) : "", maskStamp = maskIdx >= 0 ? JSON.stringify(list[maskIdx]) : null;
+  let samples = [], cancelled = false;
+  const lostAt = [];
+  try {
+    if (box) {
+      for (const [k, dir] of dirs.entries()) {
+        const run = { cancel: false };
+        const end = to != null && Math.sign(to - from) === dir ? to : dir > 0 ? c.duration : 0;
+        const r = await runTrack(c, { box, from, to: end, dir, ...opts, run, onProgress: (f) => {
+          run.cancel = renderCancelled;
+          reportExportJob(ticket.id, { progress: (k + f) / dirs.length });
+        } });
+        if (r.lostAt != null) lostAt.push(+(c.start + r.lostAt).toFixed(3));
+        cancelled = cancelled || r.cancelled;
+        samples = dir < 0 ? [...r.samples, ...samples] : [...samples, ...r.samples];
+        if (cancelled) break;
+      }
+      samples = samples.filter((sm, i) => i === 0 || sm[0] > samples[i - 1][0] + 1e-6);
+      if (samples.length < 2) return fail(lostAt.length ? "lost the region on the very next frame — pick a spot with more detail, or a bigger region" : "nothing to track in that range");
+    }
+    // the project may have been reloaded or edited while tracking: apply only onto what was measured
+    if (getClip(c.id) !== c || trackStamp(c) !== stamp || (other && (getClip(other.id) !== other || trackStamp(other) !== otherStamp)) ||
+      (maskStamp != null && JSON.stringify(maskList(c)[maskIdx] ?? null) !== maskStamp))
+      return fail("the clip changed while tracking (an edit or a reload) — nothing was applied; run it again");
+    const beforeJob = undoSnapshot();
+    pushUndo(beforeJob);
+    const tr = box ? storeTrack(c, name, opts.scale || opts.rotation ? "box" : "point", box.w, box.h, samples) : existing;
+    const used = box ? samples : tr.samples;
+    let applied = null;
+    if (maskIdx >= 0) applied = `mask ${JSON.stringify(list[maskIdx].name || maskIdx)}: ${bakeTrackIntoMask(c, maskIdx, used, opts, from)} keys`;
+    else if (other) {
+      const o = { scale: ap.scale === true, rotation: ap.rotation === true, at: Number.isFinite(ap.at) ? ap.at : at };
+      const n = attachToTrack(c, tr, other, o);
+      applied = n ? `clip ${other.id}: ${n} keys on ${["x", "y", ...(o.scale ? ["scale"] : []), ...(o.rotation ? ["rotation"] : [])].join(", ")}` : `clip ${other.id}: it does not overlap the track in time — nothing keyed`;
+    }
+    state.dirtyTimeline = true;
+    if (state.connected) {
+      clearTimeout(runtime.saveTimer); runtime.saveTimer = null;
+      project.revision++;
+      const res = await fetch("/api/project", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(projectJSON(), null, 2) });
+      if (!res.ok) {
+        project.revision--;
+        // put back only the clips this job changed (edits elsewhere since stay), and drop its undo step
+        const was = JSON.parse(beforeJob), wasClips = Array.isArray(was) ? was : was.clips;
+        for (const id of [c.id, other && other.id].filter(Boolean)) {
+          const i = project.clips.findIndex((x) => x.id === id), old = wasClips.find((x) => x.id === id);
+          if (i >= 0 && old) project.clips[i] = old;
+        }
+        const u = runtime.undo.lastIndexOf(beforeJob);
+        if (u >= 0) runtime.undo.splice(u, 1);
+        pruneSelection(); renderInspector(); drawFrame();
+        return fail(res.status === 409 ? "the project changed while tracking — nothing was saved; run it again" : `could not save the project (${res.status}) — nothing was kept`);
+      }
+    }
+    renderInspector(); drawFrame();
+    const qs = used.map((sm) => sm[5]);
+    await reportExportJob(ticket.id, { status: "done", result: {
+      clip: c.id, track: tr.name, kind: tr.kind, describe: Tracker.describe([tr]),
+      from: +(c.start + used[0][0]).toFixed(3), to: +(c.start + used[used.length - 1][0]).toFixed(3),
+      samples: used.length, tracked: !!box, lostAt, cancelled,
+      quality: { min: +Math.min(...qs).toFixed(3), mean: +(qs.reduce((a, b) => a + b, 0) / qs.length).toFixed(3) },
+      applied, revision: project.revision,
+    } }, true);
+  } catch (err) {
+    fail("tracking failed: " + (err && err.message || err));
+  }
+}
+/* fablecut_scopes: render one still exactly as export would (graded, all
+   tracks), then measure it with color.js scopeStats. The user's playhead
+   stays where it is. */
+async function renderStillAt(t) {
+  if (!runtime.forceOriginals) {   // measured and shown to agents as export renders it: the originals
+    await useOriginalPlayers();
+    try { return await renderStillAt(t); } finally { releaseOriginalPlayers(); }
+  }
+  const waits = [];
+  for (const c of mediaClips()) {
+    if (!clipRenders(c) || !activeAt(c, t)) continue;
+    if (c.kind === "video") {
+      const el = getClipEl(c);
+      if (!el) continue;
+      if (!el.paused) el.pause();
+      waits.push(hardSeekVideo(el, mediaTimeAt(c, t)));
+    } else if (c.kind === "image") {
+      const img = runtime.mediaAux.get(c.mediaId)?.img;
+      if (img && !img.complete) waits.push(img.decode().catch(() => { }));
+    }
+  }
+  await Promise.all(waits);
+  await prepareFrameAssets(t);
+  runtime.sampling = true; // no selection handles, no scope refresh
+  try { drawFrame(t); } finally { runtime.sampling = false; }
+}
+async function runScopesJob(ticket, fail) {
+  const wasPlaying = state.playing;
+  let heldOriginals = false;
+  try {
+    if (wasPlaying) pause();
+    await loadProjectFonts();
+    const dur = projDur();
+    const t = clamp(Number.isFinite(ticket.time) ? ticket.time : state.time, 0, Math.max(0, dur - 1 / projectFps()));
+    state.rendering = true; // the render loop keeps its hands off the canvas
+    const shown = runtime.matte;
+    runtime.matte = null;   // measure the graded picture, not the matte the user may be looking at
+    const mClip = ticket.matte && getClip(ticket.matte.clip);
+    if (mClip) runtime.gradeCapture = { id: mClip.id, args: null };
+    const kClip = ticket.mask && getClip(ticket.mask.clip), view = runtime.maskView;
+    runtime.maskCapture = kClip ? { id: kClip.id } : null;
+    runtime.maskView = null;
+    // the matte below re-grades the captured original — keep the originals loaded until then
+    if (!runtime.forceOriginals) { await useOriginalPlayers(); heldOriginals = true; }
+    try { await renderStillAt(t); } finally { runtime.matte = shown; runtime.maskView = view; }
+    const kcap = runtime.maskCapture;
+    runtime.maskCapture = null;
+    const cap = runtime.gradeCapture;
+    runtime.gradeCapture = null;
+    const W = els.preview.width, H = els.preview.height;
+    const r = getExportFrame() || { x: 0, y: 0, w: W, h: H };
+    const sw = Math.max(2, Math.min(960, Math.round(r.w))), sh = Math.max(2, Math.round(sw * r.h / r.w));
+    const cv = document.createElement("canvas");
+    cv.width = sw; cv.height = sh;
+    const g = cv.getContext("2d", { willReadFrequently: true });
+    g.drawImage(els.preview, r.x, r.y, r.w, r.h, 0, 0, sw, sh);
+    const img = g.getImageData(0, 0, sw, sh).data;
+    const stats = Color.scopeStats(img, sw, sh);
+    let matte = null;
+    if (ticket.matte) { // the clip's own picture, graded and as its layer's matte → what the layer selects
+      const { clip, layer } = ticket.matte, mc = mClip;
+      matte = { clip, layer };
+      if (!mc) matte.error = "no such clip";
+      else if (!gradeLayers(mc)[layer]) matte.error = `the clip has ${gradeLayers(mc).length} grade layer(s)`;
+      else if (!cap || !cap.args) matte.error = "the clip is not on screen at that time";
+      else {
+        const grade = Color.gradeAt(mc.props.grade, t - mc.start);
+        const read = (out) => {
+          const mw = Math.max(2, Math.min(480, out.width)), mh = Math.max(2, Math.round(mw * out.height / out.width));
+          const cv2 = document.createElement("canvas"); cv2.width = mw; cv2.height = mh;
+          const g2 = cv2.getContext("2d", { willReadFrequently: true });
+          g2.drawImage(out, 0, 0, mw, mh);
+          return g2.getImageData(0, 0, mw, mh).data;
+        };
+        const mOut = gradeSource(...cap.args, grade, layer), mm = mOut && read(mOut);
+        const gOut = mm && gradeSource(...cap.args, grade, -1), gg = gOut && read(gOut);
+        if (!mm || !gg) matte.error = "the clip's pixels can't be read (a cross-origin source)";
+        else {
+          let sum = 0, n = 0, px = 0;
+          const sel = [];
+          for (let i = 0; i < mm.length; i += 4) {
+            if (gg[i + 3] < 128) continue;   // transparent: not part of the picture
+            px++; sum += mm[i];
+            if (mm[i] >= 128) { sel.push(gg[i], gg[i + 1], gg[i + 2], 255); n++; }
+          }
+          matte.coverage = px ? +(100 * sum / 255 / px).toFixed(2) : 0;
+          if (n) matte.selected = Color.scopeStats(new Uint8ClampedArray(sel), n, 1);
+        }
+      }
+    }
+    let mask = null;
+    if (ticket.mask) {
+      mask = { clip: ticket.mask.clip };
+      if (!kClip) mask.error = "no such clip";
+      else if (!clipMasks(kClip)) mask.error = "the clip has no masks";
+      else if (!kcap || kcap.coverage == null) mask.error = "the clip is not on screen at that time (or its masks are all off)";
+      else Object.assign(mask, { masks: Mask.describe(clipMasks(kClip)), coverage: kcap.coverage, frameCoverage: kcap.frameCoverage });
+    }
+    /* fablecut_frame {time} with no src: hand back the same graded still as a
+       JPEG so the agent can see what it is measuring. toDataURL can throw on a
+       canvas tainted by a cross-origin src — the numbers still stand. */
+    let image = null;
+    if (ticket.image) {
+      try { image = cv.toDataURL("image/jpeg", 0.85); }
+      catch (err) { image = null; }
+    }
+    const onScreen = visibleClipsAt(t), mattes = matteTracksAt(onScreen);
+    const clips = onScreen.map((c) => {
+      const tm = clipMatte(c);
+      return {
+        id: c.id, name: c.name, kind: c.kind, track: c.track,
+        grade: Color.summarizeGrade(c.props.grade),
+        ...(clipMasks(c) ? { masks: Mask.describe(clipMasks(c)) } : {}),
+        ...(tm ? { matte: `${tm.mode} from ${tm.track}` } : {}),
+        ...(mattes.has(c.track) ? { isMatte: true } : {}),   // cuts a clip below; not drawn itself
+        ...(c.props.blend && c.props.blend !== "normal" ? { blend: c.props.blend } : {}),
+      };
+    });
+    await reportExportJob(ticket.id, { status: "done", result: { time: +t.toFixed(3), frame: { w: Math.round(r.w), h: Math.round(r.h) }, stats, clips, matte, mask, image } }, true);
+  } catch (err) {
+    fail("could not measure the frame: " + (err && err.message || err));
+  } finally {
+    runtime.gradeCapture = null;
+    runtime.maskCapture = null;
+    state.rendering = false;
+    if (heldOriginals) releaseOriginalPlayers();
+    seekMediaWhilePaused(); // the videos sat on the job's frame — back to the playhead
+    if (wasPlaying) play();
+  }
+}
+/** A headless page opened for one job (?exportJob=<id>) fetches and runs it. */
+async function runExportJobFromUrl() {
+  const id = new URLSearchParams(location.search).get("exportJob");
+  if (!id || !state.connected) return;
+  const ticket = await fetch("/api/export/job/ticket?id=" + encodeURIComponent(id)).then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (ticket?.status === "pending") runExportJob(ticket);
+}
+
+/* ── WebCodecs export (browser H.264 → server mux) ── */
+function waitEncodeQueue(encoder, max = 2, { signal, getError } = {}) {
+  const cancelled = () => renderCancelled || !!(signal && signal.aborted);
+  const failed = () => (getError ? getError() : null);
+  if (cancelled()) return Promise.reject(new Error("cancelled"));
+  {
+    const err = failed();
+    if (err) return Promise.reject(err);
+  }
+  if (encoder.encodeQueueSize <= max) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const done = (err) => {
+      clearInterval(poll);
+      encoder.ondequeue = null;
+      err ? rej(err) : res();
+    };
+    const tick = () => {
+      if (cancelled()) done(new Error("cancelled"));
+      else {
+        const err = failed();
+        if (err) done(err);
+        else if (encoder.encodeQueueSize <= max) done(null);
+      }
+    };
+    encoder.ondequeue = tick;
+    // ondequeue alone won't notice Cancel / encoder·upload failure — poll
+    const poll = setInterval(tick, 50);
+    tick();
+  });
+}
+async function webCodecsExport() {
+  if (state.exporting) return;
+  await detectWebCodecs();
+  if (!state.webCodecs) { startExport(); return; }
+  pause();
+  state.exporting = true; state.rendering = true; renderCancelled = false;
+  exportAbort = new AbortController();
+  const signal = exportAbort.signal;
+  els.exportOverlay.classList.remove("hidden");
+  els.exportProgress.style.width = "0%";
+  els.exportNote.textContent = "Encoding with WebCodecs → ffmpeg mux. You can switch tabs; export continues.";
+  restoreExportVideoState();
+  const { start: t0, end: t1, frames } = beginExportWindow();
+  const fps = projectFps();
+  const keyEvery = Math.max(1, Math.round(fps * 2));
+  let sessId = null;
+  let encoder = null;
+  let uploadError = null;
+  const setError = (err) => { if (!uploadError) uploadError = err; };
+  let up = null;
+  try {
+    els.exportTitle.textContent = "Mixing audio…";
+    const wav = await renderAudioMix(t0, t1);
+    if (renderCancelled) throw new Error("cancelled");
+
+    const begin = await fetch("/api/export/begin", {
+      method: "POST",
+      body: JSON.stringify({
+        fps,
+        name: project.name.replace(/[^\w\- ]+/g, "") || "export",
+        mode: "annexb",
+        hasAudio: !!wav,
+      }),
+      signal,
+    }).then((r) => r.json());
+    if (!begin.id) throw new Error(begin.error || "export begin failed");
+    sessId = begin.id;
+    if (wav) {
+      const r = await fetch("/api/export/audio?id=" + sessId, { method: "POST", body: wav, signal });
+      if (!r.ok) throw new Error("audio upload failed");
+    }
+    up = createExportUploader(sessId, {
+      batchItems: 12, batchBytes: 128 * 1024, signal,
+      getError: () => uploadError, setError,
+    });
+
+    // Always encode at project/frame resolution (not display CSS size).
+    const w = Math.max(2, project.width | 0 || 1280);
+    const h = Math.max(2, project.height | 0 || 720);
+    if (els.preview.width !== w || els.preview.height !== h) {
+      els.preview.width = w;
+      els.preview.height = h;
+    }
+    const codec = webCodecsAvcCodec();
+    const bitrate = webCodecsBitrate(w, h, fps);
+    const bitrateMode = getSetting("webCodecsBitrateMode") === "constant" ? "constant" : "variable";
+    encoder = new VideoEncoder({
+      output: (chunk) => {
+        if (uploadError || renderCancelled || signal.aborted) return;
+        const buf = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buf);
+        up.push(buf);
+      },
+      error: (e) => { uploadError = e; },
+    });
+    encoder.configure({
+      codec, width: w, height: h, bitrate, bitrateMode, framerate: fps,
+      avc: { format: "annexb" },
+      latencyMode: "quality",
+    });
+    await loadProjectFonts();
+    resetExportCanvases();
+    await armExportCors();
+    await useOriginalPlayers();   // proxies are for editing — export reads the originals
+    exportDecodeBegin();
+
+    for (let f = 0; f < frames; f++) {
+      if (renderCancelled || signal.aborted) throw new Error("cancelled");
+      if (uploadError) throw uploadError;
+      const queueBusy = up.inFlight() > 4 || encoder.encodeQueueSize > 4;
+      if (up.inFlight() > 3 || encoder.encodeQueueSize > 3) pauseExportVideos();
+      await up.waitBackpressure(4);
+      await waitEncodeQueue(encoder, 4, { signal, getError: () => uploadError });
+      const t = t0 + f / fps;
+      state.time = t;
+      await seekVideosTo(t, { queueBusy });
+      await prepareFrameAssets(t);
+      drawFrame(t);
+      // Absolute µs timestamps; duration = delta so average rate stays exact
+      // (constant Math.round(1e6/fps) drifts, e.g. 33333µs → avg 1000000/33333).
+      const ts = Math.round(f * 1e6 / fps);
+      let frame;
+      try {
+        frame = new VideoFrame(els.preview, {
+          timestamp: ts,
+          duration: Math.round((f + 1) * 1e6 / fps) - ts,
+        });
+      } catch (e) {
+        if (e && (e.name === "SecurityError" || /taint/i.test(String(e.message || e))))
+          throw new Error("Tainted canvas — a clip is from another origin (not /media or /library) without CORS. Import the file into the project, or serve it with Access-Control-Allow-Origin.");
+        throw e;
+      }
+      try {
+        encoder.encode(frame, { keyFrame: f === 0 || f % keyEvery === 0 });
+      } finally {
+        frame.close();
+      }
+      const pct = ((f + 1) / frames) * 100;
+      els.exportProgress.style.width = pct.toFixed(1) + "%";
+      els.exportTitle.textContent = `Encoding… ${pct.toFixed(0)}%`;
+    }
+    els.exportTitle.textContent = "Finishing…";
+    await encoder.flush();
+    await up.done();
+    if (uploadError) throw uploadError;
+    encoder.close();
+    encoder = null;
+    const end = await fetch("/api/export/end?id=" + sessId, { method: "POST", signal }).then((r) => r.json());
+    if (!end.src) throw new Error(end.error || "mux failed");
+    const a = document.createElement("a");
+    a.href = end.src;
+    a.download = decodeURIComponent(end.src.split("/").pop());
+    a.click();
+  } catch (e) {
+    try { encoder?.close(); } catch { }
+    if (sessId) fetch("/api/export/end?id=" + sessId + "&discard=1", { method: "POST" }).catch(() => { });
+    const msg = e?.name === "AbortError" ? "cancelled" : String(e.message || e);
+    if (msg !== "cancelled") alert("Export failed: " + msg);
+  } finally {
+    exportAbort = null;
+    exportDecodeEnd();
+    restoreExportVideoState();
+    endExportWindow();
+    state.exporting = false; state.rendering = false;
+    releaseOriginalPlayers();
+    els.exportOverlay.classList.add("hidden");
+    els.exportNote.textContent = "Rendering your sequence in real time. Keep this tab focused.";
+    if (runtime.pendingSync) syncFromServer();
+  }
+}
+
+/* ── Realtime export (MediaRecorder offline / unsupported fallback) ── */
+let recorder = null, recChunks = [], recDiscard = false;
+function pickMime() {
+  const cands = [
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4",
+    "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm",
+  ];
+  return cands.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+}
+async function startExport() {
+  if (state.exporting) return;
+  if (!project.clips.length) { alert("Timeline is empty — add some clips first."); return; }
+  const mime = pickMime();
+  if (!mime) { alert("MediaRecorder is not supported in this browser."); return; }
+  ensureAudio();
+  await runtime.audio.ctx.resume();
+  pause();
+  const { start } = beginExportWindow();
+  state.time = start;
+  await useOriginalPlayers();   // proxies are for editing — export reads the originals
+  seekMediaWhilePaused();
+  await new Promise((r) => setTimeout(r, 350)); // let first frames decode
+  await loadProjectFonts();
+  const stream = els.preview.captureStream(projectFps());
+  for (const tr of runtime.audio.recDest.stream.getAudioTracks()) stream.addTrack(tr);
+  recChunks = []; recDiscard = false;
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+  recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    els.exportOverlay.classList.add("hidden");
+    if (recDiscard || !recChunks.length) return;
+    const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
+    const blob = new Blob(recChunks, { type: mime.split(";")[0] });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (project.name.replace(/[^\w\- ]+/g, "") || "export") + "." + ext;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+  };
+  els.exportOverlay.classList.remove("hidden");
+  els.exportProgress.style.width = "0%";
+  state.exporting = true;
+  recorder.start(250);
+  pauseSource();
+  setMonitorMode("program");
+  state.playing = true;
+  syncPlayButton();
+}
+function finishExport(keep) {
+  if (!state.exporting) return;
+  state.exporting = false;
+  releaseOriginalPlayers();
+  endExportWindow();
+  if (runtime.pendingSync) syncFromServer();
+  recDiscard = !keep;
+  state.playing = false;
+  syncPlayButton();
+  for (const el of runtime.clipEls.values()) { if (!el.paused) el.pause(); }
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  else els.exportOverlay.classList.add("hidden");
+}
+
+/* ═══════════════════════════ WIRING ═══════════════════════════ */
+els.fileInput.addEventListener("change", () => { importFiles(els.fileInput.files); els.fileInput.value = ""; });
+$("btnImportUrl")?.addEventListener("click", openImportUrl);
+$("btnCancelImportUrl")?.addEventListener("click", closeImportUrl);
+$("btnDoImportUrl")?.addEventListener("click", () => importFromUrl(els.importUrlInput?.value));
+els.importUrlInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); importFromUrl(els.importUrlInput.value); }
+});
+els.importUrlOverlay?.addEventListener("click", (e) => {
+  if (e.target === els.importUrlOverlay) closeImportUrl();
+});
+$("btnTitle").addEventListener("click", addTitle);
+$("btnAdjust").addEventListener("click", addAdjust);
+
+$("btnSplit").addEventListener("click", splitAtPlayhead);
+$("btnCloseGap").addEventListener("click", closeGapAtPlayhead);
+$("btnLift").addEventListener("click", () => liftExtract(false));
+$("btnExtract").addEventListener("click", () => liftExtract(true));
+$("btnNextGap").addEventListener("click", goToNextGap);
+$("btnTrimIO").addEventListener("click", trimToWorkArea);
+$("btnWorkAreaPlay").addEventListener("click", () => {
+  state.workAreaPlay = !state.workAreaPlay;
+  syncTrimIOButton();
+});
+$("btnDelete").addEventListener("click", () => {
+  if (!clearFocusedTransition()) deleteSelected();
+});
+$("btnRippleDelete").addEventListener("click", () => {
+  if (!clearFocusedTransition()) rippleDeleteSelected();
+});
+$("btnExport").addEventListener("click", openExportSetup);
+$("btnStartExport").addEventListener("click", startChosenExport);
+els.exportSetup?.addEventListener("change", (e) => {
+  if (e.target.name === "engine") {
+    syncExportProfileVisibility();
+    syncExportWcOpts();
+  }
+  if (e.target.id === "exportRangeSel") syncExportRangeUi();
+});
+els.exportProfileSel?.addEventListener("change", () => {
+  const c = selectedExportChoice();
+  if (c.kind === "profile" && !project.encodeProfile)
+    setSetting("encodeProfile", c.id === encodeProfiles.default ? null : c.id);
+  syncExportChoiceUi("preset");
+});
+$("dlvBody")?.addEventListener("change", onDeliveryControl);
+$("dlvBody")?.addEventListener("input", onDeliveryControl);
+$("dlvSaveBtn")?.addEventListener("click", () => {
+  $("dlvSaveRow").classList.remove("hidden");
+  const p = Delivery.PRESETS[dlvSpec?.preset] || deliveryInfo.saved[dlvSpec?.preset];
+  $("dlvSaveName").value = p && !Delivery.PRESETS[dlvSpec.preset] ? p.label : "";
+  $("dlvSaveName").focus();
+});
+$("dlvSaveOk")?.addEventListener("click", saveDeliveryPreset);
+$("dlvSaveName")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); saveDeliveryPreset(); }
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("dlvSaveRow").classList.add("hidden"); }
+});
+$("dlvSaveCancel")?.addEventListener("click", () => $("dlvSaveRow").classList.add("hidden"));
+$("dlvDeleteBtn")?.addEventListener("click", deleteDeliveryPreset);
+$("dlvBatchList")?.addEventListener("click", onBatchListClick);
+$("dlvBatchList")?.addEventListener("change", onBatchListClick);
+$("dlvBatchAdd")?.addEventListener("click", () => { if (dlvSpec) addBatchOutput(dlvSpec); });
+$("dlvBatchTypical")?.addEventListener("click", () => {
+  const have = new Set(projectOutputs().map((o) => o.filename));
+  for (const t of TYPICAL_SET) if (!have.has(t.filename)) addBatchOutput(normalizeDelivery(t).spec);
+});
+function exportPreflight() {
+  if (exportRange().frames < 1) {
+    alert("Export range is empty — IN/OUT is at or past the end of the timeline. Choose Entire timeline, or move the markers.");
+    return false;
+  }
+  return true;
+}
+$("btnQueueExport")?.addEventListener("click", () => {
+  if (selectedExportChoice().kind !== "delivery" || !dlvSpec) { alert("The queue takes delivery presets — pick one above (encoding profiles export one at a time)."); return; }
+  if (!exportPreflight()) return;
+  setSetting("exportKind", "delivery");
+  setSetting("delivery", dlvSpec);
+  queueAdd(dlvSpec);
+  els.exportSetup.classList.add("hidden");
+  openQueue();
+});
+$("btnBatchExport")?.addEventListener("click", () => {
+  const on = projectOutputs().filter((o) => o.on !== false);
+  if (!on.length || !exportPreflight()) return;
+  for (const o of on) { const { id: _id, on: _on, ...spec } = o; queueAdd(normalizeDelivery(spec).spec); }
+  els.exportSetup.classList.add("hidden");
+  openQueue();
+  runQueue();
+});
+$("btnOpenQueue")?.addEventListener("click", () => { els.exportSetup.classList.add("hidden"); openQueue(); });
+$("btnQueueStart")?.addEventListener("click", () => (queueRunning ? stopQueue() : runQueue()));
+$("btnQueueClose")?.addEventListener("click", closeQueue);
+$("exportQueue")?.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeQueue(); }
+});
+$("btnQueueClear")?.addEventListener("click", () => {
+  for (let i = exportQueue.length - 1; i >= 0; i--) if (exportQueue[i].status !== "pending" && exportQueue[i].status !== "running") exportQueue.splice(i, 1);
+  renderQueue();
+});
+$("exportQueueList")?.addEventListener("click", (e) => {
+  const r = e.target.dataset.qRetry, x = e.target.dataset.qRemove;
+  const q = exportQueue.find((v) => v.id === (r || x));
+  if (!q) return;
+  if (r) { q.status = "pending"; q.error = null; q.progress = 0; }
+  else exportQueue.splice(exportQueue.indexOf(q), 1);
+  renderQueue();
+});
+$("btnCancelSetup").addEventListener("click", closeExportSetup);
+els.exportSetup?.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); e.stopPropagation(); closeExportSetup(); }
+});
+els.engineFast?.addEventListener("change", syncExportWcOpts);
+els.engineRealtime?.addEventListener("change", syncExportWcOpts);
+$("exportWcBitrate")?.addEventListener("change", persistExportWcOpts);
+$("exportWcMode")?.addEventListener("change", async () => {
+  persistExportWcOpts();
+  await detectWebCodecs();
+  syncExportWcOpts();
+  if (!els.exportSetup.classList.contains("hidden")) openExportSetup();
+});
+$("btnCancelExport").addEventListener("click", () => {
+  if (state.rendering) {
+    renderCancelled = true;
+    try { exportAbort?.abort(); } catch { }
+  } else finishExport(false);
+});
+$("btnPlay").addEventListener("click", toggleTransportPlay);
+els.btnSpeed.addEventListener("click", () => cyclePreviewRate(1));
+$("btnHome").addEventListener("click", gotoTransportHome);
+$("btnEnd").addEventListener("click", gotoTransportEnd);
+$("btnBack").addEventListener("click", () => stepTransport(-1));
+$("btnFwd").addEventListener("click", () => stepTransport(1));
+$("btnMarkIn").addEventListener("click", markIn);
+$("btnMarkOut").addEventListener("click", markOut);
+els.btnInsert?.addEventListener("click", () => insertSourceAtPlayhead());
+els.btnReplace?.addEventListener("click", () => replaceSourceAtPlayhead());
+$("monitorModeGroup")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-monitor-mode]");
+  if (!btn) return;
+  if (btn.dataset.monitorMode === "source" && !state.source.mediaId) {
+    setMonitorMode("source");
+    toast("Double-click a clip in Project or the timeline to load Source");
+    return;
+  }
+  setMonitorMode(btn.dataset.monitorMode);
+});
+function sourceScrubAtEvent(e) {
+  const track = els.sourceScrubTrack;
+  if (!track) return 0;
+  const r = track.getBoundingClientRect();
+  const u = clamp((e.clientX - r.left) / Math.max(1, r.width), 0, 1);
+  return u * sourceDur();
+}
+function startSourceScrub(e) {
+  if (!state.source.mediaId) return;
+  e.preventDefault();
+  pauseSource();
+  setSourceTime(sourceScrubAtEvent(e));
+  const onMove = (ev) => setSourceTime(sourceScrubAtEvent(ev));
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+els.sourceScrubTrack?.addEventListener("pointerdown", startSourceScrub);
+$("btnHelp").addEventListener("click", () => {
+  $("helpOverlay").classList.remove("hidden");
+  $("helpFilter").focus();
+});
+$("btnCloseHelp").addEventListener("click", () => $("helpOverlay").classList.add("hidden"));
+/** Keyboard shortcuts filter: keeps the rows (and whole sections, by heading) that match every typed word. */
+function filterHelp() {
+  const words = $("helpFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  let any = false;
+  for (const sec of $("helpKeys").querySelectorAll(".keys-sec")) {
+    const head = sec.querySelector("h3").textContent.toLowerCase();
+    let shown = 0;
+    for (const tr of sec.querySelectorAll("tr")) {
+      const text = head + " " + tr.textContent.toLowerCase();
+      const hit = words.every((w) => text.includes(w));
+      tr.classList.toggle("hidden", !hit);
+      if (hit) shown++;
+    }
+    sec.classList.toggle("hidden", !shown);
+    if (shown) any = true;
+  }
+  $("helpEmpty").classList.toggle("hidden", any);
+}
+$("helpFilter").addEventListener("input", filterHelp);
+$("helpFilter").addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  e.preventDefault();
+  e.stopPropagation();
+  if ($("helpFilter").value) { $("helpFilter").value = ""; filterHelp(); }
+  else $("helpOverlay").classList.add("hidden");
+});
+function settingsFocusables() {
+  const root = $("settingsDialog");
+  if (!root) return [];
+  return [...root.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+    .filter((el) => !el.disabled && el.getClientRects().length);
+}
+function onSettingsTabTrap(e) {
+  if (e.key !== "Tab") return;
+  const list = settingsFocusables();
+  if (!list.length) return;
+  const first = list[0], last = list[list.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+function openSettings() {
+  const cb = $("setLinkSelect");
+  if (cb) cb.checked = !!getSetting("linkSelect");
+  const overlay = $("settingsOverlay");
+  overlay.classList.remove("hidden");
+  overlay.addEventListener("keydown", onSettingsTabTrap);
+  const dialog = $("settingsDialog");
+  (cb || dialog)?.focus();
+}
+function closeSettings() {
+  const overlay = $("settingsOverlay");
+  overlay.removeEventListener("keydown", onSettingsTabTrap);
+  overlay.classList.add("hidden");
+  $("btnSettings")?.focus();
+}
+$("btnSettings").addEventListener("click", openSettings);
+$("btnCloseSettings").addEventListener("click", closeSettings);
+$("settingsOverlay").addEventListener("click", (e) => {
+  if (e.target === $("settingsOverlay")) closeSettings();
+});
+$("setLinkSelect").addEventListener("change", (e) => {
+  setSetting("linkSelect", !!e.target.checked);
+  if (!getSetting("linkSelect")) {
+    clearBinSelectionHighlight();
+    return;
+  }
+  if (selectedMediaIds().size && state.binTab !== "project") setBinTab("project");
+  syncBinSelectionFromTimeline();
+});
+els.btnSnap.addEventListener("click", () => {
+  state.snap = !state.snap;
+  els.btnSnap.classList.toggle("on", state.snap);
+});
+els.btnSnapMenu.addEventListener("click", () => openSnapMenu(els.btnSnap));
+els.btnMarkers.addEventListener("click", () => openMarkerList(els.btnMarkers));
+if (els.btnAudioHold) {
+  els.btnAudioHold.addEventListener("click", () => setAudioHold(!state.audioHold));
+}
+$("btnLayoutReset").addEventListener("click", restoreDefaultLayout);
+$("trackSizeGroup").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-track-size]");
+  if (b) setTrackSize(b.dataset.trackSize);
+});
+els.binTabs.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (b) setBinTab(b.dataset.tab);
+});
+/* Right-click the Project tab → New folder */
+function closeBinCtxMenu() {
+  if (!runtime.binCtxMenu) return;
+  runtime.binCtxMenu.remove();
+  runtime.binCtxMenu = null;
+  document.removeEventListener("pointerdown", onBinCtxDoc, true);
+}
+function onBinCtxDoc(e) {
+  if (runtime.binCtxMenu && !runtime.binCtxMenu.contains(e.target)) closeBinCtxMenu();
+}
+function openProjectTabMenu(clientX, clientY) {
+  closeBinCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  const item = document.createElement("div");
+  item.className = "ctx-opt";
+  item.textContent = "New folder";
+  item.addEventListener("click", () => {
+    closeBinCtxMenu();
+    if (state.binTab !== "project") setBinTab("project");
+    addFolder(null);
+  });
+  menu.appendChild(item);
+  const compItem = document.createElement("div");
+  compItem.className = "ctx-opt";
+  compItem.textContent = "New composition";
+  compItem.addEventListener("click", () => {
+    closeBinCtxMenu();
+    if (state.binTab !== "project") setBinTab("project");
+    const comp = addNewComp();
+    enterComp(comp.id);
+  });
+  menu.appendChild(compItem);
+  const vids = project.media.filter((m) => m.kind === "video" && !proxyOf(m) && !isMediaOffline(m.id));
+  if (vids.length && state.connected && state.ffmpeg) {
+    const px = document.createElement("div");
+    px.className = "ctx-opt";
+    px.textContent = `Create proxies for ${vids.length} video${vids.length === 1 ? "" : "s"}`;
+    px.addEventListener("click", () => { closeBinCtxMenu(); createProxies(vids, 540); });
+    menu.appendChild(px);
+  }
+  document.body.appendChild(menu);
+  const pad = 6;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.min(clientX, window.innerWidth - w - pad) + "px";
+  menu.style.top = Math.min(clientY, window.innerHeight - h - pad) + "px";
+  runtime.binCtxMenu = menu;
+  document.addEventListener("pointerdown", onBinCtxDoc, true);
+}
+els.binTabs.addEventListener("contextmenu", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (!b || b.dataset.tab !== "project") return;
+  e.preventDefault();
+  openProjectTabMenu(e.clientX, e.clientY);
+});
+
+/* ── Canvas aspect presets + project FPS + safe-area guides ── */
+function syncAspectSel() {
+  if (!els.aspectSel) return;
+  const i = ASPECT_PRESETS.findIndex((a) => a.w === project.width && a.h === project.height);
+  els.aspectSel.innerHTML =
+    ASPECT_PRESETS.map((a, j) => `<option value="${j}" ${j === i ? "selected" : ""}>${a.label}</option>`).join("") +
+    (i < 0 ? `<option value="custom" selected>Custom · ${project.width}×${project.height}</option>` : "");
+}
+function syncFpsSel() {
+  if (!els.fpsSel) return;
+  const fps = Number(project.fps);
+  const i = FPS_PRESETS.findIndex((v) => v === fps);
+  els.fpsSel.innerHTML =
+    FPS_PRESETS.map((v, j) => `<option value="${j}" ${j === i ? "selected" : ""}>${v} fps</option>`).join("") +
+    (i < 0 && Number.isFinite(fps) && fps > 0
+      ? `<option value="custom" selected>Custom · ${fps} fps</option>`
+      : "");
+}
+els.aspectSel.addEventListener("change", () => {
+  const a = ASPECT_PRESETS[+els.aspectSel.value];
+  if (a) setCanvasSize(a.w, a.h);
+});
+els.fpsSel?.addEventListener("change", () => {
+  const v = FPS_PRESETS[+els.fpsSel.value];
+  if (!(v > 0)) return;
+  project.fps = v;
+  syncFpsSel();
+  updateMonitorRes();
+  state.dirtyTimeline = true;
+  seekMediaWhilePaused();
+  scheduleSave();
+});
+els.exportFrameSel?.addEventListener("change", () => {
+  const v = els.exportFrameSel.value;
+  if (v === "custom") return;
+  const preset = EXPORT_FRAME_ASPECTS[+v];
+  if (!preset) return;
+  if (!preset.w) project.exportFrame = null;
+  else project.exportFrame = fitExportFrameAspect(preset.w, preset.h);
+  state.exportFrameView = !!getExportFrame();
+  els.btnExportFrame?.classList.toggle("on", state.exportFrameView && !!getExportFrame());
+  updateMonitorRes();
+  syncExportFrameSel();
+  updateExportFrameOverlay();
+  scheduleSave();
+});
+els.btnExportFrame?.addEventListener("click", () => {
+  if (!getExportFrame()) {
+    const preset = EXPORT_FRAME_ASPECTS[1]; // 9:16 — common reframe default
+    project.exportFrame = fitExportFrameAspect(preset.w, preset.h);
+    state.exportFrameView = true;
+    syncExportFrameSel();
+    updateMonitorRes();
+    scheduleSave();
+  } else if (state.exportFrameView) {
+    state.exportFrameView = false;
+    syncExportFrameSel();
+    updateMonitorRes();
+    scheduleSave();
+  } else {
+    state.exportFrameView = true;
+  }
+  els.btnExportFrame.classList.toggle("on", state.exportFrameView && !!getExportFrame());
+  updateExportFrameOverlay();
+});
+els.btnExportFrameDim?.addEventListener("click", () => {
+  state.exportFrameCrop = !state.exportFrameCrop;
+  updateExportFrameOverlay();
+});
+els.btnGuides.addEventListener("click", () => {
+  state.guides = !state.guides;
+  els.btnGuides.classList.toggle("on", state.guides);
+  els.safeOverlay.classList.toggle("hidden", !state.guides);
+  if (state.guides) updateSafeOverlay();
+});
+/* ── Program-monitor view zoom (wheel) + fit reset ──
+   Zoom enlarges the canvas layout size inside a scrollport (native scrollbars),
+   not a CSS transform — overflow stays reachable. Pointer mapping via
+   getBoundingClientRect still tracks the visible canvas.
+   Max zoom = VIEW_PIXEL_MAX screen CSS pixels per canvas pixel. */
+const VIEW_ZOOM_MIN = 1;
+const VIEW_PIXEL_MAX = 2;
+let monitorFitCache = null; // {w,h} fit size captured at zoom start (stable while zoomed)
+let monitorViewPad = { x: 0, y: 0 }; // content padding so any canvas point can sit under the cursor
+function measureMonitorFit() {
+  const sw = els.monitorStage.clientWidth, sh = els.monitorStage.clientHeight;
+  const pw = project.width || els.preview.width || 1;
+  const ph = project.height || els.preview.height || 1;
+  const s = Math.min(sw / pw, sh / ph);
+  return { w: pw * s, h: ph * s };
+}
+function monitorFitSize() {
+  if (monitorFitCache) return monitorFitCache;
+  const w = els.preview.offsetWidth, h = els.preview.offsetHeight;
+  if (w > 0 && h > 0 && state.viewZoom <= 1.001) return { w, h };
+  return measureMonitorFit();
+}
+function maxViewZoom() {
+  const { w } = monitorFitSize();
+  const pxW = project.width || els.preview.width;
+  if (!w || !pxW) return VIEW_ZOOM_MIN;
+  return Math.max(VIEW_ZOOM_MIN, VIEW_PIXEL_MAX * pxW / w);
+}
+function applyMonitorView() {
+  const z = state.viewZoom;
+  const zoomed = z > 1.001;
+  const scroll = els.monitorScroll;
+  const inner = els.monitorZoomInner;
+  if (!zoomed) {
+    state.viewZoom = 1;
+    monitorFitCache = null;
+    monitorViewPad = { x: 0, y: 0 };
+    els.preview.style.width = "";
+    els.preview.style.height = "";
+    if (inner) inner.style.padding = "";
+    scroll.scrollLeft = 0;
+    scroll.scrollTop = 0;
+  } else {
+    if (!monitorFitCache) monitorFitCache = monitorFitSize();
+    const fit = monitorFitCache;
+    els.preview.style.width = (fit.w * z) + "px";
+    els.preview.style.height = (fit.h * z) + "px";
+    // Pad by the stage size so scrollLeft can be "negative" relative to the canvas
+    // (needed when zooming from a centered fit letterbox without jumping).
+    if (!monitorViewPad.x && !monitorViewPad.y) {
+      monitorViewPad = {
+        x: Math.ceil(els.monitorStage.clientWidth || scroll.clientWidth || 0),
+        y: Math.ceil(els.monitorStage.clientHeight || scroll.clientHeight || 0),
+      };
+    }
+    if (inner) inner.style.padding = `${monitorViewPad.y}px ${monitorViewPad.x}px`;
+  }
+  els.btnZoom100.classList.toggle("hidden", !zoomed);
+  scroll.classList.toggle("is-zoomed", zoomed);
+  updateSafeOverlay();
+  updateExportFrameOverlay();
+}
+let monitorViewRaf = 0;
+let monitorViewAfter = null;
+/** Coalesce repeated zoom/pan updates into one paint (updateSafeOverlay ≤ once/frame). */
+function scheduleMonitorView(after) {
+  if (after) monitorViewAfter = after;
+  if (monitorViewRaf) return;
+  monitorViewRaf = requestAnimationFrame(() => {
+    monitorViewRaf = 0;
+    const fn = monitorViewAfter;
+    monitorViewAfter = null;
+    applyMonitorView();
+    if (fn) fn();
+  });
+}
+function resetMonitorView() {
+  state.viewZoom = 1;
+  monitorFitCache = null;
+  monitorViewPad = { x: 0, y: 0 };
+  monitorViewAfter = null;
+  if (monitorViewRaf) {
+    cancelAnimationFrame(monitorViewRaf);
+    monitorViewRaf = 0;
+  }
+  applyMonitorView(); // immediate — don't wait a frame to clear zoom
+}
+els.btnZoom100.addEventListener("click", resetMonitorView);
+els.monitorScroll.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const scroll = els.monitorScroll;
+  const rect = scroll.getBoundingClientRect();
+  const ox = e.clientX - rect.left;
+  const oy = e.clientY - rect.top;
+  const oldZ = state.viewZoom;
+  if (oldZ <= 1.001) {
+    monitorFitCache = {
+      w: els.preview.offsetWidth || measureMonitorFit().w,
+      h: els.preview.offsetHeight || measureMonitorFit().h,
+    };
+  }
+  const fit = monitorFitSize();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const next = clamp(+(oldZ * factor).toFixed(3), VIEW_ZOOM_MIN, maxViewZoom());
+  if (Math.abs(next - oldZ) < 1e-4) {
+    if (next <= VIEW_ZOOM_MIN) resetMonitorView();
+    return;
+  }
+  // Fraction of the canvas under the cursor (works for centered fit and scrolled zoom).
+  const cv = els.preview.getBoundingClientRect();
+  const relX = cv.width > 0 ? (e.clientX - cv.left) / cv.width : 0.5;
+  const relY = cv.height > 0 ? (e.clientY - cv.top) / cv.height : 0.5;
+  state.viewZoom = next;
+  if (next <= VIEW_ZOOM_MIN) {
+    resetMonitorView();
+    return;
+  }
+  scheduleMonitorView(() => {
+    void scroll.scrollWidth; // ensure padding/size are laid out before assigning scroll
+    const pad = monitorViewPad;
+    scroll.scrollLeft = pad.x + relX * fit.w * next - ox;
+    scroll.scrollTop = pad.y + relY * fit.h * next - oy;
+  });
+}, { passive: false });
+/* Pan while zoomed: middle mouse, or Alt+drag — drives native scroll position. */
+let viewPanDrag = null;
+els.monitorScroll.addEventListener("pointerdown", (e) => {
+  if (state.viewZoom <= 1.001) return;
+  if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    const scroll = els.monitorScroll;
+    viewPanDrag = { x: e.clientX, y: e.clientY, sl: scroll.scrollLeft, st: scroll.scrollTop };
+    scroll.classList.add("is-panning");
+    scroll.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+});
+els.monitorScroll.addEventListener("pointermove", (e) => {
+  if (!viewPanDrag) return;
+  const scroll = els.monitorScroll;
+  scroll.scrollLeft = viewPanDrag.sl - (e.clientX - viewPanDrag.x);
+  scroll.scrollTop = viewPanDrag.st - (e.clientY - viewPanDrag.y);
+});
+function endViewPan(e) {
+  if (!viewPanDrag) return;
+  viewPanDrag = null;
+  els.monitorScroll.classList.remove("is-panning");
+  try { els.monitorScroll.releasePointerCapture(e.pointerId); } catch { }
+}
+els.monitorScroll.addEventListener("pointerup", endViewPan);
+els.monitorScroll.addEventListener("pointercancel", endViewPan);
+els.monitorScroll.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
+els.monitorScroll.addEventListener("scroll", () => {
+  if (state.guides) updateSafeOverlay();
+  if (state.exportFrameView && getExportFrame()) updateExportFrameOverlay();
+  scheduleMonitorView();
+});
+if (typeof ResizeObserver !== "undefined") {
+  new ResizeObserver(() => {
+    fitVuMeter();
+    if (state.viewZoom <= 1.001) {
+      monitorFitCache = null;
+      if (state.guides) updateSafeOverlay();
+      if (state.exportFrameView && getExportFrame()) updateExportFrameOverlay();
+      return;
+    }
+    const scroll = els.monitorScroll;
+    const relX = scroll.scrollWidth > 0 ? scroll.scrollLeft / scroll.scrollWidth : 0;
+    const relY = scroll.scrollHeight > 0 ? scroll.scrollTop / scroll.scrollHeight : 0;
+    monitorFitCache = measureMonitorFit();
+    if (state.viewZoom > maxViewZoom()) state.viewZoom = maxViewZoom();
+    applyMonitorView();
+    scroll.scrollLeft = relX * scroll.scrollWidth;
+    scroll.scrollTop = relY * scroll.scrollHeight;
+  }).observe(els.monitorStage);
+}
+/* Keep the guide overlay glued to the canvas inside .monitor-zoom-inner */
+function updateSafeOverlay() {
+  if (!state.guides) return;
+  const cv = els.preview;
+  const o = els.safeOverlay.style;
+  o.left = cv.offsetLeft + "px";
+  o.top = cv.offsetTop + "px";
+  o.width = cv.offsetWidth + "px";
+  o.height = cv.offsetHeight + "px";
+  els.safeOverlay.classList.toggle("vertical", project.height > project.width);
+}
+/* Dimmed overscan outside the delivery export frame (preview-only overlay). */
+const EF_EDGE = 10;
+function layoutExportFrameOverlayPart(el, left, top, w, h) {
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+  el.style.width = w + "px";
+  el.style.height = h + "px";
+}
+function applyExportFrameClip(ef, show) {
+  const inner = els.monitorZoomInner;
+  if (!inner) return;
+  if (!(show && state.exportFrameCrop && ef && els.preview)) {
+    inner.style.clipPath = "";
+    return;
+  }
+  const cv = els.preview;
+  const ir = inner.getBoundingClientRect();
+  const cr = cv.getBoundingClientRect();
+  if (!ir.width || !cr.width) { inner.style.clipPath = ""; return; }
+  const sx = cr.width / project.width, sy = cr.height / project.height;
+  const left = cr.left - ir.left + ef.x * sx;
+  const top = cr.top - ir.top + ef.y * sy;
+  const right = ir.right - (cr.left + (ef.x + ef.w) * sx);
+  const bottom = ir.bottom - (cr.top + (ef.y + ef.h) * sy);
+  inner.style.clipPath = `inset(${Math.max(0, top)}px ${Math.max(0, right)}px ${Math.max(0, bottom)}px ${Math.max(0, left)}px)`;
+}
+function updateExportFrameOverlay() {
+  const ov = els.exportFrameOverlay;
+  if (!ov) return;
+  const ef = getExportFrame();
+  const show = state.exportFrameView && ef;
+  ov.classList.toggle("hidden", !show);
+  ov.classList.toggle("is-crop", !!(show && state.exportFrameCrop));
+  const dimBtn = els.btnExportFrameDim;
+  if (dimBtn) {
+    dimBtn.classList.toggle("hidden", !show);
+    dimBtn.classList.toggle("on", !!(show && !state.exportFrameCrop));
+    dimBtn.setAttribute("aria-pressed", show && !state.exportFrameCrop ? "true" : "false");
+    dimBtn.title = state.exportFrameCrop
+      ? "Lights on — show canvas outside the export frame"
+      : "Lights off — crop to the export frame";
+  }
+  applyExportFrameClip(ef, show);
+  if (!show) return;
+  const cv = els.preview;
+  const root = ov.style;
+  root.left = cv.offsetLeft + "px";
+  root.top = cv.offsetTop + "px";
+  root.width = cv.offsetWidth + "px";
+  root.height = cv.offsetHeight + "px";
+  const sx = cv.offsetWidth / project.width;
+  const sy = cv.offsetHeight / project.height;
+  const hole = ov.querySelector(".ef-shade");
+  const handle = ov.querySelector(".ef-handle");
+  const edgeT = ov.querySelector(".ef-edge-t");
+  const edgeB = ov.querySelector(".ef-edge-b");
+  const edgeL = ov.querySelector(".ef-edge-l");
+  const edgeR = ov.querySelector(".ef-edge-r");
+  if (!hole) return;
+  const left = ef.x * sx, top = ef.y * sy, w = ef.w * sx, h = ef.h * sy;
+  layoutExportFrameOverlayPart(hole, left, top, w, h);
+  if (handle) {
+    handle.style.left = (left + 6) + "px";
+    handle.style.top = (top + 6) + "px";
+    handle.style.width = "auto";
+    handle.style.maxWidth = Math.max(0, w - 12) + "px";
+  }
+  if (edgeT) layoutExportFrameOverlayPart(edgeT, left, top, w, EF_EDGE);
+  if (edgeB) layoutExportFrameOverlayPart(edgeB, left, top + h - EF_EDGE, w, EF_EDGE);
+  if (edgeL) layoutExportFrameOverlayPart(edgeL, left, top + EF_EDGE, EF_EDGE, Math.max(0, h - EF_EDGE * 2));
+  if (edgeR) layoutExportFrameOverlayPart(edgeR, left + w - EF_EDGE, top + EF_EDGE, EF_EDGE, Math.max(0, h - EF_EDGE * 2));
+}
+let exportFrameDrag = null;
+function exportFrameDragTarget(e) {
+  return e.target.closest(".ef-handle, .ef-edge-t, .ef-edge-b, .ef-edge-l, .ef-edge-r");
+}
+function exportFrameDragMove(e) {
+  if (!exportFrameDrag) return;
+  const cv = els.preview;
+  const sx = project.width / cv.offsetWidth;
+  const sy = project.height / cv.offsetHeight;
+  const ef = getExportFrame();
+  if (!ef) return;
+  project.exportFrame = normalizeExportFrame({
+    x: exportFrameDrag.ox + (e.clientX - exportFrameDrag.startX) * sx,
+    y: exportFrameDrag.oy + (e.clientY - exportFrameDrag.startY) * sy,
+    w: ef.w, h: ef.h,
+  }, project.width, project.height);
+  updateExportFrameOverlay();
+}
+function exportFrameDragEnd(e) {
+  if (!exportFrameDrag) return;
+  exportFrameDrag = null;
+  els.exportFrameOverlay?.classList.remove("is-dragging");
+  syncExportFrameSel();
+  updateMonitorRes();
+  scheduleSave();
+  document.removeEventListener("pointermove", exportFrameDragMove);
+  document.removeEventListener("pointerup", exportFrameDragEnd, true);
+  document.removeEventListener("pointercancel", exportFrameDragEnd, true);
+  try { els.exportFrameOverlay?.releasePointerCapture(e.pointerId); } catch { }
+}
+const EF_NUDGE_PX = 1;
+const EF_NUDGE_SHIFT_PX = 10;
+function nudgeExportFrame(dx, dy) {
+  const ef = getExportFrame();
+  if (!ef) return;
+  project.exportFrame = normalizeExportFrame({
+    x: ef.x + dx, y: ef.y + dy, w: ef.w, h: ef.h,
+  }, project.width, project.height);
+  updateExportFrameOverlay();
+  syncExportFrameSel();
+  updateMonitorRes();
+  scheduleSave();
+}
+function exportFrameHandleKeydown(e) {
+  const k = e.key;
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(k)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const step = e.shiftKey ? EF_NUDGE_SHIFT_PX : EF_NUDGE_PX;
+  nudgeExportFrame(
+    k === "ArrowLeft" ? -step : k === "ArrowRight" ? step : 0,
+    k === "ArrowUp" ? -step : k === "ArrowDown" ? step : 0,
+  );
+}
+els.exportFrameOverlay?.addEventListener("pointerdown", (e) => {
+  if (!exportFrameDragTarget(e)) return;
+  const ef = getExportFrame();
+  if (!ef) return;
+  e.preventDefault();
+  e.stopPropagation();
+  els.exportFrameOverlay?.classList.add("is-dragging");
+  exportFrameDrag = { startX: e.clientX, startY: e.clientY, ox: ef.x, oy: ef.y };
+  try { els.exportFrameOverlay.setPointerCapture(e.pointerId); } catch { }
+  document.addEventListener("pointermove", exportFrameDragMove);
+  document.addEventListener("pointerup", exportFrameDragEnd, true);
+  document.addEventListener("pointercancel", exportFrameDragEnd, true);
+});
+els.exportFrameOverlay?.querySelector(".ef-handle")?.addEventListener("keydown", exportFrameHandleKeydown);
+
+window.addEventListener("keydown", (e) => {
+  const k = e.key;
+  if ((k === "Delete" || k === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (!isTypingTarget(document.activeElement) && clearFocusedTransition()) {
+      e.preventDefault();
+      return;
+    }
+  }
+  // Ctrl/Cmd+S: save a version of the open project (the editor saves every change anyway)
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (k === "s" || k === "S")) {
+    e.preventDefault();   // never the browser's Save Page dialog, and not S (split) either
+    if (!e.repeat && $("btnProjectsDash") && !$("btnProjectsDash").classList.contains("hidden")) saveVersionNow();   // holding the keys makes one
+    return;
+  }
+  // Ctrl/Cmd+O: the Projects dashboard (where the editor server has projects)
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (k === "o" || k === "O") && $("btnProjectsDash") && !$("btnProjectsDash").classList.contains("hidden")) {
+    e.preventDefault();
+    openProjects();
+    return;
+  }
+  if (k === "Escape" && els.importUrlOverlay && !els.importUrlOverlay.classList.contains("hidden")) {
+    e.preventDefault();
+    closeImportUrl();
+    return;
+  }
+  if (isTypingTarget(document.activeElement)) return;
+  if (k === " ") { e.preventDefault(); toggleTransportPlay(); }
+  // JKL shuttle — bare keys only, so Cmd/Ctrl+J/K/L stay with the browser.
+  // K stops; hold K and tap J / L to step a frame, hold both to crawl.
+  else if ((k === "k" || k === "K") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (e.repeat) return;
+    runtime.kHeld = true;
+    transportStop();
+    setPreviewRate(1);
+  }
+  else if ((k === "l" || k === "L" || k === "j" || k === "J") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    const dir = k === "l" || k === "L" ? 1 : -1;
+    if (runtime.kHeld) {
+      if (!e.repeat) { stepTransport(dir); return; }
+      if (!runtime.inching) { // key auto-repeat = held: crawl until release
+        runtime.inching = true;
+        setPreviewRate(dir * INCH_RATE);
+        transportStart();
+      }
+      return;
+    }
+    if (!e.repeat) shuttle(dir);
+  }
+  else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey &&
+    Object.entries(EDIT_TOOLS).some(([, t]) => t.key === k.toUpperCase())) {
+    e.preventDefault();
+    setEditTool(Object.keys(EDIT_TOOLS).find((n) => EDIT_TOOLS[n].key === k.toUpperCase()));
+  }
+  else if (k === ";" && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); liftExtract(false); }
+  else if (k === "'" && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); liftExtract(true); }
+  else if ((k === "e" || k === "E") && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    toggleClipsDisabled();
+  }
+  else if ((k === "d" || k === "D") && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    crossfadeSelected();
+  }
+  else if ((k === "l" || k === "L") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    e.preventDefault(); // Ctrl/Cmd+L would otherwise focus the address bar
+    toggleLinkSelected();
+  }
+  else if ((k === "s" || k === "S") && !e.ctrlKey && !e.metaKey) splitAtPlayhead();
+  else if (k === "," && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    insertSourceAtPlayhead();
+  }
+  else if (k === "." && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    replaceSourceAtPlayhead();
+  }
+  else if ((k === "g" || k === "G") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    e.shiftKey ? closeGapAtPlayhead() : goToNextGap();
+  }
+  else if (e.altKey && !e.ctrlKey && !e.metaKey && (k === "t" || k === "T")) {
+    e.preventDefault();
+    addTransitionAtPlayhead();
+  }
+  else if ((k === "t" || k === "T") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    e.shiftKey ? trimToWorkArea() : splitAtWorkArea();
+  }
+  else if ((k === "Delete" || k === "Backspace") && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    rippleDeleteSelected();
+  }
+  else if ((k === "Delete" || k === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) deleteSelected();
+  else if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === "ArrowLeft" || k === "ArrowRight")) {
+    e.preventDefault();
+    goToKeyframe(k === "ArrowRight" ? 1 : -1);
+  }
+  else if ((k === "ArrowUp" || k === "ArrowDown") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    goToEditPoint(k === "ArrowDown" ? 1 : -1);
+  }
+  // Transport keys claim the event so the focused timeline/monitor scroller
+  // doesn't also scroll. Alt+←/→ stays with the browser (history navigation).
+  else if (k === "ArrowLeft" && !e.altKey) {
+    e.preventDefault();
+    const dt = e.shiftKey ? 1 : 1 / projectFps();
+    if (isSourceMode()) setSourceTime(state.source.time - dt);
+    else setTime(state.time - dt);
+  }
+  else if (k === "ArrowRight" && !e.altKey) {
+    e.preventDefault();
+    const dt = e.shiftKey ? 1 : 1 / projectFps();
+    if (isSourceMode()) setSourceTime(state.source.time + dt);
+    else setTime(state.time + dt);
+  }
+  else if (k === "Home" && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); gotoTransportHome(); }
+  else if (k === "End" && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); gotoTransportEnd(); }
+  else if (k === "[") trimToPlayhead("in");
+  else if (k === "]") trimToPlayhead("out");
+  else if (e.code === "KeyM" && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    goToMarker(e.altKey ? -1 : 1); // ⇧M next · Alt+⇧M previous
+  }
+  else if ((k === "m" || k === "M") && !e.ctrlKey && !e.metaKey && !e.altKey) toggleMarker();
+  else if (/^[0-9]$/.test(k) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault(); // type a timecode straight into the playhead readout
+    beginTcEntry(els.tcCurrent, "time", k);
+  }
+  else if ((k === "i" || k === "I") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    e.shiftKey ? clearMarkIn() : markIn();
+  }
+  else if ((k === "o" || k === "O") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    e.shiftKey ? clearMarkOut() : markOut();
+  }
+  else if (k === "n" || k === "N") els.btnSnap.click();
+  else if (k === "Escape") {
+    if (!$("settingsOverlay").classList.contains("hidden")) {
+      e.preventDefault();
+      closeSettings();
+    } else if (!$("helpOverlay").classList.contains("hidden")) {
+      e.preventDefault();
+      $("helpOverlay").classList.add("hidden");
+    } else {
+      selectClip(null);
+    }
+  }
+  else if ((e.ctrlKey || e.metaKey) && (k === "a" || k === "A")) {
+    e.preventDefault();
+    setSelection(project.clips.map((c) => c.id));
+  }
+  else if (k === "+" || k === "=") setZoom(state.pps * 1.25);
+  else if (k === "-") setZoom(state.pps / 1.25);
+  else if (e.code === "KeyZ" && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (e.altKey) zoomToWorkArea();
+    else if (e.shiftKey) zoomToFit();
+    else zoomToSelection();
+  }
+  else if ((e.ctrlKey || e.metaKey) && (k === "z" || k === "Z")) {
+    e.preventDefault();
+    e.shiftKey ? redo() : undo();
+  }
+  else if ((e.ctrlKey || e.metaKey) && (k === "y" || k === "Y")) { e.preventDefault(); redo(); }
+});
+
+window.addEventListener("resize", () => { state.dirtyTimeline = true; clampTimelineHeight(); if (mixerState.open) sizeMixerMeters(); });
+
+/* ── Resizable upper / timeline split ── */
+const TL_H_KEY = "fablecut-timeline-h";
+const TL_H_MIN = 180;
+const UPPER_MIN = 140;
+function availableTimelineMax() {
+  const app = $("app").getBoundingClientRect();
+  const topbar = document.querySelector(".topbar")?.getBoundingClientRect();
+  const topbarH = topbar ? topbar.height : 46;
+  const split = 6;
+  const gaps = 18; // three 6px flex gaps between four children
+  return Math.floor(app.height - topbarH - UPPER_MIN - split - gaps);
+}
+window.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  if (k !== "k" && k !== "j" && k !== "l") return;
+  if (k === "k") runtime.kHeld = false;
+  if (runtime.inching) {
+    runtime.inching = false;
+    transportStop();
+    setPreviewRate(1);
+  }
+});
+window.addEventListener("blur", () => { runtime.kHeld = false; });
+function setTimelineHeight(px) {
+  const h = clamp(Math.round(px), TL_H_MIN, Math.max(TL_H_MIN, availableTimelineMax()));
+  $("app").style.setProperty("--timeline-h", h + "px");
+  state.dirtyTimeline = true;
+  return h;
+}
+/* Tall enough for the toolbar + ruler + every track row (no vertical overflow). */
+function defaultTimelineHeight() {
+  const tracksH = TRACKS.reduce((s, t) => s + t.h, 0);
+  const toolbar = document.querySelector(".timeline-toolbar");
+  const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 40;
+  return tracksH + RULER_H + toolbarH + 8;
+}
+function resetTimelineHeight() {
+  const h = setTimelineHeight(defaultTimelineHeight());
+  localStorage.removeItem(TL_H_KEY);
+  state.dirtyTimeline = true;
+  return h;
+}
+function trackSizeShowsThumbs() {
+  return !!(TRACK_SIZE_PRESETS[state.trackSize] || TRACK_SIZE_PRESETS.l).thumbs;
+}
+function syncTrackSizeButtons() {
+  const group = $("trackSizeGroup");
+  if (!group) return;
+  for (const b of group.querySelectorAll("[data-track-size]"))
+    b.classList.toggle("on", b.dataset.trackSize === state.trackSize);
+  document.body.classList.toggle("track-size-s", state.trackSize === "s");
+  document.body.classList.toggle("track-size-m", state.trackSize === "m");
+  document.body.classList.toggle("track-size-l", state.trackSize === "l");
+}
+function applyTrackHeights() {
+  const preset = TRACK_SIZE_PRESETS[state.trackSize] || TRACK_SIZE_PRESETS.l;
+  for (const t of TRACKS) {
+    t.h = t.kind === "audio" ? preset.hAudio : preset.hVideo;
+  }
+}
+/* Switch S/M/L track density, rebuild the timeline, and grow/shrink the pane
+   so every track fits without a vertical scrollbar. */
+function setTrackSize(size, { persist = true, fitPane = true } = {}) {
+  if (!TRACK_SIZE_PRESETS[size]) size = "l";
+  state.trackSize = size;
+  applyTrackHeights();
+  if (persist) localStorage.setItem(TRACK_SIZE_KEY, size);
+  syncTrackSizeButtons();
+  buildTrackDOM();
+  state.dirtyTimeline = true;
+  rebuildClips();
+  if (fitPane) {
+    const h = setTimelineHeight(defaultTimelineHeight());
+    localStorage.setItem(TL_H_KEY, String(h));
+  }
+}
+function restoreDefaultLayout() {
+  setTrackSize("l", { persist: true, fitPane: false });
+  resetTimelineHeight();
+}
+function clampTimelineHeight() {
+  const cur = $("timelinePanel")?.getBoundingClientRect().height;
+  if (cur) setTimelineHeight(cur);
+}
+function initPanelSplit() {
+  const handle = $("splitUpperTimeline");
+  const tl = $("timelinePanel");
+  if (!handle || !tl) return;
+  const savedSize = localStorage.getItem(TRACK_SIZE_KEY);
+  if (TRACK_SIZE_PRESETS[savedSize]) state.trackSize = savedSize;
+  applyTrackHeights();
+  syncTrackSizeButtons();
+
+  const saved = parseFloat(localStorage.getItem(TL_H_KEY));
+  if (saved > 0) setTimelineHeight(saved);
+  else resetTimelineHeight();
+
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("dragging");
+    document.body.classList.add("resizing-panels");
+    const y0 = e.clientY;
+    const h0 = tl.getBoundingClientRect().height;
+    const onMove = (ev) => setTimelineHeight(h0 - (ev.clientY - y0));
+    const onUp = () => {
+      handle.releasePointerCapture(e.pointerId);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("resizing-panels");
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      localStorage.setItem(TL_H_KEY, String(Math.round(tl.getBoundingClientRect().height)));
+      state.dirtyTimeline = true;
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  });
+  handle.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    resetTimelineHeight();
+  });
+}
+
+/* ── Boot ── */
+loadSettings();
+/* ═══════════ COLOR WORKSPACE (wheels · primaries · scopes) ═══════════
+   The Color tab edits the selected clip's props.grade (math: color.js). The
+   Color workspace swaps the media bin for live scopes of the program
+   monitor. Grade edits are plain prop writes, so undo, save and the SSE
+   reload behave as for any inspector field. */
+const WS_KEY = "fablecut-workspace";
+const SCOPE_KEY = "fablecut-scopes";
+const SCOPE_KINDS = { waveform: "Waveform", parade: "RGB Parade", vectorscope: "Vectorscope", histogram: "Histogram" };
+const WHEEL_LABEL = { lift: "Lift", gamma: "Gamma", gain: "Gain", offset: "Offset" };
+const WHEEL_RIM = { lift: 0.25, gamma: 0.5, gain: 0.5, offset: 0.25 };    // Cb/Cr reached at the disc's rim
+const WHEEL_MASTER = { lift: 0.5, gamma: 1, gain: 1, offset: 0.5 };       // master slider range ±
+const colorState = { open: false, ws: "edit", pick: false, sig: "", drag: null, clipboard: null, disc: null,
+  curveTab: "curves", curveCh: "y", curvePick: false, curveMark: null, cdrag: null,
+  layer: -1, layerClip: null, qualPick: false, mdrag: false };
+const scopes = { slots: ["waveform", "vectorscope"], last: 0, built: false, els: [], vecColor: null,
+  src: document.createElement("canvas"), tmp: document.createElement("canvas") };
+scopes.srcCtx = scopes.src.getContext("2d", { willReadFrequently: true });
+scopes.tmpCtx = scopes.tmp.getContext("2d");
+try {
+  const s = JSON.parse(localStorage.getItem(SCOPE_KEY) || "null");
+  if (Array.isArray(s) && s.length === 2 && s.every((k) => SCOPE_KINDS[k])) scopes.slots = s;
+} catch { }
+
+function isGradable(c) { return !!c && (c.kind === "video" || c.kind === "image" || c.kind === "svg" || c.kind === "adjust" || c.kind === "comp"); }
+function setWorkspace(ws) {
+  colorState.ws = ws === "color" ? "color" : "edit";
+  $("app").classList.toggle("ws-color", colorState.ws === "color");
+  for (const b of document.querySelectorAll("#wsSwitch [data-ws]")) b.classList.toggle("on", b.dataset.ws === colorState.ws);
+  try { localStorage.setItem(WS_KEY, colorState.ws); } catch { }
+  if (colorState.ws === "color") { buildScopeSlots(); setSideTab("color"); }
+  else {
+    if (runtime.matte) setMatte(null, false);
+    if (colorState.qualPick) setQualPick(false);
+    if (colorState.open) setSideTab("inspector");
+  }
+  scopes.last = 0;
+}
+/** Write grade keys (null resets a key) on what the Color tab edits: the
+ *  primary grade or the selected layer. */
+function writeGrade(c, set) {
+  if (colorState.layer >= 0 && curLayer(c)) writeLayer(c, colorState.layer, set);
+  else {
+    const next = Color.mergeGrade(c.props.grade, set);
+    if (next) c.props.grade = next; else delete c.props.grade;
+  }
+  colorState.sig = colorPageSig(c);   // the page already shows this — no rebuild
+  scheduleSave();
+}
+function colorPageSig(c) {
+  if (!c || !isGradable(c)) return "none";
+  const keyed = gradeLayers(c).some((l) => l.mask && l.mask.keys);   // keyed masks: the sliders follow the playhead
+  return `${c.id}|${JSON.stringify(c.props.grade || null)}|${isGroupLocked(c)}|${state.selIds.size}|${!!colorState.clipboard}|${colorState.layer}|${!!runtime.matte}${keyed ? "|" + state.time.toFixed(3) : ""}`;
+}
+const fmtG = (v, step) => (+v).toFixed(step >= 1 ? 0 : step >= 0.01 ? 2 : 3);
+function renderColorPage(force = false) {
+  const root = els.colorPage;
+  if (!root || colorState.drag || colorState.cdrag || colorState.mdrag) return;
+  const c = getClip(state.selId);
+  if ((c && c.id) !== colorState.layerClip) { // another clip: back to its primary
+    colorState.layerClip = c && c.id; colorState.layer = -1;
+    if (runtime.matte) setMatte(null, false);
+    if (colorState.qualPick) setQualPick(false);
+  }
+  if (colorState.layer >= gradeLayers(c).length) colorState.layer = gradeLayers(c).length - 1;
+  const sig = colorPageSig(c);
+  if (!force && sig === colorState.sig) return;
+  colorState.sig = sig;
+  if (!isGradable(c)) {
+    root.innerHTML = `<div class="inspector-empty">Select a video, image or adjustment clip<br>to grade it.</div>`;
+    return;
+  }
+  const g = Color.fullGrade(targetGrade(c)), P = Color.GRADE_PARAMS, locked = isGroupLocked(c), allOn = c.props.grade?.on !== false;
+  const num = (k) => {
+    const d = P[k];
+    return `<div class="insp-row cp-row"><label class="cp-label" data-greset="${k}" title="Double-click: reset">${d.label}</label>
+      <input type="range" data-g="${k}" min="${d.min}" max="${d.max}" step="${d.step}" value="${g[k]}">
+      <input type="number" class="cp-num" data-gnum="${k}" min="${d.min}" max="${d.max}" step="${d.step}" value="${fmtG(g[k], d.step)}"></div>`;
+  };
+  const nSel = selectedClips().filter(isGradable).length;
+  root.innerHTML = `
+    <div class="cp-head">
+      <span class="cp-name" title="${escapeHtml(c.name || "")}">${escapeHtml(c.name || c.kind)}</span>
+      <button type="button" class="btn tiny${allOn ? " toggle on" : ""}" data-gact="bypass" title="Whole grade on / off, layers included (compare with the ungraded clip)">${allOn ? "On" : "Off"}</button>
+      <button type="button" class="btn tiny${colorState.pick ? " toggle on" : ""}" data-gact="pick" title="White balance: click something white or grey in the monitor (Esc cancels)">WB pick</button>
+    </div>
+    <div class="cp-head cp-tools">
+      <button type="button" class="btn tiny" data-gact="copy" title="Copy this clip's grade">Copy</button>
+      <button type="button" class="btn tiny" data-gact="paste" ${colorState.clipboard ? "" : "disabled"} title="Paste the copied grade onto the selected clips">Paste${nSel > 1 ? ` → ${nSel}` : ""}</button>
+      <button type="button" class="btn tiny" data-gact="reset" title="Reset the whole grade, layers included">Reset all</button>
+    </div>
+    ${layersStripHtml(c)}
+    ${layerSectionsHtml(c)}
+    <div class="cp-wheels">${Color.WHEELS.map((w) => `
+      <div class="cw" data-wheel="${w}">
+        <div class="cw-head"><span class="cp-label" data-wreset="${w}" title="Double-click: reset">${WHEEL_LABEL[w]}</span></div>
+        <canvas class="cw-disc" data-wdisc="${w}" width="200" height="200" title="Drag to tint (Shift: fine) · double-click: reset colour"></canvas>
+        <input type="range" class="cw-master" data-wmaster="${w}" min="${-WHEEL_MASTER[w]}" max="${WHEEL_MASTER[w]}" step="0.005" value="${g[w][3]}" title="Master · double-click: reset">
+        <div class="cw-vals" data-wvals="${w}"></div>
+      </div>`).join("")}
+    </div>
+    <div class="insp-section"><h3>Exposure &amp; balance</h3>${num("exposure")}${num("temp")}${num("tint")}</div>
+    <div class="insp-section"><h3>Tone</h3>${num("blacks")}${num("shadows")}${num("midtones")}${num("highlights")}${num("whites")}</div>
+    <div class="insp-section"><h3>Contrast &amp; rolloff</h3>${num("contrast")}${num("pivot")}${num("lowSoft")}${num("highSoft")}${num("saturation")}</div>
+    ${curvesSectionHtml()}`;
+  root.classList.toggle("locked", locked);
+  for (const w of Color.WHEELS) drawWheel(w, g[w]);
+  if (locked) for (const el of root.querySelectorAll("input")) el.disabled = true;
+  bindColorPage(c);
+}
+/* The disc's colour field, computed once from the same Cb/Cr → RGB mapping
+   the wheels write, so the hue under the puck is the tint it applies. */
+function wheelDiscImage(size) {
+  if (colorState.disc && colorState.disc.width === size) return colorState.disc;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = size;
+  const g = cv.getContext("2d"), img = g.createImageData(size, size), R = size / 2 - 2;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dx = (x + 0.5 - size / 2) / R, dy = (size / 2 - y - 0.5) / R, r = Math.hypot(dx, dy), i = (y * size + x) * 4;
+    if (r > 1) continue;
+    const v = Color.wheelToRgb(dx, dy), m = Math.max(1e-6, Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2]));
+    for (let k = 0; k < 3; k++) img.data[i + k] = clamp(Math.round(255 * (0.24 + 0.42 * r * v[k] / m)), 0, 255);
+    img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  colorState.disc = cv;
+  return cv;
+}
+function drawWheel(w, vals) {
+  const root = els.colorPage, cv = root.querySelector(`[data-wdisc="${w}"]`);
+  if (!cv) return;
+  const s = cv.width, ctx = cv.getContext("2d"), R = s / 2 - 2;
+  ctx.clearRect(0, 0, s, s);
+  ctx.drawImage(wheelDiscImage(s), 0, 0);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(s / 2, s / 2, R, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(s / 2, s / 2, R / 2, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s / 2 - 6, s / 2); ctx.lineTo(s / 2 + 6, s / 2); ctx.moveTo(s / 2, s / 2 - 6); ctx.lineTo(s / 2, s / 2 + 6); ctx.stroke();
+  const [cb, cr] = Color.rgbToWheel(vals[0], vals[1], vals[2]);
+  let px = cb / WHEEL_RIM[w], py = cr / WHEEL_RIM[w];
+  const r = Math.hypot(px, py);
+  if (r > 1) { px /= r; py /= r; }
+  const x = s / 2 + px * R, y = s / 2 - py * R;
+  ctx.fillStyle = "#fff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  const out = root.querySelector(`[data-wvals="${w}"]`);
+  if (out) {
+    const f = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(3);
+    out.textContent = `R${f(vals[0] + vals[3])} G${f(vals[1] + vals[3])} B${f(vals[2] + vals[3])}`;
+  }
+}
+function bindColorPage(c) {
+  const root = els.colorPage;
+  const guard = () => { if (isGroupLocked(c)) { toastLocked(); return false; } return true; };
+  bindCurveEditor(c, guard);
+  bindLayerControls(c, guard);
+  const syncNum = (k, v) => {
+    const r = root.querySelector(`[data-g="${k}"]`), n = root.querySelector(`[data-gnum="${k}"]`);
+    if (r && document.activeElement !== r) r.value = v;
+    if (n && document.activeElement !== n) n.value = fmtG(v, Color.GRADE_PARAMS[k].step);
+  };
+  for (const r of root.querySelectorAll("[data-g]")) {
+    const k = r.dataset.g;
+    r.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    r.addEventListener("input", () => { if (!isGroupLocked(c)) { writeGrade(c, { [k]: +r.value }); syncNum(k, +r.value); } });
+  }
+  for (const n of root.querySelectorAll("[data-gnum]")) {
+    const k = n.dataset.gnum;
+    n.addEventListener("change", () => {
+      const v = parseFloat(n.value);
+      if (!Number.isFinite(v) || !guard()) return;
+      pushUndo(); writeGrade(c, { [k]: v });
+      syncNum(k, Color.fullGrade(targetGrade(c))[k]);
+    });
+  }
+  for (const lab of root.querySelectorAll("[data-greset]")) lab.addEventListener("dblclick", () => {
+    if (!guard()) return;
+    pushUndo(); writeGrade(c, { [lab.dataset.greset]: null }); renderColorPage(true);
+  });
+  for (const lab of root.querySelectorAll("[data-wreset]")) lab.addEventListener("dblclick", () => {
+    if (!guard()) return;
+    pushUndo(); writeGrade(c, { [lab.dataset.wreset]: null }); renderColorPage(true);
+  });
+  for (const m of root.querySelectorAll("[data-wmaster]")) {
+    const w = m.dataset.wmaster;
+    m.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    m.addEventListener("input", () => {
+      if (isGroupLocked(c)) return;
+      const cur = Color.fullGrade(targetGrade(c))[w];
+      cur[3] = +m.value;
+      writeGrade(c, { [w]: cur }); drawWheel(w, cur);
+    });
+    m.addEventListener("dblclick", () => {
+      if (!guard()) return;
+      const cur = Color.fullGrade(targetGrade(c))[w];
+      cur[3] = 0; m.value = 0;
+      pushUndo(); writeGrade(c, { [w]: cur }); drawWheel(w, cur);
+    });
+  }
+  for (const cv of root.querySelectorAll("[data-wdisc]")) {
+    const w = cv.dataset.wdisc;
+    cv.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !guard()) return;
+      e.preventDefault();
+      cv.setPointerCapture(e.pointerId);
+      pushUndo();
+      const cur = Color.fullGrade(targetGrade(c))[w];
+      const [cb, cr] = Color.rgbToWheel(cur[0], cur[1], cur[2]);
+      colorState.drag = { w, x: e.clientX, y: e.clientY, cb, cr, master: cur[3], R: cv.getBoundingClientRect().width / 2 };
+    });
+    cv.addEventListener("pointermove", (e) => {
+      const d = colorState.drag;
+      if (!d || d.w !== w) return;
+      const k = WHEEL_RIM[w] / Math.max(20, d.R) * (e.shiftKey ? 0.2 : 1);
+      let cb = d.cb + (e.clientX - d.x) * k, cr = d.cr - (e.clientY - d.y) * k;
+      const r = Math.hypot(cb, cr) / WHEEL_RIM[w];
+      if (r > 1) { cb /= r; cr /= r; }
+      const vals = [...Color.wheelToRgb(cb, cr), d.master];
+      writeGrade(c, { [w]: vals }); drawWheel(w, vals);
+    });
+    const end = () => { if (colorState.drag?.w === w) colorState.drag = null; };
+    cv.addEventListener("pointerup", end);
+    cv.addEventListener("pointercancel", end);
+    cv.addEventListener("dblclick", () => {
+      if (!guard()) return;
+      const cur = Color.fullGrade(targetGrade(c))[w];
+      const vals = [0, 0, 0, cur[3]];
+      pushUndo(); writeGrade(c, { [w]: vals }); drawWheel(w, vals);
+    });
+  }
+  for (const b of root.querySelectorAll("[data-gact]")) b.addEventListener("click", () => {
+    const a = b.dataset.gact;
+    if (a === "copy") {
+      colorState.clipboard = c.props.grade ? JSON.parse(JSON.stringify(c.props.grade)) : {};
+      toast("Grade copied"); renderColorPage(true); return;
+    }
+    if (a === "paste") {
+      if (!colorState.clipboard) return;
+      const targets = selectedClips().filter(isGradable);
+      if (!targets.length) targets.push(c);
+      const ok = targets.filter((x) => !isGroupLocked(x));
+      if (!ok.length) { toastLocked(); return; }
+      pushUndo();
+      const g = Color.normalizeGrade(colorState.clipboard);
+      for (const x of ok) { if (g) x.props.grade = JSON.parse(JSON.stringify(g)); else delete x.props.grade; }
+      scheduleSave(); renderColorPage(true);
+      toast(`Grade pasted onto ${ok.length} clip${ok.length > 1 ? "s" : ""}` + (ok.length < targets.length ? " (locked clips skipped)" : ""));
+      return;
+    }
+    if (a === "pick") { setWbPick(!colorState.pick); return; }
+    if (!guard()) return;
+    pushUndo();
+    if (a === "bypass") {
+      const next = Color.mergeGrade(c.props.grade, { on: c.props.grade?.on === false ? null : false });
+      if (next) c.props.grade = next; else delete c.props.grade;
+      scheduleSave();
+    }
+    else if (a === "reset") { delete c.props.grade; colorState.layer = -1; setMatte(null, false); scheduleSave(); }
+    renderColorPage(true);
+  });
+}
+function setWbPick(on) {
+  colorState.pick = !!on;
+  if (on && colorState.curvePick) setCurvePick(false);
+  if (on && colorState.qualPick) setQualPick(false);
+  els.preview.classList.toggle("wb-picking", colorState.pick || colorState.curvePick || colorState.qualPick);
+  const b = els.colorPage.querySelector("[data-gact=pick]");
+  if (b) { b.classList.toggle("on", colorState.pick); b.classList.toggle("toggle", colorState.pick); }
+  if (colorState.pick) toast("Click something that should be white or grey in the monitor");
+}
+/** Average sRGB colour (0…1) of a 5×5 patch of the program frame at canvas
+ *  px (x, y), rendered with `bypassId`'s grade switched off. */
+function sampleProgram(x, y, id, grade = null) {
+  const W = els.preview.width, H = els.preview.height;
+  runtime.gradeOverride = { id, grade };
+  runtime.sampling = true;
+  try {
+    drawFrame(state.time);
+    const x0 = clamp(Math.round(x) - 2, 0, W - 5), y0 = clamp(Math.round(y) - 2, 0, H - 5);
+    const d = ctx2d.getImageData(x0, y0, 5, 5).data;
+    let r = 0, g = 0, b = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+    return [r / 25 / 255, g / 25 / 255, b / 25 / 255];
+  } catch { return null; }
+  finally {
+    runtime.gradeOverride = null;
+    runtime.sampling = false;
+    drawFrame(state.time);
+  }
+}
+els.preview.addEventListener("pointerdown", (e) => {
+  if ((!colorState.pick && !colorState.curvePick && !colorState.qualPick) || isSourceMode()) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const c = getClip(state.selId);
+  if (colorState.qualPick) {
+    setQualPick(false);
+    if (!isGradable(c) || !curLayer(c)) { toast("Select a layer of the clip first"); return; }
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    qualPickAt(c, canvasPt(e));
+    return;
+  }
+  if (colorState.curvePick) {
+    setCurvePick(false);
+    if (!isGradable(c)) { toast("Select the clip to grade first"); return; }
+    curvePickAt(c, canvasPt(e));
+    return;
+  }
+  setWbPick(false);
+  if (!isGradable(c)) { toast("Select the clip to balance first"); return; }
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  const pt = canvasPt(e);
+  const rgb = sampleProgram(pt.x, pt.y, c.id, gradeBefore(c));
+  if (!rgb) return;
+  if (Math.max(...rgb) < 0.03) { toast("That spot is too dark to balance on — pick a brighter white or grey"); return; }
+  const wb = Color.solveWhiteBalance(rgb);
+  pushUndo();
+  writeGrade(c, wb);
+  renderColorPage(true);
+  toast(`White balance: temp ${wb.temp}, tint ${wb.tint}`);
+}, true);
+window.addEventListener("keydown", (e) => {
+  if ((colorState.pick || colorState.curvePick || colorState.qualPick) && e.key === "Escape") { e.stopPropagation(); setWbPick(false); setCurvePick(false); setQualPick(false); }
+}, true);
+
+/* ── Curves editor (Color tab): YRGB curves and the four hue curves ──
+   One canvas edits the curve picked by the tabs. Click adds a point on the
+   curve (no jump), drag moves it, double-click removes it. Pick samples the
+   monitor (before the curves) and marks that hue / level on the editor. */
+const CURVE_TABS = { curves: "Curves", hueHue: "Hue·Hue", hueSat: "Hue·Sat", hueLuma: "Hue·Luma", satLuma: "Sat·Luma" };
+const CURVE_COLORS = { y: "#e8e8ee", r: "#ff5a5a", g: "#4fdc6a", b: "#5a8cff" };
+function curveSpec(tab) {
+  if (tab === "curves") return { xMax: 1, min: 0, max: 1, neutral: null, periodic: false };
+  return Color.HUE_CURVES[tab];
+}
+function curvePoints(c, tab, ch) {
+  const g = targetGrade(c) || {};
+  if (tab === "curves") return (g.curves && g.curves[ch] || [[0, 0], [1, 1]]).map((p) => p.slice());
+  return (g[tab] || []).map((p) => p.slice());
+}
+function curveValueAt(pts, tab, x) {
+  const d = curveSpec(tab);
+  if (!pts.length) return tab === "curves" ? x : d.neutral;
+  return Color.curveFn(pts, d.periodic)(x);
+}
+function writeCurve(c, tab, ch, pts) {
+  if (tab === "curves") writeGrade(c, { curves: { [ch]: pts.length ? pts : null } });
+  else writeGrade(c, { [tab]: pts.length ? pts : null });
+}
+function curvesSectionHtml() {
+  const tab = colorState.curveTab, ch = colorState.curveCh;
+  return `<div class="insp-section cp-curves"><h3>Curves</h3>
+    <div class="cv-tabs">${Object.entries(CURVE_TABS).map(([k, l]) =>
+      `<button type="button" class="btn tiny${k === tab ? " toggle on" : ""}" data-cvtab="${k}">${l}</button>`).join("")}</div>
+    <div class="cv-bar">
+      ${tab === "curves" ? Color.CURVE_CHANNELS.map((k) =>
+        `<button type="button" class="btn tiny cv-ch${k === ch ? " toggle on" : ""}" data-cvch="${k}" style="--cv:${CURVE_COLORS[k]}" title="${k === "y" ? "Luma — brightness only, colour kept" : k.toUpperCase() + " channel"}">${k.toUpperCase()}</button>`).join("") : `<span class="cv-label">${Color.HUE_CURVES[tab].label}</span>`}
+      <span class="cv-sp"></span>
+      <button type="button" class="btn tiny${colorState.curvePick ? " toggle on" : ""}" data-cvact="pick" title="Click the monitor to mark that colour's ${tab === "curves" ? "level" : tab === "satLuma" ? "saturation" : "hue"} on the curve">Pick</button>
+      <button type="button" class="btn tiny" data-cvact="reset" title="Reset this curve">Reset</button>
+    </div>
+    <canvas class="cv-ed${tab === "curves" ? " square" : ""}" data-cved title="Click: add a point · drag: move · double-click: remove"></canvas>
+  </div>`;
+}
+function drawCurveEditor(c) {
+  const cv = els.colorPage.querySelector("[data-cved]");
+  if (!cv || !c) return;
+  const dpr = window.devicePixelRatio || 1, b = cv.getBoundingClientRect();
+  const W = Math.max(10, Math.round(b.width * dpr)), H = Math.max(10, Math.round(b.height * dpr));
+  if (cv.width !== W) cv.width = W;
+  if (cv.height !== H) cv.height = H;
+  const ctx = cv.getContext("2d"), tab = colorState.curveTab, d = curveSpec(tab), pad = 6 * dpr;
+  const X = (x) => pad + (x / d.xMax) * (W - pad * 2), Y = (v) => H - pad - ((v - d.min) / (d.max - d.min)) * (H - pad * 2);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0b0b0e"; ctx.fillRect(0, 0, W, H);
+  if (tab !== "curves") { // colour band: hue across, or grey → saturated
+    for (let i = 0; i < 90; i++) {
+      const u = i / 90, x0 = X(u * d.xMax), x1 = X((u + 1 / 90) * d.xMax) + 1;
+      const rgb = tab === "satLuma" ? Color.hsvToRgb(0.02, u, 0.85) : Color.hsvToRgb(u, 0.75, 0.8);
+      ctx.fillStyle = `rgba(${rgb.map((v) => Math.round(v * 255)).join(",")},${tab === "satLuma" ? 0.35 : 0.22})`;
+      ctx.fillRect(x0, pad, x1 - x0, H - pad * 2);
+    }
+  }
+  ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.lineWidth = 1;
+  for (const q of [0.25, 0.5, 0.75]) {
+    ctx.beginPath(); ctx.moveTo(X(q * d.xMax), pad); ctx.lineTo(X(q * d.xMax), H - pad); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad, pad + q * (H - pad * 2)); ctx.lineTo(W - pad, pad + q * (H - pad * 2)); ctx.stroke();
+  }
+  ctx.setLineDash([4 * dpr, 4 * dpr]); ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.beginPath();
+  if (tab === "curves") { ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(1), Y(1)); }
+  else { ctx.moveTo(X(0), Y(d.neutral)); ctx.lineTo(X(d.xMax), Y(d.neutral)); }
+  ctx.stroke(); ctx.setLineDash([]);
+  const mark = colorState.curveMark?.[tab === "curves" ? "curves" : tab];
+  if (mark != null) {
+    ctx.strokeStyle = "rgba(255,210,90,0.9)"; ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath(); ctx.moveTo(X(mark), pad); ctx.lineTo(X(mark), H - pad); ctx.stroke();
+  }
+  const plot = (pts, color, width, ch) => {
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let i = 0; i <= 200; i++) {
+      const x = (i / 200) * d.xMax, v = curveValueAt(pts, tab, x);
+      if (i) ctx.lineTo(X(x), Y(v)); else ctx.moveTo(X(x), Y(v));
+    }
+    ctx.stroke();
+  };
+  if (tab === "curves") {
+    for (const ch of Color.CURVE_CHANNELS) if (ch !== colorState.curveCh) plot(curvePoints(c, tab, ch), CURVE_COLORS[ch] + "55", 1 * dpr);
+  }
+  const pts = colorState.cdrag ? colorState.cdrag.pts : curvePoints(c, tab, colorState.curveCh);
+  plot(pts, tab === "curves" ? CURVE_COLORS[colorState.curveCh] : "#ffffff", 1.6 * dpr);
+  for (const [x, v] of pts) {
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "rgba(0,0,0,0.8)"; ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath(); ctx.arc(X(x), Y(v), 4 * dpr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  cv._map = { X, Y, toData: (px, py) => [
+    clamp(((px * dpr - pad) / (W - pad * 2)) * d.xMax, 0, d.xMax),
+    clamp(d.min + ((H - pad - py * dpr) / (H - pad * 2)) * (d.max - d.min), d.min, d.max)], dpr };
+}
+function bindCurveEditor(c, guard) {
+  const root = els.colorPage, cv = root.querySelector("[data-cved]");
+  for (const b of root.querySelectorAll("[data-cvtab]")) b.addEventListener("click", () => {
+    colorState.curveTab = b.dataset.cvtab; renderColorPage(true);
+  });
+  for (const b of root.querySelectorAll("[data-cvch]")) b.addEventListener("click", () => {
+    colorState.curveCh = b.dataset.cvch; renderColorPage(true);
+  });
+  for (const b of root.querySelectorAll("[data-cvact]")) b.addEventListener("click", () => {
+    if (b.dataset.cvact === "pick") { setCurvePick(!colorState.curvePick); return; }
+    if (!guard()) return;
+    pushUndo(); writeCurve(c, colorState.curveTab, colorState.curveCh, []); renderColorPage(true);
+  });
+  if (!cv) return;
+  requestAnimationFrame(() => drawCurveEditor(c)); // after layout, so the canvas has its size
+  const hit = (e) => {
+    drawCurveEditor(c); // fresh hit map: the panel may have resized, or no frame has drawn it yet
+    const r = cv.getBoundingClientRect(), m = cv._map, px = e.clientX - r.left, py = e.clientY - r.top;
+    const pts = curvePoints(c, colorState.curveTab, colorState.curveCh);
+    const i = pts.findIndex(([x, v]) => Math.hypot(m.X(x) / m.dpr - px, m.Y(v) / m.dpr - py) < 8);
+    return { pts, i, data: m.toData(px, py), px };
+  };
+  cv.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !guard()) return;
+    e.preventDefault();
+    const tab = colorState.curveTab, d = curveSpec(tab);
+    let { pts, i, data } = hit(e);
+    const added = i < 0;
+    if (added) { // new point, on the curve so nothing jumps; snaps to a picked mark nearby
+      let x = data[0];
+      const mark = colorState.curveMark?.[tab];
+      if (mark != null && Math.abs(cv._map.X(mark) - cv._map.X(x)) / cv._map.dpr < 10) x = mark;
+      const v = curveValueAt(pts, tab, x);
+      if (d.periodic && !pts.length) pts = [[(x - Color.BAND + 360) % 360, d.neutral], [x, v], [(x + Color.BAND) % 360, d.neutral]];
+      else pts.push([x, v]);
+      pts.sort((a, b) => a[0] - b[0]);
+      i = pts.findIndex((p) => p[0] === x);
+    }
+    pushUndo();
+    cv.setPointerCapture(e.pointerId);
+    const sorted = pts.map((p) => p[0]);
+    colorState.cdrag = { pts, i, lo: i > 0 ? sorted[i - 1] : 0, hi: i < pts.length - 1 ? sorted[i + 1] : d.xMax,
+      endpoint: tab === "curves" && (i === 0 || i === pts.length - 1) };
+    if (added) writeCurve(c, tab, colorState.curveCh, pts); // a plain click keeps the point too
+    drawCurveEditor(c);
+  });
+  cv.addEventListener("pointermove", (e) => {
+    const g = colorState.cdrag;
+    if (!g) return;
+    const r = cv.getBoundingClientRect(), [x, v] = cv._map.toData(e.clientX - r.left, e.clientY - r.top);
+    const d = curveSpec(colorState.curveTab), eps = d.xMax * 0.002;
+    g.pts[g.i] = [g.endpoint ? g.pts[g.i][0] : clamp(x, g.lo + eps, g.hi - eps), v];
+    writeCurve(c, colorState.curveTab, colorState.curveCh, g.pts);
+    drawCurveEditor(c);
+  });
+  const end = () => { if (colorState.cdrag) { colorState.cdrag = null; drawCurveEditor(c); } };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+  cv.addEventListener("dblclick", (e) => {
+    if (!guard()) return;
+    const { pts, i } = hit(e);
+    if (i < 0) return;
+    const tab = colorState.curveTab;
+    if (tab === "curves" && (i === 0 || i === pts.length - 1)) pts[i] = [pts[i][0], pts[i][0]]; // endpoints reset, never leave
+    else pts.splice(i, 1);
+    pushUndo(); writeCurve(c, tab, colorState.curveCh, pts); drawCurveEditor(c);
+  });
+}
+function setCurvePick(on) {
+  colorState.curvePick = !!on;
+  if (on) { setWbPick(false); if (colorState.qualPick) setQualPick(false); }
+  els.preview.classList.toggle("wb-picking", colorState.pick || colorState.curvePick || colorState.qualPick);
+  const b = els.colorPage.querySelector("[data-cvact=pick]");
+  if (b) { b.classList.toggle("on", colorState.curvePick); b.classList.toggle("toggle", colorState.curvePick); }
+  if (on) toast("Click the colour to adjust in the monitor");
+}
+/** Monitor click while Pick is on: mark the sample on every curve tab. */
+function curvePickAt(c, pt) {
+  const rgb = sampleProgram(pt.x, pt.y, c.id, gradeBefore(c, true));
+  if (!rgb) return;
+  const [h, s] = Color.rgbToHsv(rgb[0], rgb[1], rgb[2]);
+  const ch = colorState.curveCh;
+  const level = ch === "y" ? 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] : rgb["rgb".indexOf(ch)];
+  colorState.curveMark = { curves: level, hueHue: h * 360, hueSat: h * 360, hueLuma: h * 360, satLuma: s };
+  if (s < 0.05 && colorState.curveTab !== "curves" && colorState.curveTab !== "satLuma") toast("That spot is nearly grey — its hue is not reliable");
+  drawCurveEditor(c);
+}
+
+/* ── Layers (secondaries) on the Color tab ──
+   colorState.layer picks what the wheels, sliders and curves edit: −1 = the
+   primary grade, k = grade.layers[k]. A layer adds a qualifier (HSL key on its
+   input), a mask (ellipse / rect / poly, dragged on the monitor, keyable) and
+   its own grade; Matte shows what it selects. */
+const QUAL_ROWS = {
+  hue: [["Centre", 0, 360, 1], ["Width", 0, 360, 1], ["Soft", 0, 180, 1]],
+  sat: [["Low", 0, 1, 0.01], ["High", 0, 1, 0.01], ["Soft", 0, 0.5, 0.01]],
+  luma: [["Low", 0, 1, 0.01], ["High", 0, 1, 0.01], ["Soft", 0, 0.5, 0.01]],
+};
+const QUAL_LABEL = { hue: "Hue", sat: "Saturation", luma: "Luma" };
+const QUAL_DEFAULT = { hue: [30, 60, 20], sat: [0.15, 1, 0.1], luma: [0.2, 0.8, 0.1] };
+const MASK_ROWS = { x: ["X", -0.5, 1.5, 0.005], y: ["Y", -0.5, 1.5, 0.005], w: ["Width", 0.01, 2, 0.005], h: ["Height", 0.01, 2, 0.005],
+  rotation: ["Rotation", -180, 180, 1], feather: ["Feather", 0, 0.5, 0.005] };
+const MASK_DEFAULT = { ellipse: { shape: "ellipse", x: 0.5, y: 0.5, w: 0.35, h: 0.5, feather: 0.06 },
+  rect: { shape: "rect", x: 0.5, y: 0.5, w: 0.4, h: 0.4, feather: 0.04 },
+  poly: { shape: "poly", x: 0.5, y: 0.5, feather: 0.04, points: [[0, -0.22], [0.16, -0.06], [0.11, 0.18], [-0.11, 0.18], [-0.16, -0.06]] } };
+function gradeLayers(c) { return (c && c.props.grade && c.props.grade.layers) || []; }
+function curLayer(c) {
+  const ls = gradeLayers(c);
+  if (colorState.layer >= ls.length) colorState.layer = ls.length - 1;
+  return colorState.layer >= 0 ? ls[colorState.layer] : null;
+}
+/** What the Color tab edits: the primary grade, or the selected layer. */
+function targetGrade(c) {
+  const l = curLayer(c);
+  return l ? Color.layerGrade(l) : c.props.grade;
+}
+function writeLayers(c, layers) {
+  const next = Color.mergeGrade(c.props.grade, { layers: layers.length ? layers : null });
+  if (next) c.props.grade = next; else delete c.props.grade;
+  colorState.sig = colorPageSig(c);   // the page already shows this — no rebuild
+}
+function writeLayer(c, k, set) {
+  const ls = gradeLayers(c).map((l) => l);
+  ls[k] = Color.mergeLayer(ls[k], set);
+  if (!ls[k].name) ls[k].name = `Layer ${k + 1}`;   // a layer always keeps a name, so it is never dropped
+  writeLayers(c, ls);
+}
+/** The grade a picker samples for what is being edited: everything before it,
+ *  plus (for the curve pickers) the edited grade without its curves. */
+function gradeBefore(c, withSelf = false) {
+  const g = c.props.grade || {}, k = colorState.layer;
+  if (k < 0) return withSelf ? { ...Color.withoutCurves(g), layers: null } : null;
+  const ls = gradeLayers(c).slice(0, k);
+  if (withSelf) ls.push(Color.withoutCurves(gradeLayers(c)[k]));
+  return { ...g, layers: ls };
+}
+function clipLocalT(c) { return state.time - c.start; }
+/** The selected layer's mask as it is at the playhead (keys resolved). */
+function maskNow(c) {
+  const l = curLayer(c);
+  return l && l.mask ? Color.maskAt(l.mask, clipLocalT(c)) : null;
+}
+function maskKeyAt(m, t) {
+  const tol = 0.5 / (projectFps() || 30);
+  return m && m.keys ? m.keys.findIndex((k) => Math.abs(k.t - t) < tol) : -1;
+}
+/** Change the selected layer's mask; with keys, keyed params land in a key at the playhead. */
+function writeMask(c, set) {
+  const l = curLayer(c);
+  if (!l) return;
+  const m = l.mask;
+  if (!m || !m.keys || !m.keys.length || !Color.MASK_KEYED.some((p) => p in set)) { writeLayer(c, colorState.layer, { mask: set }); return; }
+  const t = clipLocalT(c), keys = m.keys.map((k) => ({ ...k })), now = Color.maskAt(m, t);
+  const statics = {};
+  for (const [p, v] of Object.entries(set)) if (!Color.MASK_KEYED.includes(p)) statics[p] = v;
+  let i = maskKeyAt(m, t);
+  if (i < 0) {
+    const k = { t: +t.toFixed(4) };
+    for (const p of Color.MASK_KEYED) k[p] = now[p];
+    keys.push(k); keys.sort((a, b) => a.t - b.t); i = keys.indexOf(k);
+  }
+  for (const p of Color.MASK_KEYED) if (p in set) keys[i][p] = set[p];
+  writeLayer(c, colorState.layer, { mask: { ...statics, keys } });
+}
+function layersStripHtml(c) {
+  const ls = gradeLayers(c), k = colorState.layer;
+  const chip = (i, label, off) => `<button type="button" class="btn tiny cl-chip${i === k ? " toggle on" : ""}${off ? " off" : ""}" data-layer="${i}"
+    title="${i < 0 ? "The primary grade — the whole picture" : "Layer: graded where its qualifier and mask select"}">${escapeHtml(label)}</button>`;
+  return `<div class="cp-layers">${chip(-1, "Primary")}${ls.map((l, i) => chip(i, l.name || `Layer ${i + 1}`, l.on === false)).join("")}
+    <button type="button" class="btn tiny" data-lact="add" ${ls.length >= Color.MAX_LAYERS ? "disabled" : ""} title="Add a layer: a correction limited by a qualifier and / or a mask">+ Layer</button></div>`;
+}
+function layerSectionsHtml(c) {
+  const l = curLayer(c);
+  if (!l) return "";
+  const q = l.qualifier || {}, m = maskNow(c), i = colorState.layer, n = gradeLayers(c).length;
+  const qrow = (key) => {
+    const on = !!q[key], vals = q[key] || QUAL_DEFAULT[key];
+    return `<div class="cq-block${on ? "" : " off"}"><label class="cq-on"><input type="checkbox" data-qon="${key}" ${on ? "checked" : ""}> ${QUAL_LABEL[key]}</label>
+      ${QUAL_ROWS[key].map(([lab, min, max, step], j) => `<div class="insp-row cp-row"><label class="cp-label">${lab}</label>
+        <input type="range" class="${key === "hue" && j === 0 ? "cq-hue" : ""}" data-q="${key}.${j}" min="${min}" max="${max}" step="${step}" value="${vals[j]}" ${on ? "" : "disabled"}>
+        <input type="number" class="cp-num" data-qnum="${key}.${j}" min="${min}" max="${max}" step="${step}" value="${vals[j]}" ${on ? "" : "disabled"}></div>`).join("")}</div>`;
+  };
+  const keyed = m && l.mask.keys ? l.mask.keys.length : 0, onKey = m && maskKeyAt(l.mask, clipLocalT(c)) >= 0;
+  const mrow = (p) => {
+    const [lab, min, max, step] = MASK_ROWS[p];
+    return `<div class="insp-row cp-row"><label class="cp-label">${lab}</label>
+      <input type="range" data-m="${p}" min="${min}" max="${max}" step="${step}" value="${m[p]}">
+      <input type="number" class="cp-num" data-mnum="${p}" min="${min}" max="${max}" step="${step}" value="${fmtG(m[p], step)}"></div>`;
+  };
+  return `<div class="insp-section cp-layer">
+      <div class="cl-row"><input type="text" class="cl-name" data-lname value="${escapeHtml(l.name || "")}" maxlength="40" title="Layer name">
+        <button type="button" class="btn tiny${l.on === false ? "" : " toggle on"}" data-lact="on" title="Layer on / off">${l.on === false ? "Off" : "On"}</button>
+        <button type="button" class="btn tiny${runtime.matte ? " toggle on" : ""}" data-lact="matte" title="Show what this layer selects (white = graded) in the monitor">Matte</button>
+        <button type="button" class="btn tiny" data-lact="up" ${i === 0 ? "disabled" : ""} title="Move earlier">↑</button>
+        <button type="button" class="btn tiny" data-lact="down" ${i >= n - 1 ? "disabled" : ""} title="Move later">↓</button>
+        <button type="button" class="btn tiny" data-lact="del" title="Delete this layer">Delete</button></div>
+    </div>
+    <div class="insp-section cp-qual"><h3>Qualifier</h3>
+      <div class="cl-row"><button type="button" class="btn tiny${colorState.qualPick ? " toggle on" : ""}" data-qact="pick" title="Click a colour in the monitor to select it (its hue, saturation and luma)">Pick</button>
+        <button type="button" class="btn tiny${q.invert ? " toggle on" : ""}" data-qact="invert" title="Select everything except this">Invert</button>
+        <button type="button" class="btn tiny" data-qact="clear" title="No qualifier: the mask alone decides">Clear</button></div>
+      ${qrow("hue")}${qrow("sat")}${qrow("luma")}
+    </div>
+    <div class="insp-section cp-mask"><h3>Mask</h3>
+      <div class="cl-row">${["none", "ellipse", "rect", "poly"].map((s) => `<button type="button" class="btn tiny${(m ? m.shape : "none") === s ? " toggle on" : ""}" data-mshape="${s}">${s === "none" ? "None" : s === "rect" ? "Rect" : s[0].toUpperCase() + s.slice(1)}</button>`).join("")}
+        <button type="button" class="btn tiny${colorState.maskDraw || (m && m.shape === "bezier") ? " toggle on" : ""}" data-mdraw title="Drag a free-hand outline on the monitor — it becomes an editable bezier">Draw</button>
+        ${m ? `<button type="button" class="btn tiny${m.invert ? " toggle on" : ""}" data-mact="invert" title="Grade outside the shape">Invert</button>` : ""}</div>
+      ${m ? `<div class="cl-row"><button type="button" class="btn tiny${onKey ? " toggle on" : ""}" data-mact="key" title="${onKey ? "Remove the key at the playhead" : "Key the shape at the playhead — with keys, every change keys"}">◆ Key</button>
+        <span class="cl-note">${keyed ? `${keyed} key${keyed > 1 ? "s" : ""}` : "not animated"}</span>
+        ${keyed ? `<button type="button" class="btn tiny" data-mact="clearkeys" title="Remove every key (keeps the shape at the playhead)">Clear keys</button>` : ""}</div>
+      ${mrow("x")}${mrow("y")}${m.shape !== "poly" ? mrow("w") + mrow("h") : ""}${mrow("rotation")}${mrow("feather")}
+      <p class="cl-note">Drag it on the monitor: inside moves, handles resize, the knob rotates${m.points ? "; Ctrl-click adds a point, double-click one removes it" : ""}.</p>` : colorState.maskDraw ? `<p class="cl-note">Drag around what this layer should grade. Esc cancels.</p>` : ""}
+    </div>`;
+}
+function bindLayerControls(c, guard) {
+  const root = els.colorPage;
+  const rerender = () => renderColorPage(true);
+  for (const b of root.querySelectorAll("[data-layer]")) b.addEventListener("click", () => {
+    colorState.layer = +b.dataset.layer;
+    if (runtime.matte) setMatte(c, colorState.layer >= 0);
+    setQualPick(false);
+    rerender();
+  });
+  for (const b of root.querySelectorAll("[data-lact]")) b.addEventListener("click", () => {
+    const a = b.dataset.lact;
+    if (a === "matte") { setMatte(c, !runtime.matte); rerender(); return; }
+    if (!guard()) return;
+    const ls = gradeLayers(c).slice(), i = colorState.layer;
+    pushUndo();
+    if (a === "add") { ls.push({ name: `Layer ${ls.length + 1}` }); writeLayers(c, ls); colorState.layer = ls.length - 1; }
+    else if (a === "on") writeLayer(c, i, { on: ls[i].on === false ? null : false });
+    else if (a === "del") { ls.splice(i, 1); writeLayers(c, ls); colorState.layer = Math.min(i, ls.length - 1); if (runtime.matte) setMatte(c, colorState.layer >= 0); }
+    else if (a === "up" || a === "down") {
+      const j = a === "up" ? i - 1 : i + 1;
+      [ls[i], ls[j]] = [ls[j], ls[i]]; writeLayers(c, ls); colorState.layer = j;
+      if (runtime.matte) setMatte(c, true);
+    }
+    scheduleSave(); rerender();
+  });
+  const name = root.querySelector("[data-lname]");
+  if (name) name.addEventListener("change", () => {
+    if (!guard()) return;
+    pushUndo(); writeLayer(c, colorState.layer, { name: name.value.trim() || `Layer ${colorState.layer + 1}` }); scheduleSave(); rerender();
+  });
+  // qualifier
+  const qWrite = (key, vals) => { writeLayer(c, colorState.layer, { qualifier: { [key]: vals } }); scheduleSave(); };
+  for (const cb of root.querySelectorAll("[data-qon]")) cb.addEventListener("change", () => {
+    if (!guard()) { cb.checked = !cb.checked; return; }
+    const key = cb.dataset.qon;
+    pushUndo(); qWrite(key, cb.checked ? QUAL_DEFAULT[key].slice() : null); rerender();
+  });
+  const qVals = (key) => (curLayer(c)?.qualifier?.[key] || QUAL_DEFAULT[key]).slice();
+  for (const r of root.querySelectorAll("[data-q]")) {
+    const [key, j] = r.dataset.q.split(".");
+    r.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    r.addEventListener("input", () => {
+      if (isGroupLocked(c)) return;
+      const v = qVals(key); v[+j] = +r.value; qWrite(key, v);
+      const n = root.querySelector(`[data-qnum="${key}.${j}"]`); if (n) n.value = r.value;
+    });
+  }
+  for (const n of root.querySelectorAll("[data-qnum]")) {
+    const [key, j] = n.dataset.qnum.split(".");
+    n.addEventListener("change", () => {
+      const x = parseFloat(n.value);
+      if (!Number.isFinite(x) || !guard()) return;
+      const v = qVals(key); v[+j] = x;
+      pushUndo(); qWrite(key, v); rerender();
+    });
+  }
+  for (const b of root.querySelectorAll("[data-qact]")) b.addEventListener("click", () => {
+    const a = b.dataset.qact;
+    if (a === "pick") { setQualPick(!colorState.qualPick); return; }
+    if (!guard()) return;
+    pushUndo();
+    if (a === "invert") qWrite("invert", curLayer(c)?.qualifier?.invert ? null : true);
+    else writeLayer(c, colorState.layer, { qualifier: null });
+    scheduleSave(); rerender();
+  });
+  // mask
+  const draw = root.querySelector("[data-mdraw]");
+  if (draw) draw.addEventListener("click", () => {
+    if (!guard()) return;
+    colorState.maskDraw = !colorState.maskDraw; colorState.maskStroke = null;
+    if (colorState.maskDraw) { if (state.playing) pause(); toast("Drag around what this layer should grade"); }
+    rerender();
+  });
+  for (const b of root.querySelectorAll("[data-mshape]")) b.addEventListener("click", () => {
+    if (!guard()) return;
+    const s = b.dataset.mshape, cur = maskNow(c);
+    pushUndo();
+    if (s === "none") writeLayer(c, colorState.layer, { mask: null });
+    else if (!cur || cur.shape !== s) {
+      const m = { ...MASK_DEFAULT[s] };
+      if (cur) { m.x = cur.x; m.y = cur.y; m.rotation = cur.rotation; if (cur.invert) m.invert = true; }
+      writeLayer(c, colorState.layer, { mask: null });
+      writeLayer(c, colorState.layer, { mask: m });
+    }
+    scheduleSave(); rerender();
+  });
+  for (const b of root.querySelectorAll("[data-mact]")) b.addEventListener("click", () => {
+    if (!guard()) return;
+    const a = b.dataset.mact, l = curLayer(c), m = l && l.mask;
+    if (!m) return;
+    pushUndo();
+    if (a === "invert") writeLayer(c, colorState.layer, { mask: { invert: m.invert ? null : true } });
+    else if (a === "clearkeys") {
+      const now = maskNow(c), set = { keys: null };
+      for (const p of Color.MASK_KEYED) set[p] = now[p];
+      writeLayer(c, colorState.layer, { mask: set });
+    } else if (a === "key") {
+      const t = clipLocalT(c), i = maskKeyAt(m, t), now = maskNow(c);
+      let keys = (m.keys || []).map((k) => ({ ...k }));
+      if (i >= 0) keys.splice(i, 1);
+      else { const k = { t: +t.toFixed(4) }; for (const p of Color.MASK_KEYED) k[p] = now[p]; keys.push(k); }
+      const set = { keys: keys.length ? keys : null };
+      if (!keys.length) for (const p of Color.MASK_KEYED) set[p] = now[p];
+      writeLayer(c, colorState.layer, { mask: set });
+    }
+    scheduleSave(); rerender();
+  });
+  for (const r of root.querySelectorAll("[data-m]")) {
+    const p = r.dataset.m;
+    r.addEventListener("pointerdown", () => { if (guard()) pushUndo(); });
+    r.addEventListener("input", () => {
+      if (isGroupLocked(c)) return;
+      writeMask(c, { [p]: +r.value }); scheduleSave();
+      const n = root.querySelector(`[data-mnum="${p}"]`); if (n) n.value = fmtG(+r.value, MASK_ROWS[p][3]);
+    });
+  }
+  for (const n of root.querySelectorAll("[data-mnum]")) {
+    const p = n.dataset.mnum;
+    n.addEventListener("change", () => {
+      const x = parseFloat(n.value);
+      if (!Number.isFinite(x) || !guard()) return;
+      pushUndo(); writeMask(c, { [p]: x }); scheduleSave(); rerender();
+    });
+  }
+}
+/** Keyed masks: the Color tab's mask sliders and ◆ follow the playhead. */
+function syncColorPlayhead() {
+  if (colorState.layer < 0 || colorState.mdrag || colorState.lastT === state.time) return;
+  colorState.lastT = state.time;
+  const c = getClip(state.selId), l = c && curLayer(c);
+  if (!l || !l.mask || !l.mask.keys || !els.colorPage.querySelector("[data-m]")) return;
+  const active = document.activeElement;
+  if (active && active.dataset && (active.dataset.m || active.dataset.mnum)) return;   // mid-edit
+  syncMaskInputs(c);
+  const k = els.colorPage.querySelector("[data-mact=key]"), on = maskKeyAt(l.mask, clipLocalT(c)) >= 0;
+  if (k) { k.classList.toggle("on", on); k.classList.toggle("toggle", on); }
+}
+function syncMaskInputs(c) {
+  const m = maskNow(c);
+  if (!m) return;
+  for (const p of Object.keys(MASK_ROWS)) {
+    const r = els.colorPage.querySelector(`[data-m="${p}"]`), n = els.colorPage.querySelector(`[data-mnum="${p}"]`);
+    if (r) r.value = m[p];
+    if (n) n.value = fmtG(m[p], MASK_ROWS[p][3]);
+  }
+}
+function setMatte(c, on) {
+  runtime.matte = on && c && colorState.layer >= 0 ? { id: c.id, layer: colorState.layer } : null;
+  state.dirtyTimeline = true;
+}
+function setQualPick(on) {
+  colorState.qualPick = !!on;
+  if (on) { setWbPick(false); setCurvePick(false); }
+  els.preview.classList.toggle("wb-picking", colorState.pick || colorState.curvePick || colorState.qualPick);
+  const b = els.colorPage.querySelector("[data-qact=pick]");
+  if (b) { b.classList.toggle("on", colorState.qualPick); b.classList.toggle("toggle", colorState.qualPick); }
+  if (on) toast("Click the colour this layer should select");
+}
+/** Monitor click while the qualifier's Pick is on: select that colour. */
+function qualPickAt(c, pt) {
+  const rgb = sampleProgram(pt.x, pt.y, c.id, gradeBefore(c));
+  if (!rgb) return;
+  const [h, s] = Color.rgbToHsv(rgb[0], rgb[1], rgb[2]), y = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  const q = { luma: [Math.max(0, y - 0.25), Math.min(1, y + 0.25), 0.1] };
+  if (s >= 0.08) { q.hue = [Math.round(h * 360), 40, 20]; q.sat = [Math.max(0, s - 0.3), Math.min(1, s + 0.3), 0.1]; }
+  else { q.hue = null; q.sat = [0, Math.min(1, s + 0.12), 0.08]; }
+  pushUndo(); writeLayer(c, colorState.layer, { qualifier: q }); scheduleSave(); renderColorPage(true);
+  toast(s >= 0.08 ? `Selected hue ${Math.round(h * 360)}° — turn on Matte to check` : "Selected a neutral tone (greys carry no hue)");
+}
+
+/* ── The selected layer's mask on the monitor ── */
+/** Mask-space (0…1 of the clip's picture) ↔ monitor canvas px. */
+function maskSpace(c) {
+  const g = runtime.gradeGeom && runtime.gradeGeom.get(c.id);
+  if (!g) return null;
+  const inv = g.m.inverse();
+  return {
+    aspect: g.w / g.h,
+    toCanvas: (u, v) => { const p = g.m.transformPoint(new DOMPoint(g.x0 + u * g.w, g.y0 + v * g.h)); return { x: p.x, y: p.y }; },
+    toUv: (pt) => { const p = inv.transformPoint(new DOMPoint(pt.x, pt.y)); return { u: (p.x - g.x0) / g.w, v: (p.y - g.y0) / g.h }; },
+  };
+}
+/** Mask-local (aspect-corrected, unrotated) → picture uv. */
+function maskLocalToUv(m, a, px, py) {
+  const th = m.rotation * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+  return { u: m.x + (px * cs - py * sn) / a, v: m.y + px * sn + py * cs };
+}
+function uvToMaskLocal(m, a, u, v) {
+  const th = m.rotation * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+  const dx = (u - m.x) * a, dy = v - m.y;
+  return { x: dx * cs + dy * sn, y: -dx * sn + dy * cs };
+}
+/** The mask's handles in canvas px: centre, edges (w / h), rotate knob, poly points. */
+function maskHandles(c) {
+  const m = maskNow(c), sp = m && maskSpace(c);
+  if (!sp) return null;
+  const a = sp.aspect, at = (px, py) => { const q = maskLocalToUv(m, a, px, py); return sp.toCanvas(q.u, q.v); };
+  const rx = (m.w / 2) * a, ry = m.h / 2;
+  const top = m.points ? Math.min(...m.points.map((p) => p[1])) : -ry;
+  const W = els.preview.width, H = els.preview.height, inset = Math.max(8, W / 110), knob = at(0, top - 0.08);
+  knob.x = clamp(knob.x, inset, W - inset); knob.y = clamp(knob.y, inset, H - inset);   // stays grabbable above the frame
+  const h = { m, sp, centre: at(0, 0), knob, knobBase: at(0, top), edges: [], points: [] };
+  if (m.points) h.points = m.points.map(([x, y]) => at(x * a, y));
+  else h.edges = [["w", rx, 0], ["w", -rx, 0], ["h", 0, ry], ["h", 0, -ry]].map(([k, x, y]) => ({ k, ...at(x, y) }));
+  return h;
+}
+function maskOutline(c, h) {
+  const { m, sp } = h, a = sp.aspect, pts = [];
+  if (m.shape === "ellipse") {
+    for (let i = 0; i < 64; i++) { const t = i / 64 * Math.PI * 2; const q = maskLocalToUv(m, a, Math.cos(t) * m.w / 2 * a, Math.sin(t) * m.h / 2); pts.push(sp.toCanvas(q.u, q.v)); }
+  } else if (m.shape === "rect") {
+    for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = maskLocalToUv(m, a, x * m.w / 2 * a, y * m.h / 2); pts.push(sp.toCanvas(q.u, q.v)); }
+  } else if (m.shape === "bezier") {
+    const A = Mask.anchors({ shape: "bezier", x: 0, y: 0, scale: 1, rotation: 0, points: m.points }, 1, 1);
+    for (const [x, y] of Mask.flatten(A, 16)) { const q = maskLocalToUv(m, a, x * a, y); pts.push(sp.toCanvas(q.u, q.v)); }
+  } else pts.push(...h.points);
+  return pts;
+}
+function maskEditing(c) {
+  return colorState.ws === "color" && colorState.layer >= 0 && c && state.selId === c.id && !!maskNow(c) && activeAt(c, state.time);
+}
+/** Drawn instead of the selection box while a layer's mask is being edited. */
+function drawMaskOverlay(c, W) {
+  const h = maskHandles(c);
+  if (!h) return false;
+  const lw = Math.max(1.5, W / 800), hs = Math.max(5, W / 170);
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  const pts = maskOutline(c, h);
+  ctx2d.lineWidth = lw * 2.2; ctx2d.strokeStyle = "rgba(0,0,0,0.55)";
+  ctx2d.beginPath(); pts.forEach((p, i) => (i ? ctx2d.lineTo(p.x, p.y) : ctx2d.moveTo(p.x, p.y))); ctx2d.closePath(); ctx2d.stroke();
+  ctx2d.lineWidth = lw; ctx2d.strokeStyle = h.m.invert ? "#ff9f5a" : "#ffd25a";
+  ctx2d.beginPath(); pts.forEach((p, i) => (i ? ctx2d.lineTo(p.x, p.y) : ctx2d.moveTo(p.x, p.y))); ctx2d.closePath(); ctx2d.stroke();
+  ctx2d.beginPath(); ctx2d.moveTo(h.knobBase.x, h.knobBase.y); ctx2d.lineTo(h.knob.x, h.knob.y); ctx2d.stroke();
+  const dot = (p, r, fill) => { ctx2d.beginPath(); ctx2d.arc(p.x, p.y, r, 0, Math.PI * 2); ctx2d.fillStyle = fill; ctx2d.fill(); ctx2d.strokeStyle = "rgba(0,0,0,0.7)"; ctx2d.stroke(); };
+  for (const e of h.edges) dot(e, hs * 0.8, "#fff");
+  for (const p of h.points) dot(p, hs * 0.8, "#fff");
+  dot(h.centre, hs * 0.55, "#ffd25a");
+  dot(h.knob, hs * 0.9, "#ffce5c");
+  ctx2d.restore();
+  return true;
+}
+/** Color tab Draw: a free-hand outline for the selected layer's mask. */
+function drawingLayerMask(c) {
+  return colorState.maskDraw && colorState.ws === "color" && colorState.layer >= 0 && c && state.selId === c.id && activeAt(c, state.time) && !!maskSpace(c);
+}
+function drawLayerStroke(c, W) {
+  const sp = maskSpace(c), st = colorState.maskStroke;
+  if (!sp || !st || st.length < 2) return;
+  ctx2d.save();
+  ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+  ctx2d.lineWidth = Math.max(2, W / 600); ctx2d.strokeStyle = "#ffd25a";
+  ctx2d.beginPath();
+  st.forEach(([u, v], i) => { const p = sp.toCanvas(u, v); if (i) ctx2d.lineTo(p.x, p.y); else ctx2d.moveTo(p.x, p.y); });
+  ctx2d.stroke();
+  ctx2d.restore();
+}
+let maskDrag = null;
+els.preview.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || e.altKey || isSourceMode() || colorState.pick || colorState.curvePick || colorState.qualPick) return;
+  const c = getClip(state.selId);
+  if (drawingLayerMask(c)) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (isGroupLocked(c)) { toastLocked(); return; }
+    const uv = maskSpace(c).toUv(canvasPt(e));
+    colorState.maskStroke = [[uv.u, uv.v]];
+    maskDrag = { mode: "draw", id: c.id };
+    els.preview.setPointerCapture(e.pointerId);
+    return;
+  }
+  if (!maskEditing(c)) return;
+  const h = maskHandles(c);
+  if (!h) return;
+  const pt = canvasPt(e), W = els.preview.width, grab = Math.max(8, W / 110);
+  const near = (p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= grab;
+  const { m, sp } = h, a = sp.aspect, uv = sp.toUv(pt);
+  let drag = null;
+  if (near(h.knob)) drag = { mode: "rotate" };
+  else if (h.points.some(near)) drag = { mode: "point", i: h.points.findIndex(near) };
+  else if (h.edges.some(near)) drag = { mode: h.edges.find(near).k };
+  else if (m.points && (e.ctrlKey || e.metaKey)) { // add a point on the nearest edge
+    const lp = uvToMaskLocal(m, a, uv.u, uv.v), P = m.points.map(([x, y]) => [x * a, y]);
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < P.length; i++) {
+      const [x1, y1] = P[i], [x2, y2] = P[(i + 1) % P.length], ex = x2 - x1, ey = y2 - y1;
+      const k = clamp(((lp.x - x1) * ex + (lp.y - y1) * ey) / Math.max(1e-9, ex * ex + ey * ey), 0, 1);
+      const d = Math.hypot(lp.x - x1 - ex * k, lp.y - y1 - ey * k);
+      if (d < bd) { bd = d; best = i; }
+    }
+    const most = m.shape === "bezier" ? Color.MAX_BEZIER : Color.MAX_POLY;
+    if (m.points.length >= most) { toast(`A mask has at most ${most} points`); e.stopImmediatePropagation(); return; }
+    if (isGroupLocked(c)) { toastLocked(); e.stopImmediatePropagation(); return; }
+    const pts = m.points.map((p) => p.slice());
+    pts.splice(best + 1, 0, [lp.x / a, lp.y]);
+    pushUndo(); writeMask(c, { points: pts }); scheduleSave();
+    drag = { mode: "point", i: best + 1, pushed: true };
+  } else if (Color.maskDist(m, uv.u, uv.v, a) <= 0.01) drag = { mode: "move" };
+  if (!drag) return;     // outside the shape: the monitor's usual clicks
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  if (!drag.pushed) pushUndo();
+  maskDrag = { ...drag, id: c.id, start: uv, m0: { ...m, points: m.points && m.points.map((p) => p.slice()) } };
+  colorState.mdrag = true;
+  els.preview.setPointerCapture(e.pointerId);
+}, true);
+els.preview.addEventListener("pointermove", (e) => {
+  if (!maskDrag) return;
+  e.stopImmediatePropagation();
+  const c = getClip(maskDrag.id), sp = c && maskSpace(c);
+  if (!sp) return;
+  if (maskDrag.mode === "draw") {
+    const uv = sp.toUv(canvasPt(e)), st = colorState.maskStroke, last = st && st[st.length - 1];
+    if (last && Math.hypot((uv.u - last[0]) * sp.aspect, uv.v - last[1]) > 0.003) { st.push([uv.u, uv.v]); state.dirtyTimeline = true; }
+    return;
+  }
+  const uv = sp.toUv(canvasPt(e)), m0 = maskDrag.m0, a = sp.aspect, d = maskDrag;
+  const lp = uvToMaskLocal(m0, a, uv.u, uv.v);
+  let set;
+  if (d.mode === "move") set = { x: +(m0.x + uv.u - d.start.u).toFixed(4), y: +(m0.y + uv.v - d.start.v).toFixed(4) };
+  else if (d.mode === "w") set = { w: +clamp(Math.abs(lp.x) * 2 / a, 0.01, 4).toFixed(4) };
+  else if (d.mode === "h") set = { h: +clamp(Math.abs(lp.y) * 2, 0.01, 4).toFixed(4) };
+  else if (d.mode === "rotate") {
+    const dx = (uv.u - m0.x) * a, dy = uv.v - m0.y;
+    let r = Math.atan2(dx, -dy) * 180 / Math.PI;
+    if (e.shiftKey) r = Math.round(r / 15) * 15;
+    set = { rotation: +r.toFixed(1) };
+  } else if (d.mode === "point") {
+    const pts = (curLayer(c)?.mask?.points || m0.points).map((p) => p.slice());
+    pts[d.i] = [+(lp.x / a).toFixed(4), +lp.y.toFixed(4), ...pts[d.i].slice(2)];   // a bezier anchor keeps its handles
+    set = { points: pts };
+  }
+  if (set) { writeMask(c, set); syncMaskInputs(c); state.dirtyTimeline = true; }
+}, true);
+const endMaskDrag = (e) => {
+  if (!maskDrag) return;
+  e.stopImmediatePropagation();
+  if (maskDrag.mode === "draw") {
+    const c = getClip(maskDrag.id), sp = c && maskSpace(c), st = colorState.maskStroke;
+    maskDrag = null; colorState.maskStroke = null; state.dirtyTimeline = true;
+    if (!c || !sp || !st || st.length < 6) { toast("Drag around what this layer should grade"); return; }
+    const cur = maskNow(c), m = { shape: "freehand", stroke: st, aspect: sp.aspect, feather: cur ? cur.feather : 0.03 };
+    if (cur && cur.invert) m.invert = true;
+    pushUndo();
+    writeLayer(c, colorState.layer, { mask: null });
+    writeLayer(c, colorState.layer, { mask: m });
+    colorState.maskDraw = false;
+    scheduleSave(); renderColorPage(true);
+    return;
+  }
+  maskDrag = null; colorState.mdrag = false;
+  scheduleSave(); renderColorPage(true);
+};
+els.preview.addEventListener("pointerup", endMaskDrag, true);
+els.preview.addEventListener("pointercancel", endMaskDrag, true);
+els.preview.addEventListener("dblclick", (e) => {
+  const c = getClip(state.selId);
+  if (!maskEditing(c)) return;
+  const h = maskHandles(c), pt = canvasPt(e), grab = Math.max(8, els.preview.width / 110);
+  const i = h ? h.points.findIndex((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= grab) : -1;
+  if (i < 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (h.m.points.length <= 3) { toast("A mask needs at least 3 points"); return; }
+  if (isGroupLocked(c)) { toastLocked(); return; }
+  const pts = h.m.points.map((p) => p.slice()); pts.splice(i, 1);
+  pushUndo(); writeMask(c, { points: pts }); scheduleSave(); renderColorPage(true);
+}, true);
+
+/* ── Scopes: a ≤480 px copy of the program frame (or the export frame),
+   read back a few times a second while the Color workspace is open. ── */
+function buildScopeSlots() {
+  if (scopes.built) return;
+  scopes.built = true;
+  scopes.els = [...document.querySelectorAll("#scopesPanel .scope-slot")].map((el, i) => {
+    el.innerHTML = `<div class="scope-head"><select data-scope-kind aria-label="Scope">${Object.entries(SCOPE_KINDS).map(([k, l]) =>
+      `<option value="${k}"${k === scopes.slots[i] ? " selected" : ""}>${l}</option>`).join("")}</select></div><canvas class="scope-cv"></canvas>`;
+    const sel = el.querySelector("select");
+    sel.addEventListener("change", () => {
+      scopes.slots[i] = sel.value;
+      try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scopes.slots)); } catch { }
+      scopes.last = 0;
+    });
+    const cv = el.querySelector("canvas");
+    return { el, cv, ctx: cv.getContext("2d") };
+  });
+}
+function updateScopes() {
+  if (colorState.ws !== "color" || !scopes.built || state.exporting || state.rendering) return;
+  const now = performance.now();
+  if (now - scopes.last < (state.playing ? 70 : 140)) return;
+  scopes.last = now;
+  const W = els.preview.width, H = els.preview.height;
+  const r = getExportFrame() || { x: 0, y: 0, w: W, h: H };
+  const sw = Math.max(2, Math.min(480, Math.round(r.w))), sh = Math.max(2, Math.round(sw * r.h / r.w));
+  if (scopes.src.width !== sw) scopes.src.width = sw;
+  if (scopes.src.height !== sh) scopes.src.height = sh;
+  scopes.srcCtx.drawImage(els.preview, r.x, r.y, r.w, r.h, 0, 0, sw, sh);
+  let img;
+  try { img = scopes.srcCtx.getImageData(0, 0, sw, sh); } catch { return; } // tainted canvas
+  const data = Color.computeScopes(img.data, sw, sh, [...new Set(scopes.slots)]);
+  scopes.els.forEach((s, i) => drawScope(s, scopes.slots[i], data, sw, sh));
+}
+function sizeScopeCanvas(s) {
+  const dpr = window.devicePixelRatio || 1, b = s.cv.getBoundingClientRect();
+  const w = Math.max(10, Math.round(b.width * dpr)), h = Math.max(10, Math.round(b.height * dpr));
+  if (s.cv.width !== w) s.cv.width = w;
+  if (s.cv.height !== h) s.cv.height = h;
+  return { w, h, dpr };
+}
+function scopeImage(width, height) {
+  if (scopes.tmp.width !== width) scopes.tmp.width = width;
+  if (scopes.tmp.height !== height) scopes.tmp.height = height;
+  return scopes.tmpCtx.createImageData(width, height);
+}
+function drawScope(s, kind, data, sw, sh) {
+  const { w, h, dpr } = sizeScopeCanvas(s), ctx = s.ctx;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#0b0b0e";
+  ctx.fillRect(0, 0, w, h);
+  ctx.font = `${Math.round(9 * dpr)}px ui-monospace, Consolas, monospace`;
+  if (kind === "waveform" || kind === "parade") {
+    const padL = Math.round(22 * dpr), pad = Math.round(6 * dpr);
+    const box = { x: padL, y: pad, w: w - padL - pad, h: h - pad * 2 };
+    const ref = Math.log1p(sh / 6);
+    const bands = kind === "parade" ? 3 : 1, cols = data[kind].cols;
+    const img = scopeImage(cols * bands, 256);
+    const tints = kind === "parade" ? [[255, 90, 90], [90, 255, 120], [100, 150, 255]] : [[200, 255, 205]];
+    for (let band = 0; band < bands; band++) {
+      const src = kind === "parade" ? data.parade.data[band] : data.waveform.data, [tr, tg, tb] = tints[band];
+      for (let col = 0; col < cols; col++) for (let lv = 0; lv < 256; lv++) {
+        const n = src[col * 256 + lv];
+        if (!n) continue;
+        const v = Math.min(1, Math.log1p(n) / ref), i = ((255 - lv) * cols * bands + band * cols + col) * 4;
+        img.data[i] = tr * v; img.data[i + 1] = tg * v; img.data[i + 2] = tb * v; img.data[i + 3] = 255;
+      }
+    }
+    scopes.tmpCtx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(scopes.tmp, box.x, box.y, box.w, box.h);
+    ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.lineWidth = 1; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (const lv of [0, 25, 50, 75, 100]) {
+      const y = Math.round(box.y + box.h * (1 - lv / 100)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(box.x, y); ctx.lineTo(box.x + box.w, y); ctx.stroke();
+      ctx.fillText(String(lv), box.x - 4 * dpr, y);
+    }
+    if (bands === 3) for (const k of [1, 2]) {
+      const x = Math.round(box.x + box.w * k / 3) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, box.y); ctx.lineTo(x, box.y + box.h); ctx.stroke();
+    }
+  } else if (kind === "vectorscope") {
+    const size = Math.min(w, h) - Math.round(8 * dpr), x0 = (w - size) / 2, y0 = (h - size) / 2;
+    if (!scopes.vecColor) {
+      scopes.vecColor = new Uint8ClampedArray(256 * 256 * 3);
+      for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) {
+        const v = Color.wheelToRgb((x - 128) / 255, (128 - y) / 255), i = (y * 256 + x) * 3;
+        for (let k = 0; k < 3; k++) scopes.vecColor[i + k] = clamp(255 * (0.62 + 1.1 * v[k]), 60, 255);
+      }
+    }
+    const ref = Math.log1p(sw * sh / 1500), vec = data.vectorscope, img = scopeImage(256, 256);
+    for (let i = 0; i < 65536; i++) {
+      const n = vec[i];
+      if (!n) continue;
+      const v = Math.min(1, Math.log1p(n) / ref);
+      img.data[i * 4] = scopes.vecColor[i * 3] * v; img.data[i * 4 + 1] = scopes.vecColor[i * 3 + 1] * v;
+      img.data[i * 4 + 2] = scopes.vecColor[i * 3 + 2] * v; img.data[i * 4 + 3] = 255;
+    }
+    scopes.tmpCtx.putImageData(img, 0, 0);
+    const cx = x0 + size / 2, cy = y0 + size / 2, k = size / 256;
+    ctx.strokeStyle = "rgba(255,255,255,0.14)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, size / 2, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - size / 2, cy); ctx.lineTo(cx + size / 2, cy); ctx.moveTo(cx, cy - size / 2); ctx.lineTo(cx, cy + size / 2); ctx.stroke();
+    const a = Color.SKIN_ANGLE * Math.PI / 180;   // skin-tone line
+    ctx.strokeStyle = "rgba(255,200,150,0.35)";
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * size / 2, cy - Math.sin(a) * size / 2); ctx.stroke();
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalCompositeOperation = "lighter";
+    ctx.drawImage(scopes.tmp, x0, y0, size, size);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const bx = 5 * dpr;
+    for (const t of Color.vectorTargets()) {
+      const x = x0 + t.x * k, y = y0 + t.y * k;
+      ctx.strokeRect(x - bx, y - bx, bx * 2, bx * 2);
+      const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy) || 1;
+      ctx.fillText(t.label, x + dx / d * 13 * dpr, y + dy / d * 13 * dpr);
+    }
+  } else if (kind === "histogram") {
+    const pad = Math.round(6 * dpr), box = { x: pad, y: pad, w: w - pad * 2, h: h - pad * 2 };
+    const H4 = data.histogram;
+    let mx = 1;
+    for (const ch of [H4.r, H4.g, H4.b]) for (let i = 1; i < 255; i++) if (ch[i] > mx) mx = ch[i];
+    ctx.globalCompositeOperation = "lighter";
+    const plot = (bins, fill) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(box.x, box.y + box.h);
+      for (let i = 0; i < 256; i++) ctx.lineTo(box.x + box.w * i / 255, box.y + box.h * (1 - Math.min(1, bins[i] / mx)));
+      ctx.lineTo(box.x + box.w, box.y + box.h);
+      ctx.closePath(); ctx.fill();
+    };
+    plot(H4.r, "rgba(255,70,70,0.55)"); plot(H4.g, "rgba(70,255,100,0.5)"); plot(H4.b, "rgba(80,130,255,0.6)");
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < 256; i++) {
+      const x = box.x + box.w * i / 255, y = box.y + box.h * (1 - Math.min(1, H4.y[i] / mx));
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.1)";
+    for (const q of [0.25, 0.5, 0.75]) {
+      const x = Math.round(box.x + box.w * q) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, box.y); ctx.lineTo(x, box.y + box.h); ctx.stroke();
+    }
+  }
+}
+for (const b of document.querySelectorAll("#wsSwitch [data-ws]"))
+  b.addEventListener("click", () => setWorkspace(b.dataset.ws));
+
+initPanelSplit();
+buildTrackDOM();
+rebuildClips();
+renderBin();
+syncTrimIOButton();
+syncMonitorModeUI();
+buildMeterDOM();
+for (const b of els.sideTabs.querySelectorAll("[data-side]"))
+  b.addEventListener("click", () => setSideTab(b.dataset.side));
+try {
+  const side = localStorage.getItem(SIDE_TAB_KEY);
+  if (side === "mixer" || side === "color") setSideTab(side);
+  if (localStorage.getItem(WS_KEY) === "color") setWorkspace("color");
+} catch { }
+connectServer().then(() => { loadLibraryFonts(); runExportJobFromUrl(); });
+requestAnimationFrame(loop);

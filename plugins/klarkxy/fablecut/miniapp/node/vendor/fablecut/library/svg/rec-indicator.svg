@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80">
+  <!-- FableCut animated SVG · loop · live-recording REC indicator
+       Pulsing red dot + "REC" label. Great for "live" overlays. -->
+  <style>
+    .dot {
+      fill: #ff3b30;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.75); }
+    }
+    .ring {
+      fill: none;
+      stroke: #ff3b30;
+      stroke-width: 2;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: ringPulse 1.2s ease-out infinite;
+    }
+    @keyframes ringPulse {
+      0%   { opacity: 0.8; r: 14; }
+      100% { opacity: 0;   r: 28; }
+    }
+    .label {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-weight: 700;
+      font-size: 28px;
+      fill: #ff3b30;
+      letter-spacing: 3px;
+    }
+  </style>
+  <!-- Pulsing ring -->
+  <circle class="ring" style="--d:0s" cx="30" cy="40" r="14"/>
+  <!-- Solid dot -->
+  <circle class="dot" style="--d:0s" cx="30" cy="40" r="10"/>
+  <!-- REC text -->
+  <text class="label" x="58" y="48">REC</text>
+</svg>

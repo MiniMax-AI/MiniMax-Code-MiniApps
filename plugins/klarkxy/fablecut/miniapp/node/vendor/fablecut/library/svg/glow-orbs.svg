@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <!-- FableCut animated SVG · loops · floating bokeh orbs. Use on V4 with props {blend:"screen", opacity:0.7, fit:"cover"} -->
+  <style>
+    .o { transform-box: fill-box; transform-origin: center;
+         animation: drift 9s ease-in-out infinite; }
+    @keyframes drift {
+      0%, 100% { transform: translate(0,0) scale(1); opacity: 0.35; }
+      50%      { transform: translate(30px,-50px) scale(1.25); opacity: 0.85; }
+    }
+    .p { animation: puff 5s ease-in-out infinite; }
+    @keyframes puff { 0%,100% { opacity: 0.2; } 50% { opacity: 0.7; } }
+  </style>
+  <defs>
+    <radialGradient id="g" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.95"/>
+      <stop offset="45%" stop-color="#bfa8ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#7b6cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g fill="url(#g)">
+    <circle class="o" style="--d:0s"   cx="220" cy="180" r="120"/>
+    <circle class="o" style="--d:2.5s" cx="980" cy="230" r="160"/>
+    <circle class="o" style="--d:1.2s" cx="640" cy="520" r="100"/>
+    <circle class="o" style="--d:4s"   cx="1120" cy="560" r="90"/>
+    <circle class="p" style="--d:3s"   cx="430" cy="600" r="60"/>
+    <circle class="p" style="--d:1.8s" cx="820" cy="120" r="50"/>
+    <circle class="o" style="--d:5.5s" cx="120" cy="480" r="70"/>
+  </g>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="120" viewBox="0 0 800 120">
+  <!-- FableCut animated SVG · one-shot (~2s) · progress bar fills left→right with a moving shine -->
+  <style>
+    .fill { transform-box: fill-box; transform-origin: left center;
+            animation: grow 2s cubic-bezier(.5,.05,.2,1) both; }
+    @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    .knob { animation: run 2s cubic-bezier(.5,.05,.2,1) both; }
+    @keyframes run { 0% { transform: translateX(0); opacity: 0; } 8% { opacity: 1; } 100% { transform: translateX(720px); opacity: 1; } }
+  </style>
+  <rect x="40" y="46" width="720" height="28" rx="14" fill="#2a2a3a"/>
+  <clipPath id="track"><rect x="40" y="46" width="720" height="28" rx="14"/></clipPath>
+  <g clip-path="url(#track)">
+    <rect class="fill" style="--d:0s" x="40" y="46" width="720" height="28" fill="#7b6cff"/>
+  </g>
+  <circle class="knob" style="--d:0s" cx="40" cy="60" r="22" fill="#fff"/>
+</svg>

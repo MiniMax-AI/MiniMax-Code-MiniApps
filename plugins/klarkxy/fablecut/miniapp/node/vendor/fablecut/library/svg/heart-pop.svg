@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="600" viewBox="0 0 500 600">
+  <!-- FableCut animated SVG · loops · beating heart with floating hearts (like / reaction) -->
+  <style>
+    .beat { transform-box: fill-box; transform-origin: center;
+            animation: beat 1.2s ease-in-out infinite; }
+    @keyframes beat {
+      0%, 100% { transform: scale(1); }
+      15%      { transform: scale(1.18); }
+      30%      { transform: scale(1); }
+      45%      { transform: scale(1.12); }
+    }
+    .float { transform-box: fill-box; transform-origin: center;
+             opacity: 0;
+             animation: rise 3s ease-in infinite both; }
+    @keyframes rise {
+      0%   { transform: translate(0,0) scale(0.3); opacity: 0; }
+      22%  { opacity: 0; }
+      38%  { opacity: 0.85; }
+      100% { transform: translate(var(--tx,0px),-360px) scale(1); opacity: 0; }
+    }
+  </style>
+  <g fill="#ff4d6d">
+    <path class="beat" style="--d:0s" d="M250 470 C120 380 70 300 70 220 C70 150 120 110 175 110 C215 110 240 135 250 160 C260 135 285 110 325 110 C380 110 430 150 430 220 C430 300 380 380 250 470z"/>
+    <path class="float" style="--d:0.45s; --tx:-70px" d="M150 460 c-40 -28 -56 -52 -56 -78 c0 -22 16 -34 33 -34 c12 0 20 8 23 15 c3 -7 11 -15 23 -15 c17 0 33 12 33 34 c0 26 -16 50 -56 78z"/>
+    <path class="float" style="--d:1.45s; --tx:60px"  d="M330 470 c-40 -28 -56 -52 -56 -78 c0 -22 16 -34 33 -34 c12 0 20 8 23 15 c3 -7 11 -15 23 -15 c17 0 33 12 33 34 c0 26 -16 50 -56 78z"/>
+    <path class="float" style="--d:2.45s; --tx:15px"  d="M250 480 c-30 -21 -42 -39 -42 -58 c0 -16 12 -26 25 -26 c9 0 15 6 17 11 c2 -5 8 -11 17 -11 c13 0 25 10 25 26 c0 19 -12 37 -42 58z"/>
+  </g>
+</svg>

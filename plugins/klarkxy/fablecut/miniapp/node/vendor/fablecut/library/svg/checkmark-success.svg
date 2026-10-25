@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <!-- FableCut animated SVG · one-shot (~1s) · success check: ring draws, badge pops, tick draws -->
+  <style>
+    .ring { fill: none; stroke: #22c55e; stroke-width: 14; stroke-linecap: round;
+            stroke-dasharray: 880; stroke-dashoffset: 880;
+            animation: draw 0.7s cubic-bezier(.3,.8,.3,1) both; }
+    .disc { transform-box: fill-box; transform-origin: center;
+            animation: pop 0.4s cubic-bezier(.34,1.56,.64,1) both; }
+    .tick { fill: none; stroke: #fff; stroke-width: 22; stroke-linecap: round; stroke-linejoin: round;
+            stroke-dasharray: 200; stroke-dashoffset: 200;
+            animation: draw2 0.4s cubic-bezier(.3,.8,.3,1) both; }
+    @keyframes draw  { to { stroke-dashoffset: 0; } }
+    @keyframes draw2 { to { stroke-dashoffset: 0; } }
+    @keyframes pop   { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+  </style>
+  <circle class="ring" style="--d:0s" cx="200" cy="200" r="140"/>
+  <circle class="disc" style="--d:0.5s" cx="200" cy="200" r="120" fill="#22c55e"/>
+  <path class="tick" style="--d:0.7s" d="M140 205 l40 42 82 -92"/>
+</svg>
