@@ -8,6 +8,7 @@
 // Run with: node --test "tests/*.test.mjs"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7919,4 +7920,259 @@ test('the page waits for the run it was given, and a busy node keeps its card', 
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
   assert.match(source, /const taskId = state\.nodeTasks\.get\(nodeId\);\s*\n\s*return waitForTheRun\(\{/);
   assert.match(source, /if \(isBusyRefusal\(error\)\) \{/);
+});
+
+test('a clip the provider cannot read in time is made smaller first', async () => {
+  // The provider reads a clip frame by frame, and the Host stops a connector
+  // call after thirty seconds. A phone recording is sixty frames a second at
+  // 1080×1920 — six hundred frames to look at — so it is made smaller before
+  // it is asked about. The rules are plain functions, so they are tested
+  // without a clip.
+  const {
+    UNDERSTANDING_LIMITS,
+    compressionArgs,
+    isUnderstandTimeout,
+    understandingPlan,
+  } = await import('../miniapp/node/understand-media.mjs');
+
+  // A small clip is left alone: making it smaller would gain nothing.
+  const small = understandingPlan({ bytes: 400 * 1024, duration: 6, width: 1280, height: 720, fps: 24 });
+  assert.equal(small.compress, false);
+  assert.deepEqual(small.reasons, []);
+  assert.deepEqual(small.tiers, []);
+
+  // A phone clip is not: its size, its frame and its frame rate all say so.
+  const big = understandingPlan({ bytes: 8 * 1024 * 1024, duration: 10, width: 1080, height: 1920, fps: 60 });
+  assert.equal(big.compress, true);
+  assert.equal(big.reasons.length, 3);
+  assert.match(big.reasons.join(' '), /8\.0MB/);
+  assert.match(big.reasons.join(' '), /1080×1920/);
+  assert.match(big.reasons.join(' '), /60fps/);
+  assert.equal(big.tiers.length, 2);
+  // And a clip that is too long is cut down to what the provider reads.
+  const long = understandingPlan({ bytes: 1024, duration: 40, width: 640, height: 480, fps: 24 });
+  assert.equal(long.compress, true);
+  assert.match(long.reasons.join(' '), /40\.0s/);
+
+  // The command keeps the shape of the frame and takes the frames down.
+  const args = compressionArgs({
+    input: 'in.mp4',
+    output: 'out.mp4',
+    tier: big.tiers[0],
+    width: 1080,
+    height: 1920,
+    fps: 60,
+    duration: 10,
+    hasAudio: true,
+  });
+  const filter = args[args.indexOf('-vf') + 1];
+  assert.ok(String(filter).includes('scale=w=1280:h=1280:force_original_aspect_ratio=decrease'), filter);
+  assert.ok(String(filter).includes('fps=24'), filter);
+  assert.ok(args.includes('aac'));
+  assert.equal(args.at(-1), 'out.mp4');
+  // The sound is kept, because the provider does hear it.
+  assert.equal(args.includes('-an'), false);
+  // A clip without a sound is not given one.
+  const silent = compressionArgs({
+    input: 'a.mp4', output: 'b.mp4', tier: big.tiers[0],
+    width: 640, height: 480, fps: 30, duration: 4, hasAudio: false,
+  });
+  assert.ok(silent.includes('-an'));
+  // A clip that is already small is not scaled up.
+  const little = compressionArgs({
+    input: 'a.mp4', output: 'b.mp4', tier: big.tiers[0],
+    width: 640, height: 480, fps: 24, duration: 4, hasAudio: true,
+  });
+  assert.equal(little.some((item) => String(item).startsWith('scale=')), false);
+  assert.equal(little.some((item) => String(item).startsWith('fps=')), false);
+  // A clip whose shape could not be measured is made smaller anyway: a clip
+  // that cannot be measured is a clip that cannot be read in time.
+  const unknown = compressionArgs({
+    input: 'a.mp4', output: 'b.mp4', tier: big.tiers[0],
+    duration: 4, hasAudio: true,
+  });
+  const unknownFilter = String(unknown[unknown.indexOf('-vf') + 1]);
+  assert.ok(unknownFilter.includes('scale=w=1280:h=1280'), unknownFilter);
+  assert.ok(unknownFilter.includes('fps=24'), unknownFilter);
+
+  // Only a call that ran out of time is worth another try: a clip the
+  // provider refused would be refused the same way.
+  assert.equal(isUnderstandTimeout({ code: 'CONNECTOR_OUTCOME_UNKNOWN' }), true);
+  assert.equal(isUnderstandTimeout({ code: 'CONNECTOR_TIMEOUT' }), true);
+  assert.equal(isUnderstandTimeout({ code: 'CONNECTOR_PROVIDER_ERROR' }), false);
+  assert.equal(isUnderstandTimeout({ code: 'INVALID_ARGUMENTS' }), false);
+  assert.equal(isUnderstandTimeout(null), false);
+  // And the limits are the ones the rules say they are.
+  assert.equal(UNDERSTANDING_LIMITS.maxFps, 24);
+  assert.equal(UNDERSTANDING_LIMITS.maxSide, 1280);
+});
+
+test('the card that is empty is named, not "this picture"', async (t) => {
+  // Three cards on the board, and one of them has nothing in it: "this
+  // picture" says nothing about which one. The card that is empty is named.
+  const connector = createMockHostConnector();
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const empty = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_empty',
+      mode: 'text',
+      nodeMode: 'describe',
+      prompt: '',
+      references: [{
+        id: 'n_pic',
+        title: '参考图',
+        kind: 'image',
+        role: 'result',
+        text: '',
+        media: [],
+      }],
+    }),
+  });
+  assert.equal(empty.status, 400);
+  assert.match(empty.body.message, /参考图/);
+  assert.match(empty.body.message, /还没有内容/);
+});
+
+test('a big clip is read in a smaller shape, and a timeout is tried again', async (t) => {
+  // The provider reads a clip frame by frame, and the Host stops a connector
+  // call after thirty seconds. A clip that is too big for that is asked about
+  // in a smaller shape, and a call that ran out of time is asked again with
+  // the next size — not left as a silent failure.
+  const uploadServer = createHttpServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const uploadPort = uploadServer.address().port;
+  t.after(() => new Promise((resolve) => uploadServer.close(resolve)));
+
+  const connector = createMockHostConnector(undefined, {
+    // The first ask about the clip runs out of time.
+    timeoutCall: { tool: 'videos_understand', nth: 1 },
+    uploadHost: `http://127.0.0.1:${uploadPort}/upload`,
+  });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  // A clip like a phone recording: 1080×1920 at sixty frames a second.
+  await mkdir(join(h.dataDir, 'uploads'), { recursive: true });
+  const clip = join(h.dataDir, 'uploads', 'big.mp4');
+  const made = await makeTestClip(clip);
+  if (!made) {
+    t.skip('本机没有 ffmpeg，这条合同要在一台装了 ffmpeg 的机器上验');
+    return;
+  }
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_clip',
+      mode: 'text',
+      nodeMode: 'video2text',
+      prompt: '',
+      references: [{
+        id: 'n_v',
+        title: '参考视频',
+        kind: 'video',
+        role: 'result',
+        text: '',
+        media: [{ kind: 'video', url: '/uploads/big.mp4' }],
+      }],
+    }),
+  });
+  assert.equal(started.status, 202, JSON.stringify(started.body));
+  const runId = started.body.run.id;
+  let run = null;
+  for (let i = 0; i < 600 && run?.status !== 'done' && run?.status !== 'error'; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    run = (await getJson(h.base, `/api/runs/${runId}`)).body.run;
+    // The Agent asks before it writes, and the answer comes from the page.
+    if (run?.pendingPermission) {
+      await getJson(h.base, `/api/runs/${runId}/permission`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          requestId: run.pendingPermission.requestId,
+          sessionId: run.pendingPermission.sessionId,
+          decision: 'allowOnce',
+        }),
+      });
+    }
+  }
+
+  // The clip was asked about twice: the first ask ran out of time, and the
+  // second one was about a shape the provider could read.
+  const asked = connector.calls.filter((call) => call.toolRef.endsWith('videos-understand'));
+  assert.equal(asked.length, 2);
+  assert.match(asked[1].args.video_info[0].url, /^https:\/\//);
+  // And a smaller copy of the clip was made and uploaded for that ask.
+  const uploads = connector.calls.filter((call) => call.toolRef.endsWith('upload-temp-url'));
+  assert.ok(uploads.length >= 2, '没有把压小的视频传给 provider');
+  assert.ok(
+    uploads.some((call) => call.args?.filename && call.args.filename !== 'big.mp4'),
+    '没有压小一份视频',
+  );
+  // The run ends well: the second ask came back with an answer.
+  assert.equal(run.status, 'done', JSON.stringify(run).slice(0, 800));
+});
+
+/**
+ * A short clip like a phone recording, for the test that needs one.
+ *
+ * It is made by the local ffmpeg: the test that needs a clip is about what
+ * the runtime does with a big one, and a clip that is not big would not say
+ * anything. A machine without ffmpeg skips that test instead of failing it.
+ */
+async function makeTestClip(path) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=1080x1920:rate=60:duration=2',
+        '-pix_fmt', 'yuv420p',
+        path,
+      ],
+      { shell: false, windowsHide: true },
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+  });
+}
+
+test('a clip on this machine can be measured', async (t) => {
+  // ffprobe writes every tag of every stream, and a clip with a long tag
+  // list is more text than the answer is allowed to be: the answer was cut
+  // off in the middle and could not be read at all — so the runtime knew
+  // nothing about the clip it was asked to read, and the clip was sent to
+  // the provider exactly as it was.
+  const { createFfmpeg } = await import('../miniapp/node/ffmpeg.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-probe-'));
+  t.after(() => removeDir(dir));
+  const clip = join(dir, 'clip.mp4');
+  const made = await makeTestClip(clip);
+  if (!made) {
+    t.skip('本机没有 ffmpeg，这条合同要在一台装了 ffmpeg 的机器上验');
+    return;
+  }
+  const info = await createFfmpeg({}).probe(clip);
+  assert.equal(info.width, 1080);
+  assert.equal(info.height, 1920);
+  assert.equal(info.fps, 60);
+  assert.ok(info.duration > 1.5 && info.duration < 2.5, `时长读成了 ${info.duration}`);
+  // And only the fields that are needed are asked for: the whole of every
+  // stream and every tag is what made the answer too long to read.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/node/ffmpeg.mjs', import.meta.url)), 'utf8');
+  assert.match(source, /-show_entries/);
+  assert.equal(source.includes("'-show_streams'"), false, 'probe 又去问整个流了');
 });

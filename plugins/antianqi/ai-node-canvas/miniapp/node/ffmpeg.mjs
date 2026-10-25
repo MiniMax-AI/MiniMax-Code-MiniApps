@@ -20,7 +20,11 @@ const FFPROBE_NAME = IS_WINDOWS ? 'ffprobe.exe' : 'ffprobe';
 
 const MAX_SEARCH_DEPTH = 4;
 const DEFAULT_TIMEOUT_MS = 300_000;
-const MAX_CAPTURE_BYTES = 64 * 1024;
+// ffprobe writes a lot of metadata about a file — every tag of every stream —
+// and a clip with a long tag list runs past a small cap. The cap is there for
+// the case where a tool prints without end, so it is wide enough for a real
+// answer and still bounded.
+const MAX_CAPTURE_BYTES = 1024 * 1024;
 
 async function isExecutable(path) {
   try {
@@ -210,9 +214,17 @@ export function createFfmpeg(context) {
         code: 'FFMPEG_UNAVAILABLE',
       });
     }
+    // Only the fields this needs are asked for. The whole of every stream and
+    // every tag of the file is a lot of text, and it grows with the file: the
+    // answer was cut off in the middle and could not be read at all.
     const result = await spawnCapture(
       found.ffprobe,
-      ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file],
+      [
+        '-v', 'error',
+        '-print_format', 'json',
+        '-show_entries', 'stream=codec_type,width,height,avg_frame_rate,duration:format=duration',
+        file,
+      ],
       { timeoutMs: 60_000 },
     );
     if (result.code !== 0) {

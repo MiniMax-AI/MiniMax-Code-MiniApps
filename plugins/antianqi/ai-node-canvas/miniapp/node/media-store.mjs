@@ -9,7 +9,7 @@
 // expired is refreshed through the connector instead of failing the tool.
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { homedir } from 'node:os';
@@ -235,6 +235,11 @@ export function createMediaStore(context) {
   // succeeds, and is published into the asset folder afterwards.
   function out(ext) {
     const name = `m_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}${ext}`;
+    // The folder is made here, so every caller gets a path it can write to.
+    // The path is handed out synchronously, so the folder is made the same
+    // way: a caller that writes there without preparing it first loses the
+    // file, and the failure shows up as an empty result much later.
+    mkdirSync(workDir, { recursive: true });
     return join(workDir, name);
   }
 

@@ -30,6 +30,7 @@ import { createMediaStore } from './media-store.mjs';
 import { createFfmpeg } from './ffmpeg.mjs';
 import { buildMentionMap, compilePrompt, providerFamily, referencePattern, referenceSlots, tokenize } from './prompt.mjs';
 import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex } from './video-request.mjs';
+import { compressionArgs, isUnderstandTimeout, understandingPlan } from './understand-media.mjs';
 import { materialToRead } from '../client/forms.mjs';
 import { createConnectorRunner, queueWaitText } from './connector-runner.mjs';
 import { batchCount } from '../client/tools.mjs';
@@ -972,7 +973,7 @@ export function createAgentRunner(context) {
    * The text model never sees a picture or a video, so the runtime asks the
    * provider what the material shows, and the Agent writes from that.
    */
-  async function readMaterialFor(log, nodeMode, references) {
+  async function readMaterialFor(log, nodeMode, references, originalReferences = references) {
     const kind = materialToRead(nodeMode);
     if (!kind) return { content: '', kind: '' };
     const material = MATERIAL[kind];
@@ -986,9 +987,13 @@ export function createAgentRunner(context) {
     }
     const withContent = found.find((ref) => (ref.media ?? []).length);
     if (!withContent) {
-      // The material is connected, but it has nothing in it yet.
+      // The material is connected, but it has nothing in it yet. The card that
+      // is empty is named, so the user knows which one to fill: "this picture"
+      // says nothing when three cards are on the board.
+      const empty = found.find((ref) => !(ref.media ?? []).length);
+      const who = String(empty?.title ?? '').trim();
       throw Object.assign(
-        new Error(`${material?.this ?? `这${name}`}还没有内容：先让它跑出结果，或往输入节点里放一个${name}文件，再运行这个节点。`),
+        new Error(`${who || material?.this || `这${name}`}还没有内容：先让它跑出结果，或往输入节点里放一个${name}文件，再运行这个节点。`),
         { code: 'INVALID_ARGUMENTS' },
       );
     }
@@ -999,13 +1004,151 @@ export function createAgentRunner(context) {
       );
     }
     log.push(`▶ 先让 provider 读这${name}`);
-    const { text } = await connector.understand({
+    // The provider reads a clip frame by frame and the Host stops a connector
+    // call after thirty seconds, so a big clip is asked about in a smaller
+    // shape first. The clip that is made smaller is a working copy: it never
+    // reaches the canvas.
+    //
+    // The file on this machine is looked up by the link the page sent, not by
+    // the link the provider holds: the reference that was already uploaded
+    // points at the provider's copy, and that copy cannot be made smaller.
+    const original = (originalReferences ?? references).find((ref) => ref?.id === withContent.id);
+    const candidates = await understandingCandidates(
       kind,
-      url: withContent.media[0].url,
-      prompt: material?.ask ?? '',
+      withContent.media[0],
+      original?.media?.[0]?.url ?? '',
+    );
+    let lastError = null;
+    for (const candidate of candidates) {
+      try {
+        const { text } = await connector.understand({
+          kind,
+          url: candidate.url,
+          prompt: material?.ask ?? '',
+        });
+        if (candidate.note) log.push(`▶ ${candidate.note}`);
+        log.push(`▶ ${name}读完了，让 Agent 写`);
+        return { content: text, kind };
+      } catch (error) {
+        // Only a call that ran out of time is worth another try: the provider
+        // refused the clip, and a smaller clip would be refused the same way.
+        if (!isUnderstandTimeout(error)) throw error;
+        lastError = error;
+        log.push(`▶ provider 这一次没读出来（${error?.code ?? 'ERROR'}），换一档再试`);
+      }
+    }
+    throw Object.assign(
+      new Error(
+        `${lastError?.message ?? `这${name}没有读出来`}：这段素材对 provider 来说太长了，先剪短一点、或换一段更小的再试。`,
+      ),
+      { code: lastError?.code ?? 'CONNECTOR_ERROR' },
+    );
+  }
+
+  /**
+   * The clips the provider may be asked about, the smallest effort first.
+   *
+   * A clip that is too big for the time the Host gives a connector call is
+   * made smaller first: fewer frames and fewer pixels is what makes the
+   * difference, because the provider reads a clip frame by frame. The smaller
+   * clip is uploaded and thrown away; the canvas keeps the original.
+   */
+  async function understandingCandidates(kind, media, sourceUrl = '') {
+    const url = String(media?.url ?? '');
+    const origin = String(sourceUrl ?? '');
+    const isLocal = origin.startsWith('/uploads/') || origin.startsWith('/assets/');
+    if (!isLocal) return [{ url, note: '' }];
+    const localPath = store.localPathOf(origin);
+    if (!localPath) return [{ url, note: '' }];
+    let info = null;
+    try {
+      info = await ffmpeg.probe(localPath);
+    } catch (error) {
+      // The shape of the file is unknown, so it is measured by its size
+      // alone: a clip that cannot be measured is a clip that cannot be read
+      // in time.
+      context.logger?.info?.('the clip could not be measured', {
+        path: localPath,
+        message: String(error?.message ?? error),
+      });
+    }
+    const bytes = await fileBytes(localPath);
+    const plan = understandingPlan({
+      bytes,
+      duration: info?.duration,
+      width: info?.width,
+      height: info?.height,
+      fps: info?.fps,
     });
-    log.push(`▶ ${name}读完了，让 Agent 写`);
-    return { content: text, kind };
+    context.logger?.info?.('the clip is asked about', {
+      bytes,
+      duration: info?.duration ?? 0,
+      width: info?.width ?? 0,
+      height: info?.height ?? 0,
+      fps: info?.fps ?? 0,
+      compress: plan.compress,
+      reasons: plan.reasons.join('、'),
+    });
+    if (!plan.compress) return [{ url, note: '' }];
+    const candidates = [];
+    for (const tier of plan.tiers) {
+      const made = await smallerClip(localPath, tier, info ?? {});
+      if (!made) {
+        context.logger?.warn?.('the clip could not be made smaller', { path: localPath, tier: tier.label });
+        continue;
+      }
+      const uploaded = await store.uploadTempUrl(made.path).catch(() => null);
+      await store.discard(made.path);
+      if (!uploaded?.url) {
+        context.logger?.warn?.('the smaller clip could not be uploaded', { path: localPath, tier: tier.label });
+        continue;
+      }
+      candidates.push({
+        url: uploaded.url,
+        note: `这段${MATERIAL[kind]?.name ?? '素材'}太大（${plan.reasons.join('、')}），已压到${tier.label}再问`,
+      });
+    }
+    // The clip as it is, as the last try: it is the one the canvas shows.
+    candidates.push({ url, note: '' });
+    return candidates;
+  }
+
+  /**
+   * A smaller copy of a clip, for the provider to read.
+   *
+   * It is a working copy in the working folder: it is thrown away as soon as
+   * the provider has it, and it never becomes an asset of the canvas.
+   */
+  async function smallerClip(localPath, tier, info) {
+    const output = store.out('.mp4');
+    try {
+      await ffmpeg.run(
+        compressionArgs({
+          input: localPath,
+          output,
+          tier,
+          width: info.width,
+          height: info.height,
+          fps: info.fps,
+          duration: info.duration,
+          hasAudio: info.hasAudio,
+        }),
+      );
+      return { path: output };
+    } catch {
+      await store.discard(output);
+      return null;
+    }
+  }
+
+  /** How big a file is, in bytes. A file that cannot be read has no size. */
+  async function fileBytes(path) {
+    try {
+      const info = await stat(path);
+      return Number(info.size ?? 0) || 0;
+    } catch {
+      return 0;
+    }
   }
 
   return {
@@ -1094,7 +1237,7 @@ export function createAgentRunner(context) {
       // model never sees a picture or a video, so the provider is asked what it
       // shows first. It happens before the task exists, so a failure here does
       // not leave the node marked as running for ever.
-      const material = await readMaterialFor(setupLog, input.nodeMode, references);
+      const material = await readMaterialFor(setupLog, input.nodeMode, references, input.references);
 
       // Snap the requested parameters onto what the selected model supports.
       // The duration is fitted first: some models only offer a resolution for
