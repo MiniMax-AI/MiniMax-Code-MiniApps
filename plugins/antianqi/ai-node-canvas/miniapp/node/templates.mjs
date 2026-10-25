@@ -437,8 +437,8 @@ export const BUILTIN_TEMPLATES = [
   },
   {
     id: 'h3-reference',
-    title: 'H3 · 全参考图生视频',
-    description: '把图当参考交给 H3，提示词按它的全参考格式写。',
+    title: 'H3 · 全参考生视频',
+    description: '图、视频、音频都能当参考，空着的就是不带的；提示词按 H3 的全参考格式写。',
     group: 'H3',
     actions: [
       {
@@ -452,11 +452,27 @@ export const BUILTIN_TEMPLATES = [
       {
         type: 'add_node',
         args: {
+          type: 'input',
+          title: '参考视频',
+          kind: 'video',
+        },
+      },
+      {
+        type: 'add_node',
+        args: {
+          type: 'input',
+          title: '参考音频',
+          kind: 'audio',
+        },
+      },
+      {
+        type: 'add_node',
+        args: {
           type: 'text',
           title: 'H3 提示词',
           mode: 'prompt',
           templateId: 'h3-reference',
-          prompt: '参考图里的主体在原地做一个轻微的动作，镜头保持不动',
+          prompt: '参考里的主体在原地做一个轻微的动作，镜头保持不动',
         },
       },
       {
@@ -471,8 +487,10 @@ export const BUILTIN_TEMPLATES = [
           duration: 6,
         },
       },
-      { type: 'connect', args: { from: '@1', to: '@3' } },
-      { type: 'connect', args: { from: '@2', to: '@3' } },
+      { type: 'connect', args: { from: '@1', to: '@5' } },
+      { type: 'connect', args: { from: '@2', to: '@5' } },
+      { type: 'connect', args: { from: '@3', to: '@5' } },
+      { type: 'connect', args: { from: '@4', to: '@5' } },
     ],
   },
 ];

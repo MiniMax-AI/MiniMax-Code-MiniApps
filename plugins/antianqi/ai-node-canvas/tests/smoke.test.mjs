@@ -521,7 +521,7 @@ test('capability surface differs per generation mode', async (t) => {
   assert.deepEqual(hailuo.ratios, []);
   // Which requests each model can be asked for. The reference collection is
   // H3's alone, and the first+last frame request is not Hailuo's.
-  assert.deepEqual(h3.paths, ['keyframe', 'firstLast', 'lastFrame', 'collection', 'collectionAudio']);
+  assert.deepEqual(h3.paths, ['keyframe', 'firstLast', 'lastFrame', 'collection']);
   assert.deepEqual(h3max.paths, ['keyframe', 'firstLast', 'lastFrame']);
   assert.deepEqual(hailuo.paths, ['keyframe']);
   // One picture is the first frame; the reference collections are H3's alone.
@@ -2521,7 +2521,8 @@ test('the input ports follow the mode the node is in', async () => {
   assert.equal(modeForKinds('image', ['text', 'image']), 'image2image');
   // A picture on a video node lands on the first frame: it is the plain one.
   assert.equal(modeForKinds('video', ['text', 'image']), 'imagekey2video');
-  assert.equal(modeForKinds('video', ['video']), 'video2video');
+  // A clip lands on the reference set: that is the request that takes one.
+  assert.equal(modeForKinds('video', ['video']), 'image2video');
   assert.equal(modeForKinds('text', ['image']), 'describe');
   assert.equal(modeForKinds('text', ['text']), 'generate');
   // The order the connections arrive in does not matter.
@@ -3420,9 +3421,10 @@ test('the video node has no sound switches: the mode says what the request carri
   assert.doesNotMatch(store, /continueFromPrevious/);
 });
 
-test('the audio reference goes only in the mode that asks for it', async (t) => {
-  // The request that carries an audio is not the request that does not, so
-  // the mode says which one it is.
+test('the audio reference goes with the reference set', async (t) => {
+  // The provider takes ONE set: pictures, videos and audios sit in it
+  // together. The audio is not a request of its own any more, so it goes
+  // whenever it is there — and the picture goes with it.
   const connector = createMockHostConnector(undefined, { videoState: 'succeeded' });
   const h = await createHarness({ hostConnector: connector });
   t.after(() => h.cleanup());
@@ -3453,12 +3455,9 @@ test('the audio reference goes only in the mode that asks for it', async (t) => 
     return calls[calls.length - 1].args;
   };
 
-  const withoutAudio = await submitWith('collection', 'n_v1');
-  assert.equal(withoutAudio.reference_audios, undefined);
-  assert.equal(withoutAudio.reference_images.length, 1);
-
-  const withAudio = await submitWith('collectionAudio', 'n_v2');
-  assert.deepEqual(withAudio.reference_audios, [{ url: 'https://cdn.example.com/m.mp3' }]);
+  const withBoth = await submitWith('collection', 'n_v1');
+  assert.equal(withBoth.reference_images.length, 1);
+  assert.deepEqual(withBoth.reference_audios, [{ url: 'https://cdn.example.com/m.mp3' }]);
 });
 
 test('an audio reference never comes alone', async (t) => {
@@ -3477,7 +3476,7 @@ test('an audio reference never comes alone', async (t) => {
       mode: 'video',
       prompt: '一段配乐',
       modelKey: 'MiniMax-H3',
-      path: 'collectionAudio',
+      path: 'collection',
       references: [
         { id: 'n_music', title: '音乐', kind: 'audio', text: '', media: [{ url: 'https://cdn.example.com/m.mp3', kind: 'audio' }] },
       ],
@@ -3486,6 +3485,38 @@ test('an audio reference never comes alone', async (t) => {
   assert.equal(started.status, 400);
   const refused = await started.json();
   assert.match(refused.message, /音频参考要配一张图或一条视频/);
+  assert.equal(
+    connector.calls.some((call) => call.toolRef.endsWith('submit-video-generation')),
+    false,
+    'the run must not be sent',
+  );
+});
+
+test('a reference set with nothing in it is refused', async (t) => {
+  // The provider's own rule: a set of references needs at least one item. A
+  // word is not a reference, so the run is refused here instead of being sent
+  // and coming back with a provider error.
+  const connector = createMockHostConnector(undefined, { videoState: 'succeeded' });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_empty_set',
+      mode: 'video',
+      prompt: '一只猫在跑',
+      modelKey: 'MiniMax-H3',
+      path: 'collection',
+      references: [
+        { id: 'n_text', title: '文字', kind: 'text', text: '一只猫在跑', media: [] },
+      ],
+    }),
+  });
+  assert.equal(started.status, 400);
+  const refused = await started.json();
+  assert.match(refused.message, /至少要一样参考素材/);
   assert.equal(
     connector.calls.some((call) => call.toolRef.endsWith('submit-video-generation')),
     false,
@@ -3510,7 +3541,7 @@ test('the reference collections hold twelve items in all', async (t) => {
       mode: 'video',
       prompt: '太长的一组参考',
       modelKey: 'MiniMax-H3',
-      path: 'collectionAudio',
+      path: 'collection',
       references: [
         { id: 'n_pics', title: '图', kind: 'image', text: '', media: images },
         { id: 'n_vids', title: '视频', kind: 'video', text: '', media: videos },
@@ -3649,9 +3680,10 @@ test('a prompt node the Agent makes carries the template it was given', async ()
   );
 });
 
-test('an audio line moves the node to the mode that carries it', async () => {  // The one mode that takes an audio is the one with the audio port, so a
-  // line that carries an audio moves the node there — and the lines it
-  // already had go with it.
+test('an audio line keeps the node in the reference mode', async () => {
+  // The reference set is one mode and it takes a sound as well as a picture,
+  // so an audio line does not move the node anywhere: it lands on the audio
+  // port of the mode that is already there.
   const { applyAction } = await import('../miniapp/client/actions.mjs');
   const canvas = {
     nodes: [
@@ -3663,16 +3695,10 @@ test('an audio line moves the node to the mode that carries it', async () => {  
   };
   const withAudio = applyAction(canvas, { type: 'connect', args: { from: 'n_music', to: 'n_vid' } });
   assert.equal(withAudio.error, undefined);
-  // The node moves to the mode that takes an audio, and the picture line
-  // stays: both modes take a picture.
-  assert.equal(withAudio.canvas.nodes[2].metadata.mode, 'image2videoaudio');
+  // The node stays in the reference mode, and the picture line stays too: the
+  // set takes them both.
+  assert.equal(withAudio.canvas.nodes[2].metadata.mode, 'image2video');
   assert.equal(withAudio.canvas.connections.length, 2);
-  // And the mode that does not take an audio is not where it lands.
-  const noAudio = applyAction(
-    { ...canvas, nodes: [canvas.nodes[0], canvas.nodes[2]] },
-    { type: 'connect', args: { from: 'n_pic', to: 'n_vid' } },
-  );
-  assert.equal(noAudio.canvas.nodes[1].metadata.mode, 'image2video');
 });
 
 test('a provider error is reported instead of an empty result', async (t) => {  const connector = createMockHostConnector(undefined, { failImage: true });
@@ -4352,12 +4378,12 @@ test('every node declares the slots it takes and the one it hands on', async () 
   assert.deepEqual(portKinds({ type: 'image', metadata: { mode: 'text2image' } }), []);
   // The other kinds keep their ports.
   assert.deepEqual(portKinds({ type: 'image', metadata: { mode: 'image2image' } }), ['image']);
-  // A text-to-video run carries no reference: the audio reference only goes
-  // with a set of references, and the provider takes those two kinds of
-  // request apart.
+  // A text-to-video run carries no reference: the reference set is a request
+  // of its own.
   assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'text2video' } }), []);
-  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'image2video' } }), ['image']);
-  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'image2videoaudio' } }), ['image', 'audio']);
+  // And the reference set takes the three kinds the provider takes in it: a
+  // picture, a clip and a sound.
+  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'image2video' } }), ['image', 'video', 'audio']);
   // And the strip reads the same rule, so the card never says two different
   // things about the same input.
   assert.deepEqual(stripInputs({ type: 'image', metadata: { mode: 'image2image' } }), [{ kind: 'image', role: '', label: '' }]);
@@ -5102,41 +5128,31 @@ test('the modes and the ports follow the model the node selected', async () => {
   const video = { type: 'video', metadata: { mode: 'imagekey2video' } };
   assert.deepEqual(
     modesFor(video, h3).map((mode) => mode.id),
-    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video', 'image2videoaudio', 'video2video', 'video2videoaudio'],
+    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video'],
   );
-  // The ports are the kinds the mode takes and the model allows.
+  // The ports are the kinds the mode takes and the model allows: the
+  // reference set takes a picture, a clip and a sound.
   const ref = { type: 'video', metadata: { mode: 'image2video' } };
-  assert.deepEqual(portKindsFor(ref, h3), ['image']);
-  // The audio reference is a mode of its own: the request that carries an
-  // audio is not the request that does not.
-  const withAudio = { type: 'video', metadata: { mode: 'image2videoaudio' } };
-  assert.deepEqual(portKindsFor(withAudio, h3), ['image', 'audio']);
+  assert.deepEqual(portKindsFor(ref, h3), ['image', 'video', 'audio']);
 
-  // MiniMax-H3-Max has no reference collection, so the mode that continues a
-  // video and the mode that runs on a set of references are both off the table.
+  // MiniMax-H3-Max has no reference collection, so the mode that runs on a
+  // set of references is off the table.
   const max = resolveLimits('video', 'MiniMax-H3-Max');
-  // A kind the model cannot take has no port either: H3-Max takes no audio,
-  // so the mode that carries one loses that port.
-  assert.deepEqual(portKindsFor(withAudio, max), ['image']);
   // A kind the model cannot take has no port either: the reference set has an
-  // audio port, and H3-Max takes no audio.
+  // audio port and a video port, and H3-Max takes neither.
   assert.deepEqual(portKindsFor(ref, max), ['image']);
   assert.deepEqual(
     modesFor(video, max).map((mode) => mode.id),
     ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video'],
   );
   assert.deepEqual(portKindsFor(video, max), ['image']);
-  const cont = { type: 'video', metadata: { mode: 'video2video' } };
+  // The model that can take a clip still offers the reference set, and the set
+  // is the same one for every kind of reference.
   assert.deepEqual(
-    modesFor(cont, max).map((mode) => mode.id),
-    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video'],
+    modesFor(ref, h3).map((mode) => mode.id),
+    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video'],
   );
-  // The model that can continue a video still offers it.
-  assert.deepEqual(
-    modesFor(cont, h3).map((mode) => mode.id),
-    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video', 'image2videoaudio', 'video2video', 'video2videoaudio'],
-  );
-  assert.deepEqual(portKindsFor(cont, h3), ['video']);
+  assert.deepEqual(portKindsFor(ref, h3), ['image', 'video', 'audio']);
 
   // Hailuo has the first frame and nothing else.
   const hailuo = resolveLimits('video', 'MiniMax-Hailuo-2.3');
@@ -5155,27 +5171,64 @@ test('the modes and the ports follow the model the node selected', async () => {
   const { stripInputs } = await import('../miniapp/client/forms.mjs');
   assert.deepEqual(stripInputs(ref, h3), [
     { kind: 'image', role: '', label: '' },
-  ]);
-  // The mode that carries an audio reference has the audio port, and the one
-  // without it does not: the mode says what the request carries.
-  assert.deepEqual(stripInputs(withAudio, h3), [
-    { kind: 'image', role: '', label: '' },
+    { kind: 'video', role: '', label: '' },
     { kind: 'audio', role: '', label: '' },
-  ]);
-  // And a kind the model cannot take is not an input of the node either:
-  // H3-Max takes no audio.
-  assert.deepEqual(stripInputs(withAudio, max), [
-    { kind: 'image', role: '', label: '' },
   ]);
   // The first frame mode has one picture port, and it says which end it is.
   assert.deepEqual(stripInputs(video, max), [
     { kind: 'image', role: 'first', label: '首帧' },
   ]);
   // A kind the model cannot take is not an input of the node either: the
-  // reference set has an audio port, and H3-Max takes no audio.
+  // reference set has a clip port and a sound port, and H3-Max takes neither.
   assert.deepEqual(stripInputs(ref, max), [
     { kind: 'image', role: '', label: '' },
   ]);
+});
+
+test('the reference set takes a picture, a clip and a sound', async () => {
+  // The provider takes ONE set of references, and the set may hold pictures,
+  // videos and audios together. The card says the same thing: the ports of
+  // the reference mode are the three kinds.
+  const { modeRecordOf, portKindsFor } = await import('../miniapp/client/forms.mjs');
+  const { resolveLimits } = await import('../miniapp/node/capabilities.mjs');
+  const h3 = resolveLimits('video', 'MiniMax-H3');
+  const ref = { type: 'video', metadata: { mode: 'image2video' } };
+  const record = modeRecordOf(ref);
+  assert.equal(record.id, 'image2video');
+  assert.deepEqual(record.ports.map((port) => port.kind), ['text', 'image', 'video', 'audio']);
+  assert.deepEqual(portKindsFor(ref, h3), ['image', 'video', 'audio']);
+});
+
+test('the modes that split the reference set land on the one that carries them all', async () => {
+  // A canvas from before the merge names a mode that split the set by the
+  // kind of its first reference. It keeps its card and lands on the mode that
+  // carries them all — and gains the kinds it was missing.
+  const { currentModeId, modeOf, portKindsFor } = await import('../miniapp/client/forms.mjs');
+  const { resolveLimits } = await import('../miniapp/node/capabilities.mjs');
+  const h3 = resolveLimits('video', 'MiniMax-H3');
+  for (const old of ['image2videoaudio', 'video2video', 'video2videoaudio']) {
+    assert.equal(currentModeId(old), 'image2video');
+    const node = { type: 'video', metadata: { mode: old } };
+    assert.equal(modeOf(node), 'image2video');
+    assert.deepEqual(portKindsFor(node, h3), ['image', 'video', 'audio']);
+  }
+});
+
+test('the tool tells the Agent the modes the table has', async () => {
+  // The MCP schema lists the modes the Agent may set. The list comes from the
+  // mode table, so a mode that is added or taken away is in the tool the
+  // moment it is — there is no second copy to forget.
+  const { MCP_TOOLS } = await import('../miniapp/node/mcp.mjs');
+  const { modesOf } = await import('../miniapp/client/forms.mjs');
+  const tool = MCP_TOOLS.find((item) => item.name === 'canvas_update_node');
+  const schema = tool.inputSchema.properties.mode;
+  for (const id of modesOf({ type: 'video' }).map((mode) => mode.id)) {
+    assert.ok(schema.enum.includes(id), `the tool does not offer ${id}`);
+  }
+  // And the modes that are gone are not offered any more.
+  assert.ok(!schema.enum.includes('video2video'));
+  assert.ok(!schema.enum.includes('image2videoaudio'));
+  assert.ok(!schema.enum.includes('video2videoaudio'));
 });
 
 test('the mode list of the card follows the model too', async () => {
@@ -5210,15 +5263,15 @@ test('switching the model leaves the node on a mode the model can run', async ()
         title: '片',
         metadata: { output: { media: [{ kind: 'video', url: 'u' }] } },
       },
-      { id: 'n_t', type: 'video', title: '续写', metadata: { mode: 'video2video', model: 'MiniMax-H3' } },
+      { id: 'n_t', type: 'video', title: '参考', metadata: { mode: 'image2video', model: 'MiniMax-H3' } },
     ],
     connections: [{ id: 'c1', fromNodeId: 'n_v', toNodeId: 'n_t', kind: 'video' }],
   };
   const node = canvas.nodes[1];
 
-  // MiniMax-H3 can continue a video: the mode stays where it is.
+  // MiniMax-H3 can take a clip as a reference: the mode stays where it is.
   const same = applyModel(canvas, node, 'MiniMax-H3', { capsFor });
-  assert.equal(same.node.metadata.mode, 'video2video');
+  assert.equal(same.node.metadata.mode, 'image2video');
   assert.equal(same.dropped.length, 0);
 
   // MiniMax-H3-Max cannot: the node moves to a mode it can run, and the video
@@ -6960,6 +7013,17 @@ test('the ready-made templates cover the ways a chain starts', async () => {
     assert.equal(prompt.args.mode, 'prompt');
     assert.equal(prompt.args.templateId, id);
   }
+  // The full reference is the one shape that takes everything H3 can read, so
+  // the template leaves a slot for a picture, a clip and a sound. What is
+  // empty is simply not in the request.
+  const reference = byId.get('h3-reference');
+  const slots = reference.actions
+    .filter((action) => action.type === 'add_node' && action.args.type === 'input')
+    .map((action) => action.args.kind);
+  assert.deepEqual(slots, ['image', 'video', 'audio']);
+  // And every one of them is wired to the reference node.
+  const wires = reference.actions.filter((action) => action.type === 'connect');
+  assert.equal(wires.length, 4);
   // The two that imitate: the picture and the clip are read back into a
   // prompt, and the prompt is what is generated from.
   for (const [id, mode, read] of [
@@ -7299,7 +7363,7 @@ test('the menu offers the kinds of node, and a mode is a choice on the card', as
   assert.deepEqual(modesOf({ type: 'text', metadata: {} }).map((mode) => mode.id), ['generate', 'prompt', 'describe', 'video2text']);
   assert.deepEqual(modesOf({ type: 'audio', metadata: {} }).map((mode) => mode.id), ['speech', 'music']);
   assert.deepEqual(modesOf({ type: 'image', metadata: {} }).map((mode) => mode.id), ['text2image', 'image2image']);
-  assert.deepEqual(modesOf({ type: 'video', metadata: {} }).map((mode) => mode.id), ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video', 'image2videoaudio', 'video2video', 'video2videoaudio']);
+  assert.deepEqual(modesOf({ type: 'video', metadata: {} }).map((mode) => mode.id), ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video']);
   // The mode a node is in, and the way it runs.
   assert.equal(modeOf({ type: 'text', metadata: { mode: 'prompt' } }), 'prompt');
   assert.equal(modeOf({ type: 'text', metadata: {} }), 'generate');
@@ -7397,7 +7461,7 @@ test('the modes that were two are one, and an old canvas lands on the one that i
   // The video node had the same pair, for the same reason.
   assert.deepEqual(
     modesOf({ type: 'video', metadata: {} }).map((mode) => mode.id),
-    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video', 'image2videoaudio', 'video2video', 'video2videoaudio'],
+    ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video'],
   );
   // A canvas that still names the old mode keeps its card and lands on the
   // mode that is left.

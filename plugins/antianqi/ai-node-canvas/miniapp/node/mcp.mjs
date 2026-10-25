@@ -14,7 +14,7 @@
 // kinds it can take — are the same pure functions the page renders from, so
 // what the Agent reads is what the user sees on the card.
 import { batchCount, effectiveOption, inputSlotState, kindOf, modeOf, modeRecordOf, roleOf, slotsOf } from '../client/tools.mjs';
-import { stripInputs } from '../client/forms.mjs';
+import { NODE_MODES, stripInputs } from '../client/forms.mjs';
 import { limitsForNodeType, PROMPT_TEMPLATES } from './capabilities.mjs';
 
 // Keep in sync with `mcpEndpoints` in miniapp/miniapp.json.
@@ -31,6 +31,22 @@ const PROMPT_TEMPLATE_IDS = PROMPT_TEMPLATES.map((item) => item.id);
 const PROMPT_TEMPLATE_HINT = PROMPT_TEMPLATES
   .map((item) => `${item.id}（${item.label}）`)
   .join('、');
+
+// The modes the Agent may set, and what they are called. The list comes from
+// the mode table, so a mode that is added, renamed or taken away is in this
+// tool's description the moment it is — there is no second copy to forget.
+const MODE_IDS = Object.values(NODE_MODES).flat().map((mode) => mode.id);
+const MODE_HINT = [
+  ['text', 'text 节点'],
+  ['image', 'image 节点'],
+  ['video', 'video 节点'],
+  ['audio', 'audio 节点'],
+]
+  .map(([type, name]) => {
+    const list = (NODE_MODES[type] ?? []).map((mode) => `${mode.id}（${mode.label}）`).join('、');
+    return `${name}可用 ${list}`;
+  })
+  .join('，');
 
 export const MCP_TOOLS = [
   {
@@ -82,8 +98,8 @@ export const MCP_TOOLS = [
         },
         mode: {
           type: 'string',
-          enum: ['generate', 'prompt', 'describe', 'video2text', 'speech', 'music', 'text2image', 'image2image', 'text2video', 'image2video', 'image2videoaudio', 'imagekey2video', 'imagefl2video', 'imageend2video', 'video2video', 'video2videoaudio'],
-          description: '节点做什么：模式决定它接什么（左侧的端点）。text 节点可用 prompt（提示词增强）、describe（图生文）、video2text（视频生文，反推提示词），image 节点可用 image2image（图生图），video 节点可用 text2video（文生视频）、imagekey2video（图生视频·首帧）、imagefl2video（图生视频·首尾帧）、imageend2video（图生视频·末帧）、image2video（图生视频·参考）、image2videoaudio（图生视频·参考+音频）、video2video（视频续写）、video2videoaudio（视频续写+音频），audio 节点可用 music（文生音乐）',
+          enum: MODE_IDS,
+          description: `节点做什么：模式决定它接什么（左侧的端点）。${MODE_HINT}。参考生视频（image2video）可以接图、视频和音频当参考，provider 一次最多收 12 项；音频不能单独来，要配一张图或一条视频。`,
         },
         x: { type: 'number', description: '画布上的横坐标' },
         y: { type: 'number', description: '画布上的纵坐标' },
@@ -144,8 +160,8 @@ export const MCP_TOOLS = [
         emotion: { type: 'string', description: '情绪' },
         mode: {
           type: 'string',
-          enum: ['generate', 'prompt', 'describe', 'video2text', 'speech', 'music', 'text2image', 'image2image', 'text2video', 'image2video', 'image2videoaudio', 'imagekey2video', 'imagefl2video', 'imageend2video', 'video2video', 'video2videoaudio'],
-          description: '节点做什么：模式决定它接什么（左侧的端点）。text 节点可用 prompt（提示词增强）、describe（图生文）、video2text（视频生文，反推提示词），image 节点可用 image2image（图生图），video 节点可用 text2video（文生视频）、imagekey2video（图生视频·首帧）、imagefl2video（图生视频·首尾帧）、imageend2video（图生视频·末帧）、image2video（图生视频·参考）、image2videoaudio（图生视频·参考+音频）、video2video（视频续写）、video2videoaudio（视频续写+音频），audio 节点可用 music（文生音乐）',
+          enum: MODE_IDS,
+          description: `节点做什么：模式决定它接什么（左侧的端点）。${MODE_HINT}。参考生视频（image2video）可以接图、视频和音频当参考，provider 一次最多收 12 项；音频不能单独来，要配一张图或一条视频。`,
         },
         templateId: {
           type: 'string',

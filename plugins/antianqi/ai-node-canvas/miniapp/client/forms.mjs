@@ -69,9 +69,10 @@ export const NODE_FORMS = {
  * The order matters: the first mode whose inputs cover what is connected is
  * the mode a node lands in, so the plain one comes first.
  *
- * `needs` says what the mode is *about*: 视频续写 is about a video, so only a
- * model that takes video references can run it. The other kinds it accepts are
- * optional extras, and their ports follow the model.
+ * `needs` says what the mode is *about*: 图生文 is about a picture, so only a
+ * model that takes a picture can run it. The other kinds it accepts are
+ * optional extras, and their ports follow the model. A mode with no `needs`
+ * asks for whatever the model takes — the reference set is that one.
  *
  * A port may carry a role. A mode that takes the same kind twice — 图生视频·首尾帧
  * takes two pictures, one for each end of the clip — says which is which, and
@@ -102,16 +103,16 @@ export const NODE_MODES = {
     //   首帧   the picture is the first frame — the frame decides the shape
     //   首尾帧 two pictures, one at each end of the clip
     //   参考   a set of references, and the ratio decides the shape
-    // The two reference requests differ in one thing: whether an audio
-    // reference goes with them. That is what the mode says, so the card
-    // never shows a control the request ignores.
+    // The reference set is ONE request, and the set may hold pictures, videos
+    // and audios at the same time — twelve items in all. The modes that split
+    // it by the kind of the first reference were four ways to say the same
+    // thing, and they hid the two kinds the provider does take: a clip and a
+    // sound. One mode carries them all, and the ports it shows are the ones
+    // the model really takes.
     { id: 'imagekey2video', label: '图生视频·首帧', ports: [{ kind: 'text' }, { kind: 'image', role: 'first', label: '首帧' }], needs: ['image'], path: 'keyframe' },
     { id: 'imagefl2video', label: '图生视频·首尾帧', ports: [{ kind: 'text' }, { kind: 'image', role: 'first', label: '首帧' }, { kind: 'image', role: 'last', label: '尾帧' }], needs: ['image'], path: 'firstLast' },
     { id: 'imageend2video', label: '图生视频·末帧', ports: [{ kind: 'text' }, { kind: 'image', role: 'last', label: '末帧' }], needs: ['image'], path: 'lastFrame' },
-    { id: 'image2video', label: '图生视频·参考', ports: [{ kind: 'text' }, { kind: 'image' }], needs: ['image'], path: 'collection' },
-    { id: 'image2videoaudio', label: '图生视频·参考+音频', ports: [{ kind: 'text' }, { kind: 'image' }, { kind: 'audio' }], needs: ['image'], path: 'collectionAudio' },
-    { id: 'video2video', label: '视频续写', ports: [{ kind: 'text' }, { kind: 'video' }], needs: ['video'], path: 'collection' },
-    { id: 'video2videoaudio', label: '视频续写+音频', ports: [{ kind: 'text' }, { kind: 'video' }, { kind: 'audio' }], needs: ['video'], path: 'collectionAudio' },
+    { id: 'image2video', label: '参考生视频', ports: [{ kind: 'text' }, { kind: 'image' }, { kind: 'video' }, { kind: 'audio' }], path: 'collection' },
   ],
   audio: [
     { id: 'speech', label: '文生音频', ports: [{ kind: 'text' }] },
@@ -133,6 +134,13 @@ const LEGACY_MODES = {
   // frame mode has taken that name for itself: the old id lands on the mode
   // it meant.
   imagelast2video: 'imagefl2video',
+  // The reference set is one request: it may hold pictures, videos and audios
+  // together. The modes that split it by the kind of the first reference land
+  // on the one that carries them all, so a canvas from before keeps its card
+  // and gains the kinds it was missing.
+  image2videoaudio: 'image2video',
+  video2video: 'image2video',
+  video2videoaudio: 'image2video',
 };
 
 /**
@@ -448,8 +456,9 @@ export function referenceKinds(caps) {
 /**
  * The modes a model can run.
  *
- * A mode is about one kind of input: 视频续写 needs a video, and only the
- * model that takes video references can run it.
+ * A mode is about one kind of input: 图生文 needs a picture, and only the
+ * model that takes a picture can run it. The reference set has no kind of its
+ * own: it takes what the model takes.
  *
  * A mode also says which request it makes, and a model only runs the requests
  * it has: the reference collection is H3's alone, and the first+last frame

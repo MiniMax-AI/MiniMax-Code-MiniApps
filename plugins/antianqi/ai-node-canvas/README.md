@@ -399,13 +399,12 @@ video. They are not one request with different parameters:
 | First frame | `input_image` + `reference_type: first_frame` | all three models |
 | First+last frame | the first frame + `last_frame_image` | H3 and H3-Max |
 | Last frame | `input_image` + `reference_type: last_frame` | H3 and H3-Max |
-| References | `reference_images` / `reference_videos` | H3 only |
-| References with audio | the same, plus `reference_audios` | H3 only |
+| Reference set | `reference_images` / `reference_videos` / `reference_audios` | H3 only |
 
 So the **mode says which request is wanted** and the **model says which
-requests exist** — two different questions. The video node has eight modes,
-and every one of them has an exact port list: what it takes is what the
-request carries.
+requests exist** — two different questions. The video node has six modes, and
+every one of them has an exact port list: what it takes is what the request
+carries.
 
 | Mode | Ports |
 | --- | --- |
@@ -413,10 +412,7 @@ request carries.
 | 图生视频·首帧 | text, picture (first frame) |
 | 图生视频·首尾帧 | text, picture (first frame), picture (last frame) |
 | 图生视频·末帧 | text, picture (last frame) |
-| 图生视频·参考 | text, picture |
-| 图生视频·参考+音频 | text, picture, audio |
-| 视频续写 | text, video |
-| 视频续写+音频 | text, video, audio |
+| 参考生视频 | text, picture, video, audio |
 
 - The first+last frame mode needs **two pictures**, so the card has two picture
   ports and the slot strip names them **首帧** and **尾帧**; the line that lands
@@ -425,16 +421,19 @@ request carries.
   first+last request that has no last frame. The last-frame mode is the same
   request at the other end: the picture is the ending, and it is sent as the
   single `input_image` with `reference_type: last_frame`.
-- An audio reference is a **reference**, not the soundtrack pasted on: it tells
-  the model which way the sound should go, and the track is still the model's
-  own. That is why it deserves a mode of its own ("with audio" and "without
-  audio" are two requests) instead of a switch.
-- Two of the provider's own rules are enforced before the run is sent, because
-  the page cannot see either of them: **an audio reference never comes alone**
-  (it needs a picture or a video), and **the collections hold twelve items in
-  all** (nine pictures, three videos and three audios is fifteen — refused).
-  A run that breaks them is refused with a reason instead of being sent and
-  coming back with a provider error.
+- The reference set is **one request**, and the set may hold pictures, videos
+  and audios together: nine pictures, three videos and three audios, twelve
+  items in all. So the mode carries all three kinds, and the ports it shows
+  are the ones the model really takes — H3 shows picture, video and audio, and
+  a model without a reference set does not show the mode at all. A clip and a
+  sound are references like a picture is: they tell the model what to follow,
+  and the soundtrack is still the model's own.
+- Three of the provider's own rules are enforced before the run is sent, because
+  the page cannot see any of them: **a reference set needs at least one item**,
+  **an audio reference never comes alone** (it needs a picture or a video), and
+  **the set holds twelve items in all** (nine pictures, three videos and three
+  audios is fifteen — refused). A run that breaks them is refused with a
+  reason instead of being sent and coming back with a provider error.
 - The ratio control follows the **request**, not the model: the two keyframe
   requests follow the frame, so the card offers no ratio there; a
   text-to-video run and a reference set can pick one.
@@ -447,7 +446,7 @@ conditional schema, not from taste:
 
 | | MiniMax-H3 | MiniMax-H3-Max | MiniMax-Hailuo-2.3 |
 | --- | --- | --- | --- |
-| Modes | 文生视频 · 首帧 · 首尾帧 · 末帧 · 参考 · 参考+音频 · 续写 · 续写+音频 | 文生视频 · 首帧 · 首尾帧 · 末帧 | 文生视频 · 首帧 |
+| Modes | 文生视频 · 首帧 · 首尾帧 · 末帧 · 参考 | 文生视频 · 首帧 · 首尾帧 · 末帧 | 文生视频 · 首帧 |
 | Duration | 4–15 s | 5–15 s | 6 s or 10 s |
 | Resolution | 768P, 2K | 480P, 768P | 768P; 1080P only with 6 s |
 | Ratio | 6 ratios + `adaptive` (follows the first frame) | 6 ratios + `adaptive` (it is in the H3 family) | none — it is not in the H3 family |
@@ -455,9 +454,8 @@ conditional schema, not from taste:
 | Sound | renders its own synchronized track | **silent** — use H3 for a voice | silent — add a speech node on top |
 | Billing | account credits | account credits | Token Plan |
 
-So the card follows the model: switching to H3-Max takes the **first+last
-frame** mode (it needs two pictures), the **reference** modes (it has no
-reference set) and the audio port off the table; switching to Hailuo leaves
+So the card follows the model: switching to H3-Max takes the **reference set**
+(it has none) and the audio port off the table; switching to Hailuo leaves
 only 文生视频 and 首帧. The same rule runs when the Agent changes the model
 through MCP, so the canvas is the same whoever asked.
 

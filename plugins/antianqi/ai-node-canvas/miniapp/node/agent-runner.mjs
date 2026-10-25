@@ -29,7 +29,7 @@ import { createProviderUploader } from './provider-upload.mjs';
 import { createMediaStore } from './media-store.mjs';
 import { createFfmpeg } from './ffmpeg.mjs';
 import { buildMentionMap, compilePrompt, providerFamily, referencePattern, referenceSlots, tokenize } from './prompt.mjs';
-import { alignmentLine, frameRequestShape, lastShotIndex } from './video-request.mjs';
+import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex } from './video-request.mjs';
 import { materialToRead } from '../client/forms.mjs';
 import { createConnectorRunner, queueWaitText } from './connector-runner.mjs';
 import { batchCount } from '../client/tools.mjs';
@@ -134,8 +134,14 @@ function assertWithinLimits(capabilities, references, path = '') {
   //   - the collections hold twelve items in all
   // The page cannot see either of them, so the run is refused here instead of
   // being sent and coming back with a provider error.
-  if (path === 'collectionAudio' || path === 'collection') {
+  if (COLLECTION_PATHS.has(path)) {
     const total = counts.image + counts.video + counts.audio;
+    if (total === 0) {
+      throw Object.assign(
+        new Error('参考生视频至少要一样参考素材：一张图、一条视频或一段音频。'),
+        { code: 'INVALID_ARGUMENTS' },
+      );
+    }
     const limit = capabilities.maxReferenceItems ?? 0;
     if (limit && total > limit) {
       throw Object.assign(
@@ -144,7 +150,7 @@ function assertWithinLimits(capabilities, references, path = '') {
       );
     }
   }
-  if (path === 'collectionAudio' && counts.audio > 0 && counts.image + counts.video === 0) {
+  if (COLLECTION_PATHS.has(path) && counts.audio > 0 && counts.image + counts.video === 0) {
     throw Object.assign(
       new Error('音频参考要配一张图或一条视频：provider 只收成组的参考，音频不能单独来。'),
       { code: 'INVALID_ARGUMENTS' },

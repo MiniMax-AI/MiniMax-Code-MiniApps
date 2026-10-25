@@ -91,11 +91,10 @@ const VIDEO_MODELS = [
     //   keyframe         the picture is the first frame
     //   firstLast        two pictures, one at each end
     //   lastFrame        one picture, and it is the last frame
-    //   collection       a set of references
-    //   collectionAudio  the same set, plus an audio reference
-    // H3 is the only model with the collections, and the only one that can
+    //   collection       a set of references: pictures, videos and audios
+    // H3 is the only model with the collection, and the only one that can
     // read a video or an audio as a reference.
-    paths: ['keyframe', 'firstLast', 'lastFrame', 'collection', 'collectionAudio'],
+    paths: ['keyframe', 'firstLast', 'lastFrame', 'collection'],
     resolutions: ['768P', '2K'],
     durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     // The reference collections: up to nine pictures, three videos and three
@@ -121,7 +120,7 @@ const VIDEO_MODELS = [
     // keyframe requests follow the frame instead.
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
     // No collection: this model has no reference sets, so it cannot run the
-    // 图生视频·参考 mode, and it is not a candidate for 视频续写 either.
+    // 参考生视频 mode.
     paths: ['keyframe', 'firstLast', 'lastFrame'],
     resolutions: ['480P', '768P'],
     durations: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],

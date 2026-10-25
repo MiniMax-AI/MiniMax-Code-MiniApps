@@ -13,7 +13,7 @@
 // Every parameter below is taken from the connector's own input schema; the
 // field names are never guessed.
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
-import { frameRequestShape } from './video-request.mjs';
+import { COLLECTION_PATHS, frameRequestShape } from './video-request.mjs';
 import { batchCount } from '../client/tools.mjs';
 
 const INVENTORY_TTL_MS = 60_000;
@@ -399,12 +399,12 @@ export function createConnectorRunner(context, options = {}) {
         if (shape.kind === 'firstLast') {
           request.last_frame_image = { url: shape.last.url };
         }
-      } else if (path === 'collection' || path === 'collectionAudio') {
+      } else if (COLLECTION_PATHS.has(path)) {
         if (reference.images.length) request.reference_images = reference.images;
         if (reference.videos.length) request.reference_videos = videoReferences(reference.videos);
-        // The audio goes only when the mode asked for it: the mode says what
-        // the request carries.
-        if (path === 'collectionAudio' && reference.audios.length) {
+        // The audio belongs to the same set: the provider takes it in the
+        // collection, and it is only refused when it comes alone.
+        if (reference.audios.length) {
           request.reference_audios = reference.audios;
         }
         // A reference set may follow the frame instead of a shape.

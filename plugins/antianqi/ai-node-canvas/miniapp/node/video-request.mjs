@@ -16,6 +16,16 @@
 export const FRAME_PATHS = new Set(['keyframe', 'firstLast', 'lastFrame']);
 
 /**
+ * The requests that carry a reference set.
+ *
+ * The provider takes ONE set: pictures, videos and audios may sit in it
+ * together, twelve items in all. The second name is the one the collection
+ * used to have when the audio was a mode of its own — an old page may still
+ * ask for it, and it is the same request.
+ */
+export const COLLECTION_PATHS = new Set(['collection', 'collectionAudio']);
+
+/**
  * The picture on a port.
  *
  * The first frame and the last frame are the two lines on the card, and each
