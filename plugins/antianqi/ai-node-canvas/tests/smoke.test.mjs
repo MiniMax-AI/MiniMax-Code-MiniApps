@@ -7869,3 +7869,54 @@ test('every module the page imports is served, and the fingerprint covers it', a
   // itself when the client code changes.
   assert.deepEqual(FINGERPRINT_FILES, [...CLIENT_FILES.values()].map((entry) => entry.file));
 });
+
+test('a wait holds on to the run it is about', async () => {
+  // The page forgets which run belongs to a node as soon as that run is over
+  // — the node is free to run again — so a waiter that looked the run up again
+  // would never see it finish, and the chain that waits for an upstream node
+  // would stand still until its own timeout.
+  const { waitForTheRun } = await import('../miniapp/client/run-watch.mjs');
+  const tasks = new Map([['r_1', { id: 'r_1', status: 'running' }]]);
+  const readTask = (id) => tasks.get(id);
+  let ticks = 0;
+  const schedule = (fn) => {
+    ticks += 1;
+    if (ticks >= 3) tasks.set('r_1', { id: 'r_1', status: 'done' });
+    fn();
+  };
+  const task = await waitForTheRun({ taskId: 'r_1', readTask, schedule, intervalMs: 0 });
+  assert.equal(task.status, 'done');
+  // A wait with no run at all ends at once: nothing is going to happen.
+  const none = await waitForTheRun({ taskId: null, readTask, schedule: () => {}, intervalMs: 0 });
+  assert.equal(none, null);
+  // And a run that never ends ends the wait by the timeout, not for ever.
+  let clock = 0;
+  const timedOut = await waitForTheRun({
+    taskId: 'r_2',
+    readTask,
+    schedule: (fn) => fn(),
+    intervalMs: 0,
+    now: () => { clock += 3_000_000; return clock; },
+    timeoutMs: 2_700_000,
+  });
+  assert.equal(timedOut, null);
+});
+
+test('a busy node is not a failed one', async () => {
+  // The runtime refuses a second run on a node that is already running. That
+  // is not a failure: the run that is on the node is the one to wait for, and
+  // marking the node as failed would be a lie.
+  const { isBusyRefusal } = await import('../miniapp/client/run-watch.mjs');
+  assert.equal(isBusyRefusal({ code: 'BUSY', message: '这个节点正在生成中，请等它跑完' }), true);
+  assert.equal(isBusyRefusal({ code: 'INVALID_ARGUMENTS' }), false);
+  assert.equal(isBusyRefusal({ status: 500 }), false);
+  assert.equal(isBusyRefusal(null), false);
+});
+
+test('the page waits for the run it was given, and a busy node keeps its card', async () => {
+  // The rule is one rule: the page holds the run it waits for, and a node that
+  // is busy is not marked as failed.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(source, /const taskId = state\.nodeTasks\.get\(nodeId\);\s*\n\s*return waitForTheRun\(\{/);
+  assert.match(source, /if \(isBusyRefusal\(error\)\) \{/);
+});

@@ -41,3 +41,58 @@ export async function withDeadline(call, ms) {
 export function runIsGone(error) {
   return Number(error?.status) === 404;
 }
+
+/**
+ * Whether the runtime refused because the node is already running.
+ *
+ * That is not a failure: the run that is on the node is the one the chain has
+ * to wait for, and marking the node as failed would be a lie.
+ */
+export function isBusyRefusal(error) {
+  return String(error?.code ?? '') === 'BUSY';
+}
+
+/**
+ * Wait for one run to be over.
+ *
+ * The run is held on to **by its id**. The page forgets which run belongs to a
+ * node as soon as that run is over — the node is free to run again — so a
+ * waiter that looked the run up again would never see it finish, and the chain
+ * would stand still until its own timeout.
+ *
+ * The run that is waited for may be one that was already going: the runtime
+ * refuses a second run on the same node, so a chain that meets a busy node
+ * waits for the run that is there.
+ */
+export function waitForTheRun({
+  taskId,
+  readTask,
+  timeoutMs = 2_700_000,
+  intervalMs = 200,
+  now = () => Date.now(),
+  schedule = (fn, ms) => setTimeout(fn, ms),
+} = {}) {
+  return new Promise((resolve) => {
+    const started = now();
+    const tick = () => {
+      const task = taskId ? readTask(taskId) : null;
+      if (task && !['running', 'waiting-question'].includes(task.status)) {
+        resolve(task);
+        return;
+      }
+      if (!taskId) {
+        // There is no run to wait for, so nothing is going to happen.
+        resolve(null);
+        return;
+      }
+      // A video on MiniMax-H3 takes 15-30 minutes, so the wait is long enough
+      // for a slow generation and not a timeout of its own.
+      if (now() - started > timeoutMs) {
+        resolve(null);
+        return;
+      }
+      schedule(tick, intervalMs);
+    };
+    tick();
+  });
+}

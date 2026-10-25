@@ -12,7 +12,7 @@
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
 import { cardChrome, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf, stripInputs } from './forms.mjs';
-import { runIsGone, withDeadline } from './run-watch.mjs';
+import { isBusyRefusal, runIsGone, waitForTheRun, withDeadline } from './run-watch.mjs';
 import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
@@ -3918,24 +3918,15 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
 
   /** Wait for the run that was started on this node to finish. */
   function waitForRun(nodeId, timeoutMs = 2_700_000) {
-    return new Promise((resolve) => {
-      const started = Date.now();
-      const tick = () => {
-        const taskId = state.nodeTasks.get(nodeId);
-        const task = taskId ? state.tasks.get(taskId) : null;
-        if (task && !['running', 'waiting-question'].includes(task.status)) {
-          resolve(task);
-          return;
-        }
-        // A video on MiniMax-H3 takes 15-30 minutes, so the wait is long
-        // enough for a slow generation and not a timeout of its own.
-        if (Date.now() - started > timeoutMs) {
-          resolve(null);
-          return;
-        }
-        window.setTimeout(tick, 200);
-      };
-      tick();
+    // The run this wait is about is held on to. The page forgets which run
+    // belongs to a node as soon as that run is over — the node is free to run
+    // again — so a waiter that looked the run up again would never see it
+    // finish, and the chain would stand still until its own timeout.
+    const taskId = state.nodeTasks.get(nodeId);
+    return waitForTheRun({
+      taskId,
+      readTask: (id) => state.tasks.get(id),
+      timeoutMs,
     });
   }
 
@@ -4022,6 +4013,12 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       // asks for a run through the hosted MCP.
       return task;
     } catch (error) {
+      // The node is busy: another run is on it. That is not a failure, and the
+      // chain waits for the run that is going.
+      if (isBusyRefusal(error)) {
+        showBanner(String(error?.message ?? error));
+        return null;
+      }
       node.metadata.output.status = 'error';
       node.metadata.output.error = String(error?.message ?? error);
       markDirty();
