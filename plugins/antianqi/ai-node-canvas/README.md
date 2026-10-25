@@ -262,17 +262,17 @@ this package.
   models refuse. The Agent reads it when the request is a generation chain
   rather than a single prompt.
 - **A template is the skeleton of a chain** — the 模板 menu holds
-  **thirteen ready-made workflows**, under the headings they belong to:
-  - *从文字出发* — a product picture and then an ad, an e-commerce hero shot, a
-    shot list and a short film, a batch of pictures;
-  - *从素材出发* — a picture redrawn (图生图), a picture **imitated** and a clip
-    **imitated**: the material is read back into a prompt and the prompt is what
-    is generated from;
-  - *读回提示词* — a clip read back into a prompt;
+  **seven ready-made workflows**, under the headings they belong to:
+  - *从素材出发* — a picture **imitated** and a clip **imitated**: the material
+    is read back into a prompt and the prompt is what is generated from;
   - *H3* — one for each shape the request can carry: T2VA (words), I2VA (a
     first frame), FL2VA (a first and a last frame), L2VA (a last frame) and the
     full-reference set. Each of them carries the **prompt node** that writes the
     structure H3 expects — the runtime adds the line that names the picture.
+
+  These seven are **files** (`miniapp/templates/*.json`), not code: a template
+  is data, the user opens one, changes it and keeps it, and changing one of the
+  shipped ones is a change to a file rather than to the code.
 
   A template carries the **steps** only — the nodes, the lines, the prompts and
   the parameters — and never what a run left behind, so it works on another

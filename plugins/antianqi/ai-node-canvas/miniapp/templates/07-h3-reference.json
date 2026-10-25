@@ -1,0 +1,97 @@
+{
+  "id": "h3-reference",
+  "title": "H3 · 全参考生视频",
+  "description": "图、视频、音频都能当参考，空着的就是不带的；提示词按 H3 的全参考格式写。",
+  "group": "H3",
+  "actions": [
+    {
+      "type": "add_node",
+      "args": {
+        "type": "input",
+        "title": "参考图",
+        "prompt": "",
+        "kind": "image",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "input",
+        "title": "参考视频",
+        "prompt": "",
+        "kind": "video",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "input",
+        "title": "参考音频",
+        "prompt": "",
+        "kind": "audio",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "text",
+        "title": "H3 提示词",
+        "prompt": "参考里的主体在原地做一个轻微的动作，镜头保持不动",
+        "mode": "prompt",
+        "kind": "text",
+        "model": "default",
+        "count": 1,
+        "templateId": "h3-reference"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "video",
+        "title": "成片",
+        "prompt": "",
+        "mode": "image2video",
+        "kind": "video",
+        "model": "MiniMax-H3",
+        "ratio": "16:9",
+        "resolution": "768P",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@1",
+        "to": "@5"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@2",
+        "to": "@5"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@3",
+        "to": "@5"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@4",
+        "to": "@5"
+      }
+    }
+  ]
+}

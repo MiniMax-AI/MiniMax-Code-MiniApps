@@ -1,0 +1,43 @@
+{
+  "id": "h3-t2va",
+  "title": "H3 · 文生视频",
+  "description": "让提示词增强按 H3 的 T2VA 结构写好，再出一条 16:9、768P 的视频。",
+  "group": "H3",
+  "actions": [
+    {
+      "type": "add_node",
+      "args": {
+        "type": "text",
+        "title": "H3 提示词",
+        "prompt": "一只粉色小章鱼戴着贝雷帽趴在画布前画画，镜头缓缓推进，环境安静",
+        "mode": "prompt",
+        "kind": "text",
+        "model": "default",
+        "count": 1,
+        "templateId": "h3-t2va"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "video",
+        "title": "成片",
+        "prompt": "",
+        "mode": "text2video",
+        "kind": "video",
+        "model": "MiniMax-H3",
+        "ratio": "16:9",
+        "resolution": "768P",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@1",
+        "to": "@2"
+      }
+    }
+  ]
+}

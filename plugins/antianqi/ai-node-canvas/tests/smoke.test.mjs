@@ -6637,24 +6637,25 @@ test('a template is a skeleton, and putting it on the canvas does not run it', a
   const { applyTemplate, templateFromCanvas } = await import('../miniapp/client/actions.mjs');
   const { BUILTIN_TEMPLATES } = await import('../miniapp/node/templates.mjs');
 
-  // The built-in template that makes a product picture and then an ad.
-  const template = BUILTIN_TEMPLATES.find((item) => item.id === 'product-to-ad');
-  assert.ok(template, 'the product-to-ad template is missing');
+  // The built-in template that reads a picture back and draws it again.
+  const template = BUILTIN_TEMPLATES.find((item) => item.id === 'image-mimic');
+  assert.ok(template, 'the image-mimic template is missing');
 
   const applied = applyTemplate({ nodes: [], connections: [] }, template, { idFor: (p) => `${p}_${Math.random().toString(36).slice(2, 8)}` });  assert.equal(applied.error, undefined);
-  // Three nodes: the text, the picture and the video — and two lines.
+  // Three nodes: the picture that goes in, the prompt that reads it back, and
+  // the picture that is drawn again — and two lines.
   assert.equal(applied.canvas.nodes.length, 3);
   assert.equal(applied.canvas.connections.length, 2);
-  assert.deepEqual(applied.canvas.nodes.map((node) => node.type), ['text', 'image', 'video']);
+  assert.deepEqual(applied.canvas.nodes.map((node) => node.type), ['input', 'text', 'image']);
   // The lines point at the nodes the template made, in the order it made
-  // them: the text feeds the picture, the picture feeds the video.
+  // them: the picture feeds the prompt, the prompt feeds the picture.
   assert.equal(applied.canvas.connections[0].fromNodeId, applied.canvas.nodes[0].id);
   assert.equal(applied.canvas.connections[0].toNodeId, applied.canvas.nodes[1].id);
   assert.equal(applied.canvas.connections[1].fromNodeId, applied.canvas.nodes[1].id);
   assert.equal(applied.canvas.connections[1].toNodeId, applied.canvas.nodes[2].id);
   // The nodes carry the template's own settings.
-  assert.equal(applied.canvas.nodes[1].metadata.ratio, '16:9');
-  assert.equal(applied.canvas.nodes[2].metadata.mode, 'imagekey2video');
+  assert.equal(applied.canvas.nodes[2].metadata.ratio, '1:1');
+  assert.equal(applied.canvas.nodes[2].metadata.mode, 'text2image');
   // And nothing is run: a template puts the steps on the canvas, the user
   // decides when the first node may spend anything.
   assert.equal(applied.canvas.nodes.every((node) => node.metadata.output?.status === 'idle'), true);
@@ -6721,14 +6722,14 @@ test('the Agent can list the templates and put one on the canvas', async (t) => 
     params: { name: 'canvas_list_templates', arguments: {} },
   }));
   assert.ok(listed.templates.length >= 5, 'the built-in templates are not listed');
-  assert.ok(listed.templates.some((item) => item.id === 'product-to-ad'));
+  assert.ok(listed.templates.some((item) => item.id === 'image-mimic'));
 
   // And it can put one on the canvas.
   const applied = toolResult(await mcpCall(h.base, {
     jsonrpc: '2.0',
     id: 2,
     method: 'tools/call',
-    params: { name: 'canvas_apply_template', arguments: { id: canvas.id, template: 'ecommerce-main' } },
+    params: { name: 'canvas_apply_template', arguments: { id: canvas.id, template: 'h3-t2va' } },
   }));
   assert.ok(applied.id, 'the template was not applied');
   const doc = await getJson(h.base, `/api/canvases/${canvas.id}`);
@@ -7037,16 +7038,54 @@ test('the ready-made templates cover the ways a chain starts', async () => {
     assert.ok(reverse, `the ${id} template does not read the material back`);
     const out = template.actions.find((action) => action.type === 'add_node' && action.args.mode === mode);
     assert.ok(out, `the ${id} template does not generate anything`);
-    // The prompt that was read back is what the generation takes.
-    const lines = template.actions.filter((action) => action.type === 'connect');
-    assert.equal(lines.length, 2);
-    assert.equal(lines[1].args.to, '@3');
   }
+  // The picture is read back and drawn again: the picture feeds the prompt,
+  // and the prompt feeds the picture that is drawn.
+  const picture = byId.get('image-mimic');
+  const pictureLines = picture.actions.filter((action) => action.type === 'connect');
+  assert.equal(pictureLines.length, 2);
+  assert.equal(pictureLines[1].args.to, '@3');
+  // The clip is read back, and what was read back is written into the shape
+  // H3 expects before the clip is made again.
+  const clip = byId.get('video-mimic');
+  const clipLines = clip.actions.filter((action) => action.type === 'connect');
+  assert.equal(clipLines.length, 3);
+  assert.equal(clipLines[2].args.to, '@4');
   // Every template is a group of its own, so the panel can tell them apart.
   for (const template of BUILTIN_TEMPLATES) {
     assert.ok(template.group, `the ${template.id} template has no group`);
   }
-  assert.ok(BUILTIN_TEMPLATES.length >= 13);
+  // The ready-made ones are the ones the user kept and tuned: two that
+  // imitate a piece of material and the five shapes H3 can be asked for.
+  assert.equal(BUILTIN_TEMPLATES.length, 7);
+  assert.deepEqual(
+    BUILTIN_TEMPLATES.map((item) => item.id),
+    ['image-mimic', 'video-mimic', 'h3-t2va', 'h3-i2va', 'h3-fl2va', 'h3-l2va', 'h3-reference'],
+  );
+});
+
+test('the ready-made templates are files, so one can be read and changed', async () => {
+  // A template is data: the user opens one, changes it and keeps it. So the
+  // ones that ship with the MiniApp are files as well — not code that has to
+  // be edited to change one.
+  const { BUILTIN_TEMPLATES } = await import('../miniapp/node/templates.mjs');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/node/templates.mjs', import.meta.url)), 'utf8');
+  assert.match(source, /readdirSync/);
+  assert.match(source, /'\.\.', 'templates'/);
+  // And every file in the folder is a template that says what it is.
+  const dir = fileURLToPath(new URL('../miniapp/templates/', import.meta.url));
+  const names = (await readdir(dir)).filter((name) => name.endsWith('.json'));
+  assert.equal(names.length, 7, 'the folder of the ready-made templates does not hold seven files');
+  for (const name of names) {
+    const parsed = JSON.parse(await readFile(join(dir, name), 'utf8'));
+    assert.ok(parsed.id, `${name} has no id`);
+    assert.ok(parsed.title, `${name} has no title`);
+    assert.ok(parsed.group, `${name} has no group`);
+    assert.ok(parsed.description, `${name} has no description`);
+    assert.ok(Array.isArray(parsed.actions) && parsed.actions.length, `${name} has no steps`);
+  }
+  // And the templates that are read are the ones in the folder.
+  assert.equal(BUILTIN_TEMPLATES.length, names.length);
 });
 
 test('the group of a template reaches the panel', async (t) => {
@@ -7057,8 +7096,8 @@ test('the group of a template reaches the panel', async (t) => {
   const listed = await getJson(h.base, '/api/templates');
   assert.equal(listed.status, 200);
   const groups = new Set(listed.body.templates.map((item) => item.group).filter(Boolean));
-  assert.ok(groups.size >= 4, `the templates carry ${groups.size} groups`);
-  for (const label of ['从文字出发', '从素材出发', 'H3']) {
+  assert.ok(groups.size >= 2, `the templates carry ${groups.size} groups`);
+  for (const label of ['从素材出发', 'H3']) {
     assert.ok(groups.has(label), `the group ${label} did not reach the panel`);
   }
 });
