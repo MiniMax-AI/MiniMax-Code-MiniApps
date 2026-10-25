@@ -29,6 +29,7 @@ const EXPECTED_TOOLS = [
   'fablecut_scopes',
   'fablecut_track',
   'fablecut_import_project',
+  'minimax_cut_export',
 ];
 
 test('initialize answers with the minimax-cut identity and a session id', async () => {
@@ -84,7 +85,7 @@ test('tools/list returns the upstream tools and the project import', async () =>
   );
   assert.equal(reply.status, 200);
   const tools = reply.json.result.tools;
-  assert.equal(tools.length, 20);
+  assert.equal(tools.length, 21);
   assert.deepEqual(
     tools.map((/** @type {any} */ tool) => tool.name),
     EXPECTED_TOOLS,

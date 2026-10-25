@@ -1,6 +1,6 @@
 ---
 name: minimax-cut
-description: Edit video with the MiniMax Cut Mini App - assemble a cut, place titles and captions, grade, add transitions and motion graphics, mix and repair dialogue audio, and export - by patching the timeline document with the fablecut_* tools. Use when the user asks to cut, trim, caption, subtitle, grade, re-edit, remake a reel from a reference, add lower thirds or animated titles, clean up dialogue audio, or render a finished video.
+description: Edit video with the MiniMax Cut Mini App - assemble a cut, place titles and captions, grade, add transitions and motion graphics, mix and repair dialogue audio, and export - by patching the timeline document with the fablecut_* tools, or render it with the standalone minimax_cut_export runner. Use when the user asks to cut, trim, caption, subtitle, grade, re-edit, remake a reel from a reference, add lower thirds or animated titles, clean up dialogue audio, or render a finished video.
 ---
 
 # MiniMax Cut
@@ -52,11 +52,39 @@ The editor is a Host-managed service, not a process you start.
 | `fablecut_projects` | List, open, create, duplicate, archive projects and templates | `action`, `id`, `name`, `template`, `fps`, `width`, `height`, `open` |
 | `fablecut_versions` | Save, diff, restore and annotate versions | `action`, `version`, `to`, `name`, `note`, `final` |
 | `fablecut_encode_profiles` | Delivery presets and raw encoding profiles | `preset`, `profile`, `detail` |
-| `fablecut_export` | Render the timeline to a file | `preset`, `delivery`, `outputs`, `profile`, `range`, `where`, `wait`, `job`, `cancel` |
+| `fablecut_export` | Render the timeline to a file, in the open editor tab | `preset`, `delivery`, `outputs`, `profile`, `range`, `where`, `wait`, `job`, `cancel` |
+| `minimax_cut_export` | Render the timeline to a file with a standalone runner you start yourself | `action` (`prepare` / `status` / `cancel`), `range`, `preset`, `delivery`, `profile`, `job` |
 
-That is the upstream set of 19, plus `fablecut_import_project`, which this Mini App adds - 20 in
-all. The Host may serve a different set, so check the tool list you actually have instead of
-assuming.
+That is the upstream set of 19, plus `fablecut_import_project` and `minimax_cut_export`, which this
+Mini App adds - 21 in all. The Host may serve a different set, so check the tool list you actually
+have instead of assuming.
+
+## Two ways to render
+
+`fablecut_export` renders in the open editor tab, so the Mini App has to be open and the user sees
+the progress bar. It also supports batch outputs - several files from one render.
+
+`minimax_cut_export` is this package's own tool. It prepares a job - a snapshot of the saved
+project, copies of its media and library files, a copy of the editor and a copy of a standalone
+runner - and gives you the exact path of that runner. You start it yourself, in the foreground of
+one of your background shell tasks, and watch it with `minimax_cut_export {action:"status"}`.
+
+- The runner is a plain Node process outside the Mini App. Stopping the Mini App does not stop a
+  render that has already started.
+- It is not a detached daemon: it belongs to the background task that started it, and it goes away
+  with that task. Do not tell the user it survives the app closing.
+- It renders the snapshot, so an edit made after `prepare` is not in the file.
+- One file per render - it has no batch outputs.
+- It needs ffmpeg, ffprobe and a Chrome or Edge install, and it fails with a clear message when one
+  of them is missing.
+- The finished file lands in the job folder's `exports` directory, and the status gives its absolute
+  path. Copy it out where the user wants it, then the job folder can go: nothing deletes it for you,
+  and it holds copies of the media and the video, so it costs disk space. A file that failed its
+  checks stays in the job folder's `provisional` directory.
+
+Use the exact paths the tool returns. They are absolute and they are the authority.
+
+See [export.md](references/export.md) for both.
 
 ## A reliable order of calls
 
@@ -150,6 +178,8 @@ goes into `fablecut_import_media`, and the timeline format does not change.
   `fablecut_frame` render through the editor's own tab, and there is no headless fallback here:
   the editor is served on the Host's authenticated port, so a browser spawned outside it cannot
   load the page. When such a call fails for want of a tab, open the Mini App and call it again.
+  `minimax_cut_export` is the way out: its runner serves its own copy of the editor on its own
+  port, so it needs no open tab.
 - `fablecut_frame` returns an image. If you cannot read images, pass `text:true` and it returns
   measurements instead.
 - The editor has one job slot. An export, a scope reading, a tracking job and a composed-frame

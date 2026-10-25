@@ -89,6 +89,8 @@
   },
   "changes": [
     "PATCHES.md lists every change made to the vendored files.",
-    "miniapp/node/server.mjs and miniapp/node/adapters/ are this package's own code; they are not upstream."
+    "miniapp/node/server.mjs and miniapp/node/adapters/ are this package's own code; they are not upstream.",
+    "miniapp/node/export/ is this package's own code: the standalone export runner and the job it works on.",
+    "miniapp/node/vendor/puppeteer/ is a bundled build of Puppeteer Core (Apache-2.0) and the 55 runtime packages it pulls in; see its PROVENANCE.md and licenses/INVENTORY.md."
   ]
 }

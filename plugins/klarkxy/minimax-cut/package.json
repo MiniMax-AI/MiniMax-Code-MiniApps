@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "MiniMax Cut as a MiniMax Code Mini App: the FableCut web editor plus 19 upstream MCP tools and project-folder import on one Host-assigned port.",
+  "description": "MiniMax Cut as a MiniMax Code Mini App: the FableCut web editor plus 19 upstream MCP tools, a project-folder import tool and a standalone export tool on one Host-assigned port.",
   "license": "MIT",
   "scripts": {
     "test": "node --test tests/*.test.mjs"

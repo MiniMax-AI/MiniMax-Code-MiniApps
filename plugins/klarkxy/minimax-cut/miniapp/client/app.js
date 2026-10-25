@@ -384,7 +384,7 @@ function showTrackCtxMenu(clientX, clientY, track) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "ctx-item";
-  btn.textContent = "Remove track";
+  btn.textContent = T("Remove track");
   if (!check.ok) {
     btn.disabled = true;
     btn.title = check.reason;
@@ -427,25 +427,25 @@ function showClipCtxMenu(clientX, clientY, c) {
   const anyEnabled = group.some((x) => x.disabled !== true);
   const anyUnlocked = group.some((x) => x.locked !== true);
   const locked = group.some(isClipLocked);
-  item(anyEnabled ? "Disable clip" : "Enable clip", "Shift+E", toggleClipsDisabled,
-    locked ? "Locked — unlock to change" : null);
-  item(anyUnlocked ? "Lock clip" : "Unlock clip", "", toggleClipsLocked);
+  item(anyEnabled ? T("Disable clip") : T("Enable clip"), "Shift+E", toggleClipsDisabled,
+    locked ? T("Locked — unlock to change") : null);
+  item(anyUnlocked ? T("Lock clip") : T("Unlock clip"), "", toggleClipsLocked);
   if (group.some((x) => x.kind === "audio")) {
-    item("Crossfade with neighbours", "Shift+D", () => crossfadeSelected(), locked ? "Locked — unlock to change" : null);
-    item("Auto-duck under other tracks", "", () => autoDuckClips(selectedClips()), locked ? "Locked — unlock to change" : null);
+    item(T("Crossfade with neighbours"), "Shift+D", () => crossfadeSelected(), locked ? T("Locked — unlock to change") : null);
+    item(T("Auto-duck under other tracks"), "", () => autoDuckClips(selectedClips()), locked ? T("Locked — unlock to change") : null);
   }
   if (group.some((x) => x.kind === "audio" || x.kind === "video"))
-    item("Find silences", "", () => findSilences(selectedClips()));
+    item(T("Find silences"), "", () => findSilences(selectedClips()));
   if (selectedClips().some((x) => isVisualClip(x) && x.kind !== "null"))
-    item("Parent to a new null", "", parentSelectionToNull, locked ? "Locked — unlock to change" : null);
-  item("Precompose", "", precomposeSelection, locked ? "Locked — unlock to change" : null);
-  if (c.kind === "comp") item("Open composition", "", () => enterComp(c.compId, c));
-  if (c.mediaId || c.kind === "comp") item("Reveal in project", "", () => revealInProject(c));
+    item(T("Parent to a new null"), "", parentSelectionToNull, locked ? T("Locked — unlock to change") : null);
+  item(T("Precompose"), "", precomposeSelection, locked ? T("Locked — unlock to change") : null);
+  if (c.kind === "comp") item(T("Open composition"), "", () => enterComp(c.compId, c));
+  if (c.mediaId || c.kind === "comp") item(T("Reveal in project"), "", () => revealInProject(c));
   const linked = selectedClips().some((x) => x.linkGroup || x.linkedId);
-  if (linked) item("Unlink audio / video", "Ctrl+L", toggleLinkSelected, locked ? "Locked — unlock to change" : null);
+  if (linked) item(T("Unlink audio / video"), "Ctrl+L", toggleLinkSelected, locked ? T("Locked — unlock to change") : null);
   else if (c.kind === "video" || c.kind === "audio") {
     const why = linkRefusal(selectedClips());
-    item("Link audio / video", "Ctrl+L", toggleLinkSelected, why);
+    item(T("Link audio / video"), "Ctrl+L", toggleLinkSelected, why);
   }
   document.body.appendChild(menu);
   trackCtxMenu = menu;
@@ -477,6 +477,9 @@ const DEFAULT_SETTINGS = {
   webCodecsBitrateMode: "variable", // "variable" | "constant"
   snapTargets: { clips: true, playhead: true, markers: true, inout: true, keyframes: false, frames: true },
   useProxies: true, // play proxies (when a file has one) while editing; export always reads the original
+  // Which side panels are open: true / false, or null = follow the window.
+  mediaPanel: null,
+  inspectorPanel: null,
 };
 let settings = { ...DEFAULT_SETTINGS };
 function loadSettings() {
@@ -634,8 +637,8 @@ function clipRenders(c) {
   return isTrackEnabled(c.track) && c.disabled !== true;
 }
 function toastLocked(partial = false) {
-  toast(partial ? "Locked clips were left untouched — unlock them to edit"
-    : "Locked — unlock the clip or its track to edit");
+  toast(partial ? T("Locked clips were left untouched — unlock them to edit")
+    : T("Locked — unlock the clip or its track to edit"));
 }
 function syncTrackDisabledUI(id) {
   const on = isTrackEnabled(id);
@@ -786,16 +789,21 @@ const els = {
   btnGuides: $("btnGuides"), btnExportFrame: $("btnExportFrame"),
   btnExportFrameDim: $("btnExportFrameDim"),
   exportFrameSel: $("exportFrameSel"), exportFrameOverlay: $("exportFrameOverlay"),
+  btnCanvasSettings: $("btnCanvasSettings"), canvasSettingsPop: $("canvasSettingsPop"),
   btnZoom100: $("btnZoom100"),
   safeOverlay: $("safeOverlay"), btnSpeed: $("btnSpeed"),
   monitorStage: $("monitorStage"), monitorScroll: $("monitorScroll"),
   monitorZoomInner: $("monitorZoomInner"), kfGraphs: $("kfGraphs"),
+  monitorView: $("monitorView"), monitorMeterGutter: $("monitorMeterGutter"),
   monitorPanel: $("monitorPanel"), monitorClipName: $("monitorClipName"),
   sourceScrub: $("sourceScrub"), sourceScrubTrack: $("sourceScrubTrack"),
   sourceScrubRange: $("sourceScrubRange"), sourceScrubIn: $("sourceScrubIn"),
   sourceScrubOut: $("sourceScrubOut"), sourceScrubHead: $("sourceScrubHead"),
   btnInsert: $("btnInsert"), btnReplace: $("btnReplace"),
   vuMeter: $("vuMeter"),
+  binPanel: $("binPanel"), binRail: $("binRail"), btnCollapseBin: $("btnCollapseBin"),
+  inspectorPanel: $("inspectorPanel"), inspectorRail: $("inspectorRail"),
+  btnCollapseInspector: $("btnCollapseInspector"),
   sideTabs: $("sideTabs"),
   mixer: $("mixer"), colorPage: $("colorPage"),
   exportSetup: $("exportSetup"), engineFast: $("engineFast"), engineRealtime: $("engineRealtime"),
@@ -806,6 +814,199 @@ const els = {
   importUrlStatus: $("importUrlStatus"), importUrlProgress: $("importUrlProgress"),
 };
 let ctx2d = els.preview.getContext("2d");   // drawMaskedClip points it at an offscreen layer while a masked clip draws
+
+/* ── Localization ─────────────────────────────────────────────────────────
+ * The UI language lives in i18n.js (locale state + the static `data-i18n`
+ * pass); the dictionaries are i18n-en.js and i18n-zh-CN.js. The editor calls
+ * `T()` at the places where it builds interface text. Text the user typed —
+ * project, media and clip names, captions, template fields — is never passed
+ * through `T()`, so it stays byte-identical in every language. */
+let localeRepainting = false;   // true while a locale switch is redrawing: no save, no project change
+
+/** The locale in force right now. */
+function uiLocale() {
+  try { return (globalThis.I18n && I18n.getLocale()) || "en"; } catch { return "en"; }
+}
+
+/**
+ * The display label of an enum value. The stored value never changes — only
+ * the text shown next to it — so a project written in one language still
+ * opens in another.
+ * @param {string} group
+ * @param {unknown} value
+ * @returns {string}
+ */
+function enumLabel(group, value) {
+  const key = `${group}.${value}`;
+  try {
+    const dict = I18n.dictionary(uiLocale());
+    if (dict && Object.prototype.hasOwnProperty.call(dict, key)) return T(key);
+  } catch { }
+  return String(value);
+}
+
+/**
+ * Translate a summary the delivery module built from English parts.
+ *
+ * The module is a data module: it hands back one string made of codec names,
+ * numbers and a few English words. `T()` gives back anything it does not know,
+ * so the technical parts stay byte-identical and only the English words are
+ * replaced.
+ * @param {string} text
+ * @returns {string}
+ */
+function translateParts(text) {
+  return String(text ?? "").split(" · ").map((part) => T(part)).join(" · ");
+}
+
+/**
+ * The header shows the project name and the connection state.
+ *
+ * The state word is translated, so a language switch has to redraw it: the
+ * name is the user's own text and is written back byte for byte.
+ */
+function syncProjectNameStatus() {
+  if (!els.projectName) return;
+  els.projectName.textContent = project.name + (state.connected
+    ? T("  ·  🟢 connected")
+    : T("  ·  ⚪ local session"));
+}
+
+/**
+ * Write a runtime text into an element without dropping its `data-i18n`
+ * markup.
+ *
+ * The static pass translates the marked holder inside, so replacing the
+ * element's whole content would leave the page with an English string that
+ * no later pass can translate.
+ * @param {Element|null} el
+ * @param {string} text
+ */
+function setNoteText(el, text) {
+  if (!el) return;
+  const holder = el.querySelector("[data-i18n]") || el;
+  holder.textContent = text;
+}
+
+/**
+ * The element the user is typing in, so a redraw can put the caret back.
+ * @returns {{scope: string, id: string, key: string, tag: string, start: number|null, end: number|null}|null}
+ */
+function captureEditorFocus() {
+  const el = document.activeElement;
+  if (!el || el === document.body || !el.tagName) return null;
+  const scope = el.id ? "" : (el.parentElement?.closest("[id]")?.id || "");
+  const info = {
+    scope,
+    id: el.id || "",
+    key: el.dataset ? (el.dataset.k || el.dataset.g || "") : "",
+    tag: el.tagName,
+    start: null,
+    end: null,
+  };
+  try { info.start = el.selectionStart; info.end = el.selectionEnd; } catch { }
+  return info;
+}
+
+/**
+ * Put the caret back where it was after a redraw.
+ * @param {ReturnType<typeof captureEditorFocus>} info
+ */
+function restoreEditorFocus(info) {
+  if (!info) return;
+  const scope = info.scope ? document.getElementById(info.scope) : document;
+  if (!scope) return;
+  let el = null;
+  if (info.id) el = document.getElementById(info.id);
+  if (!el && info.key && scope) el = scope.querySelector(`[data-k="${CSS.escape(info.key)}"]`);
+  if (!el) return;
+  try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+  if (info.start != null) { try { el.setSelectionRange(info.start, info.end); } catch { } }
+}
+
+/** The track headers keep their own tooltips; a language switch refreshes them. */
+function refreshTrackHeadLabels() {
+  for (const h of els.trackHeaders.querySelectorAll(".track-head")) {
+    const t = TRACKS.find((x) => x.id === h.dataset.track);
+    if (!t) continue;
+    const on = isTrackEnabled(t.id), solo = state.soloId === t.id;
+    const toggle = h.querySelector(".track-toggle");
+    if (toggle) toggle.title = on ? T("Disable track") : T("Enable track");
+    const soloBtn = h.querySelector(".track-solo");
+    if (soloBtn) soloBtn.title = solo ? T("Unsolo track") : T("Solo track (mute all others)");
+  }
+}
+
+/** The Source monitor's "no clip" placeholder is drawn by a stylesheet rule,
+ *  so the wording is handed to it as a custom property. */
+function syncMonitorEmptyLabel() {
+  const panel = els.monitorPanel;
+  if (!panel) return;
+  panel.style.setProperty("--no-clip-text", JSON.stringify(T("No clip loaded")));
+}
+
+/** A menu that is open when the language changes must not keep the old
+ *  wording: the snap menu is drawn again, every other menu closes. */
+function refreshOpenMenuForLocale() {
+  const menu = trackCtxMenu;
+  if (!menu) return;
+  if (menu.classList.contains("snap-menu")) { renderSnapMenu(menu); return; }
+  hideTrackCtxMenu();
+}
+
+/**
+ * Draw the interface again in the language that is now in force.
+ *
+ * The static markup is handled by `I18n.applyStatic`; everything the editor
+ * builds at runtime is rebuilt here. A language switch never touches the
+ * project: `localeRepainting` keeps the redraw from scheduling a save.
+ */
+function repaintForLocale() {
+  const focus = captureEditorFocus();
+  localeRepainting = true;
+  try {
+    I18n.applyStatic(document);
+    refreshTrackHeadLabels();
+    syncMonitorEmptyLabel();
+    syncProjectNameStatus();
+    syncAspectSel();
+    syncFpsSel();
+    syncExportFrameSel();
+    refreshOpenMenuForLocale();
+    renderBin();
+    if (state.binTab === "shapes") renderShapesTab();
+    else if (state.binTab === "templates") renderTemplatesTab();
+    else if (state.binTab !== "project") renderLibrary();
+    renderProjectGrid();
+    renderInspector();
+    renderMixer();
+    renderColorPage(true);
+    renderQueue();
+    if (els.exportSetup && !els.exportSetup.classList.contains("hidden")) {
+      populateExportProfileSelect(true);
+      fillDeliveryControls();
+      refreshDeliveryNotes();
+      syncExportEngineUi();
+      syncExportRangeUi();
+    }
+    syncExportChoiceUi(dlvSource);
+  } catch (err) {
+    console.error("[FableCut] language switch failed:", err);
+  } finally {
+    localeRepainting = false;
+  }
+  restoreEditorFocus(focus);
+}
+
+/**
+ * Change the interface language. The choice is remembered in this browser.
+ * @param {string} locale
+ */
+function setUiLocale(locale) {
+  try { I18n.setLocale(locale); } catch (err) { console.error("[FableCut] language switch failed:", err); }
+  const sel = $("setLang");
+  if (sel && sel.value !== uiLocale()) sel.value = uiLocale();
+}
 
 /* ── Utils ─────────────────────────────────────────────────────────────── */
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -1073,7 +1274,7 @@ function applyInspectorReset(keys, channelWide) {
     if (channelWide) resetPropChannel(c, k);
     else refused = !resetPropAtPlayhead(c, k) || refused;
   }
-  if (refused) toast("Move the playhead over the clip to edit its keyframes");
+  if (refused) toast(T("Move the playhead over the clip to edit its keyframes"));
   scheduleSave();
   renderInspector();
 }
@@ -1200,7 +1401,7 @@ async function connectServer() {
     const data = await res.json();
     applyProject(data);
     state.connected = true;
-    els.projectName.textContent = project.name + "  ·  🟢 connected";
+    syncProjectNameStatus();
     runtime.projectId = res.headers.get("X-FableCut-Project");
     if (res.headers.get("X-FableCut-Projects")) initProjectsUi();
     listenSSE();
@@ -1210,7 +1411,7 @@ async function connectServer() {
     detectWebCodecs();
   } catch {
     state.connected = false;
-    els.projectName.textContent = project.name + "  ·  ⚪ local session";
+    syncProjectNameStatus();
   }
   initSequencesUi();
   await probeMissingMeta();
@@ -1448,11 +1649,83 @@ function syncExportFrameSel() {
   const i = exportFrameAspectIndex(ef);
   let html = EXPORT_FRAME_ASPECTS.map((a, j) => {
     const sel = ef ? (i === j) : (j === 0);
-    return `<option value="${j}" ${sel ? "selected" : ""}>${a.label}</option>`;
+    return `<option value="${j}" ${sel ? "selected" : ""}>${T(a.label)}</option>`;
   }).join("");
   if (ef && i < 0)
     html += `<option value="custom" selected>Custom · ${ef.w}×${ef.h}</option>`;
   els.exportFrameSel.innerHTML = html;
+}
+/* ── Canvas settings popover ──
+   The three canvas selects live in a popover on the body, so the monitor head
+   keeps one row. The selects are moved, not copied: their ids, their
+   listeners and their values are the ones the editor already uses. */
+let canvasPop = null;
+
+/** A row whose control is hidden hides itself: the aspect preset does not
+    apply to the Source monitor. */
+function syncCanvasPopRows() {
+  const pop = els.canvasSettingsPop;
+  if (!pop) return;
+  for (const row of pop.querySelectorAll(".canvas-pop-row")) {
+    const sel = row.querySelector("select");
+    row.classList.toggle("hidden", !!sel && sel.classList.contains("hidden"));
+  }
+}
+
+/** Keep the popover inside the window, whatever the button's place is. */
+function placeCanvasSettings(pop, anchor) {
+  const pad = 6;
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  let x = Math.min(r.right - w, window.innerWidth - w - pad);
+  x = Math.max(pad, x);
+  let y = r.bottom + 4;
+  if (y + h + pad > window.innerHeight) y = Math.max(pad, r.top - h - 4);
+  pop.style.left = Math.round(x) + "px";
+  pop.style.top = Math.round(y) + "px";
+}
+
+/** Close the popover. The button gets the keyboard back, unless the user
+    clicked somewhere else — there the focus belongs anyway. */
+function closeCanvasSettings(restoreFocus = true) {
+  const pop = els.canvasSettingsPop;
+  if (!pop || !canvasPop) return;
+  pop.hidden = true;
+  els.btnCanvasSettings?.setAttribute("aria-expanded", "false");
+  document.removeEventListener("pointerdown", canvasPop.onPointerDown, true);
+  document.removeEventListener("keydown", canvasPop.onKeyDown, true);
+  window.removeEventListener("resize", canvasPop.onResize);
+  canvasPop = null;
+  if (restoreFocus) els.btnCanvasSettings?.focus();
+}
+
+/** Open the popover under its button. Nothing in the project changes: the
+    selects are the ones the editor already uses, only moved. */
+function openCanvasSettings() {
+  const pop = els.canvasSettingsPop;
+  const btn = els.btnCanvasSettings;
+  if (!pop || !btn) return;
+  hideTrackCtxMenu();
+  pop.hidden = false;
+  btn.setAttribute("aria-expanded", "true");
+  syncCanvasPopRows();
+  placeCanvasSettings(pop, btn);
+  const onPointerDown = (e) => {
+    if (pop.contains(e.target) || btn.contains(e.target)) return;
+    closeCanvasSettings(false);
+  };
+  const onKeyDown = (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    closeCanvasSettings(true);
+  };
+  /* A window that changes size moves the button: the popover follows it. */
+  const onResize = () => placeCanvasSettings(pop, btn);
+  document.addEventListener("pointerdown", onPointerDown, true);
+  document.addEventListener("keydown", onKeyDown, true);
+  window.addEventListener("resize", onResize);
+  canvasPop = { onPointerDown, onKeyDown, onResize };
+  pop.querySelector(".canvas-pop-row:not(.hidden) select")?.focus();
 }
 function applyProject(data, opts = {}) {
   if (state.compCtx && !opts.ctx && SeqLib.activeId(data) !== SeqLib.activeId(state.compCtx.root)) {
@@ -1470,7 +1743,7 @@ function applyProject(data, opts = {}) {
     for (const f of x.frames) { f.undo = []; f.redo = []; }
     runtime.undo.length = 0; runtime.redo.length = 0;
     const path = x.path.filter((id) => CompLib.getComp(data, id));
-    if (path.length !== x.path.length) { state.compCtx = null; applyProject(data, { ctx: true }); syncCompCrumb(); toast("The open composition was removed"); return; }
+    if (path.length !== x.path.length) { state.compCtx = null; applyProject(data, { ctx: true }); syncCompCrumb(); toast(T("The open composition was removed")); return; }
     applyProject(compSyntheticDoc(data, path), { ctx: true });
     syncCompCrumb();
     return;
@@ -1574,6 +1847,7 @@ function applyProject(data, opts = {}) {
   syncAllTrackDisabledUI();
 }
 function scheduleSave() {
+  if (localeRepainting) return;   // a language switch redraws the UI; it never changes the project
   state.dirtyTimeline = true;
   if (!state.connected) return;
   clearTimeout(runtime.saveTimer);
@@ -1589,7 +1863,7 @@ async function saveNow() {
     if (res.status === 409) {
       // an external tool saved a newer revision while this change was pending
       const loaded = await syncFromServer(true);
-      toast("Project was updated externally — your last change may need redoing.");
+      toast(T("Project was updated externally — your last change may need redoing."));
       runtime.saveFailed = loaded !== true;
       return loaded === true;   // the newer document on disk is now what this tab shows
     }
@@ -1607,7 +1881,7 @@ async function flushSave() {
 }
 async function flushSaveBeforeSwitch() {
   if (await flushSave()) return true;
-  toast("Your last change couldn't be saved, so the project stays open. Try again in a moment.");
+  toast(T("Your last change couldn't be saved, so the project stays open. Try again in a moment."));
   return false;
 }
 /** One clip as saved: only the fields the editor knows (unknown runtime fields stay out). */
@@ -1763,7 +2037,7 @@ async function syncFromServer(force) {
       clearTimeout(runtime.saveTimer); runtime.saveTimer = null;
       // the undo steps describe the discarded edit; replaying one would re-save over the external write
       runtime.undo.length = 0; runtime.redo.length = 0;
-      toast("Project was updated externally — your last change may need redoing.");
+      toast(T("Project was updated externally — your last change may need redoing."));
     }
     applyProject(data);
     syncCompCrumb();   // the top bar shows the project's name
@@ -1960,7 +2234,7 @@ async function importFiles(fileList) {
       if (kind === "video") grabThumb(m).catch(() => { });
       ensureWave(m);
     } catch { skipped++; continue; }
-    if (gen !== runtime.projectGen) { toast("Import stopped: another project was opened. The uploaded files are in media/"); break; }
+    if (gen !== runtime.projectGen) { toast(T("Import stopped: another project was opened. The uploaded files are in media/")); break; }
     project.media.push(m);
     addedMedia.push(m);
     added++;
@@ -1968,7 +2242,7 @@ async function importFiles(fileList) {
   renderBin(); scheduleSave();
   refreshMediaInfo(addedMedia);
   if (!added && skipped)
-    toast("Couldn't import — unsupported or unreadable file type");
+    toast(T("Couldn't import — unsupported or unreadable file type"));
   else if (skipped)
     toast(`Imported ${added}, skipped ${skipped}`);
   return addedMedia;
@@ -1994,7 +2268,7 @@ function closeImportUrl() {
 
 function openImportUrl() {
   if (!state.connected) {
-    toast("Import from URL needs the editor server");
+    toast(T("Import from URL needs the editor server"));
     return;
   }
   if (!els.importUrlOverlay) return;
@@ -2006,9 +2280,9 @@ function openImportUrl() {
 
 async function importFromUrl(url) {
   const trimmed = String(url || "").trim();
-  if (!trimmed) { toast("Paste an HTTPS URL first"); return; }
-  if (!/^https:\/\//i.test(trimmed)) { toast("URL must start with https://"); return; }
-  if (!state.connected) { toast("Import from URL needs the editor server"); return; }
+  if (!trimmed) { toast(T("Paste an HTTPS URL first")); return; }
+  if (!/^https:\/\//i.test(trimmed)) { toast(T("URL must start with https://")); return; }
+  if (!state.connected) { toast(T("Import from URL needs the editor server")); return; }
   runtime.importUrlAbort = new AbortController();
   setImportUrlBusy(true);
   const gen = runtime.projectGen;
@@ -2060,7 +2334,7 @@ function renderBin() {
     const warn = document.createElement("div");
     warn.className = "bin-filterbar bin-offline-bar";
     warn.innerHTML = `<span>⚠ ${mediaOffline.size} file${mediaOffline.size === 1 ? " is" : "s are"} offline</span>
-      <button type="button" class="btn tiny" data-show>Show</button><button type="button" class="btn tiny accent" data-relink>Relink…</button>`;
+      <button type="button" class="btn tiny" data-show>${T("Show")}</button><button type="button" class="btn tiny accent" data-relink>${T("Relink…")}</button>`;
     warn.querySelector("[data-show]").addEventListener("click", () => setBinFilter("offline"));
     warn.querySelector("[data-relink]").addEventListener("click", () => openRelinkDialog());
     els.binList.appendChild(warn);
@@ -2136,12 +2410,12 @@ function renderBin() {
     if (binView.list) {
       const cell = (v, cls = "") => `<span class="bin-cell${cls}">${escapeHtml(v || "—")}</span>`;
       item.innerHTML = `
-        <span class="bin-cell bin-cell-name">${favHtml}<span class="bin-thumb sm"></span>${offline ? `<span class="bin-offline" title="The file is missing — right-click → Relink…">OFFLINE</span>` : ""}<span class="bin-name"></span></span>
+        <span class="bin-cell bin-cell-name">${favHtml}<span class="bin-thumb sm"></span>${offline ? `<span class="bin-offline" title="${T("The file is missing — right-click → Relink…")}">OFFLINE</span>` : ""}<span class="bin-name"></span></span>
         ${cell(MediaLib.fmtDur(m.duration), " num c-duration")}${cell(MediaLib.fmtRes(m), " num c-resolution")}${cell(MediaLib.fmtFps(m.fps), " num c-fps")}
         ${cell(m.codec, " c-codec")}${cell(MediaLib.fmtAudio(m), " c-audio")}${cell(MediaLib.fmtSize(m.size), " num c-size")}
         <span class="bin-cell c-proxy">${proxyBadgeHtml(m) || escapeHtml(m.kind === "video" ? "—" : "")}</span>
         <span class="bin-cell num c-usage">${usesHtml}</span>
-        <span class="bin-del" title="Remove (and its clips)">✕</span>`;
+        <span class="bin-del" title="${T("Remove (and its clips)")}">✕</span>`;
     } else {
       const sub = [folder ? "📁 " + folder.name : "", m.kind, m.duration ? fmt(m.duration) : "", MediaLib.fmtRes(m), m.fps ? MediaLib.fmtFps(m.fps) + " fps" : ""]
         .filter(Boolean).join(" · ");
@@ -2149,11 +2423,11 @@ function renderBin() {
         <div class="bin-thumb"></div>
         <div class="bin-meta">
           <div class="bin-name"></div>
-          <div class="bin-sub">${offline ? `<span class="bin-offline" title="The file is missing — right-click → Relink…">OFFLINE</span> ` : ""}${escapeHtml(sub)}</div>
+          <div class="bin-sub">${offline ? `<span class="bin-offline" title="${T("The file is missing — right-click → Relink…")}">OFFLINE</span> ` : ""}${escapeHtml(sub)}</div>
           ${m.tags && m.tags.length ? `<div class="bin-tags">${m.tags.map((t) => `<span class="bin-tag">#${escapeHtml(t)}</span>`).join("")}</div>` : ""}
         </div>
         <div class="bin-side">${favHtml}${usesHtml}${proxyBadgeHtml(m)}</div>
-        <span class="bin-del" title="Remove (and its clips)">✕</span>`;
+        <span class="bin-del" title="${T("Remove (and its clips)")}">✕</span>`;
     }
     const thumbEl = item.querySelector(".bin-thumb");
     if (thumbSrc) thumbEl.style.backgroundImage = `url(${JSON.stringify(thumbSrc)})`;
@@ -2218,8 +2492,8 @@ function renderBin() {
         <span class="bin-folder-icon">📁</span>
         <span class="bin-folder-name"></span>
         <span class="bin-folder-count">${count}</span>
-        <button type="button" class="bin-folder-add" title="New subfolder">+</button>
-        <button type="button" class="bin-del bin-folder-del" title="Delete folder (keeps media)">✕</button>`;
+        <button type="button" class="bin-folder-add" title="${T("New subfolder")}">+</button>
+        <button type="button" class="bin-del bin-folder-del" title="${T("Delete folder (keeps media)")}">✕</button>`;
       const nameEl = row.querySelector(".bin-folder-name");
       nameEl.textContent = f.name;
       nameEl.title = f.name;
@@ -2272,7 +2546,7 @@ function renderBin() {
     if (!hits.length) {
       const none = document.createElement("div");
       none.className = "bin-noresult";
-      none.textContent = "No media matches.";
+      none.textContent = T("No media matches.");
       els.binList.appendChild(none);
     }
   } else {
@@ -2282,7 +2556,7 @@ function renderBin() {
     // Root drop zone at the bottom so items can be moved out of folders
     const root = document.createElement("div");
     root.className = "bin-drop-root";
-    root.textContent = "Drop here to move to root";
+    root.textContent = T("Drop here to move to root");
     bindFolderDropTarget(root, null);
     els.binList.appendChild(root);
   }
@@ -2323,20 +2597,20 @@ function syncBinTools() {
   if ((f.startsWith("tag:") && !tags.some((t) => t.toLowerCase() === f.slice(4).toLowerCase())) ||
     (f.startsWith("col:") && !getCollection(f.slice(4)))) binView.filter = "";
   const opt = (v, label) => `<option value="${escapeHtml(v)}"${v === binView.filter ? " selected" : ""}>${escapeHtml(label)}</option>`;
-  const html = opt("", "All media") + opt("fav", "★ Favorites") + opt("used", "Used in the edit") + opt("unused", "Unused") +
-    (mediaOffline.size || binView.filter === "offline" ? opt("offline", `⚠ Offline (${mediaOffline.size})`) : "") +
-    (project.media.some((m) => m.kind === "video") ? opt("proxy", "Has a proxy") + opt("noproxy", "Video without a proxy") : "") +
-    `<optgroup label="Kind">${MediaLib.KINDS.map((k) => opt("kind:" + k, k[0].toUpperCase() + k.slice(1))).join("")}</optgroup>` +
-    (cols.length ? `<optgroup label="Collections">${cols.map((c) => opt("col:" + c.id, c.name + ` (${c.media.length})`)).join("")}</optgroup>` : "") +
-    (tags.length ? `<optgroup label="Tags">${tags.map((t) => opt("tag:" + t, "#" + t)).join("")}</optgroup>` : "");
+  const html = opt("", T("All media")) + opt("fav", T("★ Favorites")) + opt("used", T("Used in the edit")) + opt("unused", T("Unused")) +
+    (mediaOffline.size || binView.filter === "offline" ? opt("offline", T("⚠ Offline ({count})", { count: mediaOffline.size })) : "") +
+    (project.media.some((m) => m.kind === "video") ? opt("proxy", T("Has a proxy")) + opt("noproxy", T("Video without a proxy")) : "") +
+    `<optgroup label="${T("Kind")}">${MediaLib.KINDS.map((k) => opt("kind:" + k, enumLabel("kind", k))).join("")}</optgroup>` +
+    (cols.length ? `<optgroup label="${T("Collections")}">${cols.map((c) => opt("col:" + c.id, c.name + ` (${c.media.length})`)).join("")}</optgroup>` : "") +
+    (tags.length ? `<optgroup label="${T("Tags")}">${tags.map((t) => opt("tag:" + t, "#" + t)).join("")}</optgroup>` : "");
   if (els.binFilter.innerHTML !== html) els.binFilter.innerHTML = html;
   els.binFilter.value = binView.filter;
   els.binFilter.classList.toggle("on", !!binView.filter);
   els.binSort.value = binView.sort;
   els.binSortDir.textContent = binView.dir === "desc" ? "↓" : "↑";
-  els.binSortDir.title = binView.dir === "desc" ? "Descending — click for ascending" : "Ascending — click for descending";
+  els.binSortDir.title = binView.dir === "desc" ? T("Descending — click for ascending") : T("Ascending — click for descending");
   els.binViewBtn.classList.toggle("on", binView.list);
-  els.binViewBtn.title = binView.list ? "Thumbnail view" : "List view: metadata columns";
+  els.binViewBtn.title = binView.list ? T("Thumbnail view") : T("List view: metadata columns");
   if (els.binSearch.value !== binView.q && document.activeElement !== els.binSearch) els.binSearch.value = binView.q;
 }
 function setBinFilter(filter) {
@@ -2350,10 +2624,10 @@ function makeFilterBar(n) {
   const col = binView.filter.startsWith("col:") ? getCollection(binView.filter.slice(4)) : null;
   bar.innerHTML = `<span class="bin-filter-count">${n} of ${project.media.length}</span>` +
     (col ? `<span class="bin-filter-name" title="Collection">▣ ${escapeHtml(col.name)}</span>
-      <button type="button" class="btn tiny" data-col-rename>Rename</button>
-      <button type="button" class="btn tiny" data-col-delete title="Delete the collection (keeps the media)">Delete</button>` : "") +
-    (binView.filter === "offline" && mediaOffline.size ? `<button type="button" class="btn tiny accent" data-relink-all>Relink…</button>` : "") +
-    `<button type="button" class="btn tiny" data-clear title="Show everything (Esc in the search box)">Clear</button>`;
+      <button type="button" class="btn tiny" data-col-rename>${T("Rename")}</button>
+      <button type="button" class="btn tiny" data-col-delete title="${T("Delete the collection (keeps the media)")}">${T("Delete")}</button>` : "") +
+    (binView.filter === "offline" && mediaOffline.size ? `<button type="button" class="btn tiny accent" data-relink-all>${T("Relink…")}</button>` : "") +
+    `<button type="button" class="btn tiny" data-clear title="${T("Show everything (Esc in the search box)")}">${T("Clear")}</button>`;
   bar.querySelector("[data-relink-all]")?.addEventListener("click", () => openRelinkDialog());
   bar.querySelector("[data-clear]").addEventListener("click", () => { binView.q = ""; els.binSearch.value = ""; setBinFilter(""); });
   if (col) {
@@ -2473,7 +2747,7 @@ function promptBinText(x, y, label, value, onOk, opts = {}) {
     <input type="text" class="bin-pop-input" maxlength="${opts.max || 80}" spellcheck="false">
     ${opts.hint ? `<div class="bin-pop-hint">${escapeHtml(opts.hint)}</div>` : ""}
     <div class="bin-pop-chips"></div>
-    <div class="bin-pop-btns"><button type="button" class="btn tiny" data-cancel>Cancel</button><button type="button" class="btn tiny accent" data-ok>${escapeHtml(opts.ok || "OK")}</button></div>`;
+    <div class="bin-pop-btns"><button type="button" class="btn tiny" data-cancel>${T("Cancel")}</button><button type="button" class="btn tiny accent" data-ok>${escapeHtml(opts.ok || "OK")}</button></div>`;
   const input = pop.querySelector("input");
   input.value = value || "";
   if (opts.placeholder) input.placeholder = opts.placeholder;
@@ -2481,7 +2755,7 @@ function promptBinText(x, y, label, value, onOk, opts = {}) {
   for (const c of opts.chips || []) {
     const b = document.createElement("button");
     b.type = "button"; b.className = "bin-tag chip"; b.textContent = "#" + c;
-    b.title = "Add or remove this tag";
+    b.title = T("Add or remove this tag");
     b.addEventListener("click", () => {
       const cur = MediaLib.normalizeTags(input.value);
       const has = cur.some((t) => t.toLowerCase() === c.toLowerCase());
@@ -2524,35 +2798,35 @@ function showMediaMenu(x, y, m) {
     return b;
   };
   const sep = () => { const d = document.createElement("div"); d.className = "ctx-sep"; menu.appendChild(d); };
-  item("Open in Source", () => loadSourceFromMedia(m));
-  item(`Find timeline instances (${uses})`, () => showMediaInstances(m, x, y), uses ? null : "Not used on the timeline");
-  item("Media info…", () => showMediaInfo(m, x, y));
-  item(isMediaOffline(m.id) ? "Relink…" : "Relink to another copy…", () => openRelinkDialog([m]), state.connected ? null : "Needs the MiniMax Cut server");
-  item("Replace file…", () => replaceMediaFile(m), state.connected ? null : "Needs the MiniMax Cut server");
+  item(T("Open in Source"), () => loadSourceFromMedia(m));
+  item(T("Find timeline instances ({uses})", { uses }), () => showMediaInstances(m, x, y), uses ? null : "Not used on the timeline");
+  item(T("Media info…"), () => showMediaInfo(m, x, y));
+  item(isMediaOffline(m.id) ? T("Relink…") : T("Relink to another copy…"), () => openRelinkDialog([m]), state.connected ? null : T("Needs the MiniMax Cut server"));
+  item(T("Replace file…"), () => replaceMediaFile(m), state.connected ? null : T("Needs the MiniMax Cut server"));
   if (m.kind === "video") {
     const ps = proxyStatus.get(m.id);
     const why = !state.connected ? "Needs the MiniMax Cut server" : !state.ffmpeg ? "Needs ffmpeg on the server's PATH" : isMediaOffline(m.id) ? "The file is offline" : null;
     if (ps && (ps.state === "ready" || ps.state === "running" || ps.state === "queued")) item(ps.state === "ready" ? "Delete proxy" : "Stop making the proxy", () => deleteProxies([m]));
     else {
-      item("Create proxy (540p)", () => createProxies([m], 540), why);
-      item("Create proxy (720p)", () => createProxies([m], 720), why);
+      item(T("Create proxy (540p)"), () => createProxies([m], 540), why);
+      item(T("Create proxy (720p)"), () => createProxies([m], 720), why);
     }
   }
   sep();
-  item(m.favorite ? "Remove from favorites" : "Add to favorites", () => setMediaFavorite([m.id], !m.favorite));
-  item("Tags…", () => promptBinText(x, y, `Tags for ${m.name}`, (m.tags || []).join(", "), (v) => setMediaTags(m, v),
-    { allowEmpty: true, max: 400, ok: "Save", placeholder: "interview, b-roll, day 1", hint: "Comma-separated. Search #tag to find them.",
+  item(m.favorite ? T("Remove from favorites") : T("Add to favorites"), () => setMediaFavorite([m.id], !m.favorite));
+  item(T("Tags…"), () => promptBinText(x, y, T("Tags for {name}", { name: m.name }), (m.tags || []).join(", "), (v) => setMediaTags(m, v),
+    { allowEmpty: true, max: 400, ok: T("Save"), placeholder: T("interview, b-roll, day 1"), hint: T("Comma-separated. Search #tag to find them."),
       chips: MediaLib.allTags(project.media) }));
   for (const col of project.collections || []) {
     const inIt = col.media.includes(m.id);
-    item(inIt ? `Remove from “${col.name}”` : `Add to “${col.name}”`, () => addToCollection(col.id, m.id, !inIt));
+    item(inIt ? T("Remove from “{name}”", { name: col.name }) : T("Add to “{name}”", { name: col.name }), () => addToCollection(col.id, m.id, !inIt));
   }
-  item("New collection…", () => promptBinText(x, y, "New collection", "", (name) => {
+  item(T("New collection…"), () => promptBinText(x, y, T("New collection"), "", (name) => {
     const col = newCollection(name, [m.id]);
-    toast(`Added ${m.name} to the collection “${col.name}”`);
-  }, { placeholder: "Selects, Interviews…", ok: "Create" }));
+    toast(T("Added {name} to the collection “{col}”", { name: m.name, col: col.name }));
+  }, { placeholder: T("Selects, Interviews…"), ok: T("Create") }));
   sep();
-  item("Remove from project", () => removeMediaFromBin(m));
+  item(T("Remove from project"), () => removeMediaFromBin(m));
   document.body.appendChild(menu);
   menu.id = "trackCtxMenu";
   trackCtxMenu = menu;
@@ -2569,25 +2843,25 @@ function showMediaInfo(m, x, y) {
   const audio = m.audioChannels == null ? "" : m.audioChannels === 0 ? "none" :
     [m.audioCodec, MediaLib.fmtAudio(m)].filter(Boolean).join(" · ");
   const rows = [
-    ["Kind", m.kind], ["File", decodeURIComponent(String(m.src || "").split("?")[0]) + (isMediaOffline(m.id) ? " — MISSING (offline)" : "")],
-    ["Duration", m.duration > 0 ? MediaLib.fmtDur(m.duration) + ` (${(+m.duration).toFixed(3)} s)` : ""],
-    ["Resolution", MediaLib.fmtRes(m)], ["Frame rate", m.fps ? MediaLib.fmtFps(m.fps) + " fps" : ""],
-    ["Video codec", m.kind === "video" ? m.codec : ""], ["Format", m.kind !== "video" && m.codec ? m.codec : ""],
-    ["Audio", audio], ["Bitrate", m.bitrate ? (m.bitrate >= 1e6 ? (m.bitrate / 1e6).toFixed(1) + " Mb/s" : Math.round(m.bitrate / 1000) + " kb/s") : ""],
-    ["Size", MediaLib.fmtSize(m.size)], ["Used", uses.length ? uses.length + "×" : "not used"],
-    ["Proxy", m.kind !== "video" ? "" : (() => {
+    [T("Kind"), enumLabel("kind", m.kind)], [T("File"), decodeURIComponent(String(m.src || "").split("?")[0]) + (isMediaOffline(m.id) ? " — " + T("MISSING (offline)") : "")],
+    [T("Duration"), m.duration > 0 ? MediaLib.fmtDur(m.duration) + ` (${(+m.duration).toFixed(3)} s)` : ""],
+    [T("Resolution"), MediaLib.fmtRes(m)], [T("Frame rate"), m.fps ? MediaLib.fmtFps(m.fps) + " fps" : ""],
+    [T("Video codec"), m.kind === "video" ? m.codec : ""], [T("Format"), m.kind !== "video" && m.codec ? m.codec : ""],
+    [T("Audio"), audio], [T("Bitrate"), m.bitrate ? (m.bitrate >= 1e6 ? (m.bitrate / 1e6).toFixed(1) + " Mb/s" : Math.round(m.bitrate / 1000) + " kb/s") : ""],
+    [T("Size"), MediaLib.fmtSize(m.size)], [T("Used"), uses.length ? uses.length + "×" : T("not used")],
+    [T("Proxy"), m.kind !== "video" ? "" : (() => {
       const ps = proxyStatus.get(m.id);
-      if (!ps) return "none";
-      if (ps.state === "ready") return `${ps.width ? ps.width + "×" : ""}${ps.height} · ${MediaLib.fmtSize(ps.size)}${proxiesOn() ? " · playing it" : " · Proxy button off"}`;
-      return ps.state === "running" ? `making it — ${Math.round((ps.progress || 0) * 100)}%` : ps.state + (ps.error ? ": " + ps.error : "");
+      if (!ps) return T("none");
+      if (ps.state === "ready") return `${ps.width ? ps.width + "×" : ""}${ps.height} · ${MediaLib.fmtSize(ps.size)}${proxiesOn() ? " · " + T("playing it") : " · " + T("Proxy button off")}`;
+      return ps.state === "running" ? T("making it — {n}%", { n: Math.round((ps.progress || 0) * 100) }) : ps.state + (ps.error ? ": " + ps.error : "");
     })()],
-    ["Folder", folder ? folder.name : ""], ["Tags", (m.tags || []).map((t) => "#" + t).join(" ")],
-    ["Collections", cols.join(", ")], ["Favorite", m.favorite ? "★ yes" : ""],
+    [T("Folder"), folder ? folder.name : ""], [T("Tags"), (m.tags || []).map((t) => "#" + t).join(" ")],
+    [T("Collections"), cols.join(", ")], [T("Favorite"), m.favorite ? "★ " + T("yes") : ""],
   ].filter(([, v]) => v);
   const pop = document.createElement("div");
   pop.className = "ctx-menu bin-pop bin-info";
   pop.innerHTML = `<div class="bin-pop-title"></div><table>${rows.map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(v)}</td></tr>`).join("")}</table>` +
-    (m.size == null && state.connected ? `<div class="bin-pop-hint">Reading the file's details…</div>` : "");
+    (m.size == null && state.connected ? `<div class="bin-pop-hint">${T("Reading the file's details…")}</div>` : "");
   pop.querySelector(".bin-pop-title").textContent = m.name;
   showPopover(pop, x, y);
   if (m.size == null) refreshMediaInfo([m]);
@@ -2636,7 +2910,7 @@ function revealInProject(c) {
   let sel;
   if (id) {
     const m = getMedia(id);
-    if (!m) { toast("Its media is no longer in the project"); return; }
+    if (!m) { toast(T("Its media is no longer in the project")); return; }
     if ((binView.q || binView.filter) && !MediaLib.query([m], binView, binCtx()).length) { binView.q = ""; binView.filter = ""; }
     for (let f = getFolder(m.folderId); f; f = getFolder(f.parentId)) f.open = true;
     renderBin();
@@ -2788,10 +3062,10 @@ async function replaceMediaFile(m) {
   const file = files[0];
   if (!file) return;
   const kind = mediaKindFromFile(file);
-  if (kind !== m.kind && !(m.kind === "audio" && kind === "video")) { toast(`That is ${kind ? (kind === "audio" || kind === "image" ? "an " : "a ") + kind : "an unsupported"} file — ${m.name} is ${m.kind}`); return; }
-  toast(`Copying ${file.name} into the project…`);
+  if (kind !== m.kind && !(m.kind === "audio" && kind === "video")) { toast(T("That is {what} file — {name} is {kind}", { what: kind ? (kind === "audio" || kind === "image" ? "an " : "a ") + kind : "an unsupported", name: m.name, kind: m.kind })); return; }
+  toast(T("Copying {name} into the project…", { name: file.name }));
   const [up] = await uploadForRelink([file]);
-  if (!up || !up.src) { toast("Couldn't copy the file into media/"); return; }
+  if (!up || !up.src) { toast(T("Couldn't copy the file into media/")); return; }
   await setMediaSource(m, up.src, "replace", file.name);
 }
 
@@ -2800,20 +3074,20 @@ async function replaceMediaFile(m) {
    Browse… for one file and Choose folder… to match a whole folder by name. */
 async function openRelinkDialog(list) {
   list = (list || project.media.filter((m) => isMediaOffline(m.id))).filter(Boolean);
-  if (!list.length) { toast("Nothing is offline"); return; }
+  if (!list.length) { toast(T("Nothing is offline")); return; }
   document.getElementById("relinkOverlay")?.remove();
   const overlay = document.createElement("div");
   overlay.className = "overlay";
   overlay.id = "relinkOverlay";
   overlay.innerHTML = `<div class="dialog relink" role="dialog" aria-modal="true" aria-labelledby="relinkTitle" tabindex="-1">
-    <h2 id="relinkTitle">Relink media</h2>
+    <h2 id="relinkTitle">${T("Relink media")}</h2>
     <p class="dim">Point ${list.length === 1 ? "this file" : `these ${list.length} files`} at the footage where it is now. Clips keep their In points and edits.</p>
     <div class="relink-tools">
-      <button type="button" class="btn tiny" data-folder title="Pick the folder the files are in now — they are matched by name and copied into the project">Choose folder…</button>
+      <button type="button" class="btn tiny" data-folder title="${T("Pick the folder the files are in now — they are matched by name and copied into the project")}">${T("Choose folder…")}</button>
       <span class="relink-status dim"></span>
     </div>
     <div class="relink-rows"></div>
-    <div class="dialog-actions"><button type="button" class="btn" data-cancel>Cancel</button><button type="button" class="btn primary" data-apply>Relink</button></div>
+    <div class="dialog-actions"><button type="button" class="btn" data-cancel>${T("Cancel")}</button><button type="button" class="btn primary" data-apply>${T("Relink")}</button></div>
   </div>`;
   document.body.appendChild(overlay);
   const dialog = overlay.querySelector(".dialog");
@@ -2831,7 +3105,7 @@ async function openRelinkDialog(list) {
       row.innerHTML = `<div class="relink-name"><b></b><span class="dim relink-was"></span></div>
         <div class="relink-pick">
           <select aria-label="New location"></select>
-          <button type="button" class="btn tiny" data-browse title="Pick the file (it is copied into the project)">Browse…</button>
+          <button type="button" class="btn tiny" data-browse title="${T("Pick the file (it is copied into the project)")}">Browse…</button>
         </div>`;
       row.querySelector("b").textContent = (isMediaOffline(m.id) ? "⚠ " : "") + m.name;
       row.querySelector(".relink-was").textContent = "was " + decodeURIComponent(String(m.src).split("?")[0]) + (m.duration ? " · " + fmt(m.duration) : "") + (m.size ? " · " + MediaLib.fmtSize(m.size) : "");
@@ -2897,7 +3171,7 @@ async function openRelinkDialog(list) {
   dialog.focus();
   // candidates found on disk (same name, other extension, similar name, same size)
   if (state.connected) {
-    status.textContent = "Looking for the files…";
+    status.textContent = T("Looking for the files…");
     try {
       const res = await fetch("/api/relink/candidates", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -3010,8 +3284,8 @@ function proxyLabel(m) {
 }
 async function createProxies(list, height) {
   list = list.filter((m) => m.kind === "video" && !m.transient && isLocalSrc(m.src) && !isMediaOffline(m.id));
-  if (!list.length) { toast("No video to make proxies of"); return; }
-  if (!state.ffmpeg) { toast("Proxies need ffmpeg on the server's PATH"); return; }
+  if (!list.length) { toast(T("No video to make proxies of")); return; }
+  if (!state.ffmpeg) { toast(T("Proxies need ffmpeg on the server's PATH")); return; }
   (runtime.proxyAsked ||= new Set());
   for (const m of list) runtime.proxyAsked.add(m.id);
   try {
@@ -3021,8 +3295,9 @@ async function createProxies(list, height) {
     for (const m of list) { const s = body.status[m.src]; if (s) proxyStatus.set(m.id, s); if (s && s.state === "ready") runtime.proxyAsked.delete(m.id); }
     onProxiesChanged();
     const queued = list.filter((m) => proxyStatus.get(m.id)?.state !== "ready").length;
-    toast(queued ? `Making ${queued} prox${queued === 1 ? "y" : "ies"} in the background — the bin shows the progress` : "Already has a proxy");
-  } catch (e) { toast("Couldn't start the proxies: " + (e.message || e)); }
+    toast(queued ? T("Making {n} proxies in the background — the bin shows the progress", { n: queued })
+      : T("Already has a proxy"));
+  } catch (e) { toast(T("Couldn't start the proxies: ") + (e.message || e)); }
 }
 async function deleteProxies(list) {
   try {
@@ -3037,9 +3312,11 @@ function syncProxyButton() {
   const n = project.media.filter((m) => proxyOf(m)).length;
   b.classList.toggle("on", proxiesOn());
   b.classList.toggle("has", n > 0);
-  b.title = (proxiesOn() ? "Proxies on: " : "Proxies off: ") +
-    (n ? `${n} file${n === 1 ? " has a proxy" : "s have proxies"}` : "no proxies yet (right-click a video in the bin → Create proxy)") +
-    ". Export always uses the originals.";
+  b.setAttribute("aria-pressed", proxiesOn() ? "true" : "false");
+  b.title = (proxiesOn() ? T("Proxies on: ") : T("Proxies off: ")) +
+    (n ? (n === 1 ? T("1 file has a proxy") : T("{n} files have proxies", { n: n }))
+      : T("no proxies yet (right-click a video in the bin → Create proxy)")) +
+    T(" Export always uses the originals.");
 }
 
 /* Open the native file dialog. Windows anchors it to the <input>'s screen
@@ -3116,7 +3393,7 @@ function mediaForLibraryItem(f) {
 }
 async function addLibraryItem(f, trackId, at) {
   const m = mediaForLibraryItem(f), gen = runtime.projectGen;
-  if (!m) { toast("Unsupported file type: " + f.name); return; }
+  if (!m) { toast(T("Unsupported file type: ") + f.name); return; }
   if ((m.kind === "audio" || m.kind === "video") && (m.duration == null || isNaN(m.duration))) {
     try { await loadMediaMetadata(m); } catch { }
     ensureWave(m);
@@ -3143,7 +3420,7 @@ function toggleSfxPreview(f, btn) {
   const a = new Audio(f.src);
   a.dataset.src = f.src;
   a.onended = () => { btn.textContent = "▶"; };
-  a.play().catch(() => toast("Couldn't play " + f.name));
+  a.play().catch(() => toast(T("Couldn't play ") + f.name));
   btn.textContent = "⏸";
   runtime.sfxPreview = a;
 }
@@ -3154,9 +3431,9 @@ function renderLibrary() {
   els.libList.innerHTML = "";
   if (!files.length) {
     els.libList.innerHTML = `<div class="bin-empty">
-      <div class="bin-empty-icon">${dir === "sfx" ? "🔊" : dir === "svg" ? "✨" : "🧩"}</div>
-      <p>No assets yet.</p>
-      <p class="hint">Drop files into<br><b>library/${dir}/</b><br>— this list live-updates.</p></div>`;
+      <div class="bin-empty-icon"><svg class="ico" viewBox="0 0 16 16" width="28" height="28" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" d="M8 1.6 14.4 5 8 8.4 1.6 5z"/><path fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" d="m2.6 8 5.4 3 5.4-3M2.6 11l5.4 3 5.4-3"/></svg></div>
+      <p>${T("No assets yet.")}</p>
+      <p class="hint">${T("Drop files into")}<br><b>library/${dir}/</b><br>${T("— this list live-updates.")}</p></div>`;
     return;
   }
   for (const f of files) {
@@ -3173,7 +3450,7 @@ function renderLibrary() {
         <div class="bin-sub">${(f.size / 1024).toFixed(0)} KB</div>
       </div>
       ${dir === "sfx" ? `<button class="btn tiny lib-play" title="Preview">▶</button>` : ""}
-      <button class="btn tiny accent lib-add" title="Add at playhead">＋</button>`;
+      <button class="btn tiny accent lib-add" title="${T("Add at playhead")}">＋</button>`;
     const thumbEl = item.querySelector(".bin-thumb");
     if (visual) thumbEl.style.backgroundImage = `url(${JSON.stringify(f.src)})`;
     else thumbEl.textContent = icon;
@@ -3243,7 +3520,7 @@ async function pjPost(body) {
     const out = await res.json().catch(() => ({}));
     if (!res.ok) { toast(out.error || `Projects: request failed (${res.status})`); return null; }
     return out;
-  } catch { toast("Projects: the editor server did not answer"); return null; }
+  } catch { toast(T("Projects: the editor server did not answer")); return null; }
 }
 /* The program monitor's picture, small, as the open project's card thumbnail. */
 async function pjSnapThumb() {
@@ -3277,7 +3554,7 @@ async function pjLoad() {
       else { runtime.projectId = "?"; syncFromServer(true); }   // not what this tab shows: load it as a switch
     } else if (data.active && data.active !== runtime.projectId) syncFromServer(true);
     if (!pj.list.some((p) => p.id === pj.sel)) pj.sel = (pj.list.find((p) => p.active) || pj.list[0] || {}).id || null;
-  } catch { pj.list = []; toast("Projects: couldn't read the project list"); }
+  } catch { pj.list = []; toast(T("Projects: couldn't read the project list")); }
   renderProjects();
 }
 async function openProjects() {
@@ -3335,18 +3612,18 @@ function renderProjectGrid() {
   grid.innerHTML = rows.length ? rows.map((p) => `
     <button type="button" class="pj-card${p.id === pj.sel && pj.mode === "detail" ? " sel" : ""}${p.active ? " open" : ""}" data-pj="${escapeHtml(p.id)}" title="${p.active ? "Currently open" : "Double-click to open"}">
       ${pjThumbHtml(p)}
-      <span class="pj-card-name">${escapeHtml(p.name)}${p.active ? ` <span class="pj-badge">Open</span>` : ""}</span>
+      <span class="pj-card-name">${escapeHtml(p.name)}${p.active ? ` <span class="pj-badge">${T("Open")}</span>` : ""}</span>
       <span class="pj-card-meta">${p.unreadable ? "file unreadable" : `${p.width}×${p.height} · ${pjFps(p.fps)} · ${pjFmtDur(p.duration)}`}</span>
       <span class="pj-card-when dim">${pj.sort === "created" ? "Created " + pjAgo(p.created) : pj.sort === "modified" || !p.opened ? "Modified " + pjAgo(p.modified) : "Opened " + pjAgo(p.opened)}</span>
     </button>`).join("")
     : `<div class="pj-empty dim">${pj.list.length ? "No project matches the search." : pj.view === "archived" ? "Nothing archived. Archive a project to keep it out of the list without deleting it." : "Loading…"}</div>`;
 }
 function pjDetailHtml(p) {
-  if (!p) return `<p class="dim">Pick a project to see its details.</p>`;
+  if (!p) return `<p class="dim">${T("Pick a project to see its details.")}</p>`;
   const fact = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
   const tpl = p.template && pj.templates.find((t) => t.id === p.template);
   return `${pjThumbHtml(p, true)}
-    <label class="pj-field"><span>Name</span><input type="text" id="pjName" value="${escapeHtml(p.name)}" maxlength="120" spellcheck="false"></label>
+    <label class="pj-field"><span>${T("Name")}</span><input type="text" id="pjName" value="${escapeHtml(p.name)}" maxlength="120" spellcheck="false"></label>
     <dl class="pj-facts">
       ${fact("Canvas", p.unreadable ? "—" : `${p.width}×${p.height} · ${pjFps(p.fps)}`)}
       ${fact("Length", `${pjFmtDur(p.duration)} · ${p.clips} clip${p.clips === 1 ? "" : "s"} · ${p.media} media`)}
@@ -3355,24 +3632,24 @@ function pjDetailHtml(p) {
       ${fact("Created", pjAgo(p.created))}
       ${tpl ? fact("Template", escapeHtml(tpl.name)) : ""}
     </dl>
-    <label class="pj-field"><span>Notes</span><textarea id="pjNotes" rows="4" maxlength="4000" placeholder="Brief, client, deadline, what's left to do…">${escapeHtml(p.notes || "")}</textarea></label>
-    <label class="pj-field"><span>Tags</span><input type="text" id="pjTags" value="${escapeHtml((p.tags || []).join(", "))}" placeholder="client, reel, draft" spellcheck="false"></label>
+    <label class="pj-field"><span>${T("Notes")}</span><textarea id="pjNotes" rows="4" maxlength="4000" placeholder="Brief, client, deadline, what's left to do…">${escapeHtml(p.notes || "")}</textarea></label>
+    <label class="pj-field"><span>${T("Tags")}</span><input type="text" id="pjTags" value="${escapeHtml((p.tags || []).join(", "))}" placeholder="client, reel, draft" spellcheck="false"></label>
     <div class="pj-actions">
       ${p.archived
-        ? `<button type="button" class="btn primary" data-pj-act="unarchive">Unarchive</button>
-           <button type="button" class="btn danger-ghost" data-pj-act="delete" title="Deletes the project file. Its media stay in media/.">Delete…</button>`
+        ? `<button type="button" class="btn primary" data-pj-act="unarchive">${T("Unarchive")}</button>
+           <button type="button" class="btn danger-ghost" data-pj-act="delete" title="${T("Deletes the project file. Its media stay in media/.")}">${T("Delete…")}</button>`
         : `<button type="button" class="btn primary" data-pj-act="open"${p.active ? " disabled" : ""}>${p.active ? "Currently open" : "Open"}</button>
-           <button type="button" class="btn" data-pj-act="duplicate" title="A copy of the whole project (the footage is shared, not copied)">Duplicate</button>
-           <button type="button" class="btn" data-pj-act="template" title="Start new projects from this one: its canvas, tracks, clips and media">Save as template</button>
-           <button type="button" class="btn" data-pj-act="archive"${p.active ? ` disabled title="Open another project first"` : ` title="Hide it from the list; nothing is deleted"`}>Archive</button>`}
+           <button type="button" class="btn" data-pj-act="duplicate" title="${T("A copy of the whole project (the footage is shared, not copied)")}">${T("Duplicate")}</button>
+           <button type="button" class="btn" data-pj-act="template" title="${T("Start new projects from this one: its canvas, tracks, clips and media")}">${T("Save as template")}</button>
+           <button type="button" class="btn" data-pj-act="archive"${p.active ? ` disabled title="${T("Open another project first")}"` : ` title="Hide it from the list; nothing is deleted"`}>${T("Archive")}</button>`}
     </div>
     <div class="pj-actions">
-      <button type="button" class="btn" data-pj-act="versions" title="Saved versions of this project: compare, restore, mark the final cut">Versions…</button>
-      <a class="btn" href="/api/projects/backup?id=${encodeURIComponent(p.id)}" download${p.active ? " data-pj-backup" : ""} title="The project and all its versions as one file. Import… restores it">Download backup</a>
+      <button type="button" class="btn" data-pj-act="versions" title="${T("Saved versions of this project: compare, restore, mark the final cut")}">${T("Versions…")}</button>
+      <a class="btn" href="/api/projects/backup?id=${encodeURIComponent(p.id)}" download${p.active ? " data-pj-backup" : ""} title="${T("The project and all its versions as one file. Import… restores it")}">${T("Download backup")}</a>
     </div>
     <div class="pj-inline hidden" id="pjTplRow">
       <input type="text" id="pjTplName" value="${escapeHtml(p.name)}" maxlength="120" aria-label="Template name" spellcheck="false">
-      <button type="button" class="btn primary" data-pj-act="template-save">Save template</button>
+      <button type="button" class="btn primary" data-pj-act="template-save">${T("Save template")}</button>
     </div>`;
 }
 function pjNewHtml() {
@@ -3386,28 +3663,28 @@ function pjNewHtml() {
   const row = (x) => `<button type="button" class="pj-tpl${x.id === pj.tpl ? " on" : ""}" data-pj-tpl="${escapeHtml(x.id)}">
       ${shape(x)}<span class="pj-tpl-name">${escapeHtml(x.name)}</span>
       <span class="pj-tpl-meta dim">${x.width}×${x.height}${x.builtin ? "" : ` · ${x.clips} clip${x.clips === 1 ? "" : "s"}`}</span>
-      ${x.builtin ? "" : `<span class="pj-tpl-del" data-pj-tpldel="${escapeHtml(x.id)}" role="button" tabindex="0" title="Delete this template">✕</span>`}
+      ${x.builtin ? "" : `<span class="pj-tpl-del" data-pj-tpldel="${escapeHtml(x.id)}" role="button" tabindex="0" title="${T("Delete this template")}">✕</span>`}
     </button>`;
   const saved = tpls.filter((x) => !x.builtin);
-  return `<h3>New project</h3>
-    <label class="pj-field"><span>Name</span><input type="text" id="pjNewName" value="Untitled Project" maxlength="120" spellcheck="false"></label>
-    <div class="pj-field"><span>Start from</span>
+  return `<h3>${T("New project")}</h3>
+    <label class="pj-field"><span>${T("Name")}</span><input type="text" id="pjNewName" value="Untitled Project" maxlength="120" spellcheck="false"></label>
+    <div class="pj-field"><span>${T("Start from")}</span>
       <div class="pj-tpls">${tpls.filter((x) => x.builtin).map(row).join("")}</div>
-      ${saved.length ? `<span class="pj-sub">Saved templates</span><div class="pj-tpls">${saved.map(row).join("")}</div>` : ""}
+      ${saved.length ? `<span class="pj-sub">${T("Saved templates")}</span><div class="pj-tpls">${saved.map(row).join("")}</div>` : ""}
     </div>
-    <label class="pj-field"><span>Frame rate</span><select id="pjNewFps">
+    <label class="pj-field"><span>${T("Frame rate")}</span><select id="pjNewFps">
       <option value="">${t.fps ? `${+(+t.fps).toFixed(3)} fps (template)` : "Template's"}</option>
       ${[23.976, 24, 25, 29.97, 30, 50, 59.94, 60].map((f) => `<option value="${f}">${f} fps</option>`).join("")}
     </select></label>
     <div class="pj-actions">
-      <button type="button" class="btn" data-pj-act="new-cancel">Cancel</button>
-      <button type="button" class="btn primary" data-pj-act="new-create">Create and open</button>
+      <button type="button" class="btn" data-pj-act="new-cancel">${T("Cancel")}</button>
+      <button type="button" class="btn primary" data-pj-act="new-create">${T("Create and open")}</button>
     </div>`;
 }
 async function pjOpenProject(id) {
   const p = pj.list.find((x) => x.id === id);
   if (!p || p.active || pj.busy) return;
-  if (state.exporting) { toast("Wait for the export to finish before switching projects"); return; }
+  if (state.exporting) { toast(T("Wait for the export to finish before switching projects")); return; }
   pj.busy = true;
   try {
     if (!(await flushSaveBeforeSwitch())) return;
@@ -3429,7 +3706,7 @@ async function pjAction(act, btn) {
   if (act === "new-cancel") { pj.mode = "detail"; renderProjects(); return; }
   if (act === "new-create") {
     if (pj.busy) return;
-    if (state.exporting) { toast("Wait for the export to finish before switching projects"); return; }
+    if (state.exporting) { toast(T("Wait for the export to finish before switching projects")); return; }
     const name = ($("pjNewName")?.value || "").trim() || "Untitled Project";
     const fps = $("pjNewFps")?.value;
     pj.busy = true;
@@ -3457,8 +3734,8 @@ async function pjAction(act, btn) {
   }
   if (act === "delete") {
     if (btn.dataset.armed !== "1") {
-      btn.dataset.armed = "1"; btn.textContent = "Click again to delete";
-      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Delete…"; } }, 3000);
+      btn.dataset.armed = "1"; btn.textContent = T("Click again to delete");
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = T("Delete…"); } }, 3000);
       return;
     }
     const out = await pjBusy(() => pjPost({ action: "delete", id: p.id }));
@@ -3535,7 +3812,7 @@ function pjVersionsHtml() {
       <div class="ver-main">
         <span class="ver-num">v${v.v}</span>
         <span class="ver-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
-        ${v.final ? `<span class="ver-badge final">Final</span>` : ""}
+        ${v.final ? `<span class="ver-badge final">${T("Final")}</span>` : ""}
         ${VER_KIND[v.kind] ? `<span class="ver-badge">${VER_KIND[v.kind]}</span>` : ""}
         <span class="ver-meta dim">${pjAgo(v.created)} · ${pjFmtDur(v.duration)} · ${v.clips} clip${v.clips === 1 ? "" : "s"}</span>
       </div>
@@ -3543,26 +3820,26 @@ function pjVersionsHtml() {
       ${diff ? `<ul class="ver-diff">${diff.length ? diff.map((l) => `<li>${escapeHtml(l)}</li>`).join("") : "<li>Same as now.</li>"}</ul>` : ""}
       <div class="ver-actions">
         <button type="button" class="btn tiny" data-ver-act="diff">${diff ? "Hide changes" : "Compare with now"}</button>
-        <button type="button" class="btn tiny" data-ver-act="restore" title="Put this version back. What is there now is saved as a version first.">Restore…</button>
+        <button type="button" class="btn tiny" data-ver-act="restore" title="${T("Put this version back. What is there now is saved as a version first.")}">${T("Restore…")}</button>
         <button type="button" class="btn tiny" data-ver-act="final">${v.final ? "Unmark final" : "Mark final"}</button>
-        <button type="button" class="btn tiny" data-ver-act="rename">Rename</button>
-        <a class="btn tiny" href="/api/versions/file?project=${encodeURIComponent(pj.verOf)}&version=${v.v}" download>Download</a>
-        <button type="button" class="btn tiny danger-ghost" data-ver-act="delete"${v.final ? ` disabled title="Unmark it as final first"` : ""}>Delete…</button>
+        <button type="button" class="btn tiny" data-ver-act="rename">${T("Rename")}</button>
+        <a class="btn tiny" href="/api/versions/file?project=${encodeURIComponent(pj.verOf)}&version=${v.v}" download>${T("Download")}</a>
+        <button type="button" class="btn tiny danger-ghost" data-ver-act="delete"${v.final ? ` disabled title="${T("Unmark it as final first")}"` : ""}>${T("Delete…")}</button>
       </div>
     </div>`;
   }).join("");
   return `<div class="ver-view">
     <div class="ver-head">
-      <button type="button" class="btn tiny" data-ver-act="back">← All projects</button>
+      <button type="button" class="btn tiny" data-ver-act="back">${T("← All projects")}</button>
       <h3>Versions of ${escapeHtml(p.name)}</h3>
     </div>
     <div class="ver-save">
-      <input type="text" id="verName" maxlength="120" placeholder="Name (optional), e.g. Client cut" spellcheck="false" aria-label="Version name">
-      <input type="text" id="verNote" maxlength="2000" placeholder="Note (optional)" aria-label="Version note">
-      <button type="button" class="btn primary" data-ver-act="save">Save version</button>
+      <input type="text" id="verName" maxlength="120" placeholder="Name (optional), e.g. Client cut" spellcheck="false" aria-label="${T("Version name")}">
+      <input type="text" id="verNote" maxlength="2000" placeholder="Note (optional)" aria-label="${T("Version note")}">
+      <button type="button" class="btn primary" data-ver-act="save">${T("Save version")}</button>
     </div>
     <p class="dim ver-hint">Versions are also saved on their own every 10 minutes while the project changes, and before an agent edits it.${p.active ? " Ctrl/Cmd+S saves one from anywhere in the editor." : ""}</p>
-    ${rows || `<div class="pj-empty dim">No versions yet. Save one to have a point to come back to.</div>`}
+    ${rows || `<div class="pj-empty dim">${T("No versions yet. Save one to have a point to come back to.")}</div>`}
   </div>`;
 }
 async function pjVersionAction(act, btn) {
@@ -3580,7 +3857,7 @@ async function pjVersionRun(act, btn) {
   const row = btn.closest("[data-ver]"), v = row ? +row.dataset.ver : null;
   const post = (body) => fetch("/api/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: p.id, ...body }) })
     .then(async (r) => { const out = await r.json().catch(() => ({})); if (!r.ok) { toast(out.error || "Versions: request failed"); return null; } return out; })
-    .catch(() => { toast("Versions: the editor server did not answer"); return null; });
+    .catch(() => { toast(T("Versions: the editor server did not answer")); return null; });
   if (act === "save") {
     if (p.active && !(await flushSaveForVersion("no version was made"))) return;
     const out = await post({ action: "save", name: $("verName")?.value, note: $("verNote")?.value });
@@ -3602,11 +3879,11 @@ async function pjVersionRun(act, btn) {
   }
   if (act === "restore") {
     if (btn.dataset.armed !== "1") {
-      btn.dataset.armed = "1"; btn.textContent = "Click again to restore";
-      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Restore…"; } }, 3000);
+      btn.dataset.armed = "1"; btn.textContent = T("Click again to restore");
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = T("Restore…"); } }, 3000);
       return;
     }
-    if (p.active && state.exporting) { toast("Wait for the export to finish before restoring"); return; }
+    if (p.active && state.exporting) { toast(T("Wait for the export to finish before restoring")); return; }
     if (p.active && !(await flushSaveForVersion("nothing was restored"))) return;
     const out = await post({ action: "restore", version: v });
     if (!out) return;
@@ -3631,7 +3908,7 @@ async function pjVersionRun(act, btn) {
     const name = row.querySelector(".ver-name");
     if (!name || name.querySelector("input")) return;
     const e = pj.versions.find((x) => x.v === v);
-    name.innerHTML = `<input type="text" class="ver-rename" maxlength="120" value="${escapeHtml(e?.name || "")}" spellcheck="false" aria-label="Version name">`;
+    name.innerHTML = `<input type="text" class="ver-rename" maxlength="120" value="${escapeHtml(e?.name || "")}" spellcheck="false" aria-label="${T("Version name")}">`;
     const inp = name.querySelector("input");
     inp.focus(); inp.select();
     const done = async (keep) => {
@@ -3647,8 +3924,8 @@ async function pjVersionRun(act, btn) {
   }
   if (act === "delete") {
     if (btn.dataset.armed !== "1") {
-      btn.dataset.armed = "1"; btn.textContent = "Click again to delete";
-      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Delete…"; } }, 3000);
+      btn.dataset.armed = "1"; btn.textContent = T("Click again to delete");
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = T("Delete…"); } }, 3000);
       return;
     }
     const out = await post({ action: "delete", version: v });
@@ -3667,7 +3944,7 @@ async function saveVersionNow() {
     const out = await res.json().catch(() => ({}));
     if (!res.ok) { toast(out.error || "Couldn't save a version"); return; }
     toast(`Saved v${out.version.v} “${out.version.name}” · Projects → Versions to go back to it`);
-  } catch { toast("Couldn't save a version: the editor server did not answer"); }
+  } catch { toast(T("Couldn't save a version: the editor server did not answer")); }
   finally { versionSaving = false; }
 }
 /** Write the open project's pending edit before a version action; false (with a toast) when it didn't land. */
@@ -3683,7 +3960,7 @@ function onProjectSwitched() {
   const queued = exportQueue.length;
   for (let i = exportQueue.length - 1; i >= 0; i--)
     if (["pending", "failed", "cancelled"].includes(exportQueue[i].status)) exportQueue.splice(i, 1);   // Retry would render this project
-  if (exportQueue.length !== queued) { renderQueue(); toast("Queued exports of the previous project were removed"); }
+  if (exportQueue.length !== queued) { renderQueue(); toast(T("Queued exports of the previous project were removed")); }
   if (runtime.saveTimer) { clearTimeout(runtime.saveTimer); runtime.saveTimer = null; }  // an edit of the old project
   runtime.saveFailed = false;
   runtime.undo.length = 0; runtime.redo.length = 0;
@@ -3706,7 +3983,7 @@ function initProjectsUi() {
   btn.classList.remove("hidden");
   btn.addEventListener("click", openProjects);
   els.projectName?.classList.add("clickable");
-  els.projectName?.setAttribute("title", "Projects");
+  els.projectName?.setAttribute("title", T("Projects"));
   els.projectName?.addEventListener("click", openProjects);
   $("pjClose").addEventListener("click", closeProjects);
   ov.addEventListener("click", (e) => { if (e.target === ov) closeProjects(); });
@@ -3871,7 +4148,7 @@ function defaultTrackFor(kind) {
    group, so picture and stems never end up in different states. */
 function toggleClipsDisabled() {
   const group = withLinked(selectedClips());
-  if (!group.length) { toast("Select a clip first"); return; }
+  if (!group.length) { toast(T("Select a clip first")); return; }
   if (group.some(isClipLocked)) { toastLocked(); return; }
   const disable = group.some((c) => c.disabled !== true);
   pushUndo();
@@ -3882,7 +4159,7 @@ function toggleClipsDisabled() {
 }
 function toggleClipsLocked() {
   const group = withLinked(selectedClips());
-  if (!group.length) { toast("Select a clip first"); return; }
+  if (!group.length) { toast(T("Select a clip first")); return; }
   const lock = group.some((c) => c.locked !== true);
   pushUndo();
   for (const c of group) { if (lock) c.locked = true; else delete c.locked; }
@@ -3907,14 +4184,14 @@ function linkRefusal(clips) {
 }
 function toggleLinkSelected() {
   const sel = selectedClips();
-  if (!sel.length) { toast("Select clips first"); return; }
+  if (!sel.length) { toast(T("Select clips first")); return; }
   const linked = sel.filter((c) => c.linkGroup || c.linkedId);
   if (linked.length) {
     const group = withLinked(linked);
     if (group.some(isClipLocked)) { toastLocked(); return; }
     pushUndo();
     for (const c of group) { delete c.linkGroup; delete c.linkedId; c.unlinked = true; }
-    toast("Unlinked — video and audio now move and trim separately");
+    toast(T("Unlinked — video and audio now move and trim separately"));
   } else {
     const why = linkRefusal(sel);
     if (why) { toast(why); return; }
@@ -4071,12 +4348,12 @@ function sourceInsertWindow() {
 }
 function toastSourceWindowMissing() {
   if (!state.source.mediaId)
-    toast("Load Source first (double-click Project or a timeline clip)");
+    toast(T("Load Source first (double-click Project or a timeline clip)"));
   else
-    toast("Mark a Source range (I / O) — or load media with a known duration");
+    toast(T("Mark a Source range (I / O) — or load media with a known duration"));
 }
 function toastNoSourceTarget() {
-  toast("No targeted track for this media — click a track name to target it (and unlock it)");
+  toast(T("No targeted track for this media — click a track name to target it (and unlock it)"));
 }
 /** Premiere-style Insert: place Source In→Out at the timeline playhead and
  *  ripple later clips on targeted tracks (EDIT.insertAt). */
@@ -4130,7 +4407,7 @@ function applySourceWindowToClip(c, win) {
   const { inn, duration: mediaWin } = win;
   const sp = clipSpeed(c);
   if (hasSpeedRamp(c)) {
-    toast("Cannot retarget Source In/Out on a clip with a speed ramp");
+    toast(T("Cannot retarget Source In/Out on a clip with a speed ramp"));
     return;
   }
   const newDur = Math.max(MIN_DUR, mediaWin / sp);
@@ -4281,7 +4558,7 @@ function openStylePicker(anchor, c) {
     ensureFont(v.props.font); // so the entry itself renders in the style's face
     const it = document.createElement("div");
     it.className = "style-opt" + (c.styleName === k ? " on" : "");
-    it.textContent = v.label;
+    it.textContent = T(v.label);
     it.style.fontFamily = `"${v.props.font}", sans-serif`;
     if (v.props.uppercase) it.style.textTransform = "uppercase";
     it.addEventListener("mouseenter", () => {
@@ -4374,7 +4651,7 @@ function pickReplacementFile(clip) {
       if (!c || !added.length) return;
       const m = added.find((x) => x.kind === c.kind) || added[0];
       if (m.kind === c.kind) replaceClipMedia(c, m);
-      else toast(`Imported, but can't replace a ${c.kind} clip with ${m.kind === "audio" ? "an" : "a"} ${m.kind}`);
+      else toast(T("Imported, but can't replace a {kind} clip with {other}", { kind: c.kind, other: m.kind }));
     });
   }
   replaceFileTargetId = clip.id;
@@ -4390,7 +4667,7 @@ function openMediaPicker(anchor, c) {
   menu.className = "style-menu";
   const browse = document.createElement("div");
   browse.className = "style-opt media-opt";
-  browse.textContent = "📂 Browse file…";
+  browse.textContent = T("📂 Browse file…");
   browse.addEventListener("click", () => {
     close();
     pickReplacementFile(c);
@@ -4413,7 +4690,7 @@ function openMediaPicker(anchor, c) {
     empty.className = "style-opt media-opt";
     empty.style.opacity = ".6";
     empty.style.cursor = "default";
-    empty.textContent = `No other ${c.kind} in bin`;
+    empty.textContent = T("No other {kind} in bin", { kind: enumLabel("kind", c.kind) });
     menu.appendChild(empty);
   }
   const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
@@ -4431,7 +4708,7 @@ function openMediaPicker(anchor, c) {
 }
 function closeMediaPicker() { if (runtime.mediaMenu) runtime.mediaMenu.close(); }
 function addTitle() {
-  if (isTrackLocked("V2")) { toast("V2 is locked — unlock it to add a title"); return; }
+  if (isTrackLocked("V2")) { toast(T("V2 is locked — unlock it to add a title")); return; }
   pushUndo();
   const c = {
     id: "c_" + uid(), mediaId: null, kind: "text", track: "V2",
@@ -4445,7 +4722,7 @@ function addTitle() {
   selectClip(c.id); scheduleSave();
 }
 function addAdjust() {
-  if (isTrackLocked("V3")) { toast("V3 is locked — unlock it to add an adjustment layer"); return; }
+  if (isTrackLocked("V3")) { toast(T("V3 is locked — unlock it to add an adjustment layer")); return; }
   pushUndo();
   const c = {
     id: "c_" + uid(), mediaId: null, kind: "adjust", track: "V3",
@@ -4524,9 +4801,9 @@ function saveLastTransition(side, tr) {
 }
 function addTransitionAtPlayhead() {
   const c = getClip(state.selId);
-  if (!c) { toast("Select a clip first"); return; }
+  if (!c) { toast(T("Select a clip first")); return; }
   const t = state.time;
-  if (t < c.start || t >= clipEnd(c)) { toast("Move playhead over the selected clip"); return; }
+  if (t < c.start || t >= clipEnd(c)) { toast(T("Move playhead over the selected clip")); return; }
   const side = (t - c.start) / c.duration < 0.5 ? "in" : "out";
   const key = side === "in" ? "transitionIn" : "transitionOut";
   const preset = loadLastTransition(side);
@@ -4555,7 +4832,7 @@ function ensurePlayheadVisible() {
 /* Jump playhead to the middle of the next aligned gap (wraps). */
 function goToNextGap() {
   const { t0, t1 } = gapSearchRange();
-  if (t1 - t0 <= GAP_EPS) { toast("No gaps found"); return; }
+  if (t1 - t0 <= GAP_EPS) { toast(T("No gaps found")); return; }
   const gaps = listAlignedGaps(t0, t1);
   if (!gaps.length) {
     toast(project.inPoint != null && project.outPoint != null
@@ -4580,11 +4857,11 @@ function splitAtPlayhead() {
 function splitAtWorkArea() {
   const cuts = [project.inPoint, project.outPoint].filter((t) => t != null);
   if (!cuts.length) {
-    toast("Set an IN or OUT marker first (I / O)");
+    toast(T("Set an IN or OUT marker first (I / O)"));
     return;
   }
   const snap = undoSnapshot();
-  if (!EDIT.splitAtTimes(cuts)) { toast("Nothing to split at IN/OUT"); return; }
+  if (!EDIT.splitAtTimes(cuts)) { toast(T("Nothing to split at IN/OUT")); return; }
   pushUndo(snap);
   scheduleSave();
 }
@@ -4609,11 +4886,11 @@ function trimToPlayhead(side) {
 function trimToWorkArea() {
   const inn = project.inPoint, out = project.outPoint;
   if (inn == null && out == null) {
-    toast("Set an IN or OUT marker first (I / O)");
+    toast(T("Set an IN or OUT marker first (I / O)"));
     return;
   }
   const snap = undoSnapshot();
-  if (!EDIT.trimToRange(inn, out)) { toast("Nothing to trim"); return; }
+  if (!EDIT.trimToRange(inn, out)) { toast(T("Nothing to trim")); return; }
   pushUndo(snap);
   pruneSelection();
   scheduleSave();
@@ -4642,8 +4919,8 @@ function liftExtract(extract) {
 function crossfadeSelected(dur = FableCutEdit.CROSSFADE_DUR) {
   const pairs = state.selIds.size ? crossfadeCuts(withLinked(selectedClips())) : EDIT.crossfadeCutsNear(state.time);
   if (!pairs.length) {
-    toast(state.selIds.size ? "No audio cut next to the selection — clips must touch or overlap on one track"
-      : "No audio cut near the playhead on the targeted tracks");
+    toast(state.selIds.size ? T("No audio cut next to the selection — clips must touch or overlap on one track")
+      : T("No audio cut near the playhead on the targeted tracks"));
     return;
   }
   pushUndo();
@@ -4802,12 +5079,12 @@ function buildTrackDOM() {
     h.style.height = t.h + "px";
     h.innerHTML =
       `<button type="button" class="track-toggle" aria-pressed="${on}" ` +
-      `title="${on ? "Disable track" : "Enable track"}" style="color:${t.color}">` +
+      `title="${on ? T("Disable track") : T("Enable track")}" style="color:${t.color}">` +
       `${trackToggleIcon(t.kind)}</button>` +
       `<button type="button" class="track-id">${escapeHtml(t.id)}</button>` +
       `<button type="button" class="track-lock" aria-pressed="false">${TRACK_LOCK_ICON}</button>` +
       `<button type="button" class="track-solo${solo ? " on" : ""}" aria-pressed="${solo}" ` +
-      `title="${solo ? "Unsolo track" : "Solo track (mute all others)"}">S</button>`;
+      `title="${solo ? T("Unsolo track") : T("Solo track (mute all others)")}">S</button>`;
     h.querySelector(".track-toggle").addEventListener("click", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -4882,19 +5159,19 @@ function transitionMarksHtml(c, trackH) {
       html += `<div class="trans-mark ${side}${focused}" style="width:${w}px" data-side="${side}">` +
         `<svg viewBox="0 0 ${w} ${clipH}" preserveAspectRatio="none" aria-hidden="true">` +
         `<polygon points="${pts.join(" ")}"/></svg>` +
-        `<div class="trans-dur-handle" title="Drag to adjust duration"></div></div>`;
+        `<div class="trans-dur-handle" title="${T("Drag to adjust duration")}"></div></div>`;
       return;
     }
     if (side === "in") {
       html += `<div class="trans-mark in${focused}" style="width:${w}px" data-side="in">` +
         `<svg viewBox="0 0 ${w} ${clipH}" preserveAspectRatio="none" aria-hidden="true">` +
         `<polygon points="0,0 ${w},0 0,${bot}"/></svg>` +
-        `<div class="trans-dur-handle" title="Drag to adjust duration"></div></div>`;
+        `<div class="trans-dur-handle" title="${T("Drag to adjust duration")}"></div></div>`;
     } else {
       html += `<div class="trans-mark out${focused}" style="width:${w}px" data-side="out">` +
         `<svg viewBox="0 0 ${w} ${clipH}" preserveAspectRatio="none" aria-hidden="true">` +
         `<polygon points="0,0 ${w},0 ${w},${bot}"/></svg>` +
-        `<div class="trans-dur-handle" title="Drag to adjust duration"></div></div>`;
+        `<div class="trans-dur-handle" title="${T("Drag to adjust duration")}"></div></div>`;
     }
   };
   wedge(c.transitionIn, "in");
@@ -4982,7 +5259,7 @@ function rebuildClips() {
       // say on hover how to get inside (wide enough clips show it in the clip, every one in its tooltip)
       const comp = getComp(c.compId);
       div.title = comp ? `${comp.template ? "Template" : "Composition"} "${comp.name}" — double-click to open and edit${comp.template ? " · its fields are in the Inspector" : ""}` : "Its composition is missing";
-      if (comp && c.duration * state.pps >= label.length * 7 + 190) body += `<div class="comp-open-hint">Double-click to open</div>`;
+      if (comp && c.duration * state.pps >= label.length * 7 + 190) body += `<div class="comp-open-hint">${T("Double-click to open")}</div>`;
     }
     body += clipKeyframesHtml(c);
     let inner = `<div class="clip-body">${body}</div>`;
@@ -5053,7 +5330,7 @@ function paintAudioOverlaps() {
       el.className = "track-overlap";
       el.style.left = (t0 * state.pps) + "px";
       el.style.width = Math.max(2, (t1 - t0) * state.pps) + "px";
-      el.title = "Overlapping audio";
+      el.title = T("Overlapping audio");
       row.appendChild(el);
     }
   }
@@ -5134,7 +5411,7 @@ function volBandHtml(c, trackH) {
   const line = pts.join(" ");
   let html = `<svg class="vol-band" width="${W.toFixed(1)}" height="${clipH}" aria-hidden="true">${duck}` +
     `<polyline class="vol-line" points="${line}"/>` +
-    `<polyline class="vol-hit" points="${line}"><title>Volume — drag to change · Ctrl/Cmd-click: add keyframe</title></polyline></svg>`;
+    `<polyline class="vol-hit" points="${line}"><title>${T("Volume — drag to change · Ctrl/Cmd-click: add keyframe")}</title></polyline></svg>`;
   if (kfs?.length) for (let i = 0; i < kfs.length; i++) {
     const k = kfs[i];
     html += `<div class="vol-pt" data-i="${i}" style="left:${(k.t * state.pps).toFixed(1)}px;top:${y(k.v)}px" ` +
@@ -5145,8 +5422,8 @@ function volBandHtml(c, trackH) {
 function fadeGripsHtml(c) {
   const fin = c.transitionIn?.type === "fade" ? clipTransitionDur(c.transitionIn) : 0;
   const fout = c.transitionOut?.type === "fade" ? clipTransitionDur(c.transitionOut) : 0;
-  return `<div class="fade-grip l" style="left:${(Math.min(fin, c.duration) * state.pps).toFixed(1)}px" title="Drag to fade in"></div>` +
-    `<div class="fade-grip r" style="right:${(Math.min(fout, c.duration) * state.pps).toFixed(1)}px" title="Drag to fade out"></div>`;
+  return `<div class="fade-grip l" style="left:${(Math.min(fin, c.duration) * state.pps).toFixed(1)}px" title="${T("Drag to fade in")}"></div>` +
+    `<div class="fade-grip r" style="right:${(Math.min(fout, c.duration) * state.pps).toFixed(1)}px" title="${T("Drag to fade out")}"></div>`;
 }
 const volGroup = (c) => withLinked([c]).filter((x) => x.kind === "audio");
 /** Copy c's volume (static + keyframes) onto its linked stems. */
@@ -5459,7 +5736,9 @@ function drawRulerMainThread(w, h, dpr) {
 
 /* ── Snapping ── */
 /* Which targets pull a dragged time in (the ▾ menu next to Snap). `frames`
-   is not a target: when nothing is in reach it rounds to the frame grid. */
+   is not a target: when nothing is in reach it rounds to the frame grid.
+   The keys are the ids the targets are stored under and never change; the
+   values are the wording of the menu, translated when it is drawn. */
 const SNAP_TARGET_LABELS = {
   clips: "Clip edges", playhead: "Playhead", markers: "Markers",
   inout: "IN / OUT", keyframes: "Keyframes", frames: "Frame grid",
@@ -5520,13 +5799,19 @@ window.addEventListener("pointerup", () => els.snapLine?.classList.add("hidden")
 function toggleSnapTarget(key) {
   setSetting("snapTargets", { ...snapTargets(), [key]: !snapTargets()[key] });
 }
+/* Draw the snap menu. The wording is translated here, at the moment the menu
+   is drawn, so a language switch shows the new wording; the checkbox ids stay
+   the raw target ids, so a setting keeps its meaning in every language. */
+function renderSnapMenu(menu) {
+  const on = snapTargets();
+  menu.innerHTML = `<div class="snap-menu-head dim">${T("Snap to")}</div>` +
+    Object.entries(SNAP_TARGET_LABELS).map(([k, label]) =>
+      `<label class="ctx-item snap-opt"><input type="checkbox" data-snap="${k}"${on[k] ? " checked" : ""}> <span>${T(label)}</span></label>`).join("");
+}
 function openSnapMenu(anchor) {
   const menu = document.createElement("div");
   menu.className = "ctx-menu snap-menu";
-  const on = snapTargets();
-  menu.innerHTML = `<div class="snap-menu-head dim">Snap to</div>` +
-    Object.entries(SNAP_TARGET_LABELS).map(([k, label]) =>
-      `<label class="ctx-item snap-opt"><input type="checkbox" data-snap="${k}"${on[k] ? " checked" : ""}> <span>${label}</span></label>`).join("");
+  renderSnapMenu(menu);
   menu.addEventListener("change", (e) => {
     const k = e.target.dataset.snap;
     if (k) toggleSnapTarget(k);
@@ -5627,7 +5912,7 @@ function startTrimToolGesture(e, c, mode) {
   for (const n of [adjacentClip(c, "in"), adjacentClip(c, "out")])
     if (n) for (const x of withLinked([n])) ignore.add(x.id);
   const t0 = timeAtEvent(e), x0 = e.clientX;
-  const label = EDIT_TOOLS[tool].label;
+  const label = T(EDIT_TOOLS[tool].label);
   let moved = false, applied = 0;
   const onMove = (ev) => {
     if (!moved && Math.abs(ev.clientX - x0) <= 3) return;
@@ -6120,16 +6405,16 @@ function goToKeyframe(dir) {
       t >= c.start - 1e-6 && t <= c.start + c.duration + 1e-6);
   }
   const times = keyframeTimelineTimes(clips);
-  if (!times.length) { toast("No keyframes"); return; }
+  if (!times.length) { toast(T("No keyframes")); return; }
   const eps = kfTimeEps();
   if (dir > 0) {
     const next = times.find((t) => t > state.time + eps);
-    if (next == null) { toast("No next keyframe"); return; }
+    if (next == null) { toast(T("No next keyframe")); return; }
     setTime(next);
   } else {
     let prev = null;
     for (const t of times) if (t < state.time - eps) prev = t;
-    if (prev == null) { toast("No previous keyframe"); return; }
+    if (prev == null) { toast(T("No previous keyframe")); return; }
     setTime(prev);
   }
 }
@@ -6157,7 +6442,7 @@ function goToMarker(dir) {
 }
 /* Park the playhead on a marker (Program monitor). */
 function seekToMarker(m) {
-  if (m.t > projDur() + 1e-3) { toast("That marker is past the end of the timeline"); return; }
+  if (m.t > projDur() + 1e-3) { toast(T("That marker is past the end of the timeline")); return; }
   if (isSourceMode()) setMonitorMode("program");
   setTime(m.t);
   revealTime(m.t);
@@ -6190,10 +6475,10 @@ function openMarkerEditor(mk, clientX, clientY) {
   const swatches = Object.entries(MARKER_COLORS).map(([name, hex]) =>
     `<button type="button" class="marker-swatch" data-color="${name}" title="${name}" aria-label="${name}" style="--c:${hex}"></button>`).join("");
   menu.innerHTML =
-    `<div class="marker-pop-head"><span class="timecode">${fmt(mk.t)}</span><span class="dim">Marker</span></div>` +
+    `<div class="marker-pop-head"><span class="timecode">${fmt(mk.t)}</span><span class="dim">${T("Marker")}</span></div>` +
     `<input type="text" class="marker-name" maxlength="80" placeholder="Name (optional)" spellcheck="false">` +
     `<div class="marker-swatches">${swatches}</div>` +
-    `<button type="button" class="ctx-item marker-del"><span>Delete marker</span></button>`;
+    `<button type="button" class="ctx-item marker-del"><span>${T("Delete marker")}</span></button>`;
   const input = menu.querySelector(".marker-name");
   input.value = mk.label || "";
   const syncSwatches = () => {
@@ -6232,7 +6517,7 @@ function openMarkerList(anchor) {
   menu.className = "ctx-menu marker-list";
   const list = project.markers || [];
   if (!list.length) {
-    menu.innerHTML = `<div class="marker-empty dim">No markers yet — press <kbd>M</kbd> at the playhead.</div>`;
+    menu.innerHTML = `<div class="marker-empty dim">${T("No markers yet — press")} <kbd>M</kbd> ${T("at the playhead.")}</div>`;
   } else {
     menu.innerHTML = list.map((m, i) =>
       `<div class="marker-row" data-i="${i}">` +
@@ -6240,9 +6525,9 @@ function openMarkerList(anchor) {
       `<span class="marker-dot" style="--c:${markerColor(m)}"></span>` +
       `<span class="timecode">${fmt(m.t)}</span>` +
       `<span class="marker-label${m.label ? "" : " dim"}">${m.label ? escapeHtml(m.label) : "—"}</span></button>` +
-      `<button type="button" class="btn tiny marker-edit" data-i="${i}" title="Rename / colour">✎</button></div>`,
+      `<button type="button" class="btn tiny marker-edit" data-i="${i}" title="${T("Rename / colour")}">✎</button></div>`,
     ).join("") +
-      `<button type="button" class="ctx-item marker-clear"><span>Clear all markers</span></button>`;
+      `<button type="button" class="ctx-item marker-clear"><span>${T("Clear all markers")}</span></button>`;
   }
   menu.addEventListener("click", (e) => {
     const go = e.target.closest(".marker-go"), ed = e.target.closest(".marker-edit");
@@ -6395,7 +6680,7 @@ function zoomToFit() {
    One clip → that clip; multiple → the time range covering all of them. */
 function zoomToSelection() {
   const clips = selectedClips();
-  if (!clips.length) { toast("Select a clip to zoom to"); return; }
+  if (!clips.length) { toast(T("Select a clip to zoom to")); return; }
   const t0 = Math.min(...clips.map((c) => c.start));
   const t1 = Math.max(...clips.map((c) => c.start + c.duration));
   zoomToRange(t0, t1);
@@ -6404,7 +6689,7 @@ function zoomToSelection() {
 function zoomToWorkArea() {
   const t0 = project.inPoint, t1 = project.outPoint;
   if (t0 == null || t1 == null || t1 <= t0) {
-    toast("Set IN and OUT markers first (I / O)");
+    toast(T("Set IN and OUT markers first (I / O)"));
     return;
   }
   zoomToRange(t0, t1);
@@ -6458,7 +6743,7 @@ function selectClipsByMediaId(mediaId) {
   const clips = project.clips.filter((c) => c.mediaId === mediaId);
   if (!clips.length) {
     setSelection([]);
-    toast("No clips on the timeline use this media");
+    toast(T("No clips on the timeline use this media"));
     return;
   }
   clips.sort((a, b) => a.start - b.start || String(a.id).localeCompare(String(b.id)));
@@ -6517,7 +6802,7 @@ function renderInspector(lite) {
   if (colorState.open && !lite) renderColorPage();
   const c = getClip(state.selId);
   if (!c) {
-    els.inspector.innerHTML = `<div class="inspector-empty">Select a clip to edit its<br>transform, effects &amp; audio.</div>`;
+    els.inspector.innerHTML = `<div class="inspector-empty">${T("Select a clip")}</div>`;
     renderKfGraphsPanel();
     return;
   }
@@ -6533,7 +6818,7 @@ function renderInspector(lite) {
   const kfCtl = (k) => {
     if (!ANIMATABLE.includes(k)) return "";
     const n = kfCount(k), on = !!kfAtPlayhead(c, k);
-    return `<span class="kf-ctl"><button class="kf-btn${n ? " has" : ""}${on ? " on" : ""}" data-kf="${k}" title="${on ? "Remove keyframe at playhead" : "Set keyframe at playhead"}">◆${n || ""}</button>${n ? `<button class="kf-btn" data-kfclear="${k}" title="Clear keyframes">✕</button>` : ""}</span>`;
+    return `<span class="kf-ctl"><button class="kf-btn${n ? " has" : ""}${on ? " on" : ""}" data-kf="${k}" title="${on ? T("Remove keyframe at playhead") : T("Set keyframe at playhead")}">◆${n || ""}</button>${n ? `<button class="kf-btn" data-kfclear="${k}" title="${T("Clear keyframes")}">✕</button>` : ""}</span>`;
   };
   /* Label carries two affordances that key off different click modifiers:
      plain click toggles the keyframe graph (animatable props), Ctrl/Cmd-click
@@ -6553,83 +6838,83 @@ function renderInspector(lite) {
     ].filter(Boolean).join(" ");
     const attrs = (isGraph ? ` data-kfgraph="${k}"` : "") + (canReset ? ` data-reset="${list.join(",")}"` : "");
     const title = isGraph && canReset
-      ? "Click: keyframe graph · Ctrl-click: reset channel · Shift-click: reset at playhead / remove keyframe"
-      : isGraph ? "Show / hide keyframe graph"
-        : "Ctrl-click: reset channel · Shift-click: reset at playhead / remove keyframe";
+      ? T("Click: keyframe graph · Ctrl-click: reset channel · Shift-click: reset at playhead / remove keyframe")
+      : isGraph ? T("Show / hide keyframe graph")
+        : T("Ctrl-click: reset channel · Shift-click: reset at playhead / remove keyframe");
     return `<label class="${cls}"${attrs} title="${title}">${label}</label>`;
   };
   const row = (label, inner, k = "", reset) =>
     `<div class="insp-row">${propLabel(label, k, reset)}${inner}${k ? kfCtl(k) : ""}</div>`;
   const slider = (k, min, max, step, val, unit = "") => {
     const shown = fmtInspNum(val, step);
-    return row(k[0].toUpperCase() + k.slice(1),
-      `<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${shown}" title="Ctrl/Cmd-click: reset to default">
+    return row(T(k[0].toUpperCase() + k.slice(1)),
+      `<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${shown}" title="${T("Ctrl/Cmd-click: reset to default")}">
        <span class="val" data-val="${k}" data-unit="${unit}">${shown}${unit}</span>`, k);
   };
   let html = (state.selIds.size > 1
     ? `<div class="insp-multi">${state.selIds.size} clips selected — drag moves them together, Del deletes all. Fields below edit the primary (white-outlined) clip.</div>`
-    : "") + clipStatusBar(c) + `<div class="insp-section"><h3>Clip — ${c.kind}</h3>
-    ${row("Name", `<input type="text" data-k="name" value="${escapeHtml(c.name || "")}">`)}
-    ${c.mediaId ? row("Source", `<button type="button" class="btn tiny style-picker-btn" data-media-open title="Replace this clip's media — keeps position, trim, keyframes and effects">${escapeHtml((getMedia(c.mediaId) || {}).name || "Missing media")} ▾</button>`) : ""}
-    ${row("Start (s)", `<input type="number" data-k="start" step="0.01" value="${c.start.toFixed(2)}">`)}
-    ${row("Length (s)", `<input type="number" data-k="duration" step="0.01" value="${c.duration.toFixed(2)}">`)}
+    : "") + clipStatusBar(c) + `<div class="insp-section"><h3>${T("Clip — {kind}", { kind: enumLabel("kind", c.kind) })}</h3>
+    ${row(T("Name"), `<input type="text" data-k="name" value="${escapeHtml(c.name || "")}">`)}
+    ${c.mediaId ? row(T("Source media"), `<button type="button" class="btn tiny style-picker-btn" data-media-open title="${T("Replace this clip's media — keeps position, trim, keyframes and effects")}"><span class="picker-name">${escapeHtml((getMedia(c.mediaId) || {}).name || T("Missing media"))}</span> ▾</button>`) : ""}
+    ${row(T("Start (s)"), `<input type="number" data-k="start" step="0.01" value="${c.start.toFixed(2)}">`)}
+    ${row(T("Length (s)"), `<input type="number" data-k="duration" step="0.01" value="${c.duration.toFixed(2)}">`)}
   </div>`;
-  const sel = (label, k, opts, cur) => row(label,
-    `<select data-k="${k}">${opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${o}</option>`).join("")}</select>`, k);
+  const sel = (label, k, opts, cur, group) => row(label,
+    `<select data-k="${k}">${opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${group ? enumLabel(group, o) : o}</option>`).join("")}</select>`, k);
   const check = (label, k, on) => row(label, `<input type="checkbox" data-k="${k}" ${on ? "checked" : ""}>`, k);
   // track matte: the mode, and the track it comes from (auto = the video track above)
   const matteRows = () => {
     const others = videoTrackIds().filter((id) => id !== c.track), auto = Mask.matteTrackFor({ ...c, props: { matte: "alpha" } }, videoTrackIds());
     const opts = (cur) => [`<option value="" ${!cur ? "selected" : ""}>Above (${auto || "none"})</option>`, ...others.map((id) => `<option value="${id}" ${cur === id ? "selected" : ""}>${id}</option>`)].join("");
-    return row("Track matte", `<select data-k="matte">${["none", ...Mask.MATTES].map((o) => `<option value="${o}" ${(p.matte || "none") === o ? "selected" : ""}>${o.replace("-", " ")}</option>`).join("")}</select>`, "matte")
-      + (p.matte ? row("Matte track", `<select data-k="matteTrack">${opts(p.matteTrack)}</select>`, "matteTrack")
-        + (clipMatte(c) ? "" : `<div class="insp-note">No video track above to take the matte from — pick one.</div>`) : "");
+    return row(T("Track matte"), `<select data-k="matte">${["none", ...Mask.MATTES].map((o) => `<option value="${o}" ${(p.matte || "none") === o ? "selected" : ""}>${enumLabel("matte", o)}</option>`).join("")}</select>`, "matte")
+      + (p.matte ? row(T("Matte track"), `<select data-k="matteTrack">${opts(p.matteTrack)}</select>`, "matteTrack")
+        + (clipMatte(c) ? "" : `<div class="insp-note">${T("No video track above to take the matte from — pick one.")}</div>`) : "");
   };
   if (c.kind === "adjust") {
-    html += `<div class="insp-section"><h3>Adjustment layer</h3>
+    html += `<div class="insp-section"><h3>${T("Adjustment layer")}</h3>
       ${slider("opacity", 0, 1, 0.01, p.opacity)}
       ${matteRows()}
     </div>`;
   } else if (c.kind === "null") {
-    html += `<div class="insp-section"><h3>Null object</h3>
-      <p class="cl-note">A null never shows in the picture. Parent clips to it (their Parent field), then move, turn or scale the null to move them together.</p>
-      ${row("Position X", `<input type="number" data-k="x" value="${fmtInspNum(p.x)}">`, "x")}
-      ${row("Position Y", `<input type="number" data-k="y" value="${fmtInspNum(p.y)}">`, "y")}
+    html += `<div class="insp-section"><h3>${T("Null object")}</h3>
+      <p class="cl-note">${T("A null never shows in the picture. Parent clips to it (their Parent field), then move, turn or scale the null to move them together.")}</p>
+      ${row(T("Position X"), `<input type="number" data-k="x" value="${fmtInspNum(p.x)}">`, "x")}
+      ${row(T("Position Y"), `<input type="number" data-k="y" value="${fmtInspNum(p.y)}">`, "y")}
       ${slider("scale", 0.1, 4, 0.01, p.scale)}
       ${slider("rotation", -180, 180, 1, p.rotation, "°")}
       ${anchorRowsHtml(c, p, row)}
       ${parentRowHtml(c)}
     </div>`;
   } else if (c.kind !== "audio") {
-    html += `<div class="insp-section"><h3>Transform</h3>
-      ${row("Position X", `<input type="number" data-k="x" value="${fmtInspNum(p.x)}">`, "x")}
-      ${row("Position Y", `<input type="number" data-k="y" value="${fmtInspNum(p.y)}">`, "y")}
+    html += `<div class="insp-section"><h3>${T("Transform")}</h3>
+      ${row(T("Position X"), `<input type="number" data-k="x" value="${fmtInspNum(p.x)}">`, "x")}
+      ${row(T("Position Y"), `<input type="number" data-k="y" value="${fmtInspNum(p.y)}">`, "y")}
       ${slider("scale", 0.1, 4, 0.01, p.scale)}
       ${slider("rotation", -180, 180, 1, p.rotation, "°")}
       ${slider("opacity", 0, 1, 0.01, p.opacity)}
       ${anchorRowsHtml(c, p, row)}
       ${parentRowHtml(c)}
-      ${sel("Blend", "blend", BLEND_MODES, p.blend)}
+      ${sel(T("Blend"), "blend", BLEND_MODES, p.blend, "blend")}
       ${matteRows()}
     </div>`;
   }
-  if (c.kind === "shape") html += shapeSectionHtml(c, p, row) + `<div class="insp-section"><h3>Look</h3>${slider("blur", 0, 40, 0.5, p.blur, "px")}${slider("shake", 0, 40, 0.5, p.shake, "px")}${slider("shakeSpeed", 1, 30, 0.5, p.shakeSpeed)}</div>`;
+  if (c.kind === "shape") html += shapeSectionHtml(c, p, row) + `<div class="insp-section"><h3>${T("Look")}</h3>${slider("blur", 0, 40, 0.5, p.blur, "px")}${slider("shake", 0, 40, 0.5, p.shake, "px")}${slider("shakeSpeed", 1, 30, 0.5, p.shakeSpeed)}</div>`;
   if (c.kind === "comp") html += templateSectionHtml(c, row) + compSectionHtml(c, row);
   if (c.kind === "video" || c.kind === "image" || c.kind === "svg" || c.kind === "comp") {
-    html += `<div class="insp-section"><h3>Layout</h3>
-      ${sel("Fit", "fit", ["contain", "cover", "stretch", "none"], p.fit)}
-      ${row("Crop L/R %", `<input type="number" data-k="cropL" min="0" max="95" value="${p.cropL}" style="max-width:58px">
+    html += `<div class="insp-section"><h3>${T("Layout")}</h3>
+      ${sel(T("Fit"), "fit", ["contain", "cover", "stretch", "none"], p.fit, "fit")}
+      ${row(T("Crop L/R %"), `<input type="number" data-k="cropL" min="0" max="95" value="${p.cropL}" style="max-width:58px">
                            <input type="number" data-k="cropR" min="0" max="95" value="${p.cropR}" style="max-width:58px">`, "", "cropL,cropR")}
-      ${row("Crop T/B %", `<input type="number" data-k="cropT" min="0" max="95" value="${p.cropT}" style="max-width:58px">
+      ${row(T("Crop T/B %"), `<input type="number" data-k="cropT" min="0" max="95" value="${p.cropT}" style="max-width:58px">
                            <input type="number" data-k="cropB" min="0" max="95" value="${p.cropB}" style="max-width:58px">`, "", "cropT,cropB")}
       ${slider("cornerRadius", 0, 300, 1, p.cornerRadius, "px")}
-      ${check("Flip H", "flipH", p.flipH)}
-      ${check("Flip V", "flipV", p.flipV)}
+      ${check(T("Flip H"), "flipH", p.flipH)}
+      ${check(T("Flip V"), "flipV", p.flipV)}
     </div>`;
   }
   if (c.kind === "video" || c.kind === "image" || c.kind === "svg" || c.kind === "adjust" || c.kind === "comp") {
-    html += `<div class="insp-section"><h3>Filter / Color</h3>
-      ${sel("Preset", "filterPreset", Object.keys(FILTER_PRESETS), p.filterPreset)}
+    html += `<div class="insp-section"><h3>${T("Filter / Color")}</h3>
+      ${sel(T("Preset"), "filterPreset", Object.keys(FILTER_PRESETS), p.filterPreset, "preset")}
       ${slider("brightness", 0, 200, 1, p.brightness, "%")}
       ${slider("contrast", 0, 200, 1, p.contrast, "%")}
       ${slider("saturation", 0, 200, 1, p.saturation, "%")}
@@ -6642,7 +6927,7 @@ function renderInspector(lite) {
       ${slider("invert", 0, 100, 1, p.invert, "%")}
       ${slider("vignette", 0, 100, 1, p.vignette, "%")}
     </div>
-    <div class="insp-section"><h3>Motion FX</h3>
+    <div class="insp-section"><h3>${T("Motion FX")}</h3>
       ${slider("shake", 0, 40, 0.5, p.shake, "px")}
       ${slider("shakeSpeed", 1, 30, 0.5, p.shakeSpeed)}
       ${slider("rgbSplit", 0, 30, 0.5, p.rgbSplit, "px")}
@@ -6650,30 +6935,30 @@ function renderInspector(lite) {
     </div>`;
   }
   if (c.kind === "video" || c.kind === "image") {
-    html += `<div class="insp-section"><h3>Keying / Cut-out</h3>
-      ${row("Key color", `<input type="color" data-k="chromaKey" value="${p.chromaKey || "#00ff00"}">
-        <button class="btn tiny${p.chromaKey ? "" : " toggle on"}" data-action="keyoff" title="Disable chroma key">off</button>`, "", "chromaKey")}
+    html += `<div class="insp-section"><h3>${T("Keying / Cut-out")}</h3>
+      ${row(T("Key color"), `<input type="color" data-k="chromaKey" value="${p.chromaKey || "#00ff00"}">
+        <button class="btn tiny${p.chromaKey ? "" : " toggle on"}" data-action="keyoff" title="${T("Disable chroma key")}">off</button>`, "", "chromaKey")}
       ${slider("chromaTolerance", 0, 100, 1, p.chromaTolerance)}
       ${slider("chromaSoftness", 0, 100, 1, p.chromaSoftness)}
-      ${check("AI bg remove", "bgRemove", p.bgRemove)}
+      ${check(T("AI bg remove"), "bgRemove", p.bgRemove)}
     </div>`;
   }
   if (c.kind === "video" || c.kind === "audio") {
     const chLabel = audioChannelLong(c.props?.audioChannel);
     const nt = normalizeTarget();
-    html += `<div class="insp-section"><h3>Audio / Time</h3>
-      ${chLabel ? row("Channel", `<span style="opacity:.75">${chLabel}</span>`)
-        : row("Channels", `<select data-k="channelMode" title="Stereo: as recorded · Mono: fold L+R to one channel · Left / Right: use one side only · Swap: exchange L and R">${CHANNEL_MODES.map((o) =>
-          `<option value="${o}" ${o === clipChannelMode(c) ? "selected" : ""}>${o[0].toUpperCase() + o.slice(1)}</option>`).join("")}</select>`, "", "channelMode")}
-      ${row("Gain", `<input type="range" data-k="gain" min="-24" max="24" step="0.1" value="${fmtInspNum(clipGainDb(c), 0.1)}" title="Clip gain, applied before volume — Ctrl/Cmd-click: reset">
+    html += `<div class="insp-section"><h3>${T("Audio / Time")}</h3>
+      ${chLabel ? row(T("Channel"), `<span style="opacity:.75">${chLabel}</span>`)
+        : row(T("Channels"), `<select data-k="channelMode" title="${T("Stereo: as recorded · Mono: fold L+R to one channel · Left / Right: use one side only · Swap: exchange L and R")}">${CHANNEL_MODES.map((o) =>
+          `<option value="${o}" ${o === clipChannelMode(c) ? "selected" : ""}>${enumLabel("channel", o)}</option>`).join("")}</select>`, "", "channelMode")}
+      ${row(T("Gain"), `<input type="range" data-k="gain" min="-24" max="24" step="0.1" value="${fmtInspNum(clipGainDb(c), 0.1)}" title="${T("Clip gain, applied before volume — Ctrl/Cmd-click: reset")}">
          <span class="val" data-val="gain" data-unit=" dB">${fmtInspNum(clipGainDb(c), 0.1)} dB</span>`, "", "gain")}
-      ${row("Normalize", `<span class="insp-ctrls"><select data-norm-target title="Loudness target">${NORMALIZE_TARGETS.map((t) =>
-        `<option value="${t.id}" ${t.id === nt.id ? "selected" : ""}>${t.label}</option>`).join("")}</select>
-        <button type="button" class="btn tiny" data-norm-run title="Measure the selected clips and set their gain to hit this target (linked stems share one gain)">Apply</button></span>`)}
+      ${row(T("Normalize"), `<span class="insp-ctrls"><select data-norm-target title="${T("Loudness target")}">${NORMALIZE_TARGETS.map((t) =>
+        `<option value="${t.id}" ${t.id === nt.id ? "selected" : ""}>${T(t.label)}</option>`).join("")}</select>
+        <button type="button" class="btn tiny" data-norm-run title="${T("Measure the selected clips and set their gain to hit this target (linked stems share one gain)")}">${T("Apply")}</button></span>`)}
       ${row("Noise", `<span class="insp-ctrls"><select data-denoise title="${state.connected && state.ffmpeg
         ? "Noise reduction (ffmpeg FFT denoiser) — renders a cleaned copy of the file; Off switches back to the original"
         : "Noise reduction needs the server with ffmpeg on PATH"}" ${state.connected && state.ffmpeg ? "" : "disabled"}>${["off", ...DENOISE_LEVELS].map((v) =>
-        `<option value="${v}" ${v === clipDenoise(c) ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></span>`)}
+        `<option value="${v}" ${v === clipDenoise(c) ? "selected" : ""}>${enumLabel("denoise", v)}</option>`).join("")}</select></span>`)}
       ${slider("volume", 0, 2, 0.01, p.volume)}
       ${slider("pan", -1, 1, 0.01, p.pan)}
       ${slider("speed", 0.25, 4, 0.05, p.speed, "×")}
@@ -6682,104 +6967,104 @@ function renderInspector(lite) {
   if ((c.kind === "video" || c.kind === "audio") && typeof FableCutSilence !== "undefined") {
     const so = silenceOptions(), found = state.silence;
     const num = (k, lo, hi, step, unit, title) => `<span class="insp-ctrls"><input type="number" data-sil="${k}" min="${lo}" max="${hi}" step="${step}" value="${so[k]}" title="${title}" style="max-width:64px"> ${unit}</span>`;
-    html += `<div class="insp-section"><h3>Silence</h3>
-      ${row("Below", num("threshold", -80, -10, 1, "dB", "Quieter than this counts as silence (dBFS). Raise it toward −30 in a noisy room"))}
-      ${row("At least", num("minSilence", 0.1, 10, 0.1, "s", "Shorter pauses are left alone"))}
-      ${row("Keep", num("padding", 0, 2, 0.05, "s beside speech", "Quiet kept before and after each phrase, so words aren't clipped"))}
+    html += `<div class="insp-section"><h3>${T("Silence")}</h3>
+      ${row(T("Below"), num("threshold", -80, -10, 1, "dB", "Quieter than this counts as silence (dBFS). Raise it toward −30 in a noisy room"))}
+      ${row(T("At least"), num("minSilence", 0.1, 10, 0.1, "s", "Shorter pauses are left alone"))}
+      ${row(T("Keep"), num("padding", 0, 2, 0.05, "s beside speech", "Quiet kept before and after each phrase, so words aren't clipped"))}
       ${row("", state.silenceBusy
         ? `<span class="insp-ctrls"><span style="opacity:.75">Listening…</span>
-        <button type="button" class="btn tiny" data-sil-clear title="Stop listening">Cancel</button></span>`
-        : `<span class="insp-ctrls"><button type="button" class="btn tiny" data-sil-find title="Listen to the selected clips and mark their silences on the timeline">Find</button>
-        ${found ? `<button type="button" class="btn tiny" data-sil-cut title="Extract every marked silence on the targeted tracks (one undo step)">Cut ${found.spans.length}</button>
-        <button type="button" class="btn tiny" data-sil-clear title="Remove the marks">Clear</button>` : ""}</span>`)}
+        <button type="button" class="btn tiny" data-sil-clear title="${T("Stop listening")}">${T("Cancel")}</button></span>`
+        : `<span class="insp-ctrls"><button type="button" class="btn tiny" data-sil-find title="${T("Listen to the selected clips and mark their silences on the timeline")}">${T("Find")}</button>
+        ${found ? `<button type="button" class="btn tiny" data-sil-cut title="${T("Extract every marked silence on the targeted tracks (one undo step)")}">Cut ${found.spans.length}</button>
+        <button type="button" class="btn tiny" data-sil-clear title="${T("Remove the marks")}">${T("Clear")}</button>` : ""}</span>`)}
       ${found ? `<div class="insp-note">${found.spans.length} silence${found.spans.length === 1 ? "" : "s"}, ${FableCutSilence.total(found.spans).toFixed(1)} s, marked on the timeline. Cut extracts them on the targeted tracks — lock the music bed first to keep it running.</div>` : ""}
     </div>`;
   }
   if (c.kind === "audio" && typeof FableCutFx !== "undefined") {
-    html += `<div class="insp-section" data-fx-section><h3>Audio effects</h3>${fxEditorHtml(c.fx, playheadOverClip(c) ? state.time - c.start : null)}</div>`;
+    html += `<div class="insp-section" data-fx-section><h3>${T("Audio effects")}</h3>${fxEditorHtml(c.fx, playheadOverClip(c) ? state.time - c.start : null)}</div>`;
   }
   if (c.kind === "audio") {
     const duckN = c.keyframes?.duck?.length || 0;
     const lanes = audioTrackIds().filter((id) => id !== c.track);
-    html += `<div class="insp-section"><h3>Auto-duck</h3>
-      ${row("Under", `<select data-duck-under title="Lower this clip wherever there is sound on these tracks (dialogue / VO)">
-        <option value="">All other audio tracks</option>${lanes.map((id) => `<option value="${id}">${id}</option>`).join("")}</select>`)}
-      ${row("Amount", `<span class="insp-ctrls"><input type="number" data-duck-amount min="-40" max="-1" step="1" value="${duckAmount()}" title="How far to dip, dB" style="max-width:64px"> dB
-        <button type="button" class="btn tiny" data-duck-run title="Write duck keyframes on the selected clips">Apply</button>
-        ${duckN ? `<button type="button" class="btn tiny" data-duck-clear title="Remove the ducking">Clear</button>` : ""}</span>`)}
+    html += `<div class="insp-section"><h3>${T("Auto-duck")}</h3>
+      ${row(T("Under"), `<select data-duck-under title="${T("Lower this clip wherever there is sound on these tracks (dialogue / VO)")}">
+        <option value="">${T("All other audio tracks")}</option>${lanes.map((id) => `<option value="${id}">${id}</option>`).join("")}</select>`)}
+      ${row(T("Amount"), `<span class="insp-ctrls"><input type="number" data-duck-amount min="-40" max="-1" step="1" value="${duckAmount()}" title="${T("How far to dip, dB")}" style="max-width:64px"> dB
+        <button type="button" class="btn tiny" data-duck-run title="${T("Write duck keyframes on the selected clips")}">${T("Apply")}</button>
+        ${duckN ? `<button type="button" class="btn tiny" data-duck-clear title="${T("Remove the ducking")}">${T("Clear")}</button>` : ""}</span>`)}
       ${duckN ? `<div class="insp-note">${duckN} duck keyframe${duckN === 1 ? "" : "s"} — the dashed line on the clip shows the ducked level.</div>` : ""}
     </div>`;
   }
   const tsel = (label, key, tr) => {
     const active = state.transFocus === (key === "transIn" ? "in" : "out");
-    return `<div class="insp-row${active ? " trans-active" : ""}"><label class="insp-reset" data-reset="${key}" title="Ctrl-click: reset · Shift-click: reset">${label}</label>
-      <span class="insp-ctrls"><select data-k="${key}">${TRANSITIONS.map((x) => `<option ${x === (tr?.type || "none") ? "selected" : ""}>${x}</option>`).join("")}</select>
+    return `<div class="insp-row${active ? " trans-active" : ""}"><label class="insp-reset" data-reset="${key}" title="${T("Ctrl-click: reset · Shift-click: reset")}">${label}</label>
+      <span class="insp-ctrls"><select data-k="${key}">${TRANSITIONS.map((x) => `<option value="${x}" ${x === (tr?.type || "none") ? "selected" : ""}>${enumLabel("transition", x)}</option>`).join("")}</select>
        <input type="number" class="insp-dur" data-k="${key}Dur" step="0.1" min="0.1" value="${tr?.duration ?? 1}"></span></div>`;
   };
   const curveSel = (label, k, tr) => tr?.type === "fade" && c.kind === "audio"
-    ? row(label, `<select data-k="${k}" title="Fade shape (audio)">${[["", "Smooth (eased)"], ...Object.entries(AUDIO_FADE_CURVES)].map(([v, l]) =>
+    ? row(label, `<select data-k="${k}" title="${T("Fade shape (audio)")}">${[["", T("Smooth (eased)")], ...Object.entries(AUDIO_FADE_CURVES).map(([v, l]) => [v, T(l)])].map(([v, l]) =>
       `<option value="${v}" ${(tr.curve || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>`) : "";
   if (c.kind === "text") html += textPathSectionHtml(c, p, row);
   if (isVisualClip(c)) html += motionSectionHtml(c, p, row);
   if (c.kind !== "audio" && c.kind !== "null") html += maskSectionHtml(c);
   if (c.kind === "video") html += trackSectionHtml(c);
-  html += `<div class="insp-section"><h3>Transition</h3>
-    ${tsel("In", "transIn", c.transitionIn)}
-    ${curveSel("In curve", "curveIn", c.transitionIn)}
-    ${tsel("Out", "transOut", c.transitionOut)}
-    ${curveSel("Out curve", "curveOut", c.transitionOut)}
+  html += `<div class="insp-section"><h3>${T("Transition")}</h3>
+    ${tsel(T("In"), "transIn", c.transitionIn)}
+    ${curveSel(T("In curve"), "curveIn", c.transitionIn)}
+    ${tsel(T("Out"), "transOut", c.transitionOut)}
+    ${curveSel(T("Out curve"), "curveOut", c.transitionOut)}
   </div>`;
   if (c.kind === "text") {
     const fontGroup = (label, fonts) => fonts.length
       ? `<optgroup label="${label}">${fonts.map((f) => `<option ${f === p.font ? "selected" : ""}>${f}</option>`).join("")}</optgroup>` : "";
     const known = [...SYSTEM_FONTS, ...runtime.customFonts, ...GOOGLE_FONTS, ...runtime.googleLoaded];
-    html += `<div class="insp-section"><h3>Text</h3>
-      ${row("Content", `<textarea data-k="text">${p.text}</textarea>`, "", "text")}
-      ${row(hasTextBox(p) && p.boxFit ? "Max size" : "Font size",
-        `<input type="range" data-k="fontSize" min="12" max="300" step="1" value="${fmtInspNum(p.fontSize, 1)}" title="Ctrl/Cmd-click: reset to default">
+    html += `<div class="insp-section"><h3>${T("Text")}</h3>
+      ${row(T("Content"), `<textarea data-k="text">${p.text}</textarea>`, "", "text")}
+      ${row(hasTextBox(p) && p.boxFit ? T("Max size") : T("Font size"),
+        `<input type="range" data-k="fontSize" min="12" max="300" step="1" value="${fmtInspNum(p.fontSize, 1)}" title="${T("Ctrl/Cmd-click: reset to default")}">
          <span class="val" data-val="fontSize" data-unit="px">${fmtInspNum(p.fontSize, 1)}px</span>`, "fontSize")}
-      ${row("Box W/H", `<span class="insp-ctrls">
-        <input type="number" data-k="boxW" min="0" step="1" value="${p.boxW || 0}" title="Width in px (0 = no box — hug content)" style="max-width:64px">
-        <input type="number" data-k="boxH" min="0" step="1" value="${p.boxH || 0}" title="Height in px (0 = no box — hug content)" style="max-width:64px">
+      ${row(T("Box W/H"), `<span class="insp-ctrls">
+        <input type="number" data-k="boxW" min="0" step="1" value="${p.boxW || 0}" title="${T("Width in px (0 = no box — hug content)")}" style="max-width:64px">
+        <input type="number" data-k="boxH" min="0" step="1" value="${p.boxH || 0}" title="${T("Height in px (0 = no box — hug content)")}" style="max-width:64px">
       </span>`, "", "boxW,boxH")}
-      ${hasTextBox(p) ? check("Scale to fit", "boxFit", !!p.boxFit) : ""}
-      ${row("Color", `<span class="insp-ctrls"><input type="color" data-k="color" value="${p.color}">
-                      <input type="color" data-k="color2" value="${p.color2 || p.color}" title="Gradient bottom color">
-                      <button class="btn tiny${p.color2 ? "" : " toggle on"}" data-action="grad-off" title="Disable gradient">flat</button></span>`, "", "color,color2")}
-      ${sel("Align", "align", ["left", "center", "right", "justify"], p.align)}
-      ${hasTextBox(p) ? sel("V-align", "vAlign", ["top", "middle", "bottom"], p.vAlign || "middle") : ""}
-      ${sel("Direction", "direction", ["auto", "ltr", "rtl"], p.direction || "auto")}
+      ${hasTextBox(p) ? check(T("Scale to fit"), "boxFit", !!p.boxFit) : ""}
+      ${row(T("Color"), `<span class="insp-ctrls"><input type="color" data-k="color" value="${p.color}">
+                      <input type="color" data-k="color2" value="${p.color2 || p.color}" title="${T("Gradient bottom color")}">
+                      <button class="btn tiny${p.color2 ? "" : " toggle on"}" data-action="grad-off" title="${T("Disable gradient")}">flat</button></span>`, "", "color,color2")}
+      ${sel(T("Align"), "align", ["left", "center", "right", "justify"], p.align, "align")}
+      ${hasTextBox(p) ? sel(T("V-align"), "vAlign", ["top", "middle", "bottom"], p.vAlign || "middle", "vAlign") : ""}
+      ${sel(T("Direction"), "direction", ["auto", "ltr", "rtl"], p.direction || "auto", "direction")}
     </div>
-    <div class="insp-section"><h3>Font</h3>
+    <div class="insp-section"><h3>${T("Font")}</h3>
       ${row("Family", `<select data-k="font">
         ${fontGroup("System", SYSTEM_FONTS)}
         ${fontGroup("Library fonts", runtime.customFonts)}
         ${fontGroup("Google fonts", [...new Set([...GOOGLE_FONTS, ...runtime.googleLoaded])])}
         ${known.includes(p.font) ? "" : `<option selected>${p.font}</option>`}
       </select>`, "", "font")}
-      ${row("Google font", `<input type="text" data-gfont placeholder="Type any Google Font name…">
-        <button class="btn tiny" data-action="gfont-load">Load</button>`)}
-      ${sel("Weight", "weight", [0, 300, 400, 500, 600, 700, 800, 900], p.weight)}
-      ${check("Bold", "bold", p.bold)}
-      ${check("Italic", "italic", p.italic)}
-      ${check("Uppercase", "uppercase", p.uppercase)}
+      ${row(T("Google font"), `<input type="text" data-gfont placeholder="${T("Type any Google Font name…")}">
+        <button class="btn tiny" data-action="gfont-load">${T("Load")}</button>`)}
+      ${sel(T("Weight"), "weight", [0, 300, 400, 500, 600, 700, 800, 900], p.weight)}
+      ${check(T("Bold"), "bold", p.bold)}
+      ${check(T("Italic"), "italic", p.italic)}
+      ${check(T("Uppercase"), "uppercase", p.uppercase)}
       ${slider("letterSpacing", -10, 60, 0.5, p.letterSpacing, "px")}
       ${slider("lineHeight", 0.7, 2.5, 0.05, p.lineHeight)}
     </div>
-    <div class="insp-section"><h3>Text style</h3>
+    <div class="insp-section"><h3>${T("Text style")}</h3>
       ${slider("strokeWidth", 0, 20, 0.5, p.strokeWidth, "px")}
-      ${row("Stroke col.", `<input type="color" data-k="strokeColor" value="${p.strokeColor}">`, "", "strokeColor")}
-      ${row("Bg color", `<input type="color" data-k="bgColor" value="${p.bgColor}">`, "", "bgColor")}
+      ${row(T("Stroke col."), `<input type="color" data-k="strokeColor" value="${p.strokeColor}">`, "", "strokeColor")}
+      ${row(T("Bg color"), `<input type="color" data-k="bgColor" value="${p.bgColor}">`, "", "bgColor")}
       ${slider("bgOpacity", 0, 1, 0.05, p.bgOpacity)}
       ${slider("textShadow", 0, 40, 1, p.textShadow)}
       ${slider("glow", 0, 100, 1, p.glow)}
-      ${row("Glow color", `<input type="color" data-k="glowColor" value="${p.glowColor || p.color}">
-        <button class="btn tiny${p.glowColor ? "" : " toggle on"}" data-action="glow-auto" title="Glow uses the text color">auto</button>`, "", "glowColor")}
+      ${row(T("Glow color"), `<input type="color" data-k="glowColor" value="${p.glowColor || p.color}">
+        <button class="btn tiny${p.glowColor ? "" : " toggle on"}" data-action="glow-auto" title="${T("Glow uses the text color")}">auto</button>`, "", "glowColor")}
     </div>
-    <div class="insp-section"><h3>Title &amp; caption</h3>
-      ${row("Title style", `<button type="button" class="btn tiny style-picker-btn" data-style-open title="Pick a style — hover to preview it live">${(TITLE_STYLES[c.styleName] || {}).label || "Choose…"} ▾</button>
-        <button class="btn tiny" data-action="title-shuffle" title="Random style">Shuffle</button>`)}
-      ${row("Animation", `<select data-k="textAnim">${TEXT_ANIMS.map((a) => `<option ${a === p.textAnim ? "selected" : ""}>${a}</option>`).join("")}</select>`, "", "textAnim")}
+    <div class="insp-section"><h3>${T("Title & caption")}</h3>
+      ${row(T("Title style"), `<button type="button" class="btn tiny style-picker-btn" data-style-open title="${T("Pick a style — hover to preview it live")}"><span class="picker-name">${(TITLE_STYLES[c.styleName] || {}).label || "Choose…"}</span> ▾</button>
+        <button class="btn tiny" data-action="title-shuffle" title="${T("Random style")}">${T("Shuffle")}</button>`)}
+      ${row(T("Animation"), `<select data-k="textAnim">${TEXT_ANIMS.map((a) => `<option value="${a}" ${a === p.textAnim ? "selected" : ""}>${enumLabel("textAnim", a)}</option>`).join("")}</select>`, "", "textAnim")}
       ${slider("wordRate", 0.05, 0.6, 0.01, p.wordRate, "s")}
     </div>`;
   }
@@ -6838,7 +7123,7 @@ function renderInspector(lite) {
       }
       else if (ANIMATABLE.includes(k)) {
         if (!setAnimProp(c, k, v))
-          toast("Move the playhead over the clip to edit its keyframes");
+          toast(T("Move the playhead over the clip to edit its keyframes"));
       }
       else if (k === "matte" || k === "matteTrack") {   // "none" / "" (= the track above) clear the prop
         if (v === "none" || v === "") delete c.props[k]; else c.props[k] = String(v);
@@ -6947,7 +7232,7 @@ function renderInspector(lite) {
     btn.addEventListener("click", () => {
       pushUndo();
       if (!toggleKfAtPlayhead(c, btn.dataset.kf)) // owns dirtyTimeline on success
-        toast("Move the playhead over the clip to add or remove keyframes");
+        toast(T("Move the playhead over the clip to add or remove keyframes"));
       scheduleSave(); renderInspector();
     });
   });
@@ -7119,10 +7404,10 @@ function renderKfGraphsPanel() {
   }
   root.hidden = false;
   root.innerHTML = keys.map((k) => {
-    const label = KF_GRAPH_LABEL[k] || k;
+    const label = T("kf." + (KF_GRAPH_LABEL[k] || k));
     return `<div class="kf-graph" data-kfgraph-card="${k}">
       <div class="kf-graph-head"><span>${label}</span>
-        <button type="button" data-kfgraph-close="${k}" title="Close graph">✕</button></div>
+        <button type="button" data-kfgraph-close="${k}" title="${T("Close graph")}">✕</button></div>
       <canvas width="160" height="52"></canvas>
     </div>`;
   }).join("");
@@ -7322,6 +7607,7 @@ function syncMonitorModeUI() {
   // Safe-area guides are sequence-relative — hide overlay chrome in Source
   if (els.btnGuides) els.btnGuides.classList.toggle("hidden", src);
   if (els.aspectSel) els.aspectSel.classList.toggle("hidden", src);
+  syncCanvasPopRows();
   if (els.kfGraphs) els.kfGraphs.classList.toggle("source-hidden", src);
   if (src && els.safeOverlay) els.safeOverlay.classList.add("hidden");
   else if (!src && els.safeOverlay) {
@@ -7575,7 +7861,7 @@ function hookSourceAudio(m, el, audio) {
 
 async function playSource() {
   if (!state.source.mediaId) {
-    toast("Double-click a clip in Project or the timeline to load Source");
+    toast(T("Double-click a clip in Project or the timeline to load Source"));
     return;
   }
   if (state.playing) pause();
@@ -7661,7 +7947,7 @@ function loadSourceFromMedia(m, opts = {}) {
 function loadSourceFromClip(c, opts = {}) {
   if (!c || !c.mediaId) {
     if (c && (c.kind === "text" || c.kind === "adjust" || c.kind === "shape" || c.kind === "null" || c.kind === "comp"))
-      toast("Titles, shapes, nulls and adjustment layers have no source media");
+      toast(T("Titles, shapes, nulls and adjustment layers have no source media"));
     return;
   }
   const m = getMedia(c.mediaId);
@@ -7687,7 +7973,7 @@ function setSourceInMark(at) {
   const t = +clamp(at ?? state.source.time, 0, Math.max(sourceDur(), 0)).toFixed(3);
   const out = state.source.out;
   if (out != null && t >= out) {
-    toast("IN must be before OUT");
+    toast(T("IN must be before OUT"));
     return;
   }
   state.source.in = t;
@@ -7699,7 +7985,7 @@ function setSourceOutMark(at) {
   const t = +clamp(at ?? state.source.time, 0, Math.max(sourceDur(), 0)).toFixed(3);
   const inn = state.source.in;
   if (inn != null && t <= inn) {
-    toast("OUT must be after IN");
+    toast(T("OUT must be after IN"));
     return;
   }
   state.source.out = t;
@@ -7761,7 +8047,7 @@ function beginTcEntry(el, kind, initial) {
   input.className = "tc-input";
   input.spellcheck = false;
   input.autocomplete = "off";
-  input.title = "Enter to go · Esc to cancel (see ? for formats)";
+  input.title = T("Enter to go · Esc to cancel (see ? for formats)");
   input.value = initial ?? fmt(base);
   // Sit exactly over the readout it replaces: same font, a hair of padding
   // for relative "+30" entries, no taller than the line (IN/OUT rows stack).
@@ -7778,7 +8064,7 @@ function beginTcEntry(el, kind, initial) {
     done = true;
     if (commit) {
       const t = parseTimecode(input.value, projectFps(), base);
-      if (t == null) toast("Couldn't read that time — try 01:15:00, 1500, +30 or 12.5s");
+      if (t == null) toast(T("Couldn't read that time — try 01:15:00, 1500, +30 or 12.5s"));
       else if (input.value.trim() !== fmt(base)) applyTcEntry(kind, t);
     }
     input.remove();
@@ -8538,9 +8824,9 @@ async function measureClipGroup(clips) {
   return FableCutLoudness.measure(chans.map((x) => x.subarray(0, n)), sr);
 }
 async function normalizeClips(clips, target = normalizeTarget()) {
-  if (typeof FableCutLoudness === "undefined") { toast("Loudness module missing — reload the editor"); return; }
+  if (typeof FableCutLoudness === "undefined") { toast(T("Loudness module missing — reload the editor")); return; }
   const groups = normalizeGroups(clips).filter((g) => !g.some(isGroupLocked));
-  if (!groups.length) { toast("Select an audio or video clip to normalize"); return; }
+  if (!groups.length) { toast(T("Select an audio or video clip to normalize")); return; }
   toast(`Measuring ${groups.length} clip${groups.length > 1 ? "s" : ""}…`);
   const results = [];
   for (const g of groups) {
@@ -8585,7 +8871,7 @@ function clipDenoise(c) {
 async function denoiseClips(clips, level) {
   const picked = denoiseTargets(clips);
   const targets = picked.filter((x) => !isGroupLocked(x));
-  if (!picked.length) { toast("Noise reduction works on audio — this picture has no linked audio stems"); renderInspector(); return; }
+  if (!picked.length) { toast(T("Noise reduction works on audio — this picture has no linked audio stems")); renderInspector(); return; }
   if (!targets.length) { toastLocked(); renderInspector(); return; }
   const swap = new Map(); // base media id → the media to play
   if (level === "off") for (const t of targets) swap.set(baseMediaId(t.mediaId), baseMediaId(t.mediaId));
@@ -8704,16 +8990,16 @@ function silenceSig() {
 }
 let silenceGen = 0;   // the newest Find: an older one still decoding never replaces its result
 async function findSilences(clips, opts = silenceOptions()) {
-  if (typeof FableCutSilence === "undefined") { toast("Silence module missing — reload the editor"); return; }
+  if (typeof FableCutSilence === "undefined") { toast(T("Silence module missing — reload the editor")); return; }
   // a new Find replaces the old marks whatever it finds, so Cut never acts on another clip's result
   const gen = ++silenceGen;
   if (state.silence) { state.silence = null; state.dirtyTimeline = true; renderInspector(); }
   const all = speechGroups(clips).map((g) => g.filter(clipRenders)).filter((g) => g.length);
-  if (!all.length) { toast("Select a clip with sound to find its silences"); return; }
+  if (!all.length) { toast(T("Select a clip with sound to find its silences")); return; }
   // a speed ramp moves the sound along the timeline unevenly: those clips are left alone
   const groups = all.filter((g) => !g.some(FableCutSilence.ramped));
-  if (!groups.length) { toast("These clips have a speed ramp — silence removal works on clips at a steady speed"); return; }
-  toast("Listening for silences…");
+  if (!groups.length) { toast(T("These clips have a speed ramp — silence removal works on clips at a steady speed")); return; }
+  toast(T("Listening for silences…"));
   const sig = silenceSig(), heard = new Set();
   state.silenceBusy = true;   // the Inspector shows Listening… with Cancel meanwhile
   renderInspector();
@@ -8723,10 +9009,10 @@ async function findSilences(clips, opts = silenceOptions()) {
   if (gen !== silenceGen) return;   // a newer Find took over, or Cancel
   renderInspector();   // Listening… → Find again, whatever comes next
   // the timeline moved while it listened: these spans belong to the old one
-  if (silenceSig() !== sig) { toast("The timeline changed while listening — find the silences again"); return; }
+  if (silenceSig() !== sig) { toast(T("The timeline changed while listening — find the silences again")); return; }
   // a clip whose audio couldn't be read is not silent: leave its time alone
   const usable = groups.filter((g) => g.every((x) => heard.has(x.id)));
-  if (!usable.length) { toast("Couldn't read the audio of these clips — nothing marked"); return; }
+  if (!usable.length) { toast(T("Couldn't read the audio of these clips — nothing marked")); return; }
   const ranges = usable.map((g) => [Math.min(...g.map((x) => x.start)), Math.max(...g.map(clipEnd))]);
   const spans = FableCutSilence.silentSpans(sound, ranges, { ...opts, fps: project.fps });
   state.silence = spans.length ? { ids: usable.flat().map((x) => x.id), spans, sig } : null;
@@ -8742,15 +9028,15 @@ async function findSilences(clips, opts = silenceOptions()) {
 function cutSilences() {
   const s = state.silence;
   // the marks dropped when the timeline changed (the button can outlive them until the Inspector redraws)
-  if (!s) { renderInspector(); toast("The timeline changed — find the silences again"); return; }
-  if (s.sig !== silenceSig()) { state.silence = null; renderInspector(); toast("The timeline changed — find the silences again"); return; }
+  if (!s) { renderInspector(); toast(T("The timeline changed — find the silences again")); return; }
+  if (s.sig !== silenceSig()) { state.silence = null; renderInspector(); toast(T("The timeline changed — find the silences again")); return; }
   const snap = undoSnapshot();
   let cut = 0, secs = 0;
   for (const sp of s.spans.slice().sort((a, b) => b.from - a.from)) {
     if (!EDIT.liftRange(sp.from, sp.to, true)) { cut++; secs += sp.to - sp.from; }
   }
   state.silence = null;
-  if (!cut) { state.dirtyTimeline = true; renderInspector(); toast("Nothing was cut — target the clip's tracks first"); return; }
+  if (!cut) { state.dirtyTimeline = true; renderInspector(); toast(T("Nothing was cut — target the clip's tracks first")); return; }
   pushUndo(snap);
   pruneSelection();
   state.dirtyTimeline = true;
@@ -8766,9 +9052,9 @@ function clearSilences() {
   renderInspector();
 }
 async function autoDuckClips(clips, { under = null, amount = duckAmount(), threshold = -40 } = {}) {
-  if (typeof FableCutDucking === "undefined") { toast("Ducking module missing — reload the editor"); return; }
+  if (typeof FableCutDucking === "undefined") { toast(T("Ducking module missing — reload the editor")); return; }
   const music = withLinked(clips).filter((x) => x.kind === "audio" && !isGroupLocked(x));
-  if (!music.length) { toast("Select the music clip(s) to duck"); return; }
+  if (!music.length) { toast(T("Select the music clip(s) to duck")); return; }
   const musicIds = new Set(music.map((x) => x.id));
   const own = new Set(music.map((x) => x.track));
   const lanes = under ? [under] : audioTrackIds().filter((id) => !own.has(id));
@@ -8776,10 +9062,10 @@ async function autoDuckClips(clips, { under = null, amount = duckAmount(), thres
   const voices = project.clips.filter((x) => x.kind === "audio" && lanes.includes(x.track) &&
     !musicIds.has(x.id) && clipRenders(x) && clipEnd(x) > t0 && x.start < t1);
   if (!voices.length) {
-    toast(`No audio on ${under || "the other audio tracks"} under these clips to duck for`);
+    toast(T("No audio on {track} under these clips to duck for", { track: under || T("the other audio tracks") }));
     return;
   }
-  toast("Listening for voice…");
+  toast(T("Listening for voice…"));
   const regions = await voiceRegions(voices, threshold);
   pushUndo();
   let dips = 0;
@@ -8940,18 +9226,18 @@ function renderMixer() {
     if (color) s.style.setProperty("--strip-color", color);
     s.innerHTML = `
       <div class="mix-name" title="${isMaster ? "Master bus — everything you hear and export" : isBus ? `Submix bus ${id} — double-click to rename` : `Track ${id}`}">${escapeHtml(label)}</div>
-      ${!isMaster && !isBus ? `<select class="mix-out" title="Where this track goes: the master, or a submix bus"><option value="">→ Master</option>${buses.map((b) =>
+      ${!isMaster && !isBus ? `<select class="mix-out" title="${T("Where this track goes: the master, or a submix bus")}"><option value="">${T("→ Master")}</option>${buses.map((b) =>
         `<option value="${b.id}">→ ${escapeHtml(busLabel(b))}</option>`).join("")}</select>` : ""}
-      ${isMaster ? `<div class="mix-pan-row mix-lufs" title="Momentary loudness of the mix (post-fader)">— LUFS</div>`
-        : `<div class="mix-pan-row"><input type="range" class="mix-pan" min="-1" max="1" step="0.01" title="Track pan — double-click: center"><span class="mix-pan-val"></span></div>`}
+      ${isMaster ? `<div class="mix-pan-row mix-lufs" title="${T("Momentary loudness of the mix (post-fader)")}">${T("— LUFS")}</div>`
+        : `<div class="mix-pan-row"><input type="range" class="mix-pan" min="-1" max="1" step="0.01" title="${T("Track pan — double-click: center")}"><span class="mix-pan-val"></span></div>`}
       <div class="mix-body">
         <canvas class="mix-meter"></canvas>
         <input type="range" class="mix-fader" min="0" max="1" step="0.001" title="${isMaster ? "Master" : "Track"} fader — double-click: 0 dB">
       </div>
-      <input type="text" class="mix-db" spellcheck="false" title="Type a level in dB (e.g. -6, +2, -inf)">
+      <input type="text" class="mix-db" spellcheck="false" title="${T("Type a level in dB (e.g. -6, +2, -inf)")}">
       <button type="button" class="mix-fx" title="${isMaster ? "Master" : isBus ? `Bus ${id}` : `Track ${id}`} effects">FX</button>
-      ${isMaster ? "" : isBus ? `<div class="mix-btns"><button type="button" class="mix-m" title="Mute the bus">M</button><button type="button" class="mix-x" title="Remove the bus — its tracks go back to the master">✕</button></div>`
-        : `<div class="mix-btns"><button type="button" class="mix-m" title="Mute (track output on/off)">M</button><button type="button" class="mix-s" title="Solo">S</button></div>`}`;
+      ${isMaster ? "" : isBus ? `<div class="mix-btns"><button type="button" class="mix-m" title="${T("Mute the bus")}">M</button><button type="button" class="mix-x" title="${T("Remove the bus — its tracks go back to the master")}">✕</button></div>`
+        : `<div class="mix-btns"><button type="button" class="mix-m" title="${T("Mute (track output on/off)")}">M</button><button type="button" class="mix-s" title="${T("Solo")}">S</button></div>`}`;
     s.querySelector(".mix-fx").addEventListener("click", () => { mixerState.fxTarget = id; renderMixer(); });
     const fader = s.querySelector(".mix-fader");
     const dbIn = s.querySelector(".mix-db");
@@ -9001,8 +9287,8 @@ function renderMixer() {
     const add = document.createElement("button");
     add.type = "button";
     add.className = "mix-add";
-    add.title = "Add a submix bus — route tracks into it to process and level them together";
-    add.textContent = "+ Bus";
+    add.title = T("Add a submix bus — route tracks into it to process and level them together");
+    add.textContent = T("+ Bus");
     add.addEventListener("click", addBus);
     row.appendChild(add);
   }
@@ -9081,23 +9367,23 @@ const fxFromSlider = (s, d) => d.unit === "Hz" ? d.min * Math.pow(d.max / d.min,
 function fxEditorHtml(list, at = null) {
   const F = FableCutFx;
   const groups = {};
-  for (const [id, p] of Object.entries(F.PRESETS)) (groups[p.group] = groups[p.group] || []).push([id, p.label]);
+  for (const [id, p] of Object.entries(F.PRESETS)) (groups[p.group] = groups[p.group] || []).push([id, T(p.label)]);
   let html = `<div class="fx-tools-row">
-    <select data-fx-preset title="Replace the chain with a preset — tweak it afterwards"><option value="">Preset…</option>${Object.entries(groups).map(([g, items]) =>
-      `<optgroup label="${g}">${items.map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</optgroup>`).join("")}</select>
-    <select data-fx-add title="Add an effect to the end of the chain"><option value="">+ Add effect…</option>${F.FX_TYPES.map((t) =>
-      `<option value="${t}">${F.FX_DEFS[t].label}</option>`).join("")}</select>
-    ${list?.length ? `<button type="button" class="btn tiny" data-fx-clear title="Remove every effect">Clear</button>` : ""}
+    <select data-fx-preset title="${T("Replace the chain with a preset — tweak it afterwards")}"><option value="">${T("Preset…")}</option>${Object.entries(groups).map(([g, items]) =>
+      `<optgroup label="${T("fx." + g)}">${items.map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</optgroup>`).join("")}</select>
+    <select data-fx-add title="${T("Add an effect to the end of the chain")}"><option value="">${T("+ Add effect…")}</option>${F.FX_TYPES.map((t) =>
+      `<option value="${t}">${T(F.FX_DEFS[t].label)}</option>`).join("")}</select>
+    ${list?.length ? `<button type="button" class="btn tiny" data-fx-clear title="${T("Remove every effect")}">${T("Clear")}</button>` : ""}
   </div>`;
-  if (!list?.length) return html + `<div class="insp-note">No effects. Pick a preset or add one.</div>`;
+  if (!list?.length) return html + `<div class="insp-note">${T("No effects. Pick a preset or add one.")}</div>`;
   list.forEach((e, i) => {
     const def = F.FX_DEFS[e.type];
     const ev = at != null ? F.evalEffect(e, at) : e;
     html += `<div class="fx-card${e.on === false ? " off" : ""}" data-fx-i="${i}">
-      <div class="fx-head"><label title="On / bypass"><input type="checkbox" data-fx-on ${e.on === false ? "" : "checked"}> ${def.label}</label>
-        <span class="fx-btns"><button type="button" data-fx-move="-1" title="Earlier in the chain" ${i ? "" : "disabled"}>▲</button><button type="button" data-fx-move="1" title="Later in the chain" ${i < list.length - 1 ? "" : "disabled"}>▼</button><button type="button" data-fx-del title="Remove">✕</button></span></div>
-      ${Object.entries(def.params).map(([k, d]) => `<div class="fx-param"><span>${d.label}</span>
-        <input type="range" data-fx-p="${k}" min="${d.unit === "Hz" ? 0 : d.min}" max="${d.unit === "Hz" ? 1000 : d.max}" step="${d.unit === "Hz" ? 1 : d.step}" value="${fxToSlider(ev[k], d)}" title="Double-click: default">
+      <div class="fx-head"><label title="${T("On / bypass")}"><input type="checkbox" data-fx-on ${e.on === false ? "" : "checked"}> ${T(def.label)}</label>
+        <span class="fx-btns"><button type="button" data-fx-move="-1" title="${T("Earlier in the chain")}" ${i ? "" : "disabled"}>▲</button><button type="button" data-fx-move="1" title="${T("Later in the chain")}" ${i < list.length - 1 ? "" : "disabled"}>▼</button><button type="button" data-fx-del title="Remove">✕</button></span></div>
+      ${Object.entries(def.params).map(([k, d]) => `<div class="fx-param"><span>${T(d.label)}</span>
+        <input type="range" data-fx-p="${k}" min="${d.unit === "Hz" ? 0 : d.min}" max="${d.unit === "Hz" ? 1000 : d.max}" step="${d.unit === "Hz" ? 1 : d.step}" value="${fxToSlider(ev[k], d)}" title="${T("Double-click: default")}">
         <span class="fx-val">${fxFmt(ev[k], d)}</span>${d.fixed ? "<span></span>" : fxKeyBtn(e, k, at)}</div>`).join("")}
     </div>`;
   });
@@ -9217,7 +9503,7 @@ function renderMixerFx(root, id) {
   const t = TRACKS.find((x) => x.id === id);
   if (!isMaster && !t) { mixerState.fxTarget = null; renderMixer(); return; }
   root.innerHTML = `<div class="mixer-fx">
-    <div class="mixer-fx-head"><button type="button" class="btn tiny" data-fx-back>← Mixer</button>
+    <div class="mixer-fx-head"><button type="button" class="btn tiny" data-fx-back>${T("← Mixer")}</button>
       <span>${isMaster ? "Master" : id} effects</span></div>
     <div class="mixer-fx-body">${fxEditorHtml(isMaster ? masterFx() : t.fx, state.time)}</div></div>`;
   root.querySelector("[data-fx-back]").addEventListener("click", () => { mixerState.fxTarget = null; renderMixer(); });
@@ -9231,7 +9517,7 @@ function renderMixerFx(root, id) {
 function renderBusFx(root, bus) {
   const id = bus.id;
   root.innerHTML = `<div class="mixer-fx">
-    <div class="mixer-fx-head"><button type="button" class="btn tiny" data-fx-back>← Mixer</button>
+    <div class="mixer-fx-head"><button type="button" class="btn tiny" data-fx-back>${T("← Mixer")}</button>
       <span>${escapeHtml(busLabel(bus))} effects</span></div>
     <div class="mixer-fx-body">${fxEditorHtml(bus.fx, state.time)}</div></div>`;
   root.querySelector("[data-fx-back]").addEventListener("click", () => { mixerState.fxTarget = null; renderMixer(); });
@@ -9418,9 +9704,11 @@ const meterState = {
   lastHold: {},
   modeBtn: null,
   tracksToggleBtn: null,
+  // The master meter alone is the default; the per-track meters are one
+  // click away on the little arrow next to it.
   tracksExpanded: (() => {
-    try { return localStorage.getItem("fablecut-meter-tracks-expanded") !== "0"; }
-    catch { return true; }
+    try { return localStorage.getItem("fablecut-meter-tracks-expanded") === "1"; }
+    catch { return false; }
   })(),
   master: { rmsL: 0, rmsR: 0, peakL: 0, peakR: 0, lufs: -70,
     dispL: METER_DB_MIN, dispR: METER_DB_MIN,
@@ -9642,7 +9930,7 @@ function buildMeterDOM() {
   modeBtn.type = "button";
   modeBtn.className = "vu-mode";
   modeBtn.textContent = METER_MODE_LABEL[meterState.mode];
-  modeBtn.title = "Cycle RMS → LUFS → Peak";
+  modeBtn.title = T("Cycle RMS → LUFS → Peak");
   modeBtn.addEventListener("click", cycleMeterMode);
   masterStack.appendChild(modeBtn);
   meterState.modeBtn = modeBtn;
@@ -9675,11 +9963,12 @@ function buildMeterDOM() {
   syncMeterTracksExpandedUI();
 }
 let vuMeterScale = 1;
-/** Fit the VU overlay to the stage with a compositor scale — no canvas resize. */
+/** Fit the VU meters to the gutter beside the picture — a compositor scale, no
+ *  canvas resize, so the meter pixels and the export stay untouched. */
 function fitVuMeter() {
   const meter = els.vuMeter;
-  const stage = els.monitorStage;
-  if (!meter || !stage) return;
+  const gutter = els.monitorMeterGutter;
+  if (!meter || !gutter) return;
   const naturalH = meter.offsetHeight;
   const naturalW = meter.offsetWidth;
   if (!naturalH || !naturalW) {
@@ -9689,8 +9978,8 @@ function fitVuMeter() {
     }
     return;
   }
-  const sx = (stage.clientWidth - 4) / naturalW;
-  const sy = (stage.clientHeight - 12) / naturalH;
+  const sx = (gutter.clientWidth - 2) / naturalW;
+  const sy = (gutter.clientHeight - 8) / naturalH;
   const next = Math.max(0, Math.min(1, sx, sy));
   if (Math.abs(next - vuMeterScale) < 0.001) return;
   vuMeterScale = next;
@@ -10339,7 +10628,7 @@ function ensureBgSeg() {
       bgSeg.seg = seg;
     }).catch(() => {
       bgSeg.failed = true;
-      toast("Background removal unavailable — couldn't load MediaPipe (offline?). Using chroma key still works.");
+      toast(T("Background removal unavailable — couldn't load MediaPipe (offline?). Using chroma key still works."));
     });
   }
   return bgSeg.loading;
@@ -11062,7 +11351,7 @@ function enterComp(compId, viaClip) {
   if (state.exporting) return;
   if (state.playing) pause();
   const comp = getComp(compId);
-  if (!comp) { toast("That composition is missing"); return; }
+  if (!comp) { toast(T("That composition is missing")); return; }
   const here = compCtxId();
   if (here && CompLib.wouldCycle(state.compCtx.root, here, compId) && here === compId) return;
   const root = state.compCtx ? commitCompCtx() : projectJSONHere();
@@ -11093,7 +11382,7 @@ function exitComp(levels = 1) {
 }
 function syncCompCrumb() {
   syncSequenceButton();
-  if (els.projectName) els.projectName.textContent = project.name + (state.connected ? "  ·  🟢 connected" : "  ·  ⚪ local session");
+  syncProjectNameStatus();
   const el = document.getElementById("compCrumb");
   if (!el) return;
   const x = state.compCtx;
@@ -11145,7 +11434,7 @@ function seqUndoPrint(d, withOthers) {
 }
 /** Open sequence `id` in the editor. False when it can't be opened now. */
 function openSequence(id) {
-  if (state.exporting) { toast("Wait for the export to finish before opening another sequence"); return false; }
+  if (state.exporting) { toast(T("Wait for the export to finish before opening another sequence")); return false; }
   if (state.gesture) return false;
   if (state.compCtx) exitComp(state.compCtx.path.length);
   if (SeqLib.activeId(project) === id) return true;
@@ -11164,14 +11453,14 @@ function openSequence(id) {
 }
 /** Add a sequence ({name?, from?, width?, height?}) and open it. */
 function newSequence(opts) {
-  if (state.exporting) { toast("Wait for the export to finish"); return; }
+  if (state.exporting) { toast(T("Wait for the export to finish")); return; }
   if (state.compCtx) exitComp(state.compCtx.path.length);
   const doc = projectJSONHere();
   let s;
   try { s = SeqLib.add(doc, opts); } catch (e) { toast(e.message); return; }
   project.sequences = doc.sequences; project.sequence = doc.sequence;
-  if (openSequence(s.id)) toast(`New sequence “${s.name}” · ${s.width}×${s.height}`);
-  else { scheduleSave(); syncCompCrumb(); toast(`New sequence “${s.name}” added — open it from the sequence menu`); }
+  if (openSequence(s.id)) toast(T("New sequence “{name}” · {size}", { name: s.name, size: `${s.width}×${s.height}` }));
+  else { scheduleSave(); syncCompCrumb(); toast(T("New sequence “{name}” added — open it from the sequence menu", { name: s.name })); }
 }
 function renameSequence(id, name) {
   const r = seqRoot();
@@ -11183,7 +11472,7 @@ function renameSequence(id, name) {
 async function deleteSequence(id) {
   const r = seqRoot(), s = SeqLib.find(r, id);
   if (!s || SeqLib.entries(r).length < 2) return;
-  if (state.exporting) { toast("Wait for the export to finish"); return; }
+  if (state.exporting) { toast(T("Wait for the export to finish")); return; }
   if (state.compCtx) exitComp(state.compCtx.path.length);
   let kept = null;
   if (state.connected) {
@@ -11195,10 +11484,10 @@ async function deleteSequence(id) {
       if (res.ok) kept = (await res.json()).version;
     } catch { }
     // the delete has no undo: without that version it doesn't happen
-    if (!kept) { toast(`Couldn't keep a version of the project, so “${s.name}” was not deleted. Try again in a moment.`); return; }
+    if (!kept) { toast(T("Couldn't keep a version of the project, so “{name}” was not deleted. Try again in a moment.", { name: s.name })); return; }
   }
   // the editor may have moved on while the version was saved
-  if (state.exporting) { toast("Wait for the export to finish"); return; }
+  if (state.exporting) { toast(T("Wait for the export to finish")); return; }
   if (state.compCtx) exitComp(state.compCtx.path.length);
   if (!SeqLib.find(project, id) || SeqLib.entries(project).length < 2) return;   // deleted or changed meanwhile (another tab, an agent)
   const wasOpen = SeqLib.activeId(project) === id;
@@ -11213,15 +11502,19 @@ async function deleteSequence(id) {
   } else { project.sequences = doc.sequences || null; project.sequence = doc.sequence || null; }
   runtime.seqUndo.delete(id);
   syncCompCrumb(); scheduleSave();
-  toast(`Deleted the sequence “${s.name}”` + (kept ? ` · it is kept in version v${kept.v} (Projects → Versions)` : ""));
+  toast(T("Deleted the sequence “{name}”", { name: s.name })
+    + (kept ? ` · ${T("it is kept in version v{version} (Projects → Versions)", { version: kept.v })}` : ""));
 }
 function syncSequenceButton() {
   const b = $("btnSequences");
   if (!b) return;
   const n = SeqLib.entries(seqRoot()).length;
-  b.querySelector(".seq-name").textContent = openSequenceName();
+  const name = openSequenceName();
+  b.querySelector(".seq-name").textContent = name;
   b.querySelector(".seq-count").textContent = n > 1 ? String(n) : "";
-  b.title = `Sequence: ${openSequenceName()}${n > 1 ? ` (one of ${n})` : ""} — open another one, or add, duplicate, rename`;
+  b.title = n > 1
+    ? T("Sequence: {name} (one of {count}) — open another one, or add, duplicate, rename", { name, count: n })
+    : T("Sequence: {name} — open another one, or add, duplicate, rename", { name });
 }
 /** The sequence menu: the project's sequences (click one to open it), then what to do with them. */
 function showSequenceMenu(x, y) {
@@ -11247,14 +11540,17 @@ function showSequenceMenu(x, y) {
     if (row.active) b.classList.add("on");
   }
   sep();
-  item(`<span>New sequence…</span>`, () => promptNewSequence(x, y));
-  item(`<span>Duplicate “${escapeHtml(open.name)}”</span>`, () => newSequence({ from: "open" }));
-  item(`<span>Rename “${escapeHtml(open.name)}”…</span>`, () => promptBinText(x, y, "Sequence name", open.name, (v) => renameSequence(openId, v), { max: 120, ok: "Rename" }));
-  item(`<span>Delete “${escapeHtml(open.name)}”…</span>`, (b) => {
-    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.querySelector("span").textContent = "Click again to delete it"; return; }
+  item(`<span>${T("New sequence…")}</span>`, () => promptNewSequence(x, y));
+  /* The name is the user's own text: it is interpolated into the translated
+     wording and the whole label is escaped once, so the name keeps its bytes
+     and cannot inject markup. */
+  item(`<span>${escapeHtml(T("Duplicate “{name}”", { name: open.name }))}</span>`, () => newSequence({ from: "open" }));
+  item(`<span>${escapeHtml(T("Rename “{name}”…", { name: open.name }))}</span>`, () => promptBinText(x, y, T("Sequence name"), open.name, (v) => renameSequence(openId, v), { max: 120, ok: T("Rename") }));
+  item(`<span>${escapeHtml(T("Delete “{name}”…", { name: open.name }))}</span>`, (b) => {
+    if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.querySelector("span").textContent = T("Click again to delete it"); return; }
     hideTrackCtxMenu();
     deleteSequence(openId);
-  }, rows.length < 2 ? "A project keeps at least one sequence" : null, true);
+  }, rows.length < 2 ? T("A project keeps at least one sequence") : null, true);
   showPopover(menu, x, y);
 }
 /** New sequence: a name, a canvas, and whether it starts empty or as a copy of the open one. */
@@ -11262,14 +11558,17 @@ function promptNewSequence(x, y) {
   const pop = document.createElement("div");
   pop.className = "ctx-menu bin-pop seq-new";
   const n = SeqLib.entries(seqRoot()).length + 1;
-  const sizes = [{ label: `Same as “${openSequenceName()}” · ${project.width}×${project.height}`, w: 0, h: 0 }, ...ASPECT_PRESETS];
-  pop.innerHTML = `<label class="bin-pop-label" for="seqNewName">New sequence</label>
+  /* The first entry names the open sequence, which the user may have renamed:
+     the whole label is escaped once, so the name keeps its bytes and cannot
+     inject markup. */
+  const sizes = [{ label: escapeHtml(T("Same as “{name}” · {size}", { name: openSequenceName(), size: `${project.width}×${project.height}` })), w: 0, h: 0 }, ...ASPECT_PRESETS];
+  pop.innerHTML = `<label class="bin-pop-label" for="seqNewName">${T("New sequence")}</label>
     <input type="text" class="bin-pop-input" id="seqNewName" maxlength="120" spellcheck="false">
-    <label class="bin-pop-label" for="seqNewSize">Canvas</label>
-    <select id="seqNewSize" class="bin-pop-input">${sizes.map((s, i) => `<option value="${i}">${escapeHtml(s.label)}</option>`).join("")}</select>
-    <label class="seq-new-copy"><input type="checkbox" id="seqNewCopy"> Start from a copy of “${escapeHtml(openSequenceName())}”</label>
-    <div class="bin-pop-hint">Media and compositions are shared by every sequence. Each has its own timeline, canvas, frame rate, mix and delivery settings.</div>
-    <div class="bin-pop-btns"><button type="button" class="btn tiny" data-cancel>Cancel</button><button type="button" class="btn tiny accent" data-ok>Create</button></div>`;
+    <label class="bin-pop-label" for="seqNewSize">${T("Canvas")}</label>
+    <select id="seqNewSize" class="bin-pop-input">${sizes.map((s, i) => `<option value="${i}">${i === 0 ? s.label : escapeHtml(T(s.label))}</option>`).join("")}</select>
+    <label class="seq-new-copy"><input type="checkbox" id="seqNewCopy"> ${T("Start from a copy of")} “${escapeHtml(openSequenceName())}”</label>
+    <div class="bin-pop-hint">${T("Media and compositions are shared by every sequence. Each has its own timeline, canvas, frame rate, mix and delivery settings.")}</div>
+    <div class="bin-pop-btns"><button type="button" class="btn tiny" data-cancel>${T("Cancel")}</button><button type="button" class="btn tiny accent" data-ok>${T("Create")}</button></div>`;
   pop.querySelector("#seqNewName").value = `Sequence ${n}`;
   const ok = () => {
     const name = pop.querySelector("#seqNewName").value.trim();
@@ -11302,7 +11601,7 @@ function newCompId() { let id; do id = "comp_" + uid(); while (getComp(id)); ret
 /** Precompose the selection: the clips move into a new comp, a comp clip takes their place. */
 function precomposeSelection() {
   const sel = withLinked(selectedClips());
-  if (!sel.length) { toast("Select the clips to put in a composition"); return; }
+  if (!sel.length) { toast(T("Select the clips to put in a composition")); return; }
   if (sel.some(isClipLocked)) { toastLocked(); return; }
   pushUndo();
   const doc = { clips: project.clips, comps: project.comps || [], tracks: project.tracks, width: project.width, height: project.height, disabledTracks: project.disabledTracks || [] };
@@ -11329,7 +11628,7 @@ function addCompClip(comp, trackId, at) {
   const track = trackId && TRACKS.some((t) => t.id === trackId && t.kind === "video") ? trackId : "V1";
   if (isTrackLocked(track)) { toast(`${track} is locked`); return; }
   const here = compCtxId();
-  if (here && CompLib.wouldCycle(state.compCtx ? state.compCtx.root : project, here, comp.id)) { toast("A composition can't contain itself"); return; }
+  if (here && CompLib.wouldCycle(state.compCtx ? state.compCtx.root : project, here, comp.id)) { toast(T("A composition can't contain itself")); return; }
   pushUndo();
   const c = { id: "c_" + uid(), mediaId: null, kind: "comp", compId: comp.id, track, start: Math.max(0, at), in: 0, duration: comp.duration, name: comp.name, props: { ...DEFAULT_PROPS, fit: "none" } };
   project.clips.push(c);
@@ -11345,9 +11644,9 @@ function makeCompItem(comp) {
   const used = CompLib.usages(state.compCtx ? state.compCtx.root : project, comp.id).length;
   item.innerHTML = `<div class="bin-thumb comp-thumb">▣</div>
     <div class="bin-meta"><div class="bin-name"></div><div class="bin-sub">Composition · ${comp.width}×${comp.height} · ${comp.duration}s${used ? ` · used ${used}×` : ""}</div></div>
-    <button class="btn tiny accent lib-add" title="Add at the playhead">＋</button>`;
+    <button class="btn tiny accent lib-add" title="${T("Add at the playhead")}">＋</button>`;
   item.querySelector(".bin-name").textContent = comp.name;
-  item.title = "Drag onto the timeline · double-click to open and edit";
+  item.title = T("Drag onto the timeline · double-click to open and edit");
   item.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/fablecut-comp", comp.id); e.dataTransfer.effectAllowed = "copy"; });
   item.addEventListener("dblclick", () => enterComp(comp.id));
   item.querySelector(".lib-add").addEventListener("click", (e) => { e.stopPropagation(); addCompClip(comp, "V1", state.time); });
@@ -11365,15 +11664,15 @@ function showCompMenu(x, y, comp) {
     menu.appendChild(b);
   };
   item("Open", () => enterComp(comp.id));
-  item("Duplicate", () => {
+  item(T("Duplicate"), () => {
     pushUndo();
     const copy = JSON.parse(JSON.stringify(comp)); copy.id = newCompId(); copy.name = `${comp.name} copy`.slice(0, 80);
     project.comps.push(copy); runtime.compGen = (runtime.compGen || 0) + 1; scheduleSave(); renderBin();
   });
   // an open comp's live clips are on the timeline, not yet in its entry
-  item("Save as template", () => saveCompAsTemplate(comp.id === compCtxId() ? { ...comp, clips: project.clips, tracks: project.tracks } : comp));
+  item(T("Save as template"), () => saveCompAsTemplate(comp.id === compCtxId() ? { ...comp, clips: project.clips, tracks: project.tracks } : comp));
   const used = CompLib.usages(state.compCtx ? state.compCtx.root : project, comp.id).length;
-  item("Delete", () => {
+  item(T("Delete"), () => {
     pushUndo();
     project.comps = project.comps.filter((c) => c.id !== comp.id);
     runtime.compGen = (runtime.compGen || 0) + 1; scheduleSave(); renderBin();
@@ -11385,13 +11684,13 @@ function showCompMenu(x, y, comp) {
 }
 function compSectionHtml(c, row) {
   const comp = getComp(c.compId);
-  if (!comp) return `<div class="insp-section"><h3>Composition</h3><p class="cl-note">Its composition (${escapeHtml(c.compId || "?")}) is missing.</p></div>`;
-  return `<div class="insp-section" data-comp-section><h3>Composition</h3>
-    ${row("Comp", `<span class="insp-ctrls"><input type="text" data-comp-name value="${escapeHtml(comp.name)}" maxlength="80" title="The composition's name (every clip using it shows it)"> <button type="button" class="btn tiny" data-comp-open title="Open it on the timeline (or double-click the clip)">Open</button></span>`)}
-    ${row("Size", `<span class="insp-ctrls"><input type="number" data-comp-w min="16" max="8192" value="${comp.width}" style="max-width:72px"> × <input type="number" data-comp-h min="16" max="8192" value="${comp.height}" style="max-width:72px"></span>`)}
-    ${row("Length (s)", `<input type="number" data-comp-dur min="0.05" step="0.01" value="${comp.duration}">`)}
-    ${row("Background", `<span class="insp-ctrls"><input type="color" data-comp-bg value="${comp.background || "#000000"}"><button type="button" class="btn tiny${comp.background ? "" : " toggle on"}" data-comp-bgoff title="Transparent: what is under the comp clip shows through">None</button></span>`)}
-    <p class="cl-note">The clip shows the comp from its In point (${(+c.in || 0).toFixed(2)} s). Every clip using this comp changes when you edit it.</p>
+  if (!comp) return `<div class="insp-section"><h3>${T("Composition")}</h3><p class="cl-note">${T("Its composition ({id}) is missing.", { id: escapeHtml(c.compId || "?") })}</p></div>`;
+  return `<div class="insp-section" data-comp-section><h3>${T("Composition")}</h3>
+    ${row(T("Comp"), `<span class="insp-ctrls"><input type="text" data-comp-name value="${escapeHtml(comp.name)}" maxlength="80" title="${T("The composition's name (every clip using it shows it)")}"> <button type="button" class="btn tiny" data-comp-open title="${T("Open it on the timeline (or double-click the clip)")}">${T("Open")}</button></span>`)}
+    ${row(T("Size"), `<span class="insp-ctrls"><input type="number" data-comp-w min="16" max="8192" value="${comp.width}" style="max-width:72px"> × <input type="number" data-comp-h min="16" max="8192" value="${comp.height}" style="max-width:72px"></span>`)}
+    ${row(T("Length (s)"), `<input type="number" data-comp-dur min="0.05" step="0.01" value="${comp.duration}">`)}
+    ${row(T("Background"), `<span class="insp-ctrls"><input type="color" data-comp-bg value="${comp.background || "#000000"}"><button type="button" class="btn tiny${comp.background ? "" : " toggle on"}" data-comp-bgoff title="${T("Transparent: what is under the comp clip shows through")}">${T("None")}</button></span>`)}
+    <p class="cl-note">${T("The clip shows the comp from its In point ({s} s). Every clip using this comp changes when you edit it.", { s: (+c.in || 0).toFixed(2) })}</p>
   </div>`;
 }
 function bindCompControls(c) {
@@ -11411,6 +11710,46 @@ function bindCompControls(c) {
 /* ── Animation presets and templates (the data and the maths live in templates.js) ── */
 const Tpl = self.FableCutTemplates;
 const savedLib = { presets: [], templates: [] };   // the user's own, from library/presets and library/templates
+
+/* Only the editor's own labels are translated. A name the user gave — a
+   template, an animation preset, a delivery preset — keeps the bytes they
+   typed, even when it happens to read like one of ours. The id decides:
+   the built-in ones have an id the editor knows. */
+const isBuiltInTemplate = (/** @type {any} */ t) => Tpl.TEMPLATES.some((x) => x.id === t?.id);
+const isBuiltInAnimPreset = (/** @type {any} */ p) => Tpl.PRESETS.some((x) => x.id === p?.id);
+/* The groups the built-in templates live in. A group the user typed for their
+   own template keeps its bytes, so only these names are translated. */
+const BUILTIN_TEMPLATE_GROUPS = new Set([
+  "Lower thirds", "Logo animations", "Social", "Saved", "In", "Out", "Emphasis", "Loop",
+]);
+
+/**
+ * The name of a template: translated when it is one of ours.
+ * @param {any} t
+ * @returns {string}
+ */
+function templateLabel(t) {
+  return isBuiltInTemplate(t) ? T(t.name) : String(t?.name ?? "");
+}
+
+/**
+ * The label of a template's field: translated when the template is one of ours.
+ * @param {any} t
+ * @param {any} f
+ * @returns {string}
+ */
+function templateFieldLabel(t, f) {
+  return isBuiltInTemplate(t) ? T(f.label) : String(f?.label ?? "");
+}
+
+/**
+ * The name of an animation preset: translated when it is one of ours.
+ * @param {any} p
+ * @returns {string}
+ */
+function animPresetLabel(p) {
+  return isBuiltInAnimPreset(p) ? T(p.name) : String(p?.name ?? "");
+}
 async function fetchSaved(kind) {
   try { const r = await fetch("/api/" + kind, { cache: "no-store" }); savedLib[kind] = r.ok ? await r.json() : []; }
   catch { savedLib[kind] = []; }
@@ -11432,18 +11771,18 @@ function renderTemplatesTab() {
       group = t.group;
       const h = document.createElement("div");
       h.className = "lib-group";
-      h.textContent = group;
+      h.textContent = BUILTIN_TEMPLATE_GROUPS.has(group) ? T(group) : group;
       els.libList.appendChild(h);
     }
     const item = document.createElement("div");
     item.className = "bin-item lib-item";
     item.draggable = true;
-    item.title = "Drag onto the timeline or click ＋ — then edit its fields in the Inspector";
+    item.title = T("Drag onto the timeline or click ＋ — then edit its fields in the Inspector");
     item.innerHTML = `<div class="bin-thumb shape-thumb"><svg viewBox="0 0 24 24" aria-hidden="true">${TEMPLATE_ICONS[t.group] || TEMPLATE_ICONS.Saved}</svg></div>
       <div class="bin-meta"><div class="bin-name"></div><div class="bin-sub"></div></div>
-      <button class="btn tiny accent lib-add" title="Add at the playhead">＋</button>`;
-    item.querySelector(".bin-name").textContent = t.name;
-    item.querySelector(".bin-sub").textContent = `${t.width}×${t.height} · ${t.duration}s · ${t.fields.map((f) => f.label).join(", ") || "no fields"}`;
+      <button class="btn tiny accent lib-add" title="${T("Add at the playhead")}">＋</button>`;
+    item.querySelector(".bin-name").textContent = templateLabel(t);
+    item.querySelector(".bin-sub").textContent = `${t.width}×${t.height} · ${t.duration}s · ${t.fields.map((f) => templateFieldLabel(t, f)).join(", ") || T("no fields")}`;
     item.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/fablecut-template", t.id); e.dataTransfer.effectAllowed = "copy"; });
     item.addEventListener("dblclick", () => addTemplateClip(t, null, state.time));
     item.querySelector(".lib-add").addEventListener("click", (e) => { e.stopPropagation(); addTemplateClip(t, null, state.time); });
@@ -11452,14 +11791,14 @@ function renderTemplatesTab() {
   if (!savedLib.templates.length) {
     const p = document.createElement("p");
     p.className = "lib-hint";
-    p.textContent = "Right-click a composition in the Project tab → Save as template to keep your own here.";
+    p.textContent = T("Right-click a composition in the Project tab → Save as template to keep your own here.");
     els.libList.appendChild(p);
   }
 }
 /** Place a template: its own comp (so its fields are this copy's alone) and a comp clip at `at`. */
 function addTemplateClip(t, trackId, at) {
   const track = trackId && TRACKS.some((x) => x.id === trackId && x.kind === "video") ? trackId : shapeTrack();
-  if (!track || isTrackLocked(track)) { toast(track ? `${track} is locked` : "V1–V3 are locked — unlock a video track to add a template"); return; }
+  if (!track || isTrackLocked(track)) { toast(track ? T("{track} is locked", { track }) : T("V1–V3 are locked — unlock a video track to add a template")); return; }
   const snap = JSON.stringify({ clips: project.clips, markers: project.markers || [], comps: project.comps || [], media: project.media });
   const had = new Set(project.media.map((m) => m.id));
   project.comps = project.comps || [];
@@ -11478,7 +11817,7 @@ function addTemplateClip(t, trackId, at) {
   for (const m of project.media) if (!had.has(m.id)) loadMediaMetadata(m).then(() => { state.dirtyTimeline = true; }).catch(() => { });
   runtime.compGen = (runtime.compGen || 0) + 1;
   selectClip(clip.id); scheduleSave(); renderBin(); renderInspector();
-  toast(`${comp.name} placed — edit its fields in the Inspector`);
+  toast(T("{name} placed — edit its fields in the Inspector", { name: comp.name }));
 }
 /** Set the canvas size (the aspect menu and a template's "Use … canvas" button). */
 function setCanvasSize(w, h) {
@@ -11498,17 +11837,17 @@ function templateSectionHtml(c, row) {
   if (!tpl) return "";
   const pics = project.media.filter((m) => m.kind === "image" || m.kind === "svg" || m.kind === "video");
   const fields = (tpl.fields || []).map((f) => {
-    const v = Tpl.fieldValue(comp, f), label = escapeHtml(f.label);
+    const v = Tpl.fieldValue(comp, f), label = escapeHtml(templateFieldLabel(tpl, f));
     if (f.type === "text") return row(label, `<textarea data-tf="${escapeHtml(f.key)}" rows="${String(v || "").length > 28 ? 2 : 1}" maxlength="2000">${escapeHtml(v || "")}</textarea>`);
     if (f.type === "color") return row(label, `<input type="color" data-tf="${escapeHtml(f.key)}" value="${/^#[0-9a-f]{6}/i.test(v || "") ? v.slice(0, 7) : "#ffffff"}">`);
-    return row(label, `<select data-tf="${escapeHtml(f.key)}" title="Import your picture (or drop it in the bin), then pick it here">${pics.map((m) => `<option value="${m.id}" ${m.id === v ? "selected" : ""}>${escapeHtml(m.name)}</option>`).join("")}</select>`);
+    return row(label, `<select data-tf="${escapeHtml(f.key)}" title="${T("Import your picture (or drop it in the bin), then pick it here")}">${pics.map((m) => `<option value="${m.id}" ${m.id === v ? "selected" : ""}>${escapeHtml(m.name)}</option>`).join("")}</select>`);
   }).join("");
   const sameShape = Math.abs(comp.width / comp.height - project.width / project.height) < 0.01;
-  return `<div class="insp-section" data-tpl-section><h3>Template</h3>
+  return `<div class="insp-section" data-tpl-section><h3>${T("Template")}</h3>
     ${fields}
-    ${row("Length (s)", `<input type="number" data-tf-dur min="0.5" step="0.1" value="${comp.duration}" title="Longer holds longer — the exit keeps its timing at the end">`)}
-    ${sameShape || state.compCtx ? "" : row("Canvas", `<button type="button" class="btn tiny" data-tf-canvas title="Make the project canvas ${comp.width}×${comp.height}, the size this template was made for">Use ${comp.width}×${comp.height}</button>`)}
-    <p class="cl-note">These fields belong to this copy (its comp "${escapeHtml(comp.name)}"). Open it to change anything else.</p>
+    ${row(T("Length (s)"), `<input type="number" data-tf-dur min="0.5" step="0.1" value="${comp.duration}" title="${T("Longer holds longer — the exit keeps its timing at the end")}">`)}
+    ${sameShape || state.compCtx ? "" : row(T("Canvas"), `<button type="button" class="btn tiny" data-tf-canvas title="${T("Make the project canvas {w}×{h}, the size this template was made for", { w: comp.width, h: comp.height })}">${T("Use {w}×{h}", { w: comp.width, h: comp.height })}</button>`)}
+    <p class="cl-note">${T("These fields belong to this copy (its comp \"{name}\"). Open it to change anything else.", { name: escapeHtml(comp.name) })}</p>
   </div>`;
 }
 function bindTemplateControls(c) {
@@ -11552,7 +11891,7 @@ async function saveCompAsTemplate(comp) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     toast(`Saved "${j.name}" to ${j.file}`);
-  } catch (err) { toast("Couldn't save the template: " + err.message); return; }
+  } catch (err) { toast(T("Couldn't save the template: ") + err.message); return; }
   await fetchSaved("templates");
   if (state.binTab === "templates") renderTemplatesTab();
 }
@@ -11561,14 +11900,14 @@ async function saveCompAsTemplate(comp) {
 function presetRowsHtml(c, row) {
   const opts = (anchor, first) => {
     const own = savedLib.presets.filter((p) => p.anchor === anchor);
-    const list = (l) => l.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
-    return `<select data-preset="${anchor}"><option value="">${first}</option>${list(Tpl.PRESETS.filter((p) => p.anchor === anchor))}${own.length ? `<optgroup label="Saved">${list(own)}</optgroup>` : ""}</select>`;
+    const list = (l) => l.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(animPresetLabel(p))}</option>`).join("");
+    return `<select data-preset="${anchor}"><option value="">${first}</option>${list(Tpl.PRESETS.filter((p) => p.anchor === anchor))}${own.length ? `<optgroup label="${T("Saved")}">${list(own)}</optgroup>` : ""}</select>`;
   };
-  return row("Presets", `<span class="insp-ctrls">${opts("in", "In…")}${opts("out", "Out…")}</span>`)
-    + row("", `<span class="insp-ctrls">${opts("at", "At playhead…")}${opts("whole", "Loop…")}</span>`)
-    + row("Save as preset", `<span class="insp-ctrls"><input type="text" data-preset-name maxlength="60" placeholder="Name" style="max-width:110px">
-      <select data-preset-anchor title="In: from the clip's start · Out: up to its end · Loop: the whole clip"><option value="in">In</option><option value="out">Out</option><option value="whole">Loop</option></select>
-      <button type="button" class="btn tiny" data-preset-save title="Save this clip's keyframes to library/presets — every project can use it">Save</button></span>`);
+  return row("Presets", `<span class="insp-ctrls">${opts("in", T("In…"))}${opts("out", T("Out…"))}</span>`)
+    + row("", `<span class="insp-ctrls">${opts("at", T("At playhead…"))}${opts("whole", T("Loop…"))}</span>`)
+    + row(T("Save as preset"), `<span class="insp-ctrls"><input type="text" data-preset-name maxlength="60" placeholder="${T("Name")}" style="max-width:110px">
+      <select data-preset-anchor title="${T("In: from the clip's start · Out: up to its end · Loop: the whole clip")}"><option value="in">${T("In")}</option><option value="out">${T("Out")}</option><option value="whole">${T("Loop")}</option></select>
+      <button type="button" class="btn tiny" data-preset-save title="${T("Save this clip's keyframes to library/presets — every project can use it")}">${T("Save")}</button></span>`);
 }
 function bindPresetControls(c) {
   for (const s of els.inspector.querySelectorAll("[data-preset]")) s.addEventListener("change", () => {
@@ -11587,9 +11926,9 @@ function bindPresetControls(c) {
   els.inspector.querySelector("[data-preset-save]")?.addEventListener("click", async () => {
     const name = els.inspector.querySelector("[data-preset-name]").value.trim();
     const anchor = els.inspector.querySelector("[data-preset-anchor]").value;
-    if (!name) { toast("Name the preset first"); return; }
+    if (!name) { toast(T("Name the preset first")); return; }
     const times = Object.values(c.keyframes || {}).flat().map((x) => x.t);
-    if (!times.length) { toast("This clip has no keyframes to save"); return; }
+    if (!times.length) { toast(T("This clip has no keyframes to save")); return; }
     const from = anchor === "out" ? Math.min(...times) : 0, to = anchor === "in" ? Math.max(...times) : c.duration;
     let preset;
     try { preset = Tpl.presetFromClip(c, { name, anchor, from, to }); } catch (err) { toast(err.message); return; }
@@ -11598,7 +11937,7 @@ function bindPresetControls(c) {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || r.statusText);
       toast(`Saved "${j.name}" to ${j.file}`);
-    } catch (err) { toast("Couldn't save the preset: " + err.message); return; }
+    } catch (err) { toast(T("Couldn't save the preset: ") + err.message); return; }
     await fetchSaved("presets");
     renderInspector();
   });
@@ -12570,7 +12909,7 @@ function maskBoundsAt(c, raw, t) {
 }
 /** Run a track from the playhead with progress in the Inspector; Esc stops it. */
 async function trackWithUi(c, label, job, after) {
-  if (trackUi.run) { toast("Already tracking — wait, or press Esc to stop"); return null; }
+  if (trackUi.run) { toast(T("Already tracking — wait, or press Esc to stop")); return null; }
   if (state.playing) pause();
   const run = trackUi.run = { cancel: false, clip: c.id, label, pct: 0 };
   const stamp = trackStamp(c), maskStamp = job.mask != null ? JSON.stringify(maskList(c)[job.mask] ?? null) : null;
@@ -12592,7 +12931,7 @@ async function trackWithUi(c, label, job, after) {
     toast(r.cancelled ? `Stopped — kept ${span.toFixed(2)} s` : r.lostAt != null ? `Lost the region at ${fmt(c.start + r.lostAt)} — kept ${span.toFixed(2)} s up to there` : `Tracked ${span.toFixed(2)} s (${r.samples.length} frames)`);
     return r;
   } catch (err) {
-    toast("Tracking failed: " + (err && err.message || err));
+    toast(T("Tracking failed: ") + (err && err.message || err));
     return null;
   } finally {
     trackUi.run = null;
@@ -12602,9 +12941,9 @@ async function trackWithUi(c, label, job, after) {
 }
 function trackMaskFromPlayhead(c, i, dir) {
   const raw = maskList(c)[i], t = maskLocalT(c);
-  if (!raw || !activeAt(c, state.time)) { toast("Move the playhead over the clip first"); return; }
+  if (!raw || !activeAt(c, state.time)) { toast(T("Move the playhead over the clip first")); return; }
   const box = maskBoundsAt(c, raw, t);
-  if (!box) { toast("The mask is outside the picture here"); return; }
+  if (!box) { toast(T("The mask is outside the picture here")); return; }
   const name = raw.name || `Mask ${i + 1}`, opts = { scale: trackUi.scale, rotation: trackUi.rotation };
   trackWithUi(c, `Tracking ${name}`, { box, from: t, to: dir > 0 ? c.duration : 0, dir, mask: i, ...opts }, (r) => {
     storeTrack(c, name, "box", box.w, box.h, r.samples);
@@ -12628,22 +12967,22 @@ function trackSectionHtml(c) {
   const list = clipTracks(c), tr = list[trackUi.sel], run = trackUi.run && trackUi.run.clip === c.id ? trackUi.run : null;
   const others = project.clips.filter((x) => x.id !== c.id && isVisualClip(x) && x.start < c.start + c.duration && c.start < x.start + x.duration);
   const chips = list.map((x, j) => `<button type="button" class="btn tiny cl-chip${j === trackUi.sel ? " toggle on" : ""}" data-tsel="${j}" title="${escapeHtml(Tracker.describe([x]))}">${escapeHtml(x.name)}</button>`).join("");
-  let html = `<div class="insp-section" data-track-section><h3>Tracking</h3>
-    <div class="cl-row"><button type="button" class="btn tiny${trackUi.tool === "point" ? " toggle on" : ""}" data-tact="point" ${run ? "disabled" : ""} title="Click a spot on the monitor to follow it from the playhead to the clip's end">+ Track point</button>
-      <button type="button" class="btn tiny${trackUi.scale ? " toggle on" : ""}" data-tact="scale" title="Also follow the region's size (tracking, and attaching)">Scale</button>
-      <button type="button" class="btn tiny${trackUi.rotation ? " toggle on" : ""}" data-tact="rotation" title="Also follow the region's rotation (tracking, and attaching)">Rotate</button></div>
-    <div class="insp-row cp-row"><label class="cp-label" title="The area matched around a picked point, % of the picture's width">Region %</label>
+  let html = `<div class="insp-section" data-track-section><h3>${T("Tracking")}</h3>
+    <div class="cl-row"><button type="button" class="btn tiny${trackUi.tool === "point" ? " toggle on" : ""}" data-tact="point" ${run ? "disabled" : ""} title="${T("Click a spot on the monitor to follow it from the playhead to the clip's end")}">${T("+ Track point")}</button>
+      <button type="button" class="btn tiny${trackUi.scale ? " toggle on" : ""}" data-tact="scale" title="${T("Also follow the region's size (tracking, and attaching)")}">${T("Scale")}</button>
+      <button type="button" class="btn tiny${trackUi.rotation ? " toggle on" : ""}" data-tact="rotation" title="${T("Also follow the region's rotation (tracking, and attaching)")}">${T("Rotate")}</button></div>
+    <div class="insp-row cp-row"><label class="cp-label" title="${T("The area matched around a picked point, % of the picture's width")}">${T("Region %")}</label>
       <input type="number" class="cp-num" data-tsize min="2" max="40" step="1" value="${Math.round(trackUi.size * 100)}"></div>
     ${run ? `<p class="cl-note" data-track-progress>${escapeHtml(run.label)}: ${Math.round(run.pct * 100)}% — Esc stops</p>` : ""}
-    ${trackUi.tool === "point" ? `<p class="cl-note">Click the spot to follow on the monitor — something with detail: a corner, a logo, an eye. Esc cancels.</p>` : ""}
-    ${list.length ? `<div class="cl-row">${chips}</div>` : trackUi.tool || run ? "" : `<p class="cl-note">Follow a spot in the video, then pin a title, sticker or another clip to it. A mask tracks from the Masks section.</p>`}`;
+    ${trackUi.tool === "point" ? `<p class="cl-note">${T("Click the spot to follow on the monitor — something with detail: a corner, a logo, an eye. Esc cancels.")}</p>` : ""}
+    ${list.length ? `<div class="cl-row">${chips}</div>` : trackUi.tool || run ? "" : `<p class="cl-note">${T("Follow a spot in the video, then pin a title, sticker or another clip to it. A mask tracks from the Masks section.")}</p>`}`;
   if (tr) {
     const S = tr.samples;
-    html += `<div class="cl-row"><button type="button" class="btn tiny" data-tact="back" ${run ? "disabled" : ""} title="Track from the playhead back to the clip's start">◀ Track back</button>
-        <button type="button" class="btn tiny" data-tact="fwd" ${run ? "disabled" : ""} title="Track from the playhead to the clip's end">Track on ▶</button>
-        <button type="button" class="btn tiny" data-tact="del" title="Delete this track (what follows it keeps its keys)">Delete</button></div>
-      <div class="insp-row"><label title="A clip to pin to this track">Attach</label><select data-tattach title="A clip to pin to this track"><option value="">Pick a clip…</option>${others.map((x) => `<option value="${x.id}">${escapeHtml(x.track + " · " + (x.kind === "text" ? (x.props.text || "").split("\n")[0] : x.name || x.kind))}</option>`).join("")}</select></div>
-      <div class="cl-row"><button type="button" class="btn tiny" data-tact="attach" ${others.length ? "" : "disabled"} title="Key the clip's position (and scale / rotation when those are on) so it rides on the track, keeping where it is at the playhead">Attach to the track</button></div>
+    html += `<div class="cl-row"><button type="button" class="btn tiny" data-tact="back" ${run ? "disabled" : ""} title="${T("Track from the playhead back to the clip's start")}">${T("◀ Track back")}</button>
+        <button type="button" class="btn tiny" data-tact="fwd" ${run ? "disabled" : ""} title="${T("Track from the playhead to the clip's end")}">${T("Track on ▶")}</button>
+        <button type="button" class="btn tiny" data-tact="del" title="${T("Delete this track (what follows it keeps its keys)")}">${T("Delete")}</button></div>
+      <div class="insp-row"><label title="${T("A clip to pin to this track")}">${T("Attach")}</label><select data-tattach title="${T("A clip to pin to this track")}"><option value="">${T("Pick a clip…")}</option>${others.map((x) => `<option value="${x.id}">${escapeHtml(x.track + " · " + (x.kind === "text" ? (x.props.text || "").split("\n")[0] : x.name || x.kind))}</option>`).join("")}</select></div>
+      <div class="cl-row"><button type="button" class="btn tiny" data-tact="attach" ${others.length ? "" : "disabled"} title="${T("Key the clip's position (and scale / rotation when those are on) so it rides on the track, keeping where it is at the playhead")}">${T("Attach to the track")}</button></div>
       <p class="cl-note">${S.length} samples, ${S[0][0].toFixed(2)}–${S[S.length - 1][0].toFixed(2)} s of the clip. Attaching writes keyframes — edit them like any others.</p>`;
   }
   return html + `</div>`;
@@ -12665,19 +13004,19 @@ function bindTrackControls(c) {
     if (!guard()) return;
     if (a === "point") {
       trackUi.tool = trackUi.tool === "point" ? null : "point";
-      if (trackUi.tool && !activeAt(c, state.time)) toast("Move the playhead over the clip, then click the spot to follow");
+      if (trackUi.tool && !activeAt(c, state.time)) toast(T("Move the playhead over the clip, then click the spot to follow"));
       renderInspector(); return;
     }
     if (!tr) return;
     if (a === "del") { pushUndo(); writeTracks(c, clipTracks(c).filter((x) => x !== tr)); trackUi.sel = -1; scheduleSave(); renderInspector(); drawFrame(); return; }
     if (a === "back" || a === "fwd") {
-      if (!activeAt(c, state.time)) { toast("Move the playhead over the clip first"); return; }
+      if (!activeAt(c, state.time)) { toast(T("Move the playhead over the clip first")); return; }
       trackPointFromPlayhead(c, tr.name, trackBoxAt(c, tr), a === "fwd" ? 1 : -1);
       return;
     }
     if (a === "attach") {
       const other = getClip(root.querySelector("[data-tattach]").value);
-      if (!other) { toast("Pick a clip to attach first"); return; }
+      if (!other) { toast(T("Pick a clip to attach first")); return; }
       if (isGroupLocked(other)) { toastLocked(); return; }
       pushUndo();
       const n = attachToTrack(c, tr, other, { scale: trackUi.scale, rotation: trackUi.rotation });
@@ -12712,7 +13051,7 @@ els.preview.addEventListener("pointerdown", (e) => {
   if (!B) return;
   e.preventDefault(); e.stopImmediatePropagation();
   const bp = B.toBox(canvasPt(e)), u = bp.x / B.bw, v = bp.y / B.bh;
-  if (u < 0 || u > 1 || v < 0 || v > 1) { toast("Click inside the clip's picture"); return; }
+  if (u < 0 || u > 1 || v < 0 || v > 1) { toast(T("Click inside the clip's picture")); return; }
   const used = new Set(clipTracks(c).map((x) => x.name));
   let n = 1;
   while (used.has(`Track ${n}`)) n++;
@@ -12729,13 +13068,13 @@ function maskSectionHtml(c) {
   const ui = maskUiFor(c), list = maskList(c), i = ui.sel, m = i >= 0 ? maskNowAt(c, i) : null, raw = list[i];
   const tool = (k, label, title) => `<button type="button" class="btn tiny${ui.tool === k ? " toggle on" : ""}" data-mtool="${k}" title="${title}" ${list.length >= Mask.MAX_MASKS ? "disabled" : ""}>${label}</button>`;
   const chips = list.map((mk, j) => `<button type="button" class="btn tiny cl-chip${j === i ? " toggle on" : ""}${mk.on === false ? " off" : ""}" data-msel="${j}"
-    title="${escapeHtml(mk.shape + (mk.mode !== "add" ? " · " + mk.mode : "") + (mk.invert ? " · inverted" : ""))} — click to edit on the monitor">${escapeHtml(mk.name || `Mask ${j + 1}`)}</button>`).join("");
-  let html = `<div class="insp-section" data-mask-section><h3>Masks</h3>
-    <div class="cl-row">${tool("rect", "+ Rect", "Add a rectangle mask")}${tool("ellipse", "+ Ellipse", "Add an ellipse mask")}${tool("pen", "Pen", "Click points on the monitor (drag to pull curve handles); click the first point or press Enter to close")}${tool("draw", "Draw", "Drag a free-hand outline on the monitor — it becomes an editable bezier")}
-      ${list.length ? `<button type="button" class="btn tiny${runtime.maskView ? " toggle on" : ""}" data-mact="view" title="Show the matte in the monitor (white = visible)">Matte</button>` : ""}</div>
-    ${ui.tool === "pen" ? `<p class="cl-note">Pen: click to add points, drag to curve. Click the first point or press Enter to close. Ctrl+Z / Backspace removes the last point, Ctrl+Shift+Z puts it back, Esc cancels.</p>` : ""}
-    ${ui.tool === "draw" ? `<p class="cl-note">Draw: drag around what to keep. Esc cancels.</p>` : ""}
-    ${list.length ? `<div class="cl-row">${chips}</div>` : ui.tool ? "" : `<p class="cl-note">No masks: the whole clip shows. Masks keep (add), cut (subtract) or intersect parts of the picture and move with the clip.</p>`}`;
+    title="${escapeHtml(mk.shape + (mk.mode !== "add" ? " · " + mk.mode : "") + (mk.invert ? " · inverted" : ""))} — ${T("click to edit on the monitor")}">${escapeHtml(mk.name || `Mask ${j + 1}`)}</button>`).join("");
+  let html = `<div class="insp-section" data-mask-section><h3>${T("Masks")}</h3>
+    <div class="cl-row">${tool("rect", T("+ Rect"), T("Add a rectangle mask"))}${tool("ellipse", T("+ Ellipse"), T("Add an ellipse mask"))}${tool("pen", T("Pen"), T("Click points on the monitor (drag to pull curve handles); click the first point or press Enter to close"))}${tool("draw", T("Draw"), T("Drag a free-hand outline on the monitor — it becomes an editable bezier"))}
+      ${list.length ? `<button type="button" class="btn tiny${runtime.maskView ? " toggle on" : ""}" data-mact="view" title="${T("Show the matte in the monitor (white = visible)")}">${T("Matte")}</button>` : ""}</div>
+    ${ui.tool === "pen" ? `<p class="cl-note">${T("Pen: click to add points, drag to curve. Click the first point or press Enter to close. Ctrl+Z / Backspace removes the last point, Ctrl+Shift+Z puts it back, Esc cancels.")}</p>` : ""}
+    ${ui.tool === "draw" ? `<p class="cl-note">${T("Draw: drag around what to keep. Esc cancels.")}</p>` : ""}
+    ${list.length ? `<div class="cl-row">${chips}</div>` : ui.tool ? "" : `<p class="cl-note">${T("No masks: the whole clip shows. Masks keep (add), cut (subtract) or intersect parts of the picture and move with the clip.")}</p>`}`;
   if (m) {
     const keyed = raw.keys ? raw.keys.length : 0, onKey = maskKeyIndex(raw, maskLocalT(c)) >= 0;
     const mrow = (p) => {
@@ -12744,22 +13083,22 @@ function maskSectionHtml(c) {
         <input type="range" data-mk="${p}" min="${min}" max="${max}" step="${step}" value="${m[p]}">
         <input type="number" class="cp-num" data-mknum="${p}" step="${step}" value="${fmtG(m[p], step)}"></div>`;
     };
-    html += `<div class="cl-row"><input type="text" class="cl-name" data-mname value="${escapeHtml(raw.name || "")}" placeholder="Mask ${i + 1}" maxlength="40" title="Mask name">
-        <button type="button" class="btn tiny${raw.on === false ? "" : " toggle on"}" data-mact="on" title="Mask on / off">${raw.on === false ? "Off" : "On"}</button>
-        <button type="button" class="btn tiny" data-mact="up" ${i === 0 ? "disabled" : ""} title="Move down the stack (combined earlier)">↑</button>
-        <button type="button" class="btn tiny" data-mact="down" ${i >= list.length - 1 ? "disabled" : ""} title="Move up the stack (combined later)">↓</button>
-        <button type="button" class="btn tiny" data-mact="dup" ${list.length >= Mask.MAX_MASKS ? "disabled" : ""} title="Duplicate">Copy</button>
-        <button type="button" class="btn tiny" data-mact="del" title="Delete this mask">Delete</button></div>
-      <div class="cl-row"><select data-mmode title="How this mask combines with the masks before it">${Mask.MODES.map((md) => `<option value="${md}" ${raw.mode === md ? "selected" : ""}>${MASK_MODE_LABEL[md]}</option>`).join("")}</select>
-        <button type="button" class="btn tiny${raw.invert ? " toggle on" : ""}" data-mact="invert" title="Use everything outside the shape">Invert</button>
-        <button type="button" class="btn tiny${onKey ? " toggle on" : ""}" data-mact="key" title="${onKey ? "Remove the key at the playhead" : "Key the mask at the playhead — with keys, every change keys"}">◆ Key</button>
+    html += `<div class="cl-row"><input type="text" class="cl-name" data-mname value="${escapeHtml(raw.name || "")}" placeholder="Mask ${i + 1}" maxlength="40" title="${T("Mask name")}">
+        <button type="button" class="btn tiny${raw.on === false ? "" : " toggle on"}" data-mact="on" title="${T("Mask on / off")}">${raw.on === false ? "Off" : "On"}</button>
+        <button type="button" class="btn tiny" data-mact="up" ${i === 0 ? "disabled" : ""} title="${T("Move down the stack (combined earlier)")}">↑</button>
+        <button type="button" class="btn tiny" data-mact="down" ${i >= list.length - 1 ? "disabled" : ""} title="${T("Move up the stack (combined later)")}">↓</button>
+        <button type="button" class="btn tiny" data-mact="dup" ${list.length >= Mask.MAX_MASKS ? "disabled" : ""} title="${T("Duplicate")}">${T("Copy")}</button>
+        <button type="button" class="btn tiny" data-mact="del" title="${T("Delete this mask")}">${T("Delete")}</button></div>
+      <div class="cl-row"><select data-mmode title="${T("How this mask combines with the masks before it")}">${Mask.MODES.map((md) => `<option value="${md}" ${raw.mode === md ? "selected" : ""}>${T(MASK_MODE_LABEL[md])}</option>`).join("")}</select>
+        <button type="button" class="btn tiny${raw.invert ? " toggle on" : ""}" data-mact="invert" title="${T("Use everything outside the shape")}">${T("Invert")}</button>
+        <button type="button" class="btn tiny${onKey ? " toggle on" : ""}" data-mact="key" title="${onKey ? "Remove the key at the playhead" : "Key the mask at the playhead — with keys, every change keys"}">${T("◆ Key")}</button>
         <span class="cl-note">${keyed ? `${keyed} key${keyed > 1 ? "s" : ""}` : ""}</span>
-        ${keyed ? `<button type="button" class="btn tiny" data-mact="clearkeys" title="Remove every key (keeps the mask as it is at the playhead)">Clear keys</button>` : ""}</div>
-      ${c.kind === "video" ? `<div class="cl-row"><span class="cl-note">Track</span>
-        <button type="button" class="btn tiny" data-mtrack="-1" ${trackUi.run ? "disabled" : ""} title="Follow what the mask covers from the playhead back to the clip's start — keys its position">◀ Back</button>
-        <button type="button" class="btn tiny" data-mtrack="1" ${trackUi.run ? "disabled" : ""} title="Follow what the mask covers from the playhead to the clip's end — keys its position">On ▶</button>
-        <button type="button" class="btn tiny${trackUi.scale ? " toggle on" : ""}" data-mtrackopt="scale" title="Also key its scale">Scale</button>
-        <button type="button" class="btn tiny${trackUi.rotation ? " toggle on" : ""}" data-mtrackopt="rotation" title="Also key its rotation">Rotate</button></div>
+        ${keyed ? `<button type="button" class="btn tiny" data-mact="clearkeys" title="${T("Remove every key (keeps the mask as it is at the playhead)")}">${T("Clear keys")}</button>` : ""}</div>
+      ${c.kind === "video" ? `<div class="cl-row"><span class="cl-note">${T("Track")}</span>
+        <button type="button" class="btn tiny" data-mtrack="-1" ${trackUi.run ? "disabled" : ""} title="${T("Follow what the mask covers from the playhead back to the clip's start — keys its position")}">${T("◀ Back")}</button>
+        <button type="button" class="btn tiny" data-mtrack="1" ${trackUi.run ? "disabled" : ""} title="${T("Follow what the mask covers from the playhead to the clip's end — keys its position")}">${T("On ▶")}</button>
+        <button type="button" class="btn tiny${trackUi.scale ? " toggle on" : ""}" data-mtrackopt="scale" title="${T("Also key its scale")}">${T("Scale")}</button>
+        <button type="button" class="btn tiny${trackUi.rotation ? " toggle on" : ""}" data-mtrackopt="rotation" title="${T("Also key its rotation")}">${T("Rotate")}</button></div>
         ${trackUi.run && trackUi.run.clip === c.id ? `<p class="cl-note" data-track-progress>${escapeHtml(trackUi.run.label)}: ${Math.round(trackUi.run.pct * 100)}% — Esc stops</p>` : ""}` : ""}
       ${mrow("opacity")}${mrow("feather")}${mrow("expand")}${mrow("x")}${mrow("y")}${m.shape !== "bezier" ? mrow("w") + mrow("h") : ""}${mrow("scale")}${mrow("rotation")}
       <p class="cl-note">On the monitor: drag inside to move, the knob rotates (Shift: 15° steps)${m.shape === "bezier"
@@ -12782,11 +13121,11 @@ function bindMaskControls(c) {
       list.push({ shape: k, x: 0.5, y: 0.5, w: k === "rect" ? 0.5 : 0.45, h: k === "rect" ? 0.5 : 0.6 });
       writeMasks(c, list); maskUi.sel = list.length - 1; maskUi.tool = null; maskUi.pt = -1;
       scheduleSave(); rerender();
-      if (!activeAt(c, state.time)) toast("Move the playhead over the clip to see the mask on the monitor");
+      if (!activeAt(c, state.time)) toast(T("Move the playhead over the clip to see the mask on the monitor"));
       return;
     }
     maskUi.tool = maskUi.tool === k ? null : k; maskUi.pen = null; maskUi.stroke = null;
-    if (maskUi.tool) { maskUi.sel = -1; if (state.playing) pause(); if (!activeAt(c, state.time)) toast("Move the playhead over the clip, then draw on the monitor"); }
+    if (maskUi.tool) { maskUi.sel = -1; if (state.playing) pause(); if (!activeAt(c, state.time)) toast(T("Move the playhead over the clip, then draw on the monitor")); }
     rerender();
   });
   for (const b of root.querySelectorAll("[data-mtrackopt]")) b.addEventListener("click", () => { trackUi[b.dataset.mtrackopt] = !trackUi[b.dataset.mtrackopt]; rerender(); });
@@ -12978,7 +13317,7 @@ function addMaskFrom(c, mask) {
 }
 function finishPen(c) {
   const B = maskBox(c), P = maskUi.pen && maskUi.pen.pts;
-  if (!B || !P || P.length < 3) { toast("A pen mask needs at least 3 points"); return; }
+  if (!B || !P || P.length < 3) { toast(T("A pen mask needs at least 3 points")); return; }
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const [x, y] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
@@ -13119,7 +13458,7 @@ const endClipMaskDrag = (e) => {
       const B = c && maskBox(c), st = maskUi.stroke;
       maskUi.stroke = null;
       if (c && B && st.length >= 6) addMaskFrom(c, { shape: "freehand", stroke: st, aspect: B.bw / B.bh });
-      else toast("Drag around what the mask should keep");
+      else toast(T("Drag around what the mask should keep"));
     } else if (maskUi.pen) maskUi.pen.dragging = false;
     state.dirtyTimeline = true;
     return;
@@ -13136,7 +13475,7 @@ els.preview.addEventListener("dblclick", (e) => {
   const i = h.A.findIndex((p) => Math.hypot(p.a.x - pt.x, p.a.y - pt.y) <= grab);
   if (i < 0) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  if (h.m.points.length <= 3) { toast("A mask needs at least 3 points"); return; }
+  if (h.m.points.length <= 3) { toast(T("A mask needs at least 3 points")); return; }
   if (isGroupLocked(c)) { toastLocked(); return; }
   pushUndo();
   writeMaskTopology(c, maskUi.sel, (pts) => pts.filter((_, j) => j !== i));
@@ -13204,7 +13543,7 @@ function newVisualClip(kind, name, track, props = {}) {
 }
 function addShapeLayer(kind) {
   const track = shapeTrack();
-  if (!track) { toast("V1–V3 are locked — unlock a video track to add a shape"); return; }
+  if (!track) { toast(T("V1–V3 are locked — unlock a video track to add a shape")); return; }
   pushUndo();
   const pre = SHAPE_PRESETS[kind];
   const c = newVisualClip("shape", pre ? pre.label : "Shape", track);
@@ -13219,7 +13558,7 @@ function addShapeLayer(kind) {
 }
 function addNull() {
   const track = ["V3", "V2", "V1"].find((id) => TRACKS.some((tr) => tr.id === id) && trackFree(id));
-  if (!track) { toast("V1–V3 are locked — unlock a video track to add a null"); return; }
+  if (!track) { toast(T("V1–V3 are locked — unlock a video track to add a null")); return; }
   pushUndo();
   const c = newVisualClip("null", "Null", track);
   project.clips.push(c);
@@ -13238,7 +13577,7 @@ const SHAPE_ICONS = {
 };
 function renderShapesTab() {
   const rows = [
-    ...Object.entries(SHAPE_PRESETS).map(([k, pre]) => ({ k, name: pre.label, sub: "Shape layer", run: () => addShapeLayer(k) })),
+    ...Object.entries(SHAPE_PRESETS).map(([k, pre]) => ({ k, name: T(pre.label), sub: T("Shape layer"), run: () => addShapeLayer(k) })),
     { k: "pen", name: "Pen path", sub: "Click points on the monitor", run: () => addShapeLayer("pen") },
     { k: "null", name: "Null object", sub: "Invisible parent for other clips", run: addNull },
   ];
@@ -13249,7 +13588,7 @@ function renderShapesTab() {
     item.title = r.k === "null" ? "Add a null object at the playhead — parent clips to it to move them together" : `Add a ${r.name.toLowerCase()} layer at the playhead`;
     item.innerHTML = `<div class="bin-thumb shape-thumb"><svg viewBox="0 0 24 24" aria-hidden="true">${SHAPE_ICONS[r.k]}</svg></div>
       <div class="bin-meta"><div class="bin-name">${escapeHtml(r.name)}</div><div class="bin-sub">${escapeHtml(r.sub)}</div></div>
-      <button class="btn tiny accent lib-add" title="Add at playhead">＋</button>`;
+      <button class="btn tiny accent lib-add" title="${T("Add at playhead")}">＋</button>`;
     item.addEventListener("dblclick", r.run);
     item.querySelector(".lib-add").addEventListener("click", r.run);
     els.libList.appendChild(item);
@@ -13261,7 +13600,7 @@ function parentSelectionToNull() {
   if (!sel.length) return;
   if (sel.some(isGroupLocked)) { toastLocked(); return; }
   const track = ["V3", "V2", "V1"].find((id) => TRACKS.some((tr) => tr.id === id) && trackFree(id));
-  if (!track) { toast("V1–V3 are locked — unlock a video track for the null"); return; }
+  if (!track) { toast(T("V1–V3 are locked — unlock a video track for the null")); return; }
   pushUndo();
   const W = els.preview.width, H = els.preview.height;
   let sx = 0, sy = 0;
@@ -13275,7 +13614,7 @@ function parentSelectionToNull() {
 }
 /** Change a clip's parent, keeping it where it is at the playhead (static values; keyed ones get a key). */
 function setClipParent(c, parentId) {
-  if (parentId && Motion.wouldCycle(c.id, parentId, getClip)) { toast("That would parent the clip to itself"); return false; }
+  if (parentId && Motion.wouldCycle(c.id, parentId, getClip)) { toast(T("That would parent the clip to itself")); return false; }
   const t = clamp(state.time, c.start, c.start + c.duration);
   const v = Motion.reparentValues(c, parentId || null, getClip, t);
   if (parentId) c.parent = parentId; else delete c.parent;
@@ -13293,16 +13632,16 @@ function parentCandidates(c) {
 const clipShortLabel = (x) => x.track + " · " + (x.kind === "text" ? (x.props.text || "").split("\n")[0] : x.name || x.kind);
 function parentRowHtml(c) {
   const cands = parentCandidates(c), cur = c.parent && getClip(c.parent);
-  const opts = [`<option value="">None</option>`, ...cands.map((x) => `<option value="${x.id}" ${x.id === c.parent ? "selected" : ""}>${escapeHtml(clipShortLabel(x))}${x.kind === "null" ? " (null)" : ""}</option>`)];
-  if (c.parent && !cur) opts.push(`<option value="${escapeHtml(c.parent)}" selected>Missing clip</option>`);
-  return `<div class="insp-row"><label title="Move, turn and scale with another clip (its opacity and effects are not inherited)">Parent</label><select data-parent>${opts.join("")}</select></div>`;
+  const opts = [`<option value="">${T("None")}</option>`, ...cands.map((x) => `<option value="${x.id}" ${x.id === c.parent ? "selected" : ""}>${escapeHtml(clipShortLabel(x))}${x.kind === "null" ? " (null)" : ""}</option>`)];
+  if (c.parent && !cur) opts.push(`<option value="${escapeHtml(c.parent)}" selected>${T("Missing clip")}</option>`);
+  return `<div class="insp-row"><label title="${T("Move, turn and scale with another clip (its opacity and effects are not inherited)")}">${T("Parent")}</label><select data-parent>${opts.join("")}</select></div>`;
 }
 function anchorRowsHtml(c, p, row) {
-  return `<div class="insp-row"><label>Anchor</label><span class="insp-ctrls">
-      <button type="button" class="btn tiny${runtime.anchorTool ? " toggle on" : ""}" data-anchor-tool title="Drag on the monitor to move the anchor point — the picture stays put (Shift: snap to its centre)">✥ Move</button>
-      <button type="button" class="btn tiny" data-anchor-centre title="Put the anchor point back on the picture's centre, keeping the picture where it is">Centre</button></span></div>
-    ${row("Anchor X", `<input type="number" data-k="anchorX" value="${fmtInspNum(p.anchorX)}">`, "anchorX")}
-    ${row("Anchor Y", `<input type="number" data-k="anchorY" value="${fmtInspNum(p.anchorY)}">`, "anchorY")}`;
+  return `<div class="insp-row"><label>${T("Anchor")}</label><span class="insp-ctrls">
+      <button type="button" class="btn tiny${runtime.anchorTool ? " toggle on" : ""}" data-anchor-tool title="${T("Drag on the monitor to move the anchor point — the picture stays put (Shift: snap to its centre)")}">${T("✥ Move")}</button>
+      <button type="button" class="btn tiny" data-anchor-centre title="${T("Put the anchor point back on the picture's centre, keeping the picture where it is")}">${T("Centre")}</button></span></div>
+    ${row(T("Anchor X"), `<input type="number" data-k="anchorX" value="${fmtInspNum(p.anchorX)}">`, "anchorX")}
+    ${row(T("Anchor Y"), `<input type="number" data-k="anchorY" value="${fmtInspNum(p.anchorY)}">`, "anchorY")}`;
 }
 function bindParentAnchorControls(c) {
   const root = els.inspector;
@@ -13315,7 +13654,7 @@ function bindParentAnchorControls(c) {
   root.querySelector("[data-anchor-tool]")?.addEventListener("click", () => { runtime.anchorTool = !runtime.anchorTool; state.dirtyTimeline = true; renderInspector(); });
   root.querySelector("[data-anchor-centre]")?.addEventListener("click", () => {
     if (isGroupLocked(c)) { toastLocked(); return; }
-    if (!playheadOverClip(c)) { toast("Move the playhead over the clip"); return; }
+    if (!playheadOverClip(c)) { toast(T("Move the playhead over the clip")); return; }
     pushUndo();
     const p = propsAtPlayhead(c), box = layerBox(c, p, els.preview.width, els.preview.height, state.time), as = Motion.contentScale(c, p);
     const v = Motion.anchorMoveValues(c, p, Math.round(box.ox / as), Math.round(box.oy / as));
@@ -13353,7 +13692,7 @@ function writeShapeSet(c, path, set) {
   const next = { ...statics };
   if (Object.keys(keyed).length) {
     // like setAnimProp: off the clip there is no "at the playhead" to key
-    if (!playheadOverClip(c)) { toast("Move the playhead over the clip to edit its keyframes"); return false; }
+    if (!playheadOverClip(c)) { toast(T("Move the playhead over the clip to edit its keyframes")); return false; }
     const keys = it.keys.map((k) => ({ ...k })), kt = +clamp(t, 0, c.duration).toFixed(4);
     let j = shapeKeyIndex(keys, kt);
     if (j < 0) { keys.push({ t: kt }); keys.sort((a, b) => a.t - b.t); j = shapeKeyIndex(keys, kt); }
@@ -13390,19 +13729,19 @@ function shapeSectionHtml(c, p, row) {
   }).join("");
   const slider = (k, min, max, step, unit = "") => {
     const shown = fmtInspNum(p[k], step);
-    return row(KF_GRAPH_LABEL[k], `<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${shown}" title="Ctrl/Cmd-click: reset to default">
+    return row(KF_GRAPH_LABEL[k], `<input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${shown}" title="${T("Ctrl/Cmd-click: reset to default")}">
       <span class="val" data-val="${k}" data-unit="${unit}">${shown}${unit}</span>`, k);
   };
-  let html = `<div class="insp-section" data-shape-section><h3>Shape layer</h3>
-    <div class="cl-row">${Object.entries(SHAPE_PRESETS).map(([k, pre]) => btn(`data-sadd="${k}"`, "+ " + pre.label, `Add a ${pre.label.toLowerCase()} to this layer`, false, full)).join("")}
+  let html = `<div class="insp-section" data-shape-section><h3>${T("Shape layer")}</h3>
+    <div class="cl-row">${Object.entries(SHAPE_PRESETS).map(([k, pre]) => btn(`data-sadd="${k}"`, "+ " + T(pre.label), `Add a ${T(pre.label).toLowerCase()} to this layer`, false, full)).join("")}
       ${btn('data-stool="pen"', "Pen", "Click points on the monitor (drag to curve); click the first point to close, Enter for an open path", ui.tool === "pen", full)}</div>
-    ${ui.tool === "pen" ? `<p class="cl-note">Pen: click to add points, drag to curve. Click the first point to close, Enter keeps the path open. Backspace / Ctrl+Z removes the last point, Esc cancels.</p>` : ""}
-    ${list.length ? `<div class="cl-row shape-items">${chips}</div>` : ui.tool ? "" : `<p class="cl-note">No shapes yet — add one above.</p>`}
+    ${ui.tool === "pen" ? `<p class="cl-note">${T("Pen: click to add points, drag to curve. Click the first point to close, Enter keeps the path open. Backspace / Ctrl+Z removes the last point, Esc cancels.")}</p>` : ""}
+    ${list.length ? `<div class="cl-row shape-items">${chips}</div>` : ui.tool ? "" : `<p class="cl-note">${T("No shapes yet — add one above.")}</p>`}
     ${slider("trimStart", 0, 100, 0.5, "%")}${slider("trimEnd", 0, 100, 0.5, "%")}${slider("trimOffset", -100, 100, 0.5, "%")}`;
   const raw = ui.sel && Motion.getItem(list, ui.sel), now = raw && shapeNow(c);
   if (raw && now) {
     const t = shapeLocalT(c), j = shapeKeyIndex(raw.keys, t);
-    const kbtn = (k) => `<button type="button" class="kf-btn${isAnimated(raw, k) ? " has" : ""}${j >= 0 && raw.keys[j][k] != null ? " on" : ""}" data-skey="${k}" title="Key this value at the playhead / remove the key there">◆</button>`;
+    const kbtn = (k) => `<button type="button" class="kf-btn${isAnimated(raw, k) ? " has" : ""}${j >= 0 && raw.keys[j][k] != null ? " on" : ""}" data-skey="${k}" title="${T("Key this value at the playhead / remove the key there")}">◆</button>`;
     const srow = (k) => {
       const [lab, min, max, step] = SHAPE_ROWS_UI[k];
       return `<div class="insp-row cp-row"><label class="cp-label">${lab}</label>
@@ -13414,7 +13753,7 @@ function shapeSectionHtml(c, p, row) {
         ${btn(`data-snone="${k}"`, "None", `No ${lab.toLowerCase()}`, now[k] === "none")}${kbtn(k)}</span></div>`;
     const path = ui.sel, inGroup = path.length > 1, siblings = inGroup ? Motion.getItem(list, path.slice(0, -1)).items : list, i = path[path.length - 1];
     const own = Motion.OWN[raw.type];
-    html += `<div class="cl-row"><input type="text" class="cl-name" data-sname value="${escapeHtml(raw.name || "")}" placeholder="${escapeHtml(shapeItemLabel({ type: raw.type }, path))}" maxlength="40" title="Item name">
+    html += `<div class="cl-row"><input type="text" class="cl-name" data-sname value="${escapeHtml(raw.name || "")}" placeholder="${escapeHtml(shapeItemLabel({ type: raw.type }, path))}" maxlength="40" title="${T("Item name")}">
         ${btn('data-sact="on"', raw.on === false ? "Off" : "On", "Item on / off", raw.on !== false)}
         ${btn('data-sact="up"', "↑", "Move down the stack (drawn earlier)", false, i === 0)}
         ${btn('data-sact="down"', "↓", "Move up the stack (drawn later)", false, i >= siblings.length - 1)}
@@ -13426,11 +13765,11 @@ function shapeSectionHtml(c, p, row) {
         ${raw.keys ? btn('data-sact="clearkeys"', "Clear keys", "Remove every key (keeps the item as it is at the playhead)") : ""}</div>
       ${srow("x")}${srow("y")}${srow("rotation")}${srow("scale")}${srow("opacity")}
       ${own.includes("w") ? srow("w") + srow("h") : ""}${own.includes("radius") ? srow("radius") : ""}
-      ${own.includes("sides") ? `<div class="insp-row"><label>Points</label><input type="number" data-ssides min="3" max="64" step="1" value="${raw.sides}"></div>` : ""}
+      ${own.includes("sides") ? `<div class="insp-row"><label>${T("Points")}</label><input type="number" data-ssides min="3" max="64" step="1" value="${raw.sides}"></div>` : ""}
       ${own.includes("inner") ? srow("inner") : ""}
-      ${raw.type === "path" ? `<div class="insp-row"><label>Closed</label><input type="checkbox" data-sclosed ${raw.closed !== false ? "checked" : ""}>${kbtn("points")}</div>` : ""}
+      ${raw.type === "path" ? `<div class="insp-row"><label>${T("Closed")}</label><input type="checkbox" data-sclosed ${raw.closed !== false ? "checked" : ""}>${kbtn("points")}</div>` : ""}
       ${raw.type !== "group" ? color("fill", "Fill") + color("stroke", "Stroke") + srow("strokeWidth") +
-        `<div class="insp-row"><label>Ends / joins</label><span class="insp-ctrls"><select data-scap>${Motion.CAPS.map((v) => `<option ${raw.lineCap === v ? "selected" : ""}>${v}</option>`).join("")}</select>
+        `<div class="insp-row"><label>${T("Ends / joins")}</label><span class="insp-ctrls"><select data-scap>${Motion.CAPS.map((v) => `<option ${raw.lineCap === v ? "selected" : ""}>${v}</option>`).join("")}</select>
           <select data-sjoin>${Motion.JOINS.map((v) => `<option ${raw.lineJoin === v ? "selected" : ""}>${v}</option>`).join("")}</select></span></div>` : ""}
       ${srow("trimStart")}${srow("trimEnd")}${srow("trimOffset")}
       <p class="cl-note">On the monitor: drag the item to move it, the knob turns it (Shift: 15° steps), the corners resize it${raw.type === "line" || raw.type === "path"
@@ -13460,7 +13799,7 @@ function bindShapeControls(c) {
     if (!guard()) return;
     shapeUi.tool = shapeUi.tool === "pen" ? null : "pen"; shapeUi.pen = null; shapeUi.sel = null; maskUi.sel = -1; maskUi.tool = null;
     if (shapeUi.tool && state.playing) pause();
-    if (shapeUi.tool && !activeAt(c, state.time)) toast("Move the playhead over the clip, then draw on the monitor");
+    if (shapeUi.tool && !activeAt(c, state.time)) toast(T("Move the playhead over the clip, then draw on the monitor"));
     rerender();
   });
   for (const b of root.querySelectorAll("[data-ssel]")) b.addEventListener("click", () => {
@@ -13513,7 +13852,7 @@ function bindShapeControls(c) {
   });
   for (const b of root.querySelectorAll("[data-skey]")) b.addEventListener("click", () => {
     if (!guard() || !sel()) return;
-    if (!playheadOverClip(c)) { toast("Move the playhead over the clip to key it"); return; }
+    if (!playheadOverClip(c)) { toast(T("Move the playhead over the clip to key it")); return; }
     pushUndo(); toggleShapeKey(c, sel(), b.dataset.skey); scheduleSave(); rerender();
   });
   root.querySelector("[data-sname]")?.addEventListener("change", (e) => { if (!guard()) return; pushUndo(); edit({ name: e.target.value.trim() || null }); rerender(); });
@@ -13814,7 +14153,7 @@ els.preview.addEventListener("dblclick", (e) => {
   const i = h.A.findIndex((p) => Math.hypot(p.a.x - pt.x, p.a.y - pt.y) <= grab);
   if (i < 0) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  if (h.it.points.length <= (h.it.closed === false ? 2 : 3)) { toast("The path needs the points it has"); return; }
+  if (h.it.points.length <= (h.it.closed === false ? 2 : 3)) { toast(T("The path needs the points it has")); return; }
   if (isGroupLocked(c)) { toastLocked(); return; }
   pushUndo();
   writeShapeTopology(c, shapeUi.sel, (pts) => pts.filter((_, j) => j !== i));
@@ -14025,15 +14364,15 @@ function drawTextOnPath(c, p, local) {
 function textPathSectionHtml(c, p, row) {
   const has = !!clipTextPath(c), editing = has && shapeUi.clip === c.id && samePath(shapeUi.sel, [0]);
   const btn = (attr, label, title, on, dis) => `<button type="button" class="btn tiny${on ? " toggle on" : ""}" ${attr} title="${title}" ${dis ? "disabled" : ""}>${label}</button>`;
-  return `<div class="insp-section" data-textpath-section><h3>Text path</h3>
-    <div class="cl-row">${Object.entries(TEXT_PATH_PRESETS).map(([k, pre]) => btn(`data-tpath="${k}"`, pre.label, `Set the title on a ${pre.label.toLowerCase()}`)).join("")}
+  return `<div class="insp-section" data-textpath-section><h3>${T("Text path")}</h3>
+    <div class="cl-row">${Object.entries(TEXT_PATH_PRESETS).map(([k, pre]) => btn(`data-tpath="${k}"`, T(pre.label), `Set the title on a ${T(pre.label).toLowerCase()}`)).join("")}
       ${btn('data-tpath="pen"', "Pen", "Draw the path on the monitor: click points (drag to curve), Enter to finish, click the first point to close it", shapeUi.clip === c.id && shapeUi.tool === "pen")}</div>
     ${has ? `<div class="cl-row">${btn('data-tpath="edit"', "Edit path", "Show the path's points and handles on the monitor", editing)}${btn('data-tpath="off"', "Remove", "Back to a normal title")}</div>
-      ${row("Offset", `<input type="range" data-k="pathOffset" min="-100" max="200" step="0.5" value="${fmtInspNum(p.pathOffset, 0.5)}" title="Slide the text along the path, % of its length — key it to make the text travel">
+      ${row("Offset", `<input type="range" data-k="pathOffset" min="-100" max="200" step="0.5" value="${fmtInspNum(p.pathOffset, 0.5)}" title="${T("Slide the text along the path, % of its length — key it to make the text travel")}">
         <span class="val" data-val="pathOffset" data-unit="%">${fmtInspNum(p.pathOffset, 0.5)}%</span>`, "pathOffset")}
-      ${row("Align", `<select data-k="pathAlign">${["start", "center", "end"].map((v) => `<option value="${v}" ${(p.pathAlign || "start") === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, "pathAlign")}
-      <p class="cl-note">Each line runs along the path, the next one a line below it. Every text animation plays along the path.</p>`
-    : `<p class="cl-note">Set the title along a line, an arc, a circle, a wave or a path you draw.</p>`}
+      ${row(T("Align"), `<select data-k="pathAlign">${["start", "center", "end"].map((v) => `<option value="${v}" ${(p.pathAlign || "start") === v ? "selected" : ""}>${v}</option>`).join("")}</select>`, "pathAlign")}
+      <p class="cl-note">${T("Each line runs along the path, the next one a line below it. Every text animation plays along the path.")}</p>`
+    : `<p class="cl-note">${T("Set the title along a line, an arc, a circle, a wave or a path you draw.")}</p>`}
   </div>`;
 }
 function bindTextPathControls(c) {
@@ -14051,7 +14390,7 @@ function bindTextPathControls(c) {
       const on = shapeUi.clip === c.id && shapeUi.tool === "pen";
       Object.assign(shapeUi, { clip: c.id, sel: null, pt: -1, tool: on ? null : "pen", pen: null });
       if (!on && state.playing) pause();
-      if (!on && !activeAt(c, state.time)) toast("Move the playhead over the title, then draw on the monitor");
+      if (!on && !activeAt(c, state.time)) toast(T("Move the playhead over the title, then draw on the monitor"));
       state.dirtyTimeline = true; renderInspector();
       return;
     }
@@ -14211,15 +14550,15 @@ els.preview.addEventListener("dblclick", (e) => {
 function motionSectionHtml(c, p, row) {
   const keys = Motion.posKeys(c).length, curved = Motion.hasPathHandles(c);
   const btn = (attr, label, title, dis) => `<button type="button" class="btn tiny" ${attr} title="${title}" ${dis ? "disabled" : ""}>${label}</button>`;
-  return `<div class="insp-section" data-motion-section><h3>Motion</h3>
-    <div class="insp-row"><label title="Position keys (X and Y keyed at the same time) make a path you can bend on the monitor">Path</label><span class="insp-ctrls">
+  return `<div class="insp-section" data-motion-section><h3>${T("Motion")}</h3>
+    <div class="insp-row"><label title="${T("Position keys (X and Y keyed at the same time) make a path you can bend on the monitor")}">${T("Path")}</label><span class="insp-ctrls">
       ${btn("data-path-act=\"smooth\"", "Smooth", "Curve the path smoothly through every position key", keys < 2)}
       ${btn("data-path-act=\"straight\"", "Straight", "Straight lines between the position keys", !curved)}
       <span class="cl-note">${keys >= 2 ? `${keys} position keys${curved ? ", curved" : ""}` : "key X and Y at two times"}</span></span></div>
-    ${row("Auto-orient", `<input type="checkbox" data-k="autoOrient" ${p.autoOrient ? "checked" : ""} title="Turn the clip with its direction of travel (its Rotation adds on top)">`, "autoOrient")}
-    ${c.kind !== "null" ? row("Motion blur", `<input type="range" data-k="motionBlur" min="0" max="720" step="15" value="${+p.motionBlur || 0}" title="Shutter angle — 180° is the film look, 0 is off">
+    ${row("Auto-orient", `<input type="checkbox" data-k="autoOrient" ${p.autoOrient ? "checked" : ""} title="${T("Turn the clip with its direction of travel (its Rotation adds on top)")}">`, "autoOrient")}
+    ${c.kind !== "null" ? row(T("Motion blur"), `<input type="range" data-k="motionBlur" min="0" max="720" step="15" value="${+p.motionBlur || 0}" title="${T("Shutter angle — 180° is the film look, 0 is off")}">
       <span class="val" data-val="motionBlur" data-unit="°">${+p.motionBlur || 0}°</span>`, "motionBlur")
-      + row("Blur samples", `<input type="range" data-k="motionBlurSamples" min="2" max="32" step="1" value="${+p.motionBlurSamples || 8}" title="Sub-frame samples per frame — more is smoother and slower (playback uses as many as fit in the frame time; a paused frame and export use them all)">
+      + row(T("Blur samples"), `<input type="range" data-k="motionBlurSamples" min="2" max="32" step="1" value="${+p.motionBlurSamples || 8}" title="Sub-frame samples per frame — more is smoother and slower (playback uses as many as fit in the frame time; a paused frame and export use them all)">
       <span class="val" data-val="motionBlurSamples" data-unit="">${+p.motionBlurSamples || 8}</span>`, "motionBlurSamples") : ""}
     ${presetRowsHtml(c, row)}
   </div>`;
@@ -15052,17 +15391,16 @@ function updateExportProfileNote(id) {
   const p = exportProfileMeta(id);
   if (els.exportProfileNote) {
     els.exportProfileNote.textContent = known
-      ? [p.description, p.summary].filter(Boolean).join(" — ")
-      : `"${id}" is not defined in encoding-profiles.json — the export will fail until it is added or another profile is picked.`;
+      ? [T(p.description), p.summary].filter(Boolean).join(" — ")
+      : T("“{id}” is not defined in encoding-profiles.json — the export will fail until it is added or another profile is picked.", { id });
   }
   if (els.exportProfileHint) {
     if (project.encodeProfile) {
-      els.exportProfileHint.textContent =
-        "Project default (encodeProfile in project.json). Pick another profile here for a one-off export.";
+      els.exportProfileHint.textContent = T("Project default (encodeProfile in project.json). Pick another profile here for a one-off export.");
     } else if (getSetting("encodeProfile")) {
-      els.exportProfileHint.textContent = "Browser default — saved when you change this dropdown.";
+      els.exportProfileHint.textContent = T("Browser default — saved when you change this dropdown.");
     } else {
-      els.exportProfileHint.textContent = "Raw ffmpeg arguments from encoding-profiles.json.";
+      els.exportProfileHint.textContent = T("Raw ffmpeg arguments from encoding-profiles.json.");
     }
   }
 }
@@ -15073,6 +15411,30 @@ function updateExportProfileNote(id) {
    fills the controls below it; any change makes it "modified" and is kept as
    the browser's last settings. Values: "d:<preset id>" / "p:<profile id>". */
 const Delivery = window.FableCutDelivery;
+/* The encoding profiles the editor ships with. A profile a user added to
+   encoding-profiles.json keeps the label they gave it. */
+const BUILTIN_ENCODE_PROFILES = new Set(["draft", "delivery", "hq"]);
+
+/**
+ * The label of a delivery preset. The built-in ones are translated; a preset
+ * the user saved keeps the name they gave it.
+ * @param {string} id
+ * @param {string} label
+ * @returns {string}
+ */
+function deliveryPresetLabel(id, label) {
+  return Delivery.PRESETS[id] ? T(label) : label;
+}
+
+/**
+ * The label of an encoding profile from encoding-profiles.json.
+ * @param {string} id
+ * @param {string} label
+ * @returns {string}
+ */
+function encodeProfileLabel(id, label) {
+  return BUILTIN_ENCODE_PROFILES.has(id) ? T(label) : label;
+}
 let deliveryInfo = { encoders: null, saved: {} };
 let dlvSpec = null;
 let dlvNotes = [];
@@ -15102,31 +15464,34 @@ function selectedExportChoice() {
   const v = els.exportProfileSel?.value || "";
   return v.startsWith("p:") ? { kind: "profile", id: v.slice(2) } : { kind: "delivery", id: v.slice(2) || Delivery.DEFAULT_PRESET };
 }
-function populateExportProfileSelect() {
+function populateExportProfileSelect(keepCurrent) {
   const sel = els.exportProfileSel;
   if (!sel) return;
   const choice = exportChoice();
   let cur;
-  if (choice.kind === "delivery") {
+  if (keepCurrent && dlvSpec) {
+    // a language switch: the options are rebuilt, the edited settings stay
+    cur = sel.value || "d:" + dlvSpec.preset;
+  } else if (choice.kind === "delivery") {
     const n = normalizeDelivery(choice.spec);
     dlvSpec = n.spec; dlvNotes = n.notes;
     cur = "d:" + dlvSpec.preset;
   } else cur = "p:" + choice.id;
   const opt = (v, label) => `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`;
   let html = Delivery.presetGroups(deliveryInfo.saved).map((g) =>
-    `<optgroup label="${escapeHtml(g.group)}">${g.items.map((it) => opt("d:" + it.id, it.label)).join("")}</optgroup>`).join("");
+    `<optgroup label="${escapeHtml(T("delivery." + g.group))}">${g.items.map((it) => opt("d:" + it.id, deliveryPresetLabel(it.id, it.label))).join("")}</optgroup>`).join("");
   const ids = Object.keys(encodeProfiles.profiles);
   // a project/browser default naming a deleted profile must stay visible rather
   // than silently falling through to whichever option happens to be first
   if (choice.kind === "profile" && !ids.includes(choice.id)) ids.unshift(choice.id);
-  html += `<optgroup label="Encoding profiles (encoding-profiles.json)">${ids.map((id) => {
+  html += `<optgroup label="${escapeHtml(T("Encoding profiles (encoding-profiles.json)"))}">${ids.map((id) => {
     const p = encodeProfiles.profiles[id];
-    return opt("p:" + id, p ? (p.label || id) : `${id} (not defined on the server)`);
+    return opt("p:" + id, p ? (encodeProfileLabel(id, p.label) || id) : `${id} (not defined on the server)`);
   }).join("")}</optgroup>`;
   sel.innerHTML = html;
   sel.value = cur;
-  if (sel.value !== cur) sel.value = "d:" + Delivery.DEFAULT_PRESET;
-  syncExportChoiceUi(choice.source);
+  if (sel.value !== cur) sel.value = keepCurrent && dlvSpec ? cur : "d:" + Delivery.DEFAULT_PRESET;
+  syncExportChoiceUi(keepCurrent ? dlvSource : choice.source);
 }
 /** source: where the current settings came from, for the hint line. */
 function syncExportChoiceUi(source) {
@@ -15178,9 +15543,9 @@ function fillDeliveryControls() {
   const fr = deliveryFrame({ ...sp, width: null, height: null });
   const avail = deliveryOpts().available;
   // resolution
-  const res = [["", `Picture size (${fr.outW} × ${fr.outH})`]];
-  for (const [w, h, label] of Delivery.RESOLUTIONS) res.push([`${w}x${h}`, `${w} × ${h} · ${label}`]);
-  res.push(["custom", "Custom…"]);
+  const res = [["", T("Picture size ({w} × {h})", { w: fr.outW, h: fr.outH })]];
+  for (const [w, h, label] of Delivery.RESOLUTIONS) res.push([`${w}x${h}`, `${w} × ${h} · ${T(label)}`]);
+  res.push(["custom", T("Custom…")]);
   let rv = sp.width ? `${sp.width}x${sp.height}` : "";
   if (rv && !res.some((r) => r[0] === rv)) rv = "custom";
   if (dlvCustomRes && sp.width) rv = "custom";
@@ -15189,19 +15554,19 @@ function fillDeliveryControls() {
   if (rv === "custom") { $("dlvW").value = sp.width; $("dlvH").value = sp.height; }
   showField("dlvReframeField", !!sp.width);
   $("dlvReframe").value = sp.reframe;
-  setOptions($("dlvFps"), [["", `Project (${projectFps()} fps)`], ...Delivery.FPS_CHOICES.map((f) => [f, `${f} fps`])], sp.fps ?? "");
+  setOptions($("dlvFps"), [["", T("Project ({fps} fps)", { fps: projectFps() })], ...Delivery.FPS_CHOICES.map((f) => [f, T("{fps} fps", { fps: f })])], sp.fps ?? "");
   setOptions($("dlvCodec"), Object.entries(Delivery.CODECS).map(([k, c]) => {
     const none = avail && !Delivery.encodersFor(k, avail).length;
-    return [k, c.label + (none ? " — not in this ffmpeg" : ""), none && k !== v.codec];
+    return [k, T(c.label) + (none ? T("— not in this ffmpeg") : ""), none && k !== v.codec];
   }), v.codec);
   const encs = Delivery.encodersFor(v.codec, avail);
-  setOptions($("dlvEncoder"), (encs.length ? encs : [v.encoder]).map((e) => [e, Delivery.ENCODERS[e]?.label || e]), v.encoder);
+  setOptions($("dlvEncoder"), (encs.length ? encs : [v.encoder]).map((e) => [e, T(Delivery.ENCODERS[e]?.label) || e]), v.encoder);
   showField("dlvEncoderField", encs.length > 1);
   showField("dlvProfileField", !!C.profiles);
   if (C.profiles) setOptions($("dlvProfile"), Object.entries(C.profiles), v.profile);
   const fixed = v.rate === "fixed";
   showField("dlvRateField", !fixed);
-  if (!fixed) setOptions($("dlvRate"), C.rate.map((r) => [r, { crf: "CRF (constant quality)", vbr: "VBR (variable bitrate)", cbr: "CBR (constant bitrate)" }[r]]), v.rate);
+  if (!fixed) setOptions($("dlvRate"), C.rate.map((r) => [r, { crf: T("CRF (constant quality)"), vbr: T("VBR (variable bitrate)"), cbr: T("CBR (constant bitrate)") }[r]]), v.rate);
   showField("dlvCrfField", v.rate === "crf");
   showField("dlvBitrateField", v.rate === "vbr" || v.rate === "cbr");
   showField("dlvMaxrateField", v.rate === "crf" || v.rate === "vbr");
@@ -15219,10 +15584,10 @@ function fillDeliveryControls() {
   const PIX = { yuv420p: "4:2:0 8-bit", yuv422p: "4:2:2 8-bit", yuv444p: "4:4:4 8-bit", yuv420p10le: "4:2:0 10-bit", yuv422p10le: "4:2:2 10-bit", yuv444p10le: "4:4:4 10-bit" };
   setOptions($("dlvPixFmt"), (pix.includes(v.pixFmt) ? pix : [v.pixFmt, ...pix]).map((f) => [f, `${PIX[f] || f} (${f})`]), v.pixFmt);
   $("dlvPixFmt").disabled = v.codec === "prores" || v.codec === "dnxhr" || pix.length < 2;
-  setOptions($("dlvColor"), Object.entries(Delivery.COLORS).map(([k, c]) => [k, c.label]), sp.color);
-  setOptions($("dlvContainer"), C.containers.map((k) => [k, Delivery.CONTAINERS[k].label]), sp.container);
+  setOptions($("dlvColor"), Object.entries(Delivery.COLORS).map(([k, c]) => [k, T(c.label)]), sp.color);
+  setOptions($("dlvContainer"), C.containers.map((k) => [k, T(Delivery.CONTAINERS[k].label)]), sp.container);
   // audio
-  setOptions($("dlvACodec"), Object.entries(Delivery.AUDIO).filter(([, A]) => A.containers.includes(sp.container)).map(([k, A]) => [k, A.label]), a.codec);
+  setOptions($("dlvACodec"), Object.entries(Delivery.AUDIO).filter(([, A]) => A.containers.includes(sp.container)).map(([k, A]) => [k, T(A.label)]), a.codec);
   const A = Delivery.AUDIO[a.codec];
   showField("dlvABitrateField", !!A.bitrate);
   if (A.bitrate) {
@@ -15236,7 +15601,7 @@ function fillDeliveryControls() {
   showField("dlvLoudField", a.codec !== "none");
   showField("dlvTpField", a.codec !== "none" && a.loudness != null);
   if (a.codec !== "none") {
-    const opts = [["off", "Off — as mixed"], ...Delivery.LOUDNESS_TARGETS];
+    const opts = [["off", T("Off — as mixed")], ...Delivery.LOUDNESS_TARGETS.map(([v, label]) => [v, T(label)])];
     if (a.loudness != null && !opts.some((o) => +o[0] === a.loudness)) opts.push([a.loudness, `${a.loudness} LUFS`]);
     setOptions($("dlvLoud"), opts, a.loudness == null ? "off" : a.loudness);
     if (a.loudness != null && document.activeElement !== $("dlvTp")) $("dlvTp").value = a.truePeak;
@@ -15248,7 +15613,7 @@ function fillDeliveryControls() {
     const el = $("dlvMeta" + k[0].toUpperCase() + k.slice(1));
     if (el && document.activeElement !== el) el.value = sp.metadata[k] || "";
   }
-  $("dlvTokens").textContent = "Tokens: " + Delivery.FILENAME_TOKENS.map((t) => `{${t}}`).join(" ");
+  $("dlvTokens").textContent = T("Tokens: {list}", { list: Delivery.FILENAME_TOKENS.map((t) => `{${t}}`).join(" ") });
 }
 let dlvCustomRes = false;
 /** The controls → a spec. `changed`: the control the user touched. */
@@ -15315,21 +15680,21 @@ function refreshDeliveryNotes() {
   const sp = dlvSpec, fr = deliveryFrame(sp), fps = sp.fps || projectFps();
   const preset = Delivery.PRESETS[sp.preset] || deliveryInfo.saved[sp.preset];
   const modified = deliveryModified();
-  if (els.exportProfileNote) els.exportProfileNote.textContent = preset?.note || "";
+  if (els.exportProfileNote) els.exportProfileNote.textContent = translateParts(preset?.note || "");
   if (els.exportProfileHint) {
     els.exportProfileHint.textContent = dlvSource === "project"
-      ? "Project default (delivery in project.json) — agents export with it too."
-      : modified ? `${preset?.label || "Preset"} · modified — Save preset… keeps these settings for every project.`
-        : dlvSource === "browser" ? "Your last settings in this browser." : "";
+      ? T("Project default (delivery in project.json) — agents export with it too.")
+      : modified ? `${preset ? deliveryPresetLabel(sp.preset, preset.label) : T("Preset")} · ${T("modified — Save preset… keeps these settings for every project.")}`
+        : dlvSource === "browser" ? T("Your last settings in this browser.") : "";
   }
   const range = exportRange(fps);
   const size = Delivery.estimateSize(sp, { duration: range.dur, width: fr.outW, height: fr.outH, fps });
-  $("dlvSummary").textContent = `${Delivery.describe(sp, { width: fr.outW, height: fr.outH, fps })}` +
-    (size ? ` · about ${Delivery.fmtBytes(size)}` : "");
-  $("dlvFilePreview").textContent = "→ exports/" + deliveryFileName(sp, fps) + Delivery.CONTAINERS[sp.container].ext;
+  $("dlvSummary").textContent = translateParts(Delivery.describe(sp, { width: fr.outW, height: fr.outH, fps })) +
+    (size ? ` · ${T("about {size}", { size: Delivery.fmtBytes(size) })}` : "");
+  $("dlvFilePreview").textContent = T("→ exports/") + deliveryFileName(sp, fps) + Delivery.CONTAINERS[sp.container].ext;
   const cv = deliveryCanvas();
-  const warn = [...dlvNotes.map((n) => n[0].toUpperCase() + n.slice(1)),
-    ...Delivery.checks(sp, { duration: range.dur, fps, canvasW: cv.w, canvasH: cv.h, region: cv.region })];
+  const warn = [...dlvNotes.map((n) => { const s = T(n); return s[0].toUpperCase() + s.slice(1); }),
+    ...Delivery.checks(sp, { duration: range.dur, fps, canvasW: cv.w, canvasH: cv.h, region: cv.region }).map((n) => T(n))];
   const w = $("dlvWarn");
   if (w) { w.textContent = warn.join(" · "); w.classList.toggle("hidden", !warn.length); }
 }
@@ -15338,7 +15703,7 @@ async function saveDeliveryPreset() {
   if (!name) { $("dlvSaveName").focus(); return; }
   const r = await fetch("/api/export/presets", { method: "POST", body: JSON.stringify({ name, spec: dlvSpec }) })
     .then((x) => x.json()).catch((e) => ({ error: String(e) }));
-  if (!r.ok) { alert("Could not save the preset: " + (r.error || "unknown error")); return; }
+  if (!r.ok) { toast(T("Could not save the preset: ") + (r.error || "unknown error")); return; }
   await fetchDeliveryInfo();
   setSetting("exportKind", "delivery");
   setSetting("delivery", { ...dlvSpec, preset: r.id });
@@ -15349,7 +15714,7 @@ async function deleteDeliveryPreset() {
   const c = selectedExportChoice();
   if (c.kind !== "delivery" || !deliveryInfo.saved[c.id]) return;
   const r = await fetch("/api/export/presets/delete", { method: "POST", body: JSON.stringify({ id: c.id }) }).then((x) => x.json()).catch(() => ({}));
-  if (!r.ok) { alert("Could not delete the preset: " + (r.error || "unknown error")); return; }
+  if (!r.ok) { toast(T("Could not delete the preset: ") + (r.error || "unknown error")); return; }
   await fetchDeliveryInfo();
   els.exportProfileSel.value = "d:" + Delivery.DEFAULT_PRESET;
   dlvSpec = null;
@@ -15405,10 +15770,15 @@ function webCodecsBitrate(w, h, fps) {
   // ~0.1 bit/pixel/frame, clamped — same heuristic as before
   return Math.min(20_000_000, Math.max(2_000_000, Math.round(w * h * fps * 0.1)));
 }
-async function openExportSetup() {
-  if (state.exporting) return;
-  if (!project.clips.length) { alert("Timeline is empty — add some clips first."); return; }
-  await detectWebCodecs();
+/**
+ * The export dialog's engine choice: which radios are available, what each
+ * one says and what the realtime radio is called.
+ *
+ * The text is translated, so a language switch has to run this again while
+ * the dialog is open. The notes are written into the marked holder inside the
+ * note element, so the static pass can still translate them afterwards.
+ */
+function syncExportEngineUi() {
   const ef = getExportFrame();
   const fastOk = state.connected && state.ffmpeg;
   // WebCodecs and MediaRecorder encode the full canvas — only Fast crops.
@@ -15428,24 +15798,43 @@ async function openExportSetup() {
     els.engineFast.checked = true;
     els.engineRealtime.checked = false;
   }
-  $("engineFastNote").textContent = fastOk
-    ? (ef ? "Exports the " + ef.w + "×" + ef.h + " delivery frame (cropped). Keeps rendering if you switch tabs."
-      : "Frame-accurate. Server encodes from JPEG frames. Keeps going if you switch tabs.")
-    : (ef
-      ? "Needs the server + ffmpeg on PATH to export a cropped delivery frame."
-      : "Needs the server + ffmpeg on PATH.");
+  const fastNote = $("engineFastNote");
+  if (fastNote) {
+    setNoteText(fastNote, fastOk
+      ? (ef
+        ? T("Exports the {w}×{h} delivery frame (cropped). Keeps rendering if you switch tabs.", { w: ef.w, h: ef.h })
+        : T("Frame-accurate. Server encodes from JPEG frames. Keeps going if you switch tabs."))
+      : (ef
+        ? T("Needs the server + ffmpeg on PATH to export a cropped delivery frame.")
+        : T("Needs the server + ffmpeg on PATH.")));
+  }
   const wcNote = $("engineWebCodecsNote");
   if (wcNote) {
-    if (wcOk) wcNote.textContent = "Frame-accurate. Browser HW-encodes H.264; server muxes with audio. Faster upload than Fast.";
-    else if (ef) wcNote.textContent = fastOk
-      ? "Unavailable while an export frame is set — use Fast export."
-      : "Unavailable while an export frame is set. Install ffmpeg, or clear the export frame to use Realtime.";
-    else if (!state.connected || !state.ffmpeg) wcNote.textContent = "Needs the server + ffmpeg. Falling back to in-browser MediaRecorder when selected.";
-    else wcNote.textContent = "This browser does not support VideoEncoder Annex-B H.264. Falling back to MediaRecorder when selected.";
+    if (wcOk) setNoteText(wcNote, T("Frame-accurate. Browser HW-encodes H.264; server muxes with audio. Faster upload than Fast."));
+    else if (ef) setNoteText(wcNote, fastOk
+      ? T("Unavailable while an export frame is set — use Fast export.")
+      : T("Unavailable while an export frame is set. Install ffmpeg, or clear the export frame to use Realtime."));
+    else if (!state.connected || !state.ffmpeg) setNoteText(wcNote, T("Needs the server + ffmpeg. Falling back to in-browser MediaRecorder when selected."));
+    else setNoteText(wcNote, T("This browser does not support VideoEncoder Annex-B H.264. Falling back to MediaRecorder when selected."));
   }
-  // Relabel the radio when WebCodecs is unavailable but MediaRecorder still works
-  const label = els.engineRealtime?.closest("label")?.querySelector("b");
-  if (label) label.textContent = wcOk ? "WebCodecs (HW encode)" : "Realtime (in-browser)";
+  // The radio is called WebCodecs or Realtime, depending on what it can do.
+  const radio = els.engineRealtime?.closest("label")?.querySelector("b");
+  if (radio) {
+    setNoteText(radio, wcOk ? T("WebCodecs (HW encode)") : T("Realtime (in-browser)"));
+  }
+}
+async function openExportSetup() {
+  if (state.exporting) return;
+  // An in-app toast, not a native alert: a Host webview may swallow a modal
+  // dialog, and then the click looks like it did nothing at all.
+  if (!project.clips.length) { toast(T("Timeline is empty — add some clips first.")); return; }
+  // Show the dialog straight away. The engine detection and the profile list
+  // take a moment, and a dialog that only appears seconds later reads as
+  // broken.
+  els.exportSetup.classList.remove("hidden");
+  if (!els.exportSetup.contains(document.activeElement)) $("exportRangeSel")?.focus();
+  await detectWebCodecs();
+  syncExportEngineUi();
   fillExportWcOpts();
   syncExportWcOpts();
   const warn = $("exportTrackWarn");
@@ -15453,10 +15842,11 @@ async function openExportSetup() {
     !isTrackEnabled(t.id) && project.clips.some((c) => c.track === t.id)
   ).map((t) => t.id);
   if (disabled.length && warn) {
+    // The track ids stay as they are: only the sentence around them is translated.
     const list = disabled.join(", ");
     warn.textContent = disabled.length === 1
-      ? `Track ${list} is disabled and will be omitted from the export.`
-      : `Tracks ${list} are disabled and will be omitted from the export.`;
+      ? T("Track {list} is disabled and will be omitted from the export.", { list })
+      : T("Tracks {list} are disabled and will be omitted from the export.", { list });
     warn.classList.remove("hidden");
   } else if (warn) {
     warn.textContent = "";
@@ -15466,7 +15856,9 @@ async function openExportSetup() {
   const offUsed = project.media.filter((m) => isMediaOffline(m.id) && MediaLib.placements(usageDoc(), m.id).length);
   if (offUsed.length && warn) {
     warn.textContent = (warn.textContent ? warn.textContent + " " : "") +
-      `${offUsed.length === 1 ? `“${offUsed[0].name}” is` : offUsed.length + " files are"} offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).`;
+      (offUsed.length === 1
+        ? T("“{name}” is offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).", { name: offUsed[0].name })
+        : T("{n} files are offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).", { n: offUsed.length }));
     warn.classList.remove("hidden");
   }
   fillExportRangeSelect();
@@ -15477,9 +15869,6 @@ async function openExportSetup() {
     syncExportProfileVisibility();
     renderBatchList();
     renderQueue();
-    els.exportSetup.classList.remove("hidden");
-    // aria-modal hides what is behind — focus has to come inside
-    if (!els.exportSetup.contains(document.activeElement)) $("exportRangeSel")?.focus();
   });
 }
 function closeExportSetup() {
@@ -15493,14 +15882,14 @@ function startChosenExport() {
   if (!useFast && !useSecond) {
     const ef = getExportFrame();
     if (ef && !(state.connected && state.ffmpeg)) {
-      alert("Export frame cropping needs Fast export (server + ffmpeg). Clear the export frame, or install ffmpeg and try again.");
+      toast(T("Export frame cropping needs Fast export (server + ffmpeg). Clear the export frame, or install ffmpeg and try again."));
       return;
     }
-    alert("No export engine is available.");
+    toast(T("No export engine is available."));
     return;
   }
   if (exportRange().frames < 1) {
-    alert("Export range is empty — IN/OUT is at or past the end of the timeline. Choose Entire timeline, or move the markers.");
+    toast(T("Export range is empty — IN/OUT is at or past the end of the timeline. Choose Entire timeline, or move the markers."));
     return;
   }
   closeExportSetup();
@@ -15536,12 +15925,12 @@ function exportRangeNoteText() {
   const mode = exportRangeMode();
   const { start, dur, frames } = exportRange();
   const end = start + dur;
-  if (mode === "entire") return `Full timeline · ${fmt(start)} → ${fmt(end)}`;
-  if (frames < 1) return "IN–OUT is empty — markers are at or past the end of the timeline.";
+  if (mode === "entire") return T("Full timeline · {from} → {to}", { from: fmt(start), to: fmt(end) });
+  if (frames < 1) return T("IN–OUT is empty — markers are at or past the end of the timeline.");
   const inn = project.inPoint != null, out = project.outPoint != null;
-  if (inn && out) return `IN–OUT · ${fmt(start)} → ${fmt(end)}`;
-  if (inn) return `IN to end · ${fmt(start)} → ${fmt(end)}`;
-  return `Start to OUT · ${fmt(start)} → ${fmt(end)}`;
+  if (inn && out) return T("IN–OUT · {from} → {to}", { from: fmt(start), to: fmt(end) });
+  if (inn) return T("IN to end · {from} → {to}", { from: fmt(start), to: fmt(end) });
+  return T("Start to OUT · {from} → {to}", { from: fmt(start), to: fmt(end) });
 }
 function syncExportRangeUi() {
   const note = $("exportRangeNote");
@@ -15754,7 +16143,7 @@ async function armExportCors() {
     if (el && (el.error || el.readyState < 2)) missing.push(m.name || m.src);
   }
   if (missing.length)
-    toast("No CORS on " + missing.join(", ") + " — blank in the export. Import into the project or add Access-Control-Allow-Origin.");
+    toast(T("No CORS on ") + missing.join(", ") + " — blank in the export. Import into the project or add Access-Control-Allow-Origin.");
 }
 /* Sequential /frame POSTs, batched. Concurrent bodies can still race on ffmpeg
    stdin if they complete out of order, so the client starts each fetch only
@@ -16428,7 +16817,7 @@ async function fastExport(opts = {}) {
   const signal = exportAbort.signal;
   if (!opts.silent) els.exportOverlay.classList.remove("hidden");
   els.exportProgress.style.width = "0%";
-  els.exportNote.textContent = "Rendering frames → ffmpeg. You can switch tabs; export continues.";
+  els.exportNote.textContent = T("Rendering frames → ffmpeg. You can switch tabs; export continues.");
   restoreExportVideoState();
   const deliveries = opts.deliveries || (opts.delivery ? [{ delivery: opts.delivery }] : null);
   const delivery = deliveries ? deliveries[0].delivery : null;
@@ -16439,7 +16828,7 @@ async function fastExport(opts = {}) {
   let uploadError = null;
   const setError = (err) => { if (!uploadError) uploadError = err; };
   try {
-    els.exportTitle.textContent = "Mixing audio…";
+    els.exportTitle.textContent = T("Mixing audio…");
     const wav = await renderAudioMix(t0, t1);
     if (renderCancelled) throw new Error("cancelled");
     const profileId = opts.profile || effectiveEncodeProfileId();
@@ -16575,7 +16964,7 @@ async function fastExport(opts = {}) {
     const msg = e?.name === "AbortError" ? "cancelled" : String(e.message || e);
     result = { error: msg, cancelled: msg === "cancelled" };
     if (job) await reportExportJob(job, { status: "failed", error: msg }, true);
-    else if (msg !== "cancelled" && !opts.silent) alert("Export failed: " + msg);
+    else if (msg !== "cancelled" && !opts.silent) toast(T("Export failed: ") + msg);
   } finally {
     exportAbort = null;
     exportFullCanvas = false;
@@ -16585,7 +16974,7 @@ async function fastExport(opts = {}) {
     state.exporting = false; state.rendering = false;
     releaseOriginalPlayers();
     els.exportOverlay.classList.add("hidden");
-    els.exportNote.textContent = "Rendering your sequence in real time. Keep this tab focused.";
+    els.exportNote.textContent = T("Rendering your sequence in real time. Keep this tab focused.");
     if (runtime.pendingSync) syncFromServer();
   }
   return result;
@@ -16599,7 +16988,7 @@ const exportQueue = [];
 let queueRunning = false, queueStop = false;
 function queueLabel(spec) {
   const p = Delivery.PRESETS[spec.preset] || deliveryInfo.saved[spec.preset];
-  return p ? p.label : "Custom";
+  return p ? deliveryPresetLabel(spec.preset, p.label) : T("Custom");
 }
 function queueAdd(spec, name) {
   const fps = spec.fps || projectFps();
@@ -16628,26 +17017,26 @@ function renderQueue() {
     ? "Exporting — outputs with the same frame rate and range share one render."
     : exportQueue.length ? `${pending} waiting · ${done} done` : "Nothing queued — pick settings in Export and press Add to queue.";
   const btnOpen = $("btnOpenQueue");
-  if (btnOpen) btnOpen.textContent = exportQueue.length ? `Queue · ${pending || exportQueue.length}` : "Queue";
+  if (btnOpen) btnOpen.textContent = exportQueue.length ? `${T("Queue")} · ${pending || exportQueue.length}` : T("Queue");
   const start = $("btnQueueStart");
   start.textContent = queueRunning ? "Stop" : "Start";
   start.disabled = !queueRunning && !pending;
   $("btnQueueClose").disabled = queueRunning;
   $("btnQueueClear").disabled = queueRunning || !exportQueue.some((q) => q.status !== "pending" && q.status !== "running");
-  if (!exportQueue.length) { list.innerHTML = `<li class="xq-empty">The queue is empty</li>`; return; }
+  if (!exportQueue.length) { list.innerHTML = `<li class="xq-empty">${T("The queue is empty")}</li>`; return; }
   list.innerHTML = exportQueue.map((q) => {
     const ext = Delivery.CONTAINERS[q.spec.container].ext;
     const fr = deliveryFrame(q.spec), fps = q.spec.fps || projectFps();
-    const status = q.status === "running" ? `Rendering… ${Math.round(q.progress * 100)}%`
-      : q.status === "done" ? `Done → exports/${q.file || q.name + ext}`
+    const status = q.status === "running" ? `${T("Rendering…")} ${Math.round(q.progress * 100)}%`
+      : q.status === "done" ? `${T("Done")} → exports/${q.file || q.name + ext}`
         : q.status === "failed" ? `Failed: ${q.error || "unknown error"}`
           : q.status === "cancelled" ? "Stopped" : "Waiting";
     const actions = [
-      q.status === "done" && q.src ? `<a class="btn tiny" href="${escapeHtml(q.src)}" target="_blank" rel="noopener" download>Open</a>` : "",
-      q.status === "failed" || q.status === "cancelled" ? `<button type="button" class="btn tiny" data-q-retry="${q.id}">Retry</button>` : "",
-      q.status !== "running" ? `<button type="button" class="btn tiny" data-q-remove="${q.id}" title="Remove from the queue">✕</button>` : "",
+      q.status === "done" && q.src ? `<a class="btn tiny" href="${escapeHtml(q.src)}" target="_blank" rel="noopener" download>${T("Open")}</a>` : "",
+      q.status === "failed" || q.status === "cancelled" ? `<button type="button" class="btn tiny" data-q-retry="${q.id}">${T("Retry")}</button>` : "",
+      q.status !== "running" ? `<button type="button" class="btn tiny" data-q-remove="${q.id}" title="${T("Remove from the queue")}">✕</button>` : "",
     ].join("");
-    return `<li class="${q.status}" data-q="${q.id}"><div class="xq-main"><b>${escapeHtml(q.label)} — ${escapeHtml(q.name + ext)}</b>` +
+    return `<li class="${q.status}" data-q="${q.id}"><div class="xq-main"><b>${escapeHtml(T(q.label))} — ${escapeHtml(q.name + ext)}</b>` +
       `<span class="xq-sub">${escapeHtml(Delivery.describe(q.spec, { width: fr.outW, height: fr.outH, fps }))} · ${q.range === "in-out" ? "IN–OUT" : "entire timeline"}</span>` +
       (q.status === "running" ? `<div class="progress"><div class="progress-fill" style="width:${(q.progress * 100).toFixed(1)}%"></div></div>` : "") +
       `<span class="xq-status">${escapeHtml(status)}</span>` +
@@ -16667,7 +17056,7 @@ function renderQueueProgress() {
 }
 async function runQueue() {
   if (queueRunning || state.exporting) return;
-  if (!(state.connected && state.ffmpeg)) { alert("The export queue needs the server and ffmpeg (Fast export)."); return; }
+  if (!(state.connected && state.ffmpeg)) { toast(T("The export queue needs the server and ffmpeg (Fast export).")); return; }
   queueRunning = true; queueStop = false;
   renderQueue();
   try {
@@ -16719,7 +17108,7 @@ function setProjectOutputs(list) {
 }
 function addBatchOutput(spec) {
   const list = projectOutputs().slice();
-  if (list.length >= 16) { toast("At most 16 batch outputs"); return; }
+  if (list.length >= 16) { toast(T("At most 16 batch outputs")); return; }
   list.push({ id: "o_" + Math.random().toString(36).slice(2, 8), on: true, ...spec });
   setProjectOutputs(list);
 }
@@ -16737,16 +17126,16 @@ function renderBatchList() {
   const on = list.filter((o) => o.on !== false).length;
   $("dlvBatchCount").textContent = list.length ? `· ${on} of ${list.length} checked` : "";
   const be = $("btnBatchExport");
-  if (be) { be.disabled = !on; be.textContent = on ? `Export checked (${on})` : "Export checked"; }
-  if (!list.length) { ul.innerHTML = `<li class="bo-empty">No batch outputs yet — add the settings above, or a typical set</li>`; return; }
+  if (be) { be.disabled = !on; be.textContent = on ? `${T("Export checked")} (${on})` : T("Export checked"); }
+  if (!list.length) { ul.innerHTML = `<li class="bo-empty">${T("No batch outputs yet — add the settings above, or a typical set")}</li>`; return; }
   ul.innerHTML = list.map((o) => {
     const sp = normalizeDelivery(o).spec, fr = deliveryFrame(sp), fps = sp.fps || projectFps();
     return `<li class="${o.on === false ? "off" : ""}" data-o="${escapeHtml(o.id)}">` +
-      `<input type="checkbox" data-o-on="${escapeHtml(o.id)}"${o.on === false ? "" : " checked"} aria-label="Include ${escapeHtml(queueLabel(sp))}">` +
+      `<input type="checkbox" data-o-on="${escapeHtml(o.id)}"${o.on === false ? "" : " checked"} aria-label="${T("Include {name}", { name: queueLabel(sp) })}">` +
       `<div class="bo-main"><b>${escapeHtml(deliveryFileName(sp, fps) + Delivery.CONTAINERS[sp.container].ext)}</b>` +
       `<span>${escapeHtml(queueLabel(sp))} · ${escapeHtml(Delivery.describe(sp, { width: fr.outW, height: fr.outH, fps }))}</span></div>` +
-      `<button type="button" class="btn tiny" data-o-load="${escapeHtml(o.id)}" title="Show these settings above">Load</button>` +
-      `<button type="button" class="btn tiny" data-o-remove="${escapeHtml(o.id)}" title="Remove">✕</button></li>`;
+      `<button type="button" class="btn tiny" data-o-load="${escapeHtml(o.id)}" title="${T("Show these settings above")}">${T("Load")}</button>` +
+      `<button type="button" class="btn tiny" data-o-remove="${escapeHtml(o.id)}" title="${T("Remove")}">✕</button></li>`;
   }).join("");
 }
 function onBatchListClick(e) {
@@ -17123,7 +17512,7 @@ async function webCodecsExport() {
   const signal = exportAbort.signal;
   els.exportOverlay.classList.remove("hidden");
   els.exportProgress.style.width = "0%";
-  els.exportNote.textContent = "Encoding with WebCodecs → ffmpeg mux. You can switch tabs; export continues.";
+  els.exportNote.textContent = T("Encoding with WebCodecs → ffmpeg mux. You can switch tabs; export continues.");
   restoreExportVideoState();
   const { start: t0, end: t1, frames } = beginExportWindow();
   const fps = projectFps();
@@ -17134,7 +17523,7 @@ async function webCodecsExport() {
   const setError = (err) => { if (!uploadError) uploadError = err; };
   let up = null;
   try {
-    els.exportTitle.textContent = "Mixing audio…";
+    els.exportTitle.textContent = T("Mixing audio…");
     const wav = await renderAudioMix(t0, t1);
     if (renderCancelled) throw new Error("cancelled");
 
@@ -17240,7 +17629,7 @@ async function webCodecsExport() {
     try { encoder?.close(); } catch { }
     if (sessId) fetch("/api/export/end?id=" + sessId + "&discard=1", { method: "POST" }).catch(() => { });
     const msg = e?.name === "AbortError" ? "cancelled" : String(e.message || e);
-    if (msg !== "cancelled") alert("Export failed: " + msg);
+    if (msg !== "cancelled") toast(T("Export failed: ") + msg);
   } finally {
     exportAbort = null;
     exportDecodeEnd();
@@ -17249,7 +17638,7 @@ async function webCodecsExport() {
     state.exporting = false; state.rendering = false;
     releaseOriginalPlayers();
     els.exportOverlay.classList.add("hidden");
-    els.exportNote.textContent = "Rendering your sequence in real time. Keep this tab focused.";
+    els.exportNote.textContent = T("Rendering your sequence in real time. Keep this tab focused.");
     if (runtime.pendingSync) syncFromServer();
   }
 }
@@ -17265,9 +17654,9 @@ function pickMime() {
 }
 async function startExport() {
   if (state.exporting) return;
-  if (!project.clips.length) { alert("Timeline is empty — add some clips first."); return; }
+  if (!project.clips.length) { toast(T("Timeline is empty — add some clips first.")); return; }
   const mime = pickMime();
-  if (!mime) { alert("MediaRecorder is not supported in this browser."); return; }
+  if (!mime) { toast(T("MediaRecorder is not supported in this browser.")); return; }
   ensureAudio();
   await runtime.audio.ctx.resume();
   pause();
@@ -17385,13 +17774,13 @@ $("dlvBatchTypical")?.addEventListener("click", () => {
 });
 function exportPreflight() {
   if (exportRange().frames < 1) {
-    alert("Export range is empty — IN/OUT is at or past the end of the timeline. Choose Entire timeline, or move the markers.");
+    toast(T("Export range is empty — IN/OUT is at or past the end of the timeline. Choose Entire timeline, or move the markers."));
     return false;
   }
   return true;
 }
 $("btnQueueExport")?.addEventListener("click", () => {
-  if (selectedExportChoice().kind !== "delivery" || !dlvSpec) { alert("The queue takes delivery presets — pick one above (encoding profiles export one at a time)."); return; }
+  if (selectedExportChoice().kind !== "delivery" || !dlvSpec) { toast(T("The queue takes delivery presets — pick one above (encoding profiles export one at a time).")); return; }
   if (!exportPreflight()) return;
   setSetting("exportKind", "delivery");
   setSetting("delivery", dlvSpec);
@@ -17459,7 +17848,7 @@ $("monitorModeGroup")?.addEventListener("click", (e) => {
   if (!btn) return;
   if (btn.dataset.monitorMode === "source" && !state.source.mediaId) {
     setMonitorMode("source");
-    toast("Double-click a clip in Project or the timeline to load Source");
+    toast(T("Double-click a clip in Project or the timeline to load Source"));
     return;
   }
   setMonitorMode(btn.dataset.monitorMode);
@@ -17564,6 +17953,17 @@ $("setLinkSelect").addEventListener("change", (e) => {
   if (selectedMediaIds().size && state.binTab !== "project") setBinTab("project");
   syncBinSelectionFromTimeline();
 });
+/* ── The interface language ────────────────────────────────────────────────
+ * The choice lives in this browser only (I18n.STORAGE_KEY); it never touches
+ * the project. Switching redraws the editor straight away — no reload. */
+$("setLang")?.addEventListener("change", (e) => setUiLocale(e.target.value));
+try {
+  I18n.onChange(() => repaintForLocale());
+  const langSel = $("setLang");
+  if (langSel) langSel.value = uiLocale();
+} catch (err) {
+  console.error("[FableCut] language switch failed:", err);
+}
 els.btnSnap.addEventListener("click", () => {
   state.snap = !state.snap;
   els.btnSnap.classList.toggle("on", state.snap);
@@ -17574,6 +17974,10 @@ if (els.btnAudioHold) {
   els.btnAudioHold.addEventListener("click", () => setAudioHold(!state.audioHold));
 }
 $("btnLayoutReset").addEventListener("click", restoreDefaultLayout);
+els.btnCollapseBin?.addEventListener("click", () => togglePanel("media"));
+els.binRail?.addEventListener("click", () => togglePanel("media"));
+els.btnCollapseInspector?.addEventListener("click", () => togglePanel("inspector"));
+els.inspectorRail?.addEventListener("click", () => togglePanel("inspector"));
 $("trackSizeGroup").addEventListener("click", (e) => {
   const b = e.target.closest("[data-track-size]");
   if (b) setTrackSize(b.dataset.trackSize);
@@ -17598,7 +18002,7 @@ function openProjectTabMenu(clientX, clientY) {
   menu.className = "ctx-menu";
   const item = document.createElement("div");
   item.className = "ctx-opt";
-  item.textContent = "New folder";
+  item.textContent = T("New folder");
   item.addEventListener("click", () => {
     closeBinCtxMenu();
     if (state.binTab !== "project") setBinTab("project");
@@ -17607,7 +18011,7 @@ function openProjectTabMenu(clientX, clientY) {
   menu.appendChild(item);
   const compItem = document.createElement("div");
   compItem.className = "ctx-opt";
-  compItem.textContent = "New composition";
+  compItem.textContent = T("New composition");
   compItem.addEventListener("click", () => {
     closeBinCtxMenu();
     if (state.binTab !== "project") setBinTab("project");
@@ -17643,7 +18047,7 @@ function syncAspectSel() {
   if (!els.aspectSel) return;
   const i = ASPECT_PRESETS.findIndex((a) => a.w === project.width && a.h === project.height);
   els.aspectSel.innerHTML =
-    ASPECT_PRESETS.map((a, j) => `<option value="${j}" ${j === i ? "selected" : ""}>${a.label}</option>`).join("") +
+    ASPECT_PRESETS.map((a, j) => `<option value="${j}" ${j === i ? "selected" : ""}>${T(a.label)}</option>`).join("") +
     (i < 0 ? `<option value="custom" selected>Custom · ${project.width}×${project.height}</option>` : "");
 }
 function syncFpsSel() {
@@ -17701,7 +18105,12 @@ els.btnExportFrame?.addEventListener("click", () => {
     state.exportFrameView = true;
   }
   els.btnExportFrame.classList.toggle("on", state.exportFrameView && !!getExportFrame());
+  els.btnExportFrame.setAttribute("aria-pressed", state.exportFrameView && !!getExportFrame() ? "true" : "false");
   updateExportFrameOverlay();
+});
+els.btnCanvasSettings?.addEventListener("click", () => {
+  if (canvasPop) { closeCanvasSettings(true); return; }
+  openCanvasSettings();
 });
 els.btnExportFrameDim?.addEventListener("click", () => {
   state.exportFrameCrop = !state.exportFrameCrop;
@@ -17710,6 +18119,7 @@ els.btnExportFrameDim?.addEventListener("click", () => {
 els.btnGuides.addEventListener("click", () => {
   state.guides = !state.guides;
   els.btnGuides.classList.toggle("on", state.guides);
+  els.btnGuides.setAttribute("aria-pressed", state.guides ? "true" : "false");
   els.safeOverlay.classList.toggle("hidden", !state.guides);
   if (state.guides) updateSafeOverlay();
 });
@@ -17722,8 +18132,15 @@ const VIEW_ZOOM_MIN = 1;
 const VIEW_PIXEL_MAX = 2;
 let monitorFitCache = null; // {w,h} fit size captured at zoom start (stable while zoomed)
 let monitorViewPad = { x: 0, y: 0 }; // content padding so any canvas point can sit under the cursor
+/** The picture area: the scrollport without the meter gutter. */
+function monitorViewSize() {
+  const scroll = els.monitorScroll;
+  const w = scroll?.clientWidth || els.monitorStage?.clientWidth || 0;
+  const h = scroll?.clientHeight || els.monitorStage?.clientHeight || 0;
+  return { w, h };
+}
 function measureMonitorFit() {
-  const sw = els.monitorStage.clientWidth, sh = els.monitorStage.clientHeight;
+  const { w: sw, h: sh } = monitorViewSize();
   const pw = project.width || els.preview.width || 1;
   const ph = project.height || els.preview.height || 1;
   const s = Math.min(sw / pw, sh / ph);
@@ -17760,12 +18177,13 @@ function applyMonitorView() {
     const fit = monitorFitCache;
     els.preview.style.width = (fit.w * z) + "px";
     els.preview.style.height = (fit.h * z) + "px";
-    // Pad by the stage size so scrollLeft can be "negative" relative to the canvas
+    // Pad by the picture size so scrollLeft can be "negative" relative to the canvas
     // (needed when zooming from a centered fit letterbox without jumping).
     if (!monitorViewPad.x && !monitorViewPad.y) {
+      const view = monitorViewSize();
       monitorViewPad = {
-        x: Math.ceil(els.monitorStage.clientWidth || scroll.clientWidth || 0),
-        y: Math.ceil(els.monitorStage.clientHeight || scroll.clientHeight || 0),
+        x: Math.ceil(view.w || els.monitorStage.clientWidth || scroll.clientWidth || 0),
+        y: Math.ceil(view.h || els.monitorStage.clientHeight || scroll.clientHeight || 0),
       };
     }
     if (inner) inner.style.padding = `${monitorViewPad.y}px ${monitorViewPad.x}px`;
@@ -18209,19 +18627,29 @@ window.addEventListener("keydown", (e) => {
   else if ((e.ctrlKey || e.metaKey) && (k === "y" || k === "Y")) { e.preventDefault(); redo(); }
 });
 
-window.addEventListener("resize", () => { state.dirtyTimeline = true; clampTimelineHeight(); if (mixerState.open) sizeMixerMeters(); });
+window.addEventListener("resize", () => {
+  state.dirtyTimeline = true;
+  clampTimelineHeight();
+  if (mixerState.open) sizeMixerMeters();
+  applyPanelLayout();
+});
 
 /* ── Resizable upper / timeline split ── */
 const TL_H_KEY = "fablecut-timeline-h";
 const TL_H_MIN = 180;
-const UPPER_MIN = 140;
+/* The picture comes first: on a short window the monitor keeps a usable share
+   of the height, and the timeline makes room for it. */
+function upperMinHeight() {
+  const app = $("app").getBoundingClientRect();
+  return Math.max(220, Math.round((app.height || 0) * 0.38));
+}
 function availableTimelineMax() {
   const app = $("app").getBoundingClientRect();
   const topbar = document.querySelector(".topbar")?.getBoundingClientRect();
   const topbarH = topbar ? topbar.height : 46;
   const split = 6;
   const gaps = 18; // three 6px flex gaps between four children
-  return Math.floor(app.height - topbarH - UPPER_MIN - split - gaps);
+  return Math.floor(app.height - topbarH - upperMinHeight() - split - gaps);
 }
 window.addEventListener("keyup", (e) => {
   const k = e.key.toLowerCase();
@@ -18290,6 +18718,47 @@ function setTrackSize(size, { persist = true, fitPane = true } = {}) {
 function restoreDefaultLayout() {
   setTrackSize("l", { persist: true, fitPane: false });
   resetTimelineHeight();
+  // The panels go back to following the window.
+  setSetting("mediaPanel", null);
+  setSetting("inspectorPanel", null);
+  applyPanelLayout();
+}
+/* ── Side panels: fold the media bin and the inspector away ────────────────
+   A panel is never removed: it folds into a thin rail with a labelled button,
+   so the way back is always one click away. The choice is remembered; a
+   window that is too narrow folds a panel by itself, so the picture keeps the
+   room it needs. */
+const PANEL_MEDIA_WIDE = 760;      // below this the media bin folds away
+const PANEL_INSPECTOR_WIDE = 1180; // below this the inspector folds away
+/** @param {"media" | "inspector"} which */
+function panelWideEnough(which) {
+  return window.innerWidth >= (which === "media" ? PANEL_MEDIA_WIDE : PANEL_INSPECTOR_WIDE);
+}
+/** @param {"media" | "inspector"} which */
+function panelIsOpen(which) {
+  const stored = getSetting(which === "media" ? "mediaPanel" : "inspectorPanel");
+  if (stored === true || stored === false) return stored;
+  return panelWideEnough(which);
+}
+function applyPanelLayout() {
+  const app = $("app");
+  if (!app) return;
+  const media = panelIsOpen("media");
+  const inspector = panelIsOpen("inspector");
+  app.classList.toggle("panel-no-media", !media);
+  app.classList.toggle("panel-no-inspector", !inspector);
+  els.binPanel?.classList.toggle("collapsed", !media);
+  els.inspectorPanel?.classList.toggle("collapsed", !inspector);
+  els.btnCollapseBin?.setAttribute("aria-expanded", media ? "true" : "false");
+  els.binRail?.setAttribute("aria-expanded", media ? "true" : "false");
+  els.btnCollapseInspector?.setAttribute("aria-expanded", inspector ? "true" : "false");
+  els.inspectorRail?.setAttribute("aria-expanded", inspector ? "true" : "false");
+}
+/** @param {"media" | "inspector"} which */
+function togglePanel(which) {
+  const key = which === "media" ? "mediaPanel" : "inspectorPanel";
+  setSetting(key, !panelIsOpen(which));
+  applyPanelLayout();
 }
 function clampTimelineHeight() {
   const cur = $("timelinePanel")?.getBoundingClientRect().height;
@@ -18405,13 +18874,13 @@ function renderColorPage(force = false) {
   if (!force && sig === colorState.sig) return;
   colorState.sig = sig;
   if (!isGradable(c)) {
-    root.innerHTML = `<div class="inspector-empty">Select a video, image or adjustment clip<br>to grade it.</div>`;
+    root.innerHTML = `<div class="inspector-empty">${T("Select a video, image or adjustment clip")}<br>${T("to grade it.")}</div>`;
     return;
   }
   const g = Color.fullGrade(targetGrade(c)), P = Color.GRADE_PARAMS, locked = isGroupLocked(c), allOn = c.props.grade?.on !== false;
   const num = (k) => {
     const d = P[k];
-    return `<div class="insp-row cp-row"><label class="cp-label" data-greset="${k}" title="Double-click: reset">${d.label}</label>
+    return `<div class="insp-row cp-row"><label class="cp-label" data-greset="${k}" title="${T("Double-click: reset")}">${T(d.label)}</label>
       <input type="range" data-g="${k}" min="${d.min}" max="${d.max}" step="${d.step}" value="${g[k]}">
       <input type="number" class="cp-num" data-gnum="${k}" min="${d.min}" max="${d.max}" step="${d.step}" value="${fmtG(g[k], d.step)}"></div>`;
   };
@@ -18419,27 +18888,27 @@ function renderColorPage(force = false) {
   root.innerHTML = `
     <div class="cp-head">
       <span class="cp-name" title="${escapeHtml(c.name || "")}">${escapeHtml(c.name || c.kind)}</span>
-      <button type="button" class="btn tiny${allOn ? " toggle on" : ""}" data-gact="bypass" title="Whole grade on / off, layers included (compare with the ungraded clip)">${allOn ? "On" : "Off"}</button>
-      <button type="button" class="btn tiny${colorState.pick ? " toggle on" : ""}" data-gact="pick" title="White balance: click something white or grey in the monitor (Esc cancels)">WB pick</button>
+      <button type="button" class="btn tiny${allOn ? " toggle on" : ""}" data-gact="bypass" title="${T("Whole grade on / off, layers included (compare with the ungraded clip)")}">${allOn ? "On" : "Off"}</button>
+      <button type="button" class="btn tiny${colorState.pick ? " toggle on" : ""}" data-gact="pick" title="${T("White balance: click something white or grey in the monitor (Esc cancels)")}">${T("WB pick")}</button>
     </div>
     <div class="cp-head cp-tools">
-      <button type="button" class="btn tiny" data-gact="copy" title="Copy this clip's grade">Copy</button>
-      <button type="button" class="btn tiny" data-gact="paste" ${colorState.clipboard ? "" : "disabled"} title="Paste the copied grade onto the selected clips">Paste${nSel > 1 ? ` → ${nSel}` : ""}</button>
-      <button type="button" class="btn tiny" data-gact="reset" title="Reset the whole grade, layers included">Reset all</button>
+      <button type="button" class="btn tiny" data-gact="copy" title="${T("Copy this clip's grade")}">${T("Copy")}</button>
+      <button type="button" class="btn tiny" data-gact="paste" ${colorState.clipboard ? "" : "disabled"} title="${T("Paste the copied grade onto the selected clips")}">Paste${nSel > 1 ? ` → ${nSel}` : ""}</button>
+      <button type="button" class="btn tiny" data-gact="reset" title="${T("Reset the whole grade, layers included")}">${T("Reset all")}</button>
     </div>
     ${layersStripHtml(c)}
     ${layerSectionsHtml(c)}
     <div class="cp-wheels">${Color.WHEELS.map((w) => `
       <div class="cw" data-wheel="${w}">
-        <div class="cw-head"><span class="cp-label" data-wreset="${w}" title="Double-click: reset">${WHEEL_LABEL[w]}</span></div>
-        <canvas class="cw-disc" data-wdisc="${w}" width="200" height="200" title="Drag to tint (Shift: fine) · double-click: reset colour"></canvas>
-        <input type="range" class="cw-master" data-wmaster="${w}" min="${-WHEEL_MASTER[w]}" max="${WHEEL_MASTER[w]}" step="0.005" value="${g[w][3]}" title="Master · double-click: reset">
+        <div class="cw-head"><span class="cp-label" data-wreset="${w}" title="${T("Double-click: reset")}">${WHEEL_LABEL[w]}</span></div>
+        <canvas class="cw-disc" data-wdisc="${w}" width="200" height="200" title="${T("Drag to tint (Shift: fine) · double-click: reset colour")}"></canvas>
+        <input type="range" class="cw-master" data-wmaster="${w}" min="${-WHEEL_MASTER[w]}" max="${WHEEL_MASTER[w]}" step="0.005" value="${g[w][3]}" title="${T("Master · double-click: reset")}">
         <div class="cw-vals" data-wvals="${w}"></div>
       </div>`).join("")}
     </div>
-    <div class="insp-section"><h3>Exposure &amp; balance</h3>${num("exposure")}${num("temp")}${num("tint")}</div>
-    <div class="insp-section"><h3>Tone</h3>${num("blacks")}${num("shadows")}${num("midtones")}${num("highlights")}${num("whites")}</div>
-    <div class="insp-section"><h3>Contrast &amp; rolloff</h3>${num("contrast")}${num("pivot")}${num("lowSoft")}${num("highSoft")}${num("saturation")}</div>
+    <div class="insp-section"><h3>${T("Exposure & balance")}</h3>${num("exposure")}${num("temp")}${num("tint")}</div>
+    <div class="insp-section"><h3>${T("Tone")}</h3>${num("blacks")}${num("shadows")}${num("midtones")}${num("highlights")}${num("whites")}</div>
+    <div class="insp-section"><h3>${T("Contrast & rolloff")}</h3>${num("contrast")}${num("pivot")}${num("lowSoft")}${num("highSoft")}${num("saturation")}</div>
     ${curvesSectionHtml()}`;
   root.classList.toggle("locked", locked);
   for (const w of Color.WHEELS) drawWheel(w, g[w]);
@@ -18570,7 +19039,7 @@ function bindColorPage(c) {
     const a = b.dataset.gact;
     if (a === "copy") {
       colorState.clipboard = c.props.grade ? JSON.parse(JSON.stringify(c.props.grade)) : {};
-      toast("Grade copied"); renderColorPage(true); return;
+      toast(T("Grade copied")); renderColorPage(true); return;
     }
     if (a === "paste") {
       if (!colorState.clipboard) return;
@@ -18604,7 +19073,7 @@ function setWbPick(on) {
   els.preview.classList.toggle("wb-picking", colorState.pick || colorState.curvePick || colorState.qualPick);
   const b = els.colorPage.querySelector("[data-gact=pick]");
   if (b) { b.classList.toggle("on", colorState.pick); b.classList.toggle("toggle", colorState.pick); }
-  if (colorState.pick) toast("Click something that should be white or grey in the monitor");
+  if (colorState.pick) toast(T("Click something that should be white or grey in the monitor"));
 }
 /** Average sRGB colour (0…1) of a 5×5 patch of the program frame at canvas
  *  px (x, y), rendered with `bypassId`'s grade switched off. */
@@ -18633,24 +19102,24 @@ els.preview.addEventListener("pointerdown", (e) => {
   const c = getClip(state.selId);
   if (colorState.qualPick) {
     setQualPick(false);
-    if (!isGradable(c) || !curLayer(c)) { toast("Select a layer of the clip first"); return; }
+    if (!isGradable(c) || !curLayer(c)) { toast(T("Select a layer of the clip first")); return; }
     if (isGroupLocked(c)) { toastLocked(); return; }
     qualPickAt(c, canvasPt(e));
     return;
   }
   if (colorState.curvePick) {
     setCurvePick(false);
-    if (!isGradable(c)) { toast("Select the clip to grade first"); return; }
+    if (!isGradable(c)) { toast(T("Select the clip to grade first")); return; }
     curvePickAt(c, canvasPt(e));
     return;
   }
   setWbPick(false);
-  if (!isGradable(c)) { toast("Select the clip to balance first"); return; }
+  if (!isGradable(c)) { toast(T("Select the clip to balance first")); return; }
   if (isGroupLocked(c)) { toastLocked(); return; }
   const pt = canvasPt(e);
   const rgb = sampleProgram(pt.x, pt.y, c.id, gradeBefore(c));
   if (!rgb) return;
-  if (Math.max(...rgb) < 0.03) { toast("That spot is too dark to balance on — pick a brighter white or grey"); return; }
+  if (Math.max(...rgb) < 0.03) { toast(T("That spot is too dark to balance on — pick a brighter white or grey")); return; }
   const wb = Color.solveWhiteBalance(rgb);
   pushUndo();
   writeGrade(c, wb);
@@ -18687,17 +19156,17 @@ function writeCurve(c, tab, ch, pts) {
 }
 function curvesSectionHtml() {
   const tab = colorState.curveTab, ch = colorState.curveCh;
-  return `<div class="insp-section cp-curves"><h3>Curves</h3>
+  return `<div class="insp-section cp-curves"><h3>${T("Curves")}</h3>
     <div class="cv-tabs">${Object.entries(CURVE_TABS).map(([k, l]) =>
-      `<button type="button" class="btn tiny${k === tab ? " toggle on" : ""}" data-cvtab="${k}">${l}</button>`).join("")}</div>
+      `<button type="button" class="btn tiny${k === tab ? " toggle on" : ""}" data-cvtab="${k}">${T(l)}</button>`).join("")}</div>
     <div class="cv-bar">
       ${tab === "curves" ? Color.CURVE_CHANNELS.map((k) =>
-        `<button type="button" class="btn tiny cv-ch${k === ch ? " toggle on" : ""}" data-cvch="${k}" style="--cv:${CURVE_COLORS[k]}" title="${k === "y" ? "Luma — brightness only, colour kept" : k.toUpperCase() + " channel"}">${k.toUpperCase()}</button>`).join("") : `<span class="cv-label">${Color.HUE_CURVES[tab].label}</span>`}
+        `<button type="button" class="btn tiny cv-ch${k === ch ? " toggle on" : ""}" data-cvch="${k}" style="--cv:${CURVE_COLORS[k]}" title="${k === "y" ? "Luma — brightness only, colour kept" : k.toUpperCase() + " channel"}">${k.toUpperCase()}</button>`).join("") : `<span class="cv-label">${T(Color.HUE_CURVES[tab].label)}</span>`}
       <span class="cv-sp"></span>
-      <button type="button" class="btn tiny${colorState.curvePick ? " toggle on" : ""}" data-cvact="pick" title="Click the monitor to mark that colour's ${tab === "curves" ? "level" : tab === "satLuma" ? "saturation" : "hue"} on the curve">Pick</button>
-      <button type="button" class="btn tiny" data-cvact="reset" title="Reset this curve">Reset</button>
+      <button type="button" class="btn tiny${colorState.curvePick ? " toggle on" : ""}" data-cvact="pick" title="Click the monitor to mark that colour's ${tab === "curves" ? "level" : tab === "satLuma" ? "saturation" : "hue"} on the curve">${T("Pick")}</button>
+      <button type="button" class="btn tiny" data-cvact="reset" title="${T("Reset this curve")}">${T("Reset")}</button>
     </div>
-    <canvas class="cv-ed${tab === "curves" ? " square" : ""}" data-cved title="Click: add a point · drag: move · double-click: remove"></canvas>
+    <canvas class="cv-ed${tab === "curves" ? " square" : ""}" data-cved title="${T("Click: add a point · drag: move · double-click: remove")}"></canvas>
   </div>`;
 }
 function drawCurveEditor(c) {
@@ -18830,7 +19299,7 @@ function setCurvePick(on) {
   els.preview.classList.toggle("wb-picking", colorState.pick || colorState.curvePick || colorState.qualPick);
   const b = els.colorPage.querySelector("[data-cvact=pick]");
   if (b) { b.classList.toggle("on", colorState.curvePick); b.classList.toggle("toggle", colorState.curvePick); }
-  if (on) toast("Click the colour to adjust in the monitor");
+  if (on) toast(T("Click the colour to adjust in the monitor"));
 }
 /** Monitor click while Pick is on: mark the sample on every curve tab. */
 function curvePickAt(c, pt) {
@@ -18840,7 +19309,7 @@ function curvePickAt(c, pt) {
   const ch = colorState.curveCh;
   const level = ch === "y" ? 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] : rgb["rgb".indexOf(ch)];
   colorState.curveMark = { curves: level, hueHue: h * 360, hueSat: h * 360, hueLuma: h * 360, satLuma: s };
-  if (s < 0.05 && colorState.curveTab !== "curves" && colorState.curveTab !== "satLuma") toast("That spot is nearly grey — its hue is not reliable");
+  if (s < 0.05 && colorState.curveTab !== "curves" && colorState.curveTab !== "satLuma") toast(T("That spot is nearly grey — its hue is not reliable"));
   drawCurveEditor(c);
 }
 
@@ -18925,7 +19394,7 @@ function layersStripHtml(c) {
   const chip = (i, label, off) => `<button type="button" class="btn tiny cl-chip${i === k ? " toggle on" : ""}${off ? " off" : ""}" data-layer="${i}"
     title="${i < 0 ? "The primary grade — the whole picture" : "Layer: graded where its qualifier and mask select"}">${escapeHtml(label)}</button>`;
   return `<div class="cp-layers">${chip(-1, "Primary")}${ls.map((l, i) => chip(i, l.name || `Layer ${i + 1}`, l.on === false)).join("")}
-    <button type="button" class="btn tiny" data-lact="add" ${ls.length >= Color.MAX_LAYERS ? "disabled" : ""} title="Add a layer: a correction limited by a qualifier and / or a mask">+ Layer</button></div>`;
+    <button type="button" class="btn tiny" data-lact="add" ${ls.length >= Color.MAX_LAYERS ? "disabled" : ""} title="${T("Add a layer: a correction limited by a qualifier and / or a mask")}">${T("+ Layer")}</button></div>`;
 }
 function layerSectionsHtml(c) {
   const l = curLayer(c);
@@ -18946,28 +19415,28 @@ function layerSectionsHtml(c) {
       <input type="number" class="cp-num" data-mnum="${p}" min="${min}" max="${max}" step="${step}" value="${fmtG(m[p], step)}"></div>`;
   };
   return `<div class="insp-section cp-layer">
-      <div class="cl-row"><input type="text" class="cl-name" data-lname value="${escapeHtml(l.name || "")}" maxlength="40" title="Layer name">
-        <button type="button" class="btn tiny${l.on === false ? "" : " toggle on"}" data-lact="on" title="Layer on / off">${l.on === false ? "Off" : "On"}</button>
-        <button type="button" class="btn tiny${runtime.matte ? " toggle on" : ""}" data-lact="matte" title="Show what this layer selects (white = graded) in the monitor">Matte</button>
-        <button type="button" class="btn tiny" data-lact="up" ${i === 0 ? "disabled" : ""} title="Move earlier">↑</button>
-        <button type="button" class="btn tiny" data-lact="down" ${i >= n - 1 ? "disabled" : ""} title="Move later">↓</button>
-        <button type="button" class="btn tiny" data-lact="del" title="Delete this layer">Delete</button></div>
+      <div class="cl-row"><input type="text" class="cl-name" data-lname value="${escapeHtml(l.name || "")}" maxlength="40" title="${T("Layer name")}">
+        <button type="button" class="btn tiny${l.on === false ? "" : " toggle on"}" data-lact="on" title="${T("Layer on / off")}">${l.on === false ? "Off" : "On"}</button>
+        <button type="button" class="btn tiny${runtime.matte ? " toggle on" : ""}" data-lact="matte" title="${T("Show what this layer selects (white = graded) in the monitor")}">${T("Matte")}</button>
+        <button type="button" class="btn tiny" data-lact="up" ${i === 0 ? "disabled" : ""} title="${T("Move earlier")}">↑</button>
+        <button type="button" class="btn tiny" data-lact="down" ${i >= n - 1 ? "disabled" : ""} title="${T("Move later")}">↓</button>
+        <button type="button" class="btn tiny" data-lact="del" title="${T("Delete this layer")}">${T("Delete")}</button></div>
     </div>
-    <div class="insp-section cp-qual"><h3>Qualifier</h3>
-      <div class="cl-row"><button type="button" class="btn tiny${colorState.qualPick ? " toggle on" : ""}" data-qact="pick" title="Click a colour in the monitor to select it (its hue, saturation and luma)">Pick</button>
-        <button type="button" class="btn tiny${q.invert ? " toggle on" : ""}" data-qact="invert" title="Select everything except this">Invert</button>
-        <button type="button" class="btn tiny" data-qact="clear" title="No qualifier: the mask alone decides">Clear</button></div>
+    <div class="insp-section cp-qual"><h3>${T("Qualifier")}</h3>
+      <div class="cl-row"><button type="button" class="btn tiny${colorState.qualPick ? " toggle on" : ""}" data-qact="pick" title="${T("Click a colour in the monitor to select it (its hue, saturation and luma)")}">${T("Pick")}</button>
+        <button type="button" class="btn tiny${q.invert ? " toggle on" : ""}" data-qact="invert" title="${T("Select everything except this")}">${T("Invert")}</button>
+        <button type="button" class="btn tiny" data-qact="clear" title="${T("No qualifier: the mask alone decides")}">${T("Clear")}</button></div>
       ${qrow("hue")}${qrow("sat")}${qrow("luma")}
     </div>
-    <div class="insp-section cp-mask"><h3>Mask</h3>
-      <div class="cl-row">${["none", "ellipse", "rect", "poly"].map((s) => `<button type="button" class="btn tiny${(m ? m.shape : "none") === s ? " toggle on" : ""}" data-mshape="${s}">${s === "none" ? "None" : s === "rect" ? "Rect" : s[0].toUpperCase() + s.slice(1)}</button>`).join("")}
-        <button type="button" class="btn tiny${colorState.maskDraw || (m && m.shape === "bezier") ? " toggle on" : ""}" data-mdraw title="Drag a free-hand outline on the monitor — it becomes an editable bezier">Draw</button>
-        ${m ? `<button type="button" class="btn tiny${m.invert ? " toggle on" : ""}" data-mact="invert" title="Grade outside the shape">Invert</button>` : ""}</div>
-      ${m ? `<div class="cl-row"><button type="button" class="btn tiny${onKey ? " toggle on" : ""}" data-mact="key" title="${onKey ? "Remove the key at the playhead" : "Key the shape at the playhead — with keys, every change keys"}">◆ Key</button>
+    <div class="insp-section cp-mask"><h3>${T("Mask")}</h3>
+      <div class="cl-row">${["none", "ellipse", "rect", "poly"].map((s) => `<button type="button" class="btn tiny${(m ? m.shape : "none") === s ? " toggle on" : ""}" data-mshape="${s}">${T(s[0].toUpperCase() + s.slice(1))}</button>`).join("")}
+        <button type="button" class="btn tiny${colorState.maskDraw || (m && m.shape === "bezier") ? " toggle on" : ""}" data-mdraw title="${T("Drag a free-hand outline on the monitor — it becomes an editable bezier")}">${T("Draw")}</button>
+        ${m ? `<button type="button" class="btn tiny${m.invert ? " toggle on" : ""}" data-mact="invert" title="${T("Grade outside the shape")}">${T("Invert")}</button>` : ""}</div>
+      ${m ? `<div class="cl-row"><button type="button" class="btn tiny${onKey ? " toggle on" : ""}" data-mact="key" title="${onKey ? "Remove the key at the playhead" : "Key the shape at the playhead — with keys, every change keys"}">${T("◆ Key")}</button>
         <span class="cl-note">${keyed ? `${keyed} key${keyed > 1 ? "s" : ""}` : "not animated"}</span>
-        ${keyed ? `<button type="button" class="btn tiny" data-mact="clearkeys" title="Remove every key (keeps the shape at the playhead)">Clear keys</button>` : ""}</div>
+        ${keyed ? `<button type="button" class="btn tiny" data-mact="clearkeys" title="${T("Remove every key (keeps the shape at the playhead)")}">${T("Clear keys")}</button>` : ""}</div>
       ${mrow("x")}${mrow("y")}${m.shape !== "poly" ? mrow("w") + mrow("h") : ""}${mrow("rotation")}${mrow("feather")}
-      <p class="cl-note">Drag it on the monitor: inside moves, handles resize, the knob rotates${m.points ? "; Ctrl-click adds a point, double-click one removes it" : ""}.</p>` : colorState.maskDraw ? `<p class="cl-note">Drag around what this layer should grade. Esc cancels.</p>` : ""}
+      <p class="cl-note">Drag it on the monitor: inside moves, handles resize, the knob rotates${m.points ? "; Ctrl-click adds a point, double-click one removes it" : ""}.</p>` : colorState.maskDraw ? `<p class="cl-note">${T("Drag around what this layer should grade. Esc cancels.")}</p>` : ""}
     </div>`;
 }
 function bindLayerControls(c, guard) {
@@ -19040,7 +19509,7 @@ function bindLayerControls(c, guard) {
   if (draw) draw.addEventListener("click", () => {
     if (!guard()) return;
     colorState.maskDraw = !colorState.maskDraw; colorState.maskStroke = null;
-    if (colorState.maskDraw) { if (state.playing) pause(); toast("Drag around what this layer should grade"); }
+    if (colorState.maskDraw) { if (state.playing) pause(); toast(T("Drag around what this layer should grade")); }
     rerender();
   });
   for (const b of root.querySelectorAll("[data-mshape]")) b.addEventListener("click", () => {
@@ -19126,7 +19595,7 @@ function setQualPick(on) {
   els.preview.classList.toggle("wb-picking", colorState.pick || colorState.curvePick || colorState.qualPick);
   const b = els.colorPage.querySelector("[data-qact=pick]");
   if (b) { b.classList.toggle("on", colorState.qualPick); b.classList.toggle("toggle", colorState.qualPick); }
-  if (on) toast("Click the colour this layer should select");
+  if (on) toast(T("Click the colour this layer should select"));
 }
 /** Monitor click while the qualifier's Pick is on: select that colour. */
 function qualPickAt(c, pt) {
@@ -19309,7 +19778,7 @@ const endMaskDrag = (e) => {
   if (maskDrag.mode === "draw") {
     const c = getClip(maskDrag.id), sp = c && maskSpace(c), st = colorState.maskStroke;
     maskDrag = null; colorState.maskStroke = null; state.dirtyTimeline = true;
-    if (!c || !sp || !st || st.length < 6) { toast("Drag around what this layer should grade"); return; }
+    if (!c || !sp || !st || st.length < 6) { toast(T("Drag around what this layer should grade")); return; }
     const cur = maskNow(c), m = { shape: "freehand", stroke: st, aspect: sp.aspect, feather: cur ? cur.feather : 0.03 };
     if (cur && cur.invert) m.invert = true;
     pushUndo();
@@ -19331,7 +19800,7 @@ els.preview.addEventListener("dblclick", (e) => {
   const i = h ? h.points.findIndex((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= grab) : -1;
   if (i < 0) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  if (h.m.points.length <= 3) { toast("A mask needs at least 3 points"); return; }
+  if (h.m.points.length <= 3) { toast(T("A mask needs at least 3 points")); return; }
   if (isGroupLocked(c)) { toastLocked(); return; }
   const pts = h.m.points.map((p) => p.slice()); pts.splice(i, 1);
   pushUndo(); writeMask(c, { points: pts }); scheduleSave(); renderColorPage(true);
@@ -19492,6 +19961,8 @@ for (const b of document.querySelectorAll("#wsSwitch [data-ws]"))
   b.addEventListener("click", () => setWorkspace(b.dataset.ws));
 
 initPanelSplit();
+applyPanelLayout();
+syncMonitorEmptyLabel();
 buildTrackDOM();
 rebuildClips();
 renderBin();

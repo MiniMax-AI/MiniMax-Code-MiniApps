@@ -12,7 +12,15 @@
   --clip-video: linear-gradient(180deg, #3d5afe22, #3d5afe11), #2b3b8f;
   --track-h-video: 58px;
   --track-h-audio: 42px;
-  --side-panel-w: 320px;
+  /* The side panels are fluid: they never take a fixed, oversized column away
+     from the monitor. */
+  --side-panel-w: clamp(196px, 21vw, 300px);
+  --side-panel-rail: 30px;
+  /* A face that carries Chinese as well as Latin. The CJK names come first so
+     a Chinese Windows picks YaHei and a Chinese macOS picks PingFang. */
+  --font-ui: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", system-ui,
+    -apple-system, "Helvetica Neue", Arial, sans-serif;
 }
 
 * {
@@ -31,7 +39,7 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  font: 13px/1.45 var(--font-ui);
 }
 
 .app {
@@ -40,10 +48,24 @@ body {
   height: 100vh;
   gap: 6px;
   padding: 6px;
+  /* The width of each side panel. The editor sets these on the app element:
+     a collapsed panel falls back to its thin rail. */
+  --bin-w: var(--side-panel-w);
+  --insp-w: var(--side-panel-w);
+}
+
+.app.panel-no-media {
+  --bin-w: var(--side-panel-rail);
+}
+
+.app.panel-no-inspector {
+  --insp-w: var(--side-panel-rail);
 }
 
 .topbar {
   flex: 0 0 46px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .upper {
@@ -105,8 +127,12 @@ body.resizing-panels * {
   flex: 1;
 }
 
-/* Visually hidden but still activatable (file picker via <label for>) */
-.sr-only {
+/* Visually hidden but still activatable (file picker via <label for>).
+   A button that shows only an icon keeps its wording in the markup and hides
+   it here, so the wording is still translated and a screen reader still
+   announces it. */
+.sr-only,
+.btn.icon-only > span[data-i18n] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -157,8 +183,14 @@ body.resizing-panels * {
 
 .topbar-center {
   flex: 1;
+  min-width: 0;
   text-align: center;
   color: var(--dim);
+  /* The project name is one line: it is the user's own text, and a wrapped
+     name would push the whole bar taller. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-right {
@@ -234,8 +266,16 @@ body.track-size-s .clip.selected {
   flex: 1;
   min-width: 0;
   text-align: left;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+/* The name inside the button is what has to shrink with an ellipsis. */
+.style-picker-btn .picker-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .style-menu {
@@ -339,8 +379,14 @@ body.track-size-s .clip.selected {
 }
 
 .btn.tiny {
-  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 10px;
   font-size: 12px;
+  line-height: 1.35;
+  min-height: 28px;
   border-radius: 5px;
 }
 
@@ -366,6 +412,26 @@ body.track-size-s .clip.selected {
   font-size: 15px;
 }
 
+/* An icon-only button keeps its name in an sr-only label, so the wording is
+   still translated and a screen reader still announces it. The button itself
+   is at least 32px square, so it is easy to hit. */
+.btn.icon-only {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 7px;
+}
+
+.btn.icon-only .ico {
+  margin-right: 0;
+}
+
+/* The keyboard always shows where it is. */
+.btn:focus-visible,
+label.btn:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .btn.toggle.on {
   border-color: var(--accent);
   color: #cfc8ff;
@@ -387,6 +453,11 @@ body.track-size-s .clip.selected {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* The title and the actions each keep their own width: when they do not
+     fit side by side the actions move to their own row instead of covering
+     the title's buttons. */
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 7px 10px;
   font-size: 12px;
   font-weight: 600;
@@ -416,26 +487,31 @@ body.track-size-s .clip.selected {
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
+  /* Right of the title, and right of its own row when it wraps. */
+  margin-left: auto;
 }
 
-/* Media bin: the add buttons share one row, no heading beside them. */
+/* Media bin: the four actions are icons in one row, so the panel head stays
+   the same height in every language and no label is ever squeezed out of
+   sight. */
 .panel-head-actions.bin-actions {
   flex: 1;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(32px, 1fr));
+  gap: 4px 6px;
   min-width: 0;
 }
 
 .panel-head-actions.bin-actions .btn {
-  flex: 1;
-  min-width: 0;
   justify-content: center;
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .upper {
   display: grid;
-  grid-template-columns: var(--side-panel-w) minmax(0, 1fr) var(--side-panel-w);
+  grid-template-columns: var(--bin-w) minmax(0, 1fr) var(--insp-w);
   gap: 6px;
   min-height: 0;
 }
@@ -448,6 +524,93 @@ body.track-size-s .clip.selected {
 
 .panel.bin {
   z-index: 1;
+}
+
+/* ── A collapsed side panel keeps a thin rail ──────────────────────────────
+   The panel does not disappear: it folds into a 30px strip with a labelled
+   button, so the way back is always one click away and never hidden. */
+.panel-rail {
+  display: none;
+}
+
+.panel.collapsed {
+  padding: 0;
+}
+
+.panel.collapsed > *:not(.panel-rail) {
+  display: none;
+}
+
+.panel.collapsed > .panel-rail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 10px 2px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--dim);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.panel.collapsed > .panel-rail:hover {
+  color: var(--text);
+  background: #ffffff08;
+}
+
+.panel-rail .rail-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  letter-spacing: .5px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-rail .rail-chev {
+  order: -1;
+  font-size: 13px;
+  line-height: 1;
+  flex: none;
+}
+
+.panel-collapse {
+  flex: none;
+  width: 24px;
+  min-width: 24px;
+  padding: 3px 0;
+  text-align: center;
+  color: var(--dim);
+}
+
+.panel-collapse:hover {
+  color: var(--text);
+}
+
+/* The inspector's tabs and its collapse button share one row, so folding the
+   panel away costs no vertical space. */
+.side-head {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+}
+
+.side-head .side-tabs {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 6px 0;
+}
+
+.side-head .panel-collapse {
+  align-self: center;
+  margin-right: 5px;
 }
 
 /* keep overflowing head buttons above the monitor */
@@ -510,12 +673,14 @@ body.track-size-s .clip.selected {
   margin: auto;
   text-align: center;
   color: var(--dim);
-  padding: 20px 10px;
+  padding: 12px 10px;
 }
 
 .bin-empty-icon {
-  font-size: 34px;
-  margin-bottom: 10px;
+  display: flex;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: 6px;
   opacity: .8;
 }
 
@@ -743,7 +908,7 @@ body.track-size-s .clip.selected {
   font-size: 11px;
 }
 .panel.monitor[data-mode="source"] .monitor-clip-name:empty::before {
-  content: "No clip loaded";
+  content: var(--no-clip-text, "No clip loaded");
   opacity: .55;
 }
 
@@ -795,13 +960,35 @@ body.track-size-s .clip.selected {
 .monitor-stage {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   background: #000;
   min-height: 0;
   margin: 8px;
   border-radius: 6px;
   overflow: hidden;
   position: relative;
+}
+
+/* The picture lives in its own column; the meters sit in a gutter beside it,
+   so they never cover the frame. */
+.monitor-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.monitor-meter-gutter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 6px 6px 8px 2px;
+  background: #000;
+  overflow: hidden;
 }
 @keyframes monitor-flash-border {
   0%   { opacity: 0; }
@@ -951,11 +1138,11 @@ body.track-size-s .clip.selected {
   font-size: 8px;
   opacity: .7;
 }
-/* ── Per-track VU (RMS / LUFS / Peak) ── */
+/* ── Per-track VU (RMS / LUFS / Peak) ──
+   The meter is a flex item in the gutter beside the picture, not an overlay
+   on top of it. */
 .vu-meter {
-  position: absolute;
-  right: 2px;
-  bottom: 10px;
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1098,6 +1285,83 @@ body.track-size-s .clip.selected {
 }
 #fpsSel.head-select { max-width: 88px; }
 
+/* ── Monitor head + canvas settings ──
+   The head keeps one row at every width: the title gives up its room (the
+   clip name ellipsizes) and the actions keep theirs. The three canvas
+   selects live in a popover on the body, so the head has room to breathe
+   and no ancestor can clip the popover. */
+.monitor-head {
+  flex-wrap: nowrap;
+}
+
+.monitor-head .panel-head-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.monitor-head .monitor-clip-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.monitor-head .panel-head-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+/* The frame / safe / proxy switches are icons here: their names live in the
+   tooltip and in the label a screen reader reads. */
+.monitor-actions .btn.icon-only {
+  min-width: 30px;
+  min-height: 28px;
+  padding: 0 6px;
+}
+
+/* The canvas settings popover: a child of the body, fixed, so it never
+   clips and never moves the layout around it. */
+.canvas-settings-pop {
+  position: fixed;
+  z-index: 10000;
+  width: 300px;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 9px 11px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.canvas-settings-pop[hidden] {
+  display: none;
+}
+
+.canvas-pop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 150px);
+  align-items: center;
+  gap: 10px;
+}
+
+.canvas-pop-label {
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-settings-pop .head-select,
+.canvas-settings-pop #fpsSel.head-select {
+  width: 100%;
+  max-width: none;
+}
+
+.canvas-pop-foot {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  font-size: 11px;
+}
+
 /* ── Safe-area guides (positioned over the canvas by JS) ── */
 #safeOverlay {
   position: absolute;
@@ -1220,8 +1484,9 @@ body.track-size-s .clip.selected {
 }
 
 .transport {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
   align-items: center;
   padding: 4px 14px 8px;
   gap: 10px;
@@ -1933,18 +2198,45 @@ input[type=range] {
 /* ── Timeline ── */
 .timeline-toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
 }
 
+/* Each row of the toolbar. A row wraps instead of clipping, so a narrow
+   window never hides a control: the primary row keeps the edit tools, the
+   split, the delete and the snap, the second row holds the rest. */
+.tb-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 6px;
+  min-width: 0;
+}
+
+.tb-row-more {
+  border-top: 1px solid #232329;
+}
+
+.tb-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-left: auto;
+}
+
 .tiny-label {
-  font-size: 11px;
+  font-size: 12px;
+  white-space: nowrap;
+  flex: none;
 }
 
 #zoomSlider {
-  width: 130px;
+  width: clamp(64px, 9vw, 130px);
+  flex: none;
 }
 
 .timeline {
@@ -1983,6 +2275,7 @@ input[type=range] {
   letter-spacing: 0;
   line-height: 1.2;
   min-width: 0;
+  min-height: 0;
 }
 
 #trackHeadInner {
@@ -2209,7 +2502,8 @@ input[type=range] {
 .tool-seg .btn {
   border: 0;
   border-radius: 0;
-  padding: 3px 7px;
+  padding: 3px 5px;
+  min-height: 28px;
 }
 
 .tool-seg .btn + .btn {
@@ -3405,7 +3699,8 @@ body.file-drag::after {
 }
 
 #btnSnapMenu {
-  padding: 3px 5px;
+  padding: 3px 8px;
+  min-height: 32px;
   border-left: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -3602,8 +3897,14 @@ body.file-drag::after {
   display: flex;
 }
 
+/* The scopes take the place of the media bin in the Color workspace, so they
+   get their own fluid width instead of the bin's. */
+.app.ws-color {
+  --scopes-w: clamp(228px, 23vw, 340px);
+}
+
 .app.ws-color .upper {
-  grid-template-columns: 360px minmax(0, 1fr) 340px;
+  grid-template-columns: var(--scopes-w) minmax(0, 1fr) var(--insp-w);
 }
 
 .scope-slot {
@@ -4357,4 +4658,45 @@ a.btn { text-decoration: none; }
   gap: 6px;
   margin: 8px 0 2px;
   font-size: 12px;
+}
+
+/* ══════════════════ Narrow windows ══════════════════
+   The editor has to stay usable when the window is small. Nothing is ever
+   clipped: the toolbar rows wrap, and the second row drops its words and
+   keeps its icons so it stays on one line. The tooltips carry the meaning. */
+
+/* Below this width the side panels are narrower; below the next one they
+   fold into their rails (the editor decides that, not the stylesheet). */
+@media (max-width: 1180px) {
+  .app {
+    --side-panel-w: 236px;
+  }
+}
+
+@media (max-width: 860px) {
+  .app {
+    --side-panel-w: 208px;
+  }
+
+  /* The second row keeps its icons and drops its words. A button that shows
+     only an icon names itself through its aria-label, so nothing is lost. */
+  .tb-row-more .btn > span[data-i18n] {
+    display: none;
+  }
+
+  /* Lift and Extract keep their words: they are the two that say what they
+     do to the timeline. */
+  .tb-row-more .btn.keep-label > span[data-i18n] {
+    display: inline;
+  }
+
+  .tb-row-more .btn {
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+
+  .tb-row-more .btn.keep-label {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
 }

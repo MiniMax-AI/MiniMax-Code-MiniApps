@@ -4,11 +4,16 @@
 // Serves two things on the one port the Host assigns:
 //
 //   /editor          the upstream FableCut web editor and its REST API
-//   /mcp/minimax-cut the 19 upstream MCP tools over Streamable HTTP
+//   /mcp/minimax-cut the 20 upstream MCP tools plus this package's own
+//                    minimax_cut_export, over Streamable HTTP
 //
 // Both run in this process. The tools never open a socket to the editor: they
 // call the editor's own request handler in-process, so no credential, no port
 // and no second server is involved.
+//
+// minimax_cut_export prepares an export job in context.dataDir and names a
+// standalone runner. It does not render: the Agent starts that runner itself,
+// in a process it owns, outside this runtime.
 //
 // Durable state lives under context.dataDir (the upstream FABLECUT_DATA_DIR).
 // stdout and stdin belong to the Host, so this entry logs through
@@ -22,6 +27,9 @@ import { fileURLToPath } from 'node:url';
 
 import { createLocalApi } from './adapters/local-api.mjs';
 import { createMcpHttpHandler } from './adapters/mcp-http.mjs';
+import { withExportTool } from './adapters/export-tool.mjs';
+import { createExportJobs } from './export/prepare.mjs';
+import { createExportToolHandler, EXPORT_TOOL } from './export/export-mcp.mjs';
 
 /** @typedef {import('./miniapp-api.ts').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.ts').MiniAppLifecycle} MiniAppLifecycle */
@@ -96,8 +104,21 @@ export async function start(context) {
     where: 'the MiniMax Cut editor UI (if the Mini App is open)',
   });
 
-  const handleMcp = createMcpHttpHandler({ handleMessage: mcp.handleMessage });
-
+  // The export tool is this package's own: it prepares a self-contained job
+  // and hands back the path of a standalone runner. It never starts a render
+  // on its own, and the runner it names is a plain Node process the Agent
+  // starts in its own background task.
+  const exportJobs = createExportJobs({
+    dataDir: context.dataDir,
+    pluginRoot: context.pluginRoot,
+    logger: context.logger,
+  });
+  const handleMessage = withExportTool({
+    handleMessage: mcp.handleMessage,
+    tool: EXPORT_TOOL,
+    handleTool: createExportToolHandler(exportJobs),
+  });
+  const handleMcp = createMcpHttpHandler({ handleMessage });
   /**
    * The editor page is served on the surface route; the upstream handler
    * serves files from the static root and treats "/" as index.html.
@@ -171,7 +192,7 @@ export async function start(context) {
   context.logger.info('minimax-cut.listening', {
     surface: SURFACE_PATH,
     mcp: MCP_PATH,
-    tools: mcp.TOOLS.length,
+    tools: mcp.TOOLS.length + 1,
     client: existsSync(path.join(CLIENT_DIR, 'index.html')) ? 'ok' : 'missing',
   });
 
