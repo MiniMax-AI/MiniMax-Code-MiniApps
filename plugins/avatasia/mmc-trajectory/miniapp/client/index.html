@@ -1538,15 +1538,15 @@
          digits — the phone behaviour. */
       :root {
         --traj-index-col: 72px;
-        /* The docked height, as two fifths of the window. It was 50vh, then a quarter, and the
-           unit was never the problem — the unit being frozen was. The reader cannot make it
-           smaller, and a cap the reader cannot move is a number nobody chose. applyInspectorDock()
-           therefore writes this in px from window.innerHeight and a drag overwrites it, so the
-           declaration below is only what shows before the first measurement. It stays a vh for the
-           same reason as everywhere else here: 100vh is not the reader's height inside a host
-           iframe, and every offset on this page is measured for that reason. The 40 must track
-           INSPECTOR_DOCK_SHARE — the fallback and the measurement are the same promise written
-           twice, so a guard holds them together. */
+        /* The docked height, as the share of the window that INSPECTOR_DOCK_SHARE declares. It
+           was 50vh, then a quarter, and the unit was never the problem — the unit being frozen
+           was. The reader cannot make it smaller, and a cap the reader cannot move is a number
+           nobody chose. applyInspectorDock() therefore writes this in px from window.innerHeight
+           and a drag overwrites it, so the declaration below is only what shows before the first
+           measurement. It stays a vh for the same reason as everywhere else here: 100vh is not
+           the reader's height inside a host iframe, and every offset on this page is measured
+           for that reason. The declared vh must track INSPECTOR_DOCK_SHARE — the fallback and
+           the measurement are the same promise written twice, so a guard holds them together. */
         --inspector-dock-h: 40vh;
       }
 
@@ -2240,7 +2240,7 @@
 
            The cap stays on this rule, because it is a property of every state and not of the
            pinned ones. It is `--inspector-full-h`, the same number `is-inspector-full` uses,
-           because that is already `innerHeight - pinned strips - the ledger's reserved quarter`:
+           because that is already `innerHeight - pinned strips - the ledger's reserved share`:
            the panel can be neither taller than the window nor able to squeeze the rows. What
            changed is the reason. It used to be 「a sticky-bottom element has nowhere legal to
            sit」, which was true while sticky was here and is not true now; in flow this is an
@@ -2264,16 +2264,16 @@
           z-index: 5;
         }
 
-        /* Two fifths by default, and the reader can drag it. The content scrolls inside the
-           panel instead of the panel growing: a growing panel pushes its own handle out of the
-           viewport, which is the one thing a docked panel cannot do. The number itself is written
-           by applyInspectorDock() — a fifth of the measured window twice over, or whatever the reader
-           dragged to — so this rule only says what the cap is *called*.
+        /* Docked at INSPECTOR_DOCK_SHARE by default, and the reader can drag it. The content
+           scrolls inside the panel instead of the panel growing: a growing panel pushes its own
+           handle out of the viewport, which is the one thing a docked panel cannot do. The number
+           itself is written by applyInspectorDock() — INSPECTOR_DOCK_SHARE of the measured window,
+           or whatever the reader dragged to — so this rule only says what the cap is *called*.
 
            `max-height`, never `height`, and that is the answer to 「窗口的高度和检视的高度取
            最大还是最小」: a cap renders min(content, cap), so a record whose body is shorter
-           than the cap is shown at its own height instead of being padded out to a fifth of
-           the window. `height` would make the cap mandatory and put a blank band inside the
+           than the cap is shown at its own height instead of being padded out to the docked
+           height. `height` would make the cap mandatory and put a blank band inside the
            panel. It cannot show today — the shortest record measured 752px of content against a
            400px cap, because the summary tab always renders its metadata table — which is
            exactly why it is a rule worth writing down rather than a coincidence worth relying on. */
@@ -2286,8 +2286,8 @@
 
         /* Folded down to its own header. This is the third height the reader can pick, and it is
            the one that was missing: `flow` and `docked`/`full` are three class values, but only two
-           of them are heights — flow is a *position* ("not pinned"), so the panel could go from two
-           fifths to fully expanded and had nowhere smaller to go.
+           of them are heights — flow is a *position* ("not pinned"), so the panel could go from the
+           docked height to fully expanded and had nowhere smaller to go.
 
            Folded by taking the content out of flow rather than by capping the panel. The obvious
            version is `max-height: <the header's own height>`, and that is the version this section
@@ -9156,7 +9156,7 @@
        *   flow   — the panel is in the document below the ledger. Where it starts, and where
        *            「滚到最底部」 brings it back. This one is a position, not a height.
        *   folded — pinned, down to its own header and nothing else.
-       *   docked — pinned to the bottom of the viewport at two fifths.
+       *   docked — pinned to the bottom of the viewport at INSPECTOR_DOCK_SHARE.
        *   full   — pinned, uncapped, because the reader asked with the handle.
        *
        * Three of those four are pinned and one is not, and the fourth one did not exist for a while:
@@ -9216,7 +9216,7 @@
         // take is read off the window and the offsets syncStickyOffsets() just measured, and
         // written here.
         //
-        // panelMax is what is left after the pinned strips *and* the ledger's guaranteed quarter.
+        // panelMax is what is left after the pinned strips *and* the ledger's guaranteed share.
         // It is the ceiling for all three states, so the expanded panel stops short of covering
         // the rows and a drag cannot grow past it either.
         //
