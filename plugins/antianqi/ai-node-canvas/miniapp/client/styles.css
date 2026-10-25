@@ -1130,6 +1130,19 @@ input {
   word-break: break-word;
 }
 
+/* A notice is not a failure: the node is busy, or something is worth saying
+   that is not an error. It looks like an error less, so it is not read as
+   one. */
+.nxc-node__notice {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-faint) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-faint) 30%, transparent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  word-break: break-word;
+}
+
 /* ---------------- ports ---------------- */
 
 .nxc-node__port {

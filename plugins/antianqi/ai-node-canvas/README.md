@@ -5,9 +5,10 @@
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-**One node is one asset slot.** An image node holds an image, an audio node holds
-audio, and pressing 生成 updates that node in place — it does not spawn a child
-node.
+**A run lands on a result node.** An image node makes an image, an audio node
+makes audio, and pressing 生成 does not fill the card it was pressed on: the
+run drops a **结果** node beside it and draws the line — and that result node is
+what the next step reads.
 
 **Two families of node, four kinds of data.** An **input** node holds what goes
 in — text, an image, a video or an audio, and the kind is chosen on the card.
@@ -24,12 +25,13 @@ this package.
 
 ## What it does
 
-- **Eight kinds of node, and a mode on the card** — a node is a **role**
-  (输入 / 生成) and the **data it moves** (文本 / 图片 / 视频 / 音频), so the
-  board holds eight kinds: an input of each kind and a generating node of each
-  kind. A `group` (a frame that carries the nodes inside it) and a `result` (it
-  appears by itself when a generation finishes) complete the set. The add menus
-  list exactly those eight kinds plus the group, and they are built from the
+- **Seven kinds of node, and a mode on the card** — a node is a **role**
+  (输入 / 生成) and the **data it moves** (文本 / 图片 / 视频 / 音频): an
+  **input** node carries one of the four kinds, and a **generating** node
+  makes one of the four. A `group` (a frame that carries the nodes inside it)
+  and a `result` (it appears by itself when a generation finishes) complete
+  the set of seven. The add menus list the six that can be made — the four
+  generating nodes, the input and the group — and they are built from the
   same table the cards are drawn from, so the menu and the board cannot fall
   out of step. A **mode** is another way of making the same kind of data: a
   text node writes text, expands a sentence into a prompt (提示词增强), reads a
@@ -248,12 +250,15 @@ this package.
   until the user picks a side, and the choice is remembered.
 - **The Agent can read the canvas** — this Mini App serves a hosted MCP server
   (`servers.mcp.json`), so the Agent gets tools of its own: `canvas_list` names
-  the canvases, and `canvas_read` returns the nodes, the connections and the
-  slots of one — the same three states the card shows. Both are read-only.
-- **The Agent can change the canvas** — five more tools write to the board:
+  the canvases, `canvas_read` returns the nodes, the connections and the
+  slots of one — the same three states the card shows — and
+  `canvas_list_templates` names the ready-made workflows. All three are
+  read-only.
+- **The Agent can change the canvas** — six more tools write to the board:
   `canvas_add_node`, `canvas_connect`, `canvas_update_node`,
-  `canvas_remove_node` and `canvas_run`. They change what the user sees, so
-  they are never read-only and they say so in their description.
+  `canvas_apply_template`, `canvas_remove_node` and `canvas_run`. They change
+  what the user sees, so they are never read-only and they say so in their
+  description.
 - **The package tells the Agent how to use it** — a Skill
   (`skills/ai-node-canvas/SKILL.md`, written in Chinese) says what the canvas
   is for, when the **prompt node** is the right step (the H3 templates carry
@@ -402,17 +407,17 @@ video. They are not one request with different parameters:
 | Reference set | `reference_images` / `reference_videos` / `reference_audios` | H3 only |
 
 So the **mode says which request is wanted** and the **model says which
-requests exist** — two different questions. The video node has six modes, and
-every one of them has an exact port list: what it takes is what the request
-carries.
+requests exist** — two different questions. The video node has five modes, and
+every one of them has an exact list of what it takes: what it takes is what the
+request carries.
 
-| Mode | Ports |
+| Mode | What it takes |
 | --- | --- |
-| 文生视频 | text |
-| 图生视频·首帧 | text, picture (first frame) |
-| 图生视频·首尾帧 | text, picture (first frame), picture (last frame) |
-| 图生视频·末帧 | text, picture (last frame) |
-| 参考生视频 | text, picture, video, audio |
+| 文生视频 | a text box |
+| 图生视频·首帧 | a text box, a picture (first frame) |
+| 图生视频·首尾帧 | a text box, a picture (first frame), a picture (last frame) |
+| 图生视频·末帧 | a text box, a picture (last frame) |
+| 参考生视频 | a text box, a picture, a clip, a sound |
 
 - The first+last frame mode needs **two pictures**, so the card has two picture
   ports and the slot strip names them **首帧** and **尾帧**; the line that lands
@@ -458,6 +463,11 @@ So the card follows the model: switching to H3-Max takes the **reference set**
 (it has none) and the audio port off the table; switching to Hailuo leaves
 only 文生视频 and 首帧. The same rule runs when the Agent changes the model
 through MCP, so the canvas is the same whoever asked.
+
+> H3 and H3-Max are paid from the **account balance**, and the provider
+> refuses them while the account has no **按量自动扣费** (pay-as-you-go) turned
+> on — so a clip that should have a voice comes back refused instead of
+> silent. Hailuo runs on the Token Plan, but it is the silent one.
 
 > The card has **no sound switches**. There used to be two (sync dubbing,
 > ambient sound), but a video run goes straight to the connector and the place
@@ -670,15 +680,20 @@ separate pictures.
   server, mounted on `/mcp/canvas` by `miniapp.json`; the Host rewrites its
   address and authenticates it like the rest of the port. The server speaks
   stateless JSON-RPC (`initialize`, `ping`, `tools/list`, `tools/call`) and
-  offers two reading tools and five writing ones:
+  offers three reading tools and six writing ones:
   - `canvas_list` — the canvases with their id, title, node count and last
     change.
   - `canvas_read` — one canvas: its nodes (type, title, status, model,
-    parameters), the connections, and for every node the slots it declares with
-    the state the card shows (`filled`, `ready`, `open`, `out`).
+    parameters, and what went wrong if something did), the connections, and
+    for every node the slots it declares with the state the card shows
+    (`filled`, `ready`, `open`, `out`) — a port that has a role says which one
+    it is, so the first frame and the last frame are two ports.
+  - `canvas_list_templates` — the ready-made workflows and the templates of
+    the user's own.
   - `canvas_add_node`, `canvas_connect`, `canvas_update_node`,
-    `canvas_remove_node`, `canvas_run` — add a node, draw a line, change a
-    node, remove a node, run a node once.
+    `canvas_apply_template`, `canvas_remove_node`, `canvas_run` — add a node,
+    draw a line, change a node, put a workflow on the canvas, remove a node,
+    run a node once.
 
   The reading tools only read the canvas documents under
   `context.dataDir/canvases/`. They never write, never start a run and never

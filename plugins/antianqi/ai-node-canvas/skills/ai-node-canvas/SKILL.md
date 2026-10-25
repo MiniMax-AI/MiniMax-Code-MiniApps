@@ -6,8 +6,12 @@ description: "驱动 MiniMax Code 的「节点画布」MiniApp —— 一张无�
 # 节点画布
 
 MiniApp 就是这块画布，Agent 通过 `canvas` MCP 服务器碰它：`canvas_list`、
-`canvas_read`、`canvas_add_node`、`canvas_connect`、`canvas_update_node`、
-`canvas_remove_node`、`canvas_run`。
+`canvas_read`、`canvas_list_templates`、`canvas_add_node`、`canvas_connect`、
+`canvas_update_node`、`canvas_apply_template`、`canvas_remove_node`、`canvas_run`。
+
+**画布上有一条现成工作流。** `canvas_list_templates` 列出它们：`图片复刻`、`视频模仿`，
+以及 H3 的五种形状（文生视频 / 首帧 / 首尾帧 / 末帧 / 全参考）。`canvas_apply_template`
+把其中一条铺到画布上——**铺完不跑**，跑起来才花钱；铺完的链是空的骨架，缺的素材要用户自己放。
 
 **画布是什么。** 节点是一次模型运行，连线把上游做出来的东西送到下游。跑完会**自己
 落一个结果节点**在跑过的节点旁边 —— 不要手建结果节点，也不要去连还没出现的结果节点。
@@ -65,11 +69,14 @@ H3 那几个是 provider 自己的提示词写作指南，带着 H3 最吃的三
   视频的首帧，它拿到的编号就是对齐行里写的那个。
 - **一张图再加工。** 结果节点 → 那张卡上的工具（抠图、变清晰、改尺寸、切九宫格、
   证件照、换机位、换光）。工具会留下自己的结果节点，所以链能一直接下去。
+  **这些工具在卡片上，不在 MCP 上** —— Agent 够不着它们，只能告诉用户点哪个。
 - **同一主体，另一个机位。** 多角度工具让模型换个机位重出，主体的特征、材质和配色
   保持不变。
 - **切九宫格。** 宫格切分把一张图切成 N×M 块，每块一个节点。
 - **把片子读回来。** 视频接进 `video2text` 模式的文本节点：provider 逐镜头读，文本
-  模型写出能做出这条片子的提示词。
+  模型写出能做出这条片子的提示词。**读之前片段会在本机压小**（超过 2MB / 12 秒 /
+  1280px / 24fps 就重编码，需要本机有 ffmpeg；超过 12 秒的片段只读到前 12 秒）——
+  provider 读的是压小后的那份，所以粗一点的片段也能读出来。
 
 ## 跑的时候
 

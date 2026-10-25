@@ -330,8 +330,12 @@ export function planPort(canvas, node, kind, role = '') {
   const ports = takenPorts(node).filter((port) => port.kind === kind);
   if (ports.length < 2) return { ok: true, role: '', reason: '' };
   const filled = assignPorts(canvas, node);
-  const wanted = ports.find((port) => port.role === role)
-    ?? ports.find((port) => !filled.get(portKey(port)));
+  // A named port is a slot of its own: the first frame is the first frame,
+  // and a second line that asks for it is refused instead of landing on it
+  // too and leaving the other port empty.
+  const wanted = role
+    ? ports.find((port) => port.role === role && !filled.get(portKey(port)))
+    : ports.find((port) => !filled.get(portKey(port)));
   if (!wanted) return { ok: false, role: '', reason: '这个口已经接上了。' };
   return { ok: true, role: wanted.role, reason: '' };
 }
@@ -525,6 +529,26 @@ export function applyTemplate(canvas, template, context = {}) {
   const doc = canvas ?? { nodes: [], connections: [] };
   const actions = Array.isArray(template?.actions) ? template.actions : [];
   if (!actions.length) return { canvas: doc, error: '这个模板是空的' };
+  // A template is a skeleton: it may make nodes and draw the lines between
+  // them. It may not take anything away — a template that could would tidy
+  // up a canvas it was dropped on, and the steps of a chain are not a licence
+  // to remove things.
+  for (const action of actions) {
+    const type = String(action?.type ?? '');
+    if (!TEMPLATE_ACTION_TYPES.includes(type)) {
+      return {
+        canvas: doc,
+        error: `模板里有一步做不了的事：${type || '(没有说是什么)'}（模板只能：${TEMPLATE_ACTION_TYPES.join('、')}）`,
+      };
+    }
+    if (type === 'connect') {
+      const from = String(action?.args?.from ?? '');
+      const to = String(action?.args?.to ?? '');
+      if (!/^@\d+$/.test(from) || !/^@\d+$/.test(to)) {
+        return { canvas: doc, error: '模板里的线要指向模板自己做的节点（@1 这样的名字）' };
+      }
+    }
+  }
   const ctx = { idFor: fallbackId, ...context };
   const view = doc.viewport ?? { x: 80, y: 60 };
   const ids = [];
@@ -627,6 +651,15 @@ export const TEMPLATE_FILE_KIND = 'ai-node-canvas-template';
 
 /** The shape of the file this version writes. */
 export const TEMPLATE_FILE_VERSION = 1;
+
+/**
+ * The steps a template may carry.
+ *
+ * A template is the skeleton of a chain, so it makes nodes and draws the
+ * lines between them. The settings of a node travel with the node that is
+ * made. Anything else — a run, a removal — is not a step of a chain.
+ */
+export const TEMPLATE_ACTION_TYPES = ['add_node', 'connect'];
 
 /**
  * The document a template is shared as.
@@ -939,7 +972,8 @@ export function applyAction(canvas, action, context = {}) {
     let modeChanged = null;
     if (args.mode !== undefined) {
       // The mode is a choice the card offers; a mode the node does not have
-      // is not set on it.
+      // is not set on it — and it is said, because a change that quietly did
+      // nothing is a change the caller believes it made.
       const modes = modesOf(next);
       if (modes.some((mode) => mode.id === args.mode)) {
         next.metadata.mode = String(args.mode);
@@ -954,6 +988,11 @@ export function applyAction(canvas, action, context = {}) {
         for (let i = connections.length - 1; i >= 0; i -= 1) {
           if (dropped.includes(connections[i])) connections.splice(i, 1);
         }
+      } else {
+        return {
+          canvas: doc,
+          error: `这个节点没有「${args.mode}」这个模式（${next.type} 节点有的是：${modes.map((mode) => mode.id).join('、')}）`,
+        };
       }
     }
     if (args.model !== undefined) {

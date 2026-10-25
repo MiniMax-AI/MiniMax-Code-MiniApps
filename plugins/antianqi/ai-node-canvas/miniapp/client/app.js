@@ -1481,6 +1481,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       if (modeOf(node) === 'prompt') body.appendChild(renderPromptTemplate(node));
       body.appendChild(renderParams(node));
     }
+    if (node.metadata.output?.notice) {
+      body.appendChild(el('div', 'nxc-node__notice', node.metadata.output.notice));
+    }
     if (node.metadata.output?.error) {
       body.appendChild(el('div', 'nxc-node__error', node.metadata.output.error));
     }
@@ -4014,9 +4017,13 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       return task;
     } catch (error) {
       // The node is busy: another run is on it. That is not a failure, and the
-      // chain waits for the run that is going.
+      // chain waits for the run that is going. The reason is written down,
+      // so the one who asked can tell "it is busy" from "it did not start".
       if (isBusyRefusal(error)) {
+        node.metadata.output.notice = String(error?.message ?? error);
         showBanner(String(error?.message ?? error));
+        markDirty();
+        render();
         return null;
       }
       node.metadata.output.status = 'error';
@@ -4247,7 +4254,11 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         // hour, and the result shows up on the canvas on its own.
         const task = await startRun(node, { chain: false });
         if (!task) {
-          await ackAction(action.id, false, node.metadata.output?.error || '这次运行没有开始');
+          await ackAction(
+            action.id,
+            false,
+            node.metadata.output?.notice || node.metadata.output?.error || '这次运行没有开始',
+          );
           return;
         }
         await ackAction(action.id, true, '', { nodeId: node.id, runId: task.id });

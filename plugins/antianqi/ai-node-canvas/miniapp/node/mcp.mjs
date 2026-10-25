@@ -13,9 +13,9 @@
 // The rules about a node — its role, what it holds, what it hands on, which
 // kinds it can take — are the same pure functions the page renders from, so
 // what the Agent reads is what the user sees on the card.
-import { batchCount, effectiveOption, inputSlotState, kindOf, modeOf, modeRecordOf, roleOf, slotsOf } from '../client/tools.mjs';
+import { batchCount, effectiveOption, kindOf, modeOf, modeRecordOf, portState, roleOf, slotsOf } from '../client/tools.mjs';
 import { NODE_MODES, stripInputs } from '../client/forms.mjs';
-import { limitsForNodeType, PROMPT_TEMPLATES } from './capabilities.mjs';
+import { CAPABILITIES, limitsForNodeType, PROMPT_TEMPLATES } from './capabilities.mjs';
 
 // Keep in sync with `mcpEndpoints` in miniapp/miniapp.json.
 export const MCP_PATH = '/mcp/canvas';
@@ -47,6 +47,45 @@ const MODE_HINT = [
     return `${name}可用 ${list}`;
   })
   .join('，');
+
+/**
+ * Check the arguments against the tool's own schema.
+ *
+ * The schema is what the Agent reads, so it has to be what the tool enforces:
+ * an argument the schema does not allow must not reach the implementation, an
+ * argument the schema asks for must not be quietly replaced by a default, and
+ * a value outside an enumeration must be refused rather than ignored.
+ */
+export function checkArgs(schema, args) {
+  const problems = [];
+  const properties = schema?.properties ?? {};
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+  for (const key of required) {
+    const value = args?.[key];
+    if (value === undefined || value === null) problems.push(`缺少必填参数 ${key}`);
+  }
+  if (schema?.additionalProperties === false) {
+    for (const key of Object.keys(args ?? {})) {
+      if (!(key in properties)) problems.push(`不认识的参数 ${key}`);
+    }
+  }
+  for (const [key, spec] of Object.entries(properties)) {
+    const value = args?.[key];
+    if (value === undefined) continue;
+    if (Array.isArray(spec?.enum) && !spec.enum.includes(value)) {
+      problems.push(`${key} 只能是 ${spec.enum.join(' / ')}，收到的是 ${String(value)}`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * The emotion enum the connector accepts.
+ *
+ * The page shows a Chinese label, but the value that reaches the provider is
+ * the English one — so the Agent is told the values it may send.
+ */
+const EMOTION_IDS = (CAPABILITIES.audio?.emotions ?? []).map((item) => item.value);
 
 export const MCP_TOOLS = [
   {
@@ -157,7 +196,11 @@ export const MCP_TOOLS = [
         duration: { type: 'number', description: '时长（秒）' },
         count: { type: 'number', description: '一次生成几张（图片 / 音频 / 音乐可用）' },
         voice: { type: 'string', description: '音色 id' },
-        emotion: { type: 'string', description: '情绪' },
+        emotion: {
+          type: 'string',
+          enum: EMOTION_IDS,
+          description: `情绪：${EMOTION_IDS.join(' / ')}（这是 provider 收的值，页面上的中文是给人看的）`,
+        },
         mode: {
           type: 'string',
           enum: MODE_IDS,
@@ -248,9 +291,14 @@ export const MCP_TOOLS = [
  */
 export function slotsOfNode(canvas, node, caps = capsOf(node)) {
   return {
+    // A port with a role is a slot of its own: the first frame and the last
+    // frame are two ports, not one port twice — so the Agent can tell which
+    // line goes where, and which of them is still open.
     inputs: stripInputs(node, caps).map((slot) => ({
       kind: slot.kind,
-      state: inputSlotState(canvas, node, slot.kind),
+      role: slot.role ?? '',
+      label: slot.label ?? '',
+      state: portState(canvas, node, slot),
     })),
     outputs: slotsOf(node).outputs.map((slot) => ({ kind: slot.kind, state: 'out' })),
   };
@@ -298,12 +346,16 @@ export function describeCanvas(canvas) {
     connectionCount: connections.length,
     nodes: nodes.map((node) => {
       const caps = capsOf(node);
+      const output = node.metadata?.output ?? {};
       return {
         id: node.id,
         type: node.type,
         role: roleOf(node),
         title: node.title ?? '',
-        status: node.metadata?.output?.status ?? 'idle',
+        status: output.status ?? 'idle',
+        // What went wrong, when something did: a status alone tells the Agent
+        // that the run failed, not why.
+        error: String(output.error ?? ''),
         contentKind: kindOf(node),
         // The mode says what the node takes, and the slots are its inputs.
         mode: modeOf(node),
@@ -312,6 +364,14 @@ export function describeCanvas(canvas) {
         model: node.metadata?.model ?? '',
         prompt: String(node.metadata?.prompt ?? '').slice(0, PROMPT_LIMIT),
         params: effectiveParams(node, caps),
+        // The template the prompt node expands its sentence with, and the
+        // material the node holds — the next step reads this one.
+        templateId: node.metadata?.templateId ?? '',
+        media: (output.media ?? []).map((item) => ({
+          kind: item?.kind ?? '',
+          url: item?.url ?? '',
+        })),
+        text: String(output.text ?? '').slice(0, PROMPT_LIMIT),
       };
     }),
     connections: connections.map((conn) => ({
@@ -487,7 +547,12 @@ export async function handleMcp(req, res, { store, queue, serverInfo, json, temp
       try {
         const { name, arguments: args = {} } = message.params || {};
         if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('工具参数无效');
-        if (!MCP_TOOLS.some((tool) => tool.name === name)) throw Error('未知工具');
+        const tool = MCP_TOOLS.find((item) => item.name === name);
+        if (!tool) throw Error('未知工具');
+        // The schema the Agent read is the schema the tool enforces: a change
+        // that quietly does nothing is worse than one that is refused.
+        const problems = checkArgs(tool.inputSchema, args);
+        if (problems.length) throw Error(problems.join('；'));
         const result = await callCanvasTool(name, args, { store, queue, templates });
         return reply({ content: [{ type: 'text', text: JSON.stringify(result) }] });
       } catch (error) {

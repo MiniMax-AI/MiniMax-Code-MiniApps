@@ -251,7 +251,17 @@ const TEXT_LIMITS = {
 };
 
 // Global cap on how many references a single generation may carry.
-export const MAX_REFERENCES = 10;
+/**
+ * The most references one request may carry.
+ *
+ * It is the provider's own ceiling for a reference collection: nine pictures,
+ * three clips and three sounds are twelve items in all, and one request
+ * carries twelve. It is not a stricter number of our own — a number below the
+ * provider's would refuse a request the provider would have taken, and the
+ * per-kind limits (how many pictures, how many clips) are checked against the
+ * model that is asked.
+ */
+export const MAX_REFERENCES = 12;
 
 export const CAPABILITIES = {
   image: IMAGE_LIMITS,

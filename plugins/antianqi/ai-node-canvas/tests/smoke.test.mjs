@@ -926,8 +926,9 @@ test('the server enforces the reference limits before starting a run', async (t)
   assert.equal(ten.status, 400);
   assert.match(ten.body.message, /参考图片超过上限/);
 
-  // The global reference cap applies regardless of model. Use a fresh node so
-  // the busy guard of the previous run does not fire first.
+  // The global reference cap applies regardless of model. It is the provider's
+  // own ceiling — a collection holds twelve items in all — so a request with
+  // thirteen is refused before it is sent.
   const tooMany = await getJson(h.base, '/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -936,7 +937,7 @@ test('the server enforces the reference limits before starting a run', async (t)
       mode: 'image',
       prompt: 'x',
       modelKey: JSON.stringify({ providerId: 'minimax', modelId: 'minimax-M3' }),
-      references: Array.from({ length: 11 }, (_, index) => ({
+      references: Array.from({ length: 13 }, (_, index) => ({
         id: `n_${index}`,
         title: `素材 ${index}`,
         kind: 'image',
@@ -946,7 +947,38 @@ test('the server enforces the reference limits before starting a run', async (t)
     }),
   });
   assert.equal(tooMany.status, 400);
-  assert.match(tooMany.body.message, /参考素材超过 10 个/);
+  assert.match(tooMany.body.message, /参考素材超过 12 个/);
+  // And twelve is not refused by the cap: the cap was a number of our own
+  // before, and it took a request the provider would have taken. A collection
+  // of nine pictures and three clips is twelve items, and H3 takes twelve.
+  const twelve = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_twelve',
+      mode: 'video',
+      nodeMode: 'image2video',
+      prompt: 'x',
+      modelKey: JSON.stringify({ providerId: 'minimax', modelId: 'MiniMax-H3' }),
+      references: [
+        ...Array.from({ length: 9 }, (_, index) => ({
+          id: `n_i${index}`,
+          title: `图 ${index}`,
+          kind: 'image',
+          text: '',
+          media: [{ url: `https://cdn.example.com/${index}.png`, kind: 'image' }],
+        })),
+        ...Array.from({ length: 3 }, (_, index) => ({
+          id: `n_v${index}`,
+          title: `片 ${index}`,
+          kind: 'video',
+          text: '',
+          media: [{ url: `https://cdn.example.com/${index}.mp4`, kind: 'video' }],
+        })),
+      ],
+    }),
+  });
+  assert.doesNotMatch(String(twelve.body?.message ?? ''), /参考素材超过/);
 });
 
 test('the server refuses to forward anything but allowOnce or deny', async (t) => {
@@ -4538,18 +4570,25 @@ test('the MCP tools read the canvas the card shows', async (t) => {
   assert.equal(doc.connectionCount, 2);
 
   // The slots are the ones the card shows, with the same three states. The text
-  // is not among them: it goes into the card's text box.
+  // is not among them: it goes into the card's text box. A port with a role
+  // says which one it is, so the Agent can tell two picture ports apart.
   const gen = doc.nodes.find((node) => node.id === 'n_gen');
   // The picture is connected, so the node sits in the mode that takes a
   // picture — and that mode takes the text as well, in its text box.
-  assert.deepEqual(gen.slots.inputs, [{ kind: 'image', state: 'filled' }]);
+  assert.deepEqual(gen.slots.inputs, [{ kind: 'image', role: '', label: '', state: 'filled' }]);
   assert.deepEqual(gen.slots.outputs, [{ kind: 'image', state: 'out' }]);
   // The input card is a source, the result card is fed and hands on.
   const source = doc.nodes.find((node) => node.id === 'n_in');
   assert.deepEqual(source.slots.inputs, []);
   assert.deepEqual(source.slots.outputs, [{ kind: 'image', state: 'out' }]);
   const result = doc.nodes.find((node) => node.id === 'n_out');
-  assert.deepEqual(result.slots.inputs, [{ kind: 'image', state: 'filled' }]);
+  assert.deepEqual(result.slots.inputs, [{ kind: 'image', role: '', label: '', state: 'filled' }]);
+  // And a node says what it holds and what went wrong, so the Agent can pass
+  // the result on and can say why a run failed.
+  assert.equal(gen.error, '');
+  assert.deepEqual(gen.media, []);
+  assert.equal(typeof gen.templateId, 'string');
+  assert.equal(gen.text, '');
   assert.deepEqual(doc.connections, [
     // The kind of an old line is read from the source it comes from, the
     // same way the line is drawn on the board.
@@ -7064,10 +7103,124 @@ test('the ready-made templates cover the ways a chain starts', async () => {
   );
 });
 
+test('a change that quietly does nothing is refused instead', async () => {
+  // A mode the node does not have is not set on it — and it is said, because a
+  // change that quietly did nothing is a change the caller believes it made.
+  const { applyAction } = await import('../miniapp/client/actions.mjs');
+  const canvas = {
+    nodes: [{ id: 'n_img', type: 'image', title: '图', position: { x: 0, y: 0 }, metadata: {} }],
+    connections: [],
+  };
+  const wrong = applyAction(canvas, { type: 'update_node', args: { id: 'n_img', mode: 'music' } }, {});
+  assert.ok(wrong.error, '一个节点没有的模式被悄悄忽略了');
+  assert.match(wrong.error, /music/);
+  // And the node keeps the mode it had.
+  assert.equal(wrong.canvas.nodes[0].metadata.mode, undefined);
+  // A mode the node does have is set.
+  const right = applyAction(canvas, { type: 'update_node', args: { id: 'n_img', mode: 'image2image' } }, {});
+  assert.equal(right.error, undefined);
+  assert.equal(right.canvas.nodes[0].metadata.mode, 'image2image');
+});
+
+test('the tool enforces the schema the Agent read', async () => {
+  // The schema is what the Agent reads, so it has to be what the tool
+  // enforces: a missing argument, a value outside an enumeration and an
+  // argument that is not in the schema are all refused.
+  const { checkArgs } = await import('../miniapp/node/mcp.mjs');
+  const schema = {
+    type: 'object',
+    properties: { type: { type: 'string', enum: ['text', 'image'] } },
+    required: ['type'],
+    additionalProperties: false,
+  };
+  assert.deepEqual(checkArgs(schema, { type: 'text' }), []);
+  assert.ok(checkArgs(schema, {}).some((problem) => problem.includes('type')), '少参数没有被拒');
+  assert.ok(checkArgs(schema, { type: 'music' }).some((problem) => problem.includes('music')), '越界的值没有被拒');
+  assert.ok(checkArgs(schema, { type: 'text', nope: 1 }).some((problem) => problem.includes('nope')), '不认识的参数没有被拒');
+});
+
+test('a template cannot take anything away', async () => {
+  // A template is the skeleton of a chain: it makes nodes and draws the lines
+  // between them. A step that removes something is not a step of a chain, and
+  // a template that could would tidy up the canvas it was dropped on.
+  const { applyTemplate } = await import('../miniapp/client/actions.mjs');
+  const canvas = {
+    nodes: [{ id: 'n_keep', type: 'text', title: '留着', position: { x: 0, y: 0 }, metadata: {} }],
+    connections: [],
+  };
+  const bad = applyTemplate(canvas, {
+    id: 't',
+    title: '坏的',
+    actions: [
+      { type: 'add_node', args: { type: 'text', title: '新' } },
+      { type: 'remove_node', args: { id: 'n_keep' } },
+    ],
+  }, { idFor: () => 'n_new' });
+  assert.ok(bad.error, '模板能删节点');
+  assert.match(bad.error, /remove_node/);
+  // And the whole template is refused: the node it made is not on the canvas
+  // either.
+  assert.equal(bad.canvas.nodes.length, 1);
+  // A line that does not point at the template's own nodes is refused too.
+  const stray = applyTemplate(canvas, {
+    id: 't2',
+    title: '乱指',
+    actions: [{ type: 'connect', args: { from: 'n_keep', to: '@1' } }],
+  }, { idFor: () => 'n_new' });
+  assert.ok(stray.error, '模板的线可以指向别人的节点');
+});
+
+test('a named port is a slot of its own', async () => {
+  // The first frame and the last frame are two slots, not one slot twice: a
+  // line that asks for the first frame cannot land on it when it is taken.
+  const { planPort } = await import('../miniapp/client/actions.mjs');
+  const node = { id: 'n_v', type: 'video', title: '片', metadata: { mode: 'imagefl2video' } };
+  const picture = (id) => ({
+    id,
+    type: 'input',
+    title: '图',
+    position: { x: 0, y: 0 },
+    metadata: { kind: 'image', output: { media: [{ kind: 'image', url: `/uploads/${id}.png` }] } },
+  });
+  const one = { nodes: [node, picture('n_a')], connections: [{ id: 'c1', fromNodeId: 'n_a', toNodeId: 'n_v', kind: 'image' }] };
+  // The line that is there took the first frame, so a second line cannot ask
+  // for the first frame as well.
+  const first = planPort(one, node, 'image', 'first');
+  assert.equal(first.ok, false, '首帧口已经接上了，还能再接一条');
+  assert.match(first.reason, /已经接上/);
+  // The last frame is a slot of its own, and it is free.
+  const last = planPort(one, node, 'image', 'last');
+  assert.equal(last.ok, true);
+  assert.equal(last.role, 'last');
+  // Both picture ports are taken: a third line has nowhere to land.
+  const both = {
+    nodes: [node, picture('n_a'), picture('n_b')],
+    connections: [
+      { id: 'c1', fromNodeId: 'n_a', toNodeId: 'n_v', kind: 'image' },
+      { id: 'c2', fromNodeId: 'n_b', toNodeId: 'n_v', kind: 'image' },
+    ],
+  };
+  const again = planPort(both, node, 'image', 'first');
+  assert.equal(again.ok, false, '两个口都占满了，还能再接一条');
+  assert.match(again.reason, /已经接上/);
+});
+
+test('a run the page did not answer is not on its way, and a busy node says why', async () => {
+  // A run is not repeated: it costs money, and the runtime never sends it
+  // twice. So a run the page did not answer is not "queued" — it may never
+  // have started, and the one who asked is told that instead of being told
+  // it is on its way.
+  const queue = await readFile(fileURLToPath(new URL('../miniapp/node/action-queue.mjs', import.meta.url)), 'utf8');
+  assert.match(queue, /const isRun = action\?\.type === 'run';/);
+  assert.match(queue, /没有确认开始/);
+  // And a node that is busy says so, instead of being marked as failed: it
+  // is not an error, it is another run that is on it.
+  const app = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(app, /node\.metadata\.output\.notice = String\(error\?\.message \?\? error\);/);
+  assert.match(app, /node\.metadata\.output\?\.notice \|\| node\.metadata\.output\?\.error/);
+});
+
 test('the ready-made templates are files, so one can be read and changed', async () => {
-  // A template is data: the user opens one, changes it and keeps it. So the
-  // ones that ship with the MiniApp are files as well — not code that has to
-  // be edited to change one.
   const { BUILTIN_TEMPLATES } = await import('../miniapp/node/templates.mjs');
   const source = await readFile(fileURLToPath(new URL('../miniapp/node/templates.mjs', import.meta.url)), 'utf8');
   assert.match(source, /readdirSync/);

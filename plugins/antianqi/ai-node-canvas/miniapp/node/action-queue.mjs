@@ -256,13 +256,21 @@ export function createActionQueue({ store, runner, logger = null, signal = null,
     // here would leave the page holding a copy that is suddenly old, and its
     // next save would be refused.
     if (isOwned(canvasId)) {
+      // A run is not repeated: it costs money, and the runtime never sends it
+      // twice. So a run the page did not answer is not "queued" — it may never
+      // have started, and the caller is told that instead of being told it is
+      // on its way.
+      const isRun = action?.type === 'run';
+      const unconfirmed = '页面没有回执，这次运行没有确认开始：先看节点的状态，别急着再点一次';
       return {
         appliedBy: 'page',
-        ok: true,
-        error: '',
+        ok: !isRun,
+        error: isRun ? unconfirmed : '',
         info: {
-          queued: true,
-          message: '画布页面暂时没有回执，这个改动已经排在队列里，它会自己应用',
+          queued: !isRun,
+          message: isRun
+            ? unconfirmed
+            : '画布页面暂时没有回执，这个改动已经排在队列里，它会自己应用',
         },
       };
     }
