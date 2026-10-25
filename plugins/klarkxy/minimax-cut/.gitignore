@@ -1,0 +1,3 @@
+# Test fixtures: files the tests create and read (a clip outside the library,
+# a MiniMax Cut data folder to import from). Machine-specific, never tracked.
+tests/.tmp/

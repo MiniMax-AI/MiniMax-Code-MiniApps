@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "minimax-cut": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/minimax-cut",
+      "headers": {},
+      "description": "MiniMax Cut 剪辑台的 20 个工具：读取与改写时间线 JSON、导入素材、看画面与听感、查工程与版本、排队导出。导出由打开的剪辑台页面完成，不另起浏览器。",
+      "timeout": 900000
+    }
+  }
+}
