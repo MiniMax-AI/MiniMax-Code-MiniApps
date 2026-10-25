@@ -7775,3 +7775,97 @@ test('the package tells the Agent how to use the canvas', async () => {
     }
   }
 });
+
+test('a file box is not typing, a text field is', async () => {
+  // The rule that decides when the canvas may be drawn: a redraw that happens
+  // while the user is typing takes the text being typed with it. A file box
+  // is not typing — the user chose a file there and nothing is being written
+  // — and counting it as typing stranded a redraw once: a run that had
+  // finished kept turning for ever.
+  const { isTypingTarget, redrawBlocker } = await import('../miniapp/client/forms.mjs');
+  const input = (type) => ({ tagName: 'INPUT', getAttribute: (name) => (name === 'type' ? type : null) });
+  assert.equal(isTypingTarget(null), false);
+  assert.equal(isTypingTarget({ tagName: 'DIV' }), false);
+  assert.equal(isTypingTarget({ tagName: 'BUTTON' }), false);
+  assert.equal(isTypingTarget({ tagName: 'DIV', isContentEditable: true }), true);
+  assert.equal(isTypingTarget({ tagName: 'TEXTAREA' }), true);
+  assert.equal(isTypingTarget(input('text')), true);
+  assert.equal(isTypingTarget(input('file')), false);
+  assert.equal(isTypingTarget(input('checkbox')), false);
+  assert.equal(isTypingTarget(input('radio')), false);
+  // And what holds a redraw off: the hands, not the page.
+  assert.equal(redrawBlocker(), '');
+  assert.equal(redrawBlocker({ typing: true }), 'typing');
+  assert.equal(redrawBlocker({ pointerHeld: true }), 'pointer');
+  assert.equal(redrawBlocker({ typing: true, pointerHeld: true }), 'typing');
+});
+
+test('a request carries a deadline, and a lost run is told apart from a slow one', async () => {
+  // A request that never comes back would stop the loop that asked for it,
+  // and the card would turn for ever on a run that is long gone. The call is
+  // given a signal, so the work it started can be let go.
+  const { runIsGone, withDeadline } = await import('../miniapp/client/run-watch.mjs');
+  let signal = null;
+  const started = Date.now();
+  await assert.rejects(() => withDeadline((abortSignal) => {
+    signal = abortSignal;
+    return new Promise((_, reject) => {
+      abortSignal.addEventListener('abort', () => reject(new Error('aborted')));
+    });
+  }, 60));
+  assert.ok(signal, 'the call was not given a signal');
+  assert.equal(signal.aborted, true);
+  assert.ok(Date.now() - started < 3000, 'the deadline did not pass');
+  // A run the runtime does not know is gone. A request that timed out is
+  // another matter: the run may still be going.
+  assert.equal(runIsGone({ status: 404 }), true);
+  assert.equal(runIsGone({ status: 500 }), false);
+  assert.equal(runIsGone({ name: 'AbortError' }), false);
+  assert.equal(runIsGone(null), false);
+  // A call that answers in time is handed back as it is.
+  assert.equal(await withDeadline(async () => 'answered', 1000), 'answered');
+});
+
+test('the page asks for a run with a deadline, and asks each run on its own', async () => {
+  // The card of a run that is over must not keep turning: the request that
+  // asks for the run carries a deadline, and one run that does not answer
+  // must not keep the others from being seen.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(source, /const POLL_TIMEOUT_MS = \d+;/);
+  assert.match(source, /await apiWithDeadline\(`\/api\/runs\/\$\{taskId\}`, POLL_TIMEOUT_MS\)/);
+  assert.match(source, /if \(state\.polling\.has\(taskId\)\) continue;/);
+  // And the run that is gone is said out loud instead of turning for ever.
+  assert.match(source, /if \(!runIsGone\(error\)\) return;/);
+  assert.match(source, /error: '这次运行已经不在了/);
+});
+
+test('a redraw that was held off is not lost, and a button under the pointer is not replaced', async () => {
+  // The redraw waits for the user to stop typing — but the focus may leave
+  // any field, not only the one in a card, so the wait has to end there too.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(source, /document\.addEventListener\('focusout', \(\) => \{\s*\n\s*flushRender\(\);/);
+  // And the poll is the heartbeat that puts a held-off redraw back on the
+  // screen, and that keeps the progress panel true.
+  assert.match(source, /renderTaskPanel\(\);\s*\n\s*flushRender\(\);/);
+  // A click that is in flight: the button under the pointer stays where it
+  // is, so the click reaches it.
+  assert.match(source, /state\.pointerAt = Date\.now\(\);/);
+  assert.match(source, /state\.pendingPanel = true;/);
+});
+
+test('every module the page imports is served, and the fingerprint covers it', async () => {
+  // A module the page imports but the server does not serve is a page that
+  // never starts: the import fails, and the canvas stays blank with nothing
+  // said on the screen. The files the page is made of are one list, and the
+  // fingerprint is that same list — so a new file is registered in one place.
+  const { CLIENT_FILES, FINGERPRINT_FILES } = await import('../miniapp/node/server.mjs');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const imported = [...source.matchAll(/from '\.\/([A-Za-z0-9_.-]+\.mjs)'/g)].map((match) => match[1]);
+  assert.ok(imported.length >= 4, 'the imports of the page were not found');
+  for (const name of imported) {
+    assert.ok(CLIENT_FILES.has(`/${name}`), `${name} is imported by the page but not served`);
+  }
+  // And the fingerprint is the same list, so a page that was left open reloads
+  // itself when the client code changes.
+  assert.deepEqual(FINGERPRINT_FILES, [...CLIENT_FILES.values()].map((entry) => entry.file));
+});

@@ -430,6 +430,53 @@ export function hasTextBox(node) {
 }
 
 /**
+ * The controls that are not typing.
+ *
+ * A text field is typing; a file box, a checkbox or a button is not: the user
+ * pressed something there, and a redraw does not disturb it at all.
+ */
+const NON_TEXT_INPUT_TYPES = new Set([
+  'file', 'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color',
+]);
+
+/**
+ * Whether the element that has the focus is one the user is typing in.
+ *
+ * The rule matters because a redraw is held off while the user is typing: a
+ * redraw rebuilds the cards, and it would take the text being typed with it.
+ * A file box is not typing — the user chose a file there and nothing is being
+ * written — and counting it as typing is what stranded a redraw once: the
+ * canvas then showed a run that had finished as one that was still going, and
+ * nothing on the page ever drew it again.
+ *
+ * The element is taken as it is, so the rule can be read and tested on its own.
+ */
+export function isTypingTarget(element) {
+  if (!element) return false;
+  if (element.isContentEditable === true) return true;
+  const tag = element.tagName ?? '';
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') return false;
+  const type = String(element.getAttribute?.('type') ?? '').toLowerCase();
+  return !NON_TEXT_INPUT_TYPES.has(type);
+}
+
+/**
+ * Why the canvas may not be drawn right now.
+ *
+ * Two reasons, and both of them are about the user's hands. A redraw while
+ * the user is typing takes the text being typed with it, and a redraw while
+ * a click is in flight takes the button under the pointer — so the click
+ * never reaches anything.
+ *
+ * The answer is empty when the canvas may be drawn.
+ */
+export function redrawBlocker({ typing = false, pointerHeld = false } = {}) {
+  if (typing) return 'typing';
+  if (pointerHeld) return 'pointer';
+  return '';
+}
+
+/**
  * The kinds that get a port on the card's edge.
  *
  * A node with a text box takes its text in the text box, so the text has no

@@ -24,18 +24,25 @@ import { readTemplates, removeTemplate, saveTemplate } from './templates.mjs';
 // Keep in sync with `surface.path` in miniapp/miniapp.json.
 const SURFACE_PATH = '/canvas';
 
-const CLIENT_FILES = new Map([
+// The files the page is made of.
+//
+// One list: the page is served from it, and the fingerprint covers it. A
+// module the page imports but the server does not serve is a page that never
+// starts — the import fails and the canvas stays blank with nothing said on
+// the screen — so a new file is registered here and nowhere else.
+export const CLIENT_FILES = new Map([
   ['/app.js', { file: 'app.js', type: 'text/javascript; charset=utf-8' }],
   ['/mention.mjs', { file: 'mention.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/tools.mjs', { file: 'tools.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/forms.mjs', { file: 'forms.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/actions.mjs', { file: 'actions.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/run-watch.mjs', { file: 'run-watch.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/styles.css', { file: 'styles.css', type: 'text/css; charset=utf-8' }],
 ]);
 
 // The fingerprint covers the client code only, so injecting it into the page
 // cannot change the fingerprint.
-const FINGERPRINT_FILES = ['app.js', 'mention.mjs', 'tools.mjs', 'forms.mjs', 'actions.mjs', 'styles.css'];
+export const FINGERPRINT_FILES = [...CLIENT_FILES.values()].map((entry) => entry.file);
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;

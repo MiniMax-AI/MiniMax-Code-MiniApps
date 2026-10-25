@@ -11,7 +11,8 @@
 // chips in the text.
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
-import { cardChrome, DATA_KINDS, hasTextBox, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, runModeOf, stripInputs } from './forms.mjs';
+import { cardChrome, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf, stripInputs } from './forms.mjs';
+import { runIsGone, withDeadline } from './run-watch.mjs';
 import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
@@ -43,6 +44,14 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   const POLL_MS = 700;
   const ACTION_POLL_MS = 700;
   const AUTOSAVE_MS = 1100;
+  // A poll that never comes back would stop the whole loop, and the card would
+  // turn for ever on a run that is long gone.
+  const POLL_TIMEOUT_MS = 8000;
+  // A click that is in flight: the button under the pointer must not be
+  // replaced before the pointer lets go, or the click lands on nothing. The
+  // hold is only believed for a moment, because a pointer that was let go
+  // outside the window never sends its pointerup.
+  const POINTER_HOLD_MS = 5000;
   const HISTORY_MAX = 50;
   const HISTORY_DEBOUNCE_MS = 350;
   const GRID_SIZE = 48;
@@ -90,6 +99,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     media: { available: false, version: '', ffprobe: false, canUpload: false },
     tasks: new Map(), // taskId -> task record
     nodeTasks: new Map(), // nodeId -> taskId
+    polling: new Set(), // taskIds whose poll is still on its way
     pollTimer: null,
     actionTimer: null,
     saveTimer: null,
@@ -102,6 +112,8 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     clip: null,
     band: null,
     pendingRender: false,
+    pendingPanel: false,
+    pointerAt: 0,
     minimap: false,
     theme: 'system',
     editors: new Map(),
@@ -3110,13 +3122,23 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   function isEditing() {
-    const active = document.activeElement;
-    if (!active) return false;
-    return active.isContentEditable === true || active.tagName === 'INPUT' || active.tagName === 'TEXTAREA';
+    return isTypingTarget(document.activeElement);
+  }
+
+  /**
+   * Why the canvas may not be drawn right now.
+   *
+   * A redraw that happens while the user is typing takes the text with it,
+   * and a redraw that happens while a click is in flight takes the button
+   * under the pointer — so the click never reaches anything.
+   */
+  function redrawHeld() {
+    const held = state.pointerAt && Date.now() - state.pointerAt < POINTER_HOLD_MS;
+    return redrawBlocker({ typing: isEditing(), pointerHeld: Boolean(held) });
   }
 
   function scheduleRender() {
-    if (isEditing()) {
+    if (redrawHeld()) {
       state.pendingRender = true;
       return;
     }
@@ -3125,10 +3147,15 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
 
   function flushRender() {
     if (!state.pendingRender) return;
+    if (redrawHeld()) return;
     state.pendingRender = false;
     window.setTimeout(() => {
-      if (!isEditing()) render();
-      else state.pendingRender = true;
+      // The hands may have moved on while the redraw waited its turn.
+      if (redrawHeld()) {
+        state.pendingRender = true;
+        return;
+      }
+      render();
     }, 0);
   }
 
@@ -3191,6 +3218,14 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   function renderTaskPanel() {
     const panel = dom.taskPanel;
     if (!panel) return;
+    // A button under the pointer must not be replaced while the pointer is
+    // pressing it: the click would land on nothing. The panel is drawn again
+    // when the pointer lets go.
+    if (state.pointerAt && Date.now() - state.pointerAt < POINTER_HOLD_MS) {
+      state.pendingPanel = true;
+      return;
+    }
+    state.pendingPanel = false;
     const now = Date.now();
     const tasks = [...state.tasks.values()].filter(
       (task) => task.status === 'running' || task.status === 'waiting-question' || task.status === 'error'
@@ -4077,33 +4112,82 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   async function pollTasks() {
     const entries = [...state.nodeTasks.entries()];
     if (entries.length === 0) {
-      window.clearInterval(state.pollTimer);
-      state.pollTimer = null;
-      return;
+      // The panel keeps a finished run for a moment, so its last lines can be
+      // read, and a redraw that was held off has to find its way to the
+      // screen. So the poll stays a little longer than the run does.
+      if (!state.pendingRender && dom.taskPanel?.hidden) {
+        window.clearInterval(state.pollTimer);
+        state.pollTimer = null;
+        return;
+      }
     }
     for (const [nodeId, taskId] of entries) {
-      try {
-        const payload = await api(`/api/runs/${taskId}`);
-        const task = payload.run;
-        const node = getNode(nodeId);
-        // The result is applied before the task is recorded as settled: the
-        // chain waits for the task, and the result node has to exist by then.
-        if (node) {
-          applyRunResult(node, task);
-        }
-        state.tasks.set(taskId, task);
-        if (task.status && !['running', 'waiting-question'].includes(task.status)) {
-          // The run is over. The panel keeps it for a moment, so the last
-          // lines of its log can still be read.
-          task.finishedAt = Date.now();
-          state.nodeTasks.delete(nodeId);
-          if (task.status === 'error') showBanner(task.error || '生成失败', 'error');
-        }
-        markDirty();
-        scheduleRender();
-      } catch {
-        // Transient poll failures are ignored; the next tick retries.
+      // Every run is asked on its own: one request that hangs must not keep
+      // the others from being seen, and the one that is still on its way is
+      // not asked again.
+      if (state.polling.has(taskId)) continue;
+      state.polling.add(taskId);
+      void pollRun(nodeId, taskId).finally(() => state.polling.delete(taskId));
+    }
+    // The progress is not the editor's business: it is drawn even while the
+    // canvas waits for the user to stop typing. And a redraw that was held
+    // off finds its way to the screen as soon as the hands are off the keys.
+    renderTaskPanel();
+    flushRender();
+  }
+
+  /**
+   * A request with a deadline.
+   *
+   * A request that never comes back would stop the loop that asked for it,
+   * and the card would turn for ever on a run that is long gone.
+   */
+  async function apiWithDeadline(path, ms) {
+    return withDeadline((signal) => api(path, { signal }), ms);
+  }
+
+  /**
+   * Ask the runtime about one run and put what it says on the card.
+   *
+   * A run the runtime does not know any more is said out loud: a card that
+   * turns for ever tells the user nothing. A request that timed out is
+   * another matter — the run may still be going — so the card keeps what it
+   * knows and the next tick asks again.
+   */
+  async function pollRun(nodeId, taskId) {
+    try {
+      const payload = await apiWithDeadline(`/api/runs/${taskId}`, POLL_TIMEOUT_MS);
+      const task = payload?.run;
+      if (!task) return;
+      const node = getNode(nodeId);
+      // The result is applied before the task is recorded as settled: the
+      // chain waits for the task, and the result node has to exist by then.
+      if (node) {
+        applyRunResult(node, task);
       }
+      state.tasks.set(taskId, task);
+      if (task.status && !['running', 'waiting-question'].includes(task.status)) {
+        // The run is over. The panel keeps it for a moment, so the last
+        // lines of its log can still be read.
+        task.finishedAt = Date.now();
+        state.nodeTasks.delete(nodeId);
+        if (task.status === 'error') showBanner(task.error || '生成失败', 'error');
+      }
+      markDirty();
+      scheduleRender();
+    } catch (error) {
+      if (!runIsGone(error)) return;
+      const node = getNode(nodeId);
+      if (node) {
+        node.metadata.output = {
+          ...(node.metadata.output ?? {}),
+          status: 'error',
+          error: '这次运行已经不在了（运行时重启过），重新生成一次就好',
+        };
+      }
+      state.nodeTasks.delete(nodeId);
+      markDirty();
+      scheduleRender();
     }
   }
 
@@ -5179,6 +5263,27 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       closeDropdown();
       closeMentionMenu();
       closePanel();
+    });
+    // A pointer that goes down: the canvas is not redrawn while the click is
+    // in flight, because the button under the pointer would be replaced
+    // before the pointer lets go, and the click would land on nothing.
+    document.addEventListener('pointerdown', () => {
+      state.pointerAt = Date.now();
+    }, true);
+    const releasePointer = () => {
+      state.pointerAt = 0;
+      flushRender();
+      if (state.pendingPanel) {
+        state.pendingPanel = false;
+        renderTaskPanel();
+      }
+    };
+    window.addEventListener('pointerup', releasePointer, true);
+    window.addEventListener('pointercancel', releasePointer, true);
+    // A field that loses the focus — any field, not only the one in a card —
+    // means the user stopped typing, so a redraw that was held off is drawn.
+    document.addEventListener('focusout', () => {
+      flushRender();
     });
   }
 
