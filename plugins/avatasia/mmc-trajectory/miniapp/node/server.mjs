@@ -74,9 +74,8 @@ const MAX_RAW_BYTES = 65536;
  * This has to stay at or above the page's poll interval, and that relationship — not this
  * number — is the invariant tests/verify-list-cache.mjs holds. Below the interval the cache
  * cannot survive a single poll: every tick expires it, so the list re-walks the session tree
- * on every tick. Measured on this machine, that walk was most of the 16 GB this process read
- * in 68 minutes, and the allocation behind it held the process at a 1.2-2.5 GB high-water mark
- * for as long as the page stayed open.
+ * on every tick. The walk is the expensive part of serving the list, and a cache that expires
+ * on every tick pays for it on every tick, for as long as the page stays open.
  *
  * The runtime database is a separate matter and this TTL does not govern it. The titles read
  * rides the same interval, but the current conversation is re-read on every poll and is not
@@ -122,8 +121,8 @@ const MAX_SEARCH_HITS = MAX_HITS;
  * graph's size, so an entry is charged for the SOURCE bytes it was parsed from, times
  * `PARSED_ROWS_HEAP_PER_SOURCE_BYTE`. What this budget bounds is therefore how much INPUT the
  * cache holds, not how much memory the process ends up holding. The two are related by a measured
- * factor — on this machine the retained rows cost about 1.4x their source bytes — and that factor
- * moves with the shape of the messages, so it is a measurement and not an identity.
+ * factor — the rows cost more than the bytes they were parsed from — and that factor moves with
+ * the shape of the messages, so it is a measurement and not an identity.
  *
  * This budget no longer covers the file that matters. A cache keyed on path+size+mtime for a file
  * that is being appended to has no hit rate to speak of: `handleTrajectory` only reaches the parse
@@ -136,10 +135,7 @@ const MAX_SEARCH_HITS = MAX_HITS;
  * store keeps one rotated generation per compaction under `snapshots/` — and when they add up to
  * more than this budget, the ones the budget cannot hold are parsed again on every request. So
  * this is a trade and not a generosity: what the budget holds is paid for in memory, and what it
- * does not hold is paid for again on every poll. Measured on 2026-10-23 on this machine, on one
- * session of 79 sealed generations and 255 MB of source text, this budget retained 49.2% of that
- * source (about 187 MB of live heap) and the other 50.6% was parsed again on every request, at
- * 1.33 s of parsing per poll.
+ * does not hold is paid for again on every poll.
  *
  * `PARSED_ROWS_CACHE_TTL_MS` bounds the other end: how long the retained rows stay after nobody
  * asks for them. Pinned by tests/verify-parsed-rows.mjs.
@@ -149,12 +145,11 @@ const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
  * Heap charged to one cache entry per source byte read. V8 cannot report an object graph's
  * size, so a byte budget needs a proxy.
  *
- * Measured on this machine: on 2026-10-15, 95.3 MB of messages.jsonl retained 116 MB of heap
- * after two forced collections, i.e. 1.22x the source; on 2026-10-23, the rows a session of 255
- * MB of source left in the cache cost about 187 MB of live heap for the 131.5 MB of source the
- * budget held, i.e. 1.42x. PARSED_ROWS_HEAP_PER_SOURCE_BYTE leaves headroom over both while still
- * erring on the side of over-counting, because a proxy that under-counts would let the cache grow
- * past its own budget without noticing.
+ * The rows a session leaves in the cache cost more than the bytes they were parsed from — the
+ * multiple has been measured between 1.2x and 1.5x — and it moves with the shape of the messages,
+ * so PARSED_ROWS_HEAP_PER_SOURCE_BYTE leaves headroom over it while still erring on the side of
+ * over-counting: a proxy that under-counts would let the cache grow past its own budget without
+ * noticing.
  *
  * It was 3x before, and that was wrong in the direction that matters: 95.3 MB x 3 charged
  * 286 MB against the budget, so the LRU evicted entries it had room for in reality and
@@ -4616,7 +4611,7 @@ export async function start(context) {
       // Fast path: the id is the one the walk published that directory under, so the directory is
       // already known and no scanning is needed. This is what makes a session outside the recent
       // window reachable at all — before this, the only directories this branch could see were the ones
-      // the picker shows, so 116 of 146 sessions on this machine answered 404 to their own id.
+      // the picker shows, so a session outside that window answered 404 to its own id.
       //
       // The walk's decision is not the last word. The manifest can change under the walk, so the
       // identity of the directory is read again and compared: a directory that has stopped

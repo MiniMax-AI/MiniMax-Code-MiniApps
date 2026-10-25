@@ -2240,13 +2240,13 @@
 
            The cap stays on this rule, because it is a property of every state and not of the
            pinned ones. It is `--inspector-full-h`, the same number `is-inspector-full` uses,
-           because that is already `innerHeight - pinned strips - the ledger's reserved share`:
-           the panel can be neither taller than the window nor able to squeeze the rows. What
-           changed is the reason. It used to be 「a sticky-bottom element has nowhere legal to
-           sit」, which was true while sticky was here and is not true now; in flow this is an
-           ordinary static block. It is capped because the panel is the last thing in the
-           document, and a panel taller than the window is one the reader has to scroll past to
-           reach the end of the page. */
+           because that is already `innerHeight - pinned strips - the ledger's reserved share`
+           (INSPECTOR_LEDGER_SHARE): the panel can be neither taller than the window nor able to
+           squeeze the rows. What changed is the reason. It used to be 「a sticky-bottom element
+           has nowhere legal to sit」, which was true while sticky was here and is not true now;
+           in flow this is an ordinary static block. It is capped because the panel is the last
+           thing in the document, and a panel taller than the window is one the reader has to
+           scroll past to reach the end of the page. */
         #inspector-panel {
           max-height: var(--inspector-full-h, 70vh);
           overflow-y: auto;
@@ -2879,8 +2879,7 @@
           // It keeps its kind on purpose. The record genuinely is a reply, the 答复 chip counts
           // it and the reply filter keeps it — it is an anomaly *as well as* a reply, not
           // instead of one. 无答复 cannot see it either way: an empty reply closes its turn, so
-          // `closed` is true and that rule has nothing to fire on. Measured on this session:
-          // two, one of them the turn that ended in front of the reader with nothing shown.
+          // `closed` is true and that rule has nothing to fire on.
           // `hasText` is the server's own verdict, measured from the text it projected, and it is
           // NOT the same question as whether `summary` is empty: a body-less reply is given its
           // title as a summary, so reading one from the other would find nothing to flag.
@@ -5018,12 +5017,12 @@
        *
        * A run the runtime spawned from another session is a session like any other, and the runtime
        * hangs it off its parent with one column. The page used to draw both in one dropdown, flat:
-       * thirteen of twenty rows were runs of the one conversation being read, and nothing on the row
-       * said so.
+       * most of the rows were runs of the one conversation being read, and nothing on the row said
+       * so.
        *
        * It then drew them inside the same dropdown, indented under their conversation. That made the
-       * hierarchy visible, and made the dropdown long — forty rows on this machine, nineteen of them
-       * runs — so picking one conversation meant scrolling a list of titles to find it.
+       * hierarchy visible and made the dropdown long, so picking one conversation meant scrolling a
+       * list of titles to find it.
        *
        * It is two controls now, and the second is a cascade of the first:
        *
