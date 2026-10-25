@@ -3607,7 +3607,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     body.appendChild(save);
     // A template travels two ways: into a file that can be sent to another
     // machine, and out of a file that one sent. Both are on the toolbar.
-    body.appendChild(el('div', 'nxc-panel__desc', '这里铺在当前画布上；要开一张新画布，用「导入模板」。'));
+    body.appendChild(el('div', 'nxc-panel__desc', '这里铺在当前画布上；要导入别人发来的模板文件，用「导入模板」。'));
   }
 
   /**
@@ -4765,12 +4765,16 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   /**
-   * The templates that are ready to use and the files on this machine.
+   * The template files on this machine, and the way to bring one in.
+   *
+   * This panel is about **files**: a template that came from somewhere else.
+   * The ready-made workflows are in the template panel, where the list of
+   * templates belongs — the same template in two menus would be the same
+   * thing twice, and twice is one too many.
    *
    * A template that is picked here gets a canvas of its own: the canvas that
-   * is open now is a piece of work in progress, and a new chain should not be
-   * poured into it. The template panel puts a template on the canvas that is
-   * open instead.
+   * is open now is a piece of work in progress, and a chain that came from
+   * somewhere else should not be poured into it.
    *
    * The file a template travels in lands in the Downloads folder, so that is
    * where the runtime looks for it. Every file is read by the one rule that
@@ -4794,22 +4798,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     panel.style.left = `${place.left}px`;
     panel.style.top = `${place.top}px`;
 
-    let templates = [];
-    try {
-      const response = await api('/api/templates');
-      templates = (Array.isArray(response.templates) ? response.templates : []).filter((item) => !item.own);
-    } catch (error) {
-      body.textContent = `没找到模板：${error?.message ?? error}`;
-      return;
-    }
     body.textContent = '';
-    body.appendChild(el('div', 'nxc-panel__desc', '选中的模板会开一张新画布。'));
-    if (!templates.length) {
-      body.appendChild(el('div', 'nxc-panel__desc', '还没有预设模板。'));
-    }
-    renderTemplateGroups(body, templateGroups(templates), (template) => {
-      void openTemplateInNewCanvas(template);
-    });
+    body.appendChild(el('div', 'nxc-panel__desc', '导入的是别人发来的模板文件，选中的会开一张新画布。'));
+    body.appendChild(el('div', 'nxc-panel__desc', '现成的工作流在「模板」里。'));
 
     // The files on this machine. A template that was exported to a folder of
     // the user's own is looked for in that folder, so the path is asked for

@@ -6867,6 +6867,21 @@ test('the toolbar shares templates, and the template button stands by the import
   assert.match(source, /const input = el\('input'\);\s*\n\s*input\.type = 'file'/);
 });
 
+test('a template is listed in one menu, not two', async () => {
+  // The same template in two menus is the same thing twice. The ready-made
+  // workflows live in the template panel, where the list of templates belongs;
+  // the import panel is about the files that came from somewhere else.
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const importPanel = source.match(/async function openImportTemplatePanel\([\s\S]*?\n  }\n/)?.[0] ?? '';
+  const templatesPanel = source.match(/async function openTemplatesPanel\([\s\S]*?\n  }\n/)?.[0] ?? '';
+  assert.ok(importPanel, 'the import panel is gone');
+  assert.ok(templatesPanel, 'the template panel is gone');
+  assert.doesNotMatch(importPanel, /renderTemplateGroups/);
+  assert.match(templatesPanel, /renderTemplateGroups/);
+  // And the import panel says where the ready-made ones are.
+  assert.match(importPanel, /现成的工作流在「模板」里/);
+});
+
 test('a template that is imported gets a canvas of its own', async () => {
   // The canvas that is open now is a piece of work in progress. A chain that
   // is picked in the import panel is a new piece of work, and it gets a
