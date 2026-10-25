@@ -6849,11 +6849,8 @@ test('the toolbar shares templates, and the template button stands by the import
   const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
   assert.match(html, /id="btn-export"[^>]*>导出模板</);
   assert.match(html, /id="btn-import"[^>]*>导入模板</);
-  // The template button stands right of the import.
-  const importAt = html.indexOf('id="btn-import"');
-  const templatesAt = html.indexOf('id="btn-templates"');
-  assert.ok(importAt >= 0, 'the import button is gone');
-  assert.ok(templatesAt > importAt, 'the template button is not right of the import');
+  // There is no template button of its own: one menu holds the templates.
+  assert.doesNotMatch(html, /id="btn-templates"/);
   // The canvas itself can still be saved: it lives in the template panel.
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
   assert.match(source, /function exportTemplateFile\(\)/);
@@ -6868,18 +6865,21 @@ test('the toolbar shares templates, and the template button stands by the import
 });
 
 test('a template is listed in one menu, not two', async () => {
-  // The same template in two menus is the same thing twice. The ready-made
-  // workflows live in the template panel, where the list of templates belongs;
-  // the import panel is about the files that came from somewhere else.
+  // One menu holds the templates: the ready-made workflows, the ones the user
+  // kept, and the files that came from somewhere else. The same template in
+  // two menus would be the same thing twice.
+  const html = await readFile(fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url)), 'utf8');
+  assert.doesNotMatch(html, /id="btn-templates"/);
   const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.doesNotMatch(source, /openTemplatesPanel/);
   const importPanel = source.match(/async function openImportTemplatePanel\([\s\S]*?\n  }\n/)?.[0] ?? '';
-  const templatesPanel = source.match(/async function openTemplatesPanel\([\s\S]*?\n  }\n/)?.[0] ?? '';
   assert.ok(importPanel, 'the import panel is gone');
-  assert.ok(templatesPanel, 'the template panel is gone');
-  assert.doesNotMatch(importPanel, /renderTemplateGroups/);
-  assert.match(templatesPanel, /renderTemplateGroups/);
-  // And the import panel says where the ready-made ones are.
-  assert.match(importPanel, /现成的工作流在「模板」里/);
+  // The ready-made workflows, the ones of the user, the files and the way to
+  // keep the canvas that is open: all of it in this one menu.
+  assert.match(importPanel, /renderTemplateGroups/);
+  assert.match(importPanel, /本机模板文件/);
+  assert.match(importPanel, /把当前画布存成模板/);
+  assert.match(source, /function templateGroups\(templates\)/);
 });
 
 test('a template that is imported gets a canvas of its own', async () => {
@@ -6892,6 +6892,10 @@ test('a template that is imported gets a canvas of its own', async () => {
   // The name of the canvas is the name of the template: there is nothing to
   // ask, because the template already carries one.
   assert.match(source, /if \(askName\) startRename\(/);
+  // An empty canvas is used as it is: there is nothing on it to lose, and a
+  // second empty canvas would only be clutter. A canvas that is not open yet
+  // is not a canvas at all — it would have nowhere to be written.
+  assert.match(source, /const empty = Boolean\(state\.canvas\?\.id\) && !\(state\.canvas\?\.nodes\?\.length\);/);
 });
 
 test('the canvas saves itself, so the toolbar has no save button', async () => {

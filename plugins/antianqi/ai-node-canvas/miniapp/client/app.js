@@ -3546,69 +3546,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     }
   }
 
-  /**
-   * The workflows that are ready to use.
-   *
-   * A template is a skeleton: the steps and their prompts, without what a
-   * run left behind. Putting one on the canvas does not run it — the user
-   * decides when the first node may spend anything.
-   *
-   * The ones picked here land on the canvas that is open now. The ones in the
-   * import panel get a canvas of their own instead.
-   */
-  async function openTemplatesPanel(anchorRect) {
-    const panel = dom.floatingPanel;
-    state.panel = { type: 'templates', nodeId: null };
-    panel.textContent = '';
-    panel.dataset.canvasNoZoom = 'true';
-    panel.appendChild(el('div', 'nxc-panel__title', '模板'));
-    const body = el('div', 'nxc-panel__body', '加载中…');
-    panel.appendChild(body);
-    panel.hidden = false;
-    const rect = panel.getBoundingClientRect();
-    const place = placeOverlay(
-      { left: anchorRect.left, top: anchorRect.bottom + 6 },
-      rect,
-      { width: window.innerWidth, height: window.innerHeight },
-    );
-    panel.style.left = `${place.left}px`;
-    panel.style.top = `${place.top}px`;
-
-    let templates = [];
-    try {
-      const response = await api('/api/templates');
-      templates = Array.isArray(response.templates) ? response.templates : [];
-    } catch (error) {
-      body.textContent = `加载失败：${error?.message ?? error}`;
-      return;
-    }
-    body.textContent = '';
-    // The templates of the user come first: they are the ones that were made
-    // here. The ready-made ones are what a person finds when they have none.
-    const own = templates.filter((item) => item.own);
-    const builtin = templates.filter((item) => !item.own);
-    if (!templates.length) {
-      body.appendChild(el('div', 'nxc-panel__desc', '还没有模板。'));
-    }
-    const groups = templateGroups(builtin);
-    if (own.length) groups.unshift({ label: '我的模板', templates: own });
-    renderTemplateGroups(body, groups, (template) => {
-      applyTemplateOnCanvas(template);
-    });
-    // The canvas that is open now can become a template of its own: the
-    // steps are taken from it, the results and the material are left behind.
-    const save = el('button', 'nxc-panel__option');
-    save.type = 'button';
-    save.appendChild(el('span', null, '把当前画布存成模板'));
-    save.appendChild(el('small', null, '只留步骤：生成节点、连线和提示词；结果和素材不留'));
-    save.addEventListener('click', () => {
-      void saveCurrentCanvasAsTemplate();
-    });
-    body.appendChild(save);
-    // A template travels two ways: into a file that can be sent to another
-    // machine, and out of a file that one sent. Both are on the toolbar.
-    body.appendChild(el('div', 'nxc-panel__desc', '这里铺在当前画布上；要导入别人发来的模板文件，用「导入模板」。'));
-  }
 
   /**
    * Put a template on the canvas.
@@ -3654,7 +3591,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         body: { id, title: `${base} 的模板`, canvasId: state.canvas.id },
       });
       showBanner(`已存成模板「${response?.template?.title ?? base}」`);
-      await openTemplatesPanel(dom.templatesButton.getBoundingClientRect());
+      await openImportTemplatePanel(dom.importButton.getBoundingClientRect());
     } catch (error) {
       showBanner(`没存上：${error?.message ?? error}`, 'error');
     }
@@ -4765,16 +4702,14 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   /**
-   * The template files on this machine, and the way to bring one in.
+   * The templates of this machine and the files that came from elsewhere.
    *
-   * This panel is about **files**: a template that came from somewhere else.
-   * The ready-made workflows are in the template panel, where the list of
-   * templates belongs — the same template in two menus would be the same
-   * thing twice, and twice is one too many.
-   *
-   * A template that is picked here gets a canvas of its own: the canvas that
-   * is open now is a piece of work in progress, and a chain that came from
-   * somewhere else should not be poured into it.
+   * This is the one menu that holds templates: the ready-made workflows, the
+   * ones the user kept, and the template files lying on this machine. A
+   * template that is picked here lands on a canvas of its own — the canvas
+   * that is open now is a piece of work in progress, and a chain that came
+   * from somewhere else should not be poured into it. An empty canvas is used
+   * as it is: there is nothing on it to lose.
    *
    * The file a template travels in lands in the Downloads folder, so that is
    * where the runtime looks for it. Every file is read by the one rule that
@@ -4799,8 +4734,24 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     panel.style.top = `${place.top}px`;
 
     body.textContent = '';
-    body.appendChild(el('div', 'nxc-panel__desc', '导入的是别人发来的模板文件，选中的会开一张新画布。'));
-    body.appendChild(el('div', 'nxc-panel__desc', '现成的工作流在「模板」里。'));
+    body.appendChild(el('div', 'nxc-panel__desc', '选中的模板会开一张新画布；当前画布是空的就用它。'));
+
+    // The templates: the ones of the user first, then the ready-made ones.
+    let templates = [];
+    try {
+      const response = await api('/api/templates');
+      templates = Array.isArray(response.templates) ? response.templates : [];
+    } catch (error) {
+      body.textContent = `没找到模板：${error?.message ?? error}`;
+      return;
+    }
+    const own = templates.filter((item) => item.own);
+    const builtin = templates.filter((item) => !item.own);
+    const groups = templateGroups(builtin);
+    if (own.length) groups.unshift({ label: '我的模板', templates: own });
+    renderTemplateGroups(body, groups, (template) => {
+      void openTemplateInNewCanvas(template);
+    });
 
     // The files on this machine. A template that was exported to a folder of
     // the user's own is looked for in that folder, so the path is asked for
@@ -4892,13 +4843,26 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     });
     pick.appendChild(input);
     body.appendChild(pick);
+
+    // The canvas that is open now can become a template of its own: the steps
+    // are taken from it, the results and the material are left behind.
+    const save = el('button', 'nxc-panel__option');
+    save.type = 'button';
+    save.appendChild(el('span', null, '把当前画布存成模板'));
+    save.appendChild(el('small', null, '只留步骤：生成节点、连线和提示词；结果和素材不留'));
+    save.addEventListener('click', () => {
+      void saveCurrentCanvasAsTemplate();
+    });
+    body.appendChild(save);
   }
 
   /**
    * Put a template on a canvas of its own.
    *
    * The canvas that is open now is left alone: a chain that was picked in the
-   * import panel is a new piece of work, and it gets a canvas of its own.
+   * import panel is a new piece of work, and it gets a canvas of its own. An
+   * **empty** canvas is used as it is — there is nothing on it to lose, and a
+   * second empty canvas would only be clutter.
    *
    * The template is not kept in the list: the file it came from stays where
    * it is, and the import panel finds it there again. A template the user
@@ -4906,6 +4870,18 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
    */
   async function openTemplateInNewCanvas(template) {
     closePanel();
+    // A canvas that is open and empty is used as it is: there is nothing on
+    // it to lose, and a second empty canvas would only be clutter. A canvas
+    // that is not open yet is not a canvas at all — it would have nowhere to
+    // be written — so that one is made.
+    const empty = Boolean(state.canvas?.id) && !(state.canvas?.nodes?.length);
+    if (empty) {
+      // The canvas that is open is empty: it becomes the canvas of this
+      // template, and it takes the name of it.
+      if (template.title) state.canvas.title = template.title;
+      applyTemplateOnCanvas(template);
+      return;
+    }
     await createCanvas(`${template.title || '新画布'}`, { askName: false });
     applyTemplateOnCanvas(template);
   }
@@ -5717,9 +5693,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       await loadPalette();
       openPanel('caps', dom.capsButton.getBoundingClientRect());
     });
-    dom.templatesButton.addEventListener('click', () => {
-      void openTemplatesPanel(dom.templatesButton.getBoundingClientRect());
-    });
     dom.toolsButton.addEventListener('click', () => {
       openToolMenu(dom.toolsButton.getBoundingClientRect());
     });
@@ -5787,7 +5760,6 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     dom.undoButton = $('btn-undo');
     dom.redoButton = $('btn-redo');
     dom.capsButton = $('btn-caps');
-    dom.templatesButton = $('btn-templates');
     dom.toolsButton = $('btn-tools');
     dom.libraryButton = $('btn-library');
     dom.minimapButton = $('btn-minimap');

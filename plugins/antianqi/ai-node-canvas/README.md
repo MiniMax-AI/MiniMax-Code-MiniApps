@@ -261,7 +261,7 @@ this package.
   reference numbers work, which chains are worth building, and what the
   models refuse. The Agent reads it when the request is a generation chain
   rather than a single prompt.
-- **A template is the skeleton of a chain** — the toolbar's 模板 button holds
+- **A template is the skeleton of a chain** — the 导入模板 panel holds
   **thirteen ready-made workflows**, under the headings they belong to:
   - *从文字出发* — a product picture and then an ad, an e-commerce hero shot, a
     shot list and a short film, a batch of pictures;
@@ -287,18 +287,20 @@ this package.
 - **A template travels as a file, and it goes where the user says** — 导出模板
   writes the steps of the canvas that is open now into a JSON file and asks for
   the path: the Downloads folder, the desktop, the documents, or any folder the
-  user types. 导入模板 opens a panel with the **template files** this machine
-  has, and **a template that is picked there gets a canvas of its own** — the
-  canvas that is open now is a piece of work in progress and is left alone. A
-  file carries the steps and nothing else, so it opens whole on another machine:
-  no results, no material, nothing that would break. The empty input a chain
-  starts from **does** travel, so the person who puts the template on their
-  board puts their own file in it.
-- **A template is listed in one menu, not two** — the 模板 panel holds the
-  ready-made workflows and the ones the user kept, and puts the one that is
-  picked on the canvas that is open; the 导入模板 panel holds the files that
-  came from somewhere else, and opens a canvas of its own for them. The same
-  template in two menus would be the same thing twice.
+  user types. 导入模板 opens the one menu that holds templates: the ready-made
+  workflows, the ones the user kept, and the **template files** this machine
+  has. **A template that is picked there gets a canvas of its own** — the
+  canvas that is open now is a piece of work in progress and is left alone (an
+  empty one is used as it is: there is nothing on it to lose). A file carries
+  the steps and nothing else, so it opens whole on another machine: no results,
+  no material, nothing that would break. The empty input a chain starts from
+  **does** travel, so the person who puts the template on their board puts
+  their own file in it.
+- **A template is listed in one menu, not two** — the toolbar has no template
+  button of its own: 导出模板 and 导入模板 are a pair (a canvas becomes a file,
+  a file becomes a canvas), and everything that is a template is in the one
+  panel that 导入模板 opens. The same template in two menus would be the same
+  thing twice.
 - **The canvas is a workbench, and it saves itself** — a change is written
   down about a second later, and the state beside the canvas name says
   whether it happened, so the toolbar has no **保存** button: a button that
