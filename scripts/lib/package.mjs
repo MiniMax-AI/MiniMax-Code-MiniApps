@@ -9,6 +9,8 @@ import { checkMcode } from './rules/mcode.mjs';
 import { checkMiniApp } from './rules/miniapp.mjs';
 import { checkNode } from './rules/node.mjs';
 import { checkReadme } from './rules/readme.mjs';
+import { checkAccessUsage } from './rules/usage.mjs';
+import { requiredHostVersion } from './version.mjs';
 
 export async function validatePackage(packageDir, { requireLowercaseAuthor = true } = {}) {
   const dir = path.resolve(packageDir);
@@ -30,13 +32,19 @@ export async function validatePackage(packageDir, { requireLowercaseAuthor = tru
   if (packageJson.present) checkMcode(report, { packageJson: packageJson.value });
 
   const miniapp = await readJson(report, dir, 'miniapp/miniapp.json', 'MINIAPP_UNREADABLE');
-  let resolved = { nodeRoots: [], clientRoots: [], features: [] };
+  let resolved = { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, microphone: false } };
   if (miniapp.present) resolved = await checkMiniApp(report, { packageDir: dir, manifest: miniapp.value });
   features.push(...resolved.features);
 
   await checkFiles(report, { packageDir: dir });
-  await checkReadme(report, { packageDir: dir, features });
+  await checkReadme(report, { packageDir: dir, features, engines: resolved.engines });
   await checkNode(report, { packageDir: dir, entry: resolved.entry, nodeRoots: resolved.nodeRoots });
+  await checkAccessUsage(report, {
+    packageDir: dir,
+    roots: [...resolved.clientRoots, ...resolved.nodeRoots],
+    access: resolved.access,
+    minimum: requiredHostVersion(features, resolved.engines),
+  });
 
   return report.diagnostics;
 }

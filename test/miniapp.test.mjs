@@ -26,6 +26,7 @@ test('miniapp: baseline passes and resolves entry and roots', async () => {
     nodeRoots: ['miniapp/node'],
     clientRoots: ['miniapp/client'],
     features: [],
+    access: { agent: [], tool: false, microphone: false },
   });
 });
 
@@ -177,6 +178,57 @@ test('miniapp: routes under the Host-reserved /__mavis/ prefix are errors', asyn
   assert.deepEqual(codes(mcp.report.diagnostics), ['MINIAPP_ROUTE_RESERVED']);
   const lookalike = await run((m) => { m.surface.path = '/__mavisboard'; return m; });
   assert.deepEqual(lookalike.report.diagnostics, []);
+});
+
+test('miniapp: engines.mcode is a ">=MAJOR.MINOR.PATCH" bound and reports the feature', async () => {
+  for (const mcode of ['>=3.2.0', '>= 3.1.5', ' >=10.0.12 ']) {
+    const { report, resolved } = await run((m) => { m.engines = { mcode }; return m; });
+    assert.deepEqual(report.diagnostics, [], mcode);
+    assert.deepEqual(resolved.features, ['engines']);
+    assert.equal(resolved.engines, mcode.trim().replace(/^>=\s*/u, ''));
+  }
+  for (const engines of [{ mcode: '3.2.0' }, { mcode: '>3.2.0' }, { mcode: '>=3.2' }, { mcode: '^3.2.0' }, { mcode: '>=3.2.0-beta.1' }, { mcode: '>=3.2.0', node: '>=22' }, {}, '>=3.2.0']) {
+    const { report, resolved } = await run((m) => { m.engines = engines; return m; });
+    assert.deepEqual(codes(report.diagnostics), ['MINIAPP_ENGINES_INVALID'], JSON.stringify(engines));
+    assert.equal(resolved.engines, undefined);
+  }
+});
+
+test('miniapp: toolAccess allows only "call", reports the feature, and grants tool access', async () => {
+  const granted = await run((m) => { m.toolAccess = ['call']; return m; });
+  assert.deepEqual(granted.report.diagnostics, []);
+  assert.deepEqual(granted.resolved.features, ['toolAccess']);
+  assert.equal(granted.resolved.access.tool, true);
+  const empty = await run((m) => { m.toolAccess = []; return m; });
+  assert.deepEqual(empty.report.diagnostics, []);
+  assert.deepEqual(empty.resolved.features, ['toolAccess']);
+  assert.equal(empty.resolved.access.tool, false);
+  for (const value of [['mcp'], { mcp: ['notes'] }, 'call', [null]]) {
+    const bad = await run((m) => { m.toolAccess = value; return m; });
+    assert.deepEqual(codes(bad.report.diagnostics), ['MINIAPP_TOOL_ACCESS_INVALID'], JSON.stringify(value));
+    assert.equal(bad.resolved.access.tool, false);
+  }
+});
+
+test('miniapp: deviceAccess allows only "microphone", reports the feature, and grants the microphone', async () => {
+  const granted = await run((m) => { m.deviceAccess = ['microphone']; return m; });
+  assert.deepEqual(granted.report.diagnostics, []);
+  assert.deepEqual(granted.resolved.features, ['deviceAccess']);
+  assert.equal(granted.resolved.access.microphone, true);
+  const empty = await run((m) => { m.deviceAccess = []; return m; });
+  assert.deepEqual(empty.report.diagnostics, []);
+  assert.equal(empty.resolved.access.microphone, false);
+  for (const value of [['camera'], ['notifications'], ['geolocation'], 'microphone']) {
+    const bad = await run((m) => { m.deviceAccess = value; return m; });
+    assert.deepEqual(codes(bad.report.diagnostics), ['MINIAPP_DEVICE_ACCESS_INVALID'], JSON.stringify(value));
+  }
+});
+
+test('miniapp: access lists only the valid agentAccess values', async () => {
+  const both = await run((m) => { m.agentAccess = ['session.read', 'session.run']; return m; });
+  assert.deepEqual(both.resolved.access.agent, ['session.read', 'session.run']);
+  const bad = await run((m) => { m.agentAccess = ['session.run', 'session.write']; return m; });
+  assert.deepEqual(bad.resolved.access.agent, []);
 });
 
 test('miniapp: unknown field and wrong schemaVersion', async () => {

@@ -6,13 +6,13 @@ import { checkReadme } from '../scripts/lib/rules/readme.mjs';
 import { createReport } from '../scripts/lib/report.mjs';
 import { codes, copyExample, makeTmpRoot } from './helpers.mjs';
 
-async function run(transform, { features } = {}) {
+async function run(transform, { features, engines } = {}) {
   const root = await makeTmpRoot();
   const { dir } = await copyExample(root);
   const file = path.join(dir, 'README.md');
   if (transform) await writeFile(file, transform(await readFile(file, 'utf8')));
   const report = createReport();
-  await checkReadme(report, { packageDir: dir, features });
+  await checkReadme(report, { packageDir: dir, features, engines });
   return report.diagnostics;
 }
 
@@ -61,4 +61,20 @@ test('readme: only a MiniMax Code version inside Tested environment satisfies th
   assert.deepEqual(codes(otherSection), ['README_MIN_VERSION_MISSING']);
   const noSection = await run((text) => text.replace('## Tested environment', '## Tested'), { features: ['agents'] });
   assert.deepEqual(codes(noSection), ['README_HEADING_MISSING', 'README_MIN_VERSION_MISSING']);
+});
+
+test('readme: session.read, toolAccess, deviceAccess, and engines need 3.1.5; a 3.1.4 preview build is not enough', async () => {
+  for (const feature of ['agentAccess.session.read', 'toolAccess', 'deviceAccess', 'engines']) {
+    const preview = await run((text) => text.replace(TESTED_ON_3_0_73, '- MiniMax Code 3.1.4-preview.4773 on macOS.'), { features: [feature] });
+    assert.deepEqual(codes(preview), ['README_MIN_VERSION_MISSING'], feature);
+    assert.match(preview[0].message, /MiniMax Code 3\.1\.5/u);
+    assert.deepEqual(await run((text) => text.replace(TESTED_ON_3_0_73, '- MiniMax Code 3.1.5 on macOS.'), { features: [feature] }), [], feature);
+  }
+});
+
+test('readme: an engines bound above the feature minimum raises the version the README must name', async () => {
+  const below = await run((text) => text.replace(TESTED_ON_3_0_73, '- MiniMax Code 3.1.6 on macOS.'), { features: ['engines'], engines: '3.2.0' });
+  assert.deepEqual(codes(below), ['README_MIN_VERSION_MISSING']);
+  assert.match(below[0].message, /MiniMax Code 3\.2\.0/u);
+  assert.deepEqual(await run((text) => text.replace(TESTED_ON_3_0_73, '- MiniMax Code 3.2.0 on macOS.'), { features: ['engines'], engines: '3.2.0' }), []);
 });

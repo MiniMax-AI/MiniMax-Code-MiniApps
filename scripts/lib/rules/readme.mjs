@@ -1,12 +1,13 @@
 import path from 'node:path';
 
-import { FEATURE_MIN_HOST_VERSION, README_HEADINGS } from '../contract.mjs';
+import { README_HEADINGS } from '../contract.mjs';
 import { readText } from '../fs.mjs';
+import { compareVersions, requiredHostVersion } from '../version.mjs';
 
 const TESTED_ENVIRONMENT = '## Tested environment';
 const HOST_VERSION_MENTION = /MiniMax Code\D{0,16}?(\d+)\.(\d+)\.(\d+)/gu;
 
-export async function checkReadme(report, { packageDir, features = [] }) {
+export async function checkReadme(report, { packageDir, features = [], engines }) {
   const text = await readText(path.join(packageDir, 'README.md'));
   if (text === undefined) return;
   const lines = text.split(/\r?\n/u);
@@ -16,12 +17,12 @@ export async function checkReadme(report, { packageDir, features = [] }) {
       report.warning('README_HEADING_MISSING', `README.md should contain the heading "${heading}"`, 'README.md');
     }
   }
-  checkMinimumVersion(report, lines, features);
+  checkMinimumVersion(report, lines, features, engines);
 }
 
-function checkMinimumVersion(report, lines, features) {
-  if (features.length === 0) return;
-  const required = features.map((feature) => FEATURE_MIN_HOST_VERSION[feature]).reduce((a, b) => (compareVersions(a, b) >= 0 ? a : b));
+function checkMinimumVersion(report, lines, features, engines) {
+  const required = requiredHostVersion(features, engines);
+  if (required === undefined) return;
   const tested = testedEnvironmentSection(lines);
   const satisfied = [...tested.matchAll(HOST_VERSION_MENTION)].some((match) => compareVersions(match.slice(1, 4).join('.'), required) >= 0);
   if (!satisfied) {
@@ -39,13 +40,4 @@ function testedEnvironmentSection(lines) {
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => /^#{1,2}\s/u.test(line));
   return (end === -1 ? rest : rest.slice(0, end)).join('\n');
-}
-
-function compareVersions(a, b) {
-  const left = a.split('.').map(Number);
-  const right = b.split('.').map(Number);
-  for (let i = 0; i < 3; i += 1) {
-    if (left[i] !== right[i]) return left[i] - right[i];
-  }
-  return 0;
 }
