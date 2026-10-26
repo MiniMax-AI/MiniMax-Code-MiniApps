@@ -1,0 +1,1139 @@
+/*
+ * hidden 属性必须真的隐藏。
+ * 任何带 display 的类选择器（.checkbox{display:flex} 等）都会盖掉浏览器默认的
+ * [hidden]{display:none}，导致 el.hidden = true 失效、元素照样显示。
+ */
+[hidden] {
+  display: none !important;
+}
+
+:root,
+[data-theme='light'] {
+  --mcode-bg: #ffffff;
+  --mcode-bg-secondary: #f5f5f5;
+  --mcode-surface: #ffffff;
+  --mcode-surface-muted: #fafafa;
+  --mcode-text: #171717;
+  --mcode-text-muted: #666666;
+  --mcode-text-subtle: #adadad;
+  --mcode-border: #0a0a0a14;
+  --mcode-border-strong: #0a0a0af2;
+  --mcode-accent: #0094fc;
+  --mcode-success: #04b54b;
+  --mcode-warning: #f56811;
+  --mcode-danger: #f73646;
+  --mcode-primary-action-bg: #171717;
+  --mcode-primary-action-text: #ffffff;
+  --mcode-tone-tint: 8%;
+}
+
+[data-theme='dark'] {
+  --mcode-bg: #171717;
+  --mcode-bg-secondary: #1c1c1c;
+  --mcode-surface: #262626;
+  --mcode-surface-muted: #262626;
+  --mcode-text: #ededed;
+  --mcode-text-muted: #949494;
+  --mcode-text-subtle: #666666;
+  --mcode-border: #ffffff14;
+  --mcode-border-strong: #fffffff2;
+  --mcode-accent: #0077d9;
+  --mcode-success: #009c3d;
+  --mcode-warning: #e25507;
+  --mcode-danger: #e31937;
+  --mcode-primary-action-bg: #ffffff;
+  --mcode-primary-action-text: #171717;
+}
+
+/* 实际配色由 data-theme 决定：脚本把「跟随系统」解析成 light/dark 落到这个属性上。
+   color-scheme 决定原生控件（输入框、滚动条）用哪一套配色，别让它们跟页面脱节。 */
+[data-theme='light'] {
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* 脚本还没跑（首屏那一瞬）时，原生控件先按系统偏好走。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--mcode-bg);
+  color: var(--mcode-text);
+  font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre,
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+}
+
+a {
+  color: var(--mcode-accent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--mcode-border);
+  background: var(--mcode-surface);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.topbar h1 {
+  font-size: 18px;
+  line-height: 28px;
+}
+
+.topbar-sub {
+  margin: 2px 0 0;
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+input[type='text'] {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text);
+  font: inherit;
+  font-size: 13px;
+  max-width: 320px;
+}
+
+input:focus-visible,
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--mcode-accent);
+  outline-offset: 1px;
+}
+
+.btn {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 150ms ease-out, border-color 150ms ease-out, opacity 150ms ease-out;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--mcode-bg-secondary);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--mcode-primary-action-bg);
+  border-color: var(--mcode-primary-action-bg);
+  color: var(--mcode-primary-action-text);
+}
+
+.btn-danger {
+  color: var(--mcode-danger);
+  border-color: var(--mcode-danger);
+  background: transparent;
+}
+
+.btn-link {
+  background: transparent;
+  border-color: transparent;
+  color: var(--mcode-accent);
+  padding: 0 6px;
+}
+
+.btn[aria-busy='true'] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ---------- banner ---------- */
+
+.banner {
+  margin: 12px 24px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--mcode-border);
+  border-left: 3px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  color: var(--mcode-text);
+  font-size: 13px;
+}
+
+/* 只有真正异常（工作目录是临时投放目录）才升级为告警配色。 */
+.banner-warn {
+  border-left-color: var(--mcode-warning);
+}
+
+.banner strong {
+  font-weight: 600;
+}
+
+.banner[hidden] {
+  display: none;
+}
+
+.workspace-editor {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.workspace-editor input[type='text'] {
+  flex: 1 1 320px;
+  max-width: none;
+}
+
+/* ---------- layout ---------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  padding: 24px;
+}
+
+.runs-pane {
+  position: sticky;
+  top: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.runs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.runs-toolbar h2 {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mcode-text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--mcode-surface-muted);
+}
+
+.chip.is-active {
+  background: var(--mcode-surface-muted);
+  border-color: var(--mcode-border);
+  color: var(--mcode-text);
+}
+
+.run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.run-item {
+  position: relative;
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  padding: 12px;
+  cursor: pointer;
+  transition: background 150ms ease-out, border-color 150ms ease-out;
+}
+
+.run-item-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--mcode-border);
+}
+
+.run-item-tools .btn {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.run-item:hover {
+  background: var(--mcode-surface-muted);
+}
+
+.run-item[aria-current='true'] {
+  border-color: var(--mcode-accent);
+}
+
+.run-item-name {
+  font-weight: 500;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.run-item-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+}
+
+.run-item-progress {
+  margin-top: 6px;
+  color: var(--mcode-text-subtle);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ---------- status pills ---------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pill[data-tone='success'] {
+  color: var(--mcode-success);
+}
+
+.pill[data-tone='danger'] {
+  color: var(--mcode-danger);
+}
+
+.pill[data-tone='warning'] {
+  color: var(--mcode-warning);
+}
+
+.pill[data-tone='accent'] {
+  color: var(--mcode-accent);
+}
+
+.pill[data-tone='muted'] {
+  color: var(--mcode-text-muted);
+}
+
+.pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.pill[data-tone='accent']::before {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--mcode-border);
+  color: var(--mcode-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ---------- detail ---------- */
+
+.detail-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* 详情区正文分段容器：内部卡片之间沿用 16px 间距。 */
+#detail-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.card {
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  padding: 16px 20px;
+}
+
+.card > header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card h3 {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.detail-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.detail-title h2 {
+  font-size: 18px;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+
+.meta-line {
+  margin: 8px 0 0;
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--mcode-border);
+}
+
+.progress-track {
+  margin-top: 14px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--mcode-border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  /* 宽度由 JS 通过 CSSOM 设置；不设默认宽度的话 block 元素会撑满整条轨道。 */
+  width: 0;
+  background: var(--mcode-success);
+  transition: width 200ms ease-out;
+}
+
+.progress-fill[data-tone='warning'] {
+  background: var(--mcode-warning);
+}
+
+.progress-fill[data-tone='danger'] {
+  background: var(--mcode-danger);
+}
+
+.progress-fill[data-tone='accent'] {
+  background: var(--mcode-accent);
+}
+
+.brief-grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px 16px;
+  font-size: 13px;
+}
+
+.brief-grid dt {
+  color: var(--mcode-text-muted);
+}
+
+.brief-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.brief-grid ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* ---------- flow graph ---------- */
+
+/*
+ * 流程图与上游 Workflow Studio 的画布同构：阶段横向分列，箭头是依赖。
+ * SVG 全部走 DOM API 创建，没有内联 style，CSP 的 style-src 不会剥掉样式。
+ */
+.graph-head-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.graph-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0 8px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 10px;
+  background: var(--mcode-surface-muted);
+}
+
+.flow-graph {
+  display: block;
+}
+
+.graph-phase-index {
+  fill: var(--mcode-text-subtle);
+  font-size: 11px;
+}
+
+.graph-phase-label {
+  fill: var(--mcode-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.graph-phase-count {
+  fill: var(--mcode-text-subtle);
+  font-size: 11px;
+}
+
+.graph-phase-rule {
+  stroke: var(--mcode-border);
+  stroke-width: 1;
+}
+
+.graph-edge {
+  fill: none;
+  stroke: var(--mcode-border-strong);
+  stroke-width: 1.5;
+}
+
+/* 计划依赖用虚线，一眼能看出「还没走到这条边」 */
+.graph-edge.is-planned {
+  stroke: var(--mcode-text-subtle);
+  stroke-dasharray: 4 3;
+}
+
+.graph-edge.is-running {
+  stroke: var(--mcode-accent);
+  stroke-width: 2;
+}
+
+.graph-card {
+  fill: var(--mcode-surface);
+  stroke: var(--mcode-border);
+  stroke-width: 1;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node:hover .graph-card,
+.graph-node:focus-visible .graph-card {
+  stroke: var(--mcode-border-strong);
+}
+
+.graph-title {
+  fill: var(--mcode-text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.graph-kind {
+  fill: var(--mcode-text-subtle);
+  font-size: 10.5px;
+}
+
+.graph-state {
+  fill: var(--mcode-text-muted);
+  font-size: 11px;
+}
+
+.graph-time {
+  fill: var(--mcode-text-subtle);
+  font-size: 11px;
+}
+
+.graph-dot {
+  fill: var(--mcode-text-subtle);
+}
+
+.graph-node[data-tone='success'] .graph-dot {
+  fill: var(--mcode-success);
+}
+
+.graph-node[data-tone='success'] .graph-state {
+  fill: var(--mcode-success);
+}
+
+.graph-node[data-tone='danger'] .graph-dot {
+  fill: var(--mcode-danger);
+}
+
+.graph-node[data-tone='danger'] .graph-state {
+  fill: var(--mcode-danger);
+}
+
+.graph-node[data-tone='warning'] .graph-dot {
+  fill: var(--mcode-warning);
+}
+
+.graph-node[data-tone='warning'] .graph-state {
+  fill: var(--mcode-warning);
+}
+
+.graph-node[data-tone='accent'] .graph-dot {
+  fill: var(--mcode-accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.graph-node[data-tone='accent'] .graph-state {
+  fill: var(--mcode-accent);
+}
+
+/* ---------- lists ---------- */
+
+.step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  transition: background 150ms ease-out;
+}
+
+.step-row:hover {
+  background: var(--mcode-surface-muted);
+}
+
+.step-row-main {
+  min-width: 0;
+}
+
+.step-row-name {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.step-row-sub {
+  color: var(--mcode-text-subtle);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- timeline ---------- */
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timeline li {
+  display: grid;
+  grid-template-columns: 62px 118px minmax(0, 1fr);
+  gap: 10px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.timeline li:nth-child(odd) {
+  background: var(--mcode-surface-muted);
+}
+
+.timeline-time {
+  color: var(--mcode-text-subtle);
+}
+
+.timeline-type {
+  color: var(--mcode-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-text {
+  overflow-wrap: anywhere;
+}
+
+.timeline li[data-type='log'] .timeline-type {
+  color: var(--mcode-accent);
+}
+
+.timeline li[data-type='step.finished'] .timeline-type,
+.timeline li[data-type='run.finished'] .timeline-type {
+  color: var(--mcode-text);
+}
+
+pre.payload {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-bg-secondary);
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--mcode-text);
+}
+
+details.raw {
+  margin-top: 8px;
+}
+
+details.raw > summary {
+  cursor: pointer;
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+}
+
+.alert {
+  border: 1px solid var(--mcode-border);
+  border-left: 3px solid var(--mcode-danger);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  padding: 12px 16px;
+  font-size: 13px;
+}
+
+.alert strong {
+  font-weight: 600;
+}
+
+.alert pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- states ---------- */
+
+.empty {
+  border: 1px dashed var(--mcode-border);
+  border-radius: 12px;
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--mcode-text-muted);
+  font-size: 13px;
+}
+
+.empty h3 {
+  font-size: 15px;
+  color: var(--mcode-text);
+  margin-bottom: 6px;
+}
+
+.skeleton {
+  height: 14px;
+  border-radius: 6px;
+  background: var(--mcode-surface-muted);
+  animation: fade 1.2s ease-in-out infinite alternate;
+}
+
+/* 骨架屏的尺寸原先走内联 style，但 CSP 的 style-src 会把 style 属性剥掉，
+   这些类名是替身，样式在这里给。 */
+.sk-title {
+  width: 40%;
+  height: 20px;
+}
+.sk-sub-70 {
+  width: 70%;
+  margin-top: 12px;
+}
+.sk-sub-60 {
+  width: 60%;
+  margin-top: 8px;
+}
+.sk-sub-55 {
+  width: 55%;
+  margin-top: 8px;
+}
+.sk-sub-45 {
+  width: 45%;
+  margin-top: 8px;
+}
+.sk-w-80 {
+  width: 80%;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------- dialogs ---------- */
+
+.dialog {
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  padding: 0;
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  color: var(--mcode-text);
+  box-shadow: 0 0 20px rgb(10 10 10 / 8%);
+}
+
+.dialog::backdrop {
+  background: rgb(10 10 10 / 45%);
+}
+
+.dialog-body {
+  padding: 20px;
+  overflow: auto;
+  max-height: calc(100vh - 200px);
+}
+
+.dialog-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dialog-head h3 {
+  font-size: 16px;
+}
+
+.dialog-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--mcode-border);
+}
+
+.dialog-foot .btn:first-child {
+  order: -1;
+}
+
+.stack-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stack-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface-muted);
+}
+
+.stack-row-main {
+  min-width: 0;
+}
+
+.stack-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.stack-row-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mcode-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.stack-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.confirm-note {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--mcode-border);
+  font-size: 13px;
+}
+
+.checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.checkbox input {
+  margin-top: 4px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.tab {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mcode-text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tab.is-active {
+  background: var(--mcode-surface-muted);
+  border-color: var(--mcode-border);
+  color: var(--mcode-text);
+}
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  max-width: 360px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--mcode-border);
+  background: var(--mcode-surface);
+  box-shadow: 0 0 20px rgb(10 10 10 / 12%);
+  font-size: 13px;
+  z-index: 20;
+}
+
+.toast[data-tone='danger'] {
+  border-left: 3px solid var(--mcode-danger);
+}
+
+.toast[data-tone='success'] {
+  border-left: 3px solid var(--mcode-success);
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+.visually-hidden-focusable:not(:focus) {
+  position: absolute;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--mcode-surface);
+  padding: 8px 12px;
+  border-radius: 8px;
+  z-index: 30;
+}
+
+.skip-link:focus {
+  left: 24px;
+  top: 12px;
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .runs-pane {
+    position: static;
+  }
+
+  .run-list {
+    max-height: 320px;
+  }
+
+  .topbar {
+    padding: 12px 16px;
+  }
+
+  .timeline li {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+
+  .timeline-type {
+    display: none;
+  }
+
+  input[type='text'] {
+    max-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

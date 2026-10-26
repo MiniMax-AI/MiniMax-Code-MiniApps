@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "timezone-guard",
+  "displayName": "A/时差保安",
+  "version": "1.0.2",
+  "description": "别在对方睡着的时区跟对方聊天。A/时差保安实时对照对方当地时间：绿了正常聊，黄了短聊，红了先睡。",
+  "author": "FineCat",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "打开A/时差保安，看看洛杉矶现在该不该开口",
+    "洛杉矶现在几点，对照上海"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

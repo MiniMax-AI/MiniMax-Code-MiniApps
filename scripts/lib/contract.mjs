@@ -76,7 +76,6 @@ export const MINIAPP_FIELDS = new Set([
   'hostConnectorAccess',
   'agentAccess',
   'agentConcurrency',
-  'deviceAccess',
 ]);
 export const ARTIFACT_FIELDS = new Set(['client', 'node']);
 export const RUNTIME_FIELDS = new Set(['kind', 'entry', 'lifecycle']);
@@ -86,7 +85,6 @@ export const SURFACE_WINDOW_BOOLEAN_FIELDS = ['resizable', 'frame', 'transparent
 export const SURFACE_WINDOW_DIMENSION_MIN = 200;
 export const SURFACE_WINDOW_DIMENSION_MAX = 10_000;
 export const AGENT_ACCESS_CAPABILITIES = new Set(['session.run', 'session.read']);
-export const DEVICE_ACCESS_CAPABILITIES = new Set(['microphone']);
 export const AGENT_CONCURRENCY_MAX = 32;
 // The Host answers requests under this prefix itself; plugin routes there never work.
 export const RESERVED_ROUTE_PREFIX = '/__mavis';

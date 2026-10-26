@@ -27,12 +27,12 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 
 ## Tested environment
 
-- MiniMax Code **3.1.4 or later** is the repository's minimum installation requirement for this package's `session.read` declaration (upstream reads were observed on 3.1.4-preview). **This is not released-client GUI acceptance of this plugin or a guarantee of the observation and speech APIs below.**
-- Task monitoring additionally requires a Host build exposing `agent.observe` and `agent.cancel`, alongside `agent.sessions` and `agent.session`. A minimum released version for complete task monitoring has not been established for this plugin. Missing APIs are reported as unsupported.
-- Voice input additionally requires `deviceAccess: ["microphone"]`, `speech.transcribe`, and microphone permission; otherwise it remains unavailable.
+- MiniMax Code **3.1.6 or later** is the supported baseline. On 2026-10-26, the official [mainland China](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest-mac.yml) and [Global](https://file.cdn.minimax.io/public/minimax-agent-prod/release/latest-mac.yml) production update feeds both listed 3.1.6. The corresponding release implementation was checked for the required APIs. This establishes a released API baseline, not GUI acceptance of this plugin on that release.
+- Task monitoring uses `agent.sessions`, `agent.session`, `agent.observe`, and `agent.cancel` with the `session.read` grant. Runtime capability and permission checks remain in place; missing APIs or disabled access are reported as unavailable.
+- Voice input additionally requires `deviceAccess: ["microphone"]`, `speech.transcribe`, the plugin's microphone switch, system microphone permission, and access to the Host transcription service; otherwise it remains unavailable. A supported API does not guarantee service availability for every account.
 - The preceding UI version was exercised on macOS in a MiniMax Code development build: three tabs, wide/narrow layouts, task reading, real session/ask activity, import/delete, draft confirmation, and desktop round trips. This open-source revision has Node/DOM tests and an isolated HTTP smoke test.
 - The new original atlas and icon are checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The earlier native UI acceptance predates this artwork.
-- No Windows GUI, released-client installation, or real microphone recording/transcription has been verified for this revision. Automated tests use synthetic data and do not prove those paths.
+- No Windows GUI, released-client installation or GUI acceptance on 3.1.6, or real microphone recording/transcription has been verified for this revision. Automated tests use synthetic data and do not prove those paths.
 
 ## Data & access
 

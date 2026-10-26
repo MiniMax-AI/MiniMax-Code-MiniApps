@@ -40,9 +40,8 @@ update one package at `plugins/<github-username>/<plugin-id>/`.
   their shape only, and the Host validates them at install time. This repository documents the Mini
   App payload, the page APIs, and the Agent API; treat `context.hostConnector` and the other
   capabilities as outside its scope.
-- `agentAccess: ["session.run"]` gives an Agent with files, shell, and MCP. `session.read` is a
-  separate read-only Host extension; it does not authorize Agent turns. Declare only the grants
-  the app needs, and never answer a `permission.requested` with `allowOnce` unless the user chose it.
+- `agentAccess` gives an Agent with files, shell, and MCP. Declare it only when needed, and never
+  answer a `permission.requested` with `allowOnce` unless the user chose it.
 - The runtime payload is exactly `miniapp/client` and `miniapp/node`. Keep tests and docs outside
   `miniapp/`. Vendor third-party code inside the payload; `node_modules` is never committed.
 - Paths are portable: ASCII, no symlinks, no `..`. `npm run check` enforces the full rule set.

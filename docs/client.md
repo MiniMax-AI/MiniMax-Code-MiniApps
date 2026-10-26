@@ -2,10 +2,6 @@
 
 Verified against MiniMax Code 3.1.2.
 
-Session reads require 3.1.4 or later (observed on 3.1.4-preview). Observation and speech additionally
-require a Host build that implements them; their minimum released client version is unverified.
-These capabilities are not part of the 3.1.2 verification claim.
-
 MiniMax Code injects `window.mcode.miniapp` into the Mini App's own page. Older clients, ordinary
 Browser tabs, and other browsers do not provide it, so check that a method exists before calling
 it. No SDK is needed. For type checking, copy `examples/hello-miniapp/miniapp/client/client-api.ts`
@@ -20,7 +16,7 @@ scripts out of that document: anything running there shares the page's access to
 Asks the user to add plain text to the chat input of the conversation the Mini App is open in. The
 Host shows its own confirmation with the plugin, the target conversation, and the text. After the
 user confirms, the text is appended to the unsent draft; the user can still edit it and must press
-Send. This method cannot send messages, read chat history, or change sent messages.
+Send. The page cannot send messages, read chat history, or change sent messages.
 
 ```js
 async function addToChat(text, status) {
@@ -48,40 +44,9 @@ async function addToChat(text, status) {
 
 ## `miniapp.agent`
 
-Runs Agent turns from the page with `agentAccess: ["session.run"]` on MiniMax Code 3.1.2 or later.
-Hosts with the read extension also offer `sessions`, `session` and `observe` with
-`agentAccess: ["session.read"]`; this does not authorize running or answering a turn. The calls,
-sessions, events, and errors are in `docs/agent.md`.
-
-## Capability checks for Host extensions
-
-Some Host builds expose `window.mcode.miniapp.capabilities.has(name)`. It reports whether the Host
-offers an API, independently of the Mini App's manifest and the user's permission switches.
-Older Hosts may omit `capabilities` altogether. Check both the capability and the method before
-showing an extension-dependent control, and still handle permission and runtime errors.
-
-For read-only session features, the capability names are `agent.sessions`, `agent.session`, and
-`agent.observe`. For speech, check `speech.transcribe`. Neither a capability probe nor a passing
-repository validator guarantees that the user granted access.
-
-## `miniapp.speech` (Host extension)
-
-Requires a Host build with `capabilities?.has('speech.transcribe') === true`, a callable
-`speech.transcribe`, `deviceAccess: ["microphone"]`, and microphone permission. A released minimum
-client version has not been verified. Feature-detect it and keep text input available when absent.
-
-The page captures an utterance only after the user starts recording. Stop the microphone tracks
-when recording ends or the page closes. `transcribe({ audio, format }, { onPartial? })` accepts raw
-signed 16-bit mono PCM at 16,000 Hz (`format: { sampleRate: 16000, channelCount: 1,
-sampleFormat: 's16' }`), not an encoded WAV/WebM/MP3 file. It returns `{ text }`; optional
-`onPartial(text)` receives transcription progress. The supported build accepts up to 16,000,000
-audio bytes and one transcription per Mini App at a time. Handle rejection and preserve the user's
-existing text; do not automatically retry a result whose outcome is unknown.
-
-The Host performs transcription and may contact its speech service. Disclose that audio leaves
-the page through the Host; do not claim an offline-only flow unless that environment was tested.
-Transcription fills the Mini App's draft. Appending to the chat still uses `message.append`, with
-its separate Host confirmation, and the user still presses Send.
+Runs Agent turns from the page. Present only on MiniMax Code 3.1.2 or later, and calls reject with
+`not_permitted` unless `miniapp.json` declares `agentAccess`. The calls, sessions, events, and
+errors are in `docs/agent.md`.
 
 ## `miniapp.window` (proposed)
 

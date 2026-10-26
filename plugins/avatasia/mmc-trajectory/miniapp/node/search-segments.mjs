@@ -6,7 +6,7 @@
 // WHY A SEGMENT AND NOT A FIELD ON THE INDEX. The search surface is five fields per record
 // (summary, text, result, thinking, toolName) — measured at 36.7 MB for a 44-generation session,
 // against 8.6 MB for the index. Folding it in would make every read of the index pay for search, on
-// a page that reads the index every eight seconds and searches when someone types. Kept apart, the
+// a page that reads the index on every poll and searches when someone types. Kept apart, the
 // ordinary read never opens the surface and a search never opens the index's own metadata twice.
 //
 // WHY PER GENERATION AND NOT PER SESSION. A sealed generation's records cannot change, so its
@@ -43,8 +43,19 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** Bumped when the on-disk shape changes in a way an older reader cannot survive. */
-export const SEGMENT_SCHEMA_VERSION = 3;
+/**
+ * Bumped when the on-disk shape changes in a way an older reader cannot survive.
+ *
+ * 4: every line carries the record's version (`v`). A hit is a POSITION, and a position is only the
+ * same record in another body if the version says so — so a segment written before this would hand
+ * the page hits it cannot check, and the page would have to take them on faith.
+ *
+ * 5: every manifest states how many of the body's records the segments do NOT cover. A record with
+ * no locator names no file, so it belongs to no generation's segment — and a set that covers fewer
+ * records than the body stands for a DIFFERENT set, whose fingerprint the page is not holding. A
+ * manifest written before this does not say, and a set that does not say cannot be used.
+ */
+export const SEGMENT_SCHEMA_VERSION = 5;
 
 /**
  * The fields a search reads, in the page's order.
@@ -55,9 +66,9 @@ export const SEGMENT_SCHEMA_VERSION = 3;
  */
 export const SEARCH_FIELDS = ['summary', 'text', 'result', 'thinking', 'toolName'];
 
-/** @typedef {{ fileName: string, generation: number | null, size: number, revision: string | null, truncated?: boolean }} SegmentSource */
+/** @typedef {{ fileName: string, generation: number | null, size: number, mtimeMs?: number | null, revision: string | null, truncated?: boolean }} SegmentSource */
 
-/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, surfaceDigest: string, source: SegmentSource[] }} SegmentManifest */
+/** @typedef {{ schemaVersion: number, generation: number | null, view: string, recordCount: number, surfaceBytes: number, surfaceDigest: string, uncovered: number, source: SegmentSource[] }} SegmentManifest */
 
 /**
  * One record's searchable text.
@@ -170,6 +181,37 @@ export function fileIdxRowsFromPayload(payload, raws, files) {
 }
 
 /**
+ * How many of the body's records no segment covers.
+ *
+ * A record is filed under the generation its locator names, and a record with no locator names no
+ * file — so it is filed under no generation, and no segment holds it. The segments then cover fewer
+ * records than the body, and a shorter set is a DIFFERENT set: its fingerprint is the fingerprint
+ * of the records it does cover, and the page is holding the ones it does not. So the count is what
+ * the manifest states, and a reader that sees it knows the set cannot answer for the body.
+ *
+ * A row that is not a placement at all counts as uncovered. The count is read as 「how much is
+ * missing」, so the safe direction is the one that says something IS missing.
+ *
+ * @param {Array<{ fileIdx: number }>} rows one entry per record, from
+ *   {@link fileIdxRowsFromPayload}
+ * @returns {number}
+ */
+export function uncoveredRecordCount(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  let uncovered = 0;
+  for (const row of list) {
+    if (!row || typeof row !== 'object') {
+      uncovered += 1;
+      continue;
+    }
+    if (typeof row.fileIdx !== 'number' || !Number.isFinite(row.fileIdx) || row.fileIdx < 0) {
+      uncovered += 1;
+    }
+  }
+  return uncovered;
+}
+
+/**
  * Builds one generation's searchable lines.
  *
  * Each line is `<compact json>\t<searchable text>`, one line per record in ledger order, and it
@@ -206,6 +248,10 @@ export function buildSegment(input) {
       kind: typeof record.kind === 'string' ? record.kind : '',
       generation: typeof record.generation === 'number' ? record.generation : null,
       summary: typeof record.summary === 'string' ? record.summary : '',
+      // The version of the record this line is. It travels with the hit because a hit is a position
+      // and the page has to be able to tell whether that position still names the same record in the
+      // body it is showing.
+      v: typeof record.v === 'string' ? record.v : '',
       fileIdx: typeof record.fileIdx === 'number' ? record.fileIdx : -1,
     }) + '\t' + searchSurfaceOf(record));
   }
@@ -256,11 +302,11 @@ export function scanSegment(surface, needle) {
  *
  * @param {string} surface the whole segment text
  * @param {number[]} ordinals as returned by {@link scanSegment}
- * @returns {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null } | null>}
+ * @returns {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null, v: string } | null>}
  */
 export function readSegmentHits(surface, ordinals) {
   const wanted = new Set(ordinals);
-  /** @type {Map<number, { index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null } | null>} */
+  /** @type {Map<number, { index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null, v: string } | null>} */
   const found = new Map();
   if (wanted.size === 0) return [];
   let start = 0;
@@ -286,6 +332,7 @@ export function readSegmentHits(surface, ordinals) {
           kind: typeof parsed.kind === 'string' ? parsed.kind : '',
           summary: typeof parsed.summary === 'string' ? parsed.summary : '',
           generation: typeof parsed.generation === 'number' ? parsed.generation : null,
+          v: typeof parsed.v === 'string' ? parsed.v : '',
         });
       }
     }
@@ -376,7 +423,7 @@ export function createSegmentStore(root) {
      * @param {string} view
      * @param {string} generationKey
      * @param {{ surface: string }} segment
-     * @param {{ generation: number | null, source: SegmentManifest['source'] }} meta
+     * @param {{ generation: number | null, source: SegmentManifest['source'], uncovered: number }} meta
      */
     async write(sessionKey, view, generationKey, segment, meta) {
       const dir = dirOf(sessionKey, view, generationKey);
@@ -391,6 +438,11 @@ export function createSegmentStore(root) {
         recordCount: segment.surface === '' ? 0 : segment.surface.split('\n').length,
         surfaceBytes: Buffer.byteLength(segment.surface),
         surfaceDigest: digestOf(segment.surface),
+        // How many of the body's records these segments do NOT cover. Written here so that a reader
+        // can tell a set that stands for the whole body from one that stands for part of it — see
+        // `uncoveredRecordCount` for what the count is, and the schema version above for what
+        // happens to a manifest that does not say.
+        uncovered: meta.uncovered,
         source: meta.source,
       };
       await writeFile(`${join(dir, 'manifest.json')}.tmp`, `${JSON.stringify(manifest)}\n`, 'utf8');
@@ -420,6 +472,11 @@ export function createSegmentStore(root) {
       if (!manifest || typeof manifest !== 'object') return null;
       if (manifest.schemaVersion !== SEGMENT_SCHEMA_VERSION) return null;
       if (manifest.view !== view) return null;
+      // The manifest has to say how many of the body's records these segments do not cover. A
+      // manifest that does not say cannot be told apart from one that says 「none」, and a set that
+      // covers part of the body is not the set the page is holding — so a manifest that does not
+      // say is a manifest this reader cannot use.
+      if (!Number.isInteger(manifest.uncovered) || manifest.uncovered < 0) return null;
       if (!sameSource(manifest.source, source)) return null;
       let surface;
       try {
@@ -441,10 +498,155 @@ export function createSegmentStore(root) {
 }
 
 /**
+ * The version tokens of a segment's records, in order, up to a limit.
+ *
+ * Every line of a segment carries the version of the record it is, so the versions are already
+ * there — this reads them out rather than keeping a second copy of them. The reading is by hand
+ * instead of by parsing each line's whole answer, because a search over a big segment would then
+ * parse every line it does not need; `tests/verify-search-segments.mjs` pins that this and the
+ * parsed answer agree.
+ *
+ * The route does not read the versions this way: it needs each record's LEDGER position as well,
+ * so it reads the two in one walk — see {@link segmentLedgerPositions}.
+ *
+ * @param {string} surface
+ * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
+ *   negative or fractional limit is every record
+ * @returns {Array<string>}
+ */
+export function segmentVersions(surface, limit) {
+  /** @type {Array<string>} */
+  const out = [];
+  if (typeof surface !== 'string' || surface === '') return out;
+  // The same rule as the payload's own fold over the first N records: an explicit limit of zero
+  // is zero records, and a missing, negative or fractional limit is every record. The two are two
+  // readings of one fact — the versions of the first N records — so they have to agree.
+  const wanted = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;
+  let start = 0;
+  while (start <= surface.length && out.length < wanted) {
+    const nl = surface.indexOf('\n', start);
+    const end = nl === -1 ? surface.length : nl;
+    const tab = surface.indexOf('\t', start);
+    if (tab >= 0 && tab <= end) out.push(versionInAnswer(surface.slice(start, tab)));
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  return out;
+}
+
+/**
+ * The ledger position of every record a segment holds, and the version of each.
+ *
+ * A line carries the record's TURN and the record's own number in the body, and those two are
+ * what the ledger's order is made of: the ledger draws turn by turn, and inside a turn the
+ * records in the order they were emitted. So the two numbers on a line are enough to put that
+ * record back where the body has it.
+ *
+ * Why that matters: the segments are one file per generation and the body is not in file order.
+ * A record that belongs to an EARLIER turn and arrived after that turn was written lives in a
+ * LATER file, so the first N records of the body and the first N records of the files are two
+ * different sets. Reading the versions out of the files alone therefore answers about the wrong
+ * set, and the answer is refused for a body that did not change.
+ *
+ * The version comes along because the same walk has to hand it over: a second walk over the
+ * same surface would cost the same again, and the answer that needs them is the answer about
+ * THIS set of records.
+ *
+ * The numbers are read by hand, like the version: a search over a big segment would then parse
+ * every line it does not need. `index` and `turnIndex` are written before the summary, so the
+ * first one in a line's answer is the field and not something the summary says.
+ *
+ * @param {string} surface
+ * @returns {Array<{ turnIndex: number | null, index: number | null, v: string }>} one entry per
+ *   record, in the order the lines sit in this surface
+ */
+export function segmentLedgerPositions(surface) {
+  /** @type {Array<{ turnIndex: number | null, index: number | null, v: string }>} */
+  const out = [];
+  if (typeof surface !== 'string' || surface === '') return out;
+  let start = 0;
+  while (start <= surface.length) {
+    const nl = surface.indexOf('\n', start);
+    const end = nl === -1 ? surface.length : nl;
+    const tab = surface.indexOf('\t', start);
+    if (tab >= 0 && tab <= end) {
+      const answer = surface.slice(start, tab);
+      out.push({
+        turnIndex: numberInAnswer(answer, '"turnIndex":'),
+        index: numberInAnswer(answer, '"index":'),
+        v: versionInAnswer(answer),
+      });
+    }
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  return out;
+}
+
+/**
+ * One number out of a line's answer.
+ *
+ * Read by hand for the same reason the version is: parsing the whole answer of every line of a
+ * big segment is the cost the hand-reading exists to avoid. The number ends at the first
+ * separator after it, which is where the field ends.
+ *
+ * An empty field is nothing, not a number: `Number('')` is zero, and a record that carries no
+ * number of its own must not come back as the record numbered zero.
+ *
+ * @param {string} answer the JSON prefix of one segment line
+ * @param {string} key the field to read, with its quotes and its colon
+ * @returns {number | null} the number, or nothing when the field is not there
+ */
+function numberInAnswer(answer, key) {
+  const at = answer.indexOf(key);
+  if (at < 0) return null;
+  let end = at + key.length;
+  let value = '';
+  while (end < answer.length) {
+    const ch = answer.charAt(end);
+    if (ch === ',' || ch === '}') break;
+    value += ch;
+    end += 1;
+  }
+  const parsed = value.trim() === '' ? NaN : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * The version token inside one line's answer.
+ *
+ * The answer is JSON and the version is one of its fields. Reading that one field by name is
+ * what keeps a search from parsing every line of a segment; `buildSegment` writes the field, and
+ * the guard pins that the two readings agree.
+ *
+ * @param {string} answer the JSON prefix of one segment line
+ * @returns {string}
+ */
+function versionInAnswer(answer) {
+  const at = answer.indexOf('"v":"');
+  if (at < 0) return '';
+  const from = at + 5;
+  let end = from;
+  while (end < answer.length) {
+    const ch = answer.charAt(end);
+    // A backslash escapes the next character, so it cannot be the end of the value.
+    if (ch === '\\') { end += 2; continue; }
+    if (ch === '"') break;
+    end += 1;
+  }
+  return answer.slice(from, end);
+}
+
+/**
  * Whether the generation a segment was built from is still the generation on disk.
  *
- * Identity, not mtime: a sealed file is not written to, and a reader that treated a touch as a
- * change would rebuild correct bytes on every poll.
+ * Identity is the file name, the generation, the size, the mtime, whether the read was cut short,
+ * and the revision when both sides carry one: all of them have to agree for the segment to still
+ * be about the same bytes.
+ *
+ * The mtime IS part of that, deliberately. The parsed-rows cache and the trajectory entry both
+ * key on (size, mtime), so a file rewritten in place — the same length, different bytes — is a
+ * different file to everything else in here, and a touch is a change here as much as it is there.
  *
  * @param {SegmentManifest['source']} stored
  * @param {SegmentManifest['source']} live
@@ -459,6 +661,15 @@ export function sameSource(stored, live) {
     if (a.fileName !== b.fileName) return false;
     if (a.generation !== b.generation) return false;
     if (a.size !== b.size) return false;
+    // The mtime is this process's idea of a file's identity: the parsed-rows cache and the
+    // trajectory entry both key on (size, mtime), so a file that was rewritten IN PLACE — the same
+    // length, different bytes — is a different file to everything else in here. Leaving the mtime
+    // out of this comparison is what let a same-size rewrite keep a segment built from the old
+    // bytes, and the search then answered from those bytes as if they were the current ones.
+    //
+    // A sealed file is not written to, so its mtime does not move on its own; comparing it costs
+    // a rebuild only when something touched a file it had no reason to touch.
+    if (a.mtimeMs !== b.mtimeMs) return false;
     // Same reason as in the index: a generation read short by our own cap produces a segment that
     // covers a prefix, while `size` is the whole file. Trusting it would answer with a smaller
     // `total` and say nothing about being wrong.

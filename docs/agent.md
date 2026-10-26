@@ -1,8 +1,6 @@
 # Mini App Agent API
 
-Agent-turn APIs verified against MiniMax Code 3.1.2. Earlier clients reject packages that declare
-`agentAccess`. Read access requires 3.1.4 or later (observed on 3.1.4-preview). The observation
-extension below needs additional Host support; its minimum released client version is unverified.
+Verified against MiniMax Code 3.1.2. Earlier clients reject packages that declare `agentAccess`.
 
 A Mini App can run Agent turns from its Node entry (`context.agent`) or its page
 (`window.mcode.miniapp.agent`). The Agent keeps its full capabilities: files, shell, Skills, and MCP,
@@ -33,44 +31,6 @@ at runtime; a page that only prepares text for the user to send should use
 - Changing either field restarts the Mini App process when the package is updated.
 - State in the README `## Data & access` that the Mini App runs Agent turns and what it asks them
   to do (see `docs/security.md`).
-
-### Read-only session extension
-
-`agentAccess: ["session.read"]` declares read access without permission to create or run Agent
-turns, answer questions, decide approvals, or stop the user's work. `session.run` does not imply
-read access to user conversations. A package that needs both must declare both, once each.
-
-The `sessions` and `session` reads require 3.1.4 or later, as above. The observation methods used
-by the desktop pet additionally require a supporting Host build; their minimum released version
-has not been verified. Check the page's `capabilities.has` and method availability before use
-(see `docs/client.md`).
-
-| Page call | Read behavior |
-| --- | --- |
-| `sessions()` | Returns `{ sessions }` containing up to the 50 most recently updated visible root user conversations. It excludes Mini App-owned, scheduled and sub-Agent sessions. |
-| `session()` | Returns the conversation this page belongs to. The observed 3.1.4-preview build rejects with `not_permitted` outside a conversation; callers should also handle an absent result from other builds. This is not a promise to identify the currently focused main-window conversation. |
-| `session(sessionId)` | Returns a visible conversation's summary, current model when available, and latest assistant reply when available. It does not expose arbitrary Host files. |
-| `observe({ all: true, requestId }, { onEvent })` | Tails lifecycle events for visible user conversations. Use it together with `sessions()`; it is not a complete historical snapshot. |
-| `observe({ sessionId, requestId }, { onEvent })` | Tails progress events for one readable conversation. It does not replay earlier events or deliver actionable approval/question requests to the observer. |
-| `cancel(requestId)` | Cancels this Mini App's observation request, not the observed user's Agent turn. |
-
-Summary statuses are `idle`, `running`, `error`, or `aborted`; timestamps use Unix milliseconds.
-Global observation provides `turn.started`, `message.committed`, and `turn.finished`; a single
-session also exposes progress such as text and tool events. Ignore unknown event types. Inferring
-an ask reminder from a tool event does not authorize answering the question, and missing events
-do not prove there is no pending ask.
-
-Exactly one observation target is required. Each Mini App has at most four concurrent observers;
-observers consume no Agent-run slots. An observation's promise settles when the subscription
-ends. When replacing one, cancel it and wait for that promise to settle before admitting a new
-observer. Observers are tail-only, so interrupted or late subscriptions can miss events. Permission
-revocation, page/process shutdown or deletion can end them; clear stale UI state and reconnect
-only while permission is available. These are observation limits, separate from `agentConcurrency`.
-
-Keep user conversation data transient unless the app explicitly documents persistence. Do not
-forward it to a network service or include it in diagnostics without the user's authorization.
-The version check for the read grant does not prove that the observation methods are available
-or that an installed Host has granted access.
 
 ## Sessions
 

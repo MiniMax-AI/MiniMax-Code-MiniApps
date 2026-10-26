@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": ["./miniapp/client"],
+    "node": ["./miniapp/node"]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/canvas",
+    "window": {
+      "width": 1280,
+      "height": 820,
+      "minWidth": 720,
+      "minHeight": 480,
+      "resizable": true,
+      "frame": true
+    }
+  },
+  "mcpEndpoints": [
+    {
+      "server": "canvas",
+      "path": "/mcp/canvas"
+    }
+  ],
+  "agentAccess": ["session.run"],
+  "agentConcurrency": 4,
+  "hostConnectorAccess": {
+    "providers": ["matrix"]
+  }
+}

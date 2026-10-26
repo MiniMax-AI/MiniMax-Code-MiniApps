@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "expiry-guardian": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/expiry-guardian",
+      "headers": {},
+      "description": "\u8e6c\u738b\u4e4b\u738b local MCP endpoint.",
+      "timeout": 900000
+    }
+  }
+}

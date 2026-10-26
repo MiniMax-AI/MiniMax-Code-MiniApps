@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A/时差保安</title>
+    <link rel="icon" href="data:," />
+    <script src="./time.js"></script>
+    <script>
+      // 在首帧之前定好主题、时间制式与状态色，
+      // 避免深色闪一帧浅色、先按 12H 画一帧再翻转，
+      // 或者出现「黄色图标配红色文案」这种自相矛盾的第一帧。
+      (function () {
+        var theme = 'light';
+        var fmt = '12h';
+        var saved = {};
+        try {
+          saved = JSON.parse(localStorage.getItem(window.TZ_TIME.STORAGE_KEY) || '{}') || {};
+        } catch (error) {
+          /* 存档不可用时用默认值 */
+        }
+        // 存档只读一次：body 里那段脚本直接复用这里解析好的结果，
+        // 两处各读一次、各解析一次，早晚会读出不一样的结果。
+        window.TZ_PREFS = saved;
+        var t = saved.theme;
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        theme = t;
+        if (saved.clockFormat === '24h') fmt = '24h';
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.fmt = fmt;
+        document.documentElement.dataset.band = 'neutral';
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="5.2" fill="currentColor" />
+        <g stroke="currentColor" stroke-width="2.6" stroke-linecap="round">
+          <path d="M12 4.9V1.6M12 19.1v3.3M5 8.7 2.1 7.1M19 8.7l2.9-1.6M5 15.3l-2.9 1.6M19 15.3l2.9 1.6" />
+        </g>
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M20.4 14.4A8.6 8.6 0 0 1 9.6 3.6 8.6 8.6 0 1 0 20.4 14.4Z" />
+      </symbol>
+      <symbol id="i-dusk" viewBox="0 0 24 24">
+        <path fill="currentColor" d="M5.6 15.4a6.4 6.4 0 0 1 12.8 0Z" />
+        <path stroke="currentColor" stroke-width="2.6" stroke-linecap="round" d="M2.8 15.4h18.4" />
+      </symbol>
+      <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7 8.5h11l-3.2-3.2M17 15.5H6l3.2 3.2" />
+      </symbol>
+      <symbol id="i-contrast" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <path fill="currentColor" d="M12 3.6a8.4 8.4 0 0 0 0 16.8Z" />
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+    </svg>
+
+    <main class="page">
+      <header class="page-head">
+        <div class="page-head-text">
+          <h1 class="page-title" id="page-title">
+            <span id="page-title-target">洛杉矶</span>
+            <button type="button" class="swap-btn" id="page-title-swap" title="对调两个城市" aria-label="对调两个城市">
+              <svg class="swap" aria-hidden="true" focusable="false"><use href="#i-swap" /></svg>
+            </button>
+            <span id="page-title-home">上海</span>
+          </h1>
+          <p class="lede">实时对照 · 现在该不该开口</p>
+        </div>
+        <div class="head-tools">
+          <div class="segmented" role="group" aria-label="时间制式">
+            <button type="button" class="seg" id="fmt-12h" aria-pressed="true">12H</button>
+            <button type="button" class="seg" id="fmt-24h" aria-pressed="false">24H</button>
+          </div>
+          <button type="button" class="icon-button" id="theme-toggle" aria-pressed="false">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-contrast" id="theme-icon-use" /></svg>
+            <span class="sr-only" id="theme-toggle-label">切换到深色主题</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="switcher" aria-label="选择城市">
+        <div class="field">
+          <label class="field-label" for="combo-target">对方城市</label>
+          <div class="combo">
+            <input
+              id="combo-target"
+              class="combo-input"
+              type="text"
+              role="combobox"
+              aria-expanded="false"
+              aria-autocomplete="list"
+              aria-controls="listbox-target"
+              placeholder="搜索国家或城市"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+            <svg class="combo-chevron" aria-hidden="true" focusable="false"><use href="#i-chevron" /></svg>
+            <ul id="listbox-target" class="combo-list" role="listbox" aria-label="对方城市候选" hidden></ul>
+            <p class="combo-empty" id="empty-target" role="status" hidden></p>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="combo-home">我的城市</label>
+          <div class="combo">
+            <input
+              id="combo-home"
+              class="combo-input"
+              type="text"
+              role="combobox"
+              aria-expanded="false"
+              aria-autocomplete="list"
+              aria-controls="listbox-home"
+              placeholder="搜索国家或城市"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+            <svg class="combo-chevron" aria-hidden="true" focusable="false"><use href="#i-chevron" /></svg>
+            <ul id="listbox-home" class="combo-list" role="listbox" aria-label="我的城市候选" hidden></ul>
+            <p class="combo-empty" id="empty-home" role="status" hidden></p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="rule" />
+
+      <section class="verdict" id="verdict" aria-label="判定">
+        <span class="verdict-dot" aria-hidden="true"></span>
+        <div>
+          <p class="verdict-title" id="verdict-title" aria-live="polite">正在读取时间…</p>
+          <p class="verdict-detail" id="verdict-detail"></p>
+          <p class="verdict-extra" id="verdict-extra" hidden></p>
+        </div>
+      </section>
+
+      <hr class="rule" />
+
+      <section class="clocks" aria-label="双方当前时间">
+        <article class="clock">
+          <p class="clock-role">对方</p>
+          <p class="clock-city">
+            <svg class="sky" aria-hidden="true" focusable="false"><use href="#i-moon" id="target-icon-use" /></svg>
+            <span class="name" id="target-heading">洛杉矶</span>
+          </p>
+          <p class="clock-time">
+            <span id="target-clock">--:--:--</span>
+            <span class="clock-period" id="target-period"></span>
+          </p>
+          <p class="clock-date" id="target-date"></p>
+          <p class="clock-zone" id="target-meta"></p>
+        </article>
+        <article class="clock">
+          <p class="clock-role">我的</p>
+          <p class="clock-city">
+            <svg class="sky" aria-hidden="true" focusable="false"><use href="#i-sun" id="home-icon-use" /></svg>
+            <span class="name" id="home-heading">上海</span>
+          </p>
+          <p class="clock-time">
+            <span id="home-clock">--:--:--</span>
+            <span class="clock-period" id="home-period"></span>
+          </p>
+          <p class="clock-date" id="home-date"></p>
+          <p class="clock-zone" id="home-meta"></p>
+        </article>
+      </section>
+
+      <hr class="rule" />
+
+      <section class="dayline" aria-label="对方的一天">
+        <p class="dayline-label" id="dayline-label">对方的一天</p>
+        <div class="hour-bar" id="hour-bar" role="img" aria-label="对方城市 24 小时的昼夜分布"></div>
+        <div class="hour-ticks" aria-hidden="true">
+          <span>0</span>
+          <span>6</span>
+          <span>12</span>
+          <span>18</span>
+          <span>24</span>
+        </div>
+      </section>
+
+      <hr class="rule" />
+
+      <dl class="facts">
+        <div class="fact">
+          <dt>时差</dt>
+          <dd id="fact-diff"></dd>
+        </div>
+      </dl>
+    </main>
+
+    <script>
+      // 首帧之前把存档里的城市名写回页面。
+      // head 里的内联脚本只能设 <html> 上的属性（主题 / 制式 / 状态色），
+      // 城市名在 body 里，等到这里元素已经存在，才能在第一次绘制前写好，
+      // 免得先画一遍默认城市再翻转成用户上次选的城市。
+      (function () {
+        try {
+          // head 里已经解析过一遍存档，这里直接复用，不再读第二次。
+          var saved = window.TZ_PREFS || {};
+          if (!saved) return;
+          var t = saved.target && saved.target.title;
+          var h = saved.home && saved.home.title;
+          if (typeof t === 'string' && t) {
+            document.getElementById('page-title-target').textContent = t;
+            document.getElementById('target-heading').textContent = t;
+          }
+          if (typeof h === 'string' && h) {
+            document.getElementById('page-title-home').textContent = h;
+            document.getElementById('home-heading').textContent = h;
+          }
+          // 是否同一个城市：和 app.js 用同一套判定（规范化后的时区 ID），
+          // 两处口径一致，才不会出现「先隐藏、下一帧又被画回来」。
+          var targetZone = window.TZ_TIME.resolveZone(saved.target && saved.target.zone);
+          var homeZone = window.TZ_TIME.resolveZone(saved.home && saved.home.zone);
+          if (t && h && t === h && targetZone && homeZone && targetZone === homeZone) {
+            document.getElementById('page-title-home').style.display = 'none';
+            document.getElementById('page-title-swap').style.display = 'none';
+          }
+        } catch (error) {
+          /* 存档不可用时用默认城市 */
+        }
+      })();
+    </script>
+    <script src="./cities.js" defer></script>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

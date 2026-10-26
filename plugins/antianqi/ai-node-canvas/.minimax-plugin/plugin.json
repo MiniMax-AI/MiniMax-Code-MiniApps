@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "ai-node-canvas",
+  "displayName": "节点画布",
+  "version": "0.84.0",
+  "description": "无限画布节点编排：把 MiniMax 模型生成的文本、图片、视频串成工作流，连线即数据流，上游产物可直接被下游引用。",
+  "author": "antianqi",
+  "icon": "icon.png",
+  "darkIcon": "icon-dark.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "打开节点画布",
+    "用画布生成一张产品海报",
+    "把这两个节点连起来",
+    "用提示词增强写一条 H3 视频提示词",
+    "把画布上的产品图做成九宫格"
+  ],
+  "apps": [],
+  "mcpServers": ["servers.mcp.json"],
+  "skills": ["skills/ai-node-canvas/SKILL.md"]
+}

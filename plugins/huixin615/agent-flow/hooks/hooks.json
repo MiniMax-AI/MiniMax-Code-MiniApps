@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/record.mjs\"", "timeout": 5 }] }],
+    "PreToolUse": [{ "matcher": "task", "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/record.mjs\"", "timeout": 5 }] }],
+    "PostToolUse": [{ "matcher": "task", "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/record.mjs\"", "timeout": 5 }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/record.mjs\"", "timeout": 5 }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/record.mjs\"", "timeout": 5 }] }]
+  }
+}

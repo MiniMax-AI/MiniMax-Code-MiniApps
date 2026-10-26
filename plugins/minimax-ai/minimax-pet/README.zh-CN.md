@@ -14,9 +14,11 @@
 
 ## 环境与兼容
 
-本包声明 `session.read`，按仓库契约至少要求 MiniMax Code **3.1.4**；上游读取接口的已观察环境为 3.1.4-preview，这不代表本插件已完成正式客户端 GUI 验收，也不保证观察和语音接口可用。完整任务监控还要求 Host 提供 `agent.observe/cancel`，以及 `agent.sessions/session`，其最低正式发行版本尚未确认。缺少接口时显示不支持；语音还需要 `speech.transcribe`、麦克风声明和权限。
+本包支持 MiniMax Code **3.1.6 及以上版本**。2026-10-26 核对的[中国大陆](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest-mac.yml)与 [Global](https://file.cdn.minimax.io/public/minimax-agent-prod/release/latest-mac.yml) 正式更新清单均为 3.1.6，并已核对同版本发行实现包含所需接口。这确认了正式发布的 API 基线，不代表本插件已在该正式客户端完成 GUI 验收。
 
-此前 UI 版本已在 macOS 开发版验收三页签、窄宽布局、真实任务与 ask、导入删除、草稿确认和桌面切换；当前开源修订运行 Node／DOM 测试与隔离 HTTP smoke。新原创图集和图标通过 PNG 解码、动画帧覆盖与确定性重建检查；此前原生 UI 验收早于本次素材替换。Windows GUI、正式客户端安装、真实录音／ASR 未在当前修订中验收。
+任务监控使用 `agent.sessions/session/observe/cancel`，需要 `session.read` 授权。保留运行时能力和权限检查，缺少接口或关闭授权时显示不可用。语音还需要 `deviceAccess: ["microphone"]`、`speech.transcribe`、插件麦克风开关、系统麦克风授权和 Host 转写服务可用；接口已支持不保证每个账号都能使用转写服务。
+
+此前 UI 版本已在 macOS 开发版验收三页签、窄宽布局、真实任务与 ask、导入删除、草稿确认和桌面切换；当前开源修订运行 Node／DOM 测试与隔离 HTTP smoke。新原创图集和图标通过 PNG 解码、动画帧覆盖与确定性重建检查；此前原生 UI 验收早于本次素材替换。当前修订尚未验收 Windows GUI、正式客户端安装、3.1.6 正式版 GUI 或真实录音／ASR，自动化测试使用合成数据，不能证明这些路径。
 
 ## 数据与能力边界
 

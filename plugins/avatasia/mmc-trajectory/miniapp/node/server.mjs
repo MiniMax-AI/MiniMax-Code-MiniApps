@@ -3,7 +3,7 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
@@ -18,7 +18,9 @@ import {
   normaliseWhitespace,
   readSegmentHits,
   scanSegment,
+  segmentLedgerPositions,
   searchSurfaceOf,
+  uncoveredRecordCount,
 } from './search-segments.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
@@ -54,8 +56,8 @@ const GENERATION_PROBE_BYTES = 64 * 1024;
  *
  * The last clause used to end "for counts nobody treats as exact", and that is what turned out
  * to be false: the page printed the message count in the session picker (`（3 分钟前 · 10 条）`), so it
- * was treated as exact. On a session whose active file is 1 MB, the first 64 KB held 10 messages
- * out of 23,642 — a number that was wrong by three orders of magnitude and carried no hint of it.
+ * was treated as exact. When the prefix was a small part of the file, the count it produced was
+ * wrong by orders of magnitude and carried no hint of it.
  * So the prefix stays bounded and the counters it buys are only REPORTED when the prefix was the
  * whole file; see {@link describeSession}. Counting exactly is not available: the list reads the
  * active file, and an exact count there would still miss the rest of the lineage.
@@ -72,14 +74,40 @@ const MAX_RAW_BYTES = 65536;
  * This has to stay at or above the page's poll interval, and that relationship — not this
  * number — is the invariant tests/verify-list-cache.mjs holds. Below the interval the cache
  * cannot survive a single poll: every tick expires it, so the list re-walks the session tree
- * and reopens the runtime database on every tick. Measured on this machine, that was most of
- * the 16 GB this process read in 68 minutes, and the allocation behind it held the process at
- * a 1.2-2.5 GB high-water mark for as long as the page stayed open.
+ * on every tick. The walk is the expensive part of serving the list, and a cache that expires
+ * on every tick pays for it on every tick, for as long as the page stays open.
+ *
+ * The runtime database is a separate matter and this TTL does not govern it. The titles read
+ * rides the same interval, but the current conversation is re-read on every poll and is not
+ * cached at all: it is the one fact here that must not be stale, because a cached "current
+ * conversation" is the very defect the picker was built to remove. That read costs a few
+ * milliseconds — measured at 4.00 ms per call against the poll interval, a fraction of one percent of it —
+ * which is why it is left uncached rather than paid for with a TTL that could hide a switch
+ * from one conversation to another.
  */
 const LIST_CACHE_TTL_MS = 3000;
 const SESSION_CACHE_TTL_MS = 5000;
 const SESSION_CACHE_ENTRIES = 80;
 const TRAJECTORY_CACHE_ENTRIES = 4;
+/**
+ * How many bytes one piece of the trajectory body may hold.
+ *
+ * The body of a large session is tens of megabytes, and it used to be built by ONE
+ * `JSON.stringify` call — so the process had to hold all of it as one string at once, and V8's
+ * string builder leaves its intermediate copies behind while it doubles its buffer.
+ *
+ * The numbers here were measured on 2026-10-23 on this machine, on the code as it stood before
+ * the body was chunked, on one session of 57,436 records whose body was 53,581,503 bytes
+ * (52,648,733 characters): serializing it cost 749 MB of heap on top of the 366 MB payload it
+ * came from, and with every cache emptied the process still held 1,070 MB of resident memory on
+ * an 8.4 MB live heap.
+ *
+ * A megabyte is a compromise. Small enough that the builder's doubling is noise next to the
+ * payload it is serializing; large enough that a 53 MB body is fifty-odd writes rather than
+ * fifty thousand. A body piece that cannot be made smaller than this is one element bigger than
+ * the budget, and the budget does not pretend otherwise: it bounds that element instead.
+ */
+const TRAJECTORY_BODY_CHUNK_BYTES = 1024 * 1024;
 /**
  * The most hits one search response carries. The count is still reported in full — a needle that
  * matches ten thousand records is a real answer — so this is a transport bound and not a claim
@@ -87,39 +115,110 @@ const TRAJECTORY_CACHE_ENTRIES = 4;
  */
 const MAX_SEARCH_HITS = MAX_HITS;
 /**
- * Upper bound on the parsed generation rows kept resident, in bytes.
+ * How many BYTES OF ACCOUNTING the parsed generation rows may cost.
+ *
+ * The unit is NOT resident bytes, and this comment used to say it was. V8 cannot report an object
+ * graph's size, so an entry is charged for the SOURCE bytes it was parsed from, times
+ * `PARSED_ROWS_HEAP_PER_SOURCE_BYTE`. What this budget bounds is therefore how much INPUT the
+ * cache holds, not how much memory the process ends up holding. The two are related by a measured
+ * factor — the rows cost more than the bytes they were parsed from — and that factor moves with
+ * the shape of the messages, so it is a measurement and not an identity.
  *
  * This budget no longer covers the file that matters. A cache keyed on path+size+mtime for a file
  * that is being appended to has no hit rate to speak of: `handleTrajectory` only reaches the parse
  * after the trajectory key — which carries the same size and mtime — has already missed, so every
  * store here is followed by a miss and the entry is dead weight that still costs its rows'
- * memory. Measured on this machine, retaining it was the largest single cost in the process: 378 MB
- * of heap after one session and 304 polls, against 145 MB once it is not retained.
+ * memory.
  *
  * What is left is the sealed generations, whose stat never changes and which are therefore the
- * only parses a second request can genuinely reuse. Those files are rare at a session root — the
- * store keeps rotated generations under `snapshots/`, not beside `messages.jsonl` — so the budget
- * is now generous rather than tuned. Pinned by tests/verify-parsed-rows.mjs.
+ * only parses a second request can genuinely reuse. A LONG session has a great many of them — the
+ * store keeps one rotated generation per compaction under `snapshots/` — and when they add up to
+ * more than this budget, the ones the budget cannot hold are parsed again on every request. So
+ * this is a trade and not a generosity: what the budget holds is paid for in memory, and what it
+ * does not hold is paid for again on every poll.
+ *
+ * `PARSED_ROWS_CACHE_TTL_MS` bounds the other end: how long the retained rows stay after nobody
+ * asks for them. Pinned by tests/verify-parsed-rows.mjs.
  */
 const PARSED_ROWS_CACHE_BYTES = 256 * 1024 * 1024;
 /**
  * Heap charged to one cache entry per source byte read. V8 cannot report an object graph's
  * size, so a byte budget needs a proxy.
  *
- * Measured on this machine's own lineage: 95.3 MB of messages.jsonl retained 116 MB of heap
- * after two forced collections, i.e. 1.22x the source. 2x leaves headroom over that while
- * still erring on the side of over-counting, because a proxy that under-counts would let the
- * cache grow past its own budget without noticing.
+ * The rows a session leaves in the cache cost more than the bytes they were parsed from — the
+ * multiple has been measured between 1.2x and 1.5x — and it moves with the shape of the messages,
+ * so PARSED_ROWS_HEAP_PER_SOURCE_BYTE leaves headroom over it while still erring on the side of
+ * over-counting: a proxy that under-counts would let the cache grow past its own budget without
+ * noticing.
  *
  * It was 3x before, and that was wrong in the direction that matters: 95.3 MB x 3 charged
- * 286 MB against a 256 MB budget, so the LRU evicted entries it had room for in reality and
+ * 286 MB against the budget, so the LRU evicted entries it had room for in reality and
  * re-parsed them on the next poll. The budget is only as good as this number.
  */
 const PARSED_ROWS_HEAP_PER_SOURCE_BYTE = 2;
 /**
+ * How long the parsed rows of a generation stay in the cache after the last request that wanted
+ * them.
+ *
+ * The rows are the largest thing this service holds, and they are only worth holding while
+ * somebody is asking for them. The page rebuilds the whole trajectory on every poll while it is
+ * open, and it stops asking the moment the tab is hidden or closed — so a cache with no expiry
+ * keeps a conversation's rows for as long as the runtime lives, which is how the last session a
+ * reader opened stayed resident after they walked away.
+ *
+ * The shipped limit has two numbers behind it. The page polls as often as the client declares
+ * (`TRAJECTORY_POLL_INTERVAL`), so an open tab asks again long before this expires.
+ * And the page stops polling the moment its tab is HIDDEN, so a reader who switches away for a
+ * while is the ordinary case and not an exception — a limit shorter than that would make every
+ * return to the tab cost a re-parse. A reader who is really gone gets their rows back.
+ *
+ * **WHEN THEY COME BACK IS NOT THE SAME MOMENT AS WHEN THEY EXPIRE.** The limit is when the rows
+ * stop being wanted; the release happens on the next sweep, so the rows are gone no later than
+ * one sweep interval after the limit, with the shipped limit and the shipped sweep interval.
+ * The limit and the interval have to move together: the interval is at most a quarter of the
+ * limit, so the release is no later than a quarter of the limit after it; and when the limit is
+ * so small that a quarter of it is less than a millisecond, the interval is not finer than a
+ * millisecond and the release is at most a millisecond late. Both of those are asserted.
+ *
+ * An expiry is a MISS and not a deletion of something still wanted: the next request parses the
+ * file again and the cache fills itself back up. The price of that is one re-parse, and only when
+ * the whole-session cache misses too — which happens only when the conversation grew while the
+ * reader was away, in which case the rebuild was going to happen anyway.
+ *
+ * The timer that does the releasing is unref'd, so it never keeps the process alive, and it is
+ * stopped when the cache empties. Pinned by tests/verify-parsed-rows.mjs.
+ */
+const PARSED_ROWS_CACHE_TTL_MS = 10 * 60 * 1000;
+/**
+ * How often the cache sweeps for what has expired.
+ *
+ * The release lands on a tick, so this interval is also the gap between "the rows expired" and
+ * "the rows are gone" — which is why it is a named constant and not a fraction written at the
+ * call site: the promise to a reader is the limit PLUS this, and the two have to stay in that
+ * relation.
+ *
+ * The relation is enforced where the interval is TAKEN, not only here: the interval is clamped
+ * to a quarter of the limit the cache was given, so "never later than a quarter of the limit
+ * beyond it" holds for every limit above four milliseconds and not only for the shipped one. A
+ * constant that could outgrow the limit would make the promise true on the day it was written
+ * and false after somebody changed the limit.
+ *
+ * The timer that runs the sweep is started with this interval, and the cache reports the interval
+ * it uses, so the promise above is checked against the running cache rather than against two
+ * numbers in the source. The call that starts the timer is read by a check of its own, so the
+ * promise cannot drift away from the timer that has to keep it.
+ *
+ * The clamp has a floor of one millisecond, because a timer cannot be finer than that. For a
+ * limit below four milliseconds the floor is the larger of the two, and the release is then at
+ * most a millisecond late rather than a quarter of the limit late.
+ *
+ * Pinned by tests/verify-parsed-rows.mjs.
+ */
+const PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS = 150 * 1000;
+/**
  * How many decoded messages one trajectory entry keeps for `/raw`, per open session.
  *
- * Bounded by count rather than bytes because the thing being kept is one message, and a 64 KB cap
+ * Bounded by count rather than bytes because the thing being kept is one message, and the raw cap
  * is already what decides whether a message is too big to show. The point is not to be a cache —
  * it is so that paging back and forth in the inspector does not re-read the file each time — and a
  * reader who opens more than this many at once is served correctly either way.
@@ -131,7 +230,7 @@ const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache
  * Scans for the list counters, one per field. Each one stops right after the opening quote of
  * the value, so the value can be read out of `text` by position instead of being captured —
  * which is the whole point: a capturing `matchAll` allocates a match object per hit, and on a
- * 64 KB prefix with thousands of messages that is thousands of short-lived objects per session,
+ * the peek prefix with thousands of messages that is thousands of short-lived objects per session,
  * per rebuild.
  *
  * They carry `/g` and are driven with `test`, which allocates nothing. That mutates `lastIndex`,
@@ -339,6 +438,276 @@ export function lineDigest(bytes) {
 }
 
 /**
+ * The version of ONE record: what makes index N in one body the same record as index N in another.
+ *
+ * A record index is a POSITION, and a position means nothing without the body it was counted in.
+ * Two bodies of the same session at the same slice can hold different records at the same index —
+ * a transcript rewritten under a running page is the ordinary way that happens — and a reader who
+ * is shown 「命中 1 条」 pointing at a row whose text does not contain the needle has been told
+ * something false.
+ *
+ * So a version belongs to a position read the same way the session and the slice do: a request
+ * that names an index names the record it means, and the service can tell the two outcomes apart
+ * instead of serving the newer body under the older body's number.
+ *
+ * It is built from the LINE's digest and the record's position inside that line, and from nothing
+ * else. That matters twice over:
+ *
+ *  - The line digest is already computed for every locator, so this costs no extra reading.
+ *  - It is stable under APPEND. A session that grows does not rewrite the lines it already has, so
+ *    the records a reader is looking at keep their version. Otherwise every poll would expire every
+ *    row on screen, and the page would spend its life refusing its own answers — the common case
+ *    would be the broken one.
+ *
+ * @param {string | null | undefined} digest the line's digest
+ * @param {number | null | undefined} rowPos the record's position inside that line
+ * @returns {string}
+ */
+export function recordVersionToken(digest, rowPos) {
+  const line = typeof digest === 'string' ? digest : '';
+  const pos = Number.isInteger(rowPos) ? rowPos : 0;
+  return createHash('sha256').update(`${line}:${pos}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * Stamps every record of a built payload with its version.
+ *
+ * One place, because there are two callers that must agree: the body the page reads, and the
+ * search answer that filters it. A body whose records carry one version and an answer whose hits
+ * carry another is two answers to 「这条记录是哪一版」, and the page is then the only place that
+ * could notice — which is exactly where the check must not live.
+ *
+ * @param {{ turns?: Array<any> }} payload
+ * @param {Map<number, { digest?: string }>} locators record index -> its line's locator
+ * @returns {typeof payload}
+ */
+export function stampRecordVersions(payload, locators) {
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const records = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      const locator = locators && typeof locators.get === 'function' ? locators.get(record.index) : undefined;
+      record.v = recordVersionToken(locator ? locator.digest : null, record.rowPos);
+    }
+  }
+  return payload;
+}
+
+/**
+ * The identity of a SET of records: a fold over their version tokens, in the order they are shown.
+ *
+ * A version token says 「this one record is this one version」. It does not say anything about a
+ * set of them, and a set is what a search answer is about: an answer says 「these records match and
+ * the rest do not」, and the part that matters to the reader is the part it does NOT name.
+ *
+ * Two properties, and both of them are the point:
+ *
+ *  - **It is stable under APPEND.** A session that grows does not change the records it already
+ *    has, so the fold over the first N records is the same before and after an append. This is
+ *    the same reason the version token is built from the line's digest rather than from the body:
+ *    a body-level identity (an ETag, a digest of the whole body) changes every time the session
+ *    is written to, and then every answer stops applying every few seconds — the common case
+ *    would be the broken one.
+ *  - **It changes when a record is rewritten.** The token is a digest of that record's own bytes,
+ *    so a record whose text was replaced under the page has a different token, and the fold over
+ *    the same positions has a different answer.
+ *
+ * The fold is ordered, so a set that was reordered is a different set. Two lanes of 32 bits each:
+ * a collision is not a thing a reader can notice, and one lane of 32 is one thing a reader could
+ * notice.
+ *
+ * @param {Array<string | null | undefined>} versions the records' version tokens, in order
+ * @returns {string} 16 hex characters
+ */
+export function recordSetFingerprint(versions) {
+  let h1 = 0x811c9dc5 >>> 0;
+  let h2 = 0x9e3779b9 >>> 0;
+  const list = Array.isArray(versions) ? versions : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const text = typeof list[i] === 'string' ? list[i] : '';
+    for (let j = 0; j < text.length; j += 1) {
+      const code = text.charCodeAt(j);
+      h1 = Math.imul(h1 ^ code, 16777619) >>> 0;
+      h2 = Math.imul(h2 ^ code, 2246822519) >>> 0;
+    }
+    // A separator, so that ["ab", "c"] and ["a", "bc"] are two different sets.
+    h1 = Math.imul(h1 ^ 0x1f, 16777619) >>> 0;
+    h2 = Math.imul(h2 ^ 0x1f, 2246822519) >>> 0;
+  }
+  return hex8(h1) + hex8(h2);
+}
+
+/**
+ * Eight hex characters, most significant first.
+ * @param {number} value
+ * @returns {string}
+ */
+function hex8(value) {
+  return (value >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * The version tokens of a payload's records, in the order the ledger shows them.
+ *
+ * The order is the payload's, not the index order: the ledger draws turn by turn, and a fold over
+ * a different order is a different answer to 「这批记录是哪一批」.
+ *
+ * @param {{ turns?: Array<any> }} payload
+ * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
+ *   negative or fractional limit is every record
+ * @returns {Array<string>}
+ */
+export function payloadRecordVersions(payload, limit) {
+  /** @type {Array<string>} */
+  const out = [];
+  const cap = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;
+  const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
+  for (const turn of turns) {
+    const records = turn && Array.isArray(turn.records) ? turn.records : [];
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      // The cap is checked BEFORE the push, so a limit of zero is zero records. Checked after the
+      // push it would yield one version, and the fold over the page's empty set would then never
+      // match the service's own fold over its empty set — the request would be refused for ever.
+      if (out.length >= cap) return out;
+      out.push(typeof record.v === 'string' ? record.v : '');
+    }
+  }
+  return out;
+}
+
+/**
+ * The ledger's order: the turns in the order the body numbers them, and inside a turn the
+ * records in the order they were emitted.
+ *
+ * ONE definition, because two answers have to agree on it. The fold over the first N records
+ * says which SET of records an answer is about, and the order the hits are reported in says how
+ * that answer reads. Both are the body's order — the ledger draws turn by turn — so both are
+ * this comparison.
+ *
+ * The record's own number is not the order. It is the order the records were EMITTED in, and a
+ * record that belongs to an earlier turn and arrived after that turn was written is emitted
+ * later than a record of a later turn: its number is larger, and it still comes first. That is
+ * why the turn comes first here, and why sorting by the number alone is the wrong order.
+ *
+ * @param {{ turnIndex?: number | null, index?: number | null }} a
+ * @param {{ turnIndex?: number | null, index?: number | null }} b
+ * @returns {number}
+ */
+export function byLedgerOrder(a, b) {
+  // A record with no turn of its own cannot be placed, and the callers that read these fields
+  // have already refused such a record. The fallback is here so that a comparison can never
+  // read `null` as a number.
+  const turnA = typeof a.turnIndex === 'number' ? a.turnIndex : Number.MAX_SAFE_INTEGER;
+  const turnB = typeof b.turnIndex === 'number' ? b.turnIndex : Number.MAX_SAFE_INTEGER;
+  if (turnA !== turnB) return turnA - turnB;
+  const indexA = typeof a.index === 'number' ? a.index : 0;
+  const indexB = typeof b.index === 'number' ? b.index : 0;
+  return indexA - indexB;
+}
+
+/**
+ * The version tokens of the first N records, in the order the ledger shows them, read from the
+ * stored segments rather than from a rebuilt body.
+ *
+ * THE SAME FACT AS {@link payloadRecordVersions}, read the other way round. The body is in
+ * ledger order — turn by turn, and inside a turn the records in the order they were emitted —
+ * and the segments are not: they are one file per generation, read oldest first. A record that
+ * belongs to an EARLIER turn and arrived after that turn was written lives in a LATER file, so
+ * the first N records of the body and the first N records of the files are two different sets.
+ *
+ * That is not a detail of the fixture: a turn that spans a compaction is written like that, and
+ * a fold over the files answers about a set the page is not holding. The fingerprint then does
+ * not match the one the page asked for, and the service refuses a body that did not change.
+ *
+ * The positions on the lines are what puts the records back: the turn a record is in, and the
+ * record's own number in the body. Both are on the line, so nothing has to be rebuilt to know
+ * them — and the order is the body's, because the body numbers its turns in the order it draws
+ * them and its records in the order it emits them.
+ *
+ * `null` is the answer for a record that cannot be placed: a line that carries no turn or no
+ * record number cannot be put back into the ledger's order, and an answer about a set we cannot
+ * name is not an answer about the set the page holds. The caller falls back to the rebuild,
+ * which is the same answer it would have given before.
+ *
+ * @param {Array<{ turnIndex: number | null, index: number | null, v: string }>} positions the
+ *   ledger position of every record the segments cover
+ * @param {number} [limit] stop after this many records; zero is zero records, and a missing,
+ *   negative or fractional limit is every record
+ * @returns {Array<string> | null}
+ */
+export function segmentRecordVersions(positions, limit) {
+  const list = Array.isArray(positions) ? positions : [];
+  /** @type {Array<{ turnIndex: number, index: number, v: string }>} */
+  const placed = [];
+  for (const one of list) {
+    if (!one || typeof one !== 'object') return null;
+    const turnIndex = one.turnIndex;
+    const index = one.index;
+    if (typeof turnIndex !== 'number' || !Number.isFinite(turnIndex)) return null;
+    // A negative number is how the segment says 「this record has no number of its own」, the
+    // same way it says a record belongs to no file. Such a record cannot be placed inside its
+    // turn, and a fold that put it somewhere would be folding over a set nobody can name.
+    if (typeof index !== 'number' || !Number.isFinite(index) || index < 0) return null;
+    placed.push({ turnIndex, index, v: typeof one.v === 'string' ? one.v : '' });
+  }
+  // The ledger's order: the turns in the order the body numbers them, and inside a turn the
+  // records in the order they were emitted. The record's own number is what says which is
+  // which inside a turn — the segments hold one turn's records in more than one file.
+  placed.sort(byLedgerOrder);
+  // The same rule as the payload's own fold over the first N records: an explicit limit of zero
+  // is zero records, and a missing, negative or fractional limit is every record. The two are two
+  // readings of one fact — the versions of the first N records — so they have to agree.
+  const wanted = Number.isInteger(limit) && limit >= 0 ? limit : Infinity;
+  return placed.slice(0, wanted).map((one) => one.v);
+}
+
+/**
+ * Whether a tail may be answered to a page that holds a particular set of records.
+ *
+ * A tail carries the records AFTER the page's cursor. The records before it are not in the tail
+ * at all — the page keeps the copies it has — so the tail is only about the page's copy if that
+ * copy is still the service's.
+ *
+ * A record rewritten in place keeps its index and its id, so the cursor still points at the same
+ * record, the tail looks empty, and the page merges nothing: it keeps the old text and installs
+ * the new body's validator. Nothing else in the protocol can see it, which is why the tail names
+ * the set it is about.
+ *
+ * So the page says which set it holds — how many records, and a fingerprint of their versions —
+ * and the service folds its own first N the same way. The two have to agree before a tail is
+ * answered with a tail. The count is the FIRST N for the reason the search has it: a page that is
+ * behind because the session grew has fewer records, not different ones.
+ *
+ * `null` means the tail may be answered. Otherwise the refusal, with the status and the code the
+ * page answers it by.
+ *
+ * @param {{ turns?: Array<any> }} payload the body the tail would be cut from
+ * @param {number} count how many records the page holds
+ * @param {string} askedFingerprint the fingerprint of those records' versions
+ * @returns {{ status: number, code: string, message: string } | null}
+ */
+export function deltaRefusal(payload, count, askedFingerprint) {
+  const fingerprint = typeof askedFingerprint === 'string' ? askedFingerprint.trim() : '';
+  if (!Number.isInteger(count) || count < 0 || !/^[0-9a-f]{16}$/.test(fingerprint)) {
+    return {
+      status: 400,
+      code: 'trajectory_fingerprint_required',
+      message: '会话已更新，请重新加载后再继续',
+    };
+  }
+  if (recordSetFingerprint(payloadRecordVersions(payload, count)) !== fingerprint) {
+    return {
+      status: 409,
+      code: 'trajectory_version_mismatch',
+      message: '该记录所在的版本已变化，请重新加载会话',
+    };
+  }
+  return null;
+}
+
+/**
  * Cheap single-pass counters used by the session list; values are approximate by design.
  *
  * Allocation-free apart from the turn-id set, which has to hold the ids to count them
@@ -438,7 +807,7 @@ export function activeCatalogBytes(catalog) {
  * The catalog-recorded sizes are a snapshot, and the active `messages.jsonl` keeps being appended
  * to after the catalog was written — so "we read fewer bytes than the file now has" is not evidence
  * that the file is too large. Reporting it as truncation is how a merely-active session ended up
- * claiming the first 64 MB when it was nowhere near it.
+ * claiming the whole read cap when it was nowhere near it.
  *
  * @param {number} size the file's size at read time
  * @param {number} limit the bytes we were willing to read
@@ -634,6 +1003,31 @@ export function activeCatalogGeneration(catalog, generations) {
 }
 
 /**
+ * Whether `candidate` is `root` itself, or something under it.
+ *
+ * One definition, for every place that has to answer "is this path inside that one": the artifact
+ * file a catalog may name, the session directory a relative path may point at, and the data dir a
+ * caller may hand over.
+ *
+ * It compares the two paths rather than testing one string against the other, because a prefix test
+ * on the strings also matches a sibling whose name merely starts with the root's name (`D:\pkg-extra`
+ * against `D:\pkg`), and because it does not depend on the two paths having been spelled with the
+ * same letter case.
+ *
+ * @param {string} root
+ * @param {string} candidate
+ * @returns {boolean}
+ */
+export function isUnderDirectory(root, candidate) {
+  const base = resolve(root);
+  const target = resolve(candidate);
+  if (target === base) return true;
+  const inside = relative(base, target);
+  if (isAbsolute(inside)) return false;
+  return inside !== '..' && !inside.startsWith(`..${sep}`);
+}
+
+/**
  * Resolves a catalog artifact to a readable file inside the session directory.
  *
  * Two independent checks stand between the catalog and `open()`: the name must match the
@@ -650,7 +1044,7 @@ export function resolveArtifactPath(dir, artifact) {
   if (!SAFE_ARTIFACT_NAME.test(artifact.fileName) || artifact.fileName.includes('..')) return null;
   const root = resolve(dir);
   const candidate = resolve(root, artifact.active ? artifact.fileName : join('snapshots', artifact.fileName));
-  if (candidate !== root && !candidate.startsWith(root + sep)) return null;
+  if (!isUnderDirectory(root, candidate)) return null;
   return candidate;
 }
 
@@ -773,7 +1167,7 @@ export async function readSessionIdentity(dir) {
   const manifest = await readJsonIfPresent(dir, 'manifest.json');
   const catalog = await readJsonIfPresent(dir, 'history-catalog.json');
   const manifestId = manifest && typeof manifest.sessionId === 'string' ? manifest.sessionId.trim() : '';
-  const id = manifestId || decodeSessionIdFromDirName(basename(dir)) || basename(dir);
+  const id = publishedSessionId(manifestId, dir);
   const createdAtMs = manifest && Number.isFinite(Number(manifest.createdAtMs)) ? Number(manifest.createdAtMs) : null;
   const generations = parseCatalogGenerations(catalog);
   return {
@@ -786,31 +1180,68 @@ export async function readSessionIdentity(dir) {
 }
 
 /**
+ * The id a directory is published under.
+ *
+ * One writer, and the same answer everywhere. The manifest beside the transcript names the
+ * session when it is there, and the manifest is the authority: a directory's name is a claim,
+ * not a fact. The name names the session when it decodes, and the folder's own name is the
+ * last resort -- a directory whose name does not decode and that has no manifest has no id of
+ * its own, and its folder name is what it can be reached by.
+ *
+ * A name that does not decode names NO session, which is not the same as disagreeing with one:
+ * such a directory is identified by its manifest alone, and it is still a real session.
+ *
+ * @param {string | null | undefined} manifestId
+ * @param {string} dir
+ * @returns {string}
+ */
+export function publishedSessionId(manifestId, dir) {
+  return manifestId || decodeSessionIdFromDirName(basename(dir)) || basename(dir);
+}
+
+/**
+ * The session id the manifest beside the transcript names, or null when there is no manifest.
+ *
+ * A directory's name and the manifest beside its transcript are two copies of the same id. This
+ * reads only the manifest -- the catalogue beside it says nothing about who the directory holds
+ * -- and it says nothing when the manifest is absent, because a directory with no manifest is
+ * judged by its name alone.
+ *
+ * @param {string} dir
+ * @returns {Promise<string | null>}
+ */
+async function readManifestSessionId(dir) {
+  const manifest = await readJsonIfPresent(dir, 'manifest.json');
+  const id = manifest && typeof manifest.sessionId === 'string' ? manifest.sessionId.trim() : '';
+  return id || null;
+}
+
+/**
  * The whole candidate set from one walk, as two products of the same traversal.
  *
  * These used to be one thing, and that is the defect. `slice(0, MAX_SESSION_LIST)` ran last,
- * so the only handle the service had on a session directory was "one of the 30 most recently
+ * so the only handle the service had on a session directory was "one of the most recently
  * touched" — and `resolveTrajectoryRequest` resolved an explicit id by scanning exactly those
- * 30. Measured on this machine: 146 candidate directories, 30 exposed, 116 of them
- * unreachable by id (window inside 200/200, a sample outside 404/404). A session the user
- * could name but not open is a correctness bug, not a small one.
+ * MAX_SESSION_LIST. A session the user could name but not open is a correctness bug, not a small one.
  *
  * So the traversal now yields two things:
  *
  *  - `recentEntries` — sorted by mtime, capped at `MAX_SESSION_LIST`. This is what the picker
  *    shows, and it stays exactly as small as it was.
- *  - `byDecodedId` — every candidate directory, keyed by the id decoded from its own name.
- *    Decoding reads no file: the walk already stat'ed `messages.jsonl` for every candidate, so
- *    the index costs no I/O the walk was not doing anyway.
+ *  - `bySessionId` — every candidate directory, keyed by the id that directory is published
+ *    under. The walk decides that id once, when it reads the manifest it already reads to decide
+ *    whether the directory is publishable at all, so the index costs no I/O the walk was not
+ *    doing anyway -- and every id the list shows is an id this index can resolve.
  *
  * Two properties this must not lose:
  *
- *  - A decoded name is a *claim*, not a fact. `readSessionIdentity` prefers `manifest.sessionId`
- *    over the directory name, so every caller of this index still reads the identity of the one
- *    directory it picked and checks the id before serving it.
- *  - Two directories can decode to the same id. `Map.set` would silently keep whichever came
- *    last, which makes the answer depend on `readdir` order. Duplicates are therefore kept as a
- *    list and resolved against the manifests, not discarded and not guessed.
+ *  - The id is a *decision*, not a guess. The walk refuses a directory whose name and manifest
+ *    disagree, so a directory in this index is one session's directory; and every caller still
+ *    reads the identity of the one directory it picked and checks the id before serving it,
+ *    because the manifest can change under the walk.
+ *  - Two directories can hold the same id. `Map.set` would silently keep whichever came last,
+ *    which makes the answer depend on `readdir` order. Duplicates are therefore kept as a list
+ *    and resolved against the manifests, not discarded and not guessed.
  *
  * `truncated` says the walk hit `MAX_SESSION_CANDIDATES` and stopped early. That budget is a
  * resource guard, and it must not be allowed to masquerade as "this session does not exist" —
@@ -818,8 +1249,9 @@ export async function readSessionIdentity(dir) {
  * truthful one.
  *
  * @param {string} sessionsRoot
- * @returns {Promise<{ recentEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>,
- *   byDecodedId: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>,
+ * @returns {Promise<{ recentEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>,
+ *   allEntries: Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>,
+ *   bySessionId: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>>,
  *   truncated: boolean }>}
  */
 export async function collectSessionCandidates(sessionsRoot) {
@@ -853,21 +1285,56 @@ export async function collectSessionCandidates(sessionsRoot) {
     }
   };
   await walk(sessionsRoot, 0);
-  entries.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 
-  /** @type {Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>} */
-  const byDecodedId = new Map();
-  for (const entry of entries) {
-    const id = decodeSessionIdFromDirName(basename(entry.dir));
-    // A name that does not decode is still a real session; it just has no fast path and is
-    // found the slow way. Dropping it here would turn "no fast path" into "does not exist".
-    if (!id) continue;
-    const bucket = byDecodedId.get(id);
+  // A directory is a session's directory only when its name and the manifest beside its
+  // transcript name that session: they are two copies of the same id, and the rule the recorded
+  // path and the 'latest' binding already follow -- the name AND the manifest -- is the one that
+  // belongs here too.
+  //
+  // A directory where the two disagree is nobody's. Publishing it would put one session's id on
+  // another session's transcript, and the row would mix the manifest's id with the name's
+  // metadata -- two sources in one row. So it does not enter the walk: the list does not publish
+  // it, the validator does not see it, and the trajectory route does not serve it.
+  //
+  // And the id it claims is not among the published ones, so it is not a parent the reader can
+  // pick -- a run hanging off it becomes a conversation of its own, by the rule that a parent the
+  // reader cannot reach is not a parent.
+  //
+  // The id every directory is PUBLISHED under is decided here, once. Everything downstream --
+  // the title lookup, the layer, the row, the index the route resolves an id through -- reads it
+  // off the entry instead of decoding the name again, because a name that does not decode names
+  // no session at all: the manifest is then the only identity that directory has, and a parent
+  // identified that way still holds its runs, still has its title, and is still openable by the
+  // id the list shows.
+  const judged = await Promise.all(entries.map(async (entry) => {
+    const claimed = decodeSessionIdFromDirName(basename(entry.dir));
+    const manifestId = await readManifestSessionId(entry.dir);
+    // A name that does not decode names no session, so there is nothing for the manifest to
+    // disagree with: the manifest is the only identity there is.
+    const holds = !claimed || !manifestId || manifestId === claimed;
+    return { entry, holds, sessionId: publishedSessionId(manifestId, entry.dir) };
+  }));
+  const publishable = judged.filter((one) => one.holds)
+    .map((one) => ({ ...one.entry, sessionId: one.sessionId }));
+  publishable.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+
+  /** @type {Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>>} */
+  const bySessionId = new Map();
+  for (const entry of publishable) {
+    // The key is the id the entry is published under, so every id the list shows is an id this
+    // index can resolve. A name that does not decode names no session, and the folder name is
+    // what that directory can be reached by -- so it is in here under that name rather than
+    // missing, which would turn "no fast path" into "does not exist".
+    const bucket = bySessionId.get(entry.sessionId);
     if (bucket) bucket.push(entry);
-    else byDecodedId.set(id, [entry]);
+    else bySessionId.set(entry.sessionId, [entry]);
   }
 
-  return { recentEntries: entries.slice(0, MAX_SESSION_LIST), byDecodedId, truncated };
+  // `allEntries` is the same walk, uncut. The capped window is what 'latest' falls back to and
+  // what the picker used to draw from; the list of MAIN sessions needs a deeper pool than that,
+  // because a sub-agent sits in that window and would otherwise take a main session' place.
+  // The walk already stat'ed every one of these, so the deeper pool costs no extra disk work.
+  return { recentEntries: publishable.slice(0, MAX_SESSION_LIST), allEntries: publishable, bySessionId, truncated };
 }
 
 /**
@@ -918,13 +1385,18 @@ function toNumber(value) {
 }
 
 /**
- * Resolve the conversation the user is actually in.
+ * Resolve the conversation the runtime database reports as current.
  *
  * The Host never tells the page which session opened it, so we ask the runtime database
  * instead. Ranking, strongest signal first:
  *   1. holds a live turn lease      — an agent turn is running right now
  *   2. status = 'started'           — open and not finished
  *   3. most recently updated        — the fallback for a long-idle conversation
+ *
+ * This is what the runtime database says, and the app infers from it: a ranking is a best
+ * answer, not a certainty, and two conversations holding a lease at once are reported as
+ * ambiguous rather than resolved here. Nothing in this file can see which conversation the
+ * reader is actually looking at.
  *
  * Only real user conversations qualify. `session_kind = 'conversation'` with a NULL
  * `purpose` excludes cron runs (`purpose = 'cron:...'`) and background worker/explore
@@ -988,18 +1460,58 @@ export async function resolveCurrentConversation(home) {
   } catch {
     return null;
   } finally {
-    // Every call opened its own handle and none of them closed it. Polling every 2.5s meant
+    // Every call opened its own handle and none of them closed it. Polling on every tick meant
     // 20–30 live handles waiting on the GC, and dispose() left them open too.
     closeQuietly(db);
   }
 }
 
 /**
+ * The columns the picker reads, widest first.
+ *
+ * A runtime database written before one of these columns existed does not have it, and preparing a
+ * statement over a column that is not there throws before a single row has been read. So the read
+ * walks down this list until one statement prepares: each rung drops the newest column and keeps
+ * every older one, which is what lets an old database still yield titles, kinds and parents
+ * instead of nothing at all.
+ */
+const SESSION_TITLE_SELECTS = [
+  'select session_id, title, session_kind, parent_session_id, purpose, workspace_dir from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind, parent_session_id, purpose from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind from local_runtime_sessions where session_id = ?',
+];
+
+/**
  * Titles for the session picker. Missing database simply means the caller keeps its
  * filesystem-derived label.
+ *
+ * Five facts come back per session, and the last three are what the picker needs to stop
+ * presenting every session as if it were the reader's own conversation:
+ *
+ *   `title`     what the session is called
+ *   `kind`      the shape the runtime gave it
+ *   `parent`    the session it was spawned from, when it was spawned from one
+ *   `purpose`   what the session is FOR -- a cron run, a background task, a lightweight exchange
+ *   `workspace` the project directory it belongs to
+ *
+ * The parent id is the fact that a branch exists, and it is the ONLY part of that
+ * relationship that is always available: the list is the most recent N sessions, and a child
+ * is always newer than the parent that spawned it, so the parent's title is routinely outside
+ * the window. Carrying the id and looking the title up would therefore be a lookup that fails
+ * exactly when a reader is most likely to want it.
+ *
+ * Asking for a column is the optional part, and it has to be optional: a runtime database
+ * written before child sessions existed has no `parent_session_id`, and preparing a statement
+ * over a column that is not there throws before a single row has been read. Under the empty
+ * catch below that is not a degraded list -- it is every title and every kind in the page
+ * silently reverting to the first sentence of the transcript, which is what a reader would see
+ * as "the titles broke and nothing says why". The mapping below already answers `null` for a
+ * row that carries no parent, so the rows the lower rungs return need no change at all.
+ *
  * @param {string} home
  * @param {readonly string[]} sessionIds
- * @returns {Promise<Map<string, { title: string | null, kind: string | null }>>}
+ * @returns {Promise<Map<string, { title: string | null, kind: string | null, parent: string | null, purpose: string | null, workspace: string | null }>>}
  */
 export async function readSessionTitles(home, sessionIds) {
   const result = new Map();
@@ -1007,38 +1519,43 @@ export async function readSessionTitles(home, sessionIds) {
   if (!db) return result;
   try {
     if (sessionIds.length === 0) return result;
-    // The parent id is the fact that a branch exists, and it is the ONLY part of that
-    // relationship that is always available: the list is the most recent N sessions, and a child
-    // is always newer than the parent that spawned it, so the parent's title is routinely outside
-    // the window. Carrying the id and looking the title up would therefore be a lookup that fails
-    // exactly when a reader is most likely to want it.
-    //
-    // Asking for the column is the optional part, and it has to be optional: a runtime database
-    // written before child sessions existed has no `parent_session_id`, and preparing a statement
-    // over a column that is not there throws before a single row has been read. Under the empty
-    // catch below that is not a degraded list -- it is every title and every kind in the page
-    // silently reverting to the first sentence of the transcript, which is what a reader would see
-    // as "the titles broke and nothing says why". The mapping below already answers `null` for a
-    // row that carries no parent, so the row this fallback returns needs no change at all.
-    let stmt;
-    try {
-      stmt = db.prepare('select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?');
-    } catch {
+    let stmt = null;
+    for (const sql of SESSION_TITLE_SELECTS) {
       try {
-        stmt = db.prepare('select session_id, title, session_kind from local_runtime_sessions where session_id = ?');
+        stmt = db.prepare(sql);
+        break;
       } catch {
-        return result;
+        // This database does not have that column yet; ask for less.
       }
     }
+    if (!stmt) return result;
     for (const id of sessionIds) {
       const row = stmt.get(id);
       if (!row) continue;
+      const parent = typeof row.parent_session_id === 'string' && row.parent_session_id !== ''
+        ? row.parent_session_id
+        : null;
+      // The parent column is a foreign key into this very table: it names the session that
+      // spawned this one. A value that names no session here is not a parent, and publishing it
+      // would put a dangling link on the wire -- and the page groups its runs by that value, so
+      // a name that is not a session's id is a name the page has no business keying a group by.
+      //
+      // The lookup is the statement that read this very row, so there is no second query that
+      // could fail to prepare, and therefore no path on which a parent is published without
+      // having been looked up: a database written before child sessions existed has no
+      // `parent_session_id` column, so every parent above is null and there is nothing to
+      // look up at all.
+      //
+      // A lookup that throws takes this row out of the map along with everything else, and a
+      // row that is not in the map has no parent either. So the promise holds on every path:
+      // a parent that is published names a session.
+      const parentNames = parent ? Boolean(stmt.get(parent)) : false;
       result.set(id, {
         title: typeof row.title === 'string' && row.title.trim() ? row.title.trim() : null,
         kind: typeof row.session_kind === 'string' ? row.session_kind : null,
-        parent: typeof row.parent_session_id === 'string' && row.parent_session_id !== ''
-          ? row.parent_session_id
-          : null,
+        parent: parentNames ? parent : null,
+        purpose: typeof row.purpose === 'string' && row.purpose.trim() ? row.purpose.trim() : null,
+        workspace: typeof row.workspace_dir === 'string' && row.workspace_dir.trim() ? row.workspace_dir.trim() : null,
       });
     }
   } catch {
@@ -1047,6 +1564,454 @@ export async function readSessionTitles(home, sessionIds) {
     closeQuietly(db);
   }
   return result;
+}
+
+/**
+ * What kind of session this is, as a closed set of tokens the page can render.
+ *
+ * This is the only place that knows what a runtime `purpose` means. The raw value is free text --
+ * it carries whatever a person wrote into it -- so it is never published; what travels is the token
+ * derived from it.
+ *
+ * `purpose` answers first because it is the more specific fact: a session can be a cron run and
+ * still be recorded with the kind of a conversation. `kind` is the fallback, for a database whose
+ * `purpose` column does not exist yet.
+ *
+ * @param {string | null | undefined} kind
+ * @param {string | null | undefined} purpose
+ * @returns {'lightweight' | 'scheduled' | 'task' | null}
+ */
+export function sessionTagFor(kind, purpose) {
+  const p = typeof purpose === 'string' ? purpose.trim() : '';
+  const k = typeof kind === 'string' ? kind.trim().toLowerCase() : '';
+  if (p === 'context-mode:lightweight') return 'lightweight';
+  if (p.startsWith('cron:') || k === 'cron') return 'scheduled';
+  if (p.startsWith('local-background-task:') || p.startsWith('local-task:') || k === 'task') return 'task';
+  return null;
+}
+
+/**
+ * @param {string | null | undefined} value
+ * @returns {{ value: string, windows: boolean } | null}
+ */
+function normaliseWorkspacePath(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const slashed = trimmed.replace(/\\/g, '/');
+  const withoutTail = slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed;
+  // A drive letter or a UNC root is what makes a path a Windows path, wherever the comparison runs.
+  const windows = /^[A-Za-z]:\//.test(withoutTail) || withoutTail.startsWith('//');
+  return { value: withoutTail, windows };
+}
+
+/**
+ * Whether two workspace paths name the same directory.
+ *
+ * The value is an absolute path on the reader's machine, so it is compared here and never sent
+ * anywhere: the page receives an ordered list, and a path in it would be a location on somebody's
+ * disk. Two spellings of one path have to compare equal, because the same workspace is written
+ * with backslashes in one row and with forward slashes in another, and a Windows path does not
+ * distinguish `D:\work` from `D:\WORK`.
+ *
+ * Case is folded only for Windows-shaped paths. A POSIX path is compared as it stands, because
+ * `/work/Project` and `/work/project` really are two directories there.
+ *
+ * @param {string | null | undefined} left
+ * @param {string | null | undefined} right
+ * @returns {boolean}
+ */
+export function sameWorkspacePath(left, right) {
+  const a = normaliseWorkspacePath(left);
+  const b = normaliseWorkspacePath(right);
+  if (!a || !b) return false;
+  if (a.windows || b.windows) return a.value.toLowerCase() === b.value.toLowerCase();
+  return a.value === b.value;
+}
+
+/**
+ * The workspace a session belongs to, as the picker reads it: null when the database has no such
+ * column, no such row, or no value in it.
+ *
+ * @param {Map<string, { workspace?: string | null }>} titles
+ * @param {string | null | undefined} sessionId
+ * @returns {string | null}
+ */
+function workspaceOfSession(titles, sessionId) {
+  if (!sessionId || !(titles instanceof Map)) return null;
+  const meta = titles.get(sessionId);
+  if (!meta || typeof meta.workspace !== 'string' || !meta.workspace.trim()) return null;
+  return meta.workspace.trim();
+}
+
+/**
+ * Build a session entry from a recorded relative directory.
+ *
+ * The value is a column the runtime wrote rather than a name this app chose, so it earns the same
+ * containment check `resolveArtifactPath` gives catalog file names: a path that resolves outside
+ * the sessions root is refused, not clamped. The picker and the 'latest' resolver share this one
+ * function, so a second copy of the check cannot drift away from the first.
+ *
+ * The containment check alone is not enough, and the gap is the same shape as the one it closes:
+ * a path can sit INSIDE the sessions root and still belong to a different session than the one
+ * that recorded it. Then the caller holds one session's directory under another session's id —
+ * the picker would show the current conversation's id twice and drop the conversation itself, and
+ * the 'latest' resolver would bind one session's id to another session's directory. So the
+ * session the path is supposed to be is named here, and a path that turns out to be a different
+ * session's is refused exactly the way an outside path is.
+ *
+ * @param {string} sessionsRoot
+ * @param {string | null | undefined} relativeDir
+ * @param {string | null | undefined} [expectedSessionId]
+ * @returns {Promise<{ entry: { dir: string, sizeBytes: number, lastActiveAt: number } | null, rejected: boolean }>}
+ */
+export async function entryFromRelativeDir(sessionsRoot, relativeDir, expectedSessionId) {
+  if (typeof relativeDir !== 'string' || !relativeDir.trim()) return { entry: null, rejected: false };
+  const root = resolve(sessionsRoot);
+  const dir = resolve(root, relativeDir.trim().replace(/\\/g, '/'));
+  if (!isUnderDirectory(root, dir)) return { entry: null, rejected: true };
+  try {
+    const fileStat = await stat(join(dir, 'messages.jsonl'));
+    // The id of the session this directory holds. It travels with the entry, like it does for
+    // the walk's own rows: a row built from a recorded path is published under an id too, and a
+    // row with no id is a row the page cannot group, label or select.
+    const identity = await readSessionIdentity(dir);
+    if (expectedSessionId) {
+      // The directory name is not the only place the session id is written down, and it is not
+      // the authority either. The service reads a session's identity from the manifest the
+      // runtime wrote beside its transcript (`readSessionIdentity`), and the manifest is what
+      // says which session this directory holds. A directory whose name encodes one session and
+      // whose manifest names another is the OTHER session's directory, whatever the folder is
+      // called.
+      //
+      // So both have to be the session this path is supposed to be, and they are checked one at
+      // a time because they can disagree in both directions. The name has to be it: that is the
+      // check that keeps one directory from being listed twice under two ids. And the manifest
+      // has to be it too: a manifest naming another session is a recorded path pointing at
+      // somebody else's transcript, and accepting it would put the current conversation's id on
+      // another session's messages -- the same defect the name check exists for, one column
+      // further in.
+      //
+      // A name that does not decode names NO session, and that is not the same as disagreeing
+      // with one: there is nothing for the manifest to disagree with, so the manifest decides
+      // alone. A directory with no manifest is judged by its name alone, which is the case that
+      // was always here.
+      const claimed = decodeSessionIdFromDirName(basename(dir));
+      if (claimed && claimed !== expectedSessionId) {
+        return { entry: null, rejected: true };
+      }
+      if (identity.id !== expectedSessionId) {
+        return { entry: null, rejected: true };
+      }
+    }
+    return {
+      entry: {
+        dir,
+        sizeBytes: fileStat.size,
+        lastActiveAt: Math.floor(fileStat.mtimeMs),
+        sessionId: identity.id,
+      },
+      rejected: false,
+    };
+  } catch {
+    return { entry: null, rejected: false };
+  }
+}
+
+/**
+ * The entry that holds a session: found by the id the walk published it under, and confirmed by
+ * the manifest beside its transcript.
+ *
+ * The id is the walk's decision, and the walk refuses a directory whose name and manifest
+ * disagree -- so a candidate in the index holds the session it is indexed under. The manifest is
+ * read again anyway, because it can change under the walk, and a directory that has stopped
+ * holding that session must not be served as it.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
+ * @param {string} sessionId
+ * @returns {Promise<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string } | null>}
+ */
+export async function verifiedEntryForSessionId(entries, sessionId) {
+  if (!sessionId) return null;
+  for (const candidate of entries) {
+    if (candidate.sessionId !== sessionId) continue;
+    const identity = await readSessionIdentity(candidate.dir);
+    if (identity.id === sessionId) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The newest candidate that still holds the session it was published under.
+ *
+ * The walk's admission is a decision made when the walk ran, and the manifest beside a
+ * transcript can change under it. The explicit-id routes ask again before they serve a
+ * candidate -- the fast path re-reads the identity, the slow path asks the same question the
+ * walk asks -- so a directory whose manifest no longer agrees with its name is refused by
+ * both. The `latest` fallback used to take the first entry of the window as it stood, which
+ * served exactly that directory: the same transcript, under the id its manifest now claims,
+ * while every explicit id for it was refused. One rule, one question, three places.
+ *
+ * The question is the one the id itself answers: the id the directory holds now -- the
+ * manifest's, or the name's when the manifest is gone -- has to be the id it was published
+ * under. A manifest that changes from one id to another moves that answer and nothing else,
+ * which is exactly why it has to be asked again rather than read off the walk.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
+ * @returns {Promise<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string } | null>}
+ */
+export async function firstHoldingEntry(entries) {
+  for (const candidate of entries) {
+    const identity = await readSessionIdentity(candidate.dir);
+    if (identity.id === candidate.sessionId) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The visible set the picker shows, and the order it is shown in.
+ *
+ * Two sets live here and they are not the same set. `entries` is what the caller handed over:
+ * the sessions the visible set is drawn from, mtime-descending. The list route hands over the
+ * walk's conversations -- the runs were split off before this was called, so a run is never in
+ * here. The visible set is what the READER may pick from, and it is allowed to differ.
+ *
+ * The order is: the conversation the runtime database reports as current, then the sessions of
+ * that conversation's workspace, then everything else -- each group mtime-descending. "The
+ * current workspace" means the `workspace_dir` the runtime database records for that
+ * conversation, and only that; the path itself never leaves this function.
+ *
+ * "The current conversation" is what the runtime database reports, not what the reader is in:
+ * the runtime knows which session it last updated, and this app cannot see any more than that.
+ * The database's answer is a ranking (a live lease, then an open turn, then the most recently
+ * updated), and `resolveCurrentConversation` reports the ambiguity when two conversations hold
+ * a lease at once rather than picking one silently.
+ *
+ * The current conversation is promoted only when it IS a conversation. The layer is decided by
+ * the parent column and the chain it forms, and `splitSessionLayers` has already cleared the
+ * parent of every session it put in the conversation layer -- so a session that still has a
+ * parent here is a run, and a run that wins the current-conversation resolution is not
+ * promoted back into the conversation layer. It is already in the run layer, where it belongs,
+ * and promoting it here would put one session in both controls at once: the conversation pick
+ * would offer a run, and the run pick would offer the same run again.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
+ * @param {{ sessionId: string, relativeDir?: string | null } | null} current
+ * @param {Map<string, { workspace?: string | null, parent?: string | null }>} titles
+ * @param {string} sessionsRoot
+ * @param {number} limit
+ * @param {() => void} [onReject]
+ * @returns {Promise<Array<{ dir: string, sizeBytes: number, lastActiveAt: number }>>}
+ */
+export async function buildVisibleSessionList(entries, current, titles, sessionsRoot, limit, onReject) {
+  if (!current || typeof current.sessionId !== 'string' || !current.sessionId) {
+    // No runtime database, or no current conversation: the visible set is exactly what the walk
+    // found, in the walk's order. This is what the picker did before the current conversation was
+    // pinned into it, and it is still what it does when there is nothing to pin.
+    return entries.slice(0, limit);
+  }
+  const currentId = current.sessionId;
+  // The layer is decided by the parent column and the chain it forms, and the picker has two
+  // of them. The split has already cleared the parent of every session it put in the
+  // conversation layer, so a session that still has a parent is a run -- and a run that wins
+  // the current-conversation resolution is not promoted into the conversation layer. Promoting
+  // it would put one session in both controls at once.
+  const currentMeta = titles instanceof Map ? titles.get(currentId) : null;
+  const currentParent = currentMeta && typeof currentMeta.parent === 'string' && currentMeta.parent
+    ? currentMeta.parent
+    : null;
+  let currentEntry = null;
+  if (!currentParent) {
+    // The current conversation's own row, found among the walk's rows and CONFIRMED by the
+    // manifest beside the transcript: the directory name is only a claim. A directory whose name
+    // says this session and whose manifest says another one is that other session's directory,
+    // and promoting it would put this session's id on somebody else's messages.
+    currentEntry = await verifiedEntryForSessionId(entries, currentId);
+    if (!currentEntry && current.relativeDir) {
+      // Not in the walk -- build the entry straight from the recorded path. The session it
+      // is supposed to be is named, so a path that turns out to be a different session's directory
+      // is refused instead of being shown under this id.
+      const built = await entryFromRelativeDir(sessionsRoot, current.relativeDir, currentId);
+      if (built.rejected && typeof onReject === 'function') onReject();
+      currentEntry = built.entry;
+    }
+  }
+  const currentWorkspace = workspaceOfSession(titles, currentId);
+  const rest = entries.filter((entry) => entry !== currentEntry);
+  const same = [];
+  const other = [];
+  for (const entry of rest) {
+    const workspace = workspaceOfSession(titles, entry.sessionId);
+    if (currentWorkspace !== null && sameWorkspacePath(workspace, currentWorkspace)) same.push(entry);
+    else other.push(entry);
+  }
+  // Both groups keep the walk's order, which is mtime-descending. Stated rather than inherited:
+  // the walk's order is an implementation detail of the traversal, and the picker promises one.
+  const byRecency = (a, b) => b.lastActiveAt - a.lastActiveAt;
+  same.sort(byRecency);
+  other.sort(byRecency);
+  const ordered = currentEntry ? [currentEntry, ...same, ...other] : [...same, ...other];
+  return ordered.slice(0, limit);
+}
+
+/**
+ * The two layers of the picker: the main sessions, and the sub-agents hanging off each of them.
+ *
+ * A sub-agent is a session like any other on disk — its own directory, its own `messages.jsonl` —
+ * and the runtime hangs it off its parent with one column. So the layer is a fact about a row,
+ * and it is read from that column and from the chain that column forms. `purpose` is not the
+ * judge here: it says what a session IS (a scheduled run, a background task), which is a different
+ * question from what it hangs off, and the two are orthogonal — a sub-agent is a task AND somebody's
+ * child.
+ *
+ * The parent's id and the child's id are the same kind of id. Measured on this machine: all 208
+ * session directories carry a `manifest.json` whose `sessionId` equals the id decoded from the
+ * directory name, and that is the id the runtime database stores. So the parent's id here is the
+ * id the page will see on the parent's row, and the client can join the two layers on it.
+ *
+ * The column alone is not enough to decide the layer, though, and the cases where it is not
+ * enough are the ones where a session disappears from the picker. The column answers "does this
+ * session have a parent". The layer is "is that parent a CONVERSATION", and that is a question
+ * about the chain:
+ *
+ *   - A cycle — A's parent is B, B's parent is A — has no conversation at the end of it. Read the
+ *     column alone, both of them are runs, of each other, so neither is a conversation, and the
+ *     conversation list comes back with neither in it: they are in neither control, and the
+ *     reader cannot reach either one. A cycle is dissolved instead. Both are conversations, and
+ *     their parent columns are dropped, because a conversation that names a parent names a run.
+ *   - A chain that leaves the sessions this payload knows about — the parent has a row in the
+ *     runtime database but no directory in the pool — has no conversation to point at either: the
+ *     conversation a reader would pick to see this run is not in the list. The run is a
+ *     conversation itself, so that it is somewhere the reader can reach.
+ *   - A chain longer than one step — the parent is itself a run — puts the run in the
+ *     conversation layer, because the two controls are one conversation and the runs of THAT one.
+ *
+ * So the rule is one sentence: a session is a run iff its parent is a conversation, and a
+ * conversation is a session with no parent, or one whose parent is not a conversation. The two
+ * halves are given together on purpose. One half alone has no answer for a cycle, and the answer
+ * "the column says so" is the one that loses both sessions.
+ *
+ * The map is corrected in place: a session this puts in the conversation layer has its parent
+ * cleared, so the payload, the validator and the current-conversation promotion all read the same
+ * value. A copy would leave one of the three reading the uncorrected one, and the body and the
+ * ETag would then describe two different lists.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} entries
+ * @param {Map<string, { parent?: string | null }>} titles
+ * @returns {{ mains: Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>, childrenByParent: Map<string, Array<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>> }}
+ */
+export function splitSessionLayers(entries, titles) {
+  const mains = [];
+  const childrenByParent = new Map();
+  const map = titles instanceof Map ? titles : new Map();
+  // The sessions this payload knows about: the ones with a directory in the walk. NOT the ones
+  // with a row in the runtime database -- the map holds sessions that have no transcript here,
+  // the current conversation among them, and a parent that is only a row is not something the
+  // reader can pick, so a run hanging off it would be a run the reader cannot reach. The rule is
+  // about what the reader can reach, so the membership test is about the walk.
+  //
+  // The membership is the id each directory is PUBLISHED under, which is not always the id its
+  // name decodes to: a name that does not decode names no session, and the manifest beside the
+  // transcript is then the only identity that directory has. A parent identified that way is in
+  // the list the reader can pick, so the runs hanging off it are its runs.
+  const known = new Set();
+  for (const entry of entries) {
+    if (entry.sessionId) known.add(entry.sessionId);
+  }
+
+  /**
+   * The session a session hangs off, or null when it hangs off nothing.
+   * @param {string} id
+   * @returns {string | null}
+   */
+  const parentOf = (id) => {
+    const meta = map.get(id);
+    if (!meta) return null;
+    const declared = typeof meta.parent === 'string' && meta.parent ? meta.parent : null;
+    return declared;
+  };
+
+  // The sessions that sit on a cycle: following the parent links from one of them comes back to
+  // it. Every link is followed through the same map the layer is decided by, so a session on a
+  // cycle is one this pass reaches -- and the walk below cannot run forever, because it stops at
+  // the first of these.
+  const onCycle = new Set();
+  for (const id of map.keys()) {
+    const path = [];
+    const at = new Map();
+    let cur = id;
+    while (cur && !at.has(cur)) {
+      at.set(cur, path.length);
+      path.push(cur);
+      cur = parentOf(cur);
+    }
+    if (cur && at.has(cur)) {
+      for (let i = at.get(cur); i < path.length; i += 1) onCycle.add(path[i]);
+    }
+  }
+
+  // The layer of every session: a conversation, or a run of one. Walking up the chain flips the
+  // layer at every step, because a run's parent is a conversation and a conversation's parent is
+  // not one. The walk ends where the chain stops making sense: at a session with no parent, at a
+  // parent this payload does not know, or at a cycle.
+  const CONVERSATION = 'conversation';
+  const RUN = 'run';
+  const layerOf = new Map();
+  const flip = (layer) => (layer === CONVERSATION ? RUN : CONVERSATION);
+
+  /**
+   * @param {string} start
+   * @returns {string}
+   */
+  const classify = (start) => {
+    if (layerOf.has(start)) return /** @type {string} */ (layerOf.get(start));
+    const chain = [];
+    let cur = start;
+    let base;
+    while (true) {
+      if (layerOf.has(cur)) { base = flip(/** @type {string} */ (layerOf.get(cur))); break; }
+      chain.push(cur);
+      if (onCycle.has(cur)) { base = CONVERSATION; break; }
+      const parent = parentOf(cur);
+      if (!parent || !known.has(parent)) { base = CONVERSATION; break; }
+      cur = parent;
+    }
+    let layer = base;
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      layerOf.set(chain[i], layer);
+      layer = flip(layer);
+    }
+    return /** @type {string} */ (layerOf.get(start));
+  };
+
+  for (const id of map.keys()) classify(id);
+
+  // The correction, and the reason the layer can be read off the parent column again: a session
+  // in the conversation layer has no parent to name, so its parent column is cleared here, once,
+  // for everything that reads it afterwards. The body, the validator and the current-conversation
+  // promotion all read this same map, so all three say the same thing about the same row.
+  for (const [id, meta] of map) {
+    if (!meta) continue;
+    if (layerOf.get(id) === CONVERSATION && typeof meta.parent === 'string' && meta.parent) {
+      meta.parent = null;
+    }
+  }
+
+  for (const entry of entries) {
+    const id = entry.sessionId;
+    const parent = id ? parentOf(id) : null;
+    if (!parent) {
+      mains.push(entry);
+      continue;
+    }
+    const bucket = childrenByParent.get(parent);
+    if (bucket) bucket.push(entry);
+    else childrenByParent.set(parent, [entry]);
+  }
+  // Most recently active first, inside every bucket. The list says so in the one place that
+  // orders it, so the order cannot be one thing on the server and another on the page.
+  for (const bucket of childrenByParent.values()) bucket.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  return { mains, childrenByParent };
 }
 
 /**
@@ -1188,7 +2153,7 @@ export function toolCallSummary(name, args) {
  * The message itself was carried on every row and taken off again by this function. That is
  * what kept the bulk response small, and it stays true. What did not survive scrutiny is how
  * the size was decided: buildRawPayload() had to JSON.stringify the message to measure it, so
- * every rebuild serialized about 100 MB of message bodies to compare them against a 64 KB cap
+ * every rebuild serialized about 100 MB of message bodies to compare them against the read cap
  * and then threw the string away — for a body the page reads for one record at a time, if at
  * all. Pinned by tests/verify-raw-lazy.mjs.
  *
@@ -1282,10 +2247,10 @@ export function slimPayloadForWire(payload) {
  * @param {{ turns: Array<any> }} payload
  * @param {string} needle already normalised and folded
  * @param {number} limit
- * @returns {{ hits: Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>, total: number }}
+ * @returns {{ hits: Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>, total: number }}
  */
 export function collectSearchHits(payload, needle, limit) {
-  /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>} */
+  /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>} */
   const hits = [];
   let total = 0;
   const turns = payload && Array.isArray(payload.turns) ? payload.turns : [];
@@ -1303,6 +2268,10 @@ export function collectSearchHits(payload, needle, limit) {
         // without opening every row the needle found.
         summary: typeof record.summary === 'string' ? record.summary : '',
         generation: typeof record.generation === 'number' ? record.generation : null,
+        // The version of the record this hit names. The index alone is a position, and the position
+        // is only the same record in another body if the version says so — the page checks it
+        // against the body it is showing before it lets the hit filter anything.
+        v: typeof record.v === 'string' ? record.v : '',
       });
     }
   }
@@ -2415,18 +3384,29 @@ export function etagMatches(header, etag) {
  * SESSION_CACHE_TTL_MS to the descriptor cache this reuses, so the bound is that cache's and not
  * a new one. tests/verify-list-cache.mjs pins the TTL relationship that says so.
  *
- * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number }>} visible
+ * The sub-agents are in it for the same reason the kind badge is: they are on the page, and a
+ * sub-agent that starts, ends, or is renamed changes what the page says. A material that did not
+ * move would answer 304 for a body the caller never held — and the body it never held is the one
+ * with the new sub-agent in it.
+ *
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} visible
  * @param {Map<string, { title: string | null, kind: string | null }>} titles
  * @param {number} limit
+ * @param {ReadonlyArray<{ dir: string, sizeBytes: number, lastActiveAt: number, sessionId: string }>} [children]
  * @returns {string}
  */
-export function sessionsValidator(visible, titles, limit) {
+export function sessionsValidator(visible, titles, limit, children) {
   const parts = ['limit=' + limit];
   for (const entry of visible) {
-    const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
+    const meta = titles.get(entry.sessionId);
     const title = meta ? String(meta.title ?? "") : "";
     const kind = meta ? String(meta.kind ?? "") : "";
     const parent = meta ? String(meta.parent ?? "") : "";
+    // The kind badge the page draws is derived from the row's kind and purpose, so it is
+    // reader-visible on its own and belongs in the material for the same reason `kind` does. A
+    // runtime database that changes a session's purpose changes what the row says, and a tag that
+    // did not move would answer 304 for a body the caller never held.
+    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? "") : "";
     // Injective by construction, which no delimiter is. Any character can occur inside a SQLite TEXT
     // column — including the NUL this used to join on — so a title of "a\0b" beside a kind of "c" and
     // a title of "a" beside a kind of "b\0c" produced byte-identical material: one ETag for two rows
@@ -2434,7 +3414,25 @@ export function sessionsValidator(visible, titles, limit) {
     // different separator cannot fix that, because no character is excluded from a TEXT value.
     // JSON escapes the ambiguous characters, so the tuple's boundaries survive anything the store
     // can return, and no field needs a second representation to be safe.
-    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));
+    //
+    // The published id is in the tuple because it is in the payload: the row's id IS the id the
+    // walk published this directory under, and the body the reader receives says it. A manifest
+    // that changes from one id to another moves the published id and moves nothing else here --
+    // the directory, the transcript, the runtime row and the mtime are all the same -- so without
+    // this field the validator would answer 304 for a body that names a session the reader is no
+    // longer looking at, and the reused body would keep publishing the old id indefinitely.
+    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));
+  }
+  // The sub-agents, in the order the payload carries them: most recently active first inside
+  // each group. The parent id is in the tuple because the grouping is part of what the page
+  // shows — the same sub-agent under a different main is a different page.
+  for (const entry of children || []) {
+    const meta = titles.get(entry.sessionId);
+    const title = meta ? String(meta.title ?? "") : "";
+    const kind = meta ? String(meta.kind ?? "") : "";
+    const parent = meta ? String(meta.parent ?? "") : "";
+    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? "") : "";
+    parts.push(JSON.stringify([entry.sessionId, parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));
   }
   return parts.join("\n");
 }
@@ -2461,8 +3459,15 @@ export function trajectoryCacheFamily(dir, filter) {
  * The cache key for one rendered trajectory. Every component comes from a `stat`, a small
  * manifest/catalog file, or the already-resolved session binding — never from reading
  * `messages.jsonl`, which is the whole point: a matching key proves the file did not grow.
+ *
+ * The identity the directory holds is in it, because the body says which session it is about.
+ * A manifest that changes from one id to another leaves the directory, the transcript, the
+ * lineage and the mtime exactly as they were, so a key made of those would match and the
+ * cached body of the OLD id would be served for the NEW one — a body whose `session.id` names
+ * a session nobody asked for. The key has to cover the same facts the body carries.
+ *
  * @param {{ dir: string, sizeBytes: number, lastActiveAt: number }} entry
- * @param {{ catalogBytes?: number | null }} identity
+ * @param {{ id?: string | null, catalogBytes?: number | null }} identity
  * @param {any} binding
  * @returns {string}
  */
@@ -2484,7 +3489,7 @@ export function trajectoryCacheKey(entry, identity, binding, filter) {
     .join(',');
   // The requested slice is part of the answer too: the same session stitched and unfiltered is
   // two different bodies and must never share an entry.
-  return `${trajectoryCacheFamily(entry.dir, filter)}${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
+  return `${trajectoryCacheFamily(entry.dir, filter)}${identity.id ?? ''}|${lineage}|${entry.sizeBytes}|${entry.lastActiveAt}|${identity.catalogBytes ?? ''}|${bind}`;
 }
 /**
  * The `?since=` cursor, or null when there is not a usable one.
@@ -2634,21 +3639,111 @@ export function parsedRowsKey(filePath, size, mtimeMs, limit) {
 }
 
 /**
- * LRU over parsed generation rows, bounded by bytes.
+ * LRU over parsed generation rows, bounded by bytes and by how long they are wanted.
  *
  * Bounded by bytes rather than entries because entries say nothing about volume: one
  * generation file is 40 KB and the next is 10 MB. A single entry larger than the whole budget
  * is not stored at all — it would evict everything else and still miss every time.
  *
+ * The accounting unit is the SOURCE bytes the entry was parsed from, times the heap proxy — not
+ * resident bytes, which V8 cannot report. That is what makes the coverage computable: the source
+ * bytes a round does NOT have to parse again are the lineage's source bytes minus the source
+ * bytes this cache holds, and the cache can say the second number exactly.
+ *
+ * Bounded by time as well, because the rows are only worth holding while somebody asks for them:
+ * a reader who closes the tab stops asking, and a cache with no expiry would keep that
+ * conversation's rows for as long as the runtime lives. The expiry is a MISS and not a deletion
+ * of something still wanted — the next request parses the file again and the cache fills itself
+ * back up.
+ *
+ * A time limit of zero means NO time limit, and it means that in one place only: the rows never
+ * expire and the sweeper never runs. (The other reading — "everything expires at once" — would be
+ * a cache that never hits and never releases, which is worse than either.)
+ *
+ * A sweep interval that is not positive is taken as one millisecond: a timer cannot be finer
+ * than that, and an interval of zero used to switch the sweeper off, which left the rows to be
+ * released only when somebody asked for them.
+ *
  * @param {number} budget
+ * @param {{ ttlMs?: number, now?: () => number, sweepIntervalMs?: number }} [options]
  */
-export function createParsedRowsCache(budget) {
-  /** @type {Map<string, { value: ParsedRows, size: number }>} */
+export function createParsedRowsCache(budget, options = {}) {
+  const ttlMs = options.ttlMs ?? PARSED_ROWS_CACHE_TTL_MS;
+  const now = options.now ?? (() => Date.now());
+  // The interval the sweep actually uses, taken between two bounds.
+  //
+  // The limit bound is the rule the promise to a reader is made of: the interval is at most a
+  // quarter of the limit the cache was given, so the rows are gone no later than a quarter of
+  // the limit after they expire. The clamp is the rule and not a convenience: without it the
+  // promise would hold for the shipped limit and for nothing else, and the limit is an option a
+  // caller may set. Its floor is one millisecond, because a timer cannot be finer than that —
+  // so for a limit below four milliseconds the release is at most a millisecond late rather
+  // than a quarter of a tiny limit late.
+  //
+  // The asked bound is that same floor applied to what the caller asked for. A caller who asks
+  // for an interval that is not positive used to switch the sweeper off, and a cache whose
+  // sweeper is off only releases the rows when somebody asks for them — the one moment they
+  // are wanted again. The floor keeps the sweeper running.
+  const limitBoundMs = Math.max(1, Math.floor(ttlMs / 4));
+  const askedBoundMs = Math.max(1, options.sweepIntervalMs ?? PARSED_ROWS_CACHE_SWEEP_INTERVAL_MS);
+  const sweepIntervalMs = Math.min(limitBoundMs, askedBoundMs);
+  /** @type {Map<string, { value: ParsedRows, size: number, at: number }>} */
   const entries = new Map();
   let bytes = 0;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let sweeper = null;
+
+  /** @param {number} at */
+  const expired = (at) => ttlMs > 0 && now() - at >= ttlMs;
+
+  /** @param {string} key */
+  const drop = (key) => {
+    const victim = entries.get(key);
+    if (victim === undefined) return 0;
+    entries.delete(key);
+    bytes -= victim.size;
+    return victim.size;
+  };
+
+  const stopSweeper = () => {
+    if (sweeper === null) return;
+    clearInterval(sweeper);
+    sweeper = null;
+  };
+
+  /**
+   * Release what nobody has wanted for a while. This is what makes the rows go away while the
+   * reader is gone: a sweep that only ran on a request would release them exactly when the
+   * reader comes back, which is the one moment they are wanted again.
+   *
+   * @returns {number} the bytes still held afterwards
+   */
+  const sweep = () => {
+    for (const [key, entry] of entries) {
+      if (expired(entry.at)) drop(key);
+    }
+    if (entries.size === 0) stopSweeper();
+    return bytes;
+  };
+
+  const startSweeper = () => {
+    // The interval is floored at a millisecond where it is taken, so the third condition cannot
+    // fire today. It stays because it is the difference between the two ways a non-positive
+    // interval could hurt: a timer that runs as fast as the platform allows, or no timer at all
+    // — and no timer means the rows are released only when somebody asks for them.
+    if (sweeper !== null || ttlMs <= 0 || sweepIntervalMs <= 0) return;
+    sweeper = setInterval(sweep, sweepIntervalMs);
+    // An interval that is not unref'd keeps the event loop alive after the server closes, and the
+    // runtime would wait for it. It must never be the reason the process is still running.
+    if (typeof sweeper.unref === 'function') sweeper.unref();
+  };
+
   return {
     get bytes() { return bytes; },
     get size() { return entries.size; },
+    // The interval the sweep actually uses, so the relation between the limit and the release
+    // can be checked on the running cache rather than on the two numbers in the source.
+    get sweepIntervalMs() { return sweepIntervalMs; },
     /**
      * @param {string} key
      * @returns {ParsedRows | null}
@@ -2656,9 +3751,16 @@ export function createParsedRowsCache(budget) {
     get(key) {
       const hit = entries.get(key);
       if (hit === undefined) return null;
+      if (expired(hit.at)) {
+        // The rows have been here longer than anybody asked for them. Releasing them here is the
+        // same release the sweeper would do; the only difference is that this request asked.
+        drop(key);
+        return null;
+      }
       // Re-reading is the only signal that a file is still hot, so it refreshes recency.
       entries.delete(key);
       entries.set(key, hit);
+      hit.at = now();
       return hit.value;
     },
     /**
@@ -2674,7 +3776,7 @@ export function createParsedRowsCache(budget) {
         entries.delete(key);
       }
       if (size > budget) return bytes;
-      entries.set(key, { value, size });
+      entries.set(key, { value, size, at: now() });
       bytes += size;
       while (bytes > budget && entries.size > 1) {
         const oldest = entries.keys().next();
@@ -2683,11 +3785,15 @@ export function createParsedRowsCache(budget) {
         entries.delete(oldest.value);
         bytes -= victim ? victim.size : 0;
       }
+      startSweeper();
       return bytes;
     },
+    /** Release what expired. The timer calls this; a caller may call it too. */
+    sweep,
     clear() {
       entries.clear();
       bytes = 0;
+      stopSweeper();
     },
   };
 }
@@ -2699,7 +3805,7 @@ export function createParsedRowsCache(budget) {
  * a session that is still being written to mints a NEW key every time it grows — and every miss
  * stores another complete body. A plain FIFO therefore keeps four versions of the SAME question
  * alive, three of which no request can reach any more: `/raw` resolves the current key, and the
- * page's next poll produces a newer one. Measured on a 9.1 MB session polled every 8s, the cache
+ * page's next poll produces a newer one. Measured on a 9.1 MB session polled on every tick, the cache
  * held four bodies (49.6 MB) after four polls; at this machine's 68 MB body that is three dead
  * copies.
  *
@@ -2713,7 +3819,7 @@ export function createParsedRowsCache(budget) {
  * @param {number} limit
  */
 export function createTrajectoryCache(limit) {
-  /** @type {Map<string, { at: number, family: string, value: any }>} */
+  /** @type {Map<string, { at: number, family: string, identityId: string, value: any }>} */
   const entries = new Map();
   return {
     get size() { return entries.size; },
@@ -2730,15 +3836,53 @@ export function createTrajectoryCache(limit) {
       return hit.value;
     },
     /**
+     * The entry that answers for this family AND for this session, if there is one.
+     *
+     * The key names a VERSION; the family names the QUESTION. Two requests that name the same
+     * directory and the same slice ask the same question, and the answer to it is the entry this
+     * cache holds -- but the key it was stored under can name a different version of it, because
+     * the key also carries the requester's context. A poll that asked for `latest` and a read that
+     * asked for that session by its id are the same reader of the same body, and they have to
+     * reach the same entry: the first stores the body under a key that carries the binding it
+     * resolved, the second looks it up under a key that does not, and the two keys differ for
+     * reasons that have nothing to do with the body.
+     *
+     * A family holds exactly one entry -- storing a newer one drops its predecessor -- so what is
+     * found here is the current answer to that question.
+     *
+     * The session is asked for as well, and that is not a second question: the family names the
+     * DIRECTORY and the slice, and a directory can stop holding one session and start holding
+     * another. The manifest beside the transcript is the authority on that, it can change under a
+     * cached walk, and the walk's own decision is not the last word. An entry built for the old
+     * session is therefore not an answer about the new one, however well the directory and the
+     * slice match -- and its decoded messages are the old session's messages.
+     *
+     * @param {string} family
+     * @param {string} identityId the session the entry has to be about
+     * @returns {any | null}
+     */
+    getByFamily(family, identityId) {
+      for (const [key, hit] of entries) {
+        if (hit.family !== family) continue;
+        if (hit.identityId !== identityId) continue;
+        // Re-reading is the only signal that an entry is still hot, so it refreshes recency.
+        entries.delete(key);
+        entries.set(key, hit);
+        return hit.value;
+      }
+      return null;
+    },
+    /**
      * @param {string} key
      * @param {string} family the (session, slice) this answers for; a newer version of the same
      *   family replaces the older one instead of stacking beside it
+     * @param {string} identityId the session this body is about
      * @param {any} value
      */
-    set(key, family, value) {
+    set(key, family, identityId, value) {
       const previous = entries.get(key);
       if (previous !== undefined) entries.delete(key);
-      entries.set(key, { at: Date.now(), family, value });
+      entries.set(key, { at: Date.now(), family, identityId, value });
       for (const [existingKey, existing] of entries) {
         if (existingKey !== key && existing.family === family) entries.delete(existingKey);
       }
@@ -2817,12 +3961,154 @@ export async function loadParsedRows(cache, filePath, limit, options) {
 }
 
 /**
+ * One piece of a JSON array, serialized on its own.
+ *
+ * The array is cut at element boundaries, and the pieces concatenate back into exactly the
+ * string `JSON.stringify` would have produced for the whole array — the opening bracket opens
+ * the first piece, the closing bracket closes the last one, and every element after the first
+ * carries its comma with it, so a piece boundary never lands between an element and its comma.
+ *
+ * An element that does not fit the budget on its own becomes a piece of its own. That is the one
+ * thing the budget cannot bound, and it is bounded by the element instead of by the budget.
+ *
+ * THE CLOSING BRACKET IS COUNTED. It is one byte, it lands on the piece that holds the last
+ * element, and a piece that held two elements and ended one byte over the budget was a piece
+ * the budget did not bound. One byte is reserved for it on every piece, so no piece that holds
+ * more than one element is ever bigger than the budget.
+ *
+ * @param {Array<any>} items
+ * @param {number} budgetBytes
+ * @returns {Array<Buffer>}
+ */
+function jsonArrayPieces(items, budgetBytes) {
+  const pieces = [];
+  let current = '[';
+  let currentBytes = 1;
+  let first = true;
+  for (const item of items) {
+    const encoded = JSON.stringify(item);
+    // JSON.stringify writes an undefined element as null, and so does this.
+    const text = encoded === undefined ? 'null' : encoded;
+    const textBytes = Buffer.byteLength(text, 'utf8');
+    // The comma is counted but not concatenated into the piece: `',' + text` would be a
+    // cons string, and measuring its length would flatten it into a second copy of the
+    // element. On a body of fifty thousand records that is fifty thousand copies.
+    const pieceBytes = textBytes + (first ? 0 : 1);
+    // The closing bracket is counted here, not appended at the end. It lands on the piece that
+    // holds the LAST element, and a piece that ended exactly at the budget came out one byte
+    // over it — so the budget did not bound the piece it was supposed to bound. One byte is
+    // reserved on every piece, which is one byte more than the pieces that do not carry the
+    // bracket need: the budget is a ceiling, not a target.
+    if (currentBytes > 1 && currentBytes + pieceBytes + 1 > budgetBytes) {
+      pieces.push(Buffer.from(current, 'utf8'));
+      current = '';
+      currentBytes = 0;
+    }
+    if (!first) {
+      current += ',';
+      currentBytes += 1;
+    }
+    current += text;
+    currentBytes += textBytes;
+    first = false;
+  }
+  current += ']';
+  pieces.push(Buffer.from(current, 'utf8'));
+  return pieces;
+}
+
+/**
+ * The trajectory body, serialized in pieces small enough that no single string ever holds it.
+ *
+ * THE BYTES ARE THE SAME BYTES. Concatenating the pieces gives exactly what
+ * `JSON.stringify(payload)` would have produced — same key order, same escaping, same numbers —
+ * so the page, the search, `/raw` and `?since=` cannot tell the difference. A guard pins that
+ * byte for byte, because a body that is *nearly* the same is a body the page cannot parse.
+ *
+ * WHAT CHANGES IS HOW THEY ARE PRODUCED. The payload's big array is cut into pieces at element
+ * boundaries, each piece is serialized on its own and turned into bytes immediately, and the
+ * string is let go before the next piece is built. So the process never holds THAT ARRAY as one
+ * string, and never holds the builder's intermediate copies either.
+ *
+ * THE EXCEPTION IS A VALUE THAT IS NOT AN ARRAY. It is serialized on its own, by
+ * `JSON.stringify(value)`, and appended to the piece being built — so a payload whose bulk is one
+ * large string still holds that string, and the piece that holds it is a piece like any other.
+ * What this change removes is the array.
+ *
+ * WHY IT IS WORTH THE ROUTE'S ATTENTION. Measured on 2026-10-23 on this machine, on the code as
+ * it stood before the body was chunked, on one session of 57,436 records: one cold read left the
+ * process at 1,199 MB resident with a 302.7 MB live heap, and the peak inside the route was
+ * 1,331 MB resident on 1,115 MB of live heap — the payload object graph was 366 MB, and the single
+ * `JSON.stringify` that followed it added 749 MB on top. Clearing every cache afterwards freed
+ * the live heap down to 8.4 MB and the process still held 1,070 MB: the pages this request
+ * touched are not given back.
+ *
+ * And the floor does NOT follow the peak. Chunking the body took 151 MB off the high-water mark
+ * and the floor did not move (1,070.1 MB before, 1,069.7 MB after). So the floor is neither what
+ * the cache holds nor what the peak left behind: it is what this request allocated, and cutting
+ * the allocation is the lever.
+ *
+ * @param {Record<string, any>} payload
+ * @param {number} [budgetBytes]
+ * @returns {Array<Buffer>}
+ */
+export function serializeTrajectoryBody(payload, budgetBytes = TRAJECTORY_BODY_CHUNK_BYTES) {
+  const pieces = [];
+  let current = '';
+  let currentBytes = 0;
+  let needsComma = false;
+
+  const flush = () => {
+    if (currentBytes === 0) return;
+    pieces.push(Buffer.from(current, 'utf8'));
+    current = '';
+    currentBytes = 0;
+  };
+  const append = (text) => {
+    current += text;
+    currentBytes += Buffer.byteLength(text, 'utf8');
+  };
+
+  append('{');
+  for (const key of Object.keys(payload)) {
+    const value = payload[key];
+    // What JSON.stringify leaves out, this leaves out: a key whose value is undefined, a
+    // function or a symbol is not in the JSON at all.
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') continue;
+    if (Array.isArray(value)) {
+      if (needsComma) append(',');
+      append(JSON.stringify(key) + ':');
+      // The array goes out in pieces, so the string it would have been never exists.
+      flush();
+      for (const piece of jsonArrayPieces(value, budgetBytes)) pieces.push(piece);
+      needsComma = true;
+      continue;
+    }
+    const encoded = JSON.stringify(value);
+    // A value whose toJSON() returns undefined is left out by JSON.stringify as well.
+    if (encoded === undefined) continue;
+    if (needsComma) append(',');
+    append(JSON.stringify(key) + ':' + encoded);
+    needsComma = true;
+  }
+  append('}');
+  flush();
+  return pieces;
+}
+
+/**
  * Sends an already-serialized JSON body. Unlike {@link sendJson} it supports revalidation:
  * `no-store` would suppress the 304 path, so revalidated responses advertise `no-cache`
  * (storable, but must be revalidated) and carry the tag the page echoes back.
+ *
+ * The body is either one string or a list of byte pieces. The list is what the trajectory route
+ * sends now: the bytes are the same bytes, but the payload's big array was never held as one
+ * string, so the declared length is the sum of the pieces rather than the length of a string.
+ * (A value inside the payload that is not an array is still one string — see
+ * `serializeTrajectoryBody`.)
  * @param {any} response
  * @param {number} status
- * @param {string} body
+ * @param {string | Buffer | Array<string | Buffer>} body
  * @param {{ etag?: string, revalidate?: boolean }} [options]
  */
 export function sendJsonBody(response, status, body, options) {
@@ -2840,10 +4126,20 @@ export function sendJsonBody(response, status, body, options) {
     }
     return;
   }
-  headers['content-length'] = Buffer.byteLength(body, 'utf8');
+  const pieces = Array.isArray(body) ? body : [body];
+  let length = 0;
+  for (const piece of pieces) {
+    length += Buffer.isBuffer(piece) ? piece.length : Buffer.byteLength(piece, 'utf8');
+  }
+  headers['content-length'] = length;
   try {
     response.writeHead(status, headers);
-    response.end(body);
+    if (pieces.length === 1 && typeof pieces[0] === 'string') {
+      response.end(pieces[0]);
+      return;
+    }
+    for (const piece of pieces) response.write(piece);
+    response.end();
   } catch {
     // The client polls aggressively and aborts requests; a closed socket is not an error here.
   }
@@ -2860,9 +4156,32 @@ function sendError(response, status, code, message) {
 }
 
 /**
+ * The plugin package installs onto every reader's machine, so nothing derived may be written inside
+ * it. `context.dataDir` is the runtime's own data directory; a caller that points it at the
+ * package, or at anything under it, has the search segments land in a directory that ships to
+ * readers.
+ *
+ * The refusal names the path it refused, because the caller is the one that has to change it, and a
+ * refusal that does not say which path was refused is a refusal nobody can act on.
+ *
+ * @param {MiniAppContext} context
+ */
+function assertDataDirOutsidePlugin(context) {
+  const dataDir = typeof context.dataDir === 'string' ? context.dataDir : '';
+  if (!dataDir) throw new Error('the runtime did not give this plugin a data dir to write into');
+  const pluginRoot = typeof context.pluginRoot === 'string' ? context.pluginRoot : '';
+  if (isUnderDirectory(pluginRoot, dataDir)) {
+    throw new Error(
+      `the data dir must not be inside the plugin package: ${resolve(dataDir)} is under ${resolve(pluginRoot)}`
+    );
+  }
+}
+
+/**
  * @param {MiniAppContext} context
  */
 export async function start(context) {
+  assertDataDirOutsidePlugin(context);
   const location = resolveSessionsRoot();
   const secrets = [location.sessionsRoot, location.root, join(homedir(), '.minimax')];
   const redact = createRedactor(secrets);
@@ -2944,9 +4263,9 @@ export async function start(context) {
    *
    * readSessionTitles opens the runtime database on every call, and the list route calls it once
    * per poll for rows that only change when somebody renames a session. Raising the walk's TTL
-   * without this would still reopen a 700 MB store every 2.5 s forever, so the two caches answer
+   * without this would still reopen a 700 MB store on every poll forever, so the two caches answer
    * the same poll or neither does.
-   * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null }> }}
+   * @type {{ at: number, key: string, map: Map<string, { title: string | null, kind: string | null, parent: string | null, purpose: string | null, workspace: string | null }> }}
    */
   let titleCache = { at: 0, key: '', map: new Map() };
   /**
@@ -2968,11 +4287,14 @@ export async function start(context) {
   };
 
   const describeSession = async (entry) => {
-    const cacheKey = `${entry.dir}|${entry.sizeBytes}|${entry.lastActiveAt}`;
+    // The id is the walk's decision, and the walk read the manifest to make it, so the row says
+    // the same thing about the session whether it is read here or by the layer or by the
+    // validator. The id is in the cache key: a manifest that changes changes the id, and a
+    // descriptor cached under the old one would publish the old session's id.
+    const cacheKey = `${entry.dir}|${entry.sizeBytes}|${entry.lastActiveAt}|${entry.sessionId}`;
     const cached = descriptorCache.get(cacheKey);
     if (cached && Date.now() - cached.at < SESSION_CACHE_TTL_MS) return cached.value;
     const identity = await readSessionIdentity(entry.dir);
-    const cacheId = `${entry.dir}|${identity.id}`;
     let peek = { messages: 0, userMessages: 0, assistantMessages: 0, toolResults: 0, toolCalls: 0, thinkingBlocks: 0, turns: 0 };
     let label = null;
     let startedAt = identity.createdAtMs;
@@ -2991,8 +4313,8 @@ export async function start(context) {
       context.logger.warn('miniapp.trajectory.read_error', { reason: 'peek_failed', code: errorCode(error) });
     }
     const value = {
-      id: identity.id,
-      label: label ?? `会话 ${String(identity.id).slice(4, 12)}`,
+      id: entry.sessionId,
+      label: label ?? `会话 ${String(entry.sessionId).slice(4, 12)}`,
       // A prefix count is a prefix count. Reported as the session's message count it is simply
       // untrue, so when the prefix was not the whole file these are absent rather than approximate —
       // and the page's job is to print nothing rather than to print a number it cannot stand behind.
@@ -3003,7 +4325,7 @@ export async function start(context) {
       // here, and /api/trajectory's is. Same name, different scope. Pinned by tests/verify-list-cache.mjs.
       sizeBytes: entry.sizeBytes,
       turnCount: peekIsWhole ? peek.turns : null,
-      cacheId,
+      cacheId: `${entry.dir}|${entry.sessionId}`,
     };
     descriptorCache.set(cacheKey, { at: Date.now(), value });
     if (descriptorCache.size > SESSION_CACHE_ENTRIES) {
@@ -3085,31 +4407,75 @@ export async function start(context) {
 
   const handleSessions = async (response, url) => {
     const limit = normalizeLimit(url.searchParams.get('limit'), 20, 1, 50);
-    let entries;
+    let candidates;
     try {
-      // The picker still sees only the most recent sessions. The id index beside it is what
-      // `handleTrajectory` resolves explicit ids against, and it is deliberately not what the
-      // picker is built from — widening the list is a separate decision about the UI.
-      entries = (await listEntries()).recentEntries;
+      // The picker is built from the walk's own list: the most recent sessions, mtime-descending.
+      // That list is also what 'latest' falls back to when the runtime database is unavailable,
+      // and nothing here reorders it. The VISIBLE set below is a different set — it draws from
+      // the MAIN sessions only, and the rule for picking twenty of them is no longer pure mtime:
+      // the current conversation comes first, then the sessions of its workspace. The capped
+      // window is deliberately NOT the pool: a sub-agent sits in that window and would take a
+      // main session' place, and the walk has already stat'ed every candidate besides, so the
+      // deeper pool costs no extra disk work.
+      candidates = await listEntries();
     } catch (error) {
       context.logger.error('miniapp.trajectory.read_error', { reason: 'root_unreadable', code: errorCode(error) });
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
       return;
     }
-    if (entries.length === 0) {
+    const allEntries = candidates.allEntries;
+    if (allEntries.length === 0) {
       sendError(response, 503, 'trajectory_unavailable', '未找到本地会话数据目录');
       return;
     }
-    const visible = entries.slice(0, limit);
-    // Real titles from the runtime database; sub-agent and cron sessions get a kind badge so
-    // the picker never presents them as if they were the user's conversation.
-    const titles = await sessionTitles(
-      visible.map((entry) => decodeSessionIdFromDirName(basename(entry.dir))).filter(Boolean),
-    );
 
-    // Built from the same two values the payload below is built from, and computed before any
-    // descriptor work — which is what lets an unchanged list answer without building it.
-    const etag = weakETag(sessionsValidator(visible, titles, limit));
+    // The conversation the runtime database reports as current, asked of the database rather than
+    // guessed from mtime: the conversation being read is not necessarily the one whose file was
+    // written last. What the database reports is a ranking, not a certainty -- see
+    // `resolveCurrentConversation`, which says so where it happens.
+    const current = await resolveCurrentConversation(location.root);
+
+    // Real titles from the runtime database, for every candidate and for the current conversation,
+    // which may be outside the walk. The workspace column rides along because the visible set is
+    // ordered by it, and the parent column rides along because the layer is decided by it.
+    //
+    // The ids are the ones the walk published those directories under -- not the ids their names
+    // happen to decode to. A directory whose name does not decode is identified by its manifest,
+    // and the runtime database knows it under that id.
+    const ids = allEntries.map((entry) => entry.sessionId).filter(Boolean);
+    if (current && current.sessionId && ids.indexOf(current.sessionId) < 0) ids.push(current.sessionId);
+    const titles = await sessionTitles(ids);
+
+    // The two layers. A sub-agent is a session like any other on disk, and the runtime hangs it
+    // off its parent with one column; so the layer is a fact about a row, and the page gets the
+    // main sessions in the picker and the sub-agents of whichever main is in hand below it.
+    const layers = splitSessionLayers(allEntries, titles);
+
+    // The visible set: the current conversation first, then the sessions of its workspace, then
+    // the rest -- each group mtime-descending. At most one session joins the window this way, and
+    // it is always the current conversation. The number of visible sessions is unchanged.
+    const visible = await buildVisibleSessionList(layers.mains, current, titles, location.sessionsRoot, limit, () => {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
+    });
+
+    // Every run in the pool, and not only the runs of the mains that are on the page.
+    //
+    // The picker is two controls now: the conversation, and the runs inside it. The second one
+    // lists the runs of the conversation the reader picked -- which may be a conversation that
+    // has aged out of the twenty, the one the page keeps alive with a row of its own. Dropping
+    // those runs would break the promise the main list already keeps: the session you are
+    // reading does not disappear because it stopped being new. The order inside each group is
+    // the one `splitSessionLayers` set -- most recently active first.
+    const childEntries = [];
+    for (const bucket of layers.childrenByParent.values()) {
+      for (const child of bucket) childEntries.push(child);
+    }
+
+    // Built from the same values the payload below is built from, and computed before any
+    // descriptor work -- which is what lets an unchanged list answer without building it. The
+    // sub-agents are in it: a new one changes what the page shows, and a validator that did not
+    // move would let the caller keep a body that never had it.
+    const etag = weakETag(sessionsValidator(visible, titles, limit, childEntries));
     const requestEtag = response.req && response.req.headers ? response.req.headers['if-none-match'] : null;
     if (etagMatches(requestEtag, etag)) {
       sendJsonBody(response, 304, '', { etag, revalidate: true });
@@ -3121,22 +4487,57 @@ export async function start(context) {
     // to produce.
     let body = sessionsBody.material === etag ? sessionsBody.body : null;
     if (body === null) {
+      // One writer for a row, so the main sessions and the sub-agents cannot drift apart in the
+      // fields they carry: the same title, the same kind, the same tag, the same floor.
+      const describeRow = async (entry) => {
+        const descriptor = await describeSession(entry);
+        // The runtime facts are looked up under the id the row is published under, so the row's
+        // id and the row's facts are the same session by construction rather than by agreement.
+        const meta = titles.get(entry.sessionId);
+        // The row is BUILT, not patched. The descriptor comes out of a cache and is shared, so
+        // writing the runtime's facts onto it leaves the last writer's facts on it for the next
+        // reader -- and a session whose row has left the runtime database goes on publishing the
+        // title, the kind and the parent it had last time, while the validator, which reads the
+        // same rows, reports none of them. A body and an ETag that disagree about the same row is
+        // how a badge outlives the fact it was derived from.
+        //
+        // So every runtime fact is written on every pass, and a row with no runtime facts carries
+        // none of them: the label falls back to the one the filesystem gives, and the kind, the
+        // parent and the tag are null.
+        return {
+          ...descriptor,
+          label: meta && meta.title ? meta.title : descriptor.label,
+          sessionKind: meta ? meta.kind : null,
+          sessionParentId: meta ? meta.parent : null,
+          // What this session IS, as a token the page can render: a lightweight exchange, a
+          // scheduled run, a background task. The raw purpose stays on this side of the wire --
+          // it is free text, and free text is not something to hand a reader's browser.
+          sessionTag: meta ? sessionTagFor(meta.kind, meta.purpose) : null,
+        };
+      };
       const described = [];
       for (const entry of visible) {
         try {
-          const descriptor = await describeSession(entry);
-          const meta = titles.get(decodeSessionIdFromDirName(basename(entry.dir)));
-          if (meta) {
-            if (meta.title) descriptor.label = meta.title;
-            descriptor.sessionKind = meta.kind;
-            descriptor.sessionParentId = meta.parent;
-          }
-          described.push(descriptor);
+          described.push(await describeRow(entry));
         } catch (error) {
           context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
         }
       }
-      body = JSON.stringify({ sessions: described.map(stripInternalFields) });
+      // The sub-agents, as a flat list: each row names the main it hangs off, and the page groups
+      // them. A flat list is what lets the two layers join on ONE id -- the id the main row
+      // already carries -- without a second naming scheme to keep in step with it.
+      const children = [];
+      for (const entry of childEntries) {
+        try {
+          children.push(await describeRow(entry));
+        } catch (error) {
+          context.logger.warn('miniapp.trajectory.read_error', { reason: 'describe_failed', code: errorCode(error) });
+        }
+      }
+      body = JSON.stringify({
+        sessions: described.map(stripInternalFields),
+        children: children.map(stripInternalFields),
+      });
       sessionsBody = { material: etag, body };
     }
     sendJsonBody(response, 200, body, { etag, revalidate: true });
@@ -3158,7 +4559,7 @@ export async function start(context) {
       return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     const entries = candidates.recentEntries;
-    if (entries.length === 0 && candidates.byDecodedId.size === 0) {
+    if (entries.length === 0 && candidates.bySessionId.size === 0) {
       return { ok: false, status: 503, code: 'trajectory_unavailable', message: '未找到本地会话数据目录' };
     }
     const requested = url.searchParams.get('session');
@@ -3169,41 +4570,54 @@ export async function start(context) {
       // a worker or cron session often has the newest file even while the user reads another one.
       const current = await resolveCurrentConversation(location.root);
       if (current) {
-        entry = entries.find((candidate) => basename(candidate.dir).includes('session_')
-          && decodeSessionIdFromDirName(basename(candidate.dir)) === current.sessionId) ?? null;
+        // The current session's own row, found by the id its directory name decodes to and
+        // CONFIRMED by the manifest beside the transcript: the name is a claim, the manifest is
+        // the authority. A directory whose name says this session and whose manifest says another
+        // one is that other session's directory, and binding this session's id to it would serve
+        // somebody else's messages under this session's name.
+        entry = await verifiedEntryForSessionId(entries, current.sessionId);
         if (!entry && current.relativeDir) {
           // Not in the recent window — build the entry straight from the recorded path. That value
           // is a database column rather than a name this app chose, so it earns the same
-          // containment check `resolveArtifactPath` gives catalog file names.
-          const root = resolve(location.sessionsRoot);
-          const dir = resolve(root, current.relativeDir.replace(/\\/g, '/'));
-          if (dir !== root && !dir.startsWith(root + sep)) {
+          // containment check `resolveArtifactPath` gives catalog file names. The picker builds the
+          // same kind of entry from the same column, so both go through one function.
+          //
+          // The session it is supposed to be is named too: a path that points at a different
+          // session's directory is refused, and 'latest' falls back to the walk's answer rather
+          // than binding this session's id to somebody else's transcript.
+          const built = await entryFromRelativeDir(location.sessionsRoot, current.relativeDir, current.sessionId);
+          if (built.rejected) {
             context.logger.warn('miniapp.trajectory.read_error', { reason: 'session_dir_rejected' });
-            entry = null;
-          } else {
-            try {
-              const fileStat = await stat(join(dir, 'messages.jsonl'));
-              entry = { dir, sizeBytes: fileStat.size, lastActiveAt: Math.floor(fileStat.mtimeMs) };
-            } catch {
-              entry = null;
-            }
           }
+          entry = built.entry;
         }
         if (entry) binding = current;
       }
-      if (!entry) entry = entries[0];
+      if (!entry) {
+        // The window's first entry -- but only while it still holds the session it was
+        // published under. The explicit-id routes ask that again before they serve a
+        // candidate, and the manifest can change under the walk, so the fallback has to ask
+        // it too: a directory whose manifest no longer agrees with its name is nobody's
+        // directory, and serving it here while both explicit ids refuse it would be the
+        // same transcript under an id the reader cannot ask for.
+        entry = await firstHoldingEntry(entries);
+        if (!entry) {
+          return { ok: false, status: 404, code: 'session_not_found', message: '找不到可用的会话' };
+        }
+      }
     } else {
       // Two ways in, and the order matters.
       //
-      // Fast path: the id was decoded from a directory name during the walk, so the directory is
+      // Fast path: the id is the one the walk published that directory under, so the directory is
       // already known and no scanning is needed. This is what makes a session outside the recent
-      // 30 reachable at all — before this, the only directories this branch could see were the 30
-      // the picker shows, so 116 of 146 sessions on this machine answered 404 to their own id.
+      // window reachable at all — before this, the only directories this branch could see were the ones
+      // the picker shows, so a session outside that window answered 404 to its own id.
       //
-      // The decoded name is still only a claim. `readSessionIdentity` prefers `manifest.sessionId`,
-      // so a directory whose name disagrees with its manifest must not be served under the
-      // requested id; it falls through to the slow path instead, which re-checks every candidate.
-      const fastPath = candidates.byDecodedId.get(requested);
+      // The walk's decision is not the last word. The manifest can change under the walk, so the
+      // identity of the directory is read again and compared: a directory that has stopped
+      // holding this session is not served under it, and the request falls through to the slow
+      // path, which re-checks every candidate.
+      const fastPath = candidates.bySessionId.get(requested);
       let picked = null;
       if (fastPath) {
         // Duplicates are kept as a list rather than collapsed, because collapsing them with
@@ -3225,7 +4639,14 @@ export async function start(context) {
         const matched = [];
         for (const candidate of entries) {
           const candidateIdentity = await readSessionIdentity(candidate.dir);
-          if (candidateIdentity.id === requested || basename(candidate.dir) === requested) {
+          // The same rule the walk applies, asked again of the directory that is in hand: a
+          // directory whose name decodes to one session and whose manifest names another is
+          // nobody's directory, and it is not served under either id. The walk decided this
+          // before the manifest changed, so the manifest is read again here and the answer
+          // follows the manifest that is on disk now.
+          const claimed = decodeSessionIdFromDirName(basename(candidate.dir));
+          const holds = !claimed || claimed === candidateIdentity.id;
+          if (holds && (candidateIdentity.id === requested || basename(candidate.dir) === requested)) {
             matched.push({ entry: candidate, identity: candidateIdentity });
             break;
           }
@@ -3268,7 +4689,23 @@ export async function start(context) {
 
     // Everything needed to decide "did this change?" is already in hand. Building the key
     // before the read is what lets an unchanged session skip the read entirely.
-    return { ok: true, entry, binding, identity, generations, filter, cacheKey: trajectoryCacheKey(entry, identity, binding, filter) };
+    //
+    // The family travels with it: the key names the version and the family names the question,
+    // and a read that asks for this session by its id has to be able to reach the entry a poll
+    // stored for it even though the two computed different keys.
+    return {
+      ok: true,
+      entry,
+      binding,
+      identity,
+      // The session this request is about, for the reader that has to tell one session's cached
+      // body from another's.
+      identityId: identity.id ?? '',
+      generations,
+      filter,
+      cacheKey: trajectoryCacheKey(entry, identity, binding, filter),
+      family: trajectoryCacheFamily(entry.dir, filter),
+    };
   };
 
   /**
@@ -3500,7 +4937,12 @@ export async function start(context) {
       truncated,
       redact,
       generations,
-      generation: shown.length === 1 ? shown[0].generation : null,
+      // The slice this body IS, which is the slice that was asked for. It used to be "the one
+      // generation the body happens to show", and that is a different question: a body built for
+      // the whole lineage and a body built for one generation have to be told apart, because the
+      // page compares a search answer against the body on screen before it lets that answer's
+      // indexes filter it.
+      generation: filter,
       orphans: lineage.orphans,
       identity: identityTable,
       openerByTurn: view.openerByTurn,
@@ -3539,6 +4981,11 @@ export async function start(context) {
       const locator = rowLocators[rowIndex];
       if (locator !== undefined) raws.set(recordIndex, locator);
     }
+    // The version of every record, stamped before the body is serialized. A record index is a
+    // position inside ONE body, and the same position in a newer body can be a different record:
+    // the page asks about positions all the time (the search answer, `/raw`, `/record`), so the
+    // position carries the version of the record it means. See `recordVersionToken`.
+    stampRecordVersions(payload, raws);
 
     // Last thing before serializing, and the only place the bulk fields are ever taken off a
     // record. It happens here rather than at `push()` because the search, which runs in this
@@ -3550,7 +4997,11 @@ export async function start(context) {
 
     let body;
     try {
-      body = JSON.stringify(payload);
+      // In pieces, not as one string. The bytes are the same bytes — see serializeTrajectoryBody
+      // for why that is a contract and not an accident — but the process never holds the
+      // payload's big array as a string, and the peak this route used to leave behind does not
+      // come back.
+      body = serializeTrajectoryBody(payload);
     } catch {
       sendJson(response, 500, { error: 'trajectory_unserializable', message: '会话数据暂时无法读取' });
       return;
@@ -3559,7 +5010,7 @@ export async function start(context) {
     // same while it goes stale. Everything that decides whether the answer changed stays in the
     // key, so a newer version of one family replaces its predecessor instead of stacking beside it.
     // `decoded` is filled in by /raw, at most RAW_DECODE_CACHE_ENTRIES lines' worth.
-    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });
+    trajectoryCache.set(cacheKey, trajectoryCacheFamily(entry.dir, filter), identity.id ?? '', { at: Date.now(), etag, body, raws, rowPos: rowPosByRecord, decoded: new Map() });
     // Nothing below reads `rows` or `rowLocators`, and `payload` holds its own projections rather
     // than the rows, so this is where the object graph stops being reachable. A sealed generation's
     // rows are still held by the parsed-rows cache — that is the point of that cache — but the
@@ -3571,6 +5022,23 @@ export async function start(context) {
     // and not the server's work. Any reading of "41 MB → a few KB, so polling got faster"
     // has to carry that with it. Pinned by tests/verify-incremental.mjs.
     const since = parseSince(url.searchParams.get('since'));
+    if (since !== null) {
+      // WHICH SET the tail is about. The tail carries the records after the cursor; the ones
+      // before it stay as the page has them, so the tail is only about the page's copy if that
+      // copy is still this body's. A record rewritten in place keeps its index and its id, so
+      // the cursor still points at the same record and the tail looks empty — the page would
+      // keep the old text under the new body's validator, and nothing else in the protocol
+      // could see that it had changed.
+      const refusal = deltaRefusal(
+        payload,
+        Number.parseInt(url.searchParams.get('n') ?? '', 10),
+        url.searchParams.get('fp') ?? ''
+      );
+      if (refusal) {
+        sendError(response, refusal.status, refusal.code, refusal.message);
+        return;
+      }
+    }
     const delta = since === null ? null : buildDeltaPayload(payload, since);
     sendJsonBody(response, 200, delta === null ? body : JSON.stringify(delta), { etag, revalidate: true });
   };
@@ -3613,6 +5081,25 @@ export async function start(context) {
     const needle = foldNeedle(asked);
     const { entry, filter } = ctx;
 
+    // WHICH BODY THE ANSWER IS ABOUT. The page says which body that is: the records it has, in
+    // order, as a fingerprint. The service folds its own records the same way and compares, and
+    // refuses to answer when the two are not the same set.
+    //
+    // Without this the service can only answer about the body on disk, and the page then filters
+    // its own body with an answer about another one. What hurts is the part the answer does NOT
+    // name: a record this body has and that body does not match gets dimmed as if it did not
+    // contain the needle, with no error anywhere, and the reader is told the record is not there.
+    //
+    // The count matters as much as the fingerprint. The fold is over the FIRST N records, because
+    // the page is behind whenever the session grew since its last poll — and a session that grew
+    // has MORE records, not different ones, so the first N are still the same N.
+    const count = Number.parseInt(url.searchParams.get('n') ?? '', 10);
+    const askedFingerprint = (url.searchParams.get('fp') ?? '').trim();
+    if (!Number.isInteger(count) || count < 0 || !/^[0-9a-f]{16}$/.test(askedFingerprint)) {
+      sendError(response, 400, 'search_fingerprint_required', '会话已更新，请重新加载后再搜索');
+      return;
+    }
+
     let walked;
     try {
       walked = await collectLineage(entry, ctx.generations);
@@ -3624,20 +5111,38 @@ export async function start(context) {
     const sessionKey = searchSessionKey(entry.dir, ctx.identity.id);
     const viewKey = searchViewKey(filter);
 
-    // Before anything expensive. The lineage walk above is stat-driven and cheap; everything after
-    // this line is the rebuild, and on the largest session measured here it was 3.7 seconds for a
-    // search that returns at most 500 rows.
-    const onDisk = await searchFromArtifacts({ sessionKey, viewKey, files, needle });
-    if (onDisk !== null) {
+    // ONE answer, sent by whichever path found the hits.
+    //
+    // Two paths answering the same request with two different response shapes is not a faster
+    // version of the endpoint, it is a second endpoint — and the second one is where the slice
+    // the answer is about would have gone stale. The slice travels with every answer, in the
+    // same word the body uses, so the page can compare the two.
+    //
+    // @param {Array<any>} found the hits
+    // @param {number} foundTotal every match, which is not every hit
+    const sendAnswer = (found, foundTotal) => {
       sendJson(response, 200, {
         query: asked,
-        hits: onDisk.hits,
-        total: onDisk.total,
-        truncated: onDisk.total > onDisk.hits.length,
-        // The same field the rebuild sends. Two paths answering the same request with two different
-        // response shapes is not a faster version of the endpoint, it is a second endpoint.
+        hits: found,
+        total: foundTotal,
+        truncated: foundTotal > found.length,
         session: { id: ctx.identity.id, generation: filter },
       });
+    };
+
+    // Before anything expensive. The lineage walk above is stat-driven and cheap; everything after
+    // this line is the rebuild, and on the largest session measured here it was 3.7 seconds for a
+    // search that returns at most MAX_SEARCH_HITS rows.
+    const onDisk = await searchFromArtifacts({ sessionKey, viewKey, files, needle, count });
+    if (onDisk !== null) {
+      // The segments ARE the body this answer is about, so their records decide whether it is
+      // about the body the page is showing. The fold is over the first N, for the reason given
+      // above: a page that is behind has fewer records, not different ones.
+      if (onDisk.fingerprint !== askedFingerprint) {
+        sendError(response, 409, 'search_version_mismatch', '该记录所在的版本已变化，请重新加载会话');
+        return;
+      }
+      sendAnswer(onDisk.hits, onDisk.total);
       return;
     }
 
@@ -3657,8 +5162,25 @@ export async function start(context) {
     });
     const rowLocators = view.occurrences.map((occurrence) => occurrence.locator);
     const rowIndexByRecord = splitRawRecords(payload.turns);
+    // The record -> its line's locator, so every record can be stamped with its version before it
+    // is serialized or written into a segment. The search answer and the body the page filters with
+    // have to carry the SAME version for the same record, or the page is comparing two answers.
+    /** @type {Map<number, any>} */
+    const locatorsByRecord = new Map();
+    for (const [recordIndex, rowIndex] of rowIndexByRecord) {
+      const locator = rowLocators[rowIndex];
+      if (locator !== undefined) locatorsByRecord.set(recordIndex, locator);
+    }
+    stampRecordVersions(payload, locatorsByRecord);
 
-    /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null }>} */
+    // The same check, on the same records, on the path that rebuilt them. The fold is over the
+    // first N records of THIS body, which is what the page folded over the first N of its own.
+    if (recordSetFingerprint(payloadRecordVersions(payload, count)) !== askedFingerprint) {
+      sendError(response, 409, 'search_version_mismatch', '该记录所在的版本已变化，请重新加载会话');
+      return;
+    }
+
+    /** @type {Array<{ index: number, turnIndex: number, kind: string, summary: string, generation: number | null, v: string }>} */
     const hits = [];
     let total = 0;
     const searched = collectSearchHits(payload, needle, MAX_SEARCH_HITS);
@@ -3678,13 +5200,7 @@ export async function start(context) {
       activeFileName: walked.activeFileName,
     }).catch(() => undefined);
 
-    sendJson(response, 200, {
-      query: asked,
-      hits,
-      total,
-      truncated: total > hits.length,
-      session: { id: ctx.identity.id, generation: filter },
-    });
+    sendAnswer(hits, total);
     // Nothing below reads the view, and the payload holds projections rather than rows, so this is
     // where the object graph stops being reachable.
     view.rows.length = 0;
@@ -3710,18 +5226,30 @@ export async function start(context) {
    * The session's record index is NOT read. Each segment line carries its own answer, so a needle
    * matching 14 records out of 36,525 reads those 14 lines rather than parsing 34.2 MB of index.
    *
-   * @param {{ sessionKey: string, viewKey: string, files: Array<any>, needle: string }} input
+   * @param {{ sessionKey: string, viewKey: string, files: Array<any>, needle: string, count: number }} input
    */
-  const searchFromArtifacts = async ({ sessionKey, viewKey, files, needle }) => {
+  const searchFromArtifacts = async ({ sessionKey, viewKey, files, needle, count }) => {
     /** @type {Array<{ index: number, turnIndex: number | null, kind: string, summary: string, generation: number | null }>} */
     const hits = [];
     let total = 0;
+    // The ledger position of every record these segments cover: the turn it is in and its own
+    // number in the body. They are what the version tokens are folded over IN THE ORDER THE LEDGER
+    // SHOWS THEM — the segments are one file per generation, and the body is not in file order,
+    // so the first N records of the files are not the first N records of the body.
+    /** @type {Array<{ turnIndex: number | null, index: number | null, v: string }>} */
+    const positions = [];
     // `files` is the lineage walk's own output, so a generation that is no longer in the lineage
     // has no entry here and no segment is read — a leftover on disk cannot keep it searchable.
     for (let fileIdx = 0; fileIdx < files.length; fileIdx += 1) {
       const file = files[fileIdx];
       const segment = await segmentStore.read(sessionKey, viewKey, generationKey(file.generation), [file]);
       if (segment === null) return null;
+      // A set that does not cover the whole body is not the set the page is holding: the records
+      // no segment covers are missing from the fold, so the fingerprint is the fingerprint of a
+      // DIFFERENT set of records, and the answer would be refused for a body that did not change.
+      // The rebuild answers instead — it has the body, and the body is the authority on which
+      // records exist.
+      if (segment.manifest.uncovered > 0) return null;
       const ordinals = scanSegment(segment.surface, needle);
       const answers = readSegmentHits(segment.surface, ordinals);
       for (const hit of answers) {
@@ -3729,14 +5257,45 @@ export async function start(context) {
         // does not agree with this reader. Answering without it would quietly drop a record.
         if (hit === null) return null;
         total += 1;
-        if (hits.length < MAX_SEARCH_HITS) hits.push(hit);
+        // Every match is kept, and the cap is applied later. The cap is about WHICH records the
+        // answer is about, and the records that come first in the ledger's order are not the
+        // records that come first in the generations: a record that belongs to an earlier turn and
+        // arrived after that turn was written sits in a later file, and the ledger still draws it
+        // first. Truncating here would keep the first N in the order the generations happened to
+        // be in — a different SET of records, with the same count and the same fingerprint, which
+        // is the hardest kind of difference for anything downstream to notice.
+        hits.push(hit);
       }
+      // The position and the version of every record this generation holds, read from the surface
+      // the segment already holds rather than from a second copy of it: both are on every line,
+      // and a second copy would be a second thing to keep in step.
+      for (const one of segmentLedgerPositions(segment.surface)) positions.push(one);
     }
-    // Ascending ledger order, because the segments were read oldest generation first and a hit's
-    // place in that list is what the page scrolls to. Sorting by the index itself is the order the
-    // rebuild produces, and two answers that differ only in order are two answers.
-    hits.sort((a, b) => a.index - b.index);
-    return { hits, total };
+    // The version tokens of the first N records, in the order the ledger shows them. This is the
+    // same fact the rebuild folds over the payload's own records, and the two have to agree: the
+    // fingerprint is what says whether this answer is about the body the page is showing.
+    const versions = segmentRecordVersions(positions, count);
+    // A record that cannot be placed in the ledger's order cannot be counted into a set, so the
+    // answer would be about a set nobody can name. The rebuild answers instead.
+    if (versions === null) return null;
+    // The ledger's order, which is the order the rebuild returns its hits in: the turns in the
+    // order the body numbers them, and inside a turn the records in the order they were
+    // emitted. The segments were read oldest generation first, so that is NOT the order they
+    // arrive in, and the record's own number is not it either — a record that belongs to an
+    // earlier turn and arrived after that turn was written is emitted later than a record of a
+    // later turn, and the ledger still draws it first. Two answers to one question that differ
+    // only in order are two answers, so the cached path reports its hits in the same order the
+    // rebuild does.
+    hits.sort(byLedgerOrder);
+    // The cap is applied HERE, after the order is restored — the first N in the ledger's order is
+    // what the rebuilt path returns, and the two paths have to answer with the same records, not
+    // merely with the same number of them.
+    //
+    // The cost is that every match is held for the length of the walk. That is the same order of
+    // magnitude as the body this path exists to avoid reading, and it is released with the
+    // request. Capping the cache by bytes is a separate piece of work.
+    const capped = hits.length > MAX_SEARCH_HITS ? hits.slice(0, MAX_SEARCH_HITS) : hits;
+    return { hits: capped, total, fingerprint: recordSetFingerprint(versions) };
   };
 
   /**
@@ -3757,6 +5316,11 @@ export async function start(context) {
       if (locator !== undefined) locators.set(recordIndex, locator);
     }
     const fileIdxRows = fileIdxRowsFromPayload(payload, locators, files);
+    // How many of the body's records no segment will hold. A record with no locator names no
+    // file, so it belongs to no generation's segment — and the segments then cover fewer records
+    // than the body, which is a different set with a different fingerprint. The count goes into
+    // every manifest, so a reader can SEE that the set is short instead of answering from it.
+    const uncovered = uncoveredRecordCount(fileIdxRows);
 
     // One segment per generation, the active one included. §8.8.1 rule 5 excluded the active
     // generation on the grounds that a segment for it would be stale before it was written — true,
@@ -3801,13 +5365,16 @@ export async function start(context) {
       // rebuild forever, for a generation that could never match anything.
       const generation = files[fileIdx].generation;
       const generationKeyValue = generationKey(generation);
-      // Already there and still matching its source: nothing to do, which is the common case on a
-      // session that is not being compacted right now.
       const existing = await segmentStore.read(sessionKey, viewKey, generationKeyValue, [files[fileIdx]]);
-      if (existing !== null) continue;
+      // Already there and still matching its source: nothing to do, which is the common case on a
+      // session that is not being compacted right now. The count has to agree as well: it is
+      // written into every manifest, and a set whose manifests say different things about what
+      // they cover is not a set a reader can take on faith.
+      if (existing !== null && existing.manifest.uncovered === uncovered) continue;
       const segment = buildSegment({ records });
       await segmentStore.write(sessionKey, viewKey, generationKeyValue, segment, {
         generation,
+        uncovered,
         source: [files[fileIdx]],
       });
     }
@@ -3815,21 +5382,42 @@ export async function start(context) {
   };
 
   /**
-   * One record's untouched message, fetched only when something actually reads it.
+   * The refusal a position read gets when it does not name the record it means.
    *
-   * The body no longer has the parsed rows behind it, so the line is read back out of the file it
-   * came from. That is a seek and a digest over one line, against the alternative of holding every
-   * session's object graph in memory for the life of the page — measured at 233 MB of the 378 MB
-   * this process held while one session was open.
+   * A position read names an INDEX, and an index is a position inside ONE body. The body the page
+   * is showing and the body the service would serve can be two different bodies — a transcript
+   * rewritten under a running page is the ordinary way that happens — and then the same index
+   * names two different records. The page says which one it means by sending the record's
+   * version; the service compares it with the version of the record it would serve, so the two
+   * outcomes are told apart instead of the newer body being served under the older body's number.
    *
-   * The digest is what makes that safe to do. Between building the body and answering this request
-   * the file can be rewritten; the trajectory entry is keyed on the file's size and mtime, so a
-   * rewrite that preserved both would otherwise be served the wrong message under the right
-   * record's name. Answering `raw_stale` says the session moved instead.
+   * TWO REFUSALS, not one: a read that does not say is a read the service cannot judge, and a
+   * read that says the wrong thing is a read about a record that is not there. They are different
+   * answers, so they are asked separately — and the page's retry can tell them apart.
    *
-   * A missing entry means this process restarted between the two calls; saying so is more honest
-   * than silently showing the normalized record in a panel labelled 原文.
+   * @param {URL} url
+   * @returns {{ status: number, code: string, message: string } | null} the refusal, or null
    */
+  const missingRecordVersion = (url) => {
+    const asked = url.searchParams.get('v');
+    if (typeof asked === 'string' && asked !== '') return null;
+    return { status: 400, code: 'record_version_required', message: '缺少记录版本，请重新加载会话' };
+  };
+
+  /**
+   * The refusal a position read gets when it names a record the service would not serve.
+   *
+   * @param {URL} url
+   * @param {{ digest?: string } | undefined} locator the record's line locator
+   * @param {number} rowPos the record's position inside that line
+   * @returns {{ status: number, code: string, message: string } | null} the refusal, or null
+   */
+  const mismatchedRecordVersion = (url, locator, rowPos) => {
+    const asked = url.searchParams.get('v');
+    if (asked === recordVersionToken(locator ? locator.digest : null, rowPos)) return null;
+    return { status: 409, code: 'record_version_mismatch', message: '该记录所在的版本已变化，请重新加载会话' };
+  };
+
   /**
    * One record's four bulk fields, read on request.
    *
@@ -3858,7 +5446,14 @@ export async function start(context) {
       sendError(response, 400, 'record_index_required', '缺少记录序号');
       return;
     }
-    const cached = trajectoryCache.get(ctx.cacheKey);
+    // The key names the version and the family names the question. A read that names the
+    // session by its id and a poll that asked for `latest` are the same reader of the same
+    // body, so the second one falls back to the family's entry instead of reporting that
+    // nothing is cached: the two computed different keys because one of them carried the
+    // binding it resolved and the other did not, and that has nothing to do with the body.
+    // The session is part of the question: a directory can stop holding one session and start
+    // holding another, and the old session's body is not an answer about the new one.
+    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family, ctx.identityId);
     if (!cached) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
       return;
@@ -3867,6 +5462,14 @@ export async function start(context) {
     const rowPos = cached.rowPos.get(wanted);
     if (locator === undefined || typeof locator.filePath !== 'string' || typeof rowPos !== 'number') {
       sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    // Which record of which version the page is asking about. The entry in the cache may be a
+    // newer body than the one the page is showing, and then the index names another record.
+    const refused = missingRecordVersion(url) ?? mismatchedRecordVersion(url, locator, rowPos);
+    if (refused) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: refused.code });
+      sendError(response, refused.status, refused.code, refused.message);
       return;
     }
     const found = await readRecordRow(locator);
@@ -3898,6 +5501,10 @@ export async function start(context) {
     }
     sendJson(response, 200, {
       index: wanted,
+      // No version here. The version's job was to make the REQUEST unambiguous, and the service
+      // above either served the record that was asked for or refused: an answer that repeated the
+      // version would be a field the page never reads, and a field nobody reads is a promise with
+      // no owner. The body carries the version of every record, and the page sends it back.
       // No `kind`. Measured over 6568 records of this machine's store: re-projecting one row
       // returns the same four values every time, but it disagrees about `kind` for an opener —
       // a `steer` row projected alone has no earlier turn to have been interrupted by, so it
@@ -3947,6 +5554,22 @@ export async function start(context) {
     return { row, sizeBytes: bytes.length };
   };
 
+  /**
+   * One record's untouched message, fetched only when something actually reads it.
+   *
+   * The body no longer has the parsed rows behind it, so the line is read back out of the file it
+   * came from. That is a seek and a digest over one line, against the alternative of holding every
+   * session's object graph in memory for the life of the page — measured at 233 MB of the 378 MB
+   * this process held while one session was open.
+   *
+   * The digest is what makes that safe to do. Between building the body and answering this request
+   * the file can be rewritten; the trajectory entry is keyed on the file's size and mtime, so a
+   * rewrite that preserved both would otherwise be served the wrong message under the right
+   * record's name. Answering `raw_stale` says the session moved instead.
+   *
+   * A missing entry means this process restarted between the two calls; saying so is more honest
+   * than silently showing the normalized record in a panel labelled 原文.
+   */
   const handleRaw = async (response, url) => {
     const ctx = await resolveTrajectoryRequest(url);
     if (!ctx.ok) {
@@ -3958,9 +5581,26 @@ export async function start(context) {
       sendError(response, 400, 'record_index_required', '缺少记录序号');
       return;
     }
-    const cached = trajectoryCache.get(ctx.cacheKey);
+    // The key names the version and the family names the question — see `handleRaw` for why the
+    // family is the fallback, and why the session is part of it.
+    const cached = trajectoryCache.get(ctx.cacheKey) ?? trajectoryCache.getByFamily(ctx.family, ctx.identityId);
     if (!cached) {
       sendError(response, 503, 'trajectory_not_cached', '会话数据已释放，请重新加载');
+      return;
+    }
+    const locator = cached.raws.get(wanted);
+    const rowPos = cached.rowPos.get(wanted);
+    if (locator === undefined || typeof locator.filePath !== 'string' || typeof rowPos !== 'number') {
+      sendError(response, 404, 'record_not_found', '找不到该记录');
+      return;
+    }
+    // Which record of which version the page is asking about. The entry in the cache may be a
+    // newer body than the one the page is showing, and then the index names another record — and
+    // the decoded message kept below would be that other record's message.
+    const refused = missingRecordVersion(url) ?? mismatchedRecordVersion(url, locator, rowPos);
+    if (refused) {
+      context.logger.warn('miniapp.trajectory.read_error', { reason: refused.code });
+      sendError(response, refused.status, refused.code, refused.message);
       return;
     }
     // Re-reading a record the reader has already opened is the common case, and a decoded message
@@ -3968,11 +5608,6 @@ export async function start(context) {
     const alreadyDecoded = cached.decoded.get(wanted);
     if (alreadyDecoded !== undefined) {
       sendJson(response, 200, { index: wanted, raw: alreadyDecoded.value, omitted: alreadyDecoded.omitted });
-      return;
-    }
-    const locator = cached.raws.get(wanted);
-    if (locator === undefined || typeof locator.filePath !== 'string') {
-      sendError(response, 404, 'record_not_found', '找不到该记录');
       return;
     }
     const found = await readRecordRow(locator);
@@ -4107,7 +5742,9 @@ export async function start(context) {
     trajectoryCache.clear();
     // The parsed-row cache only ever holds sealed generations now, but it is still a cache that
     // has to be released here: a disposed runtime that kept it would still hold a rotated
-    // generation's rows. The line is here so the next cache added cannot repeat the omission.
+    // generation's rows. Clearing it also stops the sweeper that releases the rows nobody wants
+    // any more, so a disposed runtime leaves no timer behind either. The line is here so the next
+    // cache added cannot repeat the omission.
     parsedRows.clear();
     clientEntry = null;
     disposal = close(server).then(() => undefined);
@@ -4137,6 +5774,9 @@ function stripInternalFields(value) {
     // decides by whether this field is set, so a missing key and a present key both reading
     // "not set" is what keeps one row from being a branch and the next from merely lacking it.
     sessionParentId: value.sessionParentId ?? null,
+    // The same floor, for the same reason: this is the token the page turns into 「轻量」/「定时」/
+    // 「任务」, and a row with no kind of its own has to be able to say so.
+    sessionTag: value.sessionTag ?? null,
   };
 }
 

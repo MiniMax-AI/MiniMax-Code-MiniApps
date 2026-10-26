@@ -169,27 +169,103 @@ assert('the session picker omits the count segment instead of printing a placeho
 // selected, or it is selected and not mapped, or it is mapped and not put on the descriptor, or
 // it reaches the descriptor and is stripped before it is sent. Each gets its own assertion
 // because each is a place the value can be lost without a type error or a crash.
+//
+// The read is a LADDER rather than one statement, because the columns it wants are not all the
+// same age: a runtime database written before child sessions existed has no `parent_session_id`,
+// and one written before the kind of a session was recorded has neither `purpose` nor
+// `workspace_dir`. Each rung has to be there, in this order — a rung that asks for more than the
+// one above it can never be reached, and a rung that is missing sends an old database down to the
+// empty catch, which is a list with no titles at all rather than a list with fewer titles.
+const LADDER = [
+  'select session_id, title, session_kind, parent_session_id, purpose, workspace_dir from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind, parent_session_id, purpose from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = ?',
+  'select session_id, title, session_kind from local_runtime_sessions where session_id = ?',
+];
+const ladderLabels = [
+  'the widest rung reads the purpose and the workspace as well',
+  'the next rung drops the workspace column',
+  'the next rung drops the purpose column',
+  'the last rung is the one every runtime database has',
+];
+let ladderAt = -1;
+let ladderOrdered = true;
+for (let i = 0; i < LADDER.length; i += 1) {
+  const found = server.indexOf(LADDER[i], ladderAt + 1);
+  if (found < 0) ladderOrdered = false;
+  else ladderAt = found;
+  assert(ladderLabels[i], server.includes(LADDER[i]));
+}
+assert('the rungs are walked widest first — a rung that asks for more than the one above it can never be reached',
+  ladderOrdered);
+
 assert('the titles query reads the parent column',
   /select session_id, title, session_kind, parent_session_id from local_runtime_sessions where session_id = \?/.test(server));
 
 assert('the parent row is mapped, and an empty id is no parent rather than a parent named ""',
-  /parent:\s*typeof row\.parent_session_id === 'string' && row\.parent_session_id !== ''\s*\n\s*\?\s*row\.parent_session_id\s*\n\s*:\s*null,/.test(server));
+  /const parent = typeof row\.parent_session_id === 'string' && row\.parent_session_id !== ''\s*\n\s*\? row\.parent_session_id\s*\n\s*: null;/.test(server)
+  && /parent: parentNames \? parent : null,/.test(server));
 
-assert('the descriptor carries the parent onto the row the page receives',
-  /descriptor\.sessionParentId = meta\.parent;/.test(server));
+// The parent is a foreign key into the same table, so it is looked up with the statement that
+// read the row. There is no second query that could fail to prepare, and therefore no path on
+// which a parent is published without having been looked up -- which is what the two database
+// fixtures below pin down from the other side.
+assert('the parent is published only when the statement that read the row finds one for it',
+  /const parentNames = parent \? Boolean\(stmt\.get\(parent\)\) : false;/.test(server));
+
+// The same two links for the two newer columns. The purpose is what says a session is a cron
+// run, a background task or a lightweight exchange, and the workspace is what orders the list —
+// neither of them can be dropped without the page going back to presenting every session as the
+// reader's own conversation.
+assert('the purpose row is mapped, and an empty value is no purpose',
+  /purpose: typeof row\.purpose === 'string' && row\.purpose\.trim\(\) \? row\.purpose\.trim\(\) : null,/.test(server));
+assert('the workspace row is mapped, and an empty value is no workspace',
+  /workspace: typeof row\.workspace_dir === 'string' && row\.workspace_dir\.trim\(\) \? row\.workspace_dir\.trim\(\) : null,/.test(server));
+
+// The parent the page groups a session's runs under is the one the runtime database holds, and
+// the row that carries it is BUILT rather than patched: the descriptor comes out of a cache and
+// is shared, so a runtime fact written onto it outlives the fact it was derived from. The parent
+// is therefore a field of the row that is built, written on every pass, and null when the
+// runtime database holds no row for that session.
+assert('the row the page receives carries the parent, on every row',
+  /sessionParentId: meta \? meta\.parent : null,/.test(server));
+
+// The tag is written on EVERY row, not only on the rows that have a database entry -- the same
+// shape as the parent above, and for the same reason. A body and an ETag that disagree about
+// one row is how a badge outlives the fact it was derived from, and the page only ever sees the
+// body.
+//
+// The shape is what makes it unconditional: the tag is a FIELD of the row that is built, and its
+// else-branch is null -- "no row to derive one from" -- rather than a statement that only runs
+// when there is a row. An object property is not a statement, so it cannot be conditional in the
+// way the old spelling could.
+assert('the row the page receives carries the kind badge, on every row',
+  /sessionTag: meta \? sessionTagFor\(meta\.kind, meta\.purpose\) : null,/.test(server));
 
 // `?? null` rather than a bare copy: the page decides by whether this field is SET, so a missing
 // key and a present-but-undefined one have to land in the same place as a row that has no parent.
 assert('the field survives the strip, with null as the floor',
   /sessionParentId:\s*value\.sessionParentId \?\? null,/.test(server));
 
+assert('the kind badge survives the strip, with null as the floor',
+  /sessionTag:\s*value\.sessionTag \?\? null,/.test(server));
+
 // The reader-facing half, off the comment-stripped client for the reason given in section 6: the
 // comment above `sessionOptionLabel` names the marker, so an assertion made against the raw file
 // would be satisfied by prose describing the very thing it exists to require.
-assert('the page decides the marker by the field and not unconditionally',
-  /var branch = session && session\.sessionParentId \? BRANCH_MARK : '';/.test(clientJs));
+//
+// The page does not mark a row in its label any more — it decides which rows are sub-agents by
+// the parent the service named, and puts them in the run pick of that parent. So the field's
+// reader is the grouping, and the rule is that the grouping consults the field rather than
+// anything else.
+assert('the page decides which rows are sub-agents by the parent field and not unconditionally',
+  /if \(!child \|\| !child\.id \|\| !child\.sessionParentId\) continue;/.test(clientJs)
+  && /var bucket = grouped\[child\.sessionParentId\];/.test(clientJs));
 
-/* ---------- 6. a database without the column, which the four regexes above cannot see ----------
+assert('the page decides the kind badge by the field and not unconditionally',
+  /var tag = session \? sessionTagBadge\(session\.sessionTag\) : '';/.test(clientJs));
+
+/* ---------- 8. a database without the columns, which the regexes above cannot see ----------
  *
  * Everything above reads `server.mjs` as text, and every one of those regexes is satisfied by a
  * query that works. None of them is satisfied by a query that FAILS, which is the whole case here:
@@ -199,8 +275,9 @@ assert('the page decides the marker by the field and not unconditionally',
  * session fell back to the first sentence of its transcript — and nothing in the suite could see
  * it, because the shape of a correct query is the shape of a query nobody ran.
  *
- * So this runs the function against a real database built here, with and without the column. The
- * without-case is the one that carries the rule: the titles and the kind are the page's whole
+ * So this runs the function against real databases built here, one per rung of the ladder: with
+ * every column, without the workspace column, without the purpose column, and with neither. The
+ * without-cases are the ones that carry the rule — the titles and the kind are the page's whole
  * reason for opening the database, and a missing optional column is not a reason to lose them. */
 const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs');
 const { tmpdir } = await import('node:os');
@@ -219,45 +296,147 @@ process.emitWarning = (warning, ...rest) => (
 const { DatabaseSync } = await import('node:sqlite');
 // `SERVER` is a plain filesystem path, and a dynamic import of one on Windows is read as a URL
 // with an unsupported scheme. The module has to be asked for by its file: URL.
-const { readSessionTitles } = await import(pathToFileURL(SERVER).href);
+const { readSessionTitles, sessionTagFor } = await import(pathToFileURL(SERVER).href);
 
-const runtimeDb = (columns) => {
+const CHILD_ID = 'mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const PARENT_ID = 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+/**
+ * One runtime database, with the optional columns the caller asks for.
+ *
+ * Two rows, and the order they are written in is the point. A run names the conversation it was
+ * spawned from, and the runtime writes that conversation first -- so a database in which a run
+ * names a session that is not there is a database the runtime cannot write. It is a separate
+ * fixture below, because it is the one case where the parent column says something the service
+ * has to refuse.
+ *
+ * @param {readonly string[]} extraColumns
+ * @param {{ parentExists?: boolean }} [options]
+ */
+const runtimeDb = (extraColumns, options) => {
+  const opts = options || {};
   const home = mkdtempSync(join(tmpdir(), 'mmc-trajectory-runtimedb-'));
   mkdirSync(join(home, 'v2', 'sqlite'), { recursive: true });
   const db = new DatabaseSync(join(home, 'v2', 'sqlite', 'runtime-state.sqlite'));
-  const extra = columns ? ', parent_session_id' : '';
-  const placeholders = columns ? '?, ?, ?, ?' : '?, ?, ?';
+  const extra = extraColumns.length ? ', ' + extraColumns.join(', ') : '';
+  const placeholders = extraColumns.length ? ', ' + extraColumns.map(() => '?').join(', ') : '';
   db.exec('create table local_runtime_sessions (session_id text primary key, title text,'
     + ' session_kind text' + extra + ')');
-  const values = ['mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '一条真实的标题', 'conversation'];
-  if (columns) values.push('mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-  db.prepare('insert into local_runtime_sessions (session_id, title, session_kind'
-    + extra + ') values (' + placeholders + ')').run(...values);
+  const insert = db.prepare('insert into local_runtime_sessions (session_id, title, session_kind'
+    + extra + ') values (?, ?, ?' + placeholders + ')');
+  const row = (id, title, parent, purpose, workspace) => {
+    const values = [id, title, 'conversation'];
+    for (const column of extraColumns) {
+      if (column === 'parent_session_id') values.push(parent);
+      else if (column === 'purpose') values.push(purpose);
+      else if (column === 'workspace_dir') values.push(workspace);
+      else throw new Error('unknown column ' + column);
+    }
+    return values;
+  };
+  // The conversation the run hangs off, written before the run -- the order the runtime writes
+  // them in, and the reason the parent column can be read as a foreign key.
+  if (opts.parentExists !== false) {
+    insert.run(...row(PARENT_ID, '父会话的标题', null, null, null));
+  }
+  insert.run(...row(CHILD_ID, '一条真实的标题', PARENT_ID, 'context-mode:lightweight', 'workspace-of-the-session'));
   db.close();
   return home;
 };
 
-const ids = ['mvs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+const ids = [CHILD_ID];
 const homes = [];
-let withColumn = null;
-let withoutColumn = null;
+let parentOnly = null;
+let baseOnly = null;
+let noWorkspace = null;
+let everything = null;
+let dangling = null;
 try {
-  homes.push(runtimeDb(true), runtimeDb(false));
-  withColumn = await readSessionTitles(homes[0], ids);
-  withoutColumn = await readSessionTitles(homes[1], ids);
+  homes.push(
+    runtimeDb(['parent_session_id']),
+    runtimeDb([]),
+    runtimeDb(['parent_session_id', 'purpose']),
+    runtimeDb(['parent_session_id', 'purpose', 'workspace_dir']),
+    // A run whose parent names a session that is not there: the only database here that the
+    // runtime cannot write, and the only one where the parent column has something to refuse.
+    runtimeDb(['parent_session_id'], { parentExists: false })
+  );
+  parentOnly = await readSessionTitles(homes[0], ids);
+  baseOnly = await readSessionTitles(homes[1], ids);
+  noWorkspace = await readSessionTitles(homes[2], ids);
+  everything = await readSessionTitles(homes[3], ids);
+  dangling = await readSessionTitles(homes[4], ids);
 } finally {
   // The homes are `mkdtemp` directories this call created, so they are cleaned up in the same
   // breath rather than left behind for the OS to find.
   for (const h of homes) rmSync(h, { recursive: true, force: true });
 }
 assert('a database with the parent column still reports the title, the kind and the parent',
-  withColumn.get(ids[0])?.title === '一条真实的标题'
-  && withColumn.get(ids[0])?.kind === 'conversation'
-  && withColumn.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  parentOnly.get(ids[0])?.title === '一条真实的标题'
+  && parentOnly.get(ids[0])?.kind === 'conversation'
+  && parentOnly.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 assert('a database WITHOUT the column keeps the title and the kind, and only loses the parent',
-  withoutColumn.get(ids[0])?.title === '一条真实的标题'
-  && withoutColumn.get(ids[0])?.kind === 'conversation'
-  && withoutColumn.get(ids[0])?.parent === null);
+  baseOnly.get(ids[0])?.title === '一条真实的标题'
+  && baseOnly.get(ids[0])?.kind === 'conversation'
+  && baseOnly.get(ids[0])?.parent === null);
+// The same rung, one column further on: a database that knows the parent but not the purpose
+// still answers with the parent, because the rung above it asks for columns it does not have.
+assert('a database WITHOUT the purpose column still reports the title, the kind and the parent',
+  parentOnly.get(ids[0])?.title === '一条真实的标题'
+  && parentOnly.get(ids[0])?.kind === 'conversation'
+  && parentOnly.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  && parentOnly.get(ids[0])?.purpose === null
+  && parentOnly.get(ids[0])?.workspace === null);
+// And the rung below it: no workspace column, everything else still readable.
+assert('a database WITHOUT the workspace column still reports the title, the kind, the parent and the purpose',
+  noWorkspace.get(ids[0])?.title === '一条真实的标题'
+  && noWorkspace.get(ids[0])?.kind === 'conversation'
+  && noWorkspace.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  && noWorkspace.get(ids[0])?.purpose === 'context-mode:lightweight'
+  && noWorkspace.get(ids[0])?.workspace === null);
+// The widest rung, which is what a current runtime database answers with.
+assert('a database with every column reports the workspace as well',
+  everything.get(ids[0])?.title === '一条真实的标题'
+  && everything.get(ids[0])?.kind === 'conversation'
+  && everything.get(ids[0])?.parent === 'mvs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  && everything.get(ids[0])?.purpose === 'context-mode:lightweight'
+  && everything.get(ids[0])?.workspace === 'workspace-of-the-session');
+
+// A run whose parent names a session that is not there names nothing. The parent column is a
+// foreign key into this very table, so a value with no row behind it is not a conversation --
+// and the page groups its runs by that name, so publishing it puts a name on the wire that no
+// conversation in the list can answer to.
+//
+// The run itself is still a session. It is a real one, with a real title, and dropping it from
+// the list would hide a session the reader could otherwise open.
+assert('a parent that names no session is not published as a parent',
+  dangling.get(ids[0])?.parent === null);
+assert('a run whose parent names no session is still a session',
+  dangling.get(ids[0])?.title === '一条真实的标题'
+  && dangling.get(ids[0])?.kind === 'conversation');
+
+/* ---------- 9. what a purpose means, in one place and nowhere else ---------- */
+//
+// The raw purpose is free text — it carries whatever a person typed into it — so it never
+// travels to the page. What travels is a token derived from it, and this is the only place that
+// knows the derivation. A row whose kind is a conversation and whose purpose says nothing gets no
+// token at all, which is what keeps an ordinary conversation from being badged.
+assert('a lightweight purpose is a lightweight session',
+  sessionTagFor('conversation', 'context-mode:lightweight') === 'lightweight');
+assert('a cron purpose is a scheduled session',
+  sessionTagFor('conversation', 'cron:mavis:something') === 'scheduled');
+assert('a cron kind is a scheduled session even with no purpose at all',
+  sessionTagFor('cron', null) === 'scheduled');
+assert('a background task purpose is a task',
+  sessionTagFor('conversation', 'local-background-task:bg_1') === 'task');
+assert('a local task purpose is a task',
+  sessionTagFor('conversation', 'local-task:1') === 'task');
+assert('a task kind is a task even with no purpose at all',
+  sessionTagFor('task', null) === 'task');
+assert('a plain conversation is not tagged at all',
+  sessionTagFor('conversation', null) === null);
+assert('a row with neither a kind nor a purpose is not tagged at all',
+  sessionTagFor(null, null) === null);
 
 console.log('[list-cache] ' + pass + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

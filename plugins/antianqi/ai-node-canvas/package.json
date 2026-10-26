@@ -1,0 +1,10 @@
+{
+  "name": "ai-node-canvas",
+  "version": "0.84.0",
+  "private": true,
+  "description": "Node-graph canvas MiniApp for MiniMax Code: wire MiniMax model runs into a visual workflow.",
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  }
+}

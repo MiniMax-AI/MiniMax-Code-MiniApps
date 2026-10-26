@@ -32,6 +32,7 @@ import {
   needleIsUsable,
   normaliseWhitespace,
   selectIdentityView,
+  segmentRecordVersions,
   splitRawRecords,
   ROW_GENERATION,
 } from '../miniapp/node/server.mjs';
@@ -294,6 +295,44 @@ check('a payload with no turns answers nothing',
   collectSearchHits({}, foldNeedle('needle'), 500), { hits: [], total: 0 });
 
 /* =====================================================================
+ * 3b — the fold over the first N records, read from the stored segments
+ * ===================================================================== */
+
+// The same fact as the payload's own fold, read the other way round. The segments carry each
+// record's LEDGER position — the turn it is in and its own number in the body — and the fold is
+// over the first N in THAT order: the body's order, which is turn by turn. The segments are one
+// file per generation, and a record that belongs to an EARLIER turn can live in a LATER file, so
+// the order the segments are read in is not the order the ledger draws.
+//
+// The limit is read the way the payload's own fold reads it: an explicit zero is zero records,
+// and a missing, negative or fractional limit is every record. The two are two readings of one
+// fact — the versions of the first N records — so they have to agree.
+const LEDGER_POSITIONS = [
+  { turnIndex: 1, index: 1, v: 'version-1' },
+  { turnIndex: 1, index: 3, v: 'version-3' },
+  { turnIndex: 2, index: 2, v: 'version-2' },
+];
+check('the versions of the first N records are folded in the ledger\'s order',
+  segmentRecordVersions(LEDGER_POSITIONS, 3), ['version-1', 'version-3', 'version-2']);
+check('and that order is the ledger\'s, not the order the segments were read in',
+  segmentRecordVersions([
+    { turnIndex: 2, index: 2, v: 'version-2' },
+    { turnIndex: 1, index: 3, v: 'version-3' },
+    { turnIndex: 1, index: 1, v: 'version-1' },
+  ], 3), ['version-1', 'version-3', 'version-2']);
+check('and only as many as were asked for',
+  segmentRecordVersions(LEDGER_POSITIONS, 2), ['version-1', 'version-3']);
+check('and a limit of zero is zero records',
+  segmentRecordVersions(LEDGER_POSITIONS, 0), []);
+check('and a missing, negative or fractional limit is every record',
+  [segmentRecordVersions(LEDGER_POSITIONS).length,
+    segmentRecordVersions(LEDGER_POSITIONS, -1).length,
+    segmentRecordVersions(LEDGER_POSITIONS, 1.5).length], [3, 3, 3]);
+check('and a record that cannot be placed is not folded over at all',
+  [segmentRecordVersions([{ turnIndex: null, index: 1, v: 'version-1' }], 1),
+    segmentRecordVersions([{ turnIndex: 1, index: -1, v: 'version-1' }], 1)], [null, null]);
+
+/* =====================================================================
  * 4 — a needle never crosses a record, and never gets that far if too short
  * ===================================================================== */
 
@@ -492,14 +531,51 @@ assert('one missing segment makes the whole search fall back rather than answer 
 
 // The cap assertions above run against a copy of the loop written here, so they say the rule holds
 // and not that the shipped route holds it. These read the shipped function: `total` is incremented
-// for every match, the push is the thing that is bounded, and the return hands back the count.
+// for every match, the hits are put back in the ledger's order, the cap is taken AFTER that, and
+// the return hands back the count.
+//
+// The cap used to be taken while the generations were being walked, which kept the first N in the
+// order the generations happened to be in — a different SET of records, with the same count and the
+// same fingerprint. This assertion pins the order of the two steps instead of the shape of one of
+// them: the sort has to come before the slice, and the old early push must be gone.
 const artifactsSrc = SERVER.slice(
   SERVER.indexOf('const searchFromArtifacts = async'),
   SERVER.indexOf('const publishSearchArtifacts = async'));
 assert('and the shipped artifact path counts every match rather than what it sent',
   /total \+= 1;/.test(artifactsSrc)
-  && /if \(hits\.length < MAX_SEARCH_HITS\) hits\.push\(hit\);/.test(artifactsSrc)
-  && /return \{ hits, total \};/.test(artifactsSrc));
+  && /return \{ hits: capped, total, fingerprint: recordSetFingerprint\(versions\) \};/.test(artifactsSrc));
+assert('and it takes the cap after it puts the hits back in the ledger\'s order, so the two paths answer with the same records',
+  /hits\.sort\(byLedgerOrder\);[\s\S]*hits\.slice\(0, MAX_SEARCH_HITS\)/.test(artifactsSrc)
+  && !/if \(hits\.length < MAX_SEARCH_HITS\) hits\.push\(hit\);/.test(artifactsSrc));
+
+// The answer is about a SET of records, and the part of it that matters to the reader is the part
+// it does NOT name. So the service has to be able to say which set it searched, and the page has
+// to be able to check it: the fingerprint is folded over the records' own version tokens, over as
+// many of them as the page asked about.
+//
+// The fold is over the FIRST N, and that is not a detail. A page that is behind because the
+// session grew has fewer records, not different ones, so its first N are still the same N — and a
+// body-level identity (an ETag, a digest of the whole body) would change on every append and
+// make every answer stop applying every few seconds.
+// The fold is over the FIRST N records IN THE ORDER THE LEDGER SHOWS THEM — turn by turn, and
+// inside a turn the records in the order they were emitted. The segments are one file per
+// generation, and the body is not in file order, so the artifact path has to put the records
+// back where the body has them before it takes the first N.
+//
+// This assertion cannot see the ORDER: a fold over the files reads the same lines and leaves the
+// same shape behind, and the difference only shows on a body whose turn grouping differs from
+// its file order. The behaviour is owned by verify-trajectory-cache.mjs, which searches such a
+// body through the real route and compares the answer with the rebuild's.
+assert('the artifact path folds the versions of the records it covers, in the ledger\'s order',
+  /segmentLedgerPositions\(segment\.surface\)/.test(artifactsSrc)
+  && /const positions = \[\];/.test(artifactsSrc)
+  && /segmentRecordVersions\(positions, count\)/.test(artifactsSrc)
+  && /recordSetFingerprint\(versions\)/.test(artifactsSrc));
+assert('and the route refuses an answer that is not about the set the page asked about',
+  /search_version_mismatch/.test(SERVER)
+  && /recordSetFingerprint\(payloadRecordVersions\(payload, count\)\)/.test(SERVER));
+assert('and a request that does not say which set it is about is refused rather than guessed at',
+  /search_fingerprint_required/.test(SERVER));
 
 // The route resolves a whole scan in ONE call, because resolving one ordinal at a time walks the
 // segment once per hit. That version is not a slower version of this one, it is the version that
@@ -541,8 +617,14 @@ assert('and the artifact root holds segments and nothing else',
   artifactDirs.length === 1 && artifactDirs[0] === 'search');
 // Two paths answering one request is only a performance change if they answer it identically,
 // and the response body is part of the answer the page reads.
-check('both paths send the same session field',
-  (SERVER.match(/session: \{ id: ctx\.identity\.id, generation: filter \}/g) || []).length, 2);
+//
+// The two paths do not answer separately any more: they build the answer in ONE place and send
+// it. So the question is not "do they agree" — it is "is there only one place for them to
+// disagree in". A second copy of the answer is a second answer, and the copy nobody thinks
+// about is the one that eventually stops answering.
+const searchAnswerShape = (SERVER.match(/session: \{ id: ctx\.identity\.id, generation: filter \}/g) || []).length;
+check('the search answer is built in one place, so the two paths cannot answer differently',
+  searchAnswerShape, 1);
 // Scoped to handleSearch's own text: the same two lines also appear in the trajectory route, and
 // a whole-file indexOf would compare a search against an unrelated request's body.
 const handleSearchSrc = SERVER.slice(

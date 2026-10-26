@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Agent 协作透视</title>
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="brand-copy"><strong>Agent 协作透视</strong><small>任务调用与子 Agent</small></div>
+    <span class="local-badge">● 本机处理</span>
+  </header>
+  <main>
+    <section class="import-panel" aria-labelledby="import-title">
+      <div>
+        <div class="eyebrow">EVENT IMPORT</div>
+        <h1 id="import-title">导入协作记录</h1>
+        <p>选择插件生成的 <code>agent-flow-events.jsonl</code>，查看 <code>task</code> 调用与子 Agent 的运行时间。</p>
+        <p class="hint">文件只在本机解析；查看新增事件时，请重新选择文件。支持同时选择轮转文件。</p>
+      </div>
+      <div class="import-actions">
+        <input id="event-files" class="visually-hidden" type="file" accept=".jsonl,application/x-ndjson,text/plain" multiple>
+        <label class="file-button" for="event-files">选择记录文件</label>
+      </div>
+      <div id="file-note" class="hint" aria-live="polite">尚未选择记录文件</div>
+    </section>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section class="toolbar" aria-label="会话选择">
+      <div><div class="eyebrow">观察会话</div><div class="session-actions"><select id="session-select" aria-label="选择观察会话" disabled></select><button id="latest-session" type="button" disabled>查看最近记录</button></div>
+        <p id="session-note" class="hint" aria-live="polite">导入后选择会话，或查看最近记录。</p></div>
+    </section>
+    <section class="overview" aria-label="协作概况">
+      <div class="stat"><span>task 调用</span><strong id="total">0</strong></div>
+      <div class="stat"><span>未观察到回传</span><strong id="running">0</strong></div>
+      <div class="stat"><span>已观察到回传</span><strong id="done">0</strong></div>
+      <div class="stat"><span>关联子 Agent（所选会话）</span><strong id="linked">0</strong></div>
+    </section>
+    <section id="observation-panel" class="observation" aria-label="执行观察"><strong>执行观察</strong><div id="observation">导入记录后显示时间关系。</div></section>
+    <section class="workspace">
+      <div class="timeline-column">
+        <div class="section-heading"><div><div class="eyebrow">TASK CALLS</div><h2>task 工具调用</h2></div><span class="hint">仅显示工具调用耗时</span></div>
+        <div id="flow" class="flow" aria-live="polite"><div class="empty">请选择插件生成的记录文件。</div></div>
+      </div>
+      <aside class="detail-column" aria-label="任务详情">
+        <div class="section-heading"><div><div class="eyebrow">EVENT EVIDENCE</div><h2>事件详情</h2></div></div>
+        <div id="detail" class="detail"><div class="empty">选择一项 task 调用</div></div>
+      </aside>
+    </section>
+    <section class="child-section" aria-label="子 Agent 事件">
+      <div class="section-heading"><div><div class="eyebrow">SUBAGENT EVENTS</div><h2>关联子 Agent</h2></div></div>
+      <div id="children" class="child-list"><div class="empty">导入后选择会话，查看明确关联的子 Agent。</div></div>
+    </section>
+    <details class="data-notes"><summary>数据与关联说明</summary>
+      <p>只展示所选记录会话中的 task 调用，以及能通过明确 ID 关联到它的子 Agent 事件；不按时间接近程度猜测关联。</p>
+      <p>task 回传表示工具调用结束，不表示父 Agent 已采纳结果。页面只解析你选择的记录文件，不扫描其他会话文件。</p>
+    </details>
+  </main>
+</body>
+</html>

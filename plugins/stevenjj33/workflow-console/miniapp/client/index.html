@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>动态工作流控制台</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#detail-pane">跳到运行详情</a>
+
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1>动态工作流控制台</h1>
+        <p class="topbar-sub" id="service-summary">正在连接本机 Workflow Studio 服务…</p>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn" id="refresh-services">刷新引擎</button>
+        <button type="button" class="btn" id="open-templates">模板</button>
+        <button type="button" class="btn" id="open-hidden">已隐藏</button>
+        <a class="btn" id="studio-link" href="/api/studio" target="_blank" rel="noreferrer">打开完整 Studio</a>
+        <button type="button" class="btn" id="theme-toggle" aria-label="切换主题">主题：跟随系统</button>
+      </div>
+    </header>
+
+    <div class="banner" id="service-banner" role="status" hidden></div>
+
+    <div class="banner" id="workspace-row" hidden>
+      <strong id="workspace-title">内置引擎工作目录</strong>
+      <span id="workspace-hint"> 内置引擎在哪个项目里跑由这里决定，换项目时改一下（修改后自动重启）。</span>
+      <div class="workspace-editor">
+        <input type="text" id="workspace-input" placeholder="D:\path\to\your-project" aria-label="内置引擎工作目录" />
+        <button type="button" class="btn btn-primary" id="workspace-save">保存并重启</button>
+      </div>
+    </div>
+
+    <main class="layout">
+      <section class="runs-pane" aria-labelledby="runs-heading">
+        <div class="runs-toolbar">
+          <h2 id="runs-heading">运行</h2>
+          <div class="filters" role="group" aria-label="按状态筛选运行">
+            <button type="button" class="chip is-active" data-filter="all" aria-pressed="true">全部</button>
+            <button type="button" class="chip" data-filter="active" aria-pressed="false">进行中</button>
+            <button type="button" class="chip" data-filter="pending_review" aria-pressed="false">待审核</button>
+            <button type="button" class="chip" data-filter="done" aria-pressed="false">已结束</button>
+          </div>
+        </div>
+        <ul class="run-list" id="run-list" aria-busy="true">
+          <li class="run-item" aria-hidden="true">
+            <div class="skeleton"></div>
+            <div class="skeleton sk-sub-60"></div>
+          </li>
+          <li class="run-item" aria-hidden="true">
+            <div class="skeleton sk-w-80"></div>
+            <div class="skeleton sk-sub-45"></div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="detail-pane" id="detail-pane" aria-label="运行详情" aria-busy="true">
+        <div class="card">
+          <div class="skeleton sk-title"></div>
+          <div class="skeleton sk-sub-70"></div>
+          <div class="skeleton sk-sub-55"></div>
+        </div>
+      </section>
+    </main>
+
+    <dialog class="dialog" id="node-dialog" aria-labelledby="node-dialog-title">
+      <div class="dialog-body">
+        <div class="dialog-head">
+          <div>
+            <h3 id="node-dialog-title">节点</h3>
+            <p class="topbar-sub" id="node-dialog-sub"></p>
+          </div>
+          <button type="button" class="btn" data-close="node-dialog" aria-label="关闭节点详情">关闭</button>
+        </div>
+        <div class="tabs" id="node-tabs" role="tablist"></div>
+        <div id="node-panel"></div>
+      </div>
+    </dialog>
+
+    <dialog class="dialog" id="confirm-dialog" aria-labelledby="confirm-title">
+      <div class="dialog-body">
+        <h3 id="confirm-title">确认操作</h3>
+        <div class="confirm-note" id="confirm-note"></div>
+        <label class="checkbox" id="confirm-checkbox-row" hidden>
+          <input type="checkbox" id="confirm-checkbox" />
+          <span>我已确认上一次异常退出的旧 Agent 已停止，可以重新调度。</span>
+        </label>
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="btn" id="confirm-cancel">取消</button>
+        <button type="button" class="btn btn-primary" id="confirm-accept">确认</button>
+      </div>
+    </dialog>
+
+    <dialog class="dialog" id="list-dialog" aria-labelledby="list-dialog-title">
+      <div class="dialog-body">
+        <div class="dialog-head">
+          <div>
+            <h3 id="list-dialog-title">列表</h3>
+            <p class="topbar-sub" id="list-dialog-sub"></p>
+          </div>
+          <button type="button" class="btn" data-close="list-dialog" aria-label="关闭列表">关闭</button>
+        </div>
+        <div id="list-dialog-body"></div>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

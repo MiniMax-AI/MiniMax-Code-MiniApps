@@ -7,6 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
+// The service's own fold over a set of records. The page has a copy of it — two copies of one
+// question is two answers, and the difference between them is nobody's to explain — so the two are
+// compared here rather than trusted.
+import { recordSetFingerprint } from '../miniapp/node/server.mjs';
 
 const HTML = fileURLToPath(new URL('../miniapp/client/index.html', import.meta.url));
 const SERVER = fileURLToPath(new URL('../miniapp/node/server.mjs', import.meta.url));
@@ -227,7 +231,11 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   const netCtx = { console, AbortController, setTimeout, clearTimeout, encodeURIComponent };
   vm.createContext(netCtx);
   const needed = ['function isCount(value)', 'function formatInt(value)', 'function searchHitSet(hits)',
-    'function sessionParam()', 'function searchStatusLabel(searchState)', 'function runSearch(needle)'];
+    'function sessionParam()', 'function displayedSessionParam()', 'function displayedGeneration()',
+    'function displayedRecordsByIndex()', 'function displayedRecordVersions()',
+    'function displayedRecordSet(versions)', 'function recordSetFingerprint(versions)',
+    'function searchStatusLabel(searchState)',
+    'function searchAnswerDoesNotApply()', 'function runSearch(needle)'];
   const sources = needed.map((sig) => fnSource(sig));
   check('the shipped search functions are all still findable by signature',
     needed.filter((sig, i) => !sources[i]), []);
@@ -237,7 +245,18 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
     // page's state is, because nothing else about the page's state is what is under test.
     'var state = { query: "retry me", sessionId: null, hostSessionId: null, followLatest: true,',
     '  generation: null, searchHits: null, searchTotal: 0, searchTruncated: false,',
-    '  searchPending: false, searchError: null };',
+    '  searchPending: false, searchError: null, searchRefresh: 0, searchRefreshFor: "",',
+    '  searchSet: "",',
+    // The body on screen. `displayedSessionParam()` reads it and the answer is checked against
+    // it, so a harness with no body on screen cannot ask either question. Its `generation` is
+    // the slice the body IS: null is the whole lineage, a number is that one generation.
+    //
+    // `flat` is the same body's records, which is what a hit is checked against: a hit names a
+    // POSITION, and the position only names a record if the version on both sides agrees.
+    '  flat: [ { turn: {}, record: { index: 1, v: "version-one" } },',
+    '          { turn: {}, record: { index: 5, v: "version-five" } },',
+    '          { turn: {}, record: { index: 7, v: "version-seven" } } ],',
+    '  payload: { session: { id: "mvs_displayed", generation: null } } };',
     'var searchSeq = 0;',
     'var searchController = null;',
     // The two renderers paint the page; neither is what is being tested and neither has a DOM here.
@@ -249,19 +268,40 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
       + ' is not in index.html any more); }')),
   ].join('\n'), netCtx);
 
-  const settle = async () => {
+  const settle = async (turns = 3) => {
     // fetch -> response.json() -> then -> then -> then is all microtasks plus the json() promise.
     // Three macrotask turns drain all of them, so the count does not have to be right.
-    for (let i = 0; i < 3; i += 1) await new Promise((done) => setImmediate(done));
+    for (let i = 0; i < turns; i += 1) await new Promise((done) => setImmediate(done));
   };
 
-  netCtx.fetch = () => Promise.reject(Object.assign(new Error('api'), { code: 'search_failed' }));
+  // The page re-asks against the body it fetches when an answer turns out to be about another
+  // version of the records. The fetch itself is not what is under test here, so it is a stub that
+  // counts the calls: how many times the page was willing to chase the answer IS the behaviour.
+  netCtx.refreshes = 0;
+  netCtx.fetchTrajectory = function () {
+    netCtx.refreshes += 1;
+    return Promise.resolve();
+  };
+
+  // Every URL the search asked for, so the question it asked can be read off the requests
+  // rather than out of the source.
+  const asked = [];
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.reject(Object.assign(new Error('api'), { code: 'search_failed' }));
+  };
   netCtx.runSearch('retry me');
   await settle();
   const afterFailure = netCtx.searchStatusLabel(netCtx.state);
 
-  netCtx.fetch = () => Promise.resolve({ ok: true, status: 200,
-    json: () => Promise.resolve({ hits: [{ index: 7 }], total: 1, truncated: false }) });
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 7, v: 'version-seven' }], total: 1, truncated: false,
+        // The server names the session it answered for. That name is what the page checks the
+        // answer against before it lets the hits filter the body on screen.
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
   netCtx.runSearch('retry me');
   await settle();
 
@@ -271,6 +311,394 @@ check('no kinds match', sandbox.hasKind({ kind: 'system' }, ['user']), false);
   check('so the label reports the answer instead of the stale failure',
     netCtx.searchStatusLabel(netCtx.state), '命中 1 条');
   check('and the hit set it describes is the new one', [...netCtx.state.searchHits], [7]);
+
+  /* The search has to be about the body on screen, and the answer has to say so.
+   *
+   * The search used to ask for `latest`, which is a different question from 「what is on
+   * screen」: the runtime can make another conversation current while the page still shows
+   * this one, and the answer then describes another session's records. The hits are indexes,
+   * so they FILTER this body's rows against another body's matches — a row that matches
+   * reads as a miss, and a row that does not read as a hit. Both are wrong in opposite
+   * directions, which is why the number of hits alone never showed the defect.
+   *
+   * Two things have to hold and neither one is enough:
+   *
+   *   - the request names the displayed session, and
+   *   - the answer is checked against it.
+   *
+   * A request that names the displayed session can still be answered about another one if
+   * the runtime moved in between, and an answer that is checked can still be about another
+   * session if the wrong question was asked. Both halves are asserted below.
+   */
+  check('the search asks about the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(asked[1]), true);
+  check('and it does not ask about whatever is current now',
+    /[?&]session=latest(&|$)/.test(asked[1]), false);
+
+  // The answer comes back about another session. The hits must not be installed: they are
+  // indexes into another body's records, and installing them would report this body's rows
+  // against another body's matches.
+  const installed = [...netCtx.state.searchHits];
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 99 }], total: 1, truncated: false,
+        session: { id: 'mvs_other', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('an answer about another session does not install its hit set',
+    [...netCtx.state.searchHits], installed);
+  check('and it does not report the other session\'s count either',
+    netCtx.state.searchTotal, 1);
+  check('it says the search failed, so the reader is told there is no answer',
+    netCtx.state.searchError, 'session_mismatch');
+  check('and the label shows the failure rather than the hit count',
+    netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
+  check('and the request it made still named the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(asked[0]), true);
+
+  // The same session, but another slice of it. A slice is a different body, so an answer
+  // about one slice is not an answer about another.
+  //
+  // The slice on screen is the body the page is SHOWING, not the generation the reader picked.
+  // The two come apart when the load of a picked generation fails: the selection says one thing
+  // and the body on screen says another, and only the body's own slice is the question the
+  // search may ask and answer.
+  netCtx.state.payload = { session: { id: 'mvs_displayed', generation: 3 } };
+  netCtx.state.generation = 3;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 98 }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: 2 } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('an answer about another slice of the same session does not install its hit set',
+    [...netCtx.state.searchHits], installed);
+  check('and the request named the slice that is on screen',
+    /[?&]generation=3(&|$)/.test(asked[0]), true);
+  check('and it failed for the same reason',
+    netCtx.state.searchError, 'session_mismatch');
+
+  // The reader picks another generation and the load of it FAILS. The body on screen is still
+  // the old one; the selection is the new one. A search that asked about the selection would be
+  // asking about a body that is not there, and the answer it got back would carry indexes of
+  // THAT body — which then filtered the rows the reader is actually looking at.
+  netCtx.state.payload = { session: { id: 'mvs_displayed', generation: 0 } };
+  netCtx.state.generation = 1;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 1, v: 'version-one' }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: 0 } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('the search asks about the slice on screen, not the one the reader picked',
+    /[?&]generation=0(&|$)/.test(asked[0]), true);
+  check('and it does not ask about the selection',
+    /[?&]generation=1(&|$)/.test(asked[0]), false);
+  check('so the answer about the body on screen is installed',
+    [...netCtx.state.searchHits], [1]);
+  check('and there is no failure, because the answer and the body agree',
+    netCtx.state.searchError, null);
+
+  // The other direction, because a check that accepts every answer is not a check either. An
+  // answer about the SELECTED slice is not an answer about the body on screen, and its indexes
+  // must not filter that body.
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 42 }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: 1 } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('an answer about the selected slice does not install its hit set',
+    [...netCtx.state.searchHits], [1]);
+  check('and it says the answer was about another body',
+    netCtx.state.searchError, 'session_mismatch');
+
+  // The other direction, because a check that rejects every answer is not a check. The page
+  // follows the runtime to another conversation, and the answer about THAT conversation is
+  // the one that belongs to the body on screen now.
+  netCtx.state.payload = { session: { id: 'mvs_displayed_b', generation: null } };
+  netCtx.state.generation = null;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 5, v: 'version-five' }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed_b', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('the answer about the conversation the page moved to is installed',
+    [...netCtx.state.searchHits], [5]);
+  check('and there is no failure, because this time there is an answer',
+    netCtx.state.searchError, null);
+  check('and the request asked about the conversation on screen at that moment',
+    /[?&]session=mvs_displayed_b(&|$)/.test(asked[0]), true);
+
+  /* The version. A hit is a POSITION, and the same position in two bodies can be two different
+   * records: a transcript rewritten under the page leaves the indexes alone and changes the
+   * records behind them. The session and the slice say WHICH BODY the answer is about; they say
+   * nothing about whether the record at a given index is still the same record.
+   *
+   * So an answer about the rewritten body would light up a row whose text does not contain the
+   * needle at all — the page would be saying 「命中 1 条」 about a row that does not match. The
+   * version on the hit and the version on the body have to agree before a hit may filter
+   * anything. */
+  const beforeVersion = [...netCtx.state.searchHits];
+  netCtx.state.payload = { session: { id: 'mvs_displayed', generation: null } };
+  netCtx.state.generation = null;
+  netCtx.state.searchRefresh = 0;
+  netCtx.state.searchRefreshFor = '';
+  netCtx.refreshes = 0;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ hits: [{ index: 7, v: 'a-newer-version' }], total: 1, truncated: false,
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle(24);
+  check('a search answer for a newer body cannot filter the displayed older body',
+    [...netCtx.state.searchHits], beforeVersion);
+  check('and the page asks again against the body it fetches, a bounded number of times',
+    netCtx.refreshes, 2);
+  check('and then it says the answer does not apply to what is on screen',
+    netCtx.state.searchError, 'search_version_mismatch');
+  check('and the label shows the failure rather than a count it cannot stand behind',
+    netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
+
+  // A hit about a record this body does not have — the session grew after the body was built.
+  // It cannot be shown, so it is not counted either: the number the reader sees has to be the
+  // number of rows that are lit up.
+  netCtx.state.searchRefresh = 0;
+  netCtx.state.searchRefreshFor = '';
+  netCtx.refreshes = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({
+        hits: [{ index: 7, v: 'version-seven' }, { index: 4242, v: 'a-record-not-on-screen' }],
+        total: 2, truncated: false,
+        session: { id: 'mvs_displayed', generation: null } }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle();
+  check('a hit about a record that is not on screen is not installed',
+    [...netCtx.state.searchHits], [7]);
+  check('and the count is the number of rows that are lit up',
+    netCtx.state.searchTotal, 1);
+  check('and no failure is reported, because that answer did apply',
+    netCtx.state.searchError, null);
+  check('and the page did not go chasing a body it did not need to',
+    netCtx.refreshes, 0);
+
+  /* WHICH SET the answer is about.
+   *
+   * A search answer is about a SET of records: it says 「these match and the rest do not」, and
+   * the part that matters to the reader is the part it does NOT name. So the request has to say
+   * which set — how many records the page has, and a fingerprint of their versions — and the
+   * service has to answer only if it searched THAT set. Without it, an answer about another body
+   * dims a record the reader can see, and says nothing about it.
+   */
+  check('the search names how many records the body on screen has',
+    /[?&]n=3(&|$)/.test(asked[0]), true);
+  check('and a fingerprint of their versions',
+    /[?&]fp=[0-9a-f]{16}(&|$)/.test(asked[0]), true);
+  check('and the page folds a set of records into the same answer the service does',
+    netCtx.recordSetFingerprint(['version-one', 'version-five', 'version-seven']),
+    recordSetFingerprint(['version-one', 'version-five', 'version-seven']));
+  check('and a set that is not the same is not the same answer',
+    netCtx.recordSetFingerprint(['version-one', 'version-five'])
+      === netCtx.recordSetFingerprint(['version-one', 'version-seven']), false);
+  check('and the count is appended, so the request still names the session first',
+    /[?&]session=mvs_displayed(&|$)/.test(asked[0]), true);
+
+  // The service refuses: the body it searched is not the body on screen. That is the same thing a
+  // hit with the wrong version says, and it has to be answered the same way — the answer is not
+  // installed, the body is fetched once more, and the same question is put again against it.
+  const beforeRefusal = [...netCtx.state.searchHits];
+  netCtx.state.searchRefresh = 0;
+  netCtx.state.searchRefreshFor = '';
+  netCtx.refreshes = 0;
+  asked.length = 0;
+  netCtx.fetch = (url) => {
+    asked.push(String(url));
+    return Promise.resolve({ ok: false, status: 409,
+      json: () => Promise.resolve({ error: 'search_version_mismatch', message: 'x' }) });
+  };
+  netCtx.runSearch('retry me');
+  await settle(24);
+  check('an answer the service refuses is not installed',
+    [...netCtx.state.searchHits], beforeRefusal);
+  check('and the page asks again against a body it fetches, a bounded number of times',
+    netCtx.refreshes, 2);
+  check('and then it says the answer does not apply to what is on screen',
+    netCtx.state.searchError, 'search_version_mismatch');
+  check('and the label shows the failure rather than a count it cannot stand behind',
+    netCtx.searchStatusLabel(netCtx.state), '搜索失败，以下为上次结果');
+}
+
+/* The answer has to be about the records that are ON SCREEN — and a body can change without
+ * changing its shape.
+ *
+ * The change detector is a cheap one, on purpose: it compares structural counters, because
+ * rebuilding 200+ rows every 2.5s is wasteful when nothing changed. But a record's TEXT can be
+ * rewritten under the page while every one of those counters stays the same — the same message
+ * count, the same turn count, the same timestamps, the same usage. The body on screen is then a
+ * different SET of records, and the answer standing on screen is about the old ones: the reader
+ * is told 「命中 1 条」 about a row that does not contain the needle, and nothing anywhere says
+ * so.
+ *
+ * The request side already knows this — it names the set it is asking about, and the service
+ * refuses a search about another set. But a refusal only happens if a REQUEST is made, and here
+ * none is: the answer is not re-asked, it is simply left standing.
+ *
+ * So this runs the real `applyPayload` with a body that was rewritten in place, and asks what
+ * the page does about it. */
+{
+  const applyCtx = { console, AbortController, setTimeout, clearTimeout, encodeURIComponent };
+  vm.createContext(applyCtx);
+  const needed = ['function isCount(value)', 'function signatureOf(payload)', 'function flattenTurns(turns)',
+    'function payloadCursor(payload)', 'function deltaMatchesNumbering(previous, delta)',
+    'function recordSetFingerprint(versions)', 'function displayedRecordVersions()',
+    'function displayedRecordSet(versions)', 'function displayedSessionParam()',
+    'function displayedGeneration()', 'function applyPayload(body, manual)'];
+  const sources = needed.map((sig) => fnSource(sig));
+  check('the shipped functions the answer-set rule needs are all still findable by signature',
+    needed.filter((sig, i) => !sources[i]), []);
+  vm.runInContext([
+    'var turnById = new Map();',
+    'var state = { payload: null, flat: [], signature: "", loading: false, hardError: null,',
+    '  since: null, sinceFor: null, etag: "", etagFor: "", query: "", searchSet: "" };',
+    // The re-ask is what is under test, so it is recorded rather than performed — and the set is
+    // recorded the way the shipped `runSearch` records it, because the page keeps answering
+    // about the set it last asked about.
+    'var asked = [];',
+    'function runSearch(needle) { asked.push(String(needle)); state.searchSet = displayedRecordSet(); }',
+    // The page paints itself; none of that is what is under test and none of it has a DOM here.
+    'function render() {}',
+    'function announce() {}',
+    'function noteFresh() {}',
+    'function rePinWindow() {}',
+    ...sources.map((src, i) => src || (needed[i] + ' { throw new Error(' + JSON.stringify(needed[i])
+      + ' is not in index.html any more); }')),
+  ].join('\n'), applyCtx);
+
+  // One record, and the body that holds it. The SHAPE is the same in every one of these bodies:
+  // the same session, the same counters, the same turn, the same one record. Only the record's own
+  // version token moves — and that is exactly what a rewrite in place looks like from here.
+  const bodyWith = (version, stats) => ({
+    session: { id: 'mvs_displayed', generation: null },
+    stats: Object.assign({ messages: 1, toolCalls: 0, errors: 0, durationMs: 1000,
+      tokens: { totalTokens: 10 } }, stats || {}),
+    turns: [{ id: 'turn-1', records: [{ index: 1, v: version, summary: 'ALPHA BODY' }] }]
+  });
+
+  // The body on screen, and a question that was answered for it.
+  const alpha = bodyWith('the-version-of-alpha');
+  applyCtx.state.payload = alpha;
+  applyCtx.state.flat = applyCtx.flattenTurns(alpha.turns);
+  applyCtx.state.signature = applyCtx.signatureOf(alpha);
+  applyCtx.state.query = 'alpha';
+  applyCtx.state.searchSet = applyCtx.displayedRecordSet();
+  applyCtx.asked.length = 0;
+
+  // The same body again: nothing moved, so the question is not put again.
+  applyCtx.applyPayload(bodyWith('the-version-of-alpha'), false);
+  check('a body that did not change does not put the question again', applyCtx.asked, []);
+
+  // The record's text is rewritten in place. Every counter is the same; only the record's own
+  // version token is different, so the body on screen is a different SET of records.
+  applyCtx.applyPayload(bodyWith('the-version-of-charlie'), false);
+  check('a content-only payload change retires the previous search answer',
+    applyCtx.asked, ['alpha']);
+
+  // And it is retired once, not on every poll afterwards.
+  applyCtx.asked.length = 0;
+  applyCtx.applyPayload(bodyWith('the-version-of-charlie'), false);
+  check('and the question is not put again on every poll after that',
+    applyCtx.asked, []);
+
+  // The rule that was already there: a body whose SHAPE changed puts the question again, even
+  // when its records are the same ones. A change of counters is a change of body, and the answer
+  // on screen was computed against the old one.
+  applyCtx.asked.length = 0;
+  applyCtx.applyPayload(bodyWith('the-version-of-charlie', { durationMs: 2000 }), false);
+  check('a payload that changed re-runs the search rather than filtering by the old answer',
+    applyCtx.asked, ['alpha']);
+}
+
+/* handoff: the session the record came from, across a navigation.
+ *
+ * The handoff reads two things asynchronously — the record's raw message and its four bulk
+ * fields — and the page can be showing another conversation by the time they answer. The text
+ * that goes to the Host NAMES the session, so a session read at the END of the reads would put
+ * one conversation's name on another conversation's message: the reader would be told which
+ * conversation they are looking at, and told wrong.
+ *
+ * This runs the shipped `handoffSelected` over a deferred raw read and moves the page while
+ * that read is in flight, which is the only moment the two can differ. */
+{
+  const handoffSources = {
+    handoff: fnSource('function handoffSelected()'),
+    selected: fnSource('function selectedRecord()'),
+    bridge: fnSource('function hostBridge()'),
+  };
+  check('the shipped handoff functions are all still findable by signature',
+    Object.keys(handoffSources).filter((key) => !handoffSources[key]), []);
+
+  if (handoffSources.handoff && handoffSources.selected && handoffSources.bridge) {
+    const handoffCtx = { console, setTimeout, clearTimeout };
+    vm.createContext(handoffCtx);
+    // The page's own pure helpers, so the markdown is the shipped one and not a copy of it.
+    vm.runInContext(block, handoffCtx);
+    const appended = [];
+    // The Host bridge, so `hostBridge()` finds a message sink without being stubbed away.
+    handoffCtx.window = { mcode: { miniapp: { message: { append: (text) => { appended.push(text); } } } } };
+    handoffCtx.dom = { handoffBtn: { disabled: false }, inspectorStatus: { textContent: '' } };
+    handoffCtx.state = {
+      selectedId: 'rec-1',
+      flat: [{
+        id: 'rec-1',
+        record: { id: 'rec-1', index: 1, kind: 'user', role: 'user', timestamp: 1791600000000 },
+        turn: { id: 't1', index: 3 },
+      }],
+      // The conversation the selected record belongs to.
+      payload: { session: { id: 'mvs_a', label: 'A 会话' } },
+    };
+    let releaseRaw = null;
+    handoffCtx.rawSourceFor = () => new Promise((resolve) => { releaseRaw = resolve; });
+    handoffCtx.fetchDetail = () => Promise.resolve(null);
+    handoffCtx.inspectorSay = () => {};
+    handoffCtx.stripVolatile = (record) => record;
+    vm.runInContext(
+      handoffSources.handoff + '\n' + handoffSources.selected + '\n' + handoffSources.bridge,
+      handoffCtx,
+    );
+
+    handoffCtx.handoffSelected();
+    // The page moves to another conversation while the record's raw read is still in flight.
+    handoffCtx.state.payload = { session: { id: 'mvs_b', label: 'B 会话' } };
+    if (releaseRaw) releaseRaw({ raw: '{"kind":"user"}', omitted: false });
+    for (let i = 0; i < 5; i += 1) await new Promise((done) => setImmediate(done));
+
+    check('the handoff names the session the selected record came from',
+      appended.length === 1 && appended[0].includes('mvs_a'), true);
+    check('and not the conversation the page moved to while the read was pending',
+      appended.length === 1 && appended[0].includes('mvs_b'), false);
+  }
 }
 
 /* flatten + signature */
@@ -527,47 +955,105 @@ const codeOnly = html
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^[ \t]*\/\/.*$/gm, '');
 
-/* ------------------------------------------------------------------ session picker: branch marker */
+/* ------------------------------------------------------------------ session picker: the two picks */
 // A session that the runtime spawned from another one used to be listed exactly like a top-level
 // conversation, because nothing in the list said otherwise: the parent column existed in the store
 // and was never read, and the one field that did reach the page (`sessionKind`) had no reader in
 // it at all. A reader comparing two entries could not tell a sub-agent run from a conversation.
 //
-// The marker is checked here by RUNNING it rather than by matching its text, because the failure
-// worth catching is not a typo in the string — it is the marker being applied to everything, or to
-// nothing, and both of those still contain the right characters. The decisive case is the third
-// one: two sessions identical except for `sessionParentId`, whose labels must differ by exactly
-// the marker and nothing else. A version that appended the marker unconditionally passes every
-// "does it contain 子会话" check and fails this one.
-const branchMarkSrc = /var BRANCH_MARK = '[^']*';/.exec(html);
-const branchLabelSrc = fnSource('function sessionOptionLabel(session, now)');
-if (!branchMarkSrc || !branchLabelSrc) {
-  failures.push('session picker: could not lift sessionOptionLabel / BRANCH_MARK');
+// The observation still stands: `sessionKind` is sent and still has no reader. What the reader now
+// gets instead is `sessionTag` — the token the service derives from the row's purpose and kind —
+// and it is the one the page draws. The raw kind column is still on the wire and still unread.
+//
+// How a run is told apart is now WHICH CONTROL it is in, not what its label says: the conversation
+// pick holds conversations, and the run pick holds the runs of the conversation that was picked.
+// The label says nothing about it — one fact, one signal — and the signal is the control itself.
+const labelSrc = fnSource('function sessionOptionLabel(session, now)');
+if (!labelSrc) {
+  failures.push('session picker: could not lift sessionOptionLabel');
 } else {
-  vm.runInContext(branchMarkSrc[0] + '\n' + branchLabelSrc, sandbox);
+  vm.runInContext(labelSrc, sandbox);
   const NOW = 1_800_000_000_000;
   const base = { label: '一个会话', lastActiveAt: NOW - 60_000, messageCount: 42 };
   const plain = sandbox.sessionOptionLabel({ ...base }, NOW);
-  const branch = sandbox.sessionOptionLabel({ ...base, sessionParentId: 'mvs_parent' }, NOW);
+  const run = sandbox.sessionOptionLabel({ ...base, sessionParentId: 'mvs_parent' }, NOW);
 
-  assert('a top-level session is not marked as a branch',
+  // The label does not say it — the control does. A version that put the mark back into the
+  // label would say it twice, and a version that dropped it without moving the row would say it
+  // not at all.
+  assert('a run is not marked in its label',
+    run === plain);
+  assert('and a conversation is not marked either',
     plain.indexOf('子会话') < 0);
-  assert('a session the runtime spawned is marked as one',
-    branch.indexOf('子会话') >= 0);
-  // Identity, not shape: the only thing that differs between these two inputs is the field, so
-  // the only thing allowed to differ between the two labels is the marker.
-  assert('the marker is driven by the field, not by where the row sits in the list',
-    branch.replace(' · 子会话', '') === plain);
-  assert('and nothing else about the label changes with it',
-    branch.length === plain.length + ' · 子会话'.length);
-  // An empty parent string is "no parent", not "a parent named the empty string".
+  // An empty parent id is "no parent", not "a parent named the empty string".
   assert('an empty parent id is not a parent',
     sandbox.sessionOptionLabel({ ...base, sessionParentId: '' }, NOW) === plain);
-  // The unnamed branch takes the marker too — otherwise the one case with no title to read is
-  // the one case a reader cannot place.
-  assert('an unnamed branch is still marked',
-    sandbox.sessionOptionLabel({ lastActiveAt: NOW - 60_000, messageCount: 42,
-      sessionParentId: 'mvs_parent' }, NOW).indexOf('子会话') >= 0);
+}
+
+/* ------------------------------------------------------------------ session picker: kind badge */
+// The other half of the same defect: a cron run, a background task and a lightweight exchange were
+// listed exactly like the reader's own conversations, because the service read the runtime
+// database's `purpose` column not at all — so it had no way to tell them apart, and a row that
+// looked like a conversation was presented as one.
+//
+// The badge is driven by a token the service derived, never by the raw purpose: that value is free
+// text and can carry anything a person typed into it, so publishing it would hand the reader's
+// browser somebody else's words. The token set is closed, and a token this page does not know
+// about produces no badge rather than one this page invented.
+//
+// Same discipline as the layer check above, and for the same reason: the failure worth catching
+// is not a typo in the string, it is the badge being applied to everything or to nothing, and both
+// of those still contain the right characters.
+const tagBadge = sandbox.sessionTagBadge;
+assert('the badge helper is in the pure block, so a label can be built without a DOM',
+  typeof tagBadge === 'function');
+if (typeof tagBadge === 'function') {
+  check('a lightweight session is badged 轻量', tagBadge('lightweight'), ' · 轻量');
+  check('a scheduled session is badged 定时', tagBadge('scheduled'), ' · 定时');
+  check('a background task is badged 任务', tagBadge('task'), ' · 任务');
+  check('no kind at all is no badge', tagBadge(null), '');
+  check('an empty token is no badge', tagBadge(''), '');
+  check('a token this page does not know is no badge', tagBadge('something-else'), '');
+
+  const NOW = 1_800_000_000_000;
+  const base = { label: '一个会话', lastActiveAt: NOW - 60_000, messageCount: 42 };
+  const plain = sandbox.sessionOptionLabel({ ...base }, NOW);
+  const light = sandbox.sessionOptionLabel({ ...base, sessionTag: 'lightweight' }, NOW);
+
+  assert('a lightweight session is badged in the picker', light.indexOf('轻量') >= 0);
+  assert('a scheduled session is badged in the picker',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: 'scheduled' }, NOW).indexOf('定时') >= 0);
+  assert('a background task is badged in the picker',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: 'task' }, NOW).indexOf('任务') >= 0);
+  // The three "no badge" cases, which are three different ways of saying the same thing.
+  assert('a session with no kind of its own carries no badge',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: null }, NOW) === plain);
+  assert('an empty token carries no badge',
+    sandbox.sessionOptionLabel({ ...base, sessionTag: '' }, NOW) === plain);
+  assert('a row with no kind field at all carries no badge',
+    sandbox.sessionOptionLabel({ ...base }, NOW) === plain);
+  // Identity, not shape: the only thing that differs between these two inputs is the field, so
+  // the only thing allowed to differ between the two labels is the badge.
+  assert('the badge is driven by the field, not by where the row sits in the list',
+    light.replace(' · 轻量', '') === plain);
+  assert('and nothing else about the label changes with it',
+    light.length === plain.length + ' · 轻量'.length);
+  // Where the badge sits inside the label: the name first, then the times and the count, then
+  // what the session IS. Moved to the front, the row still carries the right characters in the
+  // right places — every check that asks 「does the row say 轻量」 passes — and the row now reads
+  // as a category with a name attached to it.
+  assert('the badge comes after the name, not in front of it',
+    light.indexOf(' · 轻量') > light.indexOf(base.label),
+    JSON.stringify(light));
+  // Both facts at once: the kind says what the session IS, and the parent says where it came
+  // from. The kind is in the label; the parent is in the position, so the label carries the kind
+  // and no longer says 「子会话」 in words — one fact, one signal.
+  const both = sandbox.sessionOptionLabel({ ...base, sessionTag: 'lightweight', sessionParentId: 'mvs_parent' }, NOW);
+  assert('a row with both a kind and a parent still shows the kind',
+    both.indexOf(' · 轻量') >= 0);
+  assert('and no longer claims to be a branch in words — where it sits says that',
+    both.indexOf('子会话') < 0,
+    both);
 }
 
 const checks = [
@@ -969,21 +1455,19 @@ const checks = [
     const gates = src.match(/if \(seq !== searchSeq\) return;/g) || [];
     return gates.length === 2 && /var seq = \(searchSeq \+= 1\);/.test(src);
   })()],
-  ['a payload that changed re-runs the search rather than filtering by the old answer', (() => {
-    const src = fnSource('function applyPayload(body, manual)');
-    if (!src) return false;
-    return /if \(changed && state\.query\) runSearch\(state\.query\);/.test(src);
-  })()],
   ['clearing the filters drops the answer with them', (() => {
     const src = fnSource('function resetBaseFilters()');
     if (!src) return false;
     return /state\.searchHits = null;/.test(src) && /state\.searchError = null;/.test(src);
   })()],
-  ['a search is asked about the slice the reader is looking at', (() => {
+  ['a search is asked about the slice the body on screen is', (() => {
     const src = fnSource('function runSearch(needle)');
     if (!src) return false;
     return /'\/api\/trajectory\/search\?session='/.test(src)
-      && /&generation=' \+ encodeURIComponent\(String\(state\.generation\)\)/.test(src);
+      && /&generation=' \+ encodeURIComponent\(String\(generation\)\)/.test(src)
+      // The slice the reader PICKED is a different question, and the page has to ask the one
+      // that belongs to the body it is showing.
+      && !/String\(state\.generation\)/.test(src);
   })()],
   // Clicking the window button must not move the page. It scrolled to the document tail
   // whenever it narrowed the window, on the theory that "back to the tail" should land on the
@@ -1039,15 +1523,35 @@ const checks = [
   // A checkpoint is drawn as a band, not as a row. It has to be routed there in the one place
   // the ledger builds its list — routing it anywhere else would leave the row grid laying it out
   // like ordinary work while the CSS sits unused.
+  //
+  // That place is fillGroupRows(), which the build calls: the rows of a group are built by the
+  // build and by the observer that fills a group the reader scrolls to, and a second copy of the
+  // loop would be two definitions of what a row is. Both halves are checked — a routing rule in a
+  // function the ledger does not call is a rule about nothing.
   ['a compaction record renders as a band, not as a row', (() => {
   if (!/function buildCompactionBand\(entry\)/.test(html)) return false;
+  const fill = fnSource('function fillGroupRows(list, group)');
+  if (!fill) return false;
   const render = fnSource('function renderLedger()');
   if (!render) return false;
-  const loop = render.slice(render.indexOf('var rails = railStates('));
-  if (!loop) return false;
-  return /group\.entries\[j\]\.record\.kind === 'compaction'/.test(loop)
-    && /item\.className = 'compaction-cell'/.test(loop)
-    && /item\.appendChild\(buildCompactionBand\(group\.entries\[j\]\)\)/.test(loop);
+  // The test and the branch it decides have to be one thing.
+  //
+  // Checking that the word 'compaction' appears in the function is not the same as checking
+  // that a compaction record is rendered as a band: a version that computes the test and then
+  // ignores it says the same word and renders the record as a row. That is not a hypothetical
+  // — the two were once the same line, and splitting them (the test into a variable, the
+  // branch into an `if`) left the old assertion checking a word rather than a decision.
+  //
+  // So the band branch is taken out of the function and read on its own, and the branch has to
+  // be the one the test opens. The row branch is checked too: a version that renders EVERY
+  // record as a band has the band branch right and is wrong in the other direction.
+  const band = fill.match(/if \(isBand\) \{([\s\S]*?)\n {10}\} else \{/);
+  return /var isBand = group\.entries\[j\]\.record\.kind === 'compaction';/.test(fill)
+    && !!band
+    && /item\.className = 'compaction-cell'/.test(band[1])
+    && /item\.appendChild\(buildCompactionBand\(group\.entries\[j\]\)\)/.test(band[1])
+    && /item\.appendChild\(buildRow\(group\.entries\[j\], rails\[j\]\)\)/.test(fill)
+    && /fillGroupRows\(holds \? list : null, group\)/.test(render);
 })()],
   // The band is a real control: it carries the same data-row-id the inspector looks up, so
   // clicking it opens the checkpoint's details rather than doing nothing. The two halves are
@@ -1148,6 +1652,756 @@ const checks = [
 for (const [name, ok] of checks) {
   if (ok) pass += 1;
   else failures.push('policy: ' + name);
+}
+
+/* ------------------------------------------------------------------ session picks: the cascade */
+// Two controls now. The conversation pick names the conversation; the run pick names the run
+// inside it, and holds the runs of the conversation the first pick named. A run used to sit in
+// the conversation pick as a peer of the conversations — thirteen of twenty rows on this machine
+// were runs of the one conversation being read — and it used to sit there indented under its
+// conversation, which made the dropdown forty rows long.
+//
+// The failures worth catching are not strings that survived an edit: they are a run sitting in
+// the conversation pick, a run pick that is empty when it should not be, a run pick that lists
+// the runs of the wrong conversation, and a pick that does not switch. So everything below is
+// read back out of a rendered picker, not out of its source.
+//
+// The functions are lifted HERE, before the picker section below, because that section runs
+// `renderSessionSelect` too and the picker now asks the same question this section asks: which
+// rows are runs, and which control holds them.
+const layerFns = [
+  'function sessionOptionLabel(session, now)',
+  'function childrenByParent()',
+  'function ownerSessionId()',
+  'function renderSessionSelect()',
+  'function renderChildSelect()',
+  'function selectSession(id)',
+  'function setFollow(enabled)',
+  'function onSessionSelectChange()',
+  'function onChildSelectChange()'
+];
+const layerSrc = layerFns.map((name) => fnSource(name));
+if (layerSrc.some((src) => !src)) {
+  failures.push('session layers: could not lift ' + layerFns.filter((_, i) => !layerSrc[i]).join(', '));
+} else {
+  // selectSession() drops what the ledger knows about the groups of the session it is leaving, so
+  // the two maps it uses have to exist here. They are the page's own, lifted as empty ones: what
+  // is under test is which session is chosen, not what the ledger remembers about it.
+  sandbox.ledgerState = new Map();
+  sandbox.ledgerContent = new Map();
+  vm.runInContext(layerSrc.join('\n'), sandbox);
+}
+
+// A declaration rather than a const, because the picker section below uses it and this section
+// is written after it: a `const` would be in its temporal dead zone there, and the failure would
+// read as a broken stub rather than as an ordering mistake.
+function stubSelect() {
+  const options = [];
+  return {
+    options,
+    selectedIndex: -1,
+    _value: '',
+    get value() { return this._value; },
+    set value(next) {
+      this._value = next;
+      this.selectedIndex = options.findIndex((option) => option.value === next);
+    },
+    get firstChild() { return options[0] || null; },
+    removeChild(child) {
+      const at = options.indexOf(child);
+      if (at >= 0) options.splice(at, 1);
+      return child;
+    },
+    appendChild(node) {
+      options.push(node);
+      if (this.selectedIndex < 0) this.selectedIndex = options.length - 1;
+      return node;
+    },
+    insertBefore(node, reference) {
+      const at = reference ? options.indexOf(reference) : -1;
+      options.splice(at < 0 ? options.length : at, 0, node);
+      return node;
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ session picker: where the pinned row goes */
+// The picker can hold a row the server did not send: the session the reader pinned by hand, which
+// aged out of the twenty the service returns. The page adds that row itself, and where it puts it
+// is a promise about what the reader sees — the service's first row is the conversation the
+// runtime database reports as current, and the pinned row is a different thing, so "the current
+// conversation is first" does not by itself say where the pinned row lands.
+//
+// It is checked by RUNNING `renderSessionSelect` against a stub select, not by reading its
+// source. A regex over the source would pass for a version that inserted the row in the right
+// place for the wrong reason, and would not notice a version that inserted it in the right place
+// only when the list happened to be empty. What the reader gets is the order of the options, so
+// that is what is read back.
+const renderSelectSrc = fnSource('function renderSessionSelect()');
+if (!renderSelectSrc) {
+  failures.push('session picker: could not lift renderSessionSelect');
+} else {
+  // A select, as far as this function touches it: the options it holds, the one that is
+  // selected, and the two ways a row can be added to it. The browser picks the first option
+  // when the list is built and picks by value afterwards, and `insertBefore` puts a row at a
+  // position rather than at the end — which is the whole point of the row in question.
+  sandbox.el = (tag, className, text) => {
+    const node = stubNode(tag, text);
+    if (className) node.className = className;
+    node.value = '';
+    return node;
+  };
+  sandbox.clear = (node) => { while (node && node.firstChild) node.removeChild(node.firstChild); };
+  if (!sandbox.state) sandbox.state = {};
+  sandbox.state.sessions = [
+    { id: 'mvs_server_first', label: '服务端第一行', lastActiveAt: 1_800_000_000_000, messageCount: 3 },
+    { id: 'mvs_server_second', label: '服务端第二行', lastActiveAt: 1_799_999_000_000, messageCount: 4 },
+  ];
+  sandbox.state.followLatest = false;
+  sandbox.state.sessionId = 'mvs_the_pinned_one';
+  vm.runInContext(renderSelectSrc, sandbox);
+
+  const select = stubSelect();
+  sandbox.dom = { sessionSelect: select };
+  sandbox.renderSessionSelect();
+
+  const texts = select.options.map((option) => option.textContent);
+  // The row the reader pinned is the one the service did not send, so it is on its own: the
+  // first row is 「跟随最新」 and the pinned row is the first of the session rows.
+  assert('the row the reader pinned is the first session row, above the rows the service sent',
+    texts.length === 4
+    && texts[0].indexOf('跟随最新') >= 0
+    && texts[1].indexOf('当前会话（不在最近列表）') >= 0
+    && select.options[1].value === 'mvs_the_pinned_one',
+    texts.join(' | '));
+  assert('and the service\'s own first row is still the one right after it',
+    select.options[2] && select.options[2].value === 'mvs_server_first',
+    texts.join(' | '));
+  assert('and the pinned row is the one that ends up selected',
+    select.value === 'mvs_the_pinned_one' && select.selectedIndex === 1,
+    String(select.value) + ' @ ' + String(select.selectedIndex));
+
+  // And the other direction: a pinned session the service DID send needs no row of its own, or
+  // the reader would see the same conversation twice.
+  sandbox.state.sessionId = 'mvs_server_second';
+  const second = stubSelect();
+  sandbox.dom = { sessionSelect: second };
+  sandbox.renderSessionSelect();
+  assert('a pinned session the service sent is not added a second time',
+    second.options.length === 3
+    && second.options.every((option, index) => option.value !== 'mvs_the_pinned_one')
+    && second.value === 'mvs_server_second',
+    second.options.map((option) => option.value).join(' | '));
+}
+
+/* ------------------------------------------------------------------ session picks: the cascade */
+// The functions were lifted above, before the picker section: the picker asks the same question
+// this section asks, so it needs them too.
+if (layerSrc.every((src) => src)) {
+  const NOW = 1_800_000_000_000;
+  const MAIN_A = 'mvs_main_a';
+  const MAIN_B = 'mvs_main_b';
+  // Thirteen of them, because that is the number this machine actually has: the list is not a
+  // window, and a fixture with three rows would not notice one that quietly dropped the tenth.
+  const childrenOfA = Array.from({ length: 13 }, (_, i) => ({
+    id: 'mvs_child_a' + i,
+    sessionParentId: MAIN_A,
+    label: '子代理甲 ' + i,
+    lastActiveAt: NOW - (i + 1) * 1000,
+    messageCount: i + 1
+  }));
+  const childrenOfB = [{
+    id: 'mvs_child_b0', sessionParentId: MAIN_B, label: '子代理乙',
+    lastActiveAt: NOW - 3000, messageCount: 5
+  }];
+  const layerState = {
+    sessions: [
+      { id: MAIN_A, label: '主会话甲', lastActiveAt: NOW, messageCount: 10 },
+      { id: MAIN_B, label: '主会话乙', lastActiveAt: NOW - 60_000, messageCount: 20 }
+    ],
+    children: childrenOfA.concat(childrenOfB),
+    followLatest: true,
+    sessionId: MAIN_A,
+    hostSessionId: null
+  };
+  sandbox.state = layerState;
+  // The two picks, as two stub selects: the conversation one and the run one.
+  const convo = stubSelect();
+  const runs = stubSelect();
+  sandbox.el = (tag, className, text) => {
+    const node = stubNode(tag, text);
+    if (className) node.className = className;
+    node.value = '';
+    return node;
+  };
+  sandbox.clear = (node) => { while (node && node.firstChild) node.removeChild(node.firstChild); };
+  sandbox.dom = {
+    sessionSelect: convo,
+    childSelect: runs,
+    followBtn: { setAttribute: () => {} },
+    followState: { textContent: '' }
+  };
+  sandbox.fetchSessions = () => {};
+  sandbox.fetchTrajectory = () => {};
+  sandbox.announce = () => {};
+
+  sandbox.renderSessionSelect();
+  sandbox.renderChildSelect();
+
+  // 1. While the page follows the newest conversation there is nothing to offer: that list
+  //    changes under the reader, and a run picked out of it belongs to a conversation that is no
+  //    longer on screen.
+  assert('the run pick is empty while the page follows the newest conversation',
+    runs.options.length === 1 && runs.options[0].value === '' && runs.value === '',
+    runs.options.map((option) => option.value).join(' | '));
+  assert('and it is disabled, so there is nothing to pick',
+    runs.disabled === true, String(runs.disabled));
+
+  // 2. The conversation pick holds conversations and nothing else. This is the rule the whole
+  //    feature exists for: a run must never sit where a conversation sits.
+  const convoValues = convo.options.map((option) => option.value);
+  assert('the conversation pick holds no run at all',
+    !convoValues.some((value) => /^mvs_child_/.test(value)),
+    convoValues.join(' | '));
+  assert('and it holds every conversation',
+    convoValues.length === 3
+    && convoValues.indexOf(MAIN_A) === 1
+    && convoValues.indexOf(MAIN_B) === 2,
+    convoValues.join(' | '));
+
+  // 3. With a conversation picked, the run pick holds its runs — all of them, in the order the
+  //    service sent them.
+  layerState.followLatest = false;
+  layerState.sessionId = MAIN_A;
+  sandbox.renderSessionSelect();
+  sandbox.renderChildSelect();
+  const aIds = childrenOfA.map((child) => child.id);
+  const runValues = runs.options.map((option) => option.value);
+  assert('the run pick holds every run of the conversation on screen',
+    runValues.length === 14, runValues.join(' | '));
+  assert('and they keep the order the service sent',
+    runValues.slice(1).join(',') === aIds.join(','), runValues.join(' | '));
+  assert('and the first option is the conversation itself',
+    runValues[0] === '' && (runs.options[0].textContent || '').indexOf('主会话本身') >= 0,
+    JSON.stringify(runs.options[0] && runs.options[0].textContent));
+  assert('and nothing is picked while no run is picked',
+    runs.value === '', String(runs.value));
+
+  // 4. The two picks agree about what is on screen: a run belongs to a conversation, and the
+  //    conversation pick says which one. Asked while a RUN is on screen -- asked while a
+  //    conversation is on screen it would have the same answer either way, and a guard that
+  //    cannot tell the two apart is not a guard.
+  layerState.sessionId = 'mvs_child_a5';
+  assert('the owner of a run is the conversation it hangs off',
+    sandbox.ownerSessionId() === MAIN_A, sandbox.ownerSessionId());
+  layerState.sessionId = MAIN_A;
+
+  // 5. Picking a run switches the page to it — that run's own trajectory, since a run is a
+  //    session with its own transcript — and leaves the conversation pick on its parent.
+  runs.value = 'mvs_child_a5';
+  sandbox.onChildSelectChange();
+  assert('picking a run switches the page to that run',
+    layerState.sessionId === 'mvs_child_a5' && layerState.followLatest === false,
+    layerState.sessionId + ' / follow=' + layerState.followLatest);
+  sandbox.renderSessionSelect();
+  assert('and the conversation pick stays on its parent',
+    convo.value === MAIN_A, String(convo.value));
+
+  // 6. And picking the conversation itself returns to the conversation.
+  sandbox.renderChildSelect();
+  runs.value = '';
+  sandbox.onChildSelectChange();
+  assert('picking the conversation itself returns to the conversation',
+    layerState.sessionId === MAIN_A, String(layerState.sessionId));
+
+  // 7. And picking another conversation moves the run pick with it, and clears the run.
+  convo.value = MAIN_B;
+  sandbox.onSessionSelectChange();
+  sandbox.renderChildSelect();
+  assert('picking another conversation moves the run pick with it',
+    runs.options.length === 2 && runs.options[1].value === 'mvs_child_b0',
+    runs.options.map((option) => option.value).join(' | '));
+  assert('and clears the run that was picked',
+    runs.value === '', String(runs.value));
+
+  // 8. A parent id is data, not a key the page may assume. The runtime database's parent
+  //    column crosses the wire unchanged, and the page groups its runs by that value. The
+  //    names a plain object inherits -- '__proto__', 'constructor' -- are truthy and are not
+  //    arrays, so a version that groups into a plain object reads one of them as a group and
+  //    throws on it, and the picker stops updating after an otherwise successful list.
+  const hostile = ['__proto__', 'constructor', 'toString', 'valueOf'];
+  const realState = sandbox.state;
+  sandbox.state = {
+    sessions: [{ id: MAIN_A, label: '主会话甲', lastActiveAt: NOW, messageCount: 10 }],
+    children: hostile.map((parentId, index) => ({
+      id: 'mvs_hostile_' + index,
+      sessionParentId: parentId,
+      label: '异常父 ' + index,
+      lastActiveAt: NOW - index,
+      messageCount: 1
+    })),
+    followLatest: false,
+    sessionId: MAIN_A,
+    hostSessionId: null
+  };
+  let grouped = null;
+  let groupingError = null;
+  try {
+    grouped = sandbox.childrenByParent();
+  } catch (error) {
+    groupingError = error;
+  }
+  check('a parent id that names an inherited object property does not break the grouping',
+    groupingError === null && grouped !== null, true);
+  check('and those runs are not folded into a conversation that owns them',
+    grouped !== null
+    && Object.keys(grouped).every((key) => hostile.indexOf(key) >= 0)
+    && hostile.every((key) => !grouped[key] || grouped[key].length === 1), true);
+  let renderError = null;
+  try {
+    sandbox.renderChildSelect();
+  } catch (error) {
+    renderError = error;
+  }
+  check('and the run pick still draws with such a parent on the page', renderError === null, true);
+  sandbox.state = realState;
+}
+
+/* ------------------------------------------------------------------ session list: overlapping polls */
+// The list is polled, and every poll replaces the one before it. Two things have to hold
+// while that happens, and both used to be false:
+//
+//   * a request that has been replaced must not take the next request's controller with it;
+//   * an answer that arrives late must not replace a newer list.
+//
+// The first is what made the second possible: the replaced request cleared the shared
+// controller on its way out, so the request that replaced it had nothing to abort, and the
+// request before that answered last and won.
+//
+// So this section drives three overlapping requests against a controllable fetch, and
+// reads back what the page ends up showing. It is the transition, not the shape of the
+// source: a regex would pass for a version that carries the sequence number and ignores it.
+
+const fetchSessionsSrc = fnSource('function fetchSessions(manual)');
+const inflightDecl = /var sessionsInflight = null;/.exec(html);
+const seqDecl = /var sessionsSeq = 0;/.exec(html);
+if (!fetchSessionsSrc || !inflightDecl || !seqDecl) {
+  failures.push('session list: could not lift fetchSessions and the state it keeps');
+} else {
+  vm.runInContext(inflightDecl[0] + '\n' + seqDecl[0] + '\n' + fetchSessionsSrc, sandbox);
+
+  // A fetch the section drives: every request gets a promise the section settles, and the
+  // signal is the real one, so an abort is an abort.
+  const requests = [];
+  sandbox.fetch = function (url, options) {
+    const entry = {
+      url: url,
+      signal: options && options.signal,
+      // The headers the page sent, so a section can ask what the request claimed about the
+      // list it already had. A validator is only ever read by the server, so the only way to
+      // see whether the page still holds the right one is to look at what it asked with.
+      headers: (options && options.headers) || {},
+      settle: null,
+      fail: null
+    };
+    entry.promise = new Promise((resolve, reject) => {
+      entry.settle = resolve;
+      entry.fail = reject;
+    });
+    requests.push(entry);
+    return entry.promise;
+  };
+  sandbox.AbortController = AbortController;
+  sandbox.state = {
+    sessions: [], children: [], sessionsEtag: '', sessionsEtagFor: '', sessionsLoaded: false
+  };
+  sandbox.noteFresh = () => false;
+  sandbox.renderBars = () => {};
+  sandbox.freshnessReason = () => 'unknown';
+  sandbox.renderSessionSelect = () => {};
+  sandbox.renderChildSelect = () => {};
+
+  const abortError = () => {
+    const error = new Error('The operation was aborted.');
+    error.name = 'AbortError';
+    return error;
+  };
+  const answer = (entry, body, etag) => entry.settle({
+    status: 200,
+    ok: true,
+    headers: { get: (name) => (name === 'etag' ? (etag || '') : '') },
+    json: () => Promise.resolve(body)
+  });
+
+  // Three requests: the first is replaced by the second, the second is replaced by the
+  // third. The second's answer arrives last, and it is the older one.
+  const first = sandbox.fetchSessions(false);
+  const second = sandbox.fetchSessions(false);
+  check('the second request stops the first', requests[0].signal.aborted, true);
+  // The browser delivers an abort as a rejection, and that rejection is handled while the
+  // second request is already in flight -- which is exactly when the controller used to be
+  // cleared.
+  requests[0].fail(abortError());
+  await first;
+  const third = sandbox.fetchSessions(false);
+  check('a replaced request does not take the controller of the request that replaced it',
+    requests[1].signal.aborted, true);
+  answer(requests[2], { sessions: [{ id: 'mvs_new_main' }], children: [{ id: 'mvs_new_run' }] }, '"older"');
+  await third;
+  answer(requests[1], { sessions: [{ id: 'mvs_old_main' }], children: [{ id: 'mvs_old_run' }] });
+  await second;
+  check('a late answer does not replace the newer list on screen',
+    sandbox.state.sessions.map((row) => row.id), ['mvs_new_main']);
+  check('and the run list is the newer one too',
+    sandbox.state.children.map((row) => row.id), ['mvs_new_run']);
+
+  // A 304 that arrives late. This is the second case of the same rule, and it is a different
+  // case: a 200 carries a body, so a stale one has something visible to overwrite. A 304
+  // carries a VALIDATOR instead, so a stale one has nothing to overwrite but the tag that
+  // describes the list on screen -- and that tag is what the next poll asks the server with.
+  //
+  // It used to write that tag before the sequence gate, so the list on screen and the tag that
+  // described it were two different things: the next poll asked the server about the old list,
+  // the server said "not modified", and the page kept the new one.
+  const late = sandbox.fetchSessions(false);
+  const lateReplacement = sandbox.fetchSessions(false);
+  answer(requests[4], { sessions: [{ id: 'mvs_newest_main' }], children: [] }, '"newest"');
+  await lateReplacement;
+  check('the newer list is on screen',
+    sandbox.state.sessions.map((row) => row.id), ['mvs_newest_main']);
+  requests[3].settle({
+    status: 304,
+    ok: false,
+    headers: { get: (name) => (name === 'etag' ? '"older"' : '') }
+  });
+  await late;
+  check('a late 304 does not overwrite the validator the newer answer installed',
+    sandbox.state.sessionsEtag, '"newest"');
+  check('and the list on screen is still the newer one',
+    sandbox.state.sessions.map((row) => row.id), ['mvs_newest_main']);
+
+  // And the poll after it asks the server about the list that is on screen.
+  const next = sandbox.fetchSessions(false);
+  check('the next request carries the validator of the list on screen',
+    requests[5].headers['If-None-Match'], '"newest"');
+
+  // A manual refresh drops the validator on purpose: the reader asked for the list again, so
+  // the request must not claim to already have it.
+  sandbox.fetchSessions(true);
+  check('a manual refresh sends no validator',
+    requests[6].headers['If-None-Match'], undefined);
+}
+
+// The trajectory poll is the second implementation of the same rule the session list follows,
+// and it used to write the validator BEFORE its sequence gate. A 304 that arrived late then
+// put its own older tag over the newer one, so the body on screen and the tag that described
+// it were two different things: the next poll asked the server about the old body and kept the
+// new one on screen.
+//
+// The counterexample, driven against the shipped function: the page holds A, two polls are in
+// flight, the newer one answers first with B and B's tag, and the older one answers with a 304
+// carrying A's tag. The old tag must not survive that.
+const fetchTrajectorySrc = fnSource('function fetchTrajectory(manual)');
+const sessionParamSrc = fnSource('function sessionParam()');
+const trajInflightDecl = /var inflight = null;/.exec(html);
+const trajSeqDecl = /var refreshSeq = 0;/.exec(html);
+if (!fetchTrajectorySrc || !sessionParamSrc || !trajInflightDecl || !trajSeqDecl) {
+  failures.push('trajectory poll: could not lift fetchTrajectory and the state it keeps');
+} else {
+  vm.runInContext(
+    trajInflightDecl[0] + '\n' + trajSeqDecl[0] + '\n' + sessionParamSrc + '\n' + fetchTrajectorySrc,
+    sandbox
+  );
+
+  const trajRequests = [];
+  sandbox.fetch = function (url, options) {
+    const entry = {
+      url: url,
+      signal: options && options.signal,
+      headers: (options && options.headers) || {},
+      settle: null
+    };
+    entry.promise = new Promise((resolve) => { entry.settle = resolve; });
+    trajRequests.push(entry);
+    return entry.promise;
+  };
+  sandbox.AbortController = AbortController;
+  sandbox.state = {
+    payload: null, generation: null, etag: '', etagFor: '', since: 0, sinceFor: '',
+    loading: false, followLatest: true, sessionId: '', hostSessionId: ''
+  };
+  sandbox.renderLoading = () => {};
+  sandbox.noteFresh = () => false;
+  sandbox.render = () => {};
+  const applied = [];
+  sandbox.applyPayload = function (body) { applied.push(body); };
+
+  const trajAnswer = (entry, body, etag) => entry.settle({
+    status: 200,
+    ok: true,
+    headers: { get: (name) => (name === 'etag' ? (etag || '') : '') },
+    json: () => Promise.resolve(body)
+  });
+  const trajNotModified = (entry, etag) => entry.settle({
+    status: 304,
+    ok: false,
+    headers: { get: (name) => (name === 'etag' ? (etag || '') : '') }
+  });
+
+  const older = sandbox.fetchTrajectory(false);
+  const newer = sandbox.fetchTrajectory(false);
+  check('the second poll stops the first', trajRequests[0].signal.aborted, true);
+  trajAnswer(trajRequests[1], { session: { id: 'mvs_b' } }, '"tag-b"');
+  await newer;
+  check('the newer body is the one on screen', applied.map((b) => b.session.id), ['mvs_b']);
+  check('and the validator describes it', sandbox.state.etag, '"tag-b"');
+
+  // The older answer arrives late and carries the older tag.
+  trajNotModified(trajRequests[0], '"tag-a"');
+  await older;
+  check('a replaced trajectory request writes no validator', sandbox.state.etag, '"tag-b"');
+  check('and it leaves the body on screen alone',
+    applied.map((b) => b.session.id), ['mvs_b']);
+
+  // And the poll after it asks the server about the body that is on screen.
+  sandbox.fetchTrajectory(false);
+  check('the next poll carries the validator of the body on screen',
+    trajRequests[2].headers['If-None-Match'], '"tag-b"');
+
+  // The same rule for a late 200: a replaced request must not put its body on screen either.
+  const lateOld = sandbox.fetchTrajectory(false);
+  const lateNew = sandbox.fetchTrajectory(false);
+  trajAnswer(trajRequests[4], { session: { id: 'mvs_c' } }, '"tag-c"');
+  await lateNew;
+  trajAnswer(trajRequests[3], { session: { id: 'mvs_a' } }, '"tag-a"');
+  await lateOld;
+  check('a replaced trajectory request writes no body either',
+    applied.map((b) => b.session.id), ['mvs_b', 'mvs_c']);
+  check('and the validator is still the newer one', sandbox.state.etag, '"tag-c"');
+}
+
+// A record index is a position within ONE body, so a read that carries that index has to ask
+// about the session that body was built for. The client already says so in its own cache key —
+// `rawCacheKey` names the displayed session — but the request used to ask for `latest`, which
+// is "whichever session is current now" and not necessarily the one on screen. The runtime can
+// make another session current while the page still shows this one, and the page then showed
+// that other session's words under this session's record.
+const requestRawSrc = fnSource('function requestRaw(index, version)');
+const requestDetailSrc = fnSource('function requestDetail(index, version)');
+const displayedSessionSrc = fnSource('function displayedSessionParam()');
+const displayedGenerationSrc = fnSource('function displayedGeneration()');
+const recordVersionOfSrc = fnSource('function recordVersionOf(record)');
+const rawCacheKeySrc = fnSource('function rawCacheKey(index, version)');
+if (!requestRawSrc || !requestDetailSrc || !displayedSessionSrc || !displayedGenerationSrc
+  || !recordVersionOfSrc || !rawCacheKeySrc) {
+  failures.push('secondary reads: could not lift requestRaw, requestDetail and the session they ask for');
+} else {
+  vm.runInContext(displayedSessionSrc + '\n' + displayedGenerationSrc + '\n'
+    + recordVersionOfSrc + '\n'
+    + requestRawSrc + '\n' + requestDetailSrc + '\n' + rawCacheKeySrc, sandbox);
+
+  const secondary = [];
+  sandbox.fetch = function (url) {
+    secondary.push(url);
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ raw: 'ALPHA BODY', index: 1, text: 'ALPHA BODY' })
+    });
+  };
+  // The page is following the newest conversation, and it is showing A. The runtime may already
+  // have made B current — the page does not know that, and it must not care: A is on screen.
+  //
+  // `flat` is the body on screen's records. A read that names an index has to name the RECORD
+  // behind that index, and the record's version is what says which one it is: the same position
+  // in a newer body can be a different record entirely.
+  sandbox.state = {
+    payload: { session: { id: 'mvs_displayed', generation: null } },
+    flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
+    generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
+  };
+  await sandbox.requestRaw(1, 'the-version-of-record-one');
+  await sandbox.requestDetail(1, 'the-version-of-record-one');
+  check('a raw read asks for the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(secondary[0]), true);
+  check('and it does not ask for whatever is current now',
+    /[?&]session=latest(&|$)/.test(secondary[0]), false);
+  check('a detail read asks for the session on screen',
+    /[?&]session=mvs_displayed(&|$)/.test(secondary[1]), true);
+  check('and it does not ask for whatever is current now',
+    /[?&]session=latest(&|$)/.test(secondary[1]), false);
+  check('a raw read names the version of the record it is asking for',
+    /[?&]v=the-version-of-record-one(&|$)/.test(secondary[0]), true);
+  check('and a detail read names it too',
+    /[?&]v=the-version-of-record-one(&|$)/.test(secondary[1]), true);
+
+  // The slice on screen is not the generation the reader picked. A selection whose load failed
+  // leaves the previous body up, and a read that asks about the selection asks about a body
+  // that is not there — its answer is about records the reader cannot see.
+  sandbox.state = {
+    payload: { session: { id: 'mvs_displayed', generation: 2 } },
+    flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
+    generation: 7, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
+  };
+  await sandbox.requestRaw(1, 'the-version-of-record-one');
+  await sandbox.requestDetail(1, 'the-version-of-record-one');
+  check('a raw read asks for the slice on screen',
+    /[?&]generation=2(&|$)/.test(secondary[2]), true);
+  check('and not for the one the reader picked',
+    /[?&]generation=7(&|$)/.test(secondary[2]), false);
+  check('a detail read asks for the slice on screen too',
+    /[?&]generation=2(&|$)/.test(secondary[3]), true);
+  check('and not for the one the reader picked',
+    /[?&]generation=7(&|$)/.test(secondary[3]), false);
+
+  // The browser's own raw cache is keyed the same way, and for the same reason: a record index
+  // is a position inside one body, and the body on screen is not always the body the reader last
+  // selected. A key built from the selection would serve the previous slice's message under the
+  // current slice's record — and the reader would be reading another generation's words.
+  check('the raw cache key names the slice on screen',
+    sandbox.rawCacheKey(1).includes('#2#'), true);
+  check('and not the one the reader picked',
+    sandbox.rawCacheKey(1).includes('#7#'), false);
+  check('and it still names the session on screen',
+    sandbox.rawCacheKey(1).startsWith('mvs_displayed#'), true);
+
+  // With nothing on screen there is no session to name, and the read falls back to the session
+  // parameter rather than sending an empty one.
+  sandbox.state = { payload: null, generation: null, etag: '', followLatest: true, sessionId: '', hostSessionId: '' };
+  await sandbox.requestRaw(1, 'the-version-of-record-one');
+  check('with no body on screen the read falls back to the current session',
+    /[?&]session=latest(&|$)/.test(secondary[4]), true);
+}
+
+/* A read that is retried must ask about the SAME record.
+ *
+ * The retry exists because the service let go of the session: it reloads the body and asks again.
+ * The body it reloads is a DIFFERENT one — the transcript moved while the tab was open — so a
+ * version read off the screen at that moment belongs to the NEW body's record at that index, and
+ * the retry is a different question wearing the same question's clothes. The service would answer
+ * it, because it is a perfectly good question about a perfectly good record: the wrong one.
+ *
+ * So the version travels with the RECORD the reader opened, and the reload does not change it. */
+{
+  const fetchRawSrc = fnSource('function fetchRaw(record, retried)');
+  const fetchDetailSrc = fnSource('function fetchDetail(record, retried)');
+  const requestDetailSrc2 = fnSource('function requestDetail(index, version)');
+  const isCountSrc = fnSource('function isCount(value)');
+  if (!fetchRawSrc || !fetchDetailSrc || !requestRawSrc || !requestDetailSrc2 || !isCountSrc
+    || !recordVersionOfSrc) {
+    failures.push('secondary read retry: could not lift fetchRaw, fetchDetail and the requests they make');
+  } else {
+    vm.runInContext('var rawCache = {};\nvar rawPending = {};\nvar detailCache = {};\nvar detailPending = {};\n'
+      + isCountSrc + '\n' + recordVersionOfSrc + '\n'
+      + requestRawSrc + '\n' + requestDetailSrc2 + '\n'
+      + fetchRawSrc + '\n' + fetchDetailSrc, sandbox);
+
+    const retried = [];
+    let attempts = 0;
+    sandbox.fetch = function (url) {
+      retried.push(String(url));
+      attempts += 1;
+      if (attempts === 1 || attempts === 3) {
+        return Promise.resolve({ ok: false, status: 503,
+          json: () => Promise.resolve({ error: 'trajectory_not_cached' }) });
+      }
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve({ raw: 'ALPHA BODY', index: 1, text: 'ALPHA BODY', omitted: false }) });
+    };
+    // The reload is what brings the NEW body: the same index, another record. A version read off
+    // the screen after this point is the new record's version, and the retry would be asking
+    // about it.
+    sandbox.fetchTrajectory = function () {
+      sandbox.state.flat = [{ turn: {}, record: { index: 1, v: 'a-newer-version' } }];
+      return Promise.resolve();
+    };
+    sandbox.state = {
+      payload: { session: { id: 'mvs_displayed', generation: null } },
+      flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
+      generation: null, etag: '"tag"', followLatest: true, sessionId: '', hostSessionId: ''
+    };
+    const opened = { index: 1, v: 'the-version-of-record-one' };
+    await sandbox.fetchRaw(opened);
+    await sandbox.fetchDetail(opened);
+    check('the first read names the version of the record the reader opened',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[0] || ''), true);
+    check('a read that is retried asks about that same record',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[1] || ''), true);
+    check('and not about the record that happens to be at that index after the reload',
+      /[?&]v=a-newer-version(&|$)/.test(retried[1] || ''), false);
+    check('and the same for the record\'s fields',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[2] || ''), true);
+    check('a field read that is retried asks about that same record too',
+      /[?&]v=the-version-of-record-one(&|$)/.test(retried[3] || ''), true);
+    check('and not about the record that happens to be at that index after the reload',
+      /[?&]v=a-newer-version(&|$)/.test(retried[3] || ''), false);
+
+    /* The retry must not JOIN another read.
+     *
+     * The reload brings a body in which the record at that position is a DIFFERENT one, and the
+     * panel that rebuilds on it asks for the record now on screen. The read of the record the
+     * reader opened is still in flight, and it has to ask about ITS OWN record: the two reads are
+     * at the same position, and the key that decides whose answer a caller gets is the only
+     * thing that can tell them apart.
+     *
+     * The key used to be built out of what is on screen — the validator, the slice, the position —
+     * so after the reload the retry of the old record and the new record's own read had the SAME
+     * key. The retry was then answered with the new record's body without asking anything: the
+     * reader opened ALPHA and the page handed back CHARLIE. The version belongs in the key, and
+     * it is the caller's version, not the screen's. */
+    for (const [readName, what] of [['fetchRaw', 'a retried read'],
+      ['fetchDetail', 'a retried field read']]) {
+      vm.runInContext('rawCache = {}; rawPending = {}; detailCache = {}; detailPending = {};', sandbox);
+      const joined = [];
+      sandbox.state = {
+        payload: { session: { id: 'mvs_displayed', generation: null } },
+        flat: [{ turn: {}, record: { index: 1, v: 'the-version-of-record-one' } }],
+        generation: null, etag: '"tag-old"', followLatest: true, sessionId: '', hostSessionId: ''
+      };
+      sandbox.fetch = function (url) {
+        joined.push(String(url));
+        // The first attempt is refused because the service let go of the session.
+        if (joined.length === 1) {
+          return Promise.resolve({ ok: false, status: 503,
+            json: () => Promise.resolve({ error: 'trajectory_not_cached' }) });
+        }
+        // The old record's own request: the service refuses it, because the record at that
+        // position is not the one that was asked for.
+        if (/[?&]v=the-version-of-record-one(&|$)/.test(joined[joined.length - 1])) {
+          return Promise.resolve({ ok: false, status: 409,
+            json: () => Promise.resolve({ error: 'raw_stale' }) });
+        }
+        // The record now on screen, which the rebuild of the panel asks for.
+        return Promise.resolve({ ok: true, status: 200,
+          json: () => Promise.resolve({ raw: 'CHARLIE BODY longer', index: 1, text: 'CHARLIE BODY longer' }) });
+      };
+      sandbox.fetchTrajectory = function () {
+        // The new body is on screen, with its own validator, and the panel rebuilds on it: that
+        // starts a read of the record now at that position.
+        //
+        // THE SAME KIND OF READ as the one under test. A field read that is retried has to be
+        // tested against a COMPETING FIELD READ: the two live in different pending maps, so a
+        // raw read competing with a field read would leave the field's own map empty, and the
+        // rule — a retry must not join another read — would never have been asked of it.
+        sandbox.state.etag = '"tag-new"';
+        sandbox.state.flat = [{ turn: {}, record: { index: 1, v: 'the-version-of-record-two' } }];
+        sandbox[readName]({ index: 1, v: 'the-version-of-record-two' });
+        return Promise.resolve();
+      };
+      let refused = null;
+      let handed = null;
+      try {
+        handed = await sandbox[readName]({ index: 1, v: 'the-version-of-record-one' });
+      } catch (err) {
+        refused = err && err.code ? err.code : String(err);
+      }
+      check(what + ' cannot join a newer record\'s pending read after reload',
+        refused, 'raw_stale');
+      check(what + ' is not answered with the other record\'s body', handed, null);
+      check(what + ' asked about the record the reader opened, on a request of its own',
+        joined.filter((u) => /[?&]v=the-version-of-record-one(&|$)/.test(u)).length, 2);
+    }
+  }
 }
 
 console.log('[2] pure helpers: ' + pass + ' passed, ' + failures.length + ' failed');

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/dashboard",
+    "window": {
+      "width": 560,
+      "height": 860,
+      "minWidth": 400,
+      "minHeight": 420,
+      "resizable": true
+    }
+  },
+  "mcpEndpoints": []
+}

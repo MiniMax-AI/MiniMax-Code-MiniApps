@@ -12,7 +12,7 @@ Copy this directory, including the hidden `.minimax-plugin/` directory, into the
 
 - **Long-lived Bots**: every Bot has a name, a role, instructions and its own Agent session. When its setup, the team roster or its memory changes, the next turn automatically carries the latest context.
 - **Chief Bot**: created on first launch to help you build your team. Chief can create, edit and delete Bots and groups; other Bots are refused when they try to do so.
-- **Group chats**: the group admin answers by default. `@Name` calls on a specific member, and a Bot that `@`-mentions another member in its reply hands the turn over. Members with nothing to add reply `[PASS]` and are skipped. Each member keeps a separate session per group, and groups cannot see private chats. There is no fixed reply cap. Discussions finish naturally, or wait for more instructions after repeated handoffs without tool progress.
+- **Group chats**: the group admin answers by default. `@Name` calls on a specific member, and a Bot that `@`-mentions another member in its reply hands the turn over. Members with nothing to add reply `[PASS]` and are skipped. Each member keeps a separate session per group, and groups cannot see private chats. There is no fixed reply cap by default; a group can set one in the group settings. A group can also keep a short note of what it said, which survives clearing the chat. Discussions finish naturally, or wait for more instructions after repeated handoffs without tool progress.
 - **Hand-offs between Bots**: `message_bot` hands work to another Bot and immediately returns an admission receipt; the completed result returns to the source chat. `post_group` is **private chat only**: it posts to a group and returns immediately while the discussion continues according to the group's reply mode. From a private chat, Chief can post to any group without joining it; other Bots can only post to groups they belong to. During a group turn, `post_group` is disabled for everyone, including Chief and admins, for both same-group and cross-group posts. Use `@Name` in a reply to hand off within the group; start cross-group work from a private chat.
 - **Background work**: when an isolated execution context is useful, a Bot calls `start_helper` to run it in the background in a fresh, separate session; the Bot's turn ends at once and you can keep chatting. The Bot simply says something like "let me look into it" without internal jargon or IDs. When the job finishes, its report comes back to the Bot as a new turn, and the Bot reviews it and passes it on in its own words (in groups too, where it can keep handing off with `@`). At most 2 background jobs run at once (one slot is always kept free for chat) and the rest queue; each Bot can have at most 4 queued or running. Running jobs are shown above the chat input and can be stopped at any time; the strip orders them by how far along they are, the ones already working first, then the ones waiting for another job, then the queued ones; when more than three jobs are listed, it keeps the first three in the open and folds the rest into one line that says how many are left, and one button below the rows opens the whole queue; tool approvals from a background job appear in its chat; jobs still running when the Mini App restarts are marked interrupted. Bots can also manage jobs with `list_helpers` / `stop_helper`. "Allow background helpers automatically" is on by default in Bot settings; when off, a Bot only does so when you explicitly ask.
 - **Per-Bot model and reasoning effort**: pick a model and reasoning effort in Bot settings (only the levels the model supports are listed, and thinking can be turned off where supported; Bots that follow the default model can still set their own effort). Chief can also set them with the `model` (a model ID, `provider/model` or display name; `default` follows the default) and `effort` (`low`, `high`, `off`, ...) parameters of `create_bot` / `update_bot`. Requires a MiniMax Code version with `agent.models()` / `run({ model })`; older versions prompt you to upgrade.
@@ -29,6 +29,29 @@ Copy this directory, including the hidden `.minimax-plugin/` directory, into the
 - **Reactions**: react to finished Bot replies in private and group chats. The quick bar offers 👍 ❤️ 🙌 😂 😭 😮, and more emoji can be browsed by category or searched in English or Chinese. Each message holds one reaction: picking a new one replaces it, and picking the same one again removes it. Reactions are saved locally, survive refreshes and restarts, and sync to other open windows. They do not trigger a Bot reply and are not sent to the model.
 - **Reply actions**: the reaction, copy, quote-reply and open-session buttons sit at the bottom-left of a reply, under its last line. A long reply therefore keeps its actions within reach at the end of the text instead of pushing them off the top of the message. The reaction indicator sits directly above that row and is painted with the app's own tag colours, so it follows the light and dark themes.
 - **Working messages of one reply**: the Host records a text part for every turn a Bot takes between two tool calls, so a reply that worked for a while arrives with many parts, and the page draws one bubble per part. The bubbles keep the official shape and order, and a small gap between them tells them apart instead of letting them read as one block of text.
+
+## 0.7.10 Optional group notes
+
+- A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
+- The note is kept with the group settings, not with the messages. It is still there after the chat was cleared (**Start new chat**), and a Bot that joins the group later reads it too, so a group that was reset does not start from nothing.
+- It is prompt text: the note is written from the replies the round already produced, so it costs no extra Agent turn, no extra tool call and no memory write.
+- The note is a record, not an agreement. It says what the Bots said at the end of earlier rounds, and every Bot of the group is told exactly that in the prompt.
+- The note is off unless you switch it on in the group settings, and a group without a note gets exactly the prompt it got before. Only you can set it: a Bot cannot switch it on, and the record itself is written by the plugin — a Bot cannot write into it.
+- The note holds the most recent rounds and stays within a small size limit. The group settings show what was recorded, and you can clear it there.
+
+## 0.7.9 Optional relay guardrails for groups
+
+- A group can set a hop limit in the group settings: how many Bots may speak in one relay chain. `0` (the default) means no limit, exactly as before; the largest limit is 20.
+- When the limit is reached the chain stops there. The group gets a notice saying so, and the Bot that just spoke is asked to summarise instead of calling the next one. The blocked hand-off does not run, but the wrap-up is a turn of its own: a round that reaches the limit runs `limit + 1` Agent turns, the last one being the wrap-up.
+- The limit counts every Bot that speaks in the round. In a group where every member replies (`reply_mode: all`), the first replies of the members already in the queue count towards it.
+- A group can also hand the previous conclusion over to the next Bot: the next prompt carries the conclusion of the previous reply, so the next Bot does not have to dig the same ground out of the tools again. The previous reply is listed in the new messages anyway — the hand-over repeats its conclusion on purpose. It is prompt text — no extra turn, no extra tool call, no memory write.
+- Both settings belong to the group and only you can set them. A Bot cannot change them: the MCP catalogue does not offer them, and a call that smuggles them in is ignored.
+
+## 0.7.8 Safer automatic retries
+
+- A failed turn is still retried automatically at most twice, after 8 s and 20 s.
+- A failure marked `retryable: false` is never retried automatically, whether it was thrown or returned, and whatever its message says.
+- A turn whose outcome is unknown (`AGENT_OUTCOME_UNKNOWN`) is never resent automatically: it may already have run, and resending it could repeat a reply or an action.
 
 ## 0.7.0 Reliable delegation and result delivery
 
@@ -85,12 +108,12 @@ Avatars are stored in the Mini App's `dataDir/avatars/`. `GET /api/avatars` list
 
 ## Tested environment
 
-- MiniMax Code 3.1.2 on macOS and Windows. Earlier versions cannot install this package, because it declares `agentAccess` and `surface.window`.
+- MiniMax Code 3.1.2 on macOS and Windows, and MiniMax Code 3.1.4 on Linux. Earlier versions cannot install this package, because it declares `agentAccess` and `surface.window`.
 
 ## Data & access
 
-- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically.
-- **Files written**: only inside the Mini App's `dataDir`: `state.json`, `messages/`, `usage.jsonl`, `memory/` (including its journal, archive and backups), `uploads/` (your attachments) and `avatars/`.
+- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically. A group with a relay limit spends one more Agent turn on the round that reaches the limit: the wrap-up, which replaces the blocked hand-off. A group note spends no turn at all: it is written from the replies the round already produced.
+- **Files written**: only inside the Mini App's `dataDir`: `state.json`, `messages/`, `usage.jsonl`, `memory/` (including its journal, archive and backups), `uploads/` (your attachments) and `avatars/`. A group's note is part of that group's record in `state.json`, so it is removed with the group.
 - **Files read outside `dataDir`**:
   - `/api/media` serves a local file (up to 1 GiB) only when its absolute path appears in a Bot message of that same chat.
   - An avatar given as a local image path (by you or by Chief through `update_bot`) is read once and copied into `avatars/`.

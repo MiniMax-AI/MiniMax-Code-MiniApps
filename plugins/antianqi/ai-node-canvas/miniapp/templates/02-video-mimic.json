@@ -1,0 +1,79 @@
+{
+  "id": "video-mimic",
+  "title": "视频模仿",
+  "description": "放一段视频进去，先把它的提示词反推出来，再按 H3 的结构写成提示词，最后照着生成一条视频。",
+  "group": "从素材出发",
+  "actions": [
+    {
+      "type": "add_node",
+      "args": {
+        "type": "input",
+        "title": "参考视频",
+        "prompt": "",
+        "kind": "video",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "text",
+        "title": "反推提示词",
+        "prompt": "写出能复刻这条视频的提示词：镜头顺序与运镜、主体动作、环境与光线、节奏与时长",
+        "mode": "video2text",
+        "kind": "text",
+        "model": "default",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "text",
+        "title": "文本",
+        "prompt": "",
+        "mode": "prompt",
+        "kind": "text",
+        "model": "default",
+        "count": 1,
+        "templateId": "h3-t2va"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "video",
+        "title": "视频",
+        "prompt": "",
+        "mode": "text2video",
+        "kind": "video",
+        "model": "MiniMax-H3",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@1",
+        "to": "@2"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@2",
+        "to": "@3"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@3",
+        "to": "@4"
+      }
+    }
+  ]
+}

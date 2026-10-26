@@ -5,7 +5,6 @@ import {
   AGENT_CONCURRENCY_MAX,
   ARTIFACT_FIELDS,
   CONNECTOR_PROVIDER,
-  DEVICE_ACCESS_CAPABILITIES,
   ENTRY_EXTENSION,
   EXCLUDED_DIRECTORY,
   HOST_CONNECTOR_ACCESS_FIELDS,
@@ -47,7 +46,6 @@ export async function checkMiniApp(report, { packageDir, manifest }) {
   checkHostConnectorAccess(report, manifest.hostConnectorAccess);
   checkAgentAccess(report, manifest.agentAccess);
   checkAgentConcurrency(report, manifest.agentConcurrency);
-  checkDeviceAccess(report, manifest.deviceAccess);
   if (manifest.agentAccess !== undefined) resolved.features.push('agentAccess');
   if (Array.isArray(manifest.agentAccess) && manifest.agentAccess.includes('session.read')) resolved.features.push('agentAccess.session.read');
   if (manifest.agentConcurrency !== undefined) resolved.features.push('agentConcurrency');
@@ -221,27 +219,9 @@ function checkHostConnectorAccess(report, value) {
 
 function checkAgentAccess(report, value) {
   if (value === undefined) return;
-  if (!Array.isArray(value) || value.some((capability) => !AGENT_ACCESS_CAPABILITIES.has(capability)) || new Set(value).size !== value.length) {
-    report.error('MINIAPP_AGENT_ACCESS_INVALID', `agentAccess must be a unique string array containing only ${[...AGENT_ACCESS_CAPABILITIES].map((c) => `"${c}"`).join(', ')}`, FILE);
-    return;
+  if (!Array.isArray(value) || value.some((capability) => !AGENT_ACCESS_CAPABILITIES.has(capability))) {
+    report.error('MINIAPP_AGENT_ACCESS_INVALID', `agentAccess must be an array containing only ${[...AGENT_ACCESS_CAPABILITIES].map((c) => `"${c}"`).join(', ')}`, FILE);
   }
-}
-
-function checkDeviceAccess(report, value) {
-  if (value === undefined) return;
-  if (!Array.isArray(value) || value.some((capability) => !DEVICE_ACCESS_CAPABILITIES.has(capability)) || new Set(value).size !== value.length) {
-    report.error('MINIAPP_DEVICE_ACCESS_INVALID', 'deviceAccess must be a unique string array containing only "microphone"', FILE);
-    return;
-  }
-  if (value.includes('microphone')) reportHostExtension(report, 'deviceAccess: microphone');
-}
-
-function reportHostExtension(report, capability) {
-  report.warning(
-    'HOST_EXTENSION_UNVERIFIED',
-    `${capability} requires a Host build that supports this extension; its minimum released client version is unverified. This check validates declaration shape, not runtime availability.`,
-    FILE,
-  );
 }
 
 function checkAgentConcurrency(report, value) {

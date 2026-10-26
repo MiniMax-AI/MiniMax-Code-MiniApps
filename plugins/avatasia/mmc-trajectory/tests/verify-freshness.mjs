@@ -102,6 +102,8 @@ const drawBars = sandbox.renderBars;
 sandbox.render = () => { renders += 1; drawBars(); };
 sandbox.renderLoading = noop;
 sandbox.renderSessionSelect = noop;
+// The list body feeds two picks now, and the second one is redrawn from the same body.
+sandbox.renderChildSelect = noop;
 sandbox.rePinWindow = noop;
 sandbox.runSearch = noop;
 

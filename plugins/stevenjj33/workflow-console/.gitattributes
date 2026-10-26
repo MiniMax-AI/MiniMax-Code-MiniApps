@@ -1,0 +1,20 @@
+# The working tree of this plugin must be byte-identical to what is committed.
+#
+# Without this file, core.autocrlf=true rewrites LF blobs to CRLF on checkout, and git then
+# reports the result as clean because it normalises line endings when it compares. The rewrite is
+# invisible to `git status` while it is happening.
+#
+# That matters more here than in most plugins: `miniapp/node/vendor/dynamic-workflows/` is an
+# unmodified copy of the upstream 0.8.2 runtime, and its own LICENSE and THIRD_PARTY_NOTICES.txt
+# say the files are redistributed as-is. `text=auto` leaves git free to keep deciding for itself
+# which files are binary; `eol=lf` is the part that pins the result. Every blob here is already
+# LF, so adding this changes no committed content — it only stops the working tree from
+# disagreeing with it.
+#
+# This file lives in the plugin directory, not the repository root. At the root it would rewrite
+# line endings for every other plugin in the repository, and this is a single-plugin change.
+* text=auto eol=lf
+
+# The files in this plugin that are not text.
+*.png binary
+*.wasm binary
