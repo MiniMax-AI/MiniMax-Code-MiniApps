@@ -10,11 +10,12 @@
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { createWriteStream, mkdirSync } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { isIP } from 'node:net';
+import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { BlockList, isIP } from 'node:net';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
@@ -125,31 +126,160 @@ export function resolveInside(folder, name) {
 }
 
 /**
+ * The ranges a download must not reach.
+ *
+ * The loopback, the private ranges, the link-local range, the range that is
+ * reserved and the shared address space of a carrier are this machine or the
+ * network it sits in. A provider link never points there, so a request to one
+ * is refused.
+ *
+ * The ranges are written down once, as ranges and not as single addresses, so
+ * every address inside one of them is refused by the same rule.
+ */
+const PRIVATE_RANGES = new BlockList();
+
+// IPv4: this network, the private ranges, the loopback, the link-local range,
+// the shared space of a carrier, the benchmark range, and everything from
+// multicast up (which also covers the reserved range).
+PRIVATE_RANGES.addSubnet('0.0.0.0', 8, 'ipv4');
+PRIVATE_RANGES.addSubnet('10.0.0.0', 8, 'ipv4');
+PRIVATE_RANGES.addSubnet('100.64.0.0', 10, 'ipv4');
+PRIVATE_RANGES.addSubnet('127.0.0.0', 8, 'ipv4');
+PRIVATE_RANGES.addSubnet('169.254.0.0', 16, 'ipv4');
+PRIVATE_RANGES.addSubnet('172.16.0.0', 12, 'ipv4');
+PRIVATE_RANGES.addSubnet('192.0.0.0', 24, 'ipv4');
+PRIVATE_RANGES.addSubnet('192.168.0.0', 16, 'ipv4');
+PRIVATE_RANGES.addSubnet('198.18.0.0', 15, 'ipv4');
+PRIVATE_RANGES.addSubnet('224.0.0.0', 4, 'ipv4');
+PRIVATE_RANGES.addSubnet('240.0.0.0', 4, 'ipv4');
+
+// IPv6: the unspecified address, the loopback, the discard range, the
+// documentation range, the unique local range, the link-local range and the
+// multicast range.
+PRIVATE_RANGES.addSubnet('::', 128, 'ipv6');
+PRIVATE_RANGES.addSubnet('::1', 128, 'ipv6');
+PRIVATE_RANGES.addSubnet('100::', 64, 'ipv6');
+PRIVATE_RANGES.addSubnet('2001:db8::', 32, 'ipv6');
+PRIVATE_RANGES.addSubnet('fc00::', 7, 'ipv6');
+PRIVATE_RANGES.addSubnet('fe80::', 10, 'ipv6');
+PRIVATE_RANGES.addSubnet('ff00::', 8, 'ipv6');
+
+/**
+ * An address in the one form it is written in.
+ *
+ * The URL parser rewrites an address into its own form, so the same address
+ * is always judged the same way: `::ffff:127.0.0.1` and `::ffff:7f00:1` are
+ * one address, not two. A zone id says which interface an address is on, not
+ * which address it is, so it is dropped.
+ */
+function normalizedAddress(address) {
+  let ip = String(address ?? '').trim().toLowerCase();
+  if (!ip) return '';
+  ip = ip.replace(/^\[|\]$/g, '');
+  ip = ip.split('%')[0];
+  if (!ip) return '';
+  if (isIP(ip) === 4) return ip;
+  if (isIP(ip) !== 6) return ip;
+  try {
+    return new URL(`http://[${ip}]/`).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return ip;
+  }
+}
+
+/**
+ * The eight numbers an IPv6 address is made of.
+ *
+ * The written form may leave out the zeroes in the middle, so they are put
+ * back: the address is read as the eight numbers it stands for.
+ */
+function expandIPv6(text) {
+  const parts = String(text ?? '').split('::');
+  if (parts.length > 2) return null;
+  const head = parts[0] ? parts[0].split(':') : [];
+  const tail = parts.length === 2 && parts[1] ? parts[1].split(':') : [];
+  const missing = 8 - head.length - tail.length;
+  if (parts.length === 1 ? missing !== 0 : missing < 1) return null;
+  const groups = [
+    ...head.map((part) => Number.parseInt(part, 16)),
+    ...(parts.length === 2 ? Array(missing).fill(0) : []),
+    ...tail.map((part) => Number.parseInt(part, 16)),
+  ];
+  if (groups.length !== 8) return null;
+  if (groups.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) return null;
+  return groups;
+}
+
+/**
+ * The IPv4 address an IPv6 address carries, if it carries one.
+ *
+ * Four forms carry an IPv4 address inside an IPv6 one: the mapped form
+ * (`::ffff:7f00:1`), the compatible form (`::7f00:1`), the NAT64 form
+ * (`64:ff9b::7f00:1`) and the 6to4 form (`2002:7f00:1::`). Each of them
+ * points at an IPv4 address, so each of them is judged as that address.
+ */
+export function embeddedIPv4(address) {
+  const ip = normalizedAddress(address);
+  if (isIP(ip) !== 6) return null;
+  const groups = expandIPv6(ip);
+  if (!groups) return null;
+  const zero = (from, to) => groups.slice(from, to).every((group) => group === 0);
+  const mapped = zero(0, 5) && groups[5] === 0xffff;
+  const compatible = zero(0, 6);
+  const nat64 = groups[0] === 0x64 && groups[1] === 0xff9b && zero(2, 6);
+  const sixToFour = groups[0] === 0x2002;
+  let hi = 0;
+  let lo = 0;
+  if (mapped || compatible || nat64) {
+    hi = groups[6];
+    lo = groups[7];
+  } else if (sixToFour) {
+    hi = groups[1];
+    lo = groups[2];
+  } else {
+    return null;
+  }
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+
+/**
  * Whether an address is one a download must not reach.
  *
- * The loopback, the private ranges, the link-local range and the reserved
- * ranges are this machine or the network it sits in. A provider link never
- * points there, so a request to one is refused.
+ * The ranges above are the rule. An IPv6 address that carries an IPv4
+ * address is judged as that IPv4 address, so the forms that hide one cannot
+ * be used to get past the rule.
  */
 export function isPrivateAddress(address) {
-  const ip = String(address ?? '').trim().toLowerCase();
+  const ip = normalizedAddress(address);
   if (!ip) return true;
-  if (ip === '::' || ip === '::1' || ip === '0:0:0:0:0:0:0:1') return true;
-  // An IPv4 address written inside an IPv6 one (::ffff:127.0.0.1).
-  if (ip.startsWith('::ffff:')) return isPrivateAddress(ip.slice(7));
-  if (/^fe[89ab]/.test(ip)) return true;
-  if (/^f[cd]/.test(ip)) return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
-  if (!v4) return false;
-  const first = Number(v4[1]);
-  const second = Number(v4[2]);
-  if (first === 0 || first === 127) return true;
-  if (first === 10) return true;
-  if (first === 172 && second >= 16 && second <= 31) return true;
-  if (first === 192 && second === 168) return true;
-  if (first === 169 && second === 254) return true;
-  if (first >= 224) return true;
-  return false;
+  const family = isIP(ip);
+  if (family === 4) return PRIVATE_RANGES.check(ip, 'ipv4');
+  // An address that is neither IPv4 nor IPv6 cannot be reached at all, so it
+  // is refused rather than passed on.
+  if (family !== 6) return true;
+  const carried = embeddedIPv4(ip);
+  if (carried) return PRIVATE_RANGES.check(carried, 'ipv4');
+  return PRIVATE_RANGES.check(ip, 'ipv6');
+}
+
+/**
+ * The address a download connects to.
+ *
+ * Every address a name points at is judged, so a name that points at one
+ * private address is refused even when it points at a public one as well.
+ * The answer is the address the download uses: the address that was judged
+ * is the address that is connected to.
+ */
+export function pinnedAddress(addresses) {
+  const list = (Array.isArray(addresses) ? addresses : [])
+    .map((entry) => ({
+      address: String(entry?.address ?? entry ?? '').trim(),
+      family: Number(entry?.family ?? isIP(String(entry?.address ?? entry ?? ''))) || 4,
+    }))
+    .filter((entry) => entry.address);
+  if (!list.length) return null;
+  if (list.some((entry) => isPrivateAddress(entry.address))) return null;
+  return list[0];
 }
 
 /**
@@ -184,13 +314,21 @@ export function isPublicUrl(url) {
  */
 export function isAllowedHop(url, addresses = []) {
   if (!isPublicUrl(url)) return false;
-  return !addresses.some((entry) => isPrivateAddress(entry?.address ?? entry));
+  // The same judgment the download makes: every address is judged, and the
+  // one that is used is the one that was judged.
+  return Boolean(pinnedAddress(addresses));
 }
 
-/** Whether a path is taken. */
+/**
+ * Whether a path is taken.
+ *
+ * The link itself is looked at, not what it points at: a link that points at
+ * nothing is still a name that is taken, so a file is never written through
+ * it.
+ */
 async function exists(path) {
   try {
-    await stat(path);
+    await lstat(path);
     return true;
   } catch {
     return false;
@@ -252,59 +390,99 @@ export function createMediaStore(context) {
   }
 
   /**
-   * The address a download may go to.
+   * The address a download connects to.
    *
-   * A link that spells out a private address is refused straight away, and
-   * a name is looked up first: if any of the addresses it points at is
-   * this machine or the network it sits in, the download is refused too.
+   * The name is looked up once, and the answer is what the download uses: the
+   * address that was judged is the address that is connected to, so a name
+   * that answers one thing for the check and another for the connection cannot
+   * get through.
    */
-  async function assertPublicUrl(url) {
+  async function resolvePublic(url) {
     const parsed = new URL(String(url));
-    const host = parsed.hostname.replace(/^\[|\]$/g, '');
-    if (isIP(host)) {
-      if (!isAllowedHop(url, [])) throw new Error('素材链接指向本机或内网，已拒绝');
-      return parsed.toString();
+    if (!isPublicUrl(parsed.toString())) {
+      throw new Error('素材链接指向本机或内网，已拒绝');
     }
+    const host = parsed.hostname.replace(/^\[|\]$/g, '');
+    // An address that is written out is the address that is used.
+    if (isIP(host)) return { address: host, family: isIP(host) };
     let addresses = [];
     try {
       addresses = await lookup(host, { all: true });
     } catch {
       throw new Error('素材链接的主机名解析失败');
     }
-    if (!addresses.length) throw new Error('素材链接的主机名解析失败');
-    if (!isAllowedHop(url, addresses)) throw new Error('素材链接指向本机或内网，已拒绝');
-    return parsed.toString();
+    const pinned = pinnedAddress(addresses);
+    if (!pinned) {
+      // No address at all, or one of them is this machine or the network it
+      // sits in.
+      if (!addresses.length) throw new Error('素材链接的主机名解析失败');
+      throw new Error('素材链接指向本机或内网，已拒绝');
+    }
+    return pinned;
+  }
+
+  /**
+   * Open a connection to the address that was judged.
+   *
+   * The name is not looked up again: the connection goes to the address that
+   * was checked, so a name cannot answer differently the second time.
+   */
+  function openPinned(target, pinned, signal) {
+    const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
+    return new Promise((resolve, reject) => {
+      const request = send(
+        target,
+        {
+          lookup: (hostname, options, callback) => {
+            if (options?.all) callback(null, [{ address: pinned.address, family: pinned.family }]);
+            else callback(null, pinned.address, pinned.family);
+          },
+          headers: {
+            // The bytes are wanted as they are: a compressed answer would be
+            // written down compressed.
+            'accept-encoding': 'identity',
+            'user-agent': 'ai-node-canvas',
+          },
+        },
+        (response) => resolve(response),
+      );
+      request.on('error', reject);
+      if (signal) {
+        const stop = () => request.destroy(new Error('素材下载超时'));
+        if (signal.aborted) stop();
+        else signal.addEventListener('abort', stop, { once: true });
+      }
+      request.end();
+    });
   }
 
   async function downloadTo(url, path, hops = 0) {
-    const target = await assertPublicUrl(url);
+    const target = new URL(String(url));
+    const pinned = await resolvePublic(target.toString());
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
     try {
-      const response = await fetch(target, { signal: controller.signal, redirect: 'manual' });
+      const response = await openPinned(target, pinned, controller.signal);
       // The redirect is followed by hand, so every hop is judged too: a
       // public address that redirects into the loopback is still refused.
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        await response.body?.cancel().catch(() => {});
-        if (!location) throw new Error(`素材下载失败（HTTP ${response.status}）`);
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        const location = response.headers.location;
+        response.resume();
+        if (!location) throw new Error(`素材下载失败（HTTP ${response.statusCode}）`);
         if (hops >= 5) throw new Error('素材下载失败（重定向过多）');
         return downloadTo(new URL(location, target).toString(), path, hops + 1);
       }
-      if (!response.ok) {
-        throw new Error(`素材下载失败（HTTP ${response.status}）`);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        throw new Error(`素材下载失败（HTTP ${response.statusCode}）`);
       }
-      const type = response.headers.get('content-type') ?? '';
-      const bytes = Number(response.headers.get('content-length') ?? 0);
+      const type = response.headers['content-type'] ?? '';
+      const bytes = Number(response.headers['content-length'] ?? 0);
       if (bytes > MAX_MEDIA_BYTES) {
+        response.resume();
         throw new Error('素材超过本机处理上限');
       }
-      if (!response.body) {
-        const buffer = Buffer.from(await response.arrayBuffer());
-        await writeFile(path, buffer);
-        return { path, bytes: buffer.length };
-      }
-      await pipeline(Readable.fromWeb(response.body), createWriteStream(path));
+      await pipeline(response, createWriteStream(path));
       const info = await stat(path);
       return { path, bytes: info.size, mimeType: type };
     } finally {
@@ -762,17 +940,27 @@ export function createMediaStore(context) {
     const plain = plainName(asked);
     if (!plain) return { ok: false, reason: 'bad_name' };
     await mkdir(folder, { recursive: true });
+    const body = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
     let finalPath = join(folder, plain);
     let index = 1;
-    // A file that is already there is kept: the new one gets a number.
-    while (await exists(finalPath)) {
+    // The name has to be free: not a file, and not a link that points at
+    // nothing either — a link is a name that is taken, so nothing is ever
+    // written through one.
+    for (;;) {
+      if (!(await exists(finalPath))) {
+        try {
+          await writeFile(finalPath, body, { flag: 'wx' });
+          break;
+        } catch (error) {
+          if (error?.code !== 'EEXIST') throw error;
+        }
+      }
+      // A name that is taken gets a number: the file that is there is kept.
       const ext = extensionOf(finalPath, '');
       const stem = finalPath.slice(0, finalPath.length - ext.length);
       finalPath = `${stem} (${index})${ext}`;
       index += 1;
     }
-    const body = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
-    await writeFile(finalPath, body);
     return { ok: true, path: finalPath, bytes: body.length, name: finalPath.split(/[\\/]/).pop() };
   }
 

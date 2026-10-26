@@ -12,8 +12,9 @@
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
 import { cardChrome, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf, stripInputs } from './forms.mjs';
-import { isBusyRefusal, runIsGone, waitForTheRun, withDeadline } from './run-watch.mjs';
-import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
+import { isBusyRefusal, panelClosed, panelIsShown, panelTasks, runIsGone, taskIsExpired, theRunThatIsGoing, theRunToWaitFor, waitForTheRun, withDeadline } from './run-watch.mjs';
+import { panelTitleRow } from './task-panel.mjs';
+import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
   'use strict';
@@ -101,6 +102,8 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     nodeTasks: new Map(), // nodeId -> taskId
     polling: new Set(), // taskIds whose poll is still on its way
     pollTimer: null,
+    // The user put the progress panel away: it comes back when a run starts.
+    taskPanelClosed: false,
     actionTimer: null,
     saveTimer: null,
     historyTimer: null,
@@ -161,6 +164,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       const error = new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
       error.code = payload?.error || 'http_error';
       error.status = response.status;
+      // A refused run names the run that is going: the one that asked waits
+      // for that run instead of standing still.
+      if (payload?.runId) error.runId = payload.runId;
       if (response.status === 401) {
         // The Host rotates the loopback credential when the runtime restarts,
         // and that happens on every plugin update. The page still holds the
@@ -3230,14 +3236,18 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     }
     state.pendingPanel = false;
     const now = Date.now();
-    const tasks = [...state.tasks.values()].filter(
-      (task) => task.status === 'running' || task.status === 'waiting-question' || task.status === 'error'
-        // A run that just finished stays a moment. Its log says how long it
-        // waited for the machine and how long it ran, and that is the answer
-        // to "why was this one slower?".
-        || (task.status === 'done' && now - (task.finishedAt ?? 0) < 30_000),
-    );
-    if (tasks.length === 0) {
+    // The panel shows what is going on and what just finished. A run that is
+    // over stays a moment — a failed one too, so the reason can be read — and
+    // then it goes: the panel is not a history of everything that ever ran.
+    const tasks = panelTasks(state.tasks.values(), { now });
+    // A run that is over and out of the panel is let go: the table does not
+    // grow for ever.
+    for (const [id, task] of state.tasks) {
+      if (taskIsExpired(task, { now })) state.tasks.delete(id);
+    }
+    // The panel sits over the canvas, so the user can put it away. It comes
+    // back when a run starts, because that is what the panel is for.
+    if (!panelIsShown({ closed: state.taskPanelClosed, tasks })) {
       // The panel is hidden, but its old content is cleared as well: a hidden
       // panel that still holds buttons is a stale control in the page.
       panel.hidden = true;
@@ -3246,7 +3256,13 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     }
     panel.hidden = false;
     panel.textContent = '';
-    panel.appendChild(el('div', 'nxc-taskpanel__title', '运行进度'));
+    const title = panelTitleRow(document, {
+      onPutAway: () => {
+        state.taskPanelClosed = panelClosed({ closed: state.taskPanelClosed, event: 'put-away' });
+        panel.hidden = true;
+      },
+    });
+    panel.appendChild(title);
     for (const task of tasks) {
       const item = el('div', 'nxc-taskpanel__item');
       const head = el('div', 'nxc-taskpanel__head');
@@ -3617,7 +3633,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     );
     if (applied.error) {
       showBanner(`模板没有铺上：${applied.error}`, 'error');
-      return;
+      return false;
     }
     state.canvas.nodes = applied.canvas.nodes;
     state.canvas.connections = applied.canvas.connections;
@@ -3625,6 +3641,7 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     markDirty();
     render();
     showBanner(`已铺上「${template.title}」，点节点上的「生成」开始`);
+    return true;
   }
 
   /**
@@ -3662,7 +3679,8 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
    * The question is asked in the page: a native confirm() is a separate OS
    * window that never reaches the screen inside the MiniApp host.
    */
-  async function deleteTemplate(template) {    const yes = await confirmInPage(`确定删掉模板「${template.title}」？画布本身不受影响。`);
+  async function deleteTemplate(template) {
+    const yes = await confirmInPage(`确定删掉模板「${template.title}」？画布本身不受影响，删掉就找不回来了。`);
     if (!yes) return;
     try {
       await api(`/api/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
@@ -3920,23 +3938,26 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
   }
 
   /** Wait for the run that was started on this node to finish. */
-  function waitForRun(nodeId, timeoutMs = 2_700_000) {
+  function waitForRun(nodeId, taskId = '', timeoutMs = 2_700_000) {
     // The run this wait is about is held on to. The page forgets which run
     // belongs to a node as soon as that run is over — the node is free to run
     // again — so a waiter that looked the run up again would never see it
     // finish, and the chain would stand still until its own timeout.
-    const taskId = state.nodeTasks.get(nodeId);
+    const id = theRunToWaitFor({ taskId, nodeId, known: state.nodeTasks });
     return waitForTheRun({
-      taskId,
-      readTask: (id) => state.tasks.get(id),
+      taskId: id,
+      readTask: (task) => state.tasks.get(task),
       timeoutMs,
     });
   }
 
   /** Run a node and wait for its result. */
   async function runAndWait(node) {
-    await startRun(node, { chain: false });
-    const task = await waitForRun(node.id);
+    const started = await startRun(node, { chain: false });
+    // The run that was started is the run that is waited for: the id is
+    // handed over, so a run that is over before the waiter looks it up is
+    // still waited for.
+    const task = await waitForRun(node.id, started?.id ?? '');
     return task?.status === 'done';
   }
 
@@ -4009,6 +4030,9 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
       const task = payload.run;
       state.tasks.set(task.id, task);
       state.nodeTasks.set(node.id, task.id);
+      // A run is starting, so the progress panel is worth showing again: the
+      // user put it away, but this is what it is for.
+      state.taskPanelClosed = panelClosed({ closed: state.taskPanelClosed, event: 'run-started' });
       if (task.sessionId) node.metadata.sessionId = task.sessionId;
       ensurePolling();
       render();
@@ -4024,6 +4048,14 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
         showBanner(String(error?.message ?? error));
         markDirty();
         render();
+        // The runtime names the run that is going, so the chain can wait for
+        // it even when this page is the one that did not start it.
+        const running = theRunThatIsGoing(error);
+        if (running) {
+          state.nodeTasks.set(node.id, running);
+          ensurePolling();
+          return { id: running, status: 'running', busy: true };
+        }
         return null;
       }
       node.metadata.output.status = 'error';
@@ -4991,9 +5023,15 @@ import { applyAction, applyModel, inheritedTextFor, lineKind, linesDroppedByMode
     const empty = Boolean(state.canvas?.id) && !(state.canvas?.nodes?.length);
     if (empty) {
       // The canvas that is open is empty: it becomes the canvas of this
-      // template, and it takes the name of it.
-      if (template.title) state.canvas.title = template.title;
-      applyTemplateOnCanvas(template);
+      // template. The name is given to it only when the steps are really on
+      // it, so a template that does not fit leaves no canvas with a name and
+      // no steps.
+      const applied = applyTemplateOnCanvas(template);
+      const title = canvasTitleAfterTemplate(template, applied);
+      if (!title) return;
+      state.canvas.title = title;
+      markDirty();
+      render();
       return;
     }
     await createCanvas(`${template.title || '新画布'}`, { askName: false });

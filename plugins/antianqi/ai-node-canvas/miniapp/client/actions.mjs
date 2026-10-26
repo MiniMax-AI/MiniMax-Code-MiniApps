@@ -528,26 +528,15 @@ function templateRef(value, ids) {
 export function applyTemplate(canvas, template, context = {}) {
   const doc = canvas ?? { nodes: [], connections: [] };
   const actions = Array.isArray(template?.actions) ? template.actions : [];
-  if (!actions.length) return { canvas: doc, error: '这个模板是空的' };
   // A template is a skeleton: it may make nodes and draw the lines between
   // them. It may not take anything away — a template that could would tidy
   // up a canvas it was dropped on, and the steps of a chain are not a licence
-  // to remove things.
-  for (const action of actions) {
-    const type = String(action?.type ?? '');
-    if (!TEMPLATE_ACTION_TYPES.includes(type)) {
-      return {
-        canvas: doc,
-        error: `模板里有一步做不了的事：${type || '(没有说是什么)'}（模板只能：${TEMPLATE_ACTION_TYPES.join('、')}）`,
-      };
-    }
-    if (type === 'connect') {
-      const from = String(action?.args?.from ?? '');
-      const to = String(action?.args?.to ?? '');
-      if (!/^@\d+$/.test(from) || !/^@\d+$/.test(to)) {
-        return { canvas: doc, error: '模板里的线要指向模板自己做的节点（@1 这样的名字）' };
-      }
-    }
+  // to remove things. The steps are judged by the one rule that judges them
+  // everywhere: the file that is read, the canvas the template is put on and
+  // the place it is kept in.
+  const problem = templateStepsError(actions);
+  if (problem) {
+    return { canvas: doc, error: problem };
   }
   const ctx = { idFor: fallbackId, ...context };
   const view = doc.viewport ?? { x: 80, y: 60 };
@@ -662,6 +651,36 @@ export const TEMPLATE_FILE_VERSION = 1;
 export const TEMPLATE_ACTION_TYPES = ['add_node', 'connect'];
 
 /**
+ * Whether the steps of a template are steps a template may carry.
+ *
+ * One rule, read by the three places that meet a template: the file that is
+ * read, the canvas a template is put on, and the place a template is kept
+ * in. The answer is empty when the steps are fine, and says what is wrong
+ * when they are not.
+ */
+export function templateStepsError(actions) {
+  const list = Array.isArray(actions) ? actions : [];
+  if (!list.length) return '这个模板里没有步骤';
+  for (const action of list) {
+    if (!action || typeof action !== 'object' || !action.args || typeof action.args !== 'object') {
+      return '这个模板里有一步写坏了';
+    }
+    const type = String(action.type ?? '');
+    if (!TEMPLATE_ACTION_TYPES.includes(type)) {
+      return `这个模板里有一步不是节点也不是连线：${type || '空'}（模板只能：${TEMPLATE_ACTION_TYPES.join('、')}）`;
+    }
+    if (type === 'connect') {
+      const from = String(action.args.from ?? '');
+      const to = String(action.args.to ?? '');
+      if (!/^@\d+$/.test(from) || !/^@\d+$/.test(to)) {
+        return '模板里的线要指向模板自己做的节点（@1 这样的名字）';
+      }
+    }
+  }
+  return '';
+}
+
+/**
  * The document a template is shared as.
  *
  * A template travels as a file: the steps are in it, and nothing else is, so
@@ -705,16 +724,10 @@ export function readTemplateFile(text) {
     return { ok: false, error: '这个模板的版本比这个画布新，请先更新画布' };
   }
   const actions = parsed.actions;
-  if (!Array.isArray(actions) || !actions.length) {
-    return { ok: false, error: '这个模板里没有步骤' };
-  }
-  for (const action of actions) {
-    if (!action || typeof action !== 'object' || !action.args || typeof action.args !== 'object') {
-      return { ok: false, error: '这个模板里有一步写坏了' };
-    }
-    if (action.type !== 'add_node' && action.type !== 'connect') {
-      return { ok: false, error: `这个模板里有一步不是节点也不是连线：${action.type ?? '空'}` };
-    }
+  // The steps are judged by the one rule that judges them everywhere.
+  const problem = templateStepsError(actions);
+  if (problem) {
+    return { ok: false, error: problem };
   }
   return {
     ok: true,
@@ -725,6 +738,18 @@ export function readTemplateFile(text) {
       actions,
     },
   };
+}
+
+/**
+ * The name a canvas takes from a template.
+ *
+ * The name is given to the canvas only when the steps are really on it: a
+ * template that does not fit leaves the canvas as it was, so a canvas with a
+ * name and no steps is never stored.
+ */
+export function canvasTitleAfterTemplate(template, applied) {
+  if (!applied) return '';
+  return String(template?.title ?? '').trim();
 }
 
 /**

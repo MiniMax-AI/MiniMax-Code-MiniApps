@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { homedir } from 'node:os';
 
-import { templateFromCanvas } from '../client/actions.mjs';
+import { readTemplateFile, templateFromCanvas, templateStepsError } from '../client/actions.mjs';
 import { createActionQueue } from './action-queue.mjs';
 import { createAgentRunner } from './agent-runner.mjs';
 import { palette } from './capabilities.mjs';
@@ -19,7 +19,7 @@ import { decodeHostConnectorValue } from './host-connector-value.mjs';
 import { handleMcp, MCP_PATH } from './mcp.mjs';
 import { createMediaRunner } from './media-runner.mjs';
 import { createCanvasStore } from './store.mjs';
-import { readTemplates, removeTemplate, saveTemplate } from './templates.mjs';
+import { readTemplates, removeTemplate, saveTemplate, templateIdOf } from './templates.mjs';
 
 // Keep in sync with `surface.path` in miniapp/miniapp.json.
 const SURFACE_PATH = '/canvas';
@@ -37,6 +37,7 @@ export const CLIENT_FILES = new Map([
   ['/forms.mjs', { file: 'forms.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/actions.mjs', { file: 'actions.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/run-watch.mjs', { file: 'run-watch.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/task-panel.mjs', { file: 'task-panel.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/styles.css', { file: 'styles.css', type: 'text/css; charset=utf-8' }],
 ]);
 
@@ -79,6 +80,25 @@ async function folderOf(asked) {
   }
   if (!info?.isDirectory()) return { error: '这个位置不是一个文件夹' };
   return { folder };
+}
+
+/**
+ * The text of a template file.
+ *
+ * What is written is a template: an object is written as one, and a text is
+ * written as it is when it is the text of a file that is one. Anything else
+ * is refused, so the endpoint writes templates and nothing else.
+ */
+function templateDocumentText(document) {
+  if (typeof document === 'string') {
+    const read = readTemplateFile(document);
+    if (!read.ok) return { ok: false, reason: 'bad_document', message: read.error };
+    return { ok: true, text: document };
+  }
+  if (!document || typeof document !== 'object' || Array.isArray(document)) {
+    return { ok: false, reason: 'bad_document', message: '这个文件不是一份模板' };
+  }
+  return { ok: true, text: `${JSON.stringify(document, null, 2)}\n` };
 }
 
 /**
@@ -312,13 +332,6 @@ export async function start(context) {
       });
     }
 
-    // The template files that lie on this machine.
-    //
-    // The file the page shares is written into the Downloads folder, so the
-    // file somebody sends to this machine lands there too. Each one is read
-    // by the one rule that reads a template, so a file that is something else
-    // is not offered at all.
-
     // The folders a file may be put in.
     //
     // The page asks where a file should go, and the answer is a path on this
@@ -349,9 +362,6 @@ export async function start(context) {
       if (!asked) {
         return sendJson(res, 400, { error: 'bad_name', message: '这个文件还没有名字' });
       }
-      if (body.document === undefined || body.document === null) {
-        return sendJson(res, 400, { error: 'empty', message: '这个文件是空的' });
-      }
       // The path is the one the user named: where the file goes and what it is
       // called. The folder has to be a folder that is there, and the name has
       // to be one plain name — a name that walks out of the folder is refused,
@@ -361,14 +371,20 @@ export async function start(context) {
       if (!name || name === '.' || name === '..') {
         return sendJson(res, 400, { error: 'bad_name', message: '这个文件名用不了' });
       }
+      // What is written is a template file, so the name says so and what goes
+      // in is a template: an object, or the text of a file that is one.
+      if (!name.toLowerCase().endsWith('.json')) {
+        return sendJson(res, 400, { error: 'bad_name', message: '这个文件要叫 .json 才好用' });
+      }
+      const text = templateDocumentText(body.document);
+      if (!text.ok) {
+        return sendJson(res, 400, { error: text.reason, message: text.message });
+      }
       const where = await folderOf(folder);
       if (where.error) {
         return sendJson(res, 400, { error: 'bad_folder', message: where.error });
       }
-      const text = typeof body.document === 'string'
-        ? body.document
-        : `${JSON.stringify(body.document, null, 2)}\n`;
-      const saved = await media.store.writeToFolder(name, text, where.folder);
+      const saved = await media.store.writeToFolder(name, text.text, where.folder);
       if (!saved.ok) {
         return sendJson(res, 400, { error: saved.reason, message: '这个文件名用不了' });
       }
@@ -396,9 +412,14 @@ export async function start(context) {
     // so the same place keeps both kinds of template by the same rule.
     if (path === '/api/templates' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const id = String(body.id ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64);
+      // The name is judged by the one rule that also judges taking a template
+      // away, so anything that can be kept can also be taken away.
+      const id = templateIdOf(body.id);
       if (!id) {
-        return sendJson(res, 400, { error: 'bad_id', message: '这个模板还没有名字' });
+        return sendJson(res, 400, {
+          error: 'bad_id',
+          message: '这个模板的名字不能用（只能用字母、数字、点、下划线和短横线）',
+        });
       }
       let template = null;
       if (Array.isArray(body.actions)) {
@@ -408,23 +429,37 @@ export async function start(context) {
           description: String(body.description ?? ''),
           actions: body.actions,
         };
+        // The steps are judged by the one rule that judges them everywhere, so
+        // a template that is kept cannot carry a step that would be refused
+        // the moment it is put on a canvas.
+        const problem = templateStepsError(template.actions);
+        if (problem) {
+          return sendJson(res, 400, { error: 'bad_actions', message: problem });
+        }
       } else {
         const canvas = body.canvas ?? (body.canvasId ? await store.get(body.canvasId) : null);
         if (!canvas) {
           return sendJson(res, 404, { error: 'not_found', message: '没有这张画布' });
         }
         template = templateFromCanvas(canvas, { id, title: String(body.title ?? id) });
+        if (!template.actions.length) {
+          return sendJson(res, 400, {
+            error: 'empty',
+            message: '这张画布上没有能存成模板的步骤（结果和素材不算步骤）',
+          });
+        }
       }
-      if (!template.actions.length) {
-        return sendJson(res, 400, {
-          error: 'empty',
-          message: '这张画布上没有能存成模板的步骤（结果和素材不算步骤）',
+      const saved = await saveTemplate(context.dataDir, template);
+      if (!saved.ok) {
+        const taken = saved.reason === 'taken';
+        return sendJson(res, taken ? 409 : 400, {
+          error: saved.reason,
+          message: taken ? '这个名字已经有模板了，换一个' : '这个模板的名字不能用',
         });
       }
-      await saveTemplate(context.dataDir, template);
       return sendJson(res, 200, {
         ok: true,
-        template: { id, title: template.title, steps: template.actions.length },
+        template: { id: saved.id, title: template.title, steps: template.actions.length },
       });
     }
 
@@ -792,10 +827,14 @@ export async function start(context) {
         : code === 'REQUEST_NOT_FOUND' ? 404
         : code === 'FFMPEG_UNAVAILABLE' ? 503
         : 500;
-      sendJson(res, status, {
+      const payload = {
         error: code,
         message: String(error?.message ?? error),
-      });
+      };
+      // A refused run says which run is going: the one that asked waits for
+      // that run instead of standing still.
+      if (error?.runId) payload.runId = error.runId;
+      sendJson(res, status, payload);
     });
   });
 

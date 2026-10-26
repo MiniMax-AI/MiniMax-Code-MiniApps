@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8108,10 +8108,129 @@ test('a busy node is not a failed one', async () => {
 
 test('the page waits for the run it was given, and a busy node keeps its card', async () => {
   // The rule is one rule: the page holds the run it waits for, and a node that
-  // is busy is not marked as failed.
-  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
-  assert.match(source, /const taskId = state\.nodeTasks\.get\(nodeId\);\s*\n\s*return waitForTheRun\(\{/);
-  assert.match(source, /if \(isBusyRefusal\(error\)\) \{/);
+  // is busy is not marked as failed — the run that is going is named, so the
+  // chain can wait for it.
+  const { theRunToWaitFor, theRunThatIsGoing } = await import('../miniapp/client/run-watch.mjs');
+  // The run that was started is handed over, so the waiter does not look it
+  // up: the page may have forgotten it already.
+  assert.equal(
+    theRunToWaitFor({ taskId: 'r_new', nodeId: 'n1', known: new Map([['n1', 'r_old']]) }),
+    'r_new',
+    '交到手里的那次运行就是这次要等的',
+  );
+  // Without one, the run the page knows about is the one that is waited for.
+  assert.equal(theRunToWaitFor({ nodeId: 'n1', known: new Map([['n1', 'r_old']]) }), 'r_old');
+  // And without that, there is no run to wait for.
+  assert.equal(theRunToWaitFor({ nodeId: 'n1', known: new Map() }), '');
+  // A refusal names the run that is going.
+  assert.equal(theRunThatIsGoing({ code: 'BUSY', runId: 'r_busy' }), 'r_busy');
+  assert.equal(theRunThatIsGoing({ code: 'BUSY' }), '');
+  assert.equal(theRunThatIsGoing(null), '');
+});
+
+test('a run that is over leaves the progress panel, and a failed one goes with it', async () => {
+  // The progress panel is about now: a run that is over is kept a moment so
+  // its last lines can still be read, and then it goes. A failed run is a
+  // finished run — it must not sit on the screen for ever.
+  const { FINISHED_KEEP_MS, panelTasks, taskIsExpired } = await import('../miniapp/client/run-watch.mjs');
+  const now = 1_700_000_000_000;
+
+  // A run that is going is never let go.
+  assert.equal(taskIsExpired({ status: 'running' }, { now }), false);
+  assert.equal(taskIsExpired({ status: 'waiting-question' }, { now }), false);
+  // A run that just ended is kept, so the reason can still be read.
+  assert.equal(taskIsExpired({ status: 'done', finishedAt: now - 1_000 }, { now }), false);
+  assert.equal(taskIsExpired({ status: 'error', finishedAt: now - 1_000 }, { now }), false);
+  // And then it goes: a failed run is not a history.
+  assert.equal(taskIsExpired({ status: 'done', finishedAt: now - FINISHED_KEEP_MS }, { now }), true);
+  assert.equal(taskIsExpired({ status: 'error', finishedAt: now - FINISHED_KEEP_MS - 1 }, { now }), true);
+  // A run that was cancelled has nothing left to show.
+  assert.equal(taskIsExpired({ status: 'aborted' }, { now }), true);
+
+  // And the panel shows exactly those: what is going, and what just ended.
+  const shown = panelTasks([
+    { id: 'r1', status: 'running' },
+    { id: 'r2', status: 'waiting-question' },
+    { id: 'r3', status: 'done', finishedAt: now - 1_000 },
+    { id: 'r4', status: 'error', finishedAt: now - 1_000 },
+    { id: 'r5', status: 'error', finishedAt: now - FINISHED_KEEP_MS - 1 },
+  ], { now });
+  assert.deepEqual(shown.map((task) => task.id), ['r1', 'r2', 'r3', 'r4']);
+});
+
+test('a burst of runs does not fill the screen', async () => {
+  // The panel is short: a burst of failures must not cover the canvas, and
+  // the newest runs are the ones that are kept.
+  const { panelTasks } = await import('../miniapp/client/run-watch.mjs');
+  const now = 1_700_000_000_000;
+  const many = Array.from({ length: 12 }, (unused, index) => ({ id: `r${index}`, status: 'running' }));
+  const shown = panelTasks(many, { now });
+  assert.equal(shown.length, 8);
+  assert.deepEqual(shown.map((task) => task.id), ['r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11']);
+});
+
+test('the panel is put away by the user, and a new run brings it back', async () => {
+  // The panel sits over the canvas, so it has to be the user's choice: it
+  // stays away when it is put away, and a run that starts brings it back.
+  const { panelClosed, panelIsShown } = await import('../miniapp/client/run-watch.mjs');
+  const one = [{ id: 'r1', status: 'running' }];
+
+  // It shows itself when there is something to show.
+  assert.equal(panelIsShown({ closed: false, tasks: one }), true);
+  assert.equal(panelIsShown({ closed: false, tasks: [] }), false);
+  // And it stays away when the user put it away.
+  assert.equal(panelIsShown({ closed: true, tasks: one }), false);
+
+  // The user puts it away...
+  assert.equal(panelClosed({ closed: false, event: 'put-away' }), true);
+  // ...and it stays away...
+  assert.equal(panelClosed({ closed: true }), true);
+  // ...until a run starts.
+  assert.equal(panelClosed({ closed: true, event: 'run-started' }), false);
+  assert.equal(panelClosed({ closed: false, event: 'run-started' }), false);
+});
+
+// A document that is just enough for the panel's own parts: an element with a
+// name, some text, children and a click.
+function fakeDocument() {
+  const create = (tag) => {
+    const node = {
+      tagName: tag.toUpperCase(),
+      className: '',
+      textContent: '',
+      children: [],
+      listeners: new Map(),
+      appendChild: (child) => { node.children.push(child); return child; },
+      addEventListener: (type, handler) => {
+        const list = node.listeners.get(type) ?? [];
+        list.push(handler);
+        node.listeners.set(type, list);
+      },
+      click: () => {
+        for (const handler of node.listeners.get('click') ?? []) {
+          handler({ stopPropagation() {} });
+        }
+      },
+    };
+    return node;
+  };
+  return { createElement: create };
+}
+
+test('the panel has a button that puts it away', async () => {
+  // The button is what the user reaches for, so it has to be there and it has
+  // to ask for the panel to be put away.
+  const { panelTitleRow } = await import('../miniapp/client/task-panel.mjs');
+  const doc = fakeDocument();
+  let asked = 0;
+  const row = panelTitleRow(doc, { onPutAway: () => { asked += 1; } });
+  assert.equal(row.className, 'nxc-taskpanel__title');
+  const button = row.children.find((child) => child.tagName === 'BUTTON');
+  assert.ok(button, 'the title row has no button');
+  assert.equal(button.className, 'nxc-taskpanel__close');
+  assert.equal(button.textContent, '收起');
+  button.click();
+  assert.equal(asked, 1, 'the button did not ask for the panel to be put away');
 });
 
 test('a clip the provider cannot read in time is made smaller first', async () => {
@@ -8367,4 +8486,284 @@ test('a clip on this machine can be measured', async (t) => {
   const source = await readFile(fileURLToPath(new URL('../miniapp/node/ffmpeg.mjs', import.meta.url)), 'utf8');
   assert.match(source, /-show_entries/);
   assert.equal(source.includes("'-show_streams'"), false, 'probe 又去问整个流了');
+});
+
+// ---------------------------------------------------------------------------
+// The review round: what the reviewer asked for, one test each.
+//
+// Every rule here is a plain function or a request the runtime answers, so
+// each one is checked by what it does and not by how the source reads.
+// ---------------------------------------------------------------------------
+
+test('a link to this machine is refused, however it is written', async () => {
+  // The IPv4 address can be written inside an IPv6 one in four ways, and
+  // Node's own parser rewrites them: `::ffff:127.0.0.1` becomes
+  // `::ffff:7f00:1` before the rule ever sees it. A rule that only knows
+  // the dotted form is a rule that can be stepped around.
+  const { embeddedIPv4, isPrivateAddress } = await import('../miniapp/node/media-store.mjs');
+  assert.equal(embeddedIPv4('::ffff:7f00:1'), '127.0.0.1');
+  assert.equal(embeddedIPv4('::7f00:1'), '127.0.0.1');
+  assert.equal(embeddedIPv4('64:ff9b::7f00:1'), '127.0.0.1');
+  assert.equal(embeddedIPv4('2002:7f00:1::'), '127.0.0.1');
+  assert.equal(embeddedIPv4('2606:4700::1111'), null, '一个普通 IPv6 地址里没有 IPv4');
+
+  assert.equal(isPrivateAddress('::ffff:7f00:1'), true);
+  assert.equal(isPrivateAddress('::ffff:127.0.0.1'), true);
+  assert.equal(isPrivateAddress('::7f00:1'), true);
+  assert.equal(isPrivateAddress('64:ff9b::7f00:1'), true);
+  assert.equal(isPrivateAddress('2002:7f00:1::'), true);
+  // The shared space of a carrier and the reserved ranges are refused too.
+  assert.equal(isPrivateAddress('100.64.0.1'), true);
+  assert.equal(isPrivateAddress('100.128.0.1'), false);
+  assert.equal(isPrivateAddress('198.18.0.1'), true);
+  assert.equal(isPrivateAddress('240.0.0.1'), true);
+  // A public address is still a public address, in every form.
+  assert.equal(isPrivateAddress('::ffff:8.8.8.8'), false);
+  assert.equal(isPrivateAddress('64:ff9b::8.8.8.8'), false);
+  assert.equal(isPrivateAddress('2606:4700::1111'), false);
+  assert.equal(isPrivateAddress('8.8.8.8'), false);
+});
+
+test('the address that was judged is the address that is used', async () => {
+  // The name is looked up once for the check and again for the connection,
+  // and a name that answers one thing for the first and another for the
+  // second gets through. So the address that was judged is pinned: it is
+  // the address the download connects to.
+  const { pinnedAddress } = await import('../miniapp/node/media-store.mjs');
+  assert.equal(
+    pinnedAddress([{ address: '93.184.216.34', family: 4 }])?.address,
+    '93.184.216.34',
+    '公网地址就用它自己',
+  );
+  assert.equal(
+    pinnedAddress([{ address: '93.184.216.34', family: 4 }, { address: '127.0.0.1', family: 4 }]),
+    null,
+    '只要有一个地址指向本机，整个名字都拒绝',
+  );
+  assert.equal(pinnedAddress([]), null, '没有地址就没有可连的地址');
+});
+
+test('a file is never written through a link that points at nothing', async (t) => {
+  // A link that points at a file that is not there counts as a name that is
+  // taken, so the file lands beside it instead of going through it.
+  const { createMediaStore } = await import('../miniapp/node/media-store.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-link-'));
+  const link = join(dir, '模板.json');
+  try {
+    await symlink(join(dir, 'nothing.json'), link, 'file');
+  } catch {
+    await rm(dir, { recursive: true, force: true });
+    t.skip('这台机器不让测试建软链：这条合同要在能建软链的机器上验');
+    return;
+  }
+  const store = createMediaStore({ dataDir: dir });
+  const saved = await store.writeToFolder('模板.json', '{"a":1}', dir);
+  assert.equal(saved.ok, true);
+  assert.notEqual(saved.path, link, '文件不能写在链接本身上');
+  assert.equal((await lstat(link)).isSymbolicLink(), true, '那个链接还是链接');
+  const landed = JSON.parse(await readFile(saved.path, 'utf8'));
+  assert.equal(landed.a, 1);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('a template of the user is kept and taken away by the same rule', async () => {
+  const { readTemplates, removeTemplate, saveTemplate, templateIdOf } = await import('../miniapp/node/templates.mjs');
+  const dataDir = await mkdtemp(join(tmpdir(), 'nxc-templates-'));
+  // One rule for the name: a plain name, and never a dot segment.
+  assert.equal(templateIdOf('own-abc'), 'own-abc');
+  assert.equal(templateIdOf('.'), null);
+  assert.equal(templateIdOf('..'), null);
+  assert.equal(templateIdOf('...'), null);
+  assert.equal(templateIdOf('a/b'), null);
+  assert.equal(templateIdOf(''), null);
+
+  const kept = await saveTemplate(dataDir, { id: 'own-1', title: '我的链', actions: [{ type: 'add_node', args: { type: 'image' } }] });
+  assert.equal(kept.ok, true);
+  // A template that is already there is not written over.
+  const again = await saveTemplate(dataDir, { id: 'own-1', title: '别的', actions: [] });
+  assert.equal(again.ok, false);
+  assert.equal(again.reason, 'taken');
+
+  // It is listed by the file it is in, so the panel and the file cannot differ.
+  const mine = (await readTemplates(dataDir)).find((item) => item.own);
+  assert.equal(mine.id, 'own-1');
+  // A file that was put there some other way is listed by its name too, so it
+  // can be taken away by that name.
+  await writeFile(
+    join(dataDir, 'templates', 'hand-made.json'),
+    JSON.stringify({ id: 'inner', title: '手放的', actions: [{ type: 'add_node', args: { type: 'image' } }] }),
+    'utf8',
+  );
+  const listed = (await readTemplates(dataDir)).find((item) => item.own && item.id === 'hand-made');
+  assert.equal(listed.title, '手放的');
+  assert.equal(await removeTemplate(dataDir, 'hand-made'), true);
+  assert.equal(await removeTemplate(dataDir, 'hand-made'), false, '删过就没有了');
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('a template that is kept cannot carry a step that would be refused', async (t) => {
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const post = (body) => fetch(`${h.base}/api/templates`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  // A step that is not a node and not a line is refused before it is written.
+  const bad = await post({ id: 'own-bad', title: '坏的', actions: [{ type: 'rm_rf', args: { path: '/' } }] });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error, 'bad_actions');
+
+  // A line that points at nothing is refused as well.
+  const dangling = await post({ id: 'own-dangling', title: '断的', actions: [{ type: 'connect', args: { from: 'n1', to: 'n2' } }] });
+  assert.equal(dangling.status, 400);
+
+  // The name is judged by the rule that also judges the deletion.
+  for (const id of ['.', '..', '...', '名字/带斜杠']) {
+    const refused = await post({ id, title: '名字', actions: [{ type: 'add_node', args: { type: 'image' } }] });
+    assert.equal(refused.status, 400, `${id} 这个名字不能用`);
+  }
+
+  // A good template is kept.
+  const good = await post({ id: 'own-good', title: '好的', actions: [{ type: 'add_node', args: { type: 'image' } }] });
+  assert.equal(good.status, 200);
+  const listed = await getJson(h.base, '/api/templates');
+  const mine = listed.body.templates.find((item) => item.id === 'own-good');
+  assert.equal(mine.own, true);
+  // And a name that is taken is refused, so a template is never lost.
+  const taken = await post({ id: 'own-good', title: '另一条', actions: [{ type: 'add_node', args: { type: 'image' } }] });
+  assert.equal(taken.status, 409);
+});
+
+test('the export writes a template file, and only a template file', async (t) => {
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+  const folder = await mkdtemp(join(tmpdir(), 'nxc-export-'));
+  const post = (path, document) => fetch(`${h.base}/api/export`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path, document }),
+  });
+  // A name that does not say what the file is.
+  const wrong = await post(join(folder, '模板.txt'), { id: 'x' });
+  assert.equal(wrong.status, 400);
+  assert.equal((await wrong.json()).error, 'bad_name');
+  // A document that is not a template.
+  const notATemplate = await post(join(folder, '模板.json'), [1, 2, 3]);
+  assert.equal(notATemplate.status, 400);
+  assert.equal((await notATemplate.json()).error, 'bad_document');
+  // And a template file is written.
+  const good = await post(join(folder, '模板.json'), {
+    kind: 'ai-node-canvas-template',
+    version: 1,
+    id: 'own-x',
+    title: '导出的一条',
+    actions: [{ type: 'add_node', args: { type: 'image' } }],
+  });
+  assert.equal(good.status, 200);
+  const written = JSON.parse(await readFile(join(folder, '模板.json'), 'utf8'));
+  assert.equal(written.title, '导出的一条');
+  await rm(folder, { recursive: true, force: true });
+});
+
+test('a busy node names the run that is going', async (t) => {
+  // The runtime refuses a second run on a node that is already running, and
+  // it says which run that is: the chain can wait for it instead of standing
+  // still.
+  const connector = createMockHostConnector(undefined, { videoState: 'running' });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+  const start = () => fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_busy',
+      mode: 'video',
+      prompt: '一只猫在跑',
+      modelKey: 'MiniMax-H3',
+      path: 'collection',
+      references: [{ id: 'n_pic', title: '图', kind: 'image', text: '', media: [{ url: 'https://cdn.example.com/a.png', kind: 'image' }] }],
+    }),
+  });
+  const first = await start();
+  assert.equal(first.status, 202);
+  const started = await first.json();
+  const second = await start();
+  assert.equal(second.status, 409);
+  const refused = await second.json();
+  assert.equal(refused.error, 'BUSY');
+  assert.equal(refused.runId, started.run.id, '要说出正在跑的那一次');
+});
+
+test('a refused run leaves the node free', async (t) => {
+  // A run that is refused must not leave a task behind: the node would be
+  // busy for ever, for a run that never started.
+  const connector = createMockHostConnector(undefined, { videoState: 'succeeded' });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+  const refused = await fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_refused',
+      mode: 'video',
+      prompt: '只有音频',
+      modelKey: 'MiniMax-H3',
+      path: 'collection',
+      references: [{ id: 'n_music', title: '音乐', kind: 'audio', text: '', media: [{ url: 'https://cdn.example.com/m.mp3', kind: 'audio' }] }],
+    }),
+  });
+  assert.equal(refused.status, 400);
+  // The node is free again: the next run is not refused as busy.
+  const again = await fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_refused',
+      mode: 'video',
+      prompt: '带图',
+      modelKey: 'MiniMax-H3',
+      path: 'collection',
+      references: [{ id: 'n_pic', title: '图', kind: 'image', text: '', media: [{ url: 'https://cdn.example.com/a.png', kind: 'image' }] }],
+    }),
+  });
+  assert.equal(again.status, 202, '被拒绝的一次不能让节点一直占着');
+});
+
+test('an old mode name is looked up exactly', async () => {
+  // A plain object answers `__proto__` with its prototype, so a lookup that
+  // is not exact hands back something that is not a mode.
+  const { currentModeId } = await import('../miniapp/client/forms.mjs');
+  assert.equal(currentModeId('textimage2image'), 'image2image');
+  assert.equal(currentModeId('textimage2video'), 'image2video');
+  assert.equal(currentModeId('__proto__'), '__proto__');
+  assert.equal(currentModeId('constructor'), 'constructor');
+  assert.equal(currentModeId('toString'), 'toString');
+});
+
+test('a canvas takes the name of a template only when the steps are on it', async () => {
+  const { canvasTitleAfterTemplate } = await import('../miniapp/client/actions.mjs');
+  assert.equal(canvasTitleAfterTemplate({ title: '图片复刻' }, true), '图片复刻');
+  assert.equal(canvasTitleAfterTemplate({ title: '图片复刻' }, false), '', '没有步骤就不改名');
+  assert.equal(canvasTitleAfterTemplate({}, true), '');
+});
+
+test('the MCP server says what it can do', async () => {
+  // The description of the server has to name the tools it really has,
+  // including the ones that delete something and the ones that spend money.
+  const raw = await readFile(fileURLToPath(new URL('../servers.mcp.json', import.meta.url)), 'utf8');
+  const description = JSON.parse(raw).mcpServers.canvas.description;
+  for (const tool of ['canvas_list', 'canvas_read', 'canvas_add_node', 'canvas_connect', 'canvas_update_node', 'canvas_remove_node', 'canvas_run', 'canvas_list_templates', 'canvas_apply_template']) {
+    assert.ok(description.includes(tool), `描述里要写明 ${tool}`);
+  }
+  assert.match(description, /额度/, '要说明 canvas_run 会花掉用户自己的额度');
+  assert.match(description, /没法恢复/, '要说明 canvas_remove_node 删掉的节点找不回来');
+});
+
+test('the README says that a deleted template is gone for good', async () => {
+  const en = await readFile(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
+  const zh = await readFile(fileURLToPath(new URL('../README.zh-CN.md', import.meta.url)), 'utf8');
+  assert.match(en, /cannot be undone/, '英文 README 要写明删掉找不回来');
+  assert.match(zh, /找不回来/, '中文 README 要写明删掉找不回来');
 });

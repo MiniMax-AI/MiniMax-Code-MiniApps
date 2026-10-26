@@ -312,7 +312,8 @@ this package.
 - **A template of the user can be managed** — every template of the user
   carries a delete button next to it (the question is asked in the page, like
   every other question here). The ready-made ones are not the user's to take
-  away.
+  away. **Deleting a template of the user cannot be undone**: the file is
+  gone, and there is no copy of it anywhere.
 - **The canvas is a workbench, and it saves itself** — a change is written
   down about a second later, and the state beside the canvas name says
   whether it happened, so the toolbar has no **保存** button: a button that
@@ -639,6 +640,14 @@ separate pictures.
   other request — image, video, audio, music, voice catalogue, video
   understanding — goes through the Host connector (`context.hostConnector`),
   and the Host owns the credentials and the egress.
+- **The addresses a download may go to** — a link that points at this machine
+  or at the network it sits in is refused: the loopback, the private ranges,
+  the link-local range, the shared space of a carrier and the reserved ranges,
+  in IPv4 and in IPv6 alike — including the forms that carry an IPv4 address
+  inside an IPv6 one (`::ffff:7f00:1`, `::7f00:1`, `64:ff9b::7f00:1`). The
+  name is looked up **once**, and the address that was judged is the address
+  that is connected to, so a name cannot answer one thing for the check and
+  another for the connection. Every hop of a redirect is judged the same way.
 - **The two steps of an upload** — the provider's upload command does not take
   a local path, because the provider cannot read this machine's disk. It takes
   the file name and the media type and answers with a signed form; the runtime

@@ -21,7 +21,7 @@
 // and keeping it — so the shipped ones are written the same way: a file says
 // the whole of it (the title, what it is for, the group it belongs to and
 // the steps), and nobody has to touch the code to change one.
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,20 +70,52 @@ export function templatesDir(dataDir) {
 }
 
 /**
+ * The name of a template of the user's own.
+ *
+ * One rule, shared by keeping a template and taking one away: a name is a
+ * plain name — letters, digits, dot, underscore and dash — and it is never a
+ * dot segment, so a name can only ever be a file inside the template folder.
+ */
+export function templateIdOf(value) {
+  const name = String(value ?? '').trim();
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(name)) return null;
+  // A name that is only dots is a dot segment in another dress.
+  if (/^\.+$/.test(name)) return null;
+  return name;
+}
+
+/**
  * Keep a template of the user's own.
  *
  * It lives under the runtime's own data directory, not in the package: a
  * template is the user's own, and it survives a new version of the MiniApp.
+ *
+ * A template that is already there is not written over: the file is made
+ * once, so the one that is there is kept and the new one is refused.
  */
 export async function saveTemplate(dataDir, template) {
+  const id = templateIdOf(template?.id);
+  if (!id) return { ok: false, reason: 'bad_id' };
   const dir = templatesDir(dataDir);
   await mkdir(dir, { recursive: true });
-  const file = join(dir, `${template.id}.json`);
-  await writeFile(file, `${JSON.stringify(template, null, 2)}\n`, 'utf8');
-  return file;
+  const file = join(dir, `${id}.json`);
+  const body = `${JSON.stringify({ ...template, id }, null, 2)}\n`;
+  try {
+    // The file is written only into a name that is free.
+    await writeFile(file, body, { encoding: 'utf8', flag: 'wx' });
+  } catch (error) {
+    if (error?.code === 'EEXIST') return { ok: false, reason: 'taken' };
+    throw error;
+  }
+  return { ok: true, path: file, id };
 }
 
-/** The built-in templates and the user's own, one list. */
+/**
+ * The built-in templates and the user's own, one list.
+ *
+ * A template of the user's own is listed by the file it is in: that name is
+ * the name it is taken away by, and the two can never be different.
+ */
 export async function readTemplates(dataDir) {
   const own = [];
   try {
@@ -91,8 +123,8 @@ export async function readTemplates(dataDir) {
       if (!entry.endsWith('.json')) continue;
       try {
         const parsed = JSON.parse(await readFile(join(templatesDir(dataDir), entry), 'utf8'));
-        if (!parsed?.id || !Array.isArray(parsed.actions)) continue;
-        own.push({ ...parsed, own: true });
+        if (!Array.isArray(parsed?.actions)) continue;
+        own.push({ ...parsed, id: entry.slice(0, -'.json'.length), own: true });
       } catch {
         // A template that cannot be read is one that is not there.
       }
@@ -106,16 +138,19 @@ export async function readTemplates(dataDir) {
 /**
  * Take a template of the user's own away.
  *
- * The id is the name of the file under the template folder, so it is judged as
- * a plain name: a request cannot walk out of the folder it belongs to, and it
- * cannot take a built-in template away either — those are not in this folder.
+ * The name is the name of the file under the template folder, judged by the
+ * one rule that also judges keeping a template: so a request cannot walk out
+ * of the folder it belongs to, and it cannot take a built-in template away
+ * either — those are not in this folder.
  */
 export async function removeTemplate(dataDir, id) {
-  const name = String(id ?? '').trim();
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || name === '.' || name === '..') return false;
+  const name = templateIdOf(id);
+  if (!name) return false;
   const file = join(templatesDir(dataDir), `${name}.json`);
   try {
-    await stat(file);
+    // The link itself is looked at: a link that points at nothing is still a
+    // file that is there, and it is taken away as one.
+    await lstat(file);
   } catch {
     return false;
   }

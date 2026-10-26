@@ -29,7 +29,7 @@ import { createProviderUploader } from './provider-upload.mjs';
 import { createMediaStore } from './media-store.mjs';
 import { createFfmpeg } from './ffmpeg.mjs';
 import { buildMentionMap, compilePrompt, providerFamily, referencePattern, referenceSlots, tokenize } from './prompt.mjs';
-import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex } from './video-request.mjs';
+import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex, referenceSetError } from './video-request.mjs';
 import { compressionArgs, isUnderstandTimeout, understandingPlan } from './understand-media.mjs';
 import { materialToRead } from '../client/forms.mjs';
 import { createConnectorRunner, queueWaitText } from './connector-runner.mjs';
@@ -130,19 +130,16 @@ function assertWithinLimits(capabilities, references, path = '') {
       { code: 'INVALID_ARGUMENTS' },
     );
   }
-  // The provider's own rules for a reference set:
-  //   - an audio reference never comes alone: it needs a picture or a video
-  //   - the collections hold twelve items in all
-  // The page cannot see either of them, so the run is refused here instead of
-  // being sent and coming back with a provider error.
+  // The provider's own rules for a reference set are judged on the request
+  // that is about to be sent, in the connector: the set is never empty, and
+  // an audio never comes alone. The page cannot see either of them, so the
+  // run is refused there instead of being sent and coming back with a
+  // provider error.
+  //
+  // What is left here is what the node holds: how many pictures, videos and
+  // audios a node may carry at all.
   if (COLLECTION_PATHS.has(path)) {
     const total = counts.image + counts.video + counts.audio;
-    if (total === 0) {
-      throw Object.assign(
-        new Error('参考生视频至少要一样参考素材：一张图、一条视频或一段音频。'),
-        { code: 'INVALID_ARGUMENTS' },
-      );
-    }
     const limit = capabilities.maxReferenceItems ?? 0;
     if (limit && total > limit) {
       throw Object.assign(
@@ -150,12 +147,6 @@ function assertWithinLimits(capabilities, references, path = '') {
         { code: 'INVALID_ARGUMENTS' },
       );
     }
-  }
-  if (COLLECTION_PATHS.has(path) && counts.audio > 0 && counts.image + counts.video === 0) {
-    throw Object.assign(
-      new Error('音频参考要配一张图或一条视频：provider 只收成组的参考，音频不能单独来。'),
-      { code: 'INVALID_ARGUMENTS' },
-    );
   }
   return counts;
 }
@@ -1210,7 +1201,12 @@ export function createAgentRunner(context) {
       const runningId = nodeTasks.get(nodeId);
       const running = runningId ? tasks.get(runningId) : null;
       if (running && (running.status === 'running' || running.status === 'waiting-question')) {
-        throw Object.assign(new Error('这个节点正在生成中，请等它跑完'), { code: 'BUSY' });
+        // The run that is going is named, so the one that asked can wait for
+        // it: a chain that meets a busy node waits for that run.
+        throw Object.assign(
+          new Error('这个节点正在生成中，请等它跑完'),
+          { code: 'BUSY', runId: running.id },
+        );
       }
 
       const modelId = modelIdFromKey(input.modelKey);
@@ -1251,9 +1247,6 @@ export function createAgentRunner(context) {
         duration,
       };
 
-      const task = createTask({ ...input, mode, nodeId });
-      task.count = count;
-      task.log.push(...setupLog);
       const { agentPrompt, compiled, providerPrompt, assets } = buildPrompt({
         ...input,
         // The references that were made readable for the provider: a local
@@ -1269,6 +1262,26 @@ export function createAgentRunner(context) {
         materialContent: material.content,
         materialKind: material.kind,
       });
+      // The provider's own rules for a reference set, judged on the material
+      // this run really sends: the rule follows the material, so it cannot
+      // be stepped around by naming the request something else.
+      const problem = referenceSetError(
+        {
+          images: (assets.images ?? []).filter(Boolean).length,
+          videos: (assets.videos ?? []).filter(Boolean).length,
+          audios: (assets.audios ?? []).filter(Boolean).length,
+        },
+        { collection: COLLECTION_PATHS.has(input.path) },
+      );
+      if (problem) {
+        throw Object.assign(new Error(problem), { code: 'INVALID_ARGUMENTS' });
+      }
+      // The task is made only when the run is really going to happen: a run
+      // that is refused leaves nothing behind, so the node is free again
+      // instead of staying busy for a run that never started.
+      const task = createTask({ ...input, mode, nodeId });
+      task.count = count;
+      task.log.push(...setupLog);
       task.compiledPrompt = compiled.promptForApi;
       task.assets = assets;
       task.log.push(`开始生成（${mode}）`);

@@ -2024,11 +2024,32 @@ input {
 }
 
 .nxc-taskpanel__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   font-size: 10.5px;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin-bottom: 6px;
+}
+
+/* The panel sits over the canvas, so it can be put away. */
+.nxc-taskpanel__close {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.nxc-taskpanel__close:hover {
+  color: var(--text);
 }
 
 .nxc-taskpanel__item {

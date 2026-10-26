@@ -191,7 +191,9 @@ export function modesOf(node) {
  * lands on the mode that is left.
  */
 export function currentModeId(modeId) {
-  return LEGACY_MODES[modeId] ?? modeId;
+  // The lookup is exact: a name that is not in the table is not a mode of the
+  // old names, and it stays the name it is.
+  return Object.hasOwn(LEGACY_MODES, modeId) ? LEGACY_MODES[modeId] : modeId;
 }
 
 /** The mode a node is in. */

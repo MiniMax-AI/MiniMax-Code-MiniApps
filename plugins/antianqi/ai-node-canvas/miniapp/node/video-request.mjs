@@ -26,6 +26,34 @@ export const FRAME_PATHS = new Set(['keyframe', 'firstLast', 'lastFrame']);
 export const COLLECTION_PATHS = new Set(['collection', 'collectionAudio']);
 
 /**
+ * Whether a reference set is one the provider takes.
+ *
+ * The provider takes ONE set: pictures, videos and audios may sit in it
+ * together. The collection — the one request that is made of references — is
+ * never empty, and an audio reference never comes alone: it needs a picture
+ * or a video beside it.
+ *
+ * The rule is judged on the material the request really carries, not on what
+ * the request is called, so it cannot be stepped around by naming the
+ * request something else.
+ *
+ * The answer is empty when the set is one the provider takes, and says what
+ * is wrong when it is not.
+ */
+export function referenceSetError(counts = {}, { collection = false } = {}) {
+  const pictures = Number(counts.images) || 0;
+  const clips = Number(counts.videos) || 0;
+  const sounds = Number(counts.audios) || 0;
+  if (collection && pictures + clips + sounds === 0) {
+    return '参考生视频至少要一样参考素材：一张图、一条视频或一段音频。';
+  }
+  if (sounds > 0 && pictures + clips === 0) {
+    return '音频参考要配一张图或一条视频：provider 只收成组的参考，音频不能单独来。';
+  }
+  return '';
+}
+
+/**
  * The picture on a port.
  *
  * The first frame and the last frame are the two lines on the card, and each
