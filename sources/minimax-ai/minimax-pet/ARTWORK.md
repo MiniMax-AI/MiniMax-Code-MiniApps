@@ -14,7 +14,7 @@ The generated atlas is 1536 × 2288 pixels: eight 192 × 208 cells per row, nine
 
 ## Plugin icon
 
-The icon shows a purple octopus peeking out of a mint desktop window, resting its tentacles on the window rim and waving. This ties the character to the desktop-companion concept. It was generated with OpenAI imagegen on 2026-10-26, using a user-provided octopus character image as a visual reference. It is a separate transparent PNG asset, not a frame from the default robot atlas. The reference image is not included in the package, and the geometric atlas generator does not reproduce or overwrite this icon.
+The icon shows a purple octopus emerging through a mint desktop window, resting its tentacles over the front sill and waving. This ties the character to the desktop-companion concept. It was generated with OpenAI imagegen on 2026-10-26, using a user-provided octopus character image as a visual reference, then exported as a 512 × 512 transparent PNG for small plugin-icon surfaces. It is a separate asset, not a frame from the default robot atlas. The reference image is not included in the package, and the geometric atlas generator does not reproduce or overwrite this icon.
 
 The icon was reviewed on light and dark backgrounds and at small display sizes. Tests decode the actual PNG and check its square canvas, visible content and transparency; they do not claim deterministic model reproduction. The source/distribution package check compares every shipped file byte.
 
