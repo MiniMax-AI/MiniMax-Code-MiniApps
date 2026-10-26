@@ -31,7 +31,7 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - Task monitoring uses `agent.sessions`, `agent.session`, `agent.observe`, and `agent.cancel` with the `session.read` grant. Runtime capability and permission checks remain in place; missing APIs or disabled access are reported as unavailable.
 - Voice input additionally requires `deviceAccess: ["microphone"]`, `speech.transcribe`, the plugin's microphone switch, system microphone permission, and access to the Host transcription service; otherwise it remains unavailable. A supported API does not guarantee service availability for every account.
 - The preceding UI version was exercised on macOS in a MiniMax Code development build: three tabs, wide/narrow layouts, task reading, real session/ask activity, import/delete, draft confirmation, and desktop round trips. This open-source revision has Node/DOM tests and an isolated HTTP smoke test.
-- The new original atlas and icon are checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The earlier native UI acceptance predates this artwork.
+- The default atlas is checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The separate octopus icon is checked by PNG decoding and visual review. On 2026-10-26, the packaged Skill was exercised with a real Agent in the macOS development build to create, validate, preview and import a custom v2 pet; all nine animation previews and the four cardinal mouse-look directions were checked. This does not replace released-client acceptance.
 - No Windows GUI, released-client installation or GUI acceptance on 3.1.6, or real microphone recording/transcription has been verified for this revision. Automated tests use synthetic data and do not prove those paths.
 
 ## Data & access
@@ -50,7 +50,7 @@ The `minimax-pet` Skill opens the app and guides the current Agent through creat
 
 ## Bundled artwork
 
-The default is an original MiniMax Pet character, with all nine animation states and sixteen look directions. The atlas and icon can be regenerated with Node.js from the source directory. See [ARTWORK.md](ARTWORK.md).
+The default is an original MiniMax Pet character, with all nine animation states and sixteen look directions. Its atlas can be regenerated with Node.js from the source directory. The purple octopus plugin icon is a separate imagegen asset and is preserved when regenerating the atlas. See [ARTWORK.md](ARTWORK.md).
 
 ## Development
 
@@ -58,4 +58,4 @@ The complete editable source is at `sources/minimax-ai/minimax-pet/`. The instal
 
 ## License
 
-Original code, documentation, the bundled pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. The default artwork is generated from editable geometric drawing code; see [ARTWORK.md](ARTWORK.md). No third-party pet artwork is bundled. User-imported artwork keeps its own license.
+Original code, documentation, the bundled pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. The default atlas is generated from editable geometric drawing code; the octopus icon was generated with imagegen from a user-provided visual reference. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { inflateSync } from 'node:zlib';
 import test from 'node:test';
 
-import { createPetAtlas, createPetIcon } from '../scripts/generate-pet-art.mjs';
+import { createPetAtlas } from '../scripts/generate-pet-art.mjs';
 import { ANIMATIONS, CELL } from '../miniapp/client/pet-player.js';
 import { atlasVersionFromSize, readImageHeader } from '../miniapp/node/image-header.mjs';
 
@@ -120,7 +120,7 @@ test('original gaze frames follow the player pointer convention: up, then clockw
   assert.ok(left.x < up.x && right.x > up.x);
 });
 
-test('bundled first-party PNG is reproducible and has matching v2 pet metadata', async () => {
+test('bundled artwork has a reproducible v2 atlas and a valid transparent icon', async () => {
   assert.deepEqual(createPetAtlas({ version: 1 }), v1);
   assert.deepEqual(createPetAtlas({ version: 2 }), v2);
   const bundled = new URL('../miniapp/client/pets/minimax-original/', import.meta.url);
@@ -132,6 +132,6 @@ test('bundled first-party PNG is reproducible and has matching v2 pet metadata',
   assert.deepEqual(decodeRgbaPng(await readFile(new URL(pet.spritesheetPath, bundled))), atlases[1]);
   const iconBytes = await readFile(new URL('../icon.png', import.meta.url));
   const icon = decodeRgbaPng(iconBytes);
-  assert.deepEqual(icon, decodeRgbaPng(createPetIcon()), 'bundled icon pixels match a fresh original generation');
+  assert.equal(icon.width, icon.height, 'plugin icon is square');
   assertVisibleTransparentFrame(icon.pixels, 'first-party plugin icon');
 });

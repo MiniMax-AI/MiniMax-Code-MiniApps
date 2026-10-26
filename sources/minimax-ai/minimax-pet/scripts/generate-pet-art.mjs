@@ -224,19 +224,6 @@ export function createPetAtlas({ version = 2 } = {}) {
   return encodePng(width, height, pixels);
 }
 
-/** Square first-party icon, drawn from the same original geometry as the atlas. */
-export function createPetIcon() {
-  const atlasWidth = CELL_W * COLUMNS;
-  const firstRow = Buffer.alloc(atlasWidth * CELL_H * 4);
-  drawPet(firstRow, 0, 0);
-  const size = 256;
-  const pixels = Buffer.alloc(size * size * 4);
-  for (let y = 0; y < CELL_H; y++) {
-    firstRow.copy(pixels, ((y + 24) * size + 32) * 4, y * atlasWidth * 4, (y * atlasWidth + CELL_W) * 4);
-  }
-  return encodePng(size, size, pixels);
-}
-
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const destination = path.join(root, 'miniapp/client/pets/minimax-original');
@@ -252,8 +239,7 @@ async function main() {
     license: 'MIT',
   };
   await writeFile(path.join(destination, 'pet.json'), `${JSON.stringify(metadata, null, 2)}\n`);
-  await writeFile(path.join(root, 'icon.png'), createPetIcon());
-  process.stdout.write('Generated original MiniMax Pet v2 atlas (1536 x 2288) and icon (256 x 256).\n');
+  process.stdout.write('Generated original MiniMax Pet v2 atlas (1536 x 2288); the separately authored icon.png is preserved.\n');
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main();
