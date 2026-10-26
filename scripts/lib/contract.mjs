@@ -1,17 +1,24 @@
 // Constants shared by every rule. Values mirror the MiniMax Code package reader.
 
-export const HOST_VERSION = '3.1.2';
+export const HOST_VERSION = '3.1.6';
 
 // Clients older than the listed version reject the whole package when it declares the feature.
 // Keys are the names diagnostics and docs use for each feature.
 export const FEATURE_MIN_HOST_VERSION = Object.freeze({
   agents: '3.1.2',
   agentAccess: '3.1.2',
-  // agentAccess "session.read": page agent.session() / agent.sessions(); observed on 3.1.4
-  'agentAccess.session.read': '3.1.4',
+  // Released 3.1.4 still rejects "session.read"; only 3.1.4 preview builds accepted it.
+  'agentAccess.session.read': '3.1.5',
   agentConcurrency: '3.1.2',
+  deviceAccess: '3.1.5',
+  engines: '3.1.5',
   'surface.window': '3.1.2',
+  toolAccess: '3.1.5',
 });
+
+// From this version the Host denies Mini App pages every browser permission the manifest does
+// not grant (the microphone included); earlier clients granted them silently.
+export const BROWSER_PERMISSION_GATE_VERSION = '3.1.5';
 
 export const MANIFEST_FIELDS = new Set([
   '$schema',
@@ -76,6 +83,9 @@ export const MINIAPP_FIELDS = new Set([
   'hostConnectorAccess',
   'agentAccess',
   'agentConcurrency',
+  'engines',
+  'toolAccess',
+  'deviceAccess',
 ]);
 export const ARTIFACT_FIELDS = new Set(['client', 'node']);
 export const RUNTIME_FIELDS = new Set(['kind', 'entry', 'lifecycle']);
@@ -86,6 +96,11 @@ export const SURFACE_WINDOW_DIMENSION_MIN = 200;
 export const SURFACE_WINDOW_DIMENSION_MAX = 10_000;
 export const AGENT_ACCESS_CAPABILITIES = new Set(['session.run', 'session.read']);
 export const AGENT_CONCURRENCY_MAX = 32;
+export const TOOL_ACCESS_CAPABILITIES = new Set(['call']);
+// Released clients accept only the microphone; later items get their own FEATURE_MIN_HOST_VERSION key.
+export const DEVICE_ACCESS_ITEMS = new Set(['microphone']);
+export const ENGINES_FIELDS = new Set(['mcode']);
+export const ENGINES_REQUIREMENT = /^>=\s*(\d+)\.(\d+)\.(\d+)$/u;
 // The Host answers requests under this prefix itself; plugin routes there never work.
 export const RESERVED_ROUTE_PREFIX = '/__mavis';
 export const MCP_ENDPOINT_FIELDS = new Set(['server', 'path']);

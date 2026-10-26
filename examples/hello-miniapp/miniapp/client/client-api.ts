@@ -99,10 +99,14 @@ export interface MiniAppAgentRunResult {
   readonly sessionId: string;
   /** Absent when no turn ran: an `answer` accepted without starting a continuation. */
   readonly turnId?: string;
-  /** The model the turn was dispatched with; absent when no turn ran. */
+  /** The model the turn was dispatched with; absent when no turn ran or the text was steered. */
   readonly model?: MiniAppAgentModelSelection;
-  /** `aborted` only when the Host confirmed the abort; an unconfirmed cancel rejects with `result_unknown`. */
-  readonly status: 'finished' | 'error' | 'aborted';
+  /**
+   * `aborted` only when the Host confirmed the abort; an unconfirmed cancel rejects with
+   * `result_unknown`. `steered` (only with `whenBusy`): the text joined the running turn
+   * `turnId`, whose own call gets the reply, so there is no `text`.
+   */
+  readonly status: 'finished' | 'error' | 'aborted' | 'steered';
   /** Final assistant reply; absent when the turn produced none or did not finish. */
   readonly text?: string;
   readonly error?: { readonly code: string; readonly message: string };
@@ -119,21 +123,30 @@ export interface MiniAppAgentRunResult {
  * by a delegated child session carries that child's own `sessionId` and `turnId`; `reply` with
  * those, and do not filter events by the root turn. Ignore unknown `type` values: new event
  * types may be added without notice.
- * - `run.queued`: all run slots are taken and the call waits at 1-based `position`; sent once,
- *   before the turn starts, so it has no `turnId` and names a session only when continuing one.
+ * - `run.queued`: the call waits at 1-based `position`, for a run slot or, with
+ *   `whenBusy: 'queue'`, in the session queue (a `whenBusy` call can get both); sent before the
+ *   turn starts, so it has no `turnId` and names a session only when continuing one.
+ * - `message.pending` / `message.steered`: with `whenBusy: 'steer'`, the text was handed to the
+ *   running turn, then read by it; `message.steered` is the call's last event.
  * - `turn.started`: the Agent began the turn; `model` is the model it was dispatched with.
  * - `text.delta`: a piece of the reply as it streams.
  * - `message.committed`: one complete assistant message (a turn can have several).
  * - `tool.started` / `tool.finished`: a tool call by name; `ok` is false when it failed.
  * - `permission.requested`: a tool call waits for approval; decide it with `agent.reply`.
  * - `question.requested`: the turn paused on a questionnaire; continue with `agent.answer`.
- * - `turn.finished`: always last; same `status`, `text`, and `error` as the run result.
+ * - `turn.finished`: last unless the call ended `steered`; same `status`, `text`, and `error`
+ *   as the run result.
  * Every event except `run.queued` names its `sessionId`, so `reply` works before the `run` that
  * created the session has returned. `answer` does not: call it after the paused `run` resolves,
  * or it rejects as busy.
  */
 export type MiniAppAgentRunEvent =
   | { readonly type: 'run.queued'; readonly sessionId?: string; readonly position: number }
+  | {
+      readonly type: 'message.pending' | 'message.steered';
+      readonly sessionId: string;
+      readonly turnId: string;
+    }
   | {
       readonly type: 'turn.started';
       readonly sessionId: string;
@@ -192,6 +205,67 @@ export type MiniAppAgentRunEvent =
       readonly error?: { readonly code: string; readonly message: string };
     };
 
+/** `observe({ all: true })` only: the conversation's title, when it has one. */
+interface MiniAppAgentObservedTitle {
+  readonly title?: string;
+}
+
+type MiniAppAgentRunEventOf<T extends MiniAppAgentRunEvent['type']> = Extract<
+  MiniAppAgentRunEvent,
+  { readonly type: T }
+>;
+
+/**
+ * What an observer receives: the run events without `run.queued` and without asks, which reach
+ * only the run that owns them. `turn.started.model` is present only when the Host could read it.
+ * Ignore unknown `type` values.
+ */
+export type MiniAppAgentObservedEvent =
+  | (Omit<MiniAppAgentRunEventOf<'turn.started'>, 'model'> & {
+      readonly model?: MiniAppAgentModelSelection;
+    } & MiniAppAgentObservedTitle)
+  | MiniAppAgentRunEventOf<'text.delta' | 'tool.started' | 'tool.finished'>
+  | (MiniAppAgentRunEventOf<'message.committed'> & MiniAppAgentObservedTitle)
+  | (MiniAppAgentRunEventOf<'turn.finished'> & MiniAppAgentObservedTitle);
+
+/**
+ * `{ all: true }`: `turn.started`, `message.committed` (the final reply) and `turn.finished` of
+ * every user conversation, with its `title`. `{ sessionId }`: every progress event of that
+ * session, turn after turn. Exactly one of the two.
+ */
+export type MiniAppAgentObserveTarget = { readonly sessionId: string } | { readonly all: true };
+
+/** One of the user's conversations; `running` while a turn is in flight. */
+export interface MiniAppAgentSessionSummary {
+  readonly sessionId: string;
+  readonly title?: string;
+  /** The Agent the session runs. */
+  readonly agent: string;
+  readonly status: 'idle' | 'running' | 'error' | 'aborted';
+  /** The conversation's project directory (absolute) as recorded; it may no longer exist. */
+  readonly workspaceDir: string;
+  /** True when the conversation has no project and runs in the default workspace. */
+  readonly isDefaultWorkspace: boolean;
+  /** Unix ms. */
+  readonly createdAtMs: number;
+  /** Unix ms. */
+  readonly updatedAtMs: number;
+}
+
+export interface MiniAppAgentSessionDetail extends MiniAppAgentSessionSummary {
+  /** The conversation's current model; absent when the Host has none recorded. */
+  readonly model?: MiniAppAgentModelSelection;
+  /** Only while `status` is `error` and the Host recorded a message. */
+  readonly error?: { readonly message: string };
+  /** Final text of the latest Agent reply, if any. */
+  readonly lastAssistantText?: string;
+}
+
+export interface MiniAppAgentSessions {
+  /** The 50 most recently updated user conversations (no Mini App, scheduled or sub-Agent ones). */
+  readonly sessions: readonly MiniAppAgentSessionSummary[];
+}
+
 export interface MiniAppAgentRunInput {
   /** Plain text, at most 100,000 UTF-16 code units. */
   readonly text: string;
@@ -208,6 +282,13 @@ export interface MiniAppAgentRunInput {
    * never changes its agent, so passing it with `sessionId` is `invalid_request`.
    */
   readonly agent?: string;
+  /**
+   * Only with `sessionId`, when that session is already running a turn (otherwise it starts one as
+   * usual). `queue`: the text runs as the next turn and this call follows it. `steer`: the
+   * running turn reads the text at its next input point; the call resolves `steered`, or follows
+   * the next turn when the running one answered before reading it. Omit to reject as `busy`.
+   */
+  readonly whenBusy?: 'queue' | 'steer';
   /** Your id for `cancel(requestId)`; 1-128 characters, unique among this page's active runs. */
   readonly requestId?: string;
 }
@@ -237,8 +318,10 @@ export interface MiniAppAgentRunOptions {
 }
 
 /**
- * Absent on older Hosts. Calls reject with `not_permitted` unless the manifest declares
- * `agentAccess: ["session.run"]`. A new session uses the Agent of the chat this page is open in;
+ * Absent on older Hosts. `run` / `reply` / `answer` / `open` / `models` / `agents` / `create` reject
+ * with `not_permitted` unless the manifest declares `agentAccess: ["session.run"]`; `observe` /
+ * `sessions` need `"session.read"` for anything but this Mini App's own sessions (see
+ * docs/agent.md). A new session uses the Agent of the chat this page is open in;
  * a page without a host chat uses the primary Agent unless `run({ agent })` / `create({ agent })`
  * names one from `agents()`. Continuing a session keeps its Agent.
  * The Agent works in the host chat's project directory when it has one, otherwise in this Mini
@@ -255,7 +338,8 @@ export interface MiniAppAgentRunOptions {
  * `cancel` or the page closes; there is no timeout. Up to `agentConcurrency` runs (default 4) per
  * Mini App run at once, one per session; further `run` / `answer` calls wait in order (up to four
  * times that many, see `run.queued`), and `cancel` on a waiting call rejects it with `cancelled`.
- * `busy` means the session already has a run in progress or the wait queue is full.
+ * `busy` means the session already has a run in progress (never with `whenBusy`) or the wait
+ * queue is full.
  * Failures reject with an `Error` whose `message` is `invalid_request`, `not_permitted`, `busy`,
  * `session_not_found`, `runtime_unavailable`, `cancelled`, `result_unknown`, or
  * `request_not_found`. `runtime_unavailable` means nothing was started; `result_unknown` means
@@ -305,16 +389,113 @@ export interface MiniAppAgentAPI {
    * although the session may already exist.
    */
   create(input?: { readonly agent?: string }): Promise<{ readonly sessionId: string }>;
+  /**
+   * Watch the user's Agent at work (see `MiniAppAgentObserveTarget`). Pass a `requestId` to be
+   * able to stop it with `cancel(requestId)`. Resolves when the subscription ended: cancelled, the
+   * session was deleted, the page or Mini App stopped, or `session.read` was switched off. Rejects
+   * with `invalid_request` (not exactly one target), `not_permitted`, `session_not_found`, or
+   * `busy` past 4 observers per Mini App; observers use no run slots. Check
+   * `capabilities?.has('agent.observe')` first: older Hosts lack it.
+   */
+  observe(
+    target: MiniAppAgentObserveTarget & { readonly requestId?: string },
+    options: { readonly onEvent: (event: MiniAppAgentObservedEvent) => void },
+  ): Promise<void>;
+  /** Check `capabilities?.has('agent.sessions')` first: older Hosts lack it. */
+  sessions(): Promise<MiniAppAgentSessions>;
+  /**
+   * The chat this page is open in (needs `session.read`: it is the user's conversation, not this
+   * Mini App's); undefined when the page is not in a chat tab. Check
+   * `capabilities?.has('agent.session')` first.
+   */
+  session(): Promise<MiniAppAgentSessionDetail | undefined>;
+  /** One conversation with its model and latest reply. */
+  session(sessionId: string): Promise<MiniAppAgentSessionDetail>;
+}
+
+/**
+ * Page entry for asking "always allow" ahead of time, while the user is present, so later Node
+ * calls need no prompt. Listing and calling tools is Node `context.tool` only. Needs
+ * `"toolAccess": ["call"]` and a running Node process; check
+ * `capabilities.has('tool.request')`.
+ */
+export interface MiniAppToolRequestAPI {
+  /**
+   * Shows one Host prompt for the named tools (runtime names from Node `context.tool.list()`)
+   * that are still `ask`; the user ticks which to always allow. Resolves each name's state
+   * afterwards; the Host never trusts this map back. Only inside a user gesture
+   * (`navigator.userActivation.isActive`), 1–10 distinct names, else `invalid_request`.
+   * Other rejections: `not_permitted` (no `toolAccess`), `approval_required` (no Host window
+   * can show the prompt), `runtime_unavailable` (Node process not running), `result_unknown`.
+   */
+  request(names: readonly string[]): Promise<Record<string, 'allow' | 'ask' | 'deny'>>;
 }
 
 export interface MiniAppClientAPI {
   readonly message: MiniAppMessageAPI;
   readonly agent?: MiniAppAgentAPI;
+  /** Absent on Hosts without `tool.request`. */
+  readonly tool?: MiniAppToolRequestAPI;
   /**
    * Proposed: shape may still change. Feature-detect with
    * `window.mcode?.miniapp?.window` before use.
    */
   readonly window?: MiniAppWindowHandle;
+  /** Absent on older Hosts; check `capabilities.has('speech.transcribe')`. */
+  readonly speech?: MiniAppSpeechAPI;
+  /**
+   * Synchronous probe of Host features, fixed per Host version; independent of this Mini App's
+   * manifest or grants. Absent on older Hosts: check `window.mcode?.miniapp?.capabilities?.has`.
+   */
+  readonly capabilities?: MiniAppHostCapabilities;
+}
+
+export interface MiniAppHostCapabilities {
+  has(name: string): boolean;
+}
+
+/**
+ * The only PCM the Host transcribes. Capture at exactly this (an `AudioContext` created with
+ * `sampleRate: 16000`, one channel, samples converted to `Int16Array`) and pass the object
+ * verbatim; any other value is `invalid_request`. See `audio-capture.ts` for a capture helper.
+ */
+export interface MiniAppSpeechAudioFormat {
+  readonly sampleRate: 16000;
+  readonly channelCount: 1;
+  readonly sampleFormat: 's16';
+}
+
+export interface MiniAppSpeechTranscribeInput {
+  /**
+   * One utterance of samples: an `Int16Array`, or the `ArrayBuffer` / view behind one. At least
+   * one sample, at most 16,000,000 bytes (500 s). Not an encoded file: WAV, WebM, Ogg, FLAC and
+   * MP3 are refused as `invalid_request`.
+   */
+  readonly audio: ArrayBuffer | ArrayBufferView;
+  readonly format: MiniAppSpeechAudioFormat;
+}
+
+export interface MiniAppSpeechTranscribeOptions {
+  /** The transcript so far while the Host is still transcribing; the final text is the result. */
+  readonly onPartial?: (text: string) => void;
+}
+
+/**
+ * Speech recognition of audio the page captured. Requires the manifest to declare
+ * `deviceAccess: ["microphone"]` and the user's "Use the microphone" switch to be on (the same
+ * switch that lets `getUserMedia` succeed); otherwise calls reject with `not_permitted`.
+ * The Host transcribes after it has the whole utterance: decide the utterance boundary in the
+ * page (release of a push-to-talk button, a stop button, a silence detector), then call once
+ * per utterance. One call per Mini App runs at a time; a second is `busy`.
+ * Failures reject with an `Error` whose `message` is `invalid_request`, `not_permitted`,
+ * `audio_too_large`, `busy`, `runtime_unavailable` (speech recognition is disabled or the user
+ * is signed out), `transcription_failed`, or `result_unknown`.
+ */
+export interface MiniAppSpeechAPI {
+  transcribe(
+    input: MiniAppSpeechTranscribeInput,
+    options?: MiniAppSpeechTranscribeOptions,
+  ): Promise<{ readonly text: string }>;
 }
 
 /** Live state of the popped-out window: current position, size, and flags — not the manifest declaration. */

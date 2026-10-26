@@ -5,6 +5,9 @@ import {
   AGENT_CONCURRENCY_MAX,
   ARTIFACT_FIELDS,
   CONNECTOR_PROVIDER,
+  DEVICE_ACCESS_ITEMS,
+  ENGINES_FIELDS,
+  ENGINES_REQUIREMENT,
   ENTRY_EXTENSION,
   EXCLUDED_DIRECTORY,
   HOST_CONNECTOR_ACCESS_FIELDS,
@@ -19,14 +22,20 @@ import {
   SURFACE_WINDOW_DIMENSION_FIELDS,
   SURFACE_WINDOW_DIMENSION_MAX,
   SURFACE_WINDOW_DIMENSION_MIN,
+  TOOL_ACCESS_CAPABILITIES,
 } from '../contract.mjs';
 import { isRecord, pathExists } from '../fs.mjs';
 import { isCoveredBy, normalizePluginPath, normalizeRoutePath } from '../paths.mjs';
 
 const FILE = 'miniapp/miniapp.json';
 
+// What a package without a readable miniapp.json resolves to: no payload, no features, no access.
+export function emptyMiniApp() {
+  return { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, microphone: false } };
+}
+
 export async function checkMiniApp(report, { packageDir, manifest }) {
-  const resolved = { nodeRoots: [], clientRoots: [], features: [] };
+  const resolved = emptyMiniApp();
   if (!isRecord(manifest)) {
     report.error('MINIAPP_NOT_OBJECT', 'miniapp.json must be a JSON object', FILE);
     return resolved;
@@ -44,12 +53,21 @@ export async function checkMiniApp(report, { packageDir, manifest }) {
   checkSurface(report, manifest.surface);
   checkMcpEndpoints(report, manifest.mcpEndpoints);
   checkHostConnectorAccess(report, manifest.hostConnectorAccess);
-  checkAgentAccess(report, manifest.agentAccess);
+  const agent = checkAccessList(report, manifest.agentAccess, 'agentAccess', AGENT_ACCESS_CAPABILITIES, 'MINIAPP_AGENT_ACCESS_INVALID');
   checkAgentConcurrency(report, manifest.agentConcurrency);
+  const tool = checkAccessList(report, manifest.toolAccess, 'toolAccess', TOOL_ACCESS_CAPABILITIES, 'MINIAPP_TOOL_ACCESS_INVALID');
+  const device = checkAccessList(report, manifest.deviceAccess, 'deviceAccess', DEVICE_ACCESS_ITEMS, 'MINIAPP_DEVICE_ACCESS_INVALID');
+  const engines = checkEngines(report, manifest.engines);
+  if (engines) resolved.engines = engines;
+  resolved.access = { agent, tool: tool.includes('call'), microphone: device.includes('microphone') };
+
   if (manifest.agentAccess !== undefined) resolved.features.push('agentAccess');
   if (Array.isArray(manifest.agentAccess) && manifest.agentAccess.includes('session.read')) resolved.features.push('agentAccess.session.read');
   if (manifest.agentConcurrency !== undefined) resolved.features.push('agentConcurrency');
   if (isRecord(manifest.surface) && manifest.surface.window !== undefined) resolved.features.push('surface.window');
+  for (const field of ['engines', 'toolAccess', 'deviceAccess']) {
+    if (manifest[field] !== undefined) resolved.features.push(field);
+  }
   return resolved;
 }
 
@@ -217,11 +235,14 @@ function checkHostConnectorAccess(report, value) {
   report.warning('HOST_CONNECTOR_UNVERIFIED', 'declared providers are granted by the Host at install time and are not checked here', FILE);
 }
 
-function checkAgentAccess(report, value) {
-  if (value === undefined) return;
-  if (!Array.isArray(value) || value.some((capability) => !AGENT_ACCESS_CAPABILITIES.has(capability))) {
-    report.error('MINIAPP_AGENT_ACCESS_INVALID', `agentAccess must be an array containing only ${[...AGENT_ACCESS_CAPABILITIES].map((c) => `"${c}"`).join(', ')}`, FILE);
+// Returns the declared values when the list is valid, otherwise [] (nothing is granted).
+function checkAccessList(report, value, label, allowed, code) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => !allowed.has(item))) {
+    report.error(code, `${label} must be an array containing only ${[...allowed].map((c) => `"${c}"`).join(', ')}`, FILE);
+    return [];
   }
+  return [...new Set(value)].sort();
 }
 
 function checkAgentConcurrency(report, value) {
@@ -229,4 +250,18 @@ function checkAgentConcurrency(report, value) {
   if (!Number.isInteger(value) || value < 1 || value > AGENT_CONCURRENCY_MAX) {
     report.error('MINIAPP_AGENT_CONCURRENCY_INVALID', `agentConcurrency must be an integer from 1 to ${AGENT_CONCURRENCY_MAX}`, FILE);
   }
+}
+
+// Returns the bound as "MAJOR.MINOR.PATCH".
+function checkEngines(report, value) {
+  if (value === undefined) return undefined;
+  const match =
+    isRecord(value) && Object.keys(value).every((k) => ENGINES_FIELDS.has(k)) && typeof value.mcode === 'string'
+      ? ENGINES_REQUIREMENT.exec(value.mcode.trim())
+      : null;
+  if (!match) {
+    report.error('MINIAPP_ENGINES_INVALID', 'engines must be { "mcode": ">=MAJOR.MINOR.PATCH" }', FILE);
+    return undefined;
+  }
+  return match.slice(1, 4).map(Number).join('.');
 }

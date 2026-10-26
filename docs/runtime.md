@@ -1,6 +1,6 @@
 # Mini App Node runtime
 
-Verified against MiniMax Code 3.1.2.
+Verified against MiniMax Code 3.1.6.
 
 ## Loading
 
@@ -29,7 +29,13 @@ to your entry for editor type checking; it is never imported at runtime.
 | `signal` | An `AbortSignal` that fires when the Host stops the Mini App. |
 | `logger` | `debug` / `info` / `warn` / `error` `(message, fields?)`. Messages are truncated at 4 KiB. Only the **keys** of `fields` leave the process; values stay local, so put diagnostic detail in the message. |
 | `hostConnector` | May be absent. Its use is outside the scope of this repository. |
-| `agent` | Present only when `miniapp.json` declares `"agentAccess": ["session.run"]` (MiniMax Code 3.1.2 or later). See `docs/agent.md`. |
+| `agent` | Present when `miniapp.json` declares `agentAccess` (`"session.run"`, and from MiniMax Code 3.1.5 also `"session.read"`). See `docs/agent.md`. |
+| `tool` | Present when `miniapp.json` declares `"toolAccess": ["call"]` (MiniMax Code 3.1.5 or later). See `docs/tool.md`. |
+| `capabilities` | `has(name)` answers whether this client supports a feature, such as `has('agent.observe')`; the names are listed in `docs/client.md`. Absent before MiniMax Code 3.1.5, so write `context.capabilities?.has(...)`. |
+
+`agent` and `tool` follow the manifest, not the user's permission switches: when the user switches
+a granted item off, the object stays and its calls fail until the item is switched back on (see
+"Permission switches" in `docs/package-contract.md`).
 
 ## `start(context)`
 
@@ -38,7 +44,7 @@ to your entry for editor type checking; it is never imported at runtime.
 - Return `{ dispose }` or `undefined`. An object without `dispose` is rejected as an invalid
   lifecycle. Throwing fails the start; a port collision is reported as its own error.
 - Do not fetch business data inside `start`. Register handlers and resolve.
-- Do not call `context.agent` inside `start`; call it from a request handler.
+- Do not call `context.agent` or `context.tool` inside `start`; call them from a request handler.
 
 ## `dispose()`
 

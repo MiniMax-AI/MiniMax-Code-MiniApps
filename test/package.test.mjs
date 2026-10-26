@@ -66,3 +66,33 @@ test('package: features from plugin.json and miniapp.json reach the README minim
   await writeFile(readme, (await readFile(readme, 'utf8')).replace('MiniMax Code 3.0.73', 'MiniMax Code 3.1.2'));
   assert.deepEqual(await validatePackage(dir), []);
 });
+
+test('package: getUserMedia without the microphone turns from warning to error once the package needs 3.1.5', async () => {
+  const root = await makeTmpRoot();
+  const { dir } = await copyExample(root);
+  await writeFile(path.join(dir, 'miniapp', 'client', 'record.js'), 'export const open = () => navigator.mediaDevices.getUserMedia({ audio: true });\n');
+  const anyVersion = await validatePackage(dir);
+  assert.deepEqual(codes(anyVersion), ['ACCESS_UNDECLARED']);
+  assert.equal(anyVersion[0].level, 'warning');
+
+  await editJson(path.join(dir, 'miniapp', 'miniapp.json'), (m) => ({ ...m, agentAccess: ['session.run', 'session.read'] }));
+  const gated = await validatePackage(dir);
+  assert.deepEqual(codes(gated, 'error'), ['ACCESS_UNDECLARED']);
+  assert.deepEqual(codes(gated, 'warning'), ['README_MIN_VERSION_MISSING']);
+
+  await editJson(path.join(dir, 'miniapp', 'miniapp.json'), (m) => ({ ...m, deviceAccess: ['microphone'] }));
+  const readme = path.join(dir, 'README.md');
+  await writeFile(readme, (await readFile(readme, 'utf8')).replace('MiniMax Code 3.0.73', 'MiniMax Code 3.1.5'));
+  assert.deepEqual(await validatePackage(dir), []);
+});
+
+test('package: an engines bound decides the minimum version for both the README and getUserMedia', async () => {
+  const root = await makeTmpRoot();
+  const { dir } = await copyExample(root);
+  await editJson(path.join(dir, 'miniapp', 'miniapp.json'), (m) => ({ ...m, engines: { mcode: '>=3.2.0' } }));
+  await writeFile(path.join(dir, 'miniapp', 'client', 'record.js'), 'navigator.mediaDevices.getUserMedia({ audio: true });\n');
+  const diagnostics = await validatePackage(dir);
+  assert.deepEqual(codes(diagnostics, 'error'), ['ACCESS_UNDECLARED']);
+  const [readme] = diagnostics.filter((d) => d.code === 'README_MIN_VERSION_MISSING');
+  assert.match(readme.message, /MiniMax Code 3\.2\.0/u);
+});

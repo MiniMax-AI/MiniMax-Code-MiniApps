@@ -5,8 +5,8 @@
 欢迎分享你为 MiniMax Code 制作的小工具、游戏和其他有趣作品。
 
 1. Fork 本仓库，在 `plugins/<你的 GitHub username>/<plugin-id>/` 下放入完整插件包。用户名目录统一使用小写。
-2. 从 `examples/hello-miniapp/` 复制开始。保留 `.minimax-plugin/` 隐藏目录、`package.json`、`miniapp/` 和运行所需资源。插件应能独立复制使用，不依赖仓库里的其他目录。具体规则见 `docs/package-contract.md`、`docs/runtime.md`、`docs/client.md`、`docs/agent.md` 和 `docs/security.md`（英文）。
-3. 添加简短的英文 `README.md`，可另附 `README.zh-CN.md` 并互相链接。说明用途、安装与使用方式、已验证的客户端版本和系统，以及需要的配置、文件访问、网络请求和会运行的 Agent 任务。欢迎附上截图或 GIF。如果用到了需要较新客户端的能力（如 `agentAccess`、`surface.window`），请在 `## Tested environment` 中写明不低于最低要求的 MiniMax Code 版本（见 `docs/package-contract.md` 的 “Minimum client version”）。
+2. 从 `examples/hello-miniapp/` 复制开始。保留 `.minimax-plugin/` 隐藏目录、`package.json`、`miniapp/` 和运行所需资源。插件应能独立复制使用，不依赖仓库里的其他目录。具体规则见 `docs/package-contract.md`、`docs/runtime.md`、`docs/client.md`、`docs/agent.md`、`docs/tool.md` 和 `docs/security.md`（英文）。
+3. 添加简短的英文 `README.md`，可另附 `README.zh-CN.md` 并互相链接。说明用途、安装与使用方式、已验证的客户端版本和系统，以及需要的配置、文件访问、网络请求、会运行的 Agent 任务、会读取的会话、会调用的工具和麦克风使用情况。欢迎附上截图或 GIF。`miniapp/miniapp.json` 中只声明代码实际用到的权限；代码调用了未声明的能力时，`npm run check` 会报出来。如果用到了需要较新客户端的能力（如 `agentAccess`、`toolAccess`、`deviceAccess`、`surface.window`），请在 `## Tested environment` 中写明不低于最低要求的 MiniMax Code 版本（见 `docs/package-contract.md` 的 “Minimum client version”）。
 4. 添加你有权使用的 `LICENSE`，保留第三方代码和素材要求的署名。
 5. 在根目录中英文 README 的作品表格中各增加一行，运行 `npm run check`（需要 Node.js 22 或更高版本）直到没有 error，再提交 Pull Request。
 

@@ -1,24 +1,16 @@
 import { execFile } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { RESERVED_ROUTE_LITERAL, START_EXPORT, STDOUT_CALL, UNGUARDED_SERVER } from '../contract.mjs';
-import { pathExists } from '../fs.mjs';
+import { collectPayloadFiles, pathExists } from '../fs.mjs';
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 
 export async function checkNode(report, { packageDir, entry, nodeRoots }) {
-  const scripts = new Set();
-  for (const root of nodeRoots) {
-    const absolute = path.join(packageDir, ...root.split('/'));
-    if (await pathExists(absolute, 'directory')) {
-      for (const file of await collectScripts(absolute, root)) scripts.add(file);
-    } else if (SCRIPT_EXTENSIONS.has(path.extname(root)) && (await pathExists(absolute, 'file'))) {
-      scripts.add(root);
-    }
-  }
+  const scripts = new Set(await collectPayloadFiles(packageDir, nodeRoots, SCRIPT_EXTENSIONS));
   if (entry) scripts.add(entry);
 
   for (const relativePath of [...scripts].sort()) {
@@ -49,20 +41,6 @@ export async function checkNode(report, { packageDir, entry, nodeRoots }) {
       report.warning('NODE_RESERVED_ROUTE', 'mentions a /__mavis/ route; the Host reserves that prefix and plugin routes under it do not work', relativePath);
     }
   }
-}
-
-async function collectScripts(absoluteDir, relativeDir) {
-  const files = [];
-  for (const dirent of await readdir(absoluteDir, { withFileTypes: true })) {
-    const relativePath = `${relativeDir}/${dirent.name}`;
-    if (dirent.isDirectory()) {
-      if (dirent.name.toLowerCase() === 'node_modules') continue;
-      files.push(...(await collectScripts(path.join(absoluteDir, dirent.name), relativePath)));
-    } else if (dirent.isFile() && SCRIPT_EXTENSIONS.has(path.extname(dirent.name))) {
-      files.push(relativePath);
-    }
-  }
-  return files;
 }
 
 function firstLine(text) {
