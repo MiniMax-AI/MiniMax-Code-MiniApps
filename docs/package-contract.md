@@ -1,14 +1,15 @@
 # Mini App package contract
 
-Verified against MiniMax Code 3.1.2.
+Verified against MiniMax Code 3.1.6.
 
 A Mini App is a MiniMax Plugin whose `package.json` declares a Mini App payload. MiniMax Code
 enforces the manifest, payload, and path rules below when the package is installed. `npm run check`
 enforces the same rules here, plus this repository's own requirements: `README.md` and `LICENSE`,
 a real image file behind `icon`, `lifecycle` limited to `on-demand`, no hard links, no committed
 `node_modules`, routes outside the Host-reserved `/__mavis/` prefix, the Node entry conventions in
-`docs/runtime.md`, and a stated minimum client version for newer features (see
-[Minimum client version](#minimum-client-version)).
+`docs/runtime.md`, a stated minimum client version for newer features (see
+[Minimum client version](#minimum-client-version)), and code that only calls what the manifest
+declares (see [Declared access must match the code](#declared-access-must-match-the-code)).
 
 ## Layout
 
@@ -96,7 +97,9 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
 }
 ```
 
-- `schemaVersion` is `1`. Unknown top-level fields are rejected.
+- `schemaVersion` is `1`. Unknown top-level fields are rejected: MiniMax Code 3.1.5 and later report
+  `MINIAPP_MANIFEST_FIELD_UNSUPPORTED` naming the field, which on an installed client means the
+  client is older than the package; earlier clients report `MINIAPP_MANIFEST_INVALID`.
 - `artifacts.client` and `artifacts.node` are non-empty arrays of unique paths under `miniapp/`.
   Each path must exist. These are the runtime payload roots: exactly what MiniMax Code hashes and
   installs. Any `node_modules` directory is excluded from payloads.
@@ -116,12 +119,41 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
   `^[a-z0-9_-]{1,64}$` and unique. Declared providers are granted by the Host at install time; this
   repository does not document their use.
 - `agentAccess` is optional: an array of `"session.run"` (run Agent turns) and `"session.read"`
-  (read sessions: the page's `agent.session()` returns the chat it is open in, see `docs/agent.md`).
-  Absent or `[]` means no Agent access. See `docs/agent.md` before declaring it. Requires MiniMax
-  Code 3.1.2 or later; `"session.read"` requires 3.1.4 or later.
+  (list, read, and observe the user's own conversations). Neither implies the other; declare both
+  when the Mini App needs both. Absent or `[]` means no Agent access. See `docs/agent.md` before
+  declaring it. Requires MiniMax Code 3.1.2 or later; `"session.read"` requires 3.1.5 or later.
 - `agentConcurrency` is optional: an integer from 1 to 32, default 4. It caps how many Agent turns
   of this Mini App run at once; it has no effect without `agentAccess`. Requires MiniMax Code 3.1.2
   or later.
+- `toolAccess` is optional. The only allowed value is `["call"]`, which gives the Node entry
+  `context.tool` to call the MCP and Connector tools installed on the user's MiniMax Code, each call
+  judged by the user's permission rules. See `docs/tool.md`. Requires MiniMax Code 3.1.5 or later.
+- `deviceAccess` is optional. The only allowed value is `["microphone"]`, which lets the page call
+  `getUserMedia({ audio })` and `window.mcode.miniapp.speech.transcribe` (see `docs/client.md`).
+  Requires MiniMax Code 3.1.5 or later.
+- `engines` is optional: `{ "mcode": ">=MAJOR.MINOR.PATCH" }`, nothing else. A client at 3.1.5 or
+  later but older than the bound keeps the plugin with its Skills and MCP servers, and withholds
+  the Mini App. Clients before 3.1.5 do not know the field and reject the whole package, so the
+  bound only matters above 3.1.5. Write it only when the package needs a specific newer client; it
+  is not required for the features in the table below. Requires MiniMax Code 3.1.5 or later.
+
+### Permission switches
+
+From MiniMax Code 3.1.5 the user can switch off, item by item in the plugin details, what the
+manifest declares: each `hostConnectorAccess` provider, each `agentAccess` value, `toolAccess`
+`"call"`, and `deviceAccess` `"microphone"`. Everything starts on, with no first-use prompt. A switch
+applies at once and does not restart the Mini App: `context.agent` and `context.tool` stay present,
+and their calls fail until the user switches the item back on:
+
+| Switched off | What fails |
+| --- | --- |
+| `session.run` | Running turns end as `aborted`; `run`, `reply`, `answer`, `cancel`, `open`, `models`, `agents`, `create` fail with `NOT_PERMITTED` (`not_permitted` on the page). |
+| `session.read` | Observers end; `sessions()`, `observe({ all: true })`, and reading or observing the user's sessions fail the same way. |
+| `tool:call` | `context.tool.call` fails with `TOOL_NOT_PERMITTED`; `list()` reports every tool as `deny`. |
+| `microphone` | The next `getUserMedia` fails with `NotAllowedError` and `speech.transcribe` with `not_permitted`; a recording already open keeps its stream until the page stops it. |
+
+Handle these errors where the call is made and explain in the page what the user can turn back on.
+`surface.window` flags are not switches.
 
 ### `surface.window`
 
@@ -173,13 +205,47 @@ the package cannot be installed there at all.
 | --- | --- | --- |
 | `agents` | `plugin.json` | 3.1.2 |
 | `agentAccess` | `miniapp/miniapp.json` | 3.1.2 |
-| `agentAccess` with `"session.read"` | `miniapp/miniapp.json` | 3.1.4 |
+| `agentAccess` with `"session.read"` | `miniapp/miniapp.json` | 3.1.5 |
 | `agentConcurrency` | `miniapp/miniapp.json` | 3.1.2 |
+| `deviceAccess` | `miniapp/miniapp.json` | 3.1.5 |
+| `engines` | `miniapp/miniapp.json` | 3.1.5, or its own bound when higher |
 | `surface.window` | `miniapp/miniapp.json` | 3.1.2 |
+| `toolAccess` | `miniapp/miniapp.json` | 3.1.5 |
 
-When a package declares any of these, name a MiniMax Code version at or above the minimum under
-`## Tested environment` in its README, for example `- MiniMax Code 3.1.2 on macOS 15`.
-`npm run check` warns until it finds one there.
+A 3.1.4 preview build accepted `"session.read"`, but the released 3.1.4 rejects it.
+
+The package's minimum is the highest entry it declares. When it has one, name a MiniMax Code
+version at or above it under `## Tested environment` in its README, for example
+`- MiniMax Code 3.1.5 on macOS 15`. `npm run check` warns until it finds one there.
+
+To use a newer page or Node API only where it exists, without raising the minimum, feature-detect
+it: `capabilities?.has('agent.observe')` (MiniMax Code 3.1.5 and later), or test that the method
+exists. A manifest field cannot be feature-detected: declaring it is what raises the minimum.
+
+## Declared access must match the code
+
+`npm run check` scans the files that run in the page or in Node (`.js`, `.mjs`, `.cjs`, `.html`
+under `artifacts.client` and `artifacts.node`, outside `node_modules`) for calls that need a grant
+the manifest does not make, and reports them as `ACCESS_UNDECLARED`.
+
+| Call | Needs | Level |
+| --- | --- | --- |
+| `context.agent.*` or page `agent.*` | `agentAccess` | error |
+| `agent.sessions()`, `agent.observe({ all: true })`, page `agent.session()` without an id | `agentAccess` `"session.read"` | error |
+| `context.tool.*`, page `tool.request()` | `toolAccess: ["call"]` | error |
+| `speech.transcribe()` | `deviceAccess: ["microphone"]` | error |
+| `getUserMedia()` | `deviceAccess: ["microphone"]` | error when the package's minimum is 3.1.5 or later; warning otherwise |
+
+The first four never work without the grant, on any client. `getUserMedia` worked without a grant
+before MiniMax Code 3.1.5, and 3.1.5 and later deny it with `NotAllowedError`. A package whose
+minimum is below 3.1.5 still installs on those earlier clients, so the check only warns; declaring
+`deviceAccess` fixes the call and raises the minimum to 3.1.5. Camera, geolocation, notifications,
+and every other permission a browser would prompt for are denied to Mini App pages on 3.1.5 and
+later and cannot be declared yet.
+
+The scan matches source text, so it misses calls through a renamed variable and can flag dormant
+code, such as an engine's audio input that the app never turns on. Explain a warning in the pull
+request instead of declaring a permission the app does not use.
 
 ## Portable paths
 

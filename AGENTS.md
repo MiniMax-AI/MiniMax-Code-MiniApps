@@ -11,13 +11,15 @@ update one package at `plugins/<github-username>/<plugin-id>/`.
    editing any manifest.
 2. Read `docs/runtime.md` before editing `miniapp/node/*`. Read `docs/security.md` before the
    Node code reads or writes files, spawns processes, or makes network requests. Read
-   `docs/client.md` before the page calls `window.mcode`, and `docs/agent.md` before declaring
-   `agentAccess`.
+   `docs/client.md` before the page calls `window.mcode` or a browser permission such as
+   `getUserMedia`, `docs/agent.md` before declaring `agentAccess`, and `docs/tool.md` before
+   declaring `toolAccess`.
 3. Write `README.md` (English; `README.zh-CN.md` optional): what it does, how to install and open
    it, and the headings `## Tested environment` and `## Data & access` (files read/written,
-   network hosts, spawned processes, Agent turns, where state is stored). When the package uses a
-   feature with a minimum client version (`docs/package-contract.md`), name a MiniMax Code version
-   at or above it under `## Tested environment`.
+   network hosts, spawned processes, Agent turns, conversations read, tools called, microphone use,
+   where state is stored). When the package uses a feature with a minimum client version
+   (`docs/package-contract.md`), name a MiniMax Code version at or above it under
+   `## Tested environment`.
 4. Add one row to the table in both root READMEs.
 5. Run `npm run check`. Done when it reports no errors and every warning is either fixed or
    explained in the PR description.
@@ -38,10 +40,15 @@ update one package at `plugins/<github-username>/<plugin-id>/`.
 - A Mini App package is a MiniMax Plugin. Skills, subagents (`agents`), MCP servers, hooks, host
   bindings, MCP endpoints, and `hostConnectorAccess` may all be declared; `npm run check` validates
   their shape only, and the Host validates them at install time. This repository documents the Mini
-  App payload, the page APIs, and the Agent API; treat `context.hostConnector` and the other
-  capabilities as outside its scope.
-- `agentAccess` gives an Agent with files, shell, and MCP. Declare it only when needed, and never
-  answer a `permission.requested` with `allowOnce` unless the user chose it.
+  App payload, the page APIs, the Agent API, and the tool API; treat `context.hostConnector` and the
+  other capabilities as outside its scope.
+- Declare exactly the access the code uses: `agentAccess` (`session.run`, `session.read`),
+  `toolAccess`, `deviceAccess`. A call without its declaration fails at runtime, and
+  `npm run check` reports it as `ACCESS_UNDECLARED`; do not declare access the app does not use.
+- `agentAccess` gives an Agent with files, shell, and MCP, and `session.read` exposes every user
+  conversation. Never answer a `permission.requested` with `allowOnce` unless the user chose it.
+- The user can switch any declared access off at any time. Handle `NOT_PERMITTED`,
+  `TOOL_NOT_PERMITTED`, and `NotAllowedError` where the call is made, and keep the app running.
 - The runtime payload is exactly `miniapp/client` and `miniapp/node`. Keep tests and docs outside
   `miniapp/`. Vendor third-party code inside the payload; `node_modules` is never committed.
 - Paths are portable: ASCII, no symlinks, no `..`. `npm run check` enforces the full rule set.
@@ -51,17 +58,22 @@ update one package at `plugins/<github-username>/<plugin-id>/`.
 ## Review policy
 
 Maintainers gate on three things: manifests pass `npm run check`; the README describes real
-behaviour (files, network, processes, Agent turns, tested environment); the package cannot damage
-Host or user data. Everything else is a suggestion.
+behaviour (files, network, processes, Agent turns, conversations read, tools called, microphone
+use, tested environment); the package cannot damage Host or user data. Everything else is a
+suggestion.
 
 ## Navigation
 
-- `docs/package-contract.md` — layout, the three manifests, portable paths, limits, minimum client
-  versions
+- `docs/package-contract.md` — layout, the three manifests, portable paths, limits, permission
+  switches, minimum client versions, declared access versus code
 - `docs/runtime.md` — `start(context)`, `dispose`, logger, lifecycle, loopback authentication
-- `docs/client.md` — page APIs: `message.append`, `agent`, `window`
-- `docs/agent.md` — `agentAccess`, sessions, calls, events, errors
+- `docs/client.md` — page APIs: `capabilities`, browser permissions, `message.append`, `agent`,
+  `speech.transcribe`, `tool.request`, `window`
+- `docs/agent.md` — `agentAccess`, sessions, calls, `whenBusy`, reading and observing sessions,
+  events, errors
+- `docs/tool.md` — `toolAccess`, `context.tool`, permission prompts, errors
 - `docs/security.md` — process boundary, state, writing outside `dataDir`, spawning, network, Agent
-  turns
+  turns, reading conversations, calling tools, microphone
+- `docs/snippets/audio-capture.ts` — microphone capture in the format `speech.transcribe` takes
 - `examples/hello-miniapp/` — the copyable starting point
 - `CONTRIBUTING.md` — fork, pull request, and license steps for people

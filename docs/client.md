@@ -1,6 +1,6 @@
 # Mini App page APIs
 
-Verified against MiniMax Code 3.1.2.
+Verified against MiniMax Code 3.1.6.
 
 MiniMax Code injects `window.mcode.miniapp` into the Mini App's own page. Older clients, ordinary
 Browser tabs, and other browsers do not provide it, so check that a method exists before calling
@@ -10,6 +10,25 @@ tag or import it at runtime.
 
 The bridge only works in the page's own top-level document on its own origin. Keep third-party
 scripts out of that document: anything running there shares the page's access to the bridge.
+
+## `miniapp.capabilities.has(name)`
+
+From MiniMax Code 3.1.5, `window.mcode.miniapp.capabilities.has(name)` answers synchronously whether
+this client supports a feature, named by its API path: `message.append`, `agent.run`, `agent.open`,
+`agent.models`, `agent.agents`, `agent.create`, `agent.observe`, `agent.sessions`,
+`agent.session`, `speech.transcribe`, `tool`, `tool.request`, `window`, `hostConnector`. The list is
+the same on the page and in Node (`context.capabilities`), and it describes the client, not this
+Mini App's grants: `has('agent.run')` is true even without `agentAccess`. Earlier clients have no
+`capabilities`, so write `window.mcode?.miniapp?.capabilities?.has('agent.observe')`.
+
+## Browser permissions
+
+From MiniMax Code 3.1.5 the Host decides every browser permission request from a Mini App page.
+Sanitized clipboard writes, fullscreen, pointer lock, and keyboard lock work without a declaration.
+The microphone works only when `miniapp.json` declares `deviceAccess: ["microphone"]` and the user
+has not switched it off; otherwise `getUserMedia` rejects with `NotAllowedError`. Camera,
+geolocation, notifications, and everything else a browser would prompt for are denied and cannot be
+declared yet. Earlier clients granted these requests silently.
 
 ## `miniapp.message.append(text)`
 
@@ -44,9 +63,40 @@ async function addToChat(text, status) {
 
 ## `miniapp.agent`
 
-Runs Agent turns from the page. Present only on MiniMax Code 3.1.2 or later, and calls reject with
-`not_permitted` unless `miniapp.json` declares `agentAccess`. The calls, sessions, events, and
+Runs Agent turns from the page, and from MiniMax Code 3.1.5 also reads and observes the user's
+conversations. Present only on MiniMax Code 3.1.2 or later; calls reject with `not_permitted`
+unless `miniapp.json` declares the matching `agentAccess` value. The calls, sessions, events, and
 errors are in `docs/agent.md`.
+
+## `miniapp.speech.transcribe(input, options?)`
+
+From MiniMax Code 3.1.5, `window.mcode.miniapp.speech.transcribe({ audio, format }, { onPartial? })`
+turns one utterance the page recorded into text with the Host's speech recognition and resolves
+`{ text }`. The page owns the microphone and the interaction; the Host only transcribes. It needs
+`deviceAccess: ["microphone"]` and the user's microphone switch on, or it rejects with
+`not_permitted`.
+
+- `format` must be exactly `{ sampleRate: 16000, channelCount: 1, sampleFormat: 's16' }`, and
+  `audio` an `Int16Array` (or the buffer behind one) of 16 kHz mono samples, at most 16,000,000
+  bytes (500 seconds). WAV, WebM, Ogg, FLAC, MP3, and `MediaRecorder` output are rejected with
+  `invalid_request`. `docs/snippets/audio-capture.ts` records in exactly this format: copy it next
+  to your Client source.
+- The Host returns text after it has the whole utterance; it does not caption live speech.
+  `onPartial` reports the transcript so far while it works. Decide in the page when an utterance
+  ends (push to talk, a toggle, or splitting on silence) and call once per utterance.
+- One call per Mini App runs at a time; a second call rejects with `busy`.
+- Other failures: `runtime_unavailable` (speech recognition is off or the user is signed out;
+  offer typing instead), `transcription_failed` and `result_unknown` (the same audio may be sent
+  again), `audio_too_large`.
+- The Host shows nothing while a page records. Show your own recording indicator, stop the
+  microphone as soon as the utterance ends, and make the stop path work even when the pointer is
+  released outside the button or `getUserMedia` has not resolved yet.
+
+## `miniapp.tool.request(names)`
+
+From MiniMax Code 3.1.5, a page whose manifest declares `toolAccess: ["call"]` can ask the user,
+inside a click handler, to always allow tools its Node entry calls. Listing and calling stay in
+Node. See `docs/tool.md`.
 
 ## `miniapp.window` (proposed)
 

@@ -112,7 +112,7 @@ The preview uses synthetic data. The app interface is currently in Chinese. See 
 
 ### Requirements
 
-Use a MiniMax Code desktop version that supports MiniApps. Check the app's README for tested client versions, operating systems, configuration, and known limitations. Compatibility is documented per app. Apps that use newer capabilities, such as running Agent tasks or opening in their own window, need MiniMax Code 3.1.2 or later; older versions cannot install them.
+Use a MiniMax Code desktop version that supports MiniApps. Check the app's README for tested client versions, operating systems, configuration, and known limitations. Compatibility is documented per app. Apps that use newer capabilities need a newer client, and older versions cannot install them: running Agent tasks or opening in their own window needs MiniMax Code 3.1.2 or later; reading your conversations, calling your installed tools, or using the microphone needs 3.1.5 or later. From 3.1.5 you can switch each of these permissions off per app in the plugin details.
 
 ### 1. Download
 

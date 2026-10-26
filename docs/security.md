@@ -1,6 +1,6 @@
 # Mini App security rules
 
-Verified against MiniMax Code 3.1.2.
+Verified against MiniMax Code 3.1.6.
 
 ## Process boundary
 
@@ -47,3 +47,33 @@ shell commands, and call MCP tools.
   answer `allowOnce` automatically.
 - Text from the page, files, or the network is untrusted. Build prompts from your own instructions
   plus that text clearly marked as data, and validate anything the Agent returns before acting on it.
+
+## Reading the user's conversations
+
+`"session.read"` lets the Mini App read the title, project directory, and final reply of every turn
+in every user conversation.
+
+- Declare it only when following the user's conversations is the Mini App's purpose, and say so in
+  the plugin `description` and the README `## Data & access`.
+- Keep what you read on the user's machine. Do not log it, send it to a network host, or store more
+  of it than the Mini App shows, unless the user asked for that.
+
+## Calling tools
+
+`toolAccess` lets the Node entry call the MCP and Connector tools the user has installed (see
+`docs/tool.md`).
+
+- List in the README `## Data & access` which tools the Mini App calls and what for.
+- Every call goes through the user's permission rules. Do not try to work around a `deny` or an
+  unanswered prompt, and ask for "always allow" with `request()` only from a user action, for the
+  tools the Mini App needs.
+- Treat tool results as untrusted input, like any network response.
+
+## Microphone
+
+`deviceAccess: ["microphone"]` lets the page record the user.
+
+- Say in the README `## Data & access` when the Mini App records, and where the audio goes: the
+  Host's speech recognition, a network host, or a file.
+- Record only after a user action, show that recording is on, and stop the microphone as soon as the
+  utterance ends.
