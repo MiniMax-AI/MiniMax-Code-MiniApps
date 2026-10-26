@@ -147,7 +147,6 @@ test('the same import can be done with the existing tools alone', async () => {
     width: sourceDoc.width,
     height: sourceDoc.height,
     fps: sourceDoc.fps,
-    revision: current.json.revision,
     media: sourceDoc.media.map((/** @type {any} */ m) => ({
       ...m,
       id: remapped.get(m.id).id,
@@ -157,7 +156,12 @@ test('the same import can be done with the existing tools alone', async () => {
     clips: sourceDoc.clips.map((/** @type {any} */ c) => ({ ...c, mediaId: remapped.get(c.mediaId).id })),
   };
 
-  const { reply, text } = await mcpTool(app.base, sessionId, 'fablecut_set_project', { project: doc });
+  // The document carries no revision of its own: the server sets it, and the
+  // base revision is the one the document was read at.
+  const { reply, text } = await mcpTool(app.base, sessionId, 'fablecut_set_project', {
+    project: doc,
+    baseRevision: current.json.revision,
+  });
   assert.equal(reply.json.result.isError, undefined, text);
 
   const after = await getJson(app.base, '/api/project');

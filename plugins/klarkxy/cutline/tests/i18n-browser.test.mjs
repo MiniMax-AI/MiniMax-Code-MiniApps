@@ -348,6 +348,139 @@ test('the toolbar, the header and the export frame list follow the language', { 
   assert.deepEqual(errors, [], 'the page logged errors');
 });
 
+test('an action toast speaks the chosen language', { skip: !executablePath || !hasPuppeteer ? 'no Chromium-based browser on this machine' : false }, async (t) => {
+  const { app, page, errors } = await openEditor(t);
+  t.after(async () => { await app.dispose(); });
+
+  /** @returns {Promise<string>} */
+  const readToast = () => page.evaluate(() => document.getElementById('toast')?.textContent?.trim() ?? '');
+
+  await switchLanguage(page, 'zh-CN');
+
+  // The proxy toggle is an action with a toast of its own. It is clicked
+  // through the DOM so the button does not have to be on screen.
+  const before = await readToast();
+  await page.evaluate(() => document.getElementById('btnProxy')?.click());
+  await page.waitForFunction(
+    (previous) => {
+      const now = (document.getElementById('toast')?.textContent ?? '').trim();
+      return now.length > 0 && now !== previous;
+    },
+    { timeout: 15000 },
+    before,
+  );
+  const zh = await readToast();
+  assert.ok(/[一-鿿]/.test(zh), `the toast should be Chinese: ${zh}`);
+  assert.doesNotMatch(zh, /^Proxies (on|off)/, `the toast kept the English wording: ${zh}`);
+
+  await switchLanguage(page, 'en');
+  await page.evaluate(() => document.getElementById('btnProxy')?.click());
+  await page.waitForFunction(
+    (previous) => {
+      const now = (document.getElementById('toast')?.textContent ?? '').trim();
+      return now.length > 0 && now !== previous;
+    },
+    { timeout: 15000 },
+    zh,
+  );
+  const en = await readToast();
+  assert.match(en, /^Proxies (on|off)/, `the toast should be English: ${en}`);
+
+  assert.deepEqual(errors, [], 'the page logged errors');
+});
+
+test('the export batch list, its button and its counter follow the language', { skip: !executablePath || !hasPuppeteer ? 'no Chromium-based browser on this machine' : false }, async (t) => {
+  const { app, page, errors, pageErrors } = await openEditor(t);
+  t.after(async () => { await app.dispose(); });
+
+  await switchLanguage(page, 'en');
+
+  // A clip on the timeline, so the export dialog opens at all.
+  await page.click('#btnTitle');
+  await page.waitForSelector('select[data-k="textAnim"]', { timeout: 20000 });
+  await page.click('#btnExport');
+  await page.waitForFunction(
+    () => !document.getElementById('exportSetup')?.classList.contains('hidden'),
+    { timeout: 15000 },
+  );
+
+  // A typical set of batch outputs. The button is hidden when the Fast
+  // engine is not available, so it is clicked through the DOM.
+  await page.evaluate(() => document.getElementById('dlvBatchTypical')?.click());
+  await page.waitForFunction(
+    () => (document.getElementById('dlvBatchCount')?.textContent ?? '').trim().length > 0,
+    { timeout: 15000 },
+  );
+
+  /** @returns {Promise<any>} */
+  const read = () => page.evaluate(() => ({
+    count: document.getElementById('dlvBatchCount')?.textContent?.trim() ?? '',
+    button: document.getElementById('btnBatchExport')?.textContent?.trim() ?? '',
+    rows: document.getElementById('dlvBatchList')?.querySelectorAll('li')?.length ?? 0,
+    rowButtons: [...(document.getElementById('dlvBatchList')?.querySelectorAll('button') ?? [])]
+      .map((b) => (b.textContent ?? '').trim()),
+  }));
+
+  const en = await read();
+  assert.ok(en.rows > 0, 'the batch list is empty');
+  assert.match(en.count, /^\· \d+ of \d+ checked$/, `the English counter is wrong: ${en.count}`);
+  assert.match(en.button, /^Export checked/, `the English button is wrong: ${en.button}`);
+  assert.ok(en.rowButtons.includes('Load'), `the batch list is not in English: ${en.rowButtons.join(' | ')}`);
+
+  // The language changes while the dialog is open. The count and the button
+  // are read straight away: the switch has to redraw them itself, not leave
+  // it to some later render.
+  await switchLanguage(page, 'zh-CN');
+  const zh = await read();
+  assert.ok(/[一-鿿]/.test(zh.count), `the counter should be Chinese: ${zh.count}`);
+  assert.ok(/[一-鿿]/.test(zh.button), `the button should be Chinese: ${zh.button}`);
+  assert.ok(zh.rowButtons.some((b) => /[一-鿿]/.test(b)),
+    `the batch list is not in Chinese: ${zh.rowButtons.join(' | ')}`);
+  assert.equal(zh.rows, en.rows, 'the batch list lost rows');
+
+  /* The export dialog asks the server for its encoding profiles. When the
+   * harness has already stopped and restarted the Mini App in this process,
+   * that request answers 500; the editor catches it and carries on, so it is
+   * not an editor failure. An uncaught exception in the page is. */
+  assert.deepEqual(pageErrors, [], 'the page threw');
+  const unexpected = errors.filter((e) => !/500 \(Internal Server Error\)/.test(e));
+  assert.deepEqual(unexpected, [], 'the page logged errors');
+});
+
+test('a transition tooltip follows the language', { skip: !executablePath || !hasPuppeteer ? 'no Chromium-based browser on this machine' : false }, async (t) => {
+  const { app, page, errors } = await openEditor(t);
+  t.after(async () => { await app.dispose(); });
+
+  await switchLanguage(page, 'en');
+
+  // A title card, and then a fade-in on it: the timeline draws a transition
+  // mark, and that mark carries a tooltip the editor writes itself.
+  await page.click('#btnTitle');
+  await page.waitForSelector('select[data-k="transIn"]', { timeout: 20000 });
+  await page.evaluate(() => {
+    const sel = document.querySelector('select[data-k="transIn"]');
+    sel.value = 'fade';
+    sel.dispatchEvent(new Event('input', { bubbles: true }));
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForSelector('.trans-dur-handle', { timeout: 15000 });
+
+  const readTitle = () => page.evaluate(
+    () => document.querySelector('.trans-dur-handle')?.getAttribute('title') ?? '',
+  );
+  const en = await readTitle();
+  assert.equal(en, 'Drag to adjust duration');
+
+  // The tooltip is read straight away: the switch has to redraw the timeline
+  // itself, not leave the old wording on the clip.
+  await switchLanguage(page, 'zh-CN');
+  const zh = await readTitle();
+  assert.notEqual(zh, en, 'the tooltip did not follow the language');
+  assert.ok(/[一-鿿]/.test(zh), `the tooltip should be Chinese: ${zh}`);
+
+  assert.deepEqual(errors, [], 'the page logged errors');
+});
+
 test('the export button opens the dialog and the dialog speaks the chosen language', { skip: !executablePath || !hasPuppeteer ? 'no Chromium-based browser on this machine' : false }, async (t) => {
   const { app, page, errors, pageErrors, nativeDialogs } = await openEditor(t);
   t.after(async () => { await app.dispose(); });

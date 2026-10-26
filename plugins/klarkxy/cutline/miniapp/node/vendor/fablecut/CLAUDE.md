@@ -66,10 +66,13 @@ Every Claude Code session then has these tools:
 - `fablecut_docs` — returns this document (`section: "…"` returns only matching `## ` sections).
 - `fablecut_get_project` / `fablecut_set_project` — read / replace the timeline JSON.
   `fablecut_get_project {compact:true}` returns a one-line-per-clip summary instead.
+  `fablecut_set_project` takes the document **and** the `baseRevision` it was
+  read at — see the MCP section above.
 - `fablecut_patch_project` — apply targeted ops (add/update/remove clip/media,
   set project fields, add and open sequences) without round-tripping the document. **Prefer this for edits.**
 - `fablecut_import_media` — copy a local file (or download an `https://` URL)
   into `./media/` and register it. The stored `src` is always `/media/…`.
+  Only media files are copied in (video, audio, image, SVG).
 - `fablecut_analyze_reference` — turn a reference video into an edit blueprint
   (shots, beats, BPM, energy, drop) + extract its music. See "Remake a reference video".
 - `fablecut_frame` — **look at** a moment and get back an actual image.
@@ -116,13 +119,15 @@ Editing via full get→modify→set costs thousands of tokens per change. Cheape
    and `fablecut_status` — fetch the full JSON only to inspect exact keyframes.
 2. **Edit** with `fablecut_patch_project` ops — send only what changes, e.g.
    `{ops:[{op:"updateClip", id:"c_v2", set:{props:{filterPreset:"noir"}}}]}`.
-   It re-reads the latest document internally, so it is merge-safe by design
-   (no CONFLICT dance) and never destroys concurrent UI tweaks. To also be sure
-   the clips you touch haven't changed since you looked, pass `baseRevision`
-   (the `revision` you planned from — `fablecut_get_project`, `fablecut_status`
-   or the last "Patched (revision N)" result): if the project has moved past it,
-   the patch is refused with "CONFLICT — not saved" and the current revision.
-   Re-check the clips, then retry with that revision.
+   It re-reads the latest document internally and applies your ops to it, so
+   no CONFLICT dance is needed. That is *targeted*, not blanket merge-safe: an
+   op that sets a field the user changed in the UI a moment ago overwrites
+   that field as well. To have a concurrent change detected instead of
+   applied, pass `baseRevision` (the `revision` you planned from —
+   `fablecut_get_project`, `fablecut_status` or the last "Patched (revision N)"
+   result): if the project has moved past it, the patch is refused with
+   "CONFLICT — not saved" and the current revision. Re-check the clips, then
+   retry with that revision.
 3. **Docs**: request `fablecut_docs {section:"schema"}` (or "Recipes", "Remake", …)
    instead of the whole manual; skip it entirely if the schema is already in context.
 4. **Media questions** (duration, resolution, fps, codec, audio channels, file
@@ -164,20 +169,23 @@ locked clip, a media window past the file's end) aborts the whole patch unsaved.
 Example — cut the 2 s from 10 s to 12 s out of the edit, then crossfade the new cut:
 `{ops:[{op:"extract", from:10, to:12}, {op:"crossfade", at:10, duration:0.5}]}`
 
-**`fablecut_set_project` is conflict-checked.** The MCP server remembers the
-`revision` from the most recent `fablecut_get_project` call. If `project.json`
-has been written by anyone else since that read (e.g. the user dragged a clip in
-the UI), `fablecut_set_project` refuses with a "CONFLICT — not saved" error
-instead of overwriting. Protocol:
+**`fablecut_set_project` is conflict-checked.** It takes the document **and**
+`baseRevision` — the revision the document was read at. If `project.json` is
+at a different revision (e.g. the user dragged a clip in the UI), the call
+refuses with a "CONFLICT — not saved" error instead of overwriting. Protocol:
 
 1. `fablecut_get_project` → read the document and note its `revision`.
-2. Apply your edits in memory, bump `revision`.
-3. `fablecut_set_project` → if it succeeds you're done.
-4. **On conflict**: call `fablecut_get_project` again to get the latest document,
-   re-apply your intended changes on top of it, bump `revision`, and call
-   `fablecut_set_project` again.
+2. Apply your edits in memory. **Do not bump `revision` yourself** — the
+   server owns it and stores the document at the current revision + 1.
+3. `fablecut_set_project {project, baseRevision: <the revision from step 1>}`
+   → if it succeeds you're done.
+4. **On conflict**: call `fablecut_get_project` again to get the latest
+   document, re-apply your intended changes on top of it, and call
+   `fablecut_set_project` again with the new revision as `baseRevision`.
 
-Pass `force: true` to `fablecut_set_project` only when the user explicitly
+The base revision is your own claim about the document you are sending — the
+server compares it with the revision on disk and never takes the base from
+the submitted document. Pass `force: true` only when the user explicitly
 asks to overwrite conflicting changes. `fablecut_import_media` only appends a
 new media entry and always merges safely — no conflict check needed.
 
@@ -235,6 +243,9 @@ Files: `index.html` + `style.css` + `app.js` (editor UI), `server.js` (API + hos
 2. Put source files in `./media/` (copy them in, import via the UI / **+ URL**,
    or `fablecut_import_media` with a local path or HTTPS URL).
 3. Read `project.json`, modify `media` / `clips`, **increment `revision`**, write it back.
+   (That is for a *direct file write*. `fablecut_set_project` does it for you:
+   send the document and the `baseRevision` it was read at, and leave the
+   revision alone.)
 4. The browser UI (if open) reloads instantly. The user previews/exports from the UI.
 
 Rules:
@@ -251,6 +262,10 @@ Rules:
   or probe with ffprobe.
 - Don't edit `project.json` while the UI may be mid-drag — the UI defers external
   reloads during gestures, then picks up the next change.
+- Only media files belong in `media/`: an upload or an import of an HTML page,
+  a script, a font or any other non-media file is refused, because the folder
+  is served from the editor's own origin. The asset *library* is the one place
+  a font may live (`library/fonts/`) — a font is not media.
 
 ## The asset library (`./library/`) — default media
 
@@ -1584,7 +1599,9 @@ proxy only changes how smoothly the preview runs, never the result.
   `uses:N`, and the collections on one line:
   `m_abc video "intro.mp4" 12.4s 1920×1080 29.97 fps h264 stereo 48 kHz 45 MB ★ #interview uses:2`.
 - `fablecut_import_media` probes the file as it imports it, so the entry it
-  returns already has these fields.
+  returns already has these fields. Only media files are taken (video, audio,
+  image, SVG); anything else is refused, because `media/` is served from the
+  editor's own origin and a file a browser would run there would run there.
 - `fablecut_status` lists offline media, and the compact view marks each
   `OFFLINE (file missing — relinkMedia)` and each video with a proxy `proxy:540p`.
 - `fablecut_proxy {}` reports every video's proxy; `{create:true, mediaIds?, height?}`
@@ -1985,11 +2002,22 @@ obvious cuts were missed, raise it if motion is being misread as cuts.
 
 ## REST API (alternative to file editing)
 
+Every answer carries `X-Content-Type-Options: nosniff`: the type a response
+declares is the type it is, and the browser never guesses one. The user's own
+files (media, library, proxies, exports) that a browser would execute — an HTML
+page, an XML document — are served with a sandbox Content-Security-Policy as
+well, so a file that was already there before the upload boundary refused it
+cannot run on the editor's origin. The editor's own static payload is not
+sandboxed: the page has to run.
+
 - `GET  /api/project` — current project JSON
 - `PUT  /api/project` — replace project JSON (body = full document).
   **Conflict-safe**: if the body's `revision` ≤ the revision currently on disk,
   the server rejects with **409** and returns `{"error":"…","revision":<current>}`.
-  Append `?force=1` to overwrite unconditionally. A request with an `X-FableCut-Project`
+  Append `?force=1` to overwrite unconditionally. The revision is the server's
+  to give: the document is stored at the revision on disk **+ 1**, so a forced
+  save can never rewind the counter (a lower number would let a stale
+  document pass the check above). A request with an `X-FableCut-Project`
   header (the editor sends the id of the project it loaded) is also refused with 409 when
   another project is open (see "Projects"). Writes are atomic (tmp file +
   rename), so a crashed write never corrupts the file.
@@ -2033,6 +2061,10 @@ obvious cuts were missed, raise it if motion is being misread as cuts.
   `library/presets/<id>.json` / `library/templates/<id>.json`, returning `{id, name, file}`
 - `POST /api/upload?name=foo.mp4` — raw body saved into ./media, returns `{src}`.
   MP4/MOV/M4V uploads are auto-remuxed with `+faststart` (needs ffmpeg on PATH).
+  Only media files are accepted (video, audio, image, SVG): the folder is served
+  from the editor's own origin, so an HTML page or a script dropped in here
+  would run there — such an upload is refused with **400**. A font is not media
+  either; fonts live in `library/fonts/`.
   Files copied straight into ./media by external tools skip this — remux big ones
   yourself (`ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`) or playback stalls.
 - `POST /api/import-url` — body `{url:"https://…"}` downloads the file into

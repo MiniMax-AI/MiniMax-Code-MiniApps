@@ -39,6 +39,35 @@ const TOKEN_HEADER = 'x-minimax-export-token';
 /** How often the runner refreshes its heartbeat marker. */
 const HEARTBEAT_MS = 2000;
 
+/**
+ * How long the browser may take to close before its process is killed.
+ *
+ * `browser.close()` waits for the browser to answer. A browser that hangs
+ * would hold the whole teardown - and the runner would never leave - so the
+ * close gets a short while and a browser that is still running after it is
+ * killed.
+ */
+const BROWSER_CLOSE_TIMEOUT_MS = 3000;
+
+/**
+ * How long the teardown waits for a browser that is still starting.
+ *
+ * A runner that is stopped while its browser is booting still owns that
+ * browser: it is waited for, briefly, so it can be closed.
+ */
+const BROWSER_LAUNCH_WAIT_MS = 10_000;
+
+/**
+ * How long the teardown may take before the process leaves anyway.
+ *
+ * The overall deadline cannot bound a teardown that it starts itself: it has
+ * already fired by then. So the teardown carries a bound of its own, armed
+ * when it starts and cleared when it is done. It is at least the launch wait
+ * and the close budget together, so a browser that is still starting or
+ * still closing does not eat it.
+ */
+const TEARDOWN_TIMEOUT_MS = BROWSER_LAUNCH_WAIT_MS + BROWSER_CLOSE_TIMEOUT_MS + 2000;
+
 /** The default time a render may take before the runner gives up. */
 const DEFAULT_TIMEOUT_SECONDS = 3600;
 const MIME = {
@@ -131,11 +160,48 @@ function resolveInside(root, rel) {
 }
 
 /**
+ * The types a browser would run, from the runtime's own classification.
+ *
+ * The editor's server marks the user's files (media, library, exports) as
+ * managed: a document type among them is served sandboxed, so a file that was
+ * already there before the upload boundary refused it cannot run on the
+ * editor's origin. The standalone runner serves the job's copies of the same
+ * files, so it uses the same module — the job folder carries its own copy of
+ * it, and the package carries one for the tests.
+ *
+ * @param {string} jobDir the job folder the gate serves
+ * @returns {{ isDocumentName: (name: string) => boolean } | null} null when
+ *   no classification is there at all
+ */
+function loadFileTypes(jobDir) {
+  const candidates = [
+    path.join(jobDir, 'runtime', 'media-types.js'),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'vendor', 'fablecut', 'media-types.js'),
+  ];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      const loaded = require(candidate);
+      const api =
+        loaded && loaded.default && typeof loaded.default.isDocumentName === 'function' ? loaded.default : loaded;
+      if (api && typeof api.isDocumentName === 'function') return api;
+    } catch {
+      /* the next candidate may be the one that works */
+    }
+  }
+  return null;
+}
+
+/**
  * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
  * @param {string} file
+ * @param {{ managed?: boolean, types?: { isDocumentName: (name: string) => boolean } | null }} [options]
+ *   `managed` marks the user's own files: a document type among them is
+ *   served sandboxed. The editor's own static files are not sandboxed — the
+ *   page has to run.
  */
-function serveFile(req, res, file) {
+function serveFile(req, res, file, options = {}) {
   let stat;
   try {
     stat = fs.statSync(file);
@@ -145,6 +211,11 @@ function serveFile(req, res, file) {
     return;
   }
   const type = MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+  // The browser takes the type we send as the type it is: never guess.
+  const extra = { 'X-Content-Type-Options': 'nosniff' };
+  if (options.managed && options.types && options.types.isDocumentName(file)) {
+    extra['Content-Security-Policy'] = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
+  }
   const range = req.headers.range;
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/u.exec(String(range).trim());
@@ -167,6 +238,7 @@ function serveFile(req, res, file) {
       'content-range': `bytes ${start}-${end}/${stat.size}`,
       'content-length': end - start + 1,
       'cache-control': 'no-store',
+      ...extra,
     });
     const stream = fs.createReadStream(file, { start, end });
     stream.on('error', () => res.destroy());
@@ -178,6 +250,7 @@ function serveFile(req, res, file) {
     'content-length': stat.size,
     'accept-ranges': 'bytes',
     'cache-control': 'no-store',
+    ...extra,
   });
   const stream = fs.createReadStream(file);
   stream.on('error', () => res.destroy());
@@ -457,6 +530,10 @@ function createGate({ upstream, secret, job, roots, authority, onReport, onClaim
   const secretBytes = Buffer.from(secret, 'utf8');
   /** Routes that were refused, so each one is only mentioned once. */
   const refused = new Set();
+  // The job folder holds the gate's roots, and the runtime's own copy of the
+  // file classification the editor's server uses.
+  const jobDir = path.dirname(path.resolve(roots.media));
+  const fileTypes = loadFileTypes(jobDir);
   /**
    * @param {import('node:http').ServerResponse} res
    * @param {string} what
@@ -626,7 +703,19 @@ function createGate({ upstream, secret, job, roots, authority, onReport, onClaim
           sendJson(res, 404, { error: 'not found' });
           return;
         }
-        serveFile(req, res, file);
+        if (!fileTypes) {
+          // Without the classification the user's files cannot be served
+          // safely, so they are not served at all.
+          if (!refused.has('the file classification')) {
+            refused.add('the file classification');
+            log('this job has no file classification; the user\'s own files are not served');
+          }
+          sendJson(res, 404, { error: 'not found' });
+          return;
+        }
+        // The user's own files are managed: a document type among them is
+        // served sandboxed, exactly as the editor's own server serves it.
+        serveFile(req, res, file, { managed: true, types: fileTypes });
         return;
       }
 
@@ -644,6 +733,85 @@ function createGate({ upstream, secret, job, roots, authority, onReport, onClaim
       else res.end();
     }
   };
+}
+
+/**
+ * Close the browser, but not for ever.
+ *
+ * The close is given a short while. A browser that answers is closed; a
+ * browser that fails to close, or that never answers at all, has its process
+ * killed so that nothing outlives the runner.
+ *
+ * @param {any} target the browser
+ * @returns {Promise<'closed'|'failed'|'timeout'>} what the close did
+ */
+async function closeBrowser(target) {
+  /** @type {'closed'|'failed'|'timeout'} */
+  let outcome = 'timeout';
+  /** @type {NodeJS.Timeout | null} */
+  let timer = null;
+  try {
+    await Promise.race([
+      Promise.resolve()
+        .then(() => target.close())
+        .then(
+          () => {
+            outcome = 'closed';
+          },
+          () => {
+            outcome = 'failed';
+          },
+        ),
+      new Promise((resolve) => {
+        // The timer is not unref'd: the teardown is running, and the process
+        // may not leave while it waits.
+        timer = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    outcome = 'failed';
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  if (outcome === 'closed') return outcome;
+  // A close that failed, or that never settled: the browser may still be
+  // running, and its process is killed.
+  try {
+    const proc = target.process?.();
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      proc.kill();
+      log('the browser did not close in time; its process was killed');
+    }
+  } catch {
+    /* the browser is gone either way */
+  }
+  return outcome;
+}
+
+/**
+ * A browser that is still being launched when the teardown starts.
+ *
+ * It is waited for, briefly, so it can be closed. A launch that never
+ * arrives is left to the caller.
+ *
+ * @param {Promise<any>} pending the launch
+ * @returns {Promise<any>} the browser, or null
+ */
+async function waitForBrowser(pending) {
+  /** @type {NodeJS.Timeout | null} */
+  let timer = null;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), BROWSER_LAUNCH_WAIT_MS);
+      }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -775,6 +943,11 @@ async function main() {
 
   /** @type {any} */
   let browser = null;
+  /** The launch that is on its way, when the browser is not up yet. */
+  /** @type {Promise<any> | null} */
+  let launching = null;
+  /** Whether the browser has been closed already. */
+  let browserClosed = false;
   /** @type {any} */
   let upstream = null;
   /** @type {import('node:http').Server | null} */
@@ -789,6 +962,12 @@ async function main() {
   let deadline = null;
   let cancelled = false;
   let finished = false;
+  /** The teardown, once. Every caller waits for the same one. */
+  /** @type {Promise<void> | null} */
+  let cleanupPromise = null;
+  /** The stop, once. Whichever timer noticed first, the work happens once. */
+  /** @type {Promise<void> | null} */
+  let stopping = null;
 
   /**
    * @param {Record<string, any>} patch
@@ -810,70 +989,128 @@ async function main() {
     finished = true;
     const patch = { status, error: error ?? null };
     if (status === 'succeeded') patch.progress = 1;
-    persist(patch);
+    try {
+      persist(patch);
+    } catch (writeError) {
+      // The state file cannot be written - it may be gone. The exit code and
+      // the log line still say what happened.
+      log(
+        `the job state could not be written: ${
+          writeError instanceof Error ? writeError.message : String(writeError)
+        }`,
+      );
+    }
     // The exit code says what happened, so the task that started the runner
     // does not have to read the state file to know.
     process.exitCode = status === 'succeeded' ? 0 : status === 'cancelled' ? 130 : status === 'interrupted' ? 5 : 4;
     log(`job ${job.id} ${status}${error ? `: ${error}` : ''}`);
   };
 
-  const cleanup = async () => {
-    if (heartbeat) clearInterval(heartbeat);
-    if (cancelPoll) clearInterval(cancelPoll);
-    if (parentWatch) clearInterval(parentWatch);
-    if (deadline) clearTimeout(deadline);
-    heartbeat = null;
-    cancelPoll = null;
-    parentWatch = null;
-    deadline = null;
-    // The children this runner started - the verification's ffmpeg and
-    // ffprobe - go with it.
-    for (const child of [...ownedChildren]) {
+  /**
+   * Close everything this process started: the timers, the children, the
+   * browser, the runtime's own processes, the server and the browser
+   * profile.
+   *
+   * It is safe to call more than once: the first call does the work and
+   * every other call waits for that same work.
+   *
+   * @returns {Promise<void>}
+   */
+  const cleanup = () => {
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      // The teardown has a bound of its own: the overall deadline cannot
+      // bound a teardown it starts, so this one can. It is cleared only when
+      // the teardown is done.
+      const teardownTimer = setTimeout(() => {
+        log(`the teardown did not finish in ${TEARDOWN_TIMEOUT_MS}ms; the process leaves now`);
+        process.exit(process.exitCode ?? 4);
+      }, TEARDOWN_TIMEOUT_MS);
       try {
-        child.kill();
-      } catch {
-        /* it is on its way out */
-      }
-    }
-    ownedChildren.clear();
-    try {
-      if (browser) {
-        await browser.close().catch(() => {});
-        const proc = browser.process();
-        if (proc && proc.exitCode === null) {
+        if (heartbeat) clearInterval(heartbeat);
+        if (cancelPoll) clearInterval(cancelPoll);
+        if (parentWatch) clearInterval(parentWatch);
+        heartbeat = null;
+        cancelPoll = null;
+        parentWatch = null;
+        // The children this runner started - the verification's ffmpeg and
+        // ffprobe - go with it.
+        for (const child of [...ownedChildren]) {
           try {
-            proc.kill();
+            child.kill();
           } catch {
-            /* already gone */
+            /* it is on its way out */
           }
         }
+        ownedChildren.clear();
+
+        // The browser: the one that is up, and one that is still starting.
+        // Either way it is closed here, so no browser outlives the runner.
+        const pending = launching;
+        launching = null;
+        const target = browser ?? (pending ? await waitForBrowser(pending) : null);
+        browser = null;
+        if (target && !browserClosed) {
+          browserClosed = true;
+          await closeBrowser(target);
+        }
+
+        try {
+          if (upstream) {
+            upstream.shutdown();
+            const processes = require(path.join(jobDir, 'runtime', 'processes.js'));
+            await processes.shutdown();
+          }
+        } catch {
+          /* nothing left to stop */
+        }
+        upstream = null;
+        if (server) {
+          await new Promise((done) => {
+            server.close(() => done(undefined));
+            server.closeAllConnections?.();
+          });
+          server = null;
+        }
+        try {
+          fs.rmSync(path.join(jobDir, 'browser-profile'), { recursive: true, force: true });
+        } catch {
+          /* a leftover profile is harmless */
+        }
+        // The overall deadline is the last thing that can end this process, so
+        // it stays armed until the teardown is done.
+        if (deadline) clearTimeout(deadline);
+        deadline = null;
+      } finally {
+        clearTimeout(teardownTimer);
       }
-    } catch {
-      /* the browser is gone either way */
+    })().catch((error) => {
+      log(`the teardown did not finish cleanly: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    return cleanupPromise;
+  };
+
+  /**
+   * End the run.
+   *
+   * The status is written, everything this process started is closed, and the
+   * process leaves with the code that says what happened. Every path that
+   * ends the render comes through here, so the teardown happens once,
+   * whichever timer noticed first.
+   *
+   * @param {string} status
+   * @param {string} [error]
+   * @returns {Promise<void>}
+   */
+  const stop = (status, error) => {
+    if (!stopping) {
+      finish(status, error);
+      stopping = cleanup().then(
+        () => process.exit(process.exitCode ?? 130),
+        () => process.exit(process.exitCode ?? 130),
+      );
     }
-    browser = null;
-    try {
-      if (upstream) {
-        upstream.shutdown();
-        const processes = require(path.join(jobDir, 'runtime', 'processes.js'));
-        await processes.shutdown();
-      }
-    } catch {
-      /* nothing left to stop */
-    }
-    upstream = null;
-    if (server) {
-      await new Promise((done) => {
-        server.close(() => done(undefined));
-        server.closeAllConnections?.();
-      });
-      server = null;
-    }
-    try {
-      fs.rmSync(path.join(jobDir, 'browser-profile'), { recursive: true, force: true });
-    } catch {
-      /* a leftover profile is harmless */
-    }
+    return stopping;
   };
 
   /**
@@ -883,8 +1120,7 @@ async function main() {
     if (finished) return;
     log(`received ${signal}; stopping the render`);
     cancelled = true;
-    finish('cancelled', `the runner received ${signal}`);
-    void cleanup().then(() => process.exit(process.exitCode ?? 130));
+    void stop('cancelled', `the runner received ${signal}`);
   };
   process.on('SIGINT', () => onSignal('SIGINT'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
@@ -902,9 +1138,14 @@ async function main() {
   // fonts all count against it, so a job that never reaches the render still
   // ends instead of sitting there.
   deadline = setTimeout(() => {
-    if (finished) return;
-    finish('failed', `the job did not finish within ${timeoutSeconds} seconds`);
-    void cleanup().then(() => process.exit(4));
+    if (finished) {
+      // The render is over, but the teardown is still running. Nothing may
+      // outlive this process, so it leaves now.
+      log('the teardown did not finish in time; the process leaves now');
+      process.exit(process.exitCode ?? 4);
+      return;
+    }
+    void stop('failed', `the job did not finish within ${timeoutSeconds} seconds`);
   }, Math.max(30, timeoutSeconds) * 1000);
   deadline.unref?.();
 
@@ -962,7 +1203,15 @@ async function main() {
       onReport: (body) => {
         if (Number.isFinite(body.progress)) {
           report.progress = Math.max(0, Math.min(1, Number(body.progress)));
-          persist({ progress: report.progress });
+          try {
+            persist({ progress: report.progress });
+          } catch (error) {
+            // The state file cannot be written any more, so the run cannot be
+            // watched. It stops through the one teardown path.
+            const message = error instanceof Error ? error.message : String(error);
+            log(`the job state could not be written: ${message}`);
+            void stop('failed', `the job state could not be written: ${message}`);
+          }
         }
         if (body.status === 'done') {
           report.done = true;
@@ -982,15 +1231,25 @@ async function main() {
       },
     });
 
+    // The heartbeat: the runner says every two seconds that it is still
+    // working. A state file that cannot be read or written - it may be gone
+    // - is not an uncaught error in a timer: the run stops through the one
+    // teardown path, so the browser, the server and the children are closed.
     heartbeat = setInterval(() => {
-      const current = readJobOrThrow(jobDir);
       if (finished) return;
-      writeJob(jobDir, {
-        ...current,
-        updatedAt: Date.now(),
-        attempt: { ...(current.attempt ?? {}), heartbeatAt: Date.now() },
-      });
-      writeRunning(jobDir, current);
+      try {
+        const current = readJobOrThrow(jobDir);
+        writeJob(jobDir, {
+          ...current,
+          updatedAt: Date.now(),
+          attempt: { ...(current.attempt ?? {}), heartbeatAt: Date.now() },
+        });
+        writeRunning(jobDir, current);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`the job state could not be read or written: ${message}`);
+        void stop('failed', `the job state could not be read or written: ${message}`);
+      }
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
 
@@ -1003,8 +1262,7 @@ async function main() {
       if (!fs.existsSync(path.join(jobDir, 'cancel.request'))) return;
       log('cancel requested');
       cancelled = true;
-      finish('cancelled', 'the job was cancelled');
-      void cleanup().then(() => process.exit(process.exitCode ?? 130));
+      void stop('cancelled', 'the job was cancelled');
     }, 500);
     cancelPoll.unref?.();
 
@@ -1018,8 +1276,7 @@ async function main() {
       if (process.ppid !== startParent) {
         log('the process that started the runner is gone; stopping the render');
         cancelled = true;
-        finish('interrupted', 'the process that started the runner ended');
-        void cleanup().then(() => process.exit(process.exitCode ?? 5));
+        void stop('interrupted', 'the process that started the runner ended');
       }
     }, 5000);
     parentWatch.unref?.();
@@ -1035,7 +1292,10 @@ async function main() {
     const profileDir = path.join(jobDir, 'browser-profile');
     fs.mkdirSync(profileDir, { recursive: true });
 
-    browser = await puppeteer.launch({
+    // The launch is kept, so a runner that is stopped while the browser is
+    // booting still owns that browser: the teardown closes it as soon as it
+    // is there.
+    launching = puppeteer.launch({
       executablePath: executable,
       headless: true,
       // A pipe instead of a WebSocket: the browser opens no debugging port
@@ -1055,6 +1315,17 @@ async function main() {
         '--window-size=1600,900',
       ],
     });
+    browser = await launching;
+    launching = null;
+    if (finished) {
+      // The run was stopped while the browser was starting. The teardown
+      // closed it; if it gave up waiting for it, it is closed here.
+      if (browser && !browserClosed) {
+        browserClosed = true;
+        await closeBrowser(browser);
+      }
+      return;
+    }
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1600, height: 900 });
@@ -1233,4 +1504,14 @@ const isEntryPoint = process.argv[1]
 
 if (isEntryPoint) await main();
 
-export { createGate, resolveInside, serveFile, childEnvironment, TOKEN_HEADER };
+export {
+  createGate,
+  resolveInside,
+  serveFile,
+  childEnvironment,
+  closeBrowser,
+  TOKEN_HEADER,
+  BROWSER_CLOSE_TIMEOUT_MS,
+  BROWSER_LAUNCH_WAIT_MS,
+  TEARDOWN_TIMEOUT_MS,
+};

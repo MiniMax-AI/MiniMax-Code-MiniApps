@@ -40,6 +40,7 @@ test('initialize answers with the cutline identity and a session id', async () =
     params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } },
   });
   assert.equal(reply.status, 200);
+  assert.equal(reply.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(reply.json.jsonrpc, '2.0');
   assert.equal(reply.json.id, 1);
   assert.equal(reply.json.result.serverInfo.name, 'cutline');
@@ -192,6 +193,20 @@ test('ping answers', async () => {
   );
   assert.equal(reply.status, 200);
   assert.deepEqual(reply.json.result, {});
+});
+
+test('fablecut_set_project asks for the base revision of the document', async () => {
+  const { sessionId } = await mcpSession(app.base);
+  const reply = await mcpRaw(
+    app.base,
+    { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+    { headers: { 'mcp-session-id': sessionId } },
+  );
+  const tool = reply.json.result.tools.find((/** @type {any} */ t) => t.name === 'fablecut_set_project');
+  assert.ok(tool, 'the tool is offered');
+  assert.deepEqual(tool.inputSchema.required.sort(), ['baseRevision', 'project']);
+  assert.equal(tool.inputSchema.properties.baseRevision.type, 'integer');
+  assert.match(tool.description, /baseRevision/);
 });
 
 test.after(async () => {

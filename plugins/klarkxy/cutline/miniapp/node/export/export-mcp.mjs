@@ -44,11 +44,15 @@ export const EXPORT_TOOL = {
       },
       preset: {
         type: 'string',
-        description: 'A delivery preset id: youtube, youtube-shorts, instagram-reels, tiktok, x, linkedin, master, broadcast, web, archive, custom, or a saved preset\'s id.',
+        description:
+          'A delivery preset id: youtube, youtube-shorts, instagram-reels, tiktok, x, linkedin, master, broadcast, web, archive, custom, or a saved preset\'s id. ' +
+          'An id nobody has is refused before the job is made, so a typo never renders as Custom.',
       },
       delivery: {
         type: 'object',
-        description: 'Delivery settings over the preset (or over custom): the same shape fablecut_export takes — {width, height, fps, reframe, container, video:{…}, audio:{…}, color, filename, metadata}.',
+        description:
+          'Delivery settings over the preset (or over custom): the same shape fablecut_export takes — {width, height, fps, reframe, container, video:{…}, audio:{…}, color, filename, metadata}. ' +
+          'It may carry a preset of its own ({preset: "…"}); that id is checked the same way.',
       },
       profile: {
         type: 'string',

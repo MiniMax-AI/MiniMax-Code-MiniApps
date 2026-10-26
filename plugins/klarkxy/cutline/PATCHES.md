@@ -34,8 +34,19 @@ Files this package adds that are not upstream:
 | `miniapp/node/export/runner.mjs` | The standalone runner: its own loopback server, its own secret, its own headless browser. Copied into every job folder. |
 | `miniapp/node/vendor/puppeteer/` | A bundled build of Puppeteer Core and the 55 runtime packages it pulls in, the browser automation library the runner drives the render with. See its `PROVENANCE.md` and `licenses/INVENTORY.md`. |
 | `miniapp/node/vendor/fablecut/processes.js` | Tracks media child processes and waits for their termination when the Host stops the runtime. |
+| `miniapp/node/vendor/fablecut/media-types.js` | The shared managed-media allowlist and browser-executable document classification used by uploads, imports, URL imports and safe static serving. |
 
 ---
+
+## Concurrency, managed-media and export hardening
+
+Whole-project MCP writes require an explicit `baseRevision`; a revision embedded in the submitted document is not accepted as evidence of a prior read, and the server allocates the next revision. Forced REST writes also advance the current on-disk revision instead of rewinding it. The Agent manual no longer tells callers to increment a document revision themselves or claims that an unbased targeted patch preserves same-field concurrent edits.
+
+Managed media copies share one video/audio/image/SVG allowlist, with font support confined to the library. Upload, project-folder import and standalone-export preparation reject non-media documents before copying. Every Node and standalone-runner response carries `X-Content-Type-Options: nosniff`; media, library, proxy and export documents with browser-executable extensions also carry a sandbox CSP, while each editor's own static payload remains executable.
+
+Standalone export preparation rejects unknown built-in or saved delivery preset IDs instead of allowing a later Custom fallback, and applies the same managed-media boundary as an interactive import. Runner heartbeat failures enter the same bounded teardown as render failures, concurrent cleanup is idempotent, and browser shutdown has a bounded close attempt before the process is killed. An independent teardown deadline also bounds a cleanup started by the overall render timeout.
+
+Locale repainting covers the export batch list and timeline transition/fade tooltips. User-facing toast keys and the batch counter are translated without passing user content or stored enum values through the translator.
 
 ## `miniapp/node/vendor/fablecut/server.js`
 
@@ -99,15 +110,16 @@ Files this package adds that are not upstream:
    which answers with the response object, and by the module exports. The
    Host owns stdin and stdout.
 
-3. **`fablecut_set_project` compares the submitted document's revision.**
+3. **`fablecut_set_project` requires an explicit, trusted base revision.**
    Upstream compared the file's revision with `lastReadRevision`, a
    process-global that records the last read. With several MCP sessions in
    one process, another session's read answered for this write and a stale
-   document slipped through. The base is now the revision carried by the
-   submitted document — the same rule `fablecut_patch_project` applies to
-   `baseRevision` — and a document without a revision falls back to the last
-   read, because it makes no claim of its own. The write helper also refuses
-   writes after runtime disposal has begun.
+   document slipped through. The tool now requires `baseRevision` from the
+   caller's last `fablecut_get_project`; the submitted document's own revision
+   is not treated as proof of that read. A different current revision refuses
+   the write unless `force:true` was explicitly supplied, and a successful
+   write stores current revision + 1. The write helper also refuses writes
+   after runtime disposal has begun.
 
 4. **`relinkMedia` and `replaceMedia` see the file's details.** The ops are
    applied synchronously, but the details come from ffprobe, which is
@@ -127,10 +139,10 @@ Files this package adds that are not upstream:
    media files it uses are copied into this installation's library (never
    overwriting anything), the entries point at the copies, the originals are
    left untouched, and the project is saved as the open one at the actual
-   current revision. It prevalidates document/media real paths, refuses missing
-   or escaping sources, supports nested source folders, and copies into safe
-   unique destination names. Library references are resolved by content rather
-   than silently reusing a different asset. It snapshots the existing project
+   current revision. It prevalidates document/media real paths, refuses missing,
+   escaping or unsupported non-media sources, supports nested source folders,
+   and copies into safe unique destination names. Library references are
+   resolved by content rather than silently reusing a different asset. It snapshots the existing project
    before replacement and refuses concurrent changes during probing. It writes
    the same shared `project.json` that `fablecut_set_project` writes.
 
@@ -289,20 +301,19 @@ What was deliberately left alone:
   the project, so an exported frame does not depend on the interface
   language.
 
-What is left in English, counted over the whole client payload, is 124
-strings, all of them deliberate: 35 codec, container and platform names
-("Apple ProRes", "YouTube Shorts"), 32 CSS class selectors and pixel-format
-labels ("4:2:0 10-bit"), 16 developer and server error details, 15 pieces of
-sample text inside the built-in templates ("Big news is here"), 13 CSS
-selectors and style values, 8 `[FableCut] …` log lines, 3 ffmpeg argument
-strings, the keyboard key name "Backspace" and the default names
+The deliberately untranslated remainder is limited to technical, developer and
+sample-content strings: codec, container and platform names ("Apple ProRes",
+"YouTube Shorts"), CSS class selectors and pixel-format labels ("4:2:0 10-bit"),
+developer and server error details, sample text inside the built-in templates
+("Big news is here"), CSS selectors and style values, `[FableCut] …` log lines,
+ffmpeg argument strings, the keyboard key name "Backspace" and the default names
 "Untitled Project" and "Main".
 
 The choice is made in **Settings → Appearance → Language** and applies
 without a reload. `repaintForLocale()` redraws the surfaces the editor
 builds at runtime (the bin, the inspector, the mixer, the colour page, the
-project dashboard, the export queue, the track headers) and keeps the caret
-where it was. A redraw never schedules a save: `scheduleSave()` returns
+project dashboard, the export queue and batch list, the track headers and the
+timeline's transition/fade tooltips) and keeps the caret where it was. A redraw never schedules a save: `scheduleSave()` returns
 early while `localeRepainting` is set, so a language switch never changes
 the project.
 
@@ -311,9 +322,9 @@ defined while the other scripts evaluate their own labels. The export runner
 copies the whole client directory, so the dictionaries travel with the job
 and an exported frame is identical in both languages.
 
-`tests/i18n.test.mjs` (29 tests, no dependency, no browser) checks the
+`tests/i18n.test.mjs` (37 tests, no dependency, no browser) checks the
 dictionary parity, the English value rule, the runtime behaviour and the way
-the client payload uses it. `tests/i18n-browser.test.mjs` (3 tests) drives a
+the client payload uses it. `tests/i18n-browser.test.mjs` (9 tests) drives a
 real headless Chrome against a real Mini App instance and skips itself when
 the machine has no Chromium-based browser.
 

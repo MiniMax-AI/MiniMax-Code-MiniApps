@@ -982,12 +982,19 @@ function repaintForLocale() {
     renderMixer();
     renderColorPage(true);
     renderQueue();
+    /* The timeline's own tooltips (a transition's duration handle, a fade
+       grip) are built with the language in force, so the clips are drawn
+       again. It is a redraw: the project, the revision and the undo stack are
+       left alone. */
+    rebuildClips();
     if (els.exportSetup && !els.exportSetup.classList.contains("hidden")) {
       populateExportProfileSelect(true);
       fillDeliveryControls();
       refreshDeliveryNotes();
       syncExportEngineUi();
       syncExportRangeUi();
+      /* The batch list and its counter are built at runtime too. */
+      renderBatchList();
     }
     syncExportChoiceUi(dlvSource);
   } catch (err) {
@@ -2314,7 +2321,7 @@ async function importFromUrl(url) {
   } catch (e) {
     if (e && e.name === "AbortError") return;
     setImportUrlBusy(false);
-    toast(e && e.message ? e.message : "Couldn't import URL");
+    toast(e && e.message ? e.message : T("Couldn't import URL"));
   } finally {
     runtime.importUrlAbort = null;
   }
@@ -2633,7 +2640,7 @@ function makeFilterBar(n) {
   if (col) {
     bar.querySelector("[data-col-rename]").addEventListener("click", (e) => {
       const r = e.currentTarget.getBoundingClientRect();
-      promptBinText(r.left, r.bottom + 4, "Collection name", col.name, (name) => { col.name = name.slice(0, 80); scheduleSave(); renderBin(); });
+      promptBinText(r.left, r.bottom + 4, T("Collection name"), col.name, (name) => { col.name = name.slice(0, 80); scheduleSave(); renderBin(); });
     });
     bar.querySelector("[data-col-delete]").addEventListener("click", () => {
       project.collections = (project.collections || []).filter((c) => c.id !== col.id);
@@ -2962,7 +2969,9 @@ async function checkOffline() {
     if (changed) {
       renderBin(); state.dirtyTimeline = true;
       const fresh = [...mediaOffline].filter((id) => !was.has(id));
-      if (fresh.length) toast(`${fresh.length === 1 ? `“${getMedia(fresh[0])?.name}” is` : fresh.length + " files are"} offline — right-click it in the bin → Relink…`);
+      if (fresh.length) toast(fresh.length === 1
+        ? T("“{name}” is offline — right-click it in the bin → Relink…", { name: getMedia(fresh[0])?.name || "" })
+        : T("{n} files are offline — right-click them in the bin → Relink…", { n: fresh.length }));
     }
   } catch { } finally { offlineChecking = false; }
 }
@@ -3346,7 +3355,7 @@ els.binViewBtn.addEventListener("click", () => { binView.list = !binView.list; s
 els.btnProxy?.addEventListener("click", () => {
   setSetting("useProxies", !proxiesOn());
   onProxiesChanged();
-  toast(proxiesOn() ? "Proxies on — files with a proxy play it while you edit" : "Proxies off — every clip plays its original");
+  toast(proxiesOn() ? T("Proxies on — files with a proxy play it while you edit") : T("Proxies off — every clip plays its original"));
 });
 
 /* Ctrl/Cmd+click in the Project bin opens the file importer. */
@@ -3795,7 +3804,7 @@ async function pjLoadVersions() {
     pj.versions = data.versions || [];
   } catch (e) {
     if (!current()) return;
-    pj.versions = []; toast("Versions: " + (e.message || "couldn't read them"));
+    pj.versions = []; toast(T("Versions: {error}", { error: e.message || T("couldn't read them") }));
   }
   // what is being typed in Save version survives the repaint
   const draft = { name: $("verName")?.value, note: $("verNote")?.value, focus: document.activeElement?.id };
@@ -3856,7 +3865,7 @@ async function pjVersionRun(act, btn) {
   if (!p) return;
   const row = btn.closest("[data-ver]"), v = row ? +row.dataset.ver : null;
   const post = (body) => fetch("/api/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: p.id, ...body }) })
-    .then(async (r) => { const out = await r.json().catch(() => ({})); if (!r.ok) { toast(out.error || "Versions: request failed"); return null; } return out; })
+    .then(async (r) => { const out = await r.json().catch(() => ({})); if (!r.ok) { toast(out.error || T("Versions: request failed")); return null; } return out; })
     .catch(() => { toast(T("Versions: the editor server did not answer")); return null; });
   if (act === "save") {
     if (p.active && !(await flushSaveForVersion("no version was made"))) return;
@@ -3942,7 +3951,7 @@ async function saveVersionNow() {
     if (!(await flushSaveForVersion("no version was made"))) return;
     const res = await fetch("/api/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save", ...(project && project !== "?" ? { project } : {}) }) });
     const out = await res.json().catch(() => ({}));
-    if (!res.ok) { toast(out.error || "Couldn't save a version"); return; }
+    if (!res.ok) { toast(out.error || T("Couldn't save a version")); return; }
     toast(`Saved v${out.version.v} “${out.version.name}” · Projects → Versions to go back to it`);
   } catch { toast(T("Couldn't save a version: the editor server did not answer")); }
   finally { versionSaving = false; }
@@ -4155,7 +4164,7 @@ function toggleClipsDisabled() {
   for (const c of group) { if (disable) c.disabled = true; else delete c.disabled; }
   state.dirtyTimeline = true;
   scheduleSave(); renderInspector();
-  toast(disable ? "Clip disabled — hidden from preview and export" : "Clip enabled");
+  toast(disable ? T("Clip disabled — hidden from preview and export") : T("Clip enabled"));
 }
 function toggleClipsLocked() {
   const group = withLinked(selectedClips());
@@ -4166,7 +4175,7 @@ function toggleClipsLocked() {
   state.dirtyTimeline = true;
   scheduleSave(); renderInspector();
   const trackLocked = !lock && group.some((c) => isTrackLocked(c.track));
-  toast(lock ? "Clip locked" : trackLocked ? "Clip unlocked — its track is still locked" : "Clip unlocked");
+  toast(lock ? T("Clip locked") : trackLocked ? T("Clip unlocked — its track is still locked") : T("Clip unlocked"));
 }
 /** Why these clips can't be linked, or null when they can. Links in FableCut
  *  mean identical timing, so only aligned clips of one file qualify: one
@@ -4199,7 +4208,7 @@ function toggleLinkSelected() {
     pushUndo();
     const lg = "lg_" + uid();
     for (const c of sel) { c.linkGroup = lg; delete c.linkedId; delete c.unlinked; }
-    toast("Linked");
+    toast(T("Linked"));
   }
   state.dirtyTimeline = true;
   scheduleSave(); renderInspector();
@@ -4622,7 +4631,7 @@ function replaceClipMedia(clip, media) {
   if (clip.kind === "video") reconcileAudioChannels(clip); // add/drop A3+ channel clips once decoded
   state.dirtyTimeline = true;
   scheduleSave(); renderInspector();
-  toast(trimmed ? "Media replaced — trimmed to fit shorter source" : "Media replaced");
+  toast(trimmed ? T("Media replaced — trimmed to fit shorter source") : T("Media replaced"));
 }
 /* A dedicated, lazily-created file input for the "Browse file…" replace
    action — deliberately NOT the shared #fileInput (also driven by the global
@@ -4836,7 +4845,7 @@ function goToNextGap() {
   const gaps = listAlignedGaps(t0, t1);
   if (!gaps.length) {
     toast(project.inPoint != null && project.outPoint != null
-      ? "No gaps in IN/OUT range" : "No gaps found");
+      ? T("No gaps in IN/OUT range") : T("No gaps found"));
     return;
   }
   const t = state.time;
@@ -4912,7 +4921,7 @@ function liftExtract(extract) {
   setTime(t0);
   state.dirtyTimeline = true;
   scheduleSave();
-  toast(`${extract ? "Extracted" : "Lifted"} ${(t1 - t0).toFixed(2)}s`);
+  toast(`${T(extract ? "Extracted" : "Lifted")} ${(t1 - t0).toFixed(2)}s`);
 }
 /** Shift+D: crossfade the cuts of the selected audio clips, or — with no
  *  selection — the audio cut nearest the playhead on each targeted track. */
@@ -6378,17 +6387,17 @@ function sourceEditPointTimes() {
 function goToEditPoint(dir) {
   const src = isSourceMode();
   const times = src ? sourceEditPointTimes() : editPointTimes();
-  if (!times.length) { toast(src ? "No Source marks" : "No cuts"); return; }
+  if (!times.length) { toast(src ? T("No Source marks") : T("No cuts")); return; }
   const eps = kfTimeEps();
   const now = src ? state.source.time : state.time;
   if (dir > 0) {
     const next = times.find((t) => t > now + eps);
-    if (next == null) { toast(src ? "Already at Source end" : "Already at last cut"); return; }
+    if (next == null) { toast(src ? T("Already at Source end") : T("Already at last cut")); return; }
     if (src) setSourceTime(next); else { setTime(next); ensurePlayheadVisible(); }
   } else {
     let prev = null;
     for (const t of times) if (t < now - eps) prev = t;
-    if (prev == null) { toast(src ? "Already at Source start" : "Already at first cut"); return; }
+    if (prev == null) { toast(src ? T("Already at Source start") : T("Already at first cut")); return; }
     if (src) setSourceTime(prev); else { setTime(prev); ensurePlayheadVisible(); }
   }
 }
@@ -6437,7 +6446,7 @@ function goToMarker(dir) {
   // otherwise ⇧M would park at the end and silently repeat forever.
   const end = projDur() + 1e-3;
   const m = adjacentMarker((project.markers || []).filter((mk) => mk.t <= end), state.time, dir);
-  if (!m) { toast(dir > 0 ? "No marker after the playhead" : "No marker before the playhead"); return; }
+  if (!m) { toast(dir > 0 ? T("No marker after the playhead") : T("No marker before the playhead")); return; }
   seekToMarker(m);
 }
 /* Park the playhead on a marker (Program monitor). */
@@ -6557,7 +6566,7 @@ function setInPoint(at) {
   const prevOut = project.outPoint;
   const { inPoint, outPoint } = normalizeWorkArea(t, prevOut);
   if (prevOut != null && inPoint == null && outPoint == null) {
-    toast(Math.abs(t - prevOut) < 1e-6 ? "IN and OUT must be at different times" : "IN must be before OUT");
+    toast(Math.abs(t - prevOut) < 1e-6 ? T("IN and OUT must be at different times") : T("IN must be before OUT"));
   }
   project.inPoint = inPoint;
   project.outPoint = outPoint;
@@ -6570,7 +6579,7 @@ function setOutPoint(at) {
   const prevIn = project.inPoint;
   const { inPoint, outPoint } = normalizeWorkArea(prevIn, t);
   if (prevIn != null && inPoint == null && outPoint == null) {
-    toast(Math.abs(t - prevIn) < 1e-6 ? "IN and OUT must be at different times" : "OUT must be after IN");
+    toast(Math.abs(t - prevIn) < 1e-6 ? T("IN and OUT must be at different times") : T("OUT must be after IN"));
   }
   project.inPoint = inPoint;
   project.outPoint = outPoint;
@@ -8912,7 +8921,7 @@ async function denoiseClips(clips, level) {
   renderInspector();
   renderBin();
   refreshAudioHold();
-  toast(level === "off" ? "Noise reduction off — playing the original" : `Noise reduction: ${level}`);
+  toast(level === "off" ? T("Noise reduction off — playing the original") : T("Noise reduction: {level}", { level }));
 }
 /* ── Auto-duck: find where the voice tracks have sound (ducking.js) and
    write `duck` keyframes on the selected music clips — the same pipeline as
@@ -9019,10 +9028,11 @@ async function findSilences(clips, opts = silenceOptions()) {
   state.dirtyTimeline = true;
   renderInspector();
   toast((spans.length
-    ? `${spans.length} silence${spans.length === 1 ? "" : "s"}, ${FableCutSilence.total(spans).toFixed(1)} s — marked on the timeline`
-    : "No silences that long — try a higher threshold or a shorter minimum") +
-    (usable.length < groups.length ? " · some clips' audio couldn't be read, so their time is left alone" : "") +
-    (groups.length < all.length ? " · clips with a speed ramp are left alone" : ""));
+    ? T(spans.length === 1 ? "1 silence, {s} s — marked on the timeline" : "{n} silences, {s} s — marked on the timeline",
+      { n: spans.length, s: FableCutSilence.total(spans).toFixed(1) })
+    : T("No silences that long — try a higher threshold or a shorter minimum")) +
+    (usable.length < groups.length ? T(" · some clips' audio couldn't be read, so their time is left alone") : "") +
+    (groups.length < all.length ? T(" · clips with a speed ramp are left alone") : ""));
 }
 /** Extract every marked silence on the targeted tracks, last first: one undo step. */
 function cutSilences() {
@@ -12919,9 +12929,9 @@ async function trackWithUi(c, label, job, after) {
       run.pct = f;
       for (const el of els.inspector.querySelectorAll("[data-track-progress]")) el.textContent = `${label}: ${Math.round(f * 100)}% — Esc stops`;
     } });
-    if (r.samples.length < 2) { toast(r.lostAt != null ? "Lost the region on the next frame — try a spot with more detail, or a bigger region" : "Nothing to track there"); return r; }
+    if (r.samples.length < 2) { toast(r.lostAt != null ? T("Lost the region on the next frame — try a spot with more detail, or a bigger region") : T("Nothing to track there")); return r; }
     if (getClip(c.id) !== c || trackStamp(c) !== stamp || (maskStamp != null && JSON.stringify(maskList(c)[job.mask] ?? null) !== maskStamp)) {
-      toast("The clip changed while tracking — nothing was applied; track it again");
+      toast(T("The clip changed while tracking — nothing was applied; track it again"));
       return null;
     }
     pushUndo();
@@ -13021,7 +13031,7 @@ function bindTrackControls(c) {
       pushUndo();
       const n = attachToTrack(c, tr, other, { scale: trackUi.scale, rotation: trackUi.rotation });
       scheduleSave(); renderInspector(); drawFrame();
-      toast(n ? `${other.name || other.kind} follows ${tr.name} (${n} keys)` : "That clip and the track don't overlap in time");
+      toast(n ? T("{clip} follows {track} ({n} keys)", { clip: other.name || other.kind, track: tr.name, n }) : T("That clip and the track don't overlap in time"));
     }
   });
 }
@@ -13554,7 +13564,7 @@ function addShapeLayer(kind) {
   Object.assign(shapeUi, { clip: c.id, sel: list ? [0] : null, pt: -1, tool: pre ? null : "pen", pen: null, drag: null });
   if (!pre && state.playing) pause();
   scheduleSave(); renderInspector();
-  if (!pre) toast("Pen: click points on the monitor (drag to curve); click the first point to close, Enter for an open path");
+  if (!pre) toast(T("Pen: click points on the monitor (drag to curve); click the first point to close, Enter for an open path"));
 }
 function addNull() {
   const track = ["V3", "V2", "V1"].find((id) => TRACKS.some((tr) => tr.id === id) && trackFree(id));
@@ -13998,7 +14008,7 @@ function drawShapeOverlay(c, W, H) {
 /** Finish the pen: a path item around the points' centre (closed when it was closed on the first point). */
 function finishShapePen(c, closed) {
   const P = shapeUi.pen && shapeUi.pen.pts;
-  if (!P || P.length < (closed ? 3 : 2)) { toast(closed ? "A closed path needs at least 3 points" : "A path needs at least 2 points"); return; }
+  if (!P || P.length < (closed ? 3 : 2)) { toast(closed ? T("A closed path needs at least 3 points") : T("A path needs at least 2 points")); return; }
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const [x, y] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   const cx = Math.round((x0 + x1) / 2), cy = Math.round((y0 + y1) / 2);
@@ -16143,7 +16153,7 @@ async function armExportCors() {
     if (el && (el.error || el.readyState < 2)) missing.push(m.name || m.src);
   }
   if (missing.length)
-    toast(T("No CORS on ") + missing.join(", ") + " — blank in the export. Import into the project or add Access-Control-Allow-Origin.");
+    toast(T("No CORS on ") + missing.join(", ") + T(" — blank in the export. Import into the project or add Access-Control-Allow-Origin."));
 }
 /* Sequential /frame POSTs, batched. Concurrent bodies can still race on ffmpeg
    stdin if they complete out of order, so the client starts each fetch only
@@ -16947,7 +16957,9 @@ async function fastExport(opts = {}) {
         name: String(o.file || "").replace(/\.[^.]+$/, ""), range: exportRangeMode(), status: "done", progress: 1,
         src: o.src, file: o.file, report: o.report || null });
       renderQueue();
-      toast(o.report && !o.report.ok ? `Exported ${o.file} — check: ${o.report.checks.filter((c) => !c.ok).map((c) => c.text).join("; ")} (Export → Queue)` : `Exported ${o.file}${o.report ? " — checks passed" : ""}`);
+      toast(o.report && !o.report.ok
+        ? T("Exported {file} — check: {checks} (Export → Queue)", { file: o.file, checks: o.report.checks.filter((c) => !c.ok).map((c) => c.text).join("; ") })
+        : o.report ? T("Exported {file} — checks passed", { file: o.file }) : T("Exported {file}", { file: o.file }));
       const a = document.createElement("a");
       a.href = end.src;
       a.download = decodeURIComponent(end.src.split("/").pop());
@@ -17124,7 +17136,7 @@ function renderBatchList() {
   if (!ul) return;
   const list = projectOutputs();
   const on = list.filter((o) => o.on !== false).length;
-  $("dlvBatchCount").textContent = list.length ? `· ${on} of ${list.length} checked` : "";
+  $("dlvBatchCount").textContent = list.length ? T("· {on} of {n} checked", { on, n: list.length }) : "";
   const be = $("btnBatchExport");
   if (be) { be.disabled = !on; be.textContent = on ? `${T("Export checked")} (${on})` : T("Export checked"); }
   if (!list.length) { ul.innerHTML = `<li class="bo-empty">${T("No batch outputs yet — add the settings above, or a typical set")}</li>`; return; }
@@ -19051,7 +19063,8 @@ function bindColorPage(c) {
       const g = Color.normalizeGrade(colorState.clipboard);
       for (const x of ok) { if (g) x.props.grade = JSON.parse(JSON.stringify(g)); else delete x.props.grade; }
       scheduleSave(); renderColorPage(true);
-      toast(`Grade pasted onto ${ok.length} clip${ok.length > 1 ? "s" : ""}` + (ok.length < targets.length ? " (locked clips skipped)" : ""));
+      toast(T(ok.length === 1 ? "Grade pasted onto 1 clip" : "Grade pasted onto {n} clips", { n: ok.length })
+        + (ok.length < targets.length ? T(" (locked clips skipped)") : ""));
       return;
     }
     if (a === "pick") { setWbPick(!colorState.pick); return; }
@@ -19606,7 +19619,7 @@ function qualPickAt(c, pt) {
   if (s >= 0.08) { q.hue = [Math.round(h * 360), 40, 20]; q.sat = [Math.max(0, s - 0.3), Math.min(1, s + 0.3), 0.1]; }
   else { q.hue = null; q.sat = [0, Math.min(1, s + 0.12), 0.08]; }
   pushUndo(); writeLayer(c, colorState.layer, { qualifier: q }); scheduleSave(); renderColorPage(true);
-  toast(s >= 0.08 ? `Selected hue ${Math.round(h * 360)}° — turn on Matte to check` : "Selected a neutral tone (greys carry no hue)");
+  toast(s >= 0.08 ? T("Selected hue {h}° — turn on Matte to check", { h: Math.round(h * 360) }) : T("Selected a neutral tone (greys carry no hue)"));
 }
 
 /* ── The selected layer's mask on the monitor ── */

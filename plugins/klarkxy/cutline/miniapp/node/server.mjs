@@ -136,6 +136,7 @@ export async function start(context) {
   };
 
   const server = createServer((request, response) => {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
     const pathname = (request.url ?? '/').split('?')[0];
     if (pathname === MCP_PATH) {
       handleMcp(request, response).catch((error) => {

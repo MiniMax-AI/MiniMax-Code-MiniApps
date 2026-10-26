@@ -23,7 +23,8 @@ const { loadEncodeProfiles, listProfilesPublic, resolveProfile, profileSummary }
 const {
   APP_DIR, DATA_DIR, MEDIA_DIR, EXPORTS_DIR, ANALYSIS_DIR, LIBRARY_DIR, PROJECT_FILE, PROXIES_DIR, ensureDirs, readSaved, writeSaved,
 } = require("./paths");
-const { downloadImportUrl, kindFromName, maybeFaststart } = require("./import-url");
+const { downloadImportUrl, maybeFaststart } = require("./import-url");
+const { kindFromName, isMediaName, isManagedName, refuseMessage, refuseLibraryMessage } = require("./media-types");
 const FX = require("./audio-fx");
 const EditOps = require("./edit-ops");
 const ProjectOps = require("./project-ops");
@@ -90,10 +91,6 @@ function writeProject(doc) {
   fs.writeFileSync(tmp, JSON.stringify(doc, null, 2));
   fs.renameSync(tmp, PROJECT_FILE);
 }
-/* Optimistic concurrency: revision of project.json when this session last read
-   the full document. If the file has moved past it by write time, someone else
-   (usually the user, in the editor UI) edited in between — refuse to clobber. */
-let lastReadRevision = null;
 /* Transport to the editor.
    Upstream runs the editor as a separate process and reaches it over HTTP on
    127.0.0.1:7777. A host that runs both in one process installs a transport
@@ -148,11 +145,6 @@ async function ensureUIServer() {
   }
   return false;
 }
-const KIND_BY_EXT = {
-  ".mp4": "video", ".webm": "video", ".mov": "video", ".mkv": "video", ".m4v": "video", ".avi": "video",
-  ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".m4a": "audio", ".aac": "audio", ".flac": "audio",
-  ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image", ".svg": "svg",
-};
 function ffprobeDuration(file) {
   try {
     const r = spawnSync("ffprobe",
@@ -189,7 +181,7 @@ const TOOLS = [
   },
   {
     name: "fablecut_patch_project",
-    description: "Apply targeted edits to the Cutline project WITHOUT round-tripping the whole document — PREFER THIS over get+set for every edit (it is ~10-100x cheaper in tokens and merge-safe by design: it re-reads the latest document from disk, applies your ops in order, bumps revision once, saves atomically). Ops: {op:'addClip', clip:{…}} (id auto-generated if omitted) · {op:'updateClip', id, set:{…}} · {op:'removeClip', id} · {op:'addMedia', media:{…}} · {op:'removeMedia', id} · MEDIA BIN: {op:'updateMedia', id | ids, set:{name?, favorite?:true|false, tags?:[…], folderId?}, addTags?:[…], removeTags?:[…]} (organize media; fps, codec, audio channels and size are probed from the file and read-only) · {op:'setCollection', id?, name?, media?:[…ids] (replaces), add?:[…], remove?:[…]} (a collection groups media across folders; a new id or name creates it) · {op:'removeCollection', id} · {op:'relinkMedia', id, src:'/media/…'} (the same footage found elsewhere — an OFFLINE file in the compact view; clips keep their In points) · {op:'replaceMedia', id, src, name?} (a different file behind the media — every clip using it switches, keeping its timing, trimmed to fit a shorter file; import the new file first with fablecut_import_media) · {op:'setProject', set:{name|width|height|fps|background|markers|disabledTracks|lockedTracks|untargetedTracks|encodeProfile|delivery|outputs|master}} (markers = the full list [{t, label?, color?}], color: gold|red|orange|green|cyan|blue|purple|pink; master = {gain}, the master fader in dB; delivery = a delivery preset id or spec — see fablecut_export — that exports use by default; outputs = the batch list, [preset id | spec, …] up to 16, exported together by fablecut_export {outputs:true}) · {op:'setTrack', id:'A1', set:{gain?, pan?, out?}} (audio-track fader in dB −60…+12, pan −1…1, out = a submix bus id or 'master'; null or 0 resets) · {op:'setBus', id:'B1', set:{name?, gain?, pan?, mute?}} (submix bus, created if missing; route tracks into it with setTrack out) · {op:'removeBus', id} · {op:'setFx', target:'clip'|'track'|'bus'|'master', id?, preset?:'podcast'|… OR fx:[{type,…params}], append?:true} (audio effects — validated; presets: clean-voice, podcast, radio, deep-voice, telephone, cinematic, wide, muffled; fx:null clears; on a clip it applies to its linked stems too) · {op:'setFxKeys', target, id?, index?|type?, param, keys:[{t, v, ease?}]|null} (automate one effect parameter: t is clip-local for a clip's effects, timeline seconds otherwise; see the 'Audio mix' docs section) · {op:'setGrade', id | ids:[…], grade:{exposure?, temp?, tint?, lift?, gamma?, gain?, offset?, contrast?, pivot?, blacks?, shadows?, midtones?, highlights?, whites?, lowSoft?, highSoft?, saturation?, curves?:{y?, r?, g?, b?}, hueHue?, hueSat?, hueLuma?, satLuma?, layers?:[…], on?}, replace?:true} (color grade on video / image / svg / adjust clips — wheels are [r, g, b, master]; curves are [[x, y], …] point lists on 0…1 and merge per channel; hue curves are [[hue°, value], …] — one point = a ±40° band; layers replaces the whole layer list; merges key by key, null resets a key, replace:true starts from neutral, grade:null clears; see the 'Color' docs section; measure the result with fablecut_scopes) · {op:'setGradeLayer', id | ids, layer: index | 'name', set:{name?, on?, qualifier?:{hue?:[centre°, width°, soft°], sat?:[lo, hi, soft], luma?:[lo, hi, soft], invert?}, mask?:{shape:'ellipse'|'rect'|'poly', x, y, w, h, rotation?, feather?, invert?, points?, keys?:[{t, x?, y?, …}]}, …any grade key}, replace?:true, remove?:true} (a secondary: a grade applied only where the qualifier × mask select; a new name or index = length adds a layer; qualifier and mask merge key by key; check what it selects with fablecut_scopes matte:{clip, layer}) · {op:'setMask', id | ids, mask?: index | 'name', set:{shape?:'rect'|'ellipse'|'bezier'|'freehand', mode?:'add'|'subtract'|'intersect'|'difference', invert?, opacity?, feather? (px), expand? (px, − shrinks), x?, y? (centre, 0…1 of the clip's picture), w?, h?, scale?, rotation?, points?:[[dx, dy, inX?, inY?, outX?, outY?], …] (bezier, around x, y), stroke?:[[u, v], …] (freehand: fitted into a bezier), keys?:[{t, ease?, x?, y?, w?, h?, scale?, rotation?, feather?, expand?, opacity?, points?}], name?, on?}, replace?:true, remove?:true} (clip masks on video / image / svg / text / adjust clips: the clip shows only where its masks combine to, bottom-up; mask left out, an unknown name or index = length adds one — a new mask needs shape; set merges key by key; masks follow the clip's transform; check with fablecut_scopes mask:{clip}) · {op:'removeMask', id, mask} · {op:'setMaskKeys', id, mask, keys:[…]|null} (animate a mask; t = seconds from the clip's start) · {op:'setMatte', id | ids, matte:'alpha'|'alpha-inverted'|'luma'|'luma-inverted'|null, track?:'V3'|null} (track matte: the picture on the video track directly above — or track — cuts the clip by its alpha or its brightness, inverted or not; that track stops drawing while it is a matte; null clears). · {op:'removeTrack', id, track: name | index} (delete a motion track stored by fablecut_track; what follows it keeps its keys). MOTION GRAPHICS: a shape layer is addClip {kind:'shape', track, start, duration, props:{shapes:[…]}} (no mediaId); a null is addClip {kind:'null', …} — invisible, a parent for other clips. {op:'setShape', id | ids, shape?: index | 'name' | '2.0' (path into a group), set:{type?:'rect'|'ellipse'|'polygon'|'star'|'line'|'path'|'group', name?, on?, x?, y? (px from the layer's origin), rotation?, scale?, opacity?, w?, h?, radius? (rect corners), sides?, inner? (star 0.05…1), points?:[[x, y, inX?, inY?, outX?, outY?], …] (line: 2, path: 2…128, px around x, y), closed? (path), fill?, stroke? ('#rrggbb' | '#rrggbbaa' | 'none'), strokeWidth?, lineCap?, lineJoin?, dash?:[on, off…], trimStart?, trimEnd? (0…100 — a draw-on), trimOffset?, items?:[…] (group), keys?:[{t, ease?, …any of x y rotation scale opacity w h radius inner strokeWidth trimStart trimEnd trimOffset fill stroke points}]}, replace?:true, remove?:true} (shape left out, an unknown name or index = length adds one — a new shape needs type; set merges key by key) · {op:'removeShape', id, shape} · {op:'setParent', id | ids, parent: clip id | null, keep?: true, at?} (the clip moves, turns and scales with its parent; keep:true — the default — keeps it where it is at time at, default its start; opacity and effects are not inherited). COMPOSITIONS (nested sequences): project.comps = [{id, name, width, height, duration, background?, tracks?, clips:[…]}]; a clip {kind:'comp', compId, start, in, duration} places one (draws like a picture of the comp's size — transform, masks, grade, blend, blur all apply — and its media plays and exports). {op:'addComp', comp:{id?, name, duration, width?, height?, background?, clips?:[…]}} · {op:'updateComp', id, set:{name?, width?, height?, duration?, background?, tracks?}} · {op:'removeComp', id} (refused while used) · {op:'precompose', ids:[…], name?, id?} (the clips move into a new comp; a comp clip takes their place) · {op:'inComp', comp, ops:[…]} (run clip and timeline ops on the comp's own clips — addClip, updateClip, setShape, split, …; nests). SEQUENCES (several timelines in one project — e.g. a 16:9 cut and a 9:16 cut sharing the media and comps; the open one is the top level of the document, which every op, export and the compact view use): {op:'addSequence', name?, from?:'empty'|'open'|<sequence id> (empty takes the open one's canvas and frame rate; a copy takes its whole timeline), width?, height?, fps?, open?:true} · {op:'openSequence', id} (changes what the user's editor shows — only when asked, or to work on it) · {op:'updateSequence', id, set:{name?, index?}} · {op:'removeSequence', id} (only when the user asked) · {op:'inSequence', sequence, ops:[…]} (run any clip, timeline, track or setProject op on a sequence without opening it). PRESETS AND TEMPLATES: {op:'applyPreset', id | ids, preset, length?, at?} keys a named animation onto visual clips, relative to where they sit (in: fade-in, pop-in, slide-up-in, slide-down-in, slide-left-in, slide-right-in, drop-in, zoom-in, spin-in, whip-in, rise-blur, draw-on · out: fade-out, pop-out, slide-up-out, slide-down-out, slide-left-out, slide-right-out, zoom-out, spin-out, whip-out, sink-blur, draw-off · at (an emphasis at timeline time at): pulse, shake, wobble, bounce, flash · loop (the whole clip): float, breathe, sway, spin, wiggle — or a saved one, or an inline {anchor:'in'|'out'|'at'|'whole', length, keys:{channel:[{t, v, ease?}]}} where scale / opacity multiply and the rest add). {op:'addTemplate', template, start?, track?, duration?, fields?:{key: value}, id?, compId?, name?} places a template as its own comp + a comp clip (lower-third-bar, lower-third-underline, lower-third-boxes [name, title, accent…] · logo-ring, logo-slam, logo-lines [logo = a media id, brand / tagline, accent] · social-story 1080x1920, social-quote 1080x1080, social-end-card [text fields, accent, background]); {op:'setTemplate', id: its clip or comp, fields?, duration?} changes the fields or the length (the exit keeps its timing). {op:'savePreset', id, name, anchor?} / {op:'saveTemplate', comp, name?, fields?} save to library/presets and library/templates for every project.MOTION PATHS: x and y keyed at the same time are a position key; curve handles pin / pout (px) on those x and y keys bend the path between keys ({op:'setMotionPath', id | ids, path:'smooth'|'straight', autoOrient?:bool} sets them for you; props.autoOrient turns the clip along its path). props.motionBlur = shutter angle 0…720 (180 = film look), props.motionBlurSamples 2…32. TEXT ON A PATH: {op:'setTextPath', id | ids, path:'line'|'arc'|'circle'|'wave'|{type:'path'|'line'|'ellipse'|'rect'|'polygon'|'star', …shape item geometry, keys?}|null, offset? (% along, keyable as pathOffset), align?:'start'|'center'|'end'} — the title runs along the path (more lines on parallel curves below it), every textAnim plays along it. Every visual clip also has props.anchorX / anchorY (px from its picture's centre: the point x / y place and rotation / scale turn around) and shape clips props.trimStart / trimEnd / trimOffset (trim every path in the layer) — all keyframable. props.blend: normal · multiply · screen · overlay · darken · lighten · color-dodge · color-burn · hard-light · soft-light · difference · exclusion · hue · saturation · color · luminosity · lighter. TIMELINE EDITS — the editor's own split / ripple / trim code, so linked stems, track targeting (untargetedTracks) and locks behave exactly as in the UI; times in seconds: {op:'split', at, ids?} (no ids: every targeted track) · {op:'rippleDelete', ids} (later clips close the hole) · {op:'closeGap', at} · {op:'lift'|'extract', from?, to?} (remove a range; extract closes it; default = project inPoint/outPoint, which then clear) · {op:'insert'|'overwrite', mediaId, at, in?, duration?} (three-point edit: insert pushes later clips right, overwrite replaces what is there; a video brings one audio stem per channel) · {op:'rippleTrim'|'roll', id, side:'in'|'out', delta} · {op:'slip'|'slide', id, delta} (clamped to the media; the note says what was applied) · {op:'crossfade', ids? | at, duration?} (constant-power audio crossfade, borrowing handles from both sides). Any of these takes tracks:[…] to target lanes for that op only. setProject also takes inPoint / outPoint. updateClip merge rules: top-level keys are replaced (keyframes/transitionIn/transitionOut wholesale), `props` merges key-by-key, and setting any key to null deletes it. LOCKS: the user can lock clips (`locked:true`) and tracks (`lockedTracks`); updateClip / removeClip on a locked clip — or on a clip linked to one — and addClip onto a locked track are refused. Leave locked material alone; only if the user asked you to change it, pass force:true on that op (or unlock first: updateClip set:{locked:null}, which is always allowed). All-or-nothing: an invalid op aborts the whole patch unsaved. Optional baseRevision: the revision your ops were planned against (from fablecut_get_project, fablecut_status or the previous patch result) — if the project has moved past it (e.g. the user edited in the UI meanwhile), the patch is refused with CONFLICT and the current revision, nothing saved; re-check the clips you touch, then retry with the new revision. Omit it to apply on top of whatever is latest.",
+    description: "Apply targeted edits to the Cutline project WITHOUT round-tripping the whole document — PREFER THIS over get+set for every edit (it is ~10-100x cheaper in tokens: it re-reads the latest document from disk, applies your ops in order, bumps revision once, saves atomically). Targeted is not blanket merge-safe: an op that sets a field the user changed in the UI a moment ago overwrites that field as well — pass `baseRevision` (the revision you planned from) to have that concurrent change DETECTED instead of applied; the patch is then refused with CONFLICT and nothing is saved. Ops: {op:'addClip', clip:{…}} (id auto-generated if omitted) · {op:'updateClip', id, set:{…}} · {op:'removeClip', id} · {op:'addMedia', media:{…}} · {op:'removeMedia', id} · MEDIA BIN: {op:'updateMedia', id | ids, set:{name?, favorite?:true|false, tags?:[…], folderId?}, addTags?:[…], removeTags?:[…]} (organize media; fps, codec, audio channels and size are probed from the file and read-only) · {op:'setCollection', id?, name?, media?:[…ids] (replaces), add?:[…], remove?:[…]} (a collection groups media across folders; a new id or name creates it) · {op:'removeCollection', id} · {op:'relinkMedia', id, src:'/media/…'} (the same footage found elsewhere — an OFFLINE file in the compact view; clips keep their In points) · {op:'replaceMedia', id, src, name?} (a different file behind the media — every clip using it switches, keeping its timing, trimmed to fit a shorter file; import the new file first with fablecut_import_media) · {op:'setProject', set:{name|width|height|fps|background|markers|disabledTracks|lockedTracks|untargetedTracks|encodeProfile|delivery|outputs|master}} (markers = the full list [{t, label?, color?}], color: gold|red|orange|green|cyan|blue|purple|pink; master = {gain}, the master fader in dB; delivery = a delivery preset id or spec — see fablecut_export — that exports use by default; outputs = the batch list, [preset id | spec, …] up to 16, exported together by fablecut_export {outputs:true}) · {op:'setTrack', id:'A1', set:{gain?, pan?, out?}} (audio-track fader in dB −60…+12, pan −1…1, out = a submix bus id or 'master'; null or 0 resets) · {op:'setBus', id:'B1', set:{name?, gain?, pan?, mute?}} (submix bus, created if missing; route tracks into it with setTrack out) · {op:'removeBus', id} · {op:'setFx', target:'clip'|'track'|'bus'|'master', id?, preset?:'podcast'|… OR fx:[{type,…params}], append?:true} (audio effects — validated; presets: clean-voice, podcast, radio, deep-voice, telephone, cinematic, wide, muffled; fx:null clears; on a clip it applies to its linked stems too) · {op:'setFxKeys', target, id?, index?|type?, param, keys:[{t, v, ease?}]|null} (automate one effect parameter: t is clip-local for a clip's effects, timeline seconds otherwise; see the 'Audio mix' docs section) · {op:'setGrade', id | ids:[…], grade:{exposure?, temp?, tint?, lift?, gamma?, gain?, offset?, contrast?, pivot?, blacks?, shadows?, midtones?, highlights?, whites?, lowSoft?, highSoft?, saturation?, curves?:{y?, r?, g?, b?}, hueHue?, hueSat?, hueLuma?, satLuma?, layers?:[…], on?}, replace?:true} (color grade on video / image / svg / adjust clips — wheels are [r, g, b, master]; curves are [[x, y], …] point lists on 0…1 and merge per channel; hue curves are [[hue°, value], …] — one point = a ±40° band; layers replaces the whole layer list; merges key by key, null resets a key, replace:true starts from neutral, grade:null clears; see the 'Color' docs section; measure the result with fablecut_scopes) · {op:'setGradeLayer', id | ids, layer: index | 'name', set:{name?, on?, qualifier?:{hue?:[centre°, width°, soft°], sat?:[lo, hi, soft], luma?:[lo, hi, soft], invert?}, mask?:{shape:'ellipse'|'rect'|'poly', x, y, w, h, rotation?, feather?, invert?, points?, keys?:[{t, x?, y?, …}]}, …any grade key}, replace?:true, remove?:true} (a secondary: a grade applied only where the qualifier × mask select; a new name or index = length adds a layer; qualifier and mask merge key by key; check what it selects with fablecut_scopes matte:{clip, layer}) · {op:'setMask', id | ids, mask?: index | 'name', set:{shape?:'rect'|'ellipse'|'bezier'|'freehand', mode?:'add'|'subtract'|'intersect'|'difference', invert?, opacity?, feather? (px), expand? (px, − shrinks), x?, y? (centre, 0…1 of the clip's picture), w?, h?, scale?, rotation?, points?:[[dx, dy, inX?, inY?, outX?, outY?], …] (bezier, around x, y), stroke?:[[u, v], …] (freehand: fitted into a bezier), keys?:[{t, ease?, x?, y?, w?, h?, scale?, rotation?, feather?, expand?, opacity?, points?}], name?, on?}, replace?:true, remove?:true} (clip masks on video / image / svg / text / adjust clips: the clip shows only where its masks combine to, bottom-up; mask left out, an unknown name or index = length adds one — a new mask needs shape; set merges key by key; masks follow the clip's transform; check with fablecut_scopes mask:{clip}) · {op:'removeMask', id, mask} · {op:'setMaskKeys', id, mask, keys:[…]|null} (animate a mask; t = seconds from the clip's start) · {op:'setMatte', id | ids, matte:'alpha'|'alpha-inverted'|'luma'|'luma-inverted'|null, track?:'V3'|null} (track matte: the picture on the video track directly above — or track — cuts the clip by its alpha or its brightness, inverted or not; that track stops drawing while it is a matte; null clears). · {op:'removeTrack', id, track: name | index} (delete a motion track stored by fablecut_track; what follows it keeps its keys). MOTION GRAPHICS: a shape layer is addClip {kind:'shape', track, start, duration, props:{shapes:[…]}} (no mediaId); a null is addClip {kind:'null', …} — invisible, a parent for other clips. {op:'setShape', id | ids, shape?: index | 'name' | '2.0' (path into a group), set:{type?:'rect'|'ellipse'|'polygon'|'star'|'line'|'path'|'group', name?, on?, x?, y? (px from the layer's origin), rotation?, scale?, opacity?, w?, h?, radius? (rect corners), sides?, inner? (star 0.05…1), points?:[[x, y, inX?, inY?, outX?, outY?], …] (line: 2, path: 2…128, px around x, y), closed? (path), fill?, stroke? ('#rrggbb' | '#rrggbbaa' | 'none'), strokeWidth?, lineCap?, lineJoin?, dash?:[on, off…], trimStart?, trimEnd? (0…100 — a draw-on), trimOffset?, items?:[…] (group), keys?:[{t, ease?, …any of x y rotation scale opacity w h radius inner strokeWidth trimStart trimEnd trimOffset fill stroke points}]}, replace?:true, remove?:true} (shape left out, an unknown name or index = length adds one — a new shape needs type; set merges key by key) · {op:'removeShape', id, shape} · {op:'setParent', id | ids, parent: clip id | null, keep?: true, at?} (the clip moves, turns and scales with its parent; keep:true — the default — keeps it where it is at time at, default its start; opacity and effects are not inherited). COMPOSITIONS (nested sequences): project.comps = [{id, name, width, height, duration, background?, tracks?, clips:[…]}]; a clip {kind:'comp', compId, start, in, duration} places one (draws like a picture of the comp's size — transform, masks, grade, blend, blur all apply — and its media plays and exports). {op:'addComp', comp:{id?, name, duration, width?, height?, background?, clips?:[…]}} · {op:'updateComp', id, set:{name?, width?, height?, duration?, background?, tracks?}} · {op:'removeComp', id} (refused while used) · {op:'precompose', ids:[…], name?, id?} (the clips move into a new comp; a comp clip takes their place) · {op:'inComp', comp, ops:[…]} (run clip and timeline ops on the comp's own clips — addClip, updateClip, setShape, split, …; nests). SEQUENCES (several timelines in one project — e.g. a 16:9 cut and a 9:16 cut sharing the media and comps; the open one is the top level of the document, which every op, export and the compact view use): {op:'addSequence', name?, from?:'empty'|'open'|<sequence id> (empty takes the open one's canvas and frame rate; a copy takes its whole timeline), width?, height?, fps?, open?:true} · {op:'openSequence', id} (changes what the user's editor shows — only when asked, or to work on it) · {op:'updateSequence', id, set:{name?, index?}} · {op:'removeSequence', id} (only when the user asked) · {op:'inSequence', sequence, ops:[…]} (run any clip, timeline, track or setProject op on a sequence without opening it). PRESETS AND TEMPLATES: {op:'applyPreset', id | ids, preset, length?, at?} keys a named animation onto visual clips, relative to where they sit (in: fade-in, pop-in, slide-up-in, slide-down-in, slide-left-in, slide-right-in, drop-in, zoom-in, spin-in, whip-in, rise-blur, draw-on · out: fade-out, pop-out, slide-up-out, slide-down-out, slide-left-out, slide-right-out, zoom-out, spin-out, whip-out, sink-blur, draw-off · at (an emphasis at timeline time at): pulse, shake, wobble, bounce, flash · loop (the whole clip): float, breathe, sway, spin, wiggle — or a saved one, or an inline {anchor:'in'|'out'|'at'|'whole', length, keys:{channel:[{t, v, ease?}]}} where scale / opacity multiply and the rest add). {op:'addTemplate', template, start?, track?, duration?, fields?:{key: value}, id?, compId?, name?} places a template as its own comp + a comp clip (lower-third-bar, lower-third-underline, lower-third-boxes [name, title, accent…] · logo-ring, logo-slam, logo-lines [logo = a media id, brand / tagline, accent] · social-story 1080x1920, social-quote 1080x1080, social-end-card [text fields, accent, background]); {op:'setTemplate', id: its clip or comp, fields?, duration?} changes the fields or the length (the exit keeps its timing). {op:'savePreset', id, name, anchor?} / {op:'saveTemplate', comp, name?, fields?} save to library/presets and library/templates for every project.MOTION PATHS: x and y keyed at the same time are a position key; curve handles pin / pout (px) on those x and y keys bend the path between keys ({op:'setMotionPath', id | ids, path:'smooth'|'straight', autoOrient?:bool} sets them for you; props.autoOrient turns the clip along its path). props.motionBlur = shutter angle 0…720 (180 = film look), props.motionBlurSamples 2…32. TEXT ON A PATH: {op:'setTextPath', id | ids, path:'line'|'arc'|'circle'|'wave'|{type:'path'|'line'|'ellipse'|'rect'|'polygon'|'star', …shape item geometry, keys?}|null, offset? (% along, keyable as pathOffset), align?:'start'|'center'|'end'} — the title runs along the path (more lines on parallel curves below it), every textAnim plays along it. Every visual clip also has props.anchorX / anchorY (px from its picture's centre: the point x / y place and rotation / scale turn around) and shape clips props.trimStart / trimEnd / trimOffset (trim every path in the layer) — all keyframable. props.blend: normal · multiply · screen · overlay · darken · lighten · color-dodge · color-burn · hard-light · soft-light · difference · exclusion · hue · saturation · color · luminosity · lighter. TIMELINE EDITS — the editor's own split / ripple / trim code, so linked stems, track targeting (untargetedTracks) and locks behave exactly as in the UI; times in seconds: {op:'split', at, ids?} (no ids: every targeted track) · {op:'rippleDelete', ids} (later clips close the hole) · {op:'closeGap', at} · {op:'lift'|'extract', from?, to?} (remove a range; extract closes it; default = project inPoint/outPoint, which then clear) · {op:'insert'|'overwrite', mediaId, at, in?, duration?} (three-point edit: insert pushes later clips right, overwrite replaces what is there; a video brings one audio stem per channel) · {op:'rippleTrim'|'roll', id, side:'in'|'out', delta} · {op:'slip'|'slide', id, delta} (clamped to the media; the note says what was applied) · {op:'crossfade', ids? | at, duration?} (constant-power audio crossfade, borrowing handles from both sides). Any of these takes tracks:[…] to target lanes for that op only. setProject also takes inPoint / outPoint. updateClip merge rules: top-level keys are replaced (keyframes/transitionIn/transitionOut wholesale), `props` merges key-by-key, and setting any key to null deletes it. LOCKS: the user can lock clips (`locked:true`) and tracks (`lockedTracks`); updateClip / removeClip on a locked clip — or on a clip linked to one — and addClip onto a locked track are refused. Leave locked material alone; only if the user asked you to change it, pass force:true on that op (or unlock first: updateClip set:{locked:null}, which is always allowed). All-or-nothing: an invalid op aborts the whole patch unsaved. Optional baseRevision: the revision your ops were planned against (from fablecut_get_project, fablecut_status or the previous patch result) — if the project has moved past it (e.g. the user edited in the UI meanwhile), the patch is refused with CONFLICT and the current revision, nothing saved; re-check the clips you touch, then retry with the new revision. Omit it to apply on top of whatever is latest.",
     inputSchema: {
       type: "object",
       properties: {
@@ -208,14 +200,15 @@ const TOOLS = [
   },
   {
     name: "fablecut_set_project",
-    description: "Replace the Cutline project JSON. Pass the COMPLETE document (read with fablecut_get_project, modify, send back whole). Revision is auto-bumped; the open editor UI hot-reloads instantly so the user sees the edit live. CONFLICT-SAFE: if the project changed on disk since your last fablecut_get_project (e.g. the user tweaked something in the UI), the call errors instead of overwriting — re-read, re-apply your edit on top of the latest document, and retry.",
+    description: "Replace the Cutline project JSON. Pass the COMPLETE document (read with fablecut_get_project, modify, send back whole) together with `baseRevision` — the revision that document was based on. The revision is the server's to give: it stores the document at the current revision + 1, so do NOT bump the document's `revision` yourself. CONFLICT-SAFE: if project.json is at a different revision than `baseRevision` (e.g. the user tweaked something in the UI), the call errors instead of overwriting — re-read, re-apply your edit on top of the latest document, and retry.",
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "object", description: "The complete project document (see fablecut_docs for schema)" },
-        force: { type: "boolean", description: "Overwrite even if the project changed since it was last read (discards those external/user changes). Only when the user explicitly asks." },
+        project: { type: "object", description: "The complete project document (see fablecut_docs for schema). Its `revision` field is ignored — the server sets it." },
+        baseRevision: { type: "integer", description: "REQUIRED. The revision the document was based on (from fablecut_get_project, fablecut_status or the last patch result). A different current revision refuses the save with CONFLICT (nothing is saved)." },
+        force: { type: "boolean", description: "Save even when the project has moved on since baseRevision (discards those external/user changes). Only when the user explicitly asks." },
       },
-      required: ["project"],
+      required: ["project", "baseRevision"],
     },
   },
   {
@@ -253,7 +246,7 @@ const TOOLS = [
   },
   {
     name: "fablecut_import_media",
-    description: "Import a media file into Cutline's media library and register it in the project. Pass a local absolute path (copied, including .svg) or an https:// URL (downloaded into ./media/; video/audio/image only — remote SVG is refused). The URL is never kept as the playback src — CORS would break export. Returns the created media entry (use its id in clips).",
+    description: "Import a media file into Cutline's media library and register it in the project. Pass a local absolute path (copied, including .svg) or an https:// URL (downloaded into ./media/; video/audio/image only — remote SVG is refused). Only media files are copied in (video, audio, image, SVG): anything else is refused, because media/ is served from the editor's own origin. The URL is never kept as the playback src — CORS would break export. Returns the created media entry (use its id in clips).",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "Absolute path to a local file, or an https:// URL to download" } },
@@ -458,7 +451,7 @@ const TOOLS = [
   {
     name: "fablecut_import_project",
     description:
-      "Import an existing Cutline project from another Cutline data folder — the one that holds project.json and media/. The document is read, every media file it uses is COPIED into this installation's own library (the originals are left untouched), the media entries point at the copies, and the project becomes the open one at the actual current revision. A bare project.json cannot be imported this way: its /media/ paths belong to the folder it came from, so the files have to travel with it. A media file that is not in the source folder STOPS the import: nothing is imported and nothing is changed, rather than leaving an entry that points at an unrelated file. Use this when the user points at an earlier Cutline folder; use fablecut_import_media plus fablecut_set_project to place single files by hand.",
+      "Import an existing Cutline project from another Cutline data folder — the one that holds project.json and media/. The document is read, every media file it uses is COPIED into this installation's own library (the originals are left untouched), the media entries point at the copies, and the project becomes the open one at the actual current revision. A bare project.json cannot be imported this way: its /media/ paths belong to the folder it came from, so the files have to travel with it. A media file that is not in the source folder STOPS the import: nothing is imported and nothing is changed, rather than leaving an entry that points at an unrelated file. Only media files are copied (video, audio, image, SVG) — a file that is not one stops the import as well. Use this when the user points at an earlier Cutline folder; use fablecut_import_media plus fablecut_set_project to place single files by hand.",
     inputSchema: {
       type: "object",
       properties: {
@@ -638,7 +631,6 @@ async function silenceTool(args) {
   if (diskRev !== readRev) throw new Error(`the project changed while cutting (revision ${readRev} → ${diskRev}) — nothing cut; run fablecut_silence again`);
   proj.revision = readRev + 1;
   writeProject(proj);
-  lastReadRevision = proj.revision;
   return `Cut ${head} — timeline ${fmtDur(before)} → ${fmtDur(end(proj))} (revision ${proj.revision}). UI hot-reloaded.` +
     (verWarn || ` The project as it was is kept as a version (fablecut_versions lists it; restore undoes the cut).`);
 }
@@ -712,7 +704,6 @@ async function denoiseTool(args) {
   }
   proj.revision = (proj.revision || 0) + 1;
   writeProject(proj);
-  lastReadRevision = proj.revision;
   return `Noise reduction ${amount} on ${targets.map((c) => c.id).join(", ")} (revision ${proj.revision}, ${changed} clip${changed === 1 ? "" : "s"} switched)` +
     (report.length ? ":\n" + report.join("\n") : "");
 }
@@ -1187,8 +1178,14 @@ function safeBaseName(name) {
 }
 /* Copy a file into this installation's media folder under a free name. The
    copy is exclusive, so it can never overwrite anything — not even when two
-   imports pick the same name at the same time. */
+   imports pick the same name at the same time.
+   Only a media file is copied: media/ holds media (video, audio, image, SVG)
+   and nothing else. It is served from the editor's own origin, so a file a
+   browser would run there must never land in it — and a font has no business
+   being media either. */
 function copyToMedia(from, base) {
+  if (!isMediaName(from))
+    throw new Error(refuseMessage(path.basename(from), "the file"));
   const name = safeBaseName(base);
   const ext = path.extname(name);
   const stem = path.basename(name, ext) || "media";
@@ -1204,6 +1201,29 @@ function copyToMedia(from, base) {
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
       target = path.join(MEDIA_DIR, `${stem}_${i++}${ext}`);
+    }
+  }
+}
+/* Copy a file into this installation's library under a free name. The copy is
+   exclusive, so it can never overwrite the file that is already there. Returns
+   the path relative to the library folder, with forward slashes. */
+function copyToLibrary(from, rel) {
+  const ext = path.extname(rel);
+  const stem = path.basename(rel, ext) || "asset";
+  const dir = path.dirname(rel);
+  fs.mkdirSync(path.join(LIBRARY_DIR, dir), { recursive: true });
+  let i = 0;
+  for (;;) {
+    const name = i === 0 ? path.basename(rel) : `${stem}_${i}${ext}`;
+    i++;
+    const target = path.join(LIBRARY_DIR, dir, name);
+    if (!within(path.resolve(target), path.resolve(LIBRARY_DIR)))
+      throw new Error(`library asset ${rel} would land outside ${LIBRARY_DIR}`);
+    try {
+      fs.copyFileSync(from, target, fs.constants.COPYFILE_EXCL);
+      return path.relative(LIBRARY_DIR, target).split(path.sep).join("/");
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
     }
   }
 }
@@ -1234,12 +1254,24 @@ function importPlan(doc, root) {
         const from = folderFile(mediaRoot, path.join(mediaRoot, rel), `media ${JSON.stringify(rel)}`);
         if (!from) { problems.push(`media file ${JSON.stringify(rel)} is not in the source folder's media/`); continue; }
         if (!fs.statSync(from).isFile()) { problems.push(`media ${JSON.stringify(rel)} is not a file`); continue; }
+        /* Only media travels into media/: an HTML page or a script in the
+           source folder would be copied into a folder the page can read and
+           the browser would run it there, and a font is not media either.
+           The import stops before a single file is copied. */
+        if (!isMediaName(from)) { problems.push(refuseMessage(rel, "media file")); continue; }
         media.push({ entry: m, from, rel, base: path.basename(rel) });
       } else if (src.startsWith("/library/")) {
         const rel = entryRel(src, "/library/");
         const from = folderFile(libraryRoot, path.join(libraryRoot, rel), `library asset ${JSON.stringify(rel)}`);
         const ours = folderFile(LIBRARY_DIR, path.join(LIBRARY_DIR, rel), `library asset ${JSON.stringify(rel)}`);
         if (!from && !ours) { problems.push(`library asset ${JSON.stringify(rel)} is in neither the source folder nor this installation`); continue; }
+        /* A library asset is media or a font — nothing that a browser would
+           execute. The file that is kept is this installation's own copy, so
+           that one is checked too. */
+        if ((from && !isManagedName(from)) || (ours && !isManagedName(ours))) {
+          problems.push(refuseLibraryMessage(rel));
+          continue;
+        }
         library.push({ entry: m, rel, from, ours });
       } else {
         /* Not a path of this installation's library: it cannot point at
@@ -1347,11 +1379,20 @@ async function importProjectTool(args) {
         continue;
       }
       /* This installation has a different file under that name: the source
-         folder's copy goes into media/ and the entry points at that. */
-      const target = copyToMedia(item.from, path.basename(item.rel));
-      note(target);
-      item.entry.src = "/media/" + encodeURIComponent(path.basename(target));
-      libraryNotes.push(`${item.rel} (a different file had that name here — the source folder's copy is in media/)`);
+         folder's copy is brought over. A media file goes into media/; a font
+         (a library asset that is not media) stays in the library under a free
+         name — media/ holds media only. */
+      if (isMediaName(item.from)) {
+        const target = copyToMedia(item.from, path.basename(item.rel));
+        note(target);
+        item.entry.src = "/media/" + encodeURIComponent(path.basename(target));
+        libraryNotes.push(`${item.rel} (a different file had that name here — the source folder's copy is in media/)`);
+      } else {
+        const rel = copyToLibrary(item.from, item.rel);
+        note(path.join(LIBRARY_DIR, ...rel.split("/")));
+        item.entry.src = "/library/" + rel.split("/").map(encodeURIComponent).join("/");
+        libraryNotes.push(`${item.rel} (a different file had that name here — the source folder's copy is in the library)`);
+      }
     }
     /* The copies are probed like any imported file. */
     for (const item of plan.media) {
@@ -1380,7 +1421,6 @@ async function importProjectTool(args) {
     if (!(doc.panSchema >= 1) && (cur.panSchema >= 1)) doc.panSchema = 1;
     writeProject(doc);
     saved = true;
-    lastReadRevision = doc.revision;
     const mediaList = plan.media.map((item) => `${item.rel} → ${path.basename(item.target)}`);
     return [
       `Imported "${doc.name || "Untitled Project"}" from ${file} — saved as the open project (revision ${doc.revision}).`,
@@ -1496,7 +1536,6 @@ async function callTool(name, args, attempt = 0) {
     }
     case "fablecut_get_project": {
       const doc = readProject();
-      lastReadRevision = doc.revision || 0;
       if (!args.compact) return JSON.stringify(doc);
       return ProjectOps.compactView(doc, {
         offline: (m) => /^\/(media|library)\//.test(m.src || "") && !mediaFile(m.src),
@@ -1551,7 +1590,6 @@ async function callTool(name, args, attempt = 0) {
       }
       proj.revision = readRev + 1;
       writeProject(proj);
-      lastReadRevision = proj.revision;
       for (const [kind, item] of toSave) writeSaved(kind, item.id, item);
       return `Patched (revision ${proj.revision}): ${notes.join(" ")}. Now ${proj.clips.length} clip(s), ${proj.media.length} media. UI hot-reloaded.${verWarn}`;
     }
@@ -1560,34 +1598,40 @@ async function callTool(name, args, attempt = 0) {
       if (!doc || typeof doc !== "object") throw new Error("`project` must be an object");
       if (!Array.isArray(doc.clips) || !Array.isArray(doc.media))
         throw new Error("project must contain `clips` and `media` arrays");
+      /* The base revision is the caller's own claim: the revision the
+         document was read at. It is never taken from the submitted document —
+         a caller could put any number in there — and it is not a
+         process-global either: with several MCP sessions in one process
+         another session's read would answer for this write, and a stale
+         document would slip through. */
+      const base = args.baseRevision;
+      if (base == null)
+        throw new Error("`baseRevision` is required: the integer revision the document was based on " +
+          "(from fablecut_get_project, fablecut_status or the last patch result)");
+      if (!Number.isInteger(base))
+        throw new Error(`\`baseRevision\` must be an integer revision, not ${JSON.stringify(base)} ` +
+          "(from fablecut_get_project, fablecut_status or the last patch result)");
       ProjectOps.checkProject(doc);
       const verWarn = versionBeforeAgent(true);   // before the conflict check, so the write follows it at once
       let cur = { revision: 0 };
       try { cur = readProject(); } catch {}
       const curRev = cur.revision || 0;
-      /* The revision the submitted document was based on is the base that
-         belongs to this write. lastReadRevision is process-global: in a host
-         that serves several MCP sessions another session's read would answer
-         for this one, and a stale document would slip through. A document
-         without a revision makes no claim, so the last read is the only base
-         there is. The rule is the one fablecut_patch_project uses for
-         baseRevision: a document based on an older revision is refused. */
-      const base = Number.isInteger(doc.revision) ? doc.revision : (lastReadRevision ?? 0);
-      const stale = base < curRev;
-      if (stale && !args.force) {
+      if (base !== curRev && !args.force) {
         throw new Error(
           `CONFLICT — not saved. project.json is at revision ${curRev}, but this edit was based on ` +
           `revision ${base}: the project changed in between ` +
           `(the user probably tweaked something in the editor UI). ` +
-          `Call fablecut_get_project, re-apply your edit on top of the latest document, then save again. ` +
+          `Call fablecut_get_project, re-apply your edit on top of the latest document, then save again ` +
+          `with baseRevision:${curRev}. ` +
           `Pass force:true only if the user explicitly wants those changes discarded.`);
       }
-      doc.revision = Math.max(curRev + 1, (doc.revision || 0));
+      // the revision is the server's to give: the document is stored one step
+      // above what is on disk, never at a number the caller chose
+      doc.revision = curRev + 1;
       // Agents often omit top-level flags they don't know about. Keep panSchema
       // once established so a rewrite that drops pan:0 cannot re-trigger L/R migration.
       if (!(doc.panSchema >= 1) && (cur.panSchema >= 1)) doc.panSchema = 1;
       writeProject(doc);
-      lastReadRevision = doc.revision;
       return `Saved (revision ${doc.revision}). ${doc.clips.length} clip(s). ${EDITOR_WHERE} has hot-reloaded.${verWarn}`;
     }
     case "fablecut_normalize_audio": {
@@ -1624,7 +1668,6 @@ async function callTool(name, args, attempt = 0) {
       if (changed) {
         proj.revision = (proj.revision || 0) + 1;
         writeProject(proj);
-        lastReadRevision = proj.revision;
       }
       return `Normalize to ${target} ${mode === "peak" ? "dBFS peak" : "LUFS"}${changed ? ` (revision ${proj.revision})` : " — nothing changed"}:\n` + report.join("\n");
     }
@@ -1692,7 +1735,6 @@ async function callTool(name, args, attempt = 0) {
       if (changed) {
         proj.revision = (proj.revision || 0) + 1;
         writeProject(proj);
-        lastReadRevision = proj.revision;
       }
       const head = amount ? `Auto-duck under ${lanes.join(", ")} — ${regions.length} voice span${regions.length === 1 ? "" : "s"}` : "Ducking cleared";
       return `${head}${changed ? ` (revision ${proj.revision})` : " — nothing changed"}:\n` + report.join("\n");
@@ -1728,11 +1770,9 @@ async function callTool(name, args, attempt = 0) {
           src: bp.music.src, duration: bp.duration,
         };
         const proj = readProject();
-        const wasCurrent = lastReadRevision === (proj.revision || 0);
         proj.media.push(entry);
         proj.revision = (proj.revision || 0) + 1;
         writeProject(proj);
-        if (wasCurrent) lastReadRevision = proj.revision;
         bp.music.mediaId = entry.id;
         musicNote = `Music extracted and registered as media "${entry.id}" — place it on A1 (in:0, duration:${bp.duration}).`;
       }
@@ -1759,8 +1799,12 @@ async function callTool(name, args, attempt = 0) {
         if (!fs.existsSync(src) || !fs.statSync(src).isFile())
           throw new Error("File not found: " + src);
         const ext = path.extname(src).toLowerCase();
-        kind = KIND_BY_EXT[ext];
-        if (!kind) throw new Error(`Unsupported extension ${ext}`);
+        /* The kind is detected BEFORE anything is copied: a font, a script or
+           any other non-media file is refused here, so it never reaches
+           media/. */
+        kind = kindFromName(src);
+        if (!kind) throw new Error(`Unsupported extension ${ext} — only media files ` +
+          `(video, audio, image, SVG) can be imported`);
         target = copyToMedia(src, path.basename(src));
       }
       if (!kind) throw new Error("Unsupported media type");
@@ -1774,13 +1818,10 @@ async function callTool(name, args, attempt = 0) {
       Object.assign(entry, infoForEntry(await probeFile(target), entry));
       const proj = readProject();
       // import only appends a media entry (never touches clips), so it merges
-      // into the live document; keep lastReadRevision in step only if it
-      // already was — otherwise a later set_project must still re-read
-      const wasCurrent = lastReadRevision === (proj.revision || 0);
+      // into the live document
       proj.media.push(entry);
       proj.revision = (proj.revision || 0) + 1;
       writeProject(proj);
-      if (wasCurrent) lastReadRevision = proj.revision;
       return `Imported → ${JSON.stringify(entry)}\n` +
         (entry.duration == null && kind !== "image"
           ? "Note: duration unknown (no ffprobe). The browser UI will probe and fill it in; re-read the project before trimming this media."

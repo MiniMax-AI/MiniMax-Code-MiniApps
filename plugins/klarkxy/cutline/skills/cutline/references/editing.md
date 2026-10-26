@@ -119,12 +119,23 @@ Any of them takes `tracks:[...]` to target lanes for that op only.
 - The user can lock clips and tracks. `updateClip` or `removeClip` on a locked clip, and `addClip`
   onto a locked track, are refused.
 
+### Replacing the whole document
+
+`fablecut_set_project {project, baseRevision}` writes the whole document at once. Use it only for
+structural changes; a patch is cheaper and touches fewer fields.
+
+- `baseRevision` is **required**: the revision the document was read at. If the project moved on
+  since then, the save is refused with CONFLICT and nothing is written.
+- Do not bump the revision inside the document. The server owns it and stores the document at the
+  current revision + 1.
+- `force: true` overwrites a conflict - only when the user asked for it.
+
 ## Media
 
 - `fablecut_import_media {path}` copies a local file into the project (including `.svg`) or
   downloads an `https://` URL into the media folder. The URL is never kept as the playback source,
   because a remote source would break the export. The reply returns the new media entry; use its
-  id in clips.
+  id in clips. Only media files are taken - video, audio, images and SVG; anything else is refused.
 - `fablecut_proxy` makes light H.264 copies (540p by default, 720p or 1080p, never larger than
   the source) of heavy footage so playback and scrubbing stay smooth. Export, frames and scopes
   always read the original, so a proxy never changes the result. Make proxies when the user asks;
@@ -160,6 +171,11 @@ What it does:
 - Everything is checked before a single file is written. A media file that is not in the source
   folder **stops the import**: nothing is imported and nothing is changed, rather than leaving an
   entry that quietly points at whatever happens to have that name here.
+- Only media files travel: video, audio, images and SVG. A file that is not one - an HTML page,
+  a script, a font - stops the import as well, because the media folder is served from the editor's
+  own origin and a file a browser would run there would run there. A font is not media: fonts
+  belong to the asset library, and a differing library font is brought over into the library
+  rather than into the media folder.
 
 Only what is inside the folder you name is read: the project id has to be a plain name, and a
 media path that climbs out of the source `media/` - or a link that points out of it - is refused.

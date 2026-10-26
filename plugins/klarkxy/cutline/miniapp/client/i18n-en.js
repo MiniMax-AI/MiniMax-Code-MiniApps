@@ -1075,6 +1075,7 @@
     "Stroke px": "Stroke px",
     "Targeted — edits (split, insert, ripple, close gap) touch this track. Click to untarget": "Targeted — edits (split, insert, ripple, close gap) touch this track. Click to untarget",
     "That clip and the track don't overlap in time": "That clip and the track don't overlap in time",
+    "The clip changed while tracking — nothing was applied; track it again": "The clip changed while tracking — nothing was applied; track it again",
     "The file is offline": "The file is offline",
     "Track has clips": "Track has clips",
     "Unknown track": "Unknown track",
@@ -1564,6 +1565,7 @@
     "Panel": "Panel",
     "Parent": "Parent",
     "Path": "Path",
+    "Pen: click points on the monitor (drag to curve); click the first point to close, Enter for an open path": "Pen: click points on the monitor (drag to curve); click the first point to close, Enter for an open path",
     "Pen: click to add points, drag to curve. Click the first point or press Enter to close. Ctrl+Z / Backspace removes the last point, Ctrl+Shift+Z puts it back, Esc cancels.": "Pen: click to add points, drag to curve. Click the first point or press Enter to close. Ctrl+Z / Backspace removes the last point, Ctrl+Shift+Z puts it back, Esc cancels.",
     "Pen: click to add points, drag to curve. Click the first point to close, Enter keeps the path open. Backspace / Ctrl+Z removes the last point, Esc cancels.": "Pen: click to add points, drag to curve. Click the first point to close, Enter keeps the path open. Backspace / Ctrl+Z removes the last point, Esc cancels.",
     "Pick": "Pick",
@@ -1862,6 +1864,20 @@
     "Tracks {list} are disabled and will be omitted from the export.": "Tracks {list} are disabled and will be omitted from the export.",
     "“{name}” is offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).": "“{name}” is offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).",
     "{n} files are offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).": "{n} files are offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).",
+
+    "· {on} of {n} checked": "· {on} of {n} checked",
+    "“{name}” is offline — right-click it in the bin → Relink…": "“{name}” is offline — right-click it in the bin → Relink…",
+    "{n} files are offline — right-click them in the bin → Relink…": "{n} files are offline — right-click them in the bin → Relink…",
+    "Noise reduction: {level}": "Noise reduction: {level}",
+    "{clip} follows {track} ({n} keys)": "{clip} follows {track} ({n} keys)",
+    "Exported {file} — check: {checks} (Export → Queue)": "Exported {file} — check: {checks} (Export → Queue)",
+    "Exported {file} — checks passed": "Exported {file} — checks passed",
+    "Exported {file}": "Exported {file}",
+    "Grade pasted onto 1 clip": "Grade pasted onto 1 clip",
+    "Grade pasted onto {n} clips": "Grade pasted onto {n} clips",
+    "Selected hue {h}° — turn on Matte to check": "Selected hue {h}° — turn on Matte to check",
+    "1 silence, {s} s — marked on the timeline": "1 silence, {s} s — marked on the timeline",
+    "{n} silences, {s} s — marked on the timeline": "{n} silences, {s} s — marked on the timeline",
 
   };
 

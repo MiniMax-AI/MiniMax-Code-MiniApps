@@ -17,16 +17,15 @@ const net = require("net");
 const fs = require("fs");
 const path = require("path");
 const { spawnSync, execFile } = require("./processes.js");
+const { MEDIA_KIND_BY_EXT, kindFromName } = require("./media-types");
 
 const MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
 const TIMEOUT_MS = 180_000;
 const MAX_REDIRECTS = 5;
 
-const KIND_BY_EXT = {
-  ".mp4": "video", ".webm": "video", ".mov": "video", ".mkv": "video", ".m4v": "video", ".avi": "video",
-  ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".m4a": "audio", ".aac": "audio", ".flac": "audio",
-  ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image", ".svg": "svg",
-};
+/* What may be imported: the media types the editor knows (media-types.js holds
+   the one list). Everything else — an HTML page, a script — is refused. */
+const KIND_BY_EXT = MEDIA_KIND_BY_EXT;
 const EXT_BY_MIME = {
   "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
   "video/x-matroska": ".mkv", "video/x-m4v": ".m4v",
@@ -39,9 +38,6 @@ const FASTSTART_EXT = new Set([".mp4", ".mov", ".m4v"]);
 
 function safeName(name) {
   return String(name).replace(/[^\w.\- ()\[\]]+/g, "_").slice(0, 120) || "file";
-}
-function kindFromName(name) {
-  return KIND_BY_EXT[path.extname(name).toLowerCase()] || null;
 }
 /** Create `name` under dir with exclusive `wx`. On EEXIST, try name_1, name_2, …
  *  so two concurrent imports cannot both pick the same free path. */

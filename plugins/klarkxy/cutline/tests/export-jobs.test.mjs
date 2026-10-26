@@ -236,6 +236,63 @@ test('prepare refuses a source that is missing or escapes the project folder', (
   assert.throws(() => jobs4.prepare({}), /not inside the project folder/);
 });
 
+test('a source that is not media is refused before a job is made', () => {
+  // The renderer serves the job's copies from the editor's own origin, so a
+  // file a browser would run has no place in the job. The media folder holds
+  // media; the library folder holds media and fonts.
+  const font = seedDataDir({
+    media: [
+      { id: 'm_1', name: 'clip.mp4', kind: 'video', src: '/media/clip.mp4', duration: 2 },
+      { id: 'm_2', name: 'font.ttf', kind: 'font', src: '/media/font.ttf' },
+    ],
+  });
+  writeFileSync(path.join(font.dataDir, 'media', 'font.ttf'), 'not really a font');
+  const jobs = createExportJobs({ dataDir: font.dataDir, pluginRoot: PACKAGE_ROOT });
+  assert.throws(() => jobs.prepare({}), /not a media file/, 'a font is not media');
+  assert.throws(() => jobs.prepare({}), /font\.ttf/, 'the answer names the file');
+
+  const page = seedDataDir({
+    media: [
+      { id: 'm_1', name: 'clip.mp4', kind: 'video', src: '/media/clip.mp4', duration: 2 },
+      { id: 'm_2', name: 'page.html', kind: 'html', src: '/media/page.html' },
+    ],
+  });
+  writeFileSync(path.join(page.dataDir, 'media', 'page.html'), '<!doctype html><title>x</title>');
+  const pageJobs = createExportJobs({ dataDir: page.dataDir, pluginRoot: PACKAGE_ROOT });
+  assert.throws(() => pageJobs.prepare({}), /not a media file/, 'a document is not media');
+
+  const library = seedDataDir({
+    media: [
+      { id: 'm_1', name: 'clip.mp4', kind: 'video', src: '/media/clip.mp4', duration: 2 },
+      { id: 'a_1', name: 'page.html', kind: 'html', src: '/library/notes/page.html' },
+    ],
+  });
+  mkdirSync(path.join(library.dataDir, 'library', 'notes'), { recursive: true });
+  writeFileSync(path.join(library.dataDir, 'library', 'notes', 'page.html'), '<!doctype html><title>x</title>');
+  const libraryJobs = createExportJobs({ dataDir: library.dataDir, pluginRoot: PACKAGE_ROOT });
+  assert.throws(() => libraryJobs.prepare({}), /not a media file/, 'the library holds no documents either');
+
+  for (const dataDir of [font.dataDir, page.dataDir, library.dataDir]) {
+    const root = path.join(dataDir, 'export-jobs');
+    const left = existsSync(root) ? readdirSync(root) : [];
+    assert.deepEqual(left, [], 'no job folder is left behind');
+  }
+});
+
+test('a font in the library is a source the job may use', () => {
+  const { dataDir } = seedDataDir({
+    media: [
+      { id: 'm_1', name: 'clip.mp4', kind: 'video', src: '/media/clip.mp4', duration: 2 },
+      { id: 'a_1', name: 'Anton.woff2', kind: 'font', src: '/library/fonts/Anton.woff2' },
+    ],
+  });
+  mkdirSync(path.join(dataDir, 'library', 'fonts'), { recursive: true });
+  writeFileSync(path.join(dataDir, 'library', 'fonts', 'Anton.woff2'), 'not really a font');
+  const jobs = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
+  const job = jobs.prepare({});
+  assert.ok(existsSync(path.join(job.jobDir, 'library', 'fonts', 'Anton.woff2')), 'the font is copied into the job');
+});
+
 test('a refused prepare leaves no job folder behind', () => {
   const { dataDir } = seedDataDir({
     media: [{ id: 'm_1', name: 'gone.mp4', kind: 'video', src: '/media/gone.mp4' }],
@@ -473,6 +530,67 @@ test('the runner gate serves the job copy with Range support', async () => {
   }
 });
 
+test('the runner gate serves the user\'s files with the editor\'s own headers', async () => {
+  const { dataDir } = seedDataDir();
+  const jobs = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
+  const job = jobs.prepare({});
+  const secret = 'f'.repeat(64);
+
+  // A file that was already in the media folder before the upload boundary
+  // refused it: the renderer serves it, but never as a document of its own.
+  writeFileSync(path.join(job.jobDir, 'media', 'legacy.html'), '<!doctype html><title>legacy</title>');
+
+  const gate = createGate({
+    upstream: { handleRequest: async (req, res) => { res.writeHead(500); res.end(); } },
+    secret,
+    job: JSON.parse(readFileSync(path.join(job.jobDir, 'job.json'), 'utf8')),
+    roots: {
+      client: path.join(job.jobDir, 'client'),
+      media: path.join(job.jobDir, 'media'),
+      library: path.join(job.jobDir, 'library'),
+      exports: path.join(job.jobDir, 'exports'),
+    },
+    onReport: () => {},
+    onClaim: () => true,
+  });
+
+  const { createServer } = await import('node:http');
+  const server = createServer((req, res) => void gate(req, res));
+  await new Promise((done) => server.listen(0, '127.0.0.1', () => done(undefined)));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const document = await fetch(`${base}/media/legacy.html`, { headers: { [TOKEN_HEADER]: secret } });
+    assert.equal(document.status, 200, 'the file is served');
+    assert.equal(document.headers.get('x-content-type-options'), 'nosniff', 'the type is never guessed');
+    assert.equal(
+      document.headers.get('content-security-policy'),
+      "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      'a document among the user\'s files is sandboxed',
+    );
+
+    const media = await fetch(`${base}/media/clip.mp4`, { headers: { [TOKEN_HEADER]: secret } });
+    assert.equal(media.status, 200);
+    assert.equal(media.headers.get('x-content-type-options'), 'nosniff', 'every file says what it is');
+    assert.equal(media.headers.get('content-security-policy'), null, 'a media file is not sandboxed');
+
+    const editor = await fetch(`${base}/`, { headers: { [TOKEN_HEADER]: secret } });
+    assert.equal(editor.status, 200, 'the editor page is served');
+    assert.equal(editor.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(editor.headers.get('content-security-policy'), null, 'the editor\'s own page is not sandboxed');
+    assert.match(await editor.text(), /<html/i);
+
+    const asset = await fetch(`${base}/delivery.js`, { headers: { [TOKEN_HEADER]: secret } });
+    assert.equal(asset.status, 200, 'the editor\'s own files are served');
+    assert.equal(asset.headers.get('content-security-policy'), null, 'the editor\'s own files are not sandboxed');
+  } finally {
+    await new Promise((done) => server.close(() => done(undefined)));
+    server.closeAllConnections?.();
+  }
+});
+
 test('the runner gate keeps the job apart: a claim, a report and a foreign id', async () => {
   const { dataDir } = seedDataDir();
   const jobs = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
@@ -555,6 +673,46 @@ test('a preset becomes the delivery spec the renderer uses', () => {
   const overridden = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
   const other = overridden.prepare({ preset: 'web', delivery: { fps: 60 } });
   assert.deepEqual(other.spec.delivery, { fps: 60, preset: 'web' }, 'the delivery settings sit over the preset');
+});
+
+test('a preset id nobody has is refused before a job is made', () => {
+  const { dataDir } = seedDataDir();
+  const jobs = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
+
+  // The renderer normalizes a preset it does not know to Custom, with only
+  // a note in the report. The job must not be made for it at all.
+  assert.throws(() => jobs.prepare({ preset: 'yotube' }), /unknown delivery preset "yotube"/);
+  assert.throws(() => jobs.prepare({ delivery: { preset: 'yotube' } }), /unknown delivery preset "yotube"/);
+  assert.throws(
+    () => jobs.prepare({ preset: 'web', delivery: { preset: 'yotube' } }),
+    /unknown delivery preset "yotube"/,
+  );
+  assert.throws(() => jobs.prepare({ preset: 'YouTube' }), /unknown delivery preset/, 'the ids are exact');
+
+  const root = path.join(dataDir, 'export-jobs');
+  const left = existsSync(root) ? readdirSync(root) : [];
+  assert.deepEqual(left, [], 'no job folder is left behind');
+});
+
+test('a saved delivery preset is a preset the job may use', () => {
+  const { dataDir } = seedDataDir();
+  writeFileSync(
+    path.join(dataDir, 'library', 'delivery', 'my-client.json'),
+    `${JSON.stringify({ id: 'my-client', label: 'My Client', width: 1920, height: 1080 })}\n`,
+  );
+  const jobs = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
+  const job = jobs.prepare({ preset: 'my-client' });
+  assert.deepEqual(job.spec.delivery, { preset: 'my-client' }, 'the saved preset is carried as a delivery');
+});
+
+test('the custom preset and a plain delivery are still accepted', () => {
+  const { dataDir } = seedDataDir();
+  const jobs = createExportJobs({ dataDir, pluginRoot: PACKAGE_ROOT });
+  assert.deepEqual(jobs.prepare({ preset: 'custom' }).spec.delivery, { preset: 'custom' });
+
+  const plain = jobs.prepare({ delivery: { fps: 60 } });
+  assert.equal(plain.spec.delivery.fps, 60, 'a delivery without a preset is left to the renderer');
+  assert.equal(plain.spec.delivery.preset, undefined, 'no preset is invented for it');
 });
 
 test('a profile and a preset cannot be asked for at once', () => {

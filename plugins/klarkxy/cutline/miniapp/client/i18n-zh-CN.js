@@ -1131,6 +1131,7 @@
     "Stroke px": "描边（像素）",
     "Targeted — edits (split, insert, ripple, close gap) touch this track. Click to untarget": "已指向 — 编辑（分割、插入、波纹、闭合间隙）作用于该轨道。点击以取消指向",
     "That clip and the track don't overlap in time": "该片段与该轨道在时间上没有重叠",
+    "The clip changed while tracking — nothing was applied; track it again": "跟踪期间片段已更改 — 未应用任何内容，请重新跟踪",
     "The file is offline": "文件处于离线状态",
     "Track has clips": "轨道上有片段",
     "Unknown track": "未知轨道",
@@ -1646,6 +1647,7 @@
     "Panel": "面板",
     "Parent": "父级",
     "Path": "路径",
+    "Pen: click points on the monitor (drag to curve); click the first point to close, Enter for an open path": "钢笔：在监看器上点击添加锚点（拖动可拉出曲线）；点击第一个锚点闭合，按 Enter 保持路径开放",
     "Pen: click to add points, drag to curve. Click the first point or press Enter to close. Ctrl+Z / Backspace removes the last point, Ctrl+Shift+Z puts it back, Esc cancels.": "钢笔：点击添加锚点，拖动可拉出曲线。点击第一个锚点或按 Enter 闭合。Ctrl+Z / Backspace 删除最后一个锚点，Ctrl+Shift+Z 恢复，Esc 取消。",
     "Pen: click to add points, drag to curve. Click the first point to close, Enter keeps the path open. Backspace / Ctrl+Z removes the last point, Esc cancels.": "钢笔：点击添加锚点，拖动可拉出曲线。点击第一个锚点即闭合，按 Enter 则保持路径开放。Backspace / Ctrl+Z 删除最后一个锚点，Esc 取消。",
     "Pick": "选取",
@@ -1944,6 +1946,20 @@
     "Tracks {list} are disabled and will be omitted from the export.": "轨道 {list} 已禁用，导出时将被忽略。",
     "“{name}” is offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).": "“{name}”已离线，将以“媒体离线”导出 — 请先重新链接（在素材库中右键 → 重新链接…）。",
     "{n} files are offline and will export as “Media offline” — relink first (right-click in the bin → Relink…).": "{n} 个文件已离线，将以“媒体离线”导出 — 请先重新链接（在素材库中右键 → 重新链接…）。",
+
+    "· {on} of {n} checked": "· 已勾选 {on} / {n}",
+    "“{name}” is offline — right-click it in the bin → Relink…": "“{name}”已离线 — 请在素材库中右键 → 重新链接…",
+    "{n} files are offline — right-click them in the bin → Relink…": "{n} 个文件已离线 — 请在素材库中右键 → 重新链接…",
+    "Noise reduction: {level}": "降噪：{level}",
+    "{clip} follows {track} ({n} keys)": "{clip} 跟随 {track}（{n} 个关键帧）",
+    "Exported {file} — check: {checks} (Export → Queue)": "已导出 {file} — 请检查：{checks}（导出 → 队列）",
+    "Exported {file} — checks passed": "已导出 {file} — 检查通过",
+    "Exported {file}": "已导出 {file}",
+    "Grade pasted onto 1 clip": "已将调色粘贴到 1 个片段",
+    "Grade pasted onto {n} clips": "已将调色粘贴到 {n} 个片段",
+    "Selected hue {h}° — turn on Matte to check": "已选中色相 {h}° — 开启蒙版以查看",
+    "1 silence, {s} s — marked on the timeline": "已标记 1 段静音，共 {s} 秒 — 在时间线上",
+    "{n} silences, {s} s — marked on the timeline": "已标记 {n} 段静音，共 {s} 秒 — 在时间线上",
 
   };
 

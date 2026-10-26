@@ -258,8 +258,12 @@ rather than quietly left out:
   library, a system font, or `fablecut_export` in the editor.
 - **A clip with background removal** is refused when the job is prepared, because the model it
   needs would have to be downloaded.
-- **A media or library file that is missing, or that points outside the project's own folders**,
-  is refused when the job is prepared.
+- **A media or library file that is missing, points outside the project's own folders, or has an
+  unsupported non-media type**, is refused when the job is prepared. `/media/` accepts only video,
+  audio, image and SVG files; fonts belong under `/library/`, not in the media folder.
+- **An unknown delivery preset id** is refused before a job folder is created, whether it is passed
+  as `preset` or `delivery.preset`; there is no silent fallback to Custom. Built-in and saved
+  delivery presets are both accepted.
 
 ## The exit code
 
@@ -294,6 +298,9 @@ attempt, or it had already finished). Read the state with `status` for the detai
   `ffmpeg` has decoded it all the way through. A file that does not survive that is reported as a
   failure, not as a finished export - and it is kept in the job folder's `provisional` directory
   rather than deleted, so it can still be looked at.
+- Heartbeat failures, cancellation and render failure share one idempotent cleanup path. Browser
+  close has a short bound before the process is killed, and a separate 15-second teardown deadline
+  bounds cleanup even when the overall render timeout started that cleanup.
 
 ## Limits
 
@@ -302,7 +309,8 @@ attempt, or it had already finished). Read the state with `status` for the detai
   editor open.
 - `range`, `preset`, `delivery` and `profile` are honoured the same way `fablecut_export` honours
   them, because it is the same renderer. Settings that the renderer has to correct are corrected the
-  same way and said so in the reply.
+  same way and said so in the reply. Unknown preset ids are the exception: standalone preparation
+  refuses them instead of allowing the renderer's Custom fallback.
 - The renderer is the editor's compositor in a headless browser. Long or high-resolution timelines
   are slower than a short one, and a browser's memory limits still apply. A successful short render
   does not certify long-form rendering.

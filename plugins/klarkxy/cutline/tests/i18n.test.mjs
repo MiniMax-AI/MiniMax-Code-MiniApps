@@ -494,15 +494,25 @@ test('the export button opens the dialog without a native alert', () => {
   assert.ok(shown < waited, 'the export dialog waits for the engine detection before it opens');
 });
 
-test('a language switch redraws the header and the export frame list', () => {
+test('a language switch redraws the header, the export frame list and the batch list', () => {
   const src = read('app.js');
   const repaint = /function repaintForLocale\(\) \{([\s\S]*?)\n\}/.exec(src);
   assert.ok(repaint, 'repaintForLocale() is missing');
   assert.match(repaint[1], /syncProjectNameStatus\(\);/, 'the header is not redrawn');
   assert.match(repaint[1], /syncExportFrameSel\(\);/, 'the export frame list is not redrawn');
+  // The batch list and the timeline are drawn by the editor itself, so they
+  // carry wording the editor writes: the counter, the "Export checked" button
+  // and the transition tooltips all have to be drawn again.
+  assert.match(repaint[1], /renderBatchList\(\);/, 'the export batch list is not redrawn');
+  assert.match(repaint[1], /rebuildClips\(\);/, 'the timeline is not redrawn');
   // The project name is the user's own text: only the state word is translated.
   assert.match(src, /function syncProjectNameStatus\(\)[\s\S]*?els\.projectName\.textContent = project\.name \+ \(state\.connected/,
     'the header helper does not keep the project name');
+  // The redraw is a redraw: it never touches the project.
+  assert.doesNotMatch(repaint[1], /scheduleSave\(/, 'a language switch schedules a save');
+  assert.doesNotMatch(repaint[1], /pushUndo\(/, 'a language switch pushes an undo step');
+  assert.doesNotMatch(repaint[1], /setProjectOutputs\(/, 'a language switch rewrites the batch outputs');
+  assert.doesNotMatch(repaint[1], /project\.[A-Za-z_$][\w$]*\s*=[^=]/, 'a language switch changes the project');
 });
 
 test('the editor never runs a blanket text replacement', () => {
@@ -518,6 +528,11 @@ test('the language switch never schedules a save', () => {
     'scheduleSave() has to ignore a language switch');
   assert.match(src, /function repaintForLocale\(\)/, 'no repaint function');
   assert.match(src, /localeRepainting = true;/, 'the repaint is not guarded');
+  // The caret and whatever the user was typing survive the redraw.
+  assert.match(src, /function repaintForLocale\(\) \{[\s\S]{0,200}?captureEditorFocus\(\)/,
+    'the redraw does not capture the focus');
+  assert.match(src, /function repaintForLocale\(\) \{[\s\S]*?restoreEditorFocus\(focus\)/,
+    'the redraw does not put the focus back');
 });
 
 test('user text is never passed through the translator', () => {
@@ -558,6 +573,130 @@ test('user text is never passed through the translator', () => {
     assert.doesNotMatch(m[1], /\.(?:text|notes|caption|title|value)$/,
       `T() was given user text: ${m[1]}`);
   }
+});
+
+/* ── the bare dictionary keys ─────────────────────────────────────────────── */
+
+/* The dictionary holds the interface's own words, so a message that shows one
+ * of them has to go through the translator — otherwise the editor keeps saying
+ * it in English while the rest of the page is in Chinese.
+ *
+ * A raw value is a different thing: an enum id, a file kind, the server's own
+ * error text. Those are values, not words, and they stay exactly as they are.
+ */
+const RAW_VALUES = new Set([
+  'an unsupported',   // the file kind inside a translated sentence
+  'unknown error',    // the server's own fallback message
+]);
+
+/**
+ * The string literals of a piece of source, with the offset of each.
+ * @param {string} src
+ * @returns {{value: string, start: number}[]}
+ */
+function stringLiterals(src) {
+  /** @type {{value: string, start: number}[]} */
+  const out = [];
+  for (const m of src.matchAll(/"(?:[^"\\]|\\.)*"/g)) {
+    out.push({ value: JSON.parse(m[0]), start: m.index });
+  }
+  return out;
+}
+
+/**
+ * The calls of one function, with the text of each argument list.
+ * @param {string} src
+ * @param {string} name
+ * @returns {{text: string, start: number}[]}
+ */
+function callsOf(src, name) {
+  /** @type {{text: string, start: number}[]} */
+  const out = [];
+  const re = new RegExp(`(?<![\\w.$])${name}\\s*\\(`, 'g');
+  for (const m of src.matchAll(re)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 1;
+    let i = open + 1;
+    while (i < src.length && depth > 0) {
+      const c = src[i];
+      if (c === '(') depth += 1;
+      else if (c === ')') depth -= 1;
+      i += 1;
+    }
+    out.push({ text: src.slice(open + 1, i - 1), start: open + 1 });
+  }
+  return out;
+}
+
+/**
+ * Is the literal at `offset` an argument of a T() call?
+ *
+ * The innermost open paren decides: a T( that is still open when the literal
+ * starts means the literal is one of its arguments.
+ *
+ * @param {string} src
+ * @param {number} offset
+ * @returns {boolean}
+ */
+function insideTranslator(src, offset) {
+  let depth = 0;
+  for (let i = offset - 1; i >= 0; i -= 1) {
+    const c = src[i];
+    if (c === ')') depth += 1;
+    else if (c === '(') {
+      if (depth > 0) { depth -= 1; continue; }
+      return /(^|[^\w.$])T$/.test(src.slice(0, i));
+    }
+  }
+  return false;
+}
+
+test('every toast that shows a dictionary key goes through the translator', () => {
+  const { sandbox } = loadRuntime();
+  const known = new Set(Object.keys(sandbox.I18n.dictionary('en')));
+  const src = read('app.js');
+  /** @type {string[]} */
+  const bare = [];
+  for (const call of callsOf(src, 'toast')) {
+    for (const lit of stringLiterals(call.text)) {
+      if (!known.has(lit.value)) continue;
+      if (RAW_VALUES.has(lit.value)) continue;
+      if (insideTranslator(src, call.start + lit.start)) continue;
+      const line = src.slice(0, call.start + lit.start).split('\n').length;
+      bare.push(`${lit.value} (line ${line})`);
+    }
+  }
+  assert.deepEqual(bare, [], `dictionary keys shown without the translator: ${bare.join(', ')}`);
+});
+
+test('the label of an inline prompt goes through the translator', () => {
+  const src = read('app.js');
+  /** @type {string[]} */
+  const bare = [];
+  for (const call of callsOf(src, 'promptBinText')) {
+    const lits = stringLiterals(call.text);
+    if (!lits.length) continue;   // the function's own signature
+    const first = lits[0];
+    if (insideTranslator(src, call.start + first.start)) continue;
+    bare.push(`${first.value} (line ${src.slice(0, call.start + first.start).split('\n').length})`);
+  }
+  assert.deepEqual(bare, [], `prompt labels shown without the translator: ${bare.join(', ')}`);
+});
+
+test('the export batch counter is a dictionary entry with placeholders', () => {
+  const { sandbox } = loadRuntime();
+  const key = '· {on} of {n} checked';
+  assert.ok(Object.keys(sandbox.I18n.dictionary('en')).includes(key),
+    'the batch counter is not a dictionary key');
+  sandbox.I18n.setLocale('zh-CN');
+  const zh = sandbox.I18n.t(key, { on: 2, n: 5 });
+  assert.notEqual(zh, key, 'the batch counter is not translated');
+  assert.ok(/[一-鿿]/.test(zh), `the batch counter should be Chinese: ${zh}`);
+  assert.ok(zh.includes('2') && zh.includes('5'), `the batch counter lost its numbers: ${zh}`);
+  // And the editor asks for it by that key.
+  const src = read('app.js');
+  assert.match(src, /T\("· \{on\} of \{n\} checked", \{ on, n: list\.length \}\)/,
+    'the batch counter is not translated at runtime');
 });
 
 test('a template group the user typed is not translated', () => {

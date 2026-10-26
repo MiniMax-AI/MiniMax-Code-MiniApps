@@ -37,7 +37,7 @@ The editor is a Host-managed service, not a process you start.
 | `fablecut_docs` | The project schema manual | `section` (substring match on a heading) |
 | `fablecut_get_project` | Read the timeline document | `compact: true` |
 | `fablecut_patch_project` | Targeted edits - the default way to change anything | `ops[]`, `baseRevision` |
-| `fablecut_set_project` | Replace the whole document | `project`, `force` |
+| `fablecut_set_project` | Replace the whole document | `project`, `baseRevision` (required), `force` |
 | `fablecut_frame` | Look at footage or at the composed timeline | `path`, `t`, `frames`, `from`, `to`, `time`, `text`, `where` |
 | `fablecut_scopes` | Numeric measurement of the graded picture | `time`, `matte`, `mask`, `where` |
 | `fablecut_track` | Motion-track a region, then bake it into a mask or another clip | `clip`, `region` or `point`, `at`, `direction`, `apply` |
@@ -103,9 +103,13 @@ See [export.md](references/export.md) for both.
 5. Look at the result: `fablecut_frame` for a picture, `fablecut_scopes` for numbers.
 
 `fablecut_set_project` replaces the whole document and only earns its cost for structural
-changes. It is conflict-checked: if the project moved on since your last read it refuses rather
-than overwriting. On conflict, re-read, re-apply your change on top of the latest document, and
-call it again.
+changes. It takes the document **and** `baseRevision` - the revision the document was
+read at, from `fablecut_get_project`, `fablecut_status` or the last patch result. Do not
+bump the revision inside the document: the server owns it and stores the document at the
+current revision + 1. If the project moved on since your read, the call refuses with
+CONFLICT instead of overwriting. On conflict, re-read, re-apply your change on top of the
+latest document, and call it again with the new revision. `force: true` overwrites a
+conflict - only when the user asked for it.
 
 ## Motion tracking
 
@@ -133,6 +137,8 @@ editing the same project.
   you are about to change.
 - Pass `baseRevision` when you planned against a specific revision. The patch is then refused with
   CONFLICT instead of quietly applying on top of someone else's change.
+- `fablecut_set_project` needs the same base revision, as its own `baseRevision` argument. The
+  document you send must be the one you read at that revision.
 - On CONFLICT, re-read, re-plan against the new revision and retry. Do not replay the same ops
   unchanged.
 - Do not promise that two concurrent edits merge perfectly. Say what you changed and which
@@ -150,6 +156,11 @@ as an imported file.
   and registers it. The original file is left untouched.
 - The same tool takes an `https://` URL and downloads it into the project.
 - A whole project folder can be brought in with `fablecut_import_project {folder}`.
+- Only media files are taken: video, audio, images and SVG. An HTML page, a script, a font or
+  any other non-media file is refused, because the media folder is served from the editor's own
+  origin - a file a browser would run there would run there. Fonts live in the asset library,
+  not in the media folder. Every response the editor sends declares its type (`nosniff`), and a
+  document type among the user's own files is served sandboxed.
 - Captions are text clips: the words come from the user (or from a transcript the user supplies),
   and the timing comes from the user, from the reference, or from your own reading of the clip.
   See [audio-and-subtitles.md](references/audio-and-subtitles.md).

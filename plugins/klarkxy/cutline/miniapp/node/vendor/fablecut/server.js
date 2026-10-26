@@ -34,6 +34,7 @@ const {
   dryRunProfile,
 } = require("./encode-profiles");
 const { downloadImportUrl, maybeFaststart } = require("./import-url");
+const { isMediaName, isDocumentName, refuseMessage } = require("./media-types");
 const { pruneCache } = require("./frame-cache");
 const { createExportJobs } = require("./export-jobs");
 const { denoiseFile, AMOUNT_IDS: DENOISE_AMOUNTS } = require("./denoise");
@@ -99,15 +100,23 @@ function requestAllowed(req) {
 let HAS_FFMPEG = false;
 try { HAS_FFMPEG = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0; } catch {}
 
+/* The type a file is served with. It is authoritative: every response carries
+   X-Content-Type-Options: nosniff, so a type that is missing here is a type
+   the browser may not act on (application/octet-stream). */
 const MIME = {
-  ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8", ".json": "application/json",
+  ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json", ".xml": "application/xml",
   ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
-  ".mkv": "video/x-matroska", ".m4v": "video/mp4",
+  ".mkv": "video/x-matroska", ".m4v": "video/mp4", ".avi": "video/x-msvideo",
+  ".mpg": "video/mpeg", ".mpeg": "video/mpeg",
   ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
   ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
+  ".opus": "audio/ogg", ".wma": "audio/x-ms-wma",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-  ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+  ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+  ".avif": "image/avif", ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".ttf": "font/ttf", ".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2",
 };
@@ -570,17 +579,21 @@ const exportJobs = createExportJobs({
   allowHeadless: false,
 });
 
-/* Static file with HTTP Range support (required for <video> seeking) */
-function serveFile(req, res, filePath) {
+/* Static file with HTTP Range support (required for <video> seeking).
+   `managed` marks the user's own files (media, library, proxies, exports): a
+   document type among them is served sandboxed, so a file that was already
+   there before the upload boundary refused it cannot run on the editor's
+   origin. The editor's own static files are not sandboxed — the page has to
+   run. */
+function serveFile(req, res, filePath, opts) {
   fs.stat(filePath, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end("Not found"); return; }
     const ext = path.extname(filePath).toLowerCase();
     const type = MIME[ext] || "application/octet-stream";
-    const extra = {};
-    if (ext === ".svg") {
+    // the browser takes the type we send as the type it is: never guess
+    const extra = { "X-Content-Type-Options": "nosniff" };
+    if (opts && opts.managed && isDocumentName(filePath))
       extra["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
-      extra["X-Content-Type-Options"] = "nosniff";
-    }
     const range = req.headers.range;
     if (range) {
       const m = /bytes=(\d*)-(\d*)/.exec(range);
@@ -609,6 +622,10 @@ function serveFile(req, res, filePath) {
    that is not possible in this package, because the Mini App must bind only the
    port the Host assigns (context.listen). */
 async function handleRequest(req, res) {
+  /* The type a response carries is the type it is: no browser may guess it.
+     Set once here, so every answer carries it — the JSON API, the error and
+     not-found paths, the uploads and the files. */
+  res.setHeader("X-Content-Type-Options", "nosniff");
   if (!requestAllowed(req)) {
     sendJSON(res, 403, { error: "forbidden: request must come from this machine (bad Host or Origin header)" });
     return;
@@ -721,16 +738,22 @@ async function handleRequest(req, res) {
          ?force=1 skips the check for deliberate overwrites. */
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(PROJECT_FILE, "utf8").replace(new RegExp("^\\uFEFF"), "")); } catch {}
+      const onDiskRevision = cur.revision || 0;
       // a save the editor made for another project (it sends the id it loaded) never lands here
       const meant = req.headers["x-fablecut-project"], open = projects.peekActive();
       if (meant && open && meant !== open) {
-        sendJSON(res, 409, { error: "another project is open now", revision: cur.revision || 0, project: open });
+        sendJSON(res, 409, { error: "another project is open now", revision: onDiskRevision, project: open });
         return;
       }
-      if ((data.revision || 0) <= (cur.revision || 0) && url.searchParams.get("force") !== "1") {
-        sendJSON(res, 409, { error: "stale revision — project changed since it was read", revision: cur.revision || 0 });
+      if ((data.revision || 0) <= onDiskRevision && url.searchParams.get("force") !== "1") {
+        sendJSON(res, 409, { error: "stale revision — project changed since it was read", revision: onDiskRevision });
         return;
       }
+      /* The revision is the server's to give. It only ever moves forward from
+         what is on disk, so a forced save can never rewind the counter — a
+         lower number would let a stale document pass the check above and
+         overwrite newer work. */
+      data.revision = onDiskRevision + 1;
       const tmp = PROJECT_FILE + ".tmp";
       fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
       fs.renameSync(tmp, PROJECT_FILE);
@@ -877,10 +900,16 @@ async function handleRequest(req, res) {
     return;
   }
 
-  /* API: upload → saved into ./media */
+  /* API: upload → saved into ./media.
+     Only media files are taken: the folder is served from the editor's own
+     origin, so an HTML page or a script dropped in here would run there. */
   if (p === "/api/upload" && req.method === "POST") {
     try {
       let name = safeName(url.searchParams.get("name") || "upload.bin");
+      if (!isMediaName(name)) {
+        sendJSON(res, 400, { error: refuseMessage(name, "the upload") });
+        return;
+      }
       let target = path.join(MEDIA_DIR, name);
       let i = 1;
       const ext = path.extname(name), base = path.basename(name, ext);
@@ -1378,7 +1407,7 @@ async function handleRequest(req, res) {
   if (p.startsWith("/media/")) {
     const file = resolveSrc(p);
     if (!file) { res.writeHead(404); res.end("Not found"); return; }
-    serveFile(req, res, file);
+    serveFile(req, res, file, { managed: true });
     return;
   }
 
@@ -1386,13 +1415,13 @@ async function handleRequest(req, res) {
   if (p.startsWith("/proxies/")) {
     const file = proxies.file(p.slice("/proxies/".length));
     if (!file) { res.writeHead(404); res.end(); return; }
-    serveFile(req, res, file);
+    serveFile(req, res, file, { managed: true });
     return;
   }
 
   /* Finished exports */
   if (p.startsWith("/exports/")) {
-    serveFile(req, res, path.join(EXPORTS_DIR, path.basename(p)));
+    serveFile(req, res, path.join(EXPORTS_DIR, path.basename(p)), { managed: true });
     return;
   }
 
@@ -1400,7 +1429,7 @@ async function handleRequest(req, res) {
   if (p.startsWith("/library/")) {
     const file = resolveSrc(p);
     if (!file) { res.writeHead(404); res.end("Not found"); return; }
-    serveFile(req, res, file);
+    serveFile(req, res, file, { managed: true });
     return;
   }
 

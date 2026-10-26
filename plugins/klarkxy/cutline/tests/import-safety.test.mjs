@@ -1,7 +1,8 @@
 // @ts-check
 // Importing a project folder must not reach outside the folder it was given,
-// must not leave a media entry pointing at an unrelated file, and must never
-// overwrite work that happened while it was running.
+// must not leave a media entry pointing at an unrelated file, must never
+// overwrite work that happened while it was running, and must not bring a
+// file the browser would execute into the folder the page reads.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -293,6 +294,168 @@ test('an import refuses to overwrite a project that changed while it ran', async
   assert.equal(after.json.name, 'Edited While Importing', 'the newer work is still there');
   assert.equal(after.json.revision, before.json.revision + 1, 'the import did not write over it');
   assert.ok(!existsSync(path.join(app.dataDir, 'media', 'race-a.mp4')), 'the copies of the refused import were taken away');
+});
+
+test('a file that is not media stops the import', async () => {
+  // The media folder is served from the editor's own origin: a file a browser
+  // would run there would run there.
+  const root = fixtureDir('safety-active');
+  await makeSourceMedia(root, 'ok.mp4', 1);
+  writeFileSync(path.join(root, 'media', 'evil.html'), '<script>alert(1)</script>');
+  await makeSource(root, {
+    name: 'Active Content',
+    media: [
+      { id: 'm_ok', name: 'ok.mp4', kind: 'video', src: '/media/ok.mp4' },
+      { id: 'm_evil', name: 'evil.html', kind: 'image', src: '/media/evil.html' },
+    ],
+  });
+  const before = await getJson(app.base, '/api/project');
+  const mediaBefore = mediaFiles();
+
+  const { reply, text } = await mcpTool(app.base, sessionId, 'fablecut_import_project', { folder: root });
+  assert.equal(reply.json.result.isError, true, 'the import is refused');
+  assert.match(text, /is not a media file/, text);
+
+  const after = await getJson(app.base, '/api/project');
+  assert.equal(after.json.revision, before.json.revision, 'the open project was not touched');
+  assert.deepEqual(mediaFiles(), mediaBefore, 'not even the media file was copied');
+  assert.ok(!existsSync(path.join(app.dataDir, 'media', 'evil.html')), 'the file was not copied');
+});
+
+test('an upload of a file that is not media is refused', async () => {
+  const before = mediaFiles();
+
+  const refused = await fetch(`${app.base}/api/upload?name=evil.html`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/html' },
+    body: '<script>alert(1)</script>',
+  });
+  assert.equal(refused.status, 400, 'the upload is refused');
+  const body = await refused.json();
+  assert.match(body.error, /is not a media file/);
+  assert.deepEqual(mediaFiles(), before, 'nothing was written');
+
+  // The media types that are supported still go in.
+  for (const name of ['shot.png', 'logo.svg', 'take.mp4']) {
+    const ok = await fetch(`${app.base}/api/upload?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: 'bytes',
+    });
+    assert.equal(ok.status, 200, `${name} is accepted`);
+    const answer = await ok.json();
+    assert.match(answer.src, /^\/media\//);
+  }
+  assert.ok(mediaFiles().includes('shot.png'), 'the image is in the media folder');
+  assert.ok(mediaFiles().includes('logo.svg'), 'the SVG is in the media folder');
+  assert.ok(mediaFiles().includes('take.mp4'), 'the video is in the media folder');
+});
+
+test('a file that was already in the media folder is served safely', async () => {
+  // The upload boundary refuses an HTML page, but a file that was there before
+  // it can still be served: it must not run on the editor's origin.
+  const name = 'preexisting.html';
+  writeFileSync(path.join(app.dataDir, 'media', name), '<script>alert(1)</script>');
+
+  const response = await fetch(`${app.base}/media/${name}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff', 'the type is not guessed');
+  assert.match(
+    response.headers.get('content-security-policy') || '',
+    /sandbox/,
+    'a document is served sandboxed',
+  );
+  await response.text();
+
+  // The editor's own page is not sandboxed: it has to run.
+  const page = await fetch(`${app.base}/editor`);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(page.headers.get('content-security-policy'), null, 'the editor page may run');
+  await page.text();
+});
+
+test('a font is not media content', async () => {
+  const root = fixtureDir('safety-font');
+  mkdirSync(path.join(root, 'media'), { recursive: true });
+  const font = path.join(root, 'media', 'font.ttf');
+  writeFileSync(font, 'not really a font');
+  await makeSource(root, {
+    name: 'Font In Media',
+    media: [{ id: 'm_font', name: 'font.ttf', kind: 'image', src: '/media/font.ttf' }],
+  });
+  const before = await getJson(app.base, '/api/project');
+  const mediaBefore = mediaFiles();
+
+  // A font in the source folder's media/ is not media: the import stops.
+  const { reply, text } = await mcpTool(app.base, sessionId, 'fablecut_import_project', { folder: root });
+  assert.equal(reply.json.result.isError, true, 'the import is refused');
+  assert.match(text, /is not a media file/, text);
+
+  const after = await getJson(app.base, '/api/project');
+  assert.equal(after.json.revision, before.json.revision, 'the open project was not touched');
+  assert.deepEqual(mediaFiles(), mediaBefore, 'nothing was copied');
+  assert.ok(!existsSync(path.join(app.dataDir, 'media', 'font.ttf')), 'the font was not copied');
+
+  // And a font cannot be imported as media either: the kind is detected
+  // before anything is copied.
+  const imported = await mcpTool(app.base, sessionId, 'fablecut_import_media', { path: font });
+  assert.equal(imported.reply.json.result.isError, true, 'the font import is refused');
+  assert.match(imported.text, /Unsupported extension \.ttf/, imported.text);
+  assert.deepEqual(mediaFiles(), mediaBefore, 'the font was not copied into media/');
+});
+
+test('every response says what type it is', async () => {
+  const project = await getJson(app.base, '/api/project');
+  assert.equal(project.status, 200);
+  assert.equal(project.headers.get('x-content-type-options'), 'nosniff', 'the API answers carry it');
+
+  const refused = await fetch(`${app.base}/api/upload?name=evil.html`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/html' },
+    body: '<script>alert(1)</script>',
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.headers.get('x-content-type-options'), 'nosniff', 'the error answers carry it');
+  await refused.text();
+
+  const missing = await fetch(`${app.base}/media/nothing-here.mp4`);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get('x-content-type-options'), 'nosniff', 'the not-found answers carry it');
+  await missing.text();
+});
+
+test('a differing library font stays in the library', async () => {
+  // This installation has its own file under that name and the source folder
+  // has a different one: the source's copy is brought over. A font is not
+  // media, so it must not end up in media/.
+  const rel = 'fonts/font-under-test.woff2';
+  const ours = path.join(app.dataDir, 'library', ...rel.split('/'));
+  mkdirSync(path.dirname(ours), { recursive: true });
+  writeFileSync(ours, 'our own font');
+
+  const root = fixtureDir('safety-library-font');
+  mkdirSync(path.join(root, 'library', 'fonts'), { recursive: true });
+  writeFileSync(path.join(root, 'library', 'fonts', 'font-under-test.woff2'), 'the source font');
+  await makeSource(root, {
+    name: 'Library Font',
+    media: [{ id: 'm_f', name: 'font-under-test.woff2', kind: 'image', src: '/library/fonts/font-under-test.woff2' }],
+  });
+  const mediaBefore = mediaFiles();
+
+  const { reply, text } = await mcpTool(app.base, sessionId, 'fablecut_import_project', { folder: root });
+  assert.equal(reply.json.result.isError, undefined, text);
+
+  const after = await getJson(app.base, '/api/project');
+  assert.equal(after.json.name, 'Library Font');
+  const src = String(after.json.media[0].src);
+  assert.match(src, /^\/library\/fonts\/font-under-test(_1)?\.woff2$/, 'the entry points at the library');
+  assert.deepEqual(mediaFiles(), mediaBefore, 'no font was copied into media/');
+
+  const copied = path.join(app.dataDir, 'library', 'fonts', 'font-under-test_1.woff2');
+  assert.ok(existsSync(copied), 'the source font is in the library');
+  assert.equal(readFileSync(copied, 'utf8'), 'the source font', 'the source content was brought over');
+  assert.equal(readFileSync(ours, 'utf8'), 'our own font', 'our own file was not overwritten');
 });
 
 test.after(async () => {

@@ -21,6 +21,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 import {
   collectRenderClips,
@@ -33,6 +34,8 @@ import {
   resolveJobDir,
   writeJob,
 } from './job-state.mjs';
+
+const require = createRequire(import.meta.url);
 
 /** The library folders whose contents the export reads (settings, not footage). */
 const LIBRARY_SETTING_DIRS = ['presets', 'templates', 'delivery', 'fonts'];
@@ -255,6 +258,72 @@ export function createExportJobs({ dataDir, pluginRoot, logger }) {
   const projectFile = path.join(dataDir, 'project.json');
 
   /**
+   * The delivery presets the renderer knows: the built-in ones and the ones
+   * the user saved in the library.
+   *
+   * The renderer reads the same two lists, and a preset id that is in neither
+   * is normalized to Custom — silently, with only a note in the report. A job
+   * that asks for a preset nobody has is refused here instead, before the
+   * job is made.
+   *
+   * @returns {{ ids: string[] }}
+   */
+  function knownDeliveryPresets() {
+    /** @type {any} */
+    let delivery;
+    try {
+      delivery = require(path.join(vendorDir, 'delivery.js'));
+    } catch (error) {
+      throw new Error(
+        `the package is incomplete: the delivery presets could not be read (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
+    // The saved presets are the library's own files, read the way the
+    // runtime reads them: one JSON file each, an unreadable one skipped.
+    /** @type {Array<{ file: string, data: unknown }>} */
+    const list = [];
+    const dir = path.join(libraryRoot, 'delivery');
+    try {
+      for (const name of fs.readdirSync(dir)) {
+        if (!name.toLowerCase().endsWith('.json')) continue;
+        try {
+          const raw = fs.readFileSync(path.join(dir, name), 'utf8').replace(/^\uFEFF/u, '');
+          list.push({ file: name, data: JSON.parse(raw) });
+        } catch {
+          /* an unreadable preset is skipped, like the runtime does */
+        }
+      }
+    } catch {
+      /* the library has no delivery folder yet */
+    }
+    const saved = delivery.savedPresets(list);
+    return { ids: [...delivery.PRESET_IDS, ...Object.keys(saved)] };
+  }
+
+  /**
+   * What may live in the managed folders.
+   *
+   * The classification is the runtime's own, so the job and the editor agree
+   * on it: a file the editor would refuse to copy in is not copied into a
+   * job either, and the renderer never serves a document on its own origin.
+   *
+   * @returns {{ isMediaName: (name: string) => boolean, isManagedName: (name: string) => boolean, refuseMessage: (name: string, what: string) => string }}
+   */
+  function mediaTypes() {
+    try {
+      return require(path.join(vendorDir, 'media-types.js'));
+    } catch (error) {
+      throw new Error(
+        `the package is incomplete: the media types could not be read (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
+  }
+
+  /**
    * Copy the current project, its media and the runtime into a new job.
    *
    * @param {Record<string, any>} args
@@ -270,6 +339,23 @@ export function createExportJobs({ dataDir, pluginRoot, logger }) {
     const delivery = args.delivery && typeof args.delivery === 'object' && !Array.isArray(args.delivery) ? args.delivery : null;
     if (profile && (preset || delivery)) {
       throw new Error('pass a profile (raw ffmpeg args) or a preset / delivery spec, not both');
+    }
+    // A preset id is checked before anything is copied. The renderer would
+    // take an id it does not know for Custom and carry on, so a job that
+    // asks for a preset nobody has is refused here — before a runnable job
+    // exists, and before anything is left behind.
+    const wanted = new Set(
+      [preset, delivery?.preset].filter((value) => typeof value === 'string' && value),
+    );
+    if (wanted.size) {
+      const known = knownDeliveryPresets();
+      for (const id of wanted) {
+        if (!known.ids.includes(id)) {
+          throw new Error(
+            `unknown delivery preset "${id}" — use one of ${known.ids.join(', ')}, or save the preset in the library first`,
+          );
+        }
+      }
     }
     if (delivery && preset && delivery.preset && delivery.preset !== preset) {
       throw new Error('delivery.preset and preset name different presets');
@@ -338,7 +424,10 @@ export function createExportJobs({ dataDir, pluginRoot, logger }) {
     /** @type {string[]} */
     const missing = [];
     /** @type {string[]} */
+    const refused = [];
+    /** @type {string[]} */
     const escaped = [...outside];
+    const types = mediaTypes();
 
     for (const src of sources) {
       const isMedia = src.startsWith('/media/');
@@ -354,13 +443,26 @@ export function createExportJobs({ dataDir, pluginRoot, logger }) {
         missing.push(src);
         continue;
       }
+      // The name is checked on the file that is really there: the renderer
+      // serves the job's copies from the editor's own origin, so a file a
+      // browser would run has no place in the job. The media folder holds
+      // media, the library folder media and fonts.
+      if (isMedia && !types.isMediaName(found.rel)) {
+        refused.push(types.refuseMessage(src, 'the media file'));
+        continue;
+      }
+      if (isLibrary && !types.isManagedName(found.rel)) {
+        refused.push(types.refuseMessage(src, 'the library asset'));
+        continue;
+      }
       copied.push({ src, bytes: fs.statSync(found.real).size });
     }
 
-    if (escaped.length || missing.length) {
+    if (escaped.length || missing.length || refused.length) {
       const problems = [];
       if (escaped.length) problems.push(`not inside the project folder: ${escaped.join(', ')}`);
       if (missing.length) problems.push(`missing or outside the project folder: ${missing.join(', ')}`);
+      if (refused.length) problems.push(refused.join('; '));
       throw new Error(`the job cannot be prepared — ${problems.join('; ')}`);
     }
 
