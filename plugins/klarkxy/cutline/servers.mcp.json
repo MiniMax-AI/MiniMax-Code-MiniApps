@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "cutline": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/cutline",
+      "headers": {},
+      "description": "Cutline 剪辑台的 21 个工具：读取与改写时间线 JSON、导入素材、看画面与听感、查工程与版本、排队导出。fablecut_export 在打开的剪辑台页面里渲染；cutline_export 准备一个独立任务并给出运行器路径，由 Agent 用自己的后台任务启动，不另起浏览器。",
+      "timeout": 900000
+    }
+  }
+}
