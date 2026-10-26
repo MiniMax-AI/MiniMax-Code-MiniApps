@@ -130,6 +130,14 @@ function errorText(error) {
   return String(error);
 }
 
+/**
+ * The Host could not bind a session to an Agent, so the turn never reached the model. A busy
+ * session is reported as BUSY instead, and a rejected Agent name as INVALID_ARGUMENTS.
+ */
+function isBindFailure(error) {
+  return errorCode(error) === 'AGENT_UNAVAILABLE';
+}
+
 export class Engine {
   /**
    * @param {{
@@ -149,6 +157,10 @@ export class Engine {
     this.retryDelays = deps.retryDelaysMs ?? TURN_RETRY_DELAYS_MS;
     /** @type {{ at: number, value: Promise<any> } | undefined} */
     this.catalogCache = undefined;
+    /** The Agent the Host could bind a new session to, once the default one proved unbindable. */
+    this.boundAgent = undefined;
+    /** @type {Promise<{ name: string, displayName: string, primary: boolean }[]> | undefined} */
+    this.agentOptions = undefined;
     /** @type {Map<string, { controller: AbortController, stoppedBy?: string }>} helper id -> run */
     this.helperRuns = new Map();
     this.helperActive = 0;
@@ -813,7 +825,7 @@ export class Engine {
     if (signal.aborted || this.disposed) return undefined;
     let result;
     try {
-      result = await agent.run({ text, sessionId, ...(model ? { model } : {}) }, { signal, onEvent });
+      result = await this.runTurn({ text, sessionId, model, signal, onEvent });
     } catch (error) {
       // The Host rejects a model it no longer offers before the turn starts; say which setting to fix.
       if (model && errorCode(error) === 'INVALID_ARGUMENTS') {
@@ -834,6 +846,91 @@ export class Engine {
   /** True when the Host lets a run pick its model (`agent.models()` / `run({ model })`). */
   supportsModels() {
     return typeof this.agent?.models === 'function';
+  }
+
+  /** True when the Host lets a run name its Agent (`agent.agents()` / `run({ agent })`). */
+  supportsAgents() {
+    return typeof this.agent?.agents === 'function';
+  }
+
+  /**
+   * The Agents the Host offers, primary first.
+   *
+   * A new Mini App session binds to the primary Agent unless the caller names one. The Host
+   * offers the primary under its canonical name and rejects the legacy `main` alias, so a
+   * runtime that still stores the primary under that alias cannot bind it: the session never
+   * opens and every turn fails with AGENT_UNAVAILABLE before the model is reached. Naming an
+   * Agent the Host can bind keeps the Bot team working there.
+   * @returns {Promise<{ name: string, displayName: string, primary: boolean }[]>}
+   */
+  async agentCandidates() {
+    if (!this.supportsAgents()) return [];
+    if (!this.agentOptions) {
+      this.agentOptions = Promise.resolve(/** @type {any} */ (this.agent).agents())
+        .then((value) => (value?.agents ?? [])
+          .map((entry) => ({
+            name: String(entry?.name ?? ''),
+            displayName: String(entry?.displayName ?? ''),
+            primary: Boolean(entry?.primary),
+          }))
+          .filter((entry) => entry.name))
+        .catch((error) => {
+          // A failed lookup must not be cached for the rest of the process.
+          this.agentOptions = undefined;
+          throw error;
+        });
+    }
+    const agents = await this.agentOptions;
+    return [...agents].sort((left, right) => Number(right.primary) - Number(left.primary));
+  }
+
+  /**
+   * Runs a turn, naming the Agent when the Host cannot bind its default one.
+   *
+   * A new session binds to the primary Agent. Naming one is only allowed on the first run of a
+   * session, and a continued session keeps the Agent it was created with. When the default
+   * Agent cannot be bound, the Agents the Host offers are tried in turn, primary first, and the
+   * one that works is used for the sessions that follow.
+   */
+  async runTurn({ text, sessionId, model, signal, onEvent }) {
+    const run = (agent) => /** @type {MiniAppAgentClient} */ (this.agent).run(
+      {
+        text,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(agent ? { agent } : {}),
+        ...(model ? { model } : {}),
+      },
+      { signal, onEvent },
+    );
+    // A continued session keeps its Agent; naming one again is rejected by the Host.
+    if (sessionId) return run(undefined);
+    if (this.boundAgent) {
+      try {
+        return await run(this.boundAgent);
+      } catch (error) {
+        if (!isBindFailure(error)) throw error;
+        // The Agent is gone or unbindable now: look for another one.
+        this.boundAgent = undefined;
+      }
+    }
+    try {
+      return await run(undefined);
+    } catch (error) {
+      if (!isBindFailure(error)) throw error;
+      const candidates = await this.agentCandidates();
+      for (const candidate of candidates) {
+        try {
+          const result = await run(candidate.name);
+          this.boundAgent = candidate.name;
+          this.logger?.warn?.('minimax_bot.agent_bound', { agent: candidate.name, offered: candidates.map((entry) => entry.name) });
+          return result;
+        } catch (candidateError) {
+          if (!isBindFailure(candidateError)) throw candidateError;
+        }
+      }
+      this.logger?.warn?.('minimax_bot.agent_unbound', { offered: candidates.map((entry) => entry.name) });
+      throw error;
+    }
   }
 
   /**
@@ -1545,7 +1642,7 @@ export class Engine {
         };
         const text = t('helper.brief', { bot: bot?.name ?? 'Bot', role: bot?.role || '-', task: helper.task });
         try {
-          result = await /** @type {any} */ (this.agent).run({ text, ...(model ? { model } : {}) }, { signal: controller.signal, onEvent });
+          result = await this.runTurn({ text, sessionId: undefined, model, signal: controller.signal, onEvent });
         } catch (error) {
           if (model && errorCode(error) === 'INVALID_ARGUMENTS') {
             throw Object.assign(new Error(errorText(error)), { code: 'MODEL_UNAVAILABLE' });
