@@ -1,14 +1,17 @@
 # AGENTS.md
 
-This repository hosts community Mini App packages for MiniMax Code. One task dominates: add or
-update one package at `plugins/<github-username>/<plugin-id>/`.
+This repository hosts community Mini App packages for MiniMax Code. Most tasks add or update one
+package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks or the docs (see
+"Change the checks or the docs").
 
 ## Add or update a Mini App
 
 1. New package: copy `examples/hello-miniapp/` to `plugins/<you>/<plugin-id>/`, then replace
    `name`, `displayName`, `description`, `author`, `exampleQueries`, the `<title>`, the README, and
-   the LICENSE holder. Update: open the existing package. Read `docs/package-contract.md` before
-   editing any manifest.
+   the LICENSE holder. Update: open the existing package, keep its plugin ID, and raise `version`
+   in `plugin.json`. A newly declared field that raises the minimum client version
+   (`docs/package-contract.md`) drops older clients; say so in the README and the PR. Read
+   `docs/package-contract.md` before editing any manifest.
 2. Read `docs/runtime.md` before editing `miniapp/node/*`. Read `docs/security.md` before the
    Node code reads or writes files, spawns processes, or makes network requests. Read
    `docs/client.md` before the page calls `window.mcode` or a browser permission such as
@@ -62,6 +65,19 @@ Maintainers gate on three things: manifests pass `npm run check`; the README des
 behaviour (files, network, processes, Agent turns, conversations read, tools called, microphone
 use, tested environment); the package cannot damage Host or user data. Everything else is a
 suggestion.
+
+## Change the checks or the docs
+
+`scripts/` mirrors the MiniMax Code package reader; `docs/` publishes the same contract.
+
+- A minimum in `FEATURE_MIN_HOST_VERSION` is the first released MiniMax Code that accepts the
+  field. Preview builds ship features early and are not evidence.
+- Change `scripts/lib/contract.mjs`, the rule, its `test/<rule>.test.mjs`, and the matching
+  `docs/` page together, and update the docs' `Verified against` line. The checker stays
+  dependency-free.
+- CI validates every package under `plugins/`. A new error must leave existing packages at zero
+  errors; otherwise ship it as a warning first.
+- Keep contract changes in their own PR, apart from package updates.
 
 ## Navigation
 
