@@ -29,8 +29,13 @@ import { isCoveredBy, normalizePluginPath, normalizeRoutePath } from '../paths.m
 
 const FILE = 'miniapp/miniapp.json';
 
+// What a package without a readable miniapp.json resolves to: no payload, no features, no access.
+export function emptyMiniApp() {
+  return { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, microphone: false } };
+}
+
 export async function checkMiniApp(report, { packageDir, manifest }) {
-  const resolved = { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, microphone: false } };
+  const resolved = emptyMiniApp();
   if (!isRecord(manifest)) {
     report.error('MINIAPP_NOT_OBJECT', 'miniapp.json must be a JSON object', FILE);
     return resolved;

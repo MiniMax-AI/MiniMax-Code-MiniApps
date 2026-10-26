@@ -6,7 +6,7 @@ import { checkFiles } from './rules/files.mjs';
 import { checkImageFile, checkLayout, checkNameMatchesDirectory } from './rules/layout.mjs';
 import { checkManifest } from './rules/manifest.mjs';
 import { checkMcode } from './rules/mcode.mjs';
-import { checkMiniApp } from './rules/miniapp.mjs';
+import { checkMiniApp, emptyMiniApp } from './rules/miniapp.mjs';
 import { checkNode } from './rules/node.mjs';
 import { checkReadme } from './rules/readme.mjs';
 import { checkAccessUsage } from './rules/usage.mjs';
@@ -32,7 +32,7 @@ export async function validatePackage(packageDir, { requireLowercaseAuthor = tru
   if (packageJson.present) checkMcode(report, { packageJson: packageJson.value });
 
   const miniapp = await readJson(report, dir, 'miniapp/miniapp.json', 'MINIAPP_UNREADABLE');
-  let resolved = { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, microphone: false } };
+  let resolved = emptyMiniApp();
   if (miniapp.present) resolved = await checkMiniApp(report, { packageDir: dir, manifest: miniapp.value });
   features.push(...resolved.features);
 

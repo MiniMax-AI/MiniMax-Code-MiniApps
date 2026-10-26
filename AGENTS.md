@@ -47,8 +47,9 @@ update one package at `plugins/<github-username>/<plugin-id>/`.
   `npm run check` reports it as `ACCESS_UNDECLARED`; do not declare access the app does not use.
 - `agentAccess` gives an Agent with files, shell, and MCP, and `session.read` exposes every user
   conversation. Never answer a `permission.requested` with `allowOnce` unless the user chose it.
-- The user can switch any declared access off at any time. Handle `NOT_PERMITTED`,
-  `TOOL_NOT_PERMITTED`, and `NotAllowedError` where the call is made, and keep the app running.
+- The user can switch any declared access off at any time. Handle `NOT_PERMITTED`
+  (`not_permitted` on the page), `TOOL_NOT_PERMITTED`, and `NotAllowedError` where the call is made,
+  and keep the app running.
 - The runtime payload is exactly `miniapp/client` and `miniapp/node`. Keep tests and docs outside
   `miniapp/`. Vendor third-party code inside the payload; `node_modules` is never committed.
 - Paths are portable: ASCII, no symlinks, no `..`. `npm run check` enforces the full rule set.

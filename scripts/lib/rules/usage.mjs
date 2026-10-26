@@ -8,17 +8,12 @@ import { compareVersions } from '../version.mjs';
 const SCANNED_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.html', '.htm']);
 
 // Mini App APIs that never work without their declaration, on any client.
+const AGENT_PREFIX = String.raw`\b(?:context|miniapp)\??\.agent\??\.`;
+const AGENT_RUN_CALL = new RegExp(String.raw`${AGENT_PREFIX}(?:run|answer|reply|cancel|open|models|agents|create)\s*\(`, 'u');
+const AGENT_OWN_SESSION_CALL = new RegExp(String.raw`${AGENT_PREFIX}(?:observe|session)\s*\(`, 'u');
+const USER_SESSION_CALL = /\bagent\??\.sessions\s*\(|\bagent\??\.observe\s*\(\s*\{\s*all\s*:\s*(?:true|!0)|\bagent\??\.session\s*\(\s*\)/u;
+
 const API_RULES = [
-  {
-    pattern: /\b(?:context|miniapp)\??\.agent\??\.(?:run|answer|reply|cancel|open|models|agents|create|observe|sessions|session)\s*\(/u,
-    granted: (access) => access.agent.length > 0,
-    message: 'calls the Agent API but miniapp.json declares no agentAccess; context.agent is absent and page calls reject with not_permitted',
-  },
-  {
-    pattern: /\bagent\??\.sessions\s*\(|\bagent\??\.observe\s*\(\s*\{\s*all\s*:\s*(?:true|!0)|\bagent\??\.session\s*\(\s*\)/u,
-    granted: (access) => access.agent.includes('session.read'),
-    message: 'lists sessions, observes every session, or reads the chat the page is open in, which needs agentAccess "session.read"; without it the call rejects with not_permitted',
-  },
   {
     pattern: /\b(?:context|miniapp)\??\.tool\??\.(?:call|list|request)\s*\(/u,
     granted: (access) => access.tool,
@@ -38,11 +33,29 @@ export async function checkAccessUsage(report, { packageDir, roots, access, mini
   for (const relativePath of await collectPayloadFiles(packageDir, roots, SCANNED_EXTENSIONS)) {
     const source = await readText(path.join(packageDir, ...relativePath.split('/')));
     if (source === undefined) continue;
+    checkAgentUsage(report, source, access.agent, relativePath);
     for (const rule of API_RULES) {
       if (!rule.granted(access) && rule.pattern.test(source)) report.error('ACCESS_UNDECLARED', rule.message, relativePath);
     }
     if (!access.microphone && GET_USER_MEDIA.test(source)) reportGetUserMedia(report, relativePath, gated);
   }
+}
+
+// One diagnostic per file, naming every agentAccess value the file's calls need and lack.
+function checkAgentUsage(report, source, granted, relativePath) {
+  const missing = [];
+  if (!granted.includes('session.run') && AGENT_RUN_CALL.test(source)) missing.push('"session.run"');
+  if (!granted.includes('session.read') && USER_SESSION_CALL.test(source)) missing.push('"session.read"');
+  // Reading or observing the Mini App's own sessions works with either value.
+  if (missing.length === 0 && granted.length === 0 && AGENT_OWN_SESSION_CALL.test(source)) {
+    missing.push('"session.run" or "session.read"');
+  }
+  if (missing.length === 0) return;
+  report.error(
+    'ACCESS_UNDECLARED',
+    `calls Agent APIs that need agentAccess ${missing.join(' and ')}; without it context.agent is absent or the calls reject with not_permitted`,
+    relativePath,
+  );
 }
 
 // Clients before the gate granted the microphone silently, so the call fails on every client

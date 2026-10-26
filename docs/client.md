@@ -26,7 +26,10 @@ Mini App's grants: `has('agent.run')` is true even without `agentAccess`. Earlie
 From MiniMax Code 3.1.5 the Host decides every browser permission request from a Mini App page.
 Sanitized clipboard writes, fullscreen, pointer lock, and keyboard lock work without a declaration.
 The microphone works only when `miniapp.json` declares `deviceAccess: ["microphone"]` and the user
-has not switched it off; otherwise `getUserMedia` rejects with `NotAllowedError`. Camera,
+has not switched it off; otherwise `getUserMedia` rejects with `NotAllowedError`. Only audio-only
+requests from the page's main frame are granted: asking for audio and video together, or calling
+from an iframe, is denied. `navigator.permissions.query({ name: 'microphone' })` reports `granted`
+only after a granted `getUserMedia`, so call `getUserMedia` instead of querying first. Camera,
 geolocation, notifications, and everything else a browser would prompt for are denied and cannot be
 declared yet. Earlier clients granted these requests silently.
 

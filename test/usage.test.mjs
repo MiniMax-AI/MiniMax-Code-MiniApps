@@ -53,6 +53,34 @@ test('usage: listing sessions, observing every session, and reading the page cha
   }
 });
 
+test('usage: running turns needs session.run even when session.read is declared', async () => {
+  const diagnostics = await run(
+    { 'miniapp/node/agent.mjs': 'export const go = (context) => context.agent.run({ text: "x" });\n' },
+    { access: { ...NONE, agent: ['session.read'] } },
+  );
+  assert.deepEqual(codes(diagnostics, 'error'), ['ACCESS_UNDECLARED']);
+  assert.match(diagnostics[0].message, /"session\.run"/u);
+});
+
+test('usage: one Agent diagnostic per file names every missing agentAccess value', async () => {
+  const pageChat = await run({ 'miniapp/client/app.js': 'await window.mcode.miniapp.agent.session();\n' });
+  assert.equal(pageChat.length, 1);
+  assert.match(pageChat[0].message, /"session\.read"/u);
+  const both = await run({ 'miniapp/client/app.js': 'await miniapp.agent.run({ text });\nawait miniapp.agent.sessions();\n' });
+  assert.equal(both.length, 1);
+  assert.match(both[0].message, /"session\.run" and "session\.read"/u);
+});
+
+test('usage: reading or observing its own sessions needs either agentAccess value', async () => {
+  const source = 'context.agent.observe({ sessionId }, { onEvent });\n';
+  const none = await run({ 'miniapp/node/watch.mjs': source });
+  assert.deepEqual(codes(none, 'error'), ['ACCESS_UNDECLARED']);
+  assert.match(none[0].message, /"session\.run" or "session\.read"/u);
+  for (const agent of [['session.run'], ['session.read']]) {
+    assert.deepEqual(await run({ 'miniapp/node/watch.mjs': source }, { access: { ...NONE, agent } }), [], agent[0]);
+  }
+});
+
 test('usage: tool calls without toolAccess are errors', async () => {
   for (const source of ['await context.tool.call(name, {});\n', 'const { tools } = await context.tool?.list();\n', 'await window.mcode.miniapp.tool.request([name]);\n']) {
     const diagnostics = await run({ 'miniapp/node/tools.mjs': source });

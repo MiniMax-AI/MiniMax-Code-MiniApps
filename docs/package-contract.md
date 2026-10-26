@@ -130,12 +130,15 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
   judged by the user's permission rules. See `docs/tool.md`. Requires MiniMax Code 3.1.5 or later.
 - `deviceAccess` is optional. The only allowed value is `["microphone"]`, which lets the page call
   `getUserMedia({ audio })` and `window.mcode.miniapp.speech.transcribe` (see `docs/client.md`).
-  Requires MiniMax Code 3.1.5 or later.
+  Only audio-only requests from the page's main frame are granted: a request that also asks for
+  video, or comes from an iframe, is still denied. Requires MiniMax Code 3.1.5 or later.
 - `engines` is optional: `{ "mcode": ">=MAJOR.MINOR.PATCH" }`, nothing else. A client at 3.1.5 or
   later but older than the bound keeps the plugin with its Skills and MCP servers, and withholds
-  the Mini App. Clients before 3.1.5 do not know the field and reject the whole package, so the
-  bound only matters above 3.1.5. Write it only when the package needs a specific newer client; it
-  is not required for the features in the table below. Requires MiniMax Code 3.1.5 or later.
+  the Mini App and its `mcpEndpoints`; publishing such a package from a workspace fails with
+  `MINIAPP_HOST_TOO_OLD`. Clients before 3.1.5 do not know the field and reject the whole package,
+  so the bound only matters above 3.1.5. Write it only when the package needs a specific newer
+  client; it is not required for the features in the table below. Requires MiniMax Code 3.1.5 or
+  later.
 
 ### Permission switches
 
@@ -224,19 +227,21 @@ exists. A manifest field cannot be feature-detected: declaring it is what raises
 
 ## Declared access must match the code
 
-`npm run check` scans the files that run in the page or in Node (`.js`, `.mjs`, `.cjs`, `.html`
-under `artifacts.client` and `artifacts.node`, outside `node_modules`) for calls that need a grant
-the manifest does not make, and reports them as `ACCESS_UNDECLARED`.
+`npm run check` scans the files that run in the page or in Node (`.js`, `.mjs`, `.cjs`, `.html`,
+`.htm` under `artifacts.client` and `artifacts.node`, outside `node_modules`) for calls that need a
+grant the manifest does not make, and reports them as `ACCESS_UNDECLARED`.
 
 | Call | Needs | Level |
 | --- | --- | --- |
-| `context.agent.*` or page `agent.*` | `agentAccess` | error |
+| `context.agent` / page `agent` `run`, `answer`, `reply`, `cancel`, `open`, `models`, `agents`, `create` | `agentAccess` `"session.run"` | error |
 | `agent.sessions()`, `agent.observe({ all: true })`, page `agent.session()` without an id | `agentAccess` `"session.read"` | error |
+| `agent.session(id)`, `agent.observe({ sessionId })` on the Mini App's own sessions | either `agentAccess` value | error |
 | `context.tool.*`, page `tool.request()` | `toolAccess: ["call"]` | error |
 | `speech.transcribe()` | `deviceAccess: ["microphone"]` | error |
 | `getUserMedia()` | `deviceAccess: ["microphone"]` | error when the package's minimum is 3.1.5 or later; warning otherwise |
 
-The first four never work without the grant, on any client. `getUserMedia` worked without a grant
+The Agent rows are reported once per file, naming every missing value. The first five rows never
+work without the grant, on any client. `getUserMedia` worked without a grant
 before MiniMax Code 3.1.5, and 3.1.5 and later deny it with `NotAllowedError`. A package whose
 minimum is below 3.1.5 still installs on those earlier clients, so the check only warns; declaring
 `deviceAccess` fixes the call and raises the minimum to 3.1.5. Camera, geolocation, notifications,
