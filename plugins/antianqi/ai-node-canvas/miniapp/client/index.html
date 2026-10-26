@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>节点画布</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="nxc-app">      <header class="nxc-toolbar">
+        <div class="nxc-toolbar__group">
+          <h1 class="nxc-brand"><i class="nxc-brand__dot"></i>节点画布</h1>
+          <button id="canvas-select" class="nxc-select nxc-select--canvas" type="button" title="切换画布"></button>
+          <span id="save-state" class="nxc-savestate" data-state="saved" title="画布自己会存：改动后一秒左右落盘，不用手动保存">已保存</span>
+          <input id="canvas-rename" class="nxc-rename" type="text" maxlength="120" hidden aria-label="画布名称" />
+          <button id="btn-new" class="nxc-btn" type="button">新建</button>
+          <button id="btn-rename" class="nxc-btn" type="button">重命名</button>
+          <span class="nxc-toolbar__sep" aria-hidden="true"></span>
+          <button id="btn-templates" class="nxc-btn" type="button" title="模板：我的模板、打开本地模板、保存为我的模板、保存到本地">模板</button>
+          <button id="btn-delete" class="nxc-btn nxc-btn--danger" type="button">删除</button>
+        </div>
+        <div class="nxc-toolbar__group nxc-toolbar__group--right">
+          <span id="build-badge" class="nxc-build" title="运行中的客户端版本与构建指纹"></span>
+          <span id="zoom" class="nxc-zoom">100%</span>
+          <button id="btn-undo" class="nxc-btn" type="button" title="撤销 (Ctrl+Z)">撤销</button>
+          <button id="btn-redo" class="nxc-btn" type="button" title="重做 (Ctrl+Shift+Z)">重做</button>
+          <button id="btn-caps" class="nxc-btn" type="button">能力清单</button>
+          <button id="btn-tools" class="nxc-btn" type="button">工具</button>
+          <button id="btn-library" class="nxc-btn" type="button" title="本机素材库：生成的和上传的都在这儿">资产库</button>
+          <button id="btn-minimap" class="nxc-btn" type="button">小地图</button>
+          <button id="btn-grid" class="nxc-btn" type="button">网格：线条</button>
+          <button id="btn-theme" class="nxc-btn" type="button" title="切换配色主题">主题：跟随系统</button>
+          <button id="btn-reset" class="nxc-btn" type="button">重置视图</button>
+          <button id="btn-popout" class="nxc-btn" type="button" hidden>独立窗口</button>
+          <button id="btn-add" class="nxc-btn nxc-btn--primary" type="button">添加节点</button>
+        </div>
+      </header>
+
+      <main class="nxc-main">
+        <div id="viewport" class="nxc-viewport">
+          <div id="grid" class="nxc-grid"></div>
+          <div id="world" class="nxc-world">
+            <svg id="connections" class="nxc-connections" xmlns="http://www.w3.org/2000/svg" width="20000" height="20000"></svg>
+            <div id="nodes" class="nxc-nodes"></div>
+          </div>
+          <div id="band" class="nxc-band" hidden></div>
+          <canvas id="minimap" class="nxc-minimap" width="184" height="124" hidden></canvas>
+          <div id="task-panel" class="nxc-taskpanel" role="status" aria-live="polite" hidden></div>
+          <div id="empty-hint" class="nxc-empty">
+            双击空白处新建图片节点 · Shift+拖拽框选 · 拖节点右侧圆点连线 · 连线即数据流
+          </div>
+        </div>
+      </main>
+
+      <div id="context-menu" class="nxc-menu" hidden></div>
+      <div id="add-menu" class="nxc-menu nxc-palette" hidden></div>
+      <div id="mention-menu" class="nxc-menu nxc-mention-menu" hidden></div>
+      <div id="dropdown-menu" class="nxc-menu nxc-menu--dropdown" hidden></div>
+      <div id="floating-panel" class="nxc-panel" hidden></div>
+
+      <!-- The question is asked in the page: a native confirm() is a separate
+           OS window that never reaches the screen inside the MiniApp host. -->
+      <div id="confirm-dialog" class="nxc-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-text" hidden>
+        <div class="nxc-confirm__box">
+          <p id="confirm-text" class="nxc-confirm__text"></p>
+          <div class="nxc-confirm__actions">
+            <button id="confirm-ok" class="nxc-btn nxc-btn--danger" type="button">确定</button>
+            <button id="confirm-cancel" class="nxc-btn" type="button">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

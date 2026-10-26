@@ -77,6 +77,8 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [仓库透视](plugins/yujiachen-y/repo-xray/README.zh-CN.md) | 从 Git 历史看懂一个代码仓库：可逐层下钻的代码地图、热点与 Bug 磁铁、高风险文件、负责人与知识流失、提交节奏与救火记录、技术栈；支持 GitHub、GitLab 和本机仓库，全部在本机分析 | [yujiachen-y](https://github.com/yujiachen-y) |
 | [磁盘透视](plugins/zch0227/disk-insight/README.zh-CN.md) | 查看 macOS 和 Windows 的磁盘空间去向：旭日图空间地图，按三档风险分类的垃圾文件，大文件和重复文件，代码仓库和 Git worktree 的占用；任何条目都可以问 Agent，选中的条目在确认框里逐一列出，确认后直接永久删除。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
 | [A/时差保安](plugins/liuchen19960902/timezone-guard/README.zh-CN.md) | 发消息前先看对方那边几点：按对方城市当地时间给出「现在可以聊 / 短聊就好 / 先睡，别发」三档判定。需要 MiniMax Code 3.1.2 或更高版本 | [FineCat](https://github.com/LiuChen19960902) |
+| [AI 节点画布](plugins/antianqi/ai-node-canvas/README.zh-CN.md) | MiniMax Code 里的无限画布节点图：把文本、图片、视频、音频的生成接成一张图，结果顺着连线往下传，任何一张结果都能直接做二次处理 | [antianqi](https://github.com/antianqi) |
+| [Agent 协作透视](plugins/huixin615/agent-flow/README.zh-CN.md) | 手动导入插件 Hook 记录，查看原生 task 调用与子 Agent 运行区间；有明确 ID 时关联父子任务。可选择记录会话或一键查看最近导入的记录，不读取宿主会话文件。需要 MiniMax Code 3.1.4 或更高版本 | [Huixin615](https://github.com/Huixin615) |
 | [蹬王之王](plugins/hylouis233/expiry-guardian/README.md) | 看你自己维护的本地账本，算出「该用卡还是该留积分」，并把理由说清楚 | [Hylouis](https://github.com/Hylouis233) |
 
 <details>

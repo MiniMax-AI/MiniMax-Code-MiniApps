@@ -1,5 +1,12 @@
 # Dynamic Workflow Console (`workflow-console`)
 
+[简体中文](README.zh-CN.md) | English
+
+> **中文速览**：一个把 MiniMax Code 动态工作流跑起来、盯住、看清的 Mini App。内置 Workflow Studio
+> 引擎，**无需另装插件即可运行**：运行列表、实时事件流、按阶段与依赖画出的流程图、每个节点的输出、
+> 审核后开始执行、暂停 / 取消 / 恢复、模板保存与复用、报告导出。引擎启动前必须先选定项目目录，
+> 它不会替你猜。完整中文说明见 [README.zh-CN.md](README.zh-CN.md)。
+
 A Mini App that runs, supervises, and inspects MiniMax Code dynamic workflows from one page.
 
 It embeds the `mcode-dynamic-workflows` runtime, so it works on a machine where that plugin was
@@ -8,7 +15,10 @@ project directory, and shows every run of that project: status, live event log, 
 flow graph, per-node output, and the final report. Runs can be approved, started, paused, cancelled,
 resumed, exported to Markdown or HTML, saved as a template, and restored from a template.
 
-The user interface is in Chinese.
+The user interface is in Chinese, so this README quotes the page's own wording. The terms you will
+meet on screen are: 「工作目录」 (Working directory), 「待审核」 (pending review), 「开始执行」 (start),
+「内置引擎」 (the bundled engine), 「还没有选择项目目录」 (no project directory chosen yet), and
+「审核版本已更新，请刷新后再开始执行」 (the reviewed version changed, refresh and start again).
 
 ## Based on which project
 
@@ -62,17 +72,70 @@ The console needs to know which project the engine should work in, and it will *
 
 - If the Host declares the current project through an environment variable
   (`MCODE_WORKSPACE`, `MCODE_PROJECT_DIR`, `PROJECT_DIR`, `WORKSPACE`), that directory is used.
-- Otherwise the console uses the directory you typed in the always-visible **Working directory** bar
-  at the top of the page, remembered under `context.dataDir`.
+- Otherwise the console uses the directory you typed in the always-visible **Working directory**
+  (「工作目录」) bar at the top of the page, remembered under `context.dataDir`.
 - If neither is available, **the engine does not start at all** and the page asks for an absolute
-  project path. It never falls back to your home directory — a run started there could act on your
-  whole home folder — and it never uses the Host's temporary deployment directory.
+  project path; the empty state reads 「还没有选择项目目录」 (no project directory chosen yet). It
+  never falls back to your home directory — a run started there could act on your whole home
+  folder — and it never uses the Host's temporary deployment directory.
 
 Saving the bar restarts the embedded engine against the new directory; run history is kept in the
 engine's own database and is not affected by the change.
 
 Running real workflows still requires a working `mcode` CLI: the engine orchestrates agents through
 it. The demo executor works without it.
+
+## Prerequisites
+
+The console itself needs nothing: no configuration step, no build step, and no other plugin
+installed. It ships the Workflow Studio engine and starts it as a child process.
+
+**The `mcode` CLI is a prerequisite for real runs only.** The engine drives agents through the
+`mcode` CLI, so a run on the real executor needs that CLI installed, logged in, and able to call a
+model. Everything else works without it:
+
+| | needs `mcode` CLI |
+| --- | --- |
+| Opening the page, starting the engine, choosing a project directory | no |
+| Approving a draft, pausing, cancelling, resuming | no |
+| A run on the **demo** executor (placeholder results, no model call) | no |
+| A run on the **real** executor (`mcode`, actual agent calls) | **yes** |
+
+A new workflow starts in **demo** mode: the Studio's execution-mode picker defaults to demo, so
+creating and running a workflow needs no CLI at all. Switch it to "MCode · real agents" only when
+you want real agents — that is the point where the CLI becomes required.
+
+Note that the MiniMax Code desktop app does **not** bundle the CLI. The CLI is a separate
+`@minimax-ai/code` install (npm prefix `~/.minimax-code`), so having the desktop app installed is
+not the same as having the CLI.
+
+Where the engine looks for the CLI, in the order it tries:
+
+1. `mcode` on `PATH`;
+2. the official user install — `~/.minimax-code/bin/mcode` on macOS and Linux,
+   `~/.minimax-code/mcode.cmd` on Windows. `MCODE_INSTALL_DIR` replaces `~/.minimax-code`
+   as that root, so the engine then looks for `$MCODE_INSTALL_DIR/bin/mcode`;
+3. a workflow-managed toolchain, if that directory has been populated —
+   `~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js` on macOS and
+   Linux, `~/.mcode-dynamic-workflows/toolchain/node_modules/@minimax-ai/code/cli.js` on Windows.
+
+The status line reports "MCode CLI 可用/不可用". That flag only means **the executable was found** —
+it says nothing about whether the CLI is logged in or still has model quota, which the CLI itself
+decides when a real run starts. When the CLI is missing, the console says so in a banner and
+refuses to start a real run instead of failing halfway through; the engine's own error for that
+case is "找不到 MCode CLI，请安装并登录后开始。"
+
+## Skill
+
+The package ships one Skill, `skills/workflow-console/SKILL.md`. It tells the Agent how to drive
+this console: that a project directory must be chosen before the engine can start, that a run sits
+in `pending_review` (「待审核」) until it is approved, what "approve" (「开始执行」), "pause",
+"cancel" and "resume" mean, that reusing a template creates a new draft rather than running
+anything, and that the `demo` executor calls no model. It also tells the Agent not to pick a
+working directory on the user's behalf and not to approve a run without the user's say-so.
+
+The Skill is what the Host loads when it registers this plugin; the console process itself never
+reads it.
 
 ## Tested environment
 
@@ -96,6 +159,8 @@ this app.
 Read:
 
 - `miniapp/client/` and `miniapp/node/vendor/` — this package's own assets.
+- `skills/workflow-console/SKILL.md` — read by the Host when it registers this plugin, not by the
+  console process.
 - The project directory it is bound to — the engine runs with it as its working directory, and the
   `mcode` CLI it launches reads and writes inside it.
 
@@ -109,7 +174,8 @@ Written — always under `context.dataDir`, never elsewhere:
 
 - `workspace.json` — the working directory the embedded engine is bound to.
 - `hidden-runs.json` — the list of runs hidden locally. Hiding is not deletion; the run record
-  stays in the engine's database and can be restored.
+  stays in the bundled engine's own database — `workflows.sqlite` under `context.dataDir/engine/` —
+  and can be restored.
 - `engine/` — `address.json`, `endpoint.json`, `service.log`, and `workflows.sqlite`, written by the
   embedded engine.
 
@@ -153,6 +219,7 @@ in browser storage.
 ```text
 .minimax-plugin/plugin.json                 Plugin manifest
 package.json                                Mini App declaration
+skills/workflow-console/SKILL.md            Skill the Agent loads to drive this console
 miniapp/miniapp.json                        Payload roots, Node entry, page route
 miniapp/client/index.html                   The page served at /dashboard
 miniapp/client/app.js                       Front end (plain HTML/CSS/JS, no framework, no build)
@@ -174,8 +241,11 @@ The tests use Node's built-in test runner and start an isolated console instance
 directory, so they never touch a real project:
 
 ```bash
-node --test "tests/*.test.mjs"
+npm test
 ```
+
+`npm test` runs `node --test "tests/*.test.mjs"` in this directory; the same command works
+without npm.
 
 `tests/workspace-resolution.test.mjs` covers working-directory resolution: the Host's temporary
 deployment directory and other implausible paths are rejected, the home directory is never used as

@@ -9,6 +9,8 @@ import { selectMemoryContext } from './memory-context.mjs';
 import { UserInbox } from './user-inbox.mjs';
 import { TaskDispatcher } from './task-dispatcher.mjs';
 import { modelKey, newId, withEffort } from './store.mjs';
+import { CONVERGE_MARK, handoverRequested, handoverSummary, hopLimit, renderHandover } from './relay-guard.mjs';
+import { appendNote, notesEnabled, renderNote } from './group-note.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppAgentClient} MiniAppAgentClient */
 /** @typedef {import('./miniapp-api.js').MiniAppAgentRunEvent} MiniAppAgentRunEvent */
@@ -252,11 +254,144 @@ export class Engine {
     return { botLines, groupLines };
   }
 
+  /**
+   * The hop limit of a group: how many Bots may speak in one relay chain. 0 = no limit, which
+   * is the baseline behaviour (the chain runs as long as the Bots hand over to each other).
+   *
+   * The limit belongs to the group and only the operator sets it (the panel writes
+   * `group.maxHops`); the model cannot change it, so a relay chain cannot be extended by the
+   * Bot that is running it.
+   *
+   * @param {any} group
+   * @returns {number}
+   */
+  maxHops(group) {
+    return hopLimit(group);
+  }
+
+  /**
+   * Whether the conclusion of the previous hop travels with the next hop's prompt.
+   * @param {any} group
+   * @returns {boolean}
+   */
+  handoverEnabled(group) {
+    return handoverRequested(group);
+  }
+
+  /**
+   * Whether the group really has guardrails on. The prompt-level rule (one owner per stage)
+   * follows this one, so a group without guardrails keeps the baseline prompt byte for byte.
+   * @param {any} group
+   * @returns {boolean}
+   */
+  relayGuardActive(group) {
+    return this.maxHops(group) > 0 || this.handoverEnabled(group);
+  }
+
+  /**
+   * The conclusion of the previous hop, handed over to the next one.
+   *
+   * Free by construction: the summary is text that rides along with the next turn — no model
+   * turn, no tool call, no memory write. The note the group already produced wins; without a
+   * note the tail of the previous reply is used.
+   *
+   * @param {any} group
+   * @param {{ botId: string, name: string, text: string, ts: number } | undefined} last
+   * @returns {{ from: string, text: string } | undefined}
+   */
+  handoverFor(group, last) {
+    if (!this.handoverEnabled(group)) return undefined;
+    if (!last?.text) return undefined;
+    // This build keeps no group notes, so the hand-over carries the tail of the reply.
+    const text = handoverSummary({ note: '', reply: last.text });
+    if (!text) return undefined;
+    return { from: last.name, text };
+  }
+
+
+  /**
+   * The chain reached its hop limit: the round converges instead of relaying on.
+   *
+   * Two things happen, in this order. The group is told why the chain stopped — a system notice
+   * plus an event, so the panel can show it — and then the Bot that just spoke is asked to wrap
+   * up. The hop that was blocked does not run, but the wrap-up is a model turn of its own: a
+   * round that reaches the limit therefore runs `limit + 1` model turns, the last one being the
+   * wrap-up. When it fails the notice stands on its own and the round ends; a group must never
+   * be left hanging because a model call failed.
+   *
+   * @param {any} group
+   * @param {string} chatId
+   * @param {{ reason: string, max: number }} info
+   * @param {{ botId: string, name: string, text: string, ts: number } | undefined} last
+   * @param {{ sourceMessageId?: string, sourceMessageIds?: string[], taskId?: string, signal?: AbortSignal }} [options]
+   * @returns {Promise<{ ok: boolean, reason: string, text: string }>}
+   */
+  async convergeGroup(group, chatId, info, last, options = {}) {
+    const notice = await this.store.appendMessage(chatId, {
+      role: 'system',
+      key: 'notice.hopLimit',
+      params: { max: info.max },
+      text: t('notice.hopLimit', { max: info.max }),
+    });
+    this.broadcast({ type: 'message.upsert', chatId, message: notice });
+    this.broadcastSummary(chatId);
+    this.broadcast({
+      type: 'group.hopLimit', chatId, groupId: group.id, reason: info.reason, max: info.max, hops: info.max,
+    });
+    const bot = last?.botId ? this.store.getBot(last.botId) : undefined;
+    if (!bot) return { ok: false, reason: 'no_speaker', text: '' };
+    const result = await this.runBotTurn({
+      bot,
+      chatId,
+      text: `${CONVERGE_MARK}\n${t('relay.converge', { max: info.max })}`,
+      kind: 'group',
+      sourceMessageId: options.sourceMessageId,
+      sourceMessageIds: options.sourceMessageIds,
+      signal: options.signal,
+      // The wrap-up belongs to the same round, so it belongs to the same task. Without it a
+      // group relay that came in through the task dispatcher would end up outside the task.
+      taskId: options.taskId,
+    });
+    if (result.status !== 'done') {
+      this.logger.warn('minimax_bot.relay_converge_failed', { code: errorCode(result) || 'unknown' });
+      return { ok: false, reason: 'turn_failed', text: '' };
+    }
+    return { ok: true, reason: 'converged', text: result.text ?? '' };
+  }
+
+  /**
+   * Write what the round said into the group's note.
+   *
+   * The note lives in the group record, so it survives a reset of the group's chat, and every
+   * Bot of the group gets it in its standing brief. Nothing here spends a turn: the text is the
+   * closing part of the replies the group already produced. A group that keeps no note is left
+   * alone, and so is a round that said nothing.
+   *
+   * @param {any} group
+   * @param {{ speaker: string, text: string }[]} round
+   */
+  async recordGroupNote(group, round) {
+    if (!round.length) return;
+    const current = this.store.getGroup(group.id);
+    if (!current || !notesEnabled(current)) return;
+    const entries = appendNote(current.noteEntries, round);
+    if (!entries.length) return;
+    current.noteEntries = entries;
+    await this.store.save();
+    this.broadcast({ type: 'state.changed' });
+  }
+
   /** The Bot's standing context, written in the user's language so replies default to it. */
   buildStandingBrief(bot, chatId) {
     const { botLines, groupLines } = this.roster();
     const group = chatId.startsWith('group:') ? this.store.getGroup(chatId.slice(6)) : undefined;
     const isAdmin = group?.adminId === bot.id;
+    // F7 · the group has the relay guardrails on: the prompt gets the one-owner rule. With the
+    // guardrails off this adds nothing, so the prompt stays byte-identical.
+    const relayGuard = group ? this.relayGuardActive(group) : false;
+    // The group's note: what its Bots said at the end of the earlier rounds. It is empty unless
+    // the group keeps one, so the brief of a group without notes stays byte-identical.
+    const note = group ? renderNote(group) : '';
     const lines = [
       '<minimax-bot-context>',
       t('brief.intro', { name: bot.name, id: bot.id }),
@@ -273,8 +408,15 @@ export class Engine {
             isAdmin ? t('brief.groupAdmin') : t('brief.groupMember'),
             t('brief.groupPass'),
             t('brief.groupNoPost'),
+            // The one-owner rule joins the list only when it is in force. Adding an empty
+            // string instead would still append a separator, and the English separator is a
+            // space — the brief would differ from the baseline by one trailing space.
+            ...(relayGuard ? [t('brief.groupOneOwner')] : []),
           ].join(t('brief.sentenceJoin'))
         : t('brief.private'),
+      // The note joins the brief only when the group has one. It is a block of its own, so it
+      // does not disturb the sentence the group line is made of.
+      ...(note ? ['', note] : []),
       '',
       t('brief.hTeam'),
       ...botLines,
@@ -333,6 +475,7 @@ export class Engine {
    *   bot: any, chatId: string, text: string, kind: string,
    *   sourceMessageId?: string, sourceMessageIds?: string[], taskId?: string, signal?: AbortSignal,
    *   answer?: { sessionId: string, requestId: string, answers: any[] },
+   *   handover?: { from: string, text: string },
    * }} input
    * @returns {Promise<{ status: string, text: string, messageId: string, sessionId?: string }>}
    */
@@ -1053,13 +1196,36 @@ export class Engine {
     let accepted = false;
     let paused;
     const seen = new Set();
+    // F7 · the hop limit. 0 = no limit = the baseline behaviour: the chain runs as long as the
+    // Bots hand over to each other.
+    const limit = this.maxHops(group);
+    /** How many Bots spoke in this chain so far. */
+    let hops = 0;
+    /** The conclusion of the last hop, handed over to the next one. */
+    let lastConclusion;
+    /** What the Bots said in this round, for the group's note. */
+    const noteRound = [];
+    /** Set when the chain stopped because of the hop limit. */
+    let converged;
     try {
       while (queue.length && !loop.cancelled && !options.signal?.aborted && !this.disposed) {
+        // The limit is reached and somebody is still queued: the chain converges instead of
+        // relaying on. The queue is emptied on purpose — the chain ends here, so nobody is
+        // left to be called later (the task dispatcher would otherwise resume it).
+        if (limit > 0 && hops >= limit) {
+          converged = { reason: 'hop_limit', max: limit };
+          queue.length = 0;
+          break;
+        }
         const botId = /** @type {string} */ (queue.shift());
         const bot = this.store.getBot(botId);
         const fresh = this.store.getGroup(group.id);
         if (!bot || !fresh || !fresh.memberIds.includes(botId)) continue;
-        const result = await this.runBotTurn({ bot, chatId, text: '', kind: 'group', sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId });
+        // The conclusion of the previous hop rides along with this turn. It is prompt text, not
+        // a model turn: the hand-over costs nothing.
+        const handover = this.handoverFor(fresh, lastConclusion);
+        hops += 1;
+        const result = await this.runBotTurn({ bot, chatId, text: '', kind: 'group', sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId, handover });
         lastResult = result;
         accepted ||= result.accepted;
         if (result.status === 'aborted' && (options.signal?.aborted || loop.cancelled)) queue.unshift(botId);
@@ -1082,7 +1248,17 @@ export class Engine {
         }
         // Waiting on the user (or stopped): the hand-off resumes from answerQuestion once they reply.
         if (result.status !== 'done' || result.pendingQuestion) break;
+        if (result.text) {
+          lastConclusion = { botId: bot.id, name: bot.name, text: result.text, ts: Date.now() };
+          noteRound.push({ speaker: bot.name, text: result.text });
+        }
         const next = this.mentionsIn(result.text, fresh, bot.id);
+        // The limit is reached and the reply calls somebody: that Bot is not called, the chain
+        // converges. This is the whole point of the limit — a chain that never ends.
+        if (limit > 0 && hops >= limit && next.length) {
+          converged = { reason: 'hop_limit', max: limit };
+          break;
+        }
         for (const id of next) if (!queue.includes(id)) queue.push(id);
         // Exact repeated handoffs without tool progress are a loop, not a turn budget.
         const signature = JSON.stringify([bot.id, result.text, next]);
@@ -1090,6 +1266,17 @@ export class Engine {
         if (result.toolCount) seen.clear();
         else seen.add(signature);
       }
+      if (converged) {
+        // The chain stops here: the group is told why, and the Bot that just spoke wraps up.
+        const wrap = await this.convergeGroup(group, chatId, converged, lastConclusion, {
+          sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId,
+        });
+        // The wrap-up is the conclusion of the round, so it belongs in the note.
+        if (wrap.text && lastConclusion) noteRound.push({ speaker: lastConclusion.name, text: wrap.text });
+      }
+      // The group's note: what this round said. It is written from text the group already
+      // produced, so it costs no turn, and a group that keeps no note is left alone.
+      await this.recordGroupNote(group, noteRound);
       if (paused) {
         const note = await this.store.appendMessage(chatId, { role: 'system', key: 'notice.noProgress', text: t('notice.noProgress') });
         this.broadcast({ type: 'message.upsert', chatId, message: note });
@@ -1105,8 +1292,12 @@ export class Engine {
     }
   }
 
-  async groupPrompt(group, bot) {
+  async groupPrompt(group, bot, { handover } = {}) {
     const chatId = `group:${group.id}`;
+    // The conclusion of the previous hop: text that rides along with this turn, no model turn.
+    const hand = handover ? renderHandover(handover) : '';
+    const head = [];
+    if (hand) head.push(hand, '');
     const session = this.store.getSession(chatId, bot.id);
     // Legacy wall-clock cursors could mark unseen messages as read. Replay the bounded
     // context once when upgrading a session instead of perpetuating that missing history.
@@ -1131,6 +1322,7 @@ export class Engine {
       return `[${who}] ${clip(m.role === 'user' ? agentTextOf(m.text, m.attachments) : m.text)}`;
     });
     const text = [
+      ...head,
       t('group.newMessages', { name: group.name }),
       ...(lines.length ? lines : [t('group.noNew')]),
       '',
@@ -1148,7 +1340,7 @@ export class Engine {
     if (input.answer || !input.chatId.startsWith('group:')) return { ...input, memoryQuery: input.memoryQuery ?? input.text };
     const group = this.store.getGroup(input.chatId.slice(6));
     if (!group) throw new EngineError('not_found', t('err.groupMissing'));
-    const snapshot = await this.groupPrompt(group, input.bot);
+    const snapshot = await this.groupPrompt(group, input.bot, { handover: input.handover });
     // Freeze retrieval input from the same snapshot, including relayed new tasks.
     return { ...input, memoryQuery: input.memoryQuery ?? (input.text || snapshot.memoryQuery), groupCursor: snapshot.groupCursor, text: [snapshot.text, input.text].filter(Boolean).join('\n\n') };
   }

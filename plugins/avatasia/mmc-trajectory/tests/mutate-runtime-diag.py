@@ -89,6 +89,12 @@ MUTATIONS = [
         "      dataDirBasename: context.dataDir || null,",
         "dataDirBasename is a basename and not the value it was derived from",
     ),
+    (
+        "the working directory is published whole, which is an absolute path too",
+        "      cwdBasename: basename(process.cwd()) || null,",
+        "      cwdBasename: process.cwd(),",
+        "the runtime route publishes no absolute path",
+    ),
 ]
 
 

@@ -159,8 +159,8 @@ MUTATIONS = [
     (
         "client: the page's raw cache key drops the validator, so a moved-on session keeps its old messages",
         CLIENT,
-        "        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index;",
-        "        return sid + '#' + gen + '#' + index;",
+        "        return sid + '#' + gen + '#' + (state.etag || '') + '#' + index + '#' + (version || '');",
+        "        return sid + '#' + gen + '#' + index + '#' + (version || '');",
     ),
     (
         "client: a refused raw is reloaded and retried, turning a hint into a reload the reader never asked for",

@@ -1088,6 +1088,34 @@ assert('the default docked height is computed once and both readers call it',
 assert('the stylesheet fallback agrees with the measured share',
   /--inspector-dock-h:\s*40vh\s*;/.test(html)
   && /INSPECTOR_DOCK_SHARE\s*=\s*0\.4/.test(jsHtml));
+
+// The comments that state a share of the window have to NAME the constant that holds it. The name
+// is what a reader follows to the declaration, and it is what a rename has to move with it.
+//
+// What is NOT asserted here is that the comment does not spell the value out. It cannot be: two of
+// these blocks say what the share used to be ("It was 50vh, then a quarter"), and a rule that
+// forbade the words would fire on a true statement about the past. So this holds the NAME, and the
+// value-copy rule stays a matter for the reader and for review.
+//
+// The anchor is the declaration the comment belongs to, not the wording of the comment: rewording
+// the prose must not report a drift, and the only thing compared is a name.
+function commentAbove(anchor) {
+  const at = html.indexOf(anchor);
+  if (at < 0) return '';
+  const before = html.slice(0, at);
+  const close = before.lastIndexOf('*/');
+  if (close < 0) return '';
+  const open = before.lastIndexOf('/*', close);
+  if (open < 0) return '';
+  if (before.slice(close + 2).trim() !== '') return '';
+  return before.slice(open, close + 2);
+}
+assert('the comment that states the dock default height names the constant that holds it',
+  /INSPECTOR_DOCK_SHARE/.test(commentAbove('--inspector-dock-h: 40vh;')));
+assert('the comment that states the docked rule names the constant it applies to',
+  /INSPECTOR_DOCK_SHARE/.test(commentAbove('#inspector-panel.is-inspector-docked {')));
+assert('the comment that states the ledger reserve names the constant that holds it',
+  /INSPECTOR_LEDGER_SHARE/.test(commentAbove('#inspector-panel {\n          max-height: var(--inspector-full-h, 70vh);')));
 assert('the docked height is written in pixels, like every other offset here',
   !!applyFn && /setProperty\(\s*'--inspector-dock-h'\s*,\s*[\w+ ]+\+\s*'px'\s*\)/.test(applyFn));
 // A drag that could exceed the pinned strips, or shrink past the panel head, hands the reader a

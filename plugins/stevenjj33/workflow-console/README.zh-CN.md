@@ -68,6 +68,52 @@ Apache-2.0）。
 
 跑真实工作流仍然需要本机 `mcode` CLI 可用：引擎通过它去编排 Agent。demo 执行器不需要。
 
+## 前置条件
+
+控制台本身不需要任何东西：不用配置、不用构建，也不用另外装插件——它自带 Workflow Studio 引擎，
+直接作为子进程拉起来。
+
+**`mcode` CLI 只是「真实执行」的前置条件。** 引擎通过 `mcode` CLI 驱动 Agent，所以用真实执行器
+跑一次工作流，需要这个 CLI 已安装、已登录、且能调用模型。其余环节都不需要它：
+
+| 环节 | 需要 `mcode` CLI |
+| --- | --- |
+| 打开页面、启动引擎、选定项目目录 | 不需要 |
+| 审核草稿、暂停、取消、恢复 | 不需要 |
+| **演示执行器**的运行（只返回占位结果，不调模型） | 不需要 |
+| **真实执行器**（`mcode`，真正调度 Agent）的运行 | **需要** |
+
+新建工作流默认是**演示**执行方式：Studio 的「执行方式」下拉框默认选中 demo，所以创建并运行一条
+工作流全程不需要 CLI。只有当你要用真实 Agent 时，才需要把执行方式改成「MCode · 真实执行」——
+那一步才让 CLI 变成硬前置。
+
+另外注意：MiniMax Code 桌面版**不自带** CLI。CLI 是单独的 `@minimax-ai/code` 安装
+（npm prefix 是 `~/.minimax-code`），所以装了桌面版不等于装了 CLI。
+
+引擎按这个顺序找 CLI：
+
+1. `PATH` 里的 `mcode`；
+2. 官方用户安装位置——macOS 与 Linux 是 `~/.minimax-code/bin/mcode`，Windows 是
+   `~/.minimax-code/mcode.cmd`；设了 `MCODE_INSTALL_DIR` 时，它顶替 `~/.minimax-code` 当根目录，
+   引擎找的就是 `$MCODE_INSTALL_DIR/bin/mcode`；
+3. 工作流托管的工具链（该目录已就位时才会命中）——macOS 与 Linux 是
+   `~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js`，Windows 是
+   `~/.mcode-dynamic-workflows/toolchain/node_modules/@minimax-ai/code/cli.js`。
+
+状态栏上的「MCode CLI 可用/不可用」**只表示找到了这个可执行文件**——它不说明 CLI 有没有登录、
+还剩多少模型额度，那两件事要等 CLI 真正跑起来时自己判断。CLI 缺失时，控制台会在横幅上写明，
+并且拒绝启动真实执行，而不是让它跑到一半失败；引擎那边对应的报错是
+「找不到 MCode CLI，请安装并登录后开始。」
+
+## Skill
+
+本包附带一个 Skill：`skills/workflow-console/SKILL.md`。它告诉 Agent 怎么用这个控制台——
+引擎启动前必须先选定项目目录、运行在 `pending_review` 状态要等审核、
+「审核通过 / 暂停 / 取消 / 恢复」各自意味着什么、复用模板只是新建草稿而不是开始执行、
+`demo` 执行器不调模型。也明确要求 Agent 不要替用户猜工作目录，也不要在用户没点头时替他批准运行。
+
+这个 Skill 是宿主注册本插件时加载的，控制台进程自己不会读它。
+
 ## 测试环境
 
 - MiniMax Code 3.1.4 + Windows 11，Node.js 22 与 26。从本目录安装，经 Agent 打开，页面渲染正常，
@@ -84,6 +130,7 @@ Apache-2.0）。
 ### 读取的文件
 
 - `miniapp/client/` 与 `miniapp/node/vendor/` —— 本包自己的资源。
+- `skills/workflow-console/SKILL.md` —— 宿主注册本插件时读取，控制台进程自己不读。
 - 它绑定的那个项目目录 —— 引擎以它为工作目录运行，被它拉起的 `mcode` CLI 在其中读写文件。
 
 本包**不读**自己包目录与项目目录之外的任何文件。特别是**不读**
@@ -95,7 +142,8 @@ Apache-2.0）。
 一律写在 `context.dataDir` 下，绝不写到别处：
 
 - `workspace.json` —— 内置引擎绑定的工作目录；
-- `hidden-runs.json` —— 本地隐藏的运行列表。隐藏不是删除，记录仍在引擎数据库里，可恢复；
+- `hidden-runs.json` —— 本地隐藏的运行列表。隐藏不是删除，记录仍在**内置引擎自己的数据库**里
+  （`context.dataDir/engine/` 下的 `workflows.sqlite`），可恢复；
 - `engine/` —— `address.json`、`endpoint.json`、`service.log`、`workflows.sqlite`，由内置引擎写入。
 
 ### 网络
@@ -134,6 +182,7 @@ argv 元素传入，不会拼进命令行。应用退出时整棵进程树会被
 ```text
 .minimax-plugin/plugin.json                 插件清单
 package.json                                Mini App 声明
+skills/workflow-console/SKILL.md            Agent 用来操作本控制台的 Skill
 miniapp/miniapp.json                        运行时根目录、Node 入口、页面路由
 miniapp/client/index.html                   /dashboard 上提供的页面
 miniapp/client/app.js                       前端（原生 HTML/CSS/JS，无框架无构建）
@@ -154,8 +203,10 @@ icon.png                                    插件图标
 测试用 Node 自带的测试运行器，在沙箱主目录里起一个隔离的控制台实例，不会碰任何真实项目：
 
 ```bash
-node --test "tests/*.test.mjs"
+npm test
 ```
+
+`npm test` 就是在本目录跑 `node --test "tests/*.test.mjs"`，不用 npm 直接敲那条命令也一样。
 
 `tests/workspace-resolution.test.mjs` 覆盖工作目录解析：宿主那个临时投放目录和其它不可信路径会被拒掉，
 用户主目录绝不会被当成兜底，没选定项目目录之前引擎不会启动。

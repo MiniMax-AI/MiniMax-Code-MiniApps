@@ -133,6 +133,30 @@ CEILING_BODY = ("          var ledgerReserve = Math.max(\n"
                  "            Math.round(window.innerHeight * INSPECTOR_LEDGER_SHARE)\n"
                  "          );\n"
                  "          var panelMax = Math.max(INSPECTOR_MIN_DOCK_H, inspectorUnderPins() - ledgerReserve);")
+# The comment above the dock's fallback declaration, and the same comment without the constant's
+# name in it. The block names the constant twice, so a mutation that dropped one of the two
+# mentions would leave the other and the guard would still be right -- the anchor has to be the
+# whole block.
+DOCK_FALLBACK_COMMENT = (
+    "        /* The docked height, as the share of the window that INSPECTOR_DOCK_SHARE declares. It\n"
+    "           was 50vh, then a quarter, and the unit was never the problem — the unit being frozen\n"
+    "           was. The reader cannot make it smaller, and a cap the reader cannot move is a number\n"
+    "           nobody chose. applyInspectorDock() therefore writes this in px from window.innerHeight\n"
+    "           and a drag overwrites it, so the declaration below is only what shows before the first\n"
+    "           measurement. It stays a vh for the same reason as everywhere else here: 100vh is not\n"
+    "           the reader's height inside a host iframe, and every offset on this page is measured\n"
+    "           for that reason. The declared vh must track INSPECTOR_DOCK_SHARE — the fallback and\n"
+    "           the measurement are the same promise written twice, so a guard holds them together. */\n")
+DOCK_FALLBACK_COMMENT_WITHOUT_NAME = (
+    "        /* The docked height, as the share of the window that the client declares. It\n"
+    "           was 50vh, then a quarter, and the unit was never the problem — the unit being frozen\n"
+    "           was. The reader cannot make it smaller, and a cap the reader cannot move is a number\n"
+    "           nobody chose. applyInspectorDock() therefore writes this in px from window.innerHeight\n"
+    "           and a drag overwrites it, so the declaration below is only what shows before the first\n"
+    "           measurement. It stays a vh for the same reason as everywhere else here: 100vh is not\n"
+    "           the reader's height inside a host iframe, and every offset on this page is measured\n"
+    "           for that reason. The declared vh must track that share — the fallback and\n"
+    "           the measurement are the same promise written twice, so a guard holds them together. */\n")
 MUTATIONS = [
     # ---- the CSS, in the media query that makes the feature exist ----
 
@@ -444,6 +468,44 @@ MUTATIONS = [
      "        --inspector-dock-h: 40vh;\n",
      "        --inspector-dock-h: 25vh;\n",
      "the stylesheet fallback agrees with the measured share"),
+
+    # ---- the comments that state a share name the constant that holds it ----
+    #
+    # Three comments say what share of the window the dock and the ledger take, and each of them
+    # names the constant rather than spelling the value out. The name is what a reader follows to
+    # the declaration, and it is what a rename has to move with it.
+    #
+    # The three mutations below each drop ONE name out of one comment and leave everything else
+    # alone — the comment still reads, the file still parses, and nothing about the behaviour
+    # changes. That is the point: the rule is about the comment, so only the comment moves.
+
+    # The comment above the fallback declaration names the constant twice, so the anchor is the
+    # whole block: replacing one of the two mentions would leave the other, and the guard would
+    # still be right.
+    ("the comment above the dock fallback stops naming the constant",
+     DOCK_FALLBACK_COMMENT,
+     DOCK_FALLBACK_COMMENT_WITHOUT_NAME,
+     "the comment that states the dock default height names the constant that holds it"),
+
+    # The comment above the docked rule names the constant twice as well, so the anchor spans both
+    # mentions: dropping one of them would leave the other, and the guard would still be right.
+    ("the comment above the docked rule stops naming the constant",
+     "        /* Docked at INSPECTOR_DOCK_SHARE by default, and the reader can drag it. The content\n"
+     "           scrolls inside the panel instead of the panel growing: a growing panel pushes its own\n"
+     "           handle out of the viewport, which is the one thing a docked panel cannot do. The number\n"
+     "           itself is written by applyInspectorDock() — INSPECTOR_DOCK_SHARE of the measured window,\n",
+     "        /* Docked at the share the client declares by default, and the reader can drag it. The\n"
+     "           content scrolls inside the panel instead of the panel growing: a growing panel pushes\n"
+     "           its own handle out of the viewport, which is the one thing a docked panel cannot do. The\n"
+     "           number itself is written by applyInspectorDock() — that share of the measured window,\n",
+     "the comment that states the docked rule names the constant it applies to"),
+
+    ("the comment above the panel rule stops naming the ledger's constant",
+     "           because that is already `innerHeight - pinned strips - the ledger's reserved share`\n"
+     "           (INSPECTOR_LEDGER_SHARE): the panel can be neither taller than the window nor able to\n",
+     "           because that is already `innerHeight - pinned strips - the ledger's reserved share`:\n"
+     "           the panel can be neither taller than the window nor able to\n",
+     "the comment that states the ledger reserve names the constant that holds it"),
 
     # The single writer is undone: one caller computes the share again and the other keeps calling
     # the helper. Both paths still produce a number, so nothing looks wrong until the two numbers

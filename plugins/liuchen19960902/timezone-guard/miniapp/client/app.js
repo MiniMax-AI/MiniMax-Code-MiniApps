@@ -7,6 +7,15 @@
  */
 
 /* ------------------------------------------------------------------ *
+ * 纯时间计算
+ * ------------------------------------------------------------------ */
+
+// 时区规范化、档位判定、偏移解析、时差文案都放在 time.js 里：
+// 那份文件浏览器与 Node 共用同一份源码，可以直接跑 node --test，
+// 也不用在这里和别处各留一份、改一处漏一处。
+const { resolveZone, periodOf, parseOffset, formatDiff, dayDelta } = window.TZ_TIME;
+
+/* ------------------------------------------------------------------ *
  * 城市库
  * ------------------------------------------------------------------ */
 
@@ -76,6 +85,12 @@ const BAND_COPY = {
   },
 };
 
+/**
+ * 档位判定在 time.js 里，返回的是档位 key；这里补上文案，
+ * 调用点拿到的仍然是原来那个对象，用法一个字都不用改。
+ */
+const bandOf = (hour, minute) => BAND_COPY[window.TZ_TIME.bandOf(hour, minute)];
+
 /** 城市旁的昼夜图标：太阳 / 半日 / 月亮。 */
 const SKY_ICONS = { sun: '#i-sun', dusk: '#i-dusk', moon: '#i-moon' };
 
@@ -87,49 +102,6 @@ const SKY_ICONS = { sun: '#i-sun', dusk: '#i-dusk', moon: '#i-moon' };
 
 /** @type {Entry[]} */
 let INDEX = [];
-
-/**
- * 部分 IANA 名称在不同 ICU / tzdata 版本下存在与否不同
- * （Europe/Kyiv vs Europe/Kiev、Asia/Kolkata vs Asia/Calcutta …），
- * 这里为它们准备退路，保证任何时候都拿得到一个可用时区。
- */
-const ZONE_FALLBACKS = {
-  'Europe/Kyiv': ['Europe/Kiev'],
-  'Asia/Ho_Chi_Minh': ['Asia/Saigon'],
-  'Asia/Kolkata': ['Asia/Calcutta'],
-  'America/Montreal': ['America/Toronto'],
-  'America/Argentina/Buenos_Aires': ['America/Rosario'],
-};
-
-const resolvedZoneCache = new Map();
-
-/**
- * 返回一个在当前运行时确实可用的时区 ID；都不行时返回 null。
- *
- * 注意：城市名对应的时区名不一定存在。旧金山、西雅图没有独立的
- * America/* 时区，慕尼黑没有 Europe/Munich——这类城市必须归到
- * 本国主时区，否则 new Intl.DateTimeFormat() 会抛 RangeError。
- */
-function resolveZone(zone) {
-  if (typeof zone !== 'string' || !zone) return null;
-  const trimmed = zone.trim();
-  if (!trimmed) return null;
-  if (resolvedZoneCache.has(trimmed)) return resolvedZoneCache.get(trimmed);
-  let resolved = null;
-  for (const candidate of [trimmed, ...(ZONE_FALLBACKS[trimmed] || [])]) {
-    try {
-      // 取规范化后的 ID，避免同一个时区出现大小写 / 别名两种写法，
-      // 让「是否同一时区」的比较始终可靠。
-      const canonical = new Intl.DateTimeFormat('en-US', { timeZone: candidate }).resolvedOptions().timeZone;
-      resolved = canonical || candidate;
-      break;
-    } catch {
-      /* 试下一个候选 */
-    }
-  }
-  resolvedZoneCache.set(trimmed, resolved);
-  return resolved;
-}
 
 function buildIndex() {
   const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
@@ -344,15 +316,6 @@ function getFormatters(timeZone) {
   return f;
 }
 
-/** 把 "GMT-07:00" / "GMT+05:30" / "GMT" 解析成分钟偏移。 */
-function parseOffset(text) {
-  if (!text || text === 'GMT' || text === 'UTC') return 0;
-  const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(text);
-  if (!m) return 0;
-  const sign = m[1] === '-' ? -1 : 1;
-  return sign * (Number(m[2]) * 60 + Number(m[3] || 0));
-}
-
 /**
  * 取某个时区在给定时刻的完整信息。
  * 时区 ID 先做一次解析兜底，绝不因为一个非法时区让整页渲染抛错。
@@ -386,45 +349,14 @@ function zonedInfo(timeZone, date) {
   };
 }
 
-/** 中文时段，替代 AM/PM：凌晨 / 上午 / 下午 / 晚上。 */
-function periodOf(hour) {
-  if (hour < 6) return '凌晨';
-  if (hour < 12) return '上午';
-  if (hour < 18) return '下午';
-  return '晚上';
-}
-
-/** 固定阈值判定：绿 09–18、黄 18–22、红 22–06，清晨 06–09 归黄。 */
-function bandOf(hour, minute) {
-  const t = hour * 60 + minute;
-  if (t >= 22 * 60 || t < 6 * 60) return BAND_COPY.night;
-  if (t < 9 * 60) return BAND_COPY.dawn;
-  if (t < 18 * 60) return BAND_COPY.day;
-  return BAND_COPY.dusk;
-}
-
 /** 绿 < 黄 < 红，用于比较两边的紧迫程度。 */
 const SEVERITY = { green: 0, yellow: 1, red: 2 };
-
-/**
- * 时差文案。
- * 整小时沿用「约 N 小时」；存在 45 分钟这类非整小时偏移时给出精确的
- * 小时 + 分钟，避免读者拿 5.8 小时去对旁边并排的两个时钟。
- */
-function formatDiff(diffMinutes) {
-  const abs = Math.abs(diffMinutes);
-  const hours = Math.floor(abs / 60);
-  const minutes = abs % 60;
-  if (minutes === 0) return `约 ${hours} 小时`;
-  // 非整小时时带一个前导空格，拼到「快/慢」后面才不会连成一团。
-  return hours > 0 ? ` ${hours} 小时 ${minutes} 分钟` : ` ${minutes} 分钟`;
-}
 
 /* ------------------------------------------------------------------ *
  * 状态
  * ------------------------------------------------------------------ */
 
-const STORAGE_KEY = 'timezone-guard.prefs.v1';
+const STORAGE_KEY = window.TZ_TIME.STORAGE_KEY;
 
 const DEFAULT_TARGET = {
   zone: 'America/Los_Angeles',
@@ -760,19 +692,15 @@ function render() {
     const homeAhead = diffMinutes > 0;
     const ahead = homeAhead ? state.home.title : state.target.title;
     const behind = homeAhead ? state.target.title : state.home.title;
-    const parts = [`${ahead}比${behind}快${formatDiff(diffMinutes)}`];
+    // formatDiff 只回纯文本：整小时是「约 15 小时」，那个「约」自带分词；
+    // 非整小时是「5 小时 45 分钟」，直接接在「快」后面会连成一团，这里补一个空格。
+    const gap = diffMinutes % 60 === 0 ? '' : ' ';
+    const parts = [`${ahead}比${behind}快${gap}${formatDiff(diffMinutes)}`];
     const dayDiff = dayDelta(target, home);
     if (dayDiff < 0) parts.push('对方还在昨天');
     else if (dayDiff > 0) parts.push('对方那边已是明天');
     setText(el.factDiff, parts.join(' · '));
   }
-}
-
-/** 目标日期相对对照日期的日历天数差。 */
-function dayDelta(target, home) {
-  const t = Date.UTC(target.year, target.month - 1, target.day);
-  const h = Date.UTC(home.year, home.month - 1, home.day);
-  return Math.round((t - h) / 86400000);
 }
 
 /** 当我方比对方更晚 / 都处于深夜时，补一条给用户自己的提醒。 */

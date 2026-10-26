@@ -157,8 +157,27 @@ if (picker) {
   assert('the picker recomputes recency from a render-time clock',
     /var now = Date\.now\(\);/.test(picker[0])
     && /formatAgo\(session \? session\.lastActiveAt : null, now\)/.test(html));
+}
+// The list body arrives, and the picker is redrawn from it. The claim is about the ORDER -- the
+// redraw happens after the body is stored -- and not about how far apart the two statements are:
+// a distance would have been a number to keep in step with the comments between them, and those
+// comments are the part that changes.
+const listFetch = /function fetchSessions\(manual\) \{[\s\S]*?\n      \}/.exec(html);
+assert('the list fetch is still in the shipped client', listFetch !== null);
+if (listFetch) {
+  const body = listFetch[0];
+  const at = (needle) => body.indexOf(needle);
   assert('the picker is re-rendered whenever a list body arrives',
-    /state\.sessions = [\s\S]{0,200}?renderSessionSelect\(\);/.test(html));
+    at('state.sessions = ') >= 0
+    && at('renderSessionSelect();') > at('state.sessions = '));
+  // The picker has two controls now, and the runs are rows of the second one. They have to be
+  // stored before either is redrawn: a picker that redraws from the old list and the run pick
+  // from the new one is a page showing two different moments.
+  assert('and so is the run pick',
+    at('state.children = ') >= 0
+    && at('renderChildSelect();') > at('state.children = '));
+  assert('and the conversation pick with it',
+    at('renderSessionSelect();') > at('state.children = '));
 }
 
 console.log('[poll-decoupling] ' + pass + ' passed, ' + failures.length + ' failed');

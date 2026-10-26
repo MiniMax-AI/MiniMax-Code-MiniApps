@@ -287,6 +287,74 @@ function groupOverview(group) {
       h(
         'section',
         null,
+        h('h3', { class: 'section-title' }, t('panels.group.relayGuard')),
+        h(
+          'label',
+          { class: 'field' },
+          h('span', null, t('panels.group.relayLimit')),
+          h('input', {
+            class: 'input',
+            type: 'number',
+            name: 'maxHops',
+            min: 0,
+            max: 20,
+            value: Number(group.maxHops ?? 0),
+            style: { width: '120px' },
+            onchange: (event) => {
+              const raw = Number(event.target.value);
+              const maxHops = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+              patch({ maxHops });
+            },
+          }),
+        ),
+        h('p', { class: 'hint', style: { marginTop: '8px' } }, t('panels.group.relayLimitHint')),
+        h(
+          'label',
+          { class: 'check' },
+          h('input', {
+            type: 'checkbox',
+            class: 'switch',
+            name: 'handover',
+            checked: group.handover === true,
+            onchange: (event) => patch({ handover: event.target.checked === true }),
+          }),
+          h('span', null, t('panels.group.handover')),
+        ),
+        h('p', { class: 'hint', style: { marginTop: '8px' } }, t('panels.group.handoverHint')),
+      ),
+      h(
+        'section',
+        null,
+        h('h3', { class: 'section-title' }, t('panels.group.notesHeading')),
+        h(
+          'label',
+          { class: 'check' },
+          h('input', {
+            type: 'checkbox',
+            class: 'switch',
+            name: 'notes',
+            checked: group.notes === true,
+            onchange: (event) => patch({ notes: event.target.checked === true }),
+          }),
+          h('span', null, t('panels.group.notes')),
+        ),
+        h('p', { class: 'hint', style: { marginTop: '8px' } }, t('panels.group.notesHint')),
+        ...(group.notes === true && Array.isArray(group.noteEntries) && group.noteEntries.length
+          ? [
+              h('p', { class: 'hint', style: { marginTop: '8px' } }, t('panels.group.notesList')),
+              ...group.noteEntries.map((entry) => clipped(`[${entry.speaker}] ${entry.text}`)),
+              h(
+                'button',
+                { type: 'button', class: 'link-row', onclick: () => patch({ clearNotes: true }) },
+                icon('eraser'),
+                h('span', { class: 'grow' }, t('panels.group.notesClear')),
+              ),
+            ]
+          : []),
+      ),
+      h(
+        'section',
+        null,
         h('h3', { class: 'section-title' }, t('panels.drawer.session')),
         h('button', { type: 'button', class: 'link-row', onclick: () => resetChat(chatId) }, icon('eraser'), h('span', { class: 'grow' }, t('panels.chat.newChat')), h('span', { class: 'end' }, t('panels.group.settingsKept'))),
       ),

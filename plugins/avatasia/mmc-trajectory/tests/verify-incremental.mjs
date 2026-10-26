@@ -20,7 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { buildDeltaPayload, parseSince } from '../miniapp/node/server.mjs';
+import { buildDeltaPayload, parseSince, deltaRefusal, payloadRecordVersions, recordSetFingerprint } from '../miniapp/node/server.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURE = fileURLToPath(new URL('./fixtures/trajectory.json', import.meta.url));
@@ -358,13 +358,153 @@ assert('the cursor of an empty payload is zero, not NaN',
     JSON.stringify(page.mergeDelta(merged, tail)) === JSON.stringify(merged));
 }
 
+// -------------------------------------------------- the set a tail is about
+
+/*
+ * A tail carries the records AFTER the page's cursor. The records before it are not in the tail
+ * at all — the page keeps the copies it has — so the tail is only about the page's copy if that
+ * copy is still the service's.
+ *
+ * A record rewritten in place keeps its index and its id. The cursor therefore still points at
+ * the same record, the tail names the same id, and the tail is empty: the page would merge
+ * nothing, keep the old text, and install the new body's validator. Nothing else in the
+ * protocol could see it — which is why the tail names the set it is about.
+ *
+ * So the page says which set it holds — how many records, and a fingerprint of their versions —
+ * and the service folds its own first N the same way. The two have to agree before a tail is
+ * answered with a tail.
+ */
+
+// A body of three records in two turns, with the versions the service stamps on them.
+const F7_BODY = {
+  session: { id: 's1' },
+  stats: { records: 3 },
+  turns: [
+    { id: 't1', index: 1, closed: true, records: [
+      { id: 'r1', index: 1, v: '1111111111111111' },
+      { id: 'r2', index: 2, v: '2222222222222222' },
+    ] },
+    { id: 't2', index: 2, closed: false, records: [
+      { id: 'r3', index: 3, v: '3333333333333333' },
+    ] },
+  ],
+};
+const F7_COUNT = 3;
+// The expectation is written out by hand, not folded from the function it polices. A guard that
+// computes its expected fingerprint with `payloadRecordVersions` cannot see an off-by-one inside
+// that function: the mistake would move the expectation and the answer together, and the guard
+// would stay green. So the versions are listed here, and the fingerprint is their literal.
+const F7_VERSIONS = ['1111111111111111', '2222222222222222', '3333333333333333'];
+const F7_FINGERPRINT = 'c6f81774c9d5df24';
+
+{
+  assert('the fingerprint of the hand-written list is the one the page is asked for',
+    recordSetFingerprint(F7_VERSIONS) === F7_FINGERPRINT);
+  assert('the first N records are the ones the service folds over',
+    JSON.stringify(payloadRecordVersions(F7_BODY, F7_COUNT)) === JSON.stringify(F7_VERSIONS));
+  // A limit of zero is zero records. The cap used to be checked after the push, so a limit of
+  // zero yielded one version — and the fold over the page's empty set then never matched the
+  // service's fold over its empty set, and the request was refused for ever.
+  assert('a limit of zero records is a limit of zero, not of one',
+    payloadRecordVersions(F7_BODY, 0).length === 0);
+  assert('and a limit of one record is the first record\'s version',
+    payloadRecordVersions(F7_BODY, 1).length === 1
+    && payloadRecordVersions(F7_BODY, 1)[0] === F7_VERSIONS[0]);
+}
+
+{
+  assert('a tail is answered to a page holding the records the service has',
+    deltaRefusal(F7_BODY, F7_COUNT, F7_FINGERPRINT) === null);
+
+  // The record AT the cursor, rewritten in place: the same index, the same id, a new version.
+  const atCursor = JSON.parse(JSON.stringify(F7_BODY));
+  atCursor.turns[1].records[0].v = 'deadbeefdeadbeef';
+  const refusalAtCursor = deltaRefusal(atCursor, F7_COUNT, F7_FINGERPRINT);
+  assert('a content-only rewrite at the cursor cannot be acknowledged without replacing the displayed record',
+    refusalAtCursor !== null);
+  assert('and the refusal says the version moved',
+    Boolean(refusalAtCursor) && refusalAtCursor.code === 'trajectory_version_mismatch');
+
+  // The same, one turn earlier.
+  const earlier = JSON.parse(JSON.stringify(F7_BODY));
+  earlier.turns[0].records[0].v = 'deadbeefdeadbeef';
+  assert('a content-only rewrite in an earlier turn cannot be acknowledged either',
+    deltaRefusal(earlier, F7_COUNT, F7_FINGERPRINT) !== null);
+
+  // Why the check has to be there at all: in both cases the tail is empty, and the record it
+  // names at the cursor is the same one the page already holds — so every other part of the
+  // protocol says the tail is fine.
+  assert('the tail carries nothing in either case, so the page would have kept the old text',
+    buildDeltaPayload(atCursor, 3).turns.length === 0
+    && buildDeltaPayload(earlier, 3).turns.length === 0);
+  assert('and the record it names at the cursor is the one the page already holds',
+    buildDeltaPayload(atCursor, 3).delta.basedOn.id === 'r3');
+
+  // A tail asked for without saying which set the page holds is refused rather than guessed at.
+  const unnamed = deltaRefusal(F7_BODY, F7_COUNT, '');
+  assert('a tail asked for without the set the page holds is refused',
+    Boolean(unnamed) && unnamed.code === 'trajectory_fingerprint_required');
+  assert('and that refusal is a bad request, not a version mismatch',
+    Boolean(unnamed) && unnamed.status === 400);
+}
+
+// --------------------------------------------------------------- the page, run
+
+{
+  const versions = ['1111111111111111', '2222222222222222', '3333333333333333'];
+  const client = {
+    console,
+    encodeURIComponent,
+    state: { since: 3, flat: versions.map((v) => ({ record: { v } })) },
+  };
+  vm.createContext(client);
+  for (const name of ['recordSetFingerprint', 'displayedRecordVersions', 'heldRecordSet', 'tailQuery']) {
+    const src = fnSource('function ' + name + '(');
+    if (!src) throw new Error('could not extract ' + name);
+    vm.runInContext(src, client);
+  }
+  const held = client.heldRecordSet();
+  assert('the page states the set it holds as a count and a fingerprint',
+    held.count === 3 && /^[0-9a-f]{16}$/.test(held.fingerprint));
+  assert('and the fingerprint it sends is the one the service folds over the same records',
+    held.fingerprint === F7_FINGERPRINT);
+  const query = client.tailQuery();
+  assert('a tail is asked for with the cursor and the set the page holds',
+    /&since=3/.test(query) && /&n=3/.test(query) && /&fp=[0-9a-f]{16}/.test(query));
+}
+
+{
+  const asked = [];
+  const client = {
+    console,
+    state: { since: 42, sinceFor: 'key', etag: 'tag', etagFor: 'key' },
+    render() { client.rendered = (client.rendered || 0) + 1; },
+    fetchTrajectory(manual) { asked.push(manual); },
+  };
+  vm.createContext(client);
+  for (const name of ['reloadWholeBody', 'isStaleCopyRefusal']) {
+    const src = fnSource('function ' + name + '(');
+    if (!src) throw new Error('could not extract ' + name);
+    vm.runInContext(src, client);
+  }
+  client.reloadWholeBody();
+  assert('a page whose copy is not the one the service has drops the cursor and asks for the whole body again',
+    client.state.since === null && client.state.sinceFor === null
+    && asked.length === 1 && asked[0] === true);
+  assert('a refusal about the page\'s copy is recognised as one, and only as one',
+    client.isStaleCopyRefusal({ code: 'trajectory_version_mismatch' }) === true
+    && client.isStaleCopyRefusal({ code: 'trajectory_fingerprint_required' }) === true
+    && client.isStaleCopyRefusal({ code: 'search_version_mismatch' }) === false
+    && client.isStaleCopyRefusal(null) === false);
+}
+
 // --------------------------------------------------------------- the wiring
 
 // A cursor is only ever asked alongside the validator it was taken against. Sending one
 // without the other is how a page ends up asking a server for the tail of a payload it does
 // not have — which is a session switch, or a generation switch, or a manual refresh.
 assert('the request carries the cursor and the validator under one condition',
-  /!manual && state\.sinceFor === cacheKey && state\.since > 0[\s\S]{0,120}&since=/.test(html)
+  /!manual && state\.sinceFor === cacheKey && state\.since > 0/.test(html)
   && /state\.etag && state\.etagFor === cacheKey/.test(html));
 assert('a manual refresh drops the cursor as well as the validator',
   /if \(manual\) \{\s*\n\s*state\.etag = '';\s*\n\s*state\.etagFor = '';\s*\n\s*state\.since = 0;\s*\n\s*state\.sinceFor = '';/.test(html));
@@ -403,6 +543,19 @@ assert('and it still sends the whole body when there is no cursor',
 // The cursor the page sends next is the server's own word, not a re-walk of the records.
 assert('the cursor after a delta is the server upTo, not a second walk',
   /state\.since = mergeable \? body\.delta\.upTo : payloadCursor\(payload\);/.test(html));
+
+// The refusal is wired to the answer, not merely computed: a check nobody reads is not a check.
+assert('the service refuses a tail whose set the page did not state, and says so',
+  /const refusal = deltaRefusal\(/.test(server)
+  && /if \(refusal\) \{/.test(server)
+  && /sendError\(response, refusal\.status, refusal\.code, refusal\.message\);/.test(server));
+
+// And the page answers both refusals the only way it can: by asking for the whole body. A refusal
+// it treated as a failed poll would leave the stale copy on screen, which is the defect the
+// refusal exists to stop.
+assert('a tail the service will not answer leaves the page asking for the whole body',
+  /if \(isStaleCopyRefusal\(error\)\) \{/.test(html)
+  && /reloadWholeBody\(\);/.test(html));
 
 // ---------------------------------------------------------------- reporting
 

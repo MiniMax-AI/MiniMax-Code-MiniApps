@@ -12,6 +12,7 @@ const ASSETS = {
   'index.html': 'text/html; charset=utf-8',
   'styles.css': 'text/css; charset=utf-8',
   'cities.js': 'text/javascript; charset=utf-8',
+  'time.js': 'text/javascript; charset=utf-8',
   'app.js': 'text/javascript; charset=utf-8',
 };
 

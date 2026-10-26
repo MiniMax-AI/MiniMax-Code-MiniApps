@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "name": "agent-flow",
+  "displayName": "Agent 协作透视",
+  "version": "1.0.0",
+  "description": "Import plugin-recorded Hook events to inspect native sub-agent and task timing without reading Host session files.",
+  "author": "Huixin615",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": ["打开 Agent 协作透视", "查看插件记录的 task 与子 Agent 时间事件"],
+  "apps": [],
+  "mcpServers": [],
+  "skills": [],
+  "hooks": ["hooks/hooks.json"]
+}

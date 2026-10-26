@@ -12,3 +12,9 @@ __pycache__/
 # like afterwards. The snapshot is machine-specific bookkeeping and this directory is the package
 # that ships to readers, so it must never be tracked.
 tests/.shipped-snapshot.json
+
+# Derived artifacts. The runtime writes the search segments under its own data dir, which is
+# outside this package; the runtime refuses a data dir that lands in here (see `start()` in
+# miniapp/node/server.mjs). This entry is the second half of that rule: if a caller ever got
+# through, the directory must not be tracked and must not be part of what ships.
+trajectory-artifacts/

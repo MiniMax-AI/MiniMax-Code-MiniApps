@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>A/时差保安</title>
     <link rel="icon" href="data:," />
+    <script src="./time.js"></script>
     <script>
       // 在首帧之前定好主题、时间制式与状态色，
       // 避免深色闪一帧浅色、先按 12H 画一帧再翻转，
@@ -12,17 +13,21 @@
       (function () {
         var theme = 'light';
         var fmt = '12h';
+        var saved = {};
         try {
-          var saved = JSON.parse(localStorage.getItem('timezone-guard.prefs.v1') || '{}');
-          var t = saved && saved.theme;
-          if (t !== 'light' && t !== 'dark') {
-            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          }
-          theme = t;
-          if (saved && saved.clockFormat === '24h') fmt = '24h';
+          saved = JSON.parse(localStorage.getItem(window.TZ_TIME.STORAGE_KEY) || '{}') || {};
         } catch (error) {
           /* 存档不可用时用默认值 */
         }
+        // 存档只读一次：body 里那段脚本直接复用这里解析好的结果，
+        // 两处各读一次、各解析一次，早晚会读出不一样的结果。
+        window.TZ_PREFS = saved;
+        var t = saved.theme;
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        theme = t;
+        if (saved.clockFormat === '24h') fmt = '24h';
         document.documentElement.dataset.theme = theme;
         document.documentElement.dataset.fmt = fmt;
         document.documentElement.dataset.band = 'neutral';
@@ -198,18 +203,9 @@
       // 城市名在 body 里，等到这里元素已经存在，才能在第一次绘制前写好，
       // 免得先画一遍默认城市再翻转成用户上次选的城市。
       (function () {
-        // 与 app.js 的 resolveZone 同义：把时区 ID 规范化后再比较，
-        // 否则 'asia/shanghai' 与 'Asia/Shanghai' 会被判成两个城市。
-        function canonZone(z) {
-          if (typeof z !== 'string' || !z) return z;
-          try {
-            return new Intl.DateTimeFormat('en-US', { timeZone: z }).resolvedOptions().timeZone || z;
-          } catch (error) {
-            return z;
-          }
-        }
         try {
-          var saved = JSON.parse(localStorage.getItem('timezone-guard.prefs.v1') || '{}');
+          // head 里已经解析过一遍存档，这里直接复用，不再读第二次。
+          var saved = window.TZ_PREFS || {};
           if (!saved) return;
           var t = saved.target && saved.target.title;
           var h = saved.home && saved.home.title;
@@ -221,10 +217,11 @@
             document.getElementById('page-title-home').textContent = h;
             document.getElementById('home-heading').textContent = h;
           }
-          if (
-            t && h && t === h &&
-            canonZone(saved.target && saved.target.zone) === canonZone(saved.home && saved.home.zone)
-          ) {
+          // 是否同一个城市：和 app.js 用同一套判定（规范化后的时区 ID），
+          // 两处口径一致，才不会出现「先隐藏、下一帧又被画回来」。
+          var targetZone = window.TZ_TIME.resolveZone(saved.target && saved.target.zone);
+          var homeZone = window.TZ_TIME.resolveZone(saved.home && saved.home.zone);
+          if (t && h && t === h && targetZone && homeZone && targetZone === homeZone) {
             document.getElementById('page-title-home').style.display = 'none';
             document.getElementById('page-title-swap').style.display = 'none';
           }

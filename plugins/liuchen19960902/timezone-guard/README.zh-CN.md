@@ -4,7 +4,9 @@
 
 发消息之前先看一眼对方那边几点。一个只有结论、没有废话的时差仪表：**该正常聊、该短聊、还是该先睡**，一律按对方城市的当地时间判定。
 
-作者：[FineCat](https://github.com/LiuChen19960902) · 版本：`1.0.1`
+> **界面只有中文。** 插件名、判定文案、城市名、时段、日期格式都是中文，没有语言切换；本仓库提供中英两份 README，页面本身只有一种语言。
+
+作者：[FineCat](https://github.com/LiuChen19960902) · 版本：`1.0.2`
 
 ![A/时差保安：判定区给出「短聊就好」，下方是对方城市与自己的两个时钟](docs/preview.png)
 
@@ -67,7 +69,7 @@ MiniMax Code 桌面版 **3.1.4**，Windows 11 家庭版（10.0.26300，x64）。
 
 ## 数据与访问范围
 
-- **读取的文件** —— 只有它自己包目录下的四个静态文件：`miniapp/client/index.html`、`styles.css`、`cities.js`、`app.js`。不读包目录以外的任何文件，也不扫描磁盘。
+- **读取的文件** —— 只有它自己包目录下的五个静态文件：`miniapp/client/index.html`、`styles.css`、`cities.js`、`time.js`、`app.js`。不读包目录以外的任何文件，也不扫描磁盘。
 - **写入的文件** —— 无。不写 `context.dataDir`，不写任何地方。
 - **浏览器存储** —— 只存界面偏好，键名 `timezone-guard.prefs.v1`：选中的两个城市、主题、12H/24H 制式。不存会话、不存任何内容数据。
 - **网络** —— 无。页面只从插件自己的回环服务加载静态资源，没有遥测，没有远程字体、图标或脚本。
@@ -77,7 +79,17 @@ MiniMax Code 桌面版 **3.1.4**，Windows 11 家庭版（10.0.26300，x64）。
 
 ## 源码与验证情况
 
-页面是 `miniapp/client/index.html`（无框架、无 CDN、无构建步骤，离线可用），视觉层在 `styles.css`，逻辑在 `app.js`，城市库与全时区中文名在 `cities.js`；Node 入口是 `miniapp/node/server.mjs`，它只负责把 `/dashboard` 和这四个静态文件挂到宿主分配的端口上；供编辑器类型检查用的 Host API 类型定义在 `miniapp/node/miniapp-api.ts`。**没有任何第三方运行时依赖** —— Node 侧只用内置模块，浏览器侧只用原生 API。
+页面是 `miniapp/client/index.html`（无框架、无 CDN、无构建步骤，离线可用），视觉层在 `styles.css`，判定与交互在 `app.js`，城市库与全时区中文名在 `cities.js`，纯时间计算在 `time.js`；Node 入口是 `miniapp/node/server.mjs`，它只负责把 `/dashboard` 和这五个静态文件挂到宿主分配的端口上；供编辑器类型检查用的 Host API 类型定义在 `miniapp/node/miniapp-api.ts`。**没有任何第三方运行时依赖** —— Node 侧只用内置模块，浏览器侧只用原生 API。
+
+### 跑测试
+
+`miniapp/client/time.js` 装着全部时间计算，浏览器和 Node 跑的是**同一个文件**，不存在第二份要同步的副本。单测随包分发：
+
+```sh
+npm test
+```
+
+在包目录下执行。覆盖四个阈值正好落在整点（06:00 / 09:00 / 18:00 / 22:00）、偏移解析（含 `GMT+05:45` 这类非整小时时区）、时差文案，以及「对方还在昨天」用的日历日差。
 
 ## 许可
 

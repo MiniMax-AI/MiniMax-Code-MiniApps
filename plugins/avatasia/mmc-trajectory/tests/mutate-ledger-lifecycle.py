@@ -1,0 +1,493 @@
+"""Break the per-group lifecycle in the shipped client and require verify-ledger-lifecycle.mjs
+to report each break by name.
+
+The lifecycle has two halves that pull in opposite directions, and a version of this that keeps
+one and loses the other is worse than not doing it at all:
+
+  - a group the reader is not on must not be holding its rows, or one session of about 50,600
+    records is 463,122 DOM nodes and 785 to 820 MB of the renderer's private memory;
+  - a group that has given up its rows must still be the height it was, or the document under
+    the reader loses everything they have scrolled past — measured at 79,288 px for the groups
+    around the viewport and 257,378 px more for the viewport's own group.
+
+Each mutation below breaks one of those, or one of the transitions between them, and the guard
+has to name the rule it broke. A mutation that is only "the file no longer parses" proves
+nothing, so the guard has to exit non-zero *and* report the rule by name.
+
+Anchors are multi-line and index.html is LF, so they are written with bare \\n and the file is
+read and written with newline='' — matching on normalised text while preserving the file's own
+endings.
+"""
+import io
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CLIENT = os.path.join(os.path.dirname(HERE), "miniapp", "client", "index.html")
+PROBE = os.path.join(HERE, "verify-ledger-lifecycle.mjs")
+
+# Every anchor below is text the rule is written on — a statement, a condition, an argument
+# list. Anchoring on prose would mean an edit that merely rewords a comment reported as drift,
+# and an edit that breaks the rule without touching the prose went unnoticed.
+#
+# `expect` is the name of the assertion the guard has to report. It is a list where one break
+# owns more than one rule: removing the class removal breaks both the state the reader sees
+# and the rule that says the state is turned off.
+MUTATIONS = [
+    # The build is not a visit. The poll runs every eight seconds whether the reader is there
+    # or not, so a build that stamps the reader-idle lease renews it forever: the fifteen
+    # second idle timeout can never pass, and the group the reader left keeps its row DOM for
+    # the rest of the session.
+    ("a rebuild renews the reader-idle lease of a group the reader has left",
+     [("            var holds = ledgerHoldsRows(key, build.at === 1);\n",
+       "            var holds = ledgerHoldsRows(key, build.at === 1);\n"
+       "            ledgerStateOf(key).lastSeen = Date.now();\n")],
+     ["rebuilding an offscreen group does not renew its reader-idle lease",
+      "the build does not write the reader-idle lease"]),
+
+    # The window is anchored on one group, and that group holds its rows whatever the reader
+    # is doing — so it has to be counted among the groups that hold their rows. Counted with
+    # its own lease instead of the current time, a group the reader left long ago is the
+    # oldest one there is, and the cap reaches for it first.
+    ("the window's first group is released with the others",
+     [("          live.push({ key: kept[j], at: now });\n",
+       "          live.push({ key: kept[j], at: ledgerStateOf(kept[j]).lastSeen });\n")],
+     "the window's first group is one of the groups that hold their rows"),
+
+    # The same group left out of the count altogether: it goes on holding its rows past the
+    # bound, so the bound is about one set of groups while the rows on screen are another.
+    ("the window's first group is not counted among the groups that hold their rows",
+     [("          ledgerStateOf(kept[j]).live = true;\n"
+       "          live.push({ key: kept[j], at: now });\n",
+       "")],
+     "the window's first group is one of the groups that hold their rows"),
+
+    # The idle timeout is what releases a group the reader has walked away from. Without it a
+    # group stays live for as long as the session is open, and the bound below becomes the only
+    # thing standing between the reader and 785 MB.
+    ("a group the reader has left never gives its rows up",
+     [("          if (now - state.lastSeen >= LEDGER_IDLE_MS) {\n",
+       "          if (false) {\n")],
+     "a group the reader has left gives its rows up once the idle time has passed"),
+
+    # The bound is what makes the memory bounded rather than merely reduced: a reader who
+    # scrolls through three hundred groups in a minute has been on all of them.
+    ("the number of groups holding their rows is never bounded",
+     [("        if (live.length <= LEDGER_LIVE_GROUPS) return doomed;\n",
+       "        if (true) return doomed;\n")],
+     "the number of groups holding their rows is bounded"),
+
+    # The oldest goes first, which is the order the reader would choose. Sorting the other way
+    # releases the group the reader is on and keeps the one they left long ago.
+    ("the newest group is released instead of the oldest",
+     [("      live.sort(function (a, b) { return a.at - b.at; });\n",
+       "      live.sort(function (a, b) { return b.at - a.at; });\n")],
+     "the oldest groups are the ones that go when the bound is passed"),
+
+    # The height is the reader's place in the session. `contain-intrinsic-size` sizes a group
+    # the browser has skipped, and a group near the viewport is rendered — so without an
+    # explicit height the box collapses to its 39 px header and the document shrinks under
+    # the reader.
+    ("a released group loses the height it is given",
+     [("        section.style.minHeight = Math.round(height) + 'px';\n",
+       "        section.style.minHeight = '';\n")],
+     "a released group keeps the height it is given"),
+
+    # A group with no measured height gets no reserved height either. Writing 0px would be
+    # worse than writing nothing: a group sized 0px can never come back into the viewport, so
+    # it is never re-rendered, and the ledger stays collapsed for good.
+    ("a group with no height to keep is given one anyway",
+     [("        if (!(height > 0)) return;\n",
+       "        if (false) return;\n")],
+     "a group with no height to keep is not given one"),
+
+    # The rows come back when the reader reaches the group. This is the whole of what the
+    # reader is owed for having given them up.
+    ("the rows do not come back when the reader reaches the group",
+     [("        fillGroupRows(list, group);\n", "")],
+     "a group the reader reaches puts its rows back"),
+
+    # The released state is what the reader sees while the group is empty.
+    ("the released state is left on after the rows come back",
+     [("        section.classList.remove('is-released');\n", "")],
+     ["a group that has its rows back drops the released state",
+      "the released state is turned off when the rows come back"]),
+
+    # The reserved height is given back when the group has its rows again, or the group is
+    # taller than the rows it holds.
+    ("the reserved height is not given back after the rows come back",
+     [("        section.style.minHeight = '';\n", "")],
+     "a group that has its rows back gives its reserved height back"),
+
+    # A group that is already holding its rows is filled by the build and then again by the
+    # observer, and the second pass appends every row a second time.
+    ("a group that is already holding its rows is filled a second time",
+     [("        var alreadyLive = section.getAttribute('data-rows') === 'live';\n",
+       "        var alreadyLive = false;\n")],
+     "a group that is already holding its rows is not filled a second time"),
+
+    # The first group of a window is where the reader arrives, and every other group's height
+    # is predicted from it. If it does not hold its rows there is nothing to predict from.
+    ("the first group of a window does not hold its rows",
+     [("        if (isFirst) return true;\n",
+       "        if (isFirst) return false;\n")],
+     "the first group of a window always holds its rows"),
+
+    # The anchor is read out of the group the reader is on. A released group has no rows, and
+    # an anchor read from the next group down that still has rows is an anchor to the wrong
+    # place — the reader is moved to wherever that group starts.
+    ("the anchor is read without filling the group the reader is on",
+     [("          if (sections[s].getAttribute('data-rows') !== 'live') fillLedgerGroup(sections[s]);\n",
+       "")],
+     "the group the reader is on is filled before the anchor is read out of it"),
+
+    # The build asks for no rows for a group it is not holding. This is the one that carries
+    # the whole memory win: asking for them and then hiding them is the same cost.
+    ("the build asks for the rows of every group",
+     [("            var bands = fillGroupRows(holds ? list : null, group);\n",
+       "            var bands = fillGroupRows(list, group);\n")],
+     "the build asks for no rows for a group it is not holding"),
+
+    # A group the build is not holding is given a height to keep.
+    ("a group the build is not holding is given no height to keep",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n", "")],
+     "a group the build is not holding is given a height to keep"),
+
+    # The two states are what the rest of the page reads: the build says which, and the
+    # observer fills the other.
+    ("a group the build is holding does not say so",
+     [("              section.setAttribute('data-rows', 'live');\n", "")],
+     "a group the build is holding says so"),
+    ("a group the build is not holding does not say so",
+     [("              section.setAttribute('data-rows', 'released');\n", "")],
+     "a group the build is not holding says so too"),
+
+    # The released state is what the reader sees while the group is empty, so the rule that
+    # turns it on has to exist in the build and not only in the stylesheet.
+    ("the released state is never turned on",
+     [("              section.classList.add('is-released');\n", "")],
+     "the released state is turned on by the build"),
+
+    # The bands of a released group are counted even though its rows are not built: its height
+    # is predicted from how many bands it has, and a prediction that ignored them would be
+    # short by every band in it.
+    ("the bands of a released group stop being counted",
+     [("          if (isBand) bands += 1;\n",
+       "          if (isBand && list) bands += 1;\n")],
+     "the bands of a released group are still counted"),
+
+    # A compaction record is a band, not a row, and the test that says so has to be the one the
+    # branch uses. A version that computes the test and then ignores it says the same word and
+    # renders the record as a row — which is why this break is in the branch rather than in the
+    # word.
+    ("a compaction record is rendered as a row instead of a band",
+     [("          if (isBand) {\n", "          if (false) {\n")],
+     "a compaction record is rendered as a band, not as a row"),
+
+    # The map that says which group each section stands for has to go with the sections. A
+    # section that is no longer in the table must not be filled when the observer reports it
+    # as in view — it would be filled with rows that belong to a table that no longer exists.
+    ("the ledger does not forget the groups it just emptied",
+     [("        ledgerContent.clear();\n\n        if (state.loading) {\n"
+       "          ledger.appendChild(buildSkeleton());\n",
+       "        if (state.loading) {\n          ledger.appendChild(buildSkeleton());\n")],
+     "the ledger drops what it knew about the groups it just emptied"),
+
+    # A turn key means nothing across two sessions, so the groups of the session being left
+    # have to go with it.
+    ("the groups of the session being left are not forgotten",
+     [("        ledgerState.clear();\n        ledgerContent.clear();\n",
+       "        ledgerContent.clear();\n")],
+     "the groups of the session being left are forgotten with it"),
+
+    # The height a released group keeps has to describe the content it holds now. A group is
+    # keyed by its turn, and the turn keeps its key while its content changes — a late reply, a
+    # band from a compaction — so the height taken when the group was last on screen describes
+    # content that is no longer there. Without the difference being charged, the group keeps
+    # the height of a content it no longer holds, and the document under the reader comes up
+    # short by exactly the rows that were added.
+    ("a released group does not bring the height it keeps up to date",
+     [("        var held = state.height + addedRows * heights.row + addedBands * heights.band;\n",
+       "        var held = state.height;\n")],
+     "a released group brings the height it keeps up to date with the rows it gained"),
+
+    # A height that does not say what it was a measurement of cannot be brought up to date:
+    # there is no difference to charge, and the group keeps a height that describes nothing.
+    ("the height a group was measured at stops recording what it was holding",
+     [("        var measuredBands = group.bands || 0;\n"
+       "        state.heightRows = group.entries.length - measuredBands;\n"
+       "        state.heightBands = measuredBands;\n",
+       "")],
+     "the height a group was measured at records what it was holding"),
+
+    # A band is not a row. It has its own height, and a group that gained one is taller by a
+    # band and not by a row — so a band that is not counted is a band that is not charged.
+    ("the band a group was measured at stops being recorded",
+     [("        state.heightBands = measuredBands;\n", "        state.heightBands = 0;\n")],
+     "a released group is charged for the band it gained"),
+
+    # The measurement has to record rows and bands as two counts. A band is an entry as well as
+    # a row, so recording the entry count charges every band once as a row and once as a band:
+    # a band would be charged 36 px and 38 px, and the box would stand a whole row taller than
+    # the content it is holding — the document lying about its own height in the other
+    # direction. The guard's band cases add a band without removing a row, so this shows up.
+    ("the measurement records the entry count instead of the row count",
+     [("        state.heightRows = group.entries.length - measuredBands;\n",
+       "        state.heightRows = group.entries.length;\n")],
+     ["a released group is charged for the band it gained",
+      "a released group that lost a row and gained a band is charged for both"]),
+
+    # The measured height belongs to the observer: it is taken when the group is really laid
+    # out. A build that stamped one would be writing down a height it never measured, and the
+    # next rebuild would read its own guess back as if it were a measurement.
+    ("the build writes the height it computed",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n",
+       "              ledgerStateOf(key).height = predicted;\n"
+       "              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n")],
+     ["a rebuild does not change the height a group was measured at",
+      "the build does not write a measured height"]),
+
+    # A group that has been on screen keeps the height it was measured at. The prediction is
+    # priced from medians, and a group's real height runs to several times the median one, so
+    # falling back on the prediction trades a real height for an average one.
+    ("a released group is given the prediction instead of the height it was measured at",
+     [("              holdLedgerHeight(section, heldLedgerHeight(key, group.entries.length - bands, bands, predicted, build.heights));\n",
+       "              holdLedgerHeight(section, predicted);\n")],
+     "a released group whose content has not changed keeps the height it was measured at"),
+
+    # The prediction prices the bands on their own height. A band is an entry as well as a row,
+    # so a prediction that takes the entry count as the row count prices every band twice: once
+    # at the row's height and once at the band's own. The two are close — 36 px and 38 px on a
+    # real session — so the box stands a whole row taller than the content it is holding, which
+    # is the document lying about its own height in the other direction.
+    #
+    # The two call sites are separate breaks: the one the pass after the calibration makes, and
+    # the one the build makes for every group it writes.
+    ("the prediction charges a band as a row as well",
+     [("var dormantPredicted = applyIntrinsicSize(dormant[d], dormantRows, content.bands, build.heights);",
+       "var dormantPredicted = applyIntrinsicSize(dormant[d], content.entries.length, content.bands, build.heights);")],
+     "a band is priced once in the predicted height"),
+
+    ("the build charges a band as a row as well",
+     [("var predicted = applyIntrinsicSize(section, group.entries.length - bands, bands, build.heights);",
+       "var predicted = applyIntrinsicSize(section, group.entries.length, bands, build.heights);")],
+     "the prediction of a group with a band does not charge the band as a row"),
+
+    # The pass that follows the calibration sizes the groups the build released, and what it
+    # writes is the height that is HELD — the measured one, brought up to date with what the
+    # group holds now. Writing the prediction there undoes the rule on every group of the first
+    # batch, and in the default view the first batch is the whole window: the page opens on the
+    # newest 200 records, and 200 records span fewer turns than LEDGER_BATCH_GROUPS.
+    ("the calibration overwrites the height a released group keeps",
+     [("holdLedgerHeight(dormant[d], heldLedgerHeight(content.key, dormantRows, content.bands, dormantPredicted, build.heights));",
+       "holdLedgerHeight(dormant[d], dormantPredicted);")],
+     "a released group keeps the height it was measured at in the first batch"),
+
+    # The build makes the first group of a window live, and it is laid out for real, but the
+    # build never measures — the measurement is the observer's. So the group the build made
+    # live has no height of its own until the observer looks at it, and the visit used to
+    # return early because the rows were already there. The group then fell back on the
+    # prediction when it was released: three rows and a band laid out at 1,000 px reserved
+    # 208 px, with not one row or band changed.
+    ("a group the build made live never records the height it was measured at",
+     [("        if (!alreadyLive || !state.height || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);\n",
+       "        if (!alreadyLive || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);\n")],
+     "a group built live keeps its measured height when a wider window releases it"),
+
+    # A height is a measurement of a layout, and a layout can change without the content
+    # changing: the window is resized, the text scale is turned up, the group's own chrome
+    # becomes taller. The rows and the bands stay exactly the same and the height is a
+    # different one — and the height a released group keeps is the remembered one unchanged,
+    # because the counts it was measured at have not changed either. So a group laid out at
+    # 1,500 px kept the 1,000 px it was measured at, and the document under the reader came
+    # up 500 px short of the group it stood for.
+    #
+    # The break takes away the refresh and nothing else: the group is still measured when it
+    # has no height of its own, and the rows are still built once.
+    ("a live group never refreshes its measurement after its layout changes",
+     [("        if (!alreadyLive || !state.height || ledgerLayoutChanged(section, state)) measureLedgerGroup(section, group);\n",
+       "        if (!alreadyLive || !state.height) measureLedgerGroup(section, group);\n")],
+     "a live group refreshes its measurement after its layout changes"),
+
+    # The window is resized and the client is told: the groups that are on screen have to be
+    # measured again, because a resize changes their layout without changing a row or a band
+    # in them. A client that does not re-measure them keeps the height it measured them at —
+    # a height of the layout before the resize — and when the cap releases the group, the
+    # height it reserves is that stale number, so the document under the reader comes up short
+    # by the difference.
+    #
+    # The break takes away the measurement the resize drives and nothing else: the rows are
+    # still built once, the cap still releases the same groups, and the measurement the visit
+    # path takes is untouched.
+    #
+    # The boundary, which this break does not touch either: a group that was off screen when
+    # the layout changed, and is never visited again, keeps the height it was last really
+    # measured at. Off screen the browser answers with the group's own contain-intrinsic-size,
+    # and that number is a prediction — a prediction written down as a measurement is a guess
+    # the next rebuild reads back as a fact.
+    ("a live group never refreshes its measurement when the window is resized",
+     [("            measureLedgerGroup(section, group);\n", "")],
+     "a live group refreshes its measurement when the window is resized"),
+
+    # The bound is about what the reader is holding at this moment, not only about what a
+    # rebuild leaves behind. Without the cap on the visit path, a reader who walks through
+    # more groups than the cap allows between two rebuilds is holding all of them.
+    ("reader visits do not enforce the cap on the groups holding their rows",
+     [("        releaseLedgerRows(releaseStaleGroups([ledgerFirstGroupKey(), group.key]));\n", "")],
+     "reader visits cannot increase the held row groups past the ceiling between rebuilds"),
+
+    # The visit path holds on to the group the reader has just reached. It has to hold on to
+    # the window's first group as well: that group holds its rows whatever the reader is
+    # doing, it is where the reader arrives, and every other group's height is predicted from
+    # it. A visit that protected only the group the reader had just reached let the window's
+    # first group go — the idle timeout took it, or the cap reached for it as the oldest one —
+    # and the group the heights are predicted from lost its rows while the reader was on the
+    # page.
+    ("the visit path does not protect the window's first group",
+     [("        releaseLedgerRows(releaseStaleGroups([ledgerFirstGroupKey(), group.key]));\n",
+       "        releaseLedgerRows(releaseStaleGroups([group.key]));\n")],
+     ["the window's first group keeps its rows after a round of visits",
+      "the window's first group keeps its rows when the reader comes back to another group"]),
+
+    # A group the cap released gives up its rows at once. The rows are the DOM, and a group
+    # that has given them up must not still be holding them.
+    ("a group the cap released keeps its rows",
+     [("          if (list) clear(list);\n", "")],
+     "a group the cap released holds no rows"),
+
+    # And it keeps the height it has now. The height is the reader's place in a session they
+    # have scrolled through, and a group that has given up its rows without keeping it takes
+    # the document down under them.
+    ("a group the cap released keeps no reserved height",
+     [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));\n", "")],
+     "a group the cap released keeps the height it has now"),
+
+    # The height a released group keeps has to describe the content it holds now, and the
+    # visit path has no calibration of its own to price the difference with. Passing no
+    # calibration writes the old measurement back unchanged: a group measured at 1,000 px with
+    # three rows in it and holding four rows by the time it is released on the visit path keeps
+    # 1,000 px instead of 1,036 px, and the document under the reader comes up short by the row
+    # that was added.
+    #
+    # The group that witnesses it is one the reader has left: it is off screen, so the browser
+    # skips it and what it reads is the prediction, and the measured height brought up to date
+    # with the row that was added is the only answer that is not a guess. A group the reader
+    # is on is measured again when its layout changes, and its measurement is the current one.
+    ("the visit path writes back the height the group was measured at",
+     [("          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, ledgerCalibration));\n",
+       "          holdLedgerHeight(section, heldLedgerHeight(content.key, rows, bands, measured, null));\n")],
+     "a group released off screen keeps the height it was measured at, brought up to date"),
+
+    # The rebuild is one of the two places that decides the bound, and the fixture's rebuild()
+    # calls the shipped function that does it. A rebuild that stopped releasing the groups the
+    # reader had left came out with more groups holding their rows than the cap allows, and
+    # every assertion in the guard still passed.
+    ("the rebuild does not release the groups that have to give up their rows",
+     [("        releaseStaleGroups([turnKey(groups[0].turn)]);\n", "")],
+     "after a rebuild, the number of groups holding their rows is at most the cap"),
+
+    # And the call site itself: the rebuild asks for the release before it writes the table.
+    ("the rebuild does not ask for the release before it writes the table",
+     [("        releaseStaleGroupsBeforeRebuild(groups);\n", "")],
+     "the rebuild releases the groups that have to give up their rows before it writes the table"),
+
+    # The groups the caller holds on to are counted after the ones the reader has visited, so
+    # that a tie the clock cannot break cannot put them at the head of the queue. The cap
+    # reaches for the oldest, and the group the reader has just reached must not be the one it
+    # reaches for. Counted first, the window's first group is the head of the queue and the
+    # cap takes it.
+    ("the groups the caller holds on to are counted before the ones the reader has visited",
+     [("        for (var j = 0; j < kept.length; j += 1) {\n"
+       "          ledgerStateOf(kept[j]).live = true;\n"
+       "          live.push({ key: kept[j], at: now });\n"
+       "        }\n", ""),
+      ("        ledgerState.forEach(function (state, key) {\n",
+       "        for (var j = 0; j < kept.length; j += 1) {\n"
+       "          ledgerStateOf(kept[j]).live = true;\n"
+       "          live.push({ key: kept[j], at: now });\n"
+       "        }\n"
+       "        ledgerState.forEach(function (state, key) {\n")],
+     "the window's first group keeps its rows when the clock cannot break the tie"),
+
+    # The observer is registered by the build, and the build is what re-registers it after
+    # every rebuild: a section from the previous table is not in `ledgerContent` any more, so
+    # an observer left pointing at the old table never sees the new one. A build that stops
+    # watching leaves the reader's next visit unobserved, and the height the group keeps
+    # after that is the height of a layout that is gone — the group stands 500 px shorter
+    # than the content it is holding.
+    #
+    # The refresh that a resize drives cannot cover for it: the build sized the groups of its
+    # first batch by the height they are really at, so the number the group reads back is the
+    # number it was given, and the refresh skips it as a group that is sized rather than laid
+    # out. The observer's visit is the only thing that measures it again.
+    ("the build does not observe the groups it rebuilt",
+     [("          watchLedgerGroups();\n", "")],
+     ["resize and a rebuilt observer preserve the current layout through release",
+      "a rebuilt observer watches the group the reader is on, not the one it replaced"]),
+
+    # The other half of the same rule, and the one a deletion cannot reach: an observer that
+    # is registered once and never pointed at the new table is still watching the sections of
+    # the previous table. The build's watcher disconnects the observer before it observes the
+    # new sections, and that disconnect is the whole of what makes the second build's
+    # observer the current one. Without it the observer's visit never reaches the group the
+    # reader is on — the section that replaced it is not one the observer knows — so the group
+    # keeps the height of the layout before the resize, and the document under the reader comes
+    # up short by exactly the difference.
+    ("the build observes the groups it rebuilt only once",
+     [("        } else {\n          ledgerObserver.disconnect();\n        }\n",
+       "        } else {\n          return;\n        }\n")],
+     ["resize and a rebuilt observer preserve the current layout through release",
+      "a rebuilt observer watches the group the reader is on, not the one it replaced"]),
+]
+
+original = io.open(CLIENT, encoding="utf-8", newline="").read()
+
+
+def run():
+    proc = subprocess.run(["node", PROBE], cwd=HERE,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+ok = True
+code, baseline = run()
+base_ok = code == 0 and "0 failed" in baseline
+print(("ok   " if base_ok else "FAIL ") + "baseline green")
+ok = ok and base_ok
+
+caught = []
+for title, edits, expect in MUTATIONS:
+    for old, _ in edits:
+        hits = original.count(old)
+        if hits != 1:
+            raise SystemExit("FAIL  anchor for %r matched %d times" % (title, hits))
+    names = expect if isinstance(expect, list) else [expect]
+    try:
+        mutated = original
+        for old, new in edits:
+            mutated = mutated.replace(old, new, 1)
+        io.open(CLIENT, "w", encoding="utf-8", newline="").write(mutated)
+        during_code, during = run()
+        named = all(n in during for n in names)
+        red = during_code != 0
+        # A guard that crashes is not a guard that caught anything: the rule has to be reported
+        # by name, or the mutation only proved that the file no longer parses.
+        print(("ok   " if (named and red) else "FAIL ") + "guard catches: " + title)
+        if not named:
+            print("       no assertion reported %r" % (names,))
+            for line in during.splitlines()[-4:]:
+                print("       " + line.strip())
+        elif not red:
+            print("       the rule was reported but the guard still exited 0")
+        caught.append(named and red)
+    finally:
+        io.open(CLIENT, "w", encoding="utf-8", newline="").write(original)
+
+restored = io.open(CLIENT, encoding="utf-8", newline="").read()
+after_code, after = run()
+after_ok = after_code == 0 and "0 failed" in after
+print(("ok   " if restored == original else "FAIL ") + "client restored byte for byte")
+print(("ok   " if after_ok else "FAIL ") + "green again after restore")
+
+sys.exit(0 if (ok and all(caught) and restored == original and after_ok) else 1)

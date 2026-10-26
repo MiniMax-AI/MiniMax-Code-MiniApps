@@ -79,6 +79,48 @@
 需要人工确认的步骤会让那个节点直接失败，而不是停下来等人。
 控制台的「开始执行」确认框和 README 都写明了这一点。
 
+### 上游是怎么选执行器的（升级时必看）
+
+引擎只有两个执行器，真实执行**没有第二条路径**：
+
+- `demoExecute` —— 不调模型，延时后返回占位结果；
+- `mcodeExecute` —— 直接 spawn `mcode exec --input - --cwd … --output-format stream-json --permission smart …`。
+
+有一处极易看错：**`/api/config` 里的 `executor` 字段是 CLI 命令名**
+（`engine.options.command`，值就是 `"mcode"`），**不是某次运行用的执行方式**。
+真正的执行方式是每次运行单独指定的 `request.executor`（取值 `demo` 或 `mcode`），
+引擎用 `check(["demo","mcode"].includes(request.executor), "executor 必须为 demo 或 mcode")`
+强制它存在。
+
+而新建工作流时**默认是 demo**：Studio 的「执行方式」下拉框第一项就是 demo，
+`showCreate()` 只调 `form.reset()`、从不覆盖这个选择。
+所以「MCode CLI 是硬前置」这句话只对**真实执行**成立，默认路径并不需要它。
+
+上游查找 CLI 的顺序是三处：`PATH` 里的 `mcode` → 官方用户安装位置
+（根目录是 `$MCODE_INSTALL_DIR`，没设时是 `~/.minimax-code`；macOS/Linux 找其下的 `bin/mcode`，
+Windows 找 `mcode.cmd`）→ 工作流托管的工具链
+（`~/.mcode-dynamic-workflows/toolchain/lib/node_modules/@minimax-ai/code/cli.js`，Windows 少一层 `lib`，
+只在该目录已就位时命中，引擎只检查文件存在，不负责安装）。
+
+**升级上游时如果动了这一段**（执行器选择、`resolveMcode()` 的查找顺序），
+README 的「前置条件 / Prerequisites」章节必须跟着改——两处是同一件事的两个视角，
+只改一边，两份文档就会自相矛盾。
+
+### 怎么自己确认「CLI 缺失」这个信号是真的
+
+别只读源码就相信某个分支可达。起一个隔离环境就能复现：
+
+```sh
+TMP=$(mktemp -d); mkdir -p "$TMP/ws" "$TMP/data" "$TMP/fakehome" "$TMP/emptyroot"
+env -i HOME="$TMP/fakehome" PATH="/usr/bin:/bin" MCODE_INSTALL_DIR="$TMP/emptyroot" \
+  "$(command -v node)" miniapp/node/vendor/dynamic-workflows/dist/main.mjs \
+  --workspace "$TMP/ws" --data-dir "$TMP/data"
+```
+
+`HOME` 指向空目录 → `~/.minimax-code` 不存在；`PATH` 里没有 `mcode`；
+`MCODE_INSTALL_DIR` 指向空目录。引擎照常启动，`/api/config` 返回
+`"mcodeAvailable": false`——这正是控制台横幅和「拒绝启动真实执行」所依赖的信号。
+
 ## 更新方式（怎么跟上上游）
 
 副本锁定在 `6481e4ae1e0375a4ddb3d5e9b29845354ab1cead`，不会自动跟随上游升级。

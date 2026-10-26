@@ -55,9 +55,11 @@ function dirFor(id) {
 
 const A = 'mvs_0000000000000000000000000000aaaa';
 const B = 'mvs_0000000000000000000000000000bbbb';
+// Shaped like the entries the walk returns: the id the directory is published under travels with
+// it, because that is the id the runtime facts are looked up under.
 const visible = [
-  { dir: dirFor(A), sizeBytes: 1024, lastActiveAt: 1700000000 },
-  { dir: dirFor(B), sizeBytes: 2048, lastActiveAt: 1700000001 },
+  { dir: dirFor(A), sizeBytes: 1024, lastActiveAt: 1700000000, sessionId: A },
+  { dir: dirFor(B), sizeBytes: 2048, lastActiveAt: 1700000001, sessionId: B },
 ];
 const noTitles = new Map();
 const titled = new Map([
@@ -79,6 +81,39 @@ assert('a grown active file moves the tag',
 assert('a newer mtime moves the tag',
   sessionsValidator([{ ...visible[0], lastActiveAt: 1700000002 }, visible[1]], noTitles, 20)
   !== sessionsValidator(visible, noTitles, 20));
+
+// The published id. It is in the row the page receives -- a row's id IS the id the walk
+// published that directory under -- and a manifest that changes from one id to another moves
+// that id and nothing else: the directory, the transcript's size and mtime, and the runtime
+// row are all the same. The two maps here differ in the published id and in nothing else, so
+// this cannot pass on the directory or on the mtime: a tag that did not move with the id
+// would answer 304 for a body that names a session the reader is no longer looking at.
+const reid = [
+  { dir: dirFor(A), sizeBytes: 1024, lastActiveAt: 1700000000, sessionId: A },
+  { dir: dirFor(B), sizeBytes: 2048, lastActiveAt: 1700000001, sessionId: 'mvs_0000000000000000000000000000dddd' },
+];
+assert('a changed published session id moves the tag',
+  sessionsValidator(visible, noTitles, 20) !== sessionsValidator(reid, noTitles, 20));
+
+// The published id of a SUB-AGENT. The main session's id has its own assertion above, and the
+// sub-agent's tuple is a different tuple: a rule that holds for one of them does not hold for
+// the other unless it is asked of both. Removing the sub-agent's id from its tuple left every
+// verifier green -- the tag then answered 304 for a body that named a session the reader was no
+// longer looking at, and no assertion noticed.
+//
+// The two child lists below differ in the published id and in nothing else: the same directory,
+// the same size, the same mtime, and no runtime facts for either id.
+const childIdA = 'mvs_0000000000000000000000000000eeee';
+const childIdB = 'mvs_0000000000000000000000000000ffff';
+const childWithIdA = [
+  { dir: dirFor(childIdA), sizeBytes: 512, lastActiveAt: 1700000002, sessionId: childIdA },
+];
+const childWithIdB = [
+  { dir: dirFor(childIdA), sizeBytes: 512, lastActiveAt: 1700000002, sessionId: childIdB },
+];
+assert('a changed published sub-agent id moves the tag',
+  sessionsValidator(visible, noTitles, 20, childWithIdA)
+  !== sessionsValidator(visible, noTitles, 20, childWithIdB));
 
 // The rename. Both halves of a row's metadata, because the picker renders both — and each has to
 // be isolated, or the assertion passes on the other field and the one it names is untested. These
@@ -109,6 +144,27 @@ const parentEmpty = new Map([[A, { title: '第一段会话', kind: 'conversation
 assert('an empty parent and a null one agree — they render the same row',
   sessionsValidator(visible, parentBefore, 20) === sessionsValidator(visible, parentEmpty, 20));
 
+// The kind badge. It is derived from the row's purpose, and it is on the page, so a runtime
+// database that changes a session's purpose changes what the row says — and the tag has to move
+// with it. The title AND the kind are held constant here, so this cannot pass on either of them.
+const tagBefore = new Map([[A, { title: '第一段会话', kind: 'conversation', purpose: null }]]);
+const tagAfter = new Map([[A, { title: '第一段会话', kind: 'conversation', purpose: 'context-mode:lightweight' }]]);
+assert('a changed session purpose moves the tag, even with the title and kind held constant',
+  sessionsValidator(visible, tagBefore, 20) !== sessionsValidator(visible, tagAfter, 20));
+
+// And the null case again: a row with no purpose and a row whose purpose is the empty string
+// render identically, so they must not read as a change either.
+const tagEmpty = new Map([[A, { title: '第一段会话', kind: 'conversation', purpose: '' }]]);
+assert('an empty purpose and a null one agree — they render the same row',
+  sessionsValidator(visible, tagBefore, 20) === sessionsValidator(visible, tagEmpty, 20));
+
+// The ORDER. Two rows a reader can tell apart, in two orders, are two payloads — and the picker
+// reorders the visible set (the current conversation first, then its workspace, then the rest),
+// so an order change is a change the caller has to be told about.
+const swapped = [visible[1], visible[0]];
+assert('a changed order of the visible rows moves the tag',
+  sessionsValidator(visible, noTitles, 20) !== sessionsValidator(swapped, noTitles, 20));
+
 // A null title and an absent one are the same payload — the picker falls back to 「会话 <id>」 — so
 // they have to be the same tag, or every poll would look like a change.
 const nullTitle = new Map([[A, { title: null, kind: 'conversation' }]]);
@@ -118,7 +174,12 @@ assert('a null title and an absent one agree — they render the same row',
 
 // A session entering or leaving the visible slice.
 assert('one more session in view moves the tag',
-  sessionsValidator([...visible, { dir: dirFor('mvs_0000000000000000000000000000cccc'), sizeBytes: 1, lastActiveAt: 1 }], noTitles, 20)
+  sessionsValidator([...visible, {
+    dir: dirFor('mvs_0000000000000000000000000000cccc'),
+    sizeBytes: 1,
+    lastActiveAt: 1,
+    sessionId: 'mvs_0000000000000000000000000000cccc',
+  }], noTitles, 20)
   !== sessionsValidator(visible, noTitles, 20));
 
 /* ---------- 2: the request itself is part of the identity ---------- */
@@ -162,7 +223,7 @@ assert('the same collision in the parent cannot merge two readable rows either',
 
 // The material is still built in server.mjs, which is what the three assertions above are testing
 // rather than a copy of it.
-const material = /export function sessionsValidator\(visible, titles, limit\) \{[\s\S]*?\n\}/.exec(server);
+const material = /export function sessionsValidator\(visible, titles, limit, children\) \{[\s\S]*?\n\}/.exec(server);
 assert('the material is still built in server.mjs', material !== null);
 
 // Empty input, because the route calls this before it knows the walk found anything.
@@ -177,7 +238,13 @@ assert('the list route is still in the shipped source', route !== null);
 if (route) {
   const code = route[0];
   assert('the route derives its tag from sessionsValidator',
-    /weakETag\(sessionsValidator\(visible, titles, limit\)\)/.test(code));
+    /weakETag\(sessionsValidator\(visible, titles, limit, childEntries\)\)/.test(code));
+  // The sub-agents are on the page, so they are in the material. A tag that did not move when a
+  // sub-agent started would answer 304 for a body the caller never held — and the body it never
+  // held is the one with the sub-agent in it.
+  assert('and the sub-agents it sends are in the tag',
+    /sessionsValidator\(visible, titles, limit, childEntries\)/.test(code)
+    && /childEntries\.push\(child\)/.test(code));
 
   // The same three values on both sides. A validator computed from anything the payload does not
   // use is a validator about a different payload. The pairing itself is settled by the call above

@@ -5,7 +5,11 @@
 One clock, one verdict: is it a reasonable time to message someone in another time zone? The verdict
 follows the **other** city's local time, because what matters is whether *they* are awake.
 
-Author: [FineCat](https://github.com/LiuChen19960902) · Version: `1.0.1`
+> **The interface is Chinese only.** The plugin name, the verdict, the city names, the time periods
+> and the date format are all in Chinese. This README and `README.zh-CN.md` are the two languages it
+> ships in; the page itself has no language switch.
+
+Author: [FineCat](https://github.com/LiuChen19960902) · Version: `1.0.2`
 
 ![A/时差保安 showing the verdict, with the target city clock above the local one](docs/preview.png)
 
@@ -97,9 +101,9 @@ never exercised — the page is a single responsive column either way.
 
 ## Data & access
 
-- **Files read** — only the four static files inside its own package directory:
-  `miniapp/client/index.html`, `styles.css`, `cities.js`, `app.js`. Nothing outside the package is
-  read, and the disk is never scanned.
+- **Files read** — only the five static files inside its own package directory:
+  `miniapp/client/index.html`, `styles.css`, `cities.js`, `time.js`, `app.js`. Nothing outside the
+  package is read, and the disk is never scanned.
 - **Files written** — none. `context.dataDir` is not used and nothing is written anywhere.
 - **Browser storage** — interface preferences only, under the key `timezone-guard.prefs.v1`: the
   selected pair of cities, the theme, and the 12/24-hour format. No session and no content data.
@@ -117,19 +121,35 @@ package.json                  Mini App declaration
 miniapp/miniapp.json          Payload roots, Node entry, page route
 miniapp/client/index.html     The page served at /dashboard, including the SVG sprite
 miniapp/client/styles.css     Visual layer
-miniapp/client/app.js         Time zone logic, verdict, city picker, 24-hour strip
+miniapp/client/time.js        Pure time calculations — shared by the browser and the tests
+miniapp/client/app.js         Verdict, city picker, 24-hour strip
 miniapp/client/cities.js      City list and Chinese names for every time zone
 miniapp/node/server.mjs       Node entry: start(context) → { dispose }
 miniapp/node/miniapp-api.ts   Type declarations for the runtime context
+test/time.test.mjs            Unit tests for the time calculations
 docs/preview.png              Screenshot of the page, light theme
 docs/preview-dark.png         Screenshot of the page, dark theme
 icon.png                      Plugin icon
 ```
 
 The page is plain HTML, CSS, and JavaScript — no framework, no CDN, no build step, fully offline.
-The Node entry only serves `/dashboard` and those four files on the port the Host assigns. There
+The Node entry only serves `/dashboard` and those five files on the port the Host assigns. There
 are **no third-party runtime dependencies**: the Node side uses built-in modules only, and the
 browser side uses native APIs only.
+
+## Running the tests
+
+`miniapp/client/time.js` holds the time calculations, and the browser and Node run **the same
+file** — there is no second copy to keep in sync. The unit tests ship with the package:
+
+```sh
+npm test
+```
+
+Run it from the package directory. The suite covers the band thresholds landing exactly on the
+hour (06:00 / 09:00 / 18:00 / 22:00), offset parsing including non-integral zones such as
+`GMT+05:45`, the time-difference wording, and the calendar-day difference used for "still
+yesterday".
 
 ## License
 

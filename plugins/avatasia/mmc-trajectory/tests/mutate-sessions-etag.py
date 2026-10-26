@@ -31,14 +31,30 @@ PROBE = os.path.join(HERE, "verify-sessions-etag.mjs")
 MUTATIONS = [
     # ---- the material forgets something the payload uses ----
 
+    # The anchors below name the loop they sit in, because the material now has two loops -- the
+    # main sessions and the sub-agents -- and the two read the same columns in the same order. An
+    # anchor that did not name its loop would match both, and the control would refuse to run
+    # rather than guess which one it meant.
     ("a rename stops moving the tag",
-     [("    const title = meta ? String(meta.title ?? \"\") : \"\";\n", "    const title = \"\";\n")],
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = \"\";\n")],
      "a renamed session moves the tag", SERVER),
 
     # `kind` is what puts the sub-agent and cron badges on the rows, so a page that keeps a stale
     # tag is offering the reader a worker's session as if it were their conversation.
     ("a changed session kind stops moving the tag",
-     [("    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n", "    const kind = \"\";\n")],
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = \"\";\n")],
      "a changed session kind moves the tag, even with no title", SERVER),
 
     # The one that looks like a simplification. Two different requests, one tag.
@@ -53,17 +69,37 @@ MUTATIONS = [
     # representation with no ambiguity in it survives both, so there are two cases and each owns the
     # assertion that names it.
     ("the fields are concatenated with no separator at all",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
-       "    parts.push(\"\" + entry.dir + entry.sizeBytes + entry.lastActiveAt"
-       " + title + kind + parent);")],
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(\"\" + entry.sessionId + entry.dir + entry.sizeBytes + entry.lastActiveAt"
+       " + title + kind + parent + tag);")],
      "a title/kind split cannot be hidden inside the separator", SERVER),
 
     # mtime is one of the three facts the descriptor cache keys on, and the only one that moves
     # when a session is rewritten in place without growing.
     ("a newer mtime stops moving the tag",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
-       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, title, kind, parent]));\n")],
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, title, kind, parent, tag]));\n")],
      "a newer mtime moves the tag", SERVER),
+
+    # The published id. It is in the row the page receives -- a row's id IS the id the walk
+    # published that directory under -- and a manifest that changes from one id to another moves
+    # that id and nothing else: the directory, the transcript's size and mtime, and the runtime
+    # row are all the same. A material without the id therefore answers 304 for a body that names
+    # a session the reader is no longer looking at, and the body the service reuses keeps
+    # publishing the old one until some other fact happens to move.
+    ("the published id stops being part of the material",
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n")],
+     "a changed published session id moves the tag", SERVER),
+
+    # The sub-agent's tuple is a different tuple, so the rule has to be asked of it separately.
+    # A material without the sub-agent's published id answers 304 for a body that names a session
+    # the reader is no longer looking at, and the body the service reuses keeps publishing the old
+    # one until some other fact happens to move.
+    ("the published sub-agent id stops being part of the material",
+     [("    parts.push(JSON.stringify([entry.sessionId, parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));\n",
+       "    parts.push(JSON.stringify([parent, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, tag]));\n")],
+     "a changed published sub-agent id moves the tag", SERVER),
 
     # ---- the 304 that is not earned, because it is decided too late ----
     #
@@ -107,16 +143,11 @@ MUTATIONS = [
     # A 304 that re-renders is correct and pointless: the re-render is the cost the 304 exists to
     # avoid, and on a big list it is the larger half.
     ("a 304 re-renders the picker anyway",
-     [("            if (response.status === 304) {\n"
+     [("              var fresh = response.headers.get('etag');\n"
+       "              return { changed: false, body: null, etag: fresh || state.sessionsEtag };",
        "              var fresh = response.headers.get('etag');\n"
-       "              if (fresh) state.sessionsEtag = fresh;\n"
-       "              state.sessionsEtagFor = key;\n"
-       "              return { changed: false, body: null, etag: state.sessionsEtag };\n"
-       "            }",
-       "            if (response.status === 304) {\n"
        "              renderSessionSelect();\n"
-       "              return { changed: false, body: null, etag: state.sessionsEtag };\n"
-       "            }")],
+       "              return { changed: false, body: null, etag: fresh || state.sessionsEtag };")],
      "a 304 does not re-render the picker", CLIENT),
 
     # Half a validator: kept, never sent. Every poll then carries no header and gets a full body.
@@ -148,7 +179,16 @@ MUTATIONS = [
     # review, not by a failing test: the guard was passing because every map it built varied only
     # the title and the kind, so nothing ever asked the question.
     ("the validator stops covering the parent the body sends",
-     [("    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n", "    const parent = \"\";\n")],
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = \"\";\n")],
      "a changed parent moves the tag, even with the title and kind held constant", SERVER),
 
     # The one this round's independent pass found. The material joined its fields on a bare NUL, and
@@ -158,11 +198,38 @@ MUTATIONS = [
     # `String.fromCharCode(0)` rather than an escape in the replacement, because the point of the
     # mutation is the character, not how it is spelled.
     ("the fields go back to being joined on a bare NUL",
-     [("    parts.push(JSON.stringify([entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent]));\n",
-       "    parts.push(entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt"
+     [("    parts.push(JSON.stringify([entry.sessionId, entry.dir, entry.sizeBytes, entry.lastActiveAt, title, kind, parent, tag]));\n",
+       "    parts.push(entry.sessionId + \"|\" + entry.dir + \"|\" + entry.sizeBytes + \"|\" + entry.lastActiveAt"
        " + \"|\" + title + String.fromCharCode(0) + kind"
-       " + String.fromCharCode(0) + parent);")],
+       " + String.fromCharCode(0) + parent + tag);")],
      "a separator-like character inside a value cannot merge two readable rows into one tag", SERVER),
+
+    # The kind badge, which is the same shape of rule as the parent: it is on the page, it is
+    # derived from a column the runtime database holds, and a change in that column changes what
+    # the row says. Leaving it out of the material makes the tag constant across a change the
+    # reader can see, and the 304 that follows is a statement about bytes nobody re-computed.
+    ("the validator stops covering the kind badge the body sends",
+     [("  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n"
+       "    // The kind badge the page draws is derived from the row's kind and purpose, so it is\n"
+       "    // reader-visible on its own and belongs in the material for the same reason `kind` does. A\n"
+       "    // runtime database that changes a session's purpose changes what the row says, and a tag that\n"
+       "    // did not move would answer 304 for a body the caller never held.\n"
+       "    const tag = meta ? String(sessionTagFor(meta.kind, meta.purpose) ?? \"\") : \"\";\n",
+       "  for (const entry of visible) {\n"
+       "    const meta = titles.get(entry.sessionId);\n"
+       "    const title = meta ? String(meta.title ?? \"\") : \"\";\n"
+       "    const kind = meta ? String(meta.kind ?? \"\") : \"\";\n"
+       "    const parent = meta ? String(meta.parent ?? \"\") : \"\";\n"
+       "    // The kind badge the page draws is derived from the row's kind and purpose, so it is\n"
+       "    // reader-visible on its own and belongs in the material for the same reason `kind` does. A\n"
+       "    // runtime database that changes a session's purpose changes what the row says, and a tag that\n"
+       "    // did not move would answer 304 for a body the caller never held.\n"
+       "    const tag = \"\";\n")],
+     "a changed session purpose moves the tag, even with the title and kind held constant", SERVER),
 ]
 
 ORIGINALS = {

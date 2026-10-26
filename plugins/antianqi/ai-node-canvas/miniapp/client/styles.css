@@ -1,0 +1,2339 @@
+/* ---------------- semantic tokens ----------------
+   The canvas is an independent page and does not inherit Host CSS variables,
+   so it owns its own palette. `--mcode-*` is the canonical naming; the short
+   aliases at the bottom are the single adapter layer the component styles
+   read, so a future Host theme bridge only has to change this block. */
+:root {
+  color-scheme: light dark;
+
+  --mcode-bg: #ffffff;
+  --mcode-bg-secondary: #f5f5f5;
+  --mcode-surface: #ffffff;
+  --mcode-surface-muted: #fafafa;
+  --mcode-text: #171717;
+  --mcode-text-muted: #666666;
+  --mcode-text-subtle: #adadad;
+  --mcode-border: #0a0a0a14;
+  --mcode-border-strong: #0a0a0af2;
+  --mcode-accent: #0094fc;
+  --mcode-success: #04b54b;
+  --mcode-warning: #f56811;
+  --mcode-danger: #f73646;
+  --mcode-primary-action-bg: #171717;
+  --mcode-primary-action-text: #ffffff;
+
+  --mcode-shadow: 0 0 20px rgb(10 10 10 / 8%);
+  --mcode-shadow-strong: 0 0 20px rgb(10 10 10 / 14%);
+  --mcode-radius-card: 12px;
+  --mcode-radius-control: 8px;
+  --mcode-row-height: 34px;
+  --mcode-duration-fast: 150ms;
+  --mcode-duration-panel: 220ms;
+  --mcode-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* The hues of the data kinds.
+     A node, its ports and the line between them share one hue, so a chain can
+     be read by colour alone: amber for text, green for a picture, blue for
+     video, violet for audio, rose for a style preset. The light values are
+     dark enough to sit on a white card, the dark ones light enough to sit
+     on a dark one. */
+  --nxc-kind-text: #8f6014;
+  --nxc-kind-image: #1c7a58;
+  --nxc-kind-video: #2b62b5;
+  --nxc-kind-audio: #6b4fbf;
+  --nxc-kind-style: #b23f78;
+
+  /* adapter: component styles read these short names */
+  --bg: var(--mcode-bg);
+  --bg-panel: var(--mcode-surface);
+  --line: var(--mcode-border);
+  --line-soft: var(--mcode-border);
+  --text: var(--mcode-text);
+  --text-dim: var(--mcode-text-muted);
+  --text-faint: var(--mcode-text-subtle);
+  --brand: var(--mcode-accent);
+  --brand-2: var(--mcode-accent);
+  --danger: var(--mcode-danger);
+  --ok: var(--mcode-success);
+  --warn: var(--mcode-warning);
+  --node-radius: var(--mcode-radius-card);
+}
+
+/* The dark palette is written twice on purpose: once for an explicit
+   data-theme override and once for the system preference, because CSS has no
+   way to apply a token block conditionally without repeating it. */
+[data-theme='dark'] {
+  --mcode-bg: #171717;
+  --mcode-bg-secondary: #1c1c1c;
+  --mcode-surface: #262626;
+  --mcode-surface-muted: #262626;
+  --mcode-text: #ededed;
+  --mcode-text-muted: #949494;
+  --mcode-text-subtle: #666666;
+  --mcode-border: #ffffff14;
+  --mcode-border-strong: #fffffff2;
+  --mcode-accent: #0077d9;
+  --mcode-success: #009c3d;
+  --mcode-warning: #e25507;
+  --mcode-danger: #e31937;
+  --mcode-primary-action-bg: #ffffff;
+  --mcode-primary-action-text: #171717;
+  --mcode-shadow: 0 0 20px rgb(0 0 0 / 32%);
+  --mcode-shadow-strong: 0 0 20px rgb(0 0 0 / 42%);
+  --nxc-kind-text: #d9a441;
+  --nxc-kind-image: #35b98a;
+  --nxc-kind-video: #5a9cf0;
+  --nxc-kind-audio: #a184f0;
+  --nxc-kind-style: #e879a8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mcode-bg: #171717;
+    --mcode-bg-secondary: #1c1c1c;
+    --mcode-surface: #262626;
+    --mcode-surface-muted: #262626;
+    --mcode-text: #ededed;
+    --mcode-text-muted: #949494;
+    --mcode-text-subtle: #666666;
+    --mcode-border: #ffffff14;
+    --mcode-border-strong: #fffffff2;
+    --mcode-accent: #0077d9;
+    --mcode-success: #009c3d;
+    --mcode-warning: #e25507;
+    --mcode-danger: #e31937;
+    --mcode-primary-action-bg: #ffffff;
+    --mcode-primary-action-text: #171717;
+    --mcode-shadow: 0 0 20px rgb(0 0 0 / 32%);
+    --mcode-shadow-strong: 0 0 20px rgb(0 0 0 / 42%);
+    --nxc-kind-text: #d9a441;
+    --nxc-kind-image: #35b98a;
+    --nxc-kind-video: #5a9cf0;
+    --nxc-kind-audio: #a184f0;
+    --nxc-kind-style: #e879a8;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ---------------- scrollbars ----------------
+   Every surface in the canvas stays scrollable with the wheel, but no bar is
+   ever painted. A Chromium scrollbar on a dark card reads as a stray slab
+   hanging off the node, and a nested bar inside a node looks worse still.
+   `scrollbar-width: none` is the rule that actually applies in Chromium;
+   the ::-webkit rules are the fallback for older WebKit builds. */
+.nxc-app,
+.nxc-app * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.nxc-app *::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  /* The baseline font stack, with the CJK faces after the Latin ones so
+     Chinese still picks a matching family. */
+  font: 14px/1.6 ui-sans-serif, -apple-system, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+select,
+textarea,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.nxc-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------------- toolbar ---------------- */
+
+.nxc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  background: var(--mcode-surface);
+  border-bottom: 1px solid var(--line);
+  z-index: 30;
+}
+
+.nxc-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  /* The toolbar holds more controls than fit in a narrow window. The groups
+     have to wrap as well, or the last ones run out of the page: the page
+     itself does not scroll. */
+  flex-wrap: wrap;
+}
+
+.nxc-toolbar__group--right {
+  /* The wrapped lines of the right group stay against the right edge. */
+  justify-content: flex-end;
+}
+
+/* The toolbar carries two kinds of verbs: the ones that act on this canvas
+   and the ones that act on a template. The line between them says where the
+   canvas ends and a shareable chain begins. */
+.nxc-toolbar__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: color-mix(in srgb, var(--mcode-text) 22%, transparent);
+  flex: none;
+}
+
+.nxc-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin-right: 2px;
+  white-space: nowrap;
+  /* It is the page heading, but it keeps the look of a label. */
+  margin-block: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.nxc-brand__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: none;
+}
+
+.nxc-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--mcode-surface-muted);
+  border-radius: 8px;
+  /* Baseline: 32-40px control height, 8px corners. */
+  min-height: 32px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--mcode-duration-fast) var(--mcode-ease), border-color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-btn:hover {
+  background: var(--mcode-bg-secondary);
+  border-color: var(--mcode-border-strong);
+}
+
+.nxc-btn:active {
+  background: color-mix(in srgb, var(--mcode-text) 6%, transparent);
+}
+
+.nxc-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nxc-btn--primary {
+  background: var(--mcode-primary-action-bg);
+  border-color: var(--mcode-primary-action-bg);
+  color: var(--mcode-primary-action-text);
+  font-weight: 600;
+}
+
+.nxc-btn--primary:hover {
+  background: color-mix(in srgb, var(--mcode-primary-action-bg) 85%, transparent);
+}
+
+/* A destructive action carries the danger token the whole time, not only when
+   the pointer is on it: the button that throws work away should look like it
+   before it is clicked. */
+.nxc-btn--danger {
+  border-color: color-mix(in srgb, var(--mcode-danger) 45%, var(--line));
+  color: var(--mcode-danger);
+}
+
+.nxc-btn--danger:hover {
+  border-color: var(--mcode-danger);
+  background: color-mix(in srgb, var(--mcode-danger) 12%, var(--mcode-surface-muted));
+  color: var(--mcode-danger);
+}
+
+/* A small button inside a card or a panel: the same button, less of it. */
+.nxc-btn--small {
+  min-height: 24px;
+  padding: 2px 9px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.nxc-btn--tiny {
+  padding: 2px 7px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.nxc-select {
+  appearance: none;
+  background: var(--mcode-surface-muted);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 15px center, right 10px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding: 5px 28px 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 26px 5px 9px;
+  cursor: pointer;
+  max-width: 210px;
+  text-overflow: ellipsis;
+}
+
+.nxc-select--canvas {
+  min-width: 140px;
+}
+
+/* The name of the canvas, edited in place.
+   A native prompt() is a separate OS window that never reaches the screen
+   inside the MiniApp host, so the name is typed into the page itself. */
+.nxc-rename {
+  min-width: 140px;
+  max-width: 210px;
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--mcode-surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.nxc-rename:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+/* ---------------- asking in the page ----------------
+   A native confirm() is a separate OS window that never reaches the screen
+   inside the MiniApp host, so the question is drawn here instead. */
+.nxc-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 42%);
+}
+
+/* The rule above says how the question is drawn, not that it is always
+   there: a `display` on the class would beat the `hidden` attribute. */
+.nxc-confirm[hidden] {
+  display: none;
+}
+
+.nxc-confirm__box {
+  max-width: 360px;
+  padding: 20px 22px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  color: var(--text);
+  box-shadow: var(--mcode-shadow-strong);
+}
+
+.nxc-confirm__text {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.nxc-confirm__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---------------- self-drawn dropdown ----------------
+   A native <select> popup is a separate OS window that never reaches the
+   screen inside the MiniApp host, so the canvas draws its own menu. The
+   button keeps the look of the old select. */
+.nxc-dropdown {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.nxc-dropdown__button {
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nxc-menu--dropdown {
+  max-height: 260px;
+  overflow: auto;
+  min-width: 160px;
+}
+
+.nxc-menu__item.is-active {
+  background: color-mix(in srgb, var(--mcode-accent) 22%, transparent);
+  color: var(--text);
+}
+
+.nxc-zoom {
+  min-width: 48px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.nxc-build {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.nxc-savestate {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.nxc-savestate[data-state="saving"] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--mcode-warning) 40%, transparent);
+}
+
+.nxc-savestate[data-state="pending"] {
+  color: var(--text-dim);
+}
+
+.nxc-savestate[data-state="saved"] {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--mcode-success) 40%, transparent);
+}
+
+.nxc-savestate[data-state="error"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--mcode-danger) 45%, transparent);
+}
+
+/* ---------------- focus ---------------- */
+
+/* Every operable control shows where the keyboard is. The accent ring is
+   drawn on top of the border so the shape of the control does not change. */
+.nxc-app button:focus-visible,
+.nxc-app input:focus-visible,
+.nxc-app textarea:focus-visible,
+.nxc-app [role="combobox"]:focus-visible,
+.nxc-app [role="textbox"]:focus-visible {
+  outline: 2px solid var(--mcode-accent);
+  outline-offset: 1px;
+}
+
+/* The inline editor clears its own outline, so the ring is drawn on the
+   frame around it. */
+.nxc-composer__mention-wrap:has(.nxc-composer__editor:focus-visible) {
+  box-shadow: inset 0 0 0 1px var(--mcode-accent);
+  border-radius: 8px;
+}
+
+/* ---------------- layout ---------------- */
+
+.nxc-main {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.nxc-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  background: var(--bg);
+  touch-action: none;
+}
+
+.nxc-viewport.is-panning {
+  cursor: grabbing;
+}
+
+.nxc-viewport.is-connecting {
+  cursor: crosshair;
+}
+
+.nxc-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.nxc-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.nxc-connections {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.nxc-nodes {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* ---------------- connections ---------------- */
+
+.nxc-connection {
+  fill: none;
+  /* The line carries the hue of what flows through it, so the chain reads by
+     colour. */
+  --line-kind: var(--mcode-text-subtle);
+  stroke: var(--line-kind);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  pointer-events: stroke;
+  transition: stroke var(--mcode-duration-fast) var(--mcode-ease), opacity var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-connection[data-kind='text'] { --line-kind: var(--nxc-kind-text); }
+.nxc-connection[data-kind='image'] { --line-kind: var(--nxc-kind-image); }
+.nxc-connection[data-kind='video'] { --line-kind: var(--nxc-kind-video); }
+.nxc-connection[data-kind='audio'],
+.nxc-connection[data-kind='music'] { --line-kind: var(--nxc-kind-audio); }
+.nxc-connection[data-kind='style'] { --line-kind: var(--nxc-kind-style); }
+
+.nxc-connection:hover {
+  stroke: var(--mcode-accent);
+  stroke-width: 2.4;
+}
+
+/* The line that belongs to the selection is the one the eye should follow. */
+.nxc-connection--active {
+  stroke: var(--line-kind);
+  stroke-width: 2.4;
+}
+
+/* While something is selected, the lines that are not part of it step back. */
+.nxc-connection.is-dim { opacity: 0.22; }
+
+.nxc-connection--hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.nxc-connection--draft {
+  fill: none;
+  stroke: var(--brand-2);
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+  pointer-events: none;
+}
+
+.nxc-viewport.is-connecting .nxc-connection {
+  pointer-events: none;
+}
+
+/* ---------------- nodes ---------------- */
+
+.nxc-node {
+  position: absolute;
+  /* The hue of the kind of content this node carries. It colours the header,
+     the ports and the line, so a chain reads by colour. */
+  --kind: var(--nxc-kind-text);
+  background: var(--mcode-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--node-radius);
+  box-shadow: var(--mcode-shadow);
+  display: flex;
+  flex-direction: column;
+  /* The footer must stay reachable, so the node does not clip its own chrome. */
+  overflow: visible;
+  user-select: none;
+  cursor: grab;
+  transition: opacity var(--mcode-duration-fast) var(--mcode-ease), box-shadow var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-node[data-kind='image'] { --kind: var(--nxc-kind-image); }
+.nxc-node[data-kind='video'] { --kind: var(--nxc-kind-video); }
+.nxc-node[data-kind='audio'],
+.nxc-node[data-kind='music'] { --kind: var(--nxc-kind-audio); }
+.nxc-node[data-kind='text'],
+.nxc-node[data-kind='prompt'] { --kind: var(--nxc-kind-text); }
+.nxc-node[data-kind='style'] { --kind: var(--nxc-kind-style); }
+/* An input node takes what it is given, and a group holds nothing. */
+.nxc-node[data-kind='input'],
+.nxc-node[data-kind='group'] { --kind: var(--mcode-text-subtle); }
+
+/* The state is a colour next to the words that say it, never instead of
+   them: the badge still carries the state for a reader without colour. */
+.nxc-node[data-state='done'] { border-color: color-mix(in srgb, var(--mcode-success) 42%, var(--line)); }
+.nxc-node[data-state='error'] { border-color: color-mix(in srgb, var(--mcode-danger) 55%, var(--line)); }
+.nxc-node[data-state='running'] { border-color: color-mix(in srgb, var(--mcode-warning) 45%, var(--line)); }
+
+.nxc-node:hover { border-color: var(--mcode-border-strong); }
+
+.nxc-node--selected {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--mcode-accent), var(--mcode-shadow-strong);
+}
+
+/* While a node is selected, the rest of the board steps back, so the
+   selection and the lines around it are the thing the eye lands on. The card
+   stays readable; only the line goes quiet. */
+.nxc-node.is-dim { opacity: 0.55; }
+.nxc-node--selected.is-dim { opacity: 1; }
+
+/* A native image drag would swallow the pointermove stream the canvas
+   relies on, so the browser must never start one inside a node. */
+.nxc-node img,
+.nxc-node video,
+.nxc-node canvas {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+.nxc-node--connect-snap {
+  border-color: var(--brand-2);
+  box-shadow: 0 0 0 2px var(--mcode-accent);
+}
+
+.nxc-node--loading {
+  border-color: var(--mcode-accent);
+}
+
+.nxc-node--error {
+  border-color: var(--mcode-danger);
+}
+
+.nxc-node--group {
+  background: color-mix(in srgb, var(--mcode-accent) 5%, transparent);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--mcode-accent) 35%, transparent);
+  box-shadow: none;
+}
+
+.nxc-node__head {
+  border-radius: calc(var(--node-radius) - 1px) calc(var(--node-radius) - 1px) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  /* The header carries the hue of the node, very quietly: the card stays
+     neutral, the type tells itself. */
+  border-bottom: 1px solid color-mix(in srgb, var(--kind) 22%, transparent);
+  background: color-mix(in srgb, var(--kind) 7%, var(--mcode-surface));
+  flex: none;
+}
+
+/* A dot that says how the node is doing, beside the words that say it. */
+.nxc-node__state {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  flex: none;
+}
+
+.nxc-node[data-state='done'] .nxc-node__state { background: var(--mcode-success); }
+.nxc-node[data-state='error'] .nxc-node__state { background: var(--mcode-danger); }
+.nxc-node[data-state='running'] .nxc-node__state { background: var(--mcode-warning); }
+.nxc-node[data-state='interrupted'] .nxc-node__state { background: var(--mcode-text-subtle); }
+
+.nxc-node__kind {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--kind) 18%, transparent);
+  color: var(--kind);
+  flex: none;
+}
+
+.nxc-node__kind[data-kind="image"] {
+  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
+  color: var(--mcode-accent);
+}
+
+.nxc-node__kind[data-kind="video"] {
+  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
+  color: var(--mcode-text-muted);
+}
+
+.nxc-node__kind[data-kind="audio"] {
+  background: color-mix(in srgb, var(--mcode-success) 16%, transparent);
+  color: var(--mcode-success);
+}
+
+.nxc-node__kind[data-kind="text"] {
+  background: color-mix(in srgb, var(--mcode-warning) 16%, transparent);
+  color: var(--mcode-warning);
+}
+
+.nxc-node__kind[data-kind="group"] {
+  background: color-mix(in srgb, var(--mcode-text) 16%, transparent);
+  color: var(--mcode-text-muted);
+}
+
+.nxc-node__title {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.nxc-node__title-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--brand);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nxc-node__status {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nxc-node__status[data-tone="success"] {
+  color: var(--ok);
+}
+
+.nxc-node__status[data-tone="error"] {
+  color: var(--danger);
+}
+
+/* The word that says the node is selected. The border colour says it too,
+   but a state must never be carried by colour alone. */
+.nxc-node__sel {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mcode-primary-action-bg);
+  color: var(--mcode-primary-action-text);
+  flex: none;
+  white-space: nowrap;
+}
+
+.nxc-node__sel[hidden] {
+  display: none;
+}
+
+.nxc-node__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* The output area is the only part of the card that may stretch: the
+   composer and the parameter row keep their natural height, so the preview
+   takes exactly what is left and the card never has to scroll. */
+.nxc-node__output {
+  flex: 1 1 auto;
+  min-height: 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A generated text is content, not a preview: it is never clipped and never
+   scrolls inside its own box. The card itself grows and scrolls instead. */
+.nxc-node__output--text {
+  flex-shrink: 0;
+}
+.nxc-node__output--text .nxc-node__text-body {
+  max-height: none;
+  overflow: visible;
+}
+
+.nxc-node__media-wrap {
+  position: relative;
+  overflow: hidden;
+  background: var(--mcode-bg-secondary);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  /* Top aligned on purpose: the crop overlay is positioned in percentages of
+     this box, so the media has to start at the same corner. */
+  align-items: flex-start;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 210px;
+}
+
+/* Once the media's own ratio is known, the box is sized to that ratio and the
+   card grows with it, so the preview is never letterboxed inside a fixed
+   frame. The box is written in code, so the stretch is turned off here. */
+.nxc-node__media-wrap--fitted {
+  flex: 0 0 auto;
+  align-self: center;
+  max-height: none;
+}
+
+.nxc-node__media {
+  width: 100%;
+  height: auto;
+  max-height: 210px;
+  object-fit: contain;
+  display: block;
+}
+
+/* In a fitted box the media fills it exactly. */
+.nxc-node__media-wrap--fitted .nxc-node__media {
+  height: 100%;
+  max-height: none;
+}
+
+.nxc-node__video-duration {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  background: rgb(0 0 0 / 72%);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nxc-node__video-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--mcode-text) 50%, transparent);
+  background: rgb(0 0 0 / 55%);
+  color: var(--mcode-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.nxc-node__text-body {
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* No nested scroll area: the text grows with the card and the card
+     scrolls with the wheel. */
+  max-height: none;
+  overflow: hidden;
+  cursor: text;
+}
+
+.nxc-node__text-body:empty::after {
+  content: "空节点，可连接生成结果";
+  color: var(--text-faint);
+}
+
+/* ---------------- composer (inline, contentEditable) ---------------- */
+
+.nxc-composer {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.nxc-composer__mention-wrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  padding: 6px 8px;
+  min-height: 52px;
+}
+
+.nxc-composer__mention-wrap:focus-within {
+  border-color: var(--brand);
+}
+
+.nxc-composer__placeholder {
+  position: absolute;
+  left: 9px;
+  top: 7px;
+  color: var(--text-faint);
+  font-size: 12px;
+  pointer-events: none;
+  max-width: calc(100% - 18px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The placeholder is a hint, not a second line of text: it disappears as
+   soon as the editor holds something. */
+.nxc-composer__mention-wrap:has(.nxc-composer__editor:not(:empty)) .nxc-composer__placeholder {
+  display: none;
+}
+
+.nxc-composer__editor {
+  font-size: 14px;
+  line-height: 1.6;
+  outline: none;
+  word-break: break-word;
+  min-height: 38px;
+  /* Same rule as the text body: the editor grows, the card scrolls. */
+  max-height: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.nxc-composer__editor:empty::before {
+  content: "";
+}
+
+.nxc-composer__hint {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.nxc-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 1px 6px 1px 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mcode-accent) 14%, transparent);
+  color: var(--mcode-accent);
+  border: 1px solid color-mix(in srgb, var(--mcode-accent) 30%, transparent);
+  margin: 0 2px;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.nxc-mention-chip--orphan {
+  background: color-mix(in srgb, var(--mcode-danger) 12%, transparent);
+  color: var(--mcode-danger);
+  border-color: color-mix(in srgb, var(--mcode-danger) 40%, transparent);
+}
+
+.nxc-mention-chip__thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+  background: var(--mcode-bg-secondary);
+}
+
+.nxc-mention-chip__thumb--audio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+}
+
+/* ---------------- mention menu ---------------- */
+
+.nxc-mention-menu {
+  position: fixed;
+  z-index: 80;
+  width: 250px;
+  max-height: 210px;
+  overflow: auto;
+  padding: 4px;
+}
+
+.nxc-mention-menu__item {
+  appearance: none;
+  background: none;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.nxc-mention-menu__item:hover,
+.nxc-mention-menu__item.is-active {
+  background: color-mix(in srgb, var(--mcode-accent) 18%, transparent);
+}
+
+.nxc-mention-menu__thumb {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--mcode-bg-secondary);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.nxc-mention-menu__label {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The marker of a material that is already above the node. */
+.nxc-mention-menu__hint {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.nxc-mention-menu__empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---------------- node params ---------------- */
+
+.nxc-node__params {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.nxc-node__param {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--mcode-text) 3%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 5px;
+}
+
+.nxc-node__param select,
+.nxc-node__param input {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+  max-width: 92px;
+}
+
+.nxc-node__param select {
+  cursor: pointer;
+}
+
+.nxc-node__param option {
+  background: var(--mcode-surface-muted);
+}
+
+.nxc-node__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* A dot in the hue of a data kind, for the legend in the capability list. */
+.nxc-kind-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--mcode-text-subtle);
+}
+
+.nxc-kind-dot[data-kind='text'] { background: var(--nxc-kind-text); }
+.nxc-kind-dot[data-kind='image'] { background: var(--nxc-kind-image); }
+.nxc-kind-dot[data-kind='video'] { background: var(--nxc-kind-video); }
+.nxc-kind-dot[data-kind='audio'] { background: var(--nxc-kind-audio); }
+.nxc-kind-dot[data-kind='music'] { background: var(--nxc-kind-audio); }
+.nxc-kind-dot[data-kind='style'] { background: var(--nxc-kind-style); }
+
+.nxc-node__refs {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.nxc-node__error {
+  font-size: 11px;
+  color: var(--mcode-danger);
+  background: color-mix(in srgb, var(--mcode-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mcode-danger) 35%, transparent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  word-break: break-word;
+}
+
+/* A notice is not a failure: the node is busy, or something is worth saying
+   that is not an error. It looks like an error less, so it is not read as
+   one. */
+.nxc-node__notice {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-faint) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-faint) 30%, transparent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  word-break: break-word;
+}
+
+/* ---------------- ports ---------------- */
+
+.nxc-node__port {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  /* The port is coloured by the kind that flows through it, not by the kind
+     of the card it sits on: a text slot on a picture node is amber. */
+  --port-kind: var(--nxc-kind-text);
+  background: var(--mcode-surface);
+  border: 2px solid var(--port-kind);
+  /* A ring of the surface around the port lifts it off the card edge. */
+  box-shadow: 0 0 0 3px var(--mcode-surface);
+  cursor: crosshair;
+  transition: background var(--mcode-duration-fast) var(--mcode-ease), border-color var(--mcode-duration-fast) var(--mcode-ease), box-shadow var(--mcode-duration-fast) var(--mcode-ease);
+  z-index: 2;
+}
+
+.nxc-node__port[data-kind='text'] { --port-kind: var(--nxc-kind-text); }
+.nxc-node__port[data-kind='image'] { --port-kind: var(--nxc-kind-image); }
+.nxc-node__port[data-kind='video'] { --port-kind: var(--nxc-kind-video); }
+.nxc-node__port[data-kind='audio'],
+.nxc-node__port[data-kind='music'] { --port-kind: var(--nxc-kind-audio); }
+.nxc-node__port[data-kind='style'] { --port-kind: var(--nxc-kind-style); }
+
+/* The slot strip: what may come in, and what goes out.
+   A slot nothing is plugged into yet stays hollow, so what is still open can
+   be read off the card. */
+.nxc-slots {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  row-gap: 4px;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 4px 9px;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--mcode-text) 2%, transparent);
+}
+
+.nxc-slots__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.nxc-slots__row--out {
+  /* The output stays against the right edge, also when there is no input. */
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+/* The side a slot sits on: what goes in, and what goes out. */
+.nxc-slots__label {
+  font-size: 9.5px;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  flex: none;
+}
+
+.nxc-slot {
+  /* The colour of the data this slot carries. The same colour the node, its
+     port and the line use, so a chain reads by colour alone. */
+  --slot-kind: var(--mcode-text-subtle);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.nxc-slot[data-kind='text'] { --slot-kind: var(--nxc-kind-text); }
+.nxc-slot[data-kind='image'] { --slot-kind: var(--nxc-kind-image); }
+.nxc-slot[data-kind='video'] { --slot-kind: var(--nxc-kind-video); }
+.nxc-slot[data-kind='audio'] { --slot-kind: var(--nxc-kind-audio); }
+.nxc-slot[data-kind='music'] { --slot-kind: var(--nxc-kind-audio); }
+.nxc-slot[data-kind='style'] { --slot-kind: var(--nxc-kind-style); }
+
+.nxc-slot__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--slot-kind);
+}
+
+/* An open slot: the dot is a ring in the colour of the data it waits for. */
+.nxc-slot.is-open .nxc-slot__dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--slot-kind);
+}
+
+.nxc-slot.is-open .nxc-slot__name {
+  color: var(--text-faint);
+}
+
+/* The word that says the slot is still waiting. */
+.nxc-slot__wait {
+  font-size: 9.5px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--mcode-text) 6%, transparent);
+}
+
+/* What the node hands on is filled, the way a source socket is. */
+.nxc-slot.is-out .nxc-slot__name {
+  color: var(--text-dim);
+}
+
+/* The port is a hole to grab, so the hit area is bigger than the dot. */
+.nxc-node__port::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+}
+
+.nxc-node__port--in {
+  left: -7px;
+}
+
+/* An output is always filled: the flow leaves the node. */
+.nxc-node__port--out {
+  right: -7px;
+  background: var(--port-kind);
+}
+
+/* An input is hollow until something is plugged into it. */
+.nxc-node__port--in.is-connected {
+  background: var(--port-kind);
+}
+
+.nxc-node__port:hover {
+  border-color: var(--mcode-accent);
+  box-shadow: 0 0 0 3px var(--mcode-surface), 0 0 10px var(--port-kind);
+  /* Hover changes colour only: the baseline forbids scaling on hover. */
+}
+
+.nxc-node__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 52%, var(--mcode-border-strong) 52%);
+  border-bottom-right-radius: var(--node-radius);
+  z-index: 2;
+}
+
+/* comet loading ring */
+.nxc-node__comet {
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 3;
+}
+
+.nxc-node__comet circle {
+  fill: none;
+  stroke: var(--brand-2);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 40 220;
+  animation: nxc-comet 1.15s linear infinite;
+}
+
+@keyframes nxc-comet {
+  to {
+    stroke-dashoffset: -260;
+  }
+}
+
+/* ---------------- menus & panels ---------------- */
+
+.nxc-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 158px;
+  padding: 4px;
+  background: var(--mcode-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--mcode-radius-card);
+  box-shadow: var(--mcode-shadow-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* An overlay that is taller than the window scrolls inside it. Without
+     this it grows past the bottom edge, and the placement rule has nothing
+     to clamp against — the panel ends up above the top of the screen. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  animation: nxc-menu-in var(--mcode-duration-panel) var(--mcode-ease);
+}
+
+@keyframes nxc-menu-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.nxc-menu[hidden],
+.nxc-panel[hidden] {
+  display: none;
+}
+
+.nxc-menu__item {
+  appearance: none;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 6px 9px;
+  /* Baseline: overlay corners 12px, control corners 8px, rows 32-38px. */
+  min-height: var(--mcode-row-height);
+  border-radius: var(--mcode-radius-control);
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 12px;
+  transition: background var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-menu__item:hover,
+.nxc-menu__item:focus-visible {
+  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
+  outline: none;
+}
+
+.nxc-menu__item.is-active {
+  background: color-mix(in srgb, var(--mcode-accent) 22%, transparent);
+  color: var(--mcode-text);
+}
+
+.nxc-menu__item:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--mcode-accent);
+}
+
+/* A destructive item says so before it is clicked. */
+.nxc-menu__item--danger {
+  color: var(--mcode-danger);
+}
+
+.nxc-menu__item--danger:hover,
+.nxc-menu__item--danger:focus-visible {
+  background: color-mix(in srgb, var(--mcode-danger) 14%, transparent);
+  color: var(--mcode-danger);
+}
+
+.nxc-menu__item small {
+  color: var(--text-faint);
+}
+
+/* The dot in the add menu carries the colour of the data the node moves, so
+   the menu reads the same way the board does. */
+.nxc-menu__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--slot-kind, var(--nxc-kind-text));
+  flex: none;
+}
+
+.nxc-menu__dot[data-kind='text'] { --slot-kind: var(--nxc-kind-text); }
+.nxc-menu__dot[data-kind='image'] { --slot-kind: var(--nxc-kind-image); }
+.nxc-menu__dot[data-kind='video'] { --slot-kind: var(--nxc-kind-video); }
+.nxc-menu__dot[data-kind='audio'] { --slot-kind: var(--nxc-kind-audio); }
+
+.nxc-menu__sep {
+  height: 1px;
+  background: var(--line);
+  margin: 3px 2px;
+}
+
+.nxc-panel {
+  position: fixed;
+  z-index: 85;
+  min-width: 200px;
+  max-width: 300px;
+  padding: 9px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--mcode-shadow-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  /* The capability list is longer than the window. It scrolls inside the
+     panel instead of growing past the edge of the screen. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+.nxc-panel__title {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* A heading inside the panel: it says which kind of thing the list under it
+   holds, so a list of templates is not one long row of buttons. */
+.nxc-panel__section {
+  margin: 10px 0 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.5px;
+}
+
+.nxc-panel__section:first-child {
+  margin-top: 0;
+}
+
+/* The way out of the app: the file is on this machine, and the user may
+   want it on theirs. */
+.nxc-node__media-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+/* The library: every local asset, with what can be done to it. */
+.nxc-library__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.nxc-library {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.nxc-library__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mcode-bg-secondary);
+}
+
+.nxc-library__thumb {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--mcode-bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nxc-library__thumb img,
+.nxc-library__thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nxc-library__badge {
+  font-size: 18px;
+  color: var(--text-faint);
+}
+
+.nxc-library__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nxc-library__name {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nxc-library__sub {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.nxc-library__acts {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.nxc-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.nxc-panel__option {
+  appearance: none;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 5px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nxc-panel__option:hover {
+  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
+}
+
+.nxc-panel__option.is-active {
+  background: color-mix(in srgb, var(--mcode-accent) 26%, transparent);
+}
+
+.nxc-panel__option small {
+  color: var(--text-faint);
+}
+
+/* ---------------- node picker ---------------- */
+
+/* The picker that opens when a connection is dropped on empty space. It
+   offers the node types that fit what the source offers. */
+.nxc-picker {
+  position: fixed;
+  z-index: 90;
+  min-width: 132px;
+  padding: 8px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--mcode-shadow-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+.nxc-picker__title {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 0 2px;
+}
+
+.nxc-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nxc-picker__item {
+  appearance: none;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mcode-text);
+}
+
+.nxc-picker__item:hover {
+  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
+}
+
+/* ---------------- upload ---------------- */
+
+.nxc-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* The file input is the control itself: its own button is styled to match
+   the rest of the page, and it stays reachable for assistive technology. */
+.nxc-upload__file {
+  font-size: 11px;
+  color: var(--text-faint);
+  max-width: 100%;
+}
+
+.nxc-upload__file::file-selector-button {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--mcode-bg-secondary);
+  color: var(--mcode-text);
+  border-radius: 6px;
+  padding: 3px 9px;
+  margin-right: 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.nxc-upload__list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.nxc-upload__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--mcode-bg-secondary);
+  font-size: 11px;
+}
+
+.nxc-upload__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mcode-text);
+}
+
+.nxc-upload__remove {
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.nxc-upload__remove:hover {
+  color: var(--danger);
+}
+
+/* ---------------- prompt template ---------------- */
+
+.nxc-template {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.nxc-template__text {
+  width: 100%;
+  resize: vertical;
+  min-height: 42px;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--mcode-bg-secondary);
+  color: var(--mcode-text);
+}
+
+.nxc-template__text::placeholder {
+  color: var(--text-faint);
+}
+
+/* ---------------- inherited prompt ---------------- */
+
+/* The prompt a generated upstream handed over: it is shown, but it cannot be
+   typed into, because the text comes from upstream. */
+.nxc-inherited {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--mcode-bg-secondary);
+  border: 1px solid var(--line);
+  opacity: 0.72;
+}
+
+.nxc-inherited__label {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.nxc-inherited__text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mcode-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The node's own prompt is kept, not thrown away: the note says so. */
+.nxc-inherited__note {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.nxc-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-faint);
+  pointer-events: none;
+  font-size: 12.5px;
+  text-align: center;
+  max-width: 320px;
+}
+
+.nxc-empty[hidden] {
+  display: none;
+}
+
+.nxc-banner {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  /* An outcome is not a failure: the banner is neutral unless it says the
+     something went wrong. */
+  background: var(--mcode-surface);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  z-index: 25;
+  max-width: 70%;
+  text-align: center;
+  box-shadow: var(--mcode-shadow);
+}
+
+.nxc-banner[data-tone="error"] {
+  background: color-mix(in srgb, var(--mcode-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--mcode-danger) 45%, transparent);
+  color: var(--mcode-danger);
+}
+
+.nxc-banner[hidden] {
+  display: none;
+}
+
+.nxc-spin {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--mcode-text) 22%, transparent);
+  border-top-color: var(--brand-2);
+  animation: nxc-spin 0.8s linear infinite;
+}
+
+@keyframes nxc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------------- marquee band ---------------- */
+
+.nxc-band {
+  position: absolute;
+  z-index: 20;
+  border: 1px solid var(--brand-2);
+  background: color-mix(in srgb, var(--mcode-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.nxc-band[hidden] {
+  display: none;
+}
+
+/* ---------------- minimap ---------------- */
+
+.nxc-minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 22;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mcode-surface);
+  cursor: pointer;
+  box-shadow: var(--mcode-shadow);
+}
+
+.nxc-minimap[hidden] {
+  display: none;
+}
+
+/* ---------------- palette ---------------- */
+
+.nxc-palette {
+  min-width: 210px;
+  padding: 6px;
+}
+
+.nxc-palette__group {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 6px 9px 3px;
+}
+
+.nxc-panel__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11.5px;
+  padding: 3px 7px;
+  border-radius: 6px;
+}
+
+.nxc-panel__row small {
+  color: var(--text-faint);
+}
+
+.nxc-panel__row[data-status="pending"] {
+  color: var(--warn);
+}
+
+.nxc-panel__row[data-status="ready"] {
+  color: var(--ok);
+}
+
+.nxc-panel__section {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 4px 2px 2px;
+  border-top: 1px solid var(--line-soft);
+  margin-top: 4px;
+}
+
+/* ---------------- parameter row (one row of selects) ---------------- */
+
+.nxc-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.nxc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nxc-field--grow {
+  flex: 1 1 140px;
+}
+
+.nxc-field__label {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.4px;
+}
+
+.nxc-field .nxc-select {
+  max-width: 130px;
+  padding: 4px 22px 4px 7px;
+  font-size: 12px;
+}
+
+.nxc-field--grow .nxc-select {
+  max-width: none;
+  width: 100%;
+}
+
+.nxc-note {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.nxc-media-lost {
+  font-size: 12px;
+  color: var(--danger);
+  border: 1px dashed color-mix(in srgb, var(--mcode-danger) 45%, transparent);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+/* A material that is gone: the card says so in words instead of showing a
+   broken picture. The picture stays in the page, so the card heals by itself
+   when the file is back. */
+.nxc-node__media-wrap.is-missing .nxc-node__media {
+  display: none;
+}
+
+.nxc-node__media-wrap.is-missing .nxc-media-lost {
+  margin: auto;
+  font-size: 11.5px;
+  padding: 10px;
+  line-height: 1.5;
+}
+
+.nxc-node__media--audio {
+  /* The native audio player keeps its own height and is centred by the
+     flex box instead of being stretched over the whole preview. */
+  width: 100%;
+  height: 44px;
+  align-self: center;
+}
+
+/* ---------------- style node ---------------- */
+
+.nxc-style {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nxc-style__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--mcode-text) 3%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  padding: 6px 8px;
+}
+
+.nxc-style__preview b {
+  color: var(--text);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+/* ---------------- run log panel ---------------- */
+
+.nxc-taskpanel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 22;
+  width: 280px;
+  max-height: 46%;
+  overflow: auto;
+  padding: 9px 10px;
+  background: var(--mcode-surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--mcode-shadow);
+}
+
+.nxc-taskpanel[hidden] {
+  display: none;
+}
+
+.nxc-taskpanel__title {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 6px;
+}
+
+.nxc-taskpanel__item {
+  border-top: 1px solid var(--line-soft);
+  padding: 5px 0;
+}
+
+.nxc-taskpanel__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nxc-taskpanel__head small {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.nxc-taskpanel__line {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nxc-taskpanel__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+/* ---------------- task cards (approval / question) ---------------- */
+
+.nxc-taskcard {
+  margin-top: 6px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--mcode-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--mcode-warning) 8%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.nxc-taskcard__title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--mcode-warning);
+}
+
+.nxc-taskcard__body {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.nxc-taskcard__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.nxc-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.nxc-opt input {
+  margin-top: 2px;
+  accent-color: var(--brand);
+}
+
+/* ---------------- tool bar ---------------- */
+
+.nxc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 7px;
+}
+
+.nxc-tools__btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--mcode-surface-muted);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-tools__btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--mcode-accent) 18%, transparent);
+  color: var(--text);
+}
+
+.nxc-tools__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nxc-tools__btn.is-pending {
+  border-style: dashed;
+  color: var(--text-faint);
+}
+
+.nxc-panel__desc {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.nxc-toolpanel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.nxc-toolpanel__acts {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+  margin-top: 3px;
+}
+
+.nxc-multiselect {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ---------------- crop overlay ---------------- */
+
+.nxc-crop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 55%);
+  z-index: 5;
+}
+
+.nxc-crop__box {
+  position: absolute;
+  border: 1.5px solid var(--brand-2);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 35%);
+  cursor: move;
+}
+
+.nxc-crop__handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--brand-2);
+  border: 1px solid var(--mcode-border-strong);
+  cursor: nwse-resize;
+}
+
+.nxc-crop .nxc-btn {
+  position: absolute;
+  bottom: 6px;
+}
+
+.nxc-crop .nxc-btn:nth-of-type(1) {
+  right: 76px;
+}
+
+.nxc-crop .nxc-btn:nth-of-type(2) {
+  right: 6px;
+}
+
+/* ---------------- node footer (tools stay reachable) ---------------- */
+
+.nxc-node__footer {
+  flex: none;
+  border-top: 1px solid var(--line-soft);
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--mcode-text) 2%, transparent);
+}
+
+.nxc-node__footer .nxc-tools {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* ---------------- a control that reads a file ----------------
+   The file input is the control itself. It stays in the page and lies over
+   the label, so the label is what the user reads and clicks, and the file
+   reaches the page without a native dialog that the host may never show. */
+.nxc-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.nxc-file input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The place a file goes: the path is typed into the page, because a native
+   file dialog is a separate OS window that never reaches the screen inside
+   the MiniApp host. */
+.nxc-panel__path {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text);
+  font-size: 12px;
+}
+
+.nxc-panel__row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+/* A template of the user, and the button that takes it away. */
+.nxc-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nxc-panel__item .nxc-panel__option {
+  flex: 1;
+  min-width: 0;
+}
+
+.nxc-panel__del {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 6px;
+}
+
+.nxc-panel__del:hover {
+  color: var(--mcode-danger);
+  background: color-mix(in srgb, var(--mcode-danger) 12%, transparent);
+}
+
+/* The button that keeps a template file in the list of the user's own. */
+.nxc-panel__keep {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 8px;
+  flex: none;
+}
+
+.nxc-panel__keep:hover {
+  color: var(--mcode-text);
+  border-color: var(--mcode-border-strong);
+}
+
+/* ---------------- reduced motion ----------------
+   Movement, scaling and continuous animation are removed; only opacity
+   transitions that carry state survive. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .nxc-node__comet,
+  .nxc-spin {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "id": "image-mimic",
+  "title": "图片复刻",
+  "description": "放一张图进去，先把它的提示词反推出来，再照着重新生成一张 1:1 的图。",
+  "group": "从素材出发",
+  "actions": [
+    {
+      "type": "add_node",
+      "args": {
+        "type": "input",
+        "title": "参考图",
+        "prompt": "",
+        "kind": "image",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "text",
+        "title": "反推提示词",
+        "prompt": "写出一段能复刻这张图的提示词：画面主体、动作与表情、镜头与构图、光线与色彩、材质与风格",
+        "mode": "describe",
+        "kind": "text",
+        "model": "default",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "add_node",
+      "args": {
+        "type": "image",
+        "title": "复刻",
+        "prompt": "",
+        "mode": "text2image",
+        "kind": "image",
+        "model": "matrix-image",
+        "ratio": "1:1",
+        "resolution": "1K",
+        "count": 1,
+        "templateId": "custom"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@1",
+        "to": "@2"
+      }
+    },
+    {
+      "type": "connect",
+      "args": {
+        "from": "@2",
+        "to": "@3"
+      }
+    }
+  ]
+}
