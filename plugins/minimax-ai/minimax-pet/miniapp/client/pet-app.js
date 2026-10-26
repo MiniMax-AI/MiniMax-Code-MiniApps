@@ -1359,13 +1359,14 @@ async function selectPet(id) {
   const summary = app.pets.find((p) => p.id === id);
   if (!summary) {
     showLoadError({ code: 'pet_not_found', message: `没有 id 为 ${id} 的宠物` });
-    return;
+    return 'failed';
   }
   const token = ++app.selectToken;
+  let result = 'selected';
   setMsg(els.galleryMsg, `正在加载「${summary.displayName}」…`);
   try {
     const loaded = await loadPet(new URL(summary.petJsonUrl, location.href).href);
-    if (token !== app.selectToken) return;
+    if (token !== app.selectToken) return 'superseded';
     stopLook();
     app.pet = loaded;
     app.petSummary = summary;
@@ -1378,11 +1379,13 @@ async function selectPet(id) {
     showLoadError(null);
     setMsg(els.galleryMsg, '');
   } catch (error) {
-    if (token !== app.selectToken) return;
+    if (token !== app.selectToken) return 'superseded';
     showLoadError(error, summary.displayName);
     setMsg(els.galleryMsg, '');
+    result = 'failed';
   }
   renderAll();
+  return result;
 }
 
 function showLoadError(error, name) {
@@ -1635,6 +1638,7 @@ async function confirmImport() {
   const { petJson, file } = importState;
   if (!petJson || !file || !importState.loaded || importState.errors.length || importState.busy) return;
   let generation = importState.generation;
+  let saved = false;
   const current = () => !disposed && generation === importState.generation;
   importState.busy = true;
   renderImportErrors();
@@ -1659,14 +1663,25 @@ async function confirmImport() {
       return;
     }
     const newId = data?.pet?.id ?? petJson.id;
+    saved = true;
     resetImport();
     generation = importState.generation;
     importState.busy = true;
     renderImportErrors();
     await refreshPets();
     if (!current()) return;
-    await selectPet(newId);
+    const selection = await selectPet(newId);
     if (!current()) return;
+    if (selection === 'failed') {
+      const message = '文件已导入，但宠物加载失败；请返回外观重新选择';
+      setMsg(els.importMsg, message, 'error');
+      setMsg(els.galleryMsg, message, 'error');
+      return;
+    }
+    if (selection !== 'selected' || app.pet?.id !== newId) {
+      setMsg(els.importMsg, '文件已导入，已保留你当前的宠物选择', 'ok');
+      return;
+    }
     panelNavigation?.completeImport();
     const message = `导入成功，已切换到「${data?.pet?.displayName ?? newId}」`;
     setMsg(els.importMsg, message, 'ok');
@@ -1675,7 +1690,9 @@ async function confirmImport() {
     if (!current()) return;
     const code = errCode(error);
     console.error('[pet] import_failed:', code, error);
-    setMsg(els.importMsg, `导入失败（${code}）`, 'error');
+    setMsg(els.importMsg, saved
+      ? `文件已导入，但暂时无法加载列表；请返回外观重试（${code}）`
+      : `导入失败（${code}）`, 'error');
   } finally {
     if (current()) { importState.busy = false; renderImportErrors(); }
   }

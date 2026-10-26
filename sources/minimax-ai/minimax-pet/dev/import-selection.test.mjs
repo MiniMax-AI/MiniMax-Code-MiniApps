@@ -7,6 +7,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
 const selectionSource = source.slice(source.indexOf('function resetImport()'), source.indexOf('function startImportPreview('));
 const submitSource = source.slice(source.indexOf('async function confirmImport()'), source.indexOf('// Rendering (inline panel)'));
+const selectSource = source.slice(source.indexOf('async function selectPet('), source.indexOf('function showLoadError('));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const pet = (id) => ({ id, displayName: id, spritesheetPath: `${id}.webp` });
 const files = (id, text = async () => JSON.stringify(pet(id))) => [{ name: 'pet.json', text }, { name: `${id}.webp`, size: 1 }];
@@ -22,7 +23,7 @@ function harness(overrides = {}) {
     setMsg: (el, text) => { el.textContent = text; }, basename: (value) => value.split(/[\\/]/).pop(),
     loadPetFromParts: async (value) => ({ ...value, version: 1 }), startImportPreview() {},
     fileToBase64: async () => 'aQ==', postPet: async () => ({ res: { ok: true, status: 200 }, data: { pet: pet('new') } }),
-    refreshPets: async () => {}, selectPet: async () => {}, errCode: (error) => error?.message, console: { warn() {}, error() {} },
+    refreshPets: async () => {}, selectPet: async (id) => { context.app.pet = { id }; return 'selected'; }, errCode: (error) => error?.code ?? error?.message, console: { warn() {}, error() {} },
     ...overrides,
   });
   vm.runInContext(`${selectionSource}\n${submitSource}\nglobalThis.api = { handleImportFiles, resetImport, confirmImport };`, context);
@@ -37,6 +38,70 @@ test('a late older JSON read cannot replace the latest selected pet', async () =
   assert.equal(h.state.petJson.id, 'new');
   assert.equal(h.state.loaded.id, 'new');
   assert.equal(h.els.importName.textContent, 'new');
+});
+
+function selectionHarness(overrides = {}) {
+  const completed = [], errors = [];
+  const summaries = ['new', 'other'].map((id) => ({ ...pet(id), petJsonUrl: `/imported/${id}/pet.json` }));
+  const h = harness({
+    app: { pets: summaries, pet: pet('old'), selectToken: 0, oneShotToken: 0 },
+    URL: class extends URL { static createObjectURL() { return 'blob:preview'; } static revokeObjectURL() {} },
+    location: { href: 'http://127.0.0.1/pet' }, prefs: {},
+    loadPet: async (url) => pet(url.includes('/other/') ? 'other' : 'new'),
+    stopLook() {}, player: { setPet() {} }, animationGate: null, applyActivity() {}, savePreferences() {}, renderAll() {},
+    showLoadError: (error) => { if (error) errors.push(error); },
+    panelNavigation: { completeImport: () => completed.push(true) },
+    ...overrides,
+  });
+  vm.runInContext(`${selectSource}\nglobalThis.selectPetHandler = selectPet;`, h.context);
+  return { ...h, completed, errors, selectPet: h.context.selectPetHandler };
+}
+
+test('a saved import is reported as switched only after the new pet is loaded', async () => {
+  const h = selectionHarness();
+  await h.handleImportFiles(files('new')); await h.confirmImport();
+  assert.equal(h.context.app.pet.id, 'new');
+  assert.match(h.els.galleryMsg.textContent, /已切换到「new」/);
+  assert.equal(h.completed.length, 1);
+});
+
+test('a saved import whose pet fails to load keeps the old pet and offers a selection retry', async () => {
+  const h = selectionHarness({ loadPet: async () => { throw Object.assign(new Error('unreachable'), { code: 'pet_json_unreadable' }); } });
+  await h.handleImportFiles(files('new')); await h.confirmImport();
+  assert.equal(h.context.app.pet.id, 'old');
+  assert.equal(h.errors[0].code, 'pet_json_unreadable');
+  assert.match(h.els.importMsg.textContent, /文件已导入.*加载失败.*重新选择/);
+  assert.doesNotMatch(h.els.galleryMsg.textContent, /已切换/);
+  assert.equal(h.completed.length, 0);
+  assert.equal(h.state.busy, false);
+  h.context.loadPet = async () => pet('new');
+  assert.equal(await h.selectPet('new'), 'selected');
+  assert.equal(h.context.app.pet.id, 'new');
+});
+
+test('a later pet choice wins over an import still loading its saved pet', async () => {
+  const slow = deferred(), started = deferred();
+  const h = selectionHarness({ loadPet: async (url) => {
+    if (url.includes('/new/')) { started.resolve(); return slow.promise; }
+    return pet('other');
+  } });
+  await h.handleImportFiles(files('new'));
+  const submitting = h.confirmImport(); await started.promise;
+  assert.equal(await h.selectPet('other'), 'selected');
+  slow.resolve(pet('new')); await submitting;
+  assert.equal(h.context.app.pet.id, 'other');
+  assert.match(h.els.importMsg.textContent, /文件已导入.*保留/);
+  assert.doesNotMatch(h.els.importMsg.textContent, /已切换/);
+  assert.equal(h.completed.length, 0);
+});
+
+test('a failed catalog refresh after upload reports the saved files instead of upload failure', async () => {
+  const h = selectionHarness({ refreshPets: async () => { throw new Error('offline'); } });
+  await h.handleImportFiles(files('new')); await h.confirmImport();
+  assert.match(h.els.importMsg.textContent, /文件已导入.*列表.*重试/);
+  assert.doesNotMatch(h.els.importMsg.textContent, /导入失败/);
+  assert.equal(h.context.app.pet.id, 'old');
+  assert.equal(h.state.busy, false);
 });
 
 test('cancelling pending JSON invalidates both successful and failed old reads', async () => {
