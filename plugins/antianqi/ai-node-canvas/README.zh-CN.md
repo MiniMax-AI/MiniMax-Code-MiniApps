@@ -1,9 +1,17 @@
 # AI 节点画布
 
-[English](README.md)
+[English](README.md) | 简体中文
 
 MiniMax Code 里的无限画布节点图。每个节点是一次模型运行，每条连线是一条数据通路——
 把文本节点连到图片节点，上游文本会自动注入下游提示词。
+
+作者：[antianqi](https://github.com/antianqi) · 版本：`0.86.0`
+
+![画布：铺了「图片复刻」模板——参考图进去，提示词从这张图里反推出来，再照着它重新生成一张](docs/preview.png)
+
+![模板面板：图片复刻、视频模仿，以及 H3 的五种形状](docs/templates.png)
+
+*预览图使用合成数据。界面目前是中文。*
 
 模型**不是**由本包直连 HTTP 调用的。图片/视频/音频/音乐由本包的 Node 服务通过宿主连接器
 （`context.hostConnector`）直接调用，文本模式走宿主 Agent——跑的都是你的 MiniMax 模型：

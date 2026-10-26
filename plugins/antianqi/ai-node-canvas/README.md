@@ -1,9 +1,17 @@
 # AI Node Canvas
 
-[简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md)
 
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
+
+Author: [antianqi](https://github.com/antianqi) · Version: `0.86.0`
+
+![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
+
+![The template panel: 图片复刻 and 视频模仿, plus the five shapes of H3](docs/templates.png)
+
+*The preview uses synthetic data. The app interface is currently in Chinese.*
 
 **A run lands on a result node.** An image node makes an image, an audio node
 makes audio, and pressing 生成 does not fill the card it was pressed on: the
