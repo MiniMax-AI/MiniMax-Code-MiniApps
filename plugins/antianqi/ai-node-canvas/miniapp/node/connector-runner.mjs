@@ -32,6 +32,41 @@ const TOOL = {
   assetUrl: 'get_asset_url',
 };
 
+/**
+ * What a connector call that the Host stopped says.
+ *
+ * The Host gives every connector call a window of its own — about thirty
+ * seconds — and a call that runs longer is stopped. That window is the Host's
+ * and not ours to widen, so the message has to say that it is there, and what
+ * the user can do about it.
+ *
+ * A picture is asked for in one synchronous call: there is no task number to
+ * poll, so a picture that takes too long is simply lost. The way out is a
+ * smaller request. A video is submitted and polled, which is why it can run
+ * for a quarter of an hour — and that difference is worth saying out loud,
+ * because the same limit reads as a mystery otherwise.
+ *
+ * @param {string} suffix the tool that was called
+ * @param {string} code the Host's error code
+ * @returns {string|null} the note, or null when the failure is not a stop
+ */
+export function connectorStopNote(suffix, code) {
+  const isImage = suffix === TOOL.image;
+  if (code === 'CONNECTOR_OUTCOME_UNKNOWN') {
+    return '调用已经发出但没收到回执，结果未知（可能已经扣费）；宿主对单次连接器调用有约 30 秒的超时上限，这个上限在宿主那边，画布改不了。'
+      + (isImage
+        ? '出图是一次调用直接出结果，没有可轮询的任务号，所以只能把请求变小：把清晰度降到 1K、少给几张参考图，再点一次生成。'
+        : '');
+  }
+  if (code === 'CONNECTOR_TIMEOUT') {
+    return '这次调用超过了宿主的超时上限（约 30 秒）被中止；结果未知（可能已经扣费），先核对业务状态再决定要不要重试。'
+      + (isImage
+        ? '出图是一次调用直接出结果，没有可轮询的任务号，所以只能把请求变小：把清晰度降到 1K、少给几张参考图，再点一次生成。'
+        : '');
+  }
+  return null;
+}
+
 // The provider takes media URLs, never local paths or data URIs.
 //
 // The link comes under a few names, and the video task answers with its own:
@@ -215,11 +250,7 @@ export function createConnectorRunner(context, options = {}) {
         // The time shown is the call's own time. The time it spent waiting for
         // the machine is said separately, because that is the difference
         // between "the provider was slow" and "it stood behind another call".
-        const note = error?.code === 'CONNECTOR_OUTCOME_UNKNOWN'
-          ? '调用已经发出但没收到回执，结果未知（可能已经扣费）；宿主对连接器调用有超时上限，太慢的调用会被中止。'
-          : error?.code === 'CONNECTOR_TIMEOUT'
-            ? '这次调用超过了宿主的时限（默认 30 秒）被中止；结果未知，先核对业务状态再决定要不要重试。'
-            : String(error?.message ?? error);
+        const note = connectorStopNote(suffix, error?.code) ?? String(error?.message ?? error);
         throw Object.assign(
           new Error(`调用 ${suffix} 失败（耗时 ${(callMs / 1000).toFixed(1)}s${queueNote(waitedMs)}）：${note}`),
           { code: error?.code ?? 'CONNECTOR_ERROR' },

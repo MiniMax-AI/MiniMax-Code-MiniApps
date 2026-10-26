@@ -8767,3 +8767,30 @@ test('the README says that a deleted template is gone for good', async () => {
   assert.match(en, /cannot be undone/, '英文 README 要写明删掉找不回来');
   assert.match(zh, /找不回来/, '中文 README 要写明删掉找不回来');
 });
+
+test('a call the Host stopped says where the limit is, and what to do', async () => {
+  // The Host gives every connector call a window of its own, and a picture is
+  // asked for in one call — there is no task to poll, so a picture that takes
+  // too long is lost. The message has to say where that limit is, and what the
+  // user can still change.
+  const { connectorStopNote } = await import('../miniapp/node/connector-runner.mjs');
+  const image = connectorStopNote('generate_image', 'CONNECTOR_OUTCOME_UNKNOWN');
+  assert.match(image, /30 秒/, '要说出这个窗口有多长');
+  assert.match(image, /宿主/, '要说出这个上限在宿主那边');
+  assert.match(image, /1K/, '出图要给出马上能用的办法');
+  // A call that was not stopped is not one of these.
+  assert.equal(connectorStopNote('generate_image', 'CONNECTOR_PROVIDER_ERROR'), null);
+  // A video is submitted and polled, so it does not need a smaller request.
+  const video = connectorStopNote('submit_video_generation', 'CONNECTOR_TIMEOUT');
+  assert.match(video, /30 秒/);
+  assert.equal(/1K/.test(video), false, '视频不是一次调用出结果，不用教人降清晰度');
+});
+
+test('the MCP server is given a minute', async () => {
+  // The Host waits this long for the MCP server to answer. A call that starts
+  // a run has to hand the work to the page and wait for the page's answer, so
+  // the window is a minute: a page that is busy must not turn the call into a
+  // failure.
+  const raw = await readFile(fileURLToPath(new URL('../servers.mcp.json', import.meta.url)), 'utf8');
+  assert.equal(JSON.parse(raw).mcpServers.canvas.timeout, 60000);
+});
