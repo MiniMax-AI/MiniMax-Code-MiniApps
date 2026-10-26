@@ -6,7 +6,7 @@
 
 ## 安装与上手
 
-需要 MiniMax Code 3.1.2 或更新版本。把本目录连同隐藏的 `.minimax-plugin` 复制到 `<dataDir>/plugins/minimax-video/`，重启客户端后让 Agent 打开 MiniMax Video。插件 ID 为 `minimax-video`。宿主将其视为新插件，旧 `openchatcut` 工程不会自动迁移。请保留旧插件和数据，完成工程转移并确认可用后再处理旧安装。
+需要 MiniMax Code 3.1.5 或更新版本（1.0.3 及更早版本需要 3.1.2）。把本目录连同隐藏的 `.minimax-plugin` 复制到 `<dataDir>/plugins/minimax-video/`，重启客户端后让 Agent 打开 MiniMax Video。插件 ID 为 `minimax-video`。宿主将其视为新插件，旧 `openchatcut` 工程不会自动迁移。请保留旧插件和数据，完成工程转移并确认可用后再处理旧安装。
 
 首次启动选择中国大陆或海外下载源，自动安装经过摘要校验的媒体依赖，无需手动安装 Node、npm 或 FFmpeg。后续可在“设置与关于”切换来源。已有缓存可复用，未下载的资源需要联网。
 
@@ -22,11 +22,13 @@
 
 2026-10-19 在 macOS Apple Silicon、MiniMax Code 3.1.3-preview.4675 原生窗口实测：示例创建和播放、工程保留、助手记录恢复、下载源切换、MP3 导出，以及 AI 真实生图、导入、抽帧、预览、应用、MP4 导出。导出的 12 秒 MP3 非静音；15 秒 720p/30fps MP4 完整解码，结尾可见生成图片。
 
+1.0.4 只新增了 `deviceAccess: ["microphone"]` 声明，让旁白录音在 MiniMax Code 3.1.5 及更高版本上继续可用（这些版本会拒绝未声明的麦克风请求）；这次改动后的旁白录音尚未在 MiniMax Code 内实测，`npm run check` 已通过。
+
 Windows、全部高级特效和导出格式、每种生成服务未逐一验收。平台清单支持范围和数据访问说明见 [English README](README.md#data--access)。首次离线安装不可用；本地聊天显示记录可能因清缓存或访问地址变化而丢失，恢复时先检查完整对话，不自动重复生成。
 
 ## 数据、权限和许可证
 
-工程、素材和依赖缓存保存在宿主提供的应用数据目录。导入读取你选择的文件，导出写入你选择的位置；系统字体读取本机已安装字体。会按需启动 FFmpeg、FFprobe、Remotion 和 Chromium。网络来源、生成服务与 Agent 权限详见 [Data & access](README.md#data--access)。本应用运行的宿主 Agent 可以使用文件、Shell 和 MCP 能力，确认请求由用户处理。
+工程、素材和依赖缓存保存在宿主提供的应用数据目录。导入读取你选择的文件，导出写入你选择的位置；系统字体读取本机已安装字体。会按需启动 FFmpeg、FFprobe、Remotion 和 Chromium。网络来源、生成服务与 Agent 权限详见 [Data & access](README.md#data--access)。本应用运行的宿主 Agent 可以使用文件、Shell 和 MCP 能力，确认请求由用户处理。时间线的旁白按钮会在录音期间使用麦克风，录音作为 `旁白.webm`（或 `.ogg`）导入工程，放在 A1 轨的播放头位置；和其他素材一样，你让助手处理它时可能发送给模型服务。可以在 MiniMax Code 插件详情里关闭本应用的麦克风权限。
 
 更新时先关闭应用并退出客户端，再替换完整插件目录，保留独立的工程数据。不要为清缓存删除整个数据目录。
 

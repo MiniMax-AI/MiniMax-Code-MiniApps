@@ -19,5 +19,6 @@
   },
   "agentAccess": ["session.run"],
   "agentConcurrency": 1,
+  "deviceAccess": ["microphone"],
   "mcpEndpoints": [{ "server": "openchatcut", "path": "/mcp/openchatcut" }]
 }

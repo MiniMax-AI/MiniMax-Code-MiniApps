@@ -6,7 +6,7 @@ A local video editing workspace for MiniMax Code, adapted from [OpenChatCut](htt
 
 ## Install and use
 
-Requires MiniMax Code **3.1.2 or later**. Copy this entire `minimax-video` directory, including `.minimax-plugin`, into `<dataDir>/plugins/minimax-video/`, then restart the client and ask it to open **MiniMax Video**. The plugin ID is `minimax-video`. This is a new installation identity; existing `openchatcut` projects are not automatically migrated. Keep the previous installation and its data until your projects have been transferred and verified.
+Requires MiniMax Code **3.1.5 or later** (1.0.3 and earlier need 3.1.2). Copy this entire `minimax-video` directory, including `.minimax-plugin`, into `<dataDir>/plugins/minimax-video/`, then restart the client and ask it to open **MiniMax Video**. The plugin ID is `minimax-video`. This is a new installation identity; existing `openchatcut` projects are not automatically migrated. Keep the previous installation and its data until your projects have been transferred and verified.
 
 On first launch, choose China mainland or global download sources. Media dependencies are downloaded for the current platform and verified against pinned checksums. You do not need to install Node, FFmpeg, or npm yourself. Open **Settings & About** to change download sources later. Cached downloads are reused; missing resources need network access.
 
@@ -20,10 +20,11 @@ For generated media, configure a suitable tool in MiniMax Code first. Ask for on
 
 ## Tested environment
 
-- MiniMax Code **3.1.3-preview.4675** (Internal Code), macOS Apple Silicon, 2026-10-19. Minimum supported manifest version: MiniMax Code 3.1.2.
+- MiniMax Code **3.1.3-preview.4675** (Internal Code), macOS Apple Silicon, 2026-10-19. Minimum supported manifest version: MiniMax Code 3.1.5, because 1.0.4 declares `deviceAccess`.
 - Native host: sample creation/playback, project preservation, assistant history recovery, China/global source switching, MP3 export, and Agent image generation → import → draft frame inspection → preview → apply → MP4 export.
 - Export evidence: a 12-second non-silent MP3 and a 15-second 1280×720, 30 fps H.264/AAC MP4; complete decode and inspection of the generated ending frame passed.
 - Platform manifests include macOS arm64/x64, Windows x64 and Linux glibc x64/arm64. **Only macOS arm64 was tested.** Windows ARM64 and Linux musl are not supported. Platform selection uses the host process architecture.
+- 1.0.4 only adds `deviceAccess: ["microphone"]`, so that voiceover recording keeps working on MiniMax Code 3.1.5 and later, which deny microphone requests a Mini App does not declare. Voiceover recording has not been tested inside MiniMax Code with this change; `npm run check` passes.
 - Windows, every advanced effect/export format, all generation providers, and a completely offline first installation are unverified.
 - UI is primarily Chinese. Local assistant history is tied to browser storage/origin and can be lost when that storage is cleared or the origin changes. Use the full Agent conversation to check interrupted work; never regenerate paid media merely because a reply timed out.
 
@@ -35,6 +36,7 @@ For generated media, configure a suitable tool in MiniMax Code first. Ask for on
 - Native downloads use `registry.npmjs.org`, `registry.npmmirror.com`, `github.com` / GitHub release redirects (`release-assets.githubusercontent.com`), and `npmmirror.com` binary mirrors. Exact versions and integrity values are in `miniapp/node/native-dependencies.json` and the installer. Optional fonts, sounds and browser AI assets use `filecdn.minimax.chat` (China) or `file.cdn.minimax.io` (global); exact URLs and hashes are in `resource-manifest.json`.
 - User-requested URL imports contact the URL's host. Optional upstream browser inference/stock integrations can contact their configured services (including Hugging Face, jsDelivr and stock providers); these are separate from the mirrored bundled resources and are not all verified. Do not assume every online feature works offline or has a China mirror.
 - **This app runs Agent turns** using `session.run`. The assistant asks the host Agent to inspect projects, generate/import media using configured tools, and prepare edits. That Agent can read/write files, run shell commands and call MCP tools under the user's Host permissions. Requests may send prompts, representative frames or media to the configured model/provider. No provider keys are bundled or requested in chat. Host approval/question cards remain user decisions.
+- **Microphone** (`deviceAccess: ["microphone"]`): the timeline's voiceover button records from the microphone only while recording is on. The recording becomes a `旁白.webm` (or `.ogg`) file, imported into the project like any other media and placed on track A1 at the playhead. Like other project media, it can be sent to a model/provider when you ask the assistant to work with it. You can switch the microphone off for this app in the MiniMax Code plugin details.
 - The plugin exposes its own `openchatcut` MCP tools. Manual drafts require review before application. Concurrent edits require fresh draft reads; conflicting project changes are not silently overwritten.
 
 ## Updating, source and license
