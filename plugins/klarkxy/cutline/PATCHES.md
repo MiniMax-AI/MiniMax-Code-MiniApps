@@ -371,9 +371,14 @@ session or the runtime restarts. Existing sessions and active jobs are not timed
 out or evicted. Provenance lists `mp4-demux.js` only in the client payload.
 
 Test fixtures live under repository `.fablecut-acceptance/` (or the explicit
-`FABLECUT_TEST_ROOT` override), outside the installable package. Verbatim font
-license whitespace and the upstream `analyze.js` final blank line remain intact;
-these produce existing `git diff --cached --check` diagnostics.
+`FABLECUT_TEST_ROOT` override), outside the installable package. Media-dependent
+tests skip explicitly when FFmpeg is not on PATH, so a Node-and-Git-only CI
+runner still exercises every non-media test. The private-redirect counter
+listens on `127.0.0.1`, while the URL still names `127.0.0.2`: a correct
+implementation never connects to that target, so macOS does not have to
+configure the second loopback address. Verbatim font license whitespace and the
+upstream `analyze.js` final blank line remain intact; these produce existing
+`git diff --cached --check` diagnostics.
 
 ## Export recovery messages
 
@@ -387,7 +392,7 @@ mode.
 
 `fablecut_analyze_reference` accepts only video and audio extensions before it copies an explicit local path into `media/`. This prevents arbitrary files from being exposed through the editor's media route. Supported extensions are `.mp4`, `.webm`, `.mov`, `.mkv`, `.m4v`, `.avi`, `.mp3`, `.wav`, `.ogg`, `.m4a`, `.aac` and `.flac`. The regression test verifies that a `.pem` file is rejected and never copied.
 
-Managed `/media/` and `/library/` URLs are resolved with `realpath` containment in both the HTTP server and MCP media reader; a symlink inside either managed root that targets outside it is refused. Local media copies use an exclusive-create loop so concurrent imports cannot overwrite a same-named file. The upstream `paths.js` now requires `FABLECUT_DATA_DIR` to be set before loading, preventing its standalone fallbacks from writing into the package or a home-directory folder if the entry initialization order changes.
+Managed `/media/` and `/library/` URLs are resolved with `realpath` containment in both the HTTP server and MCP media reader; a symlink inside either managed root that targets outside it is refused. Local media copies use an exclusive-create loop so concurrent imports cannot overwrite a same-named file. Single-file imports and reference analysis also resolve symbolic links before checking the extension, so a media-looking alias cannot copy a non-media target into `media/`. The upstream `paths.js` requires `FABLECUT_DATA_DIR` to be set before loading, preventing its standalone fallbacks from writing into the package or a home-directory folder if the entry initialization order changes.
 
 ## Branding and identity (Cutline)
 

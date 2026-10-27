@@ -6,7 +6,7 @@
 // test runner gives every test file its own process, which is why one file
 // here starts one Mini App and the others share it.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 
@@ -18,6 +18,11 @@ import { start } from '../miniapp/node/server.mjs';
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Keep test artifacts outside the installable package and the OS temp. */
 const FIXTURE_ROOT = process.env.FABLECUT_TEST_ROOT || path.resolve(PACKAGE_ROOT, '../../../.fablecut-acceptance/test-runs');
+
+/** Media fixtures need the real executable; CI runners may have Node and Git only. */
+const FFMPEG_AVAILABLE = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+/** Add to a media-dependent test's options: { skip: FFMPEG_SKIP }. */
+export const FFMPEG_SKIP = FFMPEG_AVAILABLE ? false : 'FFmpeg is required for this media test';
 
 /**
  * A directory for a test fixture. The fixtures are files the tests need to

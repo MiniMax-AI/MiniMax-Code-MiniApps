@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { fixtureDir, getJson, makeClip, mcpSession, mcpTool, startApp } from './helpers.mjs';
+import { FFMPEG_SKIP, fixtureDir, getJson, makeClip, mcpSession, mcpTool, startApp } from './helpers.mjs';
 
 const app = await startApp();
 const { sessionId } = await mcpSession(app.base);
@@ -40,7 +40,7 @@ async function makeSourceFolder(root, name, seconds) {
   return { root, clip, doc };
 }
 
-test('a project folder is imported with its media, and the originals stay', async () => {
+test('a project folder is imported with its media, and the originals stay', { skip: FFMPEG_SKIP }, async () => {
   const source = await makeSourceFolder(fixtureDir('import-source'), 'Older Project', 3);
 
   // A file with the same name already sits in this library: the import must
@@ -76,7 +76,7 @@ test('a project folder is imported with its media, and the originals stay', asyn
   assert.ok(existsSync(path.join(app.dataDir, 'media', 'shot.mp4')), 'the earlier file was not overwritten');
 });
 
-test('the imported project is saved at the actual current revision', async () => {
+test('the imported project is saved at the actual current revision', { skip: FFMPEG_SKIP }, async () => {
   const before = await getJson(app.base, '/api/project');
   const source = await makeSourceFolder(fixtureDir('import-source-2'), 'Another One', 2);
 
@@ -124,7 +124,7 @@ test('a folder without a project is refused', async () => {
   assert.match(text, /no project to import/);
 });
 
-test('the same import can be done with the existing tools alone', async () => {
+test('the same import can be done with the existing tools alone', { skip: FFMPEG_SKIP }, async () => {
   // The recipe the skill documents: import every file, then write the
   // document with the new ids and the actual current revision.
   const source = await makeSourceFolder(fixtureDir('import-source-4'), 'By Hand', 2);

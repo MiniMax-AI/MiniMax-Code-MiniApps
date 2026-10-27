@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { fixtureDir, getJson, makeClip, mcpSession, mcpTool, sleep, startApp } from './helpers.mjs';
+import { FFMPEG_SKIP, fixtureDir, getJson, makeClip, mcpSession, mcpTool, sleep, startApp } from './helpers.mjs';
 
 const app = await startApp();
 const { sessionId } = await mcpSession(app.base);
@@ -109,7 +109,7 @@ test('a project id that is a path is refused', async () => {
   assert.notEqual(after.json.name, 'Sneaky', 'the project outside the folder was not imported');
 });
 
-test('a media path that climbs out of the source folder is refused', async () => {
+test('a media path that climbs out of the source folder is refused', { skip: FFMPEG_SKIP }, async () => {
   const root = fixtureDir('safety-traversal');
   // a file next to the media folder, not inside it
   await makeClip(path.join(root, 'secret.mp4'), 1);
@@ -130,7 +130,7 @@ test('a media path that climbs out of the source folder is refused', async () =>
   assert.ok(!existsSync(path.join(app.dataDir, 'media', 'secret.mp4')), 'the file outside media/ was not copied');
 });
 
-test('an encoded media path that climbs out of the source folder is refused', async () => {
+test('an encoded media path that climbs out of the source folder is refused', { skip: FFMPEG_SKIP }, async () => {
   const root = fixtureDir('safety-encoded');
   await makeClip(path.join(root, 'secret.mp4'), 1);
   await makeSource(root, {
@@ -149,7 +149,7 @@ test('an encoded media path that climbs out of the source folder is refused', as
   assert.deepEqual(mediaFiles(), mediaBefore, 'no file was copied');
 });
 
-test('a link out of the source media folder is refused', async () => {
+test('a link out of the source media folder is refused', { skip: FFMPEG_SKIP }, async () => {
   const root = fixtureDir('safety-junction');
   const outside = fixtureDir('safety-junction-outside');
   await makeClip(path.join(outside, 'linked.mp4'), 1);
@@ -182,7 +182,7 @@ test('a link out of the source media folder is refused', async () => {
   }
 });
 
-test('a media file in a subfolder of the source media folder is imported', async () => {
+test('a media file in a subfolder of the source media folder is imported', { skip: FFMPEG_SKIP }, async () => {
   const root = fixtureDir('safety-nested');
   const clip = await makeSourceMedia(root, 'sub/shot.mp4', 2);
   await makeSource(root, {
@@ -205,7 +205,7 @@ test('a media file in a subfolder of the source media folder is imported', async
   assert.ok(existsSync(clip), 'the original file is still there');
 });
 
-test('a media file that is not in the source folder stops the import', async () => {
+test('a media file that is not in the source folder stops the import', { skip: FFMPEG_SKIP }, async () => {
   const root = fixtureDir('safety-missing');
   await makeSourceMedia(root, 'here.mp4', 1);
   await makeSource(root, {
@@ -228,7 +228,7 @@ test('a media file that is not in the source folder stops the import', async () 
   assert.deepEqual(mediaFiles(), mediaBefore, 'not even the file that was there was copied');
 });
 
-test('the project that was open is kept as a version before the import', async () => {
+test('the project that was open is kept as a version before the import', { skip: FFMPEG_SKIP }, async () => {
   const patch = await mcpTool(app.base, sessionId, 'fablecut_patch_project', {
     ops: [{ op: 'setProject', set: { name: 'Work In Progress' } }],
   });
@@ -259,7 +259,7 @@ test('the project that was open is kept as a version before the import', async (
   assert.match(versions.text, /before agent edits/, versions.text);
 });
 
-test('an import refuses to overwrite a project that changed while it ran', async () => {
+test('an import refuses to overwrite a project that changed while it ran', { skip: FFMPEG_SKIP }, async () => {
   const root = fixtureDir('safety-race');
   await makeSourceMedia(root, 'race-a.mp4', 1);
   await makeSourceMedia(root, 'race-b.mp4', 1);
@@ -296,7 +296,7 @@ test('an import refuses to overwrite a project that changed while it ran', async
   assert.ok(!existsSync(path.join(app.dataDir, 'media', 'race-a.mp4')), 'the copies of the refused import were taken away');
 });
 
-test('a file that is not media stops the import', async () => {
+test('a file that is not media stops the import', { skip: FFMPEG_SKIP }, async () => {
   // The media folder is served from the editor's own origin: a file a browser
   // would run there would run there.
   const root = fixtureDir('safety-active');
@@ -320,6 +320,32 @@ test('a file that is not media stops the import', async () => {
   assert.equal(after.json.revision, before.json.revision, 'the open project was not touched');
   assert.deepEqual(mediaFiles(), mediaBefore, 'not even the media file was copied');
   assert.ok(!existsSync(path.join(app.dataDir, 'media', 'evil.html')), 'the file was not copied');
+});
+
+test('a media-looking symlink cannot import a non-media target', async (t) => {
+  const root = fixtureDir('safety-media-link-target');
+  const target = path.join(root, 'not-media.txt');
+  const link = path.join(root, 'disguised.mp4');
+  writeFileSync(target, '<script>alert(1)</script>');
+  try {
+    symlinkSync(target, link, 'file');
+  } catch (error) {
+    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return t.skip(`symlinks unavailable: ${error.code}`);
+    throw error;
+  }
+  const mediaBefore = mediaFiles();
+
+  const imported = await mcpTool(app.base, sessionId, 'fablecut_import_media', { path: link });
+  assert.equal(imported.reply.json.result.isError, true, 'single-file import is refused');
+  assert.match(imported.text, /Unsupported extension \.txt/, imported.text);
+
+  const analyzed = await mcpTool(app.base, sessionId, 'fablecut_analyze_reference', {
+    path: link,
+    registerMusic: false,
+  });
+  assert.equal(analyzed.reply.json.result.isError, true, 'reference import is refused');
+  assert.match(analyzed.text, /Unsupported reference media extension \.txt/, analyzed.text);
+  assert.deepEqual(mediaFiles(), mediaBefore, 'neither entry point copied the non-media target');
 });
 
 test('an upload of a file that is not media is refused', async () => {

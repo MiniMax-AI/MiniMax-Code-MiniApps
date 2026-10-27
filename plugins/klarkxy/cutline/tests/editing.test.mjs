@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-import { fixtureDir, getJson, makeClip, mcpSession, mcpTool, startApp } from './helpers.mjs';
+import { FFMPEG_SKIP, fixtureDir, getJson, makeClip, mcpSession, mcpTool, startApp } from './helpers.mjs';
 
 const app = await startApp();
 const { sessionId } = await mcpSession(app.base);
@@ -26,7 +26,7 @@ function firstJson(text) {
   return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
 }
 
-test('a file is imported into the library and registered in the project', async () => {
+test('a file is imported into the library and registered in the project', { skip: FFMPEG_SKIP }, async () => {
   longClip = path.join(app.dataDir, 'source', 'long.mp4');
   shortClip = path.join(app.dataDir, 'source', 'short.mp4');
   await makeClip(longClip, 4);
@@ -45,7 +45,7 @@ test('a file is imported into the library and registered in the project', async 
   assert.ok(statSync(copied).size > 0);
 });
 
-test('a frame is taken from a non-zero moment of the clip', async () => {
+test('a frame is taken from a non-zero moment of the clip', { skip: FFMPEG_SKIP }, async () => {
   const project = JSON.parse((await mcpTool(app.base, sessionId, 'fablecut_get_project')).text);
   const src = project.media[0].src;
 
@@ -57,7 +57,7 @@ test('a frame is taken from a non-zero moment of the clip', async () => {
   assert.ok(image.data.length > 100, 'the image has pixels');
 });
 
-test('a contact sheet surveys a range that starts at a non-zero moment', async () => {
+test('a contact sheet surveys a range that starts at a non-zero moment', { skip: FFMPEG_SKIP }, async () => {
   const project = JSON.parse((await mcpTool(app.base, sessionId, 'fablecut_get_project')).text);
   const src = project.media[0].src;
 
@@ -73,7 +73,7 @@ test('a contact sheet surveys a range that starts at a non-zero moment', async (
   assert.ok(image.data.length > 100, 'the image has pixels');
 });
 
-test('a clip is placed on the timeline', async () => {
+test('a clip is placed on the timeline', { skip: FFMPEG_SKIP }, async () => {
   const project = JSON.parse((await mcpTool(app.base, sessionId, 'fablecut_get_project')).text);
   const media = project.media[0];
 
@@ -93,7 +93,7 @@ test('a clip is placed on the timeline', async () => {
   assert.equal(after.clips[0].mediaId, media.id);
 });
 
-test('replacing the file behind a media entry trims the clips to fit', async () => {
+test('replacing the file behind a media entry trims the clips to fit', { skip: FFMPEG_SKIP }, async () => {
   const project = JSON.parse((await mcpTool(app.base, sessionId, 'fablecut_get_project')).text);
   const media = project.media[0];
 
@@ -116,7 +116,7 @@ test('replacing the file behind a media entry trims the clips to fit', async () 
   assert.ok(clip.in <= replaced.duration, 'the in point fits the shorter file');
 });
 
-test('the project is written under the data directory', async () => {
+test('the project is written under the data directory', { skip: FFMPEG_SKIP }, async () => {
   const file = path.join(app.dataDir, 'project.json');
   assert.ok(existsSync(file), 'project.json lives in the data directory');
   const saved = JSON.parse(readFileSync(file, 'utf8'));
@@ -267,7 +267,7 @@ test('a forced save never rewinds the revision', async () => {
   assert.equal(final.json.revision, onDisk + 1, 'the revision did not move again');
 });
 
-test('the MCP client may look at a file outside the library', async () => {
+test('the MCP client may look at a file outside the library', { skip: FFMPEG_SKIP }, async () => {
   // The user asked for it: the local MCP client can read any file the user
   // can, exactly as upstream. The page cannot — that is the next test.
   const outsideDir = fixtureDir('external-frame');
@@ -279,7 +279,7 @@ test('the MCP client may look at a file outside the library', async () => {
   assert.ok(reply.json.result.content.some((/** @type {any} */ block) => block.type === 'image'));
 });
 
-test('the page may not read a file outside the library', async () => {
+test('the page may not read a file outside the library', { skip: FFMPEG_SKIP }, async () => {
   const outsideDir = fixtureDir('external-frame');
   const outside = path.join(outsideDir, 'elsewhere.mp4');
 
@@ -298,7 +298,7 @@ test('the page may not read a file outside the library', async () => {
   assert.equal(plain.status, 403);
 });
 
-test('a path inside the data directory is readable', async () => {
+test('a path inside the data directory is readable', { skip: FFMPEG_SKIP }, async () => {
   const { reply, text } = await mcpTool(app.base, sessionId, 'fablecut_frame', { path: longClip, t: 1 });
   assert.equal(reply.json.result.isError, undefined, text);
   assert.ok(reply.json.result.content.some((/** @type {any} */ block) => block.type === 'image'));

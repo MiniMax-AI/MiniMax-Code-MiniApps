@@ -247,7 +247,10 @@ test('the name stays in the Host header and in the certificate check', async () 
 });
 
 test('a redirect to a private address is refused before anything is sent', async () => {
-  const privateTarget = await startCounter('127.0.0.2');
+  // The counter listens on an address every platform has. It need not bind the
+  // advertised target: a correct downloader never connects there, and the
+  // request stub independently proves that no request was attempted.
+  const privateTarget = await startCounter('127.0.0.1');
   const redirector = await startRedirector(`https://127.0.0.2:${privateTarget.port}/secret.mp4`);
   const requests = stubHttpsRequest(() => fakeResponse(200));
 

@@ -1744,7 +1744,8 @@ async function callTool(name, args, attempt = 0) {
       let file = /^\/media\//i.test(src)
         ? folderFile(MEDIA_DIR, path.join(MEDIA_DIR, entryRel(src, "/media/")), "managed media reference")
         : src;
-      if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile())
+      file = realPath(file);
+      if (!file || !fs.statSync(file).isFile())
         throw new Error("File not found: " + src);
       const ext = path.extname(file).toLowerCase();
       const referenceKinds = new Set([".mp4", ".webm", ".mov", ".mkv", ".m4v", ".avi", ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
@@ -1796,16 +1797,17 @@ async function callTool(name, args, attempt = 0) {
         kind = kindFromName(got.name);
         await maybeFaststart(target);
       } else {
-        if (!fs.existsSync(src) || !fs.statSync(src).isFile())
+        const file = realPath(src);
+        if (!file || !fs.statSync(file).isFile())
           throw new Error("File not found: " + src);
-        const ext = path.extname(src).toLowerCase();
-        /* The kind is detected BEFORE anything is copied: a font, a script or
-           any other non-media file is refused here, so it never reaches
-           media/. */
-        kind = kindFromName(src);
+        const ext = path.extname(file).toLowerCase();
+        /* The kind is detected from the real path BEFORE anything is copied:
+           a media-looking symlink cannot smuggle a non-media target into
+           media/. Fonts, scripts and other non-media files are refused too. */
+        kind = kindFromName(file);
         if (!kind) throw new Error(`Unsupported extension ${ext} — only media files ` +
           `(video, audio, image, SVG) can be imported`);
-        target = copyToMedia(src, path.basename(src));
+        target = copyToMedia(file, path.basename(src));
       }
       if (!kind) throw new Error("Unsupported media type");
       const entry = {

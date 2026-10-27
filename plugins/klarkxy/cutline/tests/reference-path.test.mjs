@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { startApp, fixtureDir, makeClip, mcpSession, mcpTool } from './helpers.mjs';
+import { FFMPEG_SKIP, startApp, fixtureDir, makeClip, mcpSession, mcpTool } from './helpers.mjs';
 const app = await startApp();
 const { sessionId } = await mcpSession(app.base);
 test.after(() => app.dispose());
@@ -48,7 +48,7 @@ test('managed media symlinks cannot expose files outside media', async (t) => {
   assert.notEqual(await served.text(), 'private');
 });
 
-test('reference analysis accepts nested media and explicit source paths', async () => {
+test('reference analysis accepts nested media and explicit source paths', { skip: FFMPEG_SKIP }, async () => {
   const external = path.join(fixtureDir('reference-input'), 'explicit.mp4');
   await makeClip(external, 1);
   mkdirSync(path.join(app.dataDir, 'media', 'nested'), { recursive: true });

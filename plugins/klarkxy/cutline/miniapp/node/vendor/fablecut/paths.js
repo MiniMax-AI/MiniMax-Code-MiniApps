@@ -10,10 +10,10 @@
      DATA_DIR  the user's work — project.json, imported media, exports, cached
                analysis. Must outlive an update.
 
-   Standalone (`node server.js`) they are the same directory, which is exactly
-   how FableCut has always behaved. Set FABLECUT_DATA_DIR to split them; the
-   plugin sets it to ${CLAUDE_PLUGIN_DATA}. Installed from npm (the code sits
-   under node_modules, e.g. the npx cache) the default is ~/FableCut.
+   The Mini App entry must set FABLECUT_DATA_DIR before loading this module.
+   There are deliberately no standalone, package-directory or home-directory
+   fallbacks: an unset value stops startup instead of writing to an unexpected
+   location.
    ═══════════════════════════════════════════════════════════════════════════ */
 "use strict";
 const crypto = require("crypto");
