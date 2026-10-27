@@ -264,3 +264,5 @@ directory and prints the URL to open for manual inspection.
 ## License
 
 [MIT](./LICENSE). The vendored upstream runtime keeps its own Apache-2.0 license.
+
+<!-- plugin-tests workflow trial, do not merge -->

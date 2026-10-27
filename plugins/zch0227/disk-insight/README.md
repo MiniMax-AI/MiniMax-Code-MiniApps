@@ -249,3 +249,5 @@ Run the tests with `npm test` in this directory. Fixtures are created under
 ## License
 
 [MIT](./LICENSE).
+
+<!-- plugin-tests workflow trial, do not merge -->

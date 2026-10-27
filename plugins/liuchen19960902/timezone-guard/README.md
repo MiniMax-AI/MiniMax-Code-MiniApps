@@ -154,3 +154,5 @@ yesterday".
 ## License
 
 [MIT](./LICENSE).
+
+<!-- plugin-tests workflow trial, do not merge -->

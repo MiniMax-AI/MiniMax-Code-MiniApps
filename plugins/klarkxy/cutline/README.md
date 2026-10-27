@@ -142,3 +142,5 @@ Run plugin integration tests with `npm test --prefix plugins/klarkxy/cutline` fr
 Source: [ronak-create/FableCut](https://github.com/ronak-create/FableCut), version 1.16.0, commit `fd2af081d73ec94464b88df8c21f640adcc78985`. Original copyright and MIT terms are retained in [LICENSE](LICENSE). Third-party asset licenses remain beside the included assets.
 
 The source is vendored directly in this package. See `upstream.json` for provenance and `PATCHES.md` for local adaptations, including the branding changes made for this package. Updates are deliberate: compare the selected upstream revision, reapply necessary Host adaptations, run integration and repository checks, then exercise the installed editor and export path. Installing or updating the plugin does not fetch upstream code or install system software.
+
+<!-- plugin-tests workflow trial, do not merge -->

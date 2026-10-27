@@ -183,3 +183,5 @@ The model path is validated first (registered folder, allowed extension, no symb
 ## License
 
 [MIT](LICENSE), except `skills/parametric-3d-printing/`, which keeps its own [PolyForm Noncommercial 1.0.0](skills/parametric-3d-printing/LICENSE) license.
+
+<!-- plugin-tests workflow trial, do not merge -->
