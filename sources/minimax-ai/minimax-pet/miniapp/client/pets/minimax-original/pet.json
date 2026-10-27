@@ -1,0 +1,9 @@
+{
+  "id": "minimax-original",
+  "displayName": "MiniMax Pet",
+  "description": "MiniMax 原创薄荷色机器人。图集由随包源代码独立绘制，采用 MIT 许可。",
+  "spritesheetPath": "spritesheet.png",
+  "spriteVersionNumber": 2,
+  "author": "MiniMax",
+  "license": "MIT"
+}

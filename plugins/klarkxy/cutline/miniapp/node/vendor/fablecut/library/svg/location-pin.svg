@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500">
+  <!-- FableCut animated SVG · pin drops in once (~0.9s), then ground ring pulses forever (map / travel) -->
+  <style>
+    .pin { transform-box: fill-box; transform-origin: center bottom;
+           animation: drop 0.8s cubic-bezier(.5,1.6,.5,1) both; }
+    @keyframes drop {
+      0%   { transform: translateY(-320px) scale(0.6); opacity: 0; }
+      60%  { opacity: 1; }
+      80%  { transform: translateY(0) scaleY(0.82) scaleX(1.12); }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    .ping { transform-box: fill-box; transform-origin: center;
+            animation: ping 1.8s ease-out infinite; }
+    @keyframes ping {
+      0%   { transform: scale(0.3); opacity: 0.8; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+  </style>
+  <ellipse class="ping" style="--d:0.9s" cx="200" cy="430" rx="90" ry="26" fill="none" stroke="#ff5d73" stroke-width="6"/>
+  <g class="pin" style="--d:0s">
+    <path d="M200 90 C120 90 70 150 70 220 C70 300 160 380 200 430 C240 380 330 300 330 220 C330 150 280 90 200 90z" fill="#ff5d73"/>
+    <circle cx="200" cy="215" r="46" fill="#fff"/>
+    <circle cx="200" cy="215" r="22" fill="#ff5d73"/>
+  </g>
+</svg>

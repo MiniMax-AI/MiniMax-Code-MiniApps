@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "minimax-pet",
+  "displayName": "MiniMax Pet",
+  "version": "0.5.8",
+  "description": "轻量桌宠，聚合主窗口可见会话的任务状态、需要回答的提醒和最新结果，支持外观切换及图集导入。",
+  "author": "MiniMax",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": [
+    "打开 MiniMax Pet，查看任务提醒",
+    "制作一只原创桌宠，生成可导入的图集"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": [
+    "skills/minimax-pet/SKILL.md"
+  ]
+}

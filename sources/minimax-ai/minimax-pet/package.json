@@ -1,0 +1,21 @@
+{
+  "name": "minimax-pet-source",
+  "version": "0.5.8",
+  "private": true,
+  "type": "module",
+  "description": "桌宠插件的开发与验证工具，不进入分发包。",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test dev/*.test.mjs",
+    "test:smoke": "node dev/smoke-api.mjs",
+    "dev": "node dev/run-local.mjs",
+    "package": "node scripts/package.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "generate:art": "node scripts/generate-pet-art.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3"
+  }
+}

@@ -59,6 +59,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | --- | --- | --- |
 | [Dynamic Workflow Console](plugins/stevenjj33/workflow-console/) | Run and supervise MiniMax Code dynamic workflows from one page: live status, a stage-and-dependency flow graph, per-node output, approval and control, templates, and report export | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | Layered image editing with an in-app AI assistant, local recovery and programmatic editing tools | [WebGuHui](https://github.com/WebGuHui) |
+| [Cutline](plugins/klarkxy/cutline/) | Local timeline editing with MCP tools for cutting, captions, motion graphics, grading, audio and export | [klarkxy](https://github.com/klarkxy) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | Local video editing with captions, a host Agent assistant, reviewable timeline edits, and MP4/MP3 export | [WebGuHui](https://github.com/WebGuHui) |
 | [AI Office](plugins/cristinamadureira353-svg/ai-office/) | Manage five model-powered employees in a pixel office: client tasks, chats, breaks, meetings and quota-aware offline states; uses your own API keys | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
@@ -80,6 +81,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [AI Node Canvas](plugins/antianqi/ai-node-canvas/) | An infinite-canvas node graph for MiniMax Code: wire text, image, video and audio runs into a graph, let each result flow downstream, and run media tools on any result | [antianqi](https://github.com/antianqi) |
 | [Agent Flow](plugins/huixin615/agent-flow/) | Import this plugin's Hook event file to inspect native task calls and sub-agent lifecycles, with exact task-to-child links when IDs are available. Choose a recorded chat or the latest imported record; no Host session files are opened. Requires MiniMax Code 3.1.4 or later | [Huixin615](https://github.com/Huixin615) |
 | [蹬王之王 · Expiry Guardian](plugins/hylouis233/expiry-guardian/) | Track credit and reset-card expiry from a local ledger you maintain, and get a "spend the card or let the credits burn first" recommendation with the reasoning spelled out | [Hylouis](https://github.com/Hylouis233) |
+| [MiniMax Pet](plugins/minimax-ai/minimax-pet/) | A lightweight companion with appearance, task and settings tabs, visible-session activity, answer-needed reminders and a transparent desktop pet. Requires MiniMax Code 3.1.6 or later | [MiniMax](https://github.com/MiniMax-AI) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>

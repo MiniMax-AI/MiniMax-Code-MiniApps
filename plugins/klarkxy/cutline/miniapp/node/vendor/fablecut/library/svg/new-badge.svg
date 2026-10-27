@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <!-- FableCut animated SVG · badge pops + starburst spins forever (sticker / "NEW" / sale).
+       Add your own TEXT clip on top for the label. -->
+  <style>
+    .burst { transform-box: fill-box; transform-origin: center;
+             animation: spin 14s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .in { transform-box: fill-box; transform-origin: center;
+          animation: pop 0.6s cubic-bezier(.34,1.56,.64,1) both; }
+    @keyframes pop { 0% { transform: scale(0) rotate(-40deg); } 100% { transform: scale(1) rotate(0deg); } }
+  </style>
+  <g class="in" style="--d:0s">
+    <path class="burst" style="--d:0s" fill="#ff5d73" d="M180 20
+      l26 34 40 -18 6 44 44 6 -18 40 34 26 -34 26 18 40 -44 6 -6 44 -40 -18 -26 34 -26 -34 -40 18 -6 -44 -44 -6 18 -40 -34 -26 34 -26 -18 -40 44 -6 6 -44 40 18z"/>
+    <circle cx="180" cy="180" r="96" fill="#ffd166"/>
+    <circle cx="180" cy="180" r="96" fill="none" stroke="#fff" stroke-width="5" stroke-dasharray="10 12"/>
+  </g>
+</svg>

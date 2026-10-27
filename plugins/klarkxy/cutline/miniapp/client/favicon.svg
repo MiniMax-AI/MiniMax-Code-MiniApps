@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7b6cff"/>
+      <stop offset="1" stop-color="#4f8cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#g)"/>
+  <!-- play triangle sliced by a cut (the "Cut" in FableCut) -->
+  <g fill="#fff">
+    <path d="M188 146 L244 176 L244 336 L188 366 Z"/>
+    <path d="M268 189 L392 256 L268 323 Z"/>
+  </g>
+</svg>

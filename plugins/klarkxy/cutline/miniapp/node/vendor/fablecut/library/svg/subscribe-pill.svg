@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="160" viewBox="0 0 560 160">
+  <!-- FableCut animated SVG · one-shot (~1.4s) · subscribe pill + ringing bell -->
+  <style>
+    .pill { transform-box: fill-box; transform-origin: center; animation: pop 0.5s cubic-bezier(.34,1.56,.64,1) both; }
+    .txt  { animation: fadein 0.35s ease both; }
+    .bell { transform-box: fill-box; transform-origin: 50% 15%; animation: ring 0.7s ease-in-out both; }
+    @keyframes pop    { from { transform: scale(0); } to { transform: scale(1); } }
+    @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ring   { 0%,100% { transform: rotate(0); } 20% { transform: rotate(24deg); }
+                        45% { transform: rotate(-18deg); } 70% { transform: rotate(10deg); } }
+  </style>
+  <g class="pill" style="--d:0s">
+    <rect x="20" y="30" width="430" height="100" rx="50" fill="#e11d48"/>
+    <text class="txt" style="--d:0.35s" x="235" y="97" text-anchor="middle"
+          font-family="Arial, sans-serif" font-size="46" font-weight="800" fill="#ffffff"
+          letter-spacing="2">SUBSCRIBE</text>
+  </g>
+  <g class="bell" style="--d:0.6s">
+    <path d="M505 45 c-18 0 -30 14 -30 34 v18 l-10 14 h80 l-10 -14 v-18 c0 -20 -12 -34 -30 -34z" fill="#ffd166"/>
+    <circle cx="505" cy="118" r="8" fill="#ffd166"/>
+  </g>
+</svg>

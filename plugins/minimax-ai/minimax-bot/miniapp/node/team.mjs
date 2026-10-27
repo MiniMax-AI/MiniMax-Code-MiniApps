@@ -374,7 +374,8 @@ export class Team {
     if (patch.maxHops !== undefined) draft.maxHops = hopLimit({ maxHops: patch.maxHops });
     if (patch.handover !== undefined) draft.handover = Boolean(patch.handover);
     // The group's note: the switch and the record are both the operator's. Switching it off
-    // stops the record and the hand-over; clearing it drops what was recorded.
+    // stops the recording and stops handing the record to the Bots; the record itself stays
+    // until it is cleared. (The relay hand-over has its own switch, this one does not touch it.)
     if (patch.notes !== undefined) draft.notes = Boolean(patch.notes);
     if (patch.clearNotes === true) draft.noteEntries = [];
     if (patch.members !== undefined) {

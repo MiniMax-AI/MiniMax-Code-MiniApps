@@ -37,7 +37,22 @@ Copy this directory, including the hidden `.minimax-plugin/` directory, into the
 - It is prompt text: the note is written from the replies the round already produced, so it costs no extra Agent turn, no extra tool call and no memory write.
 - The note is a record, not an agreement. It says what the Bots said at the end of earlier rounds, and every Bot of the group is told exactly that in the prompt.
 - The note is off unless you switch it on in the group settings, and a group without a note gets exactly the prompt it got before. Only you can set it: a Bot cannot switch it on, and the record itself is written by the plugin — a Bot cannot write into it.
-- The note holds the most recent rounds and stays within a small size limit. The group settings show what was recorded, and you can clear it there.
+- The note holds the most recent rounds and stays within a small size limit. The group settings show what was recorded, and you can clear it there. Switching the note off stops the recording and stops handing the record to the Bots, but what was already recorded stays until you clear it.
+
+## 0.7.12 The group note, again, and background jobs that count
+
+- A recorded line keeps its Chinese text. Cutting a line to its closing part used to trim up to the first space, and Chinese has no spaces, so a Chinese entry could lose almost all of itself. The trim now only drops a half Latin word, and never more than 20 characters.
+- The protocol marks are matched in any spelling: a tag with spaces, with an attribute, in another case, or with a dash that looks like a hyphen is removed as well. The text around it is left alone, and Chinese punctuation is not rewritten.
+- The group settings state the limits the plugin actually uses. The panel reads them from the server instead of writing down numbers of its own.
+- A background job is an Agent turn like any other, so the usage panel counts it. Before, the panel showed fewer turns than the model actually ran: the job's own turn never reached the ledger, only the turn that relayed its report back.
+- The job's row carries the time it took, the tools it called and the reply it produced, and it says how the job ended: a job that failed is an error, one that was stopped or cut off is aborted.
+
+## 0.7.11 The group note, cleaned up
+
+- Switching the note off no longer hides what was recorded. The group settings keep showing the record and its **Clear** button while the record exists, and say that the switch is off. The record itself is kept until you clear it, so switching the note back on hands the same record to the Bots again.
+- The panel shows the same list the Bots read: the cleaned and bounded entries, not whatever the state file happens to hold.
+- The protocol marks are now matched case-insensitively, and the marks of the standing-context block join the list of marks a reply may not forge. A reply that ends with such a tag can no longer close the context block early.
+- A recorded line is cut on a word boundary, so it no longer starts in the middle of a word.
 
 ## 0.7.9 Optional relay guardrails for groups
 
@@ -112,8 +127,8 @@ Avatars are stored in the Mini App's `dataDir/avatars/`. `GET /api/avatars` list
 
 ## Data & access
 
-- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically. A group with a relay limit spends one more Agent turn on the round that reaches the limit: the wrap-up, which replaces the blocked hand-off. A group note spends no turn at all: it is written from the replies the round already produced.
-- **Files written**: only inside the Mini App's `dataDir`: `state.json`, `messages/`, `usage.jsonl`, `memory/` (including its journal, archive and backups), `uploads/` (your attachments) and `avatars/`. A group's note is part of that group's record in `state.json`, so it is removed with the group.
+- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically. A group with a relay limit spends one more Agent turn on the round that reaches the limit: the wrap-up, which replaces the blocked hand-off. A group note spends no turn at all: it is written from the replies the round already produced. Every turn is counted once in the usage panel, background jobs included.
+- **Files written**: only inside the Mini App's `dataDir`: `state.json`, `messages/`, `usage.jsonl` (one row per Agent turn), `memory/` (including its journal, archive and backups), `uploads/` (your attachments) and `avatars/`. A group's note is part of that group's record in `state.json`, so it is removed with the group.
 - **Files read outside `dataDir`**:
   - `/api/media` serves a local file (up to 1 GiB) only when its absolute path appears in a Bot message of that same chat.
   - An avatar given as a local image path (by you or by Chief through `update_bot`) is read once and copied into `avatars/`.

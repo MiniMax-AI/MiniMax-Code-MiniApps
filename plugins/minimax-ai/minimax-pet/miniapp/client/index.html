@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN" class="booting mode-inline">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>MiniMax Pet</title>
+    <link rel="stylesheet" href="/assets/pet.css" />
+    <script type="module" src="/assets/pet-app.js"></script>
+  </head>
+  <body>
+    <div id="panel" class="panel" data-task-detail="closed">
+      <header class="panel-header">
+        <div class="panel-title">
+          <h1>MiniMax Pet</h1>
+          <p class="muted">陪伴工作，留意任务的新动静。</p>
+        </div>
+        <div class="header-actions">
+          <button id="popout-btn" class="btn primary" type="button" hidden>放到桌面</button>
+          <p id="popout-msg" class="msg" role="status"></p>
+        </div>
+      </header>
+
+      <nav id="panel-tabs" class="panel-tabs" role="tablist" aria-label="桌宠页面">
+        <button id="tab-appearance" type="button" role="tab" data-panel-tab="appearance" aria-controls="panel-appearance" aria-selected="true">外观</button>
+        <button id="tab-tasks" type="button" role="tab" data-panel-tab="tasks" aria-controls="panel-tasks" aria-selected="false" tabindex="-1">任务 <span id="panel-task-count" class="tab-count" hidden></span></button>
+        <button id="tab-settings" type="button" role="tab" data-panel-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">设置</button>
+      </nav>
+
+      <p id="host-note" class="note" hidden></p>
+      <div id="load-error" class="alert" role="alert" hidden></div>
+
+      <main class="panel-main">
+        <section id="panel-appearance" class="panel-page" data-panel-page="appearance" role="tabpanel" aria-labelledby="tab-appearance" tabindex="0">
+          <div id="appearance-main" class="appearance-layout">
+            <section class="appearance-preview" aria-labelledby="pet-name">
+              <h2 id="stage-title" class="sr-only">动画预览</h2>
+              <div id="panel-stage" class="stage">
+                <div id="pet-sprite" class="pet-sprite" role="img" aria-label="宠物"></div>
+              </div>
+              <h2 id="pet-name">正在加载宠物…</h2>
+              <p id="pet-desc" class="muted"></p>
+              <p id="panel-status" class="stage-status" role="status"></p>
+              <div class="row appearance-actions">
+                <button id="wave-btn" class="btn" type="button">打招呼</button>
+                <details class="pet-more">
+                  <summary aria-label="更多宠物互动">更多</summary>
+                  <div class="pet-more-content"><button id="jump-btn" class="btn small" type="button">跳一下</button></div>
+                </details>
+              </div>
+            </section>
+            <section class="appearance-gallery" aria-labelledby="gallery-title">
+              <div class="section-heading">
+                <h2 id="gallery-title">选择宠物</h2>
+                <button id="open-import" class="btn small" type="button">导入宠物…</button>
+              </div>
+              <ul id="gallery" class="gallery"></ul>
+              <p id="gallery-msg" class="msg" role="status"></p>
+            </section>
+          </div>
+
+          <section id="import-panel" class="inline-subview" aria-labelledby="import-title" hidden>
+            <div class="subview-heading">
+              <button id="import-back" class="btn small back-button" type="button">返回外观</button>
+              <h2 id="import-title">导入宠物</h2>
+            </div>
+            <p class="muted">同时选择 pet.json 和对应的 .webp 或 .png 图集，导入前会先预览。</p>
+            <div id="dropzone" class="dropzone">
+              <span>把文件拖到这里，或</span>
+              <button id="import-pick" class="btn" type="button">选择文件</button>
+              <input id="import-input" type="file" multiple accept=".json,.webp,.png" hidden />
+            </div>
+            <div id="import-preview" class="import-preview" hidden>
+              <div class="import-stage"><div id="import-sprite" class="pet-sprite"></div></div>
+              <div class="import-info">
+                <strong id="import-name"></strong>
+                <p id="import-meta" class="muted"></p>
+                <p id="import-state" class="muted" aria-live="off"></p>
+                <ul id="import-errors" class="import-errors" role="alert"></ul>
+                <div class="row">
+                  <button id="import-cancel" class="btn" type="button">取消</button>
+                  <button id="import-confirm" class="btn primary" type="button">确认导入</button>
+                </div>
+              </div>
+            </div>
+            <p id="import-msg" class="msg" role="status"></p>
+          </section>
+        </section>
+
+        <section id="panel-tasks" class="panel-page task-page" data-panel-page="tasks" role="tabpanel" aria-labelledby="tab-tasks" tabindex="0" hidden>
+          <section id="activity-card" class="activity-layout" aria-labelledby="activity-title">
+            <div class="task-toolbar">
+              <h2 id="activity-title" class="sr-only">任务与提醒</h2>
+              <div class="task-filters" role="group" aria-label="任务范围">
+                <button id="task-filter-recent" class="btn small" type="button" aria-pressed="true">最近提醒</button>
+                <button id="task-filter-all" class="btn small" type="button" aria-pressed="false">全部任务</button>
+              </div>
+              <p id="aggregate-counts" class="aggregate-counts muted" role="status"></p>
+            </div>
+            <p id="task-connection" class="msg" role="status" hidden></p>
+            <div class="task-panes">
+              <div id="task-list-pane" class="task-list-pane">
+                <section id="recent-tasks" aria-label="最近提醒">
+                  <p id="reminder-note" class="muted task-list-note"></p>
+                  <ul id="reminder-list" class="reminder-list"></ul>
+                </section>
+                <div id="all-sessions" hidden>
+                  <p class="muted task-list-note">显示当前可读取的任务。</p>
+                  <ul id="session-list" class="session-list" hidden></ul>
+                </div>
+                <p id="session-msg" class="msg" role="status"></p>
+              </div>
+              <section id="detail-card" class="task-detail" aria-labelledby="detail-title">
+                <button id="task-detail-back" class="btn small back-button" type="button">返回任务</button>
+                <h2 id="detail-title" tabindex="-1">任务概览</h2>
+                <div class="detail-meta">
+                  <span id="detail-status">—</span>
+                  <span>更新于 <span id="detail-time">—</span></span>
+                </div>
+                <p id="detail-error" class="msg" data-kind="error" role="status" hidden></p>
+                <p id="detail-note" class="muted"></p>
+                <pre id="detail-reply" class="last-reply"></pre>
+              </section>
+            </div>
+          </section>
+        </section>
+
+        <section id="panel-settings" class="panel-page" data-panel-page="settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
+          <div id="settings-main" class="settings-content">
+            <section class="setting-row" aria-labelledby="scale-title">
+              <div class="setting-copy">
+                <h2 id="scale-title">桌面大小</h2>
+                <p class="muted">只调整桌面上的宠物大小，面板预览保持原尺寸。</p>
+              </div>
+              <fieldset id="scale-group" class="segmented">
+                <legend class="sr-only">桌面窗口里宠物的大小</legend>
+              </fieldset>
+              <p id="preference-msg" class="msg setting-message" role="status"></p>
+            </section>
+            <section class="setting-row" aria-labelledby="reminder-settings-title">
+              <div class="setting-copy">
+                <h2 id="reminder-settings-title">本次提醒</h2>
+                <p class="muted">静音的任务可在这里恢复；重新打开桌宠后恢复默认提醒。</p>
+              </div>
+              <div class="setting-message">
+                <details id="muted-reminders" hidden>
+                  <summary>本次已静音</summary>
+                  <div id="muted-list" class="row"></div>
+                </details>
+                <button id="clear-completed" class="btn small" type="button" hidden>清除本次完成提示</button>
+              </div>
+            </section>
+            <section class="setting-row" aria-labelledby="connection-title">
+              <div class="setting-copy">
+                <h2 id="connection-title">任务连接</h2>
+                <p id="connection-status" class="muted" role="status">正在连接…</p>
+              </div>
+              <button id="activity-retry" class="btn small" type="button" hidden>重新连接</button>
+            </section>
+            <section class="setting-row" aria-labelledby="draft-entry-title">
+              <div class="setting-copy">
+                <h2 id="draft-entry-title">原聊天草稿</h2>
+                <p class="muted">把文字或语音放入打开桌宠的聊天，由你确认后发送。</p>
+              </div>
+              <button id="open-draft" class="btn small" type="button" hidden>写入原聊天草稿…</button>
+            </section>
+            <details class="panel-help">
+              <summary>版本与帮助</summary>
+              <div class="help-content">
+                <p class="muted">MiniMax Pet 0.5.8</p>
+                <div class="row">
+                  <span id="version-badge" class="badge" hidden></span>
+                  <span id="source-badge" class="badge"></span>
+                </div>
+                <p id="activity-note" class="muted"></p>
+                <p class="muted">动画跟随系统的“减少动态效果”设置。桌宠不代答，也不会自动发送消息。</p>
+                <div id="demo-controls" class="demo-controls" hidden>
+                  <fieldset id="demo-status" class="segmented">
+                    <legend class="sr-only">手动资源动作预览，均为演示</legend>
+                  </fieldset>
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <section id="draft-card" class="inline-subview" aria-labelledby="talk-title" hidden>
+            <div class="subview-heading">
+              <button id="draft-back" class="btn small back-button" type="button">返回设置</button>
+              <h2 id="talk-title">写入原聊天草稿</h2>
+            </div>
+            <form id="talk-form" class="talk-form">
+              <p id="draft-origin" class="muted"></p>
+              <label for="talk-text" class="muted">只写入打开桌宠的原属聊天。查看其他任务不会改变目标，文字不会自动发送。</label>
+              <textarea id="talk-text" rows="5" placeholder="写下要加入原聊天草稿的内容…"></textarea>
+              <div class="row end">
+                <button id="draft-speech" class="btn" type="button">语音输入到草稿</button>
+                <button id="talk-btn" class="btn primary" type="submit">加到对话输入框</button>
+              </div>
+            </form>
+            <p id="talk-msg" class="msg" role="status"></p>
+            <div id="speech-section">
+              <div id="speech-controls" class="row" hidden>
+                <button id="speech-start" class="btn" type="button">开始录音</button>
+                <button id="speech-stop" class="btn" type="button" disabled>停止并转写</button>
+                <button id="speech-cancel" class="btn" type="button" disabled>取消录音</button>
+              </div>
+              <p id="speech-msg" class="msg" role="status"></p>
+              <p id="speech-partial" class="muted" aria-live="polite"></p>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="desk" class="desk" hidden>
+      <section id="workbench" class="workbench desk-hit" aria-label="桌宠气泡" hidden></section>
+      <div class="desk-overlays">
+        <div id="notification-stack" class="notification-stack desk-hit" aria-label="任务通知" hidden></div>
+        <div id="bubble" class="bubble desk-hit" role="status" hidden>
+          <span id="bubble-title" class="bubble-title" hidden></span>
+          <span id="bubble-text"></span>
+        </div>
+        <div id="quickbar" class="quickbar desk-hit" hidden>
+          <button id="quick-tasks" class="chip" type="button">任务</button>
+          <button id="quick-menu" class="chip" type="button" aria-haspopup="menu">菜单</button>
+        </div>
+        <form id="composer" class="composer desk-hit" hidden>
+          <p id="composer-origin" class="muted"></p>
+          <label for="composer-input" class="sr-only">要放进对话输入框的话</label>
+          <input id="composer-input" type="text" autocomplete="off" placeholder="放进对话输入框…" />
+          <button id="composer-send" class="chip primary" type="submit">加到对话输入框</button>
+          <button id="composer-close" class="chip" type="button" aria-label="关闭输入框">×</button>
+          <p id="composer-msg" class="msg" role="status"></p>
+        </form>
+      </div>
+      <div id="desk-pet-slot" class="desk-pet-slot"></div>
+      <div id="menu" class="menu desk-hit" role="menu" hidden></div>
+    </div>
+  </body>
+</html>

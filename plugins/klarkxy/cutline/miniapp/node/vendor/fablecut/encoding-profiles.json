@@ -1,0 +1,120 @@
+{
+  "default": "delivery",
+  "profiles": {
+    "draft": {
+      "label": "Draft · H.264 fast",
+      "description": "Quick preview — smaller file, faster encode.",
+      "jpegQuality": 0.85,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    },
+    "delivery": {
+      "label": "Delivery · H.264 balanced",
+      "description": "Default export — good quality and compatibility.",
+      "jpegQuality": 0.95,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    },
+    "hq": {
+      "label": "High quality · H.264 4:2:2 10-bit slow",
+      "description": "Best H.264 quality — High 4:2:2 profile, 10-bit. Slower encode, larger file; for mastering and grading round-trips, not for browser or QuickTime playback.",
+      "jpegQuality": 0.98,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv422p10le",
+        "-c:a", "aac", "-b:a", "256k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    },
+    "broadcast1080i50": {
+      "label": "Broadcast · 1080i50 MOV",
+      "description": "Interlaced H.264 for broadcast-style delivery. Set the project to 1920x1080 @ 25fps (progressive); the filter chain builds the 50i field order.",
+      "jpegQuality": 0.98,
+      "extension": ".mov",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-g", "10", "-maxrate", "60M", "-bufsize", "70M",
+        "-x264opts", "open_gop=0:interlaced=1:me=hex:subme=2:cabac=1:no-deblock:analyse=all:8x8dct=1:bframes=2:weightp=0:sliced-threads:level=41",
+        "-vf", "scale=1920:1080:interl=-1,fps=50,tinterlace=interleave_top:bypass_il",
+        "-c:a", "aac", "-b:a", "384k", "-ar", "48000", "-strict", "-2",
+        "-shortest"
+      ]
+    },
+    "prores422": {
+      "label": "ProRes 422 HQ · MOV",
+      "description": "Mezzanine / round-trip master. Large files, edits well anywhere.",
+      "jpegQuality": 1,
+      "extension": ".mov",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le",
+        "-c:a", "pcm_s16le",
+        "-shortest"
+      ]
+    },
+    "nvenc-h264": {
+      "label": "NVIDIA GPU · H.264",
+      "description": "Encodes on an NVIDIA GPU (NVENC): frees the CPU for rendering. Needs an NVIDIA card and an ffmpeg built with NVENC.",
+      "jpegQuality": 0.95,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    },
+    "nvenc-hevc": {
+      "label": "NVIDIA GPU · HEVC",
+      "description": "HEVC on an NVIDIA GPU (NVENC): smaller files than H.264 at similar quality. Needs an NVIDIA card and an ffmpeg built with NVENC.",
+      "jpegQuality": 0.95,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "21", "-b:v", "0",
+        "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    },
+    "videotoolbox-h264": {
+      "label": "Apple Silicon · H.264 (VideoToolbox)",
+      "description": "Encodes on Apple Silicon hardware (VideoToolbox): frees the CPU for rendering. Needs macOS on Apple Silicon and an ffmpeg built with videotoolbox.",
+      "jpegQuality": 0.95,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "h264_videotoolbox", "-q:v", "65",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    },
+    "videotoolbox-hevc": {
+      "label": "Apple Silicon · HEVC (VideoToolbox)",
+      "description": "HEVC on Apple Silicon hardware (VideoToolbox): smaller files than H.264 at similar quality. Needs macOS on Apple Silicon and an ffmpeg built with videotoolbox.",
+      "jpegQuality": 0.95,
+      "extension": ".mp4",
+      "color": { "matrix": "bt709", "primaries": "bt709", "trc": "bt709", "range": "tv" },
+      "args": [
+        "-c:v", "hevc_videotoolbox", "-q:v", "58",
+        "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", "-shortest"
+      ]
+    }
+  }
+}

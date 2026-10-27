@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <!-- FableCut animated SVG · one-shot (~0.7s) · hand-drawn arrow, points down-right.
+       Flip/rotate with clip props to point anywhere. -->
+  <style>
+    .s { stroke-dasharray: 520; stroke-dashoffset: 520; animation: draw 0.55s cubic-bezier(.3,.8,.3,1) both; }
+    .h { stroke-dasharray: 160; stroke-dashoffset: 160; animation: draw 0.25s ease-out both; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+  </style>
+  <path class="s" style="--d:0s" d="M60 60 C 200 40, 320 140, 300 300" fill="none"
+        stroke="#ffd166" stroke-width="16" stroke-linecap="round"/>
+  <path class="h" style="--d:0.45s" d="M240 260 L 300 306 L 344 240" fill="none"
+        stroke="#ffd166" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

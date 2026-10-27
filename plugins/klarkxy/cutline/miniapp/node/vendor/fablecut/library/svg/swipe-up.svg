@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="200" viewBox="0 0 120 200">
+  <!-- FableCut animated SVG · loop · "swipe up" hand gesture
+       Bouncing upward arrow/hand for social-media CTAs. -->
+  <style>
+    .hand {
+      transform-box: fill-box;
+      transform-origin: center bottom;
+      animation: bounce 1s cubic-bezier(.36,0,.66,1) infinite;
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      40%      { transform: translateY(-30px); }
+      60%      { transform: translateY(-30px); }
+    }
+    .arrow {
+      stroke: #ffffff;
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      opacity: 0.9;
+    }
+    .fade-arrow {
+      animation: fadeUp 1s ease-in-out infinite;
+      animation-delay: var(--d, 0s);
+    }
+    @keyframes fadeUp {
+      0%, 100% { opacity: 0.2; transform: translateY(10px); }
+      40%      { opacity: 0.9; transform: translateY(-10px); }
+      60%      { opacity: 0.9; transform: translateY(-10px); }
+    }
+  </style>
+  <!-- Trailing chevrons (fade up) -->
+  <g class="fade-arrow" style="--d:0s">
+    <polyline class="arrow" points="30,140 60,110 90,140"/>
+  </g>
+  <g class="fade-arrow" style="--d:0.15s">
+    <polyline class="arrow" points="30,170 60,140 90,170" opacity="0.5"/>
+  </g>
+  <!-- Hand / main chevron -->
+  <g class="hand">
+    <polyline class="arrow" points="20,100 60,55 100,100" stroke-width="5"/>
+    <!-- Palm base -->
+    <rect x="45" y="95" width="30" height="12" rx="6" fill="#ffffff" opacity="0.85"/>
+  </g>
+</svg>

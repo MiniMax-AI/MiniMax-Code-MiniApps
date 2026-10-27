@@ -29,6 +29,15 @@ export const HANDOVER_BLOCK_MARK = '<minimax-bot-handover>';
 export const HANDOVER_BLOCK_END = '</minimax-bot-handover>';
 /** Marks the prompt that asks the current speaker to wrap up. */
 export const CONVERGE_MARK = '<minimax-bot-relay-converge>';
+/**
+ * Opens the block that carries the Bot's standing context.
+ *
+ * The context block wraps the whole brief, so a reply that ends with its closing tag would
+ * close the block early and make the rest of the text look like it sits outside the context.
+ */
+export const CONTEXT_BLOCK_MARK = '<minimax-bot-context>';
+/** Closes the block that carries the Bot's standing context. */
+export const CONTEXT_BLOCK_END = '</minimax-bot-context>';
 /** Longest summary handed over to the next hop. */
 export const HANDOVER_MAX = 600;
 /** How much of the previous reply's tail is kept when the group keeps no note. */
@@ -37,15 +46,18 @@ export const HANDOVER_TAIL = 400;
 /**
  * Protocol marks a reply must never be able to forge: a Bot that writes them into its answer
  * would otherwise be able to open a block of its own in the next Bot's prompt.
+ *
+ * The pattern matches any `minimax-bot-…` tag rather than a fixed list, so a mark that is
+ * spelled differently — with spaces, with an attribute, in another case — is caught as well.
+ * The attribute part is bounded, so a stray `<` cannot swallow the text behind it.
  */
-const FORGED_MARKS = [
-  HANDOVER_BLOCK_MARK,
-  HANDOVER_BLOCK_END,
-  CONVERGE_MARK,
-  '<minimax-bot-group-summary>',
-  '</minimax-bot-group-summary>',
-  '<minimax-bot-group-summary-task>',
-];
+const MARK_PATTERN = /<\s*\/?\s*minimax-bot-[a-z0-9-]+(?:\s[^>]{0,40})?>/gi;
+
+/** A dash that looks like the hyphen of a protocol mark. */
+const LOOKALIKE_DASH = /[‐-―]/g;
+
+/** A full-width ASCII character, which a Host that folds them would read as ASCII. */
+const FULLWIDTH_ASCII = /[！-～]/g;
 
 /** The largest hop limit a group can hold. The panel offers the same range. */
 export const HOP_LIMIT_MAX = 20;
@@ -83,15 +95,36 @@ export function handoverRequested(group) {
 }
 
 /**
+ * A copy of the text with the characters that can stand in for a hyphen or an ASCII letter
+ * folded to their ASCII form.
+ *
+ * Every fold replaces one character with one character, so a mark found in the folded text
+ * points at the same characters in the original and the text itself stays untouched.
+ * @param {string} text
+ * @returns {string}
+ */
+function foldMarks(text) {
+  return text
+    .replace(LOOKALIKE_DASH, '-')
+    .replace(FULLWIDTH_ASCII, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
+}
+
+/**
  * Removes the protocol marks from a text, so a reply can never pretend to open or close a
  * block of its own.
  * @param {string} text
  * @returns {string}
  */
 export function neutralizeMarks(text) {
-  let out = String(text ?? '');
-  for (const mark of FORGED_MARKS) out = out.split(mark).join(' ');
-  return out;
+  const value = String(text ?? '');
+  const folded = foldMarks(value);
+  let out = '';
+  let last = 0;
+  for (const match of folded.matchAll(MARK_PATTERN)) {
+    out += value.slice(last, match.index) + ' ';
+    last = match.index + match[0].length;
+  }
+  return out + value.slice(last);
 }
 
 /**

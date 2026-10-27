@@ -339,9 +339,15 @@ function groupOverview(group) {
           h('span', null, t('panels.group.notes')),
         ),
         h('p', { class: 'hint', style: { marginTop: '8px' } }, t('panels.group.notesHint')),
-        ...(group.notes === true && Array.isArray(group.noteEntries) && group.noteEntries.length
+        // The limits come from the server, so the panel cannot state numbers the plugin does
+        // not use.
+        ...(state.noteLimits ? [h('p', { class: 'hint' }, t('panels.group.notesLimit', state.noteLimits))] : []),
+        // The record stays visible while it exists, even with the switch off: what was recorded
+        // has to be readable and clearable, otherwise turning the switch off would hide it.
+        ...(Array.isArray(group.noteEntries) && group.noteEntries.length
           ? [
               h('p', { class: 'hint', style: { marginTop: '8px' } }, t('panels.group.notesList')),
+              ...(group.notes === true ? [] : [h('p', { class: 'hint' }, t('panels.group.notesKept'))]),
               ...group.noteEntries.map((entry) => clipped(`[${entry.speaker}] ${entry.text}`)),
               h(
                 'button',

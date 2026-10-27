@@ -59,6 +59,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | --- | --- | --- |
 | [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | 图层图片编辑、应用内 AI 助手、本地恢复与程序化编辑工具 | [WebGuHui](https://github.com/WebGuHui) |
+| [Cutline](plugins/klarkxy/cutline/) | 本地时间线剪辑，MCP 工具覆盖剪切、字幕、动效、调色、音频与导出 | [klarkxy](https://github.com/klarkxy) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | 本地视频剪辑、字幕、宿主 Agent 助手、可预览的时间线修改与 MP4/MP3 导出 | [WebGuHui](https://github.com/WebGuHui) |
 | [AI 事务所](plugins/cristinamadureira353-svg/ai-office/README.zh-CN.md) | 五位真实模型员工的像素事务所：接单、聊天、休息和开会，额度耗尽时角色暂停；使用玩家自己的 API Key | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
@@ -80,6 +81,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [AI 节点画布](plugins/antianqi/ai-node-canvas/README.zh-CN.md) | MiniMax Code 里的无限画布节点图：把文本、图片、视频、音频的生成接成一张图，结果顺着连线往下传，任何一张结果都能直接做二次处理 | [antianqi](https://github.com/antianqi) |
 | [Agent 协作透视](plugins/huixin615/agent-flow/README.zh-CN.md) | 手动导入插件 Hook 记录，查看原生 task 调用与子 Agent 运行区间；有明确 ID 时关联父子任务。可选择记录会话或一键查看最近导入的记录，不读取宿主会话文件。需要 MiniMax Code 3.1.4 或更高版本 | [Huixin615](https://github.com/Huixin615) |
 | [蹬王之王](plugins/hylouis233/expiry-guardian/README.md) | 看你自己维护的本地账本，算出「该用卡还是该留积分」，并把理由说清楚 | [Hylouis](https://github.com/Hylouis233) |
+| [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |
 
 <details>
 <summary>预览：Token 用量看板</summary>

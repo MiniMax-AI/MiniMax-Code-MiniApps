@@ -298,3 +298,50 @@ test('durable task cards distinguish paused, unconfirmed and waiting states with
   assert.match(document.querySelector('.task-list').textContent,/Research/);
   closeOverlay();state.tasks=[];
 });
+
+test('the group note record stays visible and clearable while the switch is off', async () => {
+  requests = [];
+  state.groups = [{
+    id: 'g1', name: 'Team', notice: '', adminId: 'b1', memberIds: ['b1'], replyMode: 'admin',
+    notes: false, noteEntries: [{ speaker: 'Rob', text: 'we go with plan B' }],
+  }];
+  state.current = 'group:g1';
+  state.drawer = { open: true, view: 'overview', memTab: 'self', dirty: false };
+  renderDrawer(); await tick();
+  const drawer = document.getElementById('drawer');
+  // The record is shown even though the switch is off: what was recorded has to stay readable.
+  assert.match(drawer.textContent, /we go with plan B/);
+  assert.match(drawer.textContent, /neither added to nor read by the Bots/);
+  // And it can still be cleared.
+  const clear = [...drawer.querySelectorAll('button')].find((button) => button.textContent.includes('Clear the note'));
+  assert.ok(clear, 'the record can still be cleared');
+  clear.click(); await tick();
+  const cleared = requests.find((r) => r.url.includes('/api/groups/g1') && r.method === 'PATCH');
+  assert.ok(cleared, 'clearing goes to the group API');
+  assert.deepEqual(cleared.body, { clearNotes: true });
+  // With the switch on, the panel does not claim the record is kept.
+  state.groups[0].notes = true;
+  renderDrawer(); await tick();
+  assert.doesNotMatch(document.getElementById('drawer').textContent, /neither added to nor read/);
+  state.groups = []; state.current = 'bot:b1';
+});
+
+test('the panel states the limits the server sends, not numbers of its own', async () => {
+  state.groups = [{
+    id: 'g1', name: 'Team', notice: '', adminId: 'b1', memberIds: ['b1'], replyMode: 'admin',
+    notes: true, noteEntries: [{ speaker: 'Rob', text: 'we go with plan B' }],
+  }];
+  state.current = 'group:g1';
+  state.drawer = { open: true, view: 'overview', memTab: 'self', dirty: false };
+  state.noteLimits = { entries: 6, chars: 1200 };
+  renderDrawer(); await tick();
+  assert.match(document.getElementById('drawer').textContent, /6 entries and 1200 characters/);
+  // Different limits, different text: the panel reads them, it does not write them down.
+  state.noteLimits = { entries: 3, chars: 400 };
+  renderDrawer(); await tick();
+  assert.match(document.getElementById('drawer').textContent, /3 entries and 400 characters/);
+  delete state.noteLimits;
+  renderDrawer(); await tick();
+  assert.doesNotMatch(document.getElementById('drawer').textContent, /entries and/);
+  state.groups = []; state.current = 'bot:b1';
+});

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <!-- FableCut animated SVG · loops · audio equalizer bars (music sections / podcast) -->
+  <style>
+    .bar { transform-box: fill-box; transform-origin: center bottom;
+           animation: eq 0.8s ease-in-out infinite; }
+    @keyframes eq {
+      0%, 100% { transform: scaleY(0.25); }
+      50%      { transform: scaleY(1); }
+    }
+  </style>
+  <g fill="#4f8cff">
+    <rect class="bar" style="--d:0s"    x="40"  y="40" width="34" height="220" rx="8"/>
+    <rect class="bar" style="--d:0.25s" x="104" y="40" width="34" height="220" rx="8" fill="#7b6cff"/>
+    <rect class="bar" style="--d:0.5s"  x="168" y="40" width="34" height="220" rx="8" fill="#6ee7b7"/>
+    <rect class="bar" style="--d:0.15s" x="232" y="40" width="34" height="220" rx="8" fill="#ffd166"/>
+    <rect class="bar" style="--d:0.4s"  x="296" y="40" width="34" height="220" rx="8" fill="#ff5d73"/>
+  </g>
+</svg>

@@ -9,7 +9,7 @@ import { selectMemoryContext } from './memory-context.mjs';
 import { UserInbox } from './user-inbox.mjs';
 import { TaskDispatcher } from './task-dispatcher.mjs';
 import { modelKey, newId, withEffort } from './store.mjs';
-import { CONVERGE_MARK, handoverRequested, handoverSummary, hopLimit, renderHandover } from './relay-guard.mjs';
+import { CONVERGE_MARK, CONTEXT_BLOCK_END, CONTEXT_BLOCK_MARK, handoverRequested, handoverSummary, hopLimit, renderHandover } from './relay-guard.mjs';
 import { appendNote, notesEnabled, renderNote } from './group-note.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppAgentClient} MiniAppAgentClient */
@@ -130,6 +130,17 @@ const ANSWER_NOT_ACCEPTED = new Set(['AGENT_UNAVAILABLE', 'INVALID_ARGUMENTS', '
 function errorText(error) {
   if (error && typeof error === 'object' && 'message' in error) return String(error.message);
   return String(error);
+}
+
+/**
+ * The usage ledger speaks the Bot's vocabulary: a turn is done, error or aborted. A background
+ * job that failed is an error; one that was cut off (a stop, a restart) is aborted, not a fault.
+ * @param {string} status
+ */
+function helperTurnStatus(status) {
+  if (status === 'failed') return 'error';
+  if (status === 'interrupted' || status === 'stopped') return 'aborted';
+  return 'done';
 }
 
 export class Engine {
@@ -393,7 +404,7 @@ export class Engine {
     // the group keeps one, so the brief of a group without notes stays byte-identical.
     const note = group ? renderNote(group) : '';
     const lines = [
-      '<minimax-bot-context>',
+      CONTEXT_BLOCK_MARK,
       t('brief.intro', { name: bot.name, id: bot.id }),
       bot.role ? t('brief.role', { role: bot.role }) : '',
       bot.isMain ? t('brief.mainPower') : '',
@@ -442,7 +453,7 @@ export class Engine {
       '',
       t('brief.hReply'),
       t('brief.reply'),
-      '</minimax-bot-context>',
+      CONTEXT_BLOCK_END,
     ];
     return lines.filter((line, index, all) => !(line === '' && all[index - 1] === '')).join('\n');
   }
@@ -1696,6 +1707,12 @@ export class Engine {
     let result;
     let failure = '';
     let aborted = false;
+    // What this background job spent: its own turn, its tools and what it answered.
+    let turnStartedAt = 0;
+    let turnMs = 0;
+    let turnTools = 0;
+    let turnText = '';
+    let turnBotName = '';
     try {
       holdsHelper = await this.acquireHelper(controller.signal);
       if (!holdsHelper || controller.signal.aborted) throw Object.assign(new Error('stopped'), { code: 'REQUEST_CANCELLED' });
@@ -1715,6 +1732,10 @@ export class Engine {
           if (event.type === 'turn.started' && !helper.sessionId) {
             helper.sessionId = event.sessionId;
             this.broadcastHelpers();
+          } else if (event.type === 'tool.started') {
+            // A background job calls the same tools a Bot's own turn does. Count them, or the
+            // turn it spends looks like it cost nothing.
+            turnTools += 1;
           } else if (event.type === 'permission.requested') {
             // The user approves a helper's tool call in its Bot's chat, like the Bot's own.
             const approval = {
@@ -1736,6 +1757,8 @@ export class Engine {
           }
         };
         const text = t('helper.brief', { bot: bot?.name ?? 'Bot', role: bot?.role || '-', task: helper.task });
+        turnStartedAt = Date.now();
+        turnBotName = bot?.name ?? '';
         try {
           result = await /** @type {any} */ (this.agent).run({ text, ...(model ? { model } : {}) }, { signal: controller.signal, onEvent });
         } catch (error) {
@@ -1743,6 +1766,9 @@ export class Engine {
             throw Object.assign(new Error(errorText(error)), { code: 'MODEL_UNAVAILABLE' });
           }
           throw error;
+        } finally {
+          turnMs = Date.now() - turnStartedAt;
+          turnText = result?.text ?? '';
         }
       } finally {
         this.releaseSlot();
@@ -1781,6 +1807,22 @@ export class Engine {
       helper.error = result?.error?.message ?? t('agentError.unknown');
     }
     if (report) helper.report = report;
+    if (turnStartedAt) {
+      // A background job is an Agent turn like any other: meter it here, or the usage panel
+      // counts fewer turns than the model actually ran.
+      await this.store.recordUsage({
+        ts: Date.now(),
+        botId: helper.botId,
+        botName: turnBotName,
+        chatId: helper.chatId,
+        kind: 'helper-run',
+        status: helperTurnStatus(helper.status),
+        durationMs: turnMs,
+        chars: turnText.length,
+        tools: turnTools,
+      });
+      this.broadcast({ type: 'usage.changed' });
+    }
     if (this.disposed) return;
     this.trimHelpers();
     await this.store.save();

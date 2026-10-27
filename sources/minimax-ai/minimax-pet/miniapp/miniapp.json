@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "agentAccess": [
+    "session.read"
+  ],
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/pet",
+    "window": {
+      "width": 280,
+      "height": 340,
+      "minWidth": 200,
+      "minHeight": 200,
+      "resizable": true,
+      "frame": false,
+      "transparent": true,
+      "alwaysOnTop": true,
+      "skipTaskbar": true,
+      "clickThrough": true
+    }
+  },
+  "mcpEndpoints": [],
+  "deviceAccess": [
+    "microphone"
+  ]
+}

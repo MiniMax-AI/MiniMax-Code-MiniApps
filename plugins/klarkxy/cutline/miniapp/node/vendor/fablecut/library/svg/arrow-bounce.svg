@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="360" viewBox="0 0 240 360">
+  <!-- FableCut animated SVG · loops · downward chevrons bouncing (swipe-up / CTA / "look here") -->
+  <style>
+    .ch { transform-box: fill-box; transform-origin: center;
+          animation: fall 1.6s ease-in-out infinite; }
+    @keyframes fall {
+      0%   { transform: translateY(-30px); opacity: 0; }
+      40%  { opacity: 1; }
+      70%  { transform: translateY(20px); opacity: 1; }
+      100% { transform: translateY(50px); opacity: 0; }
+    }
+  </style>
+  <g fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path class="ch" style="--d:0s"    d="M60 70 L120 130 L180 70"/>
+    <path class="ch" style="--d:0.2s"  d="M60 150 L120 210 L180 150"/>
+    <path class="ch" style="--d:0.4s"  d="M60 230 L120 290 L180 230"/>
+  </g>
+</svg>

@@ -8,6 +8,7 @@ import { extname, isAbsolute, join } from 'node:path';
 
 import { createHash } from 'node:crypto';
 import { Engine, EngineError, UPLOAD_NAME_RE } from './engine.mjs';
+import { NOTE_MAX_CHARS, NOTE_MAX_ENTRIES, noteEntries } from './group-note.mjs';
 import { createMcpHandler } from './mcp.mjs';
 import { LANGUAGE_PREFS, locale, matchLocale, t } from './i18n.mjs';
 import { memoryBudget, MemoryError, MemoryStore } from './memory.mjs';
@@ -138,7 +139,14 @@ export async function start(context) {
 
   const snapshot = () => ({
     bots: store.state.bots,
-    groups: store.state.groups,
+    // A group's note is shown in the panel exactly as the Bots get it: the cleaned and bounded
+    // list, not whatever the state file happens to hold.
+    groups: store.state.groups.map((group) => (
+      Array.isArray(group.noteEntries) ? { ...group, noteEntries: noteEntries(group) } : group
+    )),
+    // The limits of a group note, so the panel can state them instead of writing down numbers
+    // that would drift away from the ones the plugin uses.
+    noteLimits: { entries: NOTE_MAX_ENTRIES, chars: NOTE_MAX_CHARS },
     schedules: store.state.schedules,
     helpers: engine.helpersList(),
     tasks: engine.tasks.uiList(),

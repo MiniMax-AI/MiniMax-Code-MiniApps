@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="960" viewBox="0 0 540 960">
+  <!-- FableCut animated SVG: looping hearts from the lower right. -->
+  <style>
+    .heart { animation-timing-function: cubic-bezier(.25,.46,.45,.94); }
+    @keyframes floatA {
+      0%   { transform: translate(432px,930px) scale(0.3) rotate(0deg); opacity: 0; }
+      12%  { transform: translate(420px,810px) scale(1) rotate(-8deg); opacity: 0.95; }
+      50%  { transform: translate(372px,510px) scale(1.1) rotate(6deg); }
+      80%  { transform: translate(408px,210px) scale(0.95) rotate(-5deg); opacity: 0.85; }
+      100% { transform: translate(360px,-90px) scale(0.8) rotate(10deg); opacity: 0; }
+    }
+    @keyframes floatB {
+      0%   { transform: translate(444px,930px) scale(0.25) rotate(0deg); opacity: 0; }
+      15%  { transform: translate(432px,780px) scale(0.9) rotate(7deg); opacity: 0.95; }
+      45%  { transform: translate(330px,480px) scale(1.05) rotate(-9deg); }
+      80%  { transform: translate(372px,180px) scale(0.9) rotate(5deg); opacity: 0.8; }
+      100% { transform: translate(300px,-90px) scale(0.75) rotate(-6deg); opacity: 0; }
+    }
+    @keyframes floatC {
+      0%   { transform: translate(420px,930px) scale(0.3) rotate(0deg); opacity: 0; }
+      15%  { transform: translate(396px,792px) scale(0.95) rotate(-5deg); opacity: 0.95; }
+      50%  { transform: translate(288px,450px) scale(1.15) rotate(8deg); }
+      85%  { transform: translate(252px,150px) scale(0.9) rotate(-7deg); opacity: 0.8; }
+      100% { transform: translate(228px,-90px) scale(0.7) rotate(4deg); opacity: 0; }
+    }
+    .h1 { fill: #FE2C55; animation: floatA 4.2s infinite both; }
+    .h2 { fill: #25F4EE; animation: floatB 4.6s infinite both; }
+    .h3 { fill: #FF007F; animation: floatC 4.4s infinite both; }
+    .h4 { fill: #FFAA00; animation: floatA 4.8s infinite both; }
+    .h5 { fill: #FE2C55; animation: floatC 4.3s infinite both; }
+    .h6 { fill: #FFFFFF; animation: floatB 4.5s infinite both; }
+  </style>
+  <path class="heart h1" style="--d:0s"   transform="translate(270 430) scale(3.2)" d="M0,-18 C-15,-48 -48,-27 -48,3 C-48,30 0,60 0,66 C0,60 48,30 48,3 C48,-27 15,-48 0,-18 Z"/>
+  <path class="heart h2" style="--d:0.8s" transform="translate(390 560) scale(2.2) rotate(-18)" d="M0,-18 C-15,-48 -48,-27 -48,3 C-48,30 0,60 0,66 C0,60 48,30 48,3 C48,-27 15,-48 0,-18 Z"/>
+  <path class="heart h3" style="--d:1.6s" transform="translate(155 540) scale(2.1) rotate(16)" d="M0,-18 C-15,-48 -48,-27 -48,3 C-48,30 0,60 0,66 C0,60 48,30 48,3 C48,-27 15,-48 0,-18 Z"/>
+  <path class="heart h4" style="--d:2.4s" transform="translate(360 300) scale(1.8) rotate(12)" d="M0,-18 C-15,-48 -48,-27 -48,3 C-48,30 0,60 0,66 C0,60 48,30 48,3 C48,-27 15,-48 0,-18 Z"/>
+  <path class="heart h5" style="--d:3.1s" transform="translate(180 310) scale(1.6) rotate(-10)" d="M0,-18 C-15,-48 -48,-27 -48,3 C-48,30 0,60 0,66 C0,60 48,30 48,3 C48,-27 15,-48 0,-18 Z"/>
+  <path class="heart h6" style="--d:3.7s" transform="translate(270 620) scale(1.7)" d="M0,-18 C-15,-48 -48,-27 -48,3 C-48,30 0,60 0,66 C0,60 48,30 48,3 C48,-27 15,-48 0,-18 Z"/>
+</svg>
