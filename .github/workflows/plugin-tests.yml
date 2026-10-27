@@ -57,7 +57,7 @@ jobs:
     name: test (${{ matrix.dir }})
     needs: detect
     if: needs.detect.outputs.dirs != '' && needs.detect.outputs.dirs != '[]'
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
