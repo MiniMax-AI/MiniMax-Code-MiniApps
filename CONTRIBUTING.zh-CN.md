@@ -16,13 +16,4 @@
 
 提交前在 MiniMax Code 中手动安装、打开并检查主要功能，在 PR 中写明测试环境和结果；未验证的部分如实说明。更新已有作品时，保留插件 ID，并按改动更新版本与使用说明。
 
-## 插件测试
-
-插件测试是可选的，放在插件自己的目录里（例如 `plugins/<author>/<plugin-id>/tests/`），通过插件 `package.json` 中的 `test` 脚本运行，即在插件目录下执行 `npm test`。
-
-- 测试不得访问外部网络，也不得依赖 MiniMax Code 宿主应用；测试自己在 `127.0.0.1` 上启动的服务不受限制。
-- 依赖只安装在插件目录内（有依赖时请提交 `package-lock.json`），不要加到根目录 `package.json`。运行 `npm run check` 前请删除插件目录里的 `node_modules`：无论是否被 Git 忽略，规则检查都会拒绝包内的 `node_modules` 目录。
-- 根目录 `test/` 只用于仓库级的 MiniApp 规则检查，不得引用或运行插件测试。
-- `Plugin tests` 工作流只针对 PR 改动到的插件运行，与规则 CI（`npm run check`）相互独立。CI 运行在 macOS 上，只提供 Node.js 22 和 Git：需要其他工具（如 FFmpeg 或浏览器）的测试，在工具缺失时必须自行跳过。
-
 使用 AI 编码助手时，它会自动读取 `AGENTS.md`；`docs/` 里是同一套规则的人类可读版本。
