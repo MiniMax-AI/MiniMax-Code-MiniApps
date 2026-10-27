@@ -57,7 +57,8 @@ jobs:
     name: test (${{ matrix.dir }})
     needs: detect
     if: needs.detect.outputs.dirs != '' && needs.detect.outputs.dirs != '[]'
-    runs-on: ubuntu-latest
+    # MiniMax Code runs on macOS and Windows, so plugin tests run where the app runs.
+    runs-on: macos-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
