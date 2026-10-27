@@ -24,7 +24,12 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
    (`docs/package-contract.md`), name a MiniMax Code version at or above it under
    `## Tested environment`.
 4. Add one row to the table in both root READMEs.
-5. Run `npm run check`. Done when it reports no errors and every warning is either fixed or
+5. Tests are optional. Put them in the package directory (for example `tests/`) and run them
+   through `scripts.test` in the package's `package.json`; the Plugin tests workflow runs `npm test`
+   there when a pull request changes the package. Keep them off external hosts (loopback is fine),
+   install dependencies only inside the package with a committed `package-lock.json`, and delete
+   that `node_modules` before the next step.
+6. Run `npm run check`. Done when it reports no errors and every warning is either fixed or
    explained in the PR description.
 
 ## Hard rules

@@ -18,10 +18,10 @@ Before submitting, install the app in MiniMax Code, open it, and check its main 
 
 ## Plugin tests
 
-Tests for a plugin are optional and live inside the plugin's own directory (for example `plugins/<author>/<plugin-id>/test/`). They run through the `test` script in the plugin's `package.json`, i.e. `npm test` from the plugin directory.
+Tests for a plugin are optional and live inside the plugin's own directory (for example `plugins/<author>/<plugin-id>/tests/`). They run through the `test` script in the plugin's `package.json`, i.e. `npm test` from the plugin directory.
 
-- Tests must not use the network and must not depend on the MiniMax Code host app.
-- Install any dependencies only inside the plugin directory (commit a `package-lock.json` if you have dependencies); never add them to the root `package.json`.
+- Tests must not reach external network hosts and must not depend on the MiniMax Code host app. A server the test starts on `127.0.0.1` is fine.
+- Install any dependencies only inside the plugin directory (commit a `package-lock.json` if you have dependencies); never add them to the root `package.json`. Delete the plugin's `node_modules` before running `npm run check`: the check rejects any `node_modules` directory inside a package, ignored by Git or not.
 - The root `test/` directory is reserved for repository-wide Mini App rule checks. It must not import or run plugin tests.
 - The `Plugin tests` workflow runs only for plugins changed by a pull request, separately from the rules CI (`npm run check`). CI uses Node.js 22.
 

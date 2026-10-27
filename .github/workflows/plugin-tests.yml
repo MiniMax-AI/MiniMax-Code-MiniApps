@@ -22,16 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          # The pull_request checkout is the PR's merge commit; its first parent is the base.
+          fetch-depth: 2
           persist-credentials: false
       - id: detect
         name: List changed plugins with a test script
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git diff --name-only -z "$BASE_SHA...$HEAD_SHA" -- plugins/ \
+          git diff --name-only -z HEAD^1 HEAD -- plugins/ \
             | node -e '
               const fs = require("fs");
               const path = require("path");
