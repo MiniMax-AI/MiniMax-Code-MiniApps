@@ -469,3 +469,20 @@ plugin id, the package name, the Skill directory and id, the MCP endpoint
 `references/media-generation.md` guidance was removed from the package because
 media generation is out of scope; it is not shipped with the plugin, and no
 file in the package refers to it.
+
+## Tool-payload and public documentation follow-up
+
+This follow-up keeps the tool surface at 21 entries while shortening the
+standing MCP descriptions: nineteen upstream `fablecut_*` tools, the local
+`fablecut_import_project` tool and the package's `cutline_export` tool. Tool
+names, schema shape and dispatch behavior stay unchanged. Safety-critical
+conditions remain in the descriptions, including explicit `baseRevision`
+conflict handling,
+editor-tab rendering, conditional IN/OUT export range, absolute-path frame
+reads, remote-SVG rejection and profile combinations.
+
+The package and root READMEs now show synthetic English and Simplified Chinese
+editor/export previews, describe the standalone export path, and disclose the
+absolute-path frame-read boundary and shared-project behavior. The new
+`tests/mcp-tool-payload.test.mjs` checks the 16,000-byte serialized tool-list budget,
+tool provenance/count, retained safety guidance and schema shape.

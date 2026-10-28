@@ -11,7 +11,7 @@
   },
   "package": {
     "id": "cutline",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "note": "The package version is this Mini App integration's own; it does not track the upstream version. upstream.version records the vendored revision."
   },
   "vendored": {

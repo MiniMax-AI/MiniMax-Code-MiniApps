@@ -18,20 +18,17 @@ import { describeJob } from './job-state.mjs';
 export const EXPORT_TOOL = {
   name: 'cutline_export',
   description:
-    'Render the timeline to a video file with a standalone renderer that runs outside the Mini App. ' +
-    'Three actions: prepare (copy the saved project, its media, the library assets and the renderer into a job folder under the plugin\'s private data dir, then return the exact path of the runner to start), ' +
-    'status (read a job\'s progress and result), and cancel (ask a running job to stop). ' +
-    'prepare does not start anything: start the returned runner with your own background shell tool, then poll status. ' +
-    'The render uses the editor\'s own compositor, audio mix and encoding, so the file matches what the editor shows. ' +
-    'Needs ffmpeg and ffprobe on PATH, and a Chrome or Edge install for the renderer. ' +
-    'One file per render in this release: batch outputs are not supported here.',
+    'Render the timeline to a video file with a standalone renderer outside the Mini App. ' +
+    'prepare copies the project, its media and the renderer into a job folder and returns the runner path, ' +
+    'which you start with your own background shell tool; status reads a job; cancel stops it. ' +
+    'Needs ffmpeg and ffprobe on PATH, and a Chrome or Edge install. One file per render.',
   inputSchema: {
     type: 'object',
     properties: {
       action: {
         type: 'string',
         enum: ['prepare', 'status', 'cancel'],
-        description: 'prepare: build a job to run. status: read a job. cancel: ask a running job to stop.',
+        description: 'prepare: build a job. status: read one. cancel: stop one.',
       },
       job: {
         type: 'string',
@@ -40,23 +37,23 @@ export const EXPORT_TOOL = {
       range: {
         type: 'string',
         enum: ['entire', 'in-out'],
-        description: 'The part of the timeline to render: the whole timeline, or the project\'s inPoint to outPoint. Default: in-out when either marker is set, else the whole timeline.',
+        description: 'The part to render: whole timeline, or the project\'s inPoint to outPoint (default: in-out when set).',
       },
       preset: {
         type: 'string',
         description:
-          'A delivery preset id: youtube, youtube-shorts, instagram-reels, tiktok, x, linkedin, master, broadcast, web, archive, custom, or a saved preset\'s id. ' +
-          'An id nobody has is refused before the job is made, so a typo never renders as Custom.',
+          'A delivery preset id (fablecut_encode_profiles lists them) or a saved preset\'s id. ' +
+          'An unknown id is refused before the job is made.',
       },
       delivery: {
         type: 'object',
         description:
-          'Delivery settings over the preset (or over custom): the same shape fablecut_export takes — {width, height, fps, reframe, container, video:{…}, audio:{…}, color, filename, metadata}. ' +
-          'It may carry a preset of its own ({preset: "…"}); that id is checked the same way.',
+          'Over the preset: {width, height, fps, reframe, container, video, audio, color, filename, metadata}; ' +
+          'it may carry preset: "…".',
       },
       profile: {
         type: 'string',
-        description: 'A raw encoding profile id (ffmpeg argument lists) instead of a preset. Cannot be combined with preset, delivery or outputs.',
+        description: 'A raw encoding profile id, not with preset or delivery.',
       },
     },
     required: ['action'],

@@ -59,7 +59,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | --- | --- | --- |
 | [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | 图层图片编辑、应用内 AI 助手、本地恢复与程序化编辑工具 | [WebGuHui](https://github.com/WebGuHui) |
-| [Cutline](plugins/klarkxy/cutline/) | 本地时间线剪辑，MCP 工具覆盖剪切、字幕、动效、调色、音频与导出 | [klarkxy](https://github.com/klarkxy) |
+| [Cutline](plugins/klarkxy/cutline/) | 浏览器里的视频剪辑台：时间线剪切、字幕、动效、调色与导出，聊天里一句话就能剪片 | [klarkxy](https://github.com/klarkxy) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | 本地视频剪辑、字幕、宿主 Agent 助手、可预览的时间线修改与 MP4/MP3 导出 | [WebGuHui](https://github.com/WebGuHui) |
 | [AI 事务所](plugins/cristinamadureira353-svg/ai-office/README.zh-CN.md) | 五位真实模型员工的像素事务所：接单、聊天、休息和开会，额度耗尽时角色暂停；使用玩家自己的 API Key | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
@@ -83,6 +83,17 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [蹬王之王](plugins/hylouis233/expiry-guardian/README.md) | 看你自己维护的本地账本，算出「该用卡还是该留积分」，并把理由说清楚 | [Hylouis](https://github.com/Hylouis233) |
 | [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |
 | [MCP OAuth 令牌台](plugins/microbiosis/mcp-oauth-console/README.zh-CN.md) | 给需要 OAuth 的 MCP 服务器完成登录：设备码或授权码 + PKCE 流程，把 `Authorization` 头写入 MCP 配置，并可选择在到期前自动续期 | [Microbiosis](https://github.com/Microbiosis) |
+
+<details>
+<summary>预览：Cutline</summary>
+
+![Cutline 编辑器，使用合成素材展示标题与多轨时间线](plugins/klarkxy/cutline/docs/editor-zh-CN.png)
+
+![Cutline 导出面板，展示范围、预设、视频与音频设置](plugins/klarkxy/cutline/docs/export-zh-CN.png)
+
+预览使用合成工程。安装、剪辑、导出和数据访问说明见 [Cutline README](plugins/klarkxy/cutline/README.zh-CN.md)。
+
+</details>
 
 <details>
 <summary>预览：Token 用量看板</summary>
