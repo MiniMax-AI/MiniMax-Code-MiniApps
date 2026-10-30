@@ -1,4 +1,4 @@
-// app.jsx - Atlas app shell adapted for the OpenViking Context Workspace Mini App.
+// app.jsx - Atlas app shell adapted for the OpenViking Mini Studio Mini App.
 // Derived from Atlas.html in https://github.com/ZaynJarvis/atlas-fs (see THIRD_PARTY_NOTICES.md).
 // Changes: mock backend and Tweaks panel removed; the OpenViking adapter talks to the local Node
 // runtime; connection settings are stored by Node; "Add to chat" uses the MiniMax Code bridge.
@@ -65,6 +65,54 @@ function ConnectionForm({ onSaved }) {
   );
 }
 
+// Shown on first launch, when the Node process has no stored connection (empty connection.json).
+// The key goes straight to PUT /ov/connection and is never read back by the page.
+function FirstRunDialog({ onSaved }) {
+  const [baseUrl, setBaseUrl] = React.useState('');
+  const [apiKey, setApiKey] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!baseUrl.trim()) { setMsg('Enter your OpenViking server URL.'); return; }
+    setBusy(true);
+    try {
+      await jsonApi('ov/connection', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ baseUrl: baseUrl.trim(), apiKey }) });
+      setApiKey(''); onSaved();
+    } catch (err) { setMsg(`Not saved: ${err.message}`); setBusy(false); }
+  };
+  return (
+    <div className="settings-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
+      <form className="settings-modal" onSubmit={submit}>
+        <header className="settings-head"><h3 id="first-run-title">Connect to OpenViking</h3></header>
+        <div className="settings-body">
+          <div style={{ fontSize: 12, opacity: .8, lineHeight: 1.5 }}>
+            No OpenViking connection is saved yet. Enter your server URL and, if it needs one, an API key.
+          </div>
+          <label className="settings-row">
+            <span className="settings-label">URL</span>
+            <input className="settings-input" autoFocus value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://127.0.0.1:1933" />
+          </label>
+          <label className="settings-row">
+            <span className="settings-label">API Key</span>
+            <input className="settings-input" type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="optional" />
+          </label>
+          <div className="settings-row">
+            <span className="settings-label"></span>
+            <div className="settings-radio">
+              <button type="submit" className="settings-radio-btn" data-active="true" disabled={busy}>{busy ? 'Saving...' : 'Save and connect'}</button>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, opacity: .65, lineHeight: 1.4 }}>
+            Stored only by this Mini App's Node process in its private data directory. The API key is never sent back to this page. Account, user, and Studio URL can be set later from the gear icon.
+            {msg && <div className="settings-error">{msg}</div>}
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 const MAX_CHAT_TEXT = 90000;
 function SendToChat({ fs, selection }) {
   const [state, setState] = React.useState('');
@@ -126,6 +174,10 @@ const ACCENTS = [
 function App() {
   const [paradigm, setParadigm] = useState('columns');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [firstRun, setFirstRun] = useState(false);
+  useEffect(() => {
+    jsonApi('ov/connection').then((c) => { if (!c.baseUrl) setFirstRun(true); }).catch(() => {});
+  }, []);
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [searchScope, setSearchScope] = useState('/');
   const [selection, setSelection] = useState(() => {
@@ -272,6 +324,8 @@ function App() {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
       </header>
+
+      {firstRun && <FirstRunDialog onSaved={() => { setFirstRun(false); setConnVersion((v) => v + 1); }} />}
 
       {settingsOpen && (
         <div className="settings-modal-backdrop" onClick={() => setSettingsOpen(false)}>

@@ -33,7 +33,7 @@ before(async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const noop = () => {};
   lifecycle = await start({
-    pluginId: 'openviking-context-workspace', pluginRoot, dataDir,
+    pluginId: 'mini-studio', pluginRoot, dataDir,
     listen: { host: '127.0.0.1', port }, signal: new AbortController().signal,
     logger: { debug: noop, info: noop, warn: noop, error: noop },
   }, { fetch: fakeFetch });

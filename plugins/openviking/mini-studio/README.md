@@ -1,4 +1,4 @@
-# OpenViking Context Workspace (`openviking-context-workspace`)
+# OpenViking Mini Studio (`mini-studio`)
 
 English | [简体中文](README.zh-CN.md)
 
@@ -15,9 +15,10 @@ capture anything.
 ## Install and open
 
 Copy this directory, including `.minimax-plugin/`, into the MiniMax Code plugin directory as
-`openviking-context-workspace/`, restart MiniMax Code, and ask "Open OpenViking Context Workspace".
+`mini-studio/`, restart MiniMax Code, and ask "Open OpenViking Mini Studio".
 
-Open the gear icon and enter your OpenViking server URL and, if the server needs one, an API key
+On first launch, with no saved connection, a dialog asks for the server URL and API key. Later,
+open the gear icon and enter your OpenViking server URL and, if the server needs one, an API key
 (optional: account, user, and the URL of a Studio you host yourself). Press Save.
 
 - **+ URI** adds `OpenViking context: viking://...` for the selected file or folder to the chat input.
@@ -65,7 +66,7 @@ npm run dev       # preview at http://127.0.0.1:4317/context (binds 127.0.0.1 on
 npm install && npm run build   # rebuild miniapp/client/build/*.js from src/*.jsx with esbuild
 ```
 
-`npm run dev` stores its connection settings in `$TMPDIR/openviking-context-workspace-dev`
+`npm run dev` stores its connection settings in `$TMPDIR/mini-studio-dev`
 (override with `OV_MINIAPP_DATA_DIR`). Outside MiniMax Code, **+ URI** / **+ Content** copy to the
 clipboard instead.
 

@@ -10,9 +10,9 @@ const write = (level, message) => {
 };
 
 const lifecycle = await start({
-  pluginId: 'openviking-context-workspace',
+  pluginId: 'mini-studio',
   pluginRoot: import.meta.dirname,
-  dataDir: process.env.OV_MINIAPP_DATA_DIR || join(tmpdir(), 'openviking-context-workspace-dev'),
+  dataDir: process.env.OV_MINIAPP_DATA_DIR || join(tmpdir(), 'mini-studio-dev'),
   listen: { host: '127.0.0.1', port },
   signal: abort.signal,
   logger: {

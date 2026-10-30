@@ -1,4 +1,4 @@
-# OpenViking Context Workspace（`openviking-context-workspace`）
+# OpenViking Mini Studio（`mini-studio`）
 
 [English](README.md) | 简体中文
 
@@ -13,9 +13,9 @@ Gateway 完成；本 Mini App 不采集任何对话。
 ## 安装与打开
 
 把整个目录（包括 `.minimax-plugin/`）复制到 MiniMax Code 插件目录，命名为
-`openviking-context-workspace/`，重启 MiniMax Code，然后说"Open OpenViking Context Workspace"。
+`mini-studio/`，重启 MiniMax Code，然后说"Open OpenViking Mini Studio"。
 
-点击齿轮图标，填写 OpenViking 服务器 URL，如需要再填 API key（可选：account、user、你自己部署的
+首次打开且尚未保存连接时，会弹窗要求填写服务器 URL 和 API key。之后可点击齿轮图标，填写 OpenViking 服务器 URL，如需要再填 API key（可选：account、user、你自己部署的
 Studio URL），然后保存。
 
 - **+ URI**：把选中文件或目录的 `OpenViking context: viking://...` 加入输入框。
