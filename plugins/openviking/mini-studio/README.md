@@ -3,11 +3,17 @@
 English | [简体中文](README.zh-CN.md)
 
 A read-only navigator for your [OpenViking](https://github.com/volcengine/OpenViking) context inside
-MiniMax Code. Browse `viking://` with Miller columns or a tree, search it (semantic find, grep,
-glob), preview Markdown / JSON / JSONL, and add the selected URI or file content to the current
+MiniMax Code. Browse `viking://` as a tree, search it (semantic find, grep, glob), preview Markdown /
+JSON / JSONL with the L0 / L1 / L2 levels, and add the selected URI or file content to the current
 MiniMax Code chat.
 
-The UI is [Atlas](https://github.com/ZaynJarvis/atlas-fs), precompiled and vendored. This package
+The UI is built from [OpenViking Studio](https://github.com/volcengine/OpenViking/tree/main/web-studio)'s
+components and design tokens (base-ui + Tailwind, the OpenViking wordmark, Noto Sans), with the
+navigation features and content renderers of [Atlas](https://github.com/ZaynJarvis/atlas-fs). It is
+precompiled into `miniapp/client`; nothing is loaded from a CDN. The theme follows the MiniMax Code
+light / dark appearance (`prefers-color-scheme`) and can be pinned to light or dark from the toolbar or
+settings. Below 720 px wide (the side panel) the tree sits above the preview with a draggable divider.
+This package
 contains no hooks, Skills, or MCP servers. Session capture and recall are expected to go through the
 OpenViking Context Gateway configured as a MiniMax Code model provider; this Mini App does not
 capture anything.
@@ -18,11 +24,13 @@ Copy this directory, including `.minimax-plugin/`, into the MiniMax Code plugin 
 `mini-studio/`, restart MiniMax Code, and ask "Open OpenViking Mini Studio".
 
 On first launch, with no saved connection, a dialog asks for the server URL and API key. Later,
-open the gear icon and enter your OpenViking server URL and, if the server needs one, an API key
-(optional: account, user, and the URL of a Studio you host yourself). Press Save.
+open the gear icon to change the server URL, API key (shown only as "key saved"), account, user, and
+the URL of a Studio you host yourself. **Test connection** checks `GET /health` and a root listing
+with the entered values (and the saved key unless you type a new one) without saving; **Save** stores
+them.
 
-- **+ URI** adds `OpenViking context: viking://...` for the selected file or folder to the chat input.
-- **+ Content** reads the selected file and adds it, wrapped in `<context uri="...">`, to the chat
+- **URI** (link icon) adds `OpenViking context: viking://...` for the selected file or folder to the chat input.
+- **Content** (file-plus icon) reads the selected file and adds it, wrapped in `<context uri="...">`, to the chat
   input (truncated at 90,000 characters).
 - MiniMax Code shows its own confirmation for each addition; nothing is sent until you press Send.
 - **Open full Studio** (in settings, only when a Studio URL is saved) asks the client to open that URL
@@ -31,8 +39,8 @@ open the gear icon and enter your OpenViking server URL and, if the server needs
 ## Tested environment
 
 - MiniMax Code 3.1.2 package contract (no features with a higher minimum version).
-- Node.js 22 on Linux: `npm test` against a fake OpenViking server, and a headless Chromium render of
-  the page through `npm run dev`.
+- Node.js 22 on Linux: `npm test` against a fake OpenViking server, and headless Chromium renders of
+  the page through `npm run dev` (light, dark, 420 px, first-run) against a live OpenViking server.
 - Not yet verified inside the MiniMax Code client: the `message.append` confirmation and the
   **Open full Studio** new-window behaviour.
 
@@ -42,8 +50,7 @@ open the gear icon and enter your OpenViking server URL and, if the server needs
 - **Files written**: `connection.json` in the plugin data directory (`context.dataDir`), holding the
   server URL, API key, account, user, and Studio URL. Written atomically with mode `0600`. Nothing is
   written anywhere else.
-- **Browser storage**: view preferences only (theme, density, accent, sort, panel sizes, expanded
-  tree nodes). No credentials and no OpenViking content.
+- **Browser storage**: view preferences only (theme, sort, show hidden files, tree / preview split). No credentials and no OpenViking content.
 - **Network**: the Node process connects only to the OpenViking server URL you configure, and only for
   these read-only routes: `GET /health`, `GET /api/v1/fs/{ls,tree,stat}`,
   `GET /api/v1/content/{read,abstract,overview}`, `POST /api/v1/search/{find,grep,glob}`. Any other
@@ -61,9 +68,9 @@ open the gear icon and enter your OpenViking server URL and, if the server needs
 ## Development
 
 ```sh
-npm test          # in-plugin tests: proxy allowlist, key handling, static file serving
+npm test          # in-plugin tests: proxy allowlist, key handling, test connection, static files
 npm run dev       # preview at http://127.0.0.1:4317/context (binds 127.0.0.1 only)
-npm install && npm run build   # rebuild miniapp/client/build/*.js from src/*.jsx with esbuild
+npm install --include=dev && npm run build   # rebuild miniapp/client from src/ with Vite
 ```
 
 `npm run dev` stores its connection settings in `$TMPDIR/mini-studio-dev`
@@ -72,10 +79,13 @@ clipboard instead.
 
 ```text
 .minimax-plugin/plugin.json   Mini App declaration only (no hooks, Skills, or MCP)
-miniapp/node/server.mjs       Page, static files, connection settings, /ov-api proxy
-miniapp/node/openviking.mjs   Settings storage and the read-only route allowlist
-miniapp/client/               index.html, Atlas CSS/JS, build/ (generated), vendor/ (React 18.3.1)
-src/*.jsx                     Atlas JSX sources compiled by scripts/build.mjs
+miniapp/node/server.mjs       Page, static files, connection settings + test, /ov-api proxy
+miniapp/node/openviking.mjs   Settings storage, connection test, read-only route allowlist
+miniapp/client/               Generated by `npm run build`: index.html + static/assets (JS, CSS, font)
+src/App.jsx                   App shell: tree, preview, search, settings, first-run dialog
+src/components/ui/            Studio UI components (base-ui + Tailwind)
+src/legacy/                   Atlas data layer and content renderers
+vite.config.js                Build config
 tests/                        node:test suite
 ```
 

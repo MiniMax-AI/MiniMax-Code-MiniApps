@@ -198,3 +198,39 @@ export async function forward(c, input, fetchImpl = fetch) {
   if (bytes.length > MAX_RESPONSE) return { status: 502, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"error":"response_too_large"}') };
   return { status: response.status, headers, body: bytes };
 }
+
+/**
+ * Test a connection without saving it: GET /health, then list the root. `patch` may override the
+ * stored values; the stored key is used unless a new one is given. Never echoes the key.
+ * @param {Connection} stored
+ * @param {any} patch
+ * @param {typeof fetch} [fetchImpl]
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function testConnection(stored, patch, fetchImpl = fetch) {
+  const p = patch && typeof patch === 'object' ? patch : {};
+  /** @type {Connection} */
+  const c = {
+    ...stored,
+    baseUrl: p.baseUrl ? parseHttpUrl(p.baseUrl, 'baseUrl') : stored.baseUrl,
+    account: p.account !== undefined ? optionalText(p.account, 'account') : stored.account,
+    user: p.user !== undefined ? optionalText(p.user, 'user') : stored.user,
+    apiKey: typeof p.apiKey === 'string' && p.apiKey.trim()
+      ? optionalText(p.apiKey, 'apiKey', 4096).replace(/^bearer\s+/i, '')
+      : stored.apiKey,
+  };
+  if (!c.baseUrl) return { ok: false, error: 'Enter the server URL first.' };
+  const rejected = (status) => status === 401 || status === 403;
+  try {
+    const health = await forward(c, { method: 'GET', path: '/health', query: new URLSearchParams() }, fetchImpl);
+    if (rejected(health.status)) return { ok: false, error: `Server reachable, but the API key was rejected (HTTP ${health.status}).` };
+    if (health.status >= 400) return { ok: false, error: `Health check failed: HTTP ${health.status}.` };
+    const ls = await forward(c, { method: 'GET', path: '/api/v1/fs/ls', query: new URLSearchParams({ uri: 'viking://' }) }, fetchImpl);
+    if (rejected(ls.status)) return { ok: false, error: `Server reachable, but the API key was rejected (HTTP ${ls.status}).` };
+    if (ls.status >= 400) return { ok: false, error: `Server reachable, but listing the root failed: HTTP ${ls.status}.` };
+    return { ok: true };
+  } catch (error) {
+    const reason = error?.name === 'TimeoutError' ? 'timed out' : (error?.cause?.code || 'network error');
+    return { ok: false, error: `Cannot reach ${c.baseUrl}: ${reason}.` };
+  }
+}

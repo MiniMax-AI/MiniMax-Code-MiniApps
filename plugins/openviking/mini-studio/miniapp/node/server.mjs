@@ -2,9 +2,9 @@
 
 import { readFile, readdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join } from 'node:path';
+import { extname, join, relative, sep } from 'node:path';
 
-import { InputError, forward, loadConnection, publicView, saveConnection } from './openviking.mjs';
+import { InputError, forward, loadConnection, publicView, saveConnection, testConnection } from './openviking.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
@@ -12,19 +12,23 @@ import { InputError, forward, loadConnection, publicView, saveConnection } from 
 const SURFACE = '/context';
 const MAX_BODY = 64 * 1024;
 const API_PREFIX = '/ov-api';
-const TYPES = { '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.html': 'text/html; charset=utf-8' };
+const TYPES = {
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
+};
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'";
 
-/** Load every Client file once; only these exact names are ever served. */
+/** Load every built Client file once (index.html excluded); only these exact names are ever served. */
 async function loadStatic(clientRoot) {
   const files = new Map();
-  for (const dir of ['', 'vendor', 'build']) {
-    for (const name of await readdir(join(clientRoot, dir))) {
-      const type = TYPES[extname(name)];
-      if (!type || name === 'index.html') continue;
-      const rel = dir ? `${dir}/${name}` : name;
-      files.set(`/static/${rel}`, { type, body: await readFile(join(clientRoot, rel)) });
-    }
+  for (const entry of await readdir(clientRoot, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const type = TYPES[extname(entry.name)];
+    if (!type) continue;
+    const rel = relative(clientRoot, join(entry.parentPath ?? entry.path, entry.name)).split(sep).join('/');
+    if (rel.startsWith("static/")) files.set(`/${rel}`, { type, body: await readFile(join(clientRoot, rel)) });
   }
   return files;
 }
@@ -75,6 +79,11 @@ export async function start(context, options = {}) {
           return;
         case 'GET /ov/connection':
           return json(response, 200, publicView(await loadConnection(dataDir)));
+        case 'POST /ov/test': {
+          // Check submitted values (falling back to the stored key) without saving them.
+          const result = await testConnection(await loadConnection(dataDir), parseJson(await readBody(request)), fetchImpl);
+          return json(response, 200, result);
+        }
         case 'PUT /ov/connection': {
           const saved = await saveConnection(dataDir, parseJson(await readBody(request)));
           logger.info('openviking.connection.saved');

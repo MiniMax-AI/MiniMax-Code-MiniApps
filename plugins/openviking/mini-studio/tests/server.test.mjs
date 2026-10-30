@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 
-import { ROUTES, buildRequest } from '../miniapp/node/openviking.mjs';
+import { ROUTES, buildRequest, testConnection } from '../miniapp/node/openviking.mjs';
 
 const q = (o = {}) => new URLSearchParams(o);
 import { start } from '../miniapp/node/server.mjs';
@@ -50,8 +50,12 @@ test('serves the page and only bundled static files', async () => {
   const page = await fetch(`${base}/context`);
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
-  assert.equal((await fetch(`${base}/static/build/app.js`)).status, 200);
-  assert.equal((await fetch(`${base}/static/vendor/react.production.min.js`)).status, 200);
+  const html = await page.text();
+  const assets = [...html.matchAll(/(?:src|href)="\.\/(static\/assets\/[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(assets.some((a) => a.endsWith('.js')) && assets.some((a) => a.endsWith('.css')), 'built assets are referenced');
+  for (const a of assets) assert.equal((await fetch(`${base}/${a}`)).status, 200, a);
+  assert.doesNotMatch(html, /<script>(?!<\/script>)/, 'no inline scripts (CSP)');
+  assert.doesNotMatch(html, /https?:\/\//, 'no CDN references');
   assert.equal((await fetch(`${base}/`)).status, 404);
   assert.equal((await fetch(`${base}/static/../node/server.mjs`)).status, 404);
   assert.equal((await fetch(`${base}/static/%2e%2e/node/server.mjs`)).status, 404);
@@ -127,4 +131,38 @@ test('everything else is refused before any upstream call', async () => {
   assert.equal(badBody.status, 400);
   assert.equal(calls.length, 0);
   assert.throws(() => buildRequest({ baseUrl: 'https://x' }, 'POST', '/api/v1/sessions', q()), /route_not_allowed/);
+});
+
+const postTest = (body) => fetch(`${base}/ov/test`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+test('test connection checks /health then the root listing, with the stored key, without saving', async () => {
+  await put({ baseUrl: 'https://ov.example.com', apiKey: KEY });
+  calls.length = 0;
+  const res = await postTest({ baseUrl: 'https://other.example.com' });
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.deepEqual(JSON.parse(text), { ok: true });
+  assert.ok(!text.includes(KEY));
+  assert.deepEqual(calls.map((c) => new URL(c.url).pathname), ['/health', '/api/v1/fs/ls']);
+  assert.equal(new URL(calls[0].url).origin, 'https://other.example.com');
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${KEY}`);
+  // Not saved.
+  assert.equal(JSON.parse(await readFile(join(dataDir, 'connection.json'), 'utf8')).baseUrl, 'https://ov.example.com');
+  assert.equal((await postTest({ baseUrl: 'file:///etc/passwd' })).status, 400);
+});
+
+test('test connection reports clear errors', async () => {
+  const stored = { baseUrl: 'https://ov.example.com', apiKey: KEY, account: '', user: '', studioUrl: '' };
+  const status = (code) => async () => new Response('{}', { status: code });
+  assert.match((await testConnection(stored, {}, status(401))).error, /API key was rejected \(HTTP 401\)/);
+  assert.match((await testConnection(stored, {}, status(500))).error, /Health check failed: HTTP 500/);
+  let n = 0;
+  const lsFails = async () => (n++ === 0 ? new Response('{}') : new Response('{}', { status: 403 }));
+  assert.match((await testConnection(stored, {}, lsFails)).error, /rejected \(HTTP 403\)/);
+  const down = async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } }); };
+  const r = await testConnection(stored, {}, down);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Cannot reach https:\/\/ov\.example\.com: ECONNREFUSED/);
+  assert.ok(!r.error.includes(KEY));
+  assert.match((await testConnection({ ...stored, baseUrl: '' }, {}, down)).error, /server URL/);
 });

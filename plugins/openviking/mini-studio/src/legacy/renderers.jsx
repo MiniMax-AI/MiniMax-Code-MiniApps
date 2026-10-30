@@ -8,7 +8,7 @@
  * as a numbered, individually-collapsible record. None of these are general-
  * purpose — they're tuned to look great in the Atlas L0/L1/L2 preview.
  */
-const { useState, useMemo, useCallback, Fragment } = React;
+import React, { useState, useMemo, useCallback, Fragment } from 'react';
 
 // ---------- Inline parser shared by md ----------
 function mdInline(s, keyPrefix = '') {
@@ -620,7 +620,4 @@ function renderPlainCode(text, lang) {
   );
 }
 
-Object.assign(window, {
-  renderMarkdown, renderJson, renderJsonl, renderPlainCode,
-  JsonValue,
-});
+export { renderMarkdown, renderJson, renderJsonl, renderPlainCode, JsonValue };
