@@ -44,6 +44,10 @@ The MCP tools check the arguments they declare before they run. A value of the w
 
 An avatar may come from the avatar library or from an image uploaded in the page only. A path on the computer is refused, the plugin reads no file outside its own `dataDir` for one, and the refused path is not echoed back — so the field cannot be used to ask what exists on the disk.
 
+## 0.7.18 An unconfirmed outcome still closes its batch
+
+An unconfirmed outcome is still never replayed, but it no longer leaves its batch open forever: the batch closes, its report says the outcome is unknown, and it is trimmed like any settled batch. Finished batches no longer pile up in the state file either: the batches that still owe something stay, the newest 30 settled ones stay, and older ones leave a small record without the reply. The reply of a batch that was trimmed is read back from the chat message that holds it, page by page, and a reply whose chat message is gone is reported as truncated instead of silently shortened.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
