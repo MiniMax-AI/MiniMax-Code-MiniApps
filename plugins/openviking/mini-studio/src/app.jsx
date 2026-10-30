@@ -16,6 +16,17 @@ function useTweaks(defaults) {
   return [values, setTweak];
 }
 
+function useSystemDark() {
+  const query = React.useMemo(() => window.matchMedia('(prefers-color-scheme: dark)'), []);
+  const [dark, setDark] = React.useState(query.matches);
+  React.useEffect(() => {
+    const onChange = () => setDark(query.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, [query]);
+  return dark;
+}
+
 async function jsonApi(path, init) {
   const res = await fetch(path, init);
   const body = await res.json().catch(() => ({}));
@@ -138,11 +149,13 @@ function SendToChat({ fs, selection }) {
   return (
     <>
       {state && <span className="sort-label" style={{ marginRight: 6, opacity: .7 }}>{state}</span>}
-      <button className="gear-btn sort-btn" onClick={() => send(false)} title={`Add ${path} URI to the chat input`}>
-        <span className="sort-label">+ URI</span>
+      <button className="gear-btn sort-btn chat-btn" onClick={() => send(false)} title={`Add ${path} URI to the chat input`} aria-label="Add URI to chat input">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg>
+        <span className="chat-label">+ URI</span>
       </button>
-      <button className="gear-btn sort-btn" onClick={() => send(true)} disabled={!selection.file} title="Add the selected file's content to the chat input">
-        <span className="sort-label">+ Content</span>
+      <button className="gear-btn sort-btn chat-btn" onClick={() => send(true)} disabled={!selection.file} title="Add the selected file's content to the chat input" aria-label="Add file content to chat input">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></svg>
+        <span className="chat-label">+ Content</span>
       </button>
     </>
   );
@@ -158,7 +171,8 @@ const PARADIGMS = [
 const TWEAK_DEFAULTS = {
   accent: ['#a05a44', '#7a4632', '#ead9d1'],
   density: 'balanced',
-  theme: 'dark',
+  // 'system' follows the MiniMax Code host theme (delivered to the page as prefers-color-scheme).
+  themeMode: 'system',
   showHidden: false,
   sortBy: 'name',
 };
@@ -214,27 +228,35 @@ function App() {
     return () => { cancelled = true; };
   }, [fs]);
 
+  // Follow the host theme live: MiniMax Code propagates its light/dark appearance to the page as
+  // prefers-color-scheme. A manual light/dark choice overrides it until reset to 'system'.
+  const systemDark = useSystemDark();
+  const mode = ['system', 'light', 'dark'].includes(tweaks.themeMode) ? tweaks.themeMode : 'system';
+  const theme = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
+
   // Apply tweak-driven CSS/data attrs
   useEffect(() => {
-    document.documentElement.setAttribute('data-density', tweaks.density);
-    document.documentElement.setAttribute('data-theme', tweaks.theme);
-    const accent = Array.isArray(tweaks.accent) ? tweaks.accent : [tweaks.accent];
-    const isDark = tweaks.theme === 'dark';
-    // In dark mode, lift the accent so it pops against the dark surface;
-    // in light mode, deepen it slightly for better contrast on white.
+    const root = document.documentElement;
+    root.setAttribute('data-density', tweaks.density);
+    root.setAttribute('data-theme', theme);
+    root.style.colorScheme = theme;
+    // Host accent, if the host page exposes --mcode-accent; otherwise the Atlas default.
+    const hostAccent = getComputedStyle(root).getPropertyValue('--mcode-accent').trim();
+    const accent = hostAccent ? [hostAccent] : (Array.isArray(tweaks.accent) ? tweaks.accent : [tweaks.accent]);
+    const isDark = theme === 'dark';
     const main = isDark
       ? `color-mix(in oklab, ${accent[0]} 75%, #fff)`
       : `color-mix(in oklab, ${accent[0]} 88%, #000)`;
     const ink  = isDark
-      ? (accent[2] || accent[0])
-      : (accent[1] || accent[0]);
+      ? (accent[2] || `color-mix(in oklab, ${accent[0]} 40%, #fff)`)
+      : (accent[1] || `color-mix(in oklab, ${accent[0]} 70%, #000)`);
     const soft = isDark
       ? `color-mix(in oklab, ${accent[0]} 22%, #000)`
-      : (accent[2] || accent[0]);
-    document.documentElement.style.setProperty('--accent', main);
-    document.documentElement.style.setProperty('--accent-ink', ink);
-    document.documentElement.style.setProperty('--accent-soft', soft);
-  }, [tweaks]);
+      : (accent[2] || `color-mix(in oklab, ${accent[0]} 18%, #fff)`);
+    root.style.setProperty('--accent', main);
+    root.style.setProperty('--accent-ink', ink);
+    root.style.setProperty('--accent-soft', soft);
+  }, [tweaks, theme]);
 
   // Cycle paradigms with cmd/ctrl-1..5; ⌘F opens search
   const [searchOpen, setSearchOpen] = useState(false);
@@ -310,8 +332,10 @@ function App() {
           <span className="sort-label">{(selection.sortBy || 'name') === 'mtime' ? 'Modified' : 'Name'}</span>
         </button>
 
-        <button className="gear-btn" onClick={() => setTweak('theme', tweaks.theme === 'dark' ? 'light' : 'dark')} title={tweaks.theme === 'dark' ? 'Switch to light' : 'Switch to dark'} aria-label="Toggle theme">
-          {tweaks.theme === 'dark' ? (
+        <button className="gear-btn" onClick={() => setTweak('themeMode', { system: 'light', light: 'dark', dark: 'system' }[mode])} title={`Theme: ${mode === 'system' ? `follow MiniMax Code (${theme})` : mode} - click to change`} aria-label="Change theme">
+          {mode === 'system' ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg>
+          ) : mode === 'light' ? (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
           ) : (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>

@@ -22,6 +22,16 @@
     }, []);
     return [values, setTweak];
   }
+  function useSystemDark() {
+    const query = React.useMemo(() => window.matchMedia("(prefers-color-scheme: dark)"), []);
+    const [dark, setDark] = React.useState(query.matches);
+    React.useEffect(() => {
+      const onChange = () => setDark(query.matches);
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    }, [query]);
+    return dark;
+  }
   async function jsonApi(path, init) {
     const res = await fetch(path, init);
     const body = await res.json().catch(() => ({}));
@@ -112,7 +122,7 @@ ${r.content || ""}
         setState(e?.message === "user_cancelled" ? "Cancelled" : `Not added (${e?.message})`);
       }
     };
-    return /* @__PURE__ */ React.createElement(React.Fragment, null, state && /* @__PURE__ */ React.createElement("span", { className: "sort-label", style: { marginRight: 6, opacity: 0.7 } }, state), /* @__PURE__ */ React.createElement("button", { className: "gear-btn sort-btn", onClick: () => send(false), title: `Add ${path} URI to the chat input` }, /* @__PURE__ */ React.createElement("span", { className: "sort-label" }, "+ URI")), /* @__PURE__ */ React.createElement("button", { className: "gear-btn sort-btn", onClick: () => send(true), disabled: !selection.file, title: "Add the selected file's content to the chat input" }, /* @__PURE__ */ React.createElement("span", { className: "sort-label" }, "+ Content")));
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, state && /* @__PURE__ */ React.createElement("span", { className: "sort-label", style: { marginRight: 6, opacity: 0.7 } }, state), /* @__PURE__ */ React.createElement("button", { className: "gear-btn sort-btn chat-btn", onClick: () => send(false), title: `Add ${path} URI to the chat input`, "aria-label": "Add URI to chat input" }, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.7", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" }, /* @__PURE__ */ React.createElement("path", { d: "M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" }), /* @__PURE__ */ React.createElement("path", { d: "M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" })), /* @__PURE__ */ React.createElement("span", { className: "chat-label" }, "+ URI")), /* @__PURE__ */ React.createElement("button", { className: "gear-btn sort-btn chat-btn", onClick: () => send(true), disabled: !selection.file, title: "Add the selected file's content to the chat input", "aria-label": "Add file content to chat input" }, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.7", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" }, /* @__PURE__ */ React.createElement("path", { d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" }), /* @__PURE__ */ React.createElement("path", { d: "M14 3v5h5M12 11v6M9 14h6" })), /* @__PURE__ */ React.createElement("span", { className: "chat-label" }, "+ Content")));
   }
   const { useState, useEffect, useMemo, useRef } = React;
   const PARADIGMS = [
@@ -122,7 +132,8 @@ ${r.content || ""}
   const TWEAK_DEFAULTS = {
     accent: ["#a05a44", "#7a4632", "#ead9d1"],
     density: "balanced",
-    theme: "dark",
+    // 'system' follows the MiniMax Code host theme (delivered to the page as prefers-color-scheme).
+    themeMode: "system",
     showHidden: false,
     sortBy: "name"
   };
@@ -172,18 +183,24 @@ ${r.content || ""}
         cancelled = true;
       };
     }, [fs]);
+    const systemDark = useSystemDark();
+    const mode = ["system", "light", "dark"].includes(tweaks.themeMode) ? tweaks.themeMode : "system";
+    const theme = mode === "system" ? systemDark ? "dark" : "light" : mode;
     useEffect(() => {
-      document.documentElement.setAttribute("data-density", tweaks.density);
-      document.documentElement.setAttribute("data-theme", tweaks.theme);
-      const accent = Array.isArray(tweaks.accent) ? tweaks.accent : [tweaks.accent];
-      const isDark = tweaks.theme === "dark";
+      const root = document.documentElement;
+      root.setAttribute("data-density", tweaks.density);
+      root.setAttribute("data-theme", theme);
+      root.style.colorScheme = theme;
+      const hostAccent = getComputedStyle(root).getPropertyValue("--mcode-accent").trim();
+      const accent = hostAccent ? [hostAccent] : Array.isArray(tweaks.accent) ? tweaks.accent : [tweaks.accent];
+      const isDark = theme === "dark";
       const main = isDark ? `color-mix(in oklab, ${accent[0]} 75%, #fff)` : `color-mix(in oklab, ${accent[0]} 88%, #000)`;
-      const ink = isDark ? accent[2] || accent[0] : accent[1] || accent[0];
-      const soft = isDark ? `color-mix(in oklab, ${accent[0]} 22%, #000)` : accent[2] || accent[0];
-      document.documentElement.style.setProperty("--accent", main);
-      document.documentElement.style.setProperty("--accent-ink", ink);
-      document.documentElement.style.setProperty("--accent-soft", soft);
-    }, [tweaks]);
+      const ink = isDark ? accent[2] || `color-mix(in oklab, ${accent[0]} 40%, #fff)` : accent[1] || `color-mix(in oklab, ${accent[0]} 70%, #000)`;
+      const soft = isDark ? `color-mix(in oklab, ${accent[0]} 22%, #000)` : accent[2] || `color-mix(in oklab, ${accent[0]} 18%, #fff)`;
+      root.style.setProperty("--accent", main);
+      root.style.setProperty("--accent-ink", ink);
+      root.style.setProperty("--accent-soft", soft);
+    }, [tweaks, theme]);
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchMode, setSearchMode] = useState("find");
     useEffect(() => {
@@ -236,7 +253,7 @@ ${r.content || ""}
         }
         return { ...s, sortBy: next, sortDir };
       });
-    }, title: `Sort by: ${selection.sortBy || "name"}`, "aria-label": "Toggle sort" }, /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M3 6h18M3 12h12M3 18h6" })), /* @__PURE__ */ React.createElement("span", { className: "sort-label" }, (selection.sortBy || "name") === "mtime" ? "Modified" : "Name")), /* @__PURE__ */ React.createElement("button", { className: "gear-btn", onClick: () => setTweak("theme", tweaks.theme === "dark" ? "light" : "dark"), title: tweaks.theme === "dark" ? "Switch to light" : "Switch to dark", "aria-label": "Toggle theme" }, tweaks.theme === "dark" ? /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" })) : /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" }))), /* @__PURE__ */ React.createElement(SendToChat, { fs, selection }), /* @__PURE__ */ React.createElement("button", { className: "gear-btn", onClick: () => setSettingsOpen(true), title: "Connection", "aria-label": "Settings" }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /* @__PURE__ */ React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" })))), firstRun && /* @__PURE__ */ React.createElement(FirstRunDialog, { onSaved: () => {
+    }, title: `Sort by: ${selection.sortBy || "name"}`, "aria-label": "Toggle sort" }, /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M3 6h18M3 12h12M3 18h6" })), /* @__PURE__ */ React.createElement("span", { className: "sort-label" }, (selection.sortBy || "name") === "mtime" ? "Modified" : "Name")), /* @__PURE__ */ React.createElement("button", { className: "gear-btn", onClick: () => setTweak("themeMode", { system: "light", light: "dark", dark: "system" }[mode]), title: `Theme: ${mode === "system" ? `follow MiniMax Code (${theme})` : mode} - click to change`, "aria-label": "Change theme" }, mode === "system" ? /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "8" }), /* @__PURE__ */ React.createElement("path", { d: "M12 4a8 8 0 0 1 0 16z", fill: "currentColor", stroke: "none" })) : mode === "light" ? /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" })) : /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" }))), /* @__PURE__ */ React.createElement(SendToChat, { fs, selection }), /* @__PURE__ */ React.createElement("button", { className: "gear-btn", onClick: () => setSettingsOpen(true), title: "Connection", "aria-label": "Settings" }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /* @__PURE__ */ React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" })))), firstRun && /* @__PURE__ */ React.createElement(FirstRunDialog, { onSaved: () => {
       setFirstRun(false);
       setConnVersion((v) => v + 1);
     } }), settingsOpen && /* @__PURE__ */ React.createElement("div", { className: "settings-modal-backdrop", onClick: () => setSettingsOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "settings-modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("header", { className: "settings-head" }, /* @__PURE__ */ React.createElement("h3", null, "OpenViking connection"), /* @__PURE__ */ React.createElement("button", { className: "settings-close", onClick: () => setSettingsOpen(false), "aria-label": "Close" }, "\xD7")), /* @__PURE__ */ React.createElement("div", { className: "settings-body" }, /* @__PURE__ */ React.createElement(ConnectionForm, { onSaved: () => setConnVersion((v) => v + 1) }), /* @__PURE__ */ React.createElement("div", { className: "settings-row settings-status" }, /* @__PURE__ */ React.createElement("span", { className: "settings-label" }, "Status"), /* @__PURE__ */ React.createElement("span", { className: "settings-pill settings-pill-" + conn.status }, conn.status)), conn.error && /* @__PURE__ */ React.createElement("div", { className: "settings-error" }, conn.error)))), /* @__PURE__ */ React.createElement("div", { className: "workspace" }, /* @__PURE__ */ React.createElement(View, { fs, selection, setSelection, onSearchScopeChange: setSearchScope })), /* @__PURE__ */ React.createElement("footer", { className: "statusbar control-footer", "aria-label": "Keyboard controls" }, /* @__PURE__ */ React.createElement("span", { className: "key" }, /* @__PURE__ */ React.createElement("kbd", null, "\u2191"), /* @__PURE__ */ React.createElement("kbd", null, "\u2193"), " Navigate"), /* @__PURE__ */ React.createElement("span", { className: "key" }, /* @__PURE__ */ React.createElement("kbd", null, "\u2192"), /* @__PURE__ */ React.createElement("kbd", null, "\u21B5"), " Open"), /* @__PURE__ */ React.createElement("span", { className: "key" }, /* @__PURE__ */ React.createElement("kbd", null, "\u2190"), " Back"), /* @__PURE__ */ React.createElement("span", { className: "key" }, /* @__PURE__ */ React.createElement("kbd", null, "\u2318F"), " Search"), /* @__PURE__ */ React.createElement("span", { className: "key" }, /* @__PURE__ */ React.createElement("kbd", null, "\u23181"), /* @__PURE__ */ React.createElement("kbd", null, "\u23182"), " View"), /* @__PURE__ */ React.createElement("span", { className: "spacer" }), /* @__PURE__ */ React.createElement("span", null, cur.label), /* @__PURE__ */ React.createElement("span", null, selection.file || selection.dir || "/")), searchOpen && /* @__PURE__ */ React.createElement(

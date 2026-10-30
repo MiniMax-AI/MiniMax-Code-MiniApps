@@ -499,6 +499,9 @@ input { font: inherit; color: inherit; }
 .gear-btn:hover { background: var(--surface); color: var(--ink); border-color: var(--line-2); }
 .gear-btn + .gear-btn { margin-left: 4px; }
 .sort-btn { width: auto; padding: 0 10px; gap: 5px; border-radius: var(--r-md); }
+.sort-btn .chat-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+@media (max-width: 560px) { .chat-btn .chat-label { display: none; } .chat-btn { padding: 0 8px; } }
+.gear-btn:disabled { opacity: .45; cursor: default; }
 .sort-btn .sort-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
 
 /* Settings modal */
