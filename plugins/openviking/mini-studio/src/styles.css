@@ -1,0 +1,271 @@
+/* Design tokens and base layer copied from OpenViking Studio (web-studio/src/styles.css). */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #242426;
+  --card: #ffffff;
+  --card-foreground: #242426;
+  --popover: #ffffff;
+  --popover-foreground: #242426;
+  --primary: #242426;
+  --primary-foreground: #fafafa;
+  --secondary: #f0f0f1;
+  --secondary-foreground: #242426;
+  --muted: #f4f4f5;
+  --muted-foreground: #6b6b70;
+  --accent: #f0f0f1;
+  --accent-foreground: #242426;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e4e4e7;
+  --input: #dedee0;
+  --ring: #929296;
+  --heatmap-empty: #ebedf0;
+  --heatmap-level-1: #9be9a8;
+  --heatmap-level-2: #40c463;
+  --heatmap-level-3: #30a14e;
+  --heatmap-level-4: #216e39;
+  --home-token-input: #4679ae;
+  --home-token-output: #328574;
+  --home-token-embedding: #8264ad;
+  --chart-1: oklch(0.8 0.1 210);
+  --chart-2: oklch(0.7 0.12 225);
+  --chart-3: oklch(0.6 0.13 243);
+  --chart-4: oklch(0.5 0.12 260);
+  --chart-5: oklch(0.42 0.1 280);
+  --radius: 0.625rem;
+  --sidebar: #f7f7f8;
+  --sidebar-foreground: #242426;
+  --sidebar-primary: #242426;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #ebebed;
+  --sidebar-accent-foreground: #242426;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: #929296;
+  --success: oklch(0.6 0.12 180);
+  --success-foreground: oklch(0.98 0.01 180);
+  --warning: oklch(0.7 0.14 75);
+  --warning-foreground: oklch(0.2 0.04 75);
+  --info: oklch(0.6 0.12 210);
+  --info-foreground: oklch(0.98 0.01 210);
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Noto Sans Variable', ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.dark {
+  --background: #1e1e20;
+  --foreground: #eeeeef;
+  --card: #2f2f31;
+  --card-foreground: #eeeeef;
+  --popover: #303032;
+  --popover-foreground: #eeeeef;
+  --primary: #f4f4f5;
+  --primary-foreground: #242426;
+  --secondary: #363638;
+  --secondary-foreground: #eeeeef;
+  --muted: #353537;
+  --muted-foreground: #ababaf;
+  --accent: #3a3a3c;
+  --accent-foreground: #f4f4f5;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: #3e3e40;
+  --input: #505053;
+  --ring: #929296;
+  --heatmap-empty: #303033;
+  --heatmap-level-1: #0e4429;
+  --heatmap-level-2: #006d32;
+  --heatmap-level-3: #26a641;
+  --heatmap-level-4: #39d353;
+  --home-token-input: #7da7d6;
+  --home-token-output: #69b3a2;
+  --home-token-embedding: #af98d1;
+  --chart-1: oklch(0.65 0.12 210);
+  --chart-2: oklch(0.6 0.13 225);
+  --chart-3: oklch(0.55 0.14 243);
+  --chart-4: oklch(0.5 0.13 260);
+  --chart-5: oklch(0.45 0.11 280);
+  --sidebar: #2b2b2d;
+  --sidebar-foreground: #dedee0;
+  --sidebar-primary: #f4f4f5;
+  --sidebar-primary-foreground: #242426;
+  --sidebar-accent: #1e1e20;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: #333335;
+  --sidebar-ring: #929296;
+  --success: oklch(0.7 0.12 180);
+  --success-foreground: oklch(0.15 0.01 180);
+  --warning: oklch(0.75 0.14 75);
+  --warning-foreground: oklch(0.15 0.04 75);
+  --info: oklch(0.7 0.13 210);
+  --info-foreground: oklch(0.15 0.01 210);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  #app {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* Keep the icon language quiet and precise across native controls, feature
+     views, and third-party primitives. Size remains owned by each context. */
+  .lucide {
+    flex: none;
+    stroke-width: 1.75;
+    shape-rendering: geometricPrecision;
+  }
+
+  button .lucide,
+  a .lucide,
+  [role="button"] .lucide {
+    transition:
+      color 160ms ease,
+      opacity 160ms ease,
+      transform 160ms ease;
+  }
+
+  button:active:not(:disabled) .lucide,
+  a:active .lucide,
+  [role="button"]:active .lucide {
+    transform: scale(0.94);
+  }
+
+  @media (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 1rem;
+      line-height: 1.5rem;
+    }
+  }
+}
+.scrollbar-fade {
+  scrollbar-width: none;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent) transparent;
+}
+
+.scrollbar-fade::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.scrollbar-fade:is(:hover, :focus-within, [data-scrolling="true"]) {
+  scrollbar-width: thin;
+}
+
+.scrollbar-fade:is(:hover, :focus-within, [data-scrolling="true"])::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.scrollbar-fade:is(:hover, :focus-within, [data-scrolling="true"])::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--foreground) 20%, transparent);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.scrollbar-fade:is(:hover, :focus-within, [data-scrolling="true"])::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- Atlas content renderers (markdown / json / jsonl / code) mapped onto Studio tokens ---- */
+:root {
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+.atlas-content {
+  --a-ink: var(--foreground);
+  --a-ink-2: color-mix(in oklch, var(--foreground) 86%, transparent);
+  --a-muted: var(--muted-foreground);
+  --a-faint: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+  --a-line: var(--border);
+  --a-line-2: var(--input);
+  --a-bg-2: var(--muted);
+  --a-surface: var(--card);
+  --a-surface-2: var(--secondary);
+  --a-accent: var(--info);
+  --a-accent-ink: var(--info);
+  --a-accent-soft: color-mix(in oklch, var(--info) 14%, transparent);
+  --a-mono: var(--font-mono);
+  --a-sans: var(--font-sans);
+  --a-serif: var(--font-sans);
+  --a-r-md: var(--radius-md);
+  --a-s-3: 12px; --a-s-4: 16px; --a-s-5: 24px;
+  --a-shadow-1: 0 1px 2px rgb(0 0 0 / 0.06);
+  font-size: 14px;
+}
+.atlas-content .preview-section-body.markdown { font-size: 14px; line-height: 1.7; }
+
+/* Noto Sans Variable, Latin subset only (Studio's font; other scripts fall back to system fonts). */
+@font-face {
+  font-family: 'Noto Sans Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('../node_modules/@fontsource-variable/noto-sans/files/noto-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
