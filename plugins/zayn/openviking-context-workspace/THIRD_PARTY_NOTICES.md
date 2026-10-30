@@ -1,15 +1,26 @@
 # Third-party notices
 
-This package bundles and adapts OpenViking components:
+## Atlas (atlas-fs)
 
-- OpenViking Studio production assets from `web-studio/`.
-- OpenViking memory hook runtimes from `examples/claude-code-memory-plugin/` and
-  `examples/codex-memory-plugin/`.
-- OpenViking Agent Skills.
+- Source: <https://github.com/ZaynJarvis/atlas-fs>, revision `8be0cf1`.
+- Author: Zayn Jarvis (also the author of this package). The upstream repository has no LICENSE
+  file; the copies here are distributed under this package's license by the author.
+- Vendored: `fs-api.js`, `openviking-adapter.js`, `styles.css`, `views.css`, `renderers.css`,
+  `search-overlay.css` (in `miniapp/client/`) and `views.jsx`, `ui-helpers.jsx`, `renderers.jsx`,
+  `search-overlay.jsx` (in `src/`, compiled to `miniapp/client/build/`). `src/app.jsx` is derived
+  from the app script in `Atlas.html`.
+- Changes: removed the Google Fonts `@import` from `styles.css` (system font fallbacks are used);
+  exported `TreeResizer` from `ui-helpers.jsx` so the precompiled scripts can share it; replaced the
+  mock backend, Tweaks panel, service worker, and in-page API key field with a connection form backed
+  by the Node runtime; added the "+ URI" / "+ Content" chat actions.
 
-Source: <https://github.com/volcengine/OpenViking>
+## React 18.3.1
 
-Revision: `b3c3f643b28d04c11c60fde0189c49bac8987c4f`
+- `miniapp/client/vendor/react.production.min.js`, `react-dom.production.min.js` (UMD builds from
+  the npm packages `react@18.3.1` and `react-dom@18.3.1`).
+- MIT License, Copyright (c) Meta Platforms, Inc. and affiliates. Full text in
+  `miniapp/client/vendor/LICENSE-react.txt`.
 
-OpenViking is distributed under the GNU Affero General Public License v3.0. The complete license is
-included in [LICENSE](./LICENSE).
+## Build-time only (not shipped)
+
+- esbuild 0.28.2 (MIT), used by `scripts/build.mjs`.

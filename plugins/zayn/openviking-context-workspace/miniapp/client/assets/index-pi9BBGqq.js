@@ -1,1 +1,0 @@
-import{a as t,u as s,j as a,N as n}from"./index-CrpXeiZm.js";function i(){const{provider:e}=t(),{isGatewayHost:o}=s();return a.jsx(n,{replace:!0,to:o?"/gateway":e==="opensource"?"/home":"/filesystem"})}export{i as component};

@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { start } from './miniapp/node/server.mjs';
@@ -11,8 +12,8 @@ const write = (level, message) => {
 const lifecycle = await start({
   pluginId: 'openviking-context-workspace',
   pluginRoot: import.meta.dirname,
-  dataDir: join(import.meta.dirname, '.dev-data'),
-  listen: { host: '0.0.0.0', port },
+  dataDir: process.env.OV_MINIAPP_DATA_DIR || join(tmpdir(), 'openviking-context-workspace-dev'),
+  listen: { host: '127.0.0.1', port },
   signal: abort.signal,
   logger: {
     debug: (message) => write('debug', message),
@@ -22,7 +23,7 @@ const lifecycle = await start({
   },
 });
 
-process.stderr.write(`OpenViking MiniApp preview: http://0.0.0.0:${port}/workspace\n`);
+process.stderr.write(`OpenViking MiniApp preview: http://127.0.0.1:${port}/context\n`);
 
 const shutdown = async () => {
   abort.abort();

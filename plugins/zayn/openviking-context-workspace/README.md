@@ -1,75 +1,83 @@
 # OpenViking Context Workspace (`openviking-context-workspace`)
 
-OpenViking Studio, context tools, and automatic session memory inside MiniMax Code.
+English | [简体中文](README.zh-CN.md)
 
-The Mini App serves the official OpenViking Studio UI at `/workspace`. Its Node runtime resolves
-the same `OPENVIKING_*`, `~/.openviking/ovcli.conf`, and `~/.openviking/ov.conf` connection
-chain used by the OpenViking CLI, then proxies only the fixed Studio REST routes and
-`/mcp/openviking`. Credentials stay in the Node process.
+A read-only navigator for your [OpenViking](https://github.com/volcengine/OpenViking) context inside
+MiniMax Code. Browse `viking://` with Miller columns or a tree, search it (semantic find, grep,
+glob), preview Markdown / JSON / JSONL, and add the selected URI or file content to the current
+MiniMax Code chat.
 
-## What is included
+The UI is [Atlas](https://github.com/ZaynJarvis/atlas-fs), precompiled and vendored. This package
+contains no hooks, Skills, or MCP servers. Session capture and recall are expected to go through the
+OpenViking Context Gateway configured as a MiniMax Code model provider; this Mini App does not
+capture anything.
 
-- The official OpenViking Studio build for browsing resources, sessions, memories, and skills.
-- The OpenViking Streamable HTTP MCP endpoint, available to the MiniMax Code Agent while the Mini
-  App is installed.
-- OpenViking Skills for memory, skill discovery, experience capture, and troubleshooting.
-- MiniMax Code hooks: `Stop` appends new user/assistant messages, while `PreCompact` and
-  `SessionEnd` commit the durable OpenViking session.
-- A **Send to MiniMax Code** button that calls `window.mcode.miniapp.message.append` from a user
-  gesture. MiniMax Code asks for confirmation before adding the handoff to the chat draft.
+## Install and open
 
-## Install
+Copy this directory, including `.minimax-plugin/`, into the MiniMax Code plugin directory as
+`openviking-context-workspace/`, restart MiniMax Code, and ask "Open OpenViking Context Workspace".
 
-Copy the complete directory, including `.minimax-plugin/`, to the MiniMax Code plugin directory as
-`openviking-context-workspace/`, then restart MiniMax Code. Configure OpenViking with the normal
-`ov config` flow or the `OPENVIKING_*` environment variables.
+Open the gear icon and enter your OpenViking server URL and, if the server needs one, an API key
+(optional: account, user, and the URL of a Studio you host yourself). Press Save.
 
-For a standalone browser preview:
-
-```sh
-npm run dev
-```
-
-Open `http://127.0.0.1:4317/workspace`. The preview server binds to `0.0.0.0`; set `PORT` to
-choose another port. In browser preview, the handoff button copies text to the clipboard because the
-MiniMax Code Host bridge is not present.
+- **+ URI** adds `OpenViking context: viking://...` for the selected file or folder to the chat input.
+- **+ Content** reads the selected file and adds it, wrapped in `<context uri="...">`, to the chat
+  input (truncated at 90,000 characters).
+- MiniMax Code shows its own confirmation for each addition; nothing is sent until you press Send.
+- **Open full Studio** (in settings, only when a Studio URL is saved) asks the client to open that URL
+  in a new window. Nothing is embedded in the page.
 
 ## Tested environment
 
-- MiniMax Code 3.1.2 package contract.
-- Node.js 22 on Linux.
-- OpenViking Studio built from OpenViking commit `b3c3f643b28d04c11c60fde0189c49bac8987c4f`.
+- MiniMax Code 3.1.2 package contract (no features with a higher minimum version).
+- Node.js 22 on Linux: `npm test` against a fake OpenViking server, and a headless Chromium render of
+  the page through `npm run dev`.
+- Not yet verified inside the MiniMax Code client: the `message.append` confirmation and the
+  **Open full Studio** new-window behaviour.
 
 ## Data & access
 
-- Files: reads bundled Studio assets and OpenViking configuration from the documented credential
-  chain. Hook state is stored in the operating system's temporary directory by the upstream hook
-  runtime.
-- Network: proxies only `/api/*`, `/bot/*`, `/health`, `/ready`, `/openapi.json`, and the
-  declared MCP endpoint to the configured OpenViking server. It does not forward browser cookies,
-  Host authorization headers, or arbitrary URLs.
-- Processes: the Mini App starts one Host-managed Node HTTP server. Hook handlers start short-lived
-  Node processes for capture and commit.
-- Agent: MCP tools can read and write OpenViking resources and sessions according to the configured
-  OpenViking identity. The page can only ask the Host to append text to the current unsent draft.
-- Credentials: resolved server-side and never returned to Studio or stored in client assets.
+- **Files read**: the package's own `miniapp/client` and `miniapp/node` files.
+- **Files written**: `connection.json` in the plugin data directory (`context.dataDir`), holding the
+  server URL, API key, account, user, and Studio URL. Written atomically with mode `0600`. Nothing is
+  written anywhere else.
+- **Browser storage**: view preferences only (theme, density, accent, sort, panel sizes, expanded
+  tree nodes). No credentials and no OpenViking content.
+- **Network**: the Node process connects only to the OpenViking server URL you configure, and only for
+  these read-only routes: `GET /health`, `GET /api/v1/fs/{ls,tree,stat}`,
+  `GET /api/v1/content/{read,abstract,overview}`, `POST /api/v1/search/{find,grep,glob}`. Any other
+  method, path, or query key is refused with no upstream call; `uri` / `target_uri` must be
+  `viking://` URIs; redirects are refused. The API key is sent as `Authorization: Bearer` and
+  `X-API-Key`. The page itself talks only to the Mini App's own loopback port. When you press
+  **Open full Studio**, the client opens the Studio URL you entered.
+- **Credentials**: entered by you in settings, stored only in `connection.json`, never returned to
+  the page, logged, or included in error responses. There is no fallback to a root key or to
+  `~/.openviking` configuration files.
+- **Processes**: none spawned.
+- **Agent turns**: none. No `agentAccess`. The page only asks the Host to append text to the unsent
+  chat draft (`window.mcode.miniapp.message.append`) after a click.
 
-## Source layout
+## Development
+
+```sh
+npm test          # in-plugin tests: proxy allowlist, key handling, static file serving
+npm run dev       # preview at http://127.0.0.1:4317/context (binds 127.0.0.1 only)
+npm install && npm run build   # rebuild miniapp/client/build/*.js from src/*.jsx with esbuild
+```
+
+`npm run dev` stores its connection settings in `$TMPDIR/openviking-context-workspace-dev`
+(override with `OV_MINIAPP_DATA_DIR`). Outside MiniMax Code, **+ URI** / **+ Content** copy to the
+clipboard instead.
 
 ```text
-.minimax-plugin/plugin.json     Mini App, MCP, Skill, and Hook declarations
-servers.mcp.json                OpenViking MCP capability
-hooks/openviking-hooks.json     MiniMax Code lifecycle subscriptions
-hooks/dispatch.mjs              Claude/Codex payload adapter
-hooks/claude/                   Upstream Claude transcript capture runtime
-hooks/codex/                    Upstream Codex transcript capture runtime
-skills/                         OpenViking Agent Skills
-miniapp/miniapp.json            Runtime, surface, and MCP endpoint
-miniapp/client/                 Official Studio build plus Host bridge
-miniapp/node/server.mjs         Static server and credential-safe fixed proxy
+.minimax-plugin/plugin.json   Mini App declaration only (no hooks, Skills, or MCP)
+miniapp/node/server.mjs       Page, static files, connection settings, /ov-api proxy
+miniapp/node/openviking.mjs   Settings storage and the read-only route allowlist
+miniapp/client/               index.html, Atlas CSS/JS, build/ (generated), vendor/ (React 18.3.1)
+src/*.jsx                     Atlas JSX sources compiled by scripts/build.mjs
+tests/                        node:test suite
 ```
 
 ## License
 
-[GNU Affero General Public License v3.0](./LICENSE). See
-[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for the bundled OpenViking source revision.
+[AGPL-3.0](./LICENSE). Third-party code: see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

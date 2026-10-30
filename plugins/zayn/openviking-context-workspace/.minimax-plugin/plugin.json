@@ -2,21 +2,16 @@
   "schemaVersion": 1,
   "name": "openviking-context-workspace",
   "displayName": "OpenViking Context Workspace",
-  "version": "1.1.0",
-  "description": "Use OpenViking Studio, MCP context tools, and automatic session capture inside MiniMax Code.",
+  "version": "2.0.0",
+  "description": "Browse and search your OpenViking context, preview it, and add selected URIs or content to the MiniMax Code chat.",
   "author": "OpenViking",
   "icon": "icon.png",
   "category": "Productivity",
-  "exampleQueries": ["Open OpenViking Context Workspace", "Browse my OpenViking context"],
-  "apps": [],
-  "mcpServers": ["servers.mcp.json"],
-  "skills": [
-    "skills/openviking-memory/SKILL.md",
-    "skills/openviking-skills/SKILL.md",
-    "skills/ov-experience-memory/SKILL.md",
-    "skills/ov-kanban/SKILL.md",
-    "skills/ov-memory-troubleshoot/SKILL.md",
-    "skills/ov-resources/SKILL.md"
+  "exampleQueries": [
+    "Open OpenViking Context Workspace",
+    "Browse my OpenViking context"
   ],
-  "hooks": ["hooks/openviking-hooks.json"]
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
 }

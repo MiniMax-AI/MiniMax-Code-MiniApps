@@ -1,80 +1,25 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/x-icon" sizes="32x32" href="/workspace/favicon.ico" />
-    <link rel="icon" type="image/svg+xml" href="/workspace/favicon.svg" />
-    <link
-      rel="icon"
-      type="image/png"
-      sizes="32x32"
-      href="/workspace/favicon-32.png"
-    />
-    <link rel="apple-touch-icon" href="/workspace/apple-touch-icon.png" />
-    <link rel="manifest" href="/workspace/manifest.json" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-    />
-    <meta name="theme-color" content="#ffffff" />
-    <meta name="application-name" content="OpenViking Studio" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="OpenViking" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <!-- Runs before Vite's module graph so dependencies can safely call crypto.randomUUID. -->
-    <script>
-      ;(() => {
-        const cryptoObject = globalThis.crypto
-        if (!cryptoObject || typeof cryptoObject.randomUUID === 'function') {
-          return
-        }
-
-        const createUuid = () => {
-          const bytes = new Uint8Array(16)
-          if (typeof cryptoObject.getRandomValues === 'function') {
-            cryptoObject.getRandomValues(bytes)
-          } else {
-            for (let index = 0; index < bytes.length; index += 1) {
-              bytes[index] = Math.floor(Math.random() * 256)
-            }
-          }
-
-          bytes[6] = (bytes[6] & 0x0f) | 0x40
-          bytes[8] = (bytes[8] & 0x3f) | 0x80
-
-          const hex = Array.from(bytes, (byte) =>
-            byte.toString(16).padStart(2, '0'),
-          )
-
-          return `${hex.slice(0, 4).join('')}-${hex
-            .slice(4, 6)
-            .join('')}-${hex.slice(6, 8).join('')}-${hex
-            .slice(8, 10)
-            .join('')}-${hex.slice(10, 16).join('')}`
-        }
-
-        try {
-          Object.defineProperty(cryptoObject, 'randomUUID', {
-            configurable: true,
-            value: createUuid,
-          })
-        } catch {
-          try {
-            cryptoObject.randomUUID = createUuid
-          } catch {
-            // Ignore browsers that expose a non-extensible Crypto object.
-          }
-        }
-      })()
-    </script>
-    <title>OpenViking Studio</title>
-    <script type="module" crossorigin src="/workspace/assets/index-CrpXeiZm.js"></script>
-    <link rel="stylesheet" crossorigin href="/workspace/assets/index-BYwXCZzA.css">
-    <link rel="stylesheet" href="/workspace/miniapp-bridge.css">
-  </head>
-  <body>
-    <div id="app"></div>
-    <script src="/workspace/miniapp-bridge.js" defer></script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#161616">
+<title>OpenViking Context Workspace</title>
+<link rel="stylesheet" href="static/styles.css">
+<link rel="stylesheet" href="static/views.css">
+<link rel="stylesheet" href="static/renderers.css">
+<link rel="stylesheet" href="static/search-overlay.css">
+<script src="static/vendor/react.production.min.js"></script>
+<script src="static/vendor/react-dom.production.min.js"></script>
+<script src="static/fs-api.js"></script>
+<script src="static/openviking-adapter.js"></script>
+<script src="static/build/renderers.js"></script>
+<script src="static/build/ui-helpers.js"></script>
+<script src="static/build/views.js"></script>
+<script src="static/build/search-overlay.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script src="static/build/app.js"></script>
+</body>
 </html>

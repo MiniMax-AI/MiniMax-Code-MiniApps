@@ -1,8 +1,12 @@
 {
   "schemaVersion": 1,
   "artifacts": {
-    "client": ["./miniapp/client"],
-    "node": ["./miniapp/node"]
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
   },
   "runtime": {
     "kind": "process",
@@ -10,24 +14,7 @@
     "lifecycle": "on-demand"
   },
   "surface": {
-    "path": "/workspace",
-    "window": {
-      "width": 1280,
-      "height": 820,
-      "minWidth": 420,
-      "minHeight": 600,
-      "resizable": true,
-      "frame": true,
-      "transparent": false,
-      "alwaysOnTop": false,
-      "skipTaskbar": false,
-      "clickThrough": false
-    }
+    "path": "/context"
   },
-  "mcpEndpoints": [
-    {
-      "server": "openviking",
-      "path": "/mcp/openviking"
-    }
-  ]
+  "mcpEndpoints": []
 }

@@ -1,1 +1,0 @@
-import{ah as a}from"./index-CrpXeiZm.js";function t(e){return e.toLocaleString(a.resolvedLanguage??a.language)}function o(e,n){return e.toLocaleString(a.resolvedLanguage??a.language,n)}export{t as a,o as f};

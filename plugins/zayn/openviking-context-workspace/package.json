@@ -3,10 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node dev-server.mjs"
+    "build": "node scripts/build.mjs",
+    "dev": "node dev-server.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "mcode": {
     "schemaVersion": 2,
     "miniApp": "./miniapp/miniapp.json"
+  },
+  "version": "2.0.0",
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }
