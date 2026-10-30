@@ -47,6 +47,11 @@ const HELPER_ACTIVE = new Set(['queued', 'running']);
  * Model capacity errors (429/529) and timeouts usually clear within a minute.
  */
 export const TURN_RETRY_DELAYS_MS = Object.freeze([8000, 20000]);
+/**
+ * How often a running turn writes its progress to disk. A crash must leave the work the model
+ * already did in the ledger, so the turn's known state cannot live only in memory.
+ */
+const LIVE_PERSIST_MS = 2000;
 /** Failure reasons a retry cannot fix; anything else (or no reason from an older Host) may be retried. */
 export const NO_RETRY_REASONS = new Set(['auth', 'quota', 'context_too_long', 'blocked', 'invalid_request']);
 /** The turn may already have run, so resending it could repeat a reply or an action. */
@@ -578,11 +583,14 @@ export class Engine {
 
     const startedAt = Date.now();
     let lastFlush = 0;
+    let lastPersist = 0;
     let rootSessionId = this.store.getSession(chatId, bot.id)?.sessionId;
     let toolStarted = false;
     /** Whether any attempt started a turn, i.e. the session already holds this input. */
     let reachedHost = false;
     let invoked = false;
+    /** How many times the model was called for this turn, retries included. */
+    let modelCalls = 0;
     let preparedInput = input;
     let acceptedGroupCursor;
     /** @type {{ type: 'text', text: string, live?: boolean } | undefined} */
@@ -593,6 +601,13 @@ export class Engine {
       lastFlush = now;
       message.text = textOf(message.parts);
       this.broadcast({ type: 'message.upsert', chatId, message });
+      // Keep the turn's progress on disk: a crash must leave the work the model already did
+      // in the ledger, not just a message that says it was still running.
+      if (now - lastPersist >= LIVE_PERSIST_MS) {
+        lastPersist = now;
+        void this.store.persistMessages(chatId).catch((error) =>
+          this.logger.warn('minimax_bot.turn_persist_failed', { code: error?.code ?? 'unknown' }));
+      }
     };
     const ensureLiveText = () => {
       if (!liveText || message.parts.at(-1) !== liveText) {
@@ -709,6 +724,8 @@ export class Engine {
           if (attempt === 0) preparedInput = await this.prepareGroupInput(input);
           const attemptInput = attempt === 0 || !reachedHost ? preparedInput : { ...preparedInput, text: t('retry.continue') };
           invoked = true;
+          modelCalls += 1;
+          message.modelCalls = modelCalls;
           result = await this.invoke(attemptInput, rootSessionId, controller.signal, onEvent) ?? skippedTurn();
         } catch (error) {
           if (errorCode(error) === 'SESSION_NOT_FOUND' && !input.answer && attempt === 0) {
@@ -716,6 +733,8 @@ export class Engine {
             await this.store.clearSession(chatId, bot.id);
             try {
               preparedInput = await this.prepareGroupInput(input);
+              modelCalls += 1;
+              message.modelCalls = modelCalls;
               result = await this.invoke(preparedInput, undefined, controller.signal, onEvent) ?? skippedTurn();
             } catch (retryError) {
               failure = describeAgentError(retryError);
@@ -814,31 +833,37 @@ export class Engine {
         request: result.pendingQuestion.request,
       };
     }
-    await this.store.updateMessage(chatId, message.id, {});
-    if (result?.sessionId) {
-      await this.store.setSession(chatId, bot.id, { sessionId: result.sessionId });
-    }
-    if (acceptedGroupCursor !== undefined) {
-      const previous = this.store.getSession(chatId, bot.id)?.lastSeenSeq ?? 0;
-      await this.store.setSession(chatId, bot.id, { lastSeenSeq: Math.max(previous, acceptedGroupCursor) });
+    const tools = message.parts.filter((part) => part.type === 'tool').length;
+    try {
+      await this.store.updateMessage(chatId, message.id, {});
+      if (result?.sessionId) {
+        await this.store.setSession(chatId, bot.id, { sessionId: result.sessionId });
+      }
+      if (acceptedGroupCursor !== undefined) {
+        const previous = this.store.getSession(chatId, bot.id)?.lastSeenSeq ?? 0;
+        await this.store.setSession(chatId, bot.id, { lastSeenSeq: Math.max(previous, acceptedGroupCursor) });
+      }
+    } finally {
+      // The model ran: the ledger must say so even when a later step of this turn fails.
+      await this.store.recordUsage({
+        ts: Date.now(),
+        turnId: message.id,
+        botId: bot.id,
+        botName: bot.name,
+        chatId,
+        kind: input.kind,
+        status,
+        durationMs: message.durationMs,
+        chars: finalText.length,
+        tools,
+        // One turn, but the model may have been called more than once to finish it.
+        attempts: modelCalls,
+      });
+      this.broadcast({ type: 'usage.changed' });
     }
     this.broadcast({ type: 'message.upsert', chatId, message });
     this.emitBusy(chatId);
     this.broadcastSummary(chatId);
-
-    const tools = message.parts.filter((part) => part.type === 'tool').length;
-    await this.store.recordUsage({
-      ts: Date.now(),
-      botId: bot.id,
-      botName: bot.name,
-      chatId,
-      kind: input.kind,
-      status,
-      durationMs: message.durationMs,
-      chars: finalText.length,
-      tools,
-    });
-    this.broadcast({ type: 'usage.changed' });
     return {
       status,
       text: finalText,
@@ -1755,6 +1780,10 @@ export class Engine {
             // A background job calls the same tools a Bot's own turn does. Count them, or the
             // turn it spends looks like it cost nothing.
             turnTools += 1;
+            // Keep the count on disk: a job cut off by a restart must still show the tools it
+            // really called in the ledger.
+            helper.turnTools = turnTools;
+            void this.store.save().catch((error) => this.logger.warn('minimax_bot.helper_save_failed', { helperId: helper.id, code: error?.code ?? 'unknown' }));
           } else if (event.type === 'permission.requested') {
             // The user approves a helper's tool call in its Bot's chat, like the Bot's own.
             const approval = {
@@ -1833,6 +1862,7 @@ export class Engine {
       // counts fewer turns than the model actually ran.
       await this.store.recordUsage({
         ts: Date.now(),
+        turnId: helper.id,
         botId: helper.botId,
         botName: turnBotName,
         chatId: helper.chatId,
@@ -1841,6 +1871,8 @@ export class Engine {
         durationMs: turnMs,
         chars: turnText.length,
         tools: turnTools,
+        // A background job runs the model once; it has no retry loop of its own.
+        attempts: 1,
       });
       this.broadcast({ type: 'usage.changed' });
     }

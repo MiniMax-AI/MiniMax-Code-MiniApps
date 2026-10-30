@@ -44,6 +44,12 @@ The MCP tools check the arguments they declare before they run. A value of the w
 
 An avatar may come from the avatar library or from an image uploaded in the page only. A path on the computer is refused, the plugin reads no file outside its own `dataDir` for one, and the refused path is not echoed back — so the field cannot be used to ask what exists on the disk.
 
+## 0.7.17 The panel and the ledger say what happened
+
+The usage ledger is the record of what the model really did. A turn cut off by a crash or a restart is written down as aborted, with no duration — it never reported how long it ran — and with the characters and tool calls it did make; the panel's average is taken over the turns that have a known duration, so a lost turn neither vanishes from the count nor counts as zero seconds. Every row says how many times the model was called for that turn (a retry is still one turn), and the panel adds that count when it is higher than the number of turns. A turn that ran is on the ledger even when a later step of the same turn fails to write.
+
+The note section of the group panel reads the note's limits (6 entries and 1200 characters) from the server, so the numbers it shows are the numbers the plugin uses.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

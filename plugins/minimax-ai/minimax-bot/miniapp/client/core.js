@@ -60,6 +60,9 @@ export const state = {
   user: { name: '', systemName: '' },
   /** Effective language resolved by the server. */
   locale: systemLocale(),
+  /** Limits the server applies to a group note; `null` until the server states them. */
+  /** @type {{ entries: number, chars: number } | null} */
+  noteLimits: null,
 };
 
 /** Navigation callbacks registered by app.js so panels can drive the main view. */
@@ -255,6 +258,19 @@ export async function api(method, path, body) {
   return /** @type {any} */ (data);
 }
 
+/**
+ * The note limits as the server states them, or `null` when it does not state a usable pair:
+ * the panel then says nothing at all rather than half a line.
+ * @param {any} limits
+ * @returns {{ entries: number, chars: number } | null}
+ */
+function noteLimitsOf(limits) {
+  if (!limits || typeof limits !== 'object') return null;
+  const { entries, chars } = limits;
+  if (!Number.isFinite(entries) || !Number.isFinite(chars)) return null;
+  return { entries, chars };
+}
+
 export async function loadState() {
   const data = await api('GET', '/api/state');
   state.bots = data.bots;
@@ -271,6 +287,9 @@ export async function loadState() {
   state.settings = data.settings ?? state.settings;
   state.user = data.user ?? state.user;
   state.locale = data.locale ?? state.locale;
+  // The server owns the note limits: the panel states them instead of writing down numbers of
+  // its own, which would drift from the ones the plugin actually applies.
+  state.noteLimits = noteLimitsOf(data.noteLimits);
   setLocale(state.locale);
   if (!state.current || !chatExists(state.current)) {
     const remembered = prefs.lastChat && chatExists(prefs.lastChat) ? prefs.lastChat : '';
