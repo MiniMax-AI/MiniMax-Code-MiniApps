@@ -662,7 +662,7 @@ export function createMcpHandler({ team, engine }) {
           result = {
             protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
             capabilities: { tools: { listChanged: false } },
-            serverInfo: { name: 'minimax-bot', version: '0.7.15' },
+            serverInfo: { name: 'minimax-bot', version: '0.7.16' },
             instructions: t('mcp.instructions'),
           };
           break;
