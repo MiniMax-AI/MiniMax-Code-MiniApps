@@ -32,7 +32,7 @@ test('a clip reference names the clip, its time, its source and where the user i
     '[Cutline reference]',
     '- Clip: c_1 · video · track V1',
     '  Timeline: 00:02:00 → 00:05:15 (2s → 5.5s, 3.5s)',
-    '  Source: “interview.mp4” · media m_1 · in point 1.25s',
+    '  Source: “interview.mp4” · id m_1 · in point 1.25s',
     '- Pointed at: 00:03:06 (3.2s) · frame 96',
     '- Sequence: Main (id main)',
     '- Project: Demo · revision 42 · 30 fps',
@@ -61,13 +61,33 @@ test('a moment lists the clips under it and the track it was taken on', () => {
   const text = Chat.timeReference(3.2, ctx({ clips: [video, title, { ...video, id: 'c_3', start: 9 }], track: 'V1' }));
   assert.match(text, /^- Time: 00:03:06 \(3\.2s\) · frame 96$/m);
   assert.match(text, /^- Track: V1$/m);
-  assert.match(text, /^ {2}- c_1 · video · track V1 · 2s → 5\.5s$/m);
-  assert.match(text, /^ {2}- c_2 · text · track V2 · “Hello” · 0s → 4s$/m);
+  assert.match(text, /^ {2}- c_2 · text · track V2 · “Hello” · 0s → 4s\n {2}- c_1 · video · track V1 · 2s → 5\.5s$/m,
+    'V2 sits above V1 on the timeline');
   assert.doesNotMatch(text, /c_3/, 'a clip after the moment is not under it');
 
   const empty = Chat.timeReference(20, ctx({ clips: [video] }));
   assert.match(empty, /^- Clips here: none$/m);
   assert.doesNotMatch(empty, /Track:/);
+});
+
+test('clips are listed top to bottom, the way the timeline shows the lanes', () => {
+  const at = (id, track) => ({ id, kind: 'shape', track, start: 0, duration: 5 });
+  const clips = [at('c_a3', 'A3'), at('c_v1', 'V1'), at('c_a1', 'A1'), at('c_v2', 'V2'), at('c_v10', 'V10')];
+  const order = (text) => [...text.matchAll(/c_(?:a3|v1|a1|v2|v10)\b/g)].map((m) => m[0]);
+
+  /* The editor passes its own lane order: it wins, even when it is unusual. */
+  const custom = ctx({ clips, trackOrder: ['V10', 'V2', 'V1', 'A1', 'A3'] });
+  assert.deepEqual(order(Chat.timeReference(1, custom)), ['c_v10', 'c_v2', 'c_v1', 'c_a1', 'c_a3']);
+  assert.deepEqual(order(Chat.clipsReference(clips, custom)), ['c_v10', 'c_v2', 'c_v1', 'c_a1', 'c_a3'],
+    'clips that start together are listed lane by lane');
+
+  /* Without one: video from the highest number down, then audio from A1 up,
+     with V10 above V2 (numbers, not text). */
+  assert.deepEqual(order(Chat.timeReference(1, ctx({ clips }))), ['c_v10', 'c_v2', 'c_v1', 'c_a1', 'c_a3']);
+
+  /* Time still comes first in a clip list. */
+  const later = [{ ...at('c_v2', 'V2'), start: 3 }, at('c_a1', 'A1')];
+  assert.deepEqual(order(Chat.clipsReference(later, ctx())), ['c_a1', 'c_v2']);
 });
 
 test('a marker reference carries its time, label and colour', () => {

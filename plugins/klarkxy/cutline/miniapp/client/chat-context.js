@@ -104,6 +104,22 @@
     return oneLine(c.name || "");
   }
 
+  /** Where a clip's track sits on the timeline, top to bottom (`ctx.trackOrder`,
+      e.g. ["V3","V2","V1","A1",…]). Without an order: video lanes from the
+      highest number down, then audio lanes from A1 up — the default layout. */
+  function trackRank(ctx) {
+    const order = Array.isArray(ctx && ctx.trackOrder) ? ctx.trackOrder : null;
+    if (order && order.length) {
+      const at = new Map(order.map((id, i) => [String(id), i]));
+      return (c) => (at.has(String(c.track)) ? at.get(String(c.track)) : order.length);
+    }
+    return (c) => {
+      const m = /^([VA])(\d+)$/.exec(String(c.track));
+      if (!m) return 1e6;
+      return m[1] === "V" ? -Number(m[2]) : 1e3 + Number(m[2]);
+    };
+  }
+
   function header(T) {
     return [`[${T("Cutline reference")}]`];
   }
@@ -131,7 +147,7 @@
     if (c.mediaId) {
       const m = ctx.getMedia ? ctx.getMedia(c.mediaId) : null;
       const file = m ? oneLine(m.name || fileName(m.src)) : "";
-      lines.push(`  ${T("Source")}: ${file ? `“${file}” · ` : ""}media ${c.mediaId} · ${T("in point")} ${seconds(c.in || 0)}s`);
+      lines.push(`  ${T("Source")}: ${file ? `“${file}” · ` : ""}id ${c.mediaId} · ${T("in point")} ${seconds(c.in || 0)}s`);
     }
     if (c.kind === "comp" && c.compId) lines.push(`  ${T("Composition")}: id ${c.compId}`);
     const flags = [];
@@ -157,7 +173,8 @@
    * @param {Function} [T]
    */
   function clipsReference(clips, ctx, T = identity) {
-    const list = (clips || []).filter(Boolean).slice().sort((a, b) => (a.start - b.start) || String(a.track).localeCompare(String(b.track)));
+    const rank = trackRank(ctx);
+    const list = (clips || []).filter(Boolean).slice().sort((a, b) => (a.start - b.start) || rank(a) - rank(b));
     const lines = header(T);
     lines.push(list.length === 1 ? `- ${T("Clip")}: ` + clipLines(list[0], ctx, T).join("\n") :
       `- ${T("Clips ({n})", { n: list.length })}:`);
@@ -183,7 +200,9 @@
     const lines = header(T);
     lines.push(`- ${T("Time")}: ${at(t, ctx.fps)} · ${T("frame")} ${frameOf(t, ctx.fps)}`);
     if (ctx.track) lines.push(`- ${T("Track")}: ${ctx.track}`);
-    const under = (ctx.clips || []).filter((c) => t >= c.start && t < c.start + c.duration);
+    const rank = trackRank(ctx);
+    const under = (ctx.clips || []).filter((c) => t >= c.start && t < c.start + c.duration)
+      .sort((a, b) => rank(a) - rank(b) || a.start - b.start);
     if (under.length) {
       lines.push(`- ${T("Clips here")}:`);
       for (const c of under.slice(0, MAX_CLIPS)) {

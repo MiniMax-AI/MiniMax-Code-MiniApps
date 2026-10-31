@@ -430,7 +430,7 @@ function chatContext(extra = {}) {
   return {
     fps: projectFps(), projectName: root.name || "", revision: project.revision ?? null,
     sequence: { id: seq.id || seqId, name: seq.name || seqId }, compPath,
-    getMedia, getComp, clips: project.clips.filter((c) => trackOf(c)), ...extra,
+    getMedia, getComp, clips: project.clips.filter((c) => trackOf(c)), trackOrder: TRACKS.map((t) => t.id), ...extra,
   };
 }
 let chatSending = false;
