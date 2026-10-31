@@ -406,8 +406,76 @@ function showTrackCtxMenu(clientX, clientY, track) {
   menu.style.top = Math.max(pad, y) + "px";
   btn.focus();
 }
+/* ── Send to chat: hand the conversation a reference to a clip, a moment, a
+   marker or a media file (chat-context.js builds the text). The Host shows its
+   own confirmation and appends the text to the chat input; nothing is sent
+   until the user presses Send. ── */
+const ChatRef = self.FableCutChat;
+function chatAppendApi() {
+  const message = window.mcode?.miniapp?.message;
+  return message && typeof message.append === "function" ? message : null;
+}
+/** Why the menu item is disabled, or null when the chat input can take text. */
+function chatUnavailable() {
+  return chatAppendApi() ? null : T("This version of MiniMax Code cannot add text to the chat input");
+}
+/** Where the user is: canvas fps, project, revision, open sequence, composition path. */
+function chatContext(extra = {}) {
+  const root = seqRoot();
+  const seqId = SeqLib.activeId(root);
+  const seq = SeqLib.find(root, seqId) || SeqLib.MAIN;
+  const compPath = state.compCtx
+    ? state.compCtx.path.map((id) => ({ id, name: (CompLib.getComp(state.compCtx.root, id) || {}).name || id }))
+    : [];
+  return {
+    fps: projectFps(), projectName: root.name || "", revision: project.revision ?? null,
+    sequence: { id: seq.id || seqId, name: seq.name || seqId }, compPath,
+    getMedia, getComp, clips: project.clips.filter((c) => trackOf(c)), trackOrder: TRACKS.map((t) => t.id), ...extra,
+  };
+}
+let chatSending = false;
+async function sendToChat(text) {
+  const message = chatAppendApi();
+  if (!message) { toast(chatUnavailable()); return; }
+  if (chatSending) return;
+  chatSending = true;
+  try {
+    await message.append(text);
+    toast(T("Added to the chat input — add your request and press Send"));
+  } catch (err) {
+    const code = err && err.message;
+    if (code === "user_cancelled") toast(T("Not added to the chat"));
+    else if (code === "target_unavailable") toast(T("No conversation to add to — open Cutline from a chat"));
+    else if (code === "result_unknown") toast(T("It may already be in the chat input — check there before trying again"));
+    else toast(T("Could not add to the chat ({code})", { code: code || "error" }));
+  } finally {
+    chatSending = false;
+  }
+}
+/** A small right-click menu of [label, run, disabledReason] rows, placed at (x, y). */
+function showChatMenu(clientX, clientY, rows) {
+  hideTrackCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.id = "trackCtxMenu";
+  for (const [label, run, why] of rows) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ctx-item";
+    btn.textContent = label;
+    if (why) { btn.disabled = true; btn.title = why; }
+    else btn.addEventListener("click", () => { hideTrackCtxMenu(); run(); });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  trackCtxMenu = menu;
+  const pad = 6;
+  menu.style.left = Math.max(pad, Math.min(clientX, window.innerWidth - menu.offsetWidth - pad)) + "px";
+  menu.style.top = Math.max(pad, Math.min(clientY, window.innerHeight - menu.offsetHeight - pad)) + "px";
+  menu.querySelector(".ctx-item:not(:disabled)")?.focus();
+}
 /* Clip right-click menu: enable / lock / link for the clip's selection. */
-function showClipCtxMenu(clientX, clientY, c) {
+function showClipCtxMenu(clientX, clientY, c, atTime = null) {
   hideTrackCtxMenu();
   if (!state.selIds.has(c.id)) selectClip(c.id);
   const group = withLinked(selectedClips());
@@ -447,6 +515,11 @@ function showClipCtxMenu(clientX, clientY, c) {
     const why = linkRefusal(selectedClips());
     item(T("Link audio / video"), "Ctrl+L", toggleLinkSelected, why);
   }
+  const sep = document.createElement("div");
+  sep.className = "ctx-sep";
+  menu.appendChild(sep);
+  const picked = selectedClips();
+  item(T("Send to chat"), "", () => sendToChat(ChatRef.clipsReference(picked, chatContext({ at: atTime }), T)), chatUnavailable());
   document.body.appendChild(menu);
   trackCtxMenu = menu;
   const pad = 6;
@@ -2806,6 +2879,7 @@ function showMediaMenu(x, y, m) {
   };
   const sep = () => { const d = document.createElement("div"); d.className = "ctx-sep"; menu.appendChild(d); };
   item(T("Open in Source"), () => loadSourceFromMedia(m));
+  item(T("Send to chat"), () => sendToChat(ChatRef.mediaReference(m, MediaLib.placements(usageDoc(), m.id), chatContext(), T)), chatUnavailable());
   item(T("Find timeline instances ({uses})", { uses }), () => showMediaInstances(m, x, y), uses ? null : "Not used on the timeline");
   item(T("Media info…"), () => showMediaInfo(m, x, y));
   item(isMediaOffline(m.id) ? T("Relink…") : T("Relink to another copy…"), () => openRelinkDialog([m]), state.connected ? null : T("Needs the Cutline server"));
@@ -5960,14 +6034,23 @@ function startTrimToolGesture(e, c, mode) {
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
 }
-/* Right-click a clip: enable / lock / link menu. */
+/* Right-click a clip: enable / lock / link menu. Right-click an empty spot on a
+   track: send that moment to the chat. */
 els.tracksContent.addEventListener("contextmenu", (e) => {
+  const at = ChatRef.snapToFrame(timeAtEvent(e), projectFps());
   const clipDiv = e.target.closest(".clip");
-  if (!clipDiv) return;
+  if (!clipDiv) {
+    const track = trackAtEvent(e);
+    if (!track) return;
+    e.preventDefault();
+    showChatMenu(e.clientX, e.clientY, [[T("Send this moment to chat"),
+      () => sendToChat(ChatRef.timeReference(at, chatContext({ track }), T)), chatUnavailable()]]);
+    return;
+  }
   const c = getClip(clipDiv.dataset.id);
   if (!c) return;
   e.preventDefault();
-  showClipCtxMenu(e.clientX, e.clientY, c);
+  showClipCtxMenu(e.clientX, e.clientY, c, at);
 });
 els.tracksContent.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
@@ -6315,10 +6398,19 @@ els.ruler.addEventListener("dblclick", (e) => {
   if (mk) openMarkerEditor(mk, e.clientX - 20, e.clientY + 10);
 });
 els.ruler.addEventListener("contextmenu", (e) => {
-  const mk = markerAtRulerEvent(e);
-  if (!mk) return;
   e.preventDefault();
-  openMarkerEditor(mk, e.clientX, e.clientY);
+  const mk = markerAtRulerEvent(e);
+  const x = e.clientX, y = e.clientY;
+  if (mk) {
+    showChatMenu(x, y, [
+      [T("Edit marker…"), () => openMarkerEditor(mk, x, y), null],
+      [T("Send marker to chat"), () => sendToChat(ChatRef.markerReference(mk, chatContext(), T)), chatUnavailable()],
+    ]);
+    return;
+  }
+  const at = ChatRef.snapToFrame(timeAtEvent(e), projectFps());
+  showChatMenu(x, y, [[T("Send this moment to chat"),
+    () => sendToChat(ChatRef.timeReference(at, chatContext(), T)), chatUnavailable()]]);
 });
 els.ruler.addEventListener("pointermove", (e) => {
   if (state.gesture) return;

@@ -1,6 +1,6 @@
 {
   "name": "cutline",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "commonjs",
   "description": "Cutline as a MiniMax Code Mini App: the FableCut web editor plus 21 Agent-facing MCP tools (19 upstream fablecut_* tools, a project-folder import tool and the standalone cutline_export tool) on one Host-assigned port.",

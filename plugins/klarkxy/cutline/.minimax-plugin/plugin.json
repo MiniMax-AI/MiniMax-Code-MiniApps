@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "cutline",
   "displayName": "Cutline",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "浏览器里的视频剪辑台：时间线剪切、字幕、动效、调色与导出，聊天里一句话就能剪片。",
   "author": "klarkxy",
   "icon": "icon.png",

@@ -145,11 +145,23 @@ export async function getJson(base, pathname) {
  */
 export async function mcpRaw(base, body, options = {}) {
   const method = options.method ?? 'POST';
-  const response = await fetch(`${base}/mcp/cutline`, {
+  const send = () => fetch(`${base}/mcp/cutline`, {
     method,
     headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
     body: method === 'POST' ? JSON.stringify(body) : undefined,
   });
+  /* fetch keeps an idle socket for 4 s and the server closes it after 5 s.
+     When a synchronous test step blocks this process long enough, both timers
+     fire together and the reused socket is reset before the request is read.
+     A reset is the only failure retried, once, on a fresh socket. */
+  let response;
+  try {
+    response = await send();
+  } catch (err) {
+    const code = /** @type {any} */ (err)?.cause?.code;
+    if (code !== 'ECONNRESET' && code !== 'UND_ERR_SOCKET') throw err;
+    response = await send();
+  }
   const text = await response.text();
   let json = null;
   try {
