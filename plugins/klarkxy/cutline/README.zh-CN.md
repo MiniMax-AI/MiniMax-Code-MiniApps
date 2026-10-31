@@ -33,6 +33,10 @@ Cutline 是基于 [FableCut](https://github.com/ronak-create/FableCut) 的社区
 
 手动编辑和 Agent 编辑使用同一个工程，你可以随时接管。
 
+### 给 Agent 指一个位置
+
+在片段、轨道空白处、时间标尺、标记或项目素材上点右键，选 **发送到对话**。MiniMax Code 弹出确认后，会在对话输入框里加一段简短引用：片段与素材 id、轨道、时间线秒数和帧号、当前序列与合成、工程修订号。接着写上要改什么，再按发送即可。片段引用还带着你右键的那个时间点，所以“从这里切开”“这个时间点的字幕”都能落在你指的位置。引用文字先进入草稿，发送前可以随意修改。
+
 ## 选择导出方式
 
 ![Cutline 中文导出面板：范围、预设、视频和音频设置](docs/export-zh-CN.png)
@@ -54,6 +58,7 @@ Cutline 是基于 [FableCut](https://github.com/ronak-create/FableCut) 的社区
 ## Tested environment
 
 - 目标客户端：MiniMax Code 3.1.2 或更高版本。已在 Windows 11 与 Google Chrome 环境中验证安装、素材导入、时间线编辑和独立导出，包括一次 180 秒渲染。
+- **发送到对话** 已在 Windows 版 MiniMax Code 3.1.9 上实测：五个右键入口都会出现，Host 会弹出确认框，确认后引用写入对话草稿，24 fps 下的 id、时间和帧号均正确。另有 Chromium 浏览器测试（Host 桥接为测试替身），覆盖各菜单生成的文字、取消确认、中英两种界面语言，以及不支持该 API 的客户端。
 - macOS、全部效果组合及长片／高分辨率负载仍待完整验证。当前记录代表已实测场景。
 
 在仓库根目录运行 `npm test --prefix plugins/klarkxy/cutline` 执行插件测试，运行 `npm run check` 执行仓库校验。
@@ -65,6 +70,7 @@ Cutline 是基于 [FableCut](https://github.com/ronak-create/FableCut) 的社区
 - **网络：** 编辑器和 MCP 使用 Host 分配的本机地址。HTTPS 导入访问你提供的 URL；可选字体功能访问 `fonts.googleapis.com`、`fonts.gstatic.com`，可选背景移除访问 `cdn.jsdelivr.net`。独立导出与外部网络隔离。
 - **进程：** 媒体处理调用 `ffmpeg`、`ffprobe`；独立导出由 Agent 启动并管理 Node、Chrome 或 Edge 后台任务。
 - **Agent 与会话：** Agent 回合由你在聊天中发起。插件提供 MCP 工具，未声明 `agentAccess`，不会读取聊天内容或其他会话；所有会话共用当前打开的工程。
+- **对话输入框：** **发送到对话** 调用页面 API `message.append`，该 API 无需声明。每次使用都会弹出 Host 自己的确认框并显示完整文字；确认后文字追加到 Mini App 所在对话的未发送草稿。引用内容包括 id、时间、轨道名、素材文件名、片段名、字幕首行、标记名和工程名。页面不会自行发送消息，也不读取聊天记录。客户端不支持该 API 时，菜单项保持可见并置灰。
 - **Host 数据与设备：** Host 配置、凭据、私有日志、会话数据库和麦克风均位于访问范围之外。
 
 ## 上游与维护

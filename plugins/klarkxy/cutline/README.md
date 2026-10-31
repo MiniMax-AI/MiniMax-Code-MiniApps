@@ -33,6 +33,10 @@ You can also ask in chat:
 
 Manual and Agent-driven edits operate on the same project, so you can take over at any point.
 
+### Point the Agent at a spot
+
+Right-click a clip, an empty spot on a track, the ruler, a marker or a file in the Project bin and choose **Send to chat**. MiniMax Code asks you to confirm, then adds a short reference to the chat input: clip and media ids, tracks, timeline seconds and frame, the open sequence and composition, and the project revision. Type what you want changed after it and press Send. A clip reference also carries the moment you right-clicked, so "split here" or "the caption at this point" lands where you meant. The text stays in the draft until you send it, and you can edit it first.
+
 ## Choose an export method
 
 ![Cutline export dialog in English: range, presets, video and audio settings](docs/export-en.png)
@@ -54,6 +58,7 @@ Standalone export needs a local Chrome or Edge installation and uses the project
 ## Tested environment
 
 - Target: MiniMax Code 3.1.2 or later. Installation, media import, timeline editing and standalone export were exercised on Windows 11 with Google Chrome, including a 180-second render.
+- **Send to chat** was checked on MiniMax Code 3.1.9 for Windows: all five right-click entries appear, the Host shows its confirmation, and the confirmed reference lands in the chat draft with correct ids, times and frames at 24 fps. A Chromium browser test with the Host bridge stubbed covers the text for each menu, a cancelled confirmation, both interface languages and a client without the API.
 - macOS, every effect combination and sustained long-form or high-resolution workloads remain on the validation roadmap. Current records cover the tested scenarios.
 
 Run `npm test --prefix plugins/klarkxy/cutline` from the repository root for plugin tests, and `npm run check` for repository validation.
@@ -65,6 +70,7 @@ Run `npm test --prefix plugins/klarkxy/cutline` from the repository root for plu
 - **Network:** the editor and MCP endpoint use the Host-assigned local address. HTTPS imports contact the supplied URL; optional font loading contacts `fonts.googleapis.com` and `fonts.gstatic.com`, and optional background removal contacts `cdn.jsdelivr.net`. Standalone export is isolated from the external network.
 - **Processes:** media operations invoke `ffmpeg` and `ffprobe`; the Agent starts and manages Node plus Chrome or Edge for standalone export.
 - **Agent turns and conversations:** Agent turns start from your chat. The plugin exposes MCP tools, leaves `agentAccess` undeclared and does not read conversation content or other sessions. All conversations use the same open project.
+- **Chat input:** **Send to chat** calls the page API `message.append`, which needs no declaration. Each use shows the Host's confirmation with the exact text; after you confirm, the text joins the unsent draft of the conversation the Mini App is open in. The reference holds ids, times, track names, media file names, clip names, the first line of a title, marker labels and the project name. The page sends nothing on its own and reads no chat history. On a client without the API the menu items stay visible and disabled.
 - **Host data and devices:** Host configuration, credentials, private logs, session databases and the microphone sit outside the plugin's access.
 
 ## Upstream and maintenance

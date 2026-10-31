@@ -380,7 +380,7 @@ test('every T() key the editor uses exists in the dictionary', () => {
   const known = new Set(Object.keys(sandbox.I18n.dictionary('en')));
   /** @type {string[]} */
   const missing = [];
-  for (const file of ['app.js', 'audio-fx.js', 'color.js', 'delivery.js', 'templates.js']) {
+  for (const file of ['app.js', 'audio-fx.js', 'chat-context.js', 'color.js', 'delivery.js', 'templates.js']) {
     const src = read(file);
     for (const m of src.matchAll(/\bT\(\s*"((?:[^"\\]|\\.)*)"/g)) {
       const key = decodeEntities(JSON.parse(`"${m[1]}"`));
