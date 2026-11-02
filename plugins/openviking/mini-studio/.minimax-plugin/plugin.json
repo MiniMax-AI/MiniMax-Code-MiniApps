@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "mini-studio",
+  "displayName": "OpenViking Mini Studio",
+  "version": "2.0.0",
+  "description": "Browse and search your OpenViking context, preview it, and add selected URIs or content to the MiniMax Code chat.",
+  "author": "OpenViking",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "Open OpenViking Mini Studio",
+    "Browse my OpenViking context"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
