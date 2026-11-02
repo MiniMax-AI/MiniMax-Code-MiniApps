@@ -60,6 +60,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [OpenFilm](plugins/cristinamadureira353-svg/openfilm/) | 把 OpenFilm 装进 MiniMax Code：桌面版界面（Studio 编辑器 + 聊天栏 + 本地 agent），桌面模式不可用时回落网页版 | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | 图层图片编辑、应用内 AI 助手、本地恢复与程序化编辑工具 | [WebGuHui](https://github.com/WebGuHui) |
+| [MMX 章鱼娘](plugins/antianqi/mmx-octopus/) | 桌面上的小章鱼：跟着 Agent 的状态换表情、用自己的会话跟你聊天，也能被 Agent 用 4 个 MCP 工具指挥 | [antianqi](https://github.com/antianqi) |
 | [Cutline](plugins/klarkxy/cutline/) | 浏览器里的视频剪辑台：时间线剪切、字幕、动效、调色与导出，聊天里一句话就能剪片 | [klarkxy](https://github.com/klarkxy) |
 | [MiniMax Video](plugins/webguhui/minimax-video/) | 本地视频剪辑、字幕、宿主 Agent 助手、可预览的时间线修改与 MP4/MP3 导出 | [WebGuHui](https://github.com/WebGuHui) |
 | [AI 事务所](plugins/cristinamadureira353-svg/ai-office/README.zh-CN.md) | 五位真实模型员工的像素事务所：接单、聊天、休息和开会，额度耗尽时角色暂停；使用玩家自己的 API Key | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
