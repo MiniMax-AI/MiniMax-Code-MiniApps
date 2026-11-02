@@ -1203,8 +1203,11 @@ export class Engine {
   groupQueue(group, text) {
     const mentioned = this.mentionsIn(text, group);
     if (mentioned.length) return mentioned;
+    // Groups written before 0.7.8 can hold an adminId that is not on the member list; queueing
+    // such an admin hands the drive a speaker it silently skips, so the whole group goes quiet.
+    const admin = group.memberIds.includes(group.adminId) ? [group.adminId] : [];
     const others = group.memberIds.filter((id) => id !== group.adminId);
-    return group.replyMode === 'all' ? [group.adminId, ...others] : [group.adminId ?? group.memberIds[0]];
+    return group.replyMode === 'all' ? [...admin, ...others] : admin.length ? admin : others.slice(0, 1);
   }
 
   /**
