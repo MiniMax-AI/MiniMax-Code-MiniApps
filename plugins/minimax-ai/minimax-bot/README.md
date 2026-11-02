@@ -44,6 +44,18 @@ The MCP tools check the arguments they declare before they run. A value of the w
 
 An avatar may come from the avatar library or from an image uploaded in the page only. A path on the computer is refused, the plugin reads no file outside its own `dataDir` for one, and the refused path is not echoed back — so the field cannot be used to ask what exists on the disk.
 
+## 0.7.17 The panel and the ledger say what happened
+
+The usage ledger is the record of what the model really did. A turn cut off by a crash or a restart is written down as aborted, with no duration — it never reported how long it ran — and with the characters and tool calls it did make; the panel's average is taken over the turns that have a known duration, so a lost turn neither vanishes from the count nor counts as zero seconds. Every row says how many times the model was called for that turn (a retry is still one turn), and the panel adds that count when it is higher than the number of turns. A turn that ran is on the ledger even when a later step of the same turn fails to write.
+
+The note section of the group panel reads the note's limits (6 entries and 1200 characters) from the server, so the numbers it shows are the numbers the plugin uses.
+
+In the usage view an `aborted` row is a turn that was cut off: it counts as a turn and it shows the characters and tool calls it did make, but it has no duration, so it is left out of the average. A turn that was never metered at all is not on the ledger; the panel's turn count is the number of rows.
+
+## 0.7.19 The mention rule, read by the script that writes the word
+
+0.7.16 started to read the character in front of the `@` as a word of any script, so a letter of a script that writes with spaces (`josé@alice`) makes an address and calls nobody. This release completes that: a full-width IME writes full-width letters and digits (`ＯＫ@某人`), and Thai, Lao, Khmer and Myanmar write a word right up against the `@` as Chinese does, so those characters do not swallow the mention either.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
@@ -60,10 +72,6 @@ An avatar may come from the avatar library or from an image uploaded in the page
 - The group settings state the limits the plugin actually uses. The panel reads them from the server instead of writing down numbers of its own.
 - A background job is an Agent turn like any other, so the usage panel counts it. Before, the panel showed fewer turns than the model actually ran: the job's own turn never reached the ledger, only the turn that relayed its report back.
 - The job's row carries the time it took, the tools it called and the reply it produced, and it says how the job ended: a job that failed is an error, one that was stopped or cut off is aborted.
-
-## 0.7.19 The mention rule, read by the script that writes the word
-
-0.7.16 started to read the character in front of the `@` as a word of any script, so a letter of a script that writes with spaces (`josé@alice`) makes an address and calls nobody. This release completes that: a full-width IME writes full-width letters and digits (`ＯＫ@某人`), and Thai, Lao, Khmer and Myanmar write a word right up against the `@` as Chinese does, so those characters do not swallow the mention either.
 
 ## 0.7.13 A mention that reads like Chinese, and marks that stay out
 
