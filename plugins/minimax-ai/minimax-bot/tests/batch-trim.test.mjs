@@ -242,3 +242,31 @@ test("a trimmed batch still answers a lookup and a retry", async (t) => {
   });
   assert.equal(again.batch_id, first.batch_id, "the same request id does not start the work again");
 });
+
+test("a regenerated reply is not taken for the task's own result", async (t) => {
+  const { engine, store, a } = await fixture(t);
+  engine.agent = {
+    async run(input, options) {
+      return agentResult(input, options, LONG_REPLY);
+    },
+  };
+  const receipt = await engine.tasks.dispatch(undefined, {
+    request_id: "regenerated",
+    tasks: [{ to: a.id, message: "Write" }],
+  });
+  await until(() => idle(engine), "idle");
+
+  const task = engine.tasks.task(receipt.tasks[0].task_id);
+  const stored = task.result;
+  assert.ok(stored.length > 0, "the task keeps a window of its reply");
+
+  // The message is retried and comes back as a different reply.
+  const messages = await store.getMessages(task.chatId);
+  const message = messages.find((item) => item.id === task.messageId);
+  assert.ok(message, "the reply is in the chat");
+  message.text = "A different answer entirely.";
+
+  const page = await engine.tasks.get(undefined, { task_id: task.id });
+  assert.equal(page.tasks[0].result, stored, "the stored window is used, not the newer reply");
+  assert.equal(page.tasks[0].result_truncated, true, "the shorter window is flagged as truncated");
+});

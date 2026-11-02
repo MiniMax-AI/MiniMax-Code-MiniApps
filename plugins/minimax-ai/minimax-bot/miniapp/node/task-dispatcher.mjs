@@ -532,7 +532,13 @@ export class TaskDispatcher {
     if (!task.chatId || !task.messageId) return undefined;
     const messages = await this.store.getMessages(task.chatId);
     const message = messages.find((item) => item.id === task.messageId);
-    return typeof message?.text === "string" ? message.text : undefined;
+    const text = typeof message?.text === "string" ? message.text : undefined;
+    if (text === undefined) return undefined;
+    // A retried or regenerated reply took the message's place: it is not this task's own result
+    // any more. The stored window is the older text, so the message has to start with it.
+    const window = typeof task.result === "string" ? task.result : "";
+    if (window && !text.startsWith(window)) return undefined;
+    return text;
   }
 
   async cancel(caller, args) {
