@@ -229,7 +229,7 @@ export async function start(context) {
     }
     /** @type {Record<string, any>} */
     const byBot = {};
-    const totals = { turns: 0, chars: 0, tools: 0, durationMs: 0, errors: 0 };
+    const totals = { turns: 0, chars: 0, tools: 0, durationMs: 0, durationSamples: 0, modelCalls: 0, errors: 0 };
     for (const row of rows) {
       const bucket = buckets[keyOf(row.ts)];
       const live = store.getBot(row.botId);
@@ -244,6 +244,8 @@ export async function start(context) {
         chars: 0,
         tools: 0,
         durationMs: 0,
+        durationSamples: 0,
+        modelCalls: 0,
         errors: 0,
       });
       if (bucket) {
@@ -254,12 +256,23 @@ export async function start(context) {
         target.turns += 1;
         target.chars += row.chars ?? 0;
         target.tools += row.tools ?? 0;
-        target.durationMs += row.durationMs ?? 0;
+        // A turn that was cut off has no known duration: it must not pull the average down,
+        // so only the turns that really ran are counted.
+        if (Number.isFinite(row.durationMs)) {
+          target.durationMs += row.durationMs;
+          target.durationSamples += 1;
+        }
+        // How many times the model really ran for this turn; a row without the field is one call.
+        target.modelCalls += row.attempts ?? 1;
       }
       if (row.status === 'error') {
         bot.errors += 1;
         totals.errors += 1;
       }
+    }
+    // The average covers the turns whose duration is known; a turn that was cut off has none.
+    for (const target of [totals, ...Object.values(byBot)]) {
+      target.avgDurationMs = target.durationSamples ? target.durationMs / target.durationSamples : null;
     }
     return {
       days: hourly ? 1 : span,

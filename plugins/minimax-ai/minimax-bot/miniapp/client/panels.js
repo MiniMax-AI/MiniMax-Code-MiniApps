@@ -1473,13 +1473,16 @@ function usagePage(body, o) {
     .then((data) => {
       if (state.overlay?.kind !== 'settings' || state.overlay.page !== 'usage') return;
       const totals = data.totals;
+      // A turn that was cut off has no known duration, so the average counts the turns that
+      // really ran; the count of model calls says how often the model was really asked.
+      const modelCalls = totals.modelCalls ?? totals.turns;
       const kpis = h(
         'div',
         { class: 'kpis' },
-        h('div', { class: 'kpi big' }, h('span', { class: 'k-label' }, days === 1 ? t('panels.usage.last24h') : t('panels.usage.lastDays', { n: days })), h('span', { class: 'k-value' }, fmtNum(totals.turns), h('span', { class: 'k-unit' }, t('panels.usage.turnsUnit', { count: totals.turns })))),
+        h('div', { class: 'kpi big' }, h('span', { class: 'k-label' }, days === 1 ? t('panels.usage.last24h') : t('panels.usage.lastDays', { n: days })), h('span', { class: 'k-value' }, fmtNum(totals.turns), h('span', { class: 'k-unit' }, t('panels.usage.turnsUnit', { count: totals.turns }), modelCalls > totals.turns ? ` · ${t('panels.usage.modelCalls', { n: modelCalls, count: modelCalls })}` : ''))),
         h('div', { class: 'kpi' }, h('span', { class: 'k-label' }, t('panels.usage.replyChars')), h('span', { class: 'k-value' }, fmtNum(totals.chars))),
         h('div', { class: 'kpi' }, h('span', { class: 'k-label' }, t('panels.usage.toolCalls')), h('span', { class: 'k-value' }, fmtNum(totals.tools))),
-        h('div', { class: 'kpi' }, h('span', { class: 'k-label' }, t('panels.usage.avgDuration')), h('span', { class: 'k-value' }, totals.turns ? fmtDuration(totals.durationMs / totals.turns) : '—')),
+        h('div', { class: 'kpi' }, h('span', { class: 'k-label' }, t('panels.usage.avgDuration')), h('span', { class: 'k-value' }, totals.avgDurationMs != null ? fmtDuration(totals.avgDurationMs) : '—'), totals.durationSamples < totals.turns ? h('small', { class: 'muted' }, t('panels.usage.avgDurationNote')) : null),
       );
       holder.replaceChildren(
         kpis,
