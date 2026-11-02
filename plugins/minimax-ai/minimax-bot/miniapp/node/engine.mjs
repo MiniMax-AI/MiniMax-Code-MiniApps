@@ -1203,13 +1203,15 @@ export class Engine {
       .sort((a, b) => b.name.length - a.name.length);
     // A word character of any script: it ends a name, so "Alicex" is not "Alice".
     const isWord = (value) => Boolean(value && /[\p{L}\p{N}\p{M}_]/u.test(value));
-    // An ASCII word character is what makes an '@' part of a handle: the local part of an
-    // email address. Chinese has no spaces between words, so a character before the '@' is a
-    // word of its own there ("请@某人"), and it must not swallow the mention.
-    const isAsciiWord = (value) => Boolean(value && /[A-Za-z0-9_]/.test(value));
+    // Chinese, Japanese kana and Korean write a word right up against the '@' without a space
+    // ("请@某人"), so a character of those scripts does not belong to an address and must not
+    // swallow the mention. Any other word character in front of the '@' does belong to one
+    // ("mail@alice.com", "josé@alice").
+    const isSpaceless = (value) => Boolean(value && /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}]/u.test(value));
+    const isAddressChar = (value) => isWord(value) && !isSpaceless(value);
     const found = [];
     for (let index = lower.indexOf('@'); index >= 0; index = lower.indexOf('@', index + 1)) {
-      if (isAsciiWord(lower[index - 1])) continue;
+      if (isAddressChar(lower[index - 1])) continue;
       const member = members.find(({ name }) => lower.startsWith(name, index + 1) && !isWord(lower[index + 1 + name.length]));
       if (!member) continue;
       if (member.id !== excludeId && !found.includes(member.id)) found.push(member.id);
@@ -1755,6 +1757,10 @@ export class Engine {
     let turnStartedAt = 0;
     let turnMs = 0;
     let turnTools = 0;
+    // A background job can call many tools in a row, and every save rewrites the whole state
+    // file. The count is written as it goes, but not on every call: a crash may lose the last
+    // second of it, and the end of the turn writes the final number anyway.
+    let lastHelperPersist = 0;
     let turnText = '';
     let turnBotName = '';
     try {
@@ -1783,7 +1789,11 @@ export class Engine {
             // Keep the count on disk: a job cut off by a restart must still show the tools it
             // really called in the ledger.
             helper.turnTools = turnTools;
-            void this.store.save().catch((error) => this.logger.warn('minimax_bot.helper_save_failed', { helperId: helper.id, code: error?.code ?? 'unknown' }));
+            const now = Date.now();
+            if (now - lastHelperPersist >= LIVE_PERSIST_MS) {
+              lastHelperPersist = now;
+              void this.store.save().catch((error) => this.logger.warn('minimax_bot.helper_save_failed', { helperId: helper.id, code: error?.code ?? 'unknown' }));
+            }
           } else if (event.type === 'permission.requested') {
             // The user approves a helper's tool call in its Bot's chat, like the Bot's own.
             const approval = {

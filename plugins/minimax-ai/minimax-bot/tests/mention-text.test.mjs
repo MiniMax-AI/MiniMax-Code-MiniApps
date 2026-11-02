@@ -3,10 +3,10 @@
 //
 // A mention is "@" plus a member's name. Chinese has no spaces between words, so the character
 // in front of the "@" is a word of its own ("请@某人") and must not swallow the mention the way
-// it does in "mail@alice.com". What makes an "@" part of a handle is an ASCII word character in
-// front of it, so that is what the guard looks at. English keeps the old rule: an ASCII letter,
-// digit or underscore in front of the "@" still ends the mention, and the address, the longer
-// name and the name that runs into more words are all as they were.
+// it does in "mail@alice.com". What makes an "@" part of an address is a word character of a
+// script that writes with spaces, so that is what the guard looks at. English keeps the old
+// rule: an ASCII letter, digit or underscore in front of the "@" still ends the mention, and
+// the address, the longer name and the name that runs into more words are all as they were.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -72,7 +72,7 @@ test('a mention in English stays the way it was', async (t) => {
 
 test('an English address is still not a mention', async (t) => {
   const { engine, group } = await fixture(t);
-  // The local part of an address is ASCII, so it ends the mention the way it always did.
+  // An ASCII local part, so it ends the mention the way it always did.
   assert.deepEqual(engine.mentionsIn('mail@alice.com', group), []);
   assert.deepEqual(engine.mentionsIn('user.name@alice.com', group), []);
   assert.deepEqual(engine.mentionsIn('mail@设计师', group), []);
