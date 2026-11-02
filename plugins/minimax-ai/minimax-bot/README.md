@@ -61,6 +61,10 @@ An avatar may come from the avatar library or from an image uploaded in the page
 - A background job is an Agent turn like any other, so the usage panel counts it. Before, the panel showed fewer turns than the model actually ran: the job's own turn never reached the ledger, only the turn that relayed its report back.
 - The job's row carries the time it took, the tools it called and the reply it produced, and it says how the job ended: a job that failed is an error, one that was stopped or cut off is aborted.
 
+## 0.7.19 The mention rule, read by the script that writes the word
+
+0.7.16 started to read the character in front of the `@` as a word of any script, so a letter of a script that writes with spaces (`josé@alice`) makes an address and calls nobody. This release completes that: a full-width IME writes full-width letters and digits (`ＯＫ@某人`), and Thai, Lao, Khmer and Myanmar write a word right up against the `@` as Chinese does, so those characters do not swallow the mention either.
+
 ## 0.7.13 A mention that reads like Chinese, and marks that stay out
 
 - A mention works right after a Chinese word. The character in front of the `@` used to end the mention whenever it was a letter of any script, and Chinese has no spaces between words, so `请@某人` and `好的@某人` reached nobody. Any letter, digit, underscore or combining mark in front of the `@` ends it now, in every script that writes with spaces: `josé@alice` and `Привет@alice` reach nobody, the way `mail@alice.com` does. Chinese, Japanese and Korean write a word right against the `@`, so their characters do not swallow the mention and `请@某人` still calls that member. A name that runs into more words (`@Alicex`) still is not a mention either, and English is unchanged: `mail@alice.com` and `ok@alice` reach nobody, while `@alice`, `@alice.` and `@Alice Smith` do.
