@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "minimax-bot",
   "displayName": "MiniMax Bot",
-  "version": "0.7.16",
+  "version": "0.7.17",
   "description": "Turn MiniMax Code into an always-on team of Bots. A Chief Bot helps you build the team; in group chats the admin answers and @mentions hand work to other members. Every Bot has its own octopus avatar and memory, with scheduled tasks and usage stats.",
   "author": "MiniMax Code",
   "icon": "icon.png",
