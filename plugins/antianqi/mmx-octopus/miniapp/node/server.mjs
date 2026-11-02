@@ -100,6 +100,7 @@ import {
   isWeekendDay,
   heartAskTopics,
   ronnyMention,
+  deRonnyLeak,
   REUNION_MS,
   BACK_GAP_MS,
 } from './chatter.mjs';
@@ -1846,8 +1847,15 @@ export async function start(context, options = {}) {
     //   并且**把页面上那个气泡也撤掉**（同一个 id 广播一条空文本 ⇒ 客户端按 id 覆盖）。
     //   ⚠️ **没有 id 的调用**（遗留降级路径）⇒ 屏幕上本来就没有气泡 ⇒ **保留原话**，
     //     否则老板的问题会被吞掉（详见 `pickFinalText` 的说明）。
-    const scrubbed = scrubText(text);
-    const finalText = pickFinalText(text, scrubbed, { hasBubble: Boolean(id) });
+    // ★ **彩蛋的两条禁令兜底**（老板 2026-11-02 第二遍要求）——
+    //   她的话在**落库前**必须过这一道：报全名 / 说来路，一样都不许出去。
+    //   ⚠️ **为什么放在剥皮之前**：剥皮治的是「工作日志味」，它不认彩蛋的禁令；
+    //     彩蛋的禁令要在这条路上**先**执行 —— 剥皮之后的文本没人再看第二遍。
+    //   ⚠️ **真机证据**（2026-11-02 15:53）：只写在事实块里不够 ——
+    //     她照样说了「爸爸说过他老叫我傻白甜」。
+    const deLeaked = deRonnyLeak(text);
+    const scrubbed = scrubText(deLeaked);
+    const finalText = pickFinalText(deLeaked, scrubbed, { hasBubble: Boolean(id) });
     if (!finalText) {
       // 撤气泡：同一个 id 广播空文本，客户端按 id 覆盖后把这条摘掉 ⇒ 页面和 chat.json 对得上。
       if (id) {

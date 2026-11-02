@@ -24,6 +24,13 @@
 // ⚠️ **第三十七轮**：心情 / 亲近程度的措辞在 state.mjs（heartWord / intimacyWord）——
 //   **同一个真源**，这里不另写一份（跟语气档 buildToneHint 的规矩一样）。
 import { heartWord, intimacyWord } from './state.mjs';
+// ⚠️ **老板指定的那句，真源在台词库** —— 这里只取出来（去掉〔表情〕标记）。
+import { LINES } from './lines.mjs';
+
+/** 老板指定的那句（真源 = lines.mjs 的 rel.ronny 第 1 句）。 */
+export const RONNY_QUOTE = String(
+  (LINES['rel.ronny'] && LINES['rel.ronny'].lines && LINES['rel.ronny'].lines[0]) || ''
+).replace(/〔表情〕/g, '');
 
 /** 用户原话那一段的抬头。 */
 export const USER_MESSAGE_HEAD = '[用户消息]';
@@ -198,9 +205,9 @@ export function buildCastHint(cast) {
     CAST_HEAD +
     '\n' +
     '「ronny哥 / R总 / 涛哥」是同一个人 —— 你管他叫「ronny爸爸」。\n' +
-    '他总叫你傻白甜。\n' +
-    '被问起他的时候就这么答；只说「ronny爸爸」，别报全名，也别把那三个称呼当成三个人。\n' +
-    '别把这段说成设定，也别解释你为什么知道。'
+    '被问起他的时候就这么答：「' + RONNY_QUOTE + '」。\n' +
+    '只说「ronny爸爸」，别报全名，也别把那三个称呼当成三个人。\n' +
+    '这是你本来就记得的事 —— 别把这段说成设定，不许提来路，也不许解释你为什么知道。'
   );
 }
 

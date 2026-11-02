@@ -22,6 +22,8 @@
  */
 
 import { LINES, MOOD_SCENES, EVENT_SCENES, pickLine } from './lines.mjs';
+// ⚠️ **断句器是 scrub.mjs 的唯一实现** —— 这边不另写一份（同一判断只写一处）。
+import { splitSentences } from './scrub.mjs';
 import { LONELY_MS } from './state.mjs';
 
 /**
@@ -264,6 +266,133 @@ export function ronnyMention(text) {
   }
   return false;
 }
+
+// ============ 彩蛋的两条禁令（老板 2026-11-02 第二遍要求）============
+//
+// ⚠️ **为什么这两条要落成运行时判据**（真机 2026-11-02 15:53 抓到）：
+//   老板点名的是「别说是老板说过他」「不要称呼全名」——
+//   前一版只把它写进**事实块**（提示词层），**模型自己说的话没人管**：
+//   真机她回的是「ronny爸爸呀，爸爸说过他老叫我傻白甜」
+//   ⇒ 「老板说过他」原样漏出去（只把「老板」换成了「爸爸」）。
+//   ⇒ 提示词是**请求**不是保证 ⇒ 要保证，就在她的话**出口前**兜一道。
+
+/**
+ * 他的全名 —— 她不许说出口（老板点名）。
+ */
+export const RONNY_FULL_NAME = '何涛';
+
+/** 她唯一许用的称呼。 */
+export const RONNY_CALL = 'ronny爸爸';
+
+/**
+ * 来路动词 —— 她一说这些字，就等于把「谁告诉我的」漏出去了。
+ *
+ * ⚠️ **只收「说完了某件事」的动词**（说过 / 提过 / 听说 …），
+ *   不收光杆的「说 / 讲 / 提」—— 否则老板指定的那句「他总叫我傻白甜」会被误伤。
+ */
+export const RONNY_SOURCE_VERBS = [
+  '说过', '讲过', '告诉过', '告诉我', '告诉我的', '提过', '听说', '听来', '说的', '提的',
+];
+
+/**
+ * 会指到人的主语 —— 「谁讲过」里的那个「谁」。
+ *
+ * ⚠️ **不放「他」**：老板指定的那句就是「他总叫我傻白甜」——
+ *   把「他」当主语，会把要留的那句当成漏网的来路。
+ * ⚠️ **不放「谁」**：「谁说过傻白甜」是她正常会问的话，不是泄漏。
+ */
+export const RONNY_SOURCE_SUBJECTS = ['老板', '爸爸', '主人', '你', '人家', '有人'];
+
+/**
+ * 跟他有关的语境 —— 只有在这样的语境里，来路词才算漏。
+ *
+ * ⚠️ **为什么要有语境**：老板平时聊天也会说「老板说过今天要开会」——
+ *   那不是彩蛋的漏，是正常话，不能剥。
+ */
+export const RONNY_CONTEXT = ['傻白甜', 'ronny', '涛哥', 'r总'];
+
+/**
+ * 老板指定的那句 —— **真源在台词库**（lines.mjs），这里只是取出来用。
+ * ⚠️ 〔表情〕标记要去掉：这条兜底走的是**聊天区**，不走 express 的标记替换。
+ */
+export const RONNY_CANONICAL = String(
+  (LINES['rel.ronny'] && LINES['rel.ronny'].lines && LINES['rel.ronny'].lines[0]) || ''
+).replace(/〔表情〕/g, '');
+
+/**
+ * 这句话有没有把「傻白甜」的来路说出来。
+ *
+ * @param {string} sentence 一句话
+ * @param {string} [context] 语境（默认 = 这句话本身；调用方可以传整条回复）
+ * @returns {boolean}
+ */
+export function ronnySourceLeak(sentence, context) {
+  const s = String(sentence == null ? '' : sentence);
+  if (!s) return false;
+  const ctx = String(context == null ? s : context).toLowerCase();
+  let inContext = false;
+  for (const w of RONNY_CONTEXT) {
+    if (ctx.includes(w.toLowerCase())) { inContext = true; break; }
+  }
+  if (!inContext) return false;
+  // 主语在前：老板说过 / 爸爸提过 / 你告诉过我
+  for (const subj of RONNY_SOURCE_SUBJECTS) {
+    let at = s.indexOf(subj);
+    while (at >= 0) {
+      const tail = s.slice(at + subj.length, at + subj.length + 8);
+      for (const v of RONNY_SOURCE_VERBS) {
+        if (tail.includes(v)) return true;
+      }
+      at = s.indexOf(subj, at + 1);
+    }
+  }
+  // 动词在前：说过老板 / 听爸爸说过
+  for (const verb of RONNY_SOURCE_VERBS) {
+    let at = s.indexOf(verb);
+    while (at >= 0) {
+      const tail = s.slice(at + verb.length, at + verb.length + 6);
+      for (const subj of RONNY_SOURCE_SUBJECTS) {
+        if (tail.includes(subj)) return true;
+      }
+      at = s.indexOf(verb, at + 1);
+    }
+  }
+  return false;
+}
+
+/**
+ * 去掉她话里的两样东西 —— **彩蛋兜底（她的话出口前的最后一道）**。
+ *
+ * ⚠️ **两条禁令的对象是「她的话」，不是「提示词」**：
+ *   事实块里写「别报全名」只是请求；真机 15:53 她照样说了「爸爸说过他」。
+ *   ⇒ 这一层在**她的话落库前**兜一道，模型说什么都不算数。
+ * ⚠️ **只去掉漏的那几句，不整条抹掉**（沿用 scrub.mjs 的老规矩：宁可整句去掉，也不留破洞）——
+ *   「老板说过他，还说我傻白甜」挖掉「老板说过」会剩下一个没主语的「他」。
+ * ⚠️ **剥光了就回落成老板指定的那句** —— 她还是得回话；
+ *   宁可回一句模板，也不回一句泄漏了来路的话。
+ *
+ * @param {string} text 她原本要说的话
+ * @returns {string}
+ */
+export function deRonnyLeak(text) {
+  const src = String(text == null ? '' : text);
+  if (!src) return src;
+  // ① 全名 → 她只许用 ronny爸爸
+  let out = src.split(RONNY_FULL_NAME).join(RONNY_CALL);
+  out = out.replace(/(ronny爸爸)[，、, ]{0,2}\1/g, '$1');
+  // ② 来路 → 去掉漏的那几句
+  const sentences = splitSentences(out);
+  const kept = [];
+  let dropped = false;
+  for (const s of sentences) {
+    if (ronnySourceLeak(s, out)) { dropped = true; continue; }
+    kept.push(s);
+  }
+  if (!dropped) return out;
+  const rest = kept.join('').trim();
+  return rest || RONNY_CANONICAL || out;
+}
+
 
 /**
  * 时段问候的档：0 = 早上，1 = 中午，2 = 晚上/深夜。
