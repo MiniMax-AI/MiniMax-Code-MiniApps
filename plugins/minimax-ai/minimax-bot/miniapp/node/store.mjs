@@ -203,6 +203,15 @@ function previewOf(message, nameOf) {
   }
 }
 
+/** The text a stored turn had produced by the time it was cut off. */
+function knownText(message) {
+  if (typeof message.text === 'string' && message.text) return message.text;
+  return (message.parts ?? [])
+    .filter((part) => part.type === 'text' && part.text)
+    .map((part) => part.text)
+    .join('\n\n');
+}
+
 export class Store {
   /** @param {string} dataDir */
   constructor(dataDir) {
@@ -216,6 +225,11 @@ export class Store {
     this.messageCache = new Map();
     /** @type {Map<string, Promise<any[]>>} cold chats being read from disk */
     this.messageLoads = new Map();
+    /** Turn ids already in the ledger, so a recovered turn is never counted twice. */
+    /** @type {Set<string>} */
+    this.usageIds = new Set();
+    /** @type {Promise<void> | undefined} */
+    this.usageIdsReady = undefined;
     /** @type {Promise<void>} */
     this.writeChain = Promise.resolve();
   }
@@ -230,9 +244,26 @@ export class Store {
     this.state.helpers = Array.isArray(this.state.helpers) ? this.state.helpers : [];
     for (const helper of this.state.helpers) {
       if (helper.status === 'queued' || helper.status === 'running') {
+        const wasQueued = helper.status === 'queued';
         helper.status = 'interrupted';
         helper.endedAt = helper.endedAt ?? Date.now();
         migrated = true;
+        // The run was cut off, so the model never reported how long it took: the ledger row
+        // says "aborted" with no duration rather than inventing one.
+        await this.recordUsageOnce({
+          ts: helper.startedAt ?? helper.createdAt ?? helper.endedAt,
+          turnId: helper.id,
+          botId: helper.botId,
+          botName: this.getBot(helper.botId)?.name ?? '',
+          chatId: helper.chatId,
+          kind: 'helper-run',
+          status: 'aborted',
+          durationMs: null,
+          chars: 0,
+          tools: helper.turnTools ?? 0,
+          // A queued job never reached the model; a running one had already called it.
+          attempts: wasQueued ? 0 : 1,
+        });
       }
     }
     this.state.taskBatches = Array.isArray(this.state.taskBatches) ? this.state.taskBatches : [];
@@ -403,6 +434,24 @@ export class Store {
         message.status = 'interrupted';
         message.live = undefined;
         dirty = true;
+        // The turn the model was in the middle of is real work: it belongs in the ledger.
+        // The run died, so its duration is unknown and stays null.
+        if (message.role === 'bot') {
+          await this.recordUsageOnce({
+            ts: message.startedAt ?? message.ts,
+            turnId: message.id,
+            botId: message.botId,
+            botName: this.getBot(message.botId)?.name ?? '',
+            chatId,
+            kind: message.kind ?? 'private',
+            status: 'aborted',
+            durationMs: null,
+            chars: knownText(message).length,
+            tools: (message.parts ?? []).filter((part) => part.type === 'tool').length,
+            // The model was already answering; a turn that never reached it is not streaming.
+            attempts: message.modelCalls ?? 1,
+          });
+        }
       }
       if (message.role === 'user' && ['adjusting', 'processing'].includes(message.dispatchState)) {
         message.dispatchState = message.dispatchState === 'adjusting' ? 'held'
@@ -570,7 +619,32 @@ export class Store {
 
   // ---------- usage ----------
   recordUsage(entry) {
-    return this.enqueue(() => appendFile(this.usagePath, `${JSON.stringify(entry)}\n`, 'utf8'));
+    return this.enqueue(async () => {
+      await appendFile(this.usagePath, `${JSON.stringify(entry)}\n`, 'utf8');
+      if (entry.turnId) this.usageIds.add(entry.turnId);
+    });
+  }
+
+  /**
+   * Writes a row only when the turn has none yet. A restart recovers the turns that were in
+   * flight; a turn the engine already metered must not be counted a second time.
+   * @param {Record<string, any>} entry
+   * @returns {Promise<boolean>} whether a row was written
+   */
+  async recordUsageOnce(entry) {
+    await this.loadUsageIds();
+    if (entry.turnId && this.usageIds.has(entry.turnId)) return false;
+    await this.recordUsage(entry);
+    return true;
+  }
+
+  /** The turn ids the ledger already holds, read once per process. */
+  async loadUsageIds() {
+    this.usageIdsReady ??= (async () => {
+      for (const row of await this.readUsage(0)) if (row.turnId) this.usageIds.add(row.turnId);
+    })();
+    await this.usageIdsReady;
+    return this.usageIds;
   }
 
   async readUsage(sinceTs) {

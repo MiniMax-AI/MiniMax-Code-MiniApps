@@ -51,6 +51,23 @@ bin. The status call reports; the Host's open action is the way in.
 `fablecut_patch_project` is the default way to change anything. `fablecut_set_project` replaces the
 whole document and is reserved for structural changes - see [editing.md](references/editing.md).
 
+## References the user sends from the editor
+
+A message can start with a block the editor wrote when the user chose **Send to chat**:
+`[Cutline reference]` (`[Cutline 引用]` in Chinese), then lines for a clip, clips, a time, a marker
+or a media file. Treat it as the user pointing at the timeline and their own words after it as the
+request.
+
+- Ids are the ones the tools take: `c_…` clip ids, `V1`/`A1` track ids, media ids, comp ids,
+  sequence ids. Times are timeline seconds in parentheses; the timecode beside them is `MM:SS:FF`
+  at the project frame rate.
+- "Pointed at" is the moment the user right-clicked on that clip: use it for "here", "this
+  point", a split or a keyframe.
+- "Inside composition" means the clip ids belong to that comp: wrap clip ops in
+  `{op:'inComp', comp, ops:[…]}`. A sequence other than the open one needs `inSequence`.
+- The revision is the one the page showed; the page saves a moment after each edit, so re-read
+  the compact project and plan against its current revision before you patch.
+
 ## The project is shared
 
 The editor service is shared across pages, so the open project can change under you and another
