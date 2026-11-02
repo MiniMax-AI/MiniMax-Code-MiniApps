@@ -1180,9 +1180,11 @@ export class Engine {
     const isWord = (value) => Boolean(value && /[\p{L}\p{N}\p{M}_]/u.test(value));
     // Chinese, Japanese kana and Korean write a word right up against the '@' without a space
     // ("请@某人"), so a character of those scripts does not belong to an address and must not
-    // swallow the mention. Any other word character in front of the '@' does belong to one
+    // swallow the mention. Thai, Lao, Khmer and Myanmar write the same way. The full-width and
+    // half-width forms are what a full-width IME produces ("ＯＫ@某人"), and they stand in the
+    // same place. Any other word character in front of the '@' does belong to an address
     // ("mail@alice.com", "josé@alice").
-    const isSpaceless = (value) => Boolean(value && /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}]/u.test(value));
+    const isSpaceless = (value) => Boolean(value && /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Thai}\p{Script_Extensions=Lao}\p{Script_Extensions=Khmer}\p{Script_Extensions=Myanmar}\uFF00-\uFFEF]/u.test(value));
     const isAddressChar = (value) => isWord(value) && !isSpaceless(value);
     const found = [];
     for (let index = lower.indexOf('@'); index >= 0; index = lower.indexOf('@', index + 1)) {
