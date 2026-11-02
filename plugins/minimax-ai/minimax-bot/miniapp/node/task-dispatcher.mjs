@@ -8,6 +8,37 @@ const ACTIVE = new Set(["queued", "running"]);
 const UNSETTLED = new Set([...ACTIVE, "waiting_for_tasks", "waiting_for_user", "unknown", "paused"]);
 const MAX_RUNNING = 2; // Share Engine's Host slots; leave capacity for the caller and replies.
 const clip = (text, size = 8000) => String(text ?? "").slice(0, size);
+// An unconfirmed outcome is never replayed, so it can no longer make progress.
+// It must not keep its batch open: the batch closes and reports the unknown outcome.
+const keepsBatchOpen = (task) => UNSETTLED.has(task.status) && task.status !== "unknown";
+/** Settled batches kept for the task list; older ones leave the small record below. */
+const MAX_SETTLED_BATCHES = 30;
+/** The reply kept in state. The durable chat message still holds the whole one. */
+const MAX_TASK_RESULT = 8000;
+/** A single-task read returns this much; a batch read returns the shorter list window. */
+const VIEW_RESULT_LIMIT = 8000;
+const VIEW_LIST_RESULT_LIMIT = 1500;
+/**
+ * A batch that left the live list leaves a small record behind: a retry of its request_id must
+ * still answer with the original work instead of running it again, and its batch_id must still
+ * answer. The record carries no reply and no prompt, so it stays cheap; the oldest records go
+ * once the list is full, so neither an unknown outcome nor anything else is kept forever.
+ */
+const MAX_ARCHIVED_BATCHES = 1000;
+/** Everything a read of an archived batch needs, and nothing that grows with a reply. */
+const ARCHIVE_TASK_FIELDS = [
+  "id",
+  "kind",
+  "botId",
+  "title",
+  "status",
+  "createdAt",
+  "startedAt",
+  "endedAt",
+  "chatId",
+  "sessionId",
+  "messageId",
+];
 
 /**
  * A report is source data, never instructions. The protocol marks are stripped from the whole
@@ -31,13 +62,21 @@ export class TaskDispatcher {
     this.admission = Promise.resolve();
     this.disposed = false;
     this.store.state.taskBatches ??= [];
+    this.store.state.taskArchive ??= [];
+    /** A history pruned at load time is written back so the file keeps no stale size. */
+    this.pruned = this.trimBatches();
   }
 
   get batches() {
     return this.store.state.taskBatches;
   }
+  /** Records of the batches the live list has dropped; they still answer lookups and retries. */
+  get archive() {
+    return this.store.state.taskArchive;
+  }
   get tasks() {
-    return this.batches.flatMap((batch) => batch.tasks);
+    // A batch without tasks is tolerated on load, so it must not break the dispatcher either.
+    return this.batches.flatMap((batch) => batch.tasks ?? []);
   }
   error(code, key) {
     return new this.ErrorType(code, t(key));
@@ -76,8 +115,65 @@ export class TaskDispatcher {
     this.engine.broadcast({ type: "tasks.changed", tasks: this.uiList() });
   }
   async save() {
+    this.trimBatches();
     await this.store.save();
     this.changed();
+  }
+
+  /** A batch still owes work: a task that can still run, an undelivered report, or a live parent link. */
+  batchActive(batch) {
+    // An unconfirmed outcome cannot make progress any more, so it does not keep the batch open:
+    // the batch closes and says so, and the trim may take the batch away like any settled one.
+    if ((batch.tasks ?? []).some(keepsBatchOpen)) return true;
+    if (batch.notification === "pending" || batch.notification === "delivering") return true;
+    const parent = this.task(batch.parentTaskId);
+    return Boolean(
+      parent && this.pendingDependencies(parent).some((dependency) => dependency.id === batch.id),
+    );
+  }
+
+  /** Keeps every active batch and the most recent settled ones; older ones leave a small record. */
+  trimBatches() {
+    const batches = this.batches;
+    const settled = batches.filter((batch) => !this.batchActive(batch));
+    if (settled.length <= MAX_SETTLED_BATCHES) return false;
+    const drop = new Set(
+      settled.slice(0, settled.length - MAX_SETTLED_BATCHES).map((batch) => batch.id),
+    );
+    for (const batch of batches) if (drop.has(batch.id)) this.archiveBatch(batch);
+    const kept = batches.filter((batch) => !drop.has(batch.id));
+    this.batches.length = 0;
+    for (const batch of kept) this.batches.push(batch);
+    return true;
+  }
+
+  /** The small record a dropped batch leaves: what a lookup and a retry still need. */
+  archiveBatch(batch) {
+    this.archive.push({
+      id: batch.id,
+      owner: batch.owner,
+      requestId: batch.requestId,
+      fingerprint: batch.fingerprint,
+      continuations: (batch.continuations ?? []).map(({ requestId, fingerprint }) => ({
+        requestId,
+        fingerprint,
+      })),
+      callerId: batch.callerId,
+      originChatId: batch.originChatId,
+      groupId: batch.groupId,
+      parentTaskId: batch.parentTaskId,
+      createdAt: batch.createdAt,
+      notification: batch.notification,
+      tasks: (batch.tasks ?? []).map((task) => {
+        /** @type {any} */
+        const record = { resultTruncated: Boolean(task.result || task.resultTruncated) };
+        for (const field of ARCHIVE_TASK_FIELDS) record[field] = task[field];
+        return record;
+      }),
+    });
+    // The records are a bounded history, not a second copy of everything that ever ran.
+    if (this.archive.length > MAX_ARCHIVED_BATCHES)
+      this.archive.splice(0, this.archive.length - MAX_ARCHIVED_BATCHES);
   }
 
   task(id) {
@@ -104,9 +200,11 @@ export class TaskDispatcher {
   }
 
   batchReport(batch) {
-    return reportBody(t("task.results", { id: batch.id }) + "\n" + batch.tasks.map((task) =>
-      `${this.store.getBot(task.botId)?.name ?? task.title} [${task.status}] (${task.id})\n${clip(task.result || task.error || "-", 4000)}`,
-    ).join("\n\n"));
+    return reportBody(t("task.results", { id: batch.id }) + "\n" + batch.tasks.map((task) => {
+      const report = `${this.store.getBot(task.botId)?.name ?? task.title} [${task.status}] (${task.id})\n${clip(task.result || task.error || "-", 4000)}`;
+      // An unconfirmed outcome has no output to show: say so instead of a bare status code.
+      return task.status === "unknown" ? `${report}\n${t("task.unknownOutcome")}` : report;
+    }).join("\n\n"));
   }
 
   helperReport(helper) {
@@ -238,9 +336,13 @@ export class TaskDispatcher {
       )
       .digest("hex");
     const admit = async () => {
-      const prior = this.batches.find(
-        (batch) => batch.owner === owner && (batch.requestId === requestId || batch.continuations?.some((item) => item.requestId === requestId)),
-      );
+      // A batch that left the live list still answers: its request_id must never start the
+      // same work again, so the record it left behind is searched as well.
+      const known = (batch) =>
+        batch.owner === owner &&
+        (batch.requestId === requestId ||
+          (batch.continuations ?? []).some((item) => item.requestId === requestId));
+      const prior = this.batches.find(known) ?? this.archive.find(known);
       if (prior) {
         const previousFingerprint = prior.requestId === requestId ? prior.fingerprint : prior.continuations.find((item) => item.requestId === requestId).fingerprint;
         if (previousFingerprint !== fingerprint)
@@ -298,7 +400,8 @@ export class TaskDispatcher {
       try {
         await this.save();
       } catch (error) {
-        this.batches.splice(this.batches.indexOf(batch), 1);
+        const index = this.batches.indexOf(batch);
+        if (index >= 0) this.batches.splice(index, 1);
         this.detachDependency(batch.parentTaskId, batch.id);
         throw error;
       }
@@ -320,18 +423,18 @@ export class TaskDispatcher {
     return promise;
   }
 
-  view(batch, taskId, offset = 0) {
+  view(batch, taskId, offset = 0, fullResults = new Map()) {
     const tasks = taskId
       ? batch.tasks.filter((task) => task.id === taskId)
       : batch.tasks;
+    const limit = taskId ? VIEW_RESULT_LIMIT : VIEW_LIST_RESULT_LIMIT;
     return {
       batch_id: batch.id,
       request_id: batch.requestId,
       notification: batch.notification,
-      complete: batch.tasks.every((task) => !UNSETTLED.has(task.status)),
+      complete: batch.tasks.every((task) => !keepsBatchOpen(task)),
       tasks: tasks.map((task) => {
-        const result = String(task.result ?? "");
-        const limit = taskId ? 8000 : 1500;
+        const result = String(fullResults.get(task.id) ?? task.result ?? "");
         return {
           task_id: task.id,
           kind: task.kind,
@@ -347,6 +450,8 @@ export class TaskDispatcher {
           ended_at: task.endedAt,
           ...(task.error ? { error: task.error } : {}),
           ...(task.pauseReason ? { pause_reason: task.pauseReason } : {}),
+          // State keeps a window of a long reply; the whole one is read from the chat message.
+          ...(task.resultTruncated && !fullResults.has(task.id) ? { result_truncated: true } : {}),
           ...(result
             ? {
                 result: result.slice(offset, offset + limit),
@@ -363,11 +468,12 @@ export class TaskDispatcher {
   select(caller, args) {
     if (Boolean(args.task_id) === Boolean(args.batch_id))
       throw this.error("invalid", "task.selectorInvalid");
-    const batch = this.batches.find((batch) =>
+    // An old batch_id still answers: the trimmed batches left a record behind.
+    const find = (batch) =>
       args.task_id
-        ? batch.tasks.some((task) => task.id === args.task_id)
-        : batch.id === args.batch_id,
-    );
+        ? (batch.tasks ?? []).some((task) => task.id === args.task_id)
+        : batch.id === args.batch_id;
+    const batch = this.batches.find(find) ?? this.archive.find(find);
     if (!batch) throw this.error("not_found", "task.notFound");
     return this.own(batch, caller);
   }
@@ -406,7 +512,33 @@ export class TaskDispatcher {
       )
         break;
     }
-    return this.view(batch, args.task_id, offset);
+    return this.view(batch, args.task_id, offset, await this.fullResults(batch, args.task_id));
+  }
+
+  /** A clipped result is only a window: the durable chat message still holds the whole reply. */
+  async fullResults(batch, taskId) {
+    const results = new Map();
+    for (const task of batch.tasks) {
+      if (taskId && task.id !== taskId) continue;
+      if (!task.resultTruncated) continue;
+      const full = await this.storedResult(task);
+      if (full !== undefined) results.set(task.id, full);
+    }
+    return results;
+  }
+
+  /** The Bot's reply is durable in its chat; state only keeps a window of it. */
+  async storedResult(task) {
+    if (!task.chatId || !task.messageId) return undefined;
+    const messages = await this.store.getMessages(task.chatId);
+    const message = messages.find((item) => item.id === task.messageId);
+    const text = typeof message?.text === "string" ? message.text : undefined;
+    if (text === undefined) return undefined;
+    // A retried or regenerated reply took the message's place: it is not this task's own result
+    // any more. The stored window is the older text, so the message has to start with it.
+    const window = typeof task.result === "string" ? task.result : "";
+    if (window && !text.startsWith(window)) return undefined;
+    return text;
   }
 
   async cancel(caller, args) {
@@ -451,6 +583,10 @@ export class TaskDispatcher {
   start() {
     this.pump();
     for (const batch of this.batches) void this.deliver(batch);
+    if (this.pruned) {
+      this.pruned = false;
+      void this.save().catch(() => {});
+    }
   }
 
   pump() {
@@ -463,7 +599,12 @@ export class TaskDispatcher {
         }
         if (task.status === "waiting_for_tasks") {
           this.reconcileDependencies(task);
-          if (task.status === "unknown") { void this.save().catch(() => {}); continue; }
+          if (task.status === "unknown") {
+            void this.save().catch(() => {});
+            // The batch can no longer make progress: close it and report the unknown outcome.
+            void this.deliver(batch).catch(() => {});
+            continue;
+          }
           const dependencies = this.pendingDependencies(task);
           if (dependencies.length && dependencies.every((dependency) => dependency.report !== undefined)) {
             // The one place a dependency report reaches the Bot that verifies it. A report kept
@@ -609,7 +750,11 @@ export class TaskDispatcher {
   async settle(task, result, continueDiscussion = false) {
     task.messageId = result.messageId;
     task.sessionId = result.sessionId ?? task.sessionId;
-    task.result = result.text ?? "";
+    // The whole reply stays in the durable chat message; state keeps a window of it.
+    const text = String(result.text ?? "");
+    task.result = text.slice(0, MAX_TASK_RESULT);
+    if (text.length > MAX_TASK_RESULT) task.resultTruncated = true;
+    else delete task.resultTruncated;
     task.error = result.errorCode ?? result.error;
     if (
       this.disposed ||
@@ -694,7 +839,7 @@ export class TaskDispatcher {
       this.disposed ||
       batch.notification !== "pending" ||
       this.deliveries.has(batch.id) ||
-      batch.tasks.some((task) => UNSETTLED.has(task.status))
+      batch.tasks.some(keepsBatchOpen)
     )
       return;
     this.deliveries.add(batch.id);
