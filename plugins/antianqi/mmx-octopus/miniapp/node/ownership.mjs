@@ -3,7 +3,7 @@
 /**
  * **归属判据** —— 「这个目录 / 这个 agent 是不是本插件自己的」唯一真源。
  *
- * ⚠️ **为什么要有这个模块**（2026-11-02 第四十二轮，PR #101 review 的 Must fix 1、2）：
+ * ⚠️ **为什么要有这个模块**（PR #101 review 的 Must fix 1、2）：
  *   评审指出两处会写到**不属于本插件**的文件：
  *   ① `displayname.mjs` 向上最多 6 级找 `agent.md` —— 会指到用户项目里毫不相干的 agent.md；
  *   ② `ensureIdentityFile()` 直接往会话工作区写 `AGENTS.md` —— 回落成默认 agent 时，

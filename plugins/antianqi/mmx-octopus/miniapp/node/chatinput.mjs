@@ -9,7 +9,7 @@
  * 同一个项目里 `clip.mjs` / `replyflow.mjs` / `summarize.mjs` / `atomic-json.mjs`
  * 都是这个路数 —— 判断归一个文件，别的文件不再另写一份。
  *
- * ⭐ **注入的时机**（老板 2026-10-29 口径）：
+ * ⭐ **注入的时机**：
  * 身份头（`[你是谁]` + 底稿 + 规矩）**只在会话的第一轮拼一次**，
  * 后面每一轮不再重贴。
  *
@@ -21,7 +21,7 @@
  * 既拖慢每轮，又把会话历史撑爆（实测第 2 轮上下文就 3 万+ tokens）。
  */
 
-// ⚠️ **第三十七轮**：心情 / 亲近程度的措辞在 state.mjs（heartWord / intimacyWord）——
+// ⚠️ 心情 / 亲近程度的措辞在 state.mjs（heartWord / intimacyWord）——
 //   **同一个真源**，这里不另写一份（跟语气档 buildToneHint 的规矩一样）。
 import { heartWord, intimacyWord } from './state.mjs';
 // ⚠️ **老板指定的那句，真源在台词库** —— 这里只取出来（去掉〔表情〕标记）。
@@ -43,7 +43,7 @@ export const IDENTITY_HEAD = '[你是谁]';
 /**
  * 用户这一条短到多少字，就算「他很忙 / 懒得多说」。
  *
- * ⚠️ **为什么要有这个**（老板 2026-10-30 第十九轮）：
+ * ⚠️ **为什么要有这个**：
  * 规矩第 27 条要求她「按用户这一条的长短调节话量」——
  * 但**光有规矩没用**，她得**看得见那个长度**才知道该不该少说。
  * 所以这里每轮多带一句极短的说明（只在用户这一条很短时才加，长消息一个字都不多花）。
@@ -66,7 +66,7 @@ export const SHORT_USER_HEAD = '[用户这一条很短]';
 export function briefUserNote(text, max = SHORT_USER_MAX) {
   const n = Array.from(String(text ?? '')).length;
   if (!n || n > max) return '';
-  // ⚠️ **第三十七轮补的半句**：规矩第 27 条要她「少说两句」，但她得知道**该少说**。
+  // ⚠️ **短消息要给的半句**：规矩第 27 条要她「少说两句」，但她得知道**该少说**。
   //   原来只报长度 —— 她看得见长度，却不知道要拿它做什么。
   return (
     SHORT_USER_HEAD + ' 用户这一条只有 ' + n + ' 个字' +
@@ -76,17 +76,17 @@ export function briefUserNote(text, max = SHORT_USER_MAX) {
 
 
 /**
- * 心情提示块的抬头（第三十七轮）。
+ * 心情提示块的抬头。
  */
 export const HEART_HINT_HEAD = '[你现在的心情]';
 
 /**
- * 心情提示块（契约 §6.1 的「用户明确问起时她口头说明」—— 第三十七轮补上）。
+ * 心情提示块（「用户明确问起时她口头说明」—— 补上）。
  *
  * ⚠️ **只在用户明确问起时才拼** —— 平时一个字节都不花（心情不显示、不进 UI）。
  * ⚠️ **她不报数字** —— 「不说出具体数字」是不露程序痕迹的口径。
  * ⚠️ **判据来自用户原话**（chatter.mjs 的 heartAskTopics）——
- *   **不读模型输出文本**（契约 §6.1 判据纪律）。
+ *   **不读模型输出文本**（判据纪律）。
  *
  * @param {{heart?: number, intimacy?: number, topics?: {heart?: boolean, intimacy?: boolean}} | null} heart
  * @returns {string} 空串 = 不用加
@@ -121,7 +121,7 @@ export function buildHeartHint(heart) {
  *  5b. **背景故事** —— 她的来历（见 `storyscope.mjs` 的 `shouldLoadStory`；**问到才给**）
  *  6. 用户原话
  *
- * ⚠️ **第 5 段是 2026-10-29 新加的**（老板：「日记是很重要的记录，
+ * ⚠️ **第 5 段**（「日记是很重要的记录，
  * 就相当于每天整理的 memory 或者重点」）。日记不进聊天区、不进 `AGENTS.md` ——
  * 它每轮都在变，`AGENTS.md` 那种静态落点装不下它。
  * 选这个位置是因为它是**最后一段背景**，紧接着就是用户原话 —— 最后读到的最容易用。
@@ -142,18 +142,18 @@ export function buildHeartHint(heart) {
  *   carryOver?: string | null,
  *   memory?: string | null,
  *   storyScope?: string | null,
- *   tone?: {{tone: string, mood?: string} | null} 语气档（契约 §6.1）
+ *   tone?: {{tone: string, mood?: string} | null} 语气档（契约口径）
  *   heart?: {heart: number, intimacy: number, topics: {heart: boolean, intimacy: boolean}} | null
- *         心情 / 亲近程度（第三十七轮）—— **只在用户明确问起时**才传
+ *         心情 / 亲近程度—— **只在用户明确问起时**才传
  * }} input
  * @returns {string}
  */
 /**
- * 语气档提示块（契约 §6.1）。
+ * 语气档提示块（契约口径）。
  *
  * ⚠️ **只影响措辞，不改事实** —— 块里必须写死这条约束，否则语气一软
  *   「不确定」就会被说成「确定」（规矩：不确定就说不确定）。
- * ⚠️ **不写进 rules.md**：规矩正文只能追加，而语气每轮都可能变 —— 只能进输入。
+ * ⚠️ **不写进规矩文件**：规矩正文只能追加，而语气每轮都可能变 —— 只能进输入。
  * ⚠️ **不许她说出来** —— 她一提「语气」「档」，程序痕迹就露了。
  *
  * @param {{tone?: string, mood?: string} | null} toneInfo
@@ -238,21 +238,21 @@ export function assembleChatInput({
   }
   if (carryOver) blocks.push(String(carryOver));
   if (memory) blocks.push(String(memory));
-  // ⭐ **背景故事**（老板 2026-10-30 第二十二轮）：她自己的来历。
+  // ⭐ **背景故事**：她自己的来历。
   // 放在日记后面 —— 两块都是「她自己记得的东西」，挨着用户原话之前最后读到。
   if (storyScope) blocks.push(String(storyScope));
-  // ⭐ **她从老板身上学到的说话习惯**（第二十六轮第三档第二项）：
+  // ⭐ **她从相处中学到的说话习惯**：
   // 放在日记与背景之后 —— 三块都是「她自己知道的东西」。
   if (styleMem) blocks.push(String(styleMem));
-  // ⭐ **语气档**（契约 §6.1）：只影响措辞，不改事实。
+  // ⭐ **语气档**（契约口径）：只影响措辞，不改事实。
   // 放在「她自己知道的东西」之后、用户原话之前 —— 她最后读到的最容易用。
   const toneHint = buildToneHint(tone);
   if (toneHint) blocks.push(toneHint);
-  // ⭐ **她被问起心情 / 亲近程度时**（第三十七轮）：才把这两个值告诉她自己。
-  //   平时**不塞** —— 心情不显示（契约 §6.1），只有「用户明确问起」才口头说明。
+  // ⭐ **她被问起心情 / 亲近程度时**：才把这两个值告诉她自己。
+  //   平时**不塞** —— 心情不显示（契约口径），只有「用户明确问起」才口头说明。
   const heartHint = buildHeartHint(heart);
   if (heartHint) blocks.push(heartHint);
-  // ⭐ **人物指认**（老板 2026-11-02 的 ronny 彩蛋）：提到「ronny哥 / R总 / 涛哥」时，
+  // ⭐ **人物指认**（ronny 彩蛋）：提到「ronny哥 / R总 / 涛哥」时，
   //   才让她知道那是同一个人 —— 平时不塞，零成本。
   const castHint = buildCastHint(cast);
   if (castHint) blocks.push(castHint);
@@ -287,7 +287,7 @@ export function buildCarryOver(messages, options = {}) {
   if (!recent.length) return '';
   const lines = recent.map((item) => {
     /**
-     * ⭐ **用户那几句必须带时态标记**（2026-10-30 第二十三轮）：
+     * ⭐ **用户那几句必须带时态标记**：
      * 原样抄成「· 用户：帮我把昨天那批订货数据上传一下，另外新开一个火锅品类表格」的话，
      * 它跟「[用户消息]」里**现在的**命令长得一模一样 ——
      * 她读到的是一条待办的活，于是闷头去干

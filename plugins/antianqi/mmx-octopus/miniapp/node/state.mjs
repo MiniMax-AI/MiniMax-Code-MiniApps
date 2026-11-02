@@ -32,7 +32,7 @@ export const MOODS = {
 export const MOOD_KEYS = Object.keys(MOODS);
 
 /**
- * 心情与亲密度（CONTRACT §6.1，老板 2026-10-28 拍板）。
+ * 心情与亲密度（契约口径）。
  *
  * ⚠️ **落盘键是 `heart`，不是 `mood`** —— `mood` 已经被任务态
  * （idle/thinking/working/celebrate）占住了。契约层：任务态 = `mood`，
@@ -96,10 +96,10 @@ export function toneOf(heart, intimacy) {
 }
 
 /**
- * 双通道时间闸门的冷却（毫秒）—— 契约 §6.2 第三十七轮落地。
+ * 双通道时间闸门的冷却（毫秒）—— 契约口径。
  *
  * ⚠️ **两条通道共用一个时钟**（lastSpokeAt）：谁先说，谁把对方的窗口一并推后。
- *   这是 dsh-pet-multi 的做法（REFERENCE §4.2 J2 / C 行）：
+ *   这是 dsh-pet-multi 的做法：
  *   feed(category) 9s 冷却 / result(kind) 5s 冷却，**共用一个 lastWhisperAt**。
  * ⚠️ **为什么 result 更短**：结果时刻更重要 ⇒ 更容易说上话。
  */
@@ -133,7 +133,7 @@ export function spokeGateOpen(channel, lastSpokeAt, now = Date.now()) {
 }
 
 /**
- * 心情的说法（**用词，不是数字**）—— 契约 §6.1「用户明确问起时她口头说明」。
+ * 心情的说法（**用词，不是数字**）—— 契约口径「用户明确问起时她口头说明」。
  *
  * ⚠️ **阈值跟 toneOf 同源**（≥66 偏轻快 / ≤33 偏安静）—— 两处不漂移。
  * @param {number} heart
@@ -192,7 +192,7 @@ const MAX_BUBBLE_QUEUE = 20;
 export const BUBBLE_KIND = { MANUAL: 'manual', TRIGGER: 'trigger', IDLE: 'idle' };
 
 /**
- * 称呼配置（老板 2026-10-28 拍板：「叫什么和称呼由用户设定」）。
+ * 称呼配置（「叫什么和称呼由用户设定」）。
  *
  * 两个字段都是**用户可改的**：
  *  - `herName`   —— 她的名字（面板上显示、她自称用）
@@ -253,7 +253,7 @@ export class PetState {
     /** @type {string} */
     this.mood = 'idle';
     /**
-     * 称呼配置（老板 2026-10-28 拍板：名字和称呼由用户设定）。
+     * 称呼配置（名字和称呼由用户设定）。
      * `configured=false` = 从没设过 = 首启要问一次。
      * @type {{herName: string, userTitle: string, configured: boolean}}
      */
@@ -288,7 +288,7 @@ export class PetState {
     /**
      * 惰性结算锚点：上一次算过「久没理她」的时间戳。
      * ⚠️ **首次零收益也要写锚点**，否则时钟永远不动
-     * （坑来自 dsh-pet-multi `settleTreatGrants`，见 REFERENCE-deepseek-pet-analysis.md §4.2 L4）。
+     * （坑来自 dsh-pet-multi 的 `settleTreatGrants`）。
      * @type {number}
      */
     this.lastSeenAt = 0;
@@ -311,7 +311,7 @@ export class PetState {
      */
     this.lastSpokeAt = 0;
     /**
-     * 这一轮已经说过一句「工作 / 任务台词」没有（第三十七轮的去位规则）。
+     * 这一轮已经说过一句「工作 / 任务台词」没有（去位规则）。
      * ⚠️ **运行时态，不落盘** —— 它只管这一轮。
      * @type {boolean}
      */
@@ -601,7 +601,7 @@ export class PetState {
   }
 
   /**
-   * 设置称呼（老板 2026-10-28 拍板：名字和称呼由用户设定）。
+   * 设置称呼（名字和称呼由用户设定）。
    *
    * **空值怎么处理**：
    *  - `userTitle` 传空串 = 用户不想给称呼 → 引导段**不带**称呼那句，
@@ -686,7 +686,7 @@ export class PetState {
   }
 
   /**
-   * 现在能不能开口（**双通道时间闸门**，契约 §6.2）。
+   * 现在能不能开口（**双通道时间闸门**，契约口径）。
    *
    * ⚠️ **通过就顺手记下时间** —— 免得「先检查后开口」之间被人插一脚。
    * ⚠️ **exempt 豁免**：降级话术必须给用户反馈，吞了她就一声不吭 ⇒ 豁免
@@ -762,7 +762,7 @@ export class PetState {
   /**
    * 惰性结算「久没理她」：heart 每满 30 分钟 −5。
    *
-   * ⚠️ **锚点差值算，不开定时器**（契约 §6.1）。
+   * ⚠️ **锚点差值算，不开定时器**（契约口径）。
    * ⚠️ **首次零收益也要写锚点** —— 否则时钟永远不动。
    * ⚠️ 只降 heart，**不降亲密度**（契约：亲密不衰减）。
    *
@@ -784,7 +784,7 @@ export class PetState {
   }
 
   /**
-   * 改心情（契约 §6.1 的四种涨法都走这里）。**上限封顶、下限兜底**。
+   * 改心情（契约口径的四种涨法都走这里）。**上限封顶、下限兜底**。
    * @param {number} delta
    * @returns {number} 改完后的心情
    */
@@ -804,7 +804,7 @@ export class PetState {
   }
 
   /**
-   * 用户主动发消息（走 L2 聊天层）⇒ `intimacy` **+2** / `heart` **+1**（契约 §6.1）。
+   * 用户主动发消息（走 L2 聊天层）⇒ `intimacy` **+2** / `heart` **+1**（契约口径）。
    *
    * ⚠️ **判据来源 = 请求路径**（`/api/chat` 这条路由），**不是模型输出文本**。
    * ⚠️ **先结算再涨**：冷落那段时间掉的心情先算掉，再算这次互动涨的。
@@ -819,10 +819,10 @@ export class PetState {
   }
 
   /**
-   * 完成一轮对话（`turn.finished` **有确证产出**）⇒ `intimacy` **+1** / `heart` **+2**（契约 §6.1）。
+   * 完成一轮对话（`turn.finished` **有确证产出**）⇒ `intimacy` **+1** / `heart` **+2**（契约口径）。
    *
    * ⚠️ **判据来源 = 事件类型**（`turn.finished` ＋ 该回合有 `message.committed`），
-   *   **不读模型输出文本**（契约 §6.1 判据纪律）。
+   *   **不读模型输出文本**（判据纪律）。
    * @returns {Promise<{heart: number, intimacy: number}>}
    */
   async applyTurnFinishedBump() {
@@ -1115,7 +1115,7 @@ export class PetState {
     // ⚠️ 这里必须是 `true` —— 语义是「这个会话的第一轮已经发过了」。
     // 写成 `false` 会让 `isNewSession = !petHeadInjected` 永远为真 →
     // 接续摘要每轮都带（老毛病「每轮重贴」换了个形式回来）。
-    // 负向注入第三轮实测抓到的就是这个（2026-10-29）。
+    // 负向注入实测抓到的就是这个。
     this.petHeadInjected = true;
     await this.commit();
     return true;

@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * 观察通道（2026-10-29 第八轮从 `server.mjs` 抽出来）。
+ * 观察通道（从 `server.mjs` 抽出来的）。
  *
  * ⭐ **为什么抽**：
  * `server.mjs` 原来是一个 1836 行的 `start()` 闭包，里面塞了三件不相干的事：
@@ -268,7 +268,7 @@ export function createObserve({ context, state, onTaskEvent = null }) {
    *  1) 记进「最近完成」
    *  2) 冒一句这一轮的**摘要**
    *
-   * ⚠️ **一轮只播一条**（老板拍板：总结一次最好）——
+   * ⚠️ **一轮只播一条**（总结一次最好）——
    * 有最终回复正文 → 播摘要；读不到正文 → 退回泛泛的兜底文案。
    * **不两条都发**：那是噪音。
    *
@@ -295,8 +295,8 @@ export function createObserve({ context, state, onTaskEvent = null }) {
     // ⚠️ 正文有两个入口：`message.committed.text` 与 `turn.finished.text`
     // （宿主规范：turn.finished carries the same `text?`）。
     // 哪个先到用哪个 —— 同一个数据源的两个入口，不是两个判断。
-    // ★ **第三十七轮：轮次播报豁免时间闸门** ——
-    //   它是通知层的核心承诺（老板拍板「总结一次最好」），被 9 秒窗口吞掉就等于没播。
+    // ★ **轮次播报豁免时间闸门** ——
+    //   它是通知层的核心承诺（「总结一次最好」），被 9 秒窗口吞掉就等于没播。
     //   但它**照样占住时钟**：她确实开口了 ⇒ 紧接着的庆祝台词会让位。
     state.noteSpoke();
     state.markRoundLineSpoken();
@@ -389,7 +389,7 @@ export function createObserve({ context, state, onTaskEvent = null }) {
       const key = eventSessionId ?? 'unknown';
       if (type === 'turn.started') {
         turnCommitted.set(key, false);
-        // ★ **任务事件台词**（B 类，第三十七轮）：真的有活儿开始了。
+        // ★ **任务事件台词**（B 类）：真的有活儿开始了。
         //   ⚠️ **先说、再改状态** —— 状态一改，「工作状态台词」也会想冒一句；
         //     先说任务台词 ⇒ 它把这一轮标记成「已说过」⇒ 工作状态台词让位（不撞车）。
         if (onTaskEvent) await onTaskEvent('task.started');
@@ -408,15 +408,15 @@ export function createObserve({ context, state, onTaskEvent = null }) {
       } else if (type === 'turn.finished') {
         const committed = turnCommitted.get(key) === true;
         turnCommitted.delete(key);
-        // ★ 心情与亲密度（契约 §6.1）：完成一轮对话且**有确证产出** ⇒ intimacy +1 / heart +2。
+        // ★ 心情与亲密度（契约口径）：完成一轮对话且**有确证产出** ⇒ intimacy +1 / heart +2。
         //   ⚠️ **判据 = 事件类型**（turn.finished ＋ 该回合有 message.committed），
         //   **不读模型输出文本** —— 跟 G5「确证才庆祝」用的是同一个 committed 标志。
         if (committed) void state.applyTurnFinishedBump().catch(() => undefined);
         // 先把正文取走（读完即弃），再交给播报逻辑用。
         const replyText = takeTurnText(key);
-        // ⚠️ **第三十七轮：顺序变了** —— 先播**轮次摘要**（信息量最大、豁免时间闸门），
+        // ⚠️ **顺序变了** —— 先播**轮次摘要**（信息量最大、豁免时间闸门），
         //   再改状态。状态一改就是 celebrate ⇒「庆祝台词」被摘要顶掉
-        //   （闸门 + 让位）⇒ **一轮只播一次结果**（老板拍板「总结一次最好」）。
+        //   （闸门 + 让位）⇒ **一轮只播一次结果**（「总结一次最好」）。
         await noteTurnFinished(event, replyText);
         await settleAfterTurn(event.title ?? null, committed);
       }
@@ -447,7 +447,7 @@ export function createObserve({ context, state, onTaskEvent = null }) {
         if (isFatalObserveError(reason)) {
           state.setAgentTracking({ subscribed: false, error: explainObserveError(reason) });
           // ★ 观察通道彻底断了（D 类 func.observe_down）：她看得见外面才说得出「在忙什么」。
-          //   ⚠️ **豁免时间闸门**（第三十七轮）—— 降级话术必须给用户反馈，
+          //   ⚠️ **豁免时间闸门**—— 降级话术必须给用户反馈，
           //     吞了她就一声不吭（用户会以为她死了）。
           state.noteSpoke();
           const pickedDown = state.nextSceneLine('func.observe_down', null);

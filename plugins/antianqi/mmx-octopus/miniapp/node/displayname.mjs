@@ -3,9 +3,9 @@
 /**
  * 顯示名（宿主 agent 列表裡顯示的名字）—— **唯一真源是設置區**。
  *
- * 為什麼有這個模塊（老板 2026-11-01 第三十二輪）：
+ * 為什麼有這個模塊：
  * 「名字不應該是寫寫死的啊，本來就是隨時進行設置和修改的」。
- * 從前 `sync_agent_prompt.py` 裡有個寫死的常量（顯示名等於 MMX），
+ * 從前那個生成腳本裡有個寫死的常量（顯示名等於 MMX），
  * 每跑一次同步就把宿主裡她 agent 的顯示名按回去 ——
  * 老板在設置裡改了名字，**這裡不跟著走** ⇒ 那就是寫死。
  *
@@ -16,7 +16,7 @@
  *      由 ① 驅動：`/api/naming` 成功後由運行時改寫，同步腳本也按 ① 寫。
  *   ③ ① 為空（用戶從沒設過名字）⇒ 回落 FALLBACK_DISPLAY_NAME。
  *
- * ⚠️ **正文裡不許出現名字** —— 那是 `sync_agent_prompt.py` 的 BANNED_NAMES 門禁管的事。
+ * ⚠️ **正文裡不許出現名字** —— 那是生成腳本的 BANNED_NAMES 門禁管的事。
  *    這裡管的是**顯示層**，兩件事不打架。
  *
  * @module miniapp/node/displayname
@@ -77,7 +77,7 @@ export function readDisplayName(text) {
 /**
  * 把顯示名寫回 agent 文件的 frontmatter（其餘內容逐字保留）。
  *
- * ⚠️ **沒有 frontmatter 就不造一個** —— 那個文件的結構歸 `sync_agent_prompt.py` 管，
+ * ⚠️ **沒有 frontmatter 就不造一個** —— 那個文件的結構歸生成腳本管，
  *    這裡只負責「改名字」，不負責「蓋房子」。
  *
  * @param {string} text agent 文件原文
@@ -116,7 +116,7 @@ export function withDisplayName(text, name) {
 /**
  * 把顯示名寫進 agent 文件（**冪等**：已經是對的就什麼都不做）。
  *
- * ⚠️ **寫的是 frontmatter，不是正文** —— 正文歸 `sync_agent_prompt.py` 管，
+ * ⚠️ **寫的是 frontmatter，不是正文** —— 正文歸生成腳本管，
  *    這裡動它就會跟那邊打架（兩個寫者 = 遲早漂）。
  *
  * @param {string} file agent 文件的絕對路徑
@@ -245,7 +245,7 @@ export async function resolveAgentFiles(opts = {}) {
 }
 
 /**
- * 设置区改了名字 => 宿主 agent 列表里的显示名跟着改（老板 2026-11-01）。
+ * 设置区改了名字 => 宿主 agent 列表里的显示名跟着改。
  *
  * (*) **显示名是投影，她叫什么才是真源**（真源 = 设置区 state.naming.herName）。
  * ⚠️ **找不到文件就什么都不做** —— 写错地方比不写更糟。

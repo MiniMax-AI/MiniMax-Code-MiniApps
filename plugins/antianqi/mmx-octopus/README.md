@@ -5,7 +5,7 @@ doing, and the Agent can tell her what to say.*
 
 English | [简体中文](README.zh-CN.md)
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.5.0` ·
+Author: [antianqi](https://github.com/antianqi) · Version: `1.6.0` ·
 Plugin ID: `mmx-octopus` · Category: `Productivity`
 
 *The app interface is in Chinese.*

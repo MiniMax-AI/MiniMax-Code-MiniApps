@@ -33,7 +33,7 @@ import {
 } from './diary.mjs';
 import { createMcpHandler } from './mcp.mjs';
 import { pickDiaryMemory, buildRecentDiaryContext } from './memory.mjs';
-// ★ **她从相处中学说话习惯**（第二十六轮第三档第二项）。
+// ★ **她从相处中学说话习惯**。
 import {
   StyleMemStore,
   buildStyleBlock,
@@ -55,7 +55,7 @@ import {
 } from './tracks.mjs';
 import { clip, textLength } from './clip.mjs';
 import { ReplyFlow, splitChunks, REPLY_MAX_CHARS, REPLY_MAX_CHARS_SHORT } from './replyflow.mjs';
-// ★ **表达独立决策环节**（第二十六轮第三档第一项）：
+// ★ **表达独立决策环节**：
 // 表情符号与口语填充词**不在大提示词里决定**，在这里单独决定。
 import {
   applyExpress,
@@ -64,9 +64,9 @@ import {
   pushHistory as pushExpressHistory,
 } from './express.mjs';
 import { assembleChatInput, buildCarryOver, SHORT_USER_MAX } from './chatinput.mjs';
-// ★ **落库前剥皮**（2026-10-31 第二十九轮）：把「工作日志味」擦掉再进聊天区。
+// ★ **落库前剥皮**：把「工作日志味」擦掉再进聊天区。
 //   预告句（「我去把 X 的代码翻出来」）/ 纯路径句 / 纯校验味句 ⇒ 去掉。
-// ⚠️ **只擦工作日志味，不擦「她懂很多」** —— 老板口径：她知道更多梗才更有真实感。
+// ⚠️ **只擦工作日志味，不擦「她懂很多」** —— 她知道更多梗才更有真实感。
 import { scrubText, pickFinalText } from './scrub.mjs';
 // ⚠️ **归属判据的唯一真源**（PR #101 Must fix 2）—— 只往自己拥有的目录写身份层。
 import { ownsPluginDir } from './ownership.mjs';
@@ -86,7 +86,7 @@ import {
   pickIdleLine,
   IDLE_DEFAULTS,
 } from './idletalk.mjs';
-// ★ **台词库接线**（2026-11-01 第三十一轮）：
+// ★ **台词库接线**：
 //   身体动画强绑定的那 27 条静态台词 ＋「她此刻在做什么」的片段上下文
 //   （模型闲话对着画面说，不再跟动作各说各的）。
 import {
@@ -121,7 +121,7 @@ const ASSETS = {
  *
  * **白名单 = 素材清单**，不是扫目录 —— 扫目录等于「文件在就能播」，
  * 半截文件、名字写错的也会被端上去。清单由
- * `mmx-character/tools/sync_webm_assets.py` 显式对账后生成。
+ * 由素材同步脚本显式对账后生成。
  */
 const WEBM_DIR = 'webm/';
 const WEBM_MANIFEST = 'manifest.json';
@@ -133,13 +133,13 @@ const SUMMARY_WIDTH = 60;
 /**
  * 她的专属 agent（`PET_AGENT_NAME`）与「要不要重建会话」的判据都在 `agentpick.mjs`。
  *
- * 起因：老板 2026-10-30 拍板「**现在最主要的问题是调用了错误的agent文件**」——
+ * 起因：「**现在最主要的问题是调用了错误的agent文件**」——
  * 她的会话原本挂在**默认 agent（primary = mavis）**上，于是她的 system prompt 是
  * Mavis 的（"You are Mavis… a coding agent…"），而「她是谁 / 她长什么样 / 她的规矩」
  * 只是工作区里的 `AGENTS.md`（项目级说明）—— **权重打架时 system prompt 赢**。
  *
- * 那个 agent 的定义文件：真源 = `mmx-character/persona/agent.md`，
- * 投影 = `.minimax/agents/mmx/agent.md`（由 `sync_agent_prompt.py` 生成）。
+ * 那个 agent 的定义文件：真源 = 人物设定里的 agent 文件，
+ * 投影 = `.minimax/agents/mmx/agent.md`（由生成脚本产出）。
  */
 
 /** 聊天历史最多留 200 条（chat.mjs 里的同一份约束）。 */
@@ -167,12 +167,10 @@ const STUCK_NOTE = '我卡住了……多半是停在等一个没人回答的问
  * agent 目录的 `AGENTS.md`，宿主每轮读它 → 进 system prompt → 压缩压不掉。
  * 那份投影只在**写文件失败**时兜底（老宿主 / 没有 `agent.session` 能力）。
  *
- * 真源：`mmx-character/persona/story-baseline.md`（底稿）、
- * `mmx-character/persona/appearance.md`（样子）、
- * `mmx-character/persona/rules.md`（规矩）——
- * 三份都由 `sync_identity_file.py` 投影进 `identity/AGENTS.md`。
+ * 真源：人物设定里的三份文件（底稿 / 样子 / 规矩），
+ *   三份都由同步脚本投影进 `identity/AGENTS.md`。
  *
- * ⚠️ **2026-10-29 第八轮**：底稿与样子的副本原本还留在本文件里
+ * ⚠️ 底稿与样子的副本原本还留在本文件里
  * （`STORY_BASELINE` / `APPEARANCE`），现在一并搬回真源 —— 三段读同一个地方。
  */
 
@@ -181,7 +179,7 @@ const STUCK_NOTE = '我卡住了……多半是停在等一个没人回答的问
  *
  * 不是客套，是必需：新的专属会话没有上一轮的上下文，这条得每轮都带。
  *
- * ⚠️ **第 2 条在 2026-10-29 改写过**（老板拍板「不要问卷，聊天哪有给人家发问卷的」）：
+ * ⚠️ **第 2 条改写过**（「不要问卷，聊天哪有给人家发问卷的」）：
  * 原来第 2 条是「提问要用非阻塞方式（async）发出来」—— 那条**反过来在鼓励她用问卷工具**，
  * 于是聊天区里就冒出一张「她想问你」的选择框卡片。
  * 现在第 2 条是「**直接在话里问出来，不发问卷、不列选项**」：
@@ -190,7 +188,7 @@ const STUCK_NOTE = '我卡住了……多半是停在等一个没人回答的问
  * 服务端另有一层**兜底降级**（`degradeQuestionToText()`）：万一她还发了问卷，
  * 也**不渲染卡片**，而是把问题降级成她的一条普通消息。
  *
- * ⚠️ **第 1 条在 2026-10-29 改写过**（老板 2026-10-29 第七轮：
+ * ⚠️ **第 1 条改写过**：
  * 「为什么要控制气泡，不是应该控制回复的内容吗」）：
  * 起因是真机实测她一轮刷了 **42 个气泡 / 820 字**。查宿主 transcript 才发现，
  * **那一轮宿主发了 5 条 committed**：前 4 条全是「我先看一眼…」「真源找到了…」
@@ -210,83 +208,83 @@ const STUCK_NOTE = '我卡住了……多半是停在等一个没人回答的问
  * 服务端就切成一堆气泡；模型既不知道切成了几条，也没法数。
  * **字数是它自己能控的**（写多少字是它自己写的）。所以约束必须落在字数上。
  * 换算：200 字 ÷ 切分规则（每条 ≤40 字）≈ 4~6 条气泡 —— 正好落在
- * 「一轮好几条短消息」的口径里（见 §5.5）。
+ * 「一轮好几条短消息」的口径里。
  *
- * ⚠️ **2026-10-29 第九轮补上「句」这个口径**（老板：「150 还是有点多，
- * 一下子会变成 8 个气泡」）：真机实测 **气泡数 ≠ 句数** ——
+ * ⚠️ **补上「句」这个口径**（「150 还是有点多，
+ * 一下子会变成 8 个气泡」）：实测 **气泡数 ≠ 句数** ——
  * 服务端切句除「句末标点」必断外，还有一条**逗号级断点**
  * （攒够 `CHUNK_MIN` 字就断），会把句子再切成「半句」。
- * 所以**光压句数压不下气泡数**；老板拍板：`CHUNK_MIN` 12 → 20。
+ * 所以**光压句数压不下气泡数**；于是：`CHUNK_MIN` 12 → 20。
  *
  * ⚠️ **为什么写在这里而不是服务端裁**：服务端裁条数是**治症状**
  * （老板明确否掉了这条路：内容错了，气泡数怎么裁都不对）。
  * 提示词是内容层的抓手 —— 她每轮都读得到这条规矩。
- * ⚠️ 2026-10-29 实测：加上「别汇报干活过程」后，过程播报**真的消失了**；
+ * ⚠️ 实测：加上「别汇报干活过程」后，过程播报**真的消失了**；
  * 但「一轮说 3~6 条」**完全无效**（仍回 29 条）—— 见上面「为什么约束字数」。
  *
  * 分两段：
  *  - 「[你的规矩]」4 条 —— 前 3 条是【工程硬约束】，不可协商；
- *    第 4 条是【气质约束】，来自官方关键词「傻白甜」（2026-10-26 老板采访 MMX 官方）——
- *    老板拍板「只呆萌、永远不出错」：自然直白、带一点甜、不端着、不客服腔；
+ *    第 4 条是【气质约束】，来自官方关键词「傻白甜」（采访 MMX 官方时定的）——
+ *    口径「只呆萌、永远不出错」：自然直白、带一点甜、不端着、不客服腔；
  *    但不许拿「我不会」当挡箭牌示弱卖萌，也绝不许敷衍装懂。
  *    注意：她的「甜」本来就自带（历史对话里就有「给你端一杯茶～」这种），
  *    这条要守的是甜，不是把甜压掉 —— 傻白甜约束的是气质，不是能力。
- *  - 「[怎么写回复]」6 条 —— **引导段**（2026-10-28 老板拍板）。
- *    ⚠️ 规矩正文**不在这个文件里** —— 真源 = `mmx-character/persona/rules.md`。
+ *  - 「[怎么写回复]」6 条 —— **引导段**。
+ *    ⚠️ 规矩正文**不在这个文件里** —— 真源 = 人物设定里的规矩文件。
  *    讲的是「回话该长什么样」，不是「你是谁」：一条消息两三句、换行分句不分条、
  *    带动作神态、不空转、不替用户做决定、语气词节制、偶尔一个表情符号。
- *    ⚠️ **第 9 条的单位是「切分之后」的那一条**（老板 2026-10-28 拍板「按切分之后算」）：
+ *    ⚠️ **第 9 条的单位是「切分之后」的那一条**（「按切分之后算」）：
  *    「一条消息」= 服务端切完后的一个气泡，「整轮」= 一轮回复。
  *    不写清楚的话，模型会把「一条消息」当成自己写的那一段，
  *    「～」的「一次」就会变成「每条消息一次」—— 切完 8 条就是 8 个「～」。
- *    骨架来自参考项目的 ROLEPLAY_GUIDE（REFERENCE-deepseek-pet-analysis.md §2.3.4），
+ *    骨架来自参考项目的 ROLEPLAY_GUIDE，
  *    只取通用骨架，不抄酒馆扮演专有的那几条。
  *  - 「[怎么写得像活人]」14 条 —— 落笔前先想什么、情绪怎么接、怎么说话才不像客服。
- *    ⭐ **第 14、15 条在 2026-10-29 放行**（老板拍板「日记是很重要的记录，
+ *    ⭐ **第 14、15 条放行**（「日记是很重要的记录，
  *    就相当于每天整理的 memory 或者重点」）。
  *    当年这两条**故意留空**：它们依赖「记忆档案」（跨会话记忆），
  *    落进去等于教她宣称自己没有的能力。
  *    现在**日记就是那份凭据** —— `memory.mjs` 每轮把她的日记注入给她，
  *    她能读到、能引原话，所以「你说过的那句我还存着」这句话**兑现得了**。
- *    ⚠️ **顺序不能动**：14、15 卡在 13 和 16 之间（编号跟着 `voice.md` 的口径）。
+ *    ⚠️ **顺序不能动**：14、15 卡在 13 和 16 之间（编号跟着台词库的口径）。
  */
 /**
- * **规矩正文不再住在 `.mjs` 里**（老板 2026-10-29 第七轮：
+ * **规矩正文不再住在 `.mjs` 里**：
  * 「**你把规则写在哪里了？写到 agent.md 里面会不会好写**」）。
  *
- * ⭐ **真源 = `mmx-character/persona/rules.md`**。
+ * ⭐ **真源 = 人物设定里的规矩文件**。
  * 查下来的事实：规矩**最终就住在 `AGENTS.md` 里** ——
  * 宿主每轮重读它 → 进 system prompt → 压缩压不掉；
  * 而真源却塞在这个文件的字符串常量里，于是「改一条规矩」要：
- * 改 .mjs → 跑 `sync_pet_rules.py` → 跑 `sync_identity_file.py`
- * → 再手抄一份 `voice.md` 的可读版。**改三处**，最后一处还是手抄。
+ * 改 .mjs → 跑同步脚本 → 跑投影脚本
+ * → 再手抄一份台词库的可读版。**改三处**，最后一处还是手抄。
  *
  * 搬过去之后：**改规矩只动那一个 md 文件**，
  * 两个同步脚本各自把它投影到 `AGENTS.md`（运行时生效的那份）和
- * `CONTRACT-v3.md` §5.0（可读的契约）—— 两边都是机器生成，不会漂。
+ * 契约（可读的那份）—— 两边都是机器生成，不会漂。
  *
  * ⚠️ **`AGENTS.md` 本身仍然不要手改**（它是脚本拼出来的三段）：
- * 改规矩 → 改 `persona/rules.md` → 重跑 `sync_identity_file.py`。
+ * 改规矩 → 改规矩真源 → 重跑投影脚本。
  *
  * ⚠️ **降级路径**（身份层写不进 agent 目录时）不再需要本文件里的副本 ——
  * 它直接读项目内那份 `identity/AGENTS.md` 的三段（见 `readIdentityFallback()`）。
  */
 
 // ⚠️ **这里原来有两份副本**：`STORY_BASELINE`（底稿）与 `APPEARANCE`（样子）——
-// 2026-10-29 第八轮**搬回真源**：
-//   底稿真源 = `mmx-character/persona/story-baseline.md`
-//   样子真源 = `mmx-character/persona/appearance.md`
-// 两者都由 `sync_identity_file.py` 投影进 `miniapp/node/identity/AGENTS.md` 的
+// **搬回真源**：
+//   底稿真源 = 人物设定里的底稿文件
+//   样子真源 = 人物设定里的样子文件
+// 两者都由投影脚本投影进 `miniapp/node/identity/AGENTS.md` 的
 // 「# 她是谁」/「# 她长什么样」两段。
 // 降级路径现在**读那份投影**（见 `readIdentityFallback()`），本文件不再留副本 ——
-// 双写 = 迟早漂（规矩 → CONTRACT §5.0 已经这么漂过好几回）。
+// 双写 = 迟早漂（规矩与契约已经这么漂过好几回）。
 
 
 
 /**
  * 从宿主发来的问卷请求里**取出问题正文**。
  *
- * ⚠️ **问卷已撤掉**（老板 2026-10-29：「不要问卷，聊天哪有给人家发问卷的」），
+ * ⚠️ **问卷已撤掉**（「不要问卷，聊天哪有给人家发问卷的」），
  * 这里只用来**兜底降级**：万一她还发了问卷，就把这个问题当成她的一句普通话说出来，
  * 用户在聊天框打字回 —— 而不是弹一张选择框卡片。
  *
@@ -396,7 +394,7 @@ export async function start(context, options = {}) {
   const chat = new ChatStore(context.dataDir);
   await chat.load();
   // 她的日记本独立于 state.json 和 chat.json：diary.json。
-  // （老板 2026-10-29：日记是她的独白，跟对话混在一起会串味）
+  // （日记是她的独白，跟对话混在一起会串味）
   const diary = new DiaryStore(context.dataDir);
   await diary.load();
   /** 她学到的说话习惯（落盘，跨会话还在） */
@@ -411,7 +409,7 @@ export async function start(context, options = {}) {
   const clientEntryRaw = await readFile(join(context.pluginRoot, 'miniapp/client/index.html'));
 
   // 资产版本戳：按文件 mtime 生成，换一次立绘/头像，URL 就变一次，
-  // 绕开浏览器缓存（换图后页面仍显示旧立绘 —— 2026-10-27 实测踩坑）。
+  // 绕开浏览器缓存（换图后页面仍显示旧立绘 —— 实测踩坑）。
   // 源 HTML 保持干净（只写 /assets/xxx.png），版本戳只在服务端注入。
   let clientEntry = clientEntryRaw.toString('utf-8');
   for (const name of Object.keys(ASSETS)) {
@@ -504,16 +502,16 @@ export async function start(context, options = {}) {
   });
 
   // 观察通道（订阅 Agent 事件 + 看板 + 轮次摘要）——
-  // 2026-10-29 第八轮从本文件抽成独立模块 `observe.mjs`：
+  // 从本文件抽成独立模块 `observe.mjs`：
   // 它只认注入进来的 `context` 和 `state`，自己的状态（订阅取消器 / 退避计时器 /
   // 看板计时器 / 轮次正文缓存）全在自己的闭包里，不再挤在这个大闭包的外层。
   const observe = createObserve({ context, state, onTaskEvent });
   state.setAgentTracking({ available: observe.agentAvailable, capability: observe.observeCapability });
 
   // ============ 闲话生产者（idle）：她不说话的时候也在活着 ============
-  // ⚠️ **为什么要做这个**（老板 2026-10-30 第十九轮）：
+  // ⚠️ **为什么要做这个**：
   // 气泡队列**一直有 idle 这一类**（排队、不抢占、沉到队尾），但**从来没有生产者** ——
-  // 「她不说话的时候也在活着」这句话一直是空的。第十八轮跟 Aurabot 逐条对账时，
+  // 「她不说话的时候也在活着」这句话一直是空的。跟 Aurabot 逐条对账时，
   // 这是三个已知空缺之一（他们有 `chatty` 维 ＋「偶尔主动开个新话题、提起以前聊过的事」）。
   //
   // **判定逻辑在 `idletalk.mjs`**（纯函数、能单独测）；这里只负责接线：
@@ -550,7 +548,7 @@ export async function start(context, options = {}) {
    * @returns {Promise<boolean>} 说出去了没有
    */
   async function speakSceneLine(lineKey, from, tone = null, index = null) {
-    // ★ **双通道时间闸门**（契约 §6.2，第三十七轮）：**先判闸门、再取句** ——
+    // ★ **双通道时间闸门**（契约口径）：**先判闸门、再取句** ——
     //   反过来的话，被挡的那一次会把「轮换计数」吃掉（下次从第三句开始）。
     //   ⚠️ **exempt 豁免**：降级话术必须给用户反馈（voiceOf 返回 exempt）。
     if (!state.trySpeak(voiceOf(lineKey))) return false;
@@ -582,7 +580,7 @@ export async function start(context, options = {}) {
    * 关系性台词（A 类）：用户发消息时，她可能该说一句什么。
    *
    * ⚠️ **判据全部来自结构化字段**：用户原话（标记词）＋ 时间锚点（冷落了多久）。
-   *   **不读模型输出文本**（契约 §6.1 判据纪律）。
+   *   **不读模型输出文本**（判据纪律）。
    * ⚠️ **一次互动最多说一句** —— 标记词优先；没有标记词才看「你回来了」。
    *
    * @param {string} text 用户原话
@@ -590,7 +588,7 @@ export async function start(context, options = {}) {
    * @returns {Promise<string | null>} 说了哪个情境键
    */
   async function speakRelationLine(text, awayMs) {
-    // ⭐ **彩蛋优先**（老板 2026-11-02 拍板）：她一认出「ronny哥 / R总 / 涛哥」
+    // ⭐ **彩蛋优先**：她一认出「ronny哥 / R总 / 涛哥」
     //   说的是同一个人，就要先说这个 —— 彩蛋比关系标记词稀有，
     //   被「谢谢 / 你真棒」盖掉的损失更大。判据 = 用户原话（chatter.mjs 的 ronnyMention）。
     if (ronnyMention(text)) {
@@ -621,7 +619,7 @@ export async function start(context, options = {}) {
    */
   async function speakGuideLine() {
     if (guideSaid) return false;
-    // ⚠️ **第三十七轮**：**说出来了才记** —— 以前先记「已说过」，
+    // ⚠️ **说出来了才记** —— 以前先记「已说过」，
     //   万一被时间闸门挡掉，这句引导语就**永远**不会再说了。
     const said = await speakSceneLine('func.guide', '引导');
     if (!said) return false;
@@ -630,9 +628,9 @@ export async function start(context, options = {}) {
   }
 
   /**
-   * 任务事件台词（B 类，第三十七轮）：真的有活儿开始 / 结束。
+   * 任务事件台词（B 类）：真的有活儿开始 / 结束。
    *
-   * ⚠️ **判据 = 观察事件**（turn.started 等）—— 不是模型输出文本（契约 §6.1 判据纪律）。
+   * ⚠️ **判据 = 观察事件**（turn.started 等）—— 不是模型输出文本（判据纪律）。
    * ⚠️ **说出来了才标记「本轮已说过」** —— 没说成（被闸门挡了）就别占位，
    *   否则工作状态台词会被一条根本没说出口的台词压掉。
    *
@@ -650,7 +648,7 @@ export async function start(context, options = {}) {
   let envWeekendDay = '';
   /**
    * E 类：今天该不该打招呼（时段问候 / 周末）。
-   * ⚠️ **判据 = 时钟**（契约 §6.2：E 类的触发判据就是时钟）。
+   * ⚠️ **判据 = 时钟**（契约口径：E 类的触发判据就是时钟）。
    * @param {number} now
    * @returns {{key: string, index: number | null} | null}
    */
@@ -683,7 +681,7 @@ export async function start(context, options = {}) {
     lastMoodForLine = snapshot.mood;
     // ⚠️ **回到待机 = 一轮结束** ⇒ 清掉「本轮已说过」的标记（下一轮可以再说话）。
     if (snapshot.mood === 'idle') state.clearRoundLineSpoken();
-    // ⚠️ **工作状态台词让位**（第三十七轮）：这一轮已经说过任务 / 结果台词 ⇒
+    // ⚠️ **工作状态台词让位**：这一轮已经说过任务 / 结果台词 ⇒
     //   不再叠一句（一次交互只冒一条，别话痨）。
     if (state.isRoundLineSpoken()) return;
     // ⚠️ **判据 = 状态四态**（D 类工作状态台词），不是「任务事件」——
@@ -782,7 +780,7 @@ export async function start(context, options = {}) {
       // ⚠️ **片段上下文**：她此刻在做什么 ＋ 刚刚发生了什么 ⇒ 模型说的话对得上画面。
       // 只喂结构化字段（片段 key / 中文动作名 / 分类 / 交互事件），不读模型输出文本。
       const scenePrompt = buildScenePrompt(state.scene);
-      // ★ **双通道时间闸门**（第三十七轮）：模型闲话走 feed 通道（9s）。
+      // ★ **双通道时间闸门**：模型闲话走 feed 通道（9s）。
       //   ⚠️ **在跑模型之前占位** —— 模型这一轮要十几秒，跑完再判就晚了。
       if (!state.trySpeak('feed')) return;
       const sessionId = await ensurePetSession();
@@ -818,7 +816,7 @@ export async function start(context, options = {}) {
         used: expressUsed,
       });
       expressHistory = pushExpressHistory(expressHistory, idleExpressed.decision);
-      // ⚠️ **第二十八轮**：同聊天路径 —— 全部用过的表情 + 口语都进轮换池。
+      // ⚠️ 同聊天路径 —— 全部用过的表情 + 口语都进轮换池。
       const idleUsedNow = [
         ...(Array.isArray(idleExpressed.decision.emojiAll) ? idleExpressed.decision.emojiAll : []),
         ...(idleExpressed.decision.emoji ? [idleExpressed.decision.emoji] : []),
@@ -858,10 +856,10 @@ export async function start(context, options = {}) {
    * @param {Record<string, unknown>} payload
    */
   function broadcastChat(payload) {
-    // ⚠️ **契约外的帧一律不发**（2026-10-29 第八轮）：
+    // ⚠️ **契约外的帧一律不发**：
     // 帧类型清单的唯一真源是 `chat-protocol.mjs`。契约表里没有的帧发出去，
     // 页面也不认（`default: break`）→ **静默失败**，最难查的就是这种
-    // （第八轮实测发现的悬空 `naming` 帧就是这个样子）。
+    // （实测发现的悬空 `naming` 帧就是这个样子）。
     // 在这里卡住，日志里立刻看得出「服务端加了帧但没进契约表」。
     const verdict = checkFrame(payload);
     if (!verdict.ok) {
@@ -945,7 +943,7 @@ export async function start(context, options = {}) {
             'content-length': info.size,
             // no-store：资产是本地开发产物，换一次立绘/头像就换一次内容。
             // 之前这里发的是 public, max-age=3600 —— 换图后浏览器仍吐旧立绘，
-            // 页面看着没更新（2026-10-27 实测踩坑）。
+            // 页面看着没更新（实测踩坑）。
             'cache-control': 'no-store',
           });
           response.end(await readFile(filePath));
@@ -1119,7 +1117,7 @@ export async function start(context, options = {}) {
           return;
         }
 
-        // ===== 称呼（老板 2026-10-28 拍板：名字和称呼由用户设定）=====
+        // ===== 称呼（名字和称呼由用户设定）=====
         // 首启问一次，之后在设置里随时改 —— 两个入口走同一个接口。
         if (path === '/api/naming') {
           const herName = String(body.herName ?? '');
@@ -1132,7 +1130,7 @@ export async function start(context, options = {}) {
           await state.commit();
           // 改了名字/称呼 → 她的专属会话要重建，否则旧会话还记着老称呼
           state.petSessionDirty = true;
-          // (*) 显示名跟着设置走（老板 2026-11-01：名字不该写死，随时能改）
+          // (*) 显示名跟着设置走（名字不该写死，随时能改）
           await syncAgentDisplayName({ context, state }, naming.herName);
           broadcastChat({ type: 'naming', naming });
           sendJson(response, 200, { ok: true, naming, snapshot: state.snapshot() });
@@ -1162,7 +1160,7 @@ export async function start(context, options = {}) {
         if (path === '/api/diary') {
           // 让她自己写一篇日记（走一次她的专属会话）。
           //
-          // ⚠️ **老板 2026-10-29 改口**：用户发动态（`{ text }`）和「让她写」按钮
+          // ⚠️ **后来的调整**：用户发动态（`{ text }`）和「让她写」按钮
           // 都被拿掉了 —— 日记本现在是**只读 + 互动**（点赞 / 评论 / 她回评论）。
           // 这个入口留着，是因为「让她写一篇」本身是日记能力的一部分：
           // 聊天结束后自动补一篇走的是**同一个** `writeDiary()`。
@@ -1184,7 +1182,7 @@ export async function start(context, options = {}) {
           return;
         }
 
-        // ===== 点赞（老板 2026-10-29：可以添加点赞）=====
+        // ===== 点赞（可以添加点赞）=====
         if (path === '/api/diary/like') {
           const id = String(body.id ?? '');
           const entry = await diary.toggleLike(id);
@@ -1202,7 +1200,7 @@ export async function start(context, options = {}) {
           return;
         }
 
-        // ===== 评论（老板 2026-10-29：可以添加评论，评论后她可以回复）=====
+        // ===== 评论（可以添加评论，评论后她可以回复）=====
         if (path === '/api/diary/comment') {
           const id = String(body.id ?? '');
           const text = String(body.text ?? '').trim();
@@ -1290,7 +1288,7 @@ export async function start(context, options = {}) {
         }
 
         // ===== 聊天 =====
-        // 契约 v3 §5：受理，不等 Agent 跑完。她一次只回一句话。
+        // 契约口径：受理，不等 Agent 跑完。她一次只回一句话。
         if (path === '/api/chat') {
           const text = String(body.text ?? '').trim();
           if (!text) {
@@ -1327,7 +1325,7 @@ export async function start(context, options = {}) {
             const userMessage = await state.appendMessage('user', text);
             broadcastChat({ type: 'message', message: userMessage });
             await state.setAsking(text);
-            // ★ 心情与亲密度（契约 §6.1）：用户主动发消息 ⇒ intimacy +2 / heart +1。
+            // ★ 心情与亲密度（契约口径）：用户主动发消息 ⇒ intimacy +2 / heart +1。
             //   判据 = **请求路径**（这条路由），不是模型输出文本。
             await state.applyUserMessageBump();
             // ★ 关系性台词（A 类）：先看消息里的标记词，没有才看「你回来了」。
@@ -1419,7 +1417,7 @@ export async function start(context, options = {}) {
         }
 
         // ===== 问卷回路：已撤掉 =====
-        // 老板 2026-10-29：「不要问卷，聊天哪有给人家发问卷的」。
+        // 「不要问卷，聊天哪有给人家发问卷的」。
         // 问卷机制整条拿掉：没有问卷，就没有「作答」这个动作，
         // 所以 `/api/chat/answer` **整条路由都不存在**（请求它 → 404）。
         // 她要问什么，**直接在话里问**（规矩第 2 条），
@@ -1465,7 +1463,7 @@ export async function start(context, options = {}) {
   // ⚠️ `context.listen.port = 0` 的意思是「让操作系统分配一个空闲端口」。
   // 以前自检是「先起一个探针占端口 → 关掉探针 → 再让真服务器绑那个端口」——
   // 中间有个窗口，端口被别人抢走就 EADDRINUSE，自检会**随机崩在 fetch 上**
-  // （2026-10-28 实测踩到：并行跑两次自检就崩一次）。
+  // （实测踩到：并行跑两次自检就崩一次）。
   // 现在由服务器自己绑 0 号端口，再把真实端口报回去，**这个竞态就没了**。
   const actualPort = server.address()?.port ?? context.listen.port;
 
@@ -1489,7 +1487,7 @@ export async function start(context, options = {}) {
    *
    * ⚠️ **为什么探测而不是写死**：专属 agent 是**用户配置**的 —— 别人装了我们的
    * Mini App，`agents()` 列表里没有「mmx」⇒ `create({agent})` 直接 INVALID_ARGUMENTS。
-   * 探测不到就退回默认 agent（= 2026-10-30 之前的行为），可推广性不破。
+   * 探测不到就退回默认 agent（= 老行为），可推广性不破。
    *
    * ⚠️ **探测结果要缓存**：`agents()` 走宿主的目录调用通道，
    * 跟 `run`/`answer` 共享 Node 进程的 16 个普通请求名额 —— 每轮探一次不划算。
@@ -1522,7 +1520,7 @@ export async function start(context, options = {}) {
    * 她的专属会话：卡住的（pendingQuestion）不能复用，重新 create 一个。
    * create 不占 run slot；run({sessionId}) 继续时不能带 agent。
    *
-   * ⭐ **agent 对不上就重建**（2026-10-30 第二十三轮）：
+   * ⭐ **agent 对不上就重建**：
    * 官方规范「会话不能中途换 agent」⇒ 想换只能新建会话。
    * 原来这里只认 `state.petSessionDirty`，而 `state.petAgent` **从来没有入口写入过**
    * （三个调用点都没传 agentName）⇒ 她的会话一直挂在默认 agent（mavis）上。
@@ -1606,7 +1604,7 @@ export async function start(context, options = {}) {
    * @returns {Promise<string>}
    */
   /**
-   * 称呼那一句（老板 2026-10-28 拍板：名字和称呼由用户设定）。
+   * 称呼那一句（名字和称呼由用户设定）。
    *
    * **只在用户真的填了称呼时才加那半句** —— 用户没填 = 她自然地用「你」，
    * 不塞一个默认称呼进去（那是替用户做决定）。
@@ -1626,7 +1624,7 @@ export async function start(context, options = {}) {
   /**
    * 把身份层写进**宿主为这个 Mini App 建的 agent 目录**的 `AGENTS.md`。
    *
-   * ⭐ 这是整件事的关键（2026-10-29 老板追问引出）：
+   * ⭐ 这是整件事的关键：
    * 宿主为每个安装的 Mini App 自动建一个专属 agent 目录
    * （`~/.minimax/agents/<用户的primary>/miniapps/<pluginId>/`），
    * 并且**每轮重读**该目录下的 `AGENTS.md`，把它当项目指令拼进 **system prompt**。
@@ -1634,12 +1632,12 @@ export async function start(context, options = {}) {
    * 为什么这比「每轮拼进 user 消息」好：
    * ① **压缩压不掉** —— system prompt 不进会话历史，宿主压缩只压对话历史；
    * ② **上下文不被撑爆** —— 身份层不进历史，每轮历史只长真实对话；
-   * ③ **符合老板口径** ——「不在每一条进行反复注入」；
+   * ③ **符合口径** ——「不在每一条进行反复注入」；
    * ④ **可推广** —— 目录由宿主按插件自动建，不要求用户配置任何 agent
    *    （专属 agent 方案不可推广：`agents()` 列的是**用户配置**的，
    *      别人装了我们的 Mini App 列表里没有「mmx」，`create({agent})` 直接 INVALID_ARGUMENTS）。
    *
-   * 实测依据（2026-10-29 真机）：写暗号「甲」→ 她答「暗号甲」；
+   * 实测依据（真机）：写暗号「甲」→ 她答「暗号甲」；
    * 改成「丙」→ **下一轮**就答「暗号丙」（每轮重读）；
    * 同目录 `PERSONA.md` 不生效（只认 `AGENTS.md`）；文件内容不进 `messages.jsonl` 历史。
    *
@@ -1693,8 +1691,8 @@ export async function start(context, options = {}) {
   /**
    * **降级路径**用的身份层三段 —— 从项目内那份 `identity/AGENTS.md` 里取。
    *
-   * ⭐ **真源在 `mmx-character/persona/`**（2026-10-29 第七轮搬走规矩、
-   * 第八轮搬走底稿与样子），而那份 `AGENTS.md` 是它的投影。
+   * ⭐ **真源在人物设定文件里**（规矩、
+   * 底稿与样子都在那儿），而那份 `AGENTS.md` 是它的投影。
    * 所以这里读投影 = 读真源，**不会漂**。
    *
    * ⚠️ **为什么降级路径要单独准备身份层**：
@@ -1751,24 +1749,24 @@ export async function start(context, options = {}) {
     const fallback = identityInFile ? null : await readIdentityFallback();
     // 换会话后的第一轮：带一段「上一段聊到这」，不然她接不上。
     const isNewSession = !state.petHeadInjected;
-    // ⭐ **她的日记**（老板 2026-10-29：「日记是很重要的记录，
+    // ⭐ **她的日记**（「日记是很重要的记录，
     // 就相当于每天整理的 memory 或者重点」）。
     // 挑哪几篇、命中怎么算，全在 `memory.mjs` 里 —— 这里只调它。
     // ⚠️ **注入的是她自己的日记**（不是用户的原话），所以她能拿它当「我记得」的凭据。
     const memory = pickDiaryMemory(diary.list(), { text }).block;
-    // ⭐ **她的背景故事**（老板 2026-10-30 第二十二轮：
+    // ⭐ **她的背景故事**：
     // 「她的背景故事，和后面的记忆，自己写的日记，都可以加入参考的范围啊」）。
     // 她 961 汉字的来历（弄堂、石库门、阿婆、作文、星野水手、画的小章鱼…）**从来没进过参考范围** ——
     // 底稿文件写着「完整故事留着，被问起时才需要」，那个机制一直没实现。
     // 现在实现它：**问到她的过去/来历时才注入**，平时零成本。
     // 判断在 `storyscope.mjs` 里（唯一一处），这里只调它。
     const storyScope = await pickStoryScope(text);
-    // ⭐ **她学到的说话习惯**（第二十六轮第三档第二项）：
+    // ⭐ **她学到的说话习惯**：
     // 每轮都带上（最多 5 条，不多）—— 学到了就要用得上。
     const styleBlock = buildStyleBlock(styleMem);
-    // ⭐ **心情 / 亲近程度**（第三十七轮）：**只在用户明确问起时**才告诉她自己 ——
+    // ⭐ **心情 / 亲近程度**：**只在用户明确问起时**才告诉她自己 ——
     //   判据 = 用户原话（chatter.mjs 的 heartAskTopics），
-    //   **不读模型输出文本**（契约 §6.1 判据纪律）。平时一个字节都不花。
+    //   **不读模型输出文本**（判据纪律）。平时一个字节都不花。
     const heartTopics = heartAskTopics(text);
     const heartInfo =
       heartTopics.heart || heartTopics.intimacy
@@ -1786,15 +1784,15 @@ export async function start(context, options = {}) {
       memory,
       storyScope,
       styleMem: styleBlock,
-      // ⭐ **语气档**（契约 §6.1）：只影响措辞，不改事实。
-      //   不写进 rules.md —— 规矩正文只能追加，而语气每轮都可能变。
+      // ⭐ **语气档**（契约口径）：只影响措辞，不改事实。
+      //   不写进规矩文件 —— 规矩正文只能追加，而语气每轮都可能变。
       tone: state.currentTone(),
-      // ⭐ **心情 / 亲近程度**（第三十七轮）：**只在用户明确问起时**才给 ——
+      // ⭐ **心情 / 亲近程度**：**只在用户明确问起时**才给 ——
       //   判据 = 用户原话（chatter.mjs 的 heartAskTopics），不读模型输出文本。
       heart: heartInfo,
-      // ⭐ **人物指认**（老板 2026-11-02 的 ronny 彩蛋）：
+      // ⭐ **人物指认**（ronny 彩蛋）：
       //   用户提到「ronny哥 / R总 / 涛哥」时，才让她知道那是同一个人。
-      //   判据 = 用户原话，不读模型输出（契约 §6.1 判据纪律）。
+      //   判据 = 用户原话，不读模型输出（判据纪律）。
       cast: ronnyMention(text) ? true : null,
     });
     if (isNewSession) await state.markPetHeadInjected();
@@ -1826,8 +1824,8 @@ export async function start(context, options = {}) {
   /**
    * 故事正文（投影）—— **只读一次**，之后走缓存。
    *
-   * 真源 `mmx-character/persona/story-mmx-origin.md` 的正文由
-   * `mmx-character/tools/sync_story_scope.py` 投影到 `identity/STORY.md`。
+   * 真源（人物设定里的故事文件）的正文由
+   * 同步脚本投影到 `identity/STORY.md`。
    * @returns {Promise<string>}
    */
   let storyBodyPromise = null;
@@ -1868,22 +1866,22 @@ export async function start(context, options = {}) {
    * @returns {Promise<any>}
    */
   async function sayHerMessage(text, id) {
-    // ★ **落库前剥皮**（2026-10-31 第二十九轮）—— 她的话进聊天区的**唯一出口**。
+    // ★ **落库前剥皮**—— 她的话进聊天区的**唯一出口**。
     //
     // ⚠️ **为什么在这里剥**：聊天回复 / 提问 / 闲话三条路径都走这个函数 ⇒ 一处覆盖全部。
     //
-    // ⚠️ **剥空了怎么办**（2026-10-31 真机实测改口径）：
+    // ⚠️ **剥空了怎么办**（实测后定的）：
     //   老口径「剥空 ⇒ 保留原话」⇒ 被剥空的那 14 条**原样落进 chat.json**
-    //   ⇒ 老板报的越界①（闲聊里真的去调工具翻源码 + 报过程）**根本没修掉**。
+    //   ⇒ 用户报的越界①（闲聊里真的去调工具翻源码 + 报过程）**根本没修掉**。
     // ⇒ **新口径**：剥空 ⇒ **这条不落库**（chat.json 不留痕），
     //   并且**把页面上那个气泡也撤掉**（同一个 id 广播一条空文本 ⇒ 客户端按 id 覆盖）。
     //   ⚠️ **没有 id 的调用**（遗留降级路径）⇒ 屏幕上本来就没有气泡 ⇒ **保留原话**，
     //     否则老板的问题会被吞掉（详见 `pickFinalText` 的说明）。
-    // ★ **彩蛋的两条禁令兜底**（老板 2026-11-02 第二遍要求）——
+    // ★ **彩蛋的两条禁令兜底**——
     //   她的话在**落库前**必须过这一道：报全名 / 说来路，一样都不许出去。
     //   ⚠️ **为什么放在剥皮之前**：剥皮治的是「工作日志味」，它不认彩蛋的禁令；
     //     彩蛋的禁令要在这条路上**先**执行 —— 剥皮之后的文本没人再看第二遍。
-    //   ⚠️ **真机证据**（2026-11-02 15:53）：只写在事实块里不够 ——
+    //   ⚠️ **真机证据**（15:53）：只写在事实块里不够 ——
     //     她照样说了「爸爸说过他老叫我傻白甜」。
     const deLeaked = deRonnyLeak(text);
     const scrubbed = scrubText(deLeaked);
@@ -1901,7 +1899,7 @@ export async function start(context, options = {}) {
   }
 
   /**
-   * 跑一轮对话（契约 v3 §5 的第 7~11 步）。
+   * 跑一轮对话（契约口径的第 7~11 步）。
    * @param {{text: string, sessionId: string | null, epoch: number}} turn
    */
   async function runChatTurn({ text, sessionId, epoch }) {
@@ -1909,13 +1907,13 @@ export async function start(context, options = {}) {
     let delta = '';
     /**
      * 这一轮回复的**流式切分器**：她的回复按断点切成多条短消息，
-     * 一条一条冒出来（老板 2026-10-28 口径：一次回好几条短句）。
+     * 一条一条冒出来（一次回好几条短句）。
      *
      * ⚠️ 流式只是**乐观预告** —— 宿主可能丢 `text.delta`。
      * 最终落库一律以 `message.committed` 的完整正文为准（下面落定段），
      * 切分规则两边共用 `replyflow.mjs` 的同一个真源，所以边界必然对齐。
      */
-    // ⚠️ **第三十七轮**：用户这一条很短 ⇒ 这一轮的回复预算收紧
+    // ⚠️ 用户这一条很短 ⇒ 这一轮的回复预算收紧
     //   （规矩第 27 条「少说两句」不只是提示，服务端也兜一道）。
     //   ⚠️ **按块收口**（replyflow 的 Chunker）⇒ 不会切出半截话。
     const replyBudget =
@@ -2034,7 +2032,7 @@ export async function start(context, options = {}) {
                 .say(clip(`她想用一下 ${toolName}，要允许吗？`, 300), 'MMX')
                 .catch(() => undefined);
             } else if (type === 'question.requested') {
-              // ⚠️ **问卷已撤掉**（老板 2026-10-29：「不要问卷，聊天哪有给人家发问卷的」）。
+              // ⚠️ **问卷已撤掉**（「不要问卷，聊天哪有给人家发问卷的」）。
               // 这里**不渲染任何卡片**、**不设 pendingInteraction**（没有问卷要答），
               // 而是把问题**降级成她的一条普通消息** —— 她用嘴问，用户在聊天框打字回。
               // 聊天是对话，不是填表。
@@ -2068,7 +2066,7 @@ export async function start(context, options = {}) {
       // 用户在等答案时清空过对话：这轮的话就不该再冒出来。
       if (epoch !== chatEpoch) return;
 
-      // 每条 message.committed 落成**若干条短消息**（老板 2026-10-28 口径）。
+      // 每条 message.committed 落成**若干条短消息**。
       //
       // ⚠️ **以 committed 的完整正文为准，不用流式结果**：
       // 宿主可能丢 `text.delta`（规范原文：events back up 时 delta may be dropped），
@@ -2083,7 +2081,7 @@ export async function start(context, options = {}) {
         const fallback = result?.text ? String(result.text) : delta;
         if (fallback) parts = flow.commit(clip(fallback, 4000));
       }
-      // ★ **表达独立决策环节**（第二十六轮第三档第一项）：
+      // ★ **表达独立决策环节**：
       // 表情 / 口语不在大提示词里决定（那部分实测证实推不动），在这里单独定。
       // ⚠️ **放在落库前**：这里定下的文字才是页面上那条。
       if (parts.length) {
@@ -2094,7 +2092,7 @@ export async function start(context, options = {}) {
         });
         parts = expressed.parts;
         expressHistory = pushExpressHistory(expressHistory, expressed.decision);
-        // ⚠️ **第二十八轮**：一轮可能贴多个表情 ⇒ 轮换池要把**全部**用过的收进来，
+        // ⚠️ 一轮可能贴多个表情 ⇒ 轮换池要把**全部**用过的收进来，
         //   口语也要收（否则「嗯…」永远是同一个 ⇒ 贴纸感）。
         const usedNow = [
           ...(Array.isArray(expressed.decision.emojiAll) ? expressed.decision.emojiAll : []),
@@ -2116,8 +2114,8 @@ export async function start(context, options = {}) {
           droppedPart = part;
         }
       }
-      // ⚠️ **整轮兜底**（2026-10-31 真机实测改口径）：
-      //   这一轮的话**全部**被剥空 ⇒ 老板发了一句话却一个字都没得到
+      // ⚠️ **整轮兜底**（实测后定的）：
+      //   这一轮的话**全部**被剥空 ⇒ 用户发了一句话却一个字都没得到
       //   ⇒ 保留第一条原话（宁可漏杀一次，也不给老板一个死轮）。
       //   真机 35 轮里 **0 次**触发（剥皮整条剥掉 14 条，散在 9 轮里）⇒ 这是兜底，不是常态。
       if (!lastHer && droppedPart) {
@@ -2126,7 +2124,7 @@ export async function start(context, options = {}) {
         lastHer = message;
       }
 
-      // 有问卷 → **降级成她的一条普通消息**（老板 2026-10-29 撤掉问卷机制）。
+      // 有问卷 → **降级成她的一条普通消息**（问卷机制已撤掉）。
       // 不渲染卡片、不设 pendingInteraction；她用嘴问，用户在聊天框打字回。
       const pending = result?.pendingQuestion;
       if (pending) {
@@ -2159,7 +2157,7 @@ export async function start(context, options = {}) {
         }
       }
 
-      // 通知走气泡，聊天区只留对话（2026-10-28 老板拍板）。
+      // 通知走气泡，聊天区只留对话。
       if (status === 'error') {
         const reason = String(result?.error?.message ?? result?.error ?? '未知原因');
         // ⚠️ **技术细节留痕，不进气泡** —— 气泡给她说人话。
@@ -2181,7 +2179,7 @@ export async function start(context, options = {}) {
         await state.setMood('idle');
       }
 
-      // ===== 「每天至少记录一次」（老板 2026-10-29）=====
+      // ===== 「每天至少记录一次」=====
       //
       // 聊天**结束**之后，如果今天还没写过日记 → 让她自己写一篇。
       //
@@ -2190,7 +2188,7 @@ export async function start(context, options = {}) {
       // 凭空编一篇没发生的事。挂在聊天后面 —— **有话可说才写**，写出来的才是真的。
       //
       // ⚠️ **每天只自动写一次**：`diary.voidToday()` 是硬判据。
-      // ⚠️ **没有「一天最多 N 篇」的闸门了**（老板 2026-10-29 要求去掉）；
+      // ⚠️ **没有「一天最多 N 篇」的闸门了**；
       // 要写几篇由她自己决定 —— 触发权在她，不在闸门。
       //
       // ⚠️ **不阻塞这一轮**：日记是异步的，写不成功也不该影响聊天。
@@ -2201,7 +2199,7 @@ export async function start(context, options = {}) {
           });
         });
       }
-      // ★ **学说话习惯**（第二十六轮第三档第二项）：
+      // ★ **学说话习惯**：
       // ⚠️ **触发点不在这里** —— 见 `finally` 块里的同名注释。
       //   （这里 `state.chatBusy` 还没清 ⇒ `!state.chatBusy` 恒假 ⇒ 永远不触发。
       //     真机实测：聊完一轮，`style.json` 压根没生成。）
@@ -2228,7 +2226,7 @@ export async function start(context, options = {}) {
       broadcastChat({ type: 'done', status });
       await state.clearAsking().catch(() => undefined);
 
-      // ★ **学说话习惯**（第二十六轮第三档第二项）：
+      // ★ **学说话习惯**：
       // ⚠️ **必须放在这里（finally 里、busy 归位之后）**：
       //   之前它挂在 `try` 段的末尾 —— 那时 `state.chatBusy` **还没清**
       //   （它要到下面的 `setChatBusy(false)` 才清）⇒ 条件里的
@@ -2250,10 +2248,10 @@ export async function start(context, options = {}) {
   /**
    * 把宿主发来的问卷**结算掉**（不显示、不作答）。
    *
-   * ⚠️ **为什么还需要结算**（老板 2026-10-29 撤掉问卷机制）：
+   * ⚠️ **为什么还需要结算**（问卷机制已撤掉）：
    * 撤掉的是**人机界面**（不再给用户一张选择框卡片），不是宿主那边的请求本身。
    * 宿主那个问卷还挂着 → 那个会话的 run slot 可能一直被占着 → 后面每一轮都 BUSY。
-   * 所以这里用 **`skipped` 答案**把它结算掉（`answers` 结构见 runtime-api.md:372-373，
+   * 所以这里用 **`skipped` 答案**把它结算掉（`answers` 结构见宿主 API 文档，
    * `selectedOther` 是必填，`skipped` 表示「这一问不答」）。
    *
    * ⚠️ **静默**：这个续接轮次的输出**一律丢弃** —— 用户看到的是
@@ -2301,10 +2299,10 @@ export async function start(context, options = {}) {
 
   // ===== 她的日记本 =====
   //
-  // 老板 2026-10-29：「进去之后，是一个日记本，或者是像QQ空间每天发动态的感觉，
+  // 「进去之后，是一个日记本，或者是像QQ空间每天发动态的感觉，
   // 每天至少记录一次，其他时间也可以写，但别太频繁，每一次字数不要太多。」
   //
-  // ⚠️ **老板 2026-10-29 改口**：「为什么要设置一天只能写三篇，去掉这个设置，
+  // ⚠️ **后来的调整**：「为什么要设置一天只能写三篇，去掉这个设置，
   // 撤掉按钮也去掉，她写日记我为啥要删除，下面的说点什么，让她写，和发表也不要，
   // 但是可以添加点赞和评论。评论后她可以回复。」
   //
@@ -2326,12 +2324,12 @@ export async function start(context, options = {}) {
    * ⚠️ **不进聊天区** —— 日记是她的独白。写完只落 `diary.json` + 推给页面。
    * 如果进了聊天区，用户会以为她在回话，其实她在写日记（那就串味了）。
    *
-   * ⚠️ **没有「一天最多 N 篇」的闸门了**（老板 2026-10-29 要求去掉）。
+   * ⚠️ **没有「一天最多 N 篇」的闸门了**。
    *
    * @returns {Promise<{ok: boolean, entry?: any, error?: string, reason?: string}>}
    */
   /**
-   * **她学一些老板的说话习惯**（第二十六轮第三档第二项）。
+   * **她学一些用户的说话习惯**。
    *
    * ⚠️ **结构照 `learn_style`（MaiBot）**，**内容全部自己写**：
    * 每条 = `场景` + `表达方式` + `来源编号`（可溯源）。
@@ -2421,7 +2419,7 @@ export async function start(context, options = {}) {
   }
 
   /**
-   * **她回复一条评论**（老板 2026-10-29：评论后她可以回复）。
+   * **她回复一条评论**（评论后她可以回复）。
    *
    * ⚠️ **走她自己的专属会话** —— 她得记得自己那篇日记写了什么，才接得上话。
    * ⚠️ **有看门狗** —— 宿主不给 run 超时，卡住就是永久卡住。
@@ -2489,9 +2487,9 @@ export async function start(context, options = {}) {
    * ⚠️ **只说「写日记」+ 长度上限 + 语气要求**，不多说：
    * 多说一点她就会开始解释「我今天要写日记了」，写出来全是废话。
    *
-   * ⭐ **带上她最近写过的**（老板 2026-10-29）：
+   * ⭐ **带上她最近写过的**：
    * 原来写的时候她眼前是空的 —— 所以会说「**又**让我写日记」，
-   * 也会把同一件事写两遍（2026-10-29 真机实证）。
+   * 也会把同一件事写两遍（真机实证）。
    * 现在她知道自己写过什么，就写得出「接着上次往下写」的东西。
    * 挑哪几篇在 `memory.mjs` 的 `buildRecentDiaryContext()` 里。
    *
@@ -2509,7 +2507,7 @@ export async function start(context, options = {}) {
   }
 
   /**
-   * 「回一条评论」这段指令（老板 2026-10-29：评论后她可以回复）。
+   * 「回一条评论」这段指令（评论后她可以回复）。
    *
    * ⚠️ **把她的日记正文一起给她** —— 她得知道自己写了什么，才接得上话。
    * ⚠️ **只说「回他一句」+ 长度上限 + 语气要求** —— 多说她就会开始解释。

@@ -3,10 +3,10 @@
 /**
  * 闲话（idle）生产者：**她不说话的时候也在活着**。
  *
- * ⚠️ **为什么要有这个**（老板 2026-10-30 第十九轮）：
+ * ⚠️ **为什么要有这个**：
  * 气泡队列**一直有 idle 这一类**（排队、不抢占、沉到队尾），但**从来没有生产者** ——
  * 于是「她不说话的时候也在活着」这句话一直是空的。
- * 第十八轮跟 Aurabot 逐条对账时，这被列成三个已知空缺之一
+ * 跟 Aurabot 逐条对账时，这被列成三个已知空缺之一
  * （他们有 `chatty` 维 ＋「偶尔主动开个新话题、或者提起以前聊过的事」）。
  *
  * **这一份只做判定和措辞，不发消息** —— 真正跑一轮模型、取回正文、塞进气泡
@@ -24,7 +24,7 @@
  */
 
 import { clip, textLength } from './clip.mjs';
-// ★ **语气块**（契约 §6.1）：闲话也是说给老板听的 ⇒ 跟聊天回复**同一块语气块**。
+// ★ **语气块**（契约口径）：闲话也是说给老板听的 ⇒ 跟聊天回复**同一块语气块**。
 //   **同一个真源**在 chatinput.mjs 的 buildToneHint() —— 这里不另写一份。
 import { buildToneHint } from './chatinput.mjs';
 
@@ -118,7 +118,7 @@ export function buildIdlePrompt(input = {}) {
   const clock = String(input.clock ?? '');
   const minutes = Math.max(0, Math.round(Number(input.minutes) || 0));
   const scene = String(input.scene ?? '').trim();
-  // ★ **语气档**（契约 §6.1）：闲话也是说给老板听的 ⇒ 跟聊天回复**同一块语气块**。
+  // ★ **语气档**（契约口径）：闲话也是说给老板听的 ⇒ 跟聊天回复**同一块语气块**。
   //   漏了它 ⇒ 同一个气泡通道出现两套标准：静态台词分了档、模型闲话没分档。
   const toneHint = buildToneHint(input.tone ?? null);
   const out = [
@@ -127,7 +127,7 @@ export function buildIdlePrompt(input = {}) {
   ];
   if (toneHint) out.push(toneHint);
   // ⚠️ **片段上下文是结构化事实**（她在做什么、刚刚发生了什么），
-  // 不是模型输出文本 —— §6.2 的硬纪律（「什么时候说哪句」来自结构化字段）。
+  // 不是模型输出文本 —— 硬纪律（「什么时候说哪句」来自结构化字段）。
   if (scene) out.push(scene);
   out.push('说一件你自己的事，或者刚看到什么，或者以前聊过的事；一条就够，别问问题。');
   return out.join('\n');

@@ -4,7 +4,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-作者：[antianqi](https://github.com/antianqi) · 版本：`1.5.0` ·
+作者：[antianqi](https://github.com/antianqi) · 版本：`1.6.0` ·
 插件 ID：`mmx-octopus` · 分类：`Productivity`
 
 ## 它做什么
