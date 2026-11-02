@@ -44,6 +44,10 @@ The MCP tools check the arguments they declare before they run. A value of the w
 
 An avatar may come from the avatar library or from an image uploaded in the page only. A path on the computer is refused, the plugin reads no file outside its own `dataDir` for one, and the refused path is not echoed back — so the field cannot be used to ask what exists on the disk.
 
+## 0.7.20 The queue of a group is built from its member list
+
+A group created before 0.7.8 can hold an admin that is not on its member list. Queueing that admin hands the group a speaker it then skips, so every message without an `@` went quiet: the reply was marked cancelled and nothing explained it. The queue is now built from the member list only — the admin speaks first when it is on the list, the first member takes over when it is not, and in the `all` mode only real members are queued. An `@` still beats every reply mode.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
