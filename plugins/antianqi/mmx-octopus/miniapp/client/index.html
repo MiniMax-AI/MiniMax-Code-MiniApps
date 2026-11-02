@@ -1,0 +1,5346 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MMX 章鱼娘</title>
+    <!-- 轨道表占位：服务端在启动时把 tracks.mjs 的数据注入这里（源 HTML 保持干净） -->
+    <script id="mmx-tracks"></script>
+    <!-- 素材清单占位：服务端在启动时把 webm 素材清单注入这里（白名单 + 事实表） -->
+    <script id="mmx-segments"></script>
+    <!-- 帧契约占位：服务端在启动时把 chat-protocol.mjs 的帧类型清单注入这里 -->
+    <script id="mmx-chat-protocol"></script>
+    <style>
+      :root,
+      [data-theme='light'] {
+        --mcode-bg: #ffffff;
+        --mcode-bg-secondary: #f5f5f5;
+        --mcode-surface: #ffffff;
+        --mcode-surface-muted: #fafafa;
+        --mcode-text: #171717;
+        --mcode-text-muted: #666666;
+        --mcode-text-subtle: #adadad;
+        --mcode-border: #0a0a0a14;
+        --mcode-border-strong: #0a0a0af2;
+        --mcode-accent: #0094fc;
+        --mcode-success: #04b54b;
+        --mcode-warning: #f56811;
+        --mcode-danger: #f73646;
+        --mcode-primary-action-bg: #171717;
+        --mcode-primary-action-text: #ffffff;
+      }
+
+      [data-theme='dark'] {
+        --mcode-bg: #171717;
+        --mcode-bg-secondary: #1c1c1c;
+        --mcode-surface: #262626;
+        --mcode-surface-muted: #262626;
+        --mcode-text: #ededed;
+        --mcode-text-muted: #949494;
+        --mcode-text-subtle: #666666;
+        --mcode-border: #ffffff14;
+        --mcode-border-strong: #fffffff2;
+        --mcode-accent: #0077d9;
+        --mcode-success: #009c3d;
+        --mcode-warning: #e25507;
+        --mcode-danger: #e31937;
+        --mcode-primary-action-bg: #ffffff;
+        --mcode-primary-action-text: #171717;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        [data-theme='auto'] {
+          --mcode-bg: #171717;
+          --mcode-bg-secondary: #1c1c1c;
+          --mcode-surface: #262626;
+          --mcode-surface-muted: #262626;
+          --mcode-text: #ededed;
+          --mcode-text-muted: #949494;
+          --mcode-text-subtle: #666666;
+          --mcode-border: #ffffff14;
+          --mcode-border-strong: #fffffff2;
+          --mcode-accent: #0077d9;
+          --mcode-success: #009c3d;
+          --mcode-warning: #e25507;
+          --mcode-danger: #e31937;
+          --mcode-primary-action-bg: #ffffff;
+          --mcode-primary-action-text: #171717;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+
+      body {
+        background: var(--mcode-bg);
+        color: var(--mcode-text);
+        font-family:
+          ui-sans-serif,
+          -apple-system,
+          system-ui,
+          'Segoe UI',
+          Helvetica,
+          Arial,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+
+      /* 浮窗形态：页面背景透明，只留章鱼娘、气泡和聊天面板 */
+      body[data-mode='window'] {
+        background: transparent;
+      }
+
+      /* =========================================================
+         外壳：面板形态是应用布局，浮窗形态是透明浮层
+         ========================================================= */
+      .app {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        /* 日记本是盖在面板上的抽屉层 —— 它的定位基准是 .app，不是视口。 */
+        position: relative;
+      }
+
+      body[data-mode='inline'] .app {
+        padding: 10px 12px 12px;
+      }
+
+      body[data-mode='window'] .app {
+        padding: 8px;
+        gap: 4px;
+      }
+
+      /* =========================================================
+         身体：她
+         ========================================================= */
+      .stage {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+        width: 100%;
+      }
+
+      body[data-mode='inline'] .stage {
+        max-width: 220px;
+        margin: 0 auto;
+      }
+
+      body[data-mode='window'] .stage {
+        flex: 1;
+        min-height: 0;
+        /*
+         * **整块（气泡 + 她）贴到窗口底沿**。
+         *
+         * 为什么必须贴底：这一整块只有 ~162px 高（气泡 + 6px + 形象盒 120px），
+         * 窗口有 460px。不指定贴底 => flex 从顶部排 => 整块堆在窗口顶上。
+         * 旧写法（`.pet-body` 撑满）则是 **气泡在窗口顶、她在窗口底**
+         * —— 真机实测中间空出 ~288px（气泡底 y≈44，人头顶 y≈332）。
+         * 贴底之后：**她一动不动**（底沿不变），气泡落到她头顶上方 6px。
+         */
+        justify-content: flex-end;
+      }
+
+      .pet-bubble {
+        width: 100%;
+        background: rgba(30, 30, 30, 0.93);
+        color: #ffffff;
+        border-radius: 12px;
+        padding: 8px 11px;
+        font-size: 13px;
+        line-height: 19px;
+        box-shadow: 0 0 20px rgb(10 10 10 / 18%);
+        opacity: 0;
+        transform: translateY(6px);
+        transition: opacity 200ms ease-out, transform 200ms ease-out;
+        pointer-events: none;
+        word-break: break-word;
+        max-height: 92px;
+        overflow-y: auto;
+      }
+
+      .pet-bubble[data-show='true'] {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .pet-body {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        width: 100%;
+      }
+
+      body[data-mode='inline'] .pet-body {
+        height: 168px;
+      }
+
+      body[data-mode='window'] .pet-body {
+        /*
+         * ⚠️ **不能撑满**（旧写法 `flex: 1`）——
+         * 撑满时形象盒（120px）被 `align-items: flex-end` 推到**窗口最底**，
+         * 而气泡是 `.stage` 的第一个流内子元素、留在**窗口最顶** => 中间空一大片。
+         * 改成按内容高度（= 形象盒高），由 `.stage` 的 `justify-content: flex-end`
+         * 把「气泡 + 她」这一整块贴到窗口底沿 => 气泡紧贴她头顶，她仍在底沿。
+         */
+        flex: none;
+      }
+
+      .pet-figure {
+        position: relative;
+        transform-origin: center 88%;
+        transition: transform 120ms linear;
+        will-change: transform;
+      }
+
+      /*
+       * **拖动不用 `-webkit-app-region: drag`** —— 改用 JS 手动拖
+       * （pointerdown/move/up + setPointerCapture + update({x,y})）。
+       *
+       * 为什么不照旧用 app-region（官方 minimax-pet 也没用）：
+       *  ① app-region 的 drag 区在 Windows 上会被当成标题栏，右键弹系统菜单；
+       *  ② drag 区**收不到鼠标事件**，而浮窗又是点击穿透的 ——
+       *     「指针靠近 → 关穿透 → 再按下」中间有一次异步往返，
+       *     用户按早了那一次点击就丢了（体感：按了没反应，要按两下）；
+       *  ③ 手动拖能自己算增量、自己决定阈值（点一下不会被当成拖）。
+       *
+       * 面板形态下她是 FilePanel 里的一张普通图，拖拽区会吞掉鼠标事件，
+       * 变成「拖动整个 MCode 窗口」，点她脸都点不到 → 所以只在浮窗形态启用。
+       */
+      body[data-mode='window'] .pet-figure {
+        cursor: grab;
+        touch-action: none;
+      }
+
+      body[data-mode='window'] .pet-figure.is-dragging {
+        cursor: grabbing;
+      }
+
+      body[data-mode='inline'] .pet-figure {
+        cursor: default;
+      }
+
+      .pet-figure img {
+        display: block;
+        width: auto;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        pointer-events: none;
+        /* 指针跟随的微转给图层，动画用的 transform 留给外层，两者不打架 */
+        transform: var(--pointer, rotateY(0deg) rotateX(0deg));
+        transition: transform 120ms linear;
+        transform-style: preserve-3d;
+      }
+
+      body[data-mode='inline'] .pet-figure img {
+        max-height: 164px;
+      }
+
+      /*
+       * 浮窗只有 220 宽 × 460 高，舞台区实际能给的高度约 140px。
+       * 她的图是 640 高的立绘（宽度随画布变，别写死），不限高就会按原尺寸铺出去，
+       * 而 .pet-body 是 align-items: flex-end —— 溢出的部分全往上走，切掉的正好是头顶。
+       * inline 模式有 164px 那道上限兜着，浮窗模式这里补上。
+       */
+      body[data-mode='window'] .pet-figure img {
+        max-height: 120px;
+      }
+
+      /*
+       * ===== 片段层：webm 段落 =====
+       *
+       * **为什么是两段 <video>**：换 src 要解码，<video> 直接换会黑一下。
+       * 双缓冲 = 一段播着、另一段悄悄装下一段，播完直接对调 —— 和官方
+       * minimax-pet 的 `runtime/electron-helper/sprite/playback.js` 同一套做法。
+       *
+       * **几何怎么算**（构图模板，真源在 mmx-character/tools/webm_codec.py）：
+       *   素材是 360×640 竖版画布；角色主体占画布高 73.6%、底边距 8.3%、水平居中。
+       *   于是：画布高 = 形象盒高 / 0.736；画布下沿 = 形象盒下沿 + 画布高×0.083
+       *   （这样主体底边正好贴住形象盒底边、主体正好填满形象盒）。
+       *   画布比形象盒大 —— 多出来的是**透明边**，看不见也不挡事。
+       *   真实像素由 JS 按形象盒实测高写进 style（百分比在 auto 高度容器里解不出来）。
+       */
+      .pet-video {
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        transform: translateX(-50%);
+        width: 0;
+        height: 0;
+        object-fit: contain;
+        background: transparent;
+        pointer-events: none;
+        display: none;
+        /* 默认藏起来：双缓冲的两段视频在同一个位置，
+           同时可见 = 两张画叠在一起（真机反馈：浮窗画面有重叠）。
+           可见性由 JS 显式互斥 —— 见 segShowFront()。 */
+        visibility: hidden;
+      }
+      /* 片段接管：立绘让位给视频（visibility 保留占位，盒子不塌） */
+      .pet-figure[data-seg='on'] .pet-video {
+        display: block;
+      }
+      .pet-figure[data-seg='on'] #pet-img {
+        visibility: hidden;
+      }
+
+      /* 她的脸 = 可交互命中区（判断指针在不在她身上 → 要不要关穿透）。
+         ⚠️ 这里**不再**需要 `-webkit-app-region: no-drag` —— 拖动已经改成 JS 手动拖，
+         页面里没有任何 app-region: drag，不会再吞掉鼠标事件。 */
+      .pet-face {
+        position: absolute;
+        top: 2%;
+        left: 6%;
+        width: 88%;
+        height: 56%;
+      }
+
+      /*
+       * 下面是**兜底**：轨道表播放器接管后（html 上加了 .tracks-on）这四条就失效，
+       * 改由播放器按帧时长推进。注入失败 / 老页面没有轨道数据时，这四条继续保证她会动。
+       */
+      /* 呼吸 */
+      :root:not(.tracks-on) .pet-figure[data-mood='idle'] {
+        animation: mmx-breathe 3.4s ease-in-out infinite;
+      }
+
+      /* 思考：慢呼吸 + 轻微左右晃 */
+      :root:not(.tracks-on) .pet-figure[data-mood='thinking'] {
+        animation: mmx-think 2.6s ease-in-out infinite;
+      }
+
+      /* 工作：快速上下点头 */
+      :root:not(.tracks-on) .pet-figure[data-mood='working'] {
+        animation: mmx-work 0.9s ease-in-out infinite;
+      }
+
+      /* 这一轮结束：跳一下 */
+      :root:not(.tracks-on) .pet-figure[data-mood='celebrate'] {
+        animation: mmx-cheer 0.7s cubic-bezier(0.3, 1.4, 0.5, 1) 2;
+      }
+
+      @keyframes mmx-breathe {
+        0%,
+        100% {
+          transform: scale(1) translateY(0);
+        }
+        50% {
+          transform: scale(1.02) translateY(-2px);
+        }
+      }
+
+      @keyframes mmx-think {
+        0%,
+        100% {
+          transform: rotate(-2deg) translateY(0) scale(1);
+        }
+        50% {
+          transform: rotate(2deg) translateY(-2px) scale(1.015);
+        }
+      }
+
+      @keyframes mmx-work {
+        0%,
+        100% {
+          transform: translateY(0) scale(1.01);
+        }
+        50% {
+          transform: translateY(-4px) scale(1.01);
+        }
+      }
+
+      @keyframes mmx-cheer {
+        0%,
+        100% {
+          transform: translateY(0) scale(1);
+        }
+        40% {
+          transform: translateY(-16px) scale(1.05);
+        }
+        70% {
+          transform: translateY(0) scale(0.97);
+        }
+      }
+
+      .pet-dots {
+        position: absolute;
+        top: 46%;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 4px;
+        opacity: 0;
+        transition: opacity 200ms ease-out;
+        pointer-events: none;
+      }
+
+      .pet-dots[data-show='true'] {
+        opacity: 1;
+      }
+
+      .pet-dots i {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--mcode-text-muted);
+        animation: mmx-dot 1.2s ease-in-out infinite;
+      }
+
+      .pet-dots i:nth-child(2) {
+        animation-delay: 0.18s;
+      }
+
+      .pet-dots i:nth-child(3) {
+        animation-delay: 0.36s;
+      }
+
+      @keyframes mmx-dot {
+        0%,
+        60%,
+        100% {
+          opacity: 0.28;
+          transform: translateY(0);
+        }
+        30% {
+          opacity: 1;
+          transform: translateY(-3px);
+        }
+      }
+
+      /* =========================================================
+         她的日记本（老板 2026-10-29）
+         ------------------------------------------------------------
+         视觉口径（老板 2026-10-29 追加：「做成像QQ空间或者微信朋友圈的感觉」）：
+           ① **左圆形头像 + 右内容**：名字（彩色）在上、时间（灰色）跟在名字后面，
+              正文再下面 —— 跟朋友圈那条一模一样的排布；
+           ② 动态之间用**细线**分隔，**不是一张张卡片**（朋友圈本来就不是卡片流）；
+           ③ 日期是一条**浅灰分组条**（粘在顶上，滚起来不跑）；
+           ④ 底部是**圆角胶囊的评论框** + 主按钮；
+           ⑤ 名字用**用户设定的那个**（她叫什么就显示什么），不写死「她」。
+         ========================================================= */
+      /* 按钮放在**人物形象旁边**（老板原话：「在后台人物形象的旁边，加一个按钮」）。
+         浮窗形态下不显示 —— 桌面上只留她一个形象，不要任何常驻按钮（见 .pet-tools）。
+
+         ⚠️ **2026-10-29 重做**（老板：「到日记的那个按钮好好设计设计」）：
+         原来是一个 34px 白底圆圈里塞一个字「记」—— 谁看都不知道那是什么。
+         现在改成：
+           ① **原创 SVG 日记本图标**（线条用 currentColor，跟主题走；
+              **不抄任何图标库**，路径是本项目自己画的）；
+           ② 悬停时**向右展开一条胶囊标签**「日记本」（微信那种图标 hover 变文字的质感）；
+           ③ 图标默认灰，悬停转她名字那个粉（#e2167e），跟形象呼应；
+           ④ 「今天还没写」的红点保留 —— 那是「每天至少记录一次」这条下限的可见提醒。 */
+      .pet-diary-btn {
+        position: absolute;
+        right: 6px;
+        bottom: 16px;
+        z-index: 12;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        border-radius: 50%;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface, #fff);
+        color: var(--mcode-text-muted, #888);
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgb(10 10 10 / 10%);
+        opacity: 0.92;
+        transition: opacity 120ms ease-out, transform 120ms ease-out, color 120ms ease-out;
+      }
+
+      .pet-diary-btn svg {
+        width: 20px;
+        height: 20px;
+        display: block;
+      }
+
+      .pet-diary-btn:hover {
+        opacity: 1;
+        transform: scale(1.06);
+        color: #e2167e;
+      }
+
+      /* 悬停时向右展开的「日记本」胶囊 —— 微信那个图标 hover 变文字的质感 */
+      .pet-diary-label {
+        position: absolute;
+        left: calc(100% + 6px);
+        top: 50%;
+        transform: translateY(-50%);
+        height: 22px;
+        padding: 0 9px;
+        border-radius: 11px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface, #fff);
+        color: var(--mcode-text);
+        font-size: 12px;
+        line-height: 20px;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-50%) translateX(-4px);
+        transition: opacity 140ms ease-out, transform 140ms ease-out;
+      }
+
+      .pet-diary-btn:hover .pet-diary-label {
+        opacity: 1;
+        transform: translateY(-50%) translateX(0);
+      }
+
+      /* 「今天还没写」的小红点 —— 「每天至少记录一次」这条下限的可见提示 */
+      .pet-diary-btn[data-void='true']::after {
+        content: '';
+        position: absolute;
+        top: -1px;
+        right: -1px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #ff6452;
+        border: 1.5px solid var(--mcode-surface, #fff);
+      }
+
+      body[data-mode='window'] .pet-diary-btn {
+        display: none;
+      }
+
+      /* 日记本本体：盖在面板上的抽屉层 */
+      .diary-panel {
+        position: absolute;
+        inset: 0;
+        z-index: 45;
+        display: flex;
+        flex-direction: column;
+        background: var(--mcode-surface, #fff);
+        color: var(--mcode-text);
+      }
+
+      .diary-panel[hidden] {
+        display: none;
+      }
+
+      /* 头部：空间那样「头像 + 名字」一行 */
+      .diary-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--mcode-border);
+        flex: none;
+        background: var(--mcode-surface, #fff);
+      }
+
+      .diary-head-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        flex: none;
+        object-fit: cover;
+        background: var(--mcode-surface-muted, #eee);
+      }
+
+      .diary-head-text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+
+      .diary-head-text strong {
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .diary-count {
+        font-size: 11px;
+        color: var(--mcode-text-muted, #888);
+      }
+
+      .diary-mini {
+        height: 24px;
+        padding: 0 10px;
+        border-radius: 12px;
+        border: 1px solid var(--mcode-border);
+        background: transparent;
+        color: var(--mcode-text-muted, #888);
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        flex: none;
+      }
+
+      .diary-mini:hover {
+        color: var(--mcode-text);
+        border-color: var(--mcode-accent, #3a6ea5);
+      }
+
+      /* 提示条：今天写了没 / 还能不能写 */
+      .diary-note {
+        padding: 7px 14px;
+        font-size: 11.5px;
+        line-height: 17px;
+        color: var(--mcode-text-muted, #888);
+        background: var(--mcode-surface-muted, #f6f6f7);
+        flex: none;
+      }
+
+      .diary-note[data-void='true'] {
+        color: #d4553f;
+        background: #fff1ee;
+      }
+
+      /* 动态流 */
+      .diary-log {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        background: var(--mcode-surface, #fff);
+      }
+
+      /* 日期分组条（粘顶） */
+      .diary-day {
+        padding: 5px 14px;
+        font-size: 11px;
+        color: var(--mcode-text-muted, #888);
+        background: var(--mcode-surface-muted, #f6f6f7);
+        border-bottom: 1px solid var(--mcode-border);
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+
+      /* 一条动态 = 朋友圈那样「左头像 + 右内容」 */
+      .diary-item {
+        display: flex;
+        gap: 10px;
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .diary-avatar {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        flex: none;
+        object-fit: cover;
+        background: var(--mcode-surface-muted, #eee);
+        display: block;
+      }
+
+      /* 用户那条没有头像图 —— 用一个写「我」的圆形 */
+      .diary-avatar-user {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        color: var(--mcode-text-muted, #888);
+        border: 1px solid var(--mcode-border);
+      }
+
+      .diary-item-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      /* 名字 + 时间：朋友圈那一行 */
+      .diary-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--mcode-accent, #3a6ea5);
+      }
+
+      .diary-item[data-author='her'] .diary-name {
+        color: #e2167e;
+      }
+
+      .diary-time {
+        margin-left: 6px;
+        font-size: 11px;
+        font-weight: 400;
+        color: var(--mcode-text-muted, #888);
+      }
+
+      /* 正文 */
+      .diary-text {
+        margin-top: 3px;
+        font-size: 14px;
+        line-height: 21px;
+        color: var(--mcode-text);
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+
+      /* 右下角操作行（朋友圈那个「赞 / 评论」的位置） */
+      .diary-ops {
+        margin-top: 6px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+      }
+
+      /* 赞 / 评论 两个入口（老板 2026-10-29：撤掉去掉，改成点赞和评论） */
+      .diary-op {
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--mcode-text-muted, #888);
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .diary-op:hover {
+        color: var(--mcode-text);
+      }
+
+      /* 点过赞的那个（朋友圈那种粉心） */
+      .diary-op[data-on='true'] {
+        color: #e2167e;
+      }
+
+      .diary-empty {
+        padding: 30px 14px;
+        font-size: 13px;
+        line-height: 20px;
+        text-align: center;
+        color: var(--mcode-text-muted, #888);
+      }
+
+      /* 评论区：折叠在每条动态下面（朋友圈那个灰底块） */
+      .diary-comments {
+        margin-top: 7px;
+        padding: 7px 10px;
+        border-radius: 7px;
+        background: var(--mcode-surface-muted, #f6f6f7);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .diary-comment {
+        padding: 2px 0;
+      }
+
+      .diary-comment-name {
+        color: var(--mcode-accent, #3a6ea5);
+      }
+
+      /* 她的回复：缩进 + 左边一条线（朋友圈那个「XX 回复 YY」） */
+      .diary-reply {
+        margin: 3px 0 3px 8px;
+        padding-left: 8px;
+        border-left: 2px solid var(--mcode-border);
+      }
+
+      .diary-reply .diary-comment-name {
+        color: #e2167e;
+      }
+
+      /* 她正在回这条评论 */
+      .diary-waiting {
+        margin: 3px 0 3px 8px;
+        padding-left: 8px;
+        border-left: 2px solid var(--mcode-border);
+        color: var(--mcode-text-muted, #888);
+      }
+
+      /* 评论输入框：胶囊 */
+      .diary-comment-form {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-top: 7px;
+      }
+
+      .diary-comment-form input {
+        flex: 1;
+        min-width: 0;
+        height: 28px;
+        padding: 0 12px;
+        border-radius: 14px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface, #fff);
+        color: var(--mcode-text);
+        font-size: 12px;
+      }
+
+      .diary-comment-form button {
+        height: 28px;
+        padding: 0 12px;
+        border-radius: 14px;
+        border: 1px solid var(--mcode-accent, #3a6ea5);
+        background: var(--mcode-accent, #3a6ea5);
+        color: #fff;
+        font-size: 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        flex: none;
+      }
+
+      .diary-comment-form button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      /* =========================================================
+         按钮行
+         ========================================================= */
+      .pet-tools {
+        display: flex;
+        gap: 6px;
+        justify-content: center;
+        flex-wrap: wrap;
+        flex: none;
+        padding-top: 8px;
+        -webkit-app-region: no-drag;
+      }
+
+      .pet-tools button {
+        height: 28px;
+        padding: 0 12px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        transition: opacity 150ms ease-out, background-color 150ms ease-out;
+      }
+
+      .pet-tools button:hover:not(:disabled) {
+        opacity: 0.82;
+      }
+
+      body[data-mode='window'] .pet-tools button {
+        height: 26px;
+        padding: 0 9px;
+        font-size: 12px;
+        border-color: rgba(140, 140, 140, 0.5);
+        background: rgba(30, 30, 30, 0.82);
+        color: #f0f0f0;
+      }
+
+      .pet-tools button:focus-visible,
+      .pet-say-row input:focus-visible,
+      .chat-input-row input:focus-visible,
+      .seg button:focus-visible,
+      .chat-mini:focus-visible,
+      .pcard-actions button:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      /* 「让她说一句话」挪进设置区了，面板上常驻显示。 */
+      body[data-mode='inline'] .pet-say-row {
+        display: flex;
+      }
+
+      /* 浮窗形态：桌面上只留她一个形象，不要任何常驻按钮。
+         浮窗里的唯一出口是右键弹出的菜单（见 .pet-menu）。 */
+      body[data-mode='window'] .pet-tools {
+        display: none;
+      }
+
+      /* ---------- 右键菜单：浮窗里唯一的出口 ---------- */
+      .pet-menu {
+        display: none;
+        position: fixed;
+        z-index: 40;
+        padding: 4px;
+        border: 1px solid rgba(140, 140, 140, 0.55);
+        border-radius: 8px;
+        background: rgba(28, 28, 28, 0.94);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+        -webkit-app-region: no-drag;
+      }
+
+      .pet-menu[data-open='true'] {
+        display: block;
+      }
+
+      .pet-menu button {
+        display: block;
+        width: 100%;
+        height: 26px;
+        padding: 0 12px;
+        font-size: 12px;
+        border: none;
+        border-radius: 5px;
+        background: transparent;
+        color: #f0f0f0;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .pet-menu button:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .pet-menu button:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      /* 面板形态里没有浮窗，右键菜单也就没有意义。 */
+      body[data-mode='inline'] .pet-menu {
+        display: none;
+      }
+
+      /* ---------- 说一句话（一行输入）---------- */
+      .pet-say-row {
+        display: none;
+        gap: 6px;
+        flex: none;
+        padding-top: 6px;
+        -webkit-app-region: no-drag;
+      }
+
+      .pet-say-row[data-open='true'] {
+        display: flex;
+      }
+
+      .pet-say-row input {
+        flex: 1;
+        min-width: 0;
+        height: 28px;
+        padding: 0 9px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 13px;
+      }
+
+      .pet-say-row button {
+        height: 28px;
+        padding: 0 12px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      /* =========================================================
+         聊天：她的房间
+         ========================================================= */
+      .chat {
+        display: none;
+        flex-direction: column;
+        min-height: 0;
+        margin-top: 10px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface);
+        overflow: hidden;
+        /* 「回到最新」浮标要绝对定位在聊天区里 */
+        position: relative;
+      }
+
+      .chat[data-open='true'] {
+        display: flex;
+      }
+
+      /* 聊天在面板里常驻展开（原来靠「聊天」按钮开，那个按钮已经去掉）。 */
+      body[data-mode='inline'] .chat {
+        display: flex;
+        flex: 1;
+        min-height: 150px;
+      }
+
+      /* 浮窗里没有聊天：桌面上只留形象，聊天回面板去。 */
+      body[data-mode='window'] .chat {
+        display: none;
+      }
+
+      .chat-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        flex: none;
+        -webkit-app-region: no-drag;
+      }
+
+      .chat-avatar {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        object-fit: contain;
+        flex: none;
+      }
+
+      .chat-head-text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.35;
+      }
+
+      .chat-head-text strong {
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .chat-head-text span {
+        font-size: 11px;
+        color: var(--mcode-text-muted);
+      }
+
+      .chat-mini {
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 6px;
+        border: 1px solid var(--mcode-border);
+        background: transparent;
+        color: var(--mcode-text-muted);
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        flex: none;
+      }
+
+      .chat-mini:hover {
+        opacity: 0.8;
+      }
+
+      .chat-log {
+        list-style: none;
+        margin: 0;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      /*
+       * 消息少的时候贴底，像真实聊天软件那样从下往上长。
+       * 用首元素的 margin-top:auto 而不是 justify-content:flex-end：
+       * 后者在内容溢出时会把顶部消息推到滚动区外，够不着。
+       */
+      .chat-log > *:first-child {
+        margin-top: auto;
+      }
+
+      .msg {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+        /* 时间条要独占一行（它是消息内部的，不是独立的一条消息） */
+        flex-wrap: wrap;
+      }
+
+      .msg-user {
+        justify-content: flex-end;
+        /* 用户消息多了个「发送中 / 已送达」小字 —— 竖排在气泡下面 */
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 2px;
+      }
+
+      .msg-avatar {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        object-fit: contain;
+        flex: none;
+      }
+
+      .msg-bubble {
+        max-width: 78%;
+        padding: 6px 9px;
+        border-radius: 10px;
+        font-size: 13px;
+        line-height: 19px;
+        word-break: break-word;
+        white-space: pre-wrap;
+        background: var(--mcode-bg-secondary);
+        color: var(--mcode-text);
+      }
+
+      .msg-user .msg-bubble {
+        background: var(--mcode-accent);
+        color: #ffffff;
+      }
+
+      .chat-empty {
+        padding: 18px 10px;
+        text-align: center;
+        color: var(--mcode-text-subtle);
+        font-size: 12px;
+      }
+
+      /* ---------- 聊天：时间分隔条（微信式） ----------
+       *
+       * 触发规则跟微信一样：**间隔够久才插一条**，不是每条消息都挂时间。
+       * 跨天时插的那条带日期（「昨天」「10月29日」）。
+       *
+       * ⚠️ 后端 `chat.json` 一直存着每条消息的 `at`（chat.mjs 的 writeMessage），
+       * 只是以前前端从来没画出来 —— 这里补的是**渲染**，不是新数据。
+       */
+      .msg-time {
+        flex: none;
+        width: 100%;
+        margin: 8px 0 2px;
+        text-align: center;
+      }
+
+      .msg-time span {
+        display: inline-block;
+        padding: 2px 9px;
+        border-radius: 9px;
+        background: var(--mcode-surface-muted, #f1f1f2);
+        color: var(--mcode-text-subtle, #999);
+        font-size: 11px;
+        line-height: 16px;
+        white-space: nowrap;
+      }
+
+      /* ---------- 聊天：发送状态 ----------
+       *
+       * 用户点发送 → 立刻上墙（半透明 + 「发送中…」）；
+       * 服务端真消息到了 → 变成实心 + 「已送达」；
+       * 送不出去 → 变红 + 「发送失败」。
+       *
+       * 为什么要自己插一条：她的回复要跑一次 Agent（可能几十秒），
+       * 用户得**马上看见自己的话上墙了**，不然会以为没点上。
+       */
+      .msg[data-state='pending'] .msg-bubble {
+        opacity: 0.55;
+      }
+
+      .msg[data-state='failed'] .msg-bubble {
+        opacity: 0.55;
+        outline: 1px solid #d4553f;
+      }
+
+      .msg-state {
+        align-self: flex-end;
+        margin-top: 1px;
+        font-size: 10px;
+        line-height: 14px;
+        color: var(--mcode-text-subtle, #999);
+      }
+
+      .msg-state[data-state='failed'] {
+        color: #d4553f;
+      }
+
+      /* ---------- 聊天：她正在输入（三个跳动的点）----------
+       *
+       * 微信/QQ 都有这个。桌宠更需要：她回一句话要跑一次 Agent，
+       * 这期间聊天区**一个像素都不动**，用户会以为死机了。
+       */
+      .chat-typing {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+      }
+
+      .chat-typing-dots {
+        display: flex;
+        gap: 3px;
+        align-items: center;
+        padding: 10px 11px;
+        border-radius: 10px;
+        background: var(--mcode-bg-secondary);
+      }
+
+      .chat-typing-dots i {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--mcode-text-subtle, #999);
+        animation: chat-typing-bounce 1.2s infinite ease-in-out;
+      }
+
+      .chat-typing-dots i:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+
+      .chat-typing-dots i:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+
+      @keyframes chat-typing-bounce {
+        0%,
+        60%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.4;
+        }
+        30% {
+          transform: translateY(-3px);
+          opacity: 1;
+        }
+      }
+
+      /* ---------- 聊天：回到最新 ----------
+       *
+       * 微信/QQ 都有。聊天历史有 200 条上限，面板又窄 ——
+       * 往上翻看旧记录时，右下角要有个一键回底的浮标。
+       */
+      .chat-jump {
+        position: absolute;
+        right: 14px;
+        bottom: 50px;
+        z-index: 6;
+        display: none;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        padding: 0 11px;
+        border-radius: 14px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface, #fff);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgb(10 10 10 / 12%);
+      }
+
+      .chat-jump[data-show='true'] {
+        display: inline-flex;
+      }
+
+      .chat-jump:hover {
+        opacity: 0.85;
+      }
+
+      /* ---------- 交互卡：审批 / 问卷 ---------- */
+      .chat-cards {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 0 10px 8px;
+      }
+
+      .chat-cards:empty {
+        display: none;
+      }
+
+      .pcard {
+        border: 1px solid var(--mcode-warning);
+        border-radius: 10px;
+        padding: 9px 10px;
+        background: var(--mcode-surface-muted);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .pcard-title {
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      .pcard-reason {
+        color: var(--mcode-text-muted);
+      }
+
+      .pcard-hint {
+        color: var(--mcode-text-muted);
+        margin-top: 4px;
+      }
+
+      .pcard-hint.is-expired {
+        color: var(--mcode-danger);
+      }
+
+      .pcard-input {
+        margin: 6px 0 0;
+        padding: 6px 8px;
+        background: var(--mcode-bg);
+        border: 1px solid var(--mcode-border);
+        border-radius: 6px;
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        line-height: 16px;
+        max-height: 96px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .pcard-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+
+      .pcard-actions button {
+        height: 26px;
+        padding: 0 10px;
+        border-radius: 6px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .pcard-actions button[data-decision='allowOnce'] {
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        border-color: transparent;
+      }
+
+      /* ---------- 聊天输入 ---------- */
+      .chat-input-row {
+        display: flex;
+        gap: 6px;
+        flex: none;
+        padding: 8px 10px;
+        border-top: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        -webkit-app-region: no-drag;
+      }
+
+      .chat-input-row input {
+        flex: 1;
+        min-width: 0;
+        height: 28px;
+        padding: 0 9px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-bg);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 13px;
+      }
+
+      .chat-input-row button {
+        height: 28px;
+        padding: 0 12px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .chat-input-row button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      /* =========================================================
+         设置（二级，默认折叠）
+         ========================================================= */
+      .settings {
+        flex: none;
+        margin-top: 10px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface);
+        overflow: hidden;
+      }
+
+      body[data-mode='window'] .settings {
+        display: none;
+      }
+
+      .settings-toggle {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 9px 12px;
+        border: 0;
+        background: transparent;
+        color: var(--mcode-text-muted);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .settings-toggle:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: -2px;
+      }
+
+      .settings-toggle::before {
+        content: '';
+        display: inline-block;
+        width: 0;
+        height: 0;
+        margin-right: 8px;
+        border-left: 5px solid var(--mcode-text-subtle);
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+        transition: transform 150ms ease-out;
+      }
+
+      .settings[data-open='true'] .settings-toggle::before {
+        transform: rotate(90deg);
+      }
+
+      .settings-body {
+        padding: 4px 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        max-height: 52vh;
+        overflow-y: auto;
+      }
+
+      .settings-body[hidden] {
+        display: none;
+      }
+
+      .set-group {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+
+      .set-title {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .set-note {
+        margin: 0;
+        font-size: 11px;
+        line-height: 17px;
+        color: var(--mcode-text-subtle);
+      }
+
+      /* 称呼设置：两行「标签 + 输入框」 */
+      .set-field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+
+      .set-field input {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 9px;
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--mcode-text);
+        background: var(--mcode-bg);
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+      }
+
+      .set-field input:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+      }
+
+      .set-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .set-actions button {
+        padding: 6px 14px;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--mcode-text);
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      .set-actions button:hover {
+        border-color: var(--mcode-accent);
+      }
+
+      /* 首启询问：盖在面板上的一次性卡片 */
+      .naming-ask {
+        position: absolute;
+        inset: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(10, 18, 28, 0.72);
+      }
+
+      .naming-ask[hidden] {
+        display: none;
+      }
+
+      .naming-card {
+        width: 100%;
+        max-width: 340px;
+        padding: 18px 20px;
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 14px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      }
+
+      .naming-card h3 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        color: var(--mcode-text);
+      }
+
+      .naming-card p {
+        margin: 0 0 14px;
+        font-size: 12px;
+        line-height: 18px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* ---------- 状态小卡 ---------- */
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin: 0;
+      }
+
+      .fact {
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        padding: 7px 9px;
+        min-width: 0;
+      }
+
+      .fact dt {
+        font-size: 11px;
+        color: var(--mcode-text-muted);
+      }
+
+      .fact dd {
+        margin: 2px 0 0;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+
+      /* ---------- 分段控件 ---------- */
+      .seg {
+        display: flex;
+        gap: 4px;
+        background: var(--mcode-surface-muted);
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        padding: 3px;
+      }
+
+      .seg button {
+        flex: 1;
+        height: 30px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--mcode-text-muted);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transition: background-color 150ms ease-out, color 150ms ease-out;
+      }
+
+      .seg button[aria-pressed='true'] {
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        box-shadow: 0 0 20px rgb(10 10 10 / 8%);
+      }
+
+      /* ---------- 状态看板 ---------- */
+      .board {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .board li {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        font-size: 12px;
+        line-height: 18px;
+        padding: 6px 9px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+      }
+
+      .board li[data-stuck='true'] {
+        border-color: var(--mcode-warning);
+      }
+
+      .board .board-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .board .board-meta {
+        flex: none;
+        color: var(--mcode-text-muted);
+        font-size: 11px;
+      }
+
+      .board .empty {
+        color: var(--mcode-text-subtle);
+        justify-content: center;
+        border-style: dashed;
+      }
+
+      /* ---------- 日志 ---------- */
+      .log {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .log li {
+        display: flex;
+        gap: 10px;
+        padding: 7px 10px;
+        font-size: 12px;
+        line-height: 18px;
+        border-bottom: 1px solid var(--mcode-border);
+      }
+
+      .log li:last-child {
+        border-bottom: 0;
+      }
+
+      .log time {
+        color: var(--mcode-text-subtle);
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        flex: none;
+        padding-top: 1px;
+      }
+
+      .log .kind {
+        flex: none;
+        width: 56px;
+        color: var(--mcode-text-muted);
+      }
+
+      .log .text {
+        flex: 1;
+        overflow-wrap: anywhere;
+      }
+
+      .empty {
+        padding: 16px 10px;
+        text-align: center;
+        color: var(--mcode-text-subtle);
+        font-size: 12px;
+      }
+
+      /* ---------- 工具说明 ---------- */
+      .tools {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border: 1px solid var(--mcode-border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .tools li {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--mcode-border);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .tools li:last-child {
+        border-bottom: 0;
+      }
+
+      .tools code {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        color: var(--mcode-text);
+        flex: none;
+      }
+
+      .tools span {
+        color: var(--mcode-text-muted);
+      }
+
+      /* ---------- 提示条 ---------- */
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%) translateY(8px);
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: 13px;
+        line-height: 19px;
+        box-shadow: 0 0 20px rgb(10 10 10 / 8%);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 200ms ease-out, transform 200ms ease-out;
+        /* 60：要盖在日记本抽屉（45）和首启询问（40）上面 ——
+           日记写砸了、频度到了，提示条不能被抽屉挡住。 */
+        z-index: 60;
+        max-width: min(520px, calc(100vw - 48px));
+      }
+
+      .toast[data-show='true'] {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
+      .toast[data-tone='error'] {
+        background: var(--mcode-danger);
+        color: #ffffff;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 420px) {
+        .facts {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body data-mode="inline">
+    <div class="app" id="app">
+      <!-- ================= 她 ================= -->
+      <section class="stage" id="stage" aria-label="MMX 章鱼娘">
+        <div class="pet-bubble" id="pet-bubble" role="status"></div>
+        <div class="pet-body">
+          <div class="pet-dots" id="pet-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="pet-figure" id="pet-figure" data-mood="idle">
+            <img id="pet-img" src="/assets/mmx-chibi-front.png" alt="MMX 章鱼娘" />
+            <!-- 片段层：两段 webm 双缓冲（几何由 JS 按形象盒实测高写入 style） -->
+            <video class="pet-video" id="pet-video-a" playsinline muted preload="auto"></video>
+            <video class="pet-video" id="pet-video-b" playsinline muted preload="auto"></video>
+            <div class="pet-face" id="pet-face" aria-hidden="true"></div>
+          </div>
+        </div>
+        <!-- 她的日记本：就在形象旁边（老板 2026-10-29：「在后台人物形象的旁边，加一个按钮」）。
+             data-void='true' 时右上角挂一个小红点 = 今天她还没记过一篇。
+
+             2026-10-29 重做：原来里面是一个字「记」，看不出是什么 →
+             换成**原创 SVG 日记本**（路径本项目自己画，不抄图标库）+
+             悬停时展开的「日记本」胶囊标签。 -->
+        <button
+          type="button"
+          class="pet-diary-btn"
+          id="pet-diary-btn"
+          title="日记本"
+          aria-label="打开日记本"
+          aria-expanded="false"
+          data-void="false"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6.2 3.2h11.3a1.5 1.5 0 0 1 1.5 1.5v16.1a1.5 1.5 0 0 1-1.5 1.5H6.2A1.7 1.7 0 0 1 4.5 20.6V4.9a1.7 1.7 0 0 1 1.7-1.7Z" />
+            <path d="M8.6 3.4v18.6" />
+            <path d="M12.2 8.1h3.6" />
+          </svg>
+          <span class="pet-diary-label" aria-hidden="true">日记本</span>
+        </button>
+      </section>
+
+      <!-- ================= 极简按钮行 ================= -->
+      <!-- 面板上只留「浮到桌面」：
+           说句话挪进设置区，聊天在面板里常驻展开，
+           收回面板改成浮窗里右键弹出的菜单。 -->
+      <div class="pet-tools" id="pet-tools">
+        <button type="button" id="btn-float">浮到桌面</button>
+      </div>
+
+      <!-- ================= 聊天：她的房间 ================= -->
+      <section class="chat" id="chat" data-open="true" aria-label="和 MMX 章鱼娘聊天">
+        <header class="chat-head">
+          <img class="chat-avatar" src="/assets/mmx-avatar.png" alt="" />
+          <div class="chat-head-text">
+            <strong id="chat-head-name">MMX</strong>
+            <span id="chat-status">在线</span>
+          </div>
+          <button type="button" id="chat-reset" class="chat-mini">清空</button>
+        </header>
+        <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
+        <div class="chat-cards" id="chat-cards"></div>
+        <!-- 往上翻旧记录时出现的「回到最新」浮标（微信/QQ 都有） -->
+        <button type="button" class="chat-jump" id="chat-jump" data-show="false">回到最新</button>
+        <form class="chat-input-row" id="chat-form">
+          <input id="chat-input" type="text" maxlength="2000" placeholder="跟她说点什么…" autocomplete="off" />
+          <button type="submit" id="chat-send">发送</button>
+        </form>
+      </section>
+
+      <!-- ================= 设置（默认折叠） ================= -->
+      <section class="settings" id="settings" data-open="false" aria-label="设置">
+        <button
+          type="button"
+          class="settings-toggle"
+          id="settings-toggle"
+          aria-expanded="false"
+          aria-controls="settings-body"
+        >
+          设置
+        </button>
+        <div class="settings-body" id="settings-body" hidden>
+          <dl class="facts">
+            <div class="fact">
+              <dt>当前表情</dt>
+              <dd id="fact-mood">待机</dd>
+            </div>
+            <div class="fact">
+              <dt>MMX Agent</dt>
+              <dd id="fact-agent">空闲</dd>
+            </div>
+            <div class="fact">
+              <dt>浮窗位置</dt>
+              <dd id="fact-position">未浮出</dd>
+            </div>
+            <div class="fact">
+              <dt>对话</dt>
+              <dd id="fact-busy">空闲</dd>
+            </div>
+            <div class="fact">
+              <dt>浮窗状态</dt>
+              <dd id="fact-window">未上报</dd>
+            </div>
+            <div class="fact">
+              <dt>拖动对账</dt>
+              <dd id="fact-drag">未拖过</dd>
+            </div>
+          </dl>
+
+          <section class="set-group">
+            <span class="set-title">称呼</span>
+            <label class="set-field">
+              <span>她的名字</span>
+              <input id="naming-her" type="text" maxlength="24" placeholder="MMX" />
+            </label>
+            <label class="set-field">
+              <span>她怎么叫你</span>
+              <input id="naming-user" type="text" maxlength="24" placeholder="留空就叫你「你」" />
+            </label>
+            <div class="set-actions">
+              <button type="button" id="naming-save">保存</button>
+            </div>
+            <p class="set-note" id="naming-note">名字和称呼都是你的设定，改了她下一轮就知道。</p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">她看着谁</span>
+            <div class="seg" role="group" aria-label="观察范围" id="scope-group">
+              <button type="button" data-scope="current" aria-pressed="false">跟随当前会话</button>
+              <button type="button" data-scope="global" aria-pressed="true">整个 MCode</button>
+            </div>
+            <p class="set-note" id="scope-note">正在探测当前会话…</p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">MCode 正在发生什么</span>
+            <ul class="board" id="board"></ul>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">停靠位置</span>
+            <div class="seg" role="group" aria-label="浮窗停靠位置" id="anchor-group">
+              <button type="button" data-anchor="bottom-right" aria-pressed="false">右下角</button>
+              <button type="button" data-anchor="bottom-left" aria-pressed="false">左下角</button>
+              <button type="button" data-anchor="top-right" aria-pressed="false">右上角</button>
+              <button type="button" data-anchor="center" aria-pressed="false">中间</button>
+            </div>
+            <p class="set-note">只在浮到桌面之后生效。面板形态下宿主不接受改坐标。</p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">让她说一句话</span>
+            <div class="pet-say-row" id="pet-say-row" data-open="true">
+              <input id="pet-say-input" type="text" maxlength="300" placeholder="让她说一句话…" />
+              <button type="button" id="pet-say-send">说</button>
+            </div>
+            <p class="set-note">调试用。Agent 那边也能用 mmx_say 让她说话。</p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">手动表情</span>
+            <div class="seg" role="group" aria-label="切换章鱼娘表情" id="mood-group">
+              <button type="button" data-mood="idle" aria-pressed="true">待机</button>
+              <button type="button" data-mood="thinking" aria-pressed="false">思考中</button>
+              <button type="button" data-mood="working" aria-pressed="false">工作中</button>
+              <button type="button" data-mood="celebrate" aria-pressed="false">这一轮结束</button>
+            </div>
+            <p class="set-note">调试用。正常情况下她自己按 MCode 的状态换表情。</p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">观察通道</span>
+            <p class="set-note" id="tracking-note">正在读取…</p>
+            <p class="set-note" id="event-note">本轮事件：—</p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">最近动作</span>
+            <ul class="log" id="log"></ul>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">Agent 可以直接指挥她</span>
+            <ul class="tools">
+              <li><code>mmx_say</code><span>让她弹气泡说一句话</span></li>
+              <li><code>mmx_mood</code><span>切换表情：idle / thinking / working / celebrate</span></li>
+              <li><code>mmx_move</code><span>把浮窗挪到四个停靠位置之一</span></li>
+              <li><code>mmx_status</code><span>读她当前的表情、气泡、Agent 状态和观察范围</span></li>
+            </ul>
+          </section>
+        </div>
+      </section>
+
+      <!-- ================= 右键菜单：浮窗里唯一的出口 ================= -->
+      <!-- 桌面上只留她一个形象，所以浮窗没有任何常驻按钮；
+           右键点她才弹出这个菜单。 -->
+      <div class="pet-menu" id="pet-menu" data-open="false" role="menu">
+        <button type="button" id="pet-menu-back">收回面板</button>
+      </div>
+
+      <!-- ================= 她的日记本 ================= -->
+      <!-- 老板 2026-10-29：「进去之后，是一个日记本，或者是像QQ空间每天发动态的感觉，
+           每天至少记录一次，其他时间也可以写，但别太频繁，每一次字数不要太多。」
+           三条规则的真源在 Node 侧 diary.mjs，这里只负责显示和发话。 -->
+      <section class="diary-panel" id="diary-panel" hidden aria-label="她的日记本">
+        <header class="diary-head">
+          <img class="diary-head-avatar" src="/assets/mmx-avatar.png" alt="" />
+          <div class="diary-head-text">
+            <strong id="diary-title">她的日记本</strong>
+            <span class="diary-count" id="diary-count"></span>
+          </div>
+          <button type="button" class="diary-mini" id="diary-close">收起</button>
+        </header>
+        <div class="diary-note" id="diary-note" data-void="false"></div>
+        <ol class="diary-log" id="diary-log" aria-live="polite"></ol>
+        <!-- ⚠️ 底部输入区（说点什么 / 让她写 / 发表）**已被老板拿掉**（2026-10-29）：
+             日记本现在只读 + 互动 —— 用户能点赞、能评论，评论后她会回复。
+             评论的输入框在**每条动态下面**，不是底部。 -->
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <!-- ================= 首启询问：叫什么 + 怎么称呼你 ================= -->
+    <!-- 老板 2026-10-28 拍板：「叫什么和称呼由用户设定，第一次打开进行询问，
+         后续可以在设置里面修改」。没设过（naming.configured=false）才弹；
+         设过了永远不弹，改名走设置区。 -->
+    <div class="naming-ask" id="naming-ask" hidden role="dialog" aria-modal="true" aria-labelledby="naming-ask-title">
+      <div class="naming-card">
+        <h3 id="naming-ask-title">先认识一下</h3>
+        <p>你想怎么叫她？她又该怎么称呼你？随时能在设置里改。</p>
+        <label class="set-field">
+          <span>她的名字</span>
+          <input id="naming-ask-her" type="text" maxlength="24" placeholder="MMX" />
+        </label>
+        <label class="set-field" style="margin-top: 8px">
+          <span>她怎么叫你</span>
+          <input id="naming-ask-user" type="text" maxlength="24" placeholder="留空就叫你「你」" />
+        </label>
+        <div class="set-actions" style="margin-top: 14px">
+          <button type="button" id="naming-ask-save">就这样</button>
+          <button type="button" id="naming-ask-skip">先跳过</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var MOOD_LABEL = {
+          idle: '待机',
+          thinking: '思考中',
+          working: '工作中',
+          celebrate: '这一轮结束',
+          unknown: '未知'
+        };
+
+        var SCOPE_LABEL = {
+          current: '跟随当前会话',
+          global: '整个 MCode'
+        };
+
+        /**
+         * 她此刻实际在看哪一片会话。
+         * 「能列出 N 个会话」是列举能力，「正在看几个」才是观察范围 —— 两件事，不能混成一句。
+         * @returns {string}
+         */
+        function watchingLabel() {
+          return state.scope === 'current' ? '只看她盯着的那一个' : '整个 MCode 的会话';
+        }
+
+        /** 卡住多久算疑似（毫秒）。与 Node 无关，客户端自己算。 */
+        var STUCK_MS = 120000;
+
+        var el = {
+          body: document.body,
+          petBubble: document.getElementById('pet-bubble'),
+          petFigure: document.getElementById('pet-figure'),
+          petDots: document.getElementById('pet-dots'),
+          petFace: document.getElementById('pet-face'),
+          petTools: document.getElementById('pet-tools'),
+          petDiaryBtn: document.getElementById('pet-diary-btn'),
+          petMenu: document.getElementById('pet-menu'),
+          petMenuBack: document.getElementById('pet-menu-back'),
+          petSayRow: document.getElementById('pet-say-row'),
+          petSayInput: document.getElementById('pet-say-input'),
+          chat: document.getElementById('chat'),
+          chatStatus: document.getElementById('chat-status'),
+          chatLog: document.getElementById('chat-log'),
+          chatCards: document.getElementById('chat-cards'),
+          chatJump: document.getElementById('chat-jump'),
+          chatForm: document.getElementById('chat-form'),
+          chatInput: document.getElementById('chat-input'),
+          chatSend: document.getElementById('chat-send'),
+          // 她的日记本
+          diaryPanel: document.getElementById('diary-panel'),
+          diaryTitle: document.getElementById('diary-title'),
+          diaryCount: document.getElementById('diary-count'),
+          diaryNote: document.getElementById('diary-note'),
+          diaryLog: document.getElementById('diary-log'),
+          diaryClose: document.getElementById('diary-close'),
+          scopeNote: document.getElementById('scope-note'),
+          board: document.getElementById('board'),
+          settings: document.getElementById('settings'),
+          settingsToggle: document.getElementById('settings-toggle'),
+          settingsBody: document.getElementById('settings-body'),
+          moodFact: document.getElementById('fact-mood'),
+          agentFact: document.getElementById('fact-agent'),
+          positionFact: document.getElementById('fact-position'),
+          busyFact: document.getElementById('fact-busy'),
+          windowFact: document.getElementById('fact-window'),
+          dragFact: document.getElementById('fact-drag'),
+          trackingNote: document.getElementById('tracking-note'),
+          eventNote: document.getElementById('event-note'),
+          namingHer: document.getElementById('naming-her'),
+          namingUser: document.getElementById('naming-user'),
+          namingSave: document.getElementById('naming-save'),
+          namingNote: document.getElementById('naming-note'),
+          namingAsk: document.getElementById('naming-ask'),
+          namingAskHer: document.getElementById('naming-ask-her'),
+          namingAskUser: document.getElementById('naming-ask-user'),
+          namingAskSave: document.getElementById('naming-ask-save'),
+          namingAskSkip: document.getElementById('naming-ask-skip'),
+          chatHeadName: document.getElementById('chat-head-name'),
+          log: document.getElementById('log'),
+          toast: document.getElementById('toast')
+        };
+
+        // 元素引用缺一个，后面的初始化就会整段断掉，页面看着正常却什么都不动。
+        // 这里当场报出来，别等排查半天。
+        (function () {
+          var missing = [];
+          for (var key in el) {
+            if (!el[key]) missing.push(key);
+          }
+          if (missing.length) throw new Error('页面缺少元素：' + missing.join(', '));
+        })();
+
+        var state = {
+          mood: 'idle',
+          bubble: null,
+          position: null,
+          agent: null,
+          scope: 'global',
+          scopeSessionId: null,
+          petSessionId: null,
+          chatBusy: false,
+          board: null,
+          // 称呼（老板 2026-10-28 拍板：名字和称呼由用户设定）
+          naming: { herName: 'MMX', userTitle: '', configured: false },
+          // 「用户正在改这一格」—— 快照回灌时不能把人家正在打的字冲掉。
+          // 只判断焦点是不够的：填完名字切到称呼框，下一次快照就把名字冲回旧值。
+          namingDirty: { her: false, user: false },
+          // 她的日记本（老板 2026-10-29）。
+          // open      —— 抽屉开没开
+          // busy      —— 她这会儿正在写 / 正在回评论
+          // status    —— Node 给的日报状态（今天写了没 / 字数上限）
+          // commentId —— 当前展开着评论输入框的那条动态的 id（没有就是 null）
+          diary: { open: false, busy: false, entries: [], status: null, commentId: null }
+        };
+
+        // ===== 身体动画播放器 =====
+        //
+        // 轨道表由服务端注入（window.__MMX_TRACKS__），**唯一真源是 node/tracks.mjs**。
+        // 这里只干三件事：
+        //   1) 按帧时长推进
+        //   2) 帧与帧之间平滑过渡（transition 时长 = 该帧自己的 ms）
+        //   3) 系统「减少动态效果」时只显示首帧，不推进
+        //
+        // **语义状态（mood）与渲染姿态（pose）分开记**：
+        // mood 是 node 说的「她现在是什么状态」，pose 是这一帧实际画出来的样子。
+        // 两者独立 —— 换状态不会丢姿态，姿态变了也不会改状态。
+        //
+        // **渲染器可插拔（借鉴官方 minimax-pet 的取帧模型）**：
+        // 官方是「按 row/col 从图集取一格」，我们现在是「对整张立绘做 transform」。
+        // 两种都靠帧上的 `kind` 分派 —— kind 由真源判定、服务端注入，页面不猜。
+        // 图集那条路（sprite）等视频抽帧出 PNG 后接上，**时序逻辑一行不用改**。
+        //
+        // 注入数据缺失时不接管，CSS 那套 @keyframes 兜底继续跑（页面加 .tracks-on 才关兜底）。
+        var body = {
+          data: window.__MMX_TRACKS__ || null,
+          mood: 'idle',
+          pose: null,
+          frameIndex: 0,
+          timer: null,
+          reduced: false,
+          media: null
+        };
+
+        function bodyTrack() {
+          if (!body.data) return null;
+          var name = body.data.moodTrack[body.mood] || body.mood;
+          return body.data.tracks[name] || null;
+        }
+
+        // 渲染器：帧的 kind 决定怎么画。
+        var bodyRenderers = {
+          // 对整张立绘做 transform（现在；只有一张 g10，程序化微动）
+          pose: function (fig, frame) {
+            fig.style.transform = frame.transform;
+          },
+          // 从图集取一格（PNG 图集路线）—— **2026-11-02 老板拍板：这条路不做**
+          // （webm 片段层已覆盖身体动效，见 ARCHITECTURE.md §3.2「已决策不做」）。
+          // ⚠️ 保留为**防御性占位**：万一真源里真出现 sourceMs 帧，
+          // **明确回退并留痕，不静默吞掉**。
+          sprite: function (fig, frame) {
+            if (!fig.hasAttribute('data-sprite-fallback')) {
+              fig.setAttribute('data-sprite-fallback', '1');
+              console.warn('[mmx] 图集帧（sourceMs）尚未接入渲染器，本轮回退到姿态渲染');
+            }
+            fig.style.transform = 'none';
+          }
+        };
+
+        function bodyApply(frame) {
+          if (!el.petFigure || !frame) return;
+          var fig = el.petFigure;
+          // **片段层接管时姿态让位**：整段视频跟着一起摇 —— 两个动效叠加会打架。
+          // 姿态照旧记进 body.pose（语义姿态与渲染姿态分离这条规矩不变）。
+          var owned = !!(seg && seg.on);
+          if (!owned) {
+            fig.style.transition = body.reduced ? 'none' : 'transform ' + frame.ms + 'ms ease';
+            var renderer = bodyRenderers[frame.kind] || bodyRenderers.pose;
+            renderer(fig, frame);
+          }
+          body.pose = frame.transform;
+          // 心跳：单调递增，每推进一帧 +1。
+          // 用来分辨「真的卡死了」和「页面在后台被浏览器节流」—— 单看 transform 分不清，
+          // 因为不同帧可能恰好是同一个 transform。
+          body.beat = (body.beat || 0) + 1;
+          fig.setAttribute('data-beat', String(body.beat));
+          fig.setAttribute('data-frame', String(body.frameIndex));
+        }
+
+        function bodySchedule() {
+          if (body.timer) {
+            clearTimeout(body.timer);
+            body.timer = null;
+          }
+          if (body.reduced) return;
+          // 片段层接管时姿态层让位（姿态照旧记，只是不再推进 transform）
+          if (seg && seg.on) return;
+          var track = bodyTrack();
+          if (!track || !track.frames.length) return;
+          var frame = track.frames[body.frameIndex];
+          if (!frame) return;
+          body.timer = setTimeout(function () {
+            body.frameIndex = (body.frameIndex + 1) % track.frames.length;
+            bodyApply(track.frames[body.frameIndex]);
+            bodySchedule();
+          }, frame.ms);
+        }
+
+        function bodySetMood(mood) {
+          if (!body.data) return;
+          if (mood === body.mood && body.pose !== null) {
+            // 同一个表情：素材可能刚同步进来 ⇒ 顺手看一眼要不要换池
+            segSyncTrack();
+            return;
+          }
+          body.mood = mood;
+          body.frameIndex = 0;
+          var track = bodyTrack();
+          // 换表情 ⇒ 换池（片段层）。素材没齐时它自己退回 pose 帧。
+          segSyncTrack();
+          if (!track || !track.frames.length) return;
+          if (el.petFigure) el.petFigure.setAttribute('data-track', body.data.moodTrack[mood] || mood);
+          bodyApply(track.frames[0]);
+          bodySchedule();
+        }
+
+        function bodyStart() {
+          if (!body.data) return; // 没有轨道数据 → CSS 兜底继续跑
+          var track = bodyTrack();
+          if (!track || !track.frames.length) return;
+          document.documentElement.classList.add('tracks-on');
+          bodyApply(track.frames[0]);
+          bodySchedule();
+          if (!window.matchMedia) return;
+          body.media = window.matchMedia('(prefers-reduced-motion: reduce)');
+          var applyMedia = function () {
+            body.reduced = !!body.media.matches;
+            if (body.reduced) {
+              if (body.timer) {
+                clearTimeout(body.timer);
+                body.timer = null;
+              }
+              var t = bodyTrack();
+              if (t) bodyApply(t.frames[0]);
+            } else {
+              bodySchedule();
+            }
+          };
+          if (body.media.addEventListener) body.media.addEventListener('change', applyMedia);
+          applyMedia();
+        }
+
+        bodyStart();
+
+        // 片段播放器（webm 段落）
+        // =========================================================
+        //
+        // **两个真源，页面只做执行**：
+        //   ① `node/tracks.mjs` 的 POOLS —— 池 → 归属轨 / 播放模式（ambient 循环 / once 播一次）；
+        //   ② `client/assets/webm/manifest.json` —— 素材清单：key → url / 池 / 权重 / 时长。
+        // 两份都由服务端注入（window.__MMX_SEGMENTS__）—— **页面不自己决定「她该做什么」**。
+        //
+        // **素材没齐怎么办**：某个池一条都没有 ⇒ 那条轨回退到 pose 帧（老播放器），
+        // 画面不会空、不会白屏 —— 片段层是**加法**不是替换。
+        //
+        // **冻结锁（locked）**：一次性演出（点她 / 走位）期间，表情切换不打断她。
+        // 演完了放开锁，回到当前表情该有的池。
+        
+        var SEG_SUBJECT_H_RATIO = 0.736; // 主体占画布高（构图模板）
+        var SEG_SUBJECT_BOTTOM_RATIO = 0.083; // 主体底边距画布底
+        var SEG_CANVAS_W = 360;
+        var SEG_CANVAS_H = 640;
+        var SEG_MAX_FAIL = 3; // 连续装不出几段就退回 pose 帧
+        var SEG_WALK_MIN_MS = 45000; // 自主走位最短间隔
+        var SEG_WALK_MAX_MS = 150000; // 自主走位最长间隔
+        var SEG_WALK_STEP_MS = 70;
+        var SEG_WALK_STEPS = 14;
+        
+        var seg = {
+          data: window.__MMX_SEGMENTS__ || null,
+          videos: [],
+          front: 0, // 现在在前台的那一段 video 的下标
+          key: null, // 当前片段 key
+          pool: null, // 当前池
+          track: null, // 当前轨
+          mode: 'ambient', // ambient=接着抽下一条 / once=播一次 / hold=停住等 node 收回
+          hold: false,
+          locked: false, // 冻结锁
+          on: false, // 此刻画面由片段层接管
+          timer: null,
+          loadTimer: null,
+          fail: 0, // 连续失败次数
+          dead: {}, // 装不出来的 key（本次会话不再试）
+          reduced: false,
+          media: null
+        };
+        
+        /**
+         * 片段层的上限。**真源是服务端注入的 limits**，页面不自己写一份数字。
+         * @returns {{maxLoadMs: number}}
+         */
+        function segLimits() {
+          return (seg.data && seg.data.limits) || { maxLoadMs: 10000 };
+        }
+        
+        /**
+         * 某个池里**现在真有的**素材 key。
+         *
+         * 从 `segments` 反查（每段自带 pool 字段），不靠清单里的 pools 汇总块 ——
+         * 汇总块是派生的，反查才是事实；两者不一致时反查更靠得住。
+         * @param {string} pool
+         * @returns {string[]}
+         */
+        function segPoolKeys(pool) {
+          var out = [];
+          var all = (seg.data && seg.data.segments) || {};
+          for (var k in all) {
+            if (!Object.prototype.hasOwnProperty.call(all, k)) continue;
+            if (!all[k] || all[k].pool !== pool) continue;
+            if (seg.dead[k]) continue;
+            out.push(k);
+          }
+          return out;
+        }
+        
+        /**
+         * 按权重抽一条。权重来自素材清单（没有就按 1 算）。
+         * @param {string[]} keys
+         * @param {string|null} avoid 避开哪一条（不想跟刚才那条重复）
+         * @returns {string|null}
+         */
+        function segPickKeys(keys, avoid) {
+          var all = (seg.data && seg.data.segments) || {};
+          var total = 0;
+          var i;
+          for (i = 0; i < keys.length; i++) {
+            if (keys[i] === avoid) continue;
+            total += Math.max(1, Number(all[keys[i]] && all[keys[i]].weight) || 1);
+          }
+          if (total <= 0) return null;
+          var r = Math.random() * total;
+          for (i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            if (k === avoid) continue;
+            r -= Math.max(1, Number(all[k] && all[k].weight) || 1);
+            if (r <= 0) return k;
+          }
+          return null;
+        }
+        
+        /**
+         * 从一个池里抽一条。
+         * @param {string} pool
+         * @param {string|null} avoid
+         * @returns {string|null}
+         */
+        function segPick(pool, avoid) {
+          return segPickKeys(segPoolKeys(pool), avoid);
+        }
+        
+        /**
+         * 某条轨现在能播的片段（它名下所有池合起来）。
+         * @param {string} track
+         * @returns {string[]}
+         */
+        function segTrackKeys(track) {
+          var out = [];
+          var pools = (seg.data && seg.data.trackPools && seg.data.trackPools[track]) || [];
+          for (var i = 0; i < pools.length; i++) {
+            var keys = segPoolKeys(pools[i]);
+            for (var j = 0; j < keys.length; j++) {
+              if (out.indexOf(keys[j]) < 0) out.push(keys[j]);
+            }
+          }
+          return out;
+        }
+        
+        /**
+         * 池的播放模式（ambient / once）。真源是 tracks.mjs 的 POOLS。
+         * @param {string} pool
+         * @returns {string}
+         */
+        function segPoolMode(pool) {
+          var defs = (seg.data && seg.data.poolDefs) || {};
+          return (defs[pool] && defs[pool].mode) || 'ambient';
+        }
+        
+        /**
+         * 这个池是不是事件池（点她 / 走位 / 拖拽 —— 不挂任何表情轨）。
+         * 事件池演完要放开冻结锁回到表情池；庆祝池演完要**停住**等 node 收回。
+         * @param {string} pool
+         * @returns {boolean}
+         */
+        function segIsEventPool(pool) {
+          return !!(seg.data && seg.data.eventPools && seg.data.eventPools[pool]);
+        }
+        
+        /** 清掉加载超时定时器。 */
+        function segClearLoadTimer() {
+          if (seg.loadTimer) {
+            clearTimeout(seg.loadTimer);
+            seg.loadTimer = null;
+          }
+        }
+        
+        /**
+         * 播一条片段：装进**后台**那一段 video，装好了再对调到前台。
+         * @param {string} key 素材 key
+         * @param {string} mode ambient / once / hold
+         * @param {string} pool 池名
+         * @returns {boolean}
+         */
+        function segPlay(key, mode, pool) {
+          var info = seg.data && seg.data.segments ? seg.data.segments[key] : null;
+          if (!info || !info.url) return false;
+          var back = 1 - seg.front;
+          var v = seg.videos[back];
+          if (!v) return false;
+          // 正在装的那段先藏起来 —— 装好了才由 segSwap 亮出来。
+          // 不藏的话：旧前台段停在最后一帧、后台段又冒出来 ⇒ 两张画叠在一起。
+          v.style.visibility = 'hidden';
+          segClearLoadTimer();
+          try {
+            v.pause();
+          } catch (error) {
+            /* 暂停失败不影响换源 */
+          }
+          v.oncanplay = null;
+          v.onerror = null;
+          v.loop = false;
+          v.setAttribute('data-seg-key', key);
+          v.src = info.url;
+          seg.key = key;
+          seg.pool = pool || info.pool || null;
+          seg.mode = mode || 'ambient';
+          seg.hold = seg.mode === 'hold';
+          seg.loadTimer = setTimeout(function () {
+            segLoadFail(key, '加载超时（' + segLimits().maxLoadMs + 'ms）');
+          }, segLimits().maxLoadMs);
+          v.oncanplay = function () {
+            segClearLoadTimer();
+            var p;
+            try {
+              p = v.play();
+            } catch (error) {
+              segLoadFail(key, 'play 抛错：' + (error && error.message ? error.message : error));
+              return;
+            }
+            if (p && p.then) {
+              p.then(function () {
+                segSwap(back, key);
+              }).catch(function (error) {
+                segLoadFail(key, '播放被拒：' + (error && error.message ? error.message : error));
+              });
+            } else {
+              segSwap(back, key);
+            }
+          };
+          v.onerror = function () {
+            segLoadFail(key, '解码失败');
+          };
+          try {
+            v.load();
+          } catch (error) {
+            segLoadFail(key, 'load 抛错：' + (error && error.message ? error.message : error));
+            return false;
+          }
+          return true;
+        }
+        
+        /**
+         * 上报「她此刻在做什么」（片段 key ＋ 池）。
+         *
+         * ⚠️ **只更新场景，不说话** —— 她每 5 秒切一段片段，
+         * 每次都冒一句就成话痨了。说话由交互事件 / 任务事件触发。
+         */
+        function reportScene() {
+          if (!seg.key) return;
+          post('/api/scene', { key: seg.key, pool: seg.pool || '' }).catch(function () {});
+        }
+
+        /**
+         * 上报一次交互事件（点她 / 双击 / 连点 / 拖动 / 挪位置）。
+         * 服务端据此走静态台词库（身体动画强绑定的那 27 条）。
+         * @param {string} kind
+         */
+        function reportReact(kind) {
+          post('/api/react', { event: kind }).catch(function () {});
+        }
+
+        /**
+         * 这一下算「点一下」「双击」还是「连点」。
+         *
+         * ⚠️ **客户端是唯一知道用户怎么点的地方** —— 服务端只能等上报。
+         * ⚠️ **按「连击串」算，不是按滑动窗口里的个数**（第三十一轮真机实测发现）：
+         * 滑动窗口（只数最近 300ms 里有几下）会把「连点三下」判成 double ——
+         * 因为第 3 下时窗口里通常只剩 1 下（人点得再快也隔 150~250ms）。
+         * **连击串**才是用户的意思：相邻两下间隔 ≤ `TAP_MULTI_MS` 就还是同一串，
+         * 第 2 下 ⇒ 双击、第 3 下及以后 ⇒ 连点；隔太久 ⇒ 新的一串，从「点一下」重来。
+         * @returns {string}
+         */
+        function tapKind() {
+          var now = Date.now();
+          var kind;
+          if (tapSeq.run > 0 && now - tapSeq.last <= TAP_MULTI_MS) {
+            tapSeq.run = tapSeq.run + 1;
+            kind = tapSeq.run === 2 ? 'double' : 'multitap';
+          } else {
+            tapSeq.run = 1;
+            kind = 'tap';
+          }
+          tapSeq.last = now;
+          return kind;
+        }
+
+        /**
+         * 装好了：前后台对调，这一段正式接管画面。
+         * @param {number} back 后台那一段的下标
+         * @param {string} key
+         */
+        function segSwap(back, key) {
+          seg.front = back;
+          seg.on = true;
+          seg.fail = 0;
+          segShowFront();
+          // ⚠️ **上报「她在做什么」** —— 服务端要靠这个把模型闲话对上画面。
+          reportScene();
+          if (el.petFigure) {
+            el.petFigure.setAttribute('data-seg', 'on');
+            el.petFigure.setAttribute('data-seg-key', key);
+            el.petFigure.setAttribute('data-seg-pool', seg.pool || '');
+            // 片段层接管 ⇒ 姿态 transform 让位（不然整段视频跟着一起摇，两个动效打架）
+            el.petFigure.style.transition = 'none';
+            el.petFigure.style.transform = 'none';
+          }
+          segFit();
+          console.info('[mmx] seg_play: ' + key + ' pool=' + seg.pool + ' mode=' + seg.mode);
+        }
+        
+        /**
+         * 一段播完了。
+         * @param {string} key 播完的那一段
+         */
+        function segEnded(key) {
+          if (seg.key !== key) return; // 已经不是这一段了（换源竞态）
+          if (seg.mode === 'once' || seg.mode === 'hold') {
+            if (seg.hold) {
+              console.info('[mmx] seg_hold: ' + key + '（停住，等 node 收回表情）');
+            } else {
+              console.info('[mmx] seg_end_once: ' + key);
+              segReleaseLock();
+            }
+            return;
+          }
+          var next = segPick(seg.pool, key);
+          if (!next) {
+            // 这个池空了 ⇒ 看看这条轨还有别的池没有
+            next = segPickKeys(segTrackKeys(seg.track), key);
+          }
+          if (!next) {
+            segFallback('池 ' + seg.pool + ' 没有下一条了');
+            return;
+          }
+          segPlay(next, 'ambient', seg.pool);
+        }
+        
+        /**
+         * 这一段装不出来：记死它，换下一条；连着失败太多就退回 pose 帧。
+         * @param {string} key
+         * @param {string} why
+         */
+        function segLoadFail(key, why) {
+          segClearLoadTimer();
+          seg.dead[key] = true;
+          seg.fail += 1;
+          console.warn('[mmx] seg_fail: ' + key + ' —— ' + why);
+          if (seg.fail >= SEG_MAX_FAIL) {
+            segFallback('连续 ' + seg.fail + ' 段装不出来');
+            return;
+          }
+          var next = segPick(seg.pool, key) || segPickKeys(segTrackKeys(seg.track), key);
+          if (!next) {
+            segFallback('没有能播的下一段');
+            return;
+          }
+          segPlay(next, seg.mode === 'hold' ? 'hold' : 'ambient', seg.pool);
+        }
+        
+        /**
+         * 退回姿态帧：片段层放手，pose 播放器接手。
+         * @param {string} why
+         */
+        function segFallback(why) {
+          seg.on = false;
+          seg.key = null;
+          seg.locked = false;
+          seg.hold = false;
+          segClearLoadTimer();
+          for (var i = 0; i < seg.videos.length; i++) {
+            try {
+              seg.videos[i].pause();
+            } catch (error) {
+              /* 停不下来也不至于 */
+            }
+            // 两段都藏起来（已经退回 pose 帧了，别留着半张画面）
+            seg.videos[i].style.visibility = 'hidden';
+          }
+          if (el.petFigure) {
+            el.petFigure.setAttribute('data-seg', 'off');
+            el.petFigure.removeAttribute('data-seg-key');
+          }
+          console.warn('[mmx] seg_fallback: ' + why);
+          var t = bodyTrack();
+          if (t && t.frames[body.frameIndex]) bodyApply(t.frames[body.frameIndex]);
+          bodySchedule();
+        }
+        
+        /**
+         * 只让**前台那一段**可见。
+         *
+         * ⚠️ 双缓冲的两个 <video> 都在同一个位置（left:50% / bottom:0）——
+         * 两段同时可见 = 两张画**叠在一起**（真机反馈：浮窗画面有重叠）。
+         * 所以可见性必须由 JS 显式互斥，光靠 CSS 的 display 不够。
+         */
+        function segShowFront() {
+          for (var i = 0; i < seg.videos.length; i++) {
+            var v = seg.videos[i];
+            v.style.visibility = (i === seg.front) ? 'visible' : 'hidden';
+          }
+        }
+
+        /**
+         * 按形象盒的**实测高**算出 video 元素的几何。
+         *
+         * 画布 360×640；主体占高 73.6%、底边距 8.3% —— 主体正好填满形象盒。
+         * 多出来的画布部分是透明边，看不见也不挡事（pointer-events: none）。
+         */
+        function segFit() {
+          if (!el.petFigure) return;
+          var box = el.petFigure.getBoundingClientRect();
+          var h = box.height;
+          if (!h) return;
+          var canvasH = h / SEG_SUBJECT_H_RATIO;
+          var w = canvasH * (SEG_CANVAS_W / SEG_CANVAS_H);
+          var bottom = -canvasH * SEG_SUBJECT_BOTTOM_RATIO;
+          for (var i = 0; i < seg.videos.length; i++) {
+            var v = seg.videos[i];
+            v.style.height = canvasH + 'px';
+            v.style.width = w + 'px';
+            v.style.bottom = bottom + 'px';
+          }
+        }
+        
+        /** 放开冻结锁，回到当前表情该有的池。 */
+        function segReleaseLock() {
+          seg.locked = false;
+          seg.mode = 'ambient';
+          seg.hold = false;
+          segSyncTrack(true);
+        }
+        
+        /**
+         * 表情变了 ⇒ 换到那条轨的池。素材没齐就退回 pose 帧。
+         * @param {boolean} [force] 强制重抽一条（一次性演出结束后用）
+         */
+        function segSyncTrack(force) {
+          if (!seg.data || seg.reduced) return;
+          if (seg.locked) return; // 冻结锁：一次性演出期间不打断
+          var track = (body.data && body.data.moodTrack && body.data.moodTrack[body.mood]) || body.mood;
+          if (!force && seg.track === track && seg.on) return;
+          var keys = segTrackKeys(track);
+          if (!keys.length) {
+            if (seg.on) segFallback('轨 ' + track + ' 还没有素材');
+            seg.track = track;
+            return;
+          }
+          var pools = (seg.data.trackPools && seg.data.trackPools[track]) || [];
+          var pool = null;
+          for (var i = 0; i < pools.length; i++) {
+            if (segPoolKeys(pools[i]).length) {
+              pool = pools[i];
+              break;
+            }
+          }
+          if (!pool) {
+            if (seg.on) segFallback('轨 ' + track + ' 的池都是空的');
+            seg.track = track;
+            return;
+          }
+          var key = segPickKeys(keys, seg.on ? seg.key : null);
+          if (!key) {
+            if (seg.on) segFallback('轨 ' + track + ' 抽不出片段');
+            seg.track = track;
+            return;
+          }
+          seg.track = track;
+          var mode = segPoolMode(pool);
+          // 庆祝池：播一次停住（回落归 node 侧状态机）；其它池：接着抽下一条
+          segPlay(key, mode === 'once' ? 'hold' : 'ambient', pool);
+        }
+        
+        /**
+         * 点她了：播 click 池。
+         * click 池还没素材 ⇒ 用当前轨的片段顶一下（别让人点了没反应）。
+         */
+        function segTap() {
+          if (!seg.data) return;
+          var key = segPick('click', null);
+          if (key) {
+            seg.locked = true;
+            segPlay(key, 'once', 'click');
+            console.info('[mmx] tap: 播 ' + key);
+            return;
+          }
+          var track = (body.data && body.data.moodTrack && body.data.moodTrack[body.mood]) || body.mood;
+          var fallback = segPickKeys(segTrackKeys(track), seg.key);
+          if (fallback) {
+            seg.locked = true;
+            segPlay(fallback, 'once', seg.pool);
+            console.info('[mmx] tap: click 池还没素材，退回 ' + fallback);
+          } else {
+            console.info('[mmx] tap: 还没有可播的片段（素材没同步过来）');
+          }
+        }
+        
+        /**
+         * 片段层启动。素材清单缺失 ⇒ 不接管（pose 帧继续跑）。
+         */
+        function segStart() {
+          var a = document.getElementById('pet-video-a');
+          var b = document.getElementById('pet-video-b');
+          seg.videos = a && b ? [a, b] : [];
+          if (seg.videos.length < 2) return;
+          if (!seg.data || !seg.data.segments || !Object.keys(seg.data.segments).length) {
+            console.info('[mmx] seg_off: 素材清单是空的（还没同步过来）');
+            return;
+          }
+          for (var i = 0; i < seg.videos.length; i++) {
+            var v = seg.videos[i];
+            v.muted = true;
+            v.playsInline = true;
+            if ('disablePictureInPicture' in v) v.disablePictureInPicture = true;
+            v.addEventListener('ended', function (event) {
+              var key = event.target.getAttribute('data-seg-key');
+              segEnded(key);
+            });
+          }
+          if (window.matchMedia) {
+            seg.media = window.matchMedia('(prefers-reduced-motion: reduce)');
+            var applyMedia = function () {
+              seg.reduced = !!seg.media.matches;
+              if (seg.reduced) {
+                if (seg.on) segFallback('系统开了「减少动态效果」');
+              } else {
+                segSyncTrack(true);
+              }
+            };
+            if (seg.media.addEventListener) seg.media.addEventListener('change', applyMedia);
+            applyMedia();
+          }
+          window.addEventListener('resize', segFit);
+          // 形象盒尺寸变了（切形态 / CSS 变化 / 缩放）就重算几何。
+          // 只靠 resize 事件不够 —— 形态切换并不改窗口大小。
+          if (window.ResizeObserver && el.petFigure) {
+            try {
+              var segRO = new ResizeObserver(function () {
+                segFit();
+              });
+              segRO.observe(el.petFigure);
+            } catch (error) {
+              /* 观察不了就算了，resize 事件还兜着 */
+            }
+          }
+          segFit();
+          segSyncTrack(true);
+          walkSchedule();
+        }
+        
+        // =========================================================
+        // 点她（点击回应）
+        // =========================================================
+        //
+        // **点 vs 拖怎么分**：复用拖动那套阈值（DRAG_THRESHOLD = 4px）。
+        // 位移没超过它就是「点了一下」；超过了就是拖。
+        // 「拖出去又拖回来」那种由 dragState.active 兜住（那次算拖，不算点）。
+        var tapState = null;
+        // 连击/双击判定用的最近点击时间（毫秒时间戳）。
+        var tapSeq = { run: 0, last: 0 };
+        // 两次点击间隔在这个毫秒数内算「连着点」。
+        var TAP_MULTI_MS = 300;
+        
+        /**
+         * 按下：记起点。
+         * @param {PointerEvent} event
+         */
+        function onFigureTapDown(event) {
+          if (event.button !== 0) return; // 右键是菜单，不算点
+          tapState = {
+            id: event.pointerId,
+            x: event.clientX,
+            y: event.clientY
+          };
+        }
+        
+        /**
+         * 松手：位移没超阈值 ⇒ 点了她。
+         * @param {PointerEvent} event
+         */
+        function onFigureTapUp(event) {
+          var t = tapState;
+          tapState = null;
+          if (!t || event.pointerId !== t.id) return;
+          if (event.button !== 0) return;
+          if (dragState && dragState.active) return; // 这次是拖，不算点
+          var dx = event.clientX - t.x;
+          var dy = event.clientY - t.y;
+          if (Math.hypot(dx, dy) > DRAG_THRESHOLD) return;
+          segTap();
+          reportReact(tapKind());
+        }
+        
+        // =========================================================
+        // 自主走位
+        // =========================================================
+        //
+        // **她自己在桌面上挪两步**。走位靠 `windowHandle.update({x,y})` 驱动窗口位移。
+        // 面板形态没有窗口 ⇒ 走不了（面板里她只是 FilePanel 的一张图）。
+        //
+        // **和拖动不打架**：用户一拖就立刻停手；拖完了再重新排下次走位。
+        var walk = { timer: null, running: false };
+        
+        /** 排下一次走位（随机间隔，别像机器人一样准点动）。 */
+        function walkSchedule() {
+          if (walk.timer) clearTimeout(walk.timer);
+          walk.timer = setTimeout(walkStart, SEG_WALK_MIN_MS + Math.random() * (SEG_WALK_MAX_MS - SEG_WALK_MIN_MS));
+        }
+        
+        /** 走位开始。 */
+        function walkStart() {
+          walk.timer = null;
+          if (walk.running) return;
+          if (mode !== 'window' || !windowHandle || !winPos) {
+            walkSchedule();
+            return;
+          }
+          if (dragging || menuOpen) {
+            walkSchedule();
+            return;
+          }
+          // 多半横向小挪，偶尔上下；距离随机
+          var dx = (Math.random() < 0.75 ? 1 : -1) * (60 + Math.random() * 140);
+          var dy = Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) * (30 + Math.random() * 60) : 0;
+          var target = clampToScreen(winPos.x + dx, winPos.y + dy);
+          if (target.x === winPos.x && target.y === winPos.y) {
+            walkSchedule();
+            return;
+          }
+          walk.running = true;
+          // 有 move 素材就播「螃蟹走路」这类动作，没有也照走
+          var key = segPick('move', null);
+          if (key) {
+            seg.locked = true;
+            segPlay(key, 'once', 'move');
+          }
+          var from = { x: winPos.x, y: winPos.y };
+          var steps = SEG_WALK_STEPS;
+          var i = 0;
+          function step() {
+            if (!walk.running) return;
+            if (dragging) { // 用户接手了 —— 立刻停
+              walk.running = false;
+              walkSchedule();
+              return;
+            }
+            i += 1;
+            var t = Math.min(1, i / steps);
+            var x = Math.round(from.x + (target.x - from.x) * t);
+            var y = Math.round(from.y + (target.y - from.y) * t);
+            windowHandle.update({ x: x, y: y }).then(
+              function () {
+                winPos = { x: x, y: y };
+                windowState.x = x;
+                windowState.y = y;
+              },
+              function (error) {
+                recordWindowError('update(walk)', error);
+              }
+            );
+            if (i >= steps) {
+              walk.running = false;
+              post('/api/position', { x: target.x, y: target.y }).catch(function () {});
+              // 位置变了 ⇒ 走静态台词库那组「被挪位置」。
+              reportReact('move');
+              walkSchedule();
+              return;
+            }
+            setTimeout(step, SEG_WALK_STEP_MS);
+          }
+          setTimeout(step, SEG_WALK_STEP_MS);
+        }
+
+        var chat = {
+          open: false,
+          messages: [],
+          pending: null,
+          busy: false,
+          // 发送中的那条本地消息（点发送立刻上墙，等服务端真消息到了才替换）。
+          // ⚠️ **只有一个**：busy 时发送按钮是禁用的，发不了第二条。
+          sending: null,
+          // 最后一条消息的时间 —— 时间条靠它判断「隔够久了没」。
+          lastAt: 0,
+          // 视角是不是贴着底部。用户往上翻看旧记录时，新消息**不抢滚动**。
+          stickToBottom: true
+        };
+
+        var toastTimer = null;
+        var bubbleTimer = null;
+        var windowHandle = window.mcode && window.mcode.miniapp ? window.mcode.miniapp.window : null;
+        var mode = 'inline';
+        var clickThrough = true;
+        /**
+         * 宿主窗口状态（模式 / 穿透 / 最近一次失败原因）。
+         * ⚠️ 本地变量 clickThrough **曾经是「自己写进去就算数」** ——
+         * 一旦某次 update 被宿主拒绝，本地值和宿主真值就永久不一致，
+         * 页面再也不会重试（`want === clickThrough` 会短路）。
+         * 结果就是浮窗永久卡在穿透状态：点不到、右键没反应、拖不动。
+         * 现在一律以宿主回报的 getState() 为准，本地只做缓存。
+         */
+        var windowState = {
+          mode: 'inline',
+          clickThrough: true,
+          lastError: '',
+          updatedAt: 0,
+        };
+        var windowStateTimer = null;
+        var lastModeSwitchAt = 0;
+
+        // ---- 浮窗交互状态 ----
+        // **这一组是照官方 minimax-pet 的结构来的**（抄结构不抄代码）：
+        // ① pointer = 最后已知指针位置。穿透时收不到 mousemove，靠它记住
+        //    「指针还在她身上」。
+        // ② dragging / menuOpen 是**强制可交互**的理由 —— 菜单开着的时候
+        //    指针可能已经移到菜单外面去了，此时如果还按「指针在哪」判断，
+        //    穿透会重新打开，菜单就**点不动**（这正是老板看到的现象）。
+        // ③ ctForwarding = 穿透状态下页面还能不能收到 mousemove。
+        //    'unknown' 时**默认可交互**（宁可挡一点桌面，也不能让她点不到）。
+        // ④ ctSafeHold = 看门狗触发的「强制可交互」，直到指针真的动过。
+        var pointer = null;
+        var dragging = false;
+        var menuOpen = false;
+        var ctForwarding = 'unknown';
+        var ctAppliedAt = 0;
+        var ctWatchdog = null;
+        var ctSafeHold = false;
+        var ctRevertedAt = 0;
+        var ctRevertPointer = null;
+        var ctRetryAt = 0;
+        var winPos = null;
+        /**
+         * 上一次打过 window-state 日志的键。
+         * 轮询每秒一次，**同一状态不重复打** —— console 缓冲只有 200 条，
+         * 而它是浮窗问题唯一的现场（要能回看「刚才那一刻窗口在哪」）。
+         */
+        var lastStateLogKey = '';
+        var dragState = null;
+        var DRAG_THRESHOLD = 4;
+        /**
+         * 最近一次拖动的**对账结果**：鼠标走了多少 vs 窗口实际走了多少 vs 差多少。
+         *
+         * 为什么要有：拖动位移精度**没法用工具验**（模拟拖动是瞬移的，
+         * 合成事件的 screen 参照系还会随窗口移动而变）。但位移本身是**可对账的** ——
+         * 拖完那一刻宿主会回报真实坐标，拿它跟鼠标位移一减就知道算法准不准。
+         * 所以让页面自己算这笔账并报上来，真桌面拖一次就能读到结论。
+         */
+        var lastDragReport = null;
+        var petMenuOpenedAt = 0;
+        var currentSessionId = null;
+        var reportedSessionId = null;
+        /** 看板：结构签名 + 行缓存，避免每秒整块重建 */
+        var boardSignature = '';
+        var boardRows = {};
+
+        /**
+         * @param {string} text
+         * @param {'info'|'error'} [tone]
+         */
+        function toast(text, tone) {
+          el.toast.textContent = text;
+          el.toast.setAttribute('data-tone', tone === 'error' ? 'error' : 'info');
+          el.toast.setAttribute('data-show', 'true');
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(function () {
+            el.toast.setAttribute('data-show', 'false');
+          }, 3200);
+        }
+
+        /**
+         * @param {number} ts
+         * @returns {string}
+         */
+        function clock(ts) {
+          var d = new Date(ts);
+          function pad(n) {
+            return n < 10 ? '0' + n : String(n);
+          }
+          return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        }
+
+        /**
+         * 看板用的时长：只到分钟。
+         * 秒级会每秒都变，页面就一直重绘——既难看，也会让指针交互判定页面不稳定。
+         * @param {number} ms
+         * @returns {string}
+         */
+        function duration(ms) {
+          var total = Math.max(0, Math.floor(ms / 1000));
+          var m = Math.floor(total / 60);
+          if (!m) return '刚起';
+          return m + ' 分';
+        }
+
+        /**
+         * @param {string} url
+         * @param {any} body
+         * @returns {Promise<any>}
+         */
+        function post(url, body) {
+          return fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body || {})
+          }).then(function (r) {
+            return r.json().then(function (data) {
+              if (!r.ok) throw new Error(data && data.error ? data.error : 'request_failed');
+              return data;
+            });
+          });
+        }
+
+        // =========================================================
+        // 称呼（老板 2026-10-28 拍板：名字和称呼由用户设定）
+        //
+        // 两个入口，一个接口：
+        //   ① 首启询问（naming.configured === false）→ 弹一次卡片
+        //   ② 设置区随时改
+        //
+        // **保存后要让专属会话重建**（服务端负责）：旧会话记着老称呼。
+        // =========================================================
+
+        /** 打开首启询问卡片。已经打开过就别再弹（别抢用户正在做的事）。 */
+        function openNamingAsk() {
+          if (!el.namingAsk) return;
+          if (el.namingAsk.hidden === false) return;
+          el.namingAskHer.value = state.naming && state.naming.herName ? state.naming.herName : '';
+          el.namingAskUser.value = state.naming && state.naming.userTitle ? state.naming.userTitle : '';
+          el.namingAsk.hidden = false;
+          try {
+            el.namingAskHer.focus();
+          } catch (error) {
+            /* 焦点拿不到就算了 */
+          }
+        }
+
+        /** 关掉首启询问卡片。 */
+        function closeNamingAsk() {
+          if (!el.namingAsk) return;
+          el.namingAsk.hidden = true;
+        }
+
+        /**
+         * 把一份称呼写进页面（面板标题 / 日记本标题 / 两个输入框）。
+         *
+         * ⚠️ **三个入口共用这一处**（2026-10-29 第八轮）：
+         *   ① `POST /api/naming` 的响应；
+         *   ② SSE 的 `naming` 帧（别的窗口改了名字，这边要跟着变）；
+         *   ③ 快照回灌（SSE 断线重连后补读）。
+         * 以前散在两处，改一处漏一处 —— 而漏掉的那处就是「改名不生效」。
+         *
+         * @param {any} naming
+         */
+        function applyNaming(naming) {
+          if (!naming || typeof naming !== 'object') return;
+          state.naming = naming;
+          // 面板上显示的名字跟着设定走
+          if (el.chatHeadName) el.chatHeadName.textContent = naming.herName || 'MMX';
+          // 日记本的标题也跟着改名走（同一个真源：state.naming）
+          if (el.diaryTitle) el.diaryTitle.textContent = (naming.herName || '她') + '的日记本';
+          // 只在用户**没在改这一格**时回填，别把他正在打的字冲掉。
+          // ⚠️ 不能只看焦点：填完名字切到称呼框，焦点一走，下一次快照就把名字冲回旧值。
+          if (!state.namingDirty.her) el.namingHer.value = naming.herName || '';
+          if (!state.namingDirty.user) el.namingUser.value = naming.userTitle || '';
+        }
+
+        /**
+         * 保存称呼。
+         * @param {string} herName
+         * @param {string} userTitle
+         * @param {boolean} close 是否关掉首启卡片
+         * @returns {Promise<void>}
+         */
+        function saveNaming(herName, userTitle, close) {
+          return post('/api/naming', { herName: herName, userTitle: userTitle })
+            .then(function (data) {
+              // 存过了 → 这一格不再是「正在改」，后面快照可以正常回灌。
+              // ⚠️ 必须在 applyNaming **之前**清掉 dirty 标志 —— 否则
+              // applyNaming 的「别冲掉用户正在打的字」判断会把刚存的值挡掉。
+              state.namingDirty.her = false;
+              state.namingDirty.user = false;
+              if (data && data.naming) {
+                applyNaming(data.naming);
+              }
+              if (close) closeNamingAsk();
+              toast('记住了', 'ok');
+            })
+            .catch(function (error) {
+              toast('保存失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+            });
+        }
+
+        // =========================================================
+        // 状态渲染
+        // =========================================================
+
+        /** 渲染快照到身体、按钮和设置区。 */
+        function render(snapshot) {
+          if (!snapshot) return;
+          state.mood = snapshot.mood;
+          state.bubble = snapshot.bubble;
+          state.position = snapshot.position;
+          state.agent = snapshot.agent;
+          state.scope = snapshot.scope || 'global';
+          state.scopeSessionId = snapshot.scopeSessionId || null;
+          state.petSessionId = snapshot.petSessionId || null;
+          // 服务端的快照才是权威：chatBusy 每一帧 state 都带着。
+          // 只认 busy 事件帧的话，页面重载或断线丢了那一帧，她就永远停在「正在想…」，
+          // 发送按钮被禁用，用户再也问不了她。所以这里以快照纠正本地标志。
+          state.chatBusy = !!snapshot.chatBusy;
+          chat.busy = !!snapshot.chatBusy;
+          state.board = snapshot.board || null;
+
+          // 身体
+          el.petFigure.setAttribute('data-mood', snapshot.mood);
+          bodySetMood(snapshot.mood);
+          el.petDots.setAttribute('data-show', snapshot.mood === 'thinking' ? 'true' : 'false');
+          if (snapshot.bubble) {
+            el.petBubble.textContent = snapshot.bubble.text;
+            el.petBubble.setAttribute('data-show', 'true');
+            if (bubbleTimer) clearTimeout(bubbleTimer);
+            // 收起时刻由服务端说了算（bubble.until），页面里不再另写一份「12000ms」——
+            // 同一个规则分裂在两处，迟早会对不上。这个计时器只是 SSE 丢帧时的兜底。
+            var wait = snapshot.bubble.until ? Math.max(500, snapshot.bubble.until - Date.now() + 300) : 20000;
+            bubbleTimer = setTimeout(function () {
+              el.petBubble.setAttribute('data-show', 'false');
+            }, wait);
+          } else {
+            el.petBubble.setAttribute('data-show', 'false');
+          }
+
+          // 设置区小卡
+          el.moodFact.textContent = snapshot.moodLabel || MOOD_LABEL[snapshot.mood] || snapshot.mood;
+
+          // 称呼（老板 2026-10-28 拍板：名字和称呼由用户设定）
+          // 快照里的 naming 才是权威 —— 页面不自己存一份，改完由服务端回灌。
+          var naming = snapshot.naming;
+          if (naming) {
+            applyNaming(naming);
+            // 首启问一次：没设过才弹
+            if (!naming.configured) openNamingAsk();
+          }
+
+          var agent = snapshot.agent;
+          if (agent) {
+            el.agentFact.textContent =
+              agent.state === 'thinking' ? '思考中' : agent.state === 'working' ? '工作中' : '刚完成';
+          } else {
+            var tracking = snapshot.agentTracking || {};
+            el.agentFact.textContent = tracking.error
+              ? '通道异常'
+              : tracking.subscribed
+                ? '空闲（通道已建）'
+                : '空闲';
+          }
+
+          if (snapshot.position) {
+            el.positionFact.textContent = snapshot.position.x + ', ' + snapshot.position.y;
+          } else if (mode === 'window') {
+            el.positionFact.textContent = '已浮出';
+          } else {
+            el.positionFact.textContent = '未浮出';
+          }
+
+          // 宿主窗口状态：浮窗出问题时，这一行是唯一能看到真相的地方。
+          var win = snapshot.windowState;
+          if (win && win.updatedAt) {
+            el.windowFact.textContent =
+              (win.mode === 'window' ? '浮窗' : '面板') +
+              ' · ' +
+              (win.clickThrough ? '穿透中' : '可交互') +
+              (win.mode === 'window' && win.x !== null && win.x !== undefined
+                ? ' · 位置 ' + win.x + ',' + win.y
+                : '') +
+              (win.lastError ? ' · 报错：' + win.lastError : '');
+          } else {
+            el.windowFact.textContent = '未上报';
+          }
+
+          // 拖动对账：鼠标走了多少 / 窗口实际走了多少 / 差多少。
+          // 这一行是拖动精度的**唯一读数** —— 工具验不了（模拟拖是瞬移的），
+          // 真桌面拖一次，这里直接给结论，不用人拿计算器减。
+          var drag = win && win.drag ? win.drag : null;
+          if (drag && drag.host && drag.error) {
+            el.dragFact.textContent =
+              '鼠标 ' +
+              drag.mouse.x +
+              ',' +
+              drag.mouse.y +
+              ' / 屏差 ' +
+              (drag.screen ? drag.screen.x + ',' + drag.screen.y : '-') +
+              ' / 实际 ' +
+              drag.host.x +
+              ',' +
+              drag.host.y +
+              ' / 误差 ' +
+              drag.error.x +
+              ',' +
+              drag.error.y +
+              ' / 偏移 ' +
+              (drag.offset ? drag.offset.x + ',' + drag.offset.y : '-') +
+              (drag.clamped ? ' · 被夹住' : '');
+          } else if (drag) {
+            el.dragFact.textContent = '鼠标 ' + drag.mouse.x + ',' + drag.mouse.y + ' · 没起点';
+          } else {
+            el.dragFact.textContent = '未拖过';
+          }
+
+          // 「她正在回话」以 SSE 推来的 busy 为准，快照只作补充：
+          // 快照可能在 busy 置位前就抓到了，会显示成「空闲」。
+          el.busyFact.textContent = (chat.busy || state.chatBusy)
+            ? '正在回话'
+            : chat.messages.length
+              ? chat.messages.length + ' 条'
+              : '空闲';
+
+          // 分段控件
+          var moodButtons = document.querySelectorAll('#mood-group button');
+          for (var i = 0; i < moodButtons.length; i++) {
+            moodButtons[i].setAttribute(
+              'aria-pressed',
+              moodButtons[i].getAttribute('data-mood') === snapshot.mood ? 'true' : 'false'
+            );
+          }
+          var scopeButtons = document.querySelectorAll('#scope-group button');
+          for (var j = 0; j < scopeButtons.length; j++) {
+            scopeButtons[j].setAttribute(
+              'aria-pressed',
+              scopeButtons[j].getAttribute('data-scope') === state.scope ? 'true' : 'false'
+            );
+          }
+
+          // 诊断与看板
+          renderTracking(snapshot);
+          renderBoard(state.board);
+          renderLog(snapshot.log);
+          renderChatStatus();
+
+          // 处理停靠请求（只有页面能控制宿主窗口）
+          if (snapshot.pendingMove && snapshot.pendingMove.at !== state.pendingMove) {
+            state.pendingMove = snapshot.pendingMove.at;
+            applyAnchor(snapshot.pendingMove.target, snapshot.pendingMove.at);
+          }
+        }
+
+        function renderTracking(snapshot) {
+          var tracking = snapshot.agentTracking || {};
+          if (tracking.error) {
+            el.trackingNote.textContent = '观察通道异常：' + tracking.error;
+          } else if (tracking.capability === 'false') {
+            el.trackingNote.textContent = '宿主未提供 agent.observe 能力，她看不到你的会话。';
+          } else if (tracking.sessionsError) {
+            el.trackingNote.textContent = '会话读取失败：' + tracking.sessionsError;
+          } else if (tracking.sessions !== null && tracking.sessions !== undefined) {
+            el.trackingNote.textContent =
+              '通道已建 · 能列出 ' + tracking.sessions + ' 个会话 · 正在看：' + watchingLabel();
+          } else if (tracking.subscribed) {
+            el.trackingNote.textContent = '通道已建，等 Agent 动作 · 正在看：' + watchingLabel();
+          } else {
+            el.trackingNote.textContent = '观察通道未就绪。';
+          }
+          // 本轮宿主发来的事件类型。宿主不落 Mini App 的 logger，
+          // 这一行是唯一能看见「她卡在哪种交互上」的地方。
+          var types = tracking.eventTypes || [];
+          el.eventNote.textContent = types.length ? '本轮事件：' + types.join(' · ') : '本轮事件：—';
+        }
+
+        /**
+         * 渲染状态看板。
+         * 只在「会话集合」变了的时候重建 DOM；平时只改时长那一行文字。
+         * 每秒整块重建既浪费，也会让页面一直在抖（连点击都判定为页面不稳定）。
+         */
+        function renderBoard(board) {
+          var running = (board && board.running) || [];
+          var recent = (board && board.recent) || [];
+          var signature =
+            running.map(function (r) { return String(r.sessionId); }).join(',') +
+            '|' +
+            recent.map(function (r) { return String(r.sessionId); }).join(',');
+          if (signature !== boardSignature) {
+            boardSignature = signature;
+            buildBoard(running, recent);
+          }
+          tickBoard(running);
+        }
+
+        function buildBoard(running, recent) {
+          el.board.innerHTML = '';
+          boardRows = {};
+          if (!running.length && !recent.length) {
+            var none = document.createElement('li');
+            none.className = 'empty';
+            none.textContent = '现在没有会话在跑';
+            el.board.appendChild(none);
+            return;
+          }
+          running.forEach(function (item) {
+            el.board.appendChild(boardRow(item, true));
+          });
+          recent.forEach(function (item) {
+            el.board.appendChild(boardRow(item, false));
+          });
+        }
+
+        function boardRow(item, isRunning) {
+          var li = document.createElement('li');
+          var name = document.createElement('span');
+          name.className = 'board-name';
+          name.textContent = item.title || item.sessionId || '未命名会话';
+          var meta = document.createElement('span');
+          meta.className = 'board-meta';
+          li.appendChild(name);
+          li.appendChild(meta);
+          boardRows[String(item.sessionId)] = {
+            li: li,
+            meta: meta,
+            sinceAt: Number(item.sinceAt) || 0,
+            running: isRunning
+          };
+          return li;
+        }
+
+        function tickBoard(running) {
+          running.forEach(function (item) {
+            var row = boardRows[String(item.sessionId)];
+            if (!row) return;
+            var since = Number(item.sinceAt) || 0;
+            row.meta.textContent = 'running · ' + (since ? duration(Date.now() - since) : '刚起');
+            // 跑太久只是「疑似」，不当作审批来断言
+            if (since && Date.now() - since > STUCK_MS) row.li.setAttribute('data-stuck', 'true');
+            else row.li.removeAttribute('data-stuck');
+          });
+        }
+
+        function renderLog(log) {
+          el.log.innerHTML = '';
+          if (!log || !log.length) {
+            var empty = document.createElement('li');
+            empty.className = 'empty';
+            empty.textContent = '还没有任何动作记录';
+            el.log.appendChild(empty);
+            return;
+          }
+          log.forEach(function (item) {
+            var li = document.createElement('li');
+            var time = document.createElement('time');
+            time.textContent = clock(item.ts);
+            var kind = document.createElement('span');
+            kind.className = 'kind';
+            kind.textContent = item.kind;
+            var text = document.createElement('span');
+            text.className = 'text';
+            text.textContent = item.text;
+            li.appendChild(time);
+            li.appendChild(kind);
+            li.appendChild(text);
+            el.log.appendChild(li);
+          });
+        }
+
+        // =========================================================
+        // 聊天：消息流
+        // =========================================================
+
+        /**
+         * 聊天时间条的文案（微信那套）。
+         *
+         * 今天 → 「下午 3:24」；昨天 → 「昨天 下午 3:24」；
+         * 今年内 → 「10月29日 下午 3:24」；更早 → 「2025年10月29日 下午 3:24」。
+         *
+         * @param {number} ts
+         * @returns {string}
+         */
+        function chatTimeLabel(ts) {
+          var d = new Date(ts);
+          var now = new Date();
+          var hh = d.getHours();
+          var mm = d.getMinutes();
+          var pad = function (n) {
+            return n < 10 ? '0' + n : String(n);
+          };
+          var period =
+            hh < 6 ? '凌晨' : hh < 12 ? '上午' : hh < 13 ? '中午' : hh < 18 ? '下午' : '晚上';
+          var h12 = hh % 12 === 0 ? 12 : hh % 12;
+          var time = period + ' ' + h12 + ':' + pad(mm);
+          if (d.toDateString() === now.toDateString()) return time;
+          var yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          if (d.toDateString() === yesterday.toDateString()) return '昨天 ' + time;
+          if (d.getFullYear() === now.getFullYear()) {
+            return d.getMonth() + 1 + '月' + d.getDate() + '日 ' + time;
+          }
+          return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + time;
+        }
+
+        /**
+         * 两条消息之间**要不要插一条时间条**（微信的规则）。
+         *
+         * ① 第一条消息要（微信第一条消息上方就有时间）；
+         * ② 跨天要（那条时间条会带日期）；
+         * ③ 间隔超过 5 分钟要。
+         *
+         * ⚠️ **本地时区**：跨天判断用 `toDateString()`（本地），不用 UTC。
+         *
+         * @param {number} prevAt 上一条消息的时间（0 = 没有上一条）
+         * @param {number} at 这一条的时间
+         * @returns {boolean}
+         */
+        function needTimeSeparator(prevAt, at) {
+          if (!prevAt) return true;
+          var prev = new Date(prevAt);
+          var cur = new Date(at);
+          if (prev.toDateString() !== cur.toDateString()) return true;
+          return cur.getTime() - prev.getTime() > 5 * 60 * 1000;
+        }
+
+        /**
+         * @param {any} msg
+         * @param {boolean} [showTime] 要不要在气泡上方插时间条
+         * @param {string} [timeText] 时间条文案
+         * @returns {HTMLElement}
+         */
+        function messageEl(msg, showTime, timeText) {
+          var li = document.createElement('li');
+          // 聊天区只有对话两种角色（通知走气泡，不进聊天区）。
+          li.className = 'msg msg-' + (msg.role === 'user' ? 'user' : 'her');
+          li.setAttribute('data-id', String(msg.id));
+          if (msg.state) li.setAttribute('data-state', msg.state);
+          // 时间条在**消息内部**（不是独立的一条消息）——
+          // 这样 `.chat-log > *:first-child { margin-top: auto }` 那个「消息少时贴底」
+          // 的技巧不会被时间条抢走。
+          if (showTime) {
+            var timeBox = document.createElement('div');
+            timeBox.className = 'msg-time';
+            var timeText2 = document.createElement('span');
+            timeText2.textContent = timeText || '';
+            timeBox.appendChild(timeText2);
+            li.appendChild(timeBox);
+          }
+          if (li.className.indexOf('msg-her') >= 0) {
+            var avatar = document.createElement('img');
+            avatar.className = 'msg-avatar';
+            avatar.src = '/assets/mmx-avatar.png';
+            avatar.alt = '';
+            li.appendChild(avatar);
+          }
+          var bubble = document.createElement('div');
+          bubble.className = 'msg-bubble';
+          bubble.textContent = msg.text || '';
+          li.appendChild(bubble);
+          // 发送状态小字（只对用户消息）：发送中 → 已送达 / 发送失败
+          if (msg.role === 'user' && msg.stateLabel) {
+            var state = document.createElement('div');
+            state.className = 'msg-state';
+            state.setAttribute('data-state', msg.state || '');
+            state.textContent = msg.stateLabel;
+            li.appendChild(state);
+          }
+          return li;
+        }
+
+        /**
+         * @param {string} id
+         * @returns {HTMLElement | null}
+         */
+        function findMessageEl(id) {
+          var children = el.chatLog.children;
+          for (var i = 0; i < children.length; i++) {
+            if (children[i].getAttribute('data-id') === String(id)) return children[i];
+          }
+          return null;
+        }
+
+        /**
+         * @param {any} msg
+         */
+        function upsertMessage(msg) {
+          if (!msg || !msg.id) return;
+          var existing = null;
+          for (var i = 0; i < chat.messages.length; i++) {
+            if (chat.messages[i].id === msg.id) {
+              existing = chat.messages[i];
+              break;
+            }
+          }
+          if (existing) {
+            // ★ **空文本 = 这条被服务端剥掉了**（2026-10-31 第二十九轮）
+            //   服务端剥皮剥空 ⇒ 这条**不落库** ⇒ 用同一个 id 广播一条空文本
+            //   ⇒ 这里把气泡**摘掉**，页面才和 chat.json 对得上（不然留一个空气泡）。
+            //   ⚠️ 只在「已经有这条」时摘 —— applyDelta 建占位气泡走的是下面那条分支。
+            if (!msg.text) {
+              var goneIndex = chat.messages.indexOf(existing);
+              if (goneIndex >= 0) chat.messages.splice(goneIndex, 1);
+              var goneNode = findMessageEl(msg.id);
+              if (goneNode && goneNode.parentNode) goneNode.parentNode.removeChild(goneNode);
+              scrollChat();
+              return;
+            }
+            existing.text = msg.text;
+            var node = findMessageEl(msg.id);
+            if (node) {
+              var bubble = node.querySelector('.msg-bubble');
+              if (bubble) bubble.textContent = msg.text || '';
+            }
+          } else if (
+            chat.sending &&
+            msg.role === 'user' &&
+            msg.text === chat.sending.text
+          ) {
+            // 服务端的真消息到了 → **替换**那条「发送中」的本地气泡（同一条，不新开一条）。
+            var local = chat.sending;
+            chat.sending = null;
+            var localNode = findMessageEl(local.id);
+            if (localNode) {
+              localNode.setAttribute('data-id', String(msg.id));
+              localNode.removeAttribute('data-state');
+              var localBubble = localNode.querySelector('.msg-bubble');
+              if (localBubble) localBubble.textContent = msg.text || '';
+              var localState = localNode.querySelector('.msg-state');
+              if (localState) {
+                localState.setAttribute('data-state', 'sent');
+                localState.textContent = '已送达';
+                // 像微信那样，过一会儿把「已送达」收掉（气泡还在）。
+                setTimeout(function () {
+                  if (localState.parentNode) localState.parentNode.removeChild(localState);
+                }, 5000);
+              }
+            }
+            var localIndex = chat.messages.indexOf(local);
+            if (localIndex >= 0) chat.messages[localIndex] = msg;
+            else chat.messages.push(msg);
+            if (msg.at) chat.lastAt = Number(msg.at);
+          } else {
+            chat.messages.push(msg);
+            // 第一条真消息进来，就把「还没聊过」的占位撤掉。
+            var empty = el.chatLog.querySelector('.chat-empty');
+            if (empty) el.chatLog.removeChild(empty);
+            appendChatMessage(msg);
+          }
+          scrollChat();
+        }
+
+        /**
+         * @param {string} id
+         * @param {string} text
+         */
+        function applyDelta(id, text) {
+          if (!id) return;
+          var existing = null;
+          for (var i = 0; i < chat.messages.length; i++) {
+            if (chat.messages[i].id === id) {
+              existing = chat.messages[i];
+              break;
+            }
+          }
+          if (!existing) {
+            upsertMessage({ id: id, role: 'her', text: '', at: Date.now() });
+            existing = chat.messages[chat.messages.length - 1];
+          }
+          existing.text = (existing.text || '') + (text || '');
+          var node = findMessageEl(id);
+          if (node) {
+            var bubble = node.querySelector('.msg-bubble');
+            if (bubble) bubble.textContent = existing.text;
+          }
+          scrollChat();
+        }
+
+        /**
+         * 插一条消息（时间条按需附在消息上方）。
+         *
+         * @param {any} msg
+         */
+        function appendChatMessage(msg) {
+          var at = Number(msg.at || Date.now());
+          var showTime = needTimeSeparator(chat.lastAt, at);
+          removeTyping();
+          el.chatLog.appendChild(messageEl(msg, showTime, chatTimeLabel(at)));
+          chat.lastAt = at;
+          renderTyping();
+          scrollChat();
+        }
+
+        function scrollChat() {
+          // 用户正在往上翻看旧记录时，**不抢滚动**（微信的脾气）。
+          if (chat.stickToBottom === false) return;
+          el.chatLog.scrollTop = el.chatLog.scrollHeight;
+        }
+
+        /**
+         * 「回到最新」浮标：不在底部就显示。
+         */
+        function updateChatJump() {
+          var log = el.chatLog;
+          if (!log) return;
+          var gap = log.scrollHeight - log.scrollTop - log.clientHeight;
+          chat.stickToBottom = gap < 40;
+          if (el.chatJump) {
+            el.chatJump.setAttribute('data-show', chat.stickToBottom ? 'false' : 'true');
+          }
+        }
+
+        /**
+         * 「她正在输入…」的三个跳动圆点（微信/QQ 都有）。
+         *
+         * ⚠️ 桌宠更需要：她回一句话要跑一次 Agent（可能几十秒），
+         * 这期间聊天区一个像素都不动，用户会以为死机了。
+         */
+        function renderTyping() {
+          removeTyping();
+          if (!chat.busy) return;
+          var li = document.createElement('li');
+          li.className = 'chat-typing';
+          var avatar = document.createElement('img');
+          avatar.className = 'msg-avatar';
+          avatar.src = '/assets/mmx-avatar.png';
+          avatar.alt = '';
+          li.appendChild(avatar);
+          var dots = document.createElement('div');
+          dots.className = 'chat-typing-dots';
+          dots.appendChild(document.createElement('i'));
+          dots.appendChild(document.createElement('i'));
+          dots.appendChild(document.createElement('i'));
+          li.appendChild(dots);
+          el.chatLog.appendChild(li);
+        }
+
+        function removeTyping() {
+          var old = el.chatLog.querySelector('.chat-typing');
+          if (old && old.parentNode) old.parentNode.removeChild(old);
+        }
+
+        /**
+         * 清掉页面上残留的文字选中（拖出来的那块蓝底）。
+         *
+         * 为什么要有：拖滚动条的时候浏览器会顺手把整块文字选中，
+         * 那块蓝底会**一直挂在那儿** —— 看着像界面坏了，其实只是一次误拖。
+         * 重画聊天区时顺手清掉。
+         */
+        function clearTextSelection() {
+          try {
+            var sel = window.getSelection && window.getSelection();
+            if (sel && sel.removeAllRanges) sel.removeAllRanges();
+          } catch (error) {
+            /* 选不中就选不中，不影响别的 */
+          }
+        }
+
+        function renderChat() {
+          el.chatLog.innerHTML = '';
+          clearTextSelection();
+          chat.lastAt = 0;
+          chat.messages.forEach(function (msg) {
+            appendChatMessage(msg);
+          });
+          if (!chat.messages.length) {
+            var li = document.createElement('li');
+            li.className = 'chat-empty';
+            li.textContent = '还没聊过。她记得你们说过的话。';
+            el.chatLog.appendChild(li);
+          }
+          renderChatStatus();
+          renderCards();
+          scrollChat();
+        }
+
+        function renderChatStatus() {
+          // 顶部状态**只留两种**（老板 2026-10-29：「顶多一个输入中的中间状态就可以了」）：
+          //   「在线」= 没事发生；「输入中…」= 她这会儿正在跑。
+          // 「在问你话」「等你点头」这类**剧情状态**撤掉 ——
+          // 问什么、答不答，卡片自己会说清楚，状态栏不该替她演戏。
+          el.chatStatus.textContent = chat.busy ? '输入中…' : '在线';
+          el.chatSend.disabled = !!chat.busy;
+          renderTyping();
+          scrollChat();
+        }
+
+        /**
+         * 渲染**审批卡**（问卷卡已撤掉 —— 老板 2026-10-29：
+         * 「不要问卷，聊天哪有给人家发问卷的」。她要问什么直接在话里问，用户打字回）。
+         */
+        function renderCards() {
+          var wantId = chat.pending ? String(chat.pending.requestId || '') : '';
+          var existing = el.chatCards.querySelector('.pcard');
+          var haveId = existing ? String(existing.getAttribute('data-request-id') || '') : '';
+          if (!chat.pending) {
+            clearCards();
+            return;
+          }
+          // 还是同一道题就别重建：重建会把用户已经选好的内容冲掉。
+          if (existing && haveId && haveId === wantId) {
+            return;
+          }
+          clearCards();
+
+          if (chat.pending.type === 'permission') {
+            el.chatCards.appendChild(permissionCard(chat.pending));
+          }
+        }
+
+        /**
+         * 清掉卡片区。
+         */
+        function clearCards() {
+          var old = el.chatCards.querySelector('.pcard');
+          if (old && old._expireTimer) {
+            clearInterval(old._expireTimer);
+            old._expireTimer = null;
+          }
+          el.chatCards.innerHTML = '';
+        }
+
+        /**
+         * @param {any} pending
+         * @returns {HTMLElement}
+         */
+        function permissionCard(pending) {
+          var card = document.createElement('div');
+          card.className = 'pcard';
+          card.setAttribute('data-request-id', String(pending.requestId || ''));
+
+          var title = document.createElement('div');
+          title.className = 'pcard-title';
+          title.textContent = '她想执行 ' + (pending.toolName || '一个工具');
+          card.appendChild(title);
+
+          if (pending.reason) {
+            var reason = document.createElement('div');
+            reason.className = 'pcard-reason';
+            reason.textContent = pending.reason;
+            card.appendChild(reason);
+          }
+
+          if (pending.toolInput) {
+            var input = document.createElement('pre');
+            input.className = 'pcard-input';
+            try {
+              input.textContent = JSON.stringify(pending.toolInput, null, 2);
+            } catch (error) {
+              input.textContent = String(pending.toolInput);
+            }
+            card.appendChild(input);
+          }
+
+          var actions = document.createElement('div');
+          actions.className = 'pcard-actions';
+          var allow = document.createElement('button');
+          allow.type = 'button';
+          allow.setAttribute('data-decision', 'allowOnce');
+          allow.textContent = '允许一次';
+          var deny = document.createElement('button');
+          deny.type = 'button';
+          deny.setAttribute('data-decision', 'deny');
+          deny.textContent = '拒绝';
+          actions.appendChild(allow);
+          actions.appendChild(deny);
+          card.appendChild(actions);
+          return card;
+        }
+
+        /**
+         * 处理 SSE 的 chat 帧。
+         * @param {any} data
+         */
+        function handleChatEvent(data) {
+          if (!data || typeof data !== 'object') return;
+          // ⚠️ **帧类型表由服务端注入**（`window.__MMX_CHAT_PROTOCOL__`，
+          // 真源是 `node/chat-protocol.mjs`）—— 页面不再自己维护一份清单。
+          // 契约表里没有的帧直接不处理（老页面配新服务端时也不会乱）；
+          // 注入缺失时（老服务端）照旧走下面的 switch，不影响功能。
+          var proto = window.__MMX_CHAT_PROTOCOL__ || null;
+          if (proto && Array.isArray(proto.types) && proto.types.indexOf(data.type) < 0) {
+            return;
+          }
+          switch (data.type) {
+            case 'message':
+              upsertMessage(data.message);
+              break;
+            case 'delta':
+              applyDelta(data.id, data.text);
+              break;
+            case 'permission':
+              chat.pending = {
+                type: 'permission',
+                requestId: data.requestId,
+                toolName: data.toolName,
+                reason: data.reason,
+                toolInput: data.toolInput
+              };
+              renderCards();
+              renderChatStatus();
+              break;
+            case 'permission_resolved':
+              chat.pending = null;
+              renderCards();
+              renderChatStatus();
+              break;
+            case 'question_as_text':
+              // 问卷已撤掉（老板 2026-10-29）：她发来的问卷被服务端降级成
+              // 一条**普通消息**了 —— 这里不需要卡片，只要把 pending 清掉。
+              chat.pending = null;
+              renderCards();
+              renderChatStatus();
+              break;
+            case 'busy':
+              chat.busy = !!data.busy;
+              renderChatStatus();
+              break;
+            case 'done':
+              chat.busy = false;
+              renderChatStatus();
+              break;
+            case 'reset':
+              chat.messages = [];
+              chat.pending = null;
+              renderChat();
+              break;
+            case 'diary':
+              // 她的日记本：有新篇目（或者她刚写完一篇）就重画。
+              // 不进聊天区 —— 日记是她的独白，混进对话里会串味。
+              applyDiary(data);
+              break;
+            case 'naming':
+              // 改了名字/称呼 —— 面板标题、日记本标题、输入框跟着走。
+              // ⚠️ 这条帧以前**没人接**（服务端发了，客户端没这个 case）：
+              // 改名只有发起改动的那一个窗口会更新，别的窗口永远显示旧名字。
+              applyNaming(data.naming);
+              break;
+            default:
+              break;
+          }
+        }
+
+        /** 拉全量聊天状态。SSE 断线重连后必须补读（事件不补发）。 */
+        function loadChat() {
+          return fetch('/api/chat')
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (data) {
+              chat.messages = Array.isArray(data.messages) ? data.messages : [];
+              chat.pending = data.pending || null;
+              chat.busy = !!data.busy;
+              renderChat();
+            })
+            .catch(function () {
+              /* 聊天读不到不影响身体 */
+            });
+        }
+
+        // =========================================================
+        // 她的日记本
+        //
+        // 老板 2026-10-29：「在后台人物形象的旁边，加一个按钮，进去之后，
+        // 是一个日记本，或者是像QQ空间每天发动态的感觉，每天至少记录一次，
+        // 其他时间也可以写，但别太频繁，每一次字数不要太多。」
+        //
+        // ⚠️ **老板 2026-10-29 改口**：「去掉一天只能写三篇的设置 / 撤掉按钮也去掉 /
+        // 下面的说点什么、让她写、和发表也不要 / 但是可以添加点赞和评论，
+        // 评论后她可以回复。」
+        //
+        // **规则的真源在 Node 侧的 `diary.mjs`**（MAX_CHARS / MAX_COMMENT_CHARS /
+        // dayKey）—— 客户端不自己数篇数、不自己截字，只显示 Node 给的状态。
+        // =========================================================
+
+        /**
+         * 拉全量日记。
+         * @returns {Promise<void>}
+         */
+        function loadDiary() {
+          return fetch('/api/diary')
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (data) {
+              applyDiary(data);
+            })
+            .catch(function () {
+              /* 日记读不到不影响身体 */
+            });
+        }
+
+        /**
+         * 吃掉一份日记数据（列表 + 状态）并重画。
+         * @param {any} data
+         */
+        function applyDiary(data) {
+          if (!data || typeof data !== 'object') return;
+          if (Array.isArray(data.entries)) state.diary.entries = data.entries;
+          if (data.status && typeof data.status === 'object') state.diary.status = data.status;
+          renderDiary();
+        }
+
+        /**
+         * 画日记本。
+         *
+         * ⚠️ **只显示，不判断** —— 「今天写了几篇」「多少字一篇」
+         * 全部来自 Node 的 `status`，客户端自己数一遍就等于有两个真源。
+         *
+         * ⚠️ **没有底部输入区**（老板 2026-10-29 拿掉了「说点什么 / 让她写 / 发表」）：
+         * 用户能做的只有两件事 —— **点赞** 和 **评论**（评论后她会回复）。
+         */
+        function renderDiary() {
+          var entries = state.diary.entries || [];
+          var status = state.diary.status || {};
+          var count = Number(status.countToday || 0);
+          var maxChars = Number(status.maxChars || 120);
+          var maxCommentChars = Number(status.maxCommentChars || 60);
+          var voidToday = status.void === true;
+
+          // 形象旁边的按钮：今天她还没记过一篇 → 挂红点。
+          el.petDiaryBtn.setAttribute('data-void', voidToday ? 'true' : 'false');
+          el.petDiaryBtn.setAttribute('aria-expanded', state.diary.open ? 'true' : 'false');
+
+          // 标题用她现在的名字（老板改了就跟着改）—— 空间那样「XX的日记本」
+          el.diaryTitle.textContent =
+            ((state.naming && state.naming.herName) || '她') + '的日记本';
+          el.diaryCount.textContent = '今天 ' + count + ' 篇';
+
+          if (voidToday) {
+            el.diaryNote.textContent = '今天她还没记过一篇。';
+            el.diaryNote.setAttribute('data-void', 'true');
+          } else {
+            el.diaryNote.textContent = '每篇不超过 ' + maxChars + ' 字。';
+            el.diaryNote.setAttribute('data-void', 'false');
+          }
+
+          el.diaryLog.innerHTML = '';
+          if (!entries.length) {
+            var empty = document.createElement('li');
+            empty.className = 'diary-empty';
+            empty.textContent = '还没有动态。';
+            el.diaryLog.appendChild(empty);
+            return;
+          }
+
+          // 名字用**用户设定的那个**（她叫什么就显示什么），不写死「她」。
+          var herName = (state.naming && state.naming.herName) || '她';
+          var userName = (state.naming && state.naming.userTitle) || '你';
+
+          // 新的在上，按天分组。
+          var lastDay = '';
+          entries.slice().reverse().forEach(function (entry) {
+            var isUser = entry.author === 'user';
+            if (entry.day !== lastDay) {
+              lastDay = entry.day;
+              var day = document.createElement('li');
+              day.className = 'diary-day';
+              day.textContent = entry.day;
+              el.diaryLog.appendChild(day);
+            }
+
+            var li = document.createElement('li');
+            li.className = 'diary-item';
+            li.setAttribute('data-author', isUser ? 'user' : 'her');
+
+            // 左边那个圆形头像：她用头像图，用户用一个写「我」的圈
+            var avatar;
+            if (isUser) {
+              avatar = document.createElement('span');
+              avatar.className = 'diary-avatar diary-avatar-user';
+              avatar.textContent = '我';
+            } else {
+              avatar = document.createElement('img');
+              avatar.className = 'diary-avatar';
+              avatar.src = '/assets/mmx-avatar.png';
+              avatar.alt = '';
+            }
+            li.appendChild(avatar);
+
+            var main = document.createElement('div');
+            main.className = 'diary-item-main';
+
+            // 名字 + 时间（朋友圈那一行）
+            var head = document.createElement('div');
+            var name = document.createElement('span');
+            name.className = 'diary-name';
+            name.textContent = isUser ? userName : herName;
+            head.appendChild(name);
+            var time = document.createElement('span');
+            time.className = 'diary-time';
+            time.textContent = clock(entry.at);
+            head.appendChild(time);
+            main.appendChild(head);
+
+            // 正文
+            var body = document.createElement('div');
+            body.className = 'diary-text';
+            body.textContent = entry.text;
+            main.appendChild(body);
+
+            // 评论区（老板 2026-10-29：可以添加点赞和评论，评论后她可以回复）
+            var comments = Array.isArray(entry.comments) ? entry.comments : [];
+            if (comments.length) {
+              var box = document.createElement('div');
+              box.className = 'diary-comments';
+              comments.forEach(function (c) {
+                var row = document.createElement('div');
+                row.className = 'diary-comment';
+                var cname = document.createElement('span');
+                cname.className = 'diary-comment-name';
+                cname.textContent = (c.author === 'her' ? herName : userName) + '：';
+                row.appendChild(cname);
+                row.appendChild(document.createTextNode(c.text));
+                box.appendChild(row);
+
+                // 她的回复（还没写出来就显示「她正在回复…」）
+                if (c.reply) {
+                  var reply = document.createElement('div');
+                  reply.className = 'diary-reply';
+                  var rname = document.createElement('span');
+                  rname.className = 'diary-comment-name';
+                  rname.textContent = herName + ' 回复：';
+                  reply.appendChild(rname);
+                  reply.appendChild(document.createTextNode(c.reply.text));
+                  box.appendChild(reply);
+                } else if (c.replying) {
+                  var waiting = document.createElement('div');
+                  waiting.className = 'diary-waiting';
+                  waiting.textContent = '她正在回复…';
+                  box.appendChild(waiting);
+                }
+              });
+              main.appendChild(box);
+            }
+
+            // 右下角操作行：赞 / 评论
+            // ⚠️ **没有「撤掉」了** —— 老板 2026-10-29：「她写日记我为啥要删除」。
+            var ops = document.createElement('div');
+            ops.className = 'diary-ops';
+
+            var like = document.createElement('button');
+            like.type = 'button';
+            like.className = 'diary-op diary-like';
+            like.textContent = entry.liked ? '♥' : '♡';
+            like.setAttribute('data-like-id', entry.id);
+            like.setAttribute('data-on', entry.liked ? 'true' : 'false');
+            like.setAttribute('aria-label', '赞');
+            like.addEventListener('click', function () {
+              toggleLike(entry.id);
+            });
+            ops.appendChild(like);
+
+            var likeCount = document.createElement('span');
+            likeCount.className = 'diary-op';
+            likeCount.textContent = '赞 ' + Number(entry.likes || 0);
+            ops.appendChild(likeCount);
+
+            var commentBtn = document.createElement('button');
+            commentBtn.type = 'button';
+            commentBtn.className = 'diary-op diary-comment-btn';
+            commentBtn.textContent = '评论';
+            commentBtn.setAttribute('data-comment-id', entry.id);
+            commentBtn.addEventListener('click', function () {
+              toggleCommentBox(entry.id);
+            });
+            ops.appendChild(commentBtn);
+
+            var commentCount = document.createElement('span');
+            commentCount.className = 'diary-op';
+            commentCount.textContent = '评论 ' + comments.length;
+            ops.appendChild(commentCount);
+
+            main.appendChild(ops);
+
+            // 评论输入框：点「评论」才展开（底部那一整块已经拿掉了）
+            if (state.diary.commentId === entry.id) {
+              var form = document.createElement('form');
+              form.className = 'diary-comment-form';
+              var input = document.createElement('input');
+              input.type = 'text';
+              input.maxLength = maxCommentChars;
+              input.placeholder = '评论一下…';
+              input.autocomplete = 'off';
+              form.appendChild(input);
+              var send = document.createElement('button');
+              send.type = 'submit';
+              send.textContent = '发送';
+              form.appendChild(send);
+              form.addEventListener('submit', function (event) {
+                event.preventDefault();
+                var text = input.value.trim();
+                if (!text) return;
+                send.disabled = true;
+                submitComment(entry.id, text);
+              });
+              main.appendChild(form);
+            }
+
+            li.appendChild(main);
+            el.diaryLog.appendChild(li);
+          });
+        }
+
+        /**
+         * 打开日记本。
+         */
+        function openDiary() {
+          state.diary.open = true;
+          el.diaryPanel.hidden = false;
+          loadDiary();
+        }
+
+        /**
+         * 收起日记本。
+         */
+        function closeDiary() {
+          state.diary.open = false;
+          el.diaryPanel.hidden = true;
+          el.petDiaryBtn.setAttribute('aria-expanded', 'false');
+        }
+
+        /**
+         * 日记本上的写操作（点赞 / 评论）。
+         *
+         * ⚠️ 不用通用的 `post()` —— 它失败时只抛 `data.error`（英文码），
+         * 而 Node 那边给的是中文 `reason`（「这条动态已经不在了。」），
+         * 那句话才是该给用户看的。
+         *
+         * @param {{id?: string, text?: string}} body
+         * @param {string} [url]
+         * @returns {Promise<any>}
+         */
+        function postDiary(body, url) {
+          return fetch(url || '/api/diary', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body || {})
+          }).then(function (r) {
+            return r.json().then(function (data) {
+              if (!r.ok) {
+                var err = new Error(
+                  (data && data.reason) || (data && data.error) || 'request_failed'
+                );
+                err.code = (data && data.error) || 'request_failed';
+                throw err;
+              }
+              return data;
+            });
+          });
+        }
+
+        /**
+         * 点赞 / 取消点赞（老板 2026-10-29：可以添加点赞）。
+         *
+         * ⚠️ 赞数**由服务端算**，客户端只把它显示出来 ——
+         * 客户端自己数一遍就等于出现了第二个真源。
+         *
+         * @param {string} id 日记 id
+         */
+        function toggleLike(id) {
+          postDiary({ id: id }, '/api/diary/like')
+            .then(function (data) {
+              applyDiary(data);
+            })
+            .catch(function (error) {
+              toast('没点成：' + (error && error.message ? error.message : '未知原因'), 'error');
+              loadDiary();
+            });
+        }
+
+        /**
+         * 展开 / 收起某条动态下面的评论输入框。
+         *
+         * ⚠️ **只有一条能展开**（`state.diary.commentId` 只记一个 id）——
+         * 同时展开好几条会把动态流撑乱。
+         *
+         * @param {string} id 日记 id
+         */
+        function toggleCommentBox(id) {
+          state.diary.commentId = state.diary.commentId === id ? null : id;
+          renderDiary();
+        }
+
+        /**
+         * 发一条评论 —— **她随后会回复这条评论**（服务端异步起她的专属会话）。
+         *
+         * @param {string} id 日记 id
+         * @param {string} text 评论正文
+         */
+        function submitComment(id, text) {
+          postDiary({ id: id, text: text }, '/api/diary/comment')
+            .then(function (data) {
+              state.diary.commentId = null;
+              applyDiary(data);
+            })
+            .catch(function (error) {
+              toast('没发出去：' + (error && error.message ? error.message : '未知原因'), 'error');
+              loadDiary();
+            });
+        }
+
+        if (el.chatJump) {
+          el.chatJump.addEventListener('click', function () {
+            chat.stickToBottom = true;
+            scrollChat();
+            updateChatJump();
+          });
+          el.chatLog.addEventListener('scroll', updateChatJump);
+        }
+
+        el.petDiaryBtn.addEventListener('click', function () {
+          if (state.diary.open) {
+            closeDiary();
+          } else {
+            openDiary();
+          }
+        });
+
+        el.diaryClose.addEventListener('click', closeDiary);
+
+        // =========================================================
+        // 观察范围
+        // =========================================================
+
+        /**
+         * 探测当前 chat 的会话。页面不在任何对话里时返回 null。
+         * @returns {Promise<string | null>}
+         */
+        function probeSession() {
+          var agent = window.mcode && window.mcode.miniapp ? window.mcode.miniapp.agent : null;
+          if (!agent || typeof agent.session !== 'function') return Promise.resolve(null);
+          return Promise.resolve()
+            .then(function () {
+              return agent.session();
+            })
+            .then(function (info) {
+              return info && typeof info.sessionId === 'string' ? info.sessionId : null;
+            })
+            .catch(function () {
+              return null;
+            });
+        }
+
+        function renderScopeNote() {
+          if (currentSessionId) {
+            el.scopeNote.textContent =
+              '当前会话：' + currentSessionId.slice(0, 16) + '… · 观察范围：' +
+              (SCOPE_LABEL[state.scope] || state.scope);
+          } else {
+            el.scopeNote.textContent =
+              '当前不在任何对话里 · 观察范围：' + (SCOPE_LABEL[state.scope] || state.scope);
+          }
+        }
+
+        /**
+         * 探测并按需上报当前会话。
+         * @param {boolean} force 强制上报（用户主动切换时）
+         * @returns {Promise<void>}
+         */
+        function syncScope(force) {
+          return probeSession().then(function (sid) {
+            currentSessionId = sid;
+            renderScopeNote();
+            // 只有「跟随当前会话」模式才需要把会话报给 Node：
+            // global 模式的观察目标是 all:true，报了也用不上，还会白白重启订阅。
+            if (state.scope !== 'current') return undefined;
+            if (!force && sid === reportedSessionId) return undefined;
+            reportedSessionId = sid;
+            return post('/api/scope', { mode: 'current', sessionId: sid }).catch(function () {
+              /* 宿主还没激活就下次再报 */
+            });
+          });
+        }
+
+        // =========================================================
+        // 启动：先让她活过来，再挂事件
+        //
+        // 顺序有讲究：渲染和 SSE 订阅排在事件绑定之前。
+        // 否则任何一个事件绑定写错（比如引用了一个不存在的元素），
+        // 就会把后面整段代码打断——页面看起来正常，却一条消息都收不到。
+        // =========================================================
+        refresh().then(loadChat).then(loadDiary).then(function () {
+          return syncScope(false);
+        });
+
+        // 看板里的运行时长要自己走。节拍放成 5 秒：分钟粒度的文案
+        // 平时根本不变，页面不会一直重绘。
+        setInterval(function () {
+          var running = (state.board && state.board.running) || [];
+          if (running.length) renderBoard(state.board);
+        }, 5000);
+
+        // 当前会话会随用户切换聊天而变，定期探测一次。
+        setInterval(function () {
+          syncScope(false);
+        }, 30000);
+
+        try {
+          var events = new EventSource('/api/events');
+          events.addEventListener('state', function (event) {
+            try {
+              render(JSON.parse(event.data));
+            } catch (error) {
+              /* 忽略坏帧 */
+            }
+          });
+          events.addEventListener('chat', function (event) {
+            try {
+              handleChatEvent(JSON.parse(event.data));
+            } catch (error) {
+              /* 忽略坏帧 */
+            }
+          });
+          events.addEventListener('open', function () {
+            // 断线重连后 missed events 不会补发，必须自己拉一次全量。
+            loadChat();
+            loadDiary();
+          });
+        } catch (error) {
+          setInterval(refresh, 3000);
+        }
+
+        // =========================================================
+        // 交互
+        // =========================================================
+
+        // =========================================================
+        // 右键菜单：浮窗里唯一的出口
+        // =========================================================
+
+        /**
+         * 打开右键菜单。位置跟着鼠标走，但要留在窗口里面 ——
+         * 浮窗只有 220×460，出界就点不到了。
+         * @param {number} x
+         * @param {number} y
+         */
+        function openPetMenu(x, y) {
+          el.petMenu.setAttribute('data-open', 'true');
+          menuOpen = true;
+          petMenuOpenedAt = Date.now();
+          // ⚠️ 菜单开着就**强制保持可交互**。
+          // 指针从她身上移到菜单按钮上时，「指针在她身上」已经是 false 了 ——
+          // 如果按那个判断，穿透会重新打开，**菜单就点不动**（老板实测的现象）。
+          refreshInteractivity();
+          console.info('[mmx] pet_menu_open: ' + Math.round(x) + ',' + Math.round(y));
+          var w = el.petMenu.offsetWidth || 96;
+          var h = el.petMenu.offsetHeight || 32;
+          var vw = window.innerWidth || 220;
+          var vh = window.innerHeight || 460;
+          var pad = 6;
+          var left = Math.max(pad, Math.min(x, vw - w - pad));
+          var top = Math.max(pad, Math.min(y, vh - h - pad));
+          el.petMenu.style.left = left + 'px';
+          el.petMenu.style.top = top + 'px';
+        }
+
+        function closePetMenu(reason) {
+          if (!menuOpen) return;
+          el.petMenu.setAttribute('data-open', 'false');
+          menuOpen = false;
+          // **留痕**：菜单为什么关的。浮窗形态下 toast 看不见，
+          // 「菜单刚弹出就被秒关」这种问题没有日志就永远查不出来。
+          console.info('[mmx] pet_menu_close: ' + (reason || 'unknown'));
+          // 菜单关了 → 重新按「指针在哪」判断要不要恢复穿透。
+          refreshInteractivity();
+        }
+
+        /** 收回面板：浮窗回到 FilePanel。 */
+        function backToPanel() {
+          if (!windowHandle || !windowHandle.update) return;
+          closePetMenu();
+          windowHandle.update({ mode: 'inline' }).catch(function (error) {
+            toast('收回失败：' + (error && error.message ? error.message : '未知原因'), 'error');
+          });
+        }
+
+        // 只有浮窗形态才需要右键菜单：面板里那个按钮条还在。
+        document.addEventListener('contextmenu', function (event) {
+          if (mode !== 'window') return;
+          event.preventDefault();
+          openPetMenu(event.clientX, event.clientY);
+        });
+
+        // 点菜单外面就收起来。
+        // ⚠️ 只认**左键** mousedown：右键自己也会产生 click，
+        // 用 click 关闭的话菜单刚弹出就被自己关掉了。
+        document.addEventListener('mousedown', function (event) {
+          if (mode !== 'window') return;
+          if (event.button !== 0) return;
+          if (Date.now() - petMenuOpenedAt < 400) return; // 刚弹出的，别被同一个手势关掉
+          if (!el.petMenu.contains(event.target)) closePetMenu('mousedown-outside');
+        });
+
+        el.petMenuBack.addEventListener('click', backToPanel);
+
+        // 设置的展开/收起。用显式按钮而不是 <details>：
+        // <details> 的 summary 在宿主的 webview 里点击落点不稳，
+        // 而且和聊天面板的交互模型不统一。
+        el.settingsToggle.addEventListener('click', function () {
+          var open = el.settings.getAttribute('data-open') === 'true';
+          el.settings.setAttribute('data-open', open ? 'false' : 'true');
+          el.settingsBody.hidden = open;
+          el.settingsToggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+        });
+
+        // 称呼：设置区保存 + 首启询问（老板 2026-10-28 拍板）
+        el.namingSave.addEventListener('click', function () {
+          saveNaming(el.namingHer.value, el.namingUser.value, false);
+        });
+        // 用户一动手就标「这一格正在改」—— 快照回灌时跳过它。
+        // （真机踩到的坑：填完名字切到称呼框，焦点一走，下一次快照把名字冲回旧值，
+        //   一点保存就把旧名字写回去，看着像「保存了但没生效」。）
+        el.namingHer.addEventListener('input', function () {
+          state.namingDirty.her = true;
+        });
+        el.namingUser.addEventListener('input', function () {
+          state.namingDirty.user = true;
+        });
+        el.namingAskSave.addEventListener('click', function () {
+          saveNaming(el.namingAskHer.value, el.namingAskUser.value, true);
+        });
+        // 「先跳过」= 不想给称呼 —— 存成默认名 + 空称呼，
+        // 这样 configured=true，首启卡片不再弹，但她以后还能在设置里补上。
+        el.namingAskSkip.addEventListener('click', function () {
+          saveNaming(el.namingAskHer.value || '', '', true);
+        });
+
+        document.getElementById('chat-reset').addEventListener('click', function () {
+          post('/api/chat/reset')
+            .then(function () {
+              chat.messages = [];
+              chat.pending = null;
+              renderChat();
+              toast('对话已清空');
+            })
+            .catch(function (error) {
+              toast('清空失败：' + error.message, 'error');
+            });
+        });
+
+        el.chatCards.addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-decision]');
+          if (button) {
+            var requestId = chat.pending ? chat.pending.requestId : null;
+            if (!requestId) return;
+            button.disabled = true;
+            post('/api/chat/permission', {
+              requestId: requestId,
+              decision: button.getAttribute('data-decision')
+            })
+              .then(function () {
+                chat.pending = null;
+                renderCards();
+                renderChatStatus();
+              })
+              .catch(function (error) {
+                button.disabled = false;
+                toast('没能答复：' + error.message, 'error');
+                if (error.message === 'NOT_FOUND') {
+                  chat.pending = null;
+                  renderCards();
+                }
+              });
+            return;
+          }
+        });
+
+        el.chatForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          var text = el.chatInput.value.trim();
+          if (!text) return;
+          el.chatInput.value = '';
+          el.chatSend.disabled = true;
+          // ① 立刻上墙：她的回复要跑一次 Agent（可能几十秒），
+          //    用户得马上看见自己的话发出去了，不然会以为没点上。
+          chat.stickToBottom = true;
+          var local = {
+            id: 'local-' + Date.now(),
+            role: 'user',
+            text: text,
+            at: Date.now(),
+            state: 'pending',
+            stateLabel: '发送中…'
+          };
+          chat.sending = local;
+          chat.messages.push(local);
+          var emptyBox = el.chatLog.querySelector('.chat-empty');
+          if (emptyBox) el.chatLog.removeChild(emptyBox);
+          appendChatMessage(local);
+          post('/api/chat', { text: text })
+            .then(function (data) {
+              if (data.snapshot) render(data.snapshot);
+              if (data.message) upsertMessage(data.message);
+              chat.busy = true;
+              renderChatStatus();
+            })
+            .catch(function (error) {
+              el.chatSend.disabled = false;
+              markSendingFailed();
+              toast('没送出去：' + error.message, 'error');
+            });
+        });
+
+        /**
+         * 送不出去：把那条「发送中」标红（消息**留在聊天区** —— 微信也是留着让你重发的）。
+         */
+        function markSendingFailed() {
+          var local = chat.sending;
+          if (!local) return;
+          chat.sending = null;
+          var node = findMessageEl(local.id);
+          if (!node) return;
+          node.setAttribute('data-state', 'failed');
+          var state = node.querySelector('.msg-state');
+          if (state) {
+            state.setAttribute('data-state', 'failed');
+            state.textContent = '发送失败';
+          }
+        }
+
+        function sendPetSay() {
+          var text = el.petSayInput.value.trim();
+          if (!text) return;
+          post('/api/say', { text: text })
+            .then(function (data) {
+              el.petSayInput.value = '';
+              if (data.snapshot) render(data.snapshot);
+            })
+            .catch(function (error) {
+              toast('发送失败：' + error.message, 'error');
+            });
+        }
+
+        document.getElementById('pet-say-send').addEventListener('click', sendPetSay);
+        el.petSayInput.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            sendPetSay();
+          }
+        });
+
+        document.getElementById('btn-float').addEventListener('click', function () {
+          if (!windowHandle || !windowHandle.update) {
+            toast('当前宿主不支持浮窗，只能在面板里用', 'error');
+            return;
+          }
+          windowHandle
+            .update({ mode: 'window', width: 220, height: 460, alwaysOnTop: true, clickThrough: true })
+            .then(function () {
+              toast('已浮到桌面：右键点她可以收回面板');
+            })
+            .catch(function (error) {
+              toast('浮出失败：' + (error && error.message ? error.message : '未知原因'), 'error');
+            });
+        });
+
+        document.getElementById('mood-group').addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-mood]');
+          if (!button) return;
+          var mood = button.getAttribute('data-mood');
+          post('/api/mood', { mood: mood })
+            .then(function (data) {
+              render(data.snapshot);
+              toast('她切到「' + (MOOD_LABEL[mood] || mood) + '」');
+            })
+            .catch(function (error) {
+              toast('切换失败：' + error.message, 'error');
+            });
+        });
+
+        document.getElementById('anchor-group').addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-anchor]');
+          if (!button) return;
+          var anchor = button.getAttribute('data-anchor');
+          post('/api/move', { target: anchor })
+            .then(function (data) {
+              render(data.snapshot);
+              if (mode !== 'window') toast('已记下位置，先浮到桌面才会生效');
+            })
+            .catch(function (error) {
+              toast('移动失败：' + error.message, 'error');
+            });
+        });
+
+        document.getElementById('scope-group').addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-scope]');
+          if (!button) return;
+          var next = button.getAttribute('data-scope');
+          if (next === state.scope) return;
+          probeSession().then(function (sid) {
+            currentSessionId = sid;
+            reportedSessionId = sid;
+            return post('/api/scope', { mode: next, sessionId: sid });
+          })
+            .then(function (data) {
+              if (data.snapshot) render(data.snapshot);
+              renderScopeNote();
+              toast('观察范围：' + (SCOPE_LABEL[next] || next));
+            })
+            .catch(function (error) {
+              toast('切换失败：' + error.message, 'error');
+            });
+        });
+
+        // =========================================================
+        // 窗口相关
+        // =========================================================
+
+        /**
+         * 把浮窗挪到指定角落。
+         * @param {string} target
+         * @param {number} at
+         */
+        function applyAnchor(target, at) {
+          if (!windowHandle || !windowHandle.update) return;
+          var w = window.outerWidth || 220;
+          var h = window.outerHeight || 460;
+          var sw = screen.availWidth || 1920;
+          var sh = screen.availHeight || 1080;
+          var gap = 16;
+          var x = gap;
+          var y = gap;
+          if (target === 'bottom-right') {
+            x = sw - w - gap;
+            y = sh - h - gap;
+          } else if (target === 'bottom-left') {
+            x = gap;
+            y = sh - h - gap;
+          } else if (target === 'top-right') {
+            x = sw - w - gap;
+            y = gap;
+          } else {
+            x = Math.round((sw - w) / 2);
+            y = Math.round((sh - h) / 2);
+          }
+          windowHandle
+            .update({ x: x, y: y })
+            .then(function () {
+              return post('/api/position', { x: x, y: y });
+            })
+            .then(function () {
+              return post('/api/move-done', { at: at });
+            })
+            .catch(function (error) {
+              // ⚠️ 失败也要**留痕**到窗口状态里 —— 光 toast 的话，
+              // 浮窗形态下根本看不见（面板在另一个窗口），
+              // 结果就是「我让她挪，她没挪，但没人知道为什么」。
+              recordWindowError('update(anchor=' + target + ')', error);
+              reportWindowState();
+              toast('挪动失败：' + (error && error.message ? error.message : '未知原因'), 'error');
+            });
+        }
+
+        /**
+         * 指针是否落在「可交互区」（她的身体 / 她的脸 / 浮层）。
+         *
+         * 用**几何命中**（指针坐标 vs 元素矩形），不用事件目标 ——
+         * 穿透状态下的 mousemove 是转发来的，target 不可靠。
+         * @param {number} x
+         * @param {number} y
+         * @returns {boolean}
+         */
+        function overInteractive(x, y) {
+          var areas = [el.petFace, el.petFigure, el.petMenu];
+          for (var i = 0; i < areas.length; i++) {
+            var area = areas[i];
+            if (!area) continue;
+            var rect = area.getBoundingClientRect();
+            if (!rect.width || !rect.height) continue;
+            if (
+              x >= rect.left &&
+              x <= rect.right &&
+              y >= rect.top &&
+              y <= rect.bottom
+            ) {
+              return true;
+            }
+          }
+          return false;
+        }
+
+        /**
+         * 浮窗形态下，让章鱼娘看着鼠标。
+         * @param {MouseEvent} event
+         */
+        function trackPointer(event) {
+          if (mode !== 'window') return;
+          var rect = el.petFace.getBoundingClientRect();
+          if (!rect.width) return;
+          var cx = rect.left + rect.width / 2;
+          var cy = rect.top + rect.height / 2;
+          var dx = (event.clientX - cx) / Math.max(rect.width, 1);
+          var dy = (event.clientY - cy) / Math.max(rect.height, 1);
+          var yaw = Math.max(-14, Math.min(14, dx * 22));
+          var pitch = Math.max(-8, Math.min(8, dy * 12));
+          el.petFigure.style.setProperty(
+            '--pointer',
+            'rotateY(' + yaw.toFixed(1) + 'deg) rotateX(' + (-pitch).toFixed(1) + 'deg)'
+          );
+        }
+
+        /**
+         * 切换穿透。
+         *
+         * **语义照官方 minimax-pet**（`setClickThrough`）：
+         * ① 失败时把本地值置为 **null（未知）**，而不是记一个错值 ——
+         *    记错值会让下一轮 `value === clickThrough` 短路，**永远不再重试**，
+         *    浮窗就永久卡在穿透状态（点不到 / 右键没反应 / 拖不动）。
+         *    置 null + ctRetryAt = 下一轮就会重试。
+         * ② 失败要留痕（不静默吞）。
+         * ③ 开了穿透后开一个**转发看门狗**：1500ms 内没收到转发的 mousemove，
+         *    说明这个宿主收不到穿透时的鼠标移动 —— 那就**强制退回可交互**，
+         *    宁可挡一点桌面，也不能让她变成点不到的东西。
+         * @param {boolean} value true = 穿透
+         */
+        function setClickThrough(value) {
+          if (!windowHandle || !windowHandle.update) return;
+          // 看门狗已经判定转发不可用 / 正在强制保持可交互 → 不许再开穿透。
+          if (value && (ctForwarding === 'broken' || ctSafeHold)) value = false;
+          if (value === clickThrough) return;
+          // 上一轮刚失败过：等一会儿再重试（但不是无限期停住）。
+          if (clickThrough === null && Date.now() < ctRetryAt) return;
+          clickThrough = value;
+          windowState.clickThrough = value;
+          clearForwardingWatchdog();
+          ctAppliedAt = 0;
+          windowHandle.update({ clickThrough: value }).then(
+            function () {
+              if (!value || clickThrough !== true || mode !== 'window') return;
+              ctAppliedAt = Date.now();
+              if (ctForwarding === 'unknown') armForwardingWatchdog();
+            },
+            function (error) {
+              recordWindowError('update(clickThrough=' + value + ')', error);
+              if (mode === 'window') {
+                clickThrough = null; // 未知 → 下一轮会重试
+                windowState.clickThrough = null;
+                ctRetryAt = Date.now() + 1000;
+              }
+              reportWindowState();
+            }
+          );
+        }
+
+        /**
+         * 转发看门狗：开了穿透却收不到转发的 mousemove → 强制退回可交互。
+         */
+        function armForwardingWatchdog() {
+          clearForwardingWatchdog();
+          ctWatchdog = setTimeout(function () {
+            ctWatchdog = null;
+            if (mode !== 'window' || clickThrough !== true) return;
+            console.warn('[mmx] click_through_unverified_reverted');
+            ctSafeHold = true;
+            ctRevertedAt = Date.now();
+            ctRevertPointer = pointer ? { x: pointer.x, y: pointer.y } : null;
+            setClickThrough(false);
+          }, 1500);
+        }
+
+        function clearForwardingWatchdog() {
+          if (ctWatchdog) {
+            clearTimeout(ctWatchdog);
+            ctWatchdog = null;
+          }
+        }
+
+        /**
+         * 穿透时的 mousemove 有没有转发到页面？
+         * 第一次看到转发就标记为 verified（以后可以放心开穿透）。
+         */
+        function noteForwardedMove(event) {
+          if (
+            ctForwarding === 'unknown' &&
+            clickThrough === true &&
+            ctAppliedAt > 0 &&
+            event.timeStamp > ctAppliedAt
+          ) {
+            ctForwarding = 'verified';
+            clearForwardingWatchdog();
+            console.info('[mmx] click_through_forwarding_verified');
+          }
+          if (!ctSafeHold) return;
+          // 看门狗退回后，指针第一次真的动了 → 说明转发其实可用。
+          // 「动得又快又远」说明我们根本没收到之前的移动 → 转发不可用。
+          var p = ctRevertPointer;
+          var quick = Date.now() - ctRevertedAt < 150;
+          var far = p ? Math.hypot(event.clientX - p.x, event.clientY - p.y) > 8 : true;
+          ctSafeHold = false;
+          if (!(quick && far)) return;
+          ctForwarding = 'broken';
+          console.warn('[mmx] click_through_forwarding_unavailable');
+          recordWindowError(
+            'forwarding',
+            new Error('穿透时收不到鼠标移动，透明区域会挡住下面的点击')
+          );
+        }
+
+        /**
+         * 重新算「现在该不该可交互」。
+         *
+         * **可交互的理由是「或」**：菜单开着 / 正在拖 / 指针在她身上 —— 任何一条成立就保持可交互。
+         * 关键是**菜单开着时不能因为指针移开就重新穿透** ——
+         * 指针从她身上移到菜单按钮上，菜单那块的 `no-drag` 区域让事件能到，
+         * 但「指针在不在她身上」已经是 false 了 → 穿透被重新打开 → **菜单点不动**。
+         */
+        function refreshInteractivity() {
+          if (mode !== 'window' || !windowHandle) return;
+          var interactive =
+            menuOpen ||
+            dragging ||
+            (pointer ? overInteractive(pointer.x, pointer.y) : false);
+          setClickThrough(!interactive);
+        }
+
+        /**
+         * =========================================================
+         * 拖动（JS 手动拖，不靠 `-webkit-app-region: drag`）
+         * =========================================================
+         *
+         * **为什么不用 app-region**：官方 minimax-pet 也没用 ——
+         * ① app-region 的 drag 区在 Windows 上会被当成标题栏，右键会弹系统菜单；
+         * ② 更要命的是 **drag 区收不到鼠标事件**，浮窗又是点击穿透的，
+         *    「指针靠近 → 关穿透 → 再按下」中间有一个异步往返，
+         *    用户按早了这一次点击就丢了（体感就是「按了没反应，要按两下」）。
+         * 手动拖用 pointerdown/pointermove/pointerup + setPointerCapture，
+         * **自己算位移、自己调 update({x,y})**，不依赖窗口标题栏。
+         */
+
+        /**
+         * 把窗口位置夹回屏幕内，**至少留 40px 可见**。
+         *
+         * **为什么要有**：宿主对「窗口是否还在屏幕上」的判定比想象的宽松 ——
+         * 实测能把窗口拖到 y = -14（屏幕上方外面）而且宿主**接受**了，
+         * 结果就是桌宠被拖丢了、再也找不回来。
+         * 官方 minimax-pet 没做这层约束，我们做（这属于「抄结构」之外的改进）。
+         * @param {number} x
+         * @param {number} y
+         * @returns {{x: number, y: number}}
+         */
+        function clampToScreen(x, y) {
+          // 屏幕可用区在**虚拟桌面**里的位置（多屏时不一定从 0,0 开始）。
+          var left = Number(screen.availLeft) || 0;
+          var top = Number(screen.availTop) || 0;
+          var sw = screen.availWidth || 1920;
+          var sh = screen.availHeight || 1080;
+          var w = window.outerWidth || 220;
+          var h = window.outerHeight || 460;
+          // ⚠️ **窗口必须完整在屏内**（老板 2026-11-01 拍板 A 口径）。
+          // 旧口径是「至少留 40px 在屏内」—— 220×460 的浮窗能整截跑到屏幕外，
+          // 只剩一条 40px 的边（真机实测窗口卡在 x=2520，只露 40px 宽），
+          // 那等于把她弄丢了：看不见也点不着，跟这段代码自己的意图相悖。
+          var minX = left;
+          var maxX = left + sw - w;
+          var minY = top;
+          var maxY = top + sh - h;
+          // 屏幕比窗口还小的时候（极小屏）别让区间反过来。
+          if (maxX < minX) maxX = minX;
+          if (maxY < minY) maxY = minY;
+          return {
+            x: Math.round(Math.max(minX, Math.min(x, maxX))),
+            y: Math.round(Math.max(minY, Math.min(y, maxY))),
+          };
+        }
+
+        /**
+         * 按下：先记起点，等超过阈值才算拖（否则点一下也会被当成拖）。
+         * @param {PointerEvent} event
+         */
+        function onFigurePointerDown(event) {
+          if (mode !== 'window') return;
+          if (event.button !== 0) return;
+          if (!winPos) {
+            // 还没拿到窗口位置 → 先同步一次，别让第一次拖拽无效。
+            syncWindowState('drag-start');
+          }
+          dragState = {
+            pointerId: event.pointerId,
+            startX: event.screenX,
+            startY: event.screenY,
+            // 累加的位移。**优先用 movementX/Y** ——
+            // 它是「相对上一次事件的增量」，**不受窗口自身移动影响**。
+            // 用 screen 坐标差值算的话：拖到一半窗口已经挪走了，
+            // 后续事件的 screen 坐标参照系跟着变，位移会**越拖越离谱**
+            // （实测账本 y=-14、宿主真值 y=-164，差 150px）。
+            moveX: 0,
+            moveY: 0,
+            // **第二套测法**：screen 差值。它是绝对屏幕坐标参照系，
+            // 窗口被我们挪走后会漂 —— 平时不用它算位移，但**留着做旁证**：
+            // 真鼠标拖一次就能看出 movement 与 screen 哪个是真值。
+            screenX: 0,
+            screenY: 0,
+            // 光标起点（屏幕坐标）。用来算「光标相对窗口的偏移」——
+            // 那是**唯一独立于浏览器自己记账**的漂移判据：
+            // 鼠标位移是浏览器报给我们的话，宿主窗口坐标是我们读回来的事实，
+            // 两者相减才知道她到底有没有跟着鼠标走。
+            cursorStartX: event.screenX,
+            cursorStartY: event.screenY,
+            cursorX: event.screenX,
+            cursorY: event.screenY,
+            win: winPos ? { x: winPos.x, y: winPos.y } : null,
+            // 这次拖动有没有被夹住。夹住了就说明位移**不是**鼠标走了多少，
+            // 对账时必须把「被夹」标出来，否则误差会被误读成算法不准。
+            clamped: false,
+            active: false,
+          };
+          console.info(
+            '[mmx] pointer_down: screen=' + event.screenX + ',' + event.screenY +
+              ' client=' + event.clientX + ',' + event.clientY +
+              ' movement=' + event.movementX + ',' + event.movementY +
+              ' win=' + (dragState.win ? dragState.win.x + ',' + dragState.win.y : 'none')
+          );
+          try {
+            el.petFigure.setPointerCapture(event.pointerId);
+          } catch (error) {
+            console.warn('[mmx] pointer_capture_failed:', error);
+          }
+        }
+
+        /**
+         * 移动：超过阈值 → 进入拖拽态 → 持续改窗口坐标。
+         * @param {PointerEvent} event
+         */
+        function onFigurePointerMove(event) {
+          var d = dragState;
+          if (!d || event.pointerId !== d.pointerId) return;
+          // **两套测法都记**：
+          // ① movement 累加 —— 增量，天然不受「窗口被我们挪走」影响（实际在用）
+          // ② screen 差值 —— 绝对屏幕坐标参照系，**会**随窗口移动而漂（平时不用，只做旁证）
+          d.screenX = event.screenX - d.startX;
+          d.screenY = event.screenY - d.startY;
+          d.cursorX = event.screenX;
+          d.cursorY = event.screenY;
+          if (event.movementX || event.movementY) {
+            d.moveX += event.movementX;
+            d.moveY += event.movementY;
+          } else {
+            // 少数环境 movement 为 0 → 退化用 screen 差值
+            d.moveX = d.screenX;
+            d.moveY = d.screenY;
+          }
+          var dx = d.moveX;
+          var dy = d.moveY;
+          if (!d.active) {
+            if (Math.hypot(dx, dy) <= DRAG_THRESHOLD) return;
+            d.active = true;
+            dragging = true;
+            el.petFigure.classList.add('is-dragging');
+            // 拖拽期间**必须**保持可交互，否则鼠标一动窗口又穿透，拖到一半断了。
+            refreshInteractivity();
+            console.info(
+              '[mmx] drag_start: movement=' + dx + ',' + dy +
+                ' screen=' + d.screenX + ',' + d.screenY +
+                ' win=' + (d.win ? d.win.x + ',' + d.win.y : 'none')
+            );
+            if (!d.win) {
+              console.warn('[mmx] drag_without_window_position: 还没拿到窗口位置');
+            }
+          }
+          // **兜底**：鼠标已经松开（buttons=0）却还在收到 move →
+          // 说明 pointerup 丢了（自动化拖动就是这种）。
+          // 不收尾的话窗口会永远卡在「拖动中」：is-dragging 类不摘、
+          // 拖动态不复位 → 窗口永远可交互（一直挡着桌面）。
+          if (d.active && event.buttons === 0) {
+            console.warn('[mmx] pointer_up_lost: buttons=0 仍收到 move，按松手处理');
+            finishDrag(event, false);
+            return;
+          }
+          if (!d.win || !windowHandle) return;
+          var nx = Math.round(d.win.x + dx);
+          var ny = Math.round(d.win.y + dy);
+          var clamped = clampToScreen(nx, ny);
+          if (clamped.x !== nx || clamped.y !== ny) {
+            // 拖到屏幕外会被宿主接受（可见性判定比想象的宽松），
+            // 结果就是桌宠被拖丢、再也找不回来 —— 这里直接夹住。
+            nx = clamped.x;
+            ny = clamped.y;
+            d.clamped = true;
+          }
+          windowHandle.update({ x: nx, y: ny }).then(
+            function () {
+              winPos = { x: nx, y: ny };
+              windowState.x = nx;
+              windowState.y = ny;
+            },
+            function (error) {
+              // not_permitted = 目标位置不在任何屏幕上（拖到屏幕外了）。
+              recordWindowError('update(drag)', error);
+            }
+          );
+        }
+
+        /**
+         * 松手：结束拖拽，把最终坐标同步给 Node（存进 state.json，下次开机还在原地）。
+         * @param {PointerEvent} event
+         * @param {boolean} cancelled
+         */
+        function finishDrag(event, cancelled) {
+          var d = dragState;
+          if (!d || event.pointerId !== d.pointerId) return;
+          dragState = null;
+          try {
+            if (el.petFigure.hasPointerCapture(event.pointerId)) {
+              el.petFigure.releasePointerCapture(event.pointerId);
+            }
+          } catch (error) {
+            console.warn('[mmx] pointer_release_failed:', error);
+          }
+          el.petFigure.classList.remove('is-dragging');
+          if (d.active) {
+            dragging = false;
+            if (!cancelled && winPos) {
+              post('/api/position', { x: winPos.x, y: winPos.y }).catch(function () {});
+              // 被拖动 ⇒ 走静态台词库那组「被拖动」。
+              reportReact('drag');
+            }
+            // 拖完先等宿主把**真实坐标**回报回来，再对账。
+            // 不用我们自己的账本 —— 账本是我们写的，宿主说没动就是没动。
+            syncWindowState('after-drag').then(function () {
+              lastDragReport = buildDragReport(d);
+              console.info('[mmx] drag_end: ' + JSON.stringify(lastDragReport));
+              reportWindowState();
+            });
+          } else {
+            console.info('[mmx] drag_end: 没超过阈值，只是点了一下');
+          }
+          refreshInteractivity();
+        }
+
+        /**
+         * 算出这次拖动的对账结果。
+         *
+         * mouse = 鼠标走了多少（movementX/Y 累加）
+         * host  = 窗口实际走了多少（宿主真坐标 − 拖动起点真坐标）
+         * error = host − mouse（差得多就说明位移算法有偏差）
+         *
+         * @param {{moveX: number, moveY: number, win: {x: number, y: number} | null, clamped: boolean}} d
+         * @returns {{mouse: {x: number, y: number}, host: ({x: number, y: number} | null), error: ({x: number, y: number} | null), clamped: boolean, at: number}}
+         */
+        function buildDragReport(d) {
+          var mouse = { x: Math.round(d.moveX), y: Math.round(d.moveY) };
+          var screen = { x: Math.round(d.screenX || 0), y: Math.round(d.screenY || 0) };
+          if (!d.win || !winPos) {
+            // 拿不到起点 → 没法对账，如实说「没起点」，别假装算得出。
+            return {
+              mouse: mouse,
+              screen: screen,
+              host: null,
+              error: null,
+              clamped: !!d.clamped,
+              at: Date.now(),
+            };
+          }
+          var host = { x: winPos.x - d.win.x, y: winPos.y - d.win.y };
+          // **独立漂移判据**：光标相对窗口的偏移，起点 vs 现在。
+          // 拖对了 → 偏移不变（她一直待在鼠标下面）；
+          // 漂了 → 偏移变了（她越拖越跑偏，历史上的 150px 就是这么来的）。
+          // 这条**不依赖浏览器自己报的 movement**，用的是宿主读回来的窗口真坐标。
+          var offset = {
+            x: d.cursorX - winPos.x - (d.cursorStartX - d.win.x),
+            y: d.cursorY - winPos.y - (d.cursorStartY - d.win.y),
+          };
+          return {
+            mouse: mouse,
+            screen: screen,
+            host: host,
+            error: { x: host.x - mouse.x, y: host.y - mouse.y },
+            offset: offset,
+            clamped: !!d.clamped,
+            at: Date.now(),
+          };
+        }
+
+        /**
+         * =========================================================
+         * 宿主窗口操作失败**必须留痕**。
+         * 原来这里是空的 `.catch(function () {})` —— 宿主拒绝时就变成一个
+         * 永远查不出来的灵异现象（「点哪儿都没反应」就是这么查不出来的）。
+         * @param {string} where
+         * @param {any} error
+         */
+        function recordWindowError(where, error) {
+          var msg = error && error.message ? error.message : String(error || 'unknown');
+          windowState.lastError = where + ': ' + msg;
+          console.error('[mmx] window ' + where + ' failed: ' + msg);
+        }
+
+        /**
+         * 把窗口状态报给 Node —— 浮窗的问题只发生在宿主窗口层，
+         * Node 侧看不到，这是唯一的观测口。
+         */
+        function reportWindowState() {
+          if (!windowState.updatedAt) return;
+          post('/api/window-state', {
+            mode: windowState.mode,
+            clickThrough: windowState.clickThrough,
+            lastError: windowState.lastError,
+            x: winPos ? winPos.x : null,
+            y: winPos ? winPos.y : null,
+            // 最近一次拖动的对账结果 —— 没有就不带这个键。
+            drag: lastDragReport,
+          }).catch(function (error) {
+            // 上报失败不影响主流程，但**必须留痕**。
+            // ⚠️ 这里只能 console.error，不能再调 recordWindowError ——
+            // 那会走 reportWindowState → 又失败 → 又 recordWindowError，死循环。
+            console.error(
+              '[mmx] window-state 上报失败: ' +
+                (error && error.message ? error.message : String(error))
+            );
+          });
+        }
+
+        /**
+         * 用宿主回报的真值校准本地状态。
+         * 宿主是唯一权威 —— 本地变量只做缓存。
+         * 切模式后立刻调一次，之后每秒轮询一次：宿主「把 WebContents 搬去
+         * 新窗口」不会重新加载页面，所以只在加载时读一次 getState() 是**不够的**
+         * （读到的还是面板态），mode 会一直停在 inline。
+         * @param {string} [reason]
+         * @returns {Promise<any>}
+         */
+        function syncWindowState(reason) {
+          if (!windowHandle || !windowHandle.getState) return Promise.resolve(null);
+          return windowHandle
+            .getState()
+            .then(function (info) {
+              var next = info && info.mode === 'window' ? 'window' : 'inline';
+              var hostClickThrough = info && info.window ? !!info.window.clickThrough : null;
+              applyMode(next);
+              if (info && info.window) {
+                // 记住窗口位置 —— 拖动要用它算增量。
+                var moved =
+                  !winPos || winPos.x !== info.window.x || winPos.y !== info.window.y;
+                winPos = { x: info.window.x, y: info.window.y };
+                windowState.x = info.window.x;
+                windowState.y = info.window.y;
+                if (dragState && dragState.active) {
+                  // 拖动过程中就把对账结果算出来 ——
+                  // 这样**即使 pointerup 丢了**（自动化拖动就是这种：它只发 down+move，
+                  // 不发 up）也照样有读数；真鼠标拖的时候还能看到实时误差。
+                  lastDragReport = buildDragReport(dragState);
+                }
+                // **位置没变就别刷日志** —— 轮询每秒一次，不收口的话
+                // console 缓冲（200 条）三分钟就冲没了，
+                // 而 console 是浮窗问题**唯一的现场**。
+                if (moved) {
+                  lastStateLogKey = 'window:' + info.window.x + ',' + info.window.y;
+                  console.info(
+                    '[mmx] getState window: x=' +
+                      info.window.x +
+                      ' y=' +
+                      info.window.y +
+                      ' keys=' +
+                      Object.keys(info.window).join(',')
+                  );
+                }
+              } else if (lastStateLogKey !== 'inline') {
+                lastStateLogKey = 'inline';
+                console.info('[mmx] getState 无 window 字段: ' + JSON.stringify(info));
+              }
+              if (hostClickThrough !== null && hostClickThrough !== clickThrough) {
+                // 本地与宿主不一致（多半是上一次 update 被拒）—— 以宿主为准。
+                clickThrough = hostClickThrough;
+              }
+              windowState.mode = next;
+              windowState.clickThrough = clickThrough;
+              windowState.updatedAt = Date.now();
+              windowState.lastError = '';
+              reportWindowState();
+              return info;
+            })
+            .catch(function (error) {
+              recordWindowError('getState' + (reason ? '(' + reason + ')' : ''), error);
+              reportWindowState();
+              return null;
+            });
+        }
+
+        /**
+         * 窗口状态轮询。只在浮窗形态下、或刚切过模式的几秒内跑，
+         * 免得面板形态白问宿主。
+         */
+        function ensureWindowStatePolling() {
+          if (windowStateTimer) return;
+          windowStateTimer = setInterval(function () {
+            var recentlySwitched = Date.now() - lastModeSwitchAt < 10000;
+            if (mode !== 'window' && !recentlySwitched) return;
+            syncWindowState('poll');
+          }, 1000);
+        }
+
+        function applyMode(next) {
+          var previous = mode;
+          mode = next;
+          el.body.setAttribute('data-mode', next);
+          // 形态变了 ⇒ 形象盒尺寸变了（面板 164px / 浮窗 120px）⇒ 视频几何必须重算。
+          // 不重算的话画布还按旧尺寸摆，主体会高出形象盒、压住上面的 UI。
+          segFit();
+          // 聊天只在面板里常驻展开，浮窗形态下它是隐藏的。
+          el.chat.setAttribute('data-open', next === 'inline' ? 'true' : 'false');
+          if (next === 'window') {
+            // ⚠️ 只有「刚切进浮窗」才处理穿透。
+            // 宿主的 onDidChangeState 在每次 clickThrough 变化时都会来一次，
+            // 无条件重置会跟 refreshInteractivity 打架（指针一移就被改回去）。
+            if (previous !== 'window') {
+              lastModeSwitchAt = Date.now();
+              // **安全默认值**：转发能力还没验证过之前，**先保持可交互**。
+              // 宁可浮窗暂时挡一点桌面，也不能让她「浮上来却点不到、拖不动」。
+              // （官方 minimax-pet 同一条：ctForwarding !== 'verified' 时
+              //   setClickThrough(false)。）
+              clickThrough = null; // 未知 → 强制走一次 update
+              windowState.clickThrough = null;
+              setClickThrough(false);
+              syncWindowState('entered-window');
+            }
+          } else {
+            // 回面板了才收菜单 —— 浮窗形态下宿主的状态事件很频繁，
+            // 收早了菜单刚弹出就被关掉。
+            closePetMenu();
+            pointer = null;
+            dragging = false;
+            clearForwardingWatchdog();
+            ctSafeHold = false;
+          }
+        }
+
+        document.addEventListener('mousemove', function (event) {
+          if (mode !== 'window') return;
+          noteForwardedMove(event);
+          pointer = { x: event.clientX, y: event.clientY };
+          trackPointer(event);
+          refreshInteractivity();
+        });
+
+        if (windowHandle) {
+          // ⚠️ 不能只在加载时读一次 getState()：宿主「把 WebContents 搬到
+          // 新窗口」不会重新加载页面，那时读到的还是面板态 → mode 永远停在
+          // inline → 穿透关不掉、拖拽区不启用、右键菜单直接 return。
+          // 所以：进来就读一次、切模式时读一次、之后每秒校准一次。
+          syncWindowState('init');
+          ensureWindowStatePolling();
+          if (windowHandle.onDidChangeState) {
+            windowHandle.onDidChangeState(function () {
+              syncWindowState('changed');
+            });
+          }
+        }
+
+        // =========================================================
+        // 片段层启动 + 点她（点击回应）
+        // =========================================================
+        //
+        // **监听器要排在拖动之前**：finishDrag 一上来就把 dragState 清成 null，
+        // 排在后面的话，拖拽结束时 dragState.active 已经没了 ⇒ 拖一下也会被当成点。
+        segStart();
+        el.petFigure.addEventListener('pointerdown', onFigureTapDown);
+        el.petFigure.addEventListener('pointerup', onFigureTapUp);
+        el.petFigure.addEventListener('pointercancel', function () { tapState = null; });
+
+        // =========================================================
+        // 拖动事件（浮窗形态）
+        // =========================================================
+        // 挂在 .pet-figure 上而不是 body：面板形态下她只是一张图，不该被拖。
+        // pointerdown 落在她身上 → 超过阈值才算拖 → 调 update({x,y})。
+        el.petFigure.addEventListener('pointerdown', onFigurePointerDown);
+        el.petFigure.addEventListener('pointermove', onFigurePointerMove);
+        el.petFigure.addEventListener('pointerup', function (event) {
+          finishDrag(event, false);
+        });
+        el.petFigure.addEventListener('pointercancel', function (event) {
+          finishDrag(event, true);
+        });
+        // **兜底**：万一 pointerup 没落到她身上（capture 丢了 / 焦点丢了 /
+        // 自动化只发 down+move 不发 up），挂在 window 上也能收尾 ——
+        // 不收尾的话窗口会永远卡在「拖动中」：is-dragging 类不摘、
+        // 拖动态不复位 → 窗口永远可交互（一直挡着桌面）。
+        window.addEventListener('pointerup', function (event) {
+          finishDrag(event, false);
+        });
+        window.addEventListener('pointercancel', function (event) {
+          finishDrag(event, true);
+        });
+        el.petFigure.addEventListener('lostpointercapture', function (event) {
+          // capture 丢了 = 这一轮已经结束了，别再等 pointerup
+          finishDrag(event, true);
+        });
+
+        // =========================================================
+        // 状态读取
+        // =========================================================
+
+        function refresh() {
+          return fetch('/api/state')
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (snapshot) {
+              render(snapshot);
+              renderScopeNote();
+            })
+            .catch(function () {
+              toast('读取状态失败', 'error');
+            });
+        }
+      })();
+    </script>
+  </body>
+</html>

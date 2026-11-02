@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "mmx": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/mmx",
+      "headers": {},
+      "description": "控制用户桌面上的 MMX 章鱼娘浮窗：mmx_say 让她弹气泡说话（适合任务完成通知），mmx_mood 切换表情（idle/ thinking/ working/ celebrate），mmx_move 把浮窗挪到屏幕四角，mmx_status 读取她当前的表情、气泡与 MMX Agent 的运行状态。",
+      "timeout": 30000
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "mmx-octopus",
+  "displayName": "MMX 章鱼娘",
+  "version": "1.1.0",
+  "description": "桌面上的 MMX 章鱼娘 —— MMX Agent 的可视化身体，也是你自己的专属聊天对象。她会反映 Agent 正在思考还是正在干活，还能被 Agent 和技能通过托管 MCP 直接指挥说话、换表情、挪位置。权限说明：本插件会读取你每个对话每轮的最终回复、标题与运行状态，用来判断 Agent 正在思考还是已经完成，并在你主动问她时用她自己的固定会话跑一轮 Agent，把回答直接说出来；她的对话历史只存在本机。",
+  "author": "antianqi",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "跟章鱼娘聊两句",
+    "让章鱼娘说句话",
+    "把章鱼娘浮到桌面右下角",
+    "看看章鱼娘现在什么状态"
+  ],
+  "apps": [],
+  "mcpServers": ["servers.mcp.json"],
+  "skills": []
+}
