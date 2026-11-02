@@ -68,6 +68,8 @@ import { assembleChatInput, buildCarryOver, SHORT_USER_MAX } from './chatinput.m
 //   预告句（「我去把 X 的代码翻出来」）/ 纯路径句 / 纯校验味句 ⇒ 去掉。
 // ⚠️ **只擦工作日志味，不擦「她懂很多」** —— 老板口径：她知道更多梗才更有真实感。
 import { scrubText, pickFinalText } from './scrub.mjs';
+// ⚠️ **归属判据的唯一真源**（PR #101 Must fix 2）—— 只往自己拥有的目录写身份层。
+import { ownsPluginDir } from './ownership.mjs';
 import {
   shouldLoadStory,
   buildStoryBlock,
@@ -744,7 +746,7 @@ export async function start(context, options = {}) {
         lastIdleAt: idleHistory.length ? idleHistory[idleHistory.length - 1] : 0,
         idleTimestamps: idleHistory,
         busy: state.chatBusy,
-      });
+      }, { enabled: state.idleTalk !== false });
       if (!verdict.ok) return;
 
       // ⚠️ **先判静态**：久没人碰她 ⇒ 用静态台词库那 3 条（idle 通道），不走模型。
@@ -1134,6 +1136,26 @@ export async function start(context, options = {}) {
           await syncAgentDisplayName({ context, state }, naming.herName);
           broadcastChat({ type: 'naming', naming });
           sendJson(response, 200, { ok: true, naming, snapshot: state.snapshot() });
+          return;
+        }
+
+        // ===== 闲话开关（PR #101 Must fix 3）=====
+        // 她没人的时候要不要自己开口（**模型闲话** —— 会烧你的模型额度）。
+        // ⚠️ **只管模型闲话**：时段问候 / 久没人碰 / 刚冷落 那几句是静态台词，
+        //   不走模型 ⇒ 关掉这个开关它们照旧（不花额度）。
+        if (path === '/api/idletalk') {
+          const enabled = body.enabled === true || body.enabled === 'true';
+          const idleTalk = await state.setIdleTalk(enabled);
+          sendJson(response, 200, { ok: true, idleTalk, snapshot: state.snapshot() });
+          return;
+        }
+
+        // ===== 「她知道我在忙什么」（PR #101 Must fix 4）=====
+        // 开着的时候，你**其它会话**的标题与运行状态会进她的提示词。
+        if (path === '/api/petaware') {
+          const enabled = body.enabled === true || body.enabled === 'true';
+          const petAware = await state.setPetAware(enabled);
+          sendJson(response, 200, { ok: true, petAware, snapshot: state.snapshot() });
           return;
         }
 
@@ -1631,6 +1653,16 @@ export async function start(context, options = {}) {
       const detail = await context.agent.session(sessionId);
       const dir = String(detail?.workspaceDir ?? '');
       if (!dir) return false;
+      // ⚠️ **只写自己拥有的工作区**（PR #101 Must fix 2）：
+      //   review 原文 —— 「write only under a path this package owns ... and
+      //   otherwise use the in-message fallback you already have」。
+      //   工作区不是 miniapps/<pluginId> ⇒ 它可能是**用户的真实项目目录**，
+      //   写进去会把用户自己的 AGENTS.md **每轮静默覆盖**。
+      if (!ownsPluginDir(dir, String(context.pluginId || ''))) {
+        await state.setIdentityFileReady(false);
+        context.logger.info('miniapp.agent.identity.skipped', { reason: 'not_owned' });
+        return false;
+      }
       const target = join(dir, 'AGENTS.md');
       const template = await readFile(
         join(context.pluginRoot, 'miniapp', 'node', 'identity', 'AGENTS.md'),

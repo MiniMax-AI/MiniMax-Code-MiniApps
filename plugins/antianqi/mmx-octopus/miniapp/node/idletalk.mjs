@@ -47,7 +47,12 @@ export const IDLE_DEFAULTS = {
   tickMs: 60 * 1000,
 };
 
-/** 总开关：不想让她主动开口时，把这里改成 false 就全停（一个数，好回滚）。 */
+/**
+ * 总开关：不想让她主动开口时，把这里改成 false 就全停（一个数，好回滚）。
+ *
+ * ⚠️ **用户开关另算**（PR #101 Must fix 3）—— 运行期由用户在面板里关
+ *   （`state.idleTalk` ⇒ 传给 `shouldSpeakIdle` 的 `options.enabled`）。
+ */
 export const IDLE_TALK_ENABLED = true;
 
 /**
@@ -78,7 +83,8 @@ export function shouldSpeakIdle(input, options = {}) {
     rand = Math.random,
   } = input ?? {};
 
-  if (!IDLE_TALK_ENABLED) return { ok: false, reason: 'disabled' };
+  // ⚠️ **两个开关**：编译期的总开关 + 运行期的用户开关（PR #101 Must fix 3）。
+  if (!IDLE_TALK_ENABLED || cfg.enabled === false) return { ok: false, reason: 'disabled' };
   if (busy) return { ok: false, reason: 'busy' };
   if (!lastUserAt) return { ok: false, reason: 'no_user_yet' };
 

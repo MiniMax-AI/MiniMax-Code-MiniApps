@@ -25,8 +25,9 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { writeTextAtomic } from './atomic-json.mjs';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
+import { join } from 'node:path';
+// ⚠️ **归属判据的唯一真源**（PR #101 Must fix 1）—— 显示名只写「装了本插件的那个 agent」。
+import { agentDirFromWorkspace, ownsAgentDir, agentsRootFromDataDir } from './ownership.mjs';
 
 /** 換行符 —— 源碼裡不寫轉義序列，免得換個地方就對不上。 */
 const NL = String.fromCharCode(10);
@@ -145,28 +146,26 @@ export async function applyDisplayName(file, herName) {
 }
 
 /**
- * 從「她的會話工作區」上溯，找出她真正在用的那個 agent 文件。
+ * 從「她的會話工作區」找出**她真正在用的那个 agent 文件**。
  *
- * 宿主給的 agent 工作區形如 `<agents>/<agent>/miniapps/<pluginId>`，
- * 所以 agent.md 在**上溯兩級**的地方。上溯而不是寫死路徑 ——
- * 寫死路徑換個 agent 名或换个插件 id 就指空了。
- *
- * ⚠️ **上溯最多 6 級且必須真的存在 agent.md** —— 不然會指到無關的目錄。
+ * ⚠️ **只認一种形状，且要归属证明**（PR #101 Must fix 1）：
+ *   review 原文 —— 「write only when the target is provably this package's own
+ *   dedicated agent」。老口径向上最多 6 级找 agent.md，会指到**用户项目里**
+ *   毫不相干的那个文件，把它的 displayName 改掉 ⇒ 老口径整个删掉。
+ *   现在：工作区 = `<agents>/<agent>/miniapps/<pluginId>` ⇒ agent.md 在**上溯两级**，
+ *   且那个 agent 目录里必须真的有 `miniapps/<pluginId>`。
  *
  * @param {string} workspaceDir 宿主給的會話工作區
- * @returns {string} agent 文件路徑；找不到就空串
+ * @param {string} pluginId 本插件的 pluginId
+ * @returns {string} agent 文件路徑；不認就空串
  */
-export function agentFileFromWorkspace(workspaceDir) {
-  let dir = String(workspaceDir || '').trim();
-  if (!dir) return '';
-  for (let i = 0; i < 6; i += 1) {
-    const candidate = join(dir, 'agent.md');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (!parent || parent === dir) break;
-    dir = parent;
-  }
-  return '';
+export function agentFileFromWorkspace(workspaceDir, pluginId) {
+  const agentDir = agentDirFromWorkspace(workspaceDir, pluginId);
+  if (!agentDir) return '';
+  // ⚠️ **形状之外还要归属证明**：agent 目录里必须真的有 miniapps/<pluginId>。
+  if (!ownsAgentDir(agentDir, pluginId)) return '';
+  const file = join(agentDir, 'agent.md');
+  return existsSync(file) ? file : '';
 }
 /**
  * 找出「她真正在用的那个 agent 文件」的候选路径（按可靠度排序）。
@@ -217,14 +216,14 @@ export async function resolveAgentFiles(opts = {}) {
   const ctx = opts.context || {};
   const st = opts.state || {};
   const files = [];
-  // agents 根目录可注入（测试用；生产走 homedir）
-  const agentsRoot = String(opts.agentsDir || join(homedir(), '.minimax', 'agents'));
+  const pluginId = String(ctx.pluginId || '');
   const sessionId = String(st.petSessionId || '');
+  // ① 会话工作区推出来的那个 agent（**只認 miniapps/<pluginId> 形状 + 归属证明**）
   if (sessionId && ctx.agent && typeof ctx.agent.session === 'function') {
     try {
       const detail = await ctx.agent.session(sessionId);
       const dir = String((detail && detail.workspaceDir) || '');
-      const hit = agentFileFromWorkspace(dir);
+      const hit = agentFileFromWorkspace(dir, pluginId);
       if (hit) files.push(hit);
     } catch (error) {
       if (ctx.logger && typeof ctx.logger.warn === 'function') {
@@ -234,15 +233,15 @@ export async function resolveAgentFiles(opts = {}) {
       }
     }
   }
-  const agentName = String(st.petAgent || '');
-  if (agentName) {
-    files.push(join(homedir(), '.minimax', 'agents', agentName, 'agent.md'));
-  }
-  // 3) 兜底：宿主 agent 目录里装了本 Mini App 的那个（首启还没会话时靠这条）
+  // ② 兜底：宿主 agent 目录里装了本 Mini App 的那个（首启还没会话时靠这条）
   //    **恰好一个才用** —— 多个都像就一个都不写（写错地方比不写更糟）。
-  const scanned = findAgentFilesByPlugin(agentsRoot, String(ctx.pluginId || ''));
+  //    ⚠️ **agents 根目录从 dataDir 推**（PR #101 Must fix 1 第三条）——
+  //    老口径写死 homedir()/.minimax/agents，自定义数据目录时指空。
+  const agentsRoot = String(opts.agentsDir || agentsRootFromDataDir(ctx.dataDir) || '');
+  const scanned = agentsRoot ? findAgentFilesByPlugin(agentsRoot, pluginId) : [];
   if (scanned.length === 1) files.push(scanned[0]);
-  return files;
+  // ③ 同一条路径可能被 ①② 各找到一次 ⇒ 去重
+  return Array.from(new Set(files));
 }
 
 /**

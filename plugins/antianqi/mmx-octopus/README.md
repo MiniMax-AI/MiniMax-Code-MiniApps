@@ -5,7 +5,7 @@ doing, and the Agent can tell her what to say.*
 
 English | [简体中文](README.zh-CN.md)
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.3.0` ·
+Author: [antianqi](https://github.com/antianqi) · Version: `1.4.0` ·
 Plugin ID: `mmx-octopus` · Category: `Productivity`
 
 *The app interface is in Chinese.*
@@ -31,6 +31,13 @@ Plugin ID: `mmx-octopus` · Category: `Productivity`
   always on top and click-through, so it never blocks the desktop. It is
   220 × 460 and can be dragged anywhere on the screen; the Agent can park it in
   one of four fixed spots (three corners and the centre).
+- **Finding her again.** The floating window is click-through, so it never
+  swallows your clicks: move the pointer onto her and click-through switches off
+  there — click her for a reaction, press and drag to move her. You can also park
+  her in one of the four fixed spots from the panel (Settings → 「停靠位置」); that
+  only takes effect once she is floating. The floating window is a separate
+  window the Host opened — close it the way you close any Host window; the panel
+  keeps running, and you can float her out again at any time.
 
 ## Install
 
@@ -104,11 +111,12 @@ it like the rest of the port.
   `miniapp/node/identity/STORY.md` (who she is), plus the page assets under
   `miniapp/client/`.
 - **And one file of the Host's** — to keep the name in the Host's agent list in sync
-  with the name set in the panel, the runtime reads the `agent.md` of the agent that
-  runs this Mini App. It locates that file by walking up from the session's workspace
-  directory (at most six levels), and as a fallback by looking under the Host's
-  `agents` directory for the agent folder that contains a `miniapps/<plugin-id>`
-  folder — that fallback is used only when it matches exactly one agent. **This
+  with the name set in the panel, the runtime rewrites the `displayName:` line in the
+  frontmatter of the `agent.md` of **the agent that has this Mini App installed** —
+  the one whose folder contains `miniapps/<plugin-id>`. It never goes looking for
+  other agents' files: it does not walk up the directory tree for an `agent.md`, and
+  it leaves every other agent's file alone. The `agents` folder is derived from this
+  package's own data directory rather than a hard-coded home path. **This still
   relies on the Host's on-disk layout, which is not a documented API.**
 - **What it writes** — four JSON files under `context.dataDir`, the private
   directory the Host creates for this plugin: `context.dataDir/state.json` (her
@@ -125,7 +133,11 @@ it like the rest of the port.
     written atomically (a temporary file in the same directory, then a rename) and
     only when its content differs from the template shipped in this package — so **a
     hand edit to it is lost on the next turn**. It belongs to this Mini App's own
-    agent workspace.
+    agent workspace. It is written **only when that workspace is this package's own
+    `miniapps/<plugin-id>` folder**; if the Host resolves some other agent for her
+    and the workspace turns out to be a real project, the file is **not** written and
+    her identity is passed in the message instead — so a project's own `AGENTS.md`
+    is never overwritten.
   - **The `displayName:` line in the frontmatter of that agent's `agent.md`**, so the
     name in the Host's agent list follows the name set in the panel. Only that one
     line is rewritten — the rest of the file is kept verbatim, and nothing is
@@ -142,6 +154,23 @@ it like the rest of the port.
   grants that agent; it reads the Host's agent list once to look for an agent
   dedicated to the Mini App, and falls back to the default agent when there is
   none. It never runs turns on your own sessions.
+- **Agent turns it starts on its own** — besides your messages, the runtime starts
+  a few turns by itself, and **each of them uses your model quota**:
+  - **Idle talk** — after 20 minutes of quiet she may start a conversation of her
+    own; at most 2 turns an hour, and at least 45 minutes apart. **Turn it off in
+    the panel**: Settings → 「她没人的时候自己说话」 ("She talks when you are away").
+  - **A diary entry** — after a chat, if today has no entry yet, she writes one.
+  - **Style learning** — after a chat, your recent chat lines are sent to the model
+    so she can pick up how you write.
+  - **A reply to your diary comment** — one more turn for each comment you leave
+    on a diary entry.
+
+  Her static lines (a greeting, "you have been quiet", "you ignored me") are **not**
+  model turns and cost nothing — turning idle talk off only stops the model ones.
+- **Other sessions' titles** — with 「她知道我在忙什么」 ("She knows what I am
+  busy with") **on (the default)**, the titles and running state of your **other**
+  sessions are put into her prompt, so she can tell what you are busy with. **Turn
+  it off in the panel**: Settings → 「她知道我在忙什么」.
 - **Tools it calls** — only its own four MCP tools, on its own port. It calls no
   connector, no provider and no third-party service.
 - **Processes spawned** — none. This package starts no child process and runs no

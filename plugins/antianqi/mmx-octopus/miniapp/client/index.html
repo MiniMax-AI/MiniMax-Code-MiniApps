@@ -1786,8 +1786,10 @@
           <div class="pet-figure" id="pet-figure" data-mood="idle">
             <img id="pet-img" src="/assets/mmx-chibi-front.png" alt="MMX 章鱼娘" />
             <!-- 片段层：两段 webm 双缓冲（几何由 JS 按形象盒实测高写入 style） -->
-            <video class="pet-video" id="pet-video-a" playsinline muted preload="auto"></video>
-            <video class="pet-video" id="pet-video-b" playsinline muted preload="auto"></video>
+            <!-- ⚠️ **预载改成 metadata**（PR #101 Optional 2）：老口径是「自动预载」，
+     会把她整段片段预先拉下来；改成 metadata 只拿元数据，省内存。 -->
+            <video class="pet-video" id="pet-video-a" playsinline muted preload="metadata"></video>
+            <video class="pet-video" id="pet-video-b" playsinline muted preload="metadata"></video>
             <div class="pet-face" id="pet-face" aria-hidden="true"></div>
           </div>
         </div>
@@ -1905,6 +1907,31 @@
               <button type="button" data-scope="global" aria-pressed="true">整个 MCode</button>
             </div>
             <p class="set-note" id="scope-note">正在探测当前会话…</p>
+          </section>
+
+          <!-- ★ **两个开关**（PR #101 Must fix 3、4）—— 面板上明确可见，
+               review 的原话是「off by default **or clearly shown in the panel**」。 -->
+          <section class="set-group">
+            <span class="set-title">她没人的时候自己说话</span>
+            <div class="seg" role="group" aria-label="闲话开关" id="idletalk-group">
+              <button type="button" data-idletalk="on" aria-pressed="true">开</button>
+              <button type="button" data-idletalk="off" aria-pressed="false">关</button>
+            </div>
+            <p class="set-note" id="idletalk-note">
+              开着的话，你安静 20 分钟后她可能自己开口（会用到你的模型额度，一小时最多 2 次）。
+              关掉只停她「主动搭话」那几句，招呼和静态台词照旧（那几句不花额度）。
+            </p>
+          </section>
+
+          <section class="set-group">
+            <span class="set-title">她知道我在忙什么</span>
+            <div class="seg" role="group" aria-label="状态感知" id="petaware-group">
+              <button type="button" data-petaware="on" aria-pressed="true">开</button>
+              <button type="button" data-petaware="off" aria-pressed="false">关</button>
+            </div>
+            <p class="set-note" id="petaware-note">
+              开着的话，你其它会话的标题和运行状态会进她的提示词；关掉她就不看这些了。
+            </p>
           </section>
 
           <section class="set-group">
@@ -2535,6 +2562,31 @@
         }
 
         /**
+         * 把后台那一段的视频资源释放掉（清 src）。
+         *
+         * ⚠️ **只清后台那一段** —— 前台正在播的那段不能动（动了就黑屏）。
+         *   下一段装载时本来就会重新设 src ⇒ 这里清掉不影响连播。
+         * @param {number} index 视频下标
+         */
+        function segReleaseBack(index) {
+          var v = seg.videos[index];
+          if (!v) return;
+          try {
+            v.pause();
+          } catch (error) {
+            /* 暂停失败不影响释放 */
+          }
+          v.oncanplay = null;
+          v.onerror = null;
+          v.removeAttribute('src');
+          try {
+            v.load();
+          } catch (error) {
+            /* 释放失败不影响下一段 */
+          }
+        }
+
+        /**
          * 装好了：前后台对调，这一段正式接管画面。
          * @param {number} back 后台那一段的下标
          * @param {string} key
@@ -2544,6 +2596,10 @@
           seg.on = true;
           seg.fail = 0;
           segShowFront();
+          // ⚠️ **释放后台那一段的视频资源**（PR #101 Optional 2）：
+          //   两个 <video> 改成 preload="metadata"，切走的那一段把 src 清掉 ⇒
+          //   她坐在桌面上时内存里只留一段。
+          segReleaseBack(1 - back);
           // ⚠️ **上报「她在做什么」** —— 服务端要靠这个把模型闲话对上画面。
           reportScene();
           if (el.petFigure) {
@@ -3275,6 +3331,26 @@
             scopeButtons[j].setAttribute(
               'aria-pressed',
               scopeButtons[j].getAttribute('data-scope') === state.scope ? 'true' : 'false'
+            );
+          }
+          // ⚠️ **undefined 算「开」** —— 老运行时的快照没有这两个字段，
+          //   按「默认开」显示，别让面板显示成「关」。
+          var idleButtons = document.querySelectorAll('#idletalk-group button');
+          for (var k = 0; k < idleButtons.length; k++) {
+            idleButtons[k].setAttribute(
+              'aria-pressed',
+              idleButtons[k].getAttribute('data-idletalk') === (snapshot.idleTalk === false ? 'off' : 'on')
+                ? 'true'
+                : 'false'
+            );
+          }
+          var awareButtons = document.querySelectorAll('#petaware-group button');
+          for (var m = 0; m < awareButtons.length; m++) {
+            awareButtons[m].setAttribute(
+              'aria-pressed',
+              awareButtons[m].getAttribute('data-petaware') === (snapshot.petAware === false ? 'off' : 'on')
+                ? 'true'
+                : 'false'
             );
           }
 
@@ -4617,6 +4693,35 @@
             })
             .catch(function (error) {
               toast('移动失败：' + error.message, 'error');
+            });
+        });
+
+        // ★ **两个开关**（PR #101 Must fix 3、4）
+        document.getElementById('idletalk-group').addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-idletalk]');
+          if (!button) return;
+          var next = button.getAttribute('data-idletalk') === 'on';
+          post('/api/idletalk', { enabled: next })
+            .then(function (data) {
+              if (data.snapshot) render(data.snapshot);
+              toast('她主动搭话：' + (next ? '开' : '关'));
+            })
+            .catch(function (error) {
+              toast('切换失败：' + error.message, 'error');
+            });
+        });
+
+        document.getElementById('petaware-group').addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-petaware]');
+          if (!button) return;
+          var next = button.getAttribute('data-petaware') === 'on';
+          post('/api/petaware', { enabled: next })
+            .then(function (data) {
+              if (data.snapshot) render(data.snapshot);
+              toast('她知道我在忙什么：' + (next ? '开' : '关'));
+            })
+            .catch(function (error) {
+              toast('切换失败：' + error.message, 'error');
             });
         });
 

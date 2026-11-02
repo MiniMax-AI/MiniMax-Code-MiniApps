@@ -354,6 +354,8 @@ export class PetState {
     this.chatBusy = false;
     /** @type {boolean} 是否把 MCode 状态摘要拼进她的输入（持久化，默认开） */
     this.petAware = true;
+    // ★ **闲话开关**（PR #101 Must fix 3）：她没人的时候要不要自己开口（模型闲话）。
+    this.idleTalk = true;
     /**
      * 设置区看板（运行时态，不持久化）。
      * running：Node 每 30 秒查一次 sessions()；
@@ -443,6 +445,7 @@ export class PetState {
         if (typeof saved.identityFileReady === 'boolean') this.identityFileReady = saved.identityFileReady;
         if (typeof saved.petAgent === 'string' && saved.petAgent) this.petAgent = saved.petAgent;
         if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
+        if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
         if (saved.naming && typeof saved.naming === 'object') {
           this.naming = {
             herName: sanitizeName(saved.naming.herName) || DEFAULT_HER_NAME,
@@ -504,6 +507,7 @@ export class PetState {
         identityFileReady: this.identityFileReady,
         petAgent: this.petAgent,
         petAware: this.petAware,
+        idleTalk: this.idleTalk,
         naming: { ...this.naming },
         windowState: { ...this.windowState },
         lineCounters: { ...this.lineCounters },
@@ -574,6 +578,7 @@ export class PetState {
       asking: this.asking,
       petAgent: this.petAgent,
       petAware: this.petAware,
+      idleTalk: this.idleTalk,
       naming: { ...this.naming },
       chatBusy: this.chatBusy,
       pendingInteraction: this.pendingInteraction,
@@ -1166,6 +1171,19 @@ export class PetState {
     this.petAware = aware !== false;
     await this.commit();
     return this.petAware;
+  }
+
+  /**
+   * 她没人的时候要不要自己开口（**模型闲话** —— 会烧你的模型额度）。
+   *
+   * ⚠️ **只管模型闲话**（PR #101 Must fix 3）：时段问候、久没人碰、刚冷落
+   *   那几句是**静态台词**，不走模型 ⇒ 关掉这个开关它们照旧（不花额度）。
+   * @param {boolean} on
+   */
+  async setIdleTalk(on) {
+    this.idleTalk = on !== false;
+    await this.commit();
+    return this.idleTalk;
   }
 
   /**
