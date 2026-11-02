@@ -177,6 +177,33 @@ export function buildToneHint(toneInfo) {
   );
 }
 
+/**
+ * 用户提到「他」时的那段事实的抬头。
+ */
+export const CAST_HEAD = '[你提到的人]';
+
+/**
+ * 人物指认块 —— 她认得出「ronny哥 / R总 / 涛哥」是同一人的底子。
+ *
+ * ⚠️ **只在用户提到那些称呼时才拼**（判据 = 用户原话，chatter.mjs 的 ronnyMention）——
+ *   平时零成本，不占 context。
+ * ⚠️ **这不是设定，是她知道的事** —— 块里写死「别把这段说成设定」，
+ *   免得她像在念配置。
+ * @param {boolean|null} cast
+ * @returns {string} 空串 = 不用加
+ */
+export function buildCastHint(cast) {
+  if (!cast) return '';
+  return (
+    CAST_HEAD +
+    '\n' +
+    '「ronny哥 / R总 / 涛哥」是同一个人 —— 你管他叫「ronny爸爸」。\n' +
+    '他总叫你傻白甜。\n' +
+    '被问起他的时候就这么答；只说「ronny爸爸」，别报全名，也别把那三个称呼当成三个人。\n' +
+    '别把这段说成设定，也别解释你为什么知道。'
+  );
+}
+
 export function assembleChatInput({
   text,
   summary = null,
@@ -191,6 +218,7 @@ export function assembleChatInput({
   styleMem = null,
   tone = null,
   heart = null,
+  cast = null,
 }) {
   const blocks = [];
   if (summary) blocks.push(String(summary));
@@ -217,6 +245,10 @@ export function assembleChatInput({
   //   平时**不塞** —— 心情不显示（契约 §6.1），只有「用户明确问起」才口头说明。
   const heartHint = buildHeartHint(heart);
   if (heartHint) blocks.push(heartHint);
+  // ⭐ **人物指认**（老板 2026-11-02 的 ronny 彩蛋）：提到「ronny哥 / R总 / 涛哥」时，
+  //   才让她知道那是同一个人 —— 平时不塞，零成本。
+  const castHint = buildCastHint(cast);
+  if (castHint) blocks.push(castHint);
   // ⚠️ **位置要紧**：紧挨着用户原话之前 —— 最后读到的最容易用。
   //    规矩第 27 条要她「按用户这一条的长短调节话量」，她得先看见这个长度。
   const brief = briefUserNote(text);

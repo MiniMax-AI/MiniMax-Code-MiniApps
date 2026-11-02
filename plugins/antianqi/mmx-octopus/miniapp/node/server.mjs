@@ -99,6 +99,7 @@ import {
   greetingTier,
   isWeekendDay,
   heartAskTopics,
+  ronnyMention,
   REUNION_MS,
   BACK_GAP_MS,
 } from './chatter.mjs';
@@ -586,6 +587,13 @@ export async function start(context, options = {}) {
    * @returns {Promise<string | null>} 说了哪个情境键
    */
   async function speakRelationLine(text, awayMs) {
+    // ⭐ **彩蛋优先**（老板 2026-11-02 拍板）：她一认出「ronny哥 / R总 / 涛哥」
+    //   说的是同一个人，就要先说这个 —— 彩蛋比关系标记词稀有，
+    //   被「谢谢 / 你真棒」盖掉的损失更大。判据 = 用户原话（chatter.mjs 的 ronnyMention）。
+    if (ronnyMention(text)) {
+      await speakSceneLine('rel.ronny', '彩蛋');
+      return 'rel.ronny';
+    }
     const mark = relationMarkScene(text);
     if (mark) {
       await speakSceneLine(mark, '关系');
@@ -1751,6 +1759,10 @@ export async function start(context, options = {}) {
       // ⭐ **心情 / 亲近程度**（第三十七轮）：**只在用户明确问起时**才给 ——
       //   判据 = 用户原话（chatter.mjs 的 heartAskTopics），不读模型输出文本。
       heart: heartInfo,
+      // ⭐ **人物指认**（老板 2026-11-02 的 ronny 彩蛋）：
+      //   用户提到「ronny哥 / R总 / 涛哥」时，才让她知道那是同一个人。
+      //   判据 = 用户原话，不读模型输出（契约 §6.1 判据纪律）。
+      cast: ronnyMention(text) ? true : null,
     });
     if (isNewSession) await state.markPetHeadInjected();
     return input;

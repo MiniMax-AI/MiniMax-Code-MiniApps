@@ -230,6 +230,42 @@ export function heartAskTopics(text) {
 }
 
 /**
+ * 用户消息里提到「ronny 爸爸」的标记词 —— **彩蛋判据（唯一一处）**。
+ *
+ * ⚠️ **这是什么彩蛋**（老板 2026-11-02 拍板）：她管 MiniMax Code 的研发负责人何涛叫
+ *   「ronny爸爸」；老板做桌宠项目时采访过他，他对 MiniMax 的印象就是「傻白甜」。
+ *   老板在群里提到「ronny哥 / R总 / 涛哥」时，她要认得出说的是同一个人。
+ * ⚠️ **读用户原话，不读模型输出**（契约 §6.1 判据纪律）。
+ * ⚠️ **词表收窄**：宁可漏判不可误判（漏判 = 她照常答；误判 = 她无缘无故插一句彩蛋）。
+ *   'ronny' 一条就盖住 ronny哥 / ronny 哥 / ronny爸爸 / RONNY 等全部变体。
+ * ⚠️ **「r总裁」不算「r总」** —— 字面边界（否则「r总裁」会误触发）。
+ */
+export const RONNY_MARKS = ['ronny', 'r总', 'r 总', '涛哥', '何涛'];
+
+/**
+ * 用户这条消息里有没有提到「ronny 爸爸」。
+ *
+ * @param {string} text 用户原话
+ * @returns {boolean}
+ */
+export function ronnyMention(text) {
+  const s = String(text ?? '').toLowerCase();
+  if (!s) return false;
+  for (const w of RONNY_MARKS) {
+    let idx = s.indexOf(w);
+    while (idx >= 0) {
+      // ⚠️ 「r总裁」不是「r总」—— 老板说的「r总」是 MiniMax Code 研发负责人。
+      if (w === 'r总' && s[idx + 2] === '裁') {
+        idx = s.indexOf(w, idx + 1);
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 时段问候的档：0 = 早上，1 = 中午，2 = 晚上/深夜。
  *
  * ⚠️ **小时数由调用方算好传进来** —— 本模块不读时钟（判据要能被抓）。
