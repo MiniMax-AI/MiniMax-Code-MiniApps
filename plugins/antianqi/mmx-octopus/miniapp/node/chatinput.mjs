@@ -114,8 +114,8 @@ export function buildHeartHint(heart) {
  * 段落顺序（不要随手改）：
  *  1. 状态摘要 —— 她得知道 MCode 现在在干什么
  *  2. 称呼 —— **每轮都带**（名字和称呼用户随时能改，静态化就不生效了）
- *  3. 身份层（底稿 + 样子 + 规矩）—— **只在降级时带**；
- *     正常情况下它已经写进 agent 目录的 `AGENTS.md`，宿主每轮读它（压缩压不掉）
+ *  3. 身份层（底稿 + 样子 + 规矩）—— **每轮都带**
+ *     （插件不往宿主目录写任何文件 ⇒ 身份层没有别的落点，只能随消息传进去）
  *  4. 接续摘要 —— 换会话时让她接上上一段（见 `buildCarryOver`）
  *  5. **日记记忆** —— 她的日记（见 `memory.mjs` 的 `pickDiaryMemory`）
  *  5b. **背景故事** —— 她的来历（见 `storyscope.mjs` 的 `shouldLoadStory`；**问到才给**）
@@ -126,10 +126,10 @@ export function buildHeartHint(heart) {
  * 它每轮都在变，`AGENTS.md` 那种静态落点装不下它。
  * 选这个位置是因为它是**最后一段背景**，紧接着就是用户原话 —— 最后读到的最容易用。
  *
- * ⚠️ **「身份层要不要带」这个开关不外传** ——
- * 它由 `identityInFile`（身份层是不是已经在文件里）**在函数内部**决定。
- * 外传就等于把「每轮都重贴」这个开关交到调用方手上，
- * 迟早有人传 true，而那时候自检是抓不到的（负向注入实测过这个洞）。
+ * ⚠️ **身份层没有开关** —— 以前这里有个 `identityInFile`
+ *   （身份层是不是已经在宿主文件里），现在**没有别的落点了** ⇒ 身份层**必须**每轮带。
+ *   外传这个开关就等于留一条「可以不带」的岔路，迟早有人走那条路，
+ *   而那时候自检是抓不到的（负向注入实测过这个洞）。
  *
  * @param {{
  *   text: string,
@@ -138,7 +138,6 @@ export function buildHeartHint(heart) {
  *   baseline?: string,
  *   appearance?: string,
  *   rules?: string,
- *   identityInFile?: boolean,
  *   carryOver?: string | null,
  *   memory?: string | null,
  *   storyScope?: string | null,
@@ -218,7 +217,6 @@ export function assembleChatInput({
   baseline = '',
   appearance = '',
   rules = '',
-  identityInFile = false,
   carryOver = null,
   memory = null,
   storyScope = null,
@@ -230,12 +228,10 @@ export function assembleChatInput({
   const blocks = [];
   if (summary) blocks.push(String(summary));
   if (naming) blocks.push(String(naming));
-  if (!identityInFile) {
-    // 降级：身份层没进文件，只能每轮拼在 user 消息里。
-    // 三样都要带：底稿（她是谁）、样子（她长什么样）、规矩（她怎么做事）。
-    const fallback = [baseline, appearance, rules].filter(Boolean).join('\n\n');
-    if (fallback) blocks.push(fallback);
-  }
+  // 身份层：**每轮都带**（插件不往宿主目录写文件 ⇒ 没有别的落点）。
+  // 三样都要带：底稿（她是谁）、样子（她长什么样）、规矩（她怎么做事）。
+  const identity = [baseline, appearance, rules].filter(Boolean).join('\n\n');
+  if (identity) blocks.push(identity);
   if (carryOver) blocks.push(String(carryOver));
   if (memory) blocks.push(String(memory));
   // ⭐ **背景故事**：她自己的来历。

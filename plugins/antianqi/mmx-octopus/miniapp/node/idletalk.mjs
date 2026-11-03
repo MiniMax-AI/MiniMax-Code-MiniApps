@@ -48,12 +48,16 @@ export const IDLE_DEFAULTS = {
 };
 
 /**
- * 总开关：不想让她主动开口时，把这里改成 false 就全停（一个数，好回滚）。
+ * **功能总开关** —— 这个功能本身可不可用（编译期，一个数，好回滚）。
  *
- * ⚠️ **用户开关另算**（PR #101 Must fix 3）—— 运行期由用户在面板里关
+ * ⚠️ **这不是「默认开关」** —— Marketplace 评审要求「默认关闭，由用户主动打开」，
+ *   真正的默认在 `state.mjs` 的 `state.idleTalk`：**默认 false（关闭）**，
+ *   由用户自己在面板里打开。这里保持 true，只表示「这个功能存在」。
+ *
+ * ⚠️ **用户开关另算** —— 运行期由用户在面板里开关
  *   （`state.idleTalk` ⇒ 传给 `shouldSpeakIdle` 的 `options.enabled`）。
  */
-export const IDLE_TALK_ENABLED = true;
+export const IDLE_TALK_AVAILABLE = true;
 
 /**
  * 现在该不该让她主动说一句。
@@ -84,7 +88,7 @@ export function shouldSpeakIdle(input, options = {}) {
   } = input ?? {};
 
   // ⚠️ **两个开关**：编译期的总开关 + 运行期的用户开关（PR #101 Must fix 3）。
-  if (!IDLE_TALK_ENABLED || cfg.enabled === false) return { ok: false, reason: 'disabled' };
+  if (!IDLE_TALK_AVAILABLE || cfg.enabled === false) return { ok: false, reason: 'disabled' };
   if (busy) return { ok: false, reason: 'busy' };
   if (!lastUserAt) return { ok: false, reason: 'no_user_yet' };
 

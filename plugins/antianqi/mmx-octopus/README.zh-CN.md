@@ -4,7 +4,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-作者：[antianqi](https://github.com/antianqi) · 版本：`1.6.0` ·
+作者：[antianqi](https://github.com/antianqi) · 版本：`1.7.0` ·
 插件 ID：`mmx-octopus` · 分类：`Productivity`
 
 ## 它做什么
@@ -87,28 +87,20 @@ English | [简体中文](README.zh-CN.md)
 - **读什么** —— 读这个包自己的文件，从 `context.pluginRoot` 读：
   `miniapp/node/identity/AGENTS.md` 和 `miniapp/node/identity/STORY.md`（她是谁），
   以及 `miniapp/client/` 下的页面素材。
-- **外加宿主的一个文件** —— 为了让宿主 agent 列表里的名字跟着面板里设的名字走，
-  运行时会改写「**装了本 Mini App 的那个 agent**」（也就是它的目录里含
-  `miniapps/<plugin-id>` 的那个）的 `agent.md` 里 frontmatter 的 `displayName:` 那一行。
-  它**不会满世界找别人的 agent 文件**：不往目录树上翻 `agent.md`，也不碰别的 agent 的文件。
-  `agents` 目录由本包自己的数据目录推出来，不是写死的家目录路径。
-  ⚠️ **这依赖宿主的磁盘布局，而它不是有文档的 API。**
-- **写什么** —— `context.dataDir` 下四个 JSON 文件，也就是宿主给这个包建的私有目录：
-  `context.dataDir/state.json`（她的表情、位置、气泡，以及 Agent 忙不忙）、
-  `context.dataDir/chat.json`（你和她的聊天）、
+- **写什么** —— 而且**只写这些**。`context.dataDir` 下四个 JSON 文件，也就是宿主给这个包建的私有目录：
+  `context.dataDir/state.json`（她的表情、位置、气泡，以及 Agent 忙不忙），
+  `context.dataDir/chat.json`（你和她的聊天），
   `context.dataDir/diary.json`（她的日记）、`context.dataDir/style.json`（她学到的语气）。
   每次落盘都是原子的 —— 先写同目录临时文件，再改名 —— 所以崩了也不会留下半个文件。
-- **这个目录之外的两处写** ——
-  - **她自己 Agent 会话工作区里的 `AGENTS.md`**：她把身份放在那儿。宿主每轮重读那个文件
-    并拼进 system prompt，所以她的身份不会被上下文压缩掉。写法是原子的（同目录临时文件 +
-    改名），且只在内容与包里这份模板不一致时才写 —— **所以你手改它，下一轮就被覆盖**。
-    它属于这个 Mini App 自己的 agent 工作区。
-    ⚠️ **只有工作区就是本包自己的 `miniapps/<plugin-id>` 目录时才会写它** —— 要是宿主给她
-    解析到了别的 agent、工作区是个真实项目，那就不写，身份改成**在消息里带上**
-    ⇒ **你项目里那份 `AGENTS.md` 永远不会被覆盖**。
-  - **那个 agent 的 `agent.md` 里 frontmatter 的 `displayName:` 那一行** ——
-    让宿主 agent 列表里的名字跟着面板里设的名字走。**只重写那一行**，文件其余内容逐字保留；
-    文件没有 frontmatter 就什么都不写。只在名字变了才写；候选文件按顺序试，命中第一个能用的就停。
+  ⚠️ **`context.dataDir` 之外一个文件都不写**：不改宿主的 `agent.md`，不写 agent 工作区里的
+  `AGENTS.md`，别的更不写。
+- **老版本留下的东西** —— 1.7.0 之前的版本会把一份 `AGENTS.md` 写进「装了本插件的那个 agent」
+  的工作区，用来把她的身份放在那儿。**现在不再写了，也不再需要它**。从老版本升级的话，
+  那份文件可能还在（`agents/<agent>/miniapps/<plugin-id>/AGENTS.md`），可以直接删 ——
+  运行时不会去动它：**插件不许写自己 dataDir 之外的文件**。
+- **她的身份怎么送到她那儿** —— **随消息带，每一轮都带**。她的底稿、样子和规矩从本包自己的
+  `miniapp/node/identity/AGENTS.md` 读出来，拼进每次的提示词里，所以**不需要为此写任何文件**。
+  ⚠️ 代价：身份层走的是会话历史 ⇒ 宿主做上下文压缩时可能把它压掉（所以每轮都重发一份）。
 - **读哪些会话** —— 这个包声明了 `session.read`。它读一轮对话的标题、运行状态和最终回复，
   用来分辨 Agent 是在想还是做完了，也用来给这一轮做摘要。面板里的看板列出正在跑的会话，
   每 30 秒刷新一次。
@@ -117,8 +109,9 @@ English | [简体中文](README.zh-CN.md)
   它会读一次宿主的 agent 列表，找有没有专属于这个 Mini App 的 agent，没有就退回默认 agent。
   它不会去跑你自己的会话。
 - **它自己会起的那些轮次** —— 除了你发的消息，运行时还会自己起几轮，**每一轮都花你的模型额度**：
-  - **闲话**：你安静 20 分钟后，她可能自己开口；一小时最多 2 轮，两轮之间至少隔 45 分钟。
-    **面板里能关**：设置 → 「她没人的时候自己说话」。
+  - **闲话**：**默认关着**，要她主动开口自己在面板里开：设置 → 「她没人的时候自己说话」。
+    开了以后，你安静 20 分钟后她可能自己开口；一小时最多 2 轮，两轮之间至少隔 45 分钟。
+    **同一个开关也能再关掉**。
   - **写日记**：聊完天，如果今天还没有日记，她会写一篇。
   - **学语气**：聊完天，你最近的聊天记录会送给模型，让她学你说话的样子。
   - **回你给日记写的评论**：每条评论再跑一轮。

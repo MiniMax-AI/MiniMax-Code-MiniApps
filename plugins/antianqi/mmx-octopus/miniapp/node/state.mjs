@@ -337,15 +337,6 @@ export class PetState {
      * @type {boolean}
      */
     this.petHeadInjected = false;
-    /**
-     * **身份层是不是已经写进 agent 目录的 `AGENTS.md`**（底稿 + 规矩正文）。
-     *
-     * true  = 宿主每轮读那个文件 → 进 system prompt → **压缩压不掉**（正常路径）
-     * false = 写失败了 → 降级：每轮把身份层拼进 user 消息（会被压缩掉）
-     *
-     * @type {boolean}
-     */
-    this.identityFileReady = false;
     /** @type {{text: string, at: number} | null} 用户正在问她的内容（临时态，不持久化） */
     this.asking = null;
     /** @type {string | null} 她的专属会话用哪个 agent */
@@ -354,8 +345,11 @@ export class PetState {
     this.chatBusy = false;
     /** @type {boolean} 是否把 MCode 状态摘要拼进她的输入（持久化，默认开） */
     this.petAware = true;
-    // ★ **闲话开关**（PR #101 Must fix 3）：她没人的时候要不要自己开口（模型闲话）。
-    this.idleTalk = true;
+    // ★ **闲话开关**：她没人的时候要不要自己开口（模型闲话）—— **默认关闭**。
+    // ⚠️ **默认关**（Marketplace 评审「强烈建议」）：自动对话会消耗用户自己的额度，
+    //   所以新装的用户一律**由用户主动打开**；已经装过的用户保留他自己上次的
+    //   开关值（`load()` 里读回来）。
+    this.idleTalk = false;
     /**
      * 设置区看板（运行时态，不持久化）。
      * running：Node 每 30 秒查一次 sessions()；
@@ -442,7 +436,6 @@ export class PetState {
         if (typeof saved.petSessionId === 'string' && saved.petSessionId) this.petSessionId = saved.petSessionId;
         if (typeof saved.petSessionDirty === 'boolean') this.petSessionDirty = saved.petSessionDirty;
         if (typeof saved.petHeadInjected === 'boolean') this.petHeadInjected = saved.petHeadInjected;
-        if (typeof saved.identityFileReady === 'boolean') this.identityFileReady = saved.identityFileReady;
         if (typeof saved.petAgent === 'string' && saved.petAgent) this.petAgent = saved.petAgent;
         if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
         if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
@@ -504,7 +497,6 @@ export class PetState {
         petSessionId: this.petSessionId,
         petSessionDirty: this.petSessionDirty,
         petHeadInjected: this.petHeadInjected,
-        identityFileReady: this.identityFileReady,
         petAgent: this.petAgent,
         petAware: this.petAware,
         idleTalk: this.idleTalk,
@@ -574,7 +566,6 @@ export class PetState {
       petSessionId: this.petSessionId,
       petSessionDirty: this.petSessionDirty,
       petHeadInjected: this.petHeadInjected,
-      identityFileReady: this.identityFileReady,
       asking: this.asking,
       petAgent: this.petAgent,
       petAware: this.petAware,
@@ -1122,17 +1113,6 @@ export class PetState {
   }
 
   /**
-   * 记下：身份层已经写进 agent 目录的 `AGENTS.md` 了。
-   * @param {boolean} ready
-   * @returns {Promise<boolean>}
-   */
-  async setIdentityFileReady(ready) {
-    this.identityFileReady = !!ready;
-    await this.commit();
-    return this.identityFileReady;
-  }
-
-  /**
    * 专属会话卡住了（还有问题没回答，run slot 被占着），
    * 下次提问要重新 create 一个会话，否则后面每一问都是 BUSY。
    */
@@ -1181,7 +1161,9 @@ export class PetState {
    * @param {boolean} on
    */
   async setIdleTalk(on) {
-    this.idleTalk = on !== false;
+    // ⚠️ **只有明确传 true 才开** —— 默认是关的（Marketplace 评审：默认关闭、
+    //   由用户主动打开）。传 undefined / 其它值一律按「关」处理。
+    this.idleTalk = on === true;
     await this.commit();
     return this.idleTalk;
   }
