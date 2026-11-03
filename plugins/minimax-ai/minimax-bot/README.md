@@ -52,25 +52,25 @@ The note section of the group panel reads the note's limits (6 entries and 1200 
 
 In the usage view an `aborted` row is a turn that was cut off: it counts as a turn and it shows the characters and tool calls it did make, but it has no duration, so it is left out of the average. A turn that was never metered at all is not on the ledger; the panel's turn count is the number of rows.
 
+## 0.7.18 An unconfirmed outcome still closes its batch
+
+An unconfirmed outcome is still never replayed, but it no longer leaves its batch open forever: the batch closes, its report says the outcome is unknown, and it is trimmed like any settled batch. Finished batches no longer pile up in the state file either: the batches that still owe something stay, the newest 30 settled ones stay, and older ones leave a small record without the reply. The reply of a batch that was trimmed is read back from the chat message that holds it, page by page, and a reply whose chat message is gone is reported as truncated instead of silently shortened. Clearing a chat therefore takes the full replies of its older tasks with it: only the trimmed window is left in the task record.
+
+Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `request_id` older than that is no longer known and its work would start again. A build older than this one does not read the archive at all, so after a downgrade an archived `request_id` can run again.
+
 ## 0.7.19 The mention rule, read by the script that writes the word
 
 0.7.16 started to read the character in front of the `@` as a word of any script, so a letter of a script that writes with spaces (`josé@alice`) makes an address and calls nobody. This release completes that: a full-width IME writes full-width letters and digits (`ＯＫ@某人`), and Thai, Lao, Khmer and Myanmar write a word right up against the `@` as Chinese does, so those characters do not swallow the mention either.
 
 ## 0.7.21 The mention sign, the admin's seat, the queued work and the clock
 
-The mention rule of the section above ships with this release, and four more corners are fixed. A full-width keyboard writes the full-width `＠`, which is the same sign as the ASCII `@`: a mention that starts with one now reaches the member like any other (`＠某人` calls that member), and a Bot or group name may no longer carry the sign.
+The mention rule of the section above left one sign out, and three more corners are fixed. A full-width keyboard writes the full-width `＠`, which is the same sign as the ASCII `@`: a mention that starts with one now reaches the member like any other (`＠某人` calls that member), and a Bot or group name may no longer carry the sign.
 
 Only a Bot may hand a group's admin over; the operator (this plugin's own page and API) still may. A group admin who patched the member list and left themselves out used to move the admin to the first member left, while the very same change through the group's admin field was refused. Both doors now ask the same question, and the refused one says why.
 
 A shutdown no longer throws away work that never started. Such a task stays queued and runs again after a restart, as the section on reliable delegation says; before, it was written down as `unknown`, a state that cannot be cancelled, so the work was lost. Work the Host had already taken is not replayed either: it stays `unknown`. A task the user cancelled stays cancelled, a task whose result is already there settles by that result instead of being marked `unknown`, and a turn that ended in a question stays answerable instead of being written off as unknown.
 
 The usage ledger counts the time the model really ran. A retried turn waits between the attempts, and that wait was counted as the model's time: a turn that waited half a minute between two attempts was written down as a turn of half a minute, and the panel averaged that up. The duration is now the time the model ran and the panel's average follows it; the wait between the attempts is kept beside it in the ledger (`usage.jsonl`), not inside the duration. A turn the model never ran has no duration to report, so it is left out of the average instead of counting as zero seconds.
-
-## 0.7.18 An unconfirmed outcome still closes its batch
-
-An unconfirmed outcome is still never replayed, but it no longer leaves its batch open forever: the batch closes, its report says the outcome is unknown, and it is trimmed like any settled batch. Finished batches no longer pile up in the state file either: the batches that still owe something stay, the newest 30 settled ones stay, and older ones leave a small record without the reply. The reply of a batch that was trimmed is read back from the chat message that holds it, page by page, and a reply whose chat message is gone is reported as truncated instead of silently shortened. Clearing a chat therefore takes the full replies of its older tasks with it: only the trimmed window is left in the task record.
-
-Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `request_id` older than that is no longer known and its work would start again. A build older than this one does not read the archive at all, so after a downgrade an archived `request_id` can run again.
 
 ## 0.7.10 Optional group notes
 

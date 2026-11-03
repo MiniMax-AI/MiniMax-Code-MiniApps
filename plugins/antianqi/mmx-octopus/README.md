@@ -5,7 +5,7 @@ doing, and the Agent can tell her what to say.*
 
 English | [简体中文](README.zh-CN.md)
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.6.0` ·
+Author: [antianqi](https://github.com/antianqi) · Version: `1.7.0` ·
 Plugin ID: `mmx-octopus` · Category: `Productivity`
 
 *The app interface is in Chinese.*
@@ -110,40 +110,28 @@ it like the rest of the port.
   `context.pluginRoot`: `miniapp/node/identity/AGENTS.md` and
   `miniapp/node/identity/STORY.md` (who she is), plus the page assets under
   `miniapp/client/`.
-- **And one file of the Host's** — to keep the name in the Host's agent list in sync
-  with the name set in the panel, the runtime rewrites the `displayName:` line in the
-  frontmatter of the `agent.md` of **the agent that has this Mini App installed** —
-  the one whose folder contains `miniapps/<plugin-id>`. It never goes looking for
-  other agents' files: it does not walk up the directory tree for an `agent.md`, and
-  it leaves every other agent's file alone. The `agents` folder is derived from this
-  package's own data directory rather than a hard-coded home path. **This still
-  relies on the Host's on-disk layout, which is not a documented API.**
-- **What it writes** — four JSON files under `context.dataDir`, the private
-  directory the Host creates for this plugin: `context.dataDir/state.json` (her
-  expression, position, bubble and the Agent's busy state),
-  `context.dataDir/chat.json` (your chat with her),
+- **What it writes** — and **nothing else**. Four JSON files under
+  `context.dataDir`, the private directory the Host creates for this plugin:
+  `context.dataDir/state.json` (her expression, position, bubble and the Agent's
+  busy state), `context.dataDir/chat.json` (your chat with her),
   `context.dataDir/diary.json` (her diary) and `context.dataDir/style.json`
   (how she has learned to write). Every write is atomic — a temporary file in
   the same directory, then a rename — so a crash cannot leave a half-written
-  file behind.
-- **The two writes outside that folder** —
-  - **`AGENTS.md` in the workspace directory of her own Agent session.** She keeps
-    her identity there. The Host re-reads that file every turn and puts it into the
-    system prompt, which is why her identity survives context compaction. It is
-    written atomically (a temporary file in the same directory, then a rename) and
-    only when its content differs from the template shipped in this package — so **a
-    hand edit to it is lost on the next turn**. It belongs to this Mini App's own
-    agent workspace. It is written **only when that workspace is this package's own
-    `miniapps/<plugin-id>` folder**; if the Host resolves some other agent for her
-    and the workspace turns out to be a real project, the file is **not** written and
-    her identity is passed in the message instead — so a project's own `AGENTS.md`
-    is never overwritten.
-  - **The `displayName:` line in the frontmatter of that agent's `agent.md`**, so the
-    name in the Host's agent list follows the name set in the panel. Only that one
-    line is rewritten — the rest of the file is kept verbatim, and nothing is
-    written when the file has no frontmatter. It is written when the name changes;
-    the candidate files are tried in order and the runtime stops at the first one it
-    can use.
+  file behind. **No file outside `context.dataDir` is ever written**: not the
+  Host's `agent.md`, not the `AGENTS.md` of the agent's workspace, nothing else.
+- **Leftovers from earlier versions** — versions before 1.7.0 wrote an `AGENTS.md`
+  into the workspace of the agent that has this Mini App installed, to carry her
+  identity there. That is no longer written and no longer needed. If you are
+  upgrading from an earlier version the old file may still be there
+  (`agents/<agent>/miniapps/<plugin-id>/AGENTS.md`) and you can delete it — the
+  runtime never touches it, because a plugin must not write outside its own
+  data directory.
+- **How her identity reaches her** — in the message, every turn. Her character
+  sheet (who she is, what she looks like, her rules) is read from this package's
+  own `miniapp/node/identity/AGENTS.md` and passed inside each prompt, so no
+  file has to be written for it. Because it travels in the conversation, the
+  Host's context compaction may drop it — that is why it is sent again every
+  turn.
 - **Sessions read** — the package declares `session.read`. It reads the title,
   the running state and the final reply of a turn, to tell whether the Agent is
   thinking or has finished, and to summarise the turn. The board in the panel
@@ -156,9 +144,11 @@ it like the rest of the port.
   none. It never runs turns on your own sessions.
 - **Agent turns it starts on its own** — besides your messages, the runtime starts
   a few turns by itself, and **each of them uses your model quota**:
-  - **Idle talk** — after 20 minutes of quiet she may start a conversation of her
-    own; at most 2 turns an hour, and at least 45 minutes apart. **Turn it off in
-    the panel**: Settings → 「她没人的时候自己说话」 ("She talks when you are away").
+  - **Idle talk** — **off by default**; turn it on in the panel: Settings →
+    「她没人的时候自己说话」 ("She talks when you are away"). Once on, after 20
+    minutes of quiet she may start a conversation of her own; at most 2 turns an
+    hour, and at least 45 minutes apart. The same switch turns those turns off
+    again.
   - **A diary entry** — after a chat, if today has no entry yet, she writes one.
   - **Style learning** — after a chat, your recent chat lines are sent to the model
     so she can pick up how you write.
