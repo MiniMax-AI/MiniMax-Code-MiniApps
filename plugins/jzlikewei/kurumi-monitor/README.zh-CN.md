@@ -6,6 +6,18 @@
 
 [English](README.md)
 
+## 截图
+
+![全景：顶栏、指数条、三栏主体、进程表与状态栏](docs/screenshots/1-board.jpg)
+
+![主图特写：品种头、K 线、MA5/10/20 与内存构成三色堆叠副图](docs/screenshots/2-chart.jpg)
+
+![指数条特写：应用图标领在最左，后接八格行情](docs/screenshots/3-indexbar.jpg)
+
+![进程表特写：按常驻内存降序，每行一条走势迷你 K 线](docs/screenshots/4-procs.jpg)
+
+主力动向与进程表里的应用名做了马赛克处理，其余内容是下方「测试环境」那台机器的实时输出。
+
 ## 平台支持
 
 | 平台 | 采集方式 | 固定指标 | 验证状态 |

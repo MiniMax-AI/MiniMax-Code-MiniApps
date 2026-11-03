@@ -7,6 +7,19 @@ watchlist, a leaderboard and a trade tape.
 
 [简体中文](README.zh-CN.md)
 
+## Screenshots
+
+![The full board: title bar, index strip, three-column body, process table and status bar](docs/screenshots/1-board.jpg)
+
+![Main chart: quote header, candlesticks, MA5/10/20 and a stacked memory-composition subchart](docs/screenshots/2-chart.jpg)
+
+![Index strip: the app icon followed by eight quotes, each with a mini candlestick](docs/screenshots/3-indexbar.jpg)
+
+![Process table sorted by resident memory, one mini candlestick per row](docs/screenshots/4-procs.jpg)
+
+Application names in the leaderboard and the process table are mosaicked. Everything else is
+live output from the machine described under **Tested environment**.
+
 ## Platform support
 
 | Platform | Collection | Fixed metrics | Status |
