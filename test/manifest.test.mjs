@@ -52,12 +52,33 @@ test('manifest: empty exampleQueries is a warning; blank entry is an error', asy
   assert.deepEqual(codes(blank.report.diagnostics), ['MANIFEST_FIELD_INVALID']);
 });
 
-test('manifest: apps entries must match *.app.json; non-empty apps only warns', async () => {
-  const bad = await run((m) => ({ ...m, apps: ['foo'] }));
-  assert.deepEqual(codes(bad.report.diagnostics, 'error'), ['MANIFEST_REFERENCE_INVALID']);
-  const ok = await run((m) => ({ ...m, apps: ['x.app.json'] }));
-  assert.deepEqual(codes(ok.report.diagnostics), ['MANIFEST_APPS_IGNORED']);
-  assert.equal(ok.report.diagnostics[0].level, 'warning');
+test('manifest: apps entries are *.app.json files that exist and hold one Connector provider each', async () => {
+  const writeApp = (name, value) => async (dir) => writeFile(path.join(dir, name), `${JSON.stringify(value)}\n`);
+  const ok = await run((m) => ({ ...m, apps: ['notion.app.json'] }), writeApp('notion.app.json', { schemaVersion: 1, provider: 'notion' }));
+  assert.deepEqual(ok.report.diagnostics, []);
+  const badPattern = await run((m) => ({ ...m, apps: ['foo'] }));
+  assert.deepEqual(codes(badPattern.report.diagnostics), ['MANIFEST_REFERENCE_INVALID']);
+  const missing = await run((m) => ({ ...m, apps: ['notion.app.json'] }));
+  assert.deepEqual(codes(missing.report.diagnostics), ['MANIFEST_REFERENCE_MISSING']);
+  const directory = await run((m) => ({ ...m, apps: ['notion.app.json'] }), async (dir) => mkdir(path.join(dir, 'notion.app.json')));
+  assert.deepEqual(codes(directory.report.diagnostics), ['MANIFEST_REFERENCE_MISSING']);
+  const notJson = await run((m) => ({ ...m, apps: ['notion.app.json'] }), async (dir) => writeFile(path.join(dir, 'notion.app.json'), '{ provider: notion }'));
+  assert.deepEqual(codes(notJson.report.diagnostics), ['MANIFEST_APP_INVALID']);
+  const repeatedPath = await run((m) => ({ ...m, apps: ['notion.app.json', 'notion.app.json'] }), writeApp('notion.app.json', { schemaVersion: 1, provider: 'notion' }));
+  assert.equal(repeatedPath.report.diagnostics.length, 1, JSON.stringify(repeatedPath.report.diagnostics));
+  for (const value of [{ schemaVersion: 2, provider: 'notion' }, { schemaVersion: 1, provider: 'Notion' }, { schemaVersion: 1, provider: 'notion', name: 'x' }, { schemaVersion: 1 }]) {
+    const bad = await run((m) => ({ ...m, apps: ['notion.app.json'] }), writeApp('notion.app.json', value));
+    assert.deepEqual(codes(bad.report.diagnostics), ['MANIFEST_APP_INVALID'], JSON.stringify(value));
+  }
+  const duplicate = await run(
+    (m) => ({ ...m, apps: ['a.app.json', 'b.app.json'] }),
+    async (dir) => {
+      await writeApp('a.app.json', { schemaVersion: 1, provider: 'notion' })(dir);
+      await writeApp('b.app.json', { $schema: 'https://example.com/app.json', schemaVersion: 1, provider: 'notion' })(dir);
+    },
+  );
+  assert.deepEqual(codes(duplicate.report.diagnostics), ['MANIFEST_APP_INVALID']);
+  assert.match(duplicate.report.diagnostics[0].message, /provider "notion"/u);
 });
 
 test('manifest: skills, mcpServers, hooks, hostBindings need matching pattern and existing file', async () => {
