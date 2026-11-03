@@ -1,7 +1,7 @@
 # Mini App Agent API
 
-Verified against MiniMax Code 3.1.6. Clients before 3.1.2 reject packages that declare
-`agentAccess`, and clients before 3.1.5 reject `"session.read"`.
+Verified against MiniMax Code 3.1.11. Clients before 3.1.2 reject packages that declare
+`agentAccess`, and clients before 3.1.6 reject `"session.read"`.
 
 A Mini App can run Agent turns from its Node entry (`context.agent`) or its page
 (`window.mcode.miniapp.agent`). The Agent keeps its full capabilities: files, shell, Skills, and MCP,
@@ -22,7 +22,7 @@ at runtime; a page that only prepares text for the user to send should use
   `context.agent` is absent and page calls reject with `not_permitted`.
 - `"session.run"` runs Agent turns in this Mini App's own sessions: `run`, `answer`, `reply`,
   `cancel`, `open`, `models`, `agents`, `create`.
-- `"session.read"` (MiniMax Code 3.1.5 or later) lists, reads, and observes the user's own
+- `"session.read"` (MiniMax Code 3.1.6 or later) lists, reads, and observes the user's own
   conversations, including the final reply of every turn: `sessions()`, `session()`, and
   `observe()` (see [Reading and observing the user's sessions](#reading-and-observing-the-users-sessions)).
   It does not let the Mini App run, answer, or continue those conversations.
@@ -30,14 +30,14 @@ at runtime; a page that only prepares text for the user to send should use
   Mini App read and observe its own sessions.
 - `agentConcurrency` (1–32, default 4) caps how many turns of this Mini App run at once.
 - Changing any of these fields restarts the Mini App process when the package is updated.
-- The user can switch either value off in the plugin details (MiniMax Code 3.1.5 or later). The
+- The user can switch either value off in the plugin details (MiniMax Code 3.1.6 or later). The
   Mini App keeps running and `context.agent` stays; calls covered by that value fail with
   `NOT_PERMITTED` / `not_permitted` until the user switches it back on. Show an explanation in the
   page instead of failing.
 - State in the README `## Data & access` that the Mini App runs Agent turns or reads the user's
   conversations, and what it does with them (see `docs/security.md`).
 - Feature-detect calls added after 3.1.2 with `capabilities?.has(...)`: `agent.observe`,
-  `agent.sessions`, and `agent.session` exist from 3.1.5.
+  `agent.sessions`, and `agent.session` exist from 3.1.6.
 
 ## Sessions
 
@@ -86,7 +86,7 @@ Node calls take an options object `{ signal?, onEvent? }`; page calls take `{ on
 
 ### Follow-ups while the session is busy (`whenBusy`)
 
-From MiniMax Code 3.1.5, `run({ sessionId, text, whenBusy })` decides what happens when that session
+From MiniMax Code 3.1.6, `run({ sessionId, text, whenBusy })` decides what happens when that session
 is already running a turn; without `whenBusy` the call fails with `busy`. On an idle session both
 values just start a turn.
 
@@ -111,7 +111,7 @@ to free the slot.
   `answer` calls wait in order, up to four times `agentConcurrency`; beyond that they fail with
   `busy`.
 - A Mini App starts at most 12 turns per 60 seconds, or 5 × `agentConcurrency` when that is larger
-  (MiniMax Code 3.1.5 or later). Past that, calls fail with `busy`. The count survives a Mini App
+  (MiniMax Code 3.1.6 or later). Past that, calls fail with `busy`. The count survives a Mini App
   restart.
 - Node sees why a call is `BUSY` in `reason`: `session_busy`, `queue_full`, `rate_limited`, or
   `observer_limit`. The page only receives `busy`.
@@ -179,7 +179,7 @@ Ignore any `type` you do not know; new types may be added.
 
 ## Reading and observing the user's sessions
 
-These calls exist from MiniMax Code 3.1.5. They need `"session.read"`, except for this Mini App's own
+These calls exist from MiniMax Code 3.1.6. They need `"session.read"`, except for this Mini App's own
 sessions, which either `agentAccess` value covers. They change nothing: a lost answer is
 `AGENT_UNAVAILABLE` / `runtime_unavailable` and safe to retry.
 

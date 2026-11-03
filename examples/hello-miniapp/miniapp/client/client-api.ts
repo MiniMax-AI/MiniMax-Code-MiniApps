@@ -443,6 +443,8 @@ export interface MiniAppClientAPI {
   readonly window?: MiniAppWindowHandle;
   /** Absent on older Hosts; check `capabilities.has('speech.transcribe')`. */
   readonly speech?: MiniAppSpeechAPI;
+  /** Effective Host preferences and bounded navigation; absent on older Hosts. */
+  readonly host?: MiniAppHostAPI;
   /**
    * Synchronous probe of Host features, fixed per Host version; independent of this Mini App's
    * manifest or grants. Absent on older Hosts: check `window.mcode?.miniapp?.capabilities?.has`.
@@ -516,8 +518,12 @@ export interface MiniAppWindowOptions {
 }
 
 export type MiniAppWindowState =
-  | { readonly mode: 'inline' }
-  | { readonly mode: 'window'; readonly window: MiniAppWindowOptions };
+  | { readonly mode: 'inline'; readonly modeChangeReloadsPage?: boolean }
+  | {
+      readonly mode: 'window';
+      readonly window: MiniAppWindowOptions;
+      readonly modeChangeReloadsPage?: boolean;
+    };
 
 /** Every field is optional; omitted fields are left unchanged. */
 export type MiniAppWindowPatch = Partial<{
@@ -548,12 +554,79 @@ export interface MiniAppWindowHandle {
   /**
    * `update({ mode: ... })` or `focus()` require the call to originate from a
    * user gesture (`navigator.userActivation.isActive`); otherwise they reject
-   * with `not_permitted` before any Host round trip.
+   * with `not_permitted` before any Host round trip. The `click` handler of a
+   * `Notification` the page created counts as one.
+   * When getState().modeChangeReloadsPage is true, mode changes end this document.
+   * Do not rely on the old Promise continuation; read state on the destination page.
    */
   update(patch: MiniAppWindowPatch): Promise<MiniAppWindowState>;
   focus(): Promise<void>;
   /** Returns a disposable; call `dispose()` to stop receiving updates. */
   onDidChangeState(listener: (state: MiniAppWindowState) => void): MiniAppWindowDisposable;
+}
+
+/** Page-visible Host state. Resource identities and pending preferences never enter these values. */
+export interface MiniAppHostUIState {
+  readonly theme: 'light' | 'dark';
+  readonly language: string;
+}
+
+export type MiniAppHostView = 'home' | 'conversation' | 'plugins' | 'schedule' | 'other';
+export type MiniAppHostOverlay = { readonly type: 'settings' } | null;
+
+export interface MiniAppHostNavigationState {
+  /** Short-lived opaque value scoped to this page and its observation authorization. */
+  readonly key: string;
+  readonly view: MiniAppHostView;
+  readonly overlay: MiniAppHostOverlay;
+}
+
+export type MiniAppHostOpenTarget =
+  | { readonly id: 'home' }
+  | { readonly id: 'plugins' }
+  | { readonly id: 'schedule' }
+  | { readonly id: 'settings'; readonly section?: 'appearance' | 'language' }
+  | { readonly id: 'session'; readonly sessionId: string; readonly source: 'local' };
+
+export type MiniAppHostOpenResult =
+  | { readonly status: 'opened' }
+  | { readonly status: 'cancelled'; readonly reason: 'user_cancelled' | 'superseded' };
+
+export type MiniAppHostErrorCode =
+  | 'invalid_request'
+  | 'not_permitted'
+  | 'host_unavailable'
+  | 'unsupported_source'
+  | 'unsupported_target'
+  | 'target_unavailable'
+  | 'result_unknown';
+export interface MiniAppHostError {
+  readonly code: MiniAppHostErrorCode;
+  readonly message: string;
+}
+export interface MiniAppHostDisposable {
+  dispose(): void;
+}
+export interface MiniAppHostSubscribeOptions {
+  readonly onError?: (error: MiniAppHostError) => void;
+}
+
+export interface MiniAppHostAPI {
+  readonly ui: {
+    getState(): Promise<MiniAppHostUIState>;
+    subscribe(
+      listener: (state: MiniAppHostUIState) => void,
+      options?: MiniAppHostSubscribeOptions,
+    ): MiniAppHostDisposable;
+  };
+  readonly navigation: {
+    getState(): Promise<MiniAppHostNavigationState>;
+    subscribe(
+      listener: (state: MiniAppHostNavigationState) => void,
+      options?: MiniAppHostSubscribeOptions,
+    ): MiniAppHostDisposable;
+    open(target: MiniAppHostOpenTarget): Promise<MiniAppHostOpenResult>;
+  };
 }
 
 export interface McodeClientAPI {
