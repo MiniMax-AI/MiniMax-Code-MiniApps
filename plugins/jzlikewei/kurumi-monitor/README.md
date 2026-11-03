@@ -7,17 +7,6 @@ watchlist, a leaderboard and a trade tape.
 
 [简体中文](README.zh-CN.md)
 
-## Credits
-
-The interface language and interaction spec were inspired by
-[PerfTicker](https://github.com/QiuSui1145/PerfTicker) by **QiuSui** (QiuSui_Studio), a
-single-file C# program that turns the Windows Task Manager into a stock terminal, released
-under GPL-3.0.
-
-This project is an independent implementation in JavaScript and Node, running inside the
-minimax Code Mini App host. The two projects share no source code. GPL-3.0 is kept as a
-tribute to the original author.
-
 ## Screenshots
 
 ![The full board: title bar, index strip, three-column body, process table and status bar](docs/screenshots/1-board.jpg)
@@ -135,6 +124,17 @@ round in 44–58 ms, a watchlist of 20 entries survives a restart of the runtime
 console reports no error. The Windows branch was exercised with a stub `powershell.exe`
 feeding recorded frames, covering 29 assertions across memory, GPU, disk, network,
 process and thermal parsing.
+
+## Credits
+
+The interface language and interaction spec were inspired by
+[PerfTicker](https://github.com/QiuSui1145/PerfTicker) by **QiuSui** (QiuSui_Studio), a
+single-file C# program that turns the Windows Task Manager into a stock terminal, released
+under GPL-3.0.
+
+This project is an independent implementation in JavaScript and Node, running inside the
+MiniMax Code Mini App host. The two projects share no source code. GPL-3.0 is kept as a
+tribute to the original author.
 
 ## Source
 
