@@ -74,6 +74,10 @@ import {
   parseStoryBody,
 } from './storyscope.mjs';
 import { pickPetAgent, needRebuild } from './agentpick.mjs';
+// ★ **v1.8.0：在宿主里新增我们自己的专属 agent**（只增不改、失败必降级）。
+import { ensureSelfAgent, SELF_AGENT_NAME } from './agentprov.mjs';
+// 身份层三段的**唯一读取口**（随消息带的那份 + 写进 agent 文件的那份，共用同一份投影）。
+import { readIdentitySections } from './identity.mjs';
 import { checkFrame, protocolPayload } from './chat-protocol.mjs';
 import { createObserve } from './observe.mjs';
 import {
@@ -698,9 +702,19 @@ export async function start(context, options = {}) {
    * 专属 agent 的探测结果（运行时缓存，不落盘）。
    *
    * `null` = 还没探过；`''` = 探过了、这台机器上没有专属 agent（用默认 agent）；
-   * `'mmx'` = 有，用它。
+   * `'mmx'` = 有，用它；`'mmx-octopus-agent'` = 我们自己新增的那个。
    */
   let petAgentProbe = null;
+
+  /**
+   * 「我们自己的专属 agent」这次运行的结论（运行时缓存）。
+   *
+   * `null` = 还没试过；对象 = 结果（ok / created / reason / path / probeSessionId）。
+   *
+   * ⚠️ **只增不改**：这个结论只决定「要不要新增我们那一个 agent」，
+   *   **绝不碰用户已有的 agent**（名字被占就降级 —— 不写、不用）。
+   */
+  let ownAgentResult = null;
 
   /**
    * 检查一次该不该让她主动开口；该就说一句。
@@ -1498,23 +1512,30 @@ export async function start(context, options = {}) {
   async function resolvePetAgent() {
     if (state.petAgent) return String(state.petAgent);
     if (petAgentProbe !== null) return petAgentProbe;
-    /** 宿主列出来的 agent 名（探测失败就当空表 ⇒ 退回默认 agent） */
-    let names = [];
+    const names = await listAgentNames();
+    petAgentProbe = pickPetAgent(names, '', SELF_AGENT_NAME);
+    context.logger.info('miniapp.agent.pet_agent.resolved', { agent: petAgentProbe || '(default)' });
+    return petAgentProbe;
+  }
+
+  /**
+   * 宿主列出来的 agent 名（探测失败就当空表 ⇒ 退回默认 agent）。
+   *
+   * @returns {Promise<string[]>}
+   */
+  async function listAgentNames() {
     try {
       if (context.agent && typeof context.agent.agents === 'function') {
         const listed = await context.agent.agents();
-        names = (listed?.agents || []).map((item) => String(item?.name ?? ''));
+        return (listed?.agents || []).map((item) => String(item?.name ?? ''));
       }
     } catch (error) {
       // 探测失败不是错误 —— 退回默认 agent 就行（她照样能说话）。
       context.logger.warn('miniapp.agent.pet_agent.probe_failed', {
         reason: error instanceof Error ? error.message : 'unknown',
       });
-      names = [];
     }
-    petAgentProbe = pickPetAgent(names, '');
-    context.logger.info('miniapp.agent.pet_agent.resolved', { agent: petAgentProbe || '(default)' });
-    return petAgentProbe;
+    return [];
   }
 
   /**
@@ -1534,7 +1555,27 @@ export async function start(context, options = {}) {
    * @returns {Promise<string>}
    */
   async function ensurePetSession(agentName) {
-    const wanted = agentName ? String(agentName) : await resolvePetAgent();
+    const explicit = agentName ? String(agentName) : '';
+    let wanted = explicit ? explicit : await resolvePetAgent();
+
+    // ⭐ **v1.8.0：没有可用的专属 agent → 现场新增一个**（只增不改、失败必降级）。
+    //
+    // ⚠️ **换 agent 只能重建会话**（官方规范：会话不能中途换 agent）⇒
+    //   只有「她还没说过话」（换过去不丢历史）时才把会话挪到我们那个 agent 上；
+    //   已经有历史了就**不动当前会话** —— 宁可暂时用弱通道，也不丢她的上下文。
+    if (!wanted) {
+      const own = await ensureOwnAgent();
+      if (own.ok) {
+        if (!state.petHeadInjected) {
+          wanted = SELF_AGENT_NAME;
+        }
+        // 已经有历史 ⇒ 保持现状（我们那个 agent 已经在宿主里了，下次重建会话时自然会用上）。
+      } else if (own.probeSessionId) {
+        // 降级：新增失败 ⇒ 继续用默认 agent（身份层仍走随消息带）。
+        await state.setPetSession(own.probeSessionId, false);
+      }
+    }
+
     const current = state.petSessionId;
     if (current && !state.petSessionDirty) {
       if (!wanted) return current;
@@ -1548,15 +1589,93 @@ export async function start(context, options = {}) {
         return current;
       }
     }
-    // 指定了 agent 就记下来，之后几轮沿用同一个。
-    if (agentName && wanted !== state.petAgent) await state.setPetAgent(wanted);
-    const created = await context.agent.create(wanted ? { agent: wanted } : {});
-    const sessionId = String(created?.sessionId ?? '');
-    if (!sessionId) throw new Error('session_create_failed');
+    // 我们自己那个 agent 要记下来（下一轮直接用它）；用户显式指定的照旧。
+    if (wanted === SELF_AGENT_NAME && state.petAgent !== SELF_AGENT_NAME) {
+      await state.setPetAgent(SELF_AGENT_NAME);
+    } else if (agentName && wanted !== state.petAgent) {
+      await state.setPetAgent(wanted);
+    }
+    const sessionId = await createSessionOn(wanted);
     await state.setPetSession(sessionId, false);
     // ⚠️ 这里**不**带身份层 —— 统一在 run 之前随消息带（`withIdentity`）。
     // 理由：老会话被复用时根本走不到这个分支，在这里带会漏。
     return sessionId;
+  }
+
+  /**
+   * 在宿主里**新增**我们自己的专属 agent（只增不改、失败必降级）。
+   *
+   * ⚠️ **为什么可能要一个临时会话**：宿主 agent 根目录只能从**宿主 API 返回的路径**认
+   *   （会话工作目录 / agents() 列表）—— **不从 dataDir 反推**（那是宿主内部布局，反推=猜）。
+   *   所以第一次拿不到路径时，先建一个默认 agent 的会话（**还没跑过回合 ⇒ 没有历史**），
+   *   拿它的路径再来一次。
+   *
+   * @returns {Promise<{ok: boolean, created: boolean, path?: string, reason?: string, probeSessionId?: string}>}
+   */
+  async function ensureOwnAgent() {
+    if (ownAgentResult) return ownAgentResult;
+    const current = state.petSessionId;
+    let result = await ensureSelfAgent({
+      context,
+      sessionId: current,
+      pluginId: context.pluginId,
+      logger: context.logger,
+    });
+    let probeSessionId = '';
+    if (!result.ok && result.reason === 'agents_root_unknown' && !current) {
+      try {
+        probeSessionId = await createSessionOn('');
+      } catch (error) {
+        context.logger.warn('miniapp.agent.self_agent.probe_session_failed', {
+          reason: error instanceof Error ? error.message : 'unknown',
+        });
+      }
+      if (probeSessionId) {
+        result = await ensureSelfAgent({
+          context,
+          sessionId: probeSessionId,
+          pluginId: context.pluginId,
+          logger: context.logger,
+        });
+      }
+    }
+    if (result.ok) {
+      // 探测缓存作废：宿主里现在多了我们那个 agent，下一轮要重新列。
+      petAgentProbe = null;
+      context.logger.info('miniapp.agent.self_agent.ready', {
+        created: !!result.created,
+        path: result.path,
+      });
+    }
+    ownAgentResult = { ...result, probeSessionId };
+    return ownAgentResult;
+  }
+
+  /**
+   * 建一个会话（可指定 agent）；我们那个 agent 被删了 ⇒ 自动退回默认 agent。
+   *
+   * ⚠️ **「她能说话」比「一定挂在专属 agent 上」重要** ⇒ 失败要降级，不抛。
+   *
+   * @param {string} wanted agent 名（'' = 默认 agent）
+   * @returns {Promise<string>}
+   */
+  async function createSessionOn(wanted) {
+    try {
+      const created = await context.agent.create(wanted ? { agent: wanted } : {});
+      const sessionId = String(created?.sessionId ?? '');
+      if (!sessionId) throw new Error('session_create_failed');
+      return sessionId;
+    } catch (error) {
+      if (wanted !== SELF_AGENT_NAME) throw error;
+      context.logger.warn('miniapp.agent.pet_session.self_agent_create_failed', {
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
+      await state.setPetAgent(null);
+      const created = await context.agent.create({});
+      const sessionId = String(created?.sessionId ?? '');
+      if (!sessionId) throw new Error('session_create_failed');
+      return sessionId;
+    }
   }
 
   /**
@@ -1623,41 +1742,20 @@ export async function start(context, options = {}) {
   }
 
   /**
-   * 身份层三段 —— 从包内那份 `identity/AGENTS.md` 里取（**只读**，不写任何宿主文件）。
+   * 身份层三段 —— 从包内那份「她是谁 / 她长什么样 / 她的规矩」投影里取（**只读**）。
    *
-   * ⭐ **真源在人物设定文件里**（规矩、
-   * 底稿与样子都在那儿），而那份 `identity/AGENTS.md` 是它的投影。
-   * 所以这里读投影 = 读真源，**不会漂**。
+   * ⭐ **判断只写一处**：读取逻辑在 `identity.mjs` 里，随消息带的那份
+   *   和写进专属 agent 文件的那份**读的是同一份投影**（改一处不会漂）。
    *
-   * ⚠️ **这是唯一路径，不是降级** —— 插件不往宿主目录写文件
-   *   （Marketplace 评审：「官方 Marketplace 不接受插件越出自己的 dataDir
-   *   写宿主内部文件」），身份层**只能**每轮随消息带进去。
+   * ⚠️ **弱通道**：插件**不**把这三段写进宿主已有文件 ⇒ 只能每轮随消息带进去。
    *   代价：身份层进会话历史 ⇒ 宿主压缩时可能被压掉。
+   *   （v1.8.0 起另有一条**强通道**：新增我们自己的 agent，把同样三段写进它的
+   *   system prompt —— 见 `agentprov.mjs`。）
    *
    * @returns {Promise<{baseline: string, appearance: string, rules: string}>}
    */
   async function readIdentityFallback() {
-    try {
-      const raw = await readFile(
-        join(context.pluginRoot, 'miniapp', 'node', 'identity', 'AGENTS.md'),
-        'utf8'
-      );
-      /** 取两个标记之间的正文（缺任一标记 → 空串，宁可不带也不带错）。 */
-      const section = (startMarker, endMarker) => {
-        const start = raw.indexOf(startMarker);
-        if (start < 0) return '';
-        const end = endMarker ? raw.indexOf(endMarker, start + startMarker.length) : -1;
-        if (endMarker && end < 0) return '';
-        return raw.slice(start + startMarker.length, end < 0 ? raw.length : end).trim();
-      };
-      return {
-        baseline: section('# 她是谁', '# 她长什么样'),
-        appearance: section('# 她长什么样', '# 她的规矩'),
-        rules: section('# 她的规矩', '# 结尾'),
-      };
-    } catch {
-      return { baseline: '', appearance: '', rules: '' };
-    }
+    return readIdentitySections(context.pluginRoot);
   }
 
   /**

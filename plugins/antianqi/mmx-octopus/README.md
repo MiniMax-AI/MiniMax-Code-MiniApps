@@ -110,15 +110,42 @@ it like the rest of the port.
   `context.pluginRoot`: `miniapp/node/identity/AGENTS.md` and
   `miniapp/node/identity/STORY.md` (who she is), plus the page assets under
   `miniapp/client/`.
-- **What it writes** — and **nothing else**. Four JSON files under
-  `context.dataDir`, the private directory the Host creates for this plugin:
+- **What it writes** — four JSON files under `context.dataDir`, the private
+  directory the Host creates for this plugin:
   `context.dataDir/state.json` (her expression, position, bubble and the Agent's
   busy state), `context.dataDir/chat.json` (your chat with her),
   `context.dataDir/diary.json` (her diary) and `context.dataDir/style.json`
   (how she has learned to write). Every write is atomic — a temporary file in
   the same directory, then a rename — so a crash cannot leave a half-written
-  file behind. **No file outside `context.dataDir` is ever written**: not the
-  Host's `agent.md`, not the `AGENTS.md` of the agent's workspace, nothing else.
+  file behind.
+- **One new agent file outside `context.dataDir`** — since 1.8.0 the runtime
+  **adds one agent of its own** to the Host's agent directory, so that her
+  character sheet can live in that agent's system prompt instead of only in the
+  message. Full disclosure:
+  - **Which file** — exactly one: `<Host agent directory>/mmx-octopus-agent/agent.md`.
+    The directory and the file are **new**; the Host picks it up without a
+    restart.
+  - **What is in it** — the same character sheet the plugin would otherwise
+    send with every message (who she is, what she looks like, her rules), plus
+    the frontmatter the Host expects (`name`, `description`, `displayName`).
+  - **What is never touched** — **no existing agent is modified and no other
+    file is written**: not your agents' `agent.md`, not the `AGENTS.md` of an
+    agent workspace, not your project files. If the name `mmx-octopus-agent` is
+    already taken by an agent that is not ours, the plugin **writes nothing and
+    does not use it** — she keeps working on the default agent.
+  - **How it is written** — atomically (temporary file, then a rename), one
+    write at a time, and only when the file does not exist yet: an existing
+    file is never overwritten, so there is nothing to back up.
+  - **How to turn it off** — if you already have your own agent named `mmx`,
+    the plugin uses that one and adds nothing. Otherwise delete
+    `<Host agent directory>/mmx-octopus-agent/` to remove it; the runtime adds
+    it again on the next start, because that is the feature. Nothing else on
+    your machine is affected.
+  - **When it cannot be done** — the Host's agent directory is located only
+    from paths the Host itself returns (the session workspace, the agent
+    list). If none of them identifies it, the plugin writes **nothing** and
+    falls back to sending her character sheet with every message, exactly as
+    before.
 - **Leftovers from earlier versions** — versions before 1.7.0 wrote an `AGENTS.md`
   into the workspace of the agent that has this Mini App installed, to carry her
   identity there. That is no longer written and no longer needed. If you are
@@ -126,12 +153,15 @@ it like the rest of the port.
   (`agents/<agent>/miniapps/<plugin-id>/AGENTS.md`) and you can delete it — the
   runtime never touches it, because a plugin must not write outside its own
   data directory.
-- **How her identity reaches her** — in the message, every turn. Her character
-  sheet (who she is, what she looks like, her rules) is read from this package's
-  own `miniapp/node/identity/AGENTS.md` and passed inside each prompt, so no
-  file has to be written for it. Because it travels in the conversation, the
-  Host's context compaction may drop it — that is why it is sent again every
-  turn.
+- **How her identity reaches her** — **twice, on purpose**. Her character
+  sheet (who she is, what she looks like, her rules) is read from this
+  package's own `miniapp/node/identity/AGENTS.md` and passed inside each
+  prompt, so it is never missing from a turn. Because that travels in the
+  conversation, the Host's context compaction may drop it — that is why it is
+  sent again every turn. Since 1.8.0 the same sheet is also written into the
+  system prompt of the agent added above (the file disclosed above), which
+  survives compaction; if that file cannot be written, the per-turn copy
+  remains and nothing changes for you.
 - **Sessions read** — the package declares `session.read`. It reads the title,
   the running state and the final reply of a turn, to tell whether the Agent is
   thinking or has finished, and to summarise the turn. The board in the panel
@@ -139,9 +169,10 @@ it like the rest of the port.
 - **Agent turns it runs** — it declares `session.run`, and it runs **one Agent
   turn per message you send her in the chat area**, in her own session. The
   turn runs through the Host Agent, so it carries the capabilities the Host
-  grants that agent; it reads the Host's agent list once to look for an agent
-  dedicated to the Mini App, and falls back to the default agent when there is
-  none. It never runs turns on your own sessions.
+  grants that agent; it reads the Host's agent list to look for an agent
+  dedicated to the Mini App — an agent of your own named `mmx` is used as it
+  is, otherwise the one it adds itself (see above) — and falls back to the
+  default agent when there is none. It never runs turns on your own sessions.
 - **Agent turns it starts on its own** — besides your messages, the runtime starts
   a few turns by itself, and **each of them uses your model quota**:
   - **Idle talk** — **off by default**; turn it on in the panel: Settings →

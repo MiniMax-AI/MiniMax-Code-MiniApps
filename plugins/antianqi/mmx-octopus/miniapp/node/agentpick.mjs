@@ -20,23 +20,38 @@
  * 并且能用「传坏参数」做负向注入。
  */
 
-/** 她的专属 agent 名。 */
+/** 她的专属 agent 名（用户自己建的那个 —— 老板机器上就有这个名字）。 */
 export const PET_AGENT_NAME = 'mmx';
+
+/**
+ * 我们自己新增的那个专属 agent 名（v1.8.0）。
+ *
+ * ⭐ **agent 名字的真源就在这个纯模块里**（agentpick.mjs 不依赖任何东西）——
+ *   `agentprov.mjs` 从这里取，两边不许各写一份。
+ */
+export const SELF_AGENT_NAME = 'mmx-octopus-agent';
 
 /**
  * 决定这一轮用哪个 agent。
  *
- * 优先级：**用户显式指定的** ＞ **探测到的专属 agent** ＞ **空（用默认 agent）**。
+ * 优先级：**用户显式指定的** ＞ **用户自己的「mmx」** ＞ **我们新增的那个专属 agent** ＞ **空（用默认 agent）**。
+ *
+ * ⚠️ **「用户自己的 mmx」优先于我们的**：老板机器上已经有那个 agent ⇒
+ *   不新增、不改它、也不把会话挪走（零影响）。
  *
  * @param {string[]} listedNames 宿主 `agents()` 列出来的 agent 名
  * @param {string|null|undefined} configured 用户显式指定的 agent 名（`state.petAgent`）
+ * @param {string} [selfName] 我们自己新增的那个 agent 名（宿主里**确实列出来了**才用它）
  * @returns {string} '' = 不指定（用默认 agent）
  */
-export function pickPetAgent(listedNames, configured) {
+export function pickPetAgent(listedNames, configured, selfName = '') {
   const explicit = configured ? String(configured) : '';
   if (explicit) return explicit;
   const names = Array.isArray(listedNames) ? listedNames.map((n) => String(n ?? '')) : [];
-  return names.includes(PET_AGENT_NAME) ? PET_AGENT_NAME : '';
+  if (names.includes(PET_AGENT_NAME)) return PET_AGENT_NAME;
+  const self = String(selfName ?? '');
+  if (self && names.includes(self)) return self;
+  return '';
 }
 
 /**
