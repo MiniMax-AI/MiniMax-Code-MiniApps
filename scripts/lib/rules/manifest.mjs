@@ -3,7 +3,9 @@ import path from 'node:path';
 import {
   AGENT_PATH,
   APP_PATH,
+  APP_FIELDS,
   CATEGORIES,
+  CONNECTOR_PROVIDER,
   HOOK_PATH,
   HOST_BINDING_PATH,
   ICON_PATH,
@@ -16,7 +18,7 @@ import {
   SKILL_PATH,
   VERSION_MAX_LENGTH,
 } from '../contract.mjs';
-import { isRecord, pathExists } from '../fs.mjs';
+import { isRecord, pathExists, readJsonFile } from '../fs.mjs';
 
 const FILE = '.minimax-plugin/plugin.json';
 
@@ -60,10 +62,8 @@ export async function checkManifest(report, { packageDir, manifest }) {
     }
   }
 
-  const apps = await references(report, packageDir, manifest.apps, 'apps', APP_PATH, { required: true, mustExist: false });
-  if (apps && apps.length > 0) {
-    report.warning('MANIFEST_APPS_IGNORED', 'apps entries are ignored for locally installed packages', FILE);
-  }
+  const apps = await references(report, packageDir, manifest.apps, 'apps', APP_PATH, { required: true, mustExist: true });
+  if (apps) await checkApps(report, packageDir, apps);
   await references(report, packageDir, manifest.mcpServers, 'mcpServers', MCP_PATH, { required: true, mustExist: true });
   await references(report, packageDir, manifest.skills, 'skills', SKILL_PATH, { required: true, mustExist: true });
   await references(report, packageDir, manifest.hooks, 'hooks', HOOK_PATH, { required: false, mustExist: true });
@@ -141,4 +141,35 @@ async function references(report, packageDir, value, label, pattern, { required,
     }
   }
   return items;
+}
+
+// Same rule set as the Host's App reference reader, which local packages use from 3.1.9.
+async function checkApps(report, packageDir, apps) {
+  const providers = new Set();
+  // references() already reported bad patterns, missing files, and repeated paths.
+  for (const item of new Set(apps)) {
+    const absolutePath = path.join(packageDir, ...item.split('/'));
+    if (!APP_PATH.test(item) || !(await pathExists(absolutePath, 'file'))) continue;
+    const file = await readJsonFile(absolutePath);
+    if (!file.ok) {
+      report.error('MANIFEST_APP_INVALID', `${item} ${file.detail}`, item);
+      continue;
+    }
+    const value = file.value;
+    if (
+      !isRecord(value) ||
+      Object.keys(value).some((key) => !APP_FIELDS.has(key)) ||
+      (value.$schema !== undefined && typeof value.$schema !== 'string') ||
+      value.schemaVersion !== 1 ||
+      typeof value.provider !== 'string' ||
+      !CONNECTOR_PROVIDER.test(value.provider)
+    ) {
+      report.error('MANIFEST_APP_INVALID', `${item} must be { "schemaVersion": 1, "provider": "<lowercase provider id>" }`, item);
+      continue;
+    }
+    if (providers.has(value.provider)) {
+      report.error('MANIFEST_APP_INVALID', `${item} repeats provider "${value.provider}"; the Host keeps only the first`, item);
+    }
+    providers.add(value.provider);
+  }
 }

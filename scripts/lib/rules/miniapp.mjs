@@ -10,6 +10,7 @@ import {
   ENGINES_REQUIREMENT,
   ENTRY_EXTENSION,
   EXCLUDED_DIRECTORY,
+  HOST_ACCESS_CAPABILITIES,
   HOST_CONNECTOR_ACCESS_FIELDS,
   MCP_ENDPOINT_FIELDS,
   MCP_SERVER_NAME,
@@ -31,7 +32,7 @@ const FILE = 'miniapp/miniapp.json';
 
 // What a package without a readable miniapp.json resolves to: no payload, no features, no access.
 export function emptyMiniApp() {
-  return { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, microphone: false } };
+  return { nodeRoots: [], clientRoots: [], features: [], access: { agent: [], tool: false, device: [], host: [] } };
 }
 
 export async function checkMiniApp(report, { packageDir, manifest }) {
@@ -57,16 +58,20 @@ export async function checkMiniApp(report, { packageDir, manifest }) {
   checkAgentConcurrency(report, manifest.agentConcurrency);
   const tool = checkAccessList(report, manifest.toolAccess, 'toolAccess', TOOL_ACCESS_CAPABILITIES, 'MINIAPP_TOOL_ACCESS_INVALID');
   const device = checkAccessList(report, manifest.deviceAccess, 'deviceAccess', DEVICE_ACCESS_ITEMS, 'MINIAPP_DEVICE_ACCESS_INVALID');
+  const host = checkAccessList(report, manifest.hostAccess, 'hostAccess', HOST_ACCESS_CAPABILITIES, 'MINIAPP_HOST_ACCESS_INVALID');
   const engines = checkEngines(report, manifest.engines);
   if (engines) resolved.engines = engines;
-  resolved.access = { agent, tool: tool.includes('call'), microphone: device.includes('microphone') };
+  resolved.access = { agent, tool: tool.includes('call'), device, host };
 
   if (manifest.agentAccess !== undefined) resolved.features.push('agentAccess');
   if (Array.isArray(manifest.agentAccess) && manifest.agentAccess.includes('session.read')) resolved.features.push('agentAccess.session.read');
   if (manifest.agentConcurrency !== undefined) resolved.features.push('agentConcurrency');
   if (isRecord(manifest.surface) && manifest.surface.window !== undefined) resolved.features.push('surface.window');
-  for (const field of ['engines', 'toolAccess', 'deviceAccess']) {
+  for (const field of ['engines', 'toolAccess', 'deviceAccess', 'hostAccess']) {
     if (manifest[field] !== undefined) resolved.features.push(field);
+  }
+  for (const item of ['camera', 'notifications']) {
+    if (device.includes(item)) resolved.features.push(`deviceAccess.${item}`);
   }
   return resolved;
 }

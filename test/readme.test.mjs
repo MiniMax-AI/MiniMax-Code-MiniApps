@@ -63,13 +63,25 @@ test('readme: only a MiniMax Code version inside Tested environment satisfies th
   assert.deepEqual(codes(noSection), ['README_HEADING_MISSING', 'README_MIN_VERSION_MISSING']);
 });
 
-test('readme: session.read, toolAccess, deviceAccess, and engines need 3.1.5; a 3.1.4 preview build is not enough', async () => {
-  for (const feature of ['agentAccess.session.read', 'toolAccess', 'deviceAccess', 'engines']) {
-    const preview = await run((text) => text.replace(TESTED_ON_3_0_73, '- MiniMax Code 3.1.4-preview.4773 on macOS.'), { features: [feature] });
-    assert.deepEqual(codes(preview), ['README_MIN_VERSION_MISSING'], feature);
-    assert.match(preview[0].message, /MiniMax Code 3\.1\.5/u);
-    assert.deepEqual(await run((text) => text.replace(TESTED_ON_3_0_73, '- MiniMax Code 3.1.5 on macOS.'), { features: [feature] }), [], feature);
+const testedOn = (line) => (text) => text.replace(TESTED_ON_3_0_73, line);
+
+test('readme: each feature names the first release with installers for both platforms', async () => {
+  const cases = [
+    [['agentAccess.session.read', 'toolAccess', 'deviceAccess', 'engines'], '3.1.6', ['3.1.4-preview.4773', '3.1.5']],
+    [['deviceAccess.camera', 'deviceAccess.notifications'], '3.1.9', ['3.1.8']],
+    [['hostAccess'], '3.1.11', ['3.1.10', '3.1.11-preview.4900']],
+  ];
+  for (const [features, minimum, tooOld] of cases) {
+    for (const feature of features) {
+      for (const version of tooOld) {
+        const stale = await run(testedOn(`- MiniMax Code ${version} on macOS.`), { features: [feature] });
+        assert.deepEqual(codes(stale), ['README_MIN_VERSION_MISSING'], `${feature} on ${version}`);
+        assert.match(stale[0].message, new RegExp(`MiniMax Code ${minimum.replaceAll('.', '\\.')} or later`, 'u'));
+      }
+      assert.deepEqual(await run(testedOn(`- MiniMax Code ${minimum} on macOS.`), { features: [feature] }), [], feature);
+    }
   }
+  assert.deepEqual(await run(testedOn('- MiniMax Code 3.1.6-3.1.11 on macOS.'), { features: ['toolAccess'] }), []);
 });
 
 test('readme: an engines bound above the feature minimum raises the version the README must name', async () => {
