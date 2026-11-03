@@ -1,6 +1,6 @@
 # Mini App security rules
 
-Verified against MiniMax Code 3.1.6.
+Verified against MiniMax Code 3.1.11.
 
 ## Process boundary
 
@@ -16,7 +16,9 @@ Verified against MiniMax Code 3.1.6.
 
 ## State
 
-- Store durable state under `context.dataDir`.
+- Store durable state under `context.dataDir`, and write it as it changes: while the Mini App is
+  not visible the Host may stop its process or reload its page without notice (see "Lifecycle" in
+  `docs/runtime.md`).
 - Browser storage may hold view preferences (filters, sort order, expanded rows), not domain data.
 
 ## Writing outside `dataDir`
@@ -69,11 +71,30 @@ in every user conversation.
   tools the Mini App needs.
 - Treat tool results as untrusted input, like any network response.
 
-## Microphone
+## Microphone and camera
 
-`deviceAccess: ["microphone"]` lets the page record the user.
+`deviceAccess` `"microphone"` and `"camera"` let the page record the user. The Host shows no
+indicator for either.
 
-- Say in the README `## Data & access` when the Mini App records, and where the audio goes: the
-  Host's speech recognition, a network host, or a file.
-- Record only after a user action, show that recording is on, and stop the microphone as soon as the
-  utterance ends.
+- Say in the README `## Data & access` when the Mini App records audio or video, and where it goes:
+  the Host's speech recognition, a network host, or a file.
+- Record only after a user action, show that recording is on, and stop the tracks as soon as the
+  page is done with them.
+
+## System notifications
+
+`deviceAccess: ["notifications"]` lets the page show notifications as MiniMax Code. They can stay in
+the system notification center after the Mini App closes and can appear on the lock screen.
+
+- Say in the README `## Data & access` what the Mini App notifies about.
+- Notify only about what the user asked to hear about. Keep secrets, and the content of the user's
+  files and conversations, out of the notification text.
+
+## Host navigation
+
+`hostAccess: ["navigation.read"]` tells the page which part of MiniMax Code the user is on (home, a
+conversation, plugins, schedule, or settings), never which conversation.
+
+- Declare it only when the Mini App reacts to where the user is, and say what for in the README
+  `## Data & access`.
+- Keep what you read on the user's machine, like conversations read with `"session.read"`.

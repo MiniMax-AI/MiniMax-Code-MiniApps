@@ -1,6 +1,6 @@
 # Mini App package contract
 
-Verified against MiniMax Code 3.1.6.
+Verified against MiniMax Code 3.1.11.
 
 A Mini App is a MiniMax Plugin whose `package.json` declares a Mini App payload. MiniMax Code
 enforces the manifest, payload, and path rules below when the package is installed. `npm run check`
@@ -52,7 +52,7 @@ committed file.
 | `darkIcon` | Optional; same rules as `icon`. |
 | `category` | One of `Office`, `Studio`, `Design & Sites`, `Code`, `Business`, `Sales`, `Productivity`, `Science & Healthcare`, `Education`, `Other`. |
 | `exampleQueries` | Array of non-empty strings. Provide at least one; the Agent uses them to open the Mini App by name. |
-| `apps` | Array of `*.app.json` paths. Locally installed packages ignore this field; use `[]`. |
+| `apps` | Array of `*.app.json` paths; each file must exist and be `{ "schemaVersion": 1, "provider": "<id>" }` (plus an optional `$schema`), with `provider` matching `^[a-z0-9_-]{1,64}$` and unique across the files. Each names a Connector app the plugin works with. From MiniMax Code 3.1.9 the plugin details list them with their connection status, and the client skips an entry that is missing, invalid, or repeats a provider instead of refusing the package; earlier clients ignore the field. |
 | `mcpServers` | Array of `*.mcp.json` paths; each file must exist. These are MCP servers the plugin offers to the Agent, distinct from `mcpEndpoints` in `miniapp.json`. |
 | `skills` | Array of `skills/<name>/SKILL.md` paths; each file must exist. |
 | `hooks` | Optional array of `*.json` paths; each file must exist. Contents are validated by MiniMax Code at install time. |
@@ -97,7 +97,7 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
 }
 ```
 
-- `schemaVersion` is `1`. Unknown top-level fields are rejected: MiniMax Code 3.1.5 and later report
+- `schemaVersion` is `1`. Unknown top-level fields are rejected: MiniMax Code 3.1.6 and later report
   `MINIAPP_MANIFEST_FIELD_UNSUPPORTED` naming the field, which on an installed client means the
   client is older than the package; earlier clients report `MINIAPP_MANIFEST_INVALID`.
 - `artifacts.client` and `artifacts.node` are non-empty arrays of unique paths under `miniapp/`.
@@ -105,7 +105,9 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
   installs. Any `node_modules` directory is excluded from payloads.
 - `runtime.kind` is `process`. `runtime.entry` ends in `.js`, `.mjs`, or `.cjs`, exists, and lies
   inside one of `artifacts.node`. Use `.mjs`: this repository checks the entry for an ESM `start`
-  export (see `docs/runtime.md`). `runtime.lifecycle` is `on-demand` or omitted.
+  export (see `docs/runtime.md`). `runtime.lifecycle` is `on-demand` or omitted. The Host may stop
+  the process and reload the page while the Mini App is not visible (see "Lifecycle" in
+  `docs/runtime.md`).
 - `surface.path` is the route the Node entry serves the page on. It is relative to the Host and
   must not contain an origin, query, fragment, or backslash. A missing leading `/` is added.
 - `surface.window` is optional; see [`surface.window`](#surfacewindow).
@@ -121,30 +123,42 @@ No other keys are allowed inside `mcode`. Other top-level keys (`name`, `type`, 
 - `agentAccess` is optional: an array of `"session.run"` (run Agent turns) and `"session.read"`
   (list, read, and observe the user's own conversations). Neither implies the other; declare both
   when the Mini App needs both. Absent or `[]` means no Agent access. See `docs/agent.md` before
-  declaring it. Requires MiniMax Code 3.1.2 or later; `"session.read"` requires 3.1.5 or later.
+  declaring it. Requires MiniMax Code 3.1.2 or later; `"session.read"` requires 3.1.6 or later.
 - `agentConcurrency` is optional: an integer from 1 to 32, default 4. It caps how many Agent turns
   of this Mini App run at once; it has no effect without `agentAccess`. Requires MiniMax Code 3.1.2
   or later.
 - `toolAccess` is optional. The only allowed value is `["call"]`, which gives the Node entry
   `context.tool` to call the MCP and Connector tools installed on the user's MiniMax Code, each call
-  judged by the user's permission rules. See `docs/tool.md`. Requires MiniMax Code 3.1.5 or later.
-- `deviceAccess` is optional. The only allowed value is `["microphone"]`, which lets the page call
-  `getUserMedia({ audio })` and `window.mcode.miniapp.speech.transcribe` (see `docs/client.md`).
-  Only audio-only requests from the page's main frame are granted: a request that also asks for
-  video, or comes from an iframe, is still denied. Requires MiniMax Code 3.1.5 or later.
-- `engines` is optional: `{ "mcode": ">=MAJOR.MINOR.PATCH" }`, nothing else. A client at 3.1.5 or
+  judged by the user's permission rules. See `docs/tool.md`. Requires MiniMax Code 3.1.6 or later.
+- `deviceAccess` is optional: an array of the browser permissions the page may hold. Absent or `[]`
+  means none. See "Browser permissions" in `docs/client.md`.
+  - `"microphone"`: `getUserMedia({ audio })` and `window.mcode.miniapp.speech.transcribe`.
+    Requires MiniMax Code 3.1.6 or later.
+  - `"camera"`: `getUserMedia({ video })`. Requires MiniMax Code 3.1.9 or later.
+  - `"notifications"`: `new Notification(...)`. Requires MiniMax Code 3.1.9 or later.
+
+  A request for audio and video together needs both `"microphone"` and `"camera"`. Requests from an
+  iframe are denied, and so is every other permission a browser would prompt for. Clients that
+  predate a value reject the package with `MINIAPP_DEVICE_ACCESS_INVALID`.
+- `hostAccess` is optional. The only allowed value is `["navigation.read"]`, which lets the page
+  read which part of MiniMax Code the user is looking at through
+  `window.mcode.miniapp.host.navigation` (see `docs/client.md`). Reading the Host's theme and
+  language, and opening Host pages, need no declaration. Other values fail with
+  `MINIAPP_HOST_ACCESS_INVALID`. Requires MiniMax Code 3.1.11 or later.
+- `engines` is optional: `{ "mcode": ">=MAJOR.MINOR.PATCH" }`, nothing else. A client at 3.1.6 or
   later but older than the bound keeps the plugin with its Skills and MCP servers, and withholds
   the Mini App and its `mcpEndpoints`; publishing such a package from a workspace fails with
-  `MINIAPP_HOST_TOO_OLD`. Clients before 3.1.5 do not know the field and reject the whole package,
-  so the bound only matters above 3.1.5. Write it only when the package needs a specific newer
-  client; it is not required for the features in the table below. Requires MiniMax Code 3.1.5 or
+  `MINIAPP_HOST_TOO_OLD`. Clients before 3.1.6 do not know the field and reject the whole package,
+  so the bound only matters above 3.1.6. Write it only when the package needs a specific newer
+  client; it is not required for the features in the table below. Requires MiniMax Code 3.1.6 or
   later.
 
 ### Permission switches
 
-From MiniMax Code 3.1.5 the user can switch off, item by item in the plugin details, what the
+From MiniMax Code 3.1.6 the user can switch off, item by item in the plugin details, what the
 manifest declares: each `hostConnectorAccess` provider, each `agentAccess` value, `toolAccess`
-`"call"`, and `deviceAccess` `"microphone"`. Everything starts on, with no first-use prompt. A switch
+`"call"`, each `deviceAccess` value, and `hostAccess` `"navigation.read"`. Everything starts on,
+with no first-use prompt and no browser permission prompt. A switch
 applies at once and does not restart the Mini App: `context.agent` and `context.tool` stay present,
 and their calls fail until the user switches the item back on:
 
@@ -154,6 +168,9 @@ and their calls fail until the user switches the item back on:
 | `session.read` | Observers end; `sessions()`, `observe({ all: true })`, and reading or observing the user's sessions fail the same way. |
 | `tool:call` | `context.tool.call` fails with `TOOL_NOT_PERMITTED`; `list()` reports every tool as `deny`. |
 | `microphone` | The next `getUserMedia` fails with `NotAllowedError` and `speech.transcribe` with `not_permitted`; a recording already open keeps its stream until the page stops it. |
+| `camera` | The next `getUserMedia` that asks for video fails with `NotAllowedError`; a stream already open keeps running until the page stops it. |
+| `notifications` | New notifications are not shown, and `Notification.permission` reads `denied`. |
+| `navigation.read` | Navigation subscriptions end through `onError`; `getState()` and new subscriptions fail with `not_permitted`. Subscribe again once it is back on. |
 
 Handle these errors where the call is made and explain in the page what the user can turn back on.
 `surface.window` flags are not switches.
@@ -208,21 +225,26 @@ the package cannot be installed there at all.
 | --- | --- | --- |
 | `agents` | `plugin.json` | 3.1.2 |
 | `agentAccess` | `miniapp/miniapp.json` | 3.1.2 |
-| `agentAccess` with `"session.read"` | `miniapp/miniapp.json` | 3.1.5 |
+| `agentAccess` with `"session.read"` | `miniapp/miniapp.json` | 3.1.6 |
 | `agentConcurrency` | `miniapp/miniapp.json` | 3.1.2 |
-| `deviceAccess` | `miniapp/miniapp.json` | 3.1.5 |
-| `engines` | `miniapp/miniapp.json` | 3.1.5, or its own bound when higher |
+| `deviceAccess` | `miniapp/miniapp.json` | 3.1.6 |
+| `deviceAccess` with `"camera"` or `"notifications"` | `miniapp/miniapp.json` | 3.1.9 |
+| `engines` | `miniapp/miniapp.json` | 3.1.6, or its own bound when higher |
+| `hostAccess` | `miniapp/miniapp.json` | 3.1.11 |
 | `surface.window` | `miniapp/miniapp.json` | 3.1.2 |
-| `toolAccess` | `miniapp/miniapp.json` | 3.1.5 |
+| `toolAccess` | `miniapp/miniapp.json` | 3.1.6 |
 
-A 3.1.4 preview build accepted `"session.read"`, but the released 3.1.4 rejects it.
+Each minimum is the first MiniMax Code release with installers for both macOS and Windows. 3.1.5
+shipped no installers and 3.1.8 none for Windows, so neither is ever a minimum. Preview builds do
+not count either: they can accept a field before the release that ships it.
 
 The package's minimum is the highest entry it declares. When it has one, name a MiniMax Code
 version at or above it under `## Tested environment` in its README, for example
-`- MiniMax Code 3.1.5 on macOS 15`. `npm run check` warns until it finds one there.
+`- MiniMax Code 3.1.6 on macOS 15`. `npm run check` warns until it finds one there. A pre-release
+such as `3.1.11-preview.4900` ranks below `3.1.11`.
 
 To use a newer page or Node API only where it exists, without raising the minimum, feature-detect
-it: `capabilities?.has('agent.observe')` (MiniMax Code 3.1.5 and later), or test that the method
+it: `capabilities?.has('agent.observe')` (MiniMax Code 3.1.6 and later), or test that the method
 exists. A manifest field cannot be feature-detected: declaring it is what raises the minimum.
 
 ## Declared access must match the code
@@ -238,15 +260,16 @@ grant the manifest does not make, and reports them as `ACCESS_UNDECLARED`.
 | `agent.session(id)`, `agent.observe({ sessionId })` on the Mini App's own sessions | either `agentAccess` value | error |
 | `context.tool.*`, page `tool.request()` | `toolAccess: ["call"]` | error |
 | `speech.transcribe()` | `deviceAccess: ["microphone"]` | error |
-| `getUserMedia()` | `deviceAccess: ["microphone"]` | error when the package's minimum is 3.1.5 or later; warning otherwise |
+| page `host.navigation.getState()`, `host.navigation.subscribe()` | `hostAccess: ["navigation.read"]` | error |
+| `getUserMedia({ audio })`, `getUserMedia({ video })` | `deviceAccess` `"microphone"`, `"camera"`; either one when the constraints are not an object literal | error when the package's minimum is 3.1.6 or later; warning otherwise |
+| `new Notification()`, `Notification.requestPermission()` | `deviceAccess: ["notifications"]` | error when the package's minimum is 3.1.6 or later; warning otherwise |
 
-The Agent rows are reported once per file, naming every missing value. The first five rows never
-work without the grant, on any client. `getUserMedia` worked without a grant
-before MiniMax Code 3.1.5, and 3.1.5 and later deny it with `NotAllowedError`. A package whose
-minimum is below 3.1.5 still installs on those earlier clients, so the check only warns; declaring
-`deviceAccess` fixes the call and raises the minimum to 3.1.5. Camera, geolocation, notifications,
-and every other permission a browser would prompt for are denied to Mini App pages on 3.1.5 and
-later and cannot be declared yet.
+The Agent rows are reported once per file, naming every missing value, and so are the browser
+permission rows. The rows marked error never work without the grant, on any client. Browser
+permissions worked without a grant before MiniMax Code 3.1.6, which denies every permission the
+manifest does not declare. A package whose minimum is below 3.1.6 still installs on those earlier
+clients, so the check only warns; declaring the `deviceAccess` value fixes the call and raises the
+minimum to 3.1.6, or 3.1.9 for `"camera"` and `"notifications"`.
 
 The scan matches source text, so it misses calls through a renamed variable and can flag dormant
 code, such as an engine's audio input that the app never turns on. Explain a warning in the pull

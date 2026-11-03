@@ -15,12 +15,12 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
 2. Read `docs/runtime.md` before editing `miniapp/node/*`. Read `docs/security.md` before the
    Node code reads or writes files, spawns processes, or makes network requests. Read
    `docs/client.md` before the page calls `window.mcode` or a browser permission such as
-   `getUserMedia`, `docs/agent.md` before declaring `agentAccess`, and `docs/tool.md` before
-   declaring `toolAccess`.
+   `getUserMedia` or `Notification`, `docs/agent.md` before declaring `agentAccess`, and
+   `docs/tool.md` before declaring `toolAccess`.
 3. Write `README.md` (English; `README.zh-CN.md` optional): what it does, how to install and open
    it, and the headings `## Tested environment` and `## Data & access` (files read/written,
-   network hosts, spawned processes, Agent turns, conversations read, tools called, microphone use,
-   where state is stored). When the package uses a feature with a minimum client version
+   network hosts, spawned processes, Agent turns, conversations read, tools called, microphone,
+   camera, and notification use, Host navigation read, where state is stored). When the package uses a feature with a minimum client version
    (`docs/package-contract.md`), name a MiniMax Code version at or above it under
    `## Tested environment`.
 4. Add one row to the table in both root READMEs.
@@ -36,7 +36,11 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
 - stdout and stdin belong to the Host. Log through `context.logger`.
 - The Node entry is ESM with a named export `start(context)`. Resolve `start` only after the
   listener accepts connections on `context.listen`. Return `{ dispose }`; `dispose` closes
-  everything the entry started: server, timers, child processes, streams, file handles.
+  everything the entry started: server, timers, child processes, streams, file handles, within
+  2 seconds.
+- While no page is visible, the Host may stop the Node process or reload the page without notice
+  or callback. Write durable state as it changes and save view state on `visibilitychange`; polling
+  and heartbeats keep nothing alive.
 - Bind only `context.listen.host` / `context.listen.port`, with a `node:http` server (or a framework
   on top of it); `https`, `http2`, `tls`, raw `net`, or a child process on that port never becomes
   ready. Serve `surface.path` plus your own routes, none under `/__mavis/`.
@@ -46,7 +50,8 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
   App payload, the page APIs, the Agent API, and the tool API; treat `context.hostConnector` and the
   other capabilities as outside its scope.
 - Declare exactly the access the code uses: `agentAccess` (`session.run`, `session.read`),
-  `toolAccess`, `deviceAccess`. A call without its declaration fails at runtime, and
+  `toolAccess`, `deviceAccess` (`microphone`, `camera`, `notifications`), `hostAccess`
+  (`navigation.read`). A call without its declaration fails at runtime, and
   `npm run check` reports it as `ACCESS_UNDECLARED`; do not declare access the app does not use.
 - `agentAccess` gives an Agent with files, shell, and MCP, and `session.read` exposes every user
   conversation. Never answer a `permission.requested` with `allowOnce` unless the user chose it.
@@ -62,16 +67,23 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
 ## Review policy
 
 Maintainers gate on three things: manifests pass `npm run check`; the README describes real
-behaviour (files, network, processes, Agent turns, conversations read, tools called, microphone
-use, tested environment); the package cannot damage Host or user data. Everything else is a
+behaviour (files, network, processes, Agent turns, conversations read, tools called, device use,
+tested environment); the package cannot damage Host or user data. Everything else is a
 suggestion.
 
 ## Change the checks or the docs
 
 `scripts/` mirrors the MiniMax Code package reader; `docs/` publishes the same contract.
 
-- A minimum in `FEATURE_MIN_HOST_VERSION` is the first released MiniMax Code that accepts the
-  field. Preview builds ship features early and are not evidence.
+- A minimum in `FEATURE_MIN_HOST_VERSION` is the first MiniMax Code release that accepts the
+  field and has installers for both macOS and Windows on the production CDN. A tag, a preview
+  build, or a release on one platform only is not evidence: 3.1.5 shipped no installers and 3.1.8
+  none for Windows. Check that `MiniMax%20Code-<version>-arm64.dmg` and
+  `MiniMax%20Code%20Setup%20<version>.exe` answer 200 under both
+  `https://filecdn.minimax.chat/public/minimax-agent-prod/release/` and
+  `https://file.cdn.minimax.io/public/minimax-agent-prod/release/`.
+- A feature that ships first in the next release uses `NEXT_RELEASE` in `scripts/lib/contract.mjs`.
+  Its PR stays a draft until that release's installers pass the check above.
 - Change `scripts/lib/contract.mjs`, the rule, its `test/<rule>.test.mjs`, and the matching
   `docs/` page together, and update the docs' `Verified against` line. The checker stays
   dependency-free.
@@ -83,14 +95,15 @@ suggestion.
 
 - `docs/package-contract.md` — layout, the three manifests, portable paths, limits, permission
   switches, minimum client versions, declared access versus code
-- `docs/runtime.md` — `start(context)`, `dispose`, logger, lifecycle, loopback authentication
-- `docs/client.md` — page APIs: `capabilities`, browser permissions, `message.append`, `agent`,
-  `speech.transcribe`, `tool.request`, `window`
+- `docs/runtime.md` — `start(context)`, `dispose`, logger, lifecycle and reclaim, loopback
+  authentication
+- `docs/client.md` — page APIs: `capabilities`, browser permissions (microphone, camera,
+  notifications), `message.append`, `agent`, `speech.transcribe`, `tool.request`, `host`, `window`
 - `docs/agent.md` — `agentAccess`, sessions, calls, `whenBusy`, reading and observing sessions,
   events, errors
 - `docs/tool.md` — `toolAccess`, `context.tool`, permission prompts, errors
 - `docs/security.md` — process boundary, state, writing outside `dataDir`, spawning, network, Agent
-  turns, reading conversations, calling tools, microphone
+  turns, reading conversations, calling tools, microphone and camera, notifications, Host navigation
 - `docs/snippets/audio-capture.ts` — microphone capture in the format `speech.transcribe` takes
 - `examples/hello-miniapp/` — the copyable starting point
 - `CONTRIBUTING.md` — fork, pull request, and license steps for people

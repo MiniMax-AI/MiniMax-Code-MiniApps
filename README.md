@@ -130,7 +130,7 @@ The preview uses synthetic data. The app interface is currently in Chinese. See 
 
 ### Requirements
 
-Use a MiniMax Code desktop version that supports MiniApps. Check the app's README for tested client versions, operating systems, configuration, and known limitations. Compatibility is documented per app. Apps that use newer capabilities need a newer client, and older versions cannot install them: running Agent tasks or opening in their own window needs MiniMax Code 3.1.2 or later; reading your conversations, calling your installed tools, or using the microphone needs 3.1.5 or later. From 3.1.5 you can switch off each permission an app declares, one by one, in its plugin details.
+Use a MiniMax Code desktop version that supports MiniApps. Check the app's README for tested client versions, operating systems, configuration, and known limitations. Compatibility is documented per app. Apps that use newer capabilities need a newer client, and older versions cannot install them: running Agent tasks or opening in their own window needs MiniMax Code 3.1.2 or later; reading your conversations, calling your installed tools, or using the microphone needs 3.1.6 or later; using the camera or showing system notifications needs 3.1.9 or later; following which MiniMax Code page you are on needs 3.1.11 or later. From 3.1.6 you can switch off each permission an app declares, one by one, in its plugin details.
 
 ### 1. Download
 
@@ -163,7 +163,7 @@ The installed manifest must be at:
 
 The author directory (`amszuidas/`) only groups contributions in the repository. Copy the plugin directory directly into the client's `plugins/` directory, without that extra author level.
 
-These packages use **manual installation**. The client's GitHub plugin import feature does not support these MiniApp packages.
+These packages use **manual installation**. Importing them with the client's GitHub plugin import does not work: the client downloads the whole repository, which is larger than its 128 MiB limit.
 
 ### 3. Open
 
