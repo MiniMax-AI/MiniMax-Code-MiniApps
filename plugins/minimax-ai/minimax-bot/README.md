@@ -52,6 +52,12 @@ The note section of the group panel reads the note's limits (6 entries and 1200 
 
 In the usage view an `aborted` row is a turn that was cut off: it counts as a turn and it shows the characters and tool calls it did make, but it has no duration, so it is left out of the average. A turn that was never metered at all is not on the ledger; the panel's turn count is the number of rows.
 
+## 0.7.18 An unconfirmed outcome still closes its batch
+
+An unconfirmed outcome is still never replayed, but it no longer leaves its batch open forever: the batch closes, its report says the outcome is unknown, and it is trimmed like any settled batch. Finished batches no longer pile up in the state file either: the batches that still owe something stay, the newest 30 settled ones stay, and older ones leave a small record without the reply. The reply of a batch that was trimmed is read back from the chat message that holds it, page by page, and a reply whose chat message is gone is reported as truncated instead of silently shortened. Clearing a chat therefore takes the full replies of its older tasks with it: only the trimmed window is left in the task record.
+
+Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `request_id` older than that is no longer known and its work would start again. A build older than this one does not read the archive at all, so after a downgrade an archived `request_id` can run again.
+
 ## 0.7.20 The queue of a group is built from its member list
 
 A group created before 0.7.8 can hold an admin that is not on its member list. Queueing that admin hands the group a speaker it then skips, so every message without an `@` went quiet: the reply was marked cancelled and nothing explained it. The queue is now built from the member list only — the admin speaks first when it is on the list, the first member takes over when it is not, and in the `all` mode only real members are queued. An `@` still beats every reply mode.

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": ["./miniapp/client"],
+    "node": ["./miniapp/node"]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/dashboard",
+    "window": {
+      "width": 220,
+      "height": 460,
+      "minWidth": 200,
+      "minHeight": 200,
+      "resizable": true,
+      "frame": false,
+      "transparent": true,
+      "alwaysOnTop": true,
+      "clickThrough": true,
+      "skipTaskbar": false
+    }
+  },
+  "mcpEndpoints": [
+    {
+      "server": "mmx",
+      "path": "/mcp/mmx"
+    }
+  ],
+  "agentAccess": ["session.read", "session.run"]
+}
