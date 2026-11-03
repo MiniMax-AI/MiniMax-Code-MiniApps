@@ -119,6 +119,13 @@ it like the rest of the port.
   the same directory, then a rename — so a crash cannot leave a half-written
   file behind. **No file outside `context.dataDir` is ever written**: not the
   Host's `agent.md`, not the `AGENTS.md` of the agent's workspace, nothing else.
+- **Leftovers from earlier versions** — versions before 1.7.0 wrote an `AGENTS.md`
+  into the workspace of the agent that has this Mini App installed, to carry her
+  identity there. That is no longer written and no longer needed. If you are
+  upgrading from an earlier version the old file may still be there
+  (`agents/<agent>/miniapps/<plugin-id>/AGENTS.md`) and you can delete it — the
+  runtime never touches it, because a plugin must not write outside its own
+  data directory.
 - **How her identity reaches her** — in the message, every turn. Her character
   sheet (who she is, what she looks like, her rules) is read from this package's
   own `miniapp/node/identity/AGENTS.md` and passed inside each prompt, so no
