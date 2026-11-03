@@ -50,6 +50,20 @@ test('a letter of a script that writes with spaces makes an address, not a menti
   assert.deepEqual(engine.mentionsIn('josé@alice @bob', group), ['bob']);
 });
 
+test('a full-width IME and the scripts that write up against the "@" still reach the member', async (t) => {
+  const { engine, group } = await fixture(t);
+  // A full-width IME writes full-width letters and digits.
+  assert.deepEqual(engine.mentionsIn('ＯＫ@alice', group), ['alice']);
+  assert.deepEqual(engine.mentionsIn('第２@alice', group), ['alice']);
+  // Thai, Lao, Khmer and Myanmar write a word right up against the "@" as well.
+  assert.deepEqual(engine.mentionsIn('\u0e02\u0e2d\u0e1a\u0e38\u0e19@alice', group), ['alice']);
+  assert.deepEqual(engine.mentionsIn('\u0e82\u0eb2\u0e99@alice', group), ['alice']);
+  assert.deepEqual(engine.mentionsIn('\u17e1\u179c\u17b7@alice', group), ['alice']);
+  assert.deepEqual(engine.mentionsIn('\u1000\u103b\u102c\u1019\u1038@alice', group), ['alice']);
+  // A letter of a script that writes with spaces still makes an address.
+  assert.deepEqual(engine.mentionsIn('josé@alice', group), []);
+});
+
 test('Chinese, Japanese and Korean write up against the "@" and still reach the member', async (t) => {
   const { engine, group } = await fixture(t);
   assert.deepEqual(engine.mentionsIn('请@alice', group), ['alice']);

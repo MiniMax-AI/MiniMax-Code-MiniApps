@@ -74,13 +74,12 @@ export async function writeJsonAtomic(file, value, options = {}) {
 /**
  * 把一段文本原子地写进文件。
  *
- * **为什么要有这个（而不是裸 `writeFile`）**：身份层 `AGENTS.md` 要写进宿主给
- * 这个 Mini App 建的 agent 目录，宿主**每轮重读**它。写到一半被读到，
- * 模型就会看到半截身份（底稿有、规矩没有）—— 那比整份旧身份更糟。
- * 裸写没有这个保证，所以走同一套「临时文件 → fsync → rename」的原子发布。
- *
  * **和 `writeJsonAtomic` 的关系**：同一个原子发布的**唯一实现**，
  * 只是一个序列化、一个直接写文本。node 层**不允许**别处裸调 `writeFile`。
+ *
+ * ⚠️ **生产代码现在没有调用点** —— 插件只落盘 `context.dataDir` 下的
+ *   四个 JSON（走 `writeJsonAtomic`），**不往宿主目录写任何文件**
+ *   （Marketplace 评审要求）。这个函数留着给随包发布的自检脚本铺夹具。
  *
  * @param {string} file 目标文件绝对路径
  * @param {string} text 要写的内容

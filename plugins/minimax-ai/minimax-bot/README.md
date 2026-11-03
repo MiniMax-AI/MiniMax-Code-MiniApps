@@ -58,6 +58,10 @@ An unconfirmed outcome is still never replayed, but it no longer leaves its batc
 
 Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `request_id` older than that is no longer known and its work would start again. A build older than this one does not read the archive at all, so after a downgrade an archived `request_id` can run again.
 
+## 0.7.19 The mention rule, read by the script that writes the word
+
+0.7.16 started to read the character in front of the `@` as a word of any script, so a letter of a script that writes with spaces (`josé@alice`) makes an address and calls nobody. This release completes that: a full-width IME writes full-width letters and digits (`ＯＫ@某人`), and Thai, Lao, Khmer and Myanmar write a word right up against the `@` as Chinese does, so those characters do not swallow the mention either.
+
 ## 0.7.20 The queue of a group is built from its member list
 
 A group created before 0.7.8 can hold an admin that is not on its member list. Queueing that admin hands the group a speaker it then skips, so every message without an `@` went quiet: the reply was marked cancelled and nothing explained it. The queue is now built from the member list only — the admin speaks first when it is on the list, the first member takes over when it is not, and in the `all` mode only real members are queued. An `@` still beats every reply mode.

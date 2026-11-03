@@ -1,6 +1,6 @@
 {
   "name": "mmx-octopus",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "description": "MMX Octopus: a desktop companion for MiniMax Code that mirrors what the Agent is doing and can be driven by it through a hosted MCP server.",
   "mcode": {
