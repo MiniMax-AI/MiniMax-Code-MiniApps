@@ -6,6 +6,15 @@
 
 [English](README.md)
 
+## 致谢
+
+界面语言与交互规格的灵感来自 [PerfTicker](https://github.com/QiuSui1145/PerfTicker)，
+作者 **QiuSui**（QiuSui_Studio），一个把 Windows 任务管理器做成炒股软件行情终端的
+C# 单文件程序，采用 GPL-3.0 协议。
+
+本项目是独立实现：技术栈为 JavaScript / Node，运行在 minimax Code 的 Mini App 宿主里，
+两边没有共享任何源码。沿用 GPL-3.0 是出于对原作者的尊重。
+
 ## 截图
 
 ![全景：顶栏、指数条、三栏主体、进程表与状态栏](docs/screenshots/1-board.jpg)
@@ -106,15 +115,6 @@ GPU 温度、GPU 功耗与 ACPI 热区温度只在 Windows 上有值。macOS 上
 macOS 上已验证：44 项指标全部有值并实时刷新，六个 macOS 采集源单轮 44–58 毫秒，
 20 项自选跨运行时重启完整恢复，控制台无报错。Windows 分支用桩 `powershell.exe`
 喂入录制帧验证，覆盖内存、GPU、磁盘、网络、进程与温度解析共 29 项断言。
-
-## 致谢
-
-界面语言与交互规格的灵感来自 [PerfTicker](https://github.com/QiuSui1145/PerfTicker)，
-作者 **QiuSui**（QiuSui_Studio），一个把 Windows 任务管理器做成炒股软件行情终端的
-C# 单文件程序，采用 GPL-3.0 协议。
-
-本项目是独立实现：技术栈为 JavaScript / Node，运行在 MiniMax Code 的 Mini App 宿主里，
-两边没有共享任何源码。沿用 GPL-3.0 是出于对原作者的尊重。
 
 ## 源码
 
