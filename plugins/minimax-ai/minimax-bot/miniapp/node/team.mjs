@@ -105,7 +105,9 @@ export class Team {
     const kind = t(`kind.${kindKey}`);
     if (!value) throw new EngineError('invalid', t('err.nameEmpty', { kind }));
     if (value.length > 24) throw new EngineError('invalid', t('err.nameTooLong', { kind }));
-    if (/[@\n\r]/.test(value)) throw new EngineError('invalid', t('err.nameChars', { kind }));
+    // The full-width "＠" and the small commercial "﹫" are the same sign as the ASCII "@",
+    // so a name must not carry them either: a mention is found by its "@".
+    if (/[@＠﹫\n\r]/.test(value)) throw new EngineError('invalid', t('err.nameChars', { kind }));
     const list = kindKey === 'bot' ? this.store.state.bots : this.store.state.groups;
     if (list.some((item) => item.id !== selfId && item.name.toLowerCase() === value.toLowerCase())) {
       throw new EngineError('invalid', t('err.nameTaken', { name: value, kind, kindKey }));
@@ -420,6 +422,10 @@ export class Team {
     if (patch.admin !== undefined) draft.adminId = this.resolveBot(patch.admin).id;
     if (!draft.memberIds.includes(draft.adminId)) {
       if (patch.admin !== undefined) draft.memberIds.unshift(draft.adminId);
+      // Dropping the admin from the member list moves the admin to the first member left. Only
+      // the main Bot may hand the admin over: another Bot would change the admin by a side
+      // door, which is the very thing the check above refuses.
+      else if (caller && !caller.isMain) throw new EngineError('forbidden', t('err.adminChangeForbidden'));
       else draft.adminId = draft.memberIds[0];
     }
     Object.assign(group, draft);
