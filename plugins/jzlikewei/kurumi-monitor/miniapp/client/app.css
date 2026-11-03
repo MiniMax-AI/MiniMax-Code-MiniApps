@@ -126,6 +126,11 @@ body {
   letter-spacing: .01em; flex: none; white-space: nowrap;
 }
 .brand small { font-weight: 500; font-size: 11px; color: var(--dim); }
+.brand-logo {
+  width: 28px; height: 28px; border-radius: 7px; flex: none;
+  display: block; object-fit: cover; background: var(--sunk);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
+}
 .pulse {
   width: 9px; height: 9px; border-radius: 50%; background: var(--up); flex: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 22%, transparent);
