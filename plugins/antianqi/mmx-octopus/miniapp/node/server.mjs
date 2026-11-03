@@ -68,16 +68,12 @@ import { assembleChatInput, buildCarryOver, SHORT_USER_MAX } from './chatinput.m
 //   预告句（「我去把 X 的代码翻出来」）/ 纯路径句 / 纯校验味句 ⇒ 去掉。
 // ⚠️ **只擦工作日志味，不擦「她懂很多」** —— 她知道更多梗才更有真实感。
 import { scrubText, pickFinalText } from './scrub.mjs';
-// ⚠️ **归属判据的唯一真源**（PR #101 Must fix 2）—— 只往自己拥有的目录写身份层。
-import { ownsPluginDir } from './ownership.mjs';
 import {
   shouldLoadStory,
   buildStoryBlock,
   parseStoryBody,
 } from './storyscope.mjs';
 import { pickPetAgent, needRebuild } from './agentpick.mjs';
-import { syncAgentDisplayName } from './displayname.mjs';
-import { writeTextAtomic } from './atomic-json.mjs';
 import { checkFrame, protocolPayload } from './chat-protocol.mjs';
 import { createObserve } from './observe.mjs';
 import {
@@ -744,7 +740,7 @@ export async function start(context, options = {}) {
         lastIdleAt: idleHistory.length ? idleHistory[idleHistory.length - 1] : 0,
         idleTimestamps: idleHistory,
         busy: state.chatBusy,
-      }, { enabled: state.idleTalk !== false });
+      }, { enabled: state.idleTalk === true });
       if (!verdict.ok) return;
 
       // ⚠️ **先判静态**：久没人碰她 ⇒ 用静态台词库那 3 条（idle 通道），不走模型。
@@ -784,15 +780,18 @@ export async function start(context, options = {}) {
       //   ⚠️ **在跑模型之前占位** —— 模型这一轮要十几秒，跑完再判就晚了。
       if (!state.trySpeak('feed')) return;
       const sessionId = await ensurePetSession();
-      // 身份层先落位（跟聊天那条路一样）：她在 agent 目录里读到 AGENTS.md 才知道自己是谁。
-      await ensureIdentityFile(sessionId);
       /** 她的这一轮正文 */
       let finalText = '';
       const controller = new AbortController();
       const watchdog = setTimeout(() => controller.abort(), CHAT_TURN_TIMEOUT);
       try {
         await context.agent.run(
-          { text: buildIdlePrompt({ clock, minutes, scene: scenePrompt, tone: state.currentTone() }), sessionId },
+          {
+            text: await withIdentity(
+              buildIdlePrompt({ clock, minutes, scene: scenePrompt, tone: state.currentTone() })
+            ),
+            sessionId,
+          },
           {
             signal: mergeSignals(context.signal, controller.signal),
             onEvent: (event) => {
@@ -1130,8 +1129,10 @@ export async function start(context, options = {}) {
           await state.commit();
           // 改了名字/称呼 → 她的专属会话要重建，否则旧会话还记着老称呼
           state.petSessionDirty = true;
-          // (*) 显示名跟着设置走（名字不该写死，随时能改）
-          await syncAgentDisplayName({ context, state }, naming.herName);
+          // ⚠️ **不再改宿主那个 agent 的文件** —— Marketplace 评审：插件不得写
+          //   自己 dataDir 之外的宿主文件。名字的**唯一真源**是设置区
+          //   （state.naming.herName），面板和她每轮的消息里都用它；
+          //   宿主 agent 列表里显示什么，由宿主自己管。
           broadcastChat({ type: 'naming', naming });
           sendJson(response, 200, { ok: true, naming, snapshot: state.snapshot() });
           return;
@@ -1553,8 +1554,8 @@ export async function start(context, options = {}) {
     const sessionId = String(created?.sessionId ?? '');
     if (!sessionId) throw new Error('session_create_failed');
     await state.setPetSession(sessionId, false);
-    // ⚠️ 这里**不**写身份层 —— 统一在 run 之前写（`ensureIdentityFile`）。
-    // 理由：老会话被复用时根本走不到这个分支，身份文件会永远缺。
+    // ⚠️ 这里**不**带身份层 —— 统一在 run 之前随消息带（`withIdentity`）。
+    // 理由：老会话被复用时根本走不到这个分支，在这里带会漏。
     return sessionId;
   }
 
@@ -1622,83 +1623,16 @@ export async function start(context, options = {}) {
   }
 
   /**
-   * 把身份层写进**宿主为这个 Mini App 建的 agent 目录**的 `AGENTS.md`。
-   *
-   * ⭐ 这是整件事的关键：
-   * 宿主为每个安装的 Mini App 自动建一个专属 agent 目录
-   * （`~/.minimax/agents/<用户的primary>/miniapps/<pluginId>/`），
-   * 并且**每轮重读**该目录下的 `AGENTS.md`，把它当项目指令拼进 **system prompt**。
-   *
-   * 为什么这比「每轮拼进 user 消息」好：
-   * ① **压缩压不掉** —— system prompt 不进会话历史，宿主压缩只压对话历史；
-   * ② **上下文不被撑爆** —— 身份层不进历史，每轮历史只长真实对话；
-   * ③ **符合口径** ——「不在每一条进行反复注入」；
-   * ④ **可推广** —— 目录由宿主按插件自动建，不要求用户配置任何 agent
-   *    （专属 agent 方案不可推广：`agents()` 列的是**用户配置**的，
-   *      别人装了我们的 Mini App 列表里没有「mmx」，`create({agent})` 直接 INVALID_ARGUMENTS）。
-   *
-   * 实测依据（真机）：写暗号「甲」→ 她答「暗号甲」；
-   * 改成「丙」→ **下一轮**就答「暗号丙」（每轮重读）；
-   * 同目录 `PERSONA.md` 不生效（只认 `AGENTS.md`）；文件内容不进 `messages.jsonl` 历史。
-   *
-   * @param {string} sessionId 她的专属会话
-   * @returns {Promise<boolean>} 有没有写成功（失败要降级）
-   */
-  async function ensureIdentityFile(sessionId) {
-    if (!sessionId) return false;
-    try {
-      if (!context.agent || typeof context.agent.session !== 'function') return false;
-      const detail = await context.agent.session(sessionId);
-      const dir = String(detail?.workspaceDir ?? '');
-      if (!dir) return false;
-      // ⚠️ **只写自己拥有的工作区**（PR #101 Must fix 2）：
-      //   review 原文 —— 「write only under a path this package owns ... and
-      //   otherwise use the in-message fallback you already have」。
-      //   工作区不是 miniapps/<pluginId> ⇒ 它可能是**用户的真实项目目录**，
-      //   写进去会把用户自己的 AGENTS.md **每轮静默覆盖**。
-      if (!ownsPluginDir(dir, String(context.pluginId || ''))) {
-        await state.setIdentityFileReady(false);
-        context.logger.info('miniapp.agent.identity.skipped', { reason: 'not_owned' });
-        return false;
-      }
-      const target = join(dir, 'AGENTS.md');
-      const template = await readFile(
-        join(context.pluginRoot, 'miniapp', 'node', 'identity', 'AGENTS.md'),
-        'utf8'
-      );
-      /** 目标文件当前的内容（不存在就当空串 → 一定会重写） */
-      let current = '';
-      try {
-        current = await readFile(target, 'utf8');
-      } catch {
-        // 文件还不存在 —— 正常情况（第一次写）。
-      }
-      if (current !== template) {
-        await writeTextAtomic(target, template);
-        context.logger.info('miniapp.agent.identity.written', { dir });
-      }
-      if (!state.identityFileReady) await state.setIdentityFileReady(true);
-      return true;
-    } catch (error) {
-      context.logger.warn('miniapp.agent.identity.write_failed', {
-        reason: error instanceof Error ? error.message : 'unknown',
-      });
-      await state.setIdentityFileReady(false);
-      return false;
-    }
-  }
-
-  /**
-   * **降级路径**用的身份层三段 —— 从项目内那份 `identity/AGENTS.md` 里取。
+   * 身份层三段 —— 从包内那份 `identity/AGENTS.md` 里取（**只读**，不写任何宿主文件）。
    *
    * ⭐ **真源在人物设定文件里**（规矩、
-   * 底稿与样子都在那儿），而那份 `AGENTS.md` 是它的投影。
+   * 底稿与样子都在那儿），而那份 `identity/AGENTS.md` 是它的投影。
    * 所以这里读投影 = 读真源，**不会漂**。
    *
-   * ⚠️ **为什么降级路径要单独准备身份层**：
-   * 身份层写不进宿主 agent 目录时（老宿主 / 没 `agent.session` 能力），
-   * 就退回「每轮把身份层拼在 user 消息里」—— 效果差一点（会被压缩掉），
-   * 但不会让她不知道自己是谁。降级判据 = `state.identityFileReady`。
+   * ⚠️ **这是唯一路径，不是降级** —— 插件不往宿主目录写文件
+   *   （Marketplace 评审：「官方 Marketplace 不接受插件越出自己的 dataDir
+   *   写宿主内部文件」），身份层**只能**每轮随消息带进去。
+   *   代价：身份层进会话历史 ⇒ 宿主压缩时可能被压掉。
    *
    * @returns {Promise<{baseline: string, appearance: string, rules: string}>}
    */
@@ -1727,26 +1661,39 @@ export async function start(context, options = {}) {
   }
 
   /**
+   * 给她这一轮补上身份层（底稿 + 样子 + 规矩）。
+   *
+   * ⚠️ **每轮都补** —— 插件**不往宿主目录写任何文件**（Marketplace 评审要求），
+   *   身份层没有别的落点 ⇒ 只能随消息传进去。聊天那条路由 `assembleChatInput`
+   *   带（同一份内容、同一个真源），这里补的是闲话 / 写日记 / 回评论 / 学语气那四条。
+   *
+   * @param {string} text 这一轮要送进去的正文
+   * @returns {Promise<string>}
+   */
+  async function withIdentity(text) {
+    const body = String(text ?? '');
+    const fb = await readIdentityFallback();
+    const identity = [fb.baseline, fb.appearance, fb.rules].filter(Boolean).join('\n\n');
+    return identity ? identity + '\n\n' + body : body;
+  }
+
+  /**
    * 拼这一轮送进她耳朵的文本。
    *
-   * ⭐ **身份层不在这里**（底稿 + 规矩已经写进 agent 目录的 `AGENTS.md`，
-   * 宿主每轮读它 → 进 system prompt → 压缩压不掉）。
-   * 这里只拼**每轮都会变的**的部分：状态摘要 + 称呼 + 用户原话。
+   * ⭐ **身份层也在这里**（底稿 + 样子 + 规矩）—— 插件**不往宿主目录写文件**
+   *   （Marketplace 评审要求），身份层只能随消息带进去。
+   * ⚠️ **代价**：身份层进会话历史 ⇒ 宿主压缩时可能被压掉。
+   *   每轮都带一份，就是压缩之后还能补回来的原因。
    *
-   * ⚠️ **称呼必须每轮带** —— 名字和称呼是用户随时能改的（`/api/naming`），
-   * 写进 `AGENTS.md` 就成了静态的，改名不生效。所以它留在这里。
+   * ⚠️ **称呼必须每轮带** —— 名字和称呼是用户随时能改的（`/api/naming`）。
    *
    * @param {string} text 用户原话
    * @returns {Promise<string>}
    */
   async function buildChatInput(text) {
     const summary = await buildStatusSummary();
-    // ⚠️ **降级路径**：身份层写不进 agent 目录时（老宿主 / 没 agent.session 能力），
-    // 就退回「每轮把身份层拼在 user 消息里」—— 效果差一点（会被压缩掉），
-    // 但不会让她不知道自己是谁。降级判据 = `state.identityFileReady`。
-    const identityInFile = state.identityFileReady;
-    // 降级路径的身份层三段（identityInFile 时不读，也不带 —— 已经在 AGENTS.md 里了）。
-    const fallback = identityInFile ? null : await readIdentityFallback();
+    // 身份层三段（**每轮都带** —— 插件不往宿主目录写文件，没有别的落点）。
+    const fallback = await readIdentityFallback();
     // 换会话后的第一轮：带一段「上一段聊到这」，不然她接不上。
     const isNewSession = !state.petHeadInjected;
     // ⭐ **她的日记**（「日记是很重要的记录，
@@ -1779,7 +1726,6 @@ export async function start(context, options = {}) {
       baseline: fallback ? fallback.baseline : '',
       appearance: fallback ? fallback.appearance : '',
       rules: fallback ? fallback.rules : '',
-      identityInFile,
       carryOver: isNewSession ? buildCarryOverBlock(text) : null,
       memory,
       storyScope,
@@ -1947,11 +1893,7 @@ export async function start(context, options = {}) {
         return;
       }
 
-      // 身份层先落位（AGENTS.md），再拼这一轮的话。
-      // 必须在 run 之前 —— 宿主每轮重读那个文件，写晚了这一轮就还用旧身份。
-      // 失败不拦：降级路径会把身份层拼进 user 消息（见 buildChatInput）。
-      await ensureIdentityFile(sessionId);
-
+      // 身份层随消息带进去（**不往宿主目录写文件** —— 身份层没有别的落点）。
       const input = await buildChatInput(text);
 
       // 看门狗：她要是停在等答案的状态，run 自己不会结束（宿主没有超时），
@@ -2347,8 +2289,7 @@ export async function start(context, options = {}) {
     styleWriting = true;
     try {
       const sessionId = await ensurePetSession();
-      await ensureIdentityFile(sessionId);
-      const prompt = buildStylePrompt(lines);
+      const prompt = await withIdentity(buildStylePrompt(lines));
       const controller = new AbortController();
       const watchdog = setTimeout(() => {
         context.logger.warn('miniapp.agent.style.timeout', { sessionId });
@@ -2387,8 +2328,7 @@ export async function start(context, options = {}) {
     diaryWriting = true;
     try {
       const sessionId = await ensurePetSession();
-      await ensureIdentityFile(sessionId);
-      const prompt = buildDiaryPrompt();
+      const prompt = await withIdentity(buildDiaryPrompt());
       const controller = new AbortController();
       const watchdog = setTimeout(() => {
         context.logger.warn('miniapp.agent.diary.timeout', { sessionId });
@@ -2442,8 +2382,7 @@ export async function start(context, options = {}) {
       }
       try {
         const sessionId = await ensurePetSession();
-        await ensureIdentityFile(sessionId);
-        const prompt = buildDiaryReplyPrompt(entry.text, comment.text);
+        const prompt = await withIdentity(buildDiaryReplyPrompt(entry.text, comment.text));
         const controller = new AbortController();
         const watchdog = setTimeout(() => {
           context.logger.warn('miniapp.agent.diary.reply_timeout', { sessionId });
