@@ -58,6 +58,10 @@ An unconfirmed outcome is still never replayed, but it no longer leaves its batc
 
 Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `request_id` older than that is no longer known and its work would start again. A build older than this one does not read the archive at all, so after a downgrade an archived `request_id` can run again.
 
+## 0.7.19 The mention rule, read by the script that writes the word
+
+0.7.16 started to read the character in front of the `@` as a word of any script, so a letter of a script that writes with spaces (`josé@alice`) makes an address and calls nobody. This release completes that: a full-width IME writes full-width letters and digits (`ＯＫ@某人`), and Thai, Lao, Khmer and Myanmar write a word right up against the `@` as Chinese does, so those characters do not swallow the mention either.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
