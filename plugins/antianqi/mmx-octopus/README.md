@@ -136,11 +136,14 @@ it like the rest of the port.
   - **How it is written** — atomically (temporary file, then a rename), one
     write at a time, and only when the file does not exist yet: an existing
     file is never overwritten, so there is nothing to back up.
-  - **How to turn it off** — if you already have your own agent named `mmx`,
-    the plugin uses that one and adds nothing. Otherwise delete
-    `<Host agent directory>/mmx-octopus-agent/` to remove it; the runtime adds
-    it again on the next start, because that is the feature. Nothing else on
-    your machine is affected.
+  - **How to remove it, or how to pick up a new version** — the file is
+    **never rewritten in place**, so after you upgrade the package the old
+    character sheet stays in it. Delete
+    `<Host agent directory>/mmx-octopus-agent/` and the runtime adds it again on
+    the next start, this time with the current version's sheet. If you would
+    rather not have this agent at all, create an agent of your own named `mmx`
+    (an empty one is enough) — the plugin prefers it and adds nothing. Nothing
+    else on your machine is affected.
   - **When it cannot be done** — the Host's agent directory is located only
     from paths the Host itself returns (the session workspace, the agent
     list). If none of them identifies it, the plugin writes **nothing** and
