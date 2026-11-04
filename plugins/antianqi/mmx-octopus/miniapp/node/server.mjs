@@ -1172,6 +1172,23 @@ export async function start(context, options = {}) {
           return;
         }
 
+        // ===== 「她用哪个 agent」（上游评审 Optional #3：给用户一个自己决定的入口）=====
+        //
+        // ⚠️ **默认「用现有 agent」** ⇒ 插件默认**不往宿主目录写任何文件**。
+        //   想要专属 agent 的用户在面板上点一下，插件才建。
+        if (path === '/api/agent-mode') {
+          const mode = body.mode === 'own' ? 'own' : 'existing';
+          const agentMode = await state.setAgentMode(mode);
+          // 换了档 ⇒ 探测缓存作废（agent 列表 / 我们那个 agent 的结论都要重探）
+          petAgentProbe = null;
+          ownAgentResult = null;
+          // 换回「现有 agent」⇒ 别再把她钉在我们那个 agent 上
+          if (mode === 'existing') await state.setPetAgent(null);
+          context.logger.info('miniapp.agent.mode.changed', { mode });
+          sendJson(response, 200, { ok: true, agentMode, snapshot: state.snapshot() });
+          return;
+        }
+
         if (path === '/api/diary') {
           // 让她自己写一篇日记（走一次她的专属会话）。
           //
@@ -1513,8 +1530,20 @@ export async function start(context, options = {}) {
     if (state.petAgent) return String(state.petAgent);
     if (petAgentProbe !== null) return petAgentProbe;
     const names = await listAgentNames();
-    petAgentProbe = pickPetAgent(names, '', SELF_AGENT_NAME);
-    context.logger.info('miniapp.agent.pet_agent.resolved', { agent: petAgentProbe || '(default)' });
+    // ⚠️ **档位决定我们新增的那个 agent 参不参与**：
+    //   「用现有 agent」这一档 ⇒ 它**不参与**（不新增、不使用）；
+    //   「建专属 agent」这一档 ⇒ 它**排在自己的 mmx 前面**（用户明确选了它）。
+    const mode = state.agentMode === 'own' ? 'own' : 'existing';
+    // ⚠️ **专属档也只有我们那个真的是我们的时才用它** —— 名字被别人占了（name_taken）
+    //   ⇒ 我们没建成 ⇒ 那个同名 agent 是**别人的** ⇒ 不能拿来当「我们那个」用
+    //   （降级：继续用现有 agent —— 与面板上写的失败原因一致）。
+    const selfOwned = mode === 'own' && !!(ownAgentResult && ownAgentResult.ok);
+    const selfName = mode === 'own' ? SELF_AGENT_NAME : '';
+    petAgentProbe = pickPetAgent(names, '', selfName, mode, selfOwned);
+    context.logger.info('miniapp.agent.pet_agent.resolved', {
+      agent: petAgentProbe || '(default)',
+      mode,
+    });
     return petAgentProbe;
   }
 
@@ -1556,28 +1585,36 @@ export async function start(context, options = {}) {
    */
   async function ensurePetSession(agentName) {
     const explicit = agentName ? String(agentName) : '';
-    let wanted = explicit ? explicit : await resolvePetAgent();
+    let wanted = explicit ? explicit : '';
 
     // ⭐ **v1.8.0：没有可用的专属 agent → 现场新增一个**（只增不改、失败必降级）。
     //
     // ⚠️ **换 agent 只能重建会话**（官方规范：会话不能中途换 agent）⇒
     //   只有「她还没说过话」（换过去不丢历史）时才把会话挪到我们那个 agent 上；
     //   已经有历史了就**不动当前会话** —— 宁可暂时用弱通道，也不丢她的上下文。
-    if (!wanted) {
+    // ⭐ **用户自己选的那一档**（面板上的「她用哪个 agent」）：
+    //   · 「用现有 agent」（**默认**）⇒ 我们新增的那个**一次都不碰**：
+    //     不新增、不使用、不把会话挪过去 ⇒ 插件不往宿主目录写任何文件。
+    //   · 「建专属 agent」⇒ 先把我们那一个建出来（只增不改、失败必降级），
+    //     建不出来 ⇒ 退回「现有 agent」，并把原因说清楚（面板上看得见）。
+    //
+    // ⚠️ **换 agent 只能重建会话**（官方规范：会话不能中途换 agent）。
+    //   用户**主动**选了「专属」⇒ 就换（新会话第一轮带接续摘要 ⇒ 上下文接得上）。
+    if (!explicit && state.agentMode === 'own') {
       const own = await ensureOwnAgent();
       if (own.ok) {
-        if (!state.petHeadInjected) {
-          wanted = SELF_AGENT_NAME;
-        } else if (own.probeSessionId) {
-          // 已经有历史 ⇒ 不换 agent；但**把探测会话拿来当她的会话**（它是我们自己建的，
-          //   不出现在左侧聊天列表里），别再另建一个（上游评审 Optional #1）。
+        await state.setAgentStatus('');
+      } else {
+        await state.setAgentStatus(ownAgentFailText(own.reason));
+        if (own.probeSessionId) {
+          // 降级：建不成 ⇒ 继续用现有 agent（身份层仍走随消息带）。
           await state.setPetSession(own.probeSessionId, false);
         }
-        // 已经有历史 ⇒ 保持现状（我们那个 agent 已经在宿主里了，下次重建会话时自然会用上）。
-      } else if (own.probeSessionId) {
-        // 降级：新增失败 ⇒ 继续用默认 agent（身份层仍走随消息带）。
-        await state.setPetSession(own.probeSessionId, false);
       }
+      wanted = await resolvePetAgent();
+    } else if (!explicit) {
+      // 「用现有 agent」这一档：我们那一个**不参与**（不写盘、不使用）。
+      wanted = await resolvePetAgent();
     }
 
     const current = state.petSessionId;
@@ -1604,6 +1641,26 @@ export async function start(context, options = {}) {
     // ⚠️ 这里**不**带身份层 —— 统一在 run 之前随消息带（`withIdentity`）。
     // 理由：老会话被复用时根本走不到这个分支，在这里带会漏。
     return sessionId;
+  }
+
+  /**
+   * 「专属 agent 没建成」的原因 —— 面板上给用户看的一句话。
+   *
+   * ⚠️ **失败要说出来**（不能默默退回「现有 agent」）：用户选的是「专属」，
+   *   没建成就告诉他为什么（名字被占 / 认不出目录 / 写不进去）。
+   *
+   * @param {string} reason
+   * @returns {string}
+   */
+  function ownAgentFailText(reason) {
+    const map = {
+      name_taken: '「mmx-octopus-agent」这个名字已经被别的 agent 占了，建不了 —— 继续用现有 agent。',
+      agents_root_unknown: '认不出宿主的 agent 目录，建不了专属 agent —— 继续用现有 agent。',
+      write_failed: '写不进宿主的 agent 目录，建不了专属 agent —— 继续用现有 agent。',
+      verify_failed: '写完没验过，建不了专属 agent —— 继续用现有 agent。',
+      persona_missing: '包里没读到她的设定，建不了专属 agent —— 继续用现有 agent。',
+    };
+    return map[String(reason)] || '专属 agent 没建成 —— 继续用现有 agent。';
   }
 
   /**

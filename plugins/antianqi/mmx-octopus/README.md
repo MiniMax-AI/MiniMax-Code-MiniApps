@@ -118,10 +118,14 @@ it like the rest of the port.
   (how she has learned to write). Every write is atomic — a temporary file in
   the same directory, then a rename — so a crash cannot leave a half-written
   file behind.
-- **One new agent file outside `context.dataDir`** — since 1.8.0 the runtime
-  **adds one agent of its own** to the Host's agent directory, so that her
-  character sheet can live in that agent's system prompt instead of only in the
-  message. Full disclosure:
+- **At most one new agent file outside `context.dataDir`** — since 1.8.0 the
+  runtime **can add one agent of its own** to the Host's agent directory, so
+  that her character sheet can live in that agent's system prompt instead of
+  only in the message. **By default it adds nothing**: the panel has a
+  two-way choice ("Which agent should she use"), and the default is "use an
+  existing agent" — the plugin then writes **not a single byte** outside its
+  own data directory. Only when you pick "create a dedicated agent" does it
+  add that agent. Full disclosure:
   - **Which file** — exactly one: `<Host agent directory>/mmx-octopus-agent/agent.md`.
     The directory and the file are **new**; the Host picks it up without a
     restart.
@@ -132,7 +136,8 @@ it like the rest of the port.
     file is written**: not your agents' `agent.md`, not the `AGENTS.md` of an
     agent workspace, not your project files. If the name `mmx-octopus-agent` is
     already taken by an agent that is not ours, the plugin **writes nothing and
-    does not use it** — she keeps working on the default agent.
+    does not use it** — she keeps working on an existing agent (that other
+    agent's file is never treated as ours).
   - **How it is written** — atomically (temporary file, then a rename), one
     write at a time, and only when the file does not exist yet: an existing
     file is never overwritten, so there is nothing to back up.
@@ -141,9 +146,10 @@ it like the rest of the port.
     character sheet stays in it. Delete
     `<Host agent directory>/mmx-octopus-agent/` and the runtime adds it again on
     the next start, this time with the current version's sheet. If you would
-    rather not have this agent at all, create an agent of your own named `mmx`
-    (an empty one is enough) — the plugin prefers it and adds nothing. Nothing
-    else on your machine is affected.
+    rather not have this agent at all, pick "use an existing agent" in the
+    panel (the default) — the plugin then leaves it alone, and as long as you
+    do not switch back to "create a dedicated agent" it will not be recreated.
+    Nothing else on your machine is affected.
   - **How the directory is found — it is never guessed** — only from the
     workspace of a session the plugin itself created: the Host sets that
     workspace to the Mini App's own agent directory
@@ -170,7 +176,8 @@ it like the rest of the port.
   package's own `miniapp/node/identity/AGENTS.md` and passed inside each
   prompt, so it is never missing from a turn. Because that travels in the
   conversation, the Host's context compaction may drop it — that is why it is
-  sent again every turn. Since 1.8.0 the same sheet is also written into the
+  sent again every turn. Since 1.8.0 — and only once you pick "create a
+  dedicated agent" in the panel — the same sheet is also written into the
   system prompt of the agent added above (the file disclosed above), which
   survives compaction; if that file cannot be written, the per-turn copy
   remains and nothing changes for you.
@@ -182,9 +189,11 @@ it like the rest of the port.
   turn per message you send her in the chat area**, in her own session. The
   turn runs through the Host Agent, so it carries the capabilities the Host
   grants that agent; it reads the Host's agent list to look for an agent
-  dedicated to the Mini App — an agent of your own named `mmx` is used as it
-  is, otherwise the one it adds itself (see above) — and falls back to the
-  default agent when there is none. It never runs turns on your own sessions.
+  dedicated to the Mini App — in the default mode ("use an existing agent")
+  the one of your own named `mmx` is used as it is; if you pick "create a
+  dedicated agent" in the panel, the one it adds itself comes first (see
+  above) and yours is only used when that one is not there; with neither, it
+  falls back to the default agent. It never runs turns on your own sessions.
 - **Agent turns it starts on its own** — besides your messages, the runtime starts
   a few turns by itself, and **each of them uses your model quota**:
   - **Idle talk** — **off by default**; turn it on in the panel: Settings →

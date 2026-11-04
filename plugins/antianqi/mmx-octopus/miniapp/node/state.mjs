@@ -341,6 +341,15 @@ export class PetState {
     this.asking = null;
     /** @type {string | null} 她的专属会话用哪个 agent */
     this.petAgent = null;
+    /**
+     * 她的会话用哪个 agent（**用户在面板里选**，持久化）。
+     * 'existing' = **用现有 agent**（默认）—— 插件不往宿主目录写任何文件；
+     * 'own'      = **建我们自己的专属 agent** —— 性格更鲜明，但从零开始、没有积累。
+     * @type {'existing'|'own'}
+     */
+    this.agentMode = 'existing';
+    /** @type {string} 运行时状态：实际用哪个 agent 的说明（不持久化；空 = 没话说） */
+    this.agentStatus = '';
     /** @type {boolean} 她正在回话（运行时态，不持久化） */
     this.chatBusy = false;
     /** @type {boolean} 是否把 MCode 状态摘要拼进她的输入（持久化，默认开） */
@@ -437,6 +446,8 @@ export class PetState {
         if (typeof saved.petSessionDirty === 'boolean') this.petSessionDirty = saved.petSessionDirty;
         if (typeof saved.petHeadInjected === 'boolean') this.petHeadInjected = saved.petHeadInjected;
         if (typeof saved.petAgent === 'string' && saved.petAgent) this.petAgent = saved.petAgent;
+        // ⚠️ **默认是「用现有 agent」** —— 只有明确存了 'own' 才算「建专属」。
+        if (saved.agentMode === 'own') this.agentMode = 'own';
         if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
         if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
         if (saved.naming && typeof saved.naming === 'object') {
@@ -498,6 +509,7 @@ export class PetState {
         petSessionDirty: this.petSessionDirty,
         petHeadInjected: this.petHeadInjected,
         petAgent: this.petAgent,
+        agentMode: this.agentMode,
         petAware: this.petAware,
         idleTalk: this.idleTalk,
         naming: { ...this.naming },
@@ -568,6 +580,8 @@ export class PetState {
       petHeadInjected: this.petHeadInjected,
       asking: this.asking,
       petAgent: this.petAgent,
+      agentMode: this.agentMode,
+      agentStatus: this.agentStatus,
       petAware: this.petAware,
       idleTalk: this.idleTalk,
       naming: { ...this.naming },
@@ -1166,6 +1180,33 @@ export class PetState {
     this.idleTalk = on === true;
     await this.commit();
     return this.idleTalk;
+  }
+
+  /**
+   * 她的会话用哪个 agent（用户在面板里选的那一档）。
+   *
+   * ⚠️ **只有明确传 'own' 才算「建专属 agent」** —— 别的值一律按「用现有 agent」处理。
+   *   默认就是「用现有 agent」：插件默认**不往宿主目录写任何文件**。
+   *
+   * @param {string} mode
+   */
+  async setAgentMode(mode) {
+    this.agentMode = mode === 'own' ? 'own' : 'existing';
+    await this.commit();
+    return this.agentMode;
+  }
+
+  /**
+   * 运行时状态：她**实际**用哪个 agent 的说明（不持久化）。
+   *
+   * ⚠️ **不落盘**：它是一次运行的现场说明（为什么没按用户选的那一档走），
+   *   不是设置 —— 设置在 `agentMode` 里。
+   *
+   * @param {string} text
+   */
+  setAgentStatus(text) {
+    this.agentStatus = String(text ?? '');
+    return this.agentStatus;
   }
 
   /**

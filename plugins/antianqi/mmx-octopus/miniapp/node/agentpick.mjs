@@ -32,25 +32,38 @@ export const PET_AGENT_NAME = 'mmx';
 export const SELF_AGENT_NAME = 'mmx-octopus-agent';
 
 /**
- * 决定这一轮用哪个 agent。
+ * 决定这一轮用哪个 agent —— **用户在面板里选的那一档**决定。
  *
- * 优先级：**用户显式指定的** ＞ **用户自己的「mmx」** ＞ **我们新增的那个专属 agent** ＞ **空（用默认 agent）**。
+ * 优先级：
+ *   · 「用现有 agent」（**默认**）：**显式指定的** ＞ **用户自己的「mmx」** ＞ **空（默认 agent）**
+ *     —— 我们新增的那个**不参与**（这一档就是「不新增、不使用」）。
+ *   · 「建专属 agent」：**显式指定的** ＞ **我们新增的那个** ＞ **用户自己的「mmx」** ＞ **空**
+ *     —— 用户明确选了它 ⇒ 就要它的性格，不迁就现有 agent。
  *
- * ⚠️ **「用户自己的 mmx」优先于我们的**：老板机器上已经有那个 agent ⇒
+ * ⚠️ **默认那一档里「用户自己的 mmx」优先于我们的**：老板机器上已经有那个 agent ⇒
  *   不新增、不改它、也不把会话挪走（零影响）。
  *
  * @param {string[]} listedNames 宿主 `agents()` 列出来的 agent 名
  * @param {string|null|undefined} configured 用户显式指定的 agent 名（`state.petAgent`）
  * @param {string} [selfName] 我们自己新增的那个 agent 名（宿主里**确实列出来了**才用它）
+ * @param {string} [mode] 'own' = 建专属 agent；其它值 = 用现有 agent（默认）
+ * @param {boolean} [selfOwned] 我们那个 agent **确实是我们写的**吗？
+ *   ⚠️ 名字被别人占了（name_taken）⇒ 我们**没建成** ⇒ 那个同名 agent 是**别人的**
+ *   ⇒ 不能把它当成「我们那个」用（降级：继续用现有 agent）。
+ *   传进来的 `selfName` 只是**名字**；**是不是我们的**由这条事实决定。
  * @returns {string} '' = 不指定（用默认 agent）
  */
-export function pickPetAgent(listedNames, configured, selfName = '') {
+export function pickPetAgent(listedNames, configured, selfName = '', mode = 'existing', selfOwned = false) {
   const explicit = configured ? String(configured) : '';
   if (explicit) return explicit;
   const names = Array.isArray(listedNames) ? listedNames.map((n) => String(n ?? '')) : [];
-  if (names.includes(PET_AGENT_NAME)) return PET_AGENT_NAME;
   const self = String(selfName ?? '');
-  if (self && names.includes(self)) return self;
+  // 「建专属 agent」那一档：我们那个**排在自己的 mmx 前面**（用户明确选了它）。
+  // ⚠️ **但只有它确实是我们写的才用** —— 名字被别人占了 ⇒ 我们没建成 ⇒
+  //   那个同名 agent 是**别人的** ⇒ 绝不能把它当成「我们那个」用。
+  if (mode === 'own' && selfOwned && self && names.includes(self)) return self;
+  // 「用现有 agent」那一档：我们那个**不参与**（不新增、不使用）。
+  if (names.includes(PET_AGENT_NAME)) return PET_AGENT_NAME;
   return '';
 }
 

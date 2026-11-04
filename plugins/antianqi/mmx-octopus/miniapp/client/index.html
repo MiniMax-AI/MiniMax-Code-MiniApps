@@ -1900,6 +1900,27 @@
             <p class="set-note" id="naming-note">名字和称呼都是你的设定，改了她下一轮就知道。</p>
           </section>
 
+          <!-- ★ **「她用哪个 agent」**（上游评审 Optional #3：给用户一个自己决定的入口）——
+               默认为「现有 agent」⇒ 插件默认**不往宿主目录写任何文件**。 -->
+          <section class="set-group">
+            <span class="set-title">她用哪个 agent</span>
+            <div class="seg" role="group" aria-label="用哪个 agent" id="agentmode-group">
+              <button type="button" data-agentmode="own" aria-pressed="false">专属 agent</button>
+              <button type="button" data-agentmode="existing" aria-pressed="true">现有 agent</button>
+            </div>
+            <p class="set-note" id="agentmode-note">
+              <b>专属 agent</b> —— 给她建一个只属于她的 agent，她的设定写进它的 system prompt：
+              性格更鲜明、回复更拟人；代价是它从零开始，没有你现有 agent 攒下的经验。
+              <br />
+              <b>现有 agent</b> —— 用你现在这个 agent：更偏助理，认得你之前的经验，
+              帮你干活的工具和上下文都是现成的；代价是她的性格只能每轮随消息带，
+              宿主压缩上下文时可能被压掉。
+              <br />
+              换档会重开她的会话（聊天记录留着）。
+            </p>
+            <p class="set-note" id="agentmode-status" style="display:none"></p>
+          </section>
+
           <section class="set-group">
             <span class="set-title">她看着谁</span>
             <div class="seg" role="group" aria-label="观察范围" id="scope-group">
@@ -3354,6 +3375,21 @@
                 : 'false'
             );
           }
+          // 「她用哪个 agent」—— 默认「现有 agent」（插件默认不往宿主目录写任何文件）
+          var modeButtons = document.querySelectorAll('#agentmode-group button');
+          var agentMode = snapshot.agentMode === 'own' ? 'own' : 'existing';
+          for (var modeIdx = 0; modeIdx < modeButtons.length; modeIdx++) {
+            modeButtons[modeIdx].setAttribute(
+              'aria-pressed',
+              modeButtons[modeIdx].getAttribute('data-agentmode') === agentMode ? 'true' : 'false'
+            );
+          }
+          var modeStatus = document.getElementById('agentmode-status');
+          if (modeStatus) {
+            var statusText = snapshot.agentStatus || '';
+            modeStatus.textContent = statusText;
+            modeStatus.style.display = statusText ? '' : 'none';
+          }
 
           // 诊断与看板
           renderTracking(snapshot);
@@ -4720,6 +4756,21 @@
             .then(function (data) {
               if (data.snapshot) render(data.snapshot);
               toast('她知道我在忙什么：' + (next ? '开' : '关'));
+            })
+            .catch(function (error) {
+              toast('切换失败：' + error.message, 'error');
+            });
+        });
+
+        // ★ **「她用哪个 agent」**（上游评审 Optional #3）
+        document.getElementById('agentmode-group').addEventListener('click', function (event) {
+          var button = event.target.closest('button[data-agentmode]');
+          if (!button) return;
+          var next = button.getAttribute('data-agentmode');
+          post('/api/agent-mode', { mode: next })
+            .then(function (data) {
+              if (data.snapshot) render(data.snapshot);
+              toast(next === 'own' ? '她用专属 agent' : '她用现有 agent');
             })
             .catch(function (error) {
               toast('切换失败：' + error.message, 'error');
