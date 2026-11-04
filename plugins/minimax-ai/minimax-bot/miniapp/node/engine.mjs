@@ -713,17 +713,17 @@ export class Engine {
     let failureReason = '';
     let attempt = 0;
     /**
-     * Calls the Host and keeps the two facts the ledger needs: how long the model ran, and
-     * whether it ran at all. `undefined` means the Host was never called (the turn was stopped
-     * before the call), and a thrown error means the call failed: only the Host reaching the
-     * turn (`turn.started`) says that the model really ran.
+     * Calls the Host and times it: the ledger's duration is the time the model ran, and the
+     * wait between two attempts is not part of it. `undefined` means the Host was never called
+     * (the turn was stopped before the call), and a thrown error means the call failed.
+     * Whether the model ran at all is not decided here: a call that returns is not a turn that
+     * ran — the Host accepts an answer without starting a continuation turn — so only the Host
+     * reaching the turn (`turn.started`) says that the model really ran.
      */
     const callModel = async (...args) => {
       const callStartedAt = Date.now();
       try {
-        const raw = await this.invoke(...args);
-        if (raw !== undefined) modelRan = true;
-        return raw;
+        return await this.invoke(...args);
       } finally {
         // Only the time the model really ran belongs to the turn's duration.
         modelMs += Date.now() - callStartedAt;
