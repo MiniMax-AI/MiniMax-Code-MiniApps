@@ -1568,6 +1568,10 @@ export async function start(context, options = {}) {
       if (own.ok) {
         if (!state.petHeadInjected) {
           wanted = SELF_AGENT_NAME;
+        } else if (own.probeSessionId) {
+          // 已经有历史 ⇒ 不换 agent；但**把探测会话拿来当她的会话**（它是我们自己建的，
+          //   不出现在左侧聊天列表里），别再另建一个（上游评审 Optional #1）。
+          await state.setPetSession(own.probeSessionId, false);
         }
         // 已经有历史 ⇒ 保持现状（我们那个 agent 已经在宿主里了，下次重建会话时自然会用上）。
       } else if (own.probeSessionId) {
@@ -1605,10 +1609,17 @@ export async function start(context, options = {}) {
   /**
    * 在宿主里**新增**我们自己的专属 agent（只增不改、失败必降级）。
    *
-   * ⚠️ **为什么可能要一个临时会话**：宿主 agent 根目录只能从**宿主 API 返回的路径**认
-   *   （会话工作目录 / agents() 列表）—— **不从 dataDir 反推**（那是宿主内部布局，反推=猜）。
-   *   所以第一次拿不到路径时，先建一个默认 agent 的会话（**还没跑过回合 ⇒ 没有历史**），
-   *   拿它的路径再来一次。
+   * ⭐ **根目录只能「证明」，不能「猜」**（上游评审 Must fix 1，2026-11-04）：
+   *   官方规范（docs/miniapp/sessions.md）：**Node 发起的会话**工作目录 =
+   *   「Mini App 自己的 Agent 目录」= <agents 根>/<agent>/miniapps/<pluginId>，
+   *   往上三层就是 agents 根；而**页面发起的会话**工作目录是**用户自己的项目**。
+   *   ⇒ 只有我们自己用 Agent API 建的会话能证明根目录；
+   *     **不**从 dataDir 反推、**不**上溯找名为 agents 的目录（会落进用户项目）。
+   *
+   * ⚠️ **为什么要一个临时会话**：当前会话的路径证明不了根目录时，
+   *   建一个**我们自己的**会话（Node 自建 ⇒ 工作目录必然是上面那个形状）来问一次。
+   *   那个会话拿不到根目录 ⇒ **一个字节都不写**（降级：身份层仍走随消息带）。
+   *   ⚠️ Node 自建的会话**不出现在左侧聊天列表**（官方规范）⇒ 不会脏用户的会话列表。
    *
    * @returns {Promise<{ok: boolean, created: boolean, path?: string, reason?: string, probeSessionId?: string}>}
    */
@@ -1622,7 +1633,9 @@ export async function start(context, options = {}) {
       logger: context.logger,
     });
     let probeSessionId = '';
-    if (!result.ok && result.reason === 'agents_root_unknown' && !current) {
+    // ⚠️ 只要「根目录证明不了」就探一次（不再要求「当前没有会话」）：
+    //   当前会话可能是**页面发起的**（工作目录 = 用户项目），证明不了根目录。
+    if (!result.ok && result.reason === 'agents_root_unknown') {
       try {
         probeSessionId = await createSessionOn('');
       } catch (error) {

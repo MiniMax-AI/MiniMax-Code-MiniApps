@@ -5,7 +5,7 @@ doing, and the Agent can tell her what to say.*
 
 English | [简体中文](README.zh-CN.md)
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.7.0` ·
+Author: [antianqi](https://github.com/antianqi) · Version: `1.8.0` ·
 Plugin ID: `mmx-octopus` · Category: `Productivity`
 
 *The app interface is in Chinese.*
@@ -144,11 +144,20 @@ it like the rest of the port.
     rather not have this agent at all, create an agent of your own named `mmx`
     (an empty one is enough) — the plugin prefers it and adds nothing. Nothing
     else on your machine is affected.
-  - **When it cannot be done** — the Host's agent directory is located only
-    from paths the Host itself returns (the session workspace, the agent
-    list). If none of them identifies it, the plugin writes **nothing** and
-    falls back to sending her character sheet with every message, exactly as
-    before.
+  - **How the directory is found — it is never guessed** — only from the
+    workspace of a session the plugin itself created: the Host sets that
+    workspace to the Mini App's own agent directory
+    (`<Host agent directory>/<agent>/miniapps/<plugin-id>`), and the plugin
+    takes its parent. It does **not** walk up the filesystem looking for a
+    folder called `agents` (a project of yours could contain one, and the
+    file would land in your project), and it does **not** derive the
+    directory from `context.dataDir`. If that one path does not identify the
+    directory, the plugin writes **nothing** and falls back to sending her
+    character sheet with every message, exactly as before.
+  - **One session of its own** — to learn that path the plugin may create one
+    session through the Host's Agent API. Such sessions belong to the plugin
+    and do **not** show up in your chat list; the plugin reuses that session
+    as hers instead of creating another one.
 - **Leftovers from earlier versions** — versions before 1.7.0 wrote an `AGENTS.md`
   into the workspace of the agent that has this Mini App installed, to carry her
   identity there. That is no longer written and no longer needed. If you are

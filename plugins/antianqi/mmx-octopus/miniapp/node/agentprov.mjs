@@ -13,8 +13,12 @@
  * ⚠️ **三条硬底线**：
  *   ① 只**新增**一个目录 + 一个文件：<agents 根>/<agent 名>/agent.md；
  *   ② **绝不改**已有的 agent —— 名字被占（那个目录里已经有别人的 agent.md）就**不碰不用**，降级；
- *   ③ 定位 agent 根目录**只用宿主 API 返回的路径**（会话工作目录 / agents() 列表），
- *      **不从 dataDir 反推** —— dataDir 的布局是宿主内部实现，反推就是猜。
+ *   ③ 定位 agent 根目录**只认一种能证明的形状**：我们自己用 Agent API 建的会话，
+ *      它的**工作目录**是「Mini App 自己的 Agent 目录」
+ *      = <agents 根>/<agent 名>/miniapps/<pluginId>，往上三层就是 agents 根。
+ *      **不猜** —— 不从 dataDir 反推（宿主内部布局，反推=猜），
+ *      也不「上溯找名为 agents 的目录」（用户项目里只要有一层目录叫 agents 就会被误认，
+ *      等于往**用户的项目**里写文件）。拿不到根目录 ⇒ **一个字节都不写**（降级）。
  *
  * ⚠️ **失败必降级**：任何一步出错（拿不到根目录 / 名字被占 / 写失败 / 校验失败）
  *   都只是**返回失败**，不抛异常、不阻断她说话 —— 降级路径上身份层仍走随消息带（弱通道）。
@@ -23,8 +27,7 @@
  */
 
 import { readFile, stat } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, dirname, join } from 'node:path';
 import { createWriteQueue, writeTextAtomic } from './atomic-json.mjs';
 import { readIdentitySections, readPersonaBody } from './identity.mjs';
 // ⭐ **agent 名字的真源在 agentpick.mjs**（纯模块、零依赖）—— 这边不许另写一份。
@@ -90,15 +93,23 @@ export function collectPathStrings(value, depth = 0, out = []) {
 }
 
 /**
- * 从宿主给的路径里找 agent 根目录。
+ * 从宿主给的路径里找 agent 根目录 —— **只认一种形状**。
  *
- * 两种形态：
- *   ① <root>/<agent 名>/miniapps/<pluginId> —— Mini App 自己的 Agent 目录
- *      ⇒ root = 往上三层；
- *   ② <root>/agents/<agent 名> —— agents() 列表里带的 agent 目录
- *      ⇒ root = 那个 agents 目录。
+ *   <root>/<agent 名>/miniapps/<pluginId> —— Mini App 自己的 Agent 目录
+ *   ⇒ root = 往上三层。
  *
- * ⚠️ **只认宿主给的路径** —— 这里不做任何「从 dataDir 反推」的兜底。
+ * ⭐ **为什么只有这一种**（上游评审 Must fix 1，2026-11-04）：
+ *   官方规范（docs/miniapp/sessions.md）写明两种会话的工作目录不一样：
+ *     · **Node 发起的会话** → 工作目录 =「Mini App 自己的 Agent 目录」= 上面这个形状；
+ *     · **页面发起的会话** → 工作目录 =「该会话的项目目录」= **用户自己的项目**。
+ *   所以只有**我们自己用 Agent API 建的会话**给的路径才能证明「这是宿主的 agents 根」。
+ *
+ * ⚠️ **上溯找名为 agents 的目录那种猜法已删**（原来有，最多上溯八层）：
+ *   用户项目里只要有一层目录叫 agents（比如 ~/code/agents/foo），
+ *   就会被当成宿主根目录 ⇒ 我们的 agent.md 会写进**用户的项目**。
+ *   宁可**写不到**（降级：身份层仍走随消息带），也不猜。
+ *
+ * ⚠️ 也不从 dataDir 反推（那是宿主内部布局，反推=猜）。
  *
  * @param {string[]} paths 宿主返回的路径们
  * @param {string} pluginId 插件 id
@@ -113,26 +124,11 @@ export function agentsRootCandidates(paths, pluginId) {
   };
   for (const raw of Array.isArray(paths) ? paths : []) {
     const text = String(raw ?? '');
-    if (!text) continue;
-    // 形态①：<root>/<agent>/miniapps/<pluginId>
-    if (wanted && basename(text) === wanted && basename(dirname(text)) === 'miniapps') {
+    if (!text || !wanted) continue;
+    // 唯一认的形状：<root>/<agent>/miniapps/<pluginId>（末尾两段必须是 miniapps/<pluginId>）
+    if (basename(text) === wanted && basename(dirname(text)) === 'miniapps') {
       const root = dirname(dirname(dirname(text)));
       if (root && root !== text) push(root);
-    }
-  }
-  for (const raw of Array.isArray(paths) ? paths : []) {
-    const text = String(raw ?? '');
-    if (!text) continue;
-    // 形态②：<root>/agents/<name>
-    let current = text;
-    for (let step = 0; step < 8; step += 1) {
-      if (basename(current) === 'agents') {
-        push(current);
-        break;
-      }
-      const up = dirname(current);
-      if (!up || up === current) break;
-      current = up;
     }
   }
   return out;
@@ -230,25 +226,18 @@ export async function ensureSelfAgent(input) {
   const logger = input?.logger || context?.logger;
   const paths = [];
 
-  // ① 会话详情里的工作目录（宿主给的路径）
+  // ① **只有我们自己用 Agent API 建的会话**能证明根目录（上游评审 Must fix 1）：
+  //    官方规范里，Node 发起的会话工作目录 =「Mini App 自己的 Agent 目录」
+  //    = <agents 根>/<agent>/miniapps/<pluginId>；而**页面发起的会话**工作目录是
+  //    **用户自己的项目** ⇒ 从它推根目录 = 往用户项目里写文件。
+  //    所以这里**只认这一个会话**，agents() 列表不再作为路径来源
+  //    （它的 agent 目录形状是 <root>/<agent>，证明不了 root 是什么）。
   if (input?.sessionId && context?.agent && typeof context.agent.session === 'function') {
     try {
       const detail = await context.agent.session(input.sessionId);
       paths.push(...collectPathStrings(detail));
     } catch (error) {
       logger?.warn?.('miniapp.agent.self_agent.session_probe_failed', {
-        reason: error instanceof Error ? error.message : 'unknown',
-      });
-    }
-  }
-
-  // ② agents() 列表里带的 agent 目录（宿主给的路径）
-  if (context?.agent && typeof context.agent.agents === 'function') {
-    try {
-      const listed = await context.agent.agents();
-      paths.push(...collectPathStrings(listed));
-    } catch (error) {
-      logger?.warn?.('miniapp.agent.self_agent.agents_probe_failed', {
         reason: error instanceof Error ? error.message : 'unknown',
       });
     }
@@ -310,77 +299,7 @@ export async function ensureSelfAgent(input) {
   return { ok: true, created: true, agent: SELF_AGENT_NAME, path: targetFile };
 }
 
-/**
- * 手动执行：node miniapp/node/agentprov.mjs --agents-root <宿主的 agents 目录>
- *
- * ⭐ **这是用户自己动手的那条路**（官方答复里说的「写个脚本新增一个 agent」）：
- *   用户明确指定了目录，我们才写；只新增，不改已有。
- *
- * @param {string[]} argv
- * @returns {Promise<number>}
- */
-export async function runCli(argv) {
-  const args = Array.isArray(argv) ? argv.slice() : [];
-  const flag = (name) => {
-    const index = args.indexOf(name);
-    return index >= 0 ? String(args[index + 1] ?? '') : '';
-  };
-  const root = flag('--agents-root');
-  const checkOnly = args.includes('--check');
-  if (!root) {
-    process.stdout.write('用法：node agentprov.mjs --agents-root <宿主 agents 目录> [--check]\n');
-    return 2;
-  }
-  const here = dirname(fileURLToPath(import.meta.url));
-  const pluginRoot = dirname(dirname(here));
-  const persona = await readPersonaBody(pluginRoot);
-  const identity = await readIdentitySections(pluginRoot);
-  const targetFile = join(resolve(root), SELF_AGENT_NAME, SELF_AGENT_FILE);
-  const existing = await readFileIfExists(targetFile);
-  if (existing !== null) {
-    process.stdout.write(
-      (isSelfAgentFile(existing) ? '已经是我们写的那个 agent：' : '那个名字已被占用（不碰）：') +
-        targetFile +
-        '\n'
-    );
-    return 0;
-  }
-  if (checkOnly) {
-    process.stdout.write('可以写：' + targetFile + '\n');
-    return 0;
-  }
-  const content = renderSelfAgentFile({
-    persona,
-    identity,
-    name: SELF_AGENT_NAME,
-    displayName: SELF_AGENT_DISPLAY_NAME,
-    description: SELF_AGENT_DESCRIPTION,
-  });
-  try {
-    await writeTextAtomic(targetFile, content);
-  } catch (error) {
-    process.stdout.write('写失败：' + (error instanceof Error ? error.message : 'unknown') + '\n');
-    return 1;
-  }
-  process.stdout.write('已写入：' + targetFile + '\n');
-  return 0;
-}
-
-/**
- * 这个文件是不是被当作主程序跑的？
- *
- * @returns {boolean}
- */
-export function isMainModule() {
-  try {
-    const entry = process.argv[1] ? resolve(process.argv[1]) : '';
-    return !!entry && entry === resolve(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isMainModule()) {
-  const code = await runCli(process.argv);
-  process.exitCode = code;
-}
+// ⭐ **CLI 不再住在这里**（上游评审 Optional，2026-11-04）：
+//   宿主把 miniapp/node/** 当运行时代码扫，进程里往 stdout 写东西会触发
+//   上游校验告警（stdout 属于宿主）。CLI 搬到 miniapp/scripts/agentprov-cli.mjs
+//   —— 仍然随包发布，用户手动跑那条路不变（--agents-root / --check）。
