@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "kurumi-monitor",
   "displayName": "本机大盘",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "把 macOS 与 Windows 的 CPU、GPU、温度、内存、磁盘、网络与进程搬进证券行情终端的界面语言：实时 K 线、主力动向、逐笔成交、自选行情与进程盯盘，历史采样本地累计。",
   "author": "jzlikewei",
   "icon": "icon.png",

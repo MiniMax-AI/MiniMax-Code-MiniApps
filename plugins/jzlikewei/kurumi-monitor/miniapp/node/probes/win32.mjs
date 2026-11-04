@@ -236,7 +236,7 @@ export async function sampleProcs(cap, ms) {
       : 0;
     rows.push({
       pid: p.pid,
-      ppid: 0,
+      ppid: ok(p.ppid) ?? 0,
       user: '',
       cpu,
       mem: totalMem > 0 ? (p.rss * 100) / totalMem : 0,

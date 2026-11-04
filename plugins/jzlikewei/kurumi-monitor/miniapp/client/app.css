@@ -420,6 +420,10 @@ select, .search {
   padding: 0; box-shadow: var(--shadow);
   min-width: 380px; max-width: 460px;
   font-family: var(--sans);
+  /* 上面的 * reset 把 UA 样式表给 dialog 的 margin: auto 抹掉了，
+     四个 inset 归零会让模态框贴死左上角。这里补回来，两轴重新居中。 */
+  margin: auto;
+  max-height: calc(100% - 32px);
 }
 .dialog::backdrop { background: rgba(0, 0, 0, .5); }
 .dialog form { padding: 20px 22px 18px; display: grid; gap: 13px; }

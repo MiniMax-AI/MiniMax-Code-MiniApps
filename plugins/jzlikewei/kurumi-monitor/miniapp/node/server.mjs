@@ -34,8 +34,62 @@ const MIME = {
   '.png': 'image/png',
 };
 
-// 绝不允许清仓的对象：板子自己与它的父进程（MCode 主界面）
-const PROTECTED_PIDS = new Set([process.pid, process.ppid, 0, 1]);
+// 会话关键进程：杀掉这些会登出用户或让桌面失去响应，按平台各一份。
+// 名字取采集器给的裸进程名，Windows 侧是 ProcessName，本身不带 .exe。
+const SESSION_CRITICAL = process.platform === 'win32'
+  ? ['explorer', 'winlogon', 'csrss', 'services', 'lsass', 'smss', 'wininit', 'dwm']
+  : ['launchd', 'kernel_task', 'loginwindow', 'windowserver', 'sshd', 'diskarbitrationd'];
+
+/** 进程名归一后比对，.exe 后缀两边都剥一次 */
+function bareName(name) {
+  return String(name ?? '').toLowerCase().replace(/\.exe$/, '');
+}
+
+/**
+ * 清仓保护集。先从板子自己沿 ppid 向上收齐整条祖先链，再把链上每个进程的后代
+ * 全部收进来——宿主主界面的其他进程、其他插件的 runtime、Agent 起的子进程都落在
+ * 这条链上，杀掉任意一个都会连带掀掉整块板子。最后按名字兜住会话关键进程。
+ * 每一拍重算：新起的兄弟 runtime 与 Agent 子进程立刻进保护集，退出的自然消失。
+ */
+function computeProtected(byPid) {
+  const protectedPids = new Set([0, 1, process.pid, process.ppid]);
+  const roots = [];
+  // 0 与 1 是会话根，预先标记为已走：它们只保护自己，绝不能当 BFS 起点，
+  // 否则 launchd 的整棵进程树都会被收进保护集，全表都不可清仓。
+  const walked = new Set([0, 1]);
+  // 进程表撞到 PROC_ROW_CAP 时自己可能不在表里，用合成的一行起步照样接得上宿主
+  let cur = byPid.get(process.pid) ?? { pid: process.pid, ppid: process.ppid };
+  for (let guard = 0; cur != null && guard < 64 && !walked.has(cur.pid); guard += 1) {
+    walked.add(cur.pid);
+    protectedPids.add(cur.pid);
+    roots.push(cur.pid);
+    cur = cur.ppid == null ? null : byPid.get(cur.ppid);
+  }
+  // 宿主被表截断时它自己也要当根，靠父子表仍能收齐它的后代
+  if (!walked.has(process.ppid)) roots.push(process.ppid);
+
+  const children = new Map();
+  for (const p of byPid.values()) {
+    // ppid 指向自身是采集异常，不建这条边
+    if (p.ppid == null || p.ppid === p.pid) continue;
+    const list = children.get(p.ppid);
+    if (list) list.push(p.pid); else children.set(p.ppid, [p.pid]);
+  }
+  // roots 兼作 BFS 队列，边遍历边追加，走完就是这些祖先的全部后代
+  for (let i = 0; i < roots.length; i += 1) {
+    for (const child of children.get(roots[i]) ?? []) {
+      if (protectedPids.has(child)) continue;
+      protectedPids.add(child);
+      roots.push(child);
+    }
+  }
+
+  const critical = new Set(SESSION_CRITICAL);
+  for (const p of byPid.values()) {
+    if (critical.has(bareName(p.name))) protectedPids.add(p.pid);
+  }
+  return protectedPids;
+}
 
 /**
  * 能不能向这个进程发信号。signal 0 不投递任何信号，只做权限检查。
@@ -136,6 +190,8 @@ export async function start(context) {
   const procByPid = new Map();
   const procStart = new Map();   // pid -> 启动秒，稳住品种代码不被 etime 精度带偏
   const alertAt = new Map();
+  // 保护集随采样重算，首拍之前先兜住自己与宿主
+  let protectedPids = new Set([0, 1, process.pid, process.ppid]);
 
   let prevProcs = new Map();
   let diskPrev = null;
@@ -236,12 +292,15 @@ export async function start(context) {
     const tick = { t: t0, v, w: cpu.work };
 
     // ------------------------------------------------ 进程快照与历史
+    // 保护集必须先于 rows 算出来：killable 是逐行字段，而保护范围取决于整张表的父子关系
     const now = new Map();
+    for (const p of procs) if (p.pid != null) now.set(p.pid, p);
+    protectedPids = computeProtected(now);
+
     const rows = [];
     let rank = 0;
     for (const p of procs) {
       if (p.pid == null) continue;
-      now.set(p.pid, p);
       // 每轮探测一次，rows 与 /api/procs 共用同一个结论
       p.owned = canSignal(p.pid);
       let hist = procHist.get(p.pid);
@@ -269,7 +328,7 @@ export async function start(context) {
         code: meta.code,
         watched: watchMeta.has(meta.code),
         owned: p.owned,
-        killable: p.owned && !PROTECTED_PIDS.has(p.pid),
+        killable: p.owned && !protectedPids.has(p.pid),
       });
     }
     // 清理已退出进程的历史，避免 Map 无限增长
@@ -371,13 +430,20 @@ export async function start(context) {
   }
 
   // ------------------------------------------------ 清仓校验
-  function validateKill(pid) {
+  /**
+   * 清仓校验。startedAt 传 null 表示只做基础校验并回传实时值，供确认框展示；
+   * 传了数字就必须与目标进程的启动时刻完全一致——确认框开着的那几秒里原进程可能
+   * 已经退出、PID 被系统复用，这时发信号会打到一个用户从没确认过的进程上。
+   */
+  function validateKill(pid, startedAt) {
     if (!Number.isInteger(pid) || pid <= 1) return { ok: false, reason: 'invalid_pid' };
-    if (PROTECTED_PIDS.has(pid)) return { ok: false, reason: 'protected' };
+    if (protectedPids.has(pid)) return { ok: false, reason: 'protected' };
     const p = procByPid.get(pid);
     if (!p) return { ok: false, reason: 'not_found' };
+    const live = startedAtOf(p, Date.now());
+    if (startedAt != null && startedAt !== live) return { ok: false, reason: 'pid_reused' };
     if (!canSignal(pid)) return { ok: false, reason: 'not_owned' };
-    return { ok: true, proc: p };
+    return { ok: true, proc: p, startedAt: live };
   }
 
   for (const m of Array.isArray(store.settings.watchProcs) ? store.settings.watchProcs : []) {
@@ -481,7 +547,7 @@ export async function start(context) {
             code,
             watched: watchMeta.has(code),
             owned: p2.owned === true,
-            killable: p2.owned === true && !PROTECTED_PIDS.has(p2.pid),
+            killable: p2.owned === true && !protectedPids.has(p2.pid),
           });
         }
         all.sort((a, b) => b.cpu - a.cpu);
@@ -528,7 +594,10 @@ export async function start(context) {
       if (req.method === 'POST' && p === '/api/kill') {
         const body = await readBody(req);
         const pid = Number(body.pid);
-        const check = validateKill(pid);
+        const startedAt = Number(body.startedAt);
+        // 启动时刻是确认框里那条进程的身份证，缺了就没法排除 PID 复用
+        if (!Number.isInteger(startedAt) || startedAt <= 0) { json(res, 400, { error: 'bad_request' }); return; }
+        const check = validateKill(pid, startedAt);
         if (!check.ok) { json(res, 403, { error: check.reason }); return; }
         const signal = body.force === true ? 'SIGKILL' : 'SIGTERM';
         try {
@@ -569,9 +638,12 @@ export async function start(context) {
 
       if (req.method === 'POST' && p === '/api/kill/preflight') {
         const body = await readBody(req);
-        const check = validateKill(Number(body.pid));
+        const check = validateKill(Number(body.pid), null);
         json(res, 200, check.ok
-          ? { ok: true, pid: Number(body.pid), name: check.proc.name, user: check.proc.user, cpu: check.proc.cpu, rss: check.proc.rss }
+          ? {
+            ok: true, pid: Number(body.pid), name: check.proc.name, user: check.proc.user,
+            cpu: check.proc.cpu, rss: check.proc.rss, startedAt: check.startedAt,
+          }
           : { ok: false, reason: check.reason });
         return;
       }

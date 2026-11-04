@@ -160,6 +160,24 @@ function Update-Gpu {
   }
 }
 
+# ---------------------------------------------------------- parent process ids
+
+# Get-Process in Windows PowerShell 5.1 exposes no Parent property, so the parent
+# has to come from the CIM process table. That query walks every process object and
+# costs far more than the rest of a round, so refresh it every 5 rounds and reuse
+# the map in between, the same way the GPU block above does.
+$script:ppidMap = @{}
+
+function Update-Ppid {
+  $map = @{}
+  try {
+    foreach ($w in Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue) {
+      $map[[int]$w.ProcessId] = [int]$w.ParentProcessId
+    }
+  } catch { }
+  if ($map.Count -gt 0) { $script:ppidMap = $map }
+}
+
 # ---------------------------------------------------------------- main loop
 
 $round = 0
@@ -170,6 +188,9 @@ while ($true) {
   $t = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
   if (($round % 5) -eq 0) { Update-Gpu }
+  # Offset from the GPU refresh so the two heavy CIM queries never land on the same
+  # round and stretch a single tick.
+  if (($round % 5) -eq 2) { Update-Ppid }
 
   # ---- Process table. TotalProcessorTime is cumulative seconds since boot, the
   # Node side diffs it into a utilisation rate.
@@ -189,8 +210,11 @@ while ($true) {
     try { $start = [DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds() } catch { $start = 0 }
     $user = ''
     try { $user = $p.UserName } catch { $user = '' }
+    $ppid = 0
+    if ($script:ppidMap.ContainsKey([int]$p.Id)) { $ppid = $script:ppidMap[[int]$p.Id] }
     if ($procCount -gt 0) { [void]$sb.Append(',') }
     [void]$sb.Append('{"pid":').Append($p.Id)
+    [void]$sb.Append(',"ppid":').Append($ppid)
     [void]$sb.Append(',"user":"').Append((Get-JsonString $user)).Append('"')
     [void]$sb.Append(',"cpu":').Append($cpu.ToString('R', [Globalization.CultureInfo]::InvariantCulture))
     [void]$sb.Append(',"rss":').Append($rss.ToString('R', [Globalization.CultureInfo]::InvariantCulture))

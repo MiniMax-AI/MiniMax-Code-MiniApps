@@ -764,7 +764,10 @@ async function openKillDialog() {
     if (dlg.returnValue !== 'confirm') return;
     const force = $('cfForce').checked;
     try {
-      const r = await api('/api/kill', { method: 'POST', body: JSON.stringify({ pid, force }) });
+      const r = await api('/api/kill', {
+        method: 'POST',
+        body: JSON.stringify({ pid, force, startedAt: pre.startedAt }),
+      });
       toast('已向 ' + r.name + ' (PID ' + r.pid + ') 发送 ' + r.signal, 'info');
       state.selectedPid = null;
       $('selInfo').textContent = '未选中';
@@ -782,6 +785,8 @@ function killReason(code) {
     protected: '受保护进程，不能终止',
     not_found: '进程已不存在',
     invalid_pid: 'PID 不合法',
+    pid_reused: '该进程已退出或 PID 被复用，请重新选择',
+    bad_request: '请求参数不完整',
     not_permitted: '系统拒绝该操作',
     gone: '进程已经退出',
     kill_failed: '发送信号失败',
