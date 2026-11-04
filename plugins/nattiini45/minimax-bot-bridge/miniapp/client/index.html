@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MiniMax Bot Bridge</title>
+    <style>
+      /* MiniMax Bot product skin, adapted to MiniMax Code. */
+      :root,
+      [data-theme='light'] {
+        --bg: #fcfcfc;
+        --sidebar: #f7f7f7;
+        --surface: #ffffff;
+        --bubble: #efefef;
+        --user: #0a0a0a;
+        --user-ink: #fcfcfc;
+        --ink: #141414;
+        --muted: #6e6e6e;
+        --subtle: #a1a1a1;
+        --line: rgba(20, 20, 20, 0.08);
+        --line-strong: rgba(20, 20, 20, 0.16);
+        --hover: rgba(119, 119, 119, 0.09);
+        --active: rgba(119, 119, 119, 0.16);
+        --tag: rgba(20, 20, 20, 0.06);
+        --star: #ff9800;
+        --danger: #e5323f;
+        --success: #12a150;
+        --warning: #e46a12;
+        --shadow-pop: 0 8px 28px -6px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.05);
+        --shadow-pill: 0 2px 8px -1px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+        --scrim: rgba(10, 10, 10, 0.28);
+        color-scheme: light;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root,
+        [data-theme='dark'] {
+          --bg: #141414;
+          --sidebar: #1b1b1b;
+          --surface: #1f1f1f;
+          --bubble: #262626;
+          --user: #f2f2f2;
+          --user-ink: #141414;
+          --ink: #f2f2f2;
+          --muted: #9a9a9a;
+          --subtle: #6b6b6b;
+          --line: rgba(255, 255, 255, 0.08);
+          --line-strong: rgba(255, 255, 255, 0.16);
+          --hover: rgba(160, 160, 160, 0.12);
+          --active: rgba(160, 160, 160, 0.2);
+          --tag: rgba(255, 255, 255, 0.09);
+          --star: #ff9800;
+          --danger: #f05561;
+          --success: #2fc06b;
+          --warning: #f08a3c;
+          --shadow-pop: 0 10px 32px -6px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+          --shadow-pill: 0 2px 10px -1px rgba(0, 0, 0, 0.5);
+          --scrim: rgba(10, 10, 10, 0.5);
+          color-scheme: dark;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px 20px 32px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-sans-serif, -apple-system, system-ui, 'PingFang SC', 'Segoe UI', Helvetica, Arial,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      h1 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 0 0 2px;
+      }
+
+      p.sub {
+        margin: 0 0 20px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px;
+        margin-bottom: 14px;
+        box-shadow: var(--shadow-pill);
+      }
+
+      .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--subtle);
+        margin-bottom: 8px;
+      }
+
+      .code {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 30px;
+        letter-spacing: 0.22em;
+        font-weight: 600;
+        color: var(--ink);
+        user-select: all;
+      }
+
+      .code.empty {
+        color: var(--subtle);
+        letter-spacing: normal;
+        font-size: 14px;
+        font-weight: 400;
+      }
+
+      button {
+        appearance: none;
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+        color: var(--ink);
+        border-radius: 999px;
+        padding: 8px 16px;
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+        touch-action: manipulation;
+        transition: transform 100ms ease-out, background 100ms ease-out;
+      }
+
+      button:hover {
+        background: var(--hover);
+      }
+
+      button:active {
+        transform: scale(0.97);
+        background: var(--active);
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+        background: var(--subtle);
+      }
+
+      .dot.on {
+        background: var(--success);
+      }
+
+      .dot.off {
+        background: var(--danger);
+      }
+
+      ul.devices {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      ul.devices li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      ul.devices li:first-child {
+        border-top: none;
+      }
+
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--tag);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      input {
+        width: 100%;
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line-strong);
+        background: var(--bg);
+        color: var(--ink);
+        font: inherit;
+        font-size: 16px;
+        margin-bottom: 10px;
+      }
+
+      input:focus {
+        outline: 2px solid var(--line-strong);
+        outline-offset: 1px;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+
+      .error {
+        color: var(--danger);
+        font-size: 13px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MiniMax Bot Bridge</h1>
+    <p class="sub">Connect your phone to the team running on this desktop.</p>
+
+    <section class="card">
+      <div class="row">
+        <div>
+          <div class="label">Relay</div>
+          <div class="muted" id="relay-state"><span class="dot"></span>checking…</div>
+        </div>
+      </div>
+      <div class="hint" id="relay-hint"></div>
+    </section>
+
+    <section class="card">
+      <div class="label">Pairing code</div>
+      <div class="code empty" id="code">Generate a code to pair a phone.</div>
+      <div class="hint" id="pair-target"></div>
+      <div class="row" style="margin-top: 14px">
+        <button type="button" id="new-code">New code</button>
+        <span class="muted" id="code-timer"></span>
+      </div>
+      <div class="row" style="margin-top: 10px">
+        <button type="button" id="rotate-token">Rotate token</button>
+        <span class="muted">Replaces the bridge token and kills the old one.</span>
+      </div>
+      <div class="error" id="pair-error"></div>
+    </section>
+
+    <section class="card">
+      <div class="label">Paired phones</div>
+      <ul class="devices" id="devices">
+        <li class="muted">None yet.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="label">Relay configuration</div>
+      <input id="relay-url" type="url" placeholder="wss://relay.example.workers.dev" autocomplete="off" />
+      <input id="account-id" type="text" placeholder="account id" autocomplete="off" />
+      <input id="bridge-id" type="text" placeholder="bridge id" autocomplete="off" />
+      <input
+        id="bridge-token"
+        type="password"
+        placeholder="bridge token (minted with the relay secret)"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div class="row" style="margin-top: 6px">
+        <button type="button" id="save-config">Save</button>
+        <span class="muted" id="config-state"></span>
+      </div>
+      <div class="hint">
+        The relay URL, the account id, the bridge id and the bridge token are stored on this desktop
+        only. The token is minted for one specific bridge id by whoever holds the relay secret:
+        <code>npm run mint:token -w @minimax-bot/relay</code>. It is never sent back to this surface.
+      </div>
+    </section>
+
+    <script type="module">
+      const $ = (id) => document.getElementById(id);
+      let timer = null;
+
+      /**
+       * The bridge's per-process secret.
+       *
+       * It proves a request came from this surface. A page in the user's browser
+       * can reach the bridge over loopback, but the bridge only answers a caller
+       * whose own headers show it is this surface, so a hostile page never gets
+       * this response, never obtains the secret, and can never redirect the
+       * bridge at a relay of its own.
+       */
+      let secret = null;
+
+      async function api(path, options) {
+        if (!secret) {
+          const handshake = await fetch('/api/session', { credentials: 'same-origin' });
+          secret = (await handshake.json()).secret;
+        }
+        const response = await fetch(path, {
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', 'x-bridge-secret': secret },
+          ...options,
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message || body.error || `HTTP ${response.status}`);
+        return body;
+      }
+
+      async function loadStatus() {
+        try {
+          const status = await api('/api/status');
+          const state = $('relay-state');
+          const connected = status.relayConnected;
+          const dot = document.createElement('span');
+          dot.className = 'dot ' + (connected ? 'on' : 'off');
+          state.replaceChildren(
+            dot,
+            document.createTextNode(
+              connected ? 'connected' : status.relayConfigured ? 'offline' : 'not configured',
+            ),
+          );
+          $('relay-hint').textContent = status.relayConfigured
+            ? status.relayUrl + '  ·  account ' + status.accountId
+            : 'Set the relay URL below to link this desktop to your phone.';
+          $('relay-url').value = status.relayUrl || '';
+          $('account-id').value = status.accountId || '';
+          $('bridge-id').value = status.bridgeId || '';
+
+          const diagnostics = status.diagnostics || {};
+          const team = diagnostics.teamToolsAvailable
+            ? diagnostics.toolCount + ' team tools linked'
+            : diagnostics.reason || 'The @minimax-bot team is not running.';
+          $('relay-hint').textContent += '  ·  bridge ' + (status.bridgeId || '?');
+          $('relay-hint').textContent += '  ·  ' + team;
+
+          // The phone needs the relay address and the account id as well as the
+          // code, so they are shown where the code is.
+          $('pair-target').textContent = status.relayConfigured
+            ? 'On the phone: relay ' + status.relayUrl + ', account ' + status.accountId
+            : 'Set the relay address first.';
+        } catch (error) {
+          const off = document.createElement('span');
+          off.className = 'dot off';
+          $('relay-state').replaceChildren(off, document.createTextNode('unavailable'));
+          $('relay-hint').textContent = error.message;
+        }
+      }
+
+      async function loadDevices() {
+        try {
+          const result = await api('/api/devices');
+          const list = $('devices');
+          list.replaceChildren();
+          if (!result.devices.length) {
+            const empty = document.createElement('li');
+            empty.className = 'muted';
+            empty.textContent = 'None yet.';
+            list.appendChild(empty);
+            return;
+          }
+          for (const device of result.devices) {
+            const item = document.createElement('li');
+            const name = document.createElement('div');
+            // The device name is whatever the phone typed when it paired, so it is
+            // built as text. Assigning it as markup would run it as script in this
+            // surface's own origin, where the bridge token lives.
+            const nameLine = document.createElement('div');
+            nameLine.textContent = device.deviceName || device.deviceId;
+            const versionLine = document.createElement('div');
+            versionLine.className = 'muted';
+            versionLine.textContent = device.clientVersion;
+            name.appendChild(nameLine);
+            name.appendChild(versionLine);
+            const right = document.createElement('div');
+            if (device.revoked) {
+              const pill = document.createElement('span');
+              pill.className = 'pill';
+              pill.textContent = 'revoked';
+              right.appendChild(pill);
+            } else {
+              const button = document.createElement('button');
+              button.type = 'button';
+              button.textContent = 'Revoke';
+              button.addEventListener('click', async () => {
+                await api('/api/devices/' + encodeURIComponent(device.deviceId), { method: 'DELETE' });
+                loadDevices();
+              });
+              right.appendChild(button);
+            }
+            item.appendChild(name);
+            item.appendChild(right);
+            list.appendChild(item);
+          }
+        } catch (error) {
+          // The message is text, never markup.
+          const failed = document.createElement('li');
+          failed.className = 'muted';
+          failed.textContent = error.message;
+          $('devices').replaceChildren(failed);
+        }
+      }
+
+      async function newCode() {
+        $('pair-error').textContent = '';
+        const button = $('new-code');
+        button.disabled = true;
+        try {
+          const result = await api('/api/pair/code', { method: 'POST', body: '{}' });
+          $('code').className = 'code';
+          $('code').textContent = result.code;
+          const expiresAt = result.expiresAt;
+          const tick = () => {
+            const left = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+            $('code-timer').textContent = left > 0 ? 'expires in ' + left + 's' : 'expired';
+            if (left <= 0) {
+              clearInterval(timer);
+              $('code').className = 'code empty';
+              $('code').textContent = 'Generate a code to pair a phone.';
+            }
+          };
+          tick();
+          clearInterval(timer);
+          timer = setInterval(tick, 1000);
+        } catch (error) {
+          $('pair-error').textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      $('new-code').addEventListener('click', newCode);
+      $('rotate-token').addEventListener('click', async () => {
+        $('pair-error').textContent = '';
+        const button = $('rotate-token');
+        button.disabled = true;
+        try {
+          await api('/api/rotate-token', { method: 'POST', body: '{}' });
+          $('code-timer').textContent = 'the token was replaced; the old one no longer works';
+        } catch (error) {
+          $('pair-error').textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $('save-config').addEventListener('click', async () => {
+        try {
+          const payload = {
+            relayUrl: $('relay-url').value.trim(),
+            accountId: $('account-id').value.trim(),
+            bridgeId: $('bridge-id').value.trim(),
+          };
+          // Only sent when it was typed: an empty field must not wipe a stored token.
+          const token = $('bridge-token').value.trim();
+          if (token) payload.bridgeToken = token;
+          await api('/api/config', { method: 'POST', body: JSON.stringify(payload) });
+          $('config-state').textContent = 'saved';
+          $('bridge-token').value = '';
+          loadStatus();
+        } catch (error) {
+          $('config-state').textContent = error.message;
+        }
+      });
+
+      loadStatus();
+      loadDevices();
+      setInterval(loadStatus, 5000);
+    </script>
+  </body>
+</html>
