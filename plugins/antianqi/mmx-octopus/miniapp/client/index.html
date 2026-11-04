@@ -1510,6 +1510,9 @@
       .naming-card {
         width: 100%;
         max-width: 340px;
+        /* 卡片变高了（多了那组二选一）⇒ 面板被缩小时要能滚，别把按钮顶出去 */
+        max-height: 100%;
+        overflow-y: auto;
         padding: 18px 20px;
         background: var(--mcode-surface);
         border: 1px solid var(--mcode-border);
@@ -1528,6 +1531,13 @@
         font-size: 12px;
         line-height: 18px;
         color: var(--mcode-text-muted);
+      }
+
+      /* 首启卡片里那组二选一下面的小字（比正文更小、更淡） */
+      .naming-card .set-note {
+        margin: 2px 0 0;
+        font-size: 11px;
+        line-height: 17px;
       }
 
       /* ---------- 状态小卡 ---------- */
@@ -1904,7 +1914,7 @@
                默认为「现有 agent」⇒ 插件默认**不往宿主目录写任何文件**。 -->
           <section class="set-group">
             <span class="set-title">她用哪个 agent</span>
-            <div class="seg" role="group" aria-label="用哪个 agent" id="agentmode-group">
+            <div class="seg" role="group" aria-label="用哪个 agent" id="agentmode-group" data-agentmode-group>
               <button type="button" data-agentmode="own" aria-pressed="false">专属 agent</button>
               <button type="button" data-agentmode="existing" aria-pressed="true">现有 agent</button>
             </div>
@@ -2052,7 +2062,19 @@
     <div class="naming-ask" id="naming-ask" hidden role="dialog" aria-modal="true" aria-labelledby="naming-ask-title">
       <div class="naming-card">
         <h3 id="naming-ask-title">先认识一下</h3>
-        <p>你想怎么叫她？她又该怎么称呼你？随时能在设置里改。</p>
+        <p>先定她用哪个 agent，再告诉她叫什么、她怎么称呼你。随时能在设置里改。</p>
+        <div class="set-group">
+          <span class="set-title">她用哪个 agent</span>
+          <div class="seg" role="group" aria-label="用哪个 agent" id="naming-agentmode-group" data-agentmode-group>
+            <button type="button" data-agentmode="own" aria-pressed="false">专属 agent</button>
+            <button type="button" data-agentmode="existing" aria-pressed="true">现有 agent</button>
+          </div>
+          <p class="set-note">
+            <b>专属 agent</b> —— 给她建一个只属于她的 agent，性格更鲜明、回复更拟人
+            （从零开始，没有积累）；<b>现有 agent</b> —— 用你现成的那个，更偏助理，
+            能用上你之前的经验与工具上下文。
+          </p>
+        </div>
         <label class="set-field">
           <span>她的名字</span>
           <input id="naming-ask-her" type="text" maxlength="24" placeholder="MMX" />
@@ -3152,6 +3174,8 @@
           if (el.namingAsk.hidden === false) return;
           el.namingAskHer.value = state.naming && state.naming.herName ? state.naming.herName : '';
           el.namingAskUser.value = state.naming && state.naming.userTitle ? state.naming.userTitle : '';
+          // 首启就把「她用哪个 agent」摆出来，并按当前档位预选（默认＝现有 agent）。
+          paintAgentMode(state.agentMode || 'existing');
           el.namingAsk.hidden = false;
           try {
             el.namingAskHer.focus();
@@ -3164,6 +3188,67 @@
         function closeNamingAsk() {
           if (!el.namingAsk) return;
           el.namingAsk.hidden = true;
+        }
+
+        /**
+         * 把「她用哪个 agent」的档位画到二选一上。
+         *
+         * ⚠️ **同一判断只写一处**（老板 2026-11-04 把这个选择搬到首启卡片，
+         *   于是同一个二选一出现在两个地方）：设置区与首启卡片都带
+         *   `data-agentmode-group`，两处共用这一个选择器 —— 谁多画一处、
+         *   谁少画一处都会漂。
+         *
+         * @param {string} mode 'own' | 'existing'
+         * @param {string} [skipGroupId] 这一处**先别画**（首启卡片开着的时候，
+         *   用户正在挑的那一档不能被快照回灌冲掉）
+         */
+        function paintAgentMode(mode, skipGroupId) {
+          var wanted = mode === 'own' ? 'own' : 'existing';
+          var buttons = document.querySelectorAll('[data-agentmode-group] button[data-agentmode]');
+          for (var i = 0; i < buttons.length; i++) {
+            if (skipGroupId && buttons[i].closest('#' + skipGroupId)) continue;
+            buttons[i].setAttribute(
+              'aria-pressed',
+              buttons[i].getAttribute('data-agentmode') === wanted ? 'true' : 'false'
+            );
+          }
+        }
+
+        /**
+         * 读某个二选一当前选中的档位。
+         * @param {string} groupId
+         * @returns {string} 'own' | 'existing'
+         */
+        function readAgentMode(groupId) {
+          var group = document.getElementById(groupId);
+          if (!group) return 'existing';
+          var picked = group.querySelector('button[aria-pressed="true"]');
+          var value = picked ? picked.getAttribute('data-agentmode') : '';
+          return value === 'own' ? 'own' : 'existing';
+        }
+
+        /**
+         * 首启卡片提交：名字 + 称呼 + **她用哪个 agent**。
+         *
+         * ⭐ **老板 2026-11-04 拍板**：「这个设置最好在第一次运行的时候就有一个选择。
+         *   选择用新建agent还是现有agent，之后选择叫什么，怎么称呼你」
+         *   ⇒ 二选一跟「叫什么 / 怎么称呼你」**同一次提交**送出去。
+         *
+         * @param {string} herName
+         * @param {string} userTitle
+         */
+        function saveNamingWithMode(herName, userTitle) {
+          var wanted = readAgentMode('naming-agentmode-group');
+          var current = state.agentMode === 'own' ? 'own' : 'existing';
+          saveNaming(herName, userTitle, true);
+          if (wanted === current) return;
+          post('/api/agent-mode', { mode: wanted })
+            .then(function (data) {
+              if (data.snapshot) render(data.snapshot);
+            })
+            .catch(function (error) {
+              toast('切换 agent 失败：' + error.message, 'error');
+            });
         }
 
         /**
@@ -3376,14 +3461,11 @@
             );
           }
           // 「她用哪个 agent」—— 默认「现有 agent」（插件默认不往宿主目录写任何文件）
-          var modeButtons = document.querySelectorAll('#agentmode-group button');
-          var agentMode = snapshot.agentMode === 'own' ? 'own' : 'existing';
-          for (var modeIdx = 0; modeIdx < modeButtons.length; modeIdx++) {
-            modeButtons[modeIdx].setAttribute(
-              'aria-pressed',
-              modeButtons[modeIdx].getAttribute('data-agentmode') === agentMode ? 'true' : 'false'
-            );
-          }
+          // ⚠️ **设置区与首启卡片共用这一处渲染**（同一判断只写一处）：
+          //   两处都带 data-agentmode-group ⇒ 一个选择器画全部，不会各画各的。
+          state.agentMode = snapshot.agentMode === 'own' ? 'own' : 'existing';
+          // 首启卡片开着的时候**别冲掉**用户正在挑的那一档（快照回灌不该改他的本地选择）。
+          paintAgentMode(state.agentMode, el.namingAsk && !el.namingAsk.hidden ? 'naming-agentmode-group' : '');
           var modeStatus = document.getElementById('agentmode-status');
           if (modeStatus) {
             var statusText = snapshot.agentStatus || '';
@@ -4568,12 +4650,13 @@
           state.namingDirty.user = true;
         });
         el.namingAskSave.addEventListener('click', function () {
-          saveNaming(el.namingAskHer.value, el.namingAskUser.value, true);
+          saveNamingWithMode(el.namingAskHer.value, el.namingAskUser.value);
         });
         // 「先跳过」= 不想给称呼 —— 存成默认名 + 空称呼，
         // 这样 configured=true，首启卡片不再弹，但她以后还能在设置里补上。
+        // ⚠️ **但他在卡片上挑过的那一档照样生效**（挑了就不该被丢掉）。
         el.namingAskSkip.addEventListener('click', function () {
-          saveNaming(el.namingAskHer.value || '', '', true);
+          saveNamingWithMode(el.namingAskHer.value || '', '');
         });
 
         document.getElementById('chat-reset').addEventListener('click', function () {
@@ -4761,6 +4844,17 @@
               toast('切换失败：' + error.message, 'error');
             });
         });
+
+        // ★ **首启卡片上的那组二选一**：**只改本地选中**，随卡片一起提交
+        //   （不立刻发请求 —— 首启这一次的提交是「名字 + 称呼 + 这一档」一起走）。
+        var namingModeGroup = document.getElementById('naming-agentmode-group');
+        if (namingModeGroup) {
+          namingModeGroup.addEventListener('click', function (event) {
+            var button = event.target.closest('button[data-agentmode]');
+            if (!button) return;
+            paintAgentMode(button.getAttribute('data-agentmode'));
+          });
+        }
 
         // ★ **「她用哪个 agent」**（上游评审 Optional #3）
         document.getElementById('agentmode-group').addEventListener('click', function (event) {

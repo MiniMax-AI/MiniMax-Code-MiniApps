@@ -125,7 +125,9 @@ it like the rest of the port.
   two-way choice ("Which agent should she use"), and the default is "use an
   existing agent" — the plugin then writes **not a single byte** outside its
   own data directory. Only when you pick "create a dedicated agent" does it
-  add that agent. Full disclosure:
+  add that agent. The choice is asked **on first run**: the opening card asks
+  for the tier first, then for her name and how she addresses you; you can
+  change it in the panel at any time. Full disclosure:
   - **Which file** — exactly one: `<Host agent directory>/mmx-octopus-agent/agent.md`.
     The directory and the file are **new**; the Host picks it up without a
     restart.
