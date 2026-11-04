@@ -1,6 +1,6 @@
 {
   "name": "minimax-bot",
-  "version": "0.7.20",
+  "version": "0.7.23",
   "private": true,
   "type": "module",
   "mcode": {

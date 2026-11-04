@@ -66,6 +66,10 @@ Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `req
 
 A group created before 0.7.8 can hold an admin that is not on its member list. Queueing that admin hands the group a speaker it then skips, so every message without an `@` went quiet: the reply was marked cancelled and nothing explained it. The queue is now built from the member list only — the admin speaks first when it is on the list, the first member takes over when it is not, and in the `all` mode only real members are queued. An `@` still beats every reply mode.
 
+## 0.7.23 The hand-over carries the conclusions of the round
+
+The hand-over between two Bots of a group carried the tail of the previous reply: the last thing one Bot said, not what the round had concluded — and a discussion concludes over several replies, not in the closing line of one of them. The hand-over now carries the conclusions of the round so far, one entry per hop and each with the Bot that said it, the way a seminar hands its conclusion to the next speaker instead of the last sentence that was said. A round with a single hop hands over exactly what it handed over before, byte for byte. A group that switched the hand-over on but left the note off is not affected by any of this: the note has always been a record of the earlier rounds that lives in the standing brief of every Bot, and the hand-over was never the same thing.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
