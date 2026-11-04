@@ -73,7 +73,7 @@ import {
   buildStoryBlock,
   parseStoryBody,
 } from './storyscope.mjs';
-import { pickPetAgent, needRebuild } from './agentpick.mjs';
+import { pickPetAgent, needRebuild, normalizeAgentMode, DEFAULT_AGENT_MODE } from './agentpick.mjs';
 // ★ **v1.8.0：在宿主里新增我们自己的专属 agent**（只增不改、失败必降级）。
 import { ensureSelfAgent, SELF_AGENT_NAME } from './agentprov.mjs';
 // 身份层三段的**唯一读取口**（随消息带的那份 + 写进 agent 文件的那份，共用同一份投影）。
@@ -494,6 +494,15 @@ export async function start(context, options = {}) {
   clientEntry = clientEntry.replace(
     '<script id="mmx-chat-protocol"></script>',
     `<script id="mmx-chat-protocol">window.__MMX_CHAT_PROTOCOL__ = ${protocolPayload()};</script>`
+  );
+  // 默认档真源注入：页面里的默认归一**只认这里**（和轨道表同一个套路）——
+  // 服务端改了默认值，页面跟着变，不用两处各写一份。
+  // ⚠️ 脚本标签里的 < 要转义，防止提前闭合脚本标签。
+  clientEntry = clientEntry.replace(
+    '<script id="mmx-agent-mode"></script>',
+    `<script id="mmx-agent-mode">window.__MMX_AGENT_MODE__ = ${JSON.stringify({
+      default: DEFAULT_AGENT_MODE,
+    }).replace(/</g, '\u003c')}</script>`
   );
   const mcpHandler = createMcpHandler({
     state,
@@ -1174,10 +1183,12 @@ export async function start(context, options = {}) {
 
         // ===== 「她用哪个 agent」（上游评审 Optional #3：给用户一个自己决定的入口）=====
         //
-        // ⚠️ **默认「用现有 agent」** ⇒ 插件默认**不往宿主目录写任何文件**。
-        //   想要专属 agent 的用户在面板上点一下，插件才建。
+        // ⚠️ **默认是「建专属 agent」**（老板 2026-11-04 拍板）⇒ 插件默认会去建那个 agent。
+        //   想要零写入的用户在面板上选「用现有 agent」（或首启卡片上选）即可。
         if (path === '/api/agent-mode') {
-          const mode = body.mode === 'own' ? 'own' : 'existing';
+          // ⚠️ 默认是「建专属 agent」；只有明确传 'existing' 才降级（老板 2026-11-04 拍板）。
+          //   归一走 agentpick.mjs 的唯一实现（不许在这里自己写默认值）。
+          const mode = normalizeAgentMode(body.mode);
           const agentMode = await state.setAgentMode(mode);
           // 换了档 ⇒ 探测缓存作废（agent 列表 / 我们那个 agent 的结论都要重探）
           petAgentProbe = null;
@@ -1533,7 +1544,7 @@ export async function start(context, options = {}) {
     // ⚠️ **档位决定我们新增的那个 agent 参不参与**：
     //   「用现有 agent」这一档 ⇒ 它**不参与**（不新增、不使用）；
     //   「建专属 agent」这一档 ⇒ 它**排在自己的 mmx 前面**（用户明确选了它）。
-    const mode = state.agentMode === 'own' ? 'own' : 'existing';
+    const mode = normalizeAgentMode(state.agentMode);
     // ⚠️ **专属档也只有我们那个真的是我们的时才用它** —— 名字被别人占了（name_taken）
     //   ⇒ 我们没建成 ⇒ 那个同名 agent 是**别人的** ⇒ 不能拿来当「我们那个」用
     //   （降级：继续用现有 agent —— 与面板上写的失败原因一致）。
@@ -1593,7 +1604,7 @@ export async function start(context, options = {}) {
     //   只有「她还没说过话」（换过去不丢历史）时才把会话挪到我们那个 agent 上；
     //   已经有历史了就**不动当前会话** —— 宁可暂时用弱通道，也不丢她的上下文。
     // ⭐ **用户自己选的那一档**（面板上的「她用哪个 agent」）：
-    //   · 「用现有 agent」（**默认**）⇒ 我们新增的那个**一次都不碰**：
+    //   · 「用现有 agent」⇒ 我们新增的那个**一次都不碰**：
     //     不新增、不使用、不把会话挪过去 ⇒ 插件不往宿主目录写任何文件。
     //   · 「建专属 agent」⇒ 先把我们那一个建出来（只增不改、失败必降级），
     //     建不出来 ⇒ 退回「现有 agent」，并把原因说清楚（面板上看得见）。

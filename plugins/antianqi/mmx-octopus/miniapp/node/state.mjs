@@ -15,6 +15,8 @@
 import { writeJsonAtomic, createWriteQueue } from './atomic-json.mjs';
 import { textLength } from './clip.mjs';
 import { pickLine } from './lines.mjs';
+// ⭐ 默认档真源（agentpick.mjs）—— 本文件不许自己写默认值。
+import { DEFAULT_AGENT_MODE, normalizeAgentMode } from './agentpick.mjs';
 
 /**
  * 章鱼娘的表情。thinking/working 由 Agent 侧驱动。
@@ -343,11 +345,14 @@ export class PetState {
     this.petAgent = null;
     /**
      * 她的会话用哪个 agent（**用户在面板里选**，持久化）。
-     * 'existing' = **用现有 agent**（默认）—— 插件不往宿主目录写任何文件；
-     * 'own'      = **建我们自己的专属 agent** —— 性格更鲜明，但从零开始、没有积累。
+     * 'own'      = **建我们自己的专属 agent**（**默认**）—— 性格更鲜明、从零开始、没有积累；
+     * 'existing' = **用现有 agent** —— 更偏助理，认得你之前的经验与工具上下文。
+     *
+     * ⚠️ **默认是「建专属 agent」**（老板 2026-11-04 拍板：体验感最好，也是主线方向）；
+     *   想给用户留余地 ⇒ 「用现有 agent」那一档随时能在面板里选。
      * @type {'existing'|'own'}
      */
-    this.agentMode = 'existing';
+    this.agentMode = DEFAULT_AGENT_MODE;
     /** @type {string} 运行时状态：实际用哪个 agent 的说明（不持久化；空 = 没话说） */
     this.agentStatus = '';
     /** @type {boolean} 她正在回话（运行时态，不持久化） */
@@ -446,8 +451,10 @@ export class PetState {
         if (typeof saved.petSessionDirty === 'boolean') this.petSessionDirty = saved.petSessionDirty;
         if (typeof saved.petHeadInjected === 'boolean') this.petHeadInjected = saved.petHeadInjected;
         if (typeof saved.petAgent === 'string' && saved.petAgent) this.petAgent = saved.petAgent;
-        // ⚠️ **默认是「用现有 agent」** —— 只有明确存了 'own' 才算「建专属」。
-        if (saved.agentMode === 'own') this.agentMode = 'own';
+        // ⚠️ **默认是「建专属 agent」**（老板 2026-11-04 拍板：体验感最好，也是主线方向）——
+        //   只有**明确存了** 'existing' 才降级成「用现有 agent」。
+        //   归一走 agentpick.mjs 的唯一实现（不许在这里自己写默认值）。
+        this.agentMode = normalizeAgentMode(saved.agentMode);
         if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
         if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
         if (saved.naming && typeof saved.naming === 'object') {
@@ -1185,13 +1192,14 @@ export class PetState {
   /**
    * 她的会话用哪个 agent（用户在面板里选的那一档）。
    *
-   * ⚠️ **只有明确传 'own' 才算「建专属 agent」** —— 别的值一律按「用现有 agent」处理。
-   *   默认就是「用现有 agent」：插件默认**不往宿主目录写任何文件**。
+   * ⚠️ **只有明确传 'existing' 才算「用现有 agent」** —— 别的值一律按「建专属 agent」处理。
+   *   默认就是「建专属 agent」（老板 2026-11-04 拍板：体验感最好，也是主线方向）；
+   *   用户想留余地 ⇒ 在面板里选「用现有 agent」，那一档**不往宿主目录写任何文件**。
    *
    * @param {string} mode
    */
   async setAgentMode(mode) {
-    this.agentMode = mode === 'own' ? 'own' : 'existing';
+    this.agentMode = normalizeAgentMode(mode);
     await this.commit();
     return this.agentMode;
   }

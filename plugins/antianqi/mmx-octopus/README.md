@@ -121,12 +121,14 @@ it like the rest of the port.
 - **At most one new agent file outside `context.dataDir`** — since 1.8.0 the
   runtime **can add one agent of its own** to the Host's agent directory, so
   that her character sheet can live in that agent's system prompt instead of
-  only in the message. **By default it adds nothing**: the panel has a
-  two-way choice ("Which agent should she use"), and the default is "use an
-  existing agent" — the plugin then writes **not a single byte** outside its
-  own data directory. Only when you pick "create a dedicated agent" does it
-  add that agent. The choice is asked **on first run**: the opening card asks
-  for the tier first, then for her name and how she addresses you; you can
+  only in the message. **By default it adds one**: the panel has a
+  two-way choice ("Which agent should she use"), and the default is "create a
+  dedicated agent" — that tier adds the agent, so her character stays in that
+  agent's system prompt (crisper personality, more lifelike replies).
+  **You can switch back to "use an existing agent" at any time** — in that tier
+  the plugin writes **not a single byte** outside its own data directory and
+  her character sheet travels with the message only. The choice is asked
+  **on first run**: the opening card asks  for the tier first, then for her name and how she addresses you; you can
   change it in the panel at any time. Full disclosure:
   - **Which file** — exactly one: `<Host agent directory>/mmx-octopus-agent/agent.md`.
     The directory and the file are **new**; the Host picks it up without a
@@ -149,8 +151,7 @@ it like the rest of the port.
     `<Host agent directory>/mmx-octopus-agent/` and the runtime adds it again on
     the next start, this time with the current version's sheet. If you would
     rather not have this agent at all, pick "use an existing agent" in the
-    panel (the default) — the plugin then leaves it alone, and as long as you
-    do not switch back to "create a dedicated agent" it will not be recreated.
+    panel — the plugin then leaves it alone, and as long as you    do not switch back to "create a dedicated agent" it will not be recreated.
     Nothing else on your machine is affected.
   - **How the directory is found — it is never guessed** — only from the
     workspace of a session the plugin itself created: the Host sets that
@@ -191,12 +192,12 @@ it like the rest of the port.
   turn per message you send her in the chat area**, in her own session. The
   turn runs through the Host Agent, so it carries the capabilities the Host
   grants that agent; it reads the Host's agent list to look for an agent
-  dedicated to the Mini App — in the default mode ("use an existing agent")
-  the one of your own named `mmx` is used as it is; if you pick "create a
-  dedicated agent" in the panel, the one it adds itself comes first (see
+  dedicated to the Mini App — in the default mode ("create a dedicated
+  agent") the one it adds itself comes first (see
   above) and yours is only used when that one is not there; with neither, it
-  falls back to the default agent. It never runs turns on your own sessions.
-- **Agent turns it starts on its own** — besides your messages, the runtime starts
+  falls back to the default agent. If you pick "use an
+  existing agent" in the panel, only your own `mmx` is used (or the default agent when there is none),
+  and the one it could add is never touched. It never runs turns on your own sessions.- **Agent turns it starts on its own** — besides your messages, the runtime starts
   a few turns by itself, and **each of them uses your model quota**:
   - **Idle talk** — **off by default**; turn it on in the panel: Settings →
     「她没人的时候自己说话」 ("She talks when you are away"). Once on, after 20
