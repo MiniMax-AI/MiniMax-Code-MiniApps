@@ -100,8 +100,12 @@ roughly 253 MB across 48 hours of continuous running.
 
 **Processes it can terminate.** 一键清仓 sends `SIGTERM` to the selected process, or
 `SIGKILL` when 强制清仓 is ticked. The button is enabled only for processes the current
-user can signal, checked with `process.kill(pid, 0)`. The app's own process and the host
-process are permanently protected.
+user can signal, checked with `process.kill(pid, 0)`. Protected from termination are this
+runtime, every ancestor of it and all of their descendants — which covers the rest of the
+host app, other plugins' runtimes and anything the Agent started — plus a small per-platform
+list of session-critical processes (`loginwindow` and `WindowServer` on macOS, `explorer`
+and `winlogon` on Windows). The confirmation dialog carries the target's start time, so the
+kill is refused when the original process has already exited and its PID has been reused.
 
 **Network.** No outbound request of any kind. No remote fonts, no CDN, no telemetry. All
 collection and rendering happen on the machine.
