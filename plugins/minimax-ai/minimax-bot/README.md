@@ -66,6 +66,16 @@ Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `req
 
 A group created before 0.7.8 can hold an admin that is not on its member list. Queueing that admin hands the group a speaker it then skips, so every message without an `@` went quiet: the reply was marked cancelled and nothing explained it. The queue is now built from the member list only — the admin speaks first when it is on the list, the first member takes over when it is not, and in the `all` mode only real members are queued. An `@` still beats every reply mode.
 
+## 0.7.21 The mention sign, the admin's seat, the queued work and the clock
+
+The mention rule of the section above left one sign out, and three more corners are fixed. A full-width keyboard writes the full-width `＠`, which is the same sign as the ASCII `@`: a mention that starts with one now reaches the member like any other (`＠某人` calls that member), and a Bot or group name may no longer carry the sign.
+
+Only the main Bot or the operator may hand a group's admin over. A group admin who patched the member list and left themselves out used to move the admin to the first member left, while the very same change through the group's admin field was refused. Both doors now ask the same question, and the refused one says why.
+
+A shutdown no longer throws away work that never started. Such a task stays queued and runs again after a restart, as the section on reliable delegation says; before, it was written down as `unknown`, a state that cannot be cancelled, so the work was lost. Work the Host had already taken is not replayed either: it stays `unknown`. A task the user cancelled stays cancelled, a task whose result is already there settles by that result instead of being marked `unknown`, and a turn that ended in a question stays answerable instead of being written off as unknown.
+
+The usage ledger counts the time the model really ran. A retried turn waits between the attempts, and that wait was counted as the model's time: a turn that waited half a minute between two attempts was written down as a turn of half a minute, and the panel averaged that up. The duration is now the time the model ran and the panel's average follows it; the wait between the attempts is kept beside it in the ledger (`usage.jsonl`), not inside the duration. A turn the model never ran has no duration to report, so it is left out of the average instead of counting as zero seconds.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

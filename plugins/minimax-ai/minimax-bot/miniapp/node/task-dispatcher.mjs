@@ -646,7 +646,12 @@ export class TaskDispatcher {
       }
       await this.save();
       if (run.controller.signal.aborted || this.disposed) {
-        task.status = this.disposed ? "unknown" : "cancelled";
+        // The turn never reached the Host, so it did no work. A cancelled task stays cancelled;
+        // a task the dispatcher was disposed for stays queued, so a restart runs it again
+        // instead of losing it.
+        task.status = this.disposed && !task.cancelRequested ? "queued" : "cancelled";
+        // It never ran, so it has no running time to show either.
+        if (task.status === "queued") delete task.startedAt;
         return { status: "aborted", skipped: true, accepted: false, safeToContinue: !this.disposed };
       }
       let result;
@@ -756,13 +761,24 @@ export class TaskDispatcher {
     if (text.length > MAX_TASK_RESULT) task.resultTruncated = true;
     else delete task.resultTruncated;
     task.error = result.errorCode ?? result.error;
-    if (
-      this.disposed ||
-      (result.safeToContinue === false && !result.pendingQuestion)
-    )
+    // Whether the Host ever took this turn: `accepted` is true only when the Host has the
+    // message or the turn produced a result of its own. A turn it did not take did no work, so
+    // it can be run again; a turn it took has an outcome nobody can observe any more.
+    const neverStarted = result.accepted === false;
+    if (this.disposed && neverStarted && !task.cancelRequested) {
+      // The dispatcher is shutting down and this turn never reached the Host: the work was
+      // never started, so it stays queued and a restart runs it again.
+      task.status = "queued";
+      // It never ran, so it has no running time to show either.
+      delete task.startedAt;
+    } else if (result.safeToContinue === false && !result.pendingQuestion) {
       task.status = "unknown";
-    else if (task.cancelRequested && (result.status !== "done" || result.pendingQuestion || this.pendingDependencies(task).length)) task.status = "cancelled";
-    else if (result.pendingQuestion) task.status = "waiting_for_user";
+    } else if (task.cancelRequested && (result.status !== "done" || result.pendingQuestion || this.pendingDependencies(task).length)) {
+      // The user asked for it to stop: a shutdown does not undo that.
+      task.status = "cancelled";
+    } else if (this.disposed && result.status !== "done") {
+      task.status = "unknown";
+    } else if (result.pendingQuestion) task.status = "waiting_for_user";
     else if (result.paused) {
       task.status = "paused";
       task.pauseReason = result.paused;
