@@ -587,7 +587,6 @@ export class Engine {
     this.running.set(key, entry);
     this.emitBusy(chatId);
 
-    const startedAt = Date.now();
     let lastFlush = 0;
     let lastPersist = 0;
     let rootSessionId = this.store.getSession(chatId, bot.id)?.sessionId;
@@ -597,6 +596,12 @@ export class Engine {
     let invoked = false;
     /** How many times the model was called for this turn, retries included. */
     let modelCalls = 0;
+    /** How long the model really ran: the wait between two attempts is not its time. */
+    let modelMs = 0;
+    /** Whether the model really ran for this turn. A turn it never ran has no duration. */
+    let modelRan = false;
+    /** How long the turn waited between two attempts, the backoff. */
+    let sleptMs = 0;
     let preparedInput = input;
     let acceptedGroupCursor;
     /** @type {{ type: 'text', text: string, live?: boolean } | undefined} */
@@ -629,6 +634,8 @@ export class Engine {
         case 'turn.started':
           // The Host has the message now: a later retry need not (and must not) send it again.
           reachedHost = true;
+          // The model is running for this turn, so it has a duration to report.
+          modelRan = true;
           acceptedGroupCursor = preparedInput.groupCursor;
           rootSessionId = event.sessionId;
           message.sessionId = event.sessionId;
@@ -711,6 +718,23 @@ export class Engine {
     let failureRetryable;
     let failureReason = '';
     let attempt = 0;
+    /**
+     * Calls the Host and times it: the ledger's duration is the time the model ran, and the
+     * wait between two attempts is not part of it. `undefined` means the Host was never called
+     * (the turn was stopped before the call), and a thrown error means the call failed.
+     * Whether the model ran at all is not decided here: a call that returns is not a turn that
+     * ran — the Host accepts an answer without starting a continuation turn — so only the Host
+     * reaching the turn (`turn.started`) says that the model really ran.
+     */
+    const callModel = async (...args) => {
+      const callStartedAt = Date.now();
+      try {
+        return await this.invoke(...args);
+      } finally {
+        // Only the time the model really ran belongs to the turn's duration.
+        modelMs += Date.now() - callStartedAt;
+      }
+    };
     try {
       for (;;) {
         result = undefined;
@@ -732,7 +756,7 @@ export class Engine {
           invoked = true;
           modelCalls += 1;
           message.modelCalls = modelCalls;
-          result = await this.invoke(attemptInput, rootSessionId, controller.signal, onEvent) ?? skippedTurn();
+          result = await callModel(attemptInput, rootSessionId, controller.signal, onEvent) ?? skippedTurn();
         } catch (error) {
           if (errorCode(error) === 'SESSION_NOT_FOUND' && !input.answer && attempt === 0) {
             // The Agent session was deleted; start a fresh one and resend the Bot's context.
@@ -741,7 +765,7 @@ export class Engine {
               preparedInput = await this.prepareGroupInput(input);
               modelCalls += 1;
               message.modelCalls = modelCalls;
-              result = await this.invoke(preparedInput, undefined, controller.signal, onEvent) ?? skippedTurn();
+              result = await callModel(preparedInput, undefined, controller.signal, onEvent) ?? skippedTurn();
             } catch (retryError) {
               failure = describeAgentError(retryError);
               failureCode = errorCode(retryError);
@@ -775,7 +799,10 @@ export class Engine {
         liveText = undefined;
         message.live = { key: 'live.retrying', params: { s: Math.round(delay / 1000), n: attempt + 1, max: this.retryDelays.length + 1 } };
         flush(true);
+        const sleepStartedAt = Date.now();
         const waited = await sleepUnlessAborted(delay, controller.signal);
+        // The wait between two attempts belongs to the turn, not to the model.
+        sleptMs += Date.now() - sleepStartedAt;
         message.live = undefined;
         if (!waited) {
           // Stopped while waiting to retry: end as the stop it was, not as the failure before it.
@@ -804,7 +831,10 @@ export class Engine {
     message.text = finalText;
     message.status = status;
     message.live = undefined;
-    message.durationMs = Date.now() - startedAt;
+    // The ledger says what the model really did: the duration is the time the model ran, not
+    // the time the turn waited between two attempts. A turn the model never ran has no
+    // duration to report, so it is left out of the average instead of counting as zero.
+    message.durationMs = modelRan ? modelMs : null;
     if (failure) {
       message.error = failure;
       // The page localises known codes; `error` keeps the text for anything else.
@@ -864,6 +894,8 @@ export class Engine {
         tools,
         // One turn, but the model may have been called more than once to finish it.
         attempts: modelCalls,
+        // The wait between two attempts is recorded on its own: it is not the model's time.
+        sleptMs,
       });
       this.broadcast({ type: 'usage.changed' });
     }
@@ -1203,7 +1235,10 @@ export class Engine {
   }
 
   mentionsIn(text, group, excludeId) {
-    const lower = String(text ?? '').toLowerCase();
+    // A full-width IME writes the full-width "＠" (and the small commercial "﹫"), and they stand
+    // where the ASCII "@" stands. Both are one character wide, so the text can be normalised
+    // without moving any other character: the offsets below stay the offsets of the original.
+    const lower = String(text ?? '').toLowerCase().replace(/[＠﹫]/g, '@');
     const members = group.memberIds.map((id) => this.store.getBot(id)).filter(Boolean)
       .map((bot) => ({ id: bot.id, name: bot.name.toLowerCase() }))
       .sort((a, b) => b.name.length - a.name.length);

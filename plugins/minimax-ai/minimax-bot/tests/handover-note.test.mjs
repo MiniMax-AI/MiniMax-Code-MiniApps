@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  HANDOVER_BLOCK_END, HANDOVER_BLOCK_MARK, HANDOVER_ENTRY_MAX, HANDOVER_MAX, HANDOVER_TAIL,
+  ENTRY_MAX, HANDOVER_BLOCK_END, HANDOVER_BLOCK_MARK, HANDOVER_MAX, HANDOVER_TAIL,
   renderHandover, tailSummary,
 } from '../miniapp/node/relay-guard.mjs';
 import { Store } from '../miniapp/node/store.mjs';
@@ -172,8 +172,8 @@ test('the hand-over stays inside its budget and drops the oldest conclusion whol
   const entries = handover.text.split(' / ');
   for (const entry of entries) {
     const payload = entry.replace(/^\[[^\]]+\]\s*/, '');
-    assert.ok(payload.length <= HANDOVER_ENTRY_MAX, 'an entry is longer than it may be');
-    assert.equal(payload.length, HANDOVER_ENTRY_MAX, 'an entry was not cut down to its own budget');
+    assert.ok(payload.length <= ENTRY_MAX, 'an entry is longer than it may be');
+    assert.equal(payload.length, ENTRY_MAX, 'an entry was not cut down to its own budget');
   }
   // The oldest conclusion is the one that goes, and it goes whole.
   assert.ok(!handover.text.includes('OLDEST'), 'the oldest conclusion was kept instead of the newest');

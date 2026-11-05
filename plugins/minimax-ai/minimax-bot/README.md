@@ -66,9 +66,19 @@ Two bounds are worth knowing. The archive keeps at most 1,000 records, so a `req
 
 A group created before 0.7.8 can hold an admin that is not on its member list. Queueing that admin hands the group a speaker it then skips, so every message without an `@` went quiet: the reply was marked cancelled and nothing explained it. The queue is now built from the member list only — the admin speaks first when it is on the list, the first member takes over when it is not, and in the `all` mode only real members are queued. An `@` still beats every reply mode.
 
+## 0.7.21 The mention sign, the admin's seat, the queued work and the clock
+
+The mention rule of the section above left one sign out, and three more corners are fixed. A full-width keyboard writes the full-width `＠`, which is the same sign as the ASCII `@`: a mention that starts with one now reaches the member like any other (`＠某人` calls that member), and a Bot or group name may no longer carry the sign.
+
+Only the main Bot or the operator may hand a group's admin over. A group admin who patched the member list and left themselves out used to move the admin to the first member left, while the very same change through the group's admin field was refused. Both doors now ask the same question, and the refused one says why.
+
+A shutdown no longer throws away work that never started. Such a task stays queued and runs again after a restart, as the section on reliable delegation says; before, it was written down as `unknown`, a state that cannot be cancelled, so the work was lost. Work the Host had already taken is not replayed either: it stays `unknown`. A task the user cancelled stays cancelled, a task whose result is already there settles by that result instead of being marked `unknown`, and a turn that ended in a question stays answerable instead of being written off as unknown.
+
+The usage ledger counts the time the model really ran. A retried turn waits between the attempts, and that wait was counted as the model's time: a turn that waited half a minute between two attempts was written down as a turn of half a minute, and the panel averaged that up. The duration is now the time the model ran and the panel's average follows it; the wait between the attempts is kept beside it in the ledger (`usage.jsonl`), not inside the duration. A turn the model never ran has no duration to report, so it is left out of the average instead of counting as zero seconds.
+
 ## 0.7.23 The hand-over carries the conclusions of the round
 
-The hand-over between two Bots of a group carried the tail of the previous reply: the last thing one Bot said, not what the round had concluded — and a discussion concludes over several replies, not in the closing line of one of them. The hand-over now carries the conclusions of the round so far, one entry per hop and each with the Bot that said it, the way a seminar hands its conclusion to the next speaker instead of the last sentence that was said. A round with a single hop hands over exactly what it handed over before, byte for byte. A group that switched the hand-over on but left the note off is not affected by any of this: the note has always been a record of the earlier rounds that lives in the standing brief of every Bot, and the hand-over was never the same thing.
+The hand-over between two Bots of a group carried the tail of the previous reply: the last thing one Bot said, not what the round had concluded — and a discussion concludes over several replies, not in the closing line of one of them. The hand-over now carries the conclusions of the round so far, one entry per hop and each with the Bot that said it, the way a seminar hands its conclusion to the next speaker instead of the last sentence that was said. A round with a single hop hands over exactly what it handed over before, byte for byte. The note setting does not change any of this: the hand-over reads the round itself, and a round is built whether or not the group keeps a note. The note stays what it always was, a record of the earlier rounds that lives in the standing brief of every Bot.
 
 ## 0.7.10 Optional group notes
 

@@ -20,7 +20,7 @@
 // Everything in this module is pure: the engine decides *when* the note is written and where it
 // goes, this module only says *what* it says. That keeps the rules testable without a model.
 
-import { neutralizeMarks, tailOf as cutTail } from './relay-guard.mjs';
+import { ENTRY_MAX, SPEAKER_MAX, neutralizeMarks, tailOf as cutTail } from './relay-guard.mjs';
 import { t } from './i18n.mjs';
 
 /**
@@ -36,10 +36,10 @@ export const GROUP_NOTE_END = '</minimax-bot-group-summary>';
 export const NOTE_MAX_ENTRIES = 6;
 /** How many characters the whole note may take. */
 export const NOTE_MAX_CHARS = 1200;
-/** How many characters one entry may take. */
-export const NOTE_ENTRY_MAX = 240;
-/** How many characters the name of a speaker may take. */
-export const NOTE_SPEAKER_MAX = 60;
+/** How many characters one entry may take. The same budget the hand-over uses, defined once in `relay-guard.mjs`. */
+export const NOTE_ENTRY_MAX = ENTRY_MAX;
+/** How many characters the name of a speaker may take. Defined once in `relay-guard.mjs`. */
+export const NOTE_SPEAKER_MAX = SPEAKER_MAX;
 
 /**
  * Whether the group keeps a note.

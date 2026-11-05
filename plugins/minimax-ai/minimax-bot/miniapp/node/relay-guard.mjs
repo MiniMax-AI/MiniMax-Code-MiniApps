@@ -48,20 +48,20 @@ export const HANDOVER_MAX = 600;
 /** How much of the previous reply's tail is kept when the round has a single hop. */
 export const HANDOVER_TAIL = 400;
 /**
- * How many characters one entry of the hand-over may take.
+ * How many characters one entry that rides into a Bot's prompt may take.
  *
- * The same number as `NOTE_ENTRY_MAX` in `group-note.mjs`. The two modules cannot import each
- * other — `group-note.mjs` imports this one — so the value is written down twice here and
- * there, and the two have to be kept in sync with `NOTE_ENTRY_MAX`.
+ * The hand-over and the group note put the same kind of entry into a prompt, so they share one
+ * budget and it is written down here once. `group-note.mjs` imports these two numbers rather
+ * than keeping a copy of its own.
  */
-export const HANDOVER_ENTRY_MAX = 240;
+export const ENTRY_MAX = 240;
 /**
  * How many characters the name of a speaker may take.
  *
  * A name is a label and not content, so it is cut short: a long one must not eat the budget of
- * the round. The same bound as `NOTE_SPEAKER_MAX` in `group-note.mjs`.
+ * the round.
  */
-const HANDOVER_SPEAKER_MAX = 60;
+export const SPEAKER_MAX = 60;
 
 /**
  * Protocol marks a reply must never be able to forge: a Bot that writes them into its answer
@@ -262,7 +262,7 @@ const WORD_PREFIX_MAX = 20;
  * @param {number} [max]
  * @returns {string}
  */
-export function tailOf(text, max = HANDOVER_ENTRY_MAX) {
+export function tailOf(text, max = ENTRY_MAX) {
   const value = String(text ?? '');
   if (value.length <= max) return value;
   const cut = value.length - max;
@@ -294,7 +294,7 @@ export function roundEntries(round) {
     const speaker = neutralizeMarks(String(item?.speaker ?? '')).replace(/\s+/g, ' ').trim();
     const text = neutralizeMarks(String(item?.text ?? '')).replace(/\s+/g, ' ').trim();
     if (!speaker || !text) continue;
-    entries.push({ speaker: speaker.slice(0, HANDOVER_SPEAKER_MAX), text });
+    entries.push({ speaker: speaker.slice(0, SPEAKER_MAX), text });
   }
   return entries;
 }
@@ -329,7 +329,7 @@ export function roundSummary(round, max = HANDOVER_MAX) {
   let chars = 0;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    const part = `[${entry.speaker}] ${tailOf(entry.text, HANDOVER_ENTRY_MAX)}`;
+    const part = `[${entry.speaker}] ${tailOf(entry.text, ENTRY_MAX)}`;
     const size = part.length + (kept.length ? 3 : 0);
     if (chars + size > max) break;
     kept.unshift(part);
