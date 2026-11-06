@@ -76,6 +76,11 @@ A shutdown no longer throws away work that never started. Such a task stays queu
 
 The usage ledger counts the time the model really ran. A retried turn waits between the attempts, and that wait was counted as the model's time: a turn that waited half a minute between two attempts was written down as a turn of half a minute, and the panel averaged that up. The duration is now the time the model ran and the panel's average follows it; the wait between the attempts is kept beside it in the ledger (`usage.jsonl`), not inside the duration. A turn the model never ran has no duration to report, so it is left out of the average instead of counting as zero seconds.
 
+## 0.7.24 A file that cannot be read, and a ledger that cannot be written
+
+- A `state.json` or a chat file that cannot be parsed no longer keeps the Mini App from starting. The unreadable file is kept as `*.corrupt-<time>` instead of being thrown away, and the store starts from the defaults: an unreadable chat starts empty, the other chats still load. The file was written with a rename, but nothing was flushed before it, so a power loss could leave an empty file behind; the bytes are flushed before the rename now, and the directory after it where the platform allows it.
+- A failed ledger write no longer fails the turn that already ran. The reply keeps its outcome, a group round goes on to the next member, and a finished background job still saves its status and delivers its report. The miss goes to the log.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

@@ -114,7 +114,8 @@ function chatReferences(messages, src) {
  */
 export async function start(context) {
   const clientDir = join(context.pluginRoot, 'miniapp/client');
-  const store = new Store(context.dataDir);
+  // The store writes the ledger; when that write fails it says so through the host's log.
+  const store = new Store(context.dataDir, context.logger);
   const memory = new MemoryStore(context.dataDir);
   await store.init();
   await memory.init();
