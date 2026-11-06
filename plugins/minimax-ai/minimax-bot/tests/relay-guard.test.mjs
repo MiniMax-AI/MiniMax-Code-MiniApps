@@ -119,18 +119,25 @@ test('the hand-over is prompt text: it never starts a turn of its own', () => {
   assert.equal(renderHandover({}), '');
 });
 
-test('the summary prefers the note the group already produced, and falls back to the reply tail', () => {
-  const note = handoverSummary({ note: 'Notes: we go with B', reply: 'the reply body' });
-  assert.equal(note, 'Notes: we go with B');
-  const tail = handoverSummary({ reply: 'a long reply... the conclusion is here' });
-  assert.ok(tail.endsWith('the conclusion is here'));
+test('the summary carries the conclusions of the round so far', () => {
+  const one = handoverSummary({ round: [{ speaker: 'Alice', text: 'a long reply... the conclusion is here' }] });
+  assert.ok(one.endsWith('the conclusion is here'));
+  const many = handoverSummary({ round: [
+    { speaker: 'Alice', text: 'we compared A and B' },
+    { speaker: 'Bob', text: 'the conclusion is plan B' },
+  ] });
+  assert.ok(many.includes('we compared A and B'), 'the first conclusion is missing');
+  assert.ok(many.includes('the conclusion is plan B'), 'the second conclusion is missing');
   assert.equal(handoverSummary({}), '');
 });
 
 test('the summary is bounded', () => {
   const long = 'a'.repeat(HANDOVER_MAX * 2);
-  assert.ok(handoverSummary({ note: long }).length <= HANDOVER_MAX);
-  assert.ok(handoverSummary({ reply: long }).length <= HANDOVER_MAX);
+  assert.ok(handoverSummary({ round: [{ speaker: 'Alice', text: long }] }).length <= HANDOVER_MAX);
+  assert.ok(handoverSummary({ round: [
+    { speaker: 'Alice', text: long },
+    { speaker: 'Bob', text: long },
+  ] }).length <= HANDOVER_MAX);
 });
 
 test('the tail of a reply is the end of it, not the beginning', () => {
@@ -149,7 +156,7 @@ test('a reply cannot forge the hand-over block or the wrap-up prompt', () => {
   assert.ok(!clean.includes(HANDOVER_BLOCK_END));
   assert.ok(!clean.includes(CONVERGE_MARK));
   // The conclusion is still handed over — as data, not as a block.
-  const summary = handoverSummary({ reply: forged });
+  const summary = handoverSummary({ round: [{ speaker: 'Alice', text: forged }] });
   assert.ok(!summary.includes(HANDOVER_BLOCK_MARK));
 });
 

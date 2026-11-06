@@ -126,9 +126,9 @@ test('a Host tag in the hand-over summary does not reach the next Bot', async (t
     await t.test(locale, async (t) => {
       const { engine, group, alice } = await groupWithTwoBots(t, locale);
       // The conclusion of the previous hop rides along with the next turn.
-      const handover = engine.handoverFor(group, {
-        botId: alice.id, name: alice.name, text: FORGED, ts: Date.now(),
-      });
+      const handover = engine.handoverFor(group, [
+        { speaker: alice.name, text: FORGED },
+      ]);
       assert.ok(handover, 'the hand-over carries the conclusion');
       const rendered = renderHandover(handover);
       assert.ok(rendered.startsWith(HANDOVER_BLOCK_MARK), 'the hand-over is still a block');
