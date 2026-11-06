@@ -881,22 +881,28 @@ export class Engine {
       }
     } finally {
       // The model ran: the ledger must say so even when a later step of this turn fails.
-      await this.store.recordUsage({
-        ts: Date.now(),
-        turnId: message.id,
-        botId: bot.id,
-        botName: bot.name,
-        chatId,
-        kind: input.kind,
-        status,
-        durationMs: message.durationMs,
-        chars: finalText.length,
-        tools,
-        // One turn, but the model may have been called more than once to finish it.
-        attempts: modelCalls,
-        // The wait between two attempts is recorded on its own: it is not the model's time.
-        sleptMs,
-      });
+      // The ledger is metering, not the turn's outcome: a failed write (a full disk) must
+      // not take the turn that already ran down with it. The miss goes to the log.
+      try {
+        await this.store.recordUsage({
+          ts: Date.now(),
+          turnId: message.id,
+          botId: bot.id,
+          botName: bot.name,
+          chatId,
+          kind: input.kind,
+          status,
+          durationMs: message.durationMs,
+          chars: finalText.length,
+          tools,
+          // One turn, but the model may have been called more than once to finish it.
+          attempts: modelCalls,
+          // The wait between two attempts is recorded on its own: it is not the model's time.
+          sleptMs,
+        });
+      } catch (error) {
+        this.logger.warn('minimax_bot.usage_write_failed', { chatId, code: error?.code ?? 'unknown' });
+      }
       this.broadcast({ type: 'usage.changed' });
     }
     this.broadcast({ type: 'message.upsert', chatId, message });
@@ -1915,21 +1921,26 @@ export class Engine {
     if (report) helper.report = report;
     if (turnStartedAt) {
       // A background job is an Agent turn like any other: meter it here, or the usage panel
-      // counts fewer turns than the model actually ran.
-      await this.store.recordUsage({
-        ts: Date.now(),
-        turnId: helper.id,
-        botId: helper.botId,
-        botName: turnBotName,
-        chatId: helper.chatId,
-        kind: 'helper-run',
-        status: helperTurnStatus(helper.status),
-        durationMs: turnMs,
-        chars: turnText.length,
-        tools: turnTools,
-        // A background job runs the model once; it has no retry loop of its own.
-        attempts: 1,
-      });
+      // counts fewer turns than the model actually ran. A failed write must not keep the
+      // finished job from saving its status and delivering its report.
+      try {
+        await this.store.recordUsage({
+          ts: Date.now(),
+          turnId: helper.id,
+          botId: helper.botId,
+          botName: turnBotName,
+          chatId: helper.chatId,
+          kind: 'helper-run',
+          status: helperTurnStatus(helper.status),
+          durationMs: turnMs,
+          chars: turnText.length,
+          tools: turnTools,
+          // A background job runs the model once; it has no retry loop of its own.
+          attempts: 1,
+        });
+      } catch (error) {
+        this.logger.warn('minimax_bot.usage_write_failed', { chatId: helper.chatId, code: error?.code ?? 'unknown' });
+      }
       this.broadcast({ type: 'usage.changed' });
     }
     if (this.disposed) return;

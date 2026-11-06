@@ -80,6 +80,11 @@ The usage ledger counts the time the model really ran. A retried turn waits betw
 
 The hand-over between two Bots of a group carried the tail of the previous reply: the last thing one Bot said, not what the round had concluded — and a discussion concludes over several replies, not in the closing line of one of them. The hand-over now carries the conclusions of the round so far, one entry per hop and each with the Bot that said it, the way a seminar hands its conclusion to the next speaker instead of the last sentence that was said. A round with a single hop hands over exactly what it handed over before, byte for byte. The note setting does not change any of this: the hand-over reads the round itself, and a round is built whether or not the group keeps a note. The note stays what it always was, a record of the earlier rounds that lives in the standing brief of every Bot.
 
+## 0.7.24 A file that cannot be read, and a ledger that cannot be written
+
+- A `state.json` or a chat file that cannot be parsed no longer keeps the Mini App from starting. The unreadable file is kept as `*.corrupt-<time>` instead of being thrown away, and the store starts from the defaults: an unreadable chat starts empty, the other chats still load. The file was written with a rename, but nothing was flushed before it, so a power loss could leave an empty file behind; the bytes are flushed before the rename now, and the directory after it where the platform allows it.
+- A failed ledger write no longer fails the turn that already ran. The reply keeps its outcome, a group round goes on to the next member, and a finished background job still saves its status and delivers its report. The miss goes to the log.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

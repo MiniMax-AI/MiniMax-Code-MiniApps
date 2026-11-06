@@ -123,6 +123,11 @@ test("a task left running by a crash converges after the restart", async (t) => 
   assert.equal(persisted.taskBatches[0].tasks[0].status, "running");
   t.after(async () => {
     engine.dispose();
+    // The aborted turn still finishes its bookkeeping, and that write lands after the
+    // dispose returned. Wait for it, the way the shutdown path does, before removing the
+    // directory it writes into.
+    await until(() => idle(engine), "idle").catch(() => {});
+    await store.writeChain;
     await rm(dir, { recursive: true, force: true });
   });
 

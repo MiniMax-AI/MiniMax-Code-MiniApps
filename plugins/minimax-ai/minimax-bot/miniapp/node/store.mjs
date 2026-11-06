@@ -1,7 +1,7 @@
 // @ts-check
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { appendFile, copyFile, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { userReaction } from '../client/emoji-data.js';
 
 import { resolveLocale, setLocale, t } from './i18n.mjs';
@@ -120,22 +120,49 @@ export function newId(prefix) {
 async function writeJsonAtomic(path, value) {
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+    // Flush the bytes before the rename: a power loss after an unflushed rename is what
+    // leaves a 0-byte file behind.
+    const handle = await open(tmp, 'w');
+    try {
+      await handle.writeFile(JSON.stringify(value, null, 2), 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(tmp, path);
+    // Best effort: some platforms (Windows) cannot sync a directory handle.
+    await open(dirname(path), 'r').then((dir) => dir.sync().finally(() => dir.close())).catch(() => {});
   } catch (error) {
     await rm(tmp, { force: true }).catch(() => {});
     throw error;
   }
 }
 
-async function readJson(path, fallback) {
+async function readJson(path, fallback, logger) {
+  let text;
   try {
-    return JSON.parse(await readFile(path, 'utf8'));
+    text = await readFile(path, 'utf8');
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       return fallback;
     }
     throw error;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Keep the unreadable bytes as evidence instead of deleting them; start from defaults.
+    const kept = `${path}.corrupt-${Date.now()}`;
+    try {
+      await rename(path, kept);
+    } catch {
+      // The rename can fail (the file may be held open). A copy keeps the bytes even when the
+      // name cannot change; the next save may write over the original, but the copy stays.
+      await copyFile(path, kept).catch(() => {});
+    }
+    // A team that came back empty, or a chat that reads empty, is otherwise unexplainable.
+    logger?.warn('minimax_bot.corrupt_file_quarantined', { file: basename(path) });
+    return fallback;
   }
 }
 
@@ -213,9 +240,11 @@ function knownText(message) {
 }
 
 export class Store {
-  /** @param {string} dataDir */
-  constructor(dataDir) {
+  /** @param {string} dataDir @param {{ warn: (...args: any[]) => void }} [logger] */
+  constructor(dataDir, logger) {
     this.dir = dataDir;
+    /** The ledger must be able to say it lost a row; without a host logger it stays quiet. */
+    this.logger = logger ?? { warn() {} };
     this.statePath = join(dataDir, 'state.json');
     this.messagesDir = join(dataDir, 'messages');
     this.usagePath = join(dataDir, 'usage.jsonl');
@@ -236,10 +265,20 @@ export class Store {
 
   async init() {
     await mkdir(this.messagesDir, { recursive: true });
-    this.state = { ...defaultState(), ...(await readJson(this.statePath, defaultState())) };
+    this.state = { ...defaultState(), ...(await readJson(this.statePath, defaultState(), this.logger)) };
     this.state.settings = { ...defaultState().settings, ...(this.state.settings ?? {}) };
     setLocale(resolveLocale(this.state));
     let migrated = false;
+    // The fields init walks must have the shape it walks: a wrong shape starts from defaults
+    // rather than throwing half way through startup.
+    for (const key of ['bots', 'groups', 'schedules']) {
+      if (!Array.isArray(this.state[key])) { this.state[key] = []; migrated = true; }
+    }
+    const sessions = this.state.sessions;
+    if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)) {
+      this.state.sessions = {};
+      migrated = true;
+    }
     // A helper's Agent run does not survive the Mini App process; one left running was cut off.
     this.state.helpers = Array.isArray(this.state.helpers) ? this.state.helpers : [];
     for (const helper of this.state.helpers) {
@@ -410,7 +449,7 @@ export class Store {
   }
 
   async loadMessages(chatId) {
-    let list = await readJson(this.messagePath(chatId), []);
+    let list = await readJson(this.messagePath(chatId), [], this.logger);
     // deleteChat() may have installed an empty list while the read was in flight; it wins.
     const installed = this.messageCache.get(chatId);
     if (installed) return installed;
@@ -620,7 +659,14 @@ export class Store {
   // ---------- usage ----------
   recordUsage(entry) {
     return this.enqueue(async () => {
-      await appendFile(this.usagePath, `${JSON.stringify(entry)}\n`, 'utf8');
+      // The ledger is metering: a failed append (a full disk) must not fail the caller's turn,
+      // but the miss goes to the log. The id is added only on success, so a retry can still write.
+      try {
+        await appendFile(this.usagePath, `${JSON.stringify(entry)}\n`, 'utf8');
+      } catch (error) {
+        this.logger.warn('minimax_bot.usage_write_failed', { code: error?.code ?? 'unknown' });
+        return;
+      }
       if (entry.turnId) this.usageIds.add(entry.turnId);
     });
   }
