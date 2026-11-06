@@ -26,7 +26,7 @@ test('miniapp: baseline passes and resolves entry and roots', async () => {
     nodeRoots: ['miniapp/node'],
     clientRoots: ['miniapp/client'],
     features: [],
-    access: { agent: [], tool: false, microphone: false },
+    access: { agent: [], tool: false, device: [], host: [] },
   });
 });
 
@@ -210,17 +210,38 @@ test('miniapp: toolAccess allows only "call", reports the feature, and grants to
   }
 });
 
-test('miniapp: deviceAccess allows only "microphone", reports the feature, and grants the microphone', async () => {
-  const granted = await run((m) => { m.deviceAccess = ['microphone']; return m; });
-  assert.deepEqual(granted.report.diagnostics, []);
-  assert.deepEqual(granted.resolved.features, ['deviceAccess']);
-  assert.equal(granted.resolved.access.microphone, true);
+test('miniapp: deviceAccess allows microphone, camera, and notifications and reports each feature', async () => {
+  const mic = await run((m) => { m.deviceAccess = ['microphone']; return m; });
+  assert.deepEqual(mic.report.diagnostics, []);
+  assert.deepEqual(mic.resolved.features, ['deviceAccess']);
+  assert.deepEqual(mic.resolved.access.device, ['microphone']);
+  const all = await run((m) => { m.deviceAccess = ['notifications', 'camera', 'microphone', 'camera']; return m; });
+  assert.deepEqual(all.report.diagnostics, []);
+  assert.deepEqual(all.resolved.features, ['deviceAccess', 'deviceAccess.camera', 'deviceAccess.notifications']);
+  assert.deepEqual(all.resolved.access.device, ['camera', 'microphone', 'notifications']);
   const empty = await run((m) => { m.deviceAccess = []; return m; });
   assert.deepEqual(empty.report.diagnostics, []);
-  assert.equal(empty.resolved.access.microphone, false);
-  for (const value of [['camera'], ['notifications'], ['geolocation'], 'microphone']) {
+  assert.deepEqual(empty.resolved.access.device, []);
+  for (const value of [['geolocation'], ['Camera'], ['camera', 'clipboard-read'], 'microphone']) {
     const bad = await run((m) => { m.deviceAccess = value; return m; });
     assert.deepEqual(codes(bad.report.diagnostics), ['MINIAPP_DEVICE_ACCESS_INVALID'], JSON.stringify(value));
+    assert.deepEqual(bad.resolved.access.device, []);
+  }
+});
+
+test('miniapp: hostAccess allows only "navigation.read", reports the feature, and grants navigation reads', async () => {
+  const granted = await run((m) => { m.hostAccess = ['navigation.read']; return m; });
+  assert.deepEqual(granted.report.diagnostics, []);
+  assert.deepEqual(granted.resolved.features, ['hostAccess']);
+  assert.deepEqual(granted.resolved.access.host, ['navigation.read']);
+  const empty = await run((m) => { m.hostAccess = []; return m; });
+  assert.deepEqual(empty.report.diagnostics, []);
+  assert.deepEqual(empty.resolved.features, ['hostAccess']);
+  assert.deepEqual(empty.resolved.access.host, []);
+  for (const value of [['navigation.open'], ['ui.read'], 'navigation.read', [null]]) {
+    const bad = await run((m) => { m.hostAccess = value; return m; });
+    assert.deepEqual(codes(bad.report.diagnostics), ['MINIAPP_HOST_ACCESS_INVALID'], JSON.stringify(value));
+    assert.deepEqual(bad.resolved.access.host, []);
   }
 });
 

@@ -67,7 +67,7 @@ test('package: features from plugin.json and miniapp.json reach the README minim
   assert.deepEqual(await validatePackage(dir), []);
 });
 
-test('package: getUserMedia without the microphone turns from warning to error once the package needs 3.1.5', async () => {
+test('package: getUserMedia without the microphone turns from warning to error once the package needs 3.1.6', async () => {
   const root = await makeTmpRoot();
   const { dir } = await copyExample(root);
   await writeFile(path.join(dir, 'miniapp', 'client', 'record.js'), 'export const open = () => navigator.mediaDevices.getUserMedia({ audio: true });\n');
@@ -82,7 +82,7 @@ test('package: getUserMedia without the microphone turns from warning to error o
 
   await editJson(path.join(dir, 'miniapp', 'miniapp.json'), (m) => ({ ...m, deviceAccess: ['microphone'] }));
   const readme = path.join(dir, 'README.md');
-  await writeFile(readme, (await readFile(readme, 'utf8')).replace('MiniMax Code 3.0.73', 'MiniMax Code 3.1.5'));
+  await writeFile(readme, (await readFile(readme, 'utf8')).replace('MiniMax Code 3.0.73', 'MiniMax Code 3.1.6'));
   assert.deepEqual(await validatePackage(dir), []);
 });
 

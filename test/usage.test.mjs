@@ -6,7 +6,7 @@ import { checkAccessUsage } from '../scripts/lib/rules/usage.mjs';
 import { createReport } from '../scripts/lib/report.mjs';
 import { codes, copyExample, makeTmpRoot } from './helpers.mjs';
 
-const NONE = { agent: [], tool: false, microphone: false };
+const NONE = { agent: [], tool: false, device: [], host: [] };
 const ROOTS = ['miniapp/client', 'miniapp/node'];
 
 async function run(files, { access = NONE, minimum } = {}) {
@@ -94,22 +94,85 @@ test('usage: speech.transcribe without the microphone is an error on every versi
   const diagnostics = await run({ 'miniapp/client/index.html': '<script>speech.transcribe({ audio, format });</script>\n' });
   assert.deepEqual(codes(diagnostics, 'error'), ['ACCESS_UNDECLARED']);
   assert.match(diagnostics[0].message, /deviceAccess/u);
-  assert.deepEqual(await run({ 'miniapp/client/index.html': '<script>speech.transcribe({ audio, format });</script>\n' }, { access: { ...NONE, microphone: true } }), []);
+  assert.deepEqual(await run({ 'miniapp/client/index.html': '<script>speech.transcribe({ audio, format });</script>\n' }, { access: { ...NONE, device: ['microphone'] } }), []);
 });
 
-test('usage: getUserMedia without the microphone is an error only when every client that installs the package denies it', async () => {
+test('usage: getUserMedia without its device is an error only when every client that installs the package denies it', async () => {
   const files = { 'miniapp/client/app.js': 'const stream = await navigator.mediaDevices.getUserMedia({ audio: true });\n' };
   const anyVersion = await run(files);
   assert.deepEqual(codes(anyVersion), ['ACCESS_UNDECLARED']);
   assert.equal(anyVersion[0].level, 'warning');
-  assert.match(anyVersion[0].message, /before 3\.1\.5/u);
-  const older = await run(files, { minimum: '3.1.4' });
-  assert.equal(older[0].level, 'warning');
-  for (const minimum of ['3.1.5', '3.2.0']) {
-    const gated = await run(files, { minimum });
-    assert.deepEqual(codes(gated, 'error'), ['ACCESS_UNDECLARED'], minimum);
+  assert.match(anyVersion[0].message, /"microphone"/u);
+  assert.match(anyVersion[0].message, /before 3\.1\.6/u);
+  assert.equal((await run(files, { minimum: '3.1.5' }))[0].level, 'warning');
+  for (const minimum of ['3.1.6', '3.2.0']) {
+    assert.deepEqual(codes(await run(files, { minimum }), 'error'), ['ACCESS_UNDECLARED'], minimum);
   }
-  assert.deepEqual(await run(files, { access: { ...NONE, microphone: true }, minimum: '3.1.5' }), []);
+  assert.deepEqual(await run(files, { access: { ...NONE, device: ['microphone'] }, minimum: '3.1.6' }), []);
+});
+
+test('usage: getUserMedia needs the devices it asks for', async () => {
+  const cases = [
+    ['getUserMedia({ video: true })', ['microphone'], /"camera"/u],
+    ['getUserMedia({audio:!0,video:{width:640}})', ['microphone'], /"camera"/u],
+    ['getUserMedia({audio:!0,video:{width:640}})', ['camera'], /"microphone"/u],
+    ['getUserMedia(constraints)', [], /"microphone" or "camera"/u],
+    ['getUserMedia({ "audio": true })', [], /"microphone"/u],
+    ["getUserMedia({ 'video': true })", ['microphone'], /"camera"/u],
+    ["getUserMedia({ video: { facingMode: '}' }, audio: true })", ['camera'], /"microphone"/u],
+    ['getUserMedia({ ...base })', [], /"microphone" or "camera"/u],
+  ];
+  for (const [call, device, missing] of cases) {
+    const diagnostics = await run({ 'miniapp/client/app.js': `${call};\n` }, { access: { ...NONE, device } });
+    assert.deepEqual(codes(diagnostics), ['ACCESS_UNDECLARED'], call);
+    assert.match(diagnostics[0].message, missing, call);
+  }
+  for (const [call, device] of [
+    ['getUserMedia({ video: true })', ['camera']],
+    ['getUserMedia({ audio: true, video: false })', ['microphone']],
+    ['getUserMedia({audio:!1,video:!0})', ['camera']],
+    ['getUserMedia(constraints)', ['camera']],
+    ['getUserMedia(constraints)', ['microphone']],
+  ]) {
+    assert.deepEqual(await run({ 'miniapp/client/app.js': `${call};\n` }, { access: { ...NONE, device } }), [], call);
+  }
+});
+
+test('usage: system notifications need deviceAccess "notifications"', async () => {
+  for (const source of ["new Notification('Done', { body });\n", 'await Notification.requestPermission();\n']) {
+    const anyVersion = await run({ 'miniapp/client/app.js': source });
+    assert.deepEqual(codes(anyVersion), ['ACCESS_UNDECLARED'], source);
+    assert.equal(anyVersion[0].level, 'warning');
+    assert.match(anyVersion[0].message, /"notifications"/u);
+    assert.deepEqual(codes(await run({ 'miniapp/client/app.js': source }, { minimum: '3.1.9' }), 'error'), ['ACCESS_UNDECLARED'], source);
+    assert.deepEqual(await run({ 'miniapp/client/app.js': source }, { access: { ...NONE, device: ['notifications'] } }), [], source);
+  }
+  assert.deepEqual(await run({ 'miniapp/client/app.js': 'const n = new NotificationCenter(); notify.showNotification(x);\n' }), []);
+});
+
+test('usage: one browser-permission diagnostic per file names every missing device', async () => {
+  const diagnostics = await run({
+    'miniapp/client/app.js': "getUserMedia({ audio: true });\ngetUserMedia({ video: true });\nnew Notification('x');\n",
+  });
+  assert.equal(diagnostics.length, 1);
+  assert.match(diagnostics[0].message, /"microphone", "camera", and "notifications"/u);
+});
+
+test('usage: reading Host navigation needs hostAccess; Host UI state and opening entries need nothing', async () => {
+  for (const source of [
+    'await window.mcode?.miniapp?.host?.navigation.getState();\n',
+    'host.navigation.subscribe(render, { onError });\n',
+    'miniAppHost.navigation.subscribe(render);\n',
+    'host?.navigation?.getState?.();\n',
+  ]) {
+    const diagnostics = await run({ 'miniapp/client/app.js': source });
+    assert.deepEqual(codes(diagnostics, 'error'), ['ACCESS_UNDECLARED'], source);
+    assert.match(diagnostics[0].message, /hostAccess/u);
+    assert.deepEqual(await run({ 'miniapp/client/app.js': source }, { access: { ...NONE, host: ['navigation.read'] } }), [], source);
+  }
+  for (const source of ["host.navigation.open({ id: 'home' });\n", 'host.ui.subscribe(apply);\nawait host.ui.getState();\n', 'const state = navigation.getState();\n']) {
+    assert.deepEqual(await run({ 'miniapp/client/app.js': source }), [], source);
+  }
 });
 
 test('usage: one diagnostic per rule per file, and only payload scripts are scanned', async () => {

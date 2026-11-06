@@ -5,7 +5,9 @@ import { readText } from '../fs.mjs';
 import { compareVersions, requiredHostVersion } from '../version.mjs';
 
 const TESTED_ENVIRONMENT = '## Tested environment';
-const HOST_VERSION_MENTION = /MiniMax Code\D{0,16}?(\d+)\.(\d+)\.(\d+)/gu;
+// A pre-release suffix (`3.1.11-preview.4900`) ranks below its release, as in SemVer.
+// The suffix starts with a letter so that a range such as `3.1.6-3.1.11` is not read as one.
+const HOST_VERSION_MENTION = /MiniMax Code\D{0,16}?(\d+)\.(\d+)\.(\d+)(-[A-Za-z][0-9A-Za-z.-]*)?/gu;
 
 export async function checkReadme(report, { packageDir, features = [], engines }) {
   const text = await readText(path.join(packageDir, 'README.md'));
@@ -24,7 +26,10 @@ function checkMinimumVersion(report, lines, features, engines) {
   const required = requiredHostVersion(features, engines);
   if (required === undefined) return;
   const tested = testedEnvironmentSection(lines);
-  const satisfied = [...tested.matchAll(HOST_VERSION_MENTION)].some((match) => compareVersions(match.slice(1, 4).join('.'), required) >= 0);
+  const satisfied = [...tested.matchAll(HOST_VERSION_MENTION)].some((match) => {
+    const order = compareVersions(match.slice(1, 4).join('.'), required);
+    return order > 0 || (order === 0 && match[4] === undefined);
+  });
   if (!satisfied) {
     report.warning(
       'README_MIN_VERSION_MISSING',
