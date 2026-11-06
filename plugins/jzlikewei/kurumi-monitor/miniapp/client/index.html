@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-scheme="redUp">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>本机大盘 · 实时行情</title>
+<link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+<a class="skip" href="#watchlist">跳到行情列表</a>
+
+<div class="terminal">
+
+  <header class="titlebar">
+    <h1 class="brand"><span class="pulse" aria-hidden="true"></span>本机大盘<small>实时行情</small></h1>
+    <p class="live" role="status" aria-live="off"><span class="dot" aria-hidden="true"></span><span id="liveText">连接中</span></p>
+    <p class="samplerate"><label for="sampleSel">采样</label>
+      <select id="sampleSel" aria-label="采样周期"></select>
+    </p>
+    <div class="spacer"></div>
+    <div class="controls">
+      <button type="button" id="btnRun" class="btn" aria-pressed="true">暂停</button>
+      <button type="button" id="btnScheme" class="btn">红涨</button>
+      <button type="button" id="btnTheme" class="btn" aria-label="切换浅色或夜间主题">夜间</button>
+      <button type="button" id="btnSettings" class="btn">设置</button>
+    </div>
+    <p class="clock"><time id="clock">--:--:--</time></p>
+  </header>
+
+  <section class="indexbar" aria-label="指数条">
+    <h2 class="sr">指数条</h2>
+    <img class="brand-logo" src="/assets/logo.png" alt="" aria-hidden="true" width="76" height="76" />
+    <ul id="indexList" class="index-list"></ul>
+  </section>
+
+  <main class="board">
+
+    <div class="leftcol">
+      <section class="watchlist" id="watchlist" aria-labelledby="wl-h">
+        <div class="pane-head">
+          <h2 id="wl-h">我的自选</h2>
+          <span class="sub" id="wlCount">—</span>
+        </div>
+        <div class="wl-scroll">
+          <div id="watchBody"></div>
+        </div>
+      </section>
+
+      <section class="market" aria-labelledby="mk-h">
+        <div class="pane-head">
+          <h2 id="mk-h">大盘行情</h2>
+          <span class="sub" id="mkCount">—</span>
+        </div>
+        <div class="wl-scroll">
+          <div id="marketBody"></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="center" aria-labelledby="quote-h">
+      <div class="quote">
+        <div class="qid">
+          <span class="code" id="qCode">------</span>
+          <h2 id="quote-h" class="qname">—</h2>
+          <p class="qtag" id="qTag" hidden></p>
+          <button type="button" id="btnWatch" class="btn qwatch" hidden aria-pressed="false">加自选</button>
+        </div>
+        <div class="qlast">
+          <span class="qval" id="qLast">—</span>
+          <span class="qdelta" id="qDelta">—</span>
+          <span class="qpct" id="qPct">—</span>
+        </div>
+        <dl class="qohlc">
+          <div><dt>今开</dt><dd id="qOpen">—</dd></div>
+          <div><dt>最高</dt><dd id="qHigh">—</dd></div>
+          <div><dt>最低</dt><dd id="qLow">—</dd></div>
+          <div><dt>均价</dt><dd id="qAvg">—</dd></div>
+        </dl>
+      </div>
+
+      <div class="periods" role="tablist" aria-label="K 线周期">
+        <div id="periodTabs" class="ptabs"></div>
+        <div class="legend" aria-hidden="true">
+          <span><i class="sw-ma5"></i>MA5</span>
+          <span><i class="sw-ma10"></i>MA10</span>
+          <span><i class="sw-ma20"></i>MA20</span>
+        </div>
+      </div>
+
+      <div class="chartwrap">
+        <canvas id="chart" role="img" aria-label="K 线主图"></canvas>
+        <p class="chart-empty" id="chartEmpty" hidden>正在积累采样点…</p>
+      </div>
+    </section>
+
+    <div class="side">
+      <section class="depth" aria-labelledby="dp-h">
+        <div class="pane-head">
+          <h2 id="dp-h">主力动向</h2>
+          <span class="sub">CPU 占用</span>
+        </div>
+        <ol id="depthList" class="depth-list"></ol>
+      </section>
+
+      <section class="tape" aria-labelledby="tp-h">
+        <div class="pane-head">
+          <h2 id="tp-h">逐笔成交</h2>
+          <span class="sub" id="tapeCount">—</span>
+        </div>
+        <ul id="tapeList" class="tape-list" aria-live="polite" aria-relevant="additions"></ul>
+      </section>
+    </div>
+  </main>
+
+  <section class="procs" aria-labelledby="pr-h">
+    <div class="pane-head">
+      <h2 id="pr-h">个股列表 · 进程</h2>
+      <div class="pane-tools">
+        <label class="sr" for="procSearch">搜索进程名或 PID</label>
+        <input id="procSearch" class="search" type="search" placeholder="搜索进程名 / PID" autocomplete="off" />
+        <output class="selinfo" id="selInfo" for="procTable">未选中</output>
+        <button type="button" id="btnKill" class="btn danger" disabled aria-describedby="selInfo">一键清仓</button>
+      </div>
+    </div>
+    <div class="proc-scroll">
+      <table id="procTable" class="ptable">
+        <caption class="sr">进程列表，可排序，点行查看该进程走势，点星标加自选，选中后可清仓</caption>
+        <thead>
+          <tr>
+            <th scope="col" class="c-star"><span class="sr">自选</span></th>
+            <th scope="col" class="c-pid"><button type="button" data-sort="pid">PID</button></th>
+            <th scope="col" class="c-name"><button type="button" data-sort="name">进程名</button></th>
+            <th scope="col" class="c-user"><button type="button" data-sort="user">属主</button></th>
+            <th scope="col" class="c-num"><button type="button" data-sort="cpu">CPU%</button></th>
+            <th scope="col" class="c-num"><button type="button" data-sort="mem">内存%</button></th>
+            <th scope="col" class="c-num"><button type="button" data-sort="rss">常驻</button></th>
+            <th scope="col" class="c-num"><button type="button" data-sort="etime">运行时长</button></th>
+            <th scope="col" class="c-spark">走势</th>
+          </tr>
+        </thead>
+        <tbody id="procBody"></tbody>
+      </table>
+      <p class="proc-empty" id="procEmpty" hidden>没有匹配的进程</p>
+    </div>
+  </section>
+
+  <footer class="statusbar">
+    <p class="st">采样 <b id="stSample">—</b></p>
+    <p class="st">进程 <b id="stProcs">—</b></p>
+    <p class="st">历史 <b id="stHistory">—</b></p>
+    <p class="st">占用 <b id="stDisk">—</b></p>
+    <p class="st">当前用户 <b id="stUser">—</b></p>
+    <div class="marquee" aria-hidden="true"><div id="mq" class="mq"></div></div>
+  </footer>
+</div>
+
+<dialog id="confirmDlg" class="dialog" aria-labelledby="cfTitle">
+  <form method="dialog">
+    <h2 id="cfTitle">确认清仓</h2>
+    <p id="cfBody" class="cf-body"></p>
+    <p class="cf-warn" role="alert">该操作会向进程发送终止信号，未保存的数据可能丢失，且不可撤销。</p>
+    <label class="cf-force">
+      <input type="checkbox" id="cfForce" />
+      <span>强制清仓（跳过进程自行清理，直接 SIGKILL）</span>
+    </label>
+    <div class="cf-actions">
+      <button type="submit" value="cancel" class="btn">取消</button>
+      <button type="submit" value="confirm" class="btn danger" id="cfOk">确认清仓</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settingsDlg" class="dialog" aria-labelledby="setTitle">
+  <form method="dialog">
+    <h2 id="setTitle">设置</h2>
+    <div class="set-row">
+      <label for="setTheme">界面主题</label>
+      <select id="setTheme">
+        <option value="auto">跟随系统</option>
+        <option value="dark">夜间</option>
+        <option value="light">浅色</option>
+      </select>
+    </div>
+    <div class="set-row">
+      <label for="setScheme">涨跌配色</label>
+      <select id="setScheme">
+        <option value="redUp">红涨绿跌</option>
+        <option value="greenUp">绿涨红跌</option>
+      </select>
+    </div>
+    <div class="set-row">
+      <label for="setRetention">历史保留</label>
+      <select id="setRetention">
+        <option value="6">6 小时</option>
+        <option value="12">12 小时</option>
+        <option value="24">24 小时</option>
+        <option value="48">48 小时</option>
+        <option value="72">72 小时</option>
+        <option value="168">7 天</option>
+      </select>
+    </div>
+    <p class="set-note" id="setUsage">—</p>
+    <div class="cf-actions">
+      <button type="submit" value="close" class="btn primary">完成</button>
+    </div>
+  </form>
+</dialog>
+
+<aside id="wideHint" class="wide-hint" role="status" aria-live="polite" hidden>
+  <p class="wh-title">窗口太窄，行情看不全</p>
+  <p class="wh-body">主力动向、逐笔成交和进程表大半列都在可视区外。点面板右上角的
+    <span class="wh-icon" aria-hidden="true">↗</span> 弹出为独立窗口，会按 1480 × 940 打开，一屏看全。</p>
+  <div class="wh-act"><button type="button" id="whClose" class="btn">知道了</button></div>
+</aside>
+
+<p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
+
+<script type="module" src="/assets/chart.js"></script>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>
