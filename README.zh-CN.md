@@ -86,6 +86,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [蹬王之王](plugins/hylouis233/expiry-guardian/README.md) | 看你自己维护的本地账本，算出「该用卡还是该留积分」，并把理由说清楚 | [Hylouis](https://github.com/Hylouis233) |
 | [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |
 | [MCP OAuth 令牌台](plugins/microbiosis/mcp-oauth-console/README.zh-CN.md) | 给需要 OAuth 的 MCP 服务器完成登录：设备码或授权码 + PKCE 流程，把 `Authorization` 头写入 MCP 配置，并可选择在到期前自动续期 | [Microbiosis](https://github.com/Microbiosis) |
+| [MiniMax Bot Bridge](plugins/nattiini45/minimax-bot-bridge/README.zh-CN.md) | 把手机和桌面上的 MiniMax Bot 团队配对：申请配对码、查看并撤销已配对的手机，并通过你自己运营的中继转发团队对话与工具活动。需要 MiniMax Code 3.1.5 或更高版本，以及官方 MiniMax Bot 插件 | [nattiini45](https://github.com/nattiini45) |
 
 <details>
 <summary>预览：Cutline</summary>
