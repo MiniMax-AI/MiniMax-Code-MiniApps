@@ -1,7 +1,7 @@
 // @ts-check
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { appendFile, copyFile, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { userReaction } from '../client/emoji-data.js';
 
 import { resolveLocale, setLocale, t } from './i18n.mjs';
@@ -138,7 +138,7 @@ async function writeJsonAtomic(path, value) {
   }
 }
 
-async function readJson(path, fallback) {
+async function readJson(path, fallback, logger) {
   let text;
   try {
     text = await readFile(path, 'utf8');
@@ -152,7 +152,16 @@ async function readJson(path, fallback) {
     return JSON.parse(text);
   } catch {
     // Keep the unreadable bytes as evidence instead of deleting them; start from defaults.
-    await rename(path, `${path}.corrupt-${Date.now()}`).catch(() => {});
+    const kept = `${path}.corrupt-${Date.now()}`;
+    try {
+      await rename(path, kept);
+    } catch {
+      // The rename can fail (the file may be held open). A copy keeps the bytes even when the
+      // name cannot change; the next save may write over the original, but the copy stays.
+      await copyFile(path, kept).catch(() => {});
+    }
+    // A team that came back empty, or a chat that reads empty, is otherwise unexplainable.
+    logger?.warn('minimax_bot.corrupt_file_quarantined', { file: basename(path) });
     return fallback;
   }
 }
@@ -256,7 +265,7 @@ export class Store {
 
   async init() {
     await mkdir(this.messagesDir, { recursive: true });
-    this.state = { ...defaultState(), ...(await readJson(this.statePath, defaultState())) };
+    this.state = { ...defaultState(), ...(await readJson(this.statePath, defaultState(), this.logger)) };
     this.state.settings = { ...defaultState().settings, ...(this.state.settings ?? {}) };
     setLocale(resolveLocale(this.state));
     let migrated = false;
@@ -440,7 +449,7 @@ export class Store {
   }
 
   async loadMessages(chatId) {
-    let list = await readJson(this.messagePath(chatId), []);
+    let list = await readJson(this.messagePath(chatId), [], this.logger);
     // deleteChat() may have installed an empty list while the read was in flight; it wins.
     const installed = this.messageCache.get(chatId);
     if (installed) return installed;

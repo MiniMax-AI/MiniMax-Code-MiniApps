@@ -9,7 +9,7 @@ import { selectMemoryContext } from './memory-context.mjs';
 import { UserInbox } from './user-inbox.mjs';
 import { TaskDispatcher } from './task-dispatcher.mjs';
 import { modelKey, newId, withEffort } from './store.mjs';
-import { CONVERGE_MARK, CONTEXT_BLOCK_END, CONTEXT_BLOCK_MARK, handoverRequested, handoverSummary, hopLimit, neutralizeMarks, renderHandover } from './relay-guard.mjs';
+import { CONVERGE_MARK, CONTEXT_BLOCK_END, CONTEXT_BLOCK_MARK, handoverRequested, handoverSummary, hopLimit, neutralizeMarks, renderHandover, roundEntries } from './relay-guard.mjs';
 import { appendNote, notesEnabled, renderNote } from './group-note.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppAgentClient} MiniAppAgentClient */
@@ -297,7 +297,7 @@ export class Engine {
   }
 
   /**
-   * Whether the conclusion of the previous hop travels with the next hop's prompt.
+   * Whether the conclusions of the round travel with the next hop's prompt.
    * @param {any} group
    * @returns {boolean}
    */
@@ -316,23 +316,29 @@ export class Engine {
   }
 
   /**
-   * The conclusion of the previous hop, handed over to the next one.
+   * The conclusions of the round so far, handed over to the next one.
    *
    * Free by construction: the summary is text that rides along with the next turn — no model
-   * turn, no tool call, no memory write. The note the group already produced wins; without a
-   * note the tail of the previous reply is used.
+   * turn, no tool call, no memory write.
+   *
+   * The round is what the group itself produced in this round, so it is the right thing to hand
+   * over: one entry per hop, each with the Bot that said it. The group's own note is not part of
+   * it — that note holds the earlier rounds and lives in the standing brief.
    *
    * @param {any} group
-   * @param {{ botId: string, name: string, text: string, ts: number } | undefined} last
+   * @param {{ speaker: string, text: string }[]} round what the Bots of this round said so far
    * @returns {{ from: string, text: string } | undefined}
    */
-  handoverFor(group, last) {
+  handoverFor(group, round) {
     if (!this.handoverEnabled(group)) return undefined;
-    if (!last?.text) return undefined;
-    // This build keeps no group notes, so the hand-over carries the tail of the reply.
-    const text = handoverSummary({ note: '', reply: last.text });
+    const text = handoverSummary({ round });
     if (!text) return undefined;
-    return { from: clean(last.name), text };
+    // The entries that count are the entries the summary shows: an empty entry is not a
+    // conclusion. One real conclusion is one voice, and the block may name it; several are
+    // several Bots, and the block must not put them in one mouth.
+    const entries = roundEntries(round);
+    const from = entries.length === 1 ? clean(entries[0].speaker) : '';
+    return { from, text };
   }
 
 
@@ -1321,9 +1327,9 @@ export class Engine {
         const bot = this.store.getBot(botId);
         const fresh = this.store.getGroup(group.id);
         if (!bot || !fresh || !fresh.memberIds.includes(botId)) continue;
-        // The conclusion of the previous hop rides along with this turn. It is prompt text, not
-        // a model turn: the hand-over costs nothing.
-        const handover = this.handoverFor(fresh, lastConclusion);
+        // What the Bots of this round concluded so far rides along with this turn. It is prompt
+        // text, not a model turn: the hand-over costs nothing.
+        const handover = this.handoverFor(fresh, noteRound);
         hops += 1;
         const result = await this.runBotTurn({ bot, chatId, text: '', kind: 'group', sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId, handover });
         lastResult = result;
@@ -1394,7 +1400,7 @@ export class Engine {
 
   async groupPrompt(group, bot, { handover } = {}) {
     const chatId = `group:${group.id}`;
-    // The conclusion of the previous hop: text that rides along with this turn, no model turn.
+    // The conclusions of the round: text that rides along with this turn, no model turn.
     const hand = handover ? renderHandover(handover) : '';
     const head = [];
     if (hand) head.push(hand, '');

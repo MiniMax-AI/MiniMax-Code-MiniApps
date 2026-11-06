@@ -20,7 +20,7 @@
 // Everything in this module is pure: the engine decides *when* the note is written and where it
 // goes, this module only says *what* it says. That keeps the rules testable without a model.
 
-import { neutralizeMarks } from './relay-guard.mjs';
+import { ENTRY_MAX, SPEAKER_MAX, neutralizeMarks, tailOf as cutTail } from './relay-guard.mjs';
 import { t } from './i18n.mjs';
 
 /**
@@ -36,10 +36,10 @@ export const GROUP_NOTE_END = '</minimax-bot-group-summary>';
 export const NOTE_MAX_ENTRIES = 6;
 /** How many characters the whole note may take. */
 export const NOTE_MAX_CHARS = 1200;
-/** How many characters one entry may take. */
-export const NOTE_ENTRY_MAX = 240;
-/** How many characters the name of a speaker may take. */
-export const NOTE_SPEAKER_MAX = 60;
+/** How many characters one entry may take. The same budget the hand-over uses, defined once in `relay-guard.mjs`. */
+export const NOTE_ENTRY_MAX = ENTRY_MAX;
+/** How many characters the name of a speaker may take. Defined once in `relay-guard.mjs`. */
+export const NOTE_SPEAKER_MAX = SPEAKER_MAX;
 
 /**
  * Whether the group keeps a note.
@@ -72,38 +72,17 @@ function cleanEntry(entry) {
 }
 
 /**
- * A word character in the Latin sense: a letter or a digit that a cut can land inside.
- *
- * A CJK ideograph is its own unit, so a cut between two of them already lands on a boundary.
- */
-const LATIN_WORD = /[A-Za-z0-9_]/;
-
-/** How much of a broken word may be dropped to reach the next boundary. */
-const WORD_PREFIX_MAX = 20;
-
-/**
  * The closing part of a text, cut on a word boundary.
  *
- * A plain cut can land inside a word — or inside the half of a tag the neutralising left
- * behind — and the entry would start mid-word. Only a Latin word can be cut in half: Chinese
- * has no spaces, so trimming up to the first whitespace there would drop the whole entry.
+ * The cut itself lives in `relay-guard.mjs`: that module cannot import this one, and both need
+ * the same rule — a plain cut would land inside a word and the entry would start mid-word.
  *
  * @param {string} text
  * @param {number} [max]
  * @returns {string}
  */
 export function tailOf(text, max = NOTE_ENTRY_MAX) {
-  const value = String(text ?? '');
-  if (value.length <= max) return value;
-  const cut = value.length - max;
-  const tail = value.slice(cut);
-  // The characters around the cut tell whether it landed inside a Latin word.
-  if (!LATIN_WORD.test(value[cut - 1] ?? '') || !LATIN_WORD.test(tail[0] ?? '')) return tail;
-  // Drop the rest of that word and the space after it. A word longer than this is left alone:
-  // dropping half of a long token would cost more than the fragment is worth.
-  const fragment = /^[A-Za-z0-9_]+/.exec(tail)?.[0] ?? '';
-  if (!fragment || fragment.length > WORD_PREFIX_MAX) return tail;
-  return tail.slice(fragment.length).replace(/^\s+/, '') || tail;
+  return cutTail(text, max);
 }
 
 /**

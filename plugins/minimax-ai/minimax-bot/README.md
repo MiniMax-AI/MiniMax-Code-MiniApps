@@ -76,6 +76,10 @@ A shutdown no longer throws away work that never started. Such a task stays queu
 
 The usage ledger counts the time the model really ran. A retried turn waits between the attempts, and that wait was counted as the model's time: a turn that waited half a minute between two attempts was written down as a turn of half a minute, and the panel averaged that up. The duration is now the time the model ran and the panel's average follows it; the wait between the attempts is kept beside it in the ledger (`usage.jsonl`), not inside the duration. A turn the model never ran has no duration to report, so it is left out of the average instead of counting as zero seconds.
 
+## 0.7.23 The hand-over carries the conclusions of the round
+
+The hand-over between two Bots of a group carried the tail of the previous reply: the last thing one Bot said, not what the round had concluded — and a discussion concludes over several replies, not in the closing line of one of them. The hand-over now carries the conclusions of the round so far, one entry per hop and each with the Bot that said it, the way a seminar hands its conclusion to the next speaker instead of the last sentence that was said. A round with a single hop hands over exactly what it handed over before, byte for byte. The note setting does not change any of this: the hand-over reads the round itself, and a round is built whether or not the group keeps a note. The note stays what it always was, a record of the earlier rounds that lives in the standing brief of every Bot.
+
 ## 0.7.24 A file that cannot be read, and a ledger that cannot be written
 
 - A `state.json` or a chat file that cannot be parsed no longer keeps the Mini App from starting. The unreadable file is kept as `*.corrupt-<time>` instead of being thrown away, and the store starts from the defaults: an unreadable chat starts empty, the other chats still load. The file was written with a rename, but nothing was flushed before it, so a power loss could leave an empty file behind; the bytes are flushed before the rename now, and the directory after it where the platform allows it.

@@ -9,9 +9,14 @@
 //     the Bot that was about to be called is not called, and the Bot that just spoke is asked
 //     to wrap up instead.
 //
-//   - the summary hand-over (`group.handover`): the conclusion of the previous hop travels with
-//     the next hop's prompt ("the previous one said: …"), so the next Bot does not have to dig
-//     the same ground out of the tools again.
+//   - the summary hand-over (`group.handover`): what the Bots of the round concluded so far
+//     travels with the next hop's prompt, so the next Bot does not have to dig the same ground
+//     out of the tools again.
+//
+// The hand-over carries the conclusions of the round, not the last sentence of one reply: a
+// discussion concludes over several replies, and the closing line of a single reply is often a
+// question or a courtesy. It is the same idea as a seminar's conclusion — the next speaker gets
+// the results, not the last words that were said.
 //
 // The hand-over is free by construction: it is text that rides along with the next turn. No
 // extra model turn, no extra tool call, no extra memory write. That is what makes it cheaper
@@ -23,9 +28,9 @@
 
 import { t } from './i18n.mjs';
 
-/** Opens the block that carries the previous hop's conclusion. */
+/** Opens the block that carries the conclusions of the round. */
 export const HANDOVER_BLOCK_MARK = '<minimax-bot-handover>';
-/** Closes the block that carries the previous hop's conclusion. */
+/** Closes the block that carries the conclusions of the round. */
 export const HANDOVER_BLOCK_END = '</minimax-bot-handover>';
 /** Marks the prompt that asks the current speaker to wrap up. */
 export const CONVERGE_MARK = '<minimax-bot-relay-converge>';
@@ -40,8 +45,23 @@ export const CONTEXT_BLOCK_MARK = '<minimax-bot-context>';
 export const CONTEXT_BLOCK_END = '</minimax-bot-context>';
 /** Longest summary handed over to the next hop. */
 export const HANDOVER_MAX = 600;
-/** How much of the previous reply's tail is kept when the group keeps no note. */
+/** How much of the previous reply's tail is kept when the round has a single hop. */
 export const HANDOVER_TAIL = 400;
+/**
+ * How many characters one entry that rides into a Bot's prompt may take.
+ *
+ * The hand-over and the group note put the same kind of entry into a prompt, so they share one
+ * budget and it is written down here once. `group-note.mjs` imports these two numbers rather
+ * than keeping a copy of its own.
+ */
+export const ENTRY_MAX = 240;
+/**
+ * How many characters the name of a speaker may take.
+ *
+ * A name is a label and not content, so it is cut short: a long one must not eat the budget of
+ * the round.
+ */
+export const SPEAKER_MAX = 60;
 
 /**
  * Protocol marks a reply must never be able to forge: a Bot that writes them into its answer
@@ -143,7 +163,7 @@ export function hopLimit(group) {
 }
 
 /**
- * Whether the group wants the conclusion of the previous hop handed over.
+ * Whether the group wants the conclusions of the round handed over.
  * @param {any} group
  * @returns {boolean}
  */
@@ -222,25 +242,123 @@ export function tailSummary(text, max = HANDOVER_TAIL) {
 }
 
 /**
- * The summary of the previous hop.
+ * A word character in the Latin sense: a letter or a digit that a cut can land inside.
  *
- * The note the group already produced wins: it is the structured conclusion of the round and it
- * cost nothing extra to reuse. Without a note the tail of the previous reply is used, which
- * costs nothing either.
+ * A CJK ideograph is its own unit, so a cut between two of them already lands on a boundary.
+ */
+const LATIN_WORD = /[A-Za-z0-9_]/;
+
+/** How much of a broken word may be dropped to reach the next boundary. */
+const WORD_PREFIX_MAX = 20;
+
+/**
+ * The closing part of a text, cut on a word boundary.
  *
- * @param {{ note?: string, reply?: string, max?: number }} input
+ * A plain cut can land inside a word — or inside the half of a tag the neutralising left
+ * behind — and the entry would start mid-word. Only a Latin word can be cut in half: Chinese
+ * has no spaces, so trimming up to the first whitespace there would drop the whole entry.
+ *
+ * @param {string} text
+ * @param {number} [max]
  * @returns {string}
  */
-export function handoverSummary({ note, reply, max = HANDOVER_MAX } = {}) {
-  const fromNote = neutralizeMarks(String(note ?? '')).replace(/\s+/g, ' ').trim();
-  if (fromNote) return fromNote.length <= max ? fromNote : fromNote.slice(0, max);
-  const tail = tailSummary(reply, Math.min(max, HANDOVER_TAIL));
-  return tail;
+export function tailOf(text, max = ENTRY_MAX) {
+  const value = String(text ?? '');
+  if (value.length <= max) return value;
+  const cut = value.length - max;
+  const tail = value.slice(cut);
+  // The characters around the cut tell whether it landed inside a Latin word.
+  if (!LATIN_WORD.test(value[cut - 1] ?? '') || !LATIN_WORD.test(tail[0] ?? '')) return tail;
+  // Drop the rest of that word and the space after it. A word longer than this is left alone:
+  // dropping half of a long token would cost more than the fragment is worth.
+  const fragment = /^[A-Za-z0-9_]+/.exec(tail)?.[0] ?? '';
+  if (!fragment || fragment.length > WORD_PREFIX_MAX) return tail;
+  return tail.slice(fragment.length).replace(/^\s+/, '') || tail;
+}
+
+/**
+ * The entries of the round that carry something: the speaker and the text, both cleaned.
+ *
+ * An entry without a speaker or without a text is not a conclusion, so it does not count. The
+ * hand-over has to count the same entries the summary shows: a round with one real conclusion
+ * and one empty entry is a round of one voice, and it must not be handed over under a headline
+ * that speaks of several.
+ *
+ * @param {{ speaker: string, text: string }[]} round what the Bots of this round said so far
+ * @returns {{ speaker: string, text: string }[]}
+ */
+export function roundEntries(round) {
+  const list = Array.isArray(round) ? round : [];
+  const entries = [];
+  for (const item of list) {
+    const speaker = neutralizeMarks(String(item?.speaker ?? '')).replace(/\s+/g, ' ').trim();
+    const text = neutralizeMarks(String(item?.text ?? '')).replace(/\s+/g, ' ').trim();
+    if (!speaker || !text) continue;
+    entries.push({ speaker: speaker.slice(0, SPEAKER_MAX), text });
+  }
+  return entries;
+}
+
+/**
+ * The conclusions of the round so far: one entry per hop, with the name of the Bot that said it.
+ *
+ * The hand-over used to carry the tail of the previous reply. That is the last thing one Bot
+ * said, not what the round concluded: a discussion concludes over several replies, and the
+ * closing line of a single reply is often a question or a courtesy. What the next Bot needs is
+ * the result, the way a seminar hands its conclusion to the next speaker.
+ *
+ * The newest entry is the conclusion of the previous hop and the one that matters most, so the
+ * budget is spent on it: when the whole round does not fit, the oldest entries go first, and
+ * they go whole — half an entry would be a sentence cut in the middle.
+ *
+ * A round with a single hop keeps the hand-over it had before: the tail of that one reply, byte
+ * for byte. The next Bot reads the same words it read before.
+ *
+ * @param {{ speaker: string, text: string }[]} round what the Bots of this round said so far
+ * @param {number} [max]
+ * @returns {string}
+ */
+export function roundSummary(round, max = HANDOVER_MAX) {
+  const entries = roundEntries(round);
+  if (!entries.length) return '';
+  if (entries.length === 1) {
+    // One hop: the hand-over of before — the tail of that reply, byte for byte.
+    return tailSummary(entries[0].text, Math.min(max, HANDOVER_TAIL));
+  }
+  const kept = [];
+  let chars = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    const part = `[${entry.speaker}] ${tailOf(entry.text, ENTRY_MAX)}`;
+    const size = part.length + (kept.length ? 3 : 0);
+    if (chars + size > max) break;
+    kept.unshift(part);
+    chars += size;
+  }
+  return kept.join(' / ');
+}
+
+/**
+ * The summary the hand-over carries.
+ *
+ * The round is the only thing it carries: the conclusions the Bots of this round reached so
+ * far. The note of the group is not part of it — that note lives in the standing brief, it
+ * holds the earlier rounds, and it is a record of what was said rather than a result of this
+ * round.
+ *
+ * @param {{ round?: { speaker: string, text: string }[], max?: number }} input
+ * @returns {string}
+ */
+export function handoverSummary({ round, max = HANDOVER_MAX } = {}) {
+  return roundSummary(round, max);
 }
 
 /**
  * The block that travels with the next hop's prompt. An empty string when there is nothing to
  * hand over, so the prompt of a group without the hand-over is byte-for-byte what it was.
+ *
+ * One hop is attributed to the Bot that said it — the block names it. Several hops are not:
+ * the conclusions belong to several Bots, and the block must not put them all in one mouth.
  *
  * @param {{ from?: string, text?: string }} input
  * @returns {string}
@@ -251,7 +369,9 @@ export function renderHandover({ from, text } = {}) {
   const who = String(from ?? '').trim();
   return [
     HANDOVER_BLOCK_MARK,
-    t('relay.handover', { from: who, text: body }),
+    who
+      ? t('relay.handover', { from: who, text: body })
+      : t('relay.handoverRound', { text: body }),
     HANDOVER_BLOCK_END,
   ].join('\n');
 }
