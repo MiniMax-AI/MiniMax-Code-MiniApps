@@ -332,15 +332,23 @@ export function createConnectorRunner(context, options = {}) {
     // calls themselves took. The two are told apart, because only one of
     // them is the provider's answer.
     const timing = { waitedMs: 0, callMs: 0 };
+    // The first failure keeps its own code: whether the Host stopped the call
+    // or the provider refused it decides what the run does next, so the code
+    // is not flattened into one thing.
+    let firstError = null;
     for (let index = 0; index < wanted; index += 1) {
       try {
         media.push(...(await callOneAsset(tool, argsFor(index), kind, signal, timing)));
       } catch (error) {
+        if (!firstError) firstError = error;
         warnings.push(`第 ${index + 1} 个没有生成出来：${error?.message ?? error}`);
       }
     }
     if (!media.length && warnings.length) {
-      throw Object.assign(new Error(warnings[0].replace(/^第 \d+ 个没有生成出来：/, '')), { code: 'CONNECTOR_ERROR' });
+      throw Object.assign(
+        new Error(warnings[0].replace(/^第 \d+ 个没有生成出来：/, '')),
+        { code: firstError?.code ?? 'CONNECTOR_ERROR' },
+      );
     }
     return { media, warnings, waitedMs: timing.waitedMs, callMs: timing.callMs };
   }

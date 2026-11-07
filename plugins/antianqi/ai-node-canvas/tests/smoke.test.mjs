@@ -2994,7 +2994,7 @@ test('a call that waited for the machine says how long it waited when it fails',
   // call, how long it ran, and how long it stood behind another call.
   const connector = createMockHostConnector(undefined, {
     callDelayMs: 60,
-    timeoutCall: { tool: 'generate_image', nth: 2 },
+    timeoutCall: { tool: 'synthesize_speech', nth: 2 },
   });
   const h = await createHarness({ hostConnector: connector });
   t.after(() => h.cleanup());
@@ -3002,14 +3002,14 @@ test('a call that waited for the machine says how long it waited when it fails',
   const first = await fetch(`${h.base}/api/runs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nodeId: 'n_ok', mode: 'image', prompt: '第一张' }),
+    body: JSON.stringify({ nodeId: 'n_ok', mode: 'audio', prompt: '第一段' }),
   });
   const firstRun = (await first.json()).run;
-  await waitForCall(connector.calls, (call) => call.toolRef.endsWith('generate-image'));
+  await waitForCall(connector.calls, (call) => call.toolRef.endsWith('synthesize-speech'));
   const second = await fetch(`${h.base}/api/runs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nodeId: 'n_cut', mode: 'image', prompt: '第二张' }),
+    body: JSON.stringify({ nodeId: 'n_cut', mode: 'audio', prompt: '第二段' }),
   });
   const secondRun = (await second.json()).run;
 
@@ -3017,7 +3017,7 @@ test('a call that waited for the machine says how long it waited when it fails',
   const failed = await waitFor(h.base, secondRun.id, (item) => item.status === 'done' || item.status === 'error');
   assert.equal(doneFirst.status, 'done');
   assert.equal(failed.status, 'error');
-  assert.match(failed.error, /generate_image/, 'the error does not say which call failed');
+  assert.match(failed.error, /synthesize_speech/, 'the error does not say which call failed');
   assert.match(failed.error, /前面排队/, 'the error does not say how long the call waited');
   assert.match(failed.error, /耗时/, 'the error does not say how long the call itself ran');
   // A call that the Host stopped leaves nothing behind: the outcome is
@@ -3028,11 +3028,76 @@ test('a call that waited for the machine says how long it waited when it fails',
   const third = await fetch(`${h.base}/api/runs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nodeId: 'n_after', mode: 'image', prompt: '第三张' }),
+    body: JSON.stringify({ nodeId: 'n_after', mode: 'audio', prompt: '第三段' }),
   });
   const thirdRun = (await third.json()).run;
   const doneThird = await waitFor(h.base, thirdRun.id, (item) => item.status === 'done' || item.status === 'error');
   assert.equal(doneThird.status, 'done', 'a failed call blocked the one behind it');
+});
+
+test('a stopped image call goes on by the Agent road instead of failing', async (t) => {
+  // The Host stops a call that runs over its window, and a picture has no
+  // task number to ask about, so the one the provider makes cannot be found
+  // afterwards. The page is therefore not told the run failed: the run goes
+  // on by the other road, because the Host does not time a turn out.
+  const connector = createMockHostConnector(undefined, {
+    timeoutCall: { tool: 'generate_image', nth: 1 },
+  });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_degrade',
+      mode: 'image',
+      prompt: '把参考图里的字搬到牌匾上',
+      params: { ratio: '9:16', resolution: '1K' },
+      references: [
+        {
+          id: 'n_ref',
+          title: '门头照',
+          kind: 'image',
+          text: '',
+          media: [{ url: 'https://cdn.example.com/ref.png', kind: 'image' }],
+        },
+      ],
+    }),
+  });
+  assert.equal(started.status, 202);
+  const runId = (await started.json()).run.id;
+
+  // The Agent turn asks for its tool call to be approved before it makes it.
+  const waiting = await waitFor(h.base, runId, (run) => Boolean(run.pendingPermission));
+  assert.ok(waiting.pendingPermission, 'the run never reached the Agent');
+  assert.equal(waiting.degraded, true, 'the run did not say it changed road');
+  assert.equal(waiting.status, 'running', 'the page was told the run failed');
+  assert.ok(!waiting.error, 'the page was shown a failure');
+  assert.ok(
+    waiting.log.some((line) => line.includes('改走 Agent 通道')),
+    'the run did not say it changed road',
+  );
+
+  // The Agent is handed the very request the direct path would have sent.
+  const runCall = h.agent.calls.find((call) => call.kind === 'run');
+  assert.ok(runCall, 'the Agent was not asked to run');
+  assert.match(runCall.payload.text, /把参考图里的字搬到牌匾上/, 'the request lost the prompt');
+  assert.match(runCall.payload.text, /"aspect_ratio":"9:16"/, 'the request lost the ratio');
+  assert.match(runCall.payload.text, /"resolution":"1K"/, 'the request lost the resolution');
+  assert.match(runCall.payload.text, /cdn\.example\.com\/ref\.png/, 'the request lost the reference');
+
+  const approved = await getJson(h.base, `/api/runs/${runId}/permission`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'allowOnce' }),
+  });
+  assert.equal(approved.status, 200);
+
+  const done = await waitFor(h.base, runId, (run) => run.status === 'done' || run.status === 'error');
+  assert.equal(done.status, 'done', `the degraded run died: ${done.error}`);
+  assert.ok(!done.error, 'the degraded run ended with an error');
+  assert.equal(done.media.length, 1, 'the degraded run produced no picture');
 });
 
 test('a finished video that cannot be fetched says so instead of finishing empty', async (t) => {

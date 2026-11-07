@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `0.86.0`
+Author: [antianqi](https://github.com/antianqi) · Version: `0.87.0`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -668,10 +668,15 @@ separate pictures.
 - **How long a connector call may take** — the Host puts a timeout on one
   connector call (30 seconds by default). A call that runs over it is aborted
   and reported as an unknown outcome: it may have been dispatched, and it may
-  have been charged, so it must never be retried automatically. A slow
-  generation (an image generation with a reference is the one that hits it
-  most often) can therefore fail once; the message names the tool and how long
-  it ran. Video is submitted and then polled, so it is not affected.
+  have been charged, so it must never be retried automatically. A picture has no
+  task number to ask about, so the one the provider makes cannot be found
+  afterwards — and a slow generation (an image generation with a reference is
+  the one that hits the limit most often) would be lost with it. So a picture
+  that runs over the limit does not fail: the run goes on by the other road.
+  The Agent is handed the very request the direct call would have sent and runs
+  it as a turn, which the Host does not time out, and the picture comes back
+  from there. The page is shown no failure; the run log says the road changed.
+  Video is submitted and then polled, so it is not affected.
 - **Processes spawned** — `ffmpeg` and `ffprobe`, and nothing else. Both are
   looked up on the machine and run with an argument array, never through a
   shell, so no part of a path or a parameter can be read as shell syntax.
