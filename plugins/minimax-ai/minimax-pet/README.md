@@ -52,10 +52,12 @@ The `minimax-pet` Skill opens the app and guides the current Agent through creat
 
 The default is an original MiniMax Pet character, with all nine animation states and sixteen look directions. Its atlas can be regenerated with Node.js from the source directory. The purple octopus plugin icon is a separate imagegen asset and is preserved when regenerating the atlas. See [ARTWORK.md](ARTWORK.md).
 
+Version **0.5.9** also includes **Maiyatang (麦芽糖)**, an optional coral-pink chibi octopus girl. Select her in **外观 → 选择宠物**; the mint robot remains the default. She has all nine animation states and sixteen look poses in the existing v2 format. Her Chinese self-introduction appears under the preview. She uses the existing player timing, including the slow six-frame idle cycle, without new permissions or runtime behavior. The atlas was validated and imported through the local plugin UI on Linux; this does not establish bundled-install or desktop-window acceptance on released clients. See [ARTWORK.md](ARTWORK.md) for the AI-generation workflow and contributor license.
+
 ## Development
 
 The complete editable source is at `sources/minimax-ai/minimax-pet/`. The installable package is self-contained at `plugins/minimax-ai/minimax-pet/`. See [PROVENANCE.md](PROVENANCE.md) for build and byte-comparison steps; developer notes and tests stay outside the distributed runtime payload.
 
 ## License
 
-Original code, documentation, the bundled pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. The default atlas is generated from editable geometric drawing code; the octopus icon was generated with imagegen from a user-provided visual reference. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.
+Original code, documentation, the default pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. Maiyatang artwork: MIT, Copyright 2026 Fectivnfy112357. The default atlas is generated from editable geometric drawing code; the octopus icon and Maiyatang were generated with imagegen from supplied visual references. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.

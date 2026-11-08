@@ -18,4 +18,12 @@ The icon shows a purple octopus emerging through a mint desktop window, resting 
 
 The icon was reviewed on light and dark backgrounds and at small display sizes. Tests decode the actual PNG and check its square canvas, visible content and transparency; they do not claim deterministic model reproduction. The source/distribution package check compares every shipped file byte.
 
+## Maiyatang (麦芽糖)
+
+The optional bundled `octopus-girl-v2` pet is a coral-pink, full-body chibi octopus girl named Maiyatang. It is a MiniMax-inspired fan character contributed by [Fectivnfy112357](https://github.com/Fectivnfy112357), not an official MiniMax character or an additional plugin. Copyright (c) 2026 Fectivnfy112357; distributed under the [MIT License](LICENSE).
+
+The artwork was created on 2026-11-08 through the MiniMax Octopus Studio character-design workflow, using OpenAI imagegen and a user-supplied character reference. Individual action and gaze sheets were generated, then their frames were cropped, fitted proportionally, padded with transparency and assembled with Pillow. Deterministic color calibration with Pillow and NumPy matches the pink and lavender palette across animation and look rows to the lighter look-pose palette, preserving the atlas alpha channel byte for byte. The image generator is not deterministic. The final atlas is committed directly; the geometric robot generator does not reproduce or overwrite it. No third-party pet spritesheet was copied, and the reference images are not shipped.
+
+The static, non-interlaced 8-bit RGBA PNG is 1536 × 2288 pixels, with 57 animation cells and 16 look poses. It follows the existing v2 layout and player timing, including the six-frame, 6600 ms idle cycle; it does not add FPS fields, change the player or claim 30 fps playback. Light/dark composites, full-body silhouettes and the four cardinal gaze poses were visually inspected. The packaged artwork validator decodes the actual PNG and checks every valid cell and the transparent unused cells; this does not prove artistic quality or smooth motion. The exact atlas was imported and selected through the local plugin UI on Linux; this is not acceptance of a bundled installation on macOS, Windows or the desktop window.
+
 No externally sourced pet spritesheet is included. User-imported artwork is not part of this distribution and keeps its own license.

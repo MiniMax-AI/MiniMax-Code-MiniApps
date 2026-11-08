@@ -14,6 +14,7 @@ const { start } = await import(resolve(packageRoot, 'miniapp/node/server.mjs'));
 const { readImageHeader, atlasVersionFromSize } = await import(resolve(packageRoot, 'miniapp/node/image-header.mjs'));
 
 const BUNDLED_PET = 'minimax-original';
+const MAIYATANG_PET = 'octopus-girl-v2';
 const petsRoot = join(packageRoot, 'miniapp/client/pets');
 
 const results = [];
@@ -280,6 +281,15 @@ try {
     assert.deepEqual(r.body, versionTwoSprite);
   });
 
+  await test('Maiyatang bundled JSON and PNG are served with their exact packaged bytes', async () => {
+    for (const [name, contentType] of [['pet.json', 'application/json'], ['spritesheet.png', 'image/png']]) {
+      const r = await call(port, 'GET', `/assets/pets/${MAIYATANG_PET}/${name}`);
+      assert.equal(r.status, 200);
+      assert.match(r.headers['content-type'], new RegExp(`^${contentType}`));
+      assert.deepEqual(r.body, await readFile(join(petsRoot, MAIYATANG_PET, name)));
+    }
+  });
+
   for (const path of [
     '/assets/../node/server.mjs',
     '/assets/%2e%2e/node/server.mjs',
@@ -299,7 +309,7 @@ try {
     });
   }
 
-  await test('GET /api/pets lists one first-party bundled v2 pet with petJsonUrl, no-store', async () => {
+  await test('GET /api/pets lists both bundled v2 pets with petJsonUrl, no-store', async () => {
     const r = await call(port, 'GET', '/api/pets');
     assert.equal(r.status, 200);
     assert.equal(r.headers['cache-control'], 'no-store');
@@ -308,6 +318,7 @@ try {
       pets.map((p) => [p.id, p.version, p.source, p.petJsonUrl]),
       [
         [BUNDLED_PET, 2, 'bundled', `/assets/pets/${BUNDLED_PET}/pet.json`],
+        [MAIYATANG_PET, 2, 'bundled', `/assets/pets/${MAIYATANG_PET}/pet.json`],
       ],
     );
     assert.equal(typeof pets[0].displayName, 'string');
@@ -340,7 +351,7 @@ try {
   await test('listing contains imported user-copy after bundled', async () => {
     const r = await call(port, 'GET', '/api/pets');
     const ids = r.json.pets.map((p) => `${p.source}:${p.id}`);
-    assert.deepEqual(ids, [`bundled:${BUNDLED_PET}`, 'imported:user-copy']);
+    assert.deepEqual(ids, [`bundled:${BUNDLED_PET}`, `bundled:${MAIYATANG_PET}`, 'imported:user-copy']);
   });
 
   await test('/imported/user-copy/pet.json → 200 normalized subset', async () => {
