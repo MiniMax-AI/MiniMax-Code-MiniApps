@@ -51,10 +51,10 @@ The nine rows map to the player states as follows.
 | 4 | `jumping` | `drag-01` | 5 | Arms up, takeoff, apex, landing |
 | 5 | `failed` | `click-03` | 8 | Head down, arms crossed, sulking |
 | 6 | `waiting` | `think-01` | 6 | Standing, hand at the chin, attentive |
-| 7 | `running` | `work-01` | 6 | Bent over, working |
+| 7 | `running` | `work-01` | 6 | Standing, hands clasped, focused on the task |
 | 8 | `review` | `cele-01` | 6 | Hands clasped, pleased with the result |
 
-Both running rows come from one continuous 360-degree run clip: the right-facing and the left-facing profile halves of that turn. The waiting and review rows are near-still poses, like the bundled default pet's rows, which carry the meaning in the pose rather than in large movement. The `failed` row is a sulking reaction; the source footage contains no literal failure gesture. The frame counts follow the official layout (6/8/8/4/5/8/6/6/6) and the unused trailing cells of the shorter rows stay fully transparent.
+Both running rows come from one continuous 360-degree run clip: the right-facing and the left-facing profile halves of that turn. The waiting, running and review rows are near-still poses, like the bundled default pet's rows, which carry the meaning in the pose rather than in large movement. The `failed` row is a sulking reaction; the source footage contains no literal failure gesture. The working row keeps a full-body standing pose: the footage that types on a keyboard also contains the keyboard, and the footage that bends over the desk is a close-up that breaks the shared scale. The frame counts follow the official layout (6/8/8/4/5/8/6/6/6) and the unused trailing cells of the shorter rows stay fully transparent.
 
 This pet ships the v1 layout, so it has the nine animation rows and no look directions; the player treats it accordingly, and the mouse-follow feature stays unavailable for it. The static, non-interlaced 8-bit RGBA PNG is 1536 × 1872 pixels with 57 valid cells. The packaged artwork validator decodes the actual PNG and checks every valid cell, the transparent background and the cell edges; this does not prove artistic quality or smooth motion. Model generation is not deterministic, so this atlas has no regeneration command; the PNG itself is the source. No third-party pet spritesheet was copied, and the source videos are not shipped.
 
