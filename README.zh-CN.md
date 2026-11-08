@@ -87,6 +87,8 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |
 | [MCP OAuth 令牌台](plugins/microbiosis/mcp-oauth-console/README.zh-CN.md) | 给需要 OAuth 的 MCP 服务器完成登录：设备码或授权码 + PKCE 流程，把 `Authorization` 头写入 MCP 配置，并可选择在到期前自动续期 | [Microbiosis](https://github.com/Microbiosis) |
 | [本机大盘](plugins/jzlikewei/kurumi-monitor/README.zh-CN.md) | 把本机当成行情终端来看：CPU、GPU、温度、内存、磁盘、网络与每个运行中的进程都是一只个股，实时 K 线、均线、自选行情、主力动向与逐笔成交，支持 macOS 与 Windows。需要 minimax Code 3.1.2 或更高版本 | [jzlikewei](https://github.com/jzlikewei) |
+| [提示词优化](plugins/7723qqq/prompt-optimizer/README.md) | 把随手写的草稿扩展成写全了的文件、改动和完成标准的请求，确认后再填入聊天输入框 | [7723qqq](https://github.com/7723qqq) |
+| [额度瓶](plugins/7723qqq/quota-bottle/README.zh-CN.md) | 一只悬浮在桌面上的章鱼形玻璃瓶，直接读取桌面端自己的 Token Plan 剩余额度，不需要二次登录；液面与透明度按剩余占比走，拿不到实时额度时回退到设备码登录或手填总额与本机本月用量 | [7723qqq](https://github.com/7723qqq) |
 
 <details>
 <summary>预览：Cutline</summary>

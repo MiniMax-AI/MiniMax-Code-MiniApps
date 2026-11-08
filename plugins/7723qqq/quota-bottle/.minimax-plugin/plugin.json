@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "quota-bottle",
+  "displayName": "Quota Bottle",
+  "version": "1.14.2",
+  "description": "An original octopus-shaped glass bottle that floats on your desktop and shows how much Token Plan quota is left: the liquid level and opacity follow the remaining share, with a device-code login and a local token-usage fallback.",
+  "author": "7723qqq",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "Open Quota Bottle",
+    "打开额度瓶，看看我还剩多少额度",
+    "把额度瓶悬浮在桌面上，实时显示剩余额度"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
