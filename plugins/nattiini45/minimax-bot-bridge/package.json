@@ -1,0 +1,16 @@
+{
+  "name": "minimax-bot-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pairs your phone with the MiniMax Bot team on your desktop: a pairing code, the paired phones, and the relay configuration, with the team's conversations and tool activity carried over a relay you operate.",
+  "license": "MIT",
+  "author": "nattiini45",
+  "type": "module",
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

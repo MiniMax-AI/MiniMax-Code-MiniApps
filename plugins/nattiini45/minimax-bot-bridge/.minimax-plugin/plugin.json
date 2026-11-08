@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "minimax-bot-bridge",
+  "displayName": "MiniMax Bot Bridge",
+  "version": "0.1.0",
+  "description": "Pairs your phone with the MiniMax Bot team on your desktop: a pairing code, the paired phones, and the relay configuration, with the team's conversations and tool activity carried over a relay you operate.",
+  "author": "nattiini45",
+  "icon": "icon.png",
+  "darkIcon": "icon-dark.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "Open MiniMax Bot Bridge and pair my phone",
+    "Show the pairing code for my phone",
+    "Which phones are linked to this desktop?"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
