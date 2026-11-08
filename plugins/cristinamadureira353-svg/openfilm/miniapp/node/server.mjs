@@ -30,19 +30,16 @@
  * 同一个规矩：取最长的那个前缀）。官方版把子文件夹也列成平级的项目，这里把它缩在父项目下面。
  * 项目 id 在各项目的 `.film/id` 里（Studio 算的，同一个文件夹永远是同一个 id）。
  */
-import { readFile, stat, mkdir, open, readdir } from 'node:fs/promises';
+import { readFile, stat, mkdir, open, readdir, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { join, dirname, basename, extname, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { createIpcMain, registerDesktopIpc, enc, dec } from './desktop-host.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-/** OpenFilm 的 Studio 打印地址的那一行：`Studio   http://127.0.0.1:4747/open?key=…&to=…`。 */
-const ADDRESS_LINE = /Studio\s+(\S+)/;
 
 /** Studio 起来要多久（它是 Node + 浏览器渲染，冷启动不慢）。 */
 const BOOT_TIMEOUT_MS = 30_000;
@@ -50,11 +47,13 @@ const BOOT_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 6_000;
 
 /**
- * 这个 Mini App 自己那份 Studio 的 home 与端口：**跟用户那份分开**。
- * 自己的 home 意味着它写自己的 run.json（不抢用户的），自己的端口意味着它不跟谁撞。
+ * 这个 Mini App 自己那份 Studio 的 home：**跟用户那份分开**，它写自己的 run.json，不抢用户的。
+ *
+ * 端口**不写死**：交给系统分配（`port: 0`）。写死一个端口会在两处撞：机器上别的 OpenFilm 正占着它，
+ * 或者同一台机器上已经有一份面板在跑 —— 两种都是 `EADDRINUSE`，起不来。
+ * 起好之后真实端口在它自己写的 run.json 里（origin / filmOrigin），下面一律按 run.json 说话。
  */
 const DEFAULT_STUDIO_HOME = join(homedir(), '.minimax', 'openfilm-studio');
-const DEFAULT_STUDIO_PORT = 4823;
 
 /** 用户那份 Studio 的 home：项目（recent）在它的 studio.json 里。 */
 const USER_STUDIO_HOMES = {
@@ -75,12 +74,95 @@ const BRIDGE_WEB_FILE = join(here, '..', 'client', 'bridge-web.js');
 /** 配置：Host 启动 Mini App 时无法注入环境变量，所以绝对路径写在这个文件里。 */
 const CONFIG_FILE = 'miniapp.config.json';
 
-/** 默认跑 npm 上的正式发布版（= GitHub 官方仓库的发布版），不用 PATH 上那个可能更旧的。 */
-const DEFAULT_OPENFILM_BIN = 'npx';
-const DEFAULT_OPENFILM_ARGS = ['-y', 'openfilm@0.2.5'];
+/** 没有本地克隆时跑 npm 上的正式发布版（= GitHub 官方仓库的发布版），不用 PATH 上那个可能更旧的。 */
+const PINNED_OPENFILM_VERSION = '0.3.0';
 
 /** 桌面版模式：把桌面 app 的界面（编辑器 + 聊天栏）跑在面板里。 */
 const DEFAULT_OPENFILM_REPO = join(homedir(), 'Developer/openfilm');
+
+/**
+ * 怎么起 Studio。
+ *
+ * 不用 `openfilm open`：那条路径会先去「复用这台机器上已有的 Studio」，可能碰到一个
+ * 用 Electron 起的老实例（甚至拉起一个 helper 不全的 app），还可能检查更新、开浏览器。
+ * 我们直接调 `startStudio`（桌面 app 也是这么做的），advertise 让它写 run.json，
+ * openBrowser 置空，完全由面板自己管。
+ *
+ * 有本地克隆就用克隆自己的 server.mjs（版本一定跟克隆一致）；没有克隆才用 npx 的
+ * 固定版本（把它的 studio/server/server.mjs 解析出来）。
+ */
+async function resolveOpenFilmCli(repoDir) {
+  const serverMjs = join(repoDir, 'packages', 'openfilm', 'studio', 'server', 'server.mjs');
+  const pkg = join(repoDir, 'packages', 'openfilm', 'package.json');
+  const version = await readFile(pkg, 'utf8').then((t) => JSON.parse(t)?.version).catch(() => null);
+  if (version && await stat(serverMjs).catch(() => null)) {
+    return { serverMjs, version: String(version), source: 'clone' };
+  }
+  return { serverMjs: null, version: PINNED_OPENFILM_VERSION, source: 'npx' };
+}
+
+/** npx 回退：把钉住版本里的 studio/server/server.mjs 解析出来（走 npm 缓存，不复制源码进包）。 */
+async function resolveNpxServer() {
+  const { execFile } = await import('node:child_process');
+  /* npx 会把包装进自己的缓存；`npx -y -p openfilm@<ver> -c 'node -p ...'` 把入口解析出来。
+     必须异步：同步等会让面板在这个子进程跑完之前一个字也应答不了（最坏 120 秒）。 */
+  const spec = `openfilm@${PINNED_OPENFILM_VERSION}`;
+  const found = await new Promise((resolve, reject) => {
+    execFile('npx', ['-y', '-p', spec, '-c', 'node -p "require.resolve(\'openfilm/package.json\')"'],
+      { encoding: 'utf8', timeout: 120000, maxBuffer: 1 << 20 },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(String(stderr || error.message).trim().slice(0, 200) || 'npx failed'));
+        else resolve(String(stdout).trim());
+      });
+  });
+  if (!found) throw new Error('npx printed nothing');
+  return pathToFileURL(join(dirname(found), 'studio', 'server', 'server.mjs')).href;
+}
+
+/**
+ * 面板自己那份 Studio 读的是它 home 里的 studio.json；用户看到的是用户 home 里那份。
+ * 两边不一致，编辑器里 /api/projects/<id> 就会答「no such project」，预览也出不来。
+ *
+ * 所以起 Studio 前把两边**合并**着写一份：先自己那份（面板里新建的项目不能丢），
+ * 再补上用户 home 里没有的（用户桌面 app 的项目），按 path 去重。
+ * 只写面板自己 home 的那个文件；用户 home 的只读。
+ */
+async function syncProjectList(userHome, studioHome) {
+  const read = async (file) => {
+    try {
+      const parsed = JSON.parse(await readFile(file, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+  const own = await read(join(studioHome, 'studio.json'));
+  const user = await read(join(userHome, 'studio.json'));
+  /* 两份都没有：让 Studio 自己从库目录扫，别在这里造一个空的把它盖了。 */
+  if (!own && !user) return;
+  const merged = { ...(own ?? {}) };
+  for (const [key, value] of Object.entries(user ?? {})) {
+    if (!(key in merged)) merged[key] = value;
+  }
+  const seenPath = new Set();
+  merged.recent = [...(own?.recent ?? []), ...(user?.recent ?? [])].filter((row) => {
+    const key = row?.path ?? row?.id;
+    if (!key || seenPath.has(key)) return false;
+    seenPath.add(key);
+    return true;
+  });
+  const seenFolder = new Set();
+  merged.folders = [...(own?.folders ?? []), ...(user?.folders ?? [])].filter((folder) => {
+    const key = folder?.id ?? folder?.path;
+    if (!key || seenFolder.has(key)) return false;
+    seenFolder.add(key);
+    return true;
+  });
+  try {
+    await mkdir(studioHome, { recursive: true });
+    await writeFile(join(studioHome, 'studio.json'), JSON.stringify(merged, null, 2) + '\n');
+  } catch { /* 写不了就算了：Studio 自己会扫库 */ }
+}
 
 /** 读配置：读不到就用默认值（配置只是让人能改，不该成为启动的前提）。 */
 async function readConfig(pluginRoot) {
@@ -101,6 +183,28 @@ async function readConfig(pluginRoot) {
 function expandHome(path) {
   const value = String(path || '');
   return value.startsWith('~') ? join(homedir(), value.slice(1)) : value;
+}
+
+/** 问一个已经跑着的 Studio 它是什么版本（/api/health 的 version）。 */
+function studioVersion(origin) {
+  return new Promise((resolve) => {
+    const url = new URL('/api/health', origin);
+    const req = httpRequest(
+      { host: url.hostname, port: url.port, path: url.pathname, method: 'GET', timeout: 4000, agent: false,
+        headers: { 'x-studio-key': 'probe' } },
+      (response) => {
+        const chunks = [];
+        response.on('data', (c) => chunks.push(c));
+        response.on('end', () => {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))?.version ?? null); }
+          catch { resolve(null); }
+        });
+      },
+    );
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
 }
 
 /** 探一个 Studio：它的 /api/health 会不会答。答了就说明地址与 key 都还管用。 */
@@ -134,18 +238,6 @@ async function readRunFile(path) {
   return null;
 }
 
-/** 从 Studio 打印的地址里取出 origin 与 key。 */
-function parseStudioAddress(address) {
-  try {
-    const url = new URL(address);
-    const key = url.searchParams.get('key');
-    if (!key) return null;
-    return { origin: url.origin, key, to: url.searchParams.get('to') };
-  } catch {
-    return null;
-  }
-}
-
 /** 杀一个进程树（先温和后强硬）。只对自己 spawn 的用。 */
 function killTree(child) {
   if (!child?.pid) return;
@@ -171,12 +263,11 @@ export async function start(context) {
   const { pluginRoot, listen, signal, logger } = context;
   const config = await readConfig(pluginRoot);
 
-  /* 这个实例自己那份 Studio 的 home 与端口：默认放在 Host 给的 dataDir 里（仓库硬规则：
+  /* 这个实例自己那份 Studio 的 home：默认放在 Host 给的 dataDir 里（仓库硬规则：
      持久状态归 context.dataDir），不抢用户桌面 app 的 home。
-     测试可以用 miniapp.config.json 的 studioHome / studioPort 指到临时目录与别的端口。 */
+     测试可以用 miniapp.config.json 的 studioHome 指到临时目录。端口由系统分配，不用配。 */
   const STUDIO_HOME = expandHome(config.studioHome
     || (context.dataDir ? join(context.dataDir, 'openfilm-studio') : DEFAULT_STUDIO_HOME));
-  const STUDIO_PORT = Number(config.studioPort) > 0 ? Number(config.studioPort) : DEFAULT_STUDIO_PORT;
 
   /* 鉴权交给 Host：MiniMax Code 3.1.2 起，Host 在这个端口上装了每次运行一个凭据的检查，
      没凭据的请求（含直连与 WebSocket）一律 401，根本到不了这里。
@@ -189,7 +280,17 @@ export async function start(context) {
    */
   const flavor = config.flavor === 'dev' ? 'dev' : 'release';
   const userHome = USER_STUDIO_HOMES[flavor];
-  const openfilmBin = DEFAULT_OPENFILM_BIN;   // 固定 npx，不接受配置里的可执行文件
+  /**
+   * 跑哪个 OpenFilm。
+   *
+   * 有本地克隆就用克隆自己的 CLI（`node <clone>/packages/openfilm/bin/openfilm.mjs`）：
+   * 版本一定跟克隆一致，不用联网，也绕开了 npx 的路径问题（npx 找不到缓存里的 bin 时会
+   * 回退到 PATH 上的全局安装，于是跑成了另一个版本）。
+   * 没有克隆才用 `npx -y openfilm@<固定版本>`。
+   *
+   * 两种情况都在起完之后核对 Studio 的版本（见 studioVersion）。
+   */
+  const openfilmCli = await resolveOpenFilmCli(expandHome(config.openfilmRepo || process.env.OPENFILM_REPO || DEFAULT_OPENFILM_REPO));
 
   /**
    * 桌面版模式：把桌面 app 的界面（编辑器 + 右边那栏聊天）跑在面板里。
@@ -221,7 +322,7 @@ export async function start(context) {
       try { stream.write(frame); } catch { /* 断了就断了 */ }
     }
   };
-  const openfilmArgs = DEFAULT_OPENFILM_ARGS;   // 固定 -y openfilm@0.2.5
+
 
   /** Studio 的现状：reused（我们上次起的，还在跑）还是 spawned（这次起的）。 */
   const state = {
@@ -236,6 +337,9 @@ export async function start(context) {
     bootLog: [],
   };
 
+  /** 已经进入收尾：这之后 child 的 exit 是我们自己收的，不该被当成「它自己挂了」。 */
+  let closing = false;
+
   const log = (message) => {
     state.bootLog.push(String(message).slice(0, 200));
     if (state.bootLog.length > 30) state.bootLog.shift();
@@ -243,14 +347,18 @@ export async function start(context) {
   };
 
   /**
-   * 起一份 Studio（或者接上我们上次起的那份）。
+   * 起一份 Studio（或者接上已经跑着的那一份）。
    *
-   * 走 `openfilm open`：它认自己的 home，会把地址打到 stdout。
-   * 但它会**复用**已经跑着的那个（按它自己 home 的 run.json）—— 那可能是用户桌面 app 的
-   * Studio（Electron 专用编辑器，浏览器里是白的）。所以先探：能答、且不是 app 自己的，才复用。
+   * 复用与否看 run.json：探 /api/health 能答、且**版本和我们要起的那份一致**，才接上去；
+   * 否则自己起一份（`startStudio`，端口交给系统分配）。
+   * 版本这道关是必要的：机器上可能还留着上一版、或全局装的 Studio，路由与 handler 都不一样。
    */
   async function ensureStudio() {
     if (state.ready) return;
+    /* Studio 的项目列表来自它自己 home 的 studio.json；面板 GUI 的项目列表来自用户 home
+       的 studio.json（USER_STUDIO_HOMES[flavor]）。两边要一致，否则编辑器里 /api/projects/<id>
+       会 404、预览也出不来。开工前把用户那份（连同 folders）抄到面板 home。 */
+    await syncProjectList(userHome, STUDIO_HOME);
 
     const run = await readRunFile(join(STUDIO_HOME, 'run.json'));
     if (run) {
@@ -267,10 +375,10 @@ export async function start(context) {
       log(`the Studio at ${run.origin} did not answer (${probe.error || probe.status}); starting one`);
     }
 
-    // 自己起一个。`openfilm open` 会把带 key 的地址打到 stdout。
+    // 自己起一个（见下面的 startStudio）。
     // 自己的 home ⇒ 它写自己的 run.json，不抢用户的；自己的库 ⇒ 它跟用户那份是两份数据。
     //
-    // **两个面板同时开时只许起一个**（它们抢同一个端口、同一份 run.json）：
+    // **两个面板同时开时只许起一个**（它们共用同一份 run.json）：
     // 锁文件放在自己那份 home 里，谁先拿到锁谁起，另一个等它起来后复用。
     await mkdir(STUDIO_HOME, { recursive: true }).catch(() => {});
     const lock = join(STUDIO_HOME, 'starting.lock');
@@ -279,6 +387,13 @@ export async function start(context) {
       if (!run) return false;
       const probe = await probeStudio(run.origin, run.key);
       if (!probe.ok) return false;
+      /* 版本对不上就不接：一个更老的 Studio（全局装的、或上一版留下的）会让界面和
+         面板的预期对不上（路由、handler 都不一样）。 */
+      const running = await studioVersion(run.origin);
+      if (running && running !== openfilmCli.version) {
+        log(`the Studio at ${run.origin} is ${running}, not ${openfilmCli.version}; not using it`);
+        return false;
+      }
       state.mode = 'reused';
       state.origin = run.origin;
       state.key = run.key;
@@ -303,7 +418,7 @@ export async function start(context) {
     // 先看有没有能用的（前一个面板留下的）
     if (await adopt(await readRunFile(join(STUDIO_HOME, 'run.json')), 'left by an earlier panel')) return;
 
-    // 没有就抢锁起一个。**两个面板同时开时只许起一个**（它们抢同一个端口、同一份 run.json）。
+    // 没有就抢锁起一个。**两个面板同时开时只许起一个**（它们共用同一份 run.json）。
     let got = false;
     for (let attempt = 0; attempt < 240; attempt++) {
       if (await take()) { got = true; break; }
@@ -322,7 +437,21 @@ export async function start(context) {
       return;
     }
 
-    const child = spawn(openfilmBin, [...openfilmArgs, 'open'], {
+    /* 直接起 startStudio：绕过 `openfilm open` 的复用/更新检查/开浏览器那套。 */
+    let serverModule = openfilmCli.serverMjs ? pathToFileURL(openfilmCli.serverMjs).href : null;
+    if (!serverModule) {
+      try { serverModule = await resolveNpxServer(); }
+      catch (e) { state.error = `could not resolve the pinned OpenFilm: ${e.message}`; log(state.error); await releaseLock(); return; }
+    }
+    /* port: 0 —— 让系统挑一个空闲端口。写死端口会在「机器上已有别的 OpenFilm」或「另一个面板在跑」
+       时撞 EADDRINUSE；挑出来的真实端口它会写进自己 home 的 run.json，我们读那个。 */
+    /* 这个 worker 什么都不打印：stdout 属于 Host（仓库的静态检查 ENTRY_STDOUT 也不许入口碰它）。
+       它起好之后会自己写 run.json（advertise: true），父进程读那个（见下面的等待）。 */
+    const workerCode = `
+      import { startStudio } from ${JSON.stringify(serverModule)};
+      await startStudio({ port: 0, advertise: true, openBrowser: () => {} });
+    `;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', workerCode], {
       cwd: here,
       env: {
         PATH: process.env.PATH ?? '',
@@ -331,48 +460,48 @@ export async function start(context) {
         TMPDIR: process.env.TMPDIR ?? '/tmp',
         OPENFILM_NO_BROWSER: '1',
         OPENFILM_HOME: STUDIO_HOME,
-        OPENFILM_STUDIO_PORT: String(STUDIO_PORT),
+        /* 面板在 MiniMax Code 里跑时，process.execPath 是 Electron 的 Helper 二进制，不是 node。
+           直接拿它跑 -e 会变成「再起一个 Electron」，报 Unable to find helper app。
+           这个变量让 Electron 以纯 Node 方式运行；在真正的 node 下它被忽略，所以测试环境不受影响。 */
+        ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       detached: true,
     });
     state.mode = 'spawned';
     state.child = child;
     log(`started openfilm (pid ${child.pid})`);
 
+    /* 它的输出只有错误有用（正常起来时什么都不打印，stdout 已经丢掉了）。 */
     let out = '';
-    const onData = (chunk) => {
-      out += String(chunk);
-      const match = out.match(ADDRESS_LINE);
-      if (match) {
-        const parsed = parseStudioAddress(match[1]);
-        if (parsed) {
-          state.origin = parsed.origin;
-          state.key = parsed.key;
-          state.ready = true;
-          state.readyAt = Date.now();
-          state.error = null;
-          log(`the Studio is at ${parsed.origin}`);
-        }
-      }
-    };
-    child.stdout?.on('data', onData);
     child.stderr?.on('data', (chunk) => { out += String(chunk); log(String(chunk).trim()); });
     child.on('error', (error) => { state.error = String(error.message || error); log(`openfilm failed: ${state.error}`); });
-    child.on('exit', async (code) => {
+    child.on('exit', (code) => {
       log(`openfilm exited (${code})`);
-      /* `openfilm open` 复用已有 Studio 时可能不打印地址就退出：按 run.json 接上。 */
-      if (!state.ready) {
-        const adopted = await adopt(await readRunFile(join(STUDIO_HOME, 'run.json')), 'it exited after reusing a Studio');
-        if (adopted) return;
-        const tail = out.trim().split('\n').filter(Boolean).slice(-2).join(' | ').slice(0, 200);
-        state.error = state.error || `openfilm exited (${code})${tail ? ': ' + tail : ''}`;
-      }
+      if (closing) return;                       // 我们自己收的，不是它挂了
+      const tail = out.trim().split('\n').filter(Boolean).slice(-2).join(' | ').slice(0, 200);
+      /* 起来了又挂：把 ready 收回，不然面板一直以为它还能用，界面只是一片空白。 */
+      state.ready = false;
+      state.origin = null;
+      state.key = null;
+      state.error = state.error || `OpenFilm stopped (exit ${code})${tail ? ': ' + tail : ''}`;
     });
 
-    // 等它把地址吐出来
+    /* 等它把自己写进 run.json（advertise: true）。不靠 stdout 握手：stdout 属于 Host。
+       run.json 里的 pid 正好是这个 child，所以「这份是刚写的」判得出来，不是上一轮留下的。 */
     const until = Date.now() + BOOT_TIMEOUT_MS;
     while (!state.ready && Date.now() < until) {
+      const run = await readRunFile(join(STUDIO_HOME, 'run.json'));
+      if (run && run.pid === child.pid) {
+        state.origin = run.origin;
+        state.key = run.key;
+        state.ready = true;
+        state.readyAt = Date.now();
+        state.error = null;
+        log(`the Studio is at ${run.origin}`);
+        break;
+      }
+      if (state.error) break;
       await new Promise((done) => setTimeout(done, 250));
     }
     if (!state.ready) {
@@ -480,6 +609,12 @@ export async function start(context) {
     return { groups, library: flavor };
   }
 
+  /** Studio 记得的项目文件夹。IPC 里要拿它当白名单用：读不到就返回空，宁可拒绝。 */
+  async function projectFolders() {
+    const body = await studioGet('/api/projects');
+    return (body?.projects ?? []).filter((p) => !p.missing).map((p) => String(p.path));
+  }
+
   /** 项目自己的 id（Studio 算的，存在项目的 .film/id 里）。 */
   async function projectId(path) {
     try {
@@ -520,7 +655,7 @@ export async function start(context) {
         studioOrigin: state.origin,
         studioKey: state.key,
         openfilmHome: STUDIO_HOME,
-        openfilmVersion: (DEFAULT_OPENFILM_ARGS.find((a) => a.includes('openfilm@')) || '').split('@')[1] || '0.2.5',
+        openfilmVersion: openfilmCli.version,
         tell,
         logger,
       });
@@ -717,6 +852,7 @@ export async function start(context) {
     'desktop:tabs:retitle': (p) => obj(p) && str(p.id) && str(p.title),
     'desktop:tabs:open': (p) => obj(p) && str(p.to),
     'desktop:agents:list': () => true,
+    'desktop:agents:refresh': () => true,
     'desktop:agents:report': () => true,
     'desktop:agents:disconnect': (p) => obj(p) && str(p.id),
     'desktop:agents:usage': (p) => obj(p) && str(p.id),
@@ -754,6 +890,7 @@ export async function start(context) {
     'desktop:chat:unsaved': (p) => obj(p) && str(p.project),
     'desktop:chat:snapshot': (p) => obj(p) && str(p.project) && str(p.turnId),
     'desktop:chat:changes': (p) => obj(p) && str(p.project) && str(p.turnId),
+    'desktop:chat:undo': (p) => obj(p) && str(p.project) && str(p.turnId),
     'desktop:skills:list': (p) => obj(p) && str(p.project),
     'desktop:skills:texts': (p) => obj(p) && str(p.project) && Array.isArray(p.names),
     'desktop:skills:changed': () => true,
@@ -809,6 +946,17 @@ export async function start(context) {
       response.end(JSON.stringify({ error: 'bad payload', channel }));
       return;
     }
+    /* 起本地 agent 的 cwd 是页面给的。只许项目文件夹：
+       否则一个页面就能让 agent 在 / 或家目录里跑，读写范围远超这个面板该碰的东西。 */
+    if (channel === 'desktop:local-agents:start') {
+      const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
+      const folders = await projectFolders();
+      if (!folders.some((root) => cwd === root || cwd.startsWith(root + sep))) {
+        response.writeHead(403, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: 'not a project folder', channel }));
+        return;
+      }
+    }
     try {
       const result = await handler({ sender: desktop.sender }, payload);
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -851,14 +999,40 @@ export async function start(context) {
 
   /**
    * Studio 的 /api/* 只放这些前缀（编辑器真正用的）。
-   * 管理类的不放：/api/quit、/api/update、/api/open、/api/keys 等一律 403。
+   * 管理类的不放：/api/quit、/api/update、/api/open、/api/desktop 等一律 403。
    */
+  /* Studio 的 /api/*：路由 + 方法都按 0.3.0 的界面真正用到的来。
+     不放：/api/get（生成媒体，要花钱）、/api/providers（你的服务密钥）、
+     /api/update、/api/quit、/api/open、/api/desktop（管理类）。 */
   const STUDIO_API_ALLOW = [
-    '/api/health', '/api/projects', '/api/files', '/api/doctor', '/api/library',
-    '/api/saved', '/api/skills', '/api/prefs', '/api/examples', '/api/fonts',
-    '/api/page-links', '/api/exports', '/api/look',
+    { p: '/api/health', m: ['GET'] },
+    { p: '/api/version', m: ['GET'] },
+    { p: '/api/projects', m: ['GET', 'POST'] },
+    { p: '/api/files', m: ['GET'] },
+    { p: '/api/page-links', m: ['GET'] },
+    { p: '/api/exports', m: ['GET', 'POST'] },
+    { p: '/api/look', m: ['GET'] },
+    { p: '/api/doctor', m: ['GET'] },
+    { p: '/api/diagnostics', m: ['GET'] },
+    { p: '/api/library', m: ['GET', 'POST'] },
+    { p: '/api/canvas', m: ['GET', 'POST'] },
+    { p: '/api/canvas-templates', m: ['GET', 'POST'] },
+    { p: '/api/canvas-characters', m: ['GET', 'POST'] },
+    { p: '/api/kept', m: ['GET'] },
+    { p: '/api/local-models', m: ['GET'] },
+    { p: '/api/saved', m: ['GET', 'POST'] },
+    { p: '/api/skills', m: ['GET'] },
+    { p: '/api/prefs', m: ['GET', 'POST'] },
+    { p: '/api/examples', m: ['GET'] },
+    { p: '/api/fonts', m: ['GET'] },
+    { p: '/api/browse', m: ['GET'] },
+    { p: '/api/locations', m: ['GET'] },
+    { p: '/api/pick-folder', m: ['POST'] },
+    { p: '/api/pick-files', m: ['POST'] },
   ];
-  const allowStudioApi = (path) => STUDIO_API_ALLOW.some((p) => path === p || path.startsWith(p + '/'));
+  const allowStudioApi = (path, method) => STUDIO_API_ALLOW.some(
+    (e) => (path === e.p || path.startsWith(e.p + '/')) && e.m.includes(method),
+  );
   /** 只放这几个头过去：不转发 cookie、不转发别人的鉴权头。 */
   const studioHeaders = (request) => ({
     ...(request.headers.accept ? { accept: request.headers.accept } : {}),
@@ -874,9 +1048,9 @@ export async function start(context) {
       response.end(JSON.stringify({ error: 'OpenFilm is not up yet' }));
       return;
     }
-    if (!allowStudioApi(url.pathname)) {
+    if (!allowStudioApi(url.pathname, request.method)) {
       response.writeHead(403, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: 'route not allowed', path: url.pathname }));
+      response.end(JSON.stringify({ error: 'route not allowed', path: url.pathname, method: request.method }));
       return;
     }
     const chunks = [];
@@ -1179,6 +1353,7 @@ export async function start(context) {
     if (disposal) return disposal;
     context.signal.removeEventListener('abort', onAbort);
     disposal = (async () => {
+      closing = true;
       await releaseLock();
       /**
        * 只关**自己起的那份**。
@@ -1190,20 +1365,14 @@ export async function start(context) {
       try { desktop.localAgents?.closeAll?.(); } catch { /* 收不干净也不挡收尾 */ }
 
       if (state.mode === 'spawned') {
-        /* `openfilm open` 自己退出后，Studio 继续活着（它才是那个服务）——
-           它的 pid 写在**自己那份 home** 的 run.json 里，不是我们 spawn 的那个进程的 pid。 */
-        const run = await readRunFile(join(STUDIO_HOME, 'run.json'));
         const quit = state.ready ? await quitStudio() : null;
         if (quit?.status === 200) log('asked the Studio to quit');
         else if (quit?.status === 423) log('the Studio is the app\'s own; left it running');
-        else {
-          /* 叫不动就杀：run.json 里的 pid 是 Studio 自己的，killTree 把它的孩子一起收走 */
-          if (run?.pid) {
-            killTree({ pid: run.pid });
-            log('asked the Studio to quit by signal');
-          } else if (state.child?.pid) {
-            killTree(state.child);
-          }
+        else if (state.child?.pid) {
+          /* 只杀**我们自己 spawn 的那个**。run.json 可能已经被后起的一份覆盖，
+             照它里面的 pid 杀会打掉别的面板的 Studio。 */
+          killTree(state.child);
+          log('asked the Studio to quit by signal');
         }
         await new Promise((r) => setTimeout(r, 800));
       }

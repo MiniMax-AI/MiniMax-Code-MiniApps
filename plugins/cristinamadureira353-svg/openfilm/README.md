@@ -21,7 +21,7 @@ The panel is the OpenFilm desktop page itself. The native bridge the desktop app
 ## Requirements
 
 - MiniMax Code **3.1.2 or newer** on macOS (the Host's loopback credential guards the panel's port).
-- Node.js 22+ and `npx` (the panel starts OpenFilm with `npx -y openfilm@0.2.5`).
+- Node.js 22+ and `npx` (only needed as a fallback when there is no local OpenFilm clone).
 - **Desktop mode only:** a local clone of [openfilm/openfilm](https://github.com/openfilm/openfilm) and one shell build. `@openfilm/desktop` is not published to npm, so the desktop handlers can only come from the repository.
 
 ```sh
@@ -44,19 +44,20 @@ Edit `miniapp.config.json` in the plugin directory. Put machine-specific overrid
 
 | Key | Default | Meaning |
 |---|---|---|
-| `openfilmBin` / `openfilmArgs` | `npx -y openfilm@0.2.5` (pinned) | Which OpenFilm to start (first run downloads it from npm). |
 | `flavor` | `release` | Which project list to show: `release` (`~/.openfilm`, `~/Movies/OpenFilm/Projects`) or `dev` (`~/.openfilm-dev`). |
 | `desktopMode` | `true` | Desktop interface + chat + local agents. `false` = plain web Studio. |
 | `openfilmRepo` | `~/Developer/openfilm` | Where the OpenFilm clone is (also `OPENFILM_REPO` env). Needed for desktop mode. |
 | `shellDist` | `<repo>/apps/desktop/shell/dist` | The built desktop page. |
 | `desktopApp` | auto-detected (fixed) | The app the `POST /miniapp/open-desktop` endpoint launches: repo dev runtimes first, then `/Applications/OpenFilm.app`. Not configurable. |
-| `studioHome` / `studioPort` | `context.dataDir/openfilm-studio` / `4823` | The panel's own Studio home/port. `studioHome` may be overridden for an existing state directory (documented exception); `studioPort` for isolated tests. |
+| `studioHome` | `context.dataDir/openfilm-studio` | The panel's own Studio home. May be overridden for an existing state directory (documented exception). There is no port setting: Studio asks the OS for a free one (`port: 0`) and its real origin and film origin are read back from the `run.json` it writes there. |
+
+There is no configurable executable or argument list either: the OpenFilm version is pinned in code (`PINNED_OPENFILM_VERSION` in `miniapp/node/server.mjs`).
 
 ## Data & access
 
 **Processes started by this package**
 
-- `npx -y openfilm@0.2.5 open` — starts the Studio (`openfilmBin`/`openfilmArgs` are pinned to this; the first run downloads OpenFilm from `registry.npmjs.org`).
+- The Studio is started by calling upstream's `startStudio` directly (`node --input-type=module -e 'import { startStudio } ...'`) from the local clone's `packages/openfilm/studio/server/server.mjs`, with `port: 0` (the OS picks a free port, and the real origin and film origin are read back from the `run.json` it writes), `advertise: true` and no browser opener. It does **not** run `openfilm open` (that path reuses a machine-wide Studio and can launch other apps). When no clone is present, the pinned `openfilm@0.3.0` from npm is used instead (first run downloads it from `registry.npmjs.org`).
 - `open -n <app>` / `open -a <app>` (macOS) — only for the fixed app locations in `desktopCandidates()` (dev runtimes under `<openfilmRepo>/apps/desktop/.dev/runtime`, then `/Applications/OpenFilm.app` and `~/Applications/OpenFilm.app`; the dev candidates depend on `openfilmRepo` / `OPENFILM_REPO`).
 - `open -R <path>` — reveals a project path in Finder (restricted to project folders).
 - `ps -ax -o command=` — to check whether that app is already running.
@@ -64,7 +65,7 @@ Edit `miniapp.config.json` in the plugin directory. Put machine-specific overrid
 
 **Network**
 
-- `registry.npmjs.org` (first `npx` run).
+- `registry.npmjs.org` (only for the npm fallback, when no local clone exists).
 - Loopback only for the panel itself and Studio (`127.0.0.1`/`localhost`). Agents you invoke use their own accounts/network as usual.
 
 **Files read**
@@ -72,6 +73,7 @@ Edit `miniapp.config.json` in the plugin directory. Put machine-specific overrid
 - `~/.openfilm/studio.json` (or `~/.openfilm-dev/studio.json` when `flavor` is `dev`): which projects exist (read-only).
 - Each listed project's `.film/id` (read-only), to address the project.
 - `<openfilmRepo>/apps/desktop/src/*.mjs` — the desktop handlers, imported and run (the documented desktop-mode requirement).
+- `<openfilmRepo>/packages/openfilm/studio/server/trash.mjs` — upstream's `moveToTrash`, used by the chat's "undo a turn" (it puts a file the turn added into the system trash).
 - `<openfilmRepo>/apps/desktop/.dev/runtime/*` — to find a dev app to launch.
 - `<openfilmRepo>/apps/desktop/shell/dist/*` — the desktop page served.
 - Agents' own config/session records, via the desktop handlers in `<openfilmRepo>/apps/desktop/src`:
@@ -86,6 +88,7 @@ Edit `miniapp.config.json` in the plugin directory. Put machine-specific overrid
 **Files written**
 
 - Only under `context.dataDir` (`openfilm-studio/`): Studio home, preferences, caches, logs, the BYOK master key and sealed BYOK keys.
+- `studio.json` **in that same Studio home** is written from the project list read in your own OpenFilm home (`recent` and `folders`). The bundled Studio reads its own `studio.json`, and the two have to agree or the editor answers "no such project". Your own `~/.openfilm/studio.json` is only read, never written.
 - Project data is written through OpenFilm's own API/handlers (chat records under `.film/`, agent sessions in project folders), exactly as the desktop app does — not by the panel itself.
 - A legacy `studioHome` override (`miniapp.config.local.json`) may point the Studio home elsewhere (this machine's original `~/.minimax/openfilm-studio`). It is an explicit, documented exception for an existing state directory, not a general writable path.
 
@@ -94,9 +97,9 @@ Edit `miniapp.config.json` in the plugin directory. Put machine-specific overrid
 
 - **Loopback authentication is done by the Host** (MiniMax Code 3.1.2+): every `node:http` server in the MiniApp process requires the per-run credential, including direct local connections and WebSocket upgrades. This package implements no token logic of its own.
 - **No secrets in pages, client JavaScript, logs, or error responses.** `/miniapp/studio` no longer returns the Studio key, and no iframe URL contains `/open?key=`; both web and desktop editors are served same-origin with the key attached only on the server side.
-- **Bounded proxies.** `/api/*` allows only the route prefixes the editor uses (`/api/health`, `/api/projects`, `/api/files`, `/api/doctor`, `/api/library`, `/api/saved`, `/api/skills`, `/api/prefs`, `/api/examples`, `/api/fonts`, `/api/page-links`, `/api/exports`, `/api/look`) and forwards only `accept`, `content-type`, `range`. `/p/*` is read-only GET/HEAD. WebSocket upgrades are limited to `/api/events` and `/api/projects/<id>/events`, with only the handshake headers plus the Studio key.
+- **Bounded proxies.** `/api/*` allows only the route prefixes and methods the editor uses (`/api/health`, `/api/version`, `/api/projects`, `/api/files`, `/api/page-links`, `/api/exports`, `/api/look`, `/api/doctor`, `/api/diagnostics`, `/api/library`, `/api/canvas`, `/api/canvas-templates`, `/api/canvas-characters`, `/api/kept`, `/api/local-models`, `/api/saved`, `/api/skills`, `/api/prefs`, `/api/examples`, `/api/fonts`, `/api/browse`, `/api/locations`, `/api/pick-folder`, `/api/pick-files`) and forwards only `accept`, `content-type`, `range`. `/api/get` (generates media, may cost) and `/api/providers` (your service keys) are not proxied. `/p/*` is read-only GET/HEAD. WebSocket upgrades are limited to `/api/events` and `/api/projects/<id>/events`, with only the handshake headers plus the Studio key.
 - **IPC allowlist with payload validation** (`IPC_RULES` in `server.mjs`): installer, sign-in and `automatic` flows are not registered at all (they return 403), and every other channel has a parameter check. `desktop:reveal` is limited to project folders. As in the desktop app, the page can also answer a local agent's permission prompts on your behalf (`desktop:local-agents:permission`) — that is how the chat's permission cards work, and it is your own UI.
-- **Fixed process launches.** `open-desktop` only opens the auto-detected OpenFilm app bundles; `openfilmBin`/`openfilmArgs` are pinned to `npx -y openfilm@0.2.5` with a minimal environment (`PATH`, `HOME`, `LANG`, `TMPDIR`, `OPENFILM_*`).
+- **Fixed process launches.** `open-desktop` only opens the auto-detected OpenFilm app bundles. Studio is started with upstream's `startStudio` (OS-assigned port, no browser) using a minimal environment (`PATH`, `HOME`, `LANG`, `TMPDIR`, `OPENFILM_*`); the npm fallback is pinned to `openfilm@0.3.0`.
 - **State lives in `context.dataDir`** (`openfilm-studio/`). Nothing durable is written into the plugin directory.
 - BYOK keys saved through the panel are sealed with AES-256-GCM using a local `0600` master key in that state directory (the desktop app uses the OS keychain instead; the two do not share key storage). This is obfuscation for at-rest files, not keychain-grade protection — the master key sits in the same directory, and a legacy `raw:` (plaintext) value is also accepted for compatibility.
 
@@ -107,16 +110,17 @@ Edit `miniapp.config.json` in the plugin directory. Put machine-specific overrid
 - Agent **installer, sign-in and `automatic` flows are not offered in the panel** (use the desktop app for those).
 - Native file/folder pickers and screen capture return `null` (no native dialogs in a browser).
 - Desktop mode needs the OpenFilm clone + shell build (see Requirements).
-- The API proxy intentionally excludes admin routes (`/api/quit`, `/api/update`, `/api/open`, `/api/keys`); actions that need them are unavailable in the panel.
+- The API proxy is limited to the routes and methods the editor actually uses, and excludes admin routes (`/api/quit`, `/api/update`, `/api/open`, `/api/desktop`).
+- **`/api/get` and `/api/providers` are not proxied**: generating media with a service (voice, music, images, video) and connecting a service (its keys) are not available in the panel — use the desktop app for those. The canvas (⌘E), the assets library and the rest of the editor work in the panel.
 - Tested on macOS only. Windows/Linux are untested (some code paths use `open`, `pbcopy`, `ps`).
 
 
 ## Tested environment
 
-- MiniMax Code desktop 3.1.2+ on macOS (Apple Silicon), Node 22, OpenFilm 0.2.5.
-- Desktop page renders with chat column and real conversation history; project switching works.
+- MiniMax Code desktop 3.1.2+ on macOS (Apple Silicon), Node 22, OpenFilm 0.3.0.
+- Desktop page renders with the chat column and real conversation history.
 - `chat:load` returns real sessions; agent roster lists 11 agents; Codex ACP probe starts a session; Claude Code correctly reports not-installed.
-- Acceptance script: 44 checks covering boot, tree, desktop IPC, roster, SSE, web fallback, missing-shell error, concurrent boot (one Studio only), dispose with open SSE streams, the review hardening assertions (no key to the page, route/IPC allowlists, payload validation, reveal restriction), and the preview path (film page proxied, editor origin rewritten, bridge allowed same-origin, media served).
+- Acceptance script: 49 checks (the few project-specific ones are skipped, and said so, on a machine with no OpenFilm projects) covering boot, tree, desktop IPC, roster, SSE, web fallback, missing-shell error, concurrent boot (one Studio only), dispose with open SSE streams, the review hardening assertions (no key to the page, route/IPC allowlists, payload validation, reveal restriction), and the preview path (film page proxied, editor origin rewritten, bridge allowed same-origin, media served).
 
 Run the acceptance yourself:
 
@@ -124,7 +128,7 @@ Run the acceptance yourself:
 node test/accept-miniapp.mjs        # SKIP_PROBE=1 to skip the Codex ACP probe
 ```
 
-It uses temporary homes and ports 4900–4903 and cleans up after itself; it never touches your running panel or writes your projects. Desktop-mode checks need the OpenFilm clone + shell build (see Requirements). After installing, also open the panel once and check Settings → Agents.
+It uses temporary homes and OS-assigned ports and cleans up after itself; it never touches your running panel or writes your projects. Desktop-mode checks need the OpenFilm clone + shell build (see Requirements). After installing, also open the panel once and check Settings → Agents.
 
 ## License
 
