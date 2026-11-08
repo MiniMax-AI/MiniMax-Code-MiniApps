@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { deflateSync, inflateSync } from 'node:zlib';
 import test from 'node:test';
@@ -111,6 +112,11 @@ test('generated v1 and v2 exports pass with the exact playable frame count', asy
   const second = await fixture(t, { png: v2, metadata: { spriteVersionNumber: 2 } });
   assert.deepEqual(await validatePetArt(first.petJsonPath), { ok: true, version: 1, width: 1536, height: 1872, frames: 57, warnings: [] });
   assert.deepEqual(await validatePetArt(second.petJsonPath), { ok: true, version: 2, width: 1536, height: 2288, frames: 73, warnings: [] });
+});
+
+test('the bundled octopus pet passes the generation profile with no warnings', async () => {
+  const petJsonPath = fileURLToPath(new URL('../miniapp/client/pets/minimax-tako/pet.json', import.meta.url));
+  assert.deepEqual(await validatePetArt(petJsonPath), { ok: true, version: 2, width: 1536, height: 2288, frames: 73, warnings: [] });
 });
 
 test('the standalone CLI returns machine-readable success and failure with exit status', async (t) => {

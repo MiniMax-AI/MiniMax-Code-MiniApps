@@ -50,7 +50,7 @@ The `minimax-pet` Skill opens the app and guides the current Agent through creat
 
 ## Bundled artwork
 
-The default is an original MiniMax Pet character, with all nine animation states and sixteen look directions. Its atlas can be regenerated with Node.js from the source directory. The purple octopus plugin icon is a separate imagegen asset and is preserved when regenerating the atlas. See [ARTWORK.md](ARTWORK.md).
+Two original pets are bundled, each with all nine animation states and sixteen look directions. The default is the MiniMax Pet mint robot, whose atlas can be regenerated with Node.js from the source directory. The second is “MiniMax Code 章鱼娘” (`minimax-tako`), a pink-haired octopus girl generated with MiniMax image generation and assembled into the v2 atlas. The purple octopus plugin icon is a separate imagegen asset and is preserved when regenerating the atlas. See [ARTWORK.md](ARTWORK.md).
 
 ## Development
 
@@ -58,4 +58,4 @@ The complete editable source is at `sources/minimax-ai/minimax-pet/`. The instal
 
 ## License
 
-Original code, documentation, the bundled pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. The default atlas is generated from editable geometric drawing code; the octopus icon was generated with imagegen from a user-provided visual reference. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.
+Original code, documentation, the bundled pets and icon: [MIT](LICENSE), Copyright 2026 MiniMax. The default atlas is generated from editable geometric drawing code; the octopus girl atlas (MiniMax image generation) and the octopus icon (imagegen) were generated from user-provided visual references. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.
