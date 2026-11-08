@@ -15,8 +15,17 @@ const { readImageHeader, atlasVersionFromSize } = await import(resolve(packageRo
 
 const BUNDLED_PET = 'minimax-original';
 const MAIYATANG_PET = 'octopus-girl-v2';
+const MMX_OCTOPUS_PET = 'mmx-octopus';
 // Bundled pets list in id order; the first one is the default for a fresh profile.
-const BUNDLED_PETS = [BUNDLED_PET, 'minimax-tako', MAIYATANG_PET];
+const BUNDLED_PETS = [BUNDLED_PET, 'minimax-tako', MMX_OCTOPUS_PET, MAIYATANG_PET];
+// Atlas version per bundled pet. The original robot and the two v2 octopus girls ship
+// v2 (73 cells); the MMX octopus girl ships v1 (57 cells, nine animation rows).
+const BUNDLED_PET_VERSIONS = {
+  [BUNDLED_PET]: 2,
+  'minimax-tako': 2,
+  [MMX_OCTOPUS_PET]: 1,
+  [MAIYATANG_PET]: 2,
+};
 const petsRoot = join(packageRoot, 'miniapp/client/pets');
 
 const results = [];
@@ -292,6 +301,15 @@ try {
     }
   });
 
+  await test('MMX octopus bundled JSON and PNG are served with their exact packaged bytes', async () => {
+    for (const [name, contentType] of [['pet.json', 'application/json'], ['spritesheet.png', 'image/png']]) {
+      const r = await call(port, 'GET', `/assets/pets/${MMX_OCTOPUS_PET}/${name}`);
+      assert.equal(r.status, 200);
+      assert.match(r.headers['content-type'], new RegExp(`^${contentType}`));
+      assert.deepEqual(r.body, await readFile(join(petsRoot, MMX_OCTOPUS_PET, name)));
+    }
+  });
+
   for (const path of [
     '/assets/../node/server.mjs',
     '/assets/%2e%2e/node/server.mjs',
@@ -311,14 +329,14 @@ try {
     });
   }
 
-  await test('GET /api/pets lists the first-party bundled v2 pets with petJsonUrl, no-store', async () => {
+  await test('GET /api/pets lists the first-party bundled pets with petJsonUrl, no-store', async () => {
     const r = await call(port, 'GET', '/api/pets');
     assert.equal(r.status, 200);
     assert.equal(r.headers['cache-control'], 'no-store');
     const pets = r.json.pets;
     assert.deepEqual(
       pets.map((p) => [p.id, p.version, p.source, p.petJsonUrl]),
-      BUNDLED_PETS.map((id) => [id, 2, 'bundled', `/assets/pets/${id}/pet.json`]),
+      BUNDLED_PETS.map((id) => [id, BUNDLED_PET_VERSIONS[id], 'bundled', `/assets/pets/${id}/pet.json`]),
     );
     assert.equal(pets[0].id, BUNDLED_PET, 'the original robot stays first, so it remains the default pet');
     for (const pet of pets) {
@@ -327,7 +345,7 @@ try {
     }
   });
 
-  await test('GET every bundled spritesheet via /assets → 200 image/png v2', async () => {
+  await test('GET every bundled spritesheet via /assets → 200 image/png in its declared version', async () => {
     for (const id of BUNDLED_PETS) {
       const json = await call(port, 'GET', `/assets/pets/${id}/pet.json`);
       assert.equal(json.status, 200);
@@ -335,7 +353,10 @@ try {
       const sprite = await call(port, 'GET', `/assets/pets/${id}/${json.json.spritesheetPath}`);
       assert.equal(sprite.status, 200);
       assert.match(sprite.headers['content-type'], /^image\/png/);
-      assert.deepEqual(readImageHeader(sprite.body), readImageHeader(await readFile(join(petsRoot, id, 'spritesheet.png'))));
+      const header = readImageHeader(sprite.body);
+      assert.deepEqual(header, readImageHeader(await readFile(join(petsRoot, id, 'spritesheet.png'))));
+      assert.equal(json.json.spriteVersionNumber, BUNDLED_PET_VERSIONS[id]);
+      assert.equal(atlasVersionFromSize(header.width, header.height), BUNDLED_PET_VERSIONS[id]);
     }
   });
 
