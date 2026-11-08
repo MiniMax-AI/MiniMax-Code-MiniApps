@@ -14,8 +14,9 @@ const { start } = await import(resolve(packageRoot, 'miniapp/node/server.mjs'));
 const { readImageHeader, atlasVersionFromSize } = await import(resolve(packageRoot, 'miniapp/node/image-header.mjs'));
 
 const BUNDLED_PET = 'minimax-original';
+const MAIYATANG_PET = 'octopus-girl-v2';
 // Bundled pets list in id order; the first one is the default for a fresh profile.
-const BUNDLED_PETS = [BUNDLED_PET, 'minimax-tako'];
+const BUNDLED_PETS = [BUNDLED_PET, 'minimax-tako', MAIYATANG_PET];
 const petsRoot = join(packageRoot, 'miniapp/client/pets');
 
 const results = [];
@@ -280,6 +281,15 @@ try {
     assert.equal(r.headers['content-type'], 'image/png');
     assert.deepEqual(r.body, bundledSprite);
     assert.deepEqual(r.body, versionTwoSprite);
+  });
+
+  await test('Maiyatang bundled JSON and PNG are served with their exact packaged bytes', async () => {
+    for (const [name, contentType] of [['pet.json', 'application/json'], ['spritesheet.png', 'image/png']]) {
+      const r = await call(port, 'GET', `/assets/pets/${MAIYATANG_PET}/${name}`);
+      assert.equal(r.status, 200);
+      assert.match(r.headers['content-type'], new RegExp(`^${contentType}`));
+      assert.deepEqual(r.body, await readFile(join(petsRoot, MAIYATANG_PET, name)));
+    }
   });
 
   for (const path of [
