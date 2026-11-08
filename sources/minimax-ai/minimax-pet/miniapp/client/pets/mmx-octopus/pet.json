@@ -1,9 +1,9 @@
 {
   "id": "mmx-octopus",
   "displayName": "MMX 章鱼娘",
-  "description": "绿川椒餐饮品牌的章鱼娘：橙发、白背心、棕格纹短裙的 Q 版少女，八只手。非 MiniMax 官方角色。",
+  "description": "橙发、白背心、棕格纹短裙的 Q 版少女，八只手。非 MiniMax 官方角色。",
   "spritesheetPath": "spritesheet.png",
   "spriteVersionNumber": 1,
-  "author": "antianqi (MMX, 绿川椒餐饮)",
+  "author": "antianqi",
   "license": "MIT"
 }

@@ -36,7 +36,7 @@ The static, non-interlaced 8-bit RGBA PNG is 1536 × 2288 pixels, with 57 animat
 
 ## MMX octopus girl (`mmx-octopus`)
 
-The optional bundled `mmx-octopus` pet is the original chibi octopus girl of 绿川椒餐饮 (the MMX brand): orange hair, a white vest, a brown plaid skirt and eight tentacles. It is a fan character contributed by [antianqi](https://github.com/antianqi), not an official MiniMax character or an additional plugin. Copyright (c) 2026 绿川椒餐饮; distributed under the [MIT License](LICENSE).
+The optional bundled `mmx-octopus` pet is an original chibi octopus girl: orange hair, a white vest, a brown plaid skirt and eight tentacles. It is a fan character contributed by [antianqi](https://github.com/antianqi), not an official MiniMax character or an additional plugin. Copyright (c) 2026 antianqi; distributed under the [MIT License](LICENSE).
 
 The character sheets and the action clips were produced in 2026-11 with a locally hosted open-weight image and video diffusion model driven from ComfyUI. A local pipeline cut the subject out of every rendered frame with a local segmentation model, and a per-row frame selection then chose the window that actually performs the requested action. All frames share one standing height; the foot baseline of a row is the lowest foot among that row's selected frames, so grounded frames sit on one baseline while airborne frames keep their relative lift.
 
