@@ -50,9 +50,9 @@ The `minimax-pet` Skill opens the app and guides the current Agent through creat
 
 ## Bundled artwork
 
-The default is an original MiniMax Pet character, with all nine animation states and sixteen look directions. Its atlas can be regenerated with Node.js from the source directory. The purple octopus plugin icon is a separate imagegen asset and is preserved when regenerating the atlas. See [ARTWORK.md](ARTWORK.md).
+Three pets are bundled, each with all nine animation states and sixteen look directions. The default is the MiniMax Pet mint robot, whose atlas can be regenerated with Node.js from the source directory. The second is “MiniMax Code 章鱼娘” (`minimax-tako`), a pink-haired octopus girl generated with MiniMax image generation and assembled into the v2 atlas. The purple octopus plugin icon is a separate imagegen asset and is preserved when regenerating the atlas. See [ARTWORK.md](ARTWORK.md).
 
-Version **0.5.9** also includes **Maiyatang (麦芽糖)**, an optional coral-pink chibi octopus girl. Select her in **外观 → 选择宠物**; the mint robot remains the default. She has all nine animation states and sixteen look poses in the existing v2 format. Her Chinese self-introduction appears under the preview. She uses the existing player timing, including the slow six-frame idle cycle, without new permissions or runtime behavior. The atlas was validated and imported through the local plugin UI on Linux; this does not establish bundled-install or desktop-window acceptance on released clients. See [ARTWORK.md](ARTWORK.md) for the AI-generation workflow and contributor license.
+Version **0.5.10** also includes **Maiyatang (麦芽糖)**, an optional coral-pink chibi octopus girl. Select her in **外观 → 选择宠物**; the mint robot remains the default. She has all nine animation states and sixteen look poses in the existing v2 format. Her Chinese self-introduction appears under the preview. She uses the existing player timing, including the slow six-frame idle cycle, without new permissions or runtime behavior. The atlas was validated and imported through the local plugin UI on Linux; this does not establish bundled-install or desktop-window acceptance on released clients. See [ARTWORK.md](ARTWORK.md) for the AI-generation workflow and contributor license.
 
 ## Development
 
@@ -60,4 +60,4 @@ The complete editable source is at `sources/minimax-ai/minimax-pet/`. The instal
 
 ## License
 
-Original code, documentation, the default pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. Maiyatang artwork: MIT, Copyright 2026 Fectivnfy112357. The default atlas is generated from editable geometric drawing code; the octopus icon and Maiyatang were generated with imagegen from supplied visual references. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.
+Original code, documentation, the robot, minimax-tako pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. Maiyatang artwork: MIT, Copyright 2026 Fectivnfy112357. The minimax-tako atlas was generated with MiniMax image generation. The default atlas is generated from editable geometric drawing code; the octopus icon and Maiyatang were generated with imagegen from supplied visual references. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.

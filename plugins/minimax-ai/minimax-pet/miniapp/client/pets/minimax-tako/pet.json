@@ -1,0 +1,9 @@
+{
+  "id": "minimax-tako",
+  "displayName": "MiniMax Code 章鱼娘",
+  "description": "MiniMax Code 原创章鱼娘：粉发眼镜、酒红触手的程序员女孩，会用触手一起敲代码。采用 MIT 许可。",
+  "spritesheetPath": "spritesheet.png",
+  "spriteVersionNumber": 2,
+  "author": "MiniMax",
+  "license": "MIT"
+}

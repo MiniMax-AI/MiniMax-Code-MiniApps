@@ -1,6 +1,6 @@
 # MiniMax Pet artwork
 
-The bundled `minimax-original` pet and `icon.png` are distributed under the plugin's [MIT License](LICENSE). Copyright (c) 2026 MiniMax.
+The bundled `minimax-original` and `minimax-tako` pets and `icon.png` are distributed under the plugin's [MIT License](LICENSE). Copyright (c) 2026 MiniMax.
 
 ## Default pet atlas
 
@@ -11,6 +11,14 @@ npm run generate:art
 ```
 
 The generated atlas is 1536 × 2288 pixels: eight 192 × 208 cells per row, nine animation rows and two rows of look directions. It is compatible with the existing player, including idle, running, waving, jumping, failure, waiting, work and review poses. Tests compare decoded atlas pixels with a fresh deterministic generation, so PNG compression differences between Node releases do not change the atlas contract. This command preserves the separately authored `icon.png`.
+
+## MiniMax Code octopus girl (`minimax-tako`)
+
+The second bundled pet, shown as “MiniMax Code 章鱼娘”, is an original chibi octopus girl: pink hair, round glasses, a red sound-wave hair clip, a white blouse with a wine-red bow, and wine-red tentacles with pink suckers. It was made on 2026-11-08 with MiniMax image generation, using user-provided character images as visual references for proportions and colors. The reference images are not included in the package.
+
+The model generated a character sheet, frame grids for each animation and nine gaze poses on a flat chroma-key background. A local script removed the background, sliced the frames, scaled them to a shared standing height and foot baseline, and assembled the exact 1536 × 2288 v2 atlas. The left-running row and the left half of the look directions are mirrored from their right-side counterparts. A small head offset strengthens each look direction. Model generation is not deterministic, so this atlas has no regeneration command; the PNG itself is the source.
+
+Tests run the packaged Skill validator on the shipped atlas (decoded PNG, exact size, all 73 cells non-empty with transparent backgrounds, no warnings), and the HTTP smoke test checks that all three bundled pets are listed and served. Character consistency, motion and gaze direction were reviewed visually; the validator cannot judge them. Its id sorts after `minimax-original`, so the mint robot stays the default pet for a fresh profile.
 
 ## Plugin icon
 
