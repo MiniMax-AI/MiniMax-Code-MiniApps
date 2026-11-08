@@ -14,6 +14,8 @@ const { start } = await import(resolve(packageRoot, 'miniapp/node/server.mjs'));
 const { readImageHeader, atlasVersionFromSize } = await import(resolve(packageRoot, 'miniapp/node/image-header.mjs'));
 
 const BUNDLED_PET = 'minimax-original';
+// Bundled pets list in id order; the first one is the default for a fresh profile.
+const BUNDLED_PETS = [BUNDLED_PET, 'minimax-tako'];
 const petsRoot = join(packageRoot, 'miniapp/client/pets');
 
 const results = [];
@@ -299,19 +301,32 @@ try {
     });
   }
 
-  await test('GET /api/pets lists one first-party bundled v2 pet with petJsonUrl, no-store', async () => {
+  await test('GET /api/pets lists the first-party bundled v2 pets with petJsonUrl, no-store', async () => {
     const r = await call(port, 'GET', '/api/pets');
     assert.equal(r.status, 200);
     assert.equal(r.headers['cache-control'], 'no-store');
     const pets = r.json.pets;
     assert.deepEqual(
       pets.map((p) => [p.id, p.version, p.source, p.petJsonUrl]),
-      [
-        [BUNDLED_PET, 2, 'bundled', `/assets/pets/${BUNDLED_PET}/pet.json`],
-      ],
+      BUNDLED_PETS.map((id) => [id, 2, 'bundled', `/assets/pets/${id}/pet.json`]),
     );
-    assert.equal(typeof pets[0].displayName, 'string');
-    assert.equal(typeof pets[0].description, 'string');
+    assert.equal(pets[0].id, BUNDLED_PET, 'the original robot stays first, so it remains the default pet');
+    for (const pet of pets) {
+      assert.equal(typeof pet.displayName, 'string');
+      assert.equal(typeof pet.description, 'string');
+    }
+  });
+
+  await test('GET every bundled spritesheet via /assets → 200 image/png v2', async () => {
+    for (const id of BUNDLED_PETS) {
+      const json = await call(port, 'GET', `/assets/pets/${id}/pet.json`);
+      assert.equal(json.status, 200);
+      assert.equal(json.json.id, id);
+      const sprite = await call(port, 'GET', `/assets/pets/${id}/${json.json.spritesheetPath}`);
+      assert.equal(sprite.status, 200);
+      assert.match(sprite.headers['content-type'], /^image\/png/);
+      assert.deepEqual(readImageHeader(sprite.body), readImageHeader(await readFile(join(petsRoot, id, 'spritesheet.png'))));
+    }
   });
 
   await test('PUT /api/pets → 405', async () => {
@@ -340,7 +355,7 @@ try {
   await test('listing contains imported user-copy after bundled', async () => {
     const r = await call(port, 'GET', '/api/pets');
     const ids = r.json.pets.map((p) => `${p.source}:${p.id}`);
-    assert.deepEqual(ids, [`bundled:${BUNDLED_PET}`, 'imported:user-copy']);
+    assert.deepEqual(ids, [...BUNDLED_PETS.map((id) => `bundled:${id}`), 'imported:user-copy']);
   });
 
   await test('/imported/user-copy/pet.json → 200 normalized subset', async () => {
