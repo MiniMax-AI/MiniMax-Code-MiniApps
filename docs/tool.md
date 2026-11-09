@@ -1,6 +1,6 @@
 # Mini App tool API
 
-Verified against MiniMax Code 3.1.6. Clients before 3.1.5 reject packages that declare
+Verified against MiniMax Code 3.1.11. Clients before 3.1.6 reject packages that declare
 `toolAccess`.
 
 `context.tool` lets the Node entry call the tools installed on the user's MiniMax Code: every

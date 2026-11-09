@@ -1,24 +1,32 @@
 // Constants shared by every rule. Values mirror the MiniMax Code package reader.
 
-export const HOST_VERSION = '3.1.6';
+// The next MiniMax Code release, frozen from preview_train. Features that ship first in it use this
+// constant, so a late renumbering is a one-line change.
+const NEXT_RELEASE = '3.1.11';
 
-// Clients older than the listed version reject the whole package when it declares the feature.
-// Keys are the names diagnostics and docs use for each feature.
+export const HOST_VERSION = NEXT_RELEASE;
+
+// A feature's minimum is the first version with released installers for both macOS and Windows.
+// Clients older than it reject the whole package when it declares the feature. 3.1.5 shipped no
+// installers and 3.1.8 shipped none for Windows, so neither is a minimum; preview builds and bare
+// tags never count. Keys are the names diagnostics and docs use for each feature.
 export const FEATURE_MIN_HOST_VERSION = Object.freeze({
   agents: '3.1.2',
   agentAccess: '3.1.2',
-  // Released 3.1.4 still rejects "session.read"; only 3.1.4 preview builds accepted it.
-  'agentAccess.session.read': '3.1.5',
+  'agentAccess.session.read': '3.1.6',
   agentConcurrency: '3.1.2',
-  deviceAccess: '3.1.5',
-  engines: '3.1.5',
+  deviceAccess: '3.1.6',
+  'deviceAccess.camera': '3.1.9',
+  'deviceAccess.notifications': '3.1.9',
+  engines: '3.1.6',
+  hostAccess: NEXT_RELEASE,
   'surface.window': '3.1.2',
-  toolAccess: '3.1.5',
+  toolAccess: '3.1.6',
 });
 
 // From this version the Host denies Mini App pages every browser permission the manifest does
-// not grant (the microphone included); earlier clients granted them silently.
-export const BROWSER_PERMISSION_GATE_VERSION = '3.1.5';
+// not grant (microphone, camera, notifications included); earlier clients granted them silently.
+export const BROWSER_PERMISSION_GATE_VERSION = '3.1.6';
 
 export const MANIFEST_FIELDS = new Set([
   '$schema',
@@ -50,6 +58,7 @@ export const SEMVER =
 
 export const ICON_PATH = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:png|jpe?g|webp)$/u;
 export const APP_PATH = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.app\.json$/u;
+export const APP_FIELDS = new Set(['$schema', 'schemaVersion', 'provider']);
 export const MCP_PATH = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.mcp\.json$/u;
 export const SKILL_PATH = /^skills\/[A-Za-z0-9._-]+\/SKILL\.md$/u;
 export const HOOK_PATH = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.json$/u;
@@ -86,6 +95,7 @@ export const MINIAPP_FIELDS = new Set([
   'engines',
   'toolAccess',
   'deviceAccess',
+  'hostAccess',
 ]);
 export const ARTIFACT_FIELDS = new Set(['client', 'node']);
 export const RUNTIME_FIELDS = new Set(['kind', 'entry', 'lifecycle']);
@@ -97,8 +107,9 @@ export const SURFACE_WINDOW_DIMENSION_MAX = 10_000;
 export const AGENT_ACCESS_CAPABILITIES = new Set(['session.run', 'session.read']);
 export const AGENT_CONCURRENCY_MAX = 32;
 export const TOOL_ACCESS_CAPABILITIES = new Set(['call']);
-// Released clients accept only the microphone; later items get their own FEATURE_MIN_HOST_VERSION key.
-export const DEVICE_ACCESS_ITEMS = new Set(['microphone']);
+// Items added after the first release of deviceAccess get their own FEATURE_MIN_HOST_VERSION key.
+export const DEVICE_ACCESS_ITEMS = new Set(['microphone', 'camera', 'notifications']);
+export const HOST_ACCESS_CAPABILITIES = new Set(['navigation.read']);
 export const ENGINES_FIELDS = new Set(['mcode']);
 export const ENGINES_REQUIREMENT = /^>=\s*(\d+)\.(\d+)\.(\d+)$/u;
 // The Host answers requests under this prefix itself; plugin routes there never work.
