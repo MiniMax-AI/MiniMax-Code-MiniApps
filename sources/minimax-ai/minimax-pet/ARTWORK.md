@@ -34,4 +34,28 @@ The artwork was created on 2026-11-08 through the MiniMax Octopus Studio charact
 
 The static, non-interlaced 8-bit RGBA PNG is 1536 × 2288 pixels, with 57 animation cells and 16 look poses. It follows the existing v2 layout and player timing, including the six-frame, 6600 ms idle cycle; it does not add FPS fields, change the player or claim 30 fps playback. Light/dark composites, full-body silhouettes and the four cardinal gaze poses were visually inspected. The packaged artwork validator decodes the actual PNG and checks every valid cell and the transparent unused cells; this does not prove artistic quality or smooth motion. The exact atlas was imported and selected through the local plugin UI on Linux; this is not acceptance of a bundled installation on macOS, Windows or the desktop window.
 
+## MMX octopus girl (`mmx-octopus`)
+
+The optional bundled `mmx-octopus` pet is an original chibi octopus girl: orange hair, a white vest, a brown plaid skirt and eight tentacles. It is a fan character contributed by [antianqi](https://github.com/antianqi), not an official MiniMax character or an additional plugin. Copyright (c) 2026 antianqi; distributed under the [MIT License](LICENSE).
+
+The character sheets and the action clips were produced in 2026-11 with a locally hosted open-weight image and video diffusion model driven from ComfyUI. A local pipeline cut the subject out of every rendered frame with a local segmentation model, and a per-row frame selection then chose the window that actually performs the requested action. All frames share one standing height; the foot baseline of a row is the lowest foot among that row's selected frames, so grounded frames sit on one baseline while airborne frames keep their relative lift.
+
+The nine rows map to the player states as follows.
+
+| Row | State | Source clip | Frames | Pose |
+| --- | --- | --- | --- | --- |
+| 0 | `idle` | `idle-01` | 6 | Standing, breathing and blinking |
+| 1 | `running-right` | `move-03` | 8 | Right-facing profile run cycle |
+| 2 | `running-left` | `move-03` | 8 | Left-facing profile run cycle |
+| 3 | `waving` | `click-01` | 4 | Greeting with both hands raised |
+| 4 | `jumping` | `drag-01` | 5 | Arms up, takeoff, apex, landing |
+| 5 | `failed` | `click-03` | 8 | Head down, arms crossed, sulking |
+| 6 | `waiting` | `think-01` | 6 | Standing, hand at the chin, attentive |
+| 7 | `running` | `work-01` | 6 | Standing, hands clasped, focused on the task |
+| 8 | `review` | `cele-01` | 6 | Hands clasped, pleased with the result |
+
+Both running rows come from one continuous 360-degree run clip: the right-facing and the left-facing profile halves of that turn. The waiting, running and review rows are near-still poses, like the bundled default pet's rows, which carry the meaning in the pose rather than in large movement. The `failed` row is a sulking reaction; the source footage contains no literal failure gesture. The working row keeps a full-body standing pose: the footage that types on a keyboard also contains the keyboard, and the footage that bends over the desk is a close-up that breaks the shared scale. The frame counts follow the official layout (6/8/8/4/5/8/6/6/6) and the unused trailing cells of the shorter rows stay fully transparent.
+
+This pet ships the v1 layout, so it has the nine animation rows and no look directions; the player treats it accordingly, and the mouse-follow feature stays unavailable for it. The static, non-interlaced 8-bit RGBA PNG is 1536 × 1872 pixels with 57 valid cells. The packaged artwork validator decodes the actual PNG and checks every valid cell, the transparent background and the cell edges; this does not prove artistic quality or smooth motion. Model generation is not deterministic, so this atlas has no regeneration command; the PNG itself is the source. No third-party pet spritesheet was copied, and the source videos are not shipped.
+
 No externally sourced pet spritesheet is included. User-imported artwork is not part of this distribution and keeps its own license.

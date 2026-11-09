@@ -119,6 +119,11 @@ test('the bundled octopus pet passes the generation profile with no warnings', a
   assert.deepEqual(await validatePetArt(petJsonPath), { ok: true, version: 2, width: 1536, height: 2288, frames: 73, warnings: [] });
 });
 
+test('the bundled MMX octopus girl passes the v1 generation profile with no warnings', async () => {
+  const petJsonPath = fileURLToPath(new URL('../miniapp/client/pets/mmx-octopus/pet.json', import.meta.url));
+  assert.deepEqual(await validatePetArt(petJsonPath), { ok: true, version: 1, width: 1536, height: 1872, frames: 57, warnings: [] });
+});
+
 test('the standalone CLI returns machine-readable success and failure with exit status', async (t) => {
   const { petJsonPath } = await fixture(t);
   const success = await run(process.execPath, [script.pathname, petJsonPath]);
