@@ -5,7 +5,7 @@ doing, and the Agent can tell her what to say.*
 
 English | [简体中文](README.zh-CN.md)
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.8.0` ·
+Author: [antianqi](https://github.com/antianqi) · Version: `1.9.0` ·
 Plugin ID: `mmx-octopus` · Category: `Productivity`
 
 *The app interface is in Chinese.*
@@ -27,6 +27,14 @@ Plugin ID: `mmx-octopus` · Category: `Productivity`
 - **The Agent can drive her.** This package hosts an MCP server with four
   tools (below), so the Agent can make her speak, change her expression, move
   her, or read her state.
+- **She can answer with an agent of her own — if you make one.** The plugin
+  never creates an agent for you and never writes one. If you want her to have
+  her own, open the panel (Settings → 「想要更鲜明的性格？」) and press
+  **「复制她的设定」** ("copy her settings"): it puts her character sheet on
+  your clipboard. Paste it into a new agent named `mmx` in the Host's Agent
+  settings, and the plugin finds that agent on its own (read-only) and answers
+  with it. Skip the step and she answers with the default agent, her character
+  sheet travelling with every message.
 - **She stays out of the way.** The floating window is frameless, transparent,
   always on top and click-through, so it never blocks the desktop. It is
   220 × 460 and can be dragged anywhere on the screen; the Agent can park it in
@@ -65,6 +73,8 @@ Nothing else is needed: no API key, no account, no dependency to install.
 2. Drag it to a corner, or let the Agent move it with `mmx_move`.
 3. Talk to the Agent as usual and watch her expression follow along.
 4. Open the panel and write to her — she answers in her own session.
+5. Optional: give her an agent of her own — copy her settings from the panel
+   and paste them into a new agent named `mmx` (see "What it does").
 
 ### The Agent's four tools
 
@@ -109,81 +119,54 @@ it like the rest of the port.
 - **What it reads** — this package's own files, read from
   `context.pluginRoot`: `miniapp/node/identity/AGENTS.md` and
   `miniapp/node/identity/STORY.md` (who she is), plus the page assets under
-  `miniapp/client/`.
+  `miniapp/client/`; and the list of agents the Host exposes, which it only
+  reads to decide which agent answers for her.
 - **What it writes** — four JSON files under `context.dataDir`, the private
-  directory the Host creates for this plugin:
+  directory the Host creates for this plugin, and **nothing outside it**:
   `context.dataDir/state.json` (her expression, position, bubble and the Agent's
   busy state), `context.dataDir/chat.json` (your chat with her),
   `context.dataDir/diary.json` (her diary) and `context.dataDir/style.json`
   (how she has learned to write). Every write is atomic — a temporary file in
   the same directory, then a rename — so a crash cannot leave a half-written
   file behind.
-- **At most one new agent file outside `context.dataDir`** — since 1.8.0 the
-  runtime **can add one agent of its own** to the Host's agent directory, so
-  that her character sheet can live in that agent's system prompt instead of
-  only in the message. **By default it adds one**: the panel has a
-  two-way choice ("Which agent should she use"), and the default is "create a
-  dedicated agent" — that tier adds the agent, so her character stays in that
-  agent's system prompt (crisper personality, more lifelike replies).
-  **You can switch back to "use an existing agent" at any time** — in that tier
-  the plugin writes **not a single byte** outside its own data directory and
-  her character sheet travels with the message only. The choice is asked
-  **on first run**: the opening card asks  for the tier first, then for her name and how she addresses you; you can
-  change it in the panel at any time. Full disclosure:
-  - **Which file** — exactly one: `<Host agent directory>/mmx-octopus-agent/agent.md`.
-    The directory and the file are **new**; the Host picks it up without a
-    restart.
-  - **What is in it** — the same character sheet the plugin would otherwise
-    send with every message (who she is, what she looks like, her rules), plus
-    the frontmatter the Host expects (`name`, `description`, `displayName`).
-  - **What is never touched** — **no existing agent is modified and no other
-    file is written**: not your agents' `agent.md`, not the `AGENTS.md` of an
-    agent workspace, not your project files. If the name `mmx-octopus-agent` is
-    already taken by an agent that is not ours, the plugin **writes nothing and
-    does not use it** — she keeps working on an existing agent (that other
-    agent's file is never treated as ours).
-  - **How it is written** — atomically (temporary file, then a rename), one
-    write at a time, and only when the file does not exist yet: an existing
-    file is never overwritten, so there is nothing to back up.
-  - **How to remove it, or how to pick up a new version** — the file is
-    **never rewritten in place**, so after you upgrade the package the old
-    character sheet stays in it. Delete
-    `<Host agent directory>/mmx-octopus-agent/` and the runtime adds it again on
-    the next start, this time with the current version's sheet. If you would
-    rather not have this agent at all, pick "use an existing agent" in the
-    panel — the plugin then leaves it alone, and as long as you    do not switch back to "create a dedicated agent" it will not be recreated.
-    Nothing else on your machine is affected.
-  - **How the directory is found — it is never guessed** — only from the
-    workspace of a session the plugin itself created: the Host sets that
-    workspace to the Mini App's own agent directory
-    (`<Host agent directory>/<agent>/miniapps/<plugin-id>`), and the plugin
-    takes its parent. It does **not** walk up the filesystem looking for a
-    folder called `agents` (a project of yours could contain one, and the
-    file would land in your project), and it does **not** derive the
-    directory from `context.dataDir`. If that one path does not identify the
-    directory, the plugin writes **nothing** and falls back to sending her
-    character sheet with every message, exactly as before.
-  - **One session of its own** — to learn that path the plugin may create one
-    session through the Host's Agent API. Such sessions belong to the plugin
-    and do **not** show up in your chat list; the plugin reuses that session
-    as hers instead of creating another one.
+- **No file outside `context.dataDir`** — since 1.9.0 the runtime writes
+  **nothing else at all**: no agent file, nothing under the Host's agent
+  directory, nothing in your project. The only files it touches are the four
+  JSON files listed above.
+  - **No choice in the panel any more.** The 1.8.0 panel's two-way choice
+    ("Which agent should she use" — "create a dedicated agent" vs "use an
+    existing agent") is gone, and so is the manual `agentprov-cli.mjs` command
+    that came with it. There is nothing left to switch.
+  - **Your own `mmx` agent, if you make one.** The panel's **「复制她的设定」**
+    button only hands you her character sheet as text — it writes nothing. You
+    paste it into a new agent named `mmx` in the Host's Agent settings; the
+    plugin then finds that agent through the Host's agent list and answers
+    with it, reading it only. Creating, editing and deleting that agent stay
+    yours; the plugin only ever reads the agent list.
+  - **It still reads the Host's agent list — read-only.** The plugin reads the
+    agents the Host exposes and, if you have an agent named `mmx`, that is the
+    one she answers with. Your agent is never modified and never written to.
+    With no `mmx` agent she falls back to the default agent.
+  - **Her character sheet travels with the message.** With no dedicated agent
+    to hold it, her identity (who she is, what she looks like, her rules) is
+    carried in the prompt of every turn — see "How her identity reaches her"
+    below.
 - **Leftovers from earlier versions** — versions before 1.7.0 wrote an `AGENTS.md`
   into the workspace of the agent that has this Mini App installed, to carry her
   identity there. That is no longer written and no longer needed. If you are
   upgrading from an earlier version the old file may still be there
   (`agents/<agent>/miniapps/<plugin-id>/AGENTS.md`) and you can delete it — the
   runtime never touches it, because a plugin must not write outside its own
-  data directory.
-- **How her identity reaches her** — **twice, on purpose**. Her character
-  sheet (who she is, what she looks like, her rules) is read from this
-  package's own `miniapp/node/identity/AGENTS.md` and passed inside each
+  data directory. What 1.8.0 may have left behind is covered under
+  "Upgrading from 1.8.0" below.
+- **How her identity reaches her** — **on every turn, in the message**. Her
+  character sheet (who she is, what she looks like, her rules) is read from
+  this package's own `miniapp/node/identity/AGENTS.md` and passed inside each
   prompt, so it is never missing from a turn. Because that travels in the
   conversation, the Host's context compaction may drop it — that is why it is
-  sent again every turn. Since 1.8.0 — and only once you pick "create a
-  dedicated agent" in the panel — the same sheet is also written into the
-  system prompt of the agent added above (the file disclosed above), which
-  survives compaction; if that file cannot be written, the per-turn copy
-  remains and nothing changes for you.
+  sent again every turn. Since 1.9.0 this is the only channel: the sheet is
+  no longer written into any agent file, so the per-turn copy is the one and
+  only copy.
 - **Sessions read** — the package declares `session.read`. It reads the title,
   the running state and the final reply of a turn, to tell whether the Agent is
   thinking or has finished, and to summarise the turn. The board in the panel
@@ -191,13 +174,11 @@ it like the rest of the port.
 - **Agent turns it runs** — it declares `session.run`, and it runs **one Agent
   turn per message you send her in the chat area**, in her own session. The
   turn runs through the Host Agent, so it carries the capabilities the Host
-  grants that agent; it reads the Host's agent list to look for an agent
-  dedicated to the Mini App — in the default mode ("create a dedicated
-  agent") the one it adds itself comes first (see
-  above) and yours is only used when that one is not there; with neither, it
-  falls back to the default agent. If you pick "use an
-  existing agent" in the panel, only your own `mmx` is used (or the default agent when there is none),
-  and the one it could add is never touched. It never runs turns on your own sessions.- **Agent turns it starts on its own** — besides your messages, the runtime starts
+  grants that agent; it reads the Host's agent list and, if you have an agent
+  named `mmx`, that is the one it answers with (your agent is only read,
+  never modified); with no `mmx` agent it falls back to the default agent.
+  It never runs turns on your own sessions.
+- **Agent turns it starts on its own** — besides your messages, the runtime starts
   a few turns by itself, and **each of them uses your model quota**:
   - **Idle talk** — **off by default**; turn it on in the panel: Settings →
     「她没人的时候自己说话」 ("She talks when you are away"). Once on, after 20
@@ -229,6 +210,31 @@ it like the rest of the port.
 - **State location** — `context.dataDir`. Treat it as opaque: it may move
   between versions, so do not hard-code it.
 
+### Upgrading from 1.8.0
+
+1.9.0 changes what the plugin does with the Host's agents, not just the
+version number. **It no longer creates an agent file anywhere**, and with it
+the panel's "create a dedicated agent / use an existing agent" choice and the
+manual `agentprov-cli.mjs` command are gone as well.
+
+- **If you used 1.8.0** and let it create its own dedicated agent, the Host
+  may still have the leftover directory
+  `<Host data dir>/agents/mmx-octopus-agent/`. You can **delete it by hand** —
+  nothing in it is needed any more.
+- **1.9.0 never creates that directory and never touches it.** The only files
+  it writes are the four JSON files under `context.dataDir`.
+- **Your own `mmx` agent still wins.** If you have an agent named `mmx`, she
+  answers with it — read-only; the plugin never modifies it.
+- **1.9.0 also hands you her settings.** The panel's **「复制她的设定」** button
+  gives you her character sheet as text, so you can put it into an agent named
+  `mmx` that you create yourself. The plugin no longer creates that agent for
+  you — it only recognises it.
+
+- **If your saved state still points at the old agent, 1.9.0 ignores it.**
+  1.8.0 could have stored `mmx-octopus-agent` in the plugin's state file. 1.9.0
+  drops that name when it loads the state, so she answers with your own `mmx`
+  agent if you have one, and with the Host's default agent otherwise.
+
 ## Known limits
 
 - The interface is Chinese only.
@@ -236,6 +242,9 @@ it like the rest of the port.
 - Her body animation only covers the moments the clips cover; between clips the
   `pose` fallback runs.
 - She answers in whatever agent the Host resolves for her.
+- Without an agent named `mmx` of your own, her character sheet travels in the
+  message instead, and the Host's context compaction may drop it — which is
+  why it is sent again every turn.
 
 ## License
 

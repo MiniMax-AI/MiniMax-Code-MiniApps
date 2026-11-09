@@ -15,8 +15,7 @@
 import { writeJsonAtomic, createWriteQueue } from './atomic-json.mjs';
 import { textLength } from './clip.mjs';
 import { pickLine } from './lines.mjs';
-// ⭐ 默认档真源（agentpick.mjs）—— 本文件不许自己写默认值。
-import { DEFAULT_AGENT_MODE, normalizeAgentMode } from './agentpick.mjs';
+import { LEGACY_SELF_AGENT_NAME } from './agentpick.mjs';
 
 /**
  * 章鱼娘的表情。thinking/working 由 Agent 侧驱动。
@@ -339,23 +338,20 @@ export class PetState {
      * @type {boolean}
      */
     this.petHeadInjected = false;
+    /**
+     * 她的会话挂在哪个 agent 上（`null` = 用默认 agent）。
+     *
+     * ⚠️ **这个初值不能少**（v1.9.0 删「建专属 agent」那一档时误删了它，
+     *   官方评审 2026-11-09 指出）：不初始化的话新装时它是 `undefined` ——
+     *   快照里就没这个字段（契约写的是 `string | null`）。
+     *
+     * 取值优先级：显式指定 ＞ 用户自己建的 `mmx` ＞ 默认 agent（见 agentpick.mjs）。
+     * @type {string | null}
+     */
+    this.petAgent = null;
     /** @type {{text: string, at: number} | null} 用户正在问她的内容（临时态，不持久化） */
     this.asking = null;
-    /** @type {string | null} 她的专属会话用哪个 agent */
-    this.petAgent = null;
-    /**
-     * 她的会话用哪个 agent（**用户在面板里选**，持久化）。
-     * 'own'      = **建我们自己的专属 agent**（**默认**）—— 性格更鲜明、从零开始、没有积累；
-     * 'existing' = **用现有 agent** —— 更偏助理，认得你之前的经验与工具上下文。
-     *
-     * ⚠️ **默认是「建专属 agent」**（老板 2026-11-04 拍板：体验感最好，也是主线方向）；
-     *   想给用户留余地 ⇒ 「用现有 agent」那一档随时能在面板里选。
-     * @type {'existing'|'own'}
-     */
-    this.agentMode = DEFAULT_AGENT_MODE;
-    /** @type {string} 运行时状态：实际用哪个 agent 的说明（不持久化；空 = 没话说） */
-    this.agentStatus = '';
-    /** @type {boolean} 她正在回话（运行时态，不持久化） */
+        /** @type {boolean} 她正在回话（运行时态，不持久化） */
     this.chatBusy = false;
     /** @type {boolean} 是否把 MCode 状态摘要拼进她的输入（持久化，默认开） */
     this.petAware = true;
@@ -450,11 +446,13 @@ export class PetState {
         if (typeof saved.petSessionId === 'string' && saved.petSessionId) this.petSessionId = saved.petSessionId;
         if (typeof saved.petSessionDirty === 'boolean') this.petSessionDirty = saved.petSessionDirty;
         if (typeof saved.petHeadInjected === 'boolean') this.petHeadInjected = saved.petHeadInjected;
-        if (typeof saved.petAgent === 'string' && saved.petAgent) this.petAgent = saved.petAgent;
-        // ⚠️ **默认是「建专属 agent」**（老板 2026-11-04 拍板：体验感最好，也是主线方向）——
-        //   只有**明确存了** 'existing' 才降级成「用现有 agent」。
-        //   归一走 agentpick.mjs 的唯一实现（不许在这里自己写默认值）。
-        this.agentMode = normalizeAgentMode(saved.agentMode);
+        // ⚠️ **1.8.0 留下的那个 agent 名要丢掉**（官方评审 2026-11-09）：
+        //   1.8.0 默认会自己建一个 agent，并把它的名写进 `petAgent`；
+        //   1.9.0 的插件既不建它、也不碰它 ⇒ 留着它，老用户升级后她的会话
+        //   仍会挂在那个 agent 上，与「1.9.0 不再碰它」对不上。
+        //   丢掉之后回到「用户自己建的 mmx 或默认 agent」（见 agentpick.mjs）。
+        if (typeof saved.petAgent === 'string' && saved.petAgent
+            && saved.petAgent !== LEGACY_SELF_AGENT_NAME) this.petAgent = saved.petAgent;
         if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
         if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
         if (saved.naming && typeof saved.naming === 'object') {
@@ -516,7 +514,6 @@ export class PetState {
         petSessionDirty: this.petSessionDirty,
         petHeadInjected: this.petHeadInjected,
         petAgent: this.petAgent,
-        agentMode: this.agentMode,
         petAware: this.petAware,
         idleTalk: this.idleTalk,
         naming: { ...this.naming },
@@ -587,8 +584,6 @@ export class PetState {
       petHeadInjected: this.petHeadInjected,
       asking: this.asking,
       petAgent: this.petAgent,
-      agentMode: this.agentMode,
-      agentStatus: this.agentStatus,
       petAware: this.petAware,
       idleTalk: this.idleTalk,
       naming: { ...this.naming },
@@ -1187,34 +1182,6 @@ export class PetState {
     this.idleTalk = on === true;
     await this.commit();
     return this.idleTalk;
-  }
-
-  /**
-   * 她的会话用哪个 agent（用户在面板里选的那一档）。
-   *
-   * ⚠️ **只有明确传 'existing' 才算「用现有 agent」** —— 别的值一律按「建专属 agent」处理。
-   *   默认就是「建专属 agent」（老板 2026-11-04 拍板：体验感最好，也是主线方向）；
-   *   用户想留余地 ⇒ 在面板里选「用现有 agent」，那一档**不往宿主目录写任何文件**。
-   *
-   * @param {string} mode
-   */
-  async setAgentMode(mode) {
-    this.agentMode = normalizeAgentMode(mode);
-    await this.commit();
-    return this.agentMode;
-  }
-
-  /**
-   * 运行时状态：她**实际**用哪个 agent 的说明（不持久化）。
-   *
-   * ⚠️ **不落盘**：它是一次运行的现场说明（为什么没按用户选的那一档走），
-   *   不是设置 —— 设置在 `agentMode` 里。
-   *
-   * @param {string} text
-   */
-  setAgentStatus(text) {
-    this.agentStatus = String(text ?? '');
-    return this.agentStatus;
   }
 
   /**
