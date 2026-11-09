@@ -1,0 +1,1737 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-mode="inline">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quota Bottle</title>
+<script>
+  (function () {
+    var pref = 'auto';
+    try { pref = localStorage.getItem('quota-bottle.theme') || 'auto'; } catch (error) { /* private mode */ }
+    var fromUrl = new URLSearchParams(location.search).get('theme');
+    if (fromUrl === 'light' || fromUrl === 'dark' || fromUrl === 'auto') pref = fromUrl;
+    var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.dataset.theme = pref === 'dark' || (pref === 'auto' && dark) ? 'dark' : 'light';
+    document.documentElement.dataset.pref = pref;
+  })();
+</script>
+<style>
+  :root[data-theme="light"] {
+    --bg: #eef2f6;
+    --panel: #ffffff;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #d9e2ec;
+    --glass-line: #94a3b8;
+    --shine: rgba(255, 255, 255, 0.95);
+    --liquid-top: #22d3ee;
+    --liquid-bottom: #0b6bcb;
+    --octo-outline: #123a6b;
+    --octo-glass: rgba(196, 226, 250, 0.12);
+    --accent: #0e7490;
+    --accent-ink: #ffffff;
+    --shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #080d13;
+    --panel: #111a23;
+    --ink: #e8eff6;
+    --muted: #93a3b3;
+    --line: #22303f;
+    --glass-line: #5b7186;
+    --shine: rgba(255, 255, 255, 0.22);
+    --liquid-top: #67e8f9;
+    --liquid-bottom: #2563eb;
+    --octo-outline: #cfe6ff;
+    --octo-glass: rgba(120, 170, 230, 0.08);
+    --accent: #5eead4;
+    --accent-ink: #06202a;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    position: relative;
+    width: 100%;
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 22px 16px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .eyebrow {
+    margin: 0 0 4px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+
+  .headActions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  .pin {
+    display: grid;
+    gap: 6px;
+    padding: 0 18px 14px;
+  }
+
+  .pin[hidden] { display: none; }
+
+  .pinBtn {
+    width: 100%;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 9px 12px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .pinBtn:hover { filter: brightness(1.06); }
+
+  .pinHint {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.45;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .themes {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    flex: 0 0 auto;
+  }
+
+  .themes button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 10px;
+    padding: 4px 7px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .themes button[aria-pressed="true"] {
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  .langs {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    flex: 0 0 auto;
+  }
+
+  .langs button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 10px;
+    padding: 4px 7px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .langs button[aria-pressed="true"] {
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  .stage {
+    position: relative;
+    overflow: hidden;
+    padding: 14px 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+
+  .stage::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 34px;
+    width: 240px;
+    height: 300px;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: radial-gradient(closest-side, var(--liquid-top), transparent 72%);
+    opacity: var(--glow, 0.16);
+    pointer-events: none;
+  }
+
+  .bottle {
+    position: relative;
+    display: block;
+    width: 100%;
+    max-width: 224px;
+    height: auto;
+    margin: 0 auto;
+    overflow: visible;
+    filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.6)) drop-shadow(0 10px 20px rgba(0, 0, 0, 0.32));
+  }
+
+  .octoOutline { fill: var(--octo-outline); }
+
+  .shine {
+    fill: none;
+    stroke: var(--shine);
+    stroke-linecap: round;
+  }
+
+  .shine.wide { stroke-width: 7; opacity: 0.85; }
+  .shine.thin { stroke-width: 3; opacity: 0.6; }
+
+  .readout {
+    position: relative;
+    margin-top: 2px;
+    text-align: center;
+  }
+
+  .percent {
+    margin: 0;
+    font-size: 40px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .amount {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .amount strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .chips {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 9px;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .chip[hidden] { display: none; }
+
+  .floatMeter {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    width: fit-content;
+    margin: 2px auto 0;
+    padding: 6px 13px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(8, 13, 19, 0.78);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+    color: #eaf6ff;
+    backdrop-filter: blur(6px);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .floatPercent {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  .floatAmount {
+    font-size: 9px;
+    opacity: 0.72;
+  }
+
+  .floatStatus {
+    max-width: 190px;
+    font-size: 9px;
+    line-height: 1.25;
+    color: #fecaca;
+    text-align: center;
+  }
+
+  .floatStatus[hidden] { display: none; }
+
+  .floatDetails {
+    max-width: 196px;
+    font-size: 8.5px;
+    line-height: 1.3;
+    text-align: center;
+    opacity: 0.8;
+  }
+
+  .floatDetails[hidden] { display: none; }
+
+  .panel {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--panel);
+  }
+
+  .label {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .check input {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    margin: 2px 0 0;
+    padding: 0;
+    accent-color: var(--accent);
+  }
+
+  input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px;
+    padding: 0 11px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .select {
+    flex: 0 0 auto;
+    height: 38px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  #loginLink {
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  input:focus-visible,
+  button:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .btn {
+    flex: 0 0 auto;
+    height: 38px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .btn[disabled] { opacity: 0.55; cursor: default; }
+
+  .hint {
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .error {
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: #dc2626;
+  }
+
+  :root[data-theme="dark"] .error { color: #fca5a5; }
+
+  .notice {
+    margin: 0;
+    padding-left: 9px;
+    border-left: 2px solid var(--line);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+
+  .notice[hidden] { display: none; }
+
+  details.models {
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
+  details.models summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .models ul {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+  }
+
+  .models li {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 0;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .models li span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .models li span:last-child { color: var(--muted); flex: 0 0 auto; }
+
+  .foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .floatExit {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    z-index: 5;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+  }
+
+  :root[data-mode="window"] {
+    height: 100%;
+    /* The window is transparent. Force it even if the Host injects a page
+       background of its own: the page must not paint a backdrop. */
+    background: transparent !important;
+  }
+
+  :root[data-mode="window"] body,
+  :root[data-mode="window"] .app {
+    background: transparent !important;
+  }
+
+  :root[data-mode="window"] body {
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  :root[data-mode="window"] .app {
+    height: 100%;
+    max-width: none;
+    padding: 6px;
+    gap: 0;
+    justify-content: center;
+    /* The window is frameless, so the page marks a drag handle: the OS moves the
+       window and its content together. A page-driven drag has to move a window
+       whose position it is also measuring against the pointer, and any unit
+       mismatch — page zoom, display scaling — turns into drift. */
+    -webkit-app-region: drag;
+    cursor: grab;
+    user-select: none;
+  }
+
+  :root[data-mode="window"] .head,
+  :root[data-mode="window"] .pin,
+  :root[data-mode="window"] .readout,
+  :root[data-mode="window"] .panel,
+  :root[data-mode="window"] .notice,
+  :root[data-mode="window"] .models,
+  :root[data-mode="window"] .foot {
+    display: none;
+  }
+
+  :root[data-mode="window"] .stage {
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :root[data-mode="window"] .stage::before { display: none; }
+
+  :root[data-mode="window"] .bottle { max-width: 182px; }
+
+  :root[data-mode="window"] .floatMeter { display: flex; }
+
+  :root[data-mode="window"] .floatExit { display: grid; }
+
+  @media (max-width: 360px) {
+    .app { padding: 16px 12px 22px; }
+    .percent { font-size: 34px; }
+    .bottle { max-width: 190px; }
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <header class="head">
+    <div>
+      <p class="eyebrow">MiniMax Code · Token Plan</p>
+      <h1>Quota Bottle</h1>
+    </div>
+    <div class="headActions">
+      <div class="langs" role="group" aria-label="Language">
+        <button type="button" data-lang-choice="zh" aria-pressed="false">中</button>
+        <button type="button" data-lang-choice="en" aria-pressed="false">EN</button>
+      </div>
+      <div class="themes" role="group" aria-label="Theme">
+        <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="stage" aria-live="polite">
+    <svg class="bottle" viewBox="0 0 240 280" role="img" aria-labelledby="bottleTitle">
+      <title id="bottleTitle">A glass octopus bottle whose liquid level shows the remaining quota</title>
+      <defs>
+        <linearGradient id="liquidFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="var(--liquid-top)"/>
+          <stop offset="1" stop-color="var(--liquid-bottom)"/>
+        </linearGradient>
+
+        <g id="octoInnerShapes">
+          <ellipse cx="120" cy="176" rx="70" ry="62"/>
+          <circle cx="66" cy="128" r="20"/>
+          <circle cx="174" cy="128" r="20"/>
+          <rect x="99" y="64" width="42" height="54" rx="9"/>
+          <rect x="87" y="46" width="66" height="22" rx="8"/>
+          <circle cx="66" cy="240" r="22"/>
+          <circle cx="102" cy="240" r="22"/>
+          <circle cx="138" cy="240" r="22"/>
+          <circle cx="174" cy="240" r="22"/>
+        </g>
+
+        <clipPath id="bodyClip">
+          <ellipse cx="120" cy="176" rx="70" ry="62"/>
+          <circle cx="66" cy="128" r="20"/>
+          <circle cx="174" cy="128" r="20"/>
+          <rect x="99" y="64" width="42" height="54" rx="9"/>
+          <rect x="87" y="46" width="66" height="22" rx="8"/>
+          <circle cx="66" cy="240" r="22"/>
+          <circle cx="102" cy="240" r="22"/>
+          <circle cx="138" cy="240" r="22"/>
+          <circle cx="174" cy="240" r="22"/>
+        </clipPath>
+
+        <clipPath id="bodyOnlyClip">
+          <ellipse cx="120" cy="176" rx="70" ry="62"/>
+        </clipPath>
+
+        <mask id="octoHoleMask" maskUnits="userSpaceOnUse" x="0" y="0" width="240" height="280">
+          <rect x="0" y="0" width="240" height="280" fill="#fff"/>
+          <use href="#octoInnerShapes" fill="#000"/>
+        </mask>
+
+        <mask id="octoInnerMask" maskUnits="userSpaceOnUse" x="0" y="0" width="240" height="280">
+          <rect x="0" y="0" width="240" height="280" fill="#000"/>
+          <use href="#octoInnerShapes" fill="#fff"/>
+        </mask>
+      </defs>
+
+      <g class="octoOutline" mask="url(#octoHoleMask)">
+        <ellipse cx="120" cy="176" rx="73.2" ry="65.2"/>
+        <circle cx="66" cy="128" r="23.2"/>
+        <circle cx="174" cy="128" r="23.2"/>
+        <rect x="95.8" y="60.8" width="48.4" height="60.4" rx="12.2"/>
+        <rect x="83.8" y="42.8" width="72.4" height="28.4" rx="11.2"/>
+        <circle cx="66" cy="240" r="25.2"/>
+        <circle cx="102" cy="240" r="25.2"/>
+        <circle cx="138" cy="240" r="25.2"/>
+        <circle cx="174" cy="240" r="25.2"/>
+      </g>
+
+      <rect x="0" y="0" width="240" height="280" fill="var(--octo-glass)" mask="url(#octoInnerMask)"/>
+
+      <g clip-path="url(#bodyClip)">
+        <g id="liquidGroup" style="opacity: 0">
+          <rect id="liquidRect" x="30" y="238" width="180" height="0" fill="url(#liquidFill)"/>
+          <ellipse id="meniscus" cx="120" cy="238" rx="64" ry="4.5" fill="var(--liquid-top)" opacity="0.55"/>
+        </g>
+      </g>
+
+      <g clip-path="url(#bodyOnlyClip)">
+        <path class="shine wide" d="M 84 138 C 77 168 77 202 84 226"/>
+        <path class="shine thin" d="M 94 144 C 88 172 88 198 93 218"/>
+      </g>
+    </svg>
+
+    <div class="readout">
+      <p class="percent" id="percent">—</p>
+      <p class="amount"><strong id="remaining">—</strong> <span id="amountUnit"></span></p>
+      <div class="chips">
+        <span class="chip" id="sourceChip">No data</span>
+        <span class="chip" id="resetChip" hidden></span>
+        <span class="chip" id="weeklyChip" hidden></span>
+        <span class="chip" id="overChip" hidden></span>
+      </div>
+    </div>
+
+    <div class="floatMeter">
+      <span class="floatPercent" id="floatPercent">—</span>
+      <span class="floatAmount" id="floatAmount">— / —</span>
+      <span class="floatStatus" id="floatStatus" hidden></span>
+      <span class="floatDetails" id="floatDetails" hidden></span>
+    </div>
+  </section>
+
+  <section class="pin" id="pin" hidden>
+    <button class="pinBtn" id="pinBtn" type="button">Pin to desktop</button>
+    <p class="pinHint" id="pinHint">Floats above other windows and refreshes every 5 seconds. MiniMax Code opens a window only from a click, so this is the one click it takes.</p>
+  </section>
+
+  <section class="panel" id="login" hidden>
+    <p class="label" id="loginTitle">Token Plan login</p>
+    <p class="hint" id="loginHint">Log in once with MiniMax. The device-code login and quota reader are built in, so no separate CLI is needed. The token is stored in this Mini App's own data folder, not in ~/.mmx/config.json.</p>
+    <div class="row" id="loginStart">
+      <select class="select" id="loginRegion">
+        <option value="cn">China</option>
+        <option value="global">Global</option>
+      </select>
+      <button class="btn" id="loginBtn" type="button">Log in</button>
+    </div>
+    <div id="loginWaiting" hidden>
+      <p class="hint"><span id="loginOpenLabel">Open</span> <a id="loginLink" target="_blank" rel="noreferrer"></a> <span id="loginCodeLabel">and enter code</span> <strong id="loginCode"></strong></p>
+      <p class="hint" id="loginStatus">Waiting for authorization…</p>
+    </div>
+    <p class="error" id="loginError" hidden></p>
+  </section>
+
+  <section class="panel" id="form" hidden>
+    <label class="label" for="totalInput" id="totalLabel">Total quota (tokens)</label>
+    <div class="row">
+      <input id="totalInput" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="e.g. 100000000">
+      <button class="btn" id="saveBtn" type="button">Save</button>
+    </div>
+    <p class="hint" id="usedHint">Local usage: —</p>
+    <p class="error" id="formError" hidden></p>
+  </section>
+
+  <section class="panel" id="settings">
+    <label class="check" for="usageScan">
+      <input type="checkbox" id="usageScan">
+      <span id="usageScanLabel">Read local usage from MiniMax Code</span>
+    </label>
+    <p class="hint" id="usageScanHint">Off by default. When on, the bottle reads the local token counters in MiniMax Code's SQLite state to estimate this month's usage. It never writes to that database.</p>
+    <p class="error" id="settingsError" hidden></p>
+  </section>
+
+  <p class="notice" id="notice" hidden></p>
+
+  <details class="models" id="models" hidden>
+    <summary id="modelsSummary">Per-model quota</summary>
+    <ul id="modelList"></ul>
+  </details>
+
+  <footer class="foot">
+    <button class="link" id="refreshBtn" type="button">Refresh</button>
+    <span id="updated">Loading…</span>
+  </footer>
+
+  <button class="floatExit" id="floatExit" type="button" aria-label="Return to the panel">×</button>
+</main>
+
+<script>
+  // The body fills across the first 80% of the quota. The last 20% fills the
+  // narrow neck and the two ears, so 100% reaches the mouth instead of
+  // stopping at the top of the body.
+  const BODY_TOP = 114;
+  const MOUTH_TOP = 46;
+  const NECK_FILL_FROM = 0.8;
+  const BODY_BOTTOM = 238;
+  const LIQUID_BOTTOM = 262;
+
+  function liquidTop(ratio) {
+    if (ratio <= NECK_FILL_FROM) {
+      return BODY_BOTTOM - (ratio / NECK_FILL_FROM) * (BODY_BOTTOM - BODY_TOP);
+    }
+    return BODY_TOP - ((ratio - NECK_FILL_FROM) / (1 - NECK_FILL_FROM)) * (BODY_TOP - MOUTH_TOP);
+  }
+  const THEME_KEY = 'quota-bottle.theme';
+
+  const LANG_KEY = 'quota-bottle.lang';
+
+  // The interface follows the client's language on first run and remembers a
+  // switch afterwards. `navigator.language` is the only signal a Mini App page
+  // gets about the Host's locale; the small 中/EN switch covers a client whose
+  // locale disagrees with the user.
+  function detectLanguage() {
+    try {
+      const saved = localStorage.getItem(LANG_KEY);
+      if (saved === 'zh' || saved === 'en') return saved;
+    } catch (error) { /* private mode */ }
+    return String(navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+  let LANG = detectLanguage();
+
+  const STRINGS = {
+    en: {
+      title: 'Quota Bottle',
+      eyebrow: 'MiniMax Code · Token Plan',
+      theme: 'Theme',
+      themeAuto: 'Auto',
+      themeLight: 'Light',
+      themeDark: 'Dark',
+      language: 'Language',
+      bottleAlt: 'A glass octopus bottle whose liquid level shows the remaining quota',
+      noData: 'No data',
+      noTotalSet: 'No total set',
+      pin: 'Pin to desktop',
+      pinHint: 'Floats above other windows and refreshes every 5 seconds. MiniMax Code opens a window only from a click, so this is the one click it takes.',
+      loginTitle: 'Token Plan login',
+      loginHint: "Log in once with MiniMax. The device-code login and quota reader are built in, so no separate CLI is needed. The token is stored in this Mini App's own data folder, not in ~/.mmx/config.json.",
+      regionCn: 'China',
+      regionGlobal: 'Global',
+      logIn: 'Log in',
+      openLabel: 'Open',
+      codeLabel: 'and enter code',
+      waiting: 'Waiting for authorization…',
+      totalLabel: 'Total quota (tokens)',
+      totalPlaceholder: 'e.g. 100000000',
+      save: 'Save',
+      localUsage: 'Local usage: —',
+      models: 'Per-model quota',
+      refresh: 'Refresh',
+      loading: 'Loading…',
+      offline: 'Offline',
+      updated: 'Updated {time}',
+      returnToPanel: 'Return to the panel',
+      tokens: 'tokens',
+      used: '{percent} used',
+      video: 'Video',
+      videoUsed: 'Video {percent} used',
+      setTotalInPanel: 'Set a total in the panel',
+      loginToRead: 'Log in to read the live quota',
+      overSavedTotal: 'Over the saved total',
+      liveUnavailable: 'Live quota unavailable',
+      localUsageSource: 'Local usage · {month}',
+      resetsIn: 'Resets in {time}',
+      resets: 'Resets {date}',
+      weekUnlimited: 'Week unlimited',
+      week: 'Week {percent}',
+      overBy: 'Over the saved total by {amount}',
+      localUsageMonth: 'Local usage in {month}: {amount} tokens',
+      localUsageUnavailable: 'Local usage: unavailable',
+      localUsageOff: 'Local usage: off',
+      usageScanLabel: 'Read local usage from MiniMax Code',
+      usageScanHint: "Off by default. When on, the bottle reads the local token counters in MiniMax Code's SQLite state to estimate this month's usage. It never writes to that database.",
+      unlimited: 'unlimited',
+      left: '{percent} left',
+      overBudgetNote: "This month's local usage ({used}) is above the total you saved ({total}), so the bottle reads empty. Raise the total, or log in for the real quota.",
+      manualNote: "Using your saved total and this month's local usage.",
+      loginNote: 'Log in below, or run mmx auth login, to read the live quota.',
+      setTotalBelow: 'Set a total below.',
+      reachFail: 'Could not reach the local service.',
+      invalidTotal: 'Enter a positive whole number of tokens.',
+      saveFailed: 'Could not save the total.',
+      settingsFailed: 'Could not save the setting.',
+      loginUrlRejected: 'The login URL was rejected.',
+      loginExpired: 'The code expired. Try again.',
+      loginFailed: 'Login failed. Try again.',
+      loginStartFailed: 'Could not start the login.',
+      pinFailed: 'This client cannot open a window ({reason}). MiniMax Code 3.1.2 or later is required.',
+      closeFailed: 'The window did not close. Use the taskbar entry for the bottle and try again.',
+      thisMonth: 'this month',
+      dayShort: 'd',
+      hourShort: 'h',
+      minuteShort: 'm',
+      errors: {
+        config_invalid: 'The CLI config is not valid JSON.',
+        config_unreadable: 'The CLI config could not be read.',
+        no_credential: 'No Token Plan login yet.',
+        oauth_expired: 'The Token Plan login expired.',
+        unauthorized: 'The Token Plan credential was rejected.',
+        invalid_credential: 'MiniMax rejected the saved credential.',
+        missing_credential: 'The quota endpoint did not accept the credential format.',
+        api_rejected: 'The quota endpoint refused the request.',
+        quota_exhausted: 'The Token Plan reports no remaining quota.',
+        http_error: 'The quota endpoint answered with an error.',
+        network: 'Could not reach the quota endpoint.',
+        timeout: 'The quota endpoint timed out.',
+        invalid_response: 'The quota endpoint returned an unreadable answer.',
+        no_quota: 'The Token Plan reports no metered quota.',
+        balance_credential: 'This API key reports account balance, not Token Plan quota.',
+        usage_scan_off: 'Local usage scanning is off. Turn it on below to estimate usage from MiniMax Code\'s local database.',
+        db_missing: 'The local usage database was not found.',
+        db_unreadable: 'The local usage database could not be opened.',
+        db_schema: 'The local usage database has no token table.',
+        db_query_failed: 'The local usage could not be read.',
+        sqlite_unavailable: 'This Node runtime has no node:sqlite.',
+        unknown: 'The quota could not be read.',
+      },
+    },
+    zh: {
+      title: '额度瓶',
+      eyebrow: 'MiniMax Code · Token Plan',
+      theme: '主题',
+      themeAuto: '自动',
+      themeLight: '浅色',
+      themeDark: '深色',
+      language: '语言',
+      bottleAlt: '一只玻璃章鱼瓶，液面高度显示剩余额度',
+      noData: '暂无数据',
+      noTotalSet: '未设置总额',
+      pin: '固定到桌面',
+      pinHint: '固定在其它窗口之上，每 5 秒刷新一次。MiniMax Code 只在点击后开窗，所以需要这一下。',
+      loginTitle: 'Token Plan 登录',
+      loginHint: '用 MiniMax 登录一次即可。设备码登录和额度读取都内置了，不需要另装 CLI。token 存在这个 Mini App 自己的数据目录里，不会写进 ~/.mmx/config.json。',
+      regionCn: '中国',
+      regionGlobal: '海外',
+      logIn: '登录',
+      openLabel: '打开',
+      codeLabel: '，输入代码',
+      waiting: '等待授权…',
+      totalLabel: '总额度（token）',
+      totalPlaceholder: '例如 100000000',
+      save: '保存',
+      localUsage: '本机用量：—',
+      models: '分模型额度',
+      refresh: '刷新',
+      loading: '加载中…',
+      offline: '离线',
+      updated: '更新于 {time}',
+      returnToPanel: '回到面板',
+      tokens: 'token',
+      used: '已用 {percent}',
+      video: '视频',
+      videoUsed: '视频 已用 {percent}',
+      setTotalInPanel: '在面板里设置总额',
+      loginToRead: '登录后读取实时额度',
+      overSavedTotal: '超出已保存的总额',
+      liveUnavailable: '实时额度不可用',
+      localUsageSource: '本机用量 · {month}',
+      resetsIn: '{time}后重置',
+      resets: '{date}重置',
+      weekUnlimited: '本周不限量',
+      week: '本周 {percent}',
+      overBy: '超出已保存总额 {amount}',
+      localUsageMonth: '{month}本机用量：{amount} token',
+      localUsageUnavailable: '本机用量：不可用',
+      localUsageOff: '本机用量：已关闭',
+      usageScanLabel: '读取 MiniMax Code 的本机用量',
+      usageScanHint: '默认关闭。打开后，瓶子会读取 MiniMax Code 本地 SQLite 里的 token 计数来估算本月用量；只读取，不写入这个数据库。',
+      unlimited: '不限量',
+      left: '剩余 {percent}',
+      overBudgetNote: '本月本机用量（{used}）已超过你保存的总额（{total}），所以瓶子显示为空。可以调高总额，或登录读取真实额度。',
+      manualNote: '正在使用你保存的总额和本月本机用量。',
+      loginNote: '在下面登录，或运行 mmx auth login，以读取实时额度。',
+      setTotalBelow: '在下面设置总额。',
+      reachFail: '连不上本机服务。',
+      invalidTotal: '请输入正整数个 token。',
+      saveFailed: '保存失败。',
+      settingsFailed: '设置保存失败。',
+      loginUrlRejected: '登录地址被拒绝。',
+      loginExpired: '授权码过期了，请重试。',
+      loginFailed: '登录失败，请重试。',
+      loginStartFailed: '登录没能启动。',
+      pinFailed: '这个客户端开不了窗口（{reason}），需要 MiniMax Code 3.1.2 或更高版本。',
+      closeFailed: '窗口没有关掉。可以用任务栏里的额度瓶再试一次。',
+      thisMonth: '本月',
+      dayShort: '天',
+      hourShort: '小时',
+      minuteShort: '分',
+      errors: {
+        config_invalid: 'CLI 配置不是合法的 JSON。',
+        config_unreadable: '读不到 CLI 配置。',
+        no_credential: '还没登录 Token Plan。',
+        oauth_expired: 'Token Plan 登录已过期。',
+        unauthorized: 'Token Plan 凭据被拒绝。',
+        invalid_credential: 'MiniMax 拒绝了已保存的凭据。',
+        missing_credential: '额度接口不接受这个凭据格式。',
+        api_rejected: '额度接口拒绝了这次请求。',
+        quota_exhausted: 'Token Plan 显示额度已用尽。',
+        http_error: '额度接口返回了错误。',
+        network: '连不上额度接口。',
+        timeout: '额度接口超时。',
+        invalid_response: '额度接口返回了无法解析的内容。',
+        no_quota: 'Token Plan 没有可计量的额度。',
+        balance_credential: '这个 API key 读的是账户余额，不是 Token Plan 额度。',
+        usage_scan_off: '本机用量扫描已关闭。打开下面的开关，才会从 MiniMax Code 的本地数据库估算用量。',
+        db_missing: '没找到本机用量数据库。',
+        db_unreadable: '打不开本机用量数据库。',
+        db_schema: '本机用量数据库没有 token 表。',
+        db_query_failed: '读不到本机用量。',
+        sqlite_unavailable: '这个 Node 运行时没有 node:sqlite。',
+        unknown: '读不到额度。',
+      },
+    },
+  };
+
+  /** @param {string} key @param {Record<string, unknown>} [vars] */
+  function t(key, vars) {
+    const table = STRINGS[LANG] || STRINGS.en;
+    const template = table[key] ?? STRINGS.en[key] ?? key;
+    if (typeof template !== 'string' || !vars) return template;
+    return template.replace(/\{(\w+)\}/gu, (match, name) => (name in vars ? String(vars[name]) : match));
+  }
+
+  /** @param {string} code */
+  function messageFor(code) {
+    return STRINGS[LANG].errors[code] || STRINGS.en.errors[code] || '';
+  }
+
+  const LOGIN_CODES = new Set([
+    'no_credential',
+    'oauth_expired',
+    'unauthorized',
+    'invalid_credential',
+    'missing_credential',
+    'config_invalid',
+    'config_unreadable',
+  ]);
+
+  // The account service answers with the region's platform host; the account
+  // host stays allowed because older responses point there.
+  const VERIFY_ORIGINS = [
+    'https://account.minimaxi.com',
+    'https://platform.minimaxi.com',
+    'https://account.minimax.io',
+    'https://platform.minimax.io',
+  ];
+
+  const byId = (id) => document.getElementById(id);
+  const numberFormat = new Intl.NumberFormat('en-US');
+  const windowHandle = window.mcode?.miniapp?.window ?? null;
+  const WINDOW_SIZE = { width: 220, height: 300 };
+
+  /**
+   * The size patch, plus a position when the window is not on screen.
+   *
+   * The Host keeps a per-plugin window memory that outranks `surface.window`, so
+   * a remembered screen-sized window reopens at that size every time. Resizing it
+   * is refused unless the *resulting* bounds still overlap a display by 40px on
+   * both axes, and a remembered position can be off-screen: the patch must carry
+   * a visible position as well, or the Host rejects it and the window never shrinks.
+   */
+  function windowPatch() {
+    const { width, height } = WINDOW_SIZE;
+    const availWidth = Number(screen.availWidth) || 1920;
+    const availHeight = Number(screen.availHeight) || 1080;
+    const left = typeof screen.availLeft === 'number' ? screen.availLeft : 0;
+    const top = typeof screen.availTop === 'number' ? screen.availTop : 0;
+    const currentX = Number.isFinite(window.screenX) ? window.screenX : left;
+    const currentY = Number.isFinite(window.screenY) ? window.screenY : top;
+    const onScreen = currentX + width - 40 > left
+      && currentX + 40 < left + availWidth
+      && currentY + height - 40 > top
+      && currentY + 40 < top + availHeight;
+    if (onScreen) return { ...WINDOW_SIZE };
+    return {
+      ...WINDOW_SIZE,
+      x: Math.round(left + Math.max(0, availWidth - width - 24)),
+      y: Math.round(top + 40),
+    };
+  }
+  let current = null;
+  let requestId = 0;
+  let mode = 'inline';
+  let pollTimer = null;
+  let loginTimer = null;
+  let loginBusy = false;
+  let loginRegionSet = false;
+  let windowState = null;
+  let drag = null;
+  let dragFrame = 0;
+  /** Last window position this page knows, in the Host's own units. */
+  let windowOrigin = null;
+
+  function formatInt(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? numberFormat.format(Math.round(value)) : '—';
+  }
+
+  function formatPercent(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    if (value >= 99.995) return '100%';
+    if (value <= 0.005) return '0%';
+    return value.toFixed(1) + '%';
+  }
+
+  function localeTag() {
+    return LANG === 'zh' ? 'zh-CN' : 'en-US';
+  }
+
+  function formatDuration(ms) {
+    const minutes = Math.max(0, Math.ceil(ms / 60000));
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const rest = minutes % 60;
+    const d = t('dayShort');
+    const h = t('hourShort');
+    const m = t('minuteShort');
+    if (days > 0) return days + d + ' ' + hours + h;
+    if (hours > 0) return hours + h + ' ' + rest + m;
+    return rest + m;
+  }
+
+  function formatDate(ms) {
+    return new Date(ms).toLocaleDateString(localeTag(), { month: 'short', day: 'numeric' });
+  }
+
+  function monthLabel(period) {
+    if (typeof period !== 'string') return t('thisMonth');
+    const parts = period.split('-');
+    const date = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
+    return date.toLocaleDateString(localeTag(), { month: 'short', year: 'numeric' });
+  }
+
+  const THEME_KEYS = { auto: 'themeAuto', light: 'themeLight', dark: 'themeDark' };
+
+  /** Static text, applied at boot and again whenever the language changes. */
+  function localize() {
+    document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+    document.title = t('title');
+    document.querySelector('.eyebrow').textContent = t('eyebrow');
+    document.querySelector('h1').textContent = t('title');
+    document.querySelector('.themes').setAttribute('aria-label', t('theme'));
+    for (const button of document.querySelectorAll('[data-theme-choice]')) {
+      button.textContent = t(THEME_KEYS[button.dataset.themeChoice] || 'themeAuto');
+    }
+    document.querySelector('.langs').setAttribute('aria-label', t('language'));
+    for (const button of document.querySelectorAll('[data-lang-choice]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.langChoice === LANG));
+    }
+    byId('bottleTitle').textContent = t('bottleAlt');
+    byId('pinBtn').textContent = t('pin');
+    byId('pinHint').textContent = t('pinHint');
+    byId('loginTitle').textContent = t('loginTitle');
+    byId('loginHint').textContent = t('loginHint');
+    byId('loginRegion').querySelector('option[value="cn"]').textContent = t('regionCn');
+    byId('loginRegion').querySelector('option[value="global"]').textContent = t('regionGlobal');
+    byId('loginBtn').textContent = t('logIn');
+    byId('loginOpenLabel').textContent = t('openLabel');
+    byId('loginCodeLabel').textContent = t('codeLabel');
+    byId('loginStatus').textContent = t('waiting');
+    byId('totalLabel').textContent = t('totalLabel');
+    byId('totalInput').placeholder = t('totalPlaceholder');
+    byId('saveBtn').textContent = t('save');
+    byId('usageScanLabel').textContent = t('usageScanLabel');
+    byId('usageScanHint').textContent = t('usageScanHint');
+    byId('modelsSummary').textContent = t('models');
+    byId('refreshBtn').textContent = t('refresh');
+    byId('floatExit').setAttribute('aria-label', t('returnToPanel'));
+  }
+
+  /** @param {'zh' | 'en'} next */
+  function setLanguage(next) {
+    if (next !== 'zh' && next !== 'en') return;
+    LANG = next;
+    try { localStorage.setItem(LANG_KEY, LANG); } catch (error) { /* private mode */ }
+    localize();
+    render();
+    refresh(false);
+  }
+
+  function storedTheme() {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      return saved === 'auto' || saved === 'light' || saved === 'dark' ? saved : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function applyTheme(pref) {
+    const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = pref === 'light' || pref === 'dark' ? pref : dark ? 'dark' : 'light';
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.pref = pref;
+    for (const button of document.querySelectorAll('[data-theme-choice]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.themeChoice === pref));
+    }
+  }
+
+  /**
+   * The floating window is dragged from page code. Some clients render Mini Apps
+   * in a WebView2 guest, where `-webkit-app-region` does nothing, so the page
+   * moves the window itself; the app-region stays for the builds that do support
+   * it, and swallows the pointer events there so the two never both run.
+   *
+   * Pointer deltas are taken in screen coordinates: the window moves with the
+   * pointer, so a client-relative delta would shrink by exactly the distance the
+   * window just moved and the drag would fight itself.
+   */
+  function dragOrigin() {
+    const win = windowState && windowState.mode === 'window' ? windowState.window : null;
+    if (win && typeof win.x === 'number' && typeof win.y === 'number') return { x: win.x, y: win.y };
+    return windowOrigin;
+  }
+
+  function onPointerDown(event) {
+    if (mode !== 'window' || !windowHandle || event.button !== 0) return;
+    if (event.target.closest('button, a, input, label')) return;
+    const origin = dragOrigin();
+    if (!origin) return;
+    drag = {
+      pointerId: event.pointerId,
+      startX: event.screenX,
+      startY: event.screenY,
+      originX: origin.x,
+      originY: origin.y,
+      lastX: event.screenX,
+      lastY: event.screenY,
+      sentX: null,
+      sentY: null,
+    };
+    try { event.target.setPointerCapture(event.pointerId); } catch (error) { /* capture is optional */ }
+    event.preventDefault();
+  }
+
+  function onPointerMove(event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag.lastX = event.screenX;
+    drag.lastY = event.screenY;
+    if (dragFrame) return;
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = 0;
+      if (!drag) return;
+      const target = {
+        x: Math.round(drag.originX + (drag.lastX - drag.startX)),
+        y: Math.round(drag.originY + (drag.lastY - drag.startY)),
+      };
+      // One request per frame, and none when the pointer has not moved since the
+      // last one: a repeated identical request only adds round-trip lag.
+      if (drag.sentX === target.x && drag.sentY === target.y) return;
+      drag.sentX = target.x;
+      drag.sentY = target.y;
+      windowHandle.update(target)
+        .then(() => {
+          windowOrigin = target;
+          if (windowState && windowState.mode === 'window') {
+            windowState = { ...windowState, window: { ...windowState.window, ...target } };
+          }
+        })
+        .catch(() => {});
+    });
+  }
+
+  function onPointerUp(event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag = null;
+  }
+
+  function render() {
+    const state = current;
+    const ratio = state && typeof state.ratio === 'number' ? Math.max(0, Math.min(1, state.ratio)) : 0;
+    const problems = state && Array.isArray(state.problems) ? state.problems : [];
+    const overBudget = Boolean(state && state.overBudget);
+    const top = liquidTop(ratio);
+
+    byId('liquidRect').setAttribute('y', top.toFixed(2));
+    byId('liquidRect').setAttribute('height', (LIQUID_BOTTOM - top).toFixed(2));
+    byId('liquidGroup').style.opacity = ratio.toFixed(4);
+    byId('meniscus').setAttribute('cy', top.toFixed(2));
+    document.querySelector('.stage').style.setProperty('--glow', (ratio * 0.18).toFixed(3));
+
+    const percent = state && state.percent !== null ? formatPercent(state.percent) : '—';
+    byId('percent').textContent = percent;
+    byId('floatPercent').textContent = percent;
+    // The desktop reports a percentage quota, so the headline is that share.
+    // Token counts are shown only when the plan actually counts them.
+    const counted = state && typeof state.total === 'number' && typeof state.remaining === 'number';
+    const usedLabel = state && typeof state.usedPercent === 'number'
+      ? t('used', { percent: formatPercent(state.usedPercent) })
+      : '—';
+    byId('remaining').textContent = counted
+      ? formatInt(state.remaining) + ' / ' + formatInt(state.total)
+      : usedLabel;
+    byId('amountUnit').textContent = counted ? t('tokens') : '';
+    byId('floatAmount').textContent = counted
+      ? formatInt(state.remaining) + ' / ' + formatInt(state.total)
+      : usedLabel;
+    const floatStatus = byId('floatStatus');
+    const needsLogin = state && typeof state.needsLogin === 'boolean'
+      ? state.needsLogin
+      : problems.some((code) => LOGIN_CODES.has(code));
+    if (!state || state.mode === 'unset') {
+      floatStatus.hidden = false;
+      floatStatus.textContent = t('setTotalInPanel');
+    } else if (needsLogin) {
+      floatStatus.hidden = false;
+      floatStatus.textContent = t('loginToRead');
+    } else if (overBudget) {
+      floatStatus.hidden = false;
+      floatStatus.textContent = t('overSavedTotal');
+    } else if (state.mode !== 'live' && problems.length > 0) {
+      floatStatus.hidden = false;
+      floatStatus.textContent = t('liveUnavailable');
+    } else {
+      floatStatus.hidden = true;
+      floatStatus.textContent = '';
+    }
+
+    const sourceChip = byId('sourceChip');
+    const source = state && state.source ? state.source : null;
+    if (!state || state.mode === 'unset') {
+      sourceChip.textContent = t('noTotalSet');
+    } else if (source && source.kind === 'token-plan') {
+      sourceChip.textContent = 'Token Plan';
+    } else {
+      sourceChip.textContent = t('localUsageSource', { month: monthLabel(state.period) });
+    }
+
+    const resetChip = byId('resetChip');
+    if (state && state.mode === 'live' && typeof state.remainsMs === 'number' && state.remainsMs > 0) {
+      const elapsed = Date.now() - (state.generatedAt || Date.now());
+      resetChip.hidden = false;
+      resetChip.textContent = t('resetsIn', { time: formatDuration(Math.max(0, state.remainsMs - elapsed)) });
+    } else if (state && state.mode !== 'live' && typeof state.resetAt === 'number') {
+      resetChip.hidden = false;
+      resetChip.textContent = t('resets', { date: formatDate(state.resetAt) });
+    } else {
+      resetChip.hidden = true;
+    }
+
+    const weeklyChip = byId('weeklyChip');
+    const weekly = state && state.weekly;
+    if (weekly && weekly.unlimited) {
+      weeklyChip.hidden = false;
+      weeklyChip.textContent = t('weekUnlimited');
+    } else if (weekly && typeof weekly.percent === 'number') {
+      weeklyChip.hidden = false;
+      weeklyChip.textContent = t('week', { percent: formatPercent(weekly.percent) });
+    } else {
+      weeklyChip.hidden = true;
+    }
+
+    const overChip = byId('overChip');
+    if (overBudget) {
+      overChip.hidden = false;
+      overChip.textContent = t('overBy', { amount: formatInt(state.overBy) });
+    } else {
+      overChip.hidden = true;
+    }
+
+    const form = byId('form');
+    form.hidden = Boolean(state && state.mode === 'live');
+    const input = byId('totalInput');
+    if (document.activeElement !== input) {
+      input.value = state && state.mode === 'manual' ? String(state.total) : '';
+    }
+
+    const usedHint = byId('usedHint');
+    if (state && state.usageScan === false) {
+      usedHint.textContent = t('localUsageOff');
+    } else if (state && typeof state.used === 'number') {
+      usedHint.textContent = t('localUsageMonth', { month: monthLabel(state.period), amount: formatInt(state.used) });
+    } else {
+      usedHint.textContent = t('localUsageUnavailable');
+    }
+    const usageScanBox = byId('usageScan');
+    if (!usageScanBox.disabled) usageScanBox.checked = Boolean(state && state.usageScan === true);
+
+    const notice = byId('notice');
+    const messages = problems.map((code) => messageFor(code)).filter(Boolean);
+    const parts = messages.slice();
+    if (overBudget) {
+      parts.push(t('overBudgetNote', { used: formatInt(state.used), total: formatInt(state.total) }));
+    } else if (state && state.mode === 'manual' && typeof state.used === 'number') {
+      parts.push(t('manualNote'));
+    }
+    if (needsLogin) {
+      parts.push(t('loginNote'));
+    } else if (state && state.mode === 'unset') {
+      parts.push(t('setTotalBelow'));
+    }
+    if (parts.length > 0) {
+      notice.hidden = false;
+      notice.textContent = parts.join(' ');
+    } else {
+      notice.hidden = true;
+      notice.textContent = '';
+    }
+
+    // The configured region decides which account service the login starts
+    // against; the user can still switch it before starting.
+    if (!loginRegionSet && state && (state.region === 'cn' || state.region === 'global')) {
+      byId('loginRegion').value = state.region;
+      loginRegionSet = true;
+    }
+    byId('login').hidden = !needsLogin || mode === 'window';
+    if (state && state.mode === 'live' && loginTimer) {
+      clearInterval(loginTimer);
+      loginTimer = null;
+    }
+
+    const models = state && Array.isArray(state.models) ? state.models : [];
+    const details = byId('models');
+    const list = byId('modelList');
+    if (models.length > 1) {
+      details.hidden = false;
+      list.textContent = '';
+      for (const model of models) {
+        const item = document.createElement('li');
+        const name = document.createElement('span');
+        name.textContent = model.name;
+        const value = document.createElement('span');
+        value.textContent = model.unlimited
+          ? t('unlimited')
+          : (typeof model.usedPercent === 'number'
+            ? t('used', { percent: formatPercent(model.usedPercent) })
+            : t('left', { percent: formatPercent(model.percent) }));
+        item.append(name, value);
+        list.append(item);
+      }
+    } else {
+      details.hidden = true;
+    }
+
+    const floatDetails = byId('floatDetails');
+    const detailParts = [];
+    if (!resetChip.hidden && resetChip.textContent) detailParts.push(resetChip.textContent);
+    if (!weeklyChip.hidden && weeklyChip.textContent) detailParts.push(weeklyChip.textContent);
+    const video = models.find((model) => /video/iu.test(String(model.name)));
+    if (video) {
+      if (video.unlimited) {
+        detailParts.push(`${t('video')} ${t('unlimited')}`);
+      } else {
+        const used = typeof video.usedPercent === 'number'
+          ? video.usedPercent
+          : (typeof video.percent === 'number' ? 100 - video.percent : null);
+        detailParts.push(used === null ? t('video') : t('videoUsed', { percent: formatPercent(used) }));
+      }
+    }
+    floatDetails.hidden = detailParts.length === 0;
+    floatDetails.textContent = detailParts.join(' · ');
+  }
+
+  function setNotice(text) {
+    const notice = byId('notice');
+    notice.hidden = !text;
+    notice.textContent = text || '';
+  }
+
+  async function refresh(fresh) {
+    const id = ++requestId;
+    byId('updated').textContent = t('loading');
+    try {
+      const response = await fetch('/api/state' + (fresh ? '?fresh=1' : ''), {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const state = await response.json();
+      if (id !== requestId) return;
+      current = state;
+      render();
+      byId('updated').textContent = t('updated', {
+        time: new Date().toLocaleTimeString(localeTag(), { hour: '2-digit', minute: '2-digit' }),
+      });
+    } catch (error) {
+      if (id !== requestId) return;
+      setNotice(t('reachFail'));
+      byId('updated').textContent = t('offline');
+    }
+  }
+
+  function showFormError(text) {
+    const node = byId('formError');
+    node.hidden = !text;
+    node.textContent = text || '';
+  }
+
+  async function save() {
+    const input = byId('totalInput');
+    const raw = input.value.replace(/[,_\s]/g, '');
+    if (!/^\d+$/.test(raw) || Number(raw) < 1 || !Number.isSafeInteger(Number(raw))) {
+      showFormError(t('invalidTotal'));
+      return;
+    }
+
+    const button = byId('saveBtn');
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/quota', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ total: Number(raw) }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      showFormError('');
+      await refresh(true);
+    } catch (error) {
+      showFormError(t('saveFailed'));
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function saveUsageScan() {
+    const checkbox = byId('usageScan');
+    const next = checkbox.checked;
+    const errorNode = byId('settingsError');
+    errorNode.hidden = true;
+    checkbox.disabled = true;
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ usageScan: next }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      await refresh(true);
+    } catch {
+      checkbox.checked = !next;
+      errorNode.hidden = false;
+      errorNode.textContent = t('settingsFailed');
+    } finally {
+      checkbox.disabled = false;
+    }
+  }
+
+  function showLoginError(text) {
+    const node = byId('loginError');
+    node.hidden = !text;
+    node.textContent = text || '';
+  }
+
+  function renderLoginFlow(flow) {
+    byId('loginStart').hidden = true;
+    byId('loginWaiting').hidden = false;
+    byId('loginError').hidden = true;
+    const link = byId('loginLink');
+    if (!VERIFY_ORIGINS.some((origin) => String(flow.verificationUri || '').startsWith(origin + '/'))) {
+      showLoginError(t('loginUrlRejected'));
+      return;
+    }
+    link.href = flow.verificationUri;
+    link.textContent = flow.verificationUri;
+    byId('loginCode').textContent = flow.userCode;
+    byId('loginStatus').textContent = t('waiting');
+  }
+
+  function stopLoginPolling() {
+    if (loginTimer) {
+      clearInterval(loginTimer);
+      loginTimer = null;
+    }
+  }
+
+  function pollLogin() {
+    if (loginTimer) return;
+    loginTimer = setInterval(async () => {
+      if (loginBusy) return;
+      loginBusy = true;
+      try {
+        const response = await fetch('/api/login', { cache: 'no-store' });
+        const flow = await response.json();
+        if (flow.status === 'success') {
+          stopLoginPolling();
+          byId('loginWaiting').hidden = true;
+          byId('loginStart').hidden = false;
+          byId('login').hidden = true;
+          await refresh(true);
+        } else if (flow.status === 'expired' || flow.status === 'error') {
+          stopLoginPolling();
+          byId('loginWaiting').hidden = true;
+          byId('loginStart').hidden = false;
+          showLoginError(flow.status === 'expired' ? t('loginExpired') : t('loginFailed'));
+        } else if (flow.status === 'idle') {
+          stopLoginPolling();
+          byId('loginWaiting').hidden = true;
+          byId('loginStart').hidden = false;
+        }
+      } catch {
+        // Keep polling; a page-side hiccup is not a login failure.
+      } finally {
+        loginBusy = false;
+      }
+    }, 2500);
+  }
+
+  async function startLogin() {
+    byId('loginError').hidden = true;
+    const region = byId('loginRegion').value;
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ region }),
+      });
+      if (response.status === 409) {
+        await resumeLogin();
+        return;
+      }
+      if (!response.ok) throw new Error(String(response.status));
+      renderLoginFlow(await response.json());
+      pollLogin();
+    } catch {
+      showLoginError(t('loginStartFailed'));
+    }
+  }
+
+  async function resumeLogin() {
+    try {
+      const flow = await fetch('/api/login', { cache: 'no-store' }).then((response) => response.json());
+      if (flow.status === 'pending') {
+        renderLoginFlow(flow);
+        pollLogin();
+      }
+    } catch {
+      // No pending flow.
+    }
+  }
+
+  // A pinned window is the thing the user actually watches, so it is polled
+  // fastest. The panel can be slower, and a hidden page slower still; the
+  // Node side caches the upstream read for three seconds on top of this.
+  const POLL_WINDOW_MS = 5000;
+  const POLL_PANEL_MS = 10000;
+  const POLL_HIDDEN_MS = 60000;
+
+  function pollIntervalMs() {
+    if (document.hidden) return POLL_HIDDEN_MS;
+    return mode === 'window' ? POLL_WINDOW_MS : POLL_PANEL_MS;
+  }
+
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
+      if (!document.hidden) refresh(false);
+    }, pollIntervalMs());
+  }
+
+  function applyMode(next) {
+    const changed = mode !== next;
+    mode = next;
+    document.documentElement.dataset.mode = next;
+    // The Host opens a window only from a user action, so this button is the
+    // one click the whole product needs. It is hidden while the window is up.
+    byId('pin').hidden = next === 'window' || !windowHandle;
+    // Drag updates arrive as window state changes; they must not restart the
+    // poll timer or repeat the entry work on every frame.
+    if (!changed) return;
+    startPolling();
+    if (next === 'window') refresh(false);
+    render();
+  }
+
+  for (const button of document.querySelectorAll('[data-theme-choice]')) {
+    button.addEventListener('click', () => {
+      const pref = button.dataset.themeChoice;
+      try { localStorage.setItem(THEME_KEY, pref); } catch (error) { /* private mode */ }
+      applyTheme(pref);
+    });
+  }
+
+  for (const button of document.querySelectorAll('[data-lang-choice]')) {
+    button.addEventListener('click', () => setLanguage(button.dataset.langChoice));
+  }
+
+  if (window.matchMedia) {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => {
+      if (document.documentElement.dataset.pref === 'auto') applyTheme('auto');
+    };
+    if (media.addEventListener) media.addEventListener('change', onChange);
+  }
+
+  byId('saveBtn').addEventListener('click', save);
+  byId('usageScan').addEventListener('change', saveUsageScan);
+  byId('loginBtn').addEventListener('click', startLogin);
+  byId('totalInput').addEventListener('input', () => showFormError(''));
+  byId('totalInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') save();
+  });
+  byId('refreshBtn').addEventListener('click', () => refresh(true));
+  document.addEventListener('visibilitychange', () => {
+    startPolling();
+    if (!document.hidden) refresh(false);
+  });
+
+  if (windowHandle) {
+    // `update` must run synchronously inside the click: the Host accepts a mode
+    // change only from a user gesture, and an await before it loses the gesture.
+    byId('pinBtn').addEventListener('click', () => {
+      // Apply the window layout as soon as the Host accepts the change. The
+      // page then shows its window form even on a client whose state
+      // subscription never fires, so the × stays reachable.
+      // No size in the patch: the window is non-resizable (transparency depends
+      // on it), and the Host refuses a mode switch that carries width/height
+      // when the manifest is non-resizable.
+      windowHandle.update({ mode: 'window' })
+        .then(() => applyMode('window'))
+        .catch((error) => {
+          setNotice(t('pinFailed', { reason: (error && error.message) || 'unknown' }));
+        });
+    });
+
+    byId('floatExit').addEventListener('click', () => {
+      windowHandle.update({ mode: 'inline' })
+        .then(() => applyMode('inline'))
+        .catch(() => {
+          setNotice(t('closeFailed'));
+        });
+    });
+
+    const noteState = (state) => {
+      windowState = state;
+      const win = state && state.mode === 'window' ? state.window : null;
+      if (win && typeof win.x === 'number' && typeof win.y === 'number') {
+        windowOrigin = { x: win.x, y: win.y };
+      }
+      // The Host remembers a window size that outranks the manifest. Repairing
+      // it needs a resizeable window, so only a client that reports one gets the
+      // patch; a non-resizable window keeps whatever it was opened with.
+      if (win && win.resizable === true
+        && (win.width !== WINDOW_SIZE.width || win.height !== WINDOW_SIZE.height)) {
+        windowHandle.update(windowPatch()).catch(() => {});
+      }
+      applyMode(state && state.mode === 'window' ? 'window' : 'inline');
+    };
+
+    windowHandle.getState().then(noteState).catch(() => {});
+
+    const subscription = windowHandle.onDidChangeState?.(noteState);
+    if (subscription) addEventListener('pagehide', () => subscription.dispose());
+
+    // The window has no native title bar, and a WebView2 guest ignores
+    // `-webkit-app-region`, so the page moves the window itself. On a client
+    // whose renderer does honour the app-region, this never fires: the drag
+    // region swallows the pointer events first.
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerUp);
+  }
+
+  applyTheme(storedTheme() || 'auto');
+  localize();
+  refresh(false);
+  resumeLogin();
+  startPolling();
+</script>
+</body>
+</html>

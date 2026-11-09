@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": ["./miniapp/client"],
+    "node": ["./miniapp/node"]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/bottle",
+    "window": {
+      "width": 220,
+      "height": 300,
+      "minWidth": 220,
+      "minHeight": 300,
+      "resizable": false,
+      "frame": false,
+      "transparent": true,
+      "alwaysOnTop": true,
+      "skipTaskbar": false
+    }
+  },
+  "mcpEndpoints": []
+}
