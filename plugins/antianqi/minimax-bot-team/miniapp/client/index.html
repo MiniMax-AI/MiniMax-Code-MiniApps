@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MiniMax Bot</title>
+    <link rel="stylesheet" href="/bot/app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <div class="rail">
+        <nav class="rail-filters" id="rail" aria-label="会话筛选" data-i18n-label="side.filter.label"></nav>
+        <button type="button" class="rail-me rail-tasks" id="tasks-btn" aria-label="任务" title="任务" data-i18n-label="side.tasks" data-i18n-title="side.tasks"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m4 6 2 2 3-4M12 6h8M4 13h4M12 13h8M4 20h4M12 20h8"/></svg></button>
+        <button type="button" class="rail-me" id="me-btn" aria-label="设置" data-i18n-label="side.settings"><span class="rail-me-initial" id="me-initial" aria-hidden="true"></span></button>
+      </div>
+      <nav class="side" id="side" aria-label="Bot 和群聊" data-i18n-label="a11y.sidebar">
+        <header class="side-top">
+          <div class="brand">
+            <span id="brand-mark"></span>
+            <h1>MiniMax Bot</h1>
+          </div>
+          <button type="button" class="round search" id="search-btn" aria-label="搜索" title="搜索（⌘K）" data-i18n-label="side.search" data-i18n-title="side.searchTitle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg>
+          </button>
+          <button type="button" class="round" id="new-btn" aria-label="新建" title="新建" data-i18n-label="side.new" data-i18n-title="side.new">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </header>
+        <div class="side-list" id="side-list" role="region" aria-label="Bot 列表" data-i18n-label="a11y.botList">
+          <p class="side-hint" role="status" data-i18n="side.loading">正在加载团队…</p>
+        </div>
+      </nav>
+
+      <main class="main" id="main" tabindex="-1">
+        <p class="loading" role="status" data-i18n="main.loading">正在加载…</p>
+      </main>
+
+      <aside class="drawer" id="drawer" aria-label="详情" data-i18n-label="a11y.drawer" hidden></aside>
+    </div>
+
+    <div id="overlay-root"></div>
+    <div id="connection-status" class="connection-status" role="status" aria-live="polite" hidden></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <dialog class="confirm" id="confirm" aria-labelledby="confirm-title">
+      <form method="dialog">
+        <h2 id="confirm-title" data-i18n="common.confirm">确认</h2>
+        <p id="confirm-text"></p>
+        <div class="row-end">
+          <button type="submit" value="cancel" class="btn" data-i18n="common.cancel">取消</button>
+          <button type="submit" value="ok" class="btn danger-solid" id="confirm-ok" data-i18n="common.confirm">确认</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/bot/app.js"></script>
+  </body>
+</html>
