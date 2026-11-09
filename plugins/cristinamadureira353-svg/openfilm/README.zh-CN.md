@@ -21,7 +21,7 @@
 ## 前提
 
 - macOS 上的 MiniMax Code **3.1.2 或更新**（Host 的 loopback 凭据守着面板的端口）。
-- Node.js 22+ 和 `npx`（面板用 `npx -y openfilm@0.2.5` 起 OpenFilm）。
+- Node.js 22+ 和 `npx`（只在没有本地 OpenFilm 克隆时作为回退才用到）。
 - **只有桌面模式需要**：本地克隆 [openfilm/openfilm](https://github.com/openfilm/openfilm)，并构建一次桌面版页面。`@openfilm/desktop` 没发布到 npm，所以这些模块只能从仓库来。
 
 ```sh
@@ -44,19 +44,20 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `openfilmBin` / `openfilmArgs` | `npx -y openfilm@0.2.5`（固定） | 起哪个 OpenFilm（第一次会从 npm 下载）。 |
 | `flavor` | `release` | 列哪套项目：`release`（`~/.openfilm`、`~/Movies/OpenFilm/Projects`）或 `dev`（`~/.openfilm-dev`）。 |
 | `desktopMode` | `true` | 桌面版界面 + 聊天 + 本地 agent。`false` = 纯网页版。 |
 | `openfilmRepo` | `~/Developer/openfilm` | OpenFilm 仓库在哪（也可用环境变量 `OPENFILM_REPO`）。桌面模式必须要。 |
 | `shellDist` | `<仓库>/apps/desktop/shell/dist` | 构建出来的桌面版页面。 |
 | `desktopApp` | 自动找（固定） | `POST /miniapp/open-desktop` 这个接口开哪个 app：先仓库里的 Dev 版，再 `/Applications/OpenFilm.app`。不可配置。 |
-| `studioHome` / `studioPort` | `context.dataDir/openfilm-studio` / `4823` | 面板自己那份 Studio 的 home 和端口。`studioHome` 可为已有状态目录覆盖（文档写明的例外）；`studioPort` 用于隔离测试。 |
+| `studioHome` | `context.dataDir/openfilm-studio` | 面板自己那份 Studio 的 home。可为已有状态目录覆盖（文档写明的例外）。**没有端口配置**：Studio 向系统要一个空闲端口（`port: 0`），真实端口和影片端口从它写在那里的 `run.json` 读回。 |
+
+也没有可配置的可执行文件和参数：OpenFilm 的版本钉在代码里（`miniapp/node/server.mjs` 的 `PINNED_OPENFILM_VERSION`）。
 
 ## 数据与访问
 
 **这个包会启动的进程**
 
-- `npx -y openfilm@0.2.5 open` —— 起 Studio（`openfilmBin`/`openfilmArgs` 已固定为这个；第一次跑会从 `registry.npmjs.org` 下载 OpenFilm）。
+- 面板直接调上游的 `startStudio`（`node --input-type=module -e 'import { startStudio } ...'`），入口用本地克隆的 `packages/openfilm/studio/server/server.mjs`，用 `port: 0` 让系统挑空闲端口（真实端口和影片端口从它写的 `run.json` 读回）、`advertise: true`、不开浏览器。**不跑 `openfilm open`**（那条路会去复用机器上已有的 Studio，可能拉起别的 app）。没有克隆时才用 npm 上钉住的 `openfilm@0.3.0`（第一次跑从 `registry.npmjs.org` 下载）。
 - `open -n <app>` / `open -a <app>`（macOS）—— 只开 `desktopCandidates()` 里那些固定位置（先 `<openfilmRepo>/apps/desktop/.dev/runtime` 下的 Dev 版，再 `/Applications/OpenFilm.app`、`~/Applications/OpenFilm.app`；Dev 候选依赖 `openfilmRepo` / `OPENFILM_REPO`）。
 - `open -R <path>` —— 在访达里显示项目路径（只限项目文件夹）。
 - `ps -ax -o command=` —— 看那个 app 是不是已经在跑。
@@ -64,7 +65,7 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 
 **网络**
 
-- `registry.npmjs.org`（第一次 `npx`）。
+- `registry.npmjs.org`（仅 npm 回退时，也就是没有本地克隆时）。
 - 面板和 Studio 之间只有本机回环（`127.0.0.1`/`localhost`）。你调用的 agent 用它们自己的账号和网络。
 
 **会读的文件**
@@ -72,6 +73,7 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 - `~/.openfilm/studio.json`（`flavor` 为 `dev` 时是 `~/.openfilm-dev/studio.json`）：有哪些项目（只读）。
 - 每个列出的项目的 `.film/id`（只读），用来定位项目。
 - `<openfilmRepo>/apps/desktop/src/*.mjs` —— 桌面 handler，会被导入并运行（文档写明的桌面模式前提）。
+- `<openfilmRepo>/packages/openfilm/studio/server/trash.mjs` —— 上游的 `moveToTrash`，聊天里「撤销一个回合」用它把新增的文件放进系统废纸篓。
 - `<openfilmRepo>/apps/desktop/.dev/runtime/*` —— 找要叫起的 Dev 版 app。
 - `<openfilmRepo>/apps/desktop/shell/dist/*` —— 伺服桌面版页面。
 - agent 自己的配置/会话记录（通过 `<openfilmRepo>/apps/desktop/src` 里的桌面 handler）：
@@ -86,6 +88,7 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 **会写的文件**
 
 - 只在 `context.dataDir`（`openfilm-studio/`）里：Studio home、偏好、缓存、日志、BYOK 主密钥和封存后的 BYOK 密钥。
+- **同一份 Studio home 里的 `studio.json`** 是用「你自己 OpenFilm home 里读到的项目列表」（`recent` 和 `folders`）写成的。面板里那份 Studio 读的是它自己的 `studio.json`，两边不一致编辑器就会答「no such project」。你自己的 `~/.openfilm/studio.json` 只读、不写。
 - 项目数据通过 OpenFilm 自己的 API/handler 写入（`.film/` 下的聊天记录、项目目录里的 agent 会话），跟桌面 app 一样，不是面板自己写的。
 - 旧的 `studioHome` 覆盖（`miniapp.config.local.json`）可以把 Studio home 指到别处（这台机器原来的 `~/.minimax/openfilm-studio`）。那是对已有状态目录的明确例外，不是一个任意可写路径。
 
@@ -94,9 +97,9 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 
 - **loopback 鉴权由 Host 做**（MiniMax Code 3.1.2+）：MiniApp 进程里的每个 `node:http` 服务都要每次运行一个凭据，包括本机直连和 WebSocket。这个包自己不造 token。
 - **页面、客户端 JS、日志、错误响应里都不放密钥**。`/miniapp/studio` 不再返回 Studio 的 key，iframe 地址里不再有 `/open?key=`；网页版和桌面版编辑器都同源伺服，key 只在服务端带上。
-- **代理有边界**。`/api/*` 只放编辑器用到的前缀（`/api/health`、`/api/projects`、`/api/files`、`/api/doctor`、`/api/library`、`/api/saved`、`/api/skills`、`/api/prefs`、`/api/examples`、`/api/fonts`、`/api/page-links`、`/api/exports`、`/api/look`），请求头只放 `accept`、`content-type`、`range`。`/p/*` 只读 GET/HEAD。WebSocket 只放 `/api/events` 和 `/api/projects/<id>/events`，只带握手头和 Studio key。
+- **代理有边界**。`/api/*` 只放编辑器用到的前缀与方法（`/api/health`、`/api/version`、`/api/projects`、`/api/files`、`/api/page-links`、`/api/exports`、`/api/look`、`/api/doctor`、`/api/diagnostics`、`/api/library`、`/api/canvas`、`/api/canvas-templates`、`/api/canvas-characters`、`/api/kept`、`/api/local-models`、`/api/saved`、`/api/skills`、`/api/prefs`、`/api/examples`、`/api/fonts`、`/api/browse`、`/api/locations`、`/api/pick-folder`、`/api/pick-files`），请求头只放 `accept`、`content-type`、`range`。`/api/get`（生成媒体，可能花钱）和 `/api/providers`（你的服务密钥）不代理。`/p/*` 只读 GET/HEAD。WebSocket 只放 `/api/events` 和 `/api/projects/<id>/events`，只带握手头和 Studio key。
 - **IPC 白名单 + 参数校验**（`server.mjs` 的 `IPC_RULES`）：安装、登录、`automatic` 一律不注册（403），其它频道逐个查参数。`desktop:reveal` 只限项目文件夹。和桌面版一样，页面也可以替你回答本地 agent 的权限提问（`desktop:local-agents:permission`）—— 聊天里的权限卡片就是这么工作的，而且这是你自己的界面。
-- **进程启动固定**。`open-desktop` 只开自动发现的 OpenFilm app；`openfilmBin`/`openfilmArgs` 固定为 `npx -y openfilm@0.2.5`，环境变量只给 `PATH`、`HOME`、`LANG`、`TMPDIR`、`OPENFILM_*`。
+- **进程启动固定**。`open-desktop` 只开自动发现的 OpenFilm app。Studio 用上游的 `startStudio`（端口由系统分配、不开浏览器）以最小环境变量启动（`PATH`、`HOME`、`LANG`、`TMPDIR`、`OPENFILM_*`）；npm 回退固定为 `openfilm@0.3.0`。
 - **状态放在 `context.dataDir`**（`openfilm-studio/`），插件目录里不写任何运行时数据。
 - 在面板里保存的自有密钥（BYOK）用本机 `0600` 主密钥做 AES-256-GCM 封存（桌面 app 用的是系统钥匙串；两边不共享）。这只是对落盘文件的混淆，不是钥匙串级保护 —— 主密钥就在同一目录里，而且也兼容旧的 `raw:`（明文）值。
 
@@ -107,16 +110,17 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 - 面板里**不提供 agent 的安装、登录、`automatic` 流程**（这些请去桌面版做）。
 - 原生文件/目录选择框和截屏返回 `null`（浏览器里没有原生对话框）。
 - 桌面模式需要 OpenFilm 仓库 + 构建（见前提）。
-- API 代理刻意排除了管理类路由（`/api/quit`、`/api/update`、`/api/open`、`/api/keys`），需要它们的操作在面板里不可用。
+- API 代理只放编辑器真正用到的路由与方法，并排除了管理类路由（`/api/quit`、`/api/update`、`/api/open`、`/api/desktop`）。
+- **`/api/get` 与 `/api/providers` 不代理**：用服务生成媒体（配音、音乐、图片、视频）和连接服务（填密钥）在面板里不可用，请用桌面版。画布（⌘E）、素材库和编辑器其余部分在面板里都正常。
 - 只在 macOS 测过；Windows/Linux 未测（有些地方用了 `open`、`pbcopy`、`ps`）。
 
 
 ## 测试环境
 
-- macOS（Apple Silicon）上的 MiniMax Code 桌面版 3.1.2+，Node 22，OpenFilm 0.2.5。
-- 桌面版页面带聊天栏和真实会话历史渲染正常，切项目正常。
+- macOS（Apple Silicon）上的 MiniMax Code 桌面版 3.1.2+，Node 22，OpenFilm 0.3.0。
+- 桌面版页面带聊天栏和真实会话历史渲染正常。
 - `chat:load` 返回真实会话；agent 名单 11 个；Codex ACP 探测能起会话；Claude Code 如实报未安装。
-- 验收脚本 44 项：启动、项目列表、桌面 IPC、名单、SSE、网页降级、缺构建报错、并发只起一个 Studio、SSE 开着时 dispose 不挂、评审要求的安全断言（页面无 key、路由与 IPC 白名单、参数校验、reveal 限制），以及预览链路（影片页代理、EDITOR 改写、同源放开、素材可读）。
+- 验收脚本 49 项（没有 OpenFilm 项目的机器上，少数与项目相关的会明确跳过）：启动、项目列表、桌面 IPC、名单、SSE、网页降级、缺构建报错、并发只起一个 Studio、SSE 开着时 dispose 不挂、评审要求的安全断言（页面无 key、路由与 IPC 白名单、参数校验、reveal 限制），以及预览链路（影片页代理、EDITOR 改写、同源放开、素材可读）。
 
 自己跑一遍验收：
 
@@ -124,7 +128,7 @@ manifest 最后要在：`~/.minimax/plugins/openfilm/.minimax-plugin/plugin.json
 node test/accept-miniapp.mjs        # 不想跑 Codex ACP 探测就 SKIP_PROBE=1
 ```
 
-全部实例用临时 home 和端口（4900–4903），跑完自己收掉；不碰你正在用的面板，也不写你的项目。桌面模式的检查需要 OpenFilm 仓库 + 构建（见前提）。装好后也开一次面板，看看设置 → 智能体。
+全部实例用临时 home 和系统分配的空闲端口，跑完自己收掉；不碰你正在用的面板，也不写你的项目。桌面模式的检查需要 OpenFilm 仓库 + 构建（见前提）。装好后也开一次面板，看看设置 → 智能体。
 
 ## 许可
 

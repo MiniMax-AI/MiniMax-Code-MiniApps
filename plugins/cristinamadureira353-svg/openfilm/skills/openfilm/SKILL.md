@@ -5,7 +5,7 @@ description: OpenFilm inside MiniMax Code. The panel is the OpenFilm desktop int
 
 # OpenFilm panel (Mini App)
 
-The official OpenFilm release (`openfilm@0.2.5`) is installed as a Mini App. The panel is OpenFilm itself.
+The official OpenFilm release (`openfilm@0.3.0`) is installed as a Mini App. The panel is OpenFilm itself.
 
 ## What the panel is
 
@@ -22,7 +22,7 @@ A MiniApp can only be a page + a Node process, so the Electron window cannot be 
 - Studio's `/api/*` and its WebSocket event stream are proxied same-origin, with the key attached on the server side only. The API proxy allows only the route prefixes the editor uses (no `quit`/`update`/`open`/`keys`), and forwards only `accept`, `content-type` and `range`. WebSocket upgrades are limited to the two event streams.
 - Film pages and media are proxied under `/p/*`: the embedded editor origin and Studio's `folder` URLs are rewritten to the panel's origin, and the film bridge's same-origin early return is disabled in the proxied copy. Without this the preview stays on "drawing the first frame".
 - Settings → Agents and the chat's agent menu use the **roster** (`agent-roster.mjs` + `agents.mjs`), not the `localAgents` list; both are wired.
-- **Security**: loopback authentication is done by the Host (MiniMax Code 3.1.2+). No secrets are injected into pages, client JS, logs, or error responses. IPC channels are an explicit allowlist with payload validation; installer, sign-in and `automatic` flows are not offered. `open-desktop` launches only fixed OpenFilm app locations, and OpenFilm is always started as `npx -y openfilm@0.2.5` with a minimal environment. State lives in `context.dataDir` (`openfilm-studio/`); the legacy `studioHome` override is documented in `## Data & access`.
+- **Security**: loopback authentication is done by the Host (MiniMax Code 3.1.2+). No secrets are injected into pages, client JS, logs, or error responses. IPC channels are an explicit allowlist with payload validation; installer, sign-in and `automatic` flows are not offered. `open-desktop` launches only fixed OpenFilm app locations. Studio is started through upstream's `startStudio` (OS-assigned port, `advertise: true`, no browser) from the clone named by `openfilmRepo`; when there is no clone, the pinned `openfilm@0.3.0` from npm is used instead. Always with a minimal environment. State lives in `context.dataDir` (`openfilm-studio/`); the legacy `studioHome` override is documented in `## Data & access`.
 - **Cleanup**: `dispose` closes local agent sessions, ends SSE streams, and quits only the Studio this instance spawned.
 
 Desktop handlers are not published to npm (`@openfilm/desktop`), so desktop mode needs the clone (`openfilmRepo`) and one build:

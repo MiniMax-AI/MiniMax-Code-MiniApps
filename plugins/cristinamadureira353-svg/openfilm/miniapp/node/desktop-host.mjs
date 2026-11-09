@@ -87,6 +87,8 @@ export async function registerDesktopIpc(ipcMain, options) {
   const load = async (file) => import(pathToFileURL(join(src, file)).href);
 
   const { registerChatIpc, readPreferences } = await load('chat-ipc.mjs');
+  /* 上游的废纸篓（0.3.0 的「撤销一个聊天回合」要用它把新增的文件放回废纸篓）。 */
+  const { moveToTrash } = await import(pathToFileURL(join(repoDir, 'packages', 'openfilm', 'studio', 'server', 'trash.mjs')).href);
   const { registerLocalAgentIpc } = await load('local-agents-ipc.mjs');
   const { registerSkillsIpc } = await load('skills-ipc.mjs');
 
@@ -119,6 +121,7 @@ export async function registerDesktopIpc(ipcMain, options) {
     projects,
     dataDir,
     reveal,
+    trash: (path) => moveToTrash(path),
     tell,
     log,
   });
@@ -152,7 +155,7 @@ export async function registerDesktopIpc(ipcMain, options) {
   /* 下面这些是 app 自己的（窗口、标签、更新、登录）——网页里没有，就照实说没有。 */
   ipcMain.handle('desktop:hello', () => ({
     flavor: 'dev',
-    version: options.openfilmVersion || '0.2.5',
+    version: options.openfilmVersion || '0.3.0',
     ffmpeg: null,
     update: null,
     chatOpen: true,
@@ -225,6 +228,7 @@ export async function registerDesktopIpc(ipcMain, options) {
   });
 
   ipcMain.handle('desktop:agents:list', () => { void roster.refresh(); return roster.list(); });
+  ipcMain.handle('desktop:agents:refresh', () => roster.recheck());
   ipcMain.handle('desktop:agents:connect', (event, { id } = {}) => roster.connect(String(id)));
   ipcMain.handle('desktop:agents:disconnect', (event, { id } = {}) => { roster.disconnect(String(id)); return { ok: true }; });
   ipcMain.handle('desktop:agents:usage', (event, { id, fresh } = {}) => agentUsage(String(id), { fresh: fresh === true }));

@@ -2,7 +2,7 @@
  * OpenFilm MiniApp 的完整验收。
  *
  * 跑法：node test/accept-miniapp.mjs
- * 全部实例都用**临时的 home 和端口**（4900–4903），跑完自己收掉；
+ * 全部实例都用**临时的 home 和系统分配的空闲端口**，跑完自己收掉；
  * 不碰你正在用的面板，也不写你的项目（项目列表只读）。
  * 没有 OpenFilm 项目的机器上，与项目相关的两项检查会明确跳过。
  *
@@ -72,7 +72,10 @@ async function boot(pluginRoot, port, studioHome) {
   const waitReady = async () => {
     for (let i = 0; i < 240; i++) {
       const { data } = await json('/miniapp/studio');
-      if (data?.ready) return data;
+      /* Studio 起来之后，桌面版的 handler 才异步接上（server.mjs 里 ensureStudio().then(ensureDesktopHost)），
+         所以「就绪」要等到桌面侧也有个结论：接上了（ready），或者报错了（error）。只看 data.ready 会抢跑。 */
+      const settled = data?.desktop?.on === false || Boolean(data?.desktop?.ready) || Boolean(data?.desktop?.error);
+      if (data?.ready && settled) return data;
       await sleep(500);
     }
     return null;
@@ -115,10 +118,14 @@ const portFree = (port) => {
 
 /* ───────────────────────── 1. 主实例：桌面版模式 ───────────────────────── */
 console.log('\n【1】桌面版模式（主实例）');
-const mainPkg = await tempPackage({ studioPort: await freePort() });
+const mainPkg = await tempPackage({});
 const main = await boot(mainPkg.root, await freePort(), mainPkg.studioHome);
 const studio = await main.waitReady();
 check('Studio 起来', Boolean(studio), studio ? `mode=${studio.mode}` : '超时');
+{
+  const h = await main.json('/api/health');
+  check('Studio 是钉住的 0.3.0（不是机器上别的版本）', h.data?.version === '0.3.0', `version=${h.data?.version}`);
+}
 check('桌面模式就绪', studio?.desktop?.ready === true, JSON.stringify(studio?.desktop ?? {}));
 
 const tree = await main.json('/miniapp/tree');
@@ -196,6 +203,8 @@ console.log('\n【2b】评审要求的安全边界');
   check('/api/quit 被白名单挡住', quit.status === 403, `HTTP ${quit.status}`);
   const open = await main.call('/api/open');
   check('/api/open 被白名单挡住', open.status === 403, `HTTP ${open.status}`);
+  const looseCwd = await main.ipc('desktop:local-agents:start', { agent: 'codex', cwd: '/' });
+  check('本地 agent 只许在项目文件夹里跑', looseCwd.status === 403, `HTTP ${looseCwd.status}`);
   const auto = await main.ipc('desktop:agents:automatic', { id: 'codex' });
   check('automatic 流程被 IPC 白名单挡住', auto.status === 403, `HTTP ${auto.status}`);
   const bad = await main.ipc('desktop:agents:shown', { id: 'codex', shown: 'yes' });
@@ -223,12 +232,23 @@ await rm(mainPkg.root, { recursive: true, force: true });
 
 /* ───────────────────────── 2. 降级：desktopMode false ───────────────────────── */
 console.log('\n【4】降级：关掉桌面模式就是网页版');
-const webPort = await freePort();
-const web = await tempPackage({ desktopMode: false, studioPort: webPort });
+const web = await tempPackage({ desktopMode: false });
+/* 面板自己那份项目清单不能被用户那份盖掉：先只往面板 home 里塞一个项目，起完之后看它还在不在。 */
+const ownOnly = await mkdtemp(join(tmpdir(), 'of-own-'));
+await mkdir(join(ownOnly, '.film'), { recursive: true });
+await writeFile(join(ownOnly, '.film', 'id'), 'OwnOnlyProject01\n');
+await mkdir(web.studioHome, { recursive: true });
+await writeFile(join(web.studioHome, 'studio.json'), JSON.stringify({ recent: [{ id: 'OwnOnlyProject01', path: ownOnly, openedAt: Date.now() }], folders: [] }, null, 2));
 const webApp = await boot(web.root, await freePort(), web.studioHome);
 const webStudio = await webApp.waitReady();
 check('网页模式 Studio 起来', Boolean(webStudio));
 check('desktop.on = false', webStudio?.desktop?.on === false);
+{
+  const wt = await webApp.json('/miniapp/tree');
+  const paths = (wt.data?.groups ?? []).flatMap((g) => [g.project.path, ...(g.children ?? []).map((c) => c.project.path)]);
+  check('面板自己的项目没被用户那份盖掉（合并而不是覆盖）', paths.includes(ownOnly));
+  if (firstProject) check('用户那份的项目也还在（两边合并）', paths.includes(firstProject.path), `${paths.length} 个项目`);
+}
 if (firstProject) {
   const wp = await webApp.call('/projects/' + firstProject.id);
   check('网页模式编辑器也同源伺服（不带 key）', wp.status === 200 && !wp.text.includes('/open?key='), `HTTP ${wp.status}`);
@@ -236,13 +256,15 @@ if (firstProject) {
 const noBridge = await webApp.call('/bridge-web.js');
 check('网页模式不伺服**我们的**桥（返回的是 Studio 编辑器）', !noBridge.text.includes('openfilmNative'), `HTTP ${noBridge.status}`);
 await webApp.app.dispose();
-check('网页模式 dispose 后端口空了', portFree(webPort));
+/* 端口是系统挑的（port: 0），所以按它自己报的 origin 去查，而不是测试开头写死的那个。 */
+const webOriginPort = Number(new URL(webStudio?.origin ?? 'http://127.0.0.1:0').port);
+check('网页模式 dispose 后端口空了', webOriginPort > 0 && portFree(webOriginPort), `port ${webOriginPort}`);
 await rm(web.root, { recursive: true, force: true });
+await rm(ownOnly, { recursive: true, force: true });
 
 /* ───────────────────────── 3. 桌面版没构建：要报错，不是白屏 ───────────────────────── */
 console.log('\n【5】桌面版页面没构建时');
-const brokenPort = await freePort();
-const broken = await tempPackage({ desktopMode: true, shellDist: '/nonexistent-of-shell', studioPort: brokenPort });
+const broken = await tempPackage({ desktopMode: true, shellDist: '/nonexistent-of-shell' });
 const brokenApp = await boot(broken.root, await freePort(), broken.studioHome);
 await brokenApp.waitReady();
 let brokenStudio = null;
@@ -260,15 +282,14 @@ await rm(broken.root, { recursive: true, force: true });
 
 /* ───────────────────────── 4. 生命周期：幂等 + 并发 + 收尾 ───────────────────────── */
 console.log('\n【6】两个面板同时开：只许起一个 Studio');
-const lifeStudioPort = await freePort();
-const life = await tempPackage({ desktopMode: false, studioPort: lifeStudioPort });
+const life = await tempPackage({ desktopMode: false });
 const a = await boot(life.root, await freePort(), life.studioHome);
 const b = await boot(life.root, await freePort(), life.studioHome);
 const [sa, sb] = await Promise.all([a.waitReady(), b.waitReady()]);
 check('两个都起来了', Boolean(sa && sb), `A=${sa?.mode} B=${sb?.mode}`);
 check('一个 spawned 一个 reused', new Set([sa?.mode, sb?.mode]).size === 2 || sa?.mode === 'reused' && sb?.mode === 'reused',
   `A=${sa?.mode} B=${sb?.mode}`);
-if (hasLsof) {
+if (hasLsof && sa?.origin) {
   const listeners = execFileSync('bash', ['-c', `lsof -nP -iTCP:${new URL(sa.origin).port} -sTCP:LISTEN -t | sort -u | wc -l`], { encoding: 'utf8' }).trim();
   check('只起一个 Studio 进程', listeners === '1', `${listeners} 个`);
 } else {
@@ -282,7 +303,9 @@ check('A dispose（SSE 开着）不挂', disposeA === 'done', disposeA);
 await aSse.body.cancel().catch(() => {});
 const disposeB = await Promise.race([b.app.dispose().then(() => 'done'), sleep(15000).then(() => 'timeout')]);
 check('B dispose 完成', disposeB === 'done', disposeB);
-check('两份都收了之后没有 Studio 留下', portFree(lifeStudioPort));
+/* 同上：按 Studio 自己报的 origin 端口查，不按测试写死的端口。 */
+const lifeOriginPort = Number(new URL(sa?.origin ?? 'http://127.0.0.1:0').port);
+check('两份都收了之后没有 Studio 留下', lifeOriginPort > 0 && portFree(lifeOriginPort), `port ${lifeOriginPort}`);
 /* 如果这次复用的是上一轮留下的 Studio（reused），顺手收掉它，免得测试越积越多。
    只收高位端口的测试 Studio，4823 那个真面板的一律不碰。 */
 for (const origin of [sa?.origin, sb?.origin]) {
