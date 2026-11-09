@@ -2,18 +2,16 @@
 
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, parse } from 'node:path';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 /**
- * Resolve the active Host data root. context.dataDir may live beneath that
- * root, so a bounded ancestor walk is preferred over guessing a home path.
- * @param {MiniAppContext} context
+ * The Host data root comes only from variables the Host itself documents.
+ * This package never infers it by walking up from context.dataDir: that would
+ * make Mini App state depend on the Host's directory layout.
  * @param {NodeJS.ProcessEnv} [env]
  */
-export function dataRoot(context, env = process.env) {
-  const fromDataDir = findDataRoot(context.dataDir);
-  if (fromDataDir) return fromDataDir;
+export function dataRoot(env = process.env) {
   const explicit = env.MINIMAX_DATA_DIR?.trim();
   if (explicit) return explicit;
   const mavis = env.MAVIS_HOME?.trim();
@@ -21,27 +19,9 @@ export function dataRoot(context, env = process.env) {
   return join(homedir(), '.minimax');
 }
 
-/** @param {MiniAppContext} context @param {NodeJS.ProcessEnv} [env] */
-export function usageDbPath(context, env) {
-  return join(dataRoot(context, env), 'v2', 'sqlite', 'runtime-state.sqlite');
-}
-
-/** @param {string} dataDir */
-function findDataRoot(dataDir) {
-  if (!dataDir) return null;
-  let dir = dataDir;
-  for (let i = 0; i < 12; i += 1) {
-    if (parse(dir).root === dir) break;
-    if (basename(dir) === 'v2') return dirname(dir);
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-}
-
-function basename(value) {
-  return value.split(/[\\/]/).pop() ?? '';
+/** @param {NodeJS.ProcessEnv} [env] */
+export function usageDbPath(env = process.env) {
+  return join(dataRoot(env), 'v2', 'sqlite', 'runtime-state.sqlite');
 }
 
 /** @param {Date} [now] */
@@ -59,13 +39,14 @@ export function monthWindow(now = new Date()) {
  * Sum the runtime's token counters inside the local calendar month. The
  * database is copied into a fresh snapshot node:sqlite can open read-only,
  * including any WAL side files; the plugin never writes to the Host database.
+ * Callers must only reach this after the user turned the local usage scan on.
  * @param {{ startMs: number, endMs: number }} window
  * @param {MiniAppContext} context
  * @param {NodeJS.ProcessEnv} [env]
  * @param {{ sqlite?: any, now?: () => number }} [deps]
  */
 export async function readUsedTokens({ startMs, endMs }, context, env = process.env, deps = {}) {
-  const file = usageDbPath(context, env);
+  const file = usageDbPath(env);
   const info = await stat(file).catch(() => null);
   if (!info?.isFile()) return { ok: false, code: 'db_missing' };
 

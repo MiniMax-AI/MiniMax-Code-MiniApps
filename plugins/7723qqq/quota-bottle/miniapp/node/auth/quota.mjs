@@ -1,6 +1,6 @@
 // @ts-check
 
-import { loadQuotaConfig } from './config.mjs';
+import { loadQuotaConfig } from './snapshot.mjs';
 import { resolveCredentialFromSnapshot } from './auth.mjs';
 import { QuotaError, pickMostSpecific } from '../errors.mjs';
 import { fetchWithoutRedirect } from '../net.mjs';
@@ -25,11 +25,12 @@ export function quotaEndpoint(baseUrl) {
  * host rejects may belong to the other region, and a host that refuses the
  * credential must not hide a host that accepts it. The failure that gets
  * reported is the one the user can act on.
+ * @param {string} dataDir
  * @param {AbortSignal} [signal]
  * @param {{ fetchImpl?: typeof fetch }} [deps]
  */
-export async function fetchQuota(signal, deps = {}) {
-  const snapshot = await loadQuotaConfig();
+export async function fetchQuota(dataDir, signal, deps = {}) {
+  const snapshot = await loadQuotaConfig(dataDir);
   if (!snapshot.ok) throw new QuotaError(snapshot.code);
   const { config } = snapshot;
   const credential = await resolveCredentialFromSnapshot({
@@ -69,7 +70,7 @@ async function readQuota(baseUrl, token, signal, timeoutMs, fetchImpl) {
   const response = await fetchWithoutRedirect(quotaEndpoint(baseUrl), {
     method: 'GET',
     headers: {
-      'User-Agent': 'quota-bottle/1.3.0',
+      'User-Agent': 'quota-bottle/1.15.3',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },

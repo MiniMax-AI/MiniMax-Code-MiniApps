@@ -1,6 +1,6 @@
 // @ts-check
 
-import { getConfigPath, updateConfigFile } from './config.mjs';
+import { saveCredentials } from './credentials.mjs';
 import { OAUTH_CLIENT } from './oauth-client.mjs';
 import { QuotaError } from '../errors.mjs';
 import { normalizeFlexibleExpiry } from '../urls.mjs';
@@ -13,32 +13,36 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const pendingRefreshes = new Map();
 
 /**
- * Write OAuth credentials without dropping unknown fields. The token replaces
- * any API key and sets the region in the CLI's own config.
+ * Store the panel login's credential in this package's own data directory.
+ * The user's CLI config is never written, so its api_key, base_url and OAuth
+ * token stay exactly as the user left them.
+ * @param {string} dataDir
  * @param {'cn' | 'global'} region
  * @param {Record<string, unknown>} credentials
  * @param {AbortSignal} [signal]
  */
-export async function saveOauth(region, credentials, signal) {
-  await updateConfigFile((raw) => {
-    if (signal?.aborted) throw new Error('aborted');
-    delete raw.api_key;
-    raw.oauth = { ...credentials, region };
-    raw.region = region;
-    delete raw.base_url;
-  });
+export async function saveOauth(dataDir, region, credentials, signal) {
+  if (signal?.aborted) throw new Error('aborted');
+  await saveCredentials(dataDir, { ...credentials, region });
 }
 
 /**
  * Resolve a credential from the config snapshot supplied by the caller.
- * @param {{ oauth?: (Record<string, unknown> & { configPath?: string }) | null, apiKey?: string }} snapshot
+ * @param {{ oauth?: (Record<string, unknown> & { configPath?: string, storePath?: string, persist?: (updated: Record<string, unknown>) => Promise<void> }) | null, apiKey?: string }} snapshot
  * @param {AbortSignal} [signal]
  */
 export async function resolveCredentialFromSnapshot(snapshot, signal) {
   const oauth = snapshot.oauth;
   if (oauth && typeof oauth.access_token === 'string' && oauth.access_token) {
-    const token = await ensureFreshToken(oauth, signal);
-    return { token, method: /** @type {'oauth'} */ ('oauth') };
+    try {
+      const token = await ensureFreshToken(oauth, signal);
+      return { token, method: /** @type {'oauth'} */ ('oauth') };
+    } catch (error) {
+      // A CLI-owned token is never refreshed. When it has expired, a valid API
+      // key beside it is still a credential the user configured, so use it
+      // instead of sending them through a login they do not need.
+      if (!(error instanceof QuotaError) || error.code !== 'oauth_expired' || !snapshot.apiKey) throw error;
+    }
   }
   if (typeof snapshot.apiKey === 'string' && snapshot.apiKey) {
     return { token: snapshot.apiKey, method: /** @type {'api-key'} */ ('api-key') };
@@ -48,8 +52,10 @@ export async function resolveCredentialFromSnapshot(snapshot, signal) {
 
 /**
  * Refresh and persist a token approaching expiry. Concurrent callers share one
- * network request and one config write.
- * @param {Record<string, unknown> & { configPath?: string }} creds
+ * network request and one credential write. Only a credential this package
+ * owns is persisted; a CLI-owned token is used while valid and then reported
+ * as expired instead of being rotated behind the CLI's back.
+ * @param {Record<string, unknown> & { configPath?: string, storePath?: string, persist?: (updated: Record<string, unknown>) => Promise<void> }} creds
  * @param {AbortSignal} [signal]
  * @param {{ fetchImpl?: typeof fetch }} [deps]
  */
@@ -57,13 +63,19 @@ export async function ensureFreshToken(creds, signal, deps = {}) {
   const expiresAt = new Date(String(creds.expires_at)).getTime();
   const accessToken = String(creds.access_token ?? '');
   const refreshToken = String(creds.refresh_token ?? '');
-  if (!refreshToken) {
-    if (Number.isFinite(expiresAt) && Date.now() < expiresAt - REFRESH_BUFFER_MS) return accessToken;
+  const valid = Number.isFinite(expiresAt) && Date.now() < expiresAt - REFRESH_BUFFER_MS;
+  const persist = typeof creds.persist === 'function' ? creds.persist : null;
+
+  if (!persist) {
+    if (valid && accessToken) return accessToken;
     throw new QuotaError('oauth_expired');
   }
-  if (Number.isFinite(expiresAt) && Date.now() < expiresAt - REFRESH_BUFFER_MS) return accessToken;
+  if (valid && accessToken) return accessToken;
+  if (!refreshToken) {
+    throw new QuotaError('oauth_expired');
+  }
   const region = creds.region === 'cn' || creds.region === 'global' ? creds.region : 'global';
-  const key = JSON.stringify([String(creds.configPath ?? getConfigPath()), region, refreshToken]);
+  const key = JSON.stringify([String(creds.storePath ?? creds.configPath ?? 'plugin'), region, refreshToken]);
   const existing = pendingRefreshes.get(key);
   if (existing && !signal?.aborted) return existing;
   const pending = (async () => {
@@ -76,10 +88,7 @@ export async function ensureFreshToken(creds, signal, deps = {}) {
     };
     if (typeof creds.account === 'string') updated.account = creds.account;
     if (signal?.aborted) throw new QuotaError('timeout');
-    await updateConfigFile((raw) => {
-      if (signal?.aborted) throw new Error('aborted');
-      raw.oauth = updated;
-    }, String(creds.configPath ?? getConfigPath()));
+    await persist(updated);
     return fresh.access_token;
   })();
   pendingRefreshes.set(key, pending);

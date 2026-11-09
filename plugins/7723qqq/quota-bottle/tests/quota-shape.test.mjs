@@ -4,8 +4,8 @@ import test from 'node:test';
 import { normalizeQuota } from '../miniapp/node/quota.mjs';
 
 test('a percentage-only window is a real quota and is not dropped', () => {
-  // The desktop reports the text plan without token counts: a zero total and a
-  // remaining percentage. Dropping this row would hide the whole quota.
+  // The Token Plan reports the text quota without token counts: a zero total
+  // and a remaining percentage. Dropping this row would hide the whole quota.
   const result = normalizeQuota({
     model_remains: [{
       model_name: 'general',
@@ -45,7 +45,7 @@ test('a counted window still reports counts', () => {
   assert.equal(result.percent, 60);
 });
 
-test('the first model row is the headline, the row the desktop panel reads', () => {
+test('the first model row is the headline', () => {
   const result = normalizeQuota({
     model_remains: [
       { model_name: 'video', current_interval_total_count: 3, current_interval_usage_count: 3, current_interval_remaining_percent: 100 },
@@ -53,9 +53,9 @@ test('the first model row is the headline, the row the desktop panel reads', () 
     ],
   });
   assert.equal(result.ok, true);
-  // Row order is the service's, and the desktop's own usage panel reads its
-  // first row. Picking a different row here would show a second number next to
-  // that panel, so the bottle follows the same rule.
+  // Row order is the service's, and the plan's own panel reads its first row.
+  // Picking a different row here would show a second number next to that
+  // panel, so the bottle follows the same rule.
   assert.equal(result.primaryModel, 'video');
   assert.equal(result.percent, 100);
   assert.equal(result.models.length, 2);

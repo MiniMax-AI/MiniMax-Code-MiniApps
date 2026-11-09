@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,13 +8,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { dataRoot, monthWindow, readUsedTokens, usageDbPath } from '../miniapp/node/usage.mjs';
 import { disposeTemp, tempDir } from './helpers.mjs';
 
-const contextFor = (root, dataDir = join(root, 'root', 'v2', 'plugin-data', 'quota-bottle')) => ({ dataDir });
-
 async function makeDb(root, table = true) {
-  const context = contextFor(root);
+  const context = { dataDir: join(root, 'data') };
+  const env = { MINIMAX_DATA_DIR: join(root, 'root') };
   await mkdir(join(root, 'root', 'v2', 'sqlite'), { recursive: true });
   await mkdir(context.dataDir, { recursive: true });
-  const file = usageDbPath(context, {});
+  const file = usageDbPath(env);
   const db = new DatabaseSync(file);
   if (table) {
     db.exec(`
@@ -28,12 +28,13 @@ async function makeDb(root, table = true) {
     db.exec('CREATE TABLE other (a INTEGER);');
   }
   db.close();
-  return context;
+  return { context, env };
 }
 
-test('dataRoot prefers the active data directory ancestor', () => {
-  const root = join('G:', 'mimimaxcode', 'instance');
-  assert.equal(dataRoot(contextFor(root), {}), join(root, 'root'));
+test('dataRoot comes from explicit Host variables, never from dataDir', () => {
+  assert.equal(dataRoot({ MINIMAX_DATA_DIR: join('G:', 'mimimaxcode', 'instance') }), join('G:', 'mimimaxcode', 'instance'));
+  assert.equal(dataRoot({ MAVIS_HOME: join('G:', 'mavis') }), join('G:', 'mavis'));
+  assert.equal(dataRoot({}), join(homedir(), '.minimax'));
 });
 
 test('monthWindow uses a half-open local calendar month', () => {
@@ -46,8 +47,8 @@ test('monthWindow uses a half-open local calendar month', () => {
 test('readUsedTokens sums only rows inside the month window', async () => {
   const dir = await tempDir('quota-usage-');
   try {
-    const context = await makeDb(dir);
-    const result = await readUsedTokens({ startMs: 100, endMs: 300 }, context, {});
+    const { context, env } = await makeDb(dir);
+    const result = await readUsedTokens({ startMs: 100, endMs: 300 }, context, env);
     assert.deepEqual(result, { ok: true, used: 110, rows: 2 });
   } finally {
     await disposeTemp(dir);
@@ -58,9 +59,12 @@ test('readUsedTokens reports a missing table and a missing database', async () =
   const dir = await tempDir('quota-usage-schema-');
   try {
     const noTable = await makeDb(dir, false);
-    assert.deepEqual(await readUsedTokens({ startMs: 0, endMs: 999 }, noTable, {}), { ok: false, code: 'db_schema' });
-    const missing = contextFor(join(dir, 'missing'));
-    assert.equal((await readUsedTokens({ startMs: 0, endMs: 999 }, missing, {})).code, 'db_missing');
+    assert.deepEqual(await readUsedTokens({ startMs: 0, endMs: 999 }, noTable.context, noTable.env), { ok: false, code: 'db_schema' });
+    const missing = {
+      context: { dataDir: join(dir, 'missing-data') },
+      env: { MINIMAX_DATA_DIR: join(dir, 'missing-root') },
+    };
+    assert.equal((await readUsedTokens({ startMs: 0, endMs: 999 }, missing.context, missing.env)).code, 'db_missing');
   } finally {
     await disposeTemp(dir);
   }

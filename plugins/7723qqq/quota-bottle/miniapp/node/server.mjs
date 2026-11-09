@@ -7,15 +7,16 @@ import { join } from 'node:path';
 import { ValueCache } from './cache.mjs';
 import { QuotaError, isLoginFixable, pickMostSpecific, safeErrorCode } from './errors.mjs';
 import { saveOauth } from './auth/auth.mjs';
-import { normalizeRegion, readConfiguredRegion } from './auth/config.mjs';
+import { normalizeRegion } from './auth/config.mjs';
 import { openBrowser, pollDeviceLogin, startDeviceLogin } from './auth/oauth.mjs';
-import { fetchDesktopSessionQuota } from './desktop-session.mjs';
+import { readConfiguredRegion } from './auth/snapshot.mjs';
 import { fetchQuota, manualState, normalizeQuota } from './quota.mjs';
+import { readSettings, writeSettings } from './settings.mjs';
 import { createStore, normalizeTotal } from './store.mjs';
 import { monthWindow, readUsedTokens } from './usage.mjs';
 
-// The desktop reads the same endpoint with a five second cache of its own, so
-// three seconds here keeps a pinned window close to live without adding load.
+// Three seconds keeps a pinned window close to live without adding load; the
+// page polls every five seconds while pinned.
 const LIVE_TTL_MS = 3_000;
 const USAGE_TTL_MS = 15_000;
 const BODY_LIMIT = 4096;
@@ -33,8 +34,7 @@ export async function start(context) {
 
   const liveCache = new ValueCache(LIVE_TTL_MS);
   const usageCache = new ValueCache(USAGE_TTL_MS);
-  /** @type {'cn' | 'global' | null} */
-  let lastLiveRegion = null;
+  let settings = await readSettings(context.dataDir);
   /** @type {any} */
   let loginFlow = null;
   /** @type {Promise<any> | null} */
@@ -51,45 +51,20 @@ export async function start(context) {
   }
 
   async function liveValue() {
-    /** @type {string[]} */
-    const failures = [];
-    // The desktop's own session first: it is a credential the user already has,
-    // and it reports the same Token Plan quota the desktop shows.
     try {
-      // The client's region is not ours to know: the first read discovers it,
-      // and later reads start with the region that answered.
-      const preferred = lastLiveRegion ?? (await readConfiguredRegion());
-      const session = await fetchDesktopSessionQuota(context, {
-        preferredRegion: preferred,
-        signal: service.signal,
-      });
-      const normalized = normalizeQuota(session.payload);
-      if (normalized.ok) {
-        lastLiveRegion = session.region;
-        context.logger.info('quota-bottle.live.ok', { source: 'desktop', region: session.region, models: normalized.models.length });
-        return { ...normalized, detail: session.detail, region: session.region };
-      }
-      failures.push(normalized.code);
-    } catch (error) {
-      const code = error instanceof QuotaError ? error.code : 'unknown';
-      context.logger.warn('quota-bottle.live.desktop_failed', { code });
-      failures.push(code);
-    }
-    try {
-      const payload = await fetchQuota(service.signal);
+      const payload = await fetchQuota(context.dataDir, service.signal);
       const normalized = normalizeQuota(payload);
       if (normalized.ok) {
-        context.logger.info('quota-bottle.live.ok', { source: 'cli', models: normalized.models.length });
+        context.logger.info('quota-bottle.live.ok', { source: 'credential', models: normalized.models.length });
         return { ...normalized, detail: 'token-plan' };
       }
       context.logger.warn('quota-bottle.live.empty', { code: normalized.code });
-      failures.push(normalized.code);
+      return { ok: false, code: safeErrorCode(normalized.code) };
     } catch (error) {
       const code = error instanceof QuotaError ? error.code : 'unknown';
       context.logger.warn('quota-bottle.live.failed', { code });
-      failures.push(code);
+      return { ok: false, code: safeErrorCode(pickMostSpecific([code])) };
     }
-    return { ok: false, code: safeErrorCode(pickMostSpecific(failures)) };
   }
 
   async function liveState(fresh) {
@@ -97,19 +72,21 @@ export async function start(context) {
   }
 
   async function usageState(window, fresh) {
+    if (!settings.usageScan) return { ok: false, code: 'usage_scan_off' };
     return usageCache.get(fresh, () => track(readUsedTokens(window, context)), window.label);
   }
 
   async function buildState(fresh = false) {
     const live = await liveState(fresh);
     if (live.ok) {
-      // The desktop's panel reads the first row of `model_remains`; taking a
-      // different row here would show a second number next to that panel.
+      // The plan's first row is the headline; a different row would be a
+      // second number next to the plan's own panel.
       const primary = live.models[0];
       return {
         generatedAt: Date.now(),
         mode: 'live',
         region: live.region,
+        usageScan: settings.usageScan,
         total: live.total,
         used: live.used,
         remaining: live.remaining,
@@ -134,12 +111,13 @@ export async function start(context) {
     const used = await usageState(window, fresh);
     // The manual fallback has no live session to ask, so the configured region
     // is the only hint available for the label.
-    const region = await readConfiguredRegion();
+    const region = await readConfiguredRegion(context.dataDir);
     const problems = [live.code];
     if (!used.ok) problems.push(used.code);
     const base = {
       generatedAt: Date.now(),
       region,
+      usageScan: settings.usageScan,
       period: window.label,
       resetAt: window.endMs,
       remainsMs: null,
@@ -173,6 +151,7 @@ export async function start(context) {
       setFlow: (value) => { loginFlow = value; },
       getLoginRequest: () => loginRequest,
       setLoginRequest: (value) => { loginRequest = value; },
+      setSettings: (value) => { settings = value; },
       clearCache: () => { liveCache.clear(); usageCache.clear(); },
       buildState,
     }));
@@ -228,6 +207,7 @@ async function handleRoute(route, url, request, response, deps) {
     return;
   }
   if (route === 'POST /api/quota') return handleQuotaPost(request, response, deps);
+  if (route === 'POST /api/settings') return handleSettingsPost(request, response, deps);
   sendJson(response, 404, { error: 'not_found' });
 }
 
@@ -279,7 +259,7 @@ async function handleLoginStatus(response, deps) {
   try {
     const result = await pollDeviceLogin(flow, deps.service.signal);
     if (result.status === 'success' && result.credentials && deps.getFlow() === flow) {
-      await saveOauth(flow.region, result.credentials, deps.service.signal);
+      await saveOauth(deps.context.dataDir, flow.region, result.credentials, deps.service.signal);
       deps.clearCache();
       deps.setFlow(null);
     }
@@ -304,6 +284,21 @@ async function handleQuotaPost(request, response, deps) {
     await deps.store.write(total);
     deps.clearCache();
     sendJson(response, 200, { ok: true, total });
+  } catch {
+    sendJson(response, 500, { error: 'write_failed' });
+  }
+}
+
+/** @param {any} deps */
+async function handleSettingsPost(request, response, deps) {
+  const body = await readJsonBody(request, response);
+  if (body === undefined) return;
+  if (typeof body?.usageScan !== 'boolean') return sendJson(response, 400, { error: 'invalid_settings' });
+  try {
+    const next = await writeSettings(deps.context.dataDir, { usageScan: body.usageScan });
+    deps.setSettings(next);
+    deps.clearCache();
+    sendJson(response, 200, { ok: true, usageScan: next.usageScan });
   } catch {
     sendJson(response, 500, { error: 'write_failed' });
   }

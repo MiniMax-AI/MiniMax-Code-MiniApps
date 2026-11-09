@@ -8,8 +8,6 @@ export const ERROR_CODES = Object.freeze([
   'unauthorized',
   'invalid_credential',
   'missing_credential',
-  'desktop_session_expired',
-  'desktop_unavailable',
   'api_rejected',
   'quota_exhausted',
   'http_error',
@@ -18,6 +16,7 @@ export const ERROR_CODES = Object.freeze([
   'invalid_response',
   'no_quota',
   'balance_credential',
+  'usage_scan_off',
   'db_missing',
   'db_unreadable',
   'db_schema',
@@ -36,7 +35,6 @@ export const LOGIN_FIXABLE_CODES = Object.freeze([
   'unauthorized',
   'invalid_credential',
   'missing_credential',
-  'desktop_session_expired',
   'config_invalid',
   'config_unreadable',
 ]);
@@ -46,7 +44,6 @@ export const LOGIN_FIXABLE_CODES = Object.freeze([
  * the failure the user can act on instead of the last one that happened.
  */
 const SPECIFICITY = Object.freeze([
-  'desktop_session_expired',
   'invalid_credential',
   'missing_credential',
   'unauthorized',
@@ -54,7 +51,6 @@ const SPECIFICITY = Object.freeze([
   'no_credential',
   'balance_credential',
   'quota_exhausted',
-  'desktop_unavailable',
   'api_rejected',
   'http_error',
   'invalid_response',

@@ -58,24 +58,35 @@ export function normalizeUserCode(value) {
   return typeof value === 'string' && /^[A-Za-z0-9-]{4,32}$/.test(value) ? value : null;
 }
 
-/** @param {unknown} value */
-export function normalizeAbsoluteExpiry(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value > Date.now() && value < Date.now() + 24 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000;
+// A device code lives for minutes. An access token can be days out: the
+// account service currently answers with an absolute timestamp about 48 hours
+// ahead, so a token expiry gets a wider horizon than a device code.
+const MAX_TOKEN_AHEAD_MS = 30 * DAY_MS;
+
+/**
+ * @param {unknown} value
+ * @param {number} [maxAheadMs]
+ */
+export function normalizeAbsoluteExpiry(value, maxAheadMs = DAY_MS) {
+  const now = Date.now();
+  return typeof value === 'number' && Number.isFinite(value) && value > now && value < now + maxAheadMs
     ? value
     : null;
 }
 
 /**
  * Read an expiry that may arrive as an absolute timestamp or as a lifetime in
- * seconds. A value below one trillion is a lifetime, so a service that counts
- * down instead of counting to a moment still yields a usable expiry.
+ * seconds. A value at or above one trillion is an absolute millisecond
+ * timestamp; a smaller one is a lifetime in seconds. The account service uses
+ * both shapes, and its access token is valid for days rather than hours.
  * @param {unknown} value
  */
 export function normalizeFlexibleExpiry(value) {
   const number = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(number) || number <= 0) return null;
-  if (number >= 1e12) return normalizeAbsoluteExpiry(number);
-  return normalizeAbsoluteExpiry(Date.now() + number * 1000);
+  if (number >= 1e12) return normalizeAbsoluteExpiry(number, MAX_TOKEN_AHEAD_MS);
+  return normalizeAbsoluteExpiry(Date.now() + number * 1000, MAX_TOKEN_AHEAD_MS);
 }
 
 /** @param {unknown} value */

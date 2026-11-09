@@ -320,6 +320,16 @@
 
   .floatStatus[hidden] { display: none; }
 
+  .floatDetails {
+    max-width: 196px;
+    font-size: 8.5px;
+    line-height: 1.3;
+    text-align: center;
+    opacity: 0.8;
+  }
+
+  .floatDetails[hidden] { display: none; }
+
   .panel {
     padding: 14px;
     border: 1px solid var(--line);
@@ -339,6 +349,25 @@
   .row {
     display: flex;
     gap: 8px;
+  }
+
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .check input {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    margin: 2px 0 0;
+    padding: 0;
+    accent-color: var(--accent);
   }
 
   input {
@@ -551,7 +580,7 @@
 
   :root[data-mode="window"] .stage::before { display: none; }
 
-  :root[data-mode="window"] .bottle { max-width: 192px; }
+  :root[data-mode="window"] .bottle { max-width: 182px; }
 
   :root[data-mode="window"] .floatMeter { display: flex; }
 
@@ -607,6 +636,10 @@
 
         <clipPath id="bodyClip">
           <ellipse cx="120" cy="176" rx="70" ry="62"/>
+          <circle cx="66" cy="128" r="20"/>
+          <circle cx="174" cy="128" r="20"/>
+          <rect x="99" y="64" width="42" height="54" rx="9"/>
+          <rect x="87" y="46" width="66" height="22" rx="8"/>
           <circle cx="66" cy="240" r="22"/>
           <circle cx="102" cy="240" r="22"/>
           <circle cx="138" cy="240" r="22"/>
@@ -670,6 +703,7 @@
       <span class="floatPercent" id="floatPercent">—</span>
       <span class="floatAmount" id="floatAmount">— / —</span>
       <span class="floatStatus" id="floatStatus" hidden></span>
+      <span class="floatDetails" id="floatDetails" hidden></span>
     </div>
   </section>
 
@@ -680,7 +714,7 @@
 
   <section class="panel" id="login" hidden>
     <p class="label" id="loginTitle">Token Plan login</p>
-    <p class="hint" id="loginHint">Log in once with MiniMax. The device-code login and quota reader are built in, so no separate CLI is needed. The token is saved to ~/.mmx/config.json.</p>
+    <p class="hint" id="loginHint">Log in once with MiniMax. The device-code login and quota reader are built in, so no separate CLI is needed. The token is stored in this Mini App's own data folder, not in ~/.mmx/config.json.</p>
     <div class="row" id="loginStart">
       <select class="select" id="loginRegion">
         <option value="cn">China</option>
@@ -705,6 +739,15 @@
     <p class="error" id="formError" hidden></p>
   </section>
 
+  <section class="panel" id="settings">
+    <label class="check" for="usageScan">
+      <input type="checkbox" id="usageScan">
+      <span id="usageScanLabel">Read local usage from MiniMax Code</span>
+    </label>
+    <p class="hint" id="usageScanHint">Off by default. When on, the bottle reads the local token counters in MiniMax Code's SQLite state to estimate this month's usage. It never writes to that database.</p>
+    <p class="error" id="settingsError" hidden></p>
+  </section>
+
   <p class="notice" id="notice" hidden></p>
 
   <details class="models" id="models" hidden>
@@ -721,10 +764,21 @@
 </main>
 
 <script>
+  // The body fills across the first 80% of the quota. The last 20% fills the
+  // narrow neck and the two ears, so 100% reaches the mouth instead of
+  // stopping at the top of the body.
   const BODY_TOP = 114;
+  const MOUTH_TOP = 46;
+  const NECK_FILL_FROM = 0.8;
   const BODY_BOTTOM = 238;
-  const BODY_HEIGHT = BODY_BOTTOM - BODY_TOP;
   const LIQUID_BOTTOM = 262;
+
+  function liquidTop(ratio) {
+    if (ratio <= NECK_FILL_FROM) {
+      return BODY_BOTTOM - (ratio / NECK_FILL_FROM) * (BODY_BOTTOM - BODY_TOP);
+    }
+    return BODY_TOP - ((ratio - NECK_FILL_FROM) / (1 - NECK_FILL_FROM)) * (BODY_TOP - MOUTH_TOP);
+  }
   const THEME_KEY = 'quota-bottle.theme';
 
   const LANG_KEY = 'quota-bottle.lang';
@@ -757,7 +811,7 @@
       pin: 'Pin to desktop',
       pinHint: 'Floats above other windows and refreshes every 5 seconds. MiniMax Code opens a window only from a click, so this is the one click it takes.',
       loginTitle: 'Token Plan login',
-      loginHint: 'Log in once with MiniMax. The device-code login and quota reader are built in, so no separate CLI is needed. The token is saved to ~/.mmx/config.json.',
+      loginHint: "Log in once with MiniMax. The device-code login and quota reader are built in, so no separate CLI is needed. The token is stored in this Mini App's own data folder, not in ~/.mmx/config.json.",
       regionCn: 'China',
       regionGlobal: 'Global',
       logIn: 'Log in',
@@ -776,12 +830,12 @@
       returnToPanel: 'Return to the panel',
       tokens: 'tokens',
       used: '{percent} used',
+      video: 'Video',
+      videoUsed: 'Video {percent} used',
       setTotalInPanel: 'Set a total in the panel',
       loginToRead: 'Log in to read the live quota',
       overSavedTotal: 'Over the saved total',
       liveUnavailable: 'Live quota unavailable',
-      tokenPlan: 'Token Plan · {detail}',
-      desktopSession: 'desktop session',
       localUsageSource: 'Local usage · {month}',
       resetsIn: 'Resets in {time}',
       resets: 'Resets {date}',
@@ -790,6 +844,9 @@
       overBy: 'Over the saved total by {amount}',
       localUsageMonth: 'Local usage in {month}: {amount} tokens',
       localUsageUnavailable: 'Local usage: unavailable',
+      localUsageOff: 'Local usage: off',
+      usageScanLabel: 'Read local usage from MiniMax Code',
+      usageScanHint: "Off by default. When on, the bottle reads the local token counters in MiniMax Code's SQLite state to estimate this month's usage. It never writes to that database.",
       unlimited: 'unlimited',
       left: '{percent} left',
       overBudgetNote: "This month's local usage ({used}) is above the total you saved ({total}), so the bottle reads empty. Raise the total, or log in for the real quota.",
@@ -799,6 +856,7 @@
       reachFail: 'Could not reach the local service.',
       invalidTotal: 'Enter a positive whole number of tokens.',
       saveFailed: 'Could not save the total.',
+      settingsFailed: 'Could not save the setting.',
       loginUrlRejected: 'The login URL was rejected.',
       loginExpired: 'The code expired. Try again.',
       loginFailed: 'Login failed. Try again.',
@@ -817,8 +875,6 @@
         unauthorized: 'The Token Plan credential was rejected.',
         invalid_credential: 'MiniMax rejected the saved credential.',
         missing_credential: 'The quota endpoint did not accept the credential format.',
-        desktop_session_expired: 'MiniMax Code is signed out. Sign in to MiniMax Code again and the bottle reads the quota on its own.',
-        desktop_unavailable: 'MiniMax Code is not running, so its quota session is unavailable.',
         api_rejected: 'The quota endpoint refused the request.',
         quota_exhausted: 'The Token Plan reports no remaining quota.',
         http_error: 'The quota endpoint answered with an error.',
@@ -827,6 +883,7 @@
         invalid_response: 'The quota endpoint returned an unreadable answer.',
         no_quota: 'The Token Plan reports no metered quota.',
         balance_credential: 'This API key reports account balance, not Token Plan quota.',
+        usage_scan_off: 'Local usage scanning is off. Turn it on below to estimate usage from MiniMax Code\'s local database.',
         db_missing: 'The local usage database was not found.',
         db_unreadable: 'The local usage database could not be opened.',
         db_schema: 'The local usage database has no token table.',
@@ -849,7 +906,7 @@
       pin: '固定到桌面',
       pinHint: '固定在其它窗口之上，每 5 秒刷新一次。MiniMax Code 只在点击后开窗，所以需要这一下。',
       loginTitle: 'Token Plan 登录',
-      loginHint: '用 MiniMax 登录一次即可。设备码登录和额度读取都内置了，不需要另装 CLI。token 会保存到 ~/.mmx/config.json。',
+      loginHint: '用 MiniMax 登录一次即可。设备码登录和额度读取都内置了，不需要另装 CLI。token 存在这个 Mini App 自己的数据目录里，不会写进 ~/.mmx/config.json。',
       regionCn: '中国',
       regionGlobal: '海外',
       logIn: '登录',
@@ -868,12 +925,12 @@
       returnToPanel: '回到面板',
       tokens: 'token',
       used: '已用 {percent}',
+      video: '视频',
+      videoUsed: '视频 已用 {percent}',
       setTotalInPanel: '在面板里设置总额',
       loginToRead: '登录后读取实时额度',
       overSavedTotal: '超出已保存的总额',
       liveUnavailable: '实时额度不可用',
-      tokenPlan: 'Token Plan · {detail}',
-      desktopSession: '桌面会话',
       localUsageSource: '本机用量 · {month}',
       resetsIn: '{time}后重置',
       resets: '{date}重置',
@@ -882,6 +939,9 @@
       overBy: '超出已保存总额 {amount}',
       localUsageMonth: '{month}本机用量：{amount} token',
       localUsageUnavailable: '本机用量：不可用',
+      localUsageOff: '本机用量：已关闭',
+      usageScanLabel: '读取 MiniMax Code 的本机用量',
+      usageScanHint: '默认关闭。打开后，瓶子会读取 MiniMax Code 本地 SQLite 里的 token 计数来估算本月用量；只读取，不写入这个数据库。',
       unlimited: '不限量',
       left: '剩余 {percent}',
       overBudgetNote: '本月本机用量（{used}）已超过你保存的总额（{total}），所以瓶子显示为空。可以调高总额，或登录读取真实额度。',
@@ -891,6 +951,7 @@
       reachFail: '连不上本机服务。',
       invalidTotal: '请输入正整数个 token。',
       saveFailed: '保存失败。',
+      settingsFailed: '设置保存失败。',
       loginUrlRejected: '登录地址被拒绝。',
       loginExpired: '授权码过期了，请重试。',
       loginFailed: '登录失败，请重试。',
@@ -909,8 +970,6 @@
         unauthorized: 'Token Plan 凭据被拒绝。',
         invalid_credential: 'MiniMax 拒绝了已保存的凭据。',
         missing_credential: '额度接口不接受这个凭据格式。',
-        desktop_session_expired: 'MiniMax Code 处于未登录状态。重新登录后瓶子会自动读取额度。',
-        desktop_unavailable: 'MiniMax Code 没有运行，拿不到它的额度会话。',
         api_rejected: '额度接口拒绝了这次请求。',
         quota_exhausted: 'Token Plan 显示额度已用尽。',
         http_error: '额度接口返回了错误。',
@@ -919,6 +978,7 @@
         invalid_response: '额度接口返回了无法解析的内容。',
         no_quota: 'Token Plan 没有可计量的额度。',
         balance_credential: '这个 API key 读的是账户余额，不是 Token Plan 额度。',
+        usage_scan_off: '本机用量扫描已关闭。打开下面的开关，才会从 MiniMax Code 的本地数据库估算用量。',
         db_missing: '没找到本机用量数据库。',
         db_unreadable: '打不开本机用量数据库。',
         db_schema: '本机用量数据库没有 token 表。',
@@ -948,7 +1008,6 @@
     'unauthorized',
     'invalid_credential',
     'missing_credential',
-    'desktop_session_expired',
     'config_invalid',
     'config_unreadable',
   ]);
@@ -1077,6 +1136,8 @@
     byId('totalLabel').textContent = t('totalLabel');
     byId('totalInput').placeholder = t('totalPlaceholder');
     byId('saveBtn').textContent = t('save');
+    byId('usageScanLabel').textContent = t('usageScanLabel');
+    byId('usageScanHint').textContent = t('usageScanHint');
     byId('modelsSummary').textContent = t('models');
     byId('refreshBtn').textContent = t('refresh');
     byId('floatExit').setAttribute('aria-label', t('returnToPanel'));
@@ -1185,7 +1246,7 @@
     const ratio = state && typeof state.ratio === 'number' ? Math.max(0, Math.min(1, state.ratio)) : 0;
     const problems = state && Array.isArray(state.problems) ? state.problems : [];
     const overBudget = Boolean(state && state.overBudget);
-    const top = BODY_BOTTOM - ratio * BODY_HEIGHT;
+    const top = liquidTop(ratio);
 
     byId('liquidRect').setAttribute('y', top.toFixed(2));
     byId('liquidRect').setAttribute('height', (LIQUID_BOTTOM - top).toFixed(2));
@@ -1235,8 +1296,7 @@
     if (!state || state.mode === 'unset') {
       sourceChip.textContent = t('noTotalSet');
     } else if (source && source.kind === 'token-plan') {
-      const detail = source.detail === 'desktop session' ? t('desktopSession') : '';
-      sourceChip.textContent = detail ? t('tokenPlan', { detail }) : 'Token Plan';
+      sourceChip.textContent = 'Token Plan';
     } else {
       sourceChip.textContent = t('localUsageSource', { month: monthLabel(state.period) });
     }
@@ -1281,11 +1341,15 @@
     }
 
     const usedHint = byId('usedHint');
-    if (state && typeof state.used === 'number') {
+    if (state && state.usageScan === false) {
+      usedHint.textContent = t('localUsageOff');
+    } else if (state && typeof state.used === 'number') {
       usedHint.textContent = t('localUsageMonth', { month: monthLabel(state.period), amount: formatInt(state.used) });
     } else {
       usedHint.textContent = t('localUsageUnavailable');
     }
+    const usageScanBox = byId('usageScan');
+    if (!usageScanBox.disabled) usageScanBox.checked = Boolean(state && state.usageScan === true);
 
     const notice = byId('notice');
     const messages = problems.map((code) => messageFor(code)).filter(Boolean);
@@ -1342,6 +1406,24 @@
     } else {
       details.hidden = true;
     }
+
+    const floatDetails = byId('floatDetails');
+    const detailParts = [];
+    if (!resetChip.hidden && resetChip.textContent) detailParts.push(resetChip.textContent);
+    if (!weeklyChip.hidden && weeklyChip.textContent) detailParts.push(weeklyChip.textContent);
+    const video = models.find((model) => /video/iu.test(String(model.name)));
+    if (video) {
+      if (video.unlimited) {
+        detailParts.push(`${t('video')} ${t('unlimited')}`);
+      } else {
+        const used = typeof video.usedPercent === 'number'
+          ? video.usedPercent
+          : (typeof video.percent === 'number' ? 100 - video.percent : null);
+        detailParts.push(used === null ? t('video') : t('videoUsed', { percent: formatPercent(used) }));
+      }
+    }
+    floatDetails.hidden = detailParts.length === 0;
+    floatDetails.textContent = detailParts.join(' · ');
   }
 
   function setNotice(text) {
@@ -1403,6 +1485,29 @@
       showFormError(t('saveFailed'));
     } finally {
       button.disabled = false;
+    }
+  }
+
+  async function saveUsageScan() {
+    const checkbox = byId('usageScan');
+    const next = checkbox.checked;
+    const errorNode = byId('settingsError');
+    errorNode.hidden = true;
+    checkbox.disabled = true;
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ usageScan: next }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      await refresh(true);
+    } catch {
+      checkbox.checked = !next;
+      errorNode.hidden = false;
+      errorNode.textContent = t('settingsFailed');
+    } finally {
+      checkbox.disabled = false;
     }
   }
 
@@ -1554,6 +1659,7 @@
   }
 
   byId('saveBtn').addEventListener('click', save);
+  byId('usageScan').addEventListener('change', saveUsageScan);
   byId('loginBtn').addEventListener('click', startLogin);
   byId('totalInput').addEventListener('input', () => showFormError(''));
   byId('totalInput').addEventListener('keydown', (event) => {

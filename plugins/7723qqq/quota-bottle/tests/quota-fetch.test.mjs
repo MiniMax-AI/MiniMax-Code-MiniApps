@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { saveCredentials } from '../miniapp/node/auth/credentials.mjs';
 import { fetchQuota } from '../miniapp/node/auth/quota.mjs';
 import { disposeTemp, tempDir, writeJson } from './helpers.mjs';
 
@@ -22,7 +23,9 @@ async function withConfig(config, run) {
     process.env.MMX_CONFIG_DIR = dir;
     delete process.env.MINIMAX_BASE_URL;
     delete process.env.MINIMAX_REGION;
-    return await run();
+    const dataDir = join(dir, 'data');
+    await mkdir(dataDir, { recursive: true });
+    return await run(dataDir);
   } finally {
     if (previous.configDir === undefined) delete process.env.MMX_CONFIG_DIR;
     else process.env.MMX_CONFIG_DIR = previous.configDir;
@@ -55,72 +58,92 @@ const okBody = {
 };
 
 test('the region decides the first host, not the global default', async () => {
-  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async (dataDir) => {
     const { impl, calls } = stubFetch({ [CN_HOST]: { status: 200, body: okBody } });
-    const payload = await fetchQuota(undefined, { fetchImpl: impl });
+    const payload = await fetchQuota(dataDir, undefined, { fetchImpl: impl });
     assert.equal(payload.base_resp.status_code, 0);
     assert.deepEqual(calls, [CN_HOST]);
   });
 });
 
 test('a host that refuses the credential does not hide a host that accepts it', async () => {
-  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async (dataDir) => {
     const { impl, calls } = stubFetch({
       [CN_HOST]: { status: 200, body: { base_resp: { status_code: 2049, status_msg: 'invalid api key' } } },
       [GLOBAL_HOST]: { status: 200, body: okBody },
     });
-    const payload = await fetchQuota(undefined, { fetchImpl: impl });
+    const payload = await fetchQuota(dataDir, undefined, { fetchImpl: impl });
     assert.equal(payload.base_resp.status_code, 0);
     assert.deepEqual(calls, [CN_HOST, GLOBAL_HOST]);
   });
 });
 
 test('a rejected credential is reported as a credential problem, not a generic refusal', async () => {
-  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async (dataDir) => {
     const { impl } = stubFetch({
       [CN_HOST]: { status: 200, body: { base_resp: { status_code: 2049, status_msg: 'invalid api key' } } },
       [GLOBAL_HOST]: { status: 200, body: { base_resp: { status_code: 2049, status_msg: 'invalid api key' } } },
     });
-    await assert.rejects(fetchQuota(undefined, { fetchImpl: impl }), (error) => error.code === 'invalid_credential');
+    await assert.rejects(fetchQuota(dataDir, undefined, { fetchImpl: impl }), (error) => error.code === 'invalid_credential');
   });
 });
 
 test('the actionable failure wins when two hosts disagree', async () => {
-  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async (dataDir) => {
     const { impl } = stubFetch({
       [CN_HOST]: { status: 200, body: { base_resp: { status_code: 2049, status_msg: 'invalid api key' } } },
       [GLOBAL_HOST]: { status: 500, body: {} },
     });
-    await assert.rejects(fetchQuota(undefined, { fetchImpl: impl }), (error) => error.code === 'invalid_credential');
+    await assert.rejects(fetchQuota(dataDir, undefined, { fetchImpl: impl }), (error) => error.code === 'invalid_credential');
   });
 });
 
 test('an HTTP 401 stays unauthorized and a missing secret key is its own code', async () => {
-  await withConfig({ region: 'global', api_key: 'sk-cp-test' }, async () => {
+  await withConfig({ region: 'global', api_key: 'sk-cp-test' }, async (dataDir) => {
     const unauthorized = stubFetch({ [GLOBAL_HOST]: { status: 401, body: {} } });
-    await assert.rejects(fetchQuota(undefined, { fetchImpl: unauthorized.impl }), (error) => error.code === 'unauthorized');
+    await assert.rejects(fetchQuota(dataDir, undefined, { fetchImpl: unauthorized.impl }), (error) => error.code === 'unauthorized');
 
     const missing = stubFetch({ [GLOBAL_HOST]: { status: 200, body: { base_resp: { status_code: 1004, status_msg: 'no secret key' } } } });
-    await assert.rejects(fetchQuota(undefined, { fetchImpl: missing.impl }), (error) => error.code === 'missing_credential');
+    await assert.rejects(fetchQuota(dataDir, undefined, { fetchImpl: missing.impl }), (error) => error.code === 'missing_credential');
   });
 });
 
 test('an account-balance key is refused before any request is sent', async () => {
-  await withConfig({ region: 'cn', api_key: 'sk-api-balance' }, async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-api-balance' }, async (dataDir) => {
     const { impl, calls } = stubFetch({});
-    await assert.rejects(fetchQuota(undefined, { fetchImpl: impl }), (error) => error.code === 'balance_credential');
+    await assert.rejects(fetchQuota(dataDir, undefined, { fetchImpl: impl }), (error) => error.code === 'balance_credential');
     assert.deepEqual(calls, []);
   });
 });
 
 test('a transport failure stops the walk instead of retrying every host', async () => {
-  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-cp-test' }, async (dataDir) => {
     const calls = [];
     const impl = async (url) => {
       calls.push(url);
       throw new Error('offline');
     };
-    await assert.rejects(fetchQuota(undefined, { fetchImpl: impl }), (error) => error.code === 'network');
+    await assert.rejects(fetchQuota(dataDir, undefined, { fetchImpl: impl }), (error) => error.code === 'network');
     assert.deepEqual(calls, [CN_HOST]);
+  });
+});
+
+test('the plugin login is used before the CLI API key', async () => {
+  await withConfig({ region: 'cn', api_key: 'sk-cp-cli' }, async (dataDir) => {
+    await saveCredentials(dataDir, {
+      access_token: 'plugin-token',
+      refresh_token: 'plugin-refresh',
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      region: 'cn',
+    });
+    const calls = [];
+    const impl = async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      return { ok: true, status: 200, json: async () => okBody };
+    };
+    await fetchQuota(dataDir, undefined, { fetchImpl: impl });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, CN_HOST);
+    assert.equal(calls[0].init.headers.Authorization, 'Bearer plugin-token');
   });
 });

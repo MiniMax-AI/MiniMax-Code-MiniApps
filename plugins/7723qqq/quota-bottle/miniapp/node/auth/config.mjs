@@ -1,9 +1,8 @@
 // @ts-check
 
-import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import { normalizeHttpsUrl, quotaHostCandidates } from '../urls.mjs';
 
@@ -12,9 +11,6 @@ export { REGIONS, OAUTH_HOSTS } from './constants.mjs';
 const CONFIG_DIR_NAME = '.mmx';
 const VALID_REGIONS = new Set(['global', 'cn']);
 const VALID_OUTPUTS = new Set(['text', 'json']);
-
-/** @type {Map<string, Promise<void>>} */
-const writeQueues = new Map();
 
 export function getConfigDir() {
   const dir = process.env.MMX_CONFIG_DIR?.trim();
@@ -28,18 +24,6 @@ export function getConfigPath() {
 /** @param {unknown} value */
 export function normalizeRegion(value) {
   return value === 'cn' || value === 'global' ? value : null;
-}
-
-async function withConfigLock(path, task) {
-  const previous = writeQueues.get(path) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(task);
-  const settled = next.catch(() => {});
-  writeQueues.set(path, settled);
-  try {
-    return await next;
-  } finally {
-    if (writeQueues.get(path) === settled) writeQueues.delete(path);
-  }
 }
 
 function parseOAuth(raw) {
@@ -87,8 +71,9 @@ export function parseConfigFile(raw) {
 }
 
 /**
- * Read the config as a raw object so an unrelated field is never lost by a
- * credential update. A missing file is represented by an empty object.
+ * Read the CLI config for a user-configured credential. This module only
+ * reads it: the panel login stores its own credentials under dataDir, and a
+ * credential found here is never rewritten.
  * @param {string} [path]
  * @returns {Promise<{ ok: true, raw: Record<string, unknown> } | { ok: false, code: string }>}
  */
@@ -111,49 +96,20 @@ export async function readRawConfig(path = getConfigPath()) {
 }
 
 /**
- * Patch a raw config object, serialize writes, keep unrelated fields, and
- * preserve the existing file's mode. The temp name is unique to this process.
- * @param {(raw: Record<string, unknown>) => void} patch
- * @param {string} [path]
- */
-export async function updateConfigFile(patch, path = getConfigPath()) {
-  return withConfigLock(path, async () => {
-    const existing = await readRawConfig(path);
-    if (!existing.ok) throw new Error(existing.code);
-    const next = { ...existing.raw };
-    patch(next);
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    let mode = 0o600;
-    try {
-      mode = (await stat(path)).mode & 0o777;
-    } catch (error) {
-      if (/** @type {any} */ (error)?.code !== 'ENOENT') throw error;
-    }
-    const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode });
-      await chmod(tmp, mode);
-      await rename(tmp, path);
-    } catch (error) {
-      await unlink(tmp).catch(() => {});
-      throw error;
-    }
-  });
-}
-
-/**
  * Build a runtime view from one raw config read. Callers that already read the
  * file pass `raw` so a request never resolves credentials from a second,
- * possibly changed snapshot.
+ * possibly changed snapshot. `regionOverride` is the region stored with the
+ * plugin's own login; an explicit environment value still wins.
  * @param {Record<string, unknown>} [raw]
  * @param {NodeJS.ProcessEnv} [env]
+ * @param {'cn' | 'global' | null} [regionOverride]
  */
-export function configFromRaw(raw = {}, env = process.env) {
+export function configFromRaw(raw = {}, env = process.env, regionOverride = null) {
   const file = parseConfigFile(raw);
   const explicitRegion = env.MINIMAX_REGION;
   const region = explicitRegion === 'cn' || explicitRegion === 'global'
     ? explicitRegion
-    : normalizeRegion(file.region) ?? 'global';
+    : normalizeRegion(regionOverride) ?? normalizeRegion(file.region) ?? 'global';
   const envBase = env.MINIMAX_BASE_URL
     ? normalizeHttpsUrl(env.MINIMAX_BASE_URL, { purpose: 'api', allowHttpLoopback: true })
     : null;
@@ -164,36 +120,9 @@ export function configFromRaw(raw = {}, env = process.env) {
     ? [envBase]
     : quotaHostCandidates(region, file.base_url ?? file.oauth?.resource_url ?? null);
   return {
-    configPath: getConfigPath(),
     region,
     baseUrl: baseUrls[0],
     baseUrls,
     timeout: 20,
-  };
-}
-
-/**
- * Read the region the CLI config asks for, so a login can start against the
- * right account service instead of whichever one the panel happened to pick.
- * @returns {Promise<'cn' | 'global' | null>}
- */
-export async function readConfiguredRegion() {
-  const raw = await readRawConfig();
-  if (!raw.ok) return null;
-  return normalizeRegion(parseConfigFile(raw.raw).region);
-}
-
-/**
- * @returns {Promise<{ ok: true, config: ReturnType<typeof configFromRaw>, credentials: Record<string, unknown> | null, apiKey: string | undefined } | { ok: false, code: string }>}
- */
-export async function loadQuotaConfig() {
-  const raw = await readRawConfig();
-  if (!raw.ok) return raw;
-  const file = parseConfigFile(raw.raw);
-  return {
-    ok: true,
-    config: configFromRaw(file),
-    credentials: file.oauth ? { ...file.oauth, configPath: getConfigPath() } : null,
-    apiKey: typeof file.api_key === 'string' ? file.api_key : undefined,
   };
 }

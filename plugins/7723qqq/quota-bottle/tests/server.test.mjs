@@ -26,11 +26,6 @@ async function boot(root) {
   process.env.MMX_CONFIG_DIR = join(root, 'mmx');
   process.env.MINIMAX_BASE_URL = '';
   delete process.env.MINIMAX_REGION;
-  // A test must not borrow the developer's real desktop session: point the
-  // lease at a capability file that cannot exist, so the manual path is what
-  // this server is actually exercising.
-  process.env.MCODE_AUTH_BROKER_ENDPOINT = join(root, 'no-broker.sock');
-  process.env.MCODE_AUTH_BROKER_CAPABILITY_FILE = join(root, 'no-broker.cap');
   const lifecycle = await start(context);
   return { context, controller, port, lifecycle };
 }
@@ -90,6 +85,24 @@ test('dispose frees the listener and closes the server', async () => {
     const listener = await fetch(`http://127.0.0.1:${port}/bottle`).catch((error) => error);
     assert.ok(listener instanceof Error);
   } finally {
+    controller.abort();
+    await disposeTemp(dir);
+  }
+});
+
+test('the usage scan switch only accepts a boolean', async () => {
+  const dir = await tempDir('quota-server-settings-');
+  const { context, controller, port, lifecycle } = await boot(dir);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const invalid = await fetch(`${base}/api/settings`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ usageScan: 'yes' }),
+    });
+    assert.equal(invalid.status, 400);
+    const state = await (await fetch(`${base}/api/state`)).json();
+    assert.equal(state.usageScan, false);
+  } finally {
+    await lifecycle.dispose();
     controller.abort();
     await disposeTemp(dir);
   }

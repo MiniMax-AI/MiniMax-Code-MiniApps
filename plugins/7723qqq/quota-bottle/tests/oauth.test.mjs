@@ -95,11 +95,14 @@ test('a refused grant ends the flow', async () => {
 });
 
 test('a refresh that answers with a token succeeds without a status field', async () => {
+  /** @type {Record<string, unknown> | null} */
+  let saved = null;
   const creds = {
     access_token: 'old',
     refresh_token: 'refresh',
     expires_at: '2020-01-01T00:00:00.000Z',
     region: 'cn',
+    persist: async (/** @type {Record<string, unknown>} */ updated) => { saved = updated; },
   };
   const token = await ensureFreshToken(creds, undefined, {
     fetchImpl: async () => jsonResponse(200, {
@@ -110,6 +113,32 @@ test('a refresh that answers with a token succeeds without a status field', asyn
     }),
   });
   assert.equal(token, 'fresh-token');
+  assert.equal(saved?.access_token, 'fresh-token');
+  assert.equal(saved?.refresh_token, 'fresh-refresh');
+});
+
+test('a CLI-owned token is used while valid and is never refreshed or written', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return jsonResponse(200, { access_token: 'unexpected', expired_in: 3600 });
+  };
+  const valid = new Date(Date.now() + 3600 * 1000).toISOString();
+  assert.equal(await ensureFreshToken({
+    access_token: 'valid-cli-token',
+    refresh_token: 'refresh',
+    expires_at: valid,
+    region: 'cn',
+  }, undefined, { fetchImpl }), 'valid-cli-token');
+  assert.equal(calls, 0);
+
+  await assert.rejects(ensureFreshToken({
+    access_token: 'expired-cli-token',
+    refresh_token: 'refresh',
+    expires_at: '2020-01-01T00:00:00.000Z',
+    region: 'cn',
+  }, undefined, { fetchImpl }), (error) => error.code === 'oauth_expired');
+  assert.equal(calls, 0);
 });
 
 test('normalizeFlexibleExpiry reads both a timestamp and a lifetime', () => {
@@ -118,4 +147,15 @@ test('normalizeFlexibleExpiry reads both a timestamp and a lifetime', () => {
   assert.ok(Math.abs(normalizeFlexibleExpiry(600) - (now + 600_000)) < 2000);
   assert.equal(normalizeFlexibleExpiry(0), null);
   assert.equal(normalizeFlexibleExpiry('nope'), null);
+});
+
+test('an absolute token expiry two days out is accepted', () => {
+  // The account service answers with expired_in = 1794385769283, an absolute
+  // millisecond timestamp about 48 hours ahead. Rejecting it broke the login.
+  const expiry = Date.now() + 48 * 60 * 60 * 1000;
+  assert.equal(normalizeFlexibleExpiry(expiry), expiry);
+});
+
+test('a clearly absurd expiry is still refused', () => {
+  assert.equal(normalizeFlexibleExpiry(Date.now() + 365 * 24 * 60 * 60 * 1000), null);
 });

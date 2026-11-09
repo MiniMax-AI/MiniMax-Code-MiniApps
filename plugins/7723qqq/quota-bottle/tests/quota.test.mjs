@@ -103,7 +103,7 @@ test('the weekly aggregate is the text model window, unlimited included', () => 
   });
   assert.equal(result.ok, true);
   assert.equal(result.primaryModel, 'general');
-  // The text model's weekly window is unlimited, exactly as the desktop reports.
+  // The text model's weekly window is unlimited, exactly as the service reports.
   assert.equal(result.weekly.unlimited, true);
   assert.equal(result.weekly.percent, 100);
   // The video row keeps its own weekly counts.

@@ -165,7 +165,7 @@ export function normalizeQuota(payload) {
   }
   if (models.length === 0) return { ok: false, code: 'no_quota' };
 
-  // The desktop's own panel reads the first row of `model_remains`; choosing a
+  // The plan's own panel reads the first row of `model_remains`; choosing a
   // different row here would put a second number next to the same panel.
   const text = models[0];
   const percent = text.percent ?? 0;
