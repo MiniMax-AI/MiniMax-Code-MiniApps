@@ -18,6 +18,21 @@
 export const PET_AGENT_NAME = 'mmx';
 
 /**
+ * v1.8.0 时代插件自动创建的那个 agent 名（**历史遗留**）。
+ *
+ * 那个 agent 是 1.8.0 自己建的 —— 用户没点头就会多出来，卸载后也不清理 ⇒
+ * 官方插件市场拒收了 1.8.0。1.9.0 起插件既不建它、也不碰它。
+ *
+ * ⚠️ **用途只有一个**：加载 state 时把 1.8.0 留在 `state.json` 里的
+ *   `petAgent: "mmx-octopus-agent"` 丢掉 —— 不丢的话，老用户升级后她的会话
+ *   仍会挂在那个 agent 上，与「1.9.0 不再碰它」对不上
+ *   （官方评审 2026-11-09 在 PR #119 上指出的问题）。
+ *
+ * agent 名字的真源在这一份文件里，别处不许再抄一遍。
+ */
+export const LEGACY_SELF_AGENT_NAME = 'mmx-octopus-agent';
+
+/**
  * 决定这一轮用哪个 agent。
  *
  * 优先级：

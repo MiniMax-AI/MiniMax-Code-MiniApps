@@ -15,6 +15,7 @@
 import { writeJsonAtomic, createWriteQueue } from './atomic-json.mjs';
 import { textLength } from './clip.mjs';
 import { pickLine } from './lines.mjs';
+import { LEGACY_SELF_AGENT_NAME } from './agentpick.mjs';
 
 /**
  * 章鱼娘的表情。thinking/working 由 Agent 侧驱动。
@@ -337,6 +338,17 @@ export class PetState {
      * @type {boolean}
      */
     this.petHeadInjected = false;
+    /**
+     * 她的会话挂在哪个 agent 上（`null` = 用默认 agent）。
+     *
+     * ⚠️ **这个初值不能少**（v1.9.0 删「建专属 agent」那一档时误删了它，
+     *   官方评审 2026-11-09 指出）：不初始化的话新装时它是 `undefined` ——
+     *   快照里就没这个字段（契约写的是 `string | null`）。
+     *
+     * 取值优先级：显式指定 ＞ 用户自己建的 `mmx` ＞ 默认 agent（见 agentpick.mjs）。
+     * @type {string | null}
+     */
+    this.petAgent = null;
     /** @type {{text: string, at: number} | null} 用户正在问她的内容（临时态，不持久化） */
     this.asking = null;
         /** @type {boolean} 她正在回话（运行时态，不持久化） */
@@ -434,10 +446,13 @@ export class PetState {
         if (typeof saved.petSessionId === 'string' && saved.petSessionId) this.petSessionId = saved.petSessionId;
         if (typeof saved.petSessionDirty === 'boolean') this.petSessionDirty = saved.petSessionDirty;
         if (typeof saved.petHeadInjected === 'boolean') this.petHeadInjected = saved.petHeadInjected;
-        if (typeof saved.petAgent === 'string' && saved.petAgent) this.petAgent = saved.petAgent;
-        // ⚠️ **默认是「建专属 agent」**（老板 2026-11-04 拍板：体验感最好，也是主线方向）——
-        //   只有**明确存了** 'existing' 才降级成「用现有 agent」。
-        //   归一走 agentpick.mjs 的唯一实现（不许在这里自己写默认值）。
+        // ⚠️ **1.8.0 留下的那个 agent 名要丢掉**（官方评审 2026-11-09）：
+        //   1.8.0 默认会自己建一个 agent，并把它的名写进 `petAgent`；
+        //   1.9.0 的插件既不建它、也不碰它 ⇒ 留着它，老用户升级后她的会话
+        //   仍会挂在那个 agent 上，与「1.9.0 不再碰它」对不上。
+        //   丢掉之后回到「用户自己建的 mmx 或默认 agent」（见 agentpick.mjs）。
+        if (typeof saved.petAgent === 'string' && saved.petAgent
+            && saved.petAgent !== LEGACY_SELF_AGENT_NAME) this.petAgent = saved.petAgent;
         if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
         if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
         if (saved.naming && typeof saved.naming === 'object') {
@@ -1169,7 +1184,7 @@ export class PetState {
     return this.idleTalk;
   }
 
-      /**
+  /**
    * 设置区看板。running 来自 sessions()，recent 来自 turn.finished。
    * @param {{running?: any[], recent?: any[]}} board
    */

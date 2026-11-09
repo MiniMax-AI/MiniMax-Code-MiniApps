@@ -230,6 +230,11 @@ manual `agentprov-cli.mjs` command are gone as well.
   `mmx` that you create yourself. The plugin no longer creates that agent for
   you — it only recognises it.
 
+- **If your saved state still points at the old agent, 1.9.0 ignores it.**
+  1.8.0 could have stored `mmx-octopus-agent` in the plugin's state file. 1.9.0
+  drops that name when it loads the state, so she answers with your own `mmx`
+  agent if you have one, and with the Host's default agent otherwise.
+
 ## Known limits
 
 - The interface is Chinese only.
