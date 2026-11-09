@@ -163,7 +163,7 @@ The installed manifest must be at:
 
 The author directory (`amszuidas/`) only groups contributions in the repository. Copy the plugin directory directly into the client's `plugins/` directory, without that extra author level.
 
-These packages use **manual installation**. Importing them with the client's GitHub plugin import does not work: the client downloads the whole repository, which is larger than its 128 MiB limit.
+From MiniMax Code 3.1.11 you can import an app instead of copying it: on the Plugins page, choose **Create**, then **Import from a Git repository** under Mini App, and paste the URL of the plugin directory, for example `https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/amszuidas/mcode-token-usage-board`. The client downloads the whole repository (about 160 MiB) and gives up after five minutes, so on a slow connection install manually instead. Earlier clients cannot import from this repository because it is larger than their 128 MiB limit.
 
 ### 3. Open
 
