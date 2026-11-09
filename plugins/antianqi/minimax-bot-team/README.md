@@ -2,9 +2,10 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A team of MiniMax Code Bots that keeps working after the chat ends: one chief Bot takes
-the work, the members do it in their own chats, and an @-mention in a group chat is the
-hand-over.
+Today's bot is one person wearing several masks, taking turns with you. MiniMax
+Bot Team gives you a team instead: members with different skills and different
+temperaments, each guarding one field, and they can sit down together and argue about the
+same question from different angles.
 
 Author: [antianqi](https://github.com/antianqi) - Version: `1.0.0`
 

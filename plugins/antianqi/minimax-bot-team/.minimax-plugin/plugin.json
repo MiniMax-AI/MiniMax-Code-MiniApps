@@ -3,7 +3,7 @@
   "name": "minimax-bot-team",
   "displayName": "MiniMax Bot Team / MiniMax Bot 团队",
   "version": "1.0.0",
-  "description": "把 MiniMax Code 变成一支常驻的 Bot 团队：主 Bot 接单并调度，成员 Bot 在私聊里干活，群聊里 @ 某人就是派活；每个 Bot 有自己的身份文件、记忆与定时任务。 / Turn MiniMax Code into an always-on team of Bots: a chief Bot takes the work and hands it to the members, every Bot carries its own identity files, memory and schedules, and an @-mention in a group chat is how the work is handed over.",
+  "description": "现在的 bot 像一个人轮流带着几个面具跟你聊天。MiniMax Bot Team 给你的是一支真正各有能力、各有性格的团队，各自守着一个领域，也能围坐一起，从不同角度讨论同一个问题。 / Today's bot is one person wearing several masks, taking turns with you. MiniMax Bot Team gives you a team instead: members with different skills and different temperaments, each guarding one field, and they can sit down together and argue about the same question from different angles.",
   "author": "antianqi",
   "icon": "icon.png",
   "category": "Productivity",

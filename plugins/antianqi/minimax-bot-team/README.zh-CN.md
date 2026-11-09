@@ -2,8 +2,8 @@
 
 [English](README.md) | 简体中文
 
-一支会一直干下去的 MiniMax Code Bot 团队：主 Bot 接单，成员 Bot 在各自的私聊里干活，
-群聊里 @ 某人就是派活。
+现在的 bot 像一个人轮流带着几个面具跟你聊天。MiniMax Bot Team 给你的是一支真正各有
+能力、各有性格的团队，各自守着一个领域，也能围坐一起，从不同角度讨论同一个问题。
 
 作者：[antianqi](https://github.com/antianqi) - 版本：`1.0.0`
 
