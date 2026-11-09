@@ -112,7 +112,7 @@ metadata:
 | `post_group` | 群里发言 |
 | `create_schedule` / `list_schedules` / `delete_schedule` | 定时任务 |
 | `start_helper` / `stop_helper` / `list_helpers` | 后台 helper |
-| `host_memory_search` / `memory_pending` | 宿主记忆检索与待收条目 |
+| `host_memory_search` / `memory_pending` | 宿主记忆检索与待收条目（宿主记忆默认关着，要在插件设置里打开「宿主记忆」才有） |
 
 ---
 

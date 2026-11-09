@@ -32,6 +32,19 @@ const MAX_FILES = 400;
 /** Two matches of the same weight: the summary is newer than the index it summarizes. */
 const SOURCE_WEIGHT = { 'memory_summary.md': 1.3, 'MEMORY.md': 1.15, sessions: 1, notes: 1 };
 
+/**
+ * Whether the memory of the Host may be read at all.
+ *
+ * Those files are private to the Host, and this plugin reads them from outside its own data
+ * directory. So the door is shut by default and opens only when the user turns it on in the
+ * plugin's settings.
+ * @param {any} [settings] the plugin settings
+ * @returns {boolean}
+ */
+export function hostMemoryEnabled(settings) {
+  return settings?.hostMemory === true;
+}
+
 async function readIfFile(path) {
   try {
     const info = await stat(path);

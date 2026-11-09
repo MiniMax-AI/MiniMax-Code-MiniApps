@@ -584,8 +584,15 @@ export class Engine {
       t('brief.tool.schedule'),
       t('brief.scheduleRule'),
       '',
+      // The whole bridge sits behind the switch: while the access is off, the Bot is not
+      // taught to look anything up and not taught to mark a conclusion either.
       ...(this.bridgeHelper
-        ? [t('brief.hMemoryBridge'), t('brief.memoryBridge', { command: 'node "' + this.bridgeHelper + '" "<query>"' })]
+        ? [
+          t('brief.hMemoryNote'),
+          t('brief.memoryNote'),
+          t('brief.hMemoryBridge'),
+          t('brief.memoryBridge', { command: 'node "' + this.bridgeHelper + '" "<query>"' }),
+        ]
         : []),
       '',
       ...(notices.length ? [t('brief.hVoid'), ...notices, ''] : []),

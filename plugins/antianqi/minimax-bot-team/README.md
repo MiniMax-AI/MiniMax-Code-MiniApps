@@ -61,6 +61,32 @@ Author: [antianqi](https://github.com/antianqi) - Version: `1.0.0`
 Nothing has to be configured: no API key, no account, no service to sign up for. The Bots
 run on the models the Host already uses.
 
+## Host memory (off by default)
+
+MiniMax Code keeps its own memory under `~/.minimax/memories/scopes/global/`. A Bot in a
+Mini App session cannot reach it: the Host's memory tools are not in a Mini App session's
+tool surface. This package can read those files read-only - it never writes there - and it
+does so **only after you turn it on**.
+
+The switch sits in the plugin settings, on the General page, under Data storage:
+**Host memory**. It is off on a fresh install, and while it is off:
+
+- `host_memory_search` is not in the tool catalogue, and a call to it refuses itself with
+  a message that names the switch.
+- The helper a Bot runs (`node <dataDir>/memory-bridge/search.mjs`) is not written, and one
+  left over from before is removed.
+- The Bot's standing brief carries no memory section, so the Bots are not told to look
+  anything up.
+
+Turning it on writes the helper, offers the tool and adds that section to the brief.
+Nothing else changes: the files are still read-only, and the package still writes nothing
+into the Host's memory directory.
+
+The package also never tells the Host to write a conclusion into its own memory. A Bot
+marks a conclusion with `[[note: ...]]`, the package keeps it in its own queue, and
+`memory_pending` hands the text to whoever asks for it. What happens to that text
+afterwards is the Host's and the user's business - the package does not order the Host to
+call a memory write tool.
 ## Tested environment
 
 - MiniMax Code 3.1.2 or later on macOS, Windows and Linux. Earlier versions cannot
@@ -82,18 +108,20 @@ run on the models the Host already uses.
   (one file per chat), `usage.jsonl` (one row per Agent turn), `memory/` (with its
   journal and archive), `shared/` and `common/` (the cards and the two shared files),
   `agents/<bot-id>/` (each Bot's identity files), `uploads/` (your attachments),
-  `avatars/` and `memory-bridge/` (the helper described below). A chat message is masked
+  `avatars/` and `memory-bridge/` (the search helper - it exists only while the Host-memory switch is on). A chat message is masked
   before it is written: a value that looks like a key is stored as `[REDACTED]`, so the
   history on disk holds no secret.
 - **Files read outside `dataDir`**: the Host's global memory files under
   `~/.minimax/memories/scopes/global/`, read only, to answer a Bot's
-  `host_memory_search` query. There is no supported API for this, so it relies on the
-  Host's unspecified layout and may stop working when the Host changes it. Nothing is
-  written there.
+  `host_memory_search` query - **and only while the Host-memory switch is on** (see
+  *Host memory (off by default)* above). There is no supported API for this, so it
+  relies on the Host's unspecified layout and may stop working when the Host changes it.
+  Nothing is written there.
 - **Processes**: on macOS, `id -F` is run once (1.5 s timeout) to read your account's
-  full name as the default display name. One helper process is started per Host-memory
-  search (`node <dataDir>/memory-bridge/search.mjs`); its stdout carries the result back
-  to the plugin and it exits right after.
+  full name as the default display name. While the Host-memory switch is on, a Bot may run
+  the search helper (`node <dataDir>/memory-bridge/search.mjs`); it prints the JSON result on
+  its stdout and exits right after. The switch is off by default, so no such process is
+  spawned until you turn it on.
 - **Network**: the Node service makes no outbound requests, and the page loads no remote
   resources. HTML previews may load the HTTP(S) styles and resources that the previewed
   document references, inside an isolated sandbox.
@@ -111,6 +139,9 @@ run on the models the Host already uses.
   name has to match `[A-Za-z0-9_-]{1,48}.md`.
 - The plugin manifest shows one description string, and it is written in Chinese and
   English, so the marketplace shows both.
+- The Host caches the tool list it read when it registered the plugin. If it cached that
+  list before the Host-memory switch was turned on, `host_memory_search` may still show
+  up in the catalogue; the call refuses itself until the switch is on.
 
 ## Acknowledgements
 

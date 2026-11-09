@@ -14,7 +14,7 @@
 // The queue is the plugin's own runtime state, not a memory: it holds what a Bot said until the
 // main conversation has taken it. Nothing here writes into the Host's memory files.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** How a Bot marks a conclusion it wants kept. */
@@ -124,16 +124,24 @@ export class MemoryBridge {
 }
 
 /**
- * Write the helper a Bot runs to search the Host's memory.
+ * Write the helper a Bot runs to search the memory of the Host - or take it away again.
 //
 // A Bot reaches the Host's memory files through this one script: it is the only way in, so the
 // search stays bounded and every excerpt keeps its source. The script is regenerated on every
 // start, because it names the deployed path of the module it calls.
- * @param {{ dataDir: string, pluginRoot: string }} options
- * @returns {Promise<string>} the path of the helper
+//
+// The memory of the Host is private to the Host, so the access is off until the user asks
+// for it. While it is off the helper is not written at all, and one left over from before
+// is removed: a Bot must not reach those files through a script either.
+ * @param {{ dataDir: string, pluginRoot: string, enabled: boolean }} options
+ * @returns {Promise<string>} the path of the helper, or '' while the access is off
  */
-export async function writeBridgeHelper({ dataDir, pluginRoot }) {
+export async function setBridgeHelper({ dataDir, pluginRoot, enabled }) {
   const dir = join(dataDir, 'memory-bridge');
+  if (!enabled) {
+    await rm(dir, { recursive: true, force: true });
+    return '';
+  }
   await mkdir(dir, { recursive: true });
   // The Host runs a package from a directory it unpacks per run, so the helper must not import
   // from there: it would break at the next restart. It carries its own copy of the two modules

@@ -1,6 +1,6 @@
 // @ts-check
 import { EngineError } from './engine.mjs';
-import { searchHostMemory } from './host-memory.mjs';
+import { hostMemoryEnabled, searchHostMemory } from './host-memory.mjs';
 import { t } from './i18n.mjs';
 import { MemoryError } from './memory.mjs';
 import { BOT_COLORS, BOT_SKINS, effortOptions, withEffort, newId } from './store.mjs';
@@ -356,6 +356,11 @@ const toSelection = (m) => ({
 });
 
 export function createMcpHandler({ team, engine }) {
+  /**
+   * Whether the memory of the Host may be read. It is off until the user turns it on in the
+   * settings, so the tool is not even offered by default.
+   */
+  const hostMemoryOn = () => hostMemoryEnabled(team.store.state.settings);
   const store = team.store;
 
   function resolveCaller(args) {
@@ -652,6 +657,10 @@ export function createMcpHandler({ team, engine }) {
         return { value: { deleted: removed.name, schedule_id: removed.id }, event: { kind: 'schedule_deleted', name: removed.name } };
       }
       case 'host_memory_search':
+        // The memory files of the Host are private to the Host, so they are read only when
+        // the user has turned that access on. A tool list the Host cached earlier still
+        // names the tool, so the call refuses it as well.
+        if (!hostMemoryOn()) throw new EngineError('forbidden', t('mcp.err.hostMemoryOff'));
         return { value: await searchHostMemory(String(args.query ?? ''), { limit: args.limit }) };
       case 'memory_pending': {
         const entries = await engine.bridge.take(args.limit);
@@ -699,7 +708,9 @@ export function createMcpHandler({ team, engine }) {
           result = {};
           break;
         case 'tools/list':
-          result = { tools: toolDefs() };
+          // The memory of the Host is private to the Host: while the access is off, the
+          // tool is not offered at all.
+          result = { tools: toolDefs().filter((tool) => tool.name !== 'host_memory_search' || hostMemoryOn()) };
           break;
         case 'tools/call': {
           const name = params?.name;

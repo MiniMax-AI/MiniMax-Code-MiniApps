@@ -13,7 +13,8 @@ import { createMcpHandler } from './mcp.mjs';
 import { renameWithRetry } from './fs-retry.mjs';
 import { LANGUAGE_PREFS, locale, matchLocale, t } from './i18n.mjs';
 import { MemoryError, MemoryStore } from './memory.mjs';
-import { MemoryBridge, writeBridgeHelper } from './memory-bridge.mjs';
+import { MemoryBridge, setBridgeHelper } from './memory-bridge.mjs';
+import { hostMemoryEnabled } from './host-memory.mjs';
 import { AgentFileStore } from './agent-file.mjs';
 import { BRIEF_BYTES_MAX } from './brief-budget.mjs';
 import { Store } from './store.mjs';
@@ -188,7 +189,13 @@ export async function start(context) {
   const bridge = new MemoryBridge(store);
   // The helper a Bot runs to search the Host's memory. It is rewritten on every start, because
   // it names the deployed path of the module it calls.
-  const bridgeHelper = await writeBridgeHelper({ dataDir: context.dataDir, pluginRoot: context.pluginRoot });
+  // The memory of the Host is private to the Host: the helper that reaches it is written
+  // only when the user has turned that access on.
+  const bridgeHelper = await setBridgeHelper({
+    dataDir: context.dataDir,
+    pluginRoot: context.pluginRoot,
+    enabled: hostMemoryEnabled(store.state.settings),
+  });
   const engine = new Engine({ store, memory, agentFiles, agent: context.agent, logger: context.logger, broadcast, bridge, bridgeHelper });
   const team = new Team({ store, memory, agentFiles, engine, broadcast });
   const handleMcp = createMcpHandler({ team, engine });
@@ -614,9 +621,25 @@ export async function start(context) {
         if (name.length > USER_NAME_MAX) throw new EngineError('invalid', t('err.userNameTooLong', { max: USER_NAME_MAX }));
         next.userName = name;
       }
+      if (body.hostMemory !== undefined) {
+        if (typeof body.hostMemory !== 'boolean') throw new EngineError('invalid', t('err.badHostMemory'));
+        next.hostMemory = body.hostMemory;
+      }
+      const hostMemoryChanged = (next.hostMemory === true) !== (store.state.settings.hostMemory === true);
       store.state.settings = next;
       if (body.language !== undefined) await team.applyLocale();
       else {
+        await store.save();
+        broadcast({ type: 'state.changed' });
+      }
+      if (hostMemoryChanged) {
+        // The helper a Bot runs to search the memory of the Host appears and disappears
+        // with the switch, so the access follows it in both directions.
+        engine.bridgeHelper = await setBridgeHelper({
+          dataDir: context.dataDir,
+          pluginRoot: context.pluginRoot,
+          enabled: next.hostMemory === true,
+        });
         await store.save();
         broadcast({ type: 'state.changed' });
       }

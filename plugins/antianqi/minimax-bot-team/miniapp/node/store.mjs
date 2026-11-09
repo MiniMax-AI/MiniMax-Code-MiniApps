@@ -156,7 +156,8 @@ function defaultState() {
     helpers: [],
     taskBatches: [],
     /** `language`: 'auto' (follow the OS) | 'zh' | 'en' */
-    settings: { language: 'auto', userName: '' },
+    /** `hostMemory`: whether the Bots may read the memory of the Host. Off until the user asks for it. */
+    settings: { language: 'auto', userName: '', hostMemory: false },
     /** OS language last reported by the page, used to resolve `auto`. */
     systemLocale: undefined,
   };

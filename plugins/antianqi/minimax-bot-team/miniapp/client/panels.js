@@ -1114,6 +1114,22 @@ function generalPage(body) {
   nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') nameInput.blur();
   });
+  // The memory of the Host belongs to the Host: the switch is off until the user opens it.
+  // The server owns the truth - the helper and the tool follow this switch in both directions.
+  const hostMemorySwitch = h('input', {
+    type: 'checkbox',
+    class: 'switch',
+    name: 'hostMemory',
+    checked: state.settings.hostMemory === true,
+    'aria-label': t('panels.general.hostMemory'),
+  });
+  hostMemorySwitch.addEventListener(
+    'change',
+    guard(async () => {
+      await api('PUT', '/api/settings', { hostMemory: hostMemorySwitch.checked === true });
+      await loadState();
+    }),
+  );
   body.append(
     h(
       'div',
@@ -1127,6 +1143,7 @@ function generalPage(body) {
     h(
       'div',
       { class: 'set-group' },
+      setRow(t('panels.general.hostMemory'), t('panels.general.hostMemorySub'), hostMemorySwitch),
       setRow(t('panels.general.storage'), t('panels.general.storageSub'), null),
       setRow(t('panels.general.model'), t('panels.general.modelSub'), null),
     ),
