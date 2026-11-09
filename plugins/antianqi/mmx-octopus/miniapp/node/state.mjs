@@ -353,8 +353,16 @@ export class PetState {
     this.asking = null;
         /** @type {boolean} 她正在回话（运行时态，不持久化） */
     this.chatBusy = false;
-    /** @type {boolean} 是否把 MCode 状态摘要拼进她的输入（持久化，默认开） */
-    this.petAware = true;
+    /**
+     * 是否读取 MCode 的跨会话信息（持久化，**默认关**）。
+     *
+     * ⚠️ **默认关**（官方插件市场 2026-11-16 评审：隐私敏感的跨会话能力必须默认关闭，
+     *   由用户自己打开）：关着的时候她**不订阅**宿主的事件、**不列**会话、
+     *   提示词里也**不拼**状态摘要 ⇒ 别的会话的标题、运行状态、最终回复她一概看不到。
+     *   已经装过的用户保留他自己上次的开关值（`load()` 里读回来）。
+     * @type {boolean}
+     */
+    this.petAware = false;
     // ★ **闲话开关**：她没人的时候要不要自己开口（模型闲话）—— **默认关闭**。
     // ⚠️ **默认关**（Marketplace 评审「强烈建议」）：自动对话会消耗用户自己的额度，
     //   所以新装的用户一律**由用户主动打开**；已经装过的用户保留他自己上次的
@@ -1164,7 +1172,10 @@ export class PetState {
    * @param {boolean} aware
    */
   async setPetAware(aware) {
-    this.petAware = aware !== false;
+    // ⚠️ **只有明确传 true 才开** —— 默认是关的（官方插件市场 2026-11-16 评审：
+    //   隐私敏感的跨会话能力默认关闭、由用户主动打开）。
+    //   传 undefined / 其它值一律按「关」处理（与 setIdleTalk 同一口径）。
+    this.petAware = aware === true;
     await this.commit();
     return this.petAware;
   }

@@ -108,9 +108,9 @@ it like the rest of the port.
 ## Tested environment
 
 - MiniMax Code 3.1.7 on Windows 11 (x64).
-- The package needs **MiniMax Code 3.1.5 or later**: it declares
+- The package needs **MiniMax Code 3.1.6 or later**: it declares
   `agentAccess: ["session.read", "session.run"]`, and a client older than
-  3.1.5 rejects the whole package rather than installing half of it.
+  3.1.6 rejects the whole package rather than installing half of it.
 - A desktop client that supports MiniApps and Agent turns.
 - The bundled self-check script needs Node 22 or later.
 
@@ -167,10 +167,15 @@ it like the rest of the port.
   sent again every turn. Since 1.9.0 this is the only channel: the sheet is
   no longer written into any agent file, so the per-turn copy is the one and
   only copy.
-- **Sessions read** — the package declares `session.read`. It reads the title,
-  the running state and the final reply of a turn, to tell whether the Agent is
-  thinking or has finished, and to summarise the turn. The board in the panel
-  lists the running sessions and refreshes every 30 seconds.
+- **Sessions read** — the package declares `session.read`. **Since 1.10.0 this is
+  off by default**: on a fresh install the package does **not** subscribe to your
+  session events, does **not** list your sessions, and does **not** put anything
+  about them into her prompt. Turn it on in the panel (Settings →
+  「她知道我在忙什么」) and it reads the title, the running state and the final
+  reply of a turn, to tell whether the Agent is thinking or has finished, and to
+  summarise the turn; the board in the panel then lists the running sessions and
+  refreshes every 30 seconds. Turning it off again stops the subscription and
+  the reads — nothing about your other sessions is collected while it is off.
 - **Agent turns it runs** — it declares `session.run`, and it runs **one Agent
   turn per message you send her in the chat area**, in her own session. The
   turn runs through the Host Agent, so it carries the capabilities the Host
@@ -194,9 +199,11 @@ it like the rest of the port.
   Her static lines (a greeting, "you have been quiet", "you ignored me") are **not**
   model turns and cost nothing — turning idle talk off only stops the model ones.
 - **Other sessions' titles** — with 「她知道我在忙什么」 ("She knows what I am
-  busy with") **on (the default)**, the titles and running state of your **other**
-  sessions are put into her prompt, so she can tell what you are busy with. **Turn
-  it off in the panel**: Settings → 「她知道我在忙什么」.
+  busy with") **on**, the titles and running state of your **other** sessions are
+  put into her prompt, so she can tell what you are busy with. It is **off by
+  default** (since 1.10.0): a fresh install neither subscribes to your session
+  events nor lists your sessions, and nothing about them reaches her prompt.
+  **Turn it on in the panel**: Settings → 「她知道我在忙什么」.
 - **Tools it calls** — only its own four MCP tools, on its own port. It calls no
   connector, no provider and no third-party service.
 - **Processes spawned** — none. This package starts no child process and runs no

@@ -1956,11 +1956,13 @@
           <section class="set-group">
             <span class="set-title">她知道我在忙什么</span>
             <div class="seg" role="group" aria-label="状态感知" id="petaware-group">
-              <button type="button" data-petaware="on" aria-pressed="true">开</button>
-              <button type="button" data-petaware="off" aria-pressed="false">关</button>
+              <button type="button" data-petaware="on" aria-pressed="false">开</button>
+              <button type="button" data-petaware="off" aria-pressed="true">关</button>
             </div>
             <p class="set-note" id="petaware-note">
-              开着的话，你其它会话的标题和运行状态会进她的提示词；关掉她就不看这些了。
+              <b>默认关。</b>开着的话，她会订阅你的会话事件、列出你的会话，
+              并把其它会话的标题、运行状态和最终回复写进她的提示词；
+              关掉这些一概不采、也不进提示词。
             </p>
           </section>
 
@@ -3434,8 +3436,9 @@
               scopeButtons[j].getAttribute('data-scope') === state.scope ? 'true' : 'false'
             );
           }
-          // ⚠️ **undefined 算「开」** —— 老运行时的快照没有这两个字段，
-          //   按「默认开」显示，别让面板显示成「关」。
+          // ⚠️ **undefined 按各自的默认值走** —— 老运行时的快照可能没有这两个字段：
+          //   闲话按「开」显示（v1.7.0 之前的默认）；状态感知按「关」显示
+          //   （2026-11-16 起默认关，取更安全的那一边）。
           var idleButtons = document.querySelectorAll('#idletalk-group button');
           for (var k = 0; k < idleButtons.length; k++) {
             idleButtons[k].setAttribute(
@@ -3449,7 +3452,7 @@
           for (var m = 0; m < awareButtons.length; m++) {
             awareButtons[m].setAttribute(
               'aria-pressed',
-              awareButtons[m].getAttribute('data-petaware') === (snapshot.petAware === false ? 'off' : 'on')
+              awareButtons[m].getAttribute('data-petaware') === (snapshot.petAware === true ? 'on' : 'off')
                 ? 'true'
                 : 'false'
             );
