@@ -88,6 +88,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [MCP OAuth Console](plugins/microbiosis/mcp-oauth-console/) | Sign in to MCP servers that require OAuth: device-code or authorization-code + PKCE flow, the `Authorization` header written into the MCP configuration, and an opt-in refresh before expiry | [Microbiosis](https://github.com/Microbiosis) |
 | [本机大盘 · Local Market Board](plugins/jzlikewei/kurumi-monitor/) | Watch your own machine as a stock terminal: CPU, GPU, temperature, memory, disk, network and every running process become listed stocks with live candlesticks, moving averages, a watchlist, a leaderboard and a trade tape, on macOS and Windows. Requires minimax Code 3.1.2 or later | [jzlikewei](https://github.com/jzlikewei) |
 | [Quota Bottle](plugins/7723qqq/quota-bottle/) | An octopus-shaped glass bottle that floats on your desktop and shows the remaining Token Plan quota from a login you configure yourself, with the liquid level and opacity following the remaining share, and a device-code login plus an opt-in local token-usage estimate as fallbacks | [7723qqq](https://github.com/7723qqq) |
+| [Site QA](plugins/lonelyguy-se1/site-qa/) | Check local HTML/robots/sitemap for SEO and accessibility gaps, then ask the agent to fix them (Mini App + skill/CLI). Requires MiniMax Code 3.1.6 or later | [LonelyGuySE1](https://github.com/LonelyGuy-SE1) |
 
 <details>
 <summary>Preview: Cutline</summary>

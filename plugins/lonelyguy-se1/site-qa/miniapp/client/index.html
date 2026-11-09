@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Site QA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/qa/app.css" />
+  </head>
+  <body>
+    <div class="frame">
+      <header class="hero">
+        <div class="brand-block">
+          <p class="brand">Site QA</p>
+          <h1>Find what is hurting the site. Fix it in chat.</h1>
+        </div>
+        <p id="status" class="status" role="status">Pick a site root, then scan.</p>
+      </header>
+
+      <section class="panel controls" aria-label="Scan controls">
+        <div class="field">
+          <label class="label" for="site-trigger">Site root</label>
+          <div class="menu" id="site-menu">
+            <button
+              id="site-trigger"
+              class="menu-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="site-list"
+            >
+              <span id="site-label">Detect folders from this project</span>
+              <span class="menu-caret" aria-hidden="true"></span>
+            </button>
+            <ul id="site-list" class="menu-list" role="listbox" hidden></ul>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label" for="root">Path</label>
+          <input
+            id="root"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="/absolute/path/to/site"
+          />
+        </div>
+
+        <div class="actions">
+          <button id="scan" class="primary" type="button">Check site</button>
+          <button id="summary" class="ghost" type="button">Ask agent to fix</button>
+        </div>
+      </section>
+
+      <section class="summary" id="summary-cards" hidden>
+        <article class="stat error"><span class="num" id="count-error">0</span><span>Errors</span></article>
+        <article class="stat warn"><span class="num" id="count-warning">0</span><span>Warnings</span></article>
+        <article class="stat"><span class="num" id="count-seo">0</span><span>SEO</span></article>
+        <article class="stat"><span class="num" id="count-a11y">0</span><span>A11y</span></article>
+        <article class="stat"><span class="num" id="count-files">0</span><span>HTML</span></article>
+      </section>
+
+      <section class="panel filters" id="filters" hidden aria-label="Filters">
+        <label class="chip"><input type="radio" name="filter" value="all" checked /> All</label>
+        <label class="chip"><input type="radio" name="filter" value="error" /> Errors</label>
+        <label class="chip"><input type="radio" name="filter" value="warning" /> Warnings</label>
+        <label class="chip"><input type="radio" name="filter" value="seo" /> SEO</label>
+        <label class="chip"><input type="radio" name="filter" value="accessibility" /> A11y</label>
+      </section>
+
+      <section class="panel findings-panel">
+        <div class="section-head">
+          <h2>Findings</h2>
+          <p id="meta" class="meta"></p>
+        </div>
+        <ul id="findings" class="findings"></ul>
+        <p id="empty" class="empty">Check a site folder to list SEO and accessibility gaps.</p>
+      </section>
+    </div>
+
+    <script src="/qa/app.js"></script>
+  </body>
+</html>
