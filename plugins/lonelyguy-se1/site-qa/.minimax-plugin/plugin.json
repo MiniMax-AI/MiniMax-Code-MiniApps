@@ -6,7 +6,7 @@
   "description": "Check the site you are building for SEO and accessibility gaps. Pick a site root, review findings, ask the agent to fix them.",
   "author": "LonelyGuySE1",
   "icon": "icon.png",
-  "category": "Code",
+  "category": "Design & Sites",
   "exampleQueries": [
     "Open Site QA",
     "Check this site for SEO problems",
