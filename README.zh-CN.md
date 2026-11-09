@@ -163,7 +163,7 @@ git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
 
 作者目录（`amszuidas/`）只用于仓库归类。复制到客户端时，将插件目录直接放入 `plugins/`，不要多套一层作者目录。
 
-这些插件包采用**手动安装**方式。用客户端的 GitHub 插件导入功能无法安装：客户端会下载整个仓库，而本仓库已超过它 128 MiB 的上限。
+从 MiniMax Code 3.1.11 起，也可以不复制文件、直接导入：在插件页点击 **创建**，在 Mini App 下选择 **从 Git 仓库导入**，粘贴插件目录的链接，例如 `https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/amszuidas/mcode-token-usage-board`。客户端会下载整个仓库（约 160 MiB），5 分钟内没下完就会放弃，网络较慢时请改用手动安装。更早的版本无法从本仓库导入，因为仓库已超过它们 128 MiB 的上限。
 
 ### 3. 打开
 
