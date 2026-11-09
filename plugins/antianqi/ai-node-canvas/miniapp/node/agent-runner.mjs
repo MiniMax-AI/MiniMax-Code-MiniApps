@@ -42,6 +42,11 @@ const MODES = new Set(['image', 'video', 'audio', 'music', 'text']);
 // so it keeps the Agent turn.
 const DIRECT_MODES = new Set(['image', 'video', 'audio', 'music']);
 
+// The codes that mean the Host stopped a connector call it had already sent:
+// the provider may still be working on it, and a picture has no task number
+// to ask about afterwards.
+const STOPPED_CODES = new Set(['CONNECTOR_TIMEOUT', 'CONNECTOR_OUTCOME_UNKNOWN']);
+
 const ERROR_TEXT = {
   NOT_PERMITTED: '没有 Agent 访问权限（需要 MiniMax Code 3.1.2 或更新版本）',
   BUSY: 'Agent 正忙，请稍后重试',
@@ -383,6 +388,35 @@ function buildPrompt({ mode, segments, prompt, references, params, model, path =
   return { agentPrompt: sections.join('\n\n'), compiled, providerPrompt, assets };
 }
 
+/**
+ * What the Agent is told when the direct call was stopped.
+ *
+ * The request is the one the direct path would have sent, written out as the
+ * tool call to make. The Agent decides nothing here: it is handed the same
+ * request and asked to run it by the other road, because the Host does not
+ * time a turn out the way it times a connector call out.
+ */
+function agentImageInstruction({ prompt, params, assets, count = 1 }) {
+  const request = { prompt: String(prompt ?? '') };
+  if (params?.ratio) request.aspect_ratio = params.ratio;
+  if (params?.resolution) request.resolution = params.resolution;
+  const urls = (assets?.images ?? [])
+    .map((item) => String(item?.url ?? item ?? ''))
+    .filter(Boolean);
+  if (urls.length) request.input_urls = urls;
+  // A batch is one call with one request per asset: the direct path gives
+  // every asset a window of its own, but a turn has no such window.
+  const total = Math.max(1, Number(count) || 1);
+  const requests = [];
+  for (let index = 0; index < total; index += 1) requests.push({ ...request });
+  return [
+    '刚才那条直连生成通道超时了，现在改走另一条路：请调用图片生成工具重新生成，只调用这一次。',
+    '参数严格照抄下面这一份，不要改动，也不要额外生成别的：',
+    JSON.stringify({ requests }),
+    '生成之后，对每一张图片调用 get_asset_url 换成能访问的链接，并把每条链接都写在回复里。',
+  ].join('\n\n');
+}
+
 export function createAgentRunner(context) {
   const tasks = new Map();
   const nodeTasks = new Map();
@@ -696,6 +730,9 @@ export function createAgentRunner(context) {
       assets: { images: [], videos: [], audios: [] },
       // Which path owns this run: the connector (direct) or an Agent turn.
       runner: 'agent',
+      // Set when the direct call was stopped and the run went on by the
+      // Agent road instead.
+      degraded: false,
       providerTaskId: null,
       providerModel: null,
       providerStatus: null,
@@ -836,6 +873,9 @@ export function createAgentRunner(context) {
   // plan quota. The Host owns the credentials; no key is handled here.
   async function executeConnector(task, { mode, prompt, params, assets, modelId, count = 1, path, frames }) {
     const signal = armController(task);
+    // Set when the direct call was stopped and the run goes on by the Agent
+    // road instead.
+    let degrade = false;
     try {
       const result = await connector.submit({ mode, prompt, params, assets, modelId, signal, count, path, frames });
       if (task.cancelled) {
@@ -876,6 +916,15 @@ export function createAgentRunner(context) {
         task.status = 'aborted';
         task.error = '';
         task.log.push('已取消');
+      } else if (mode === 'image' && STOPPED_CODES.has(error?.code)) {
+        // The Host stopped the call and the outcome is unknown: the provider
+        // may still be working on it. A picture has no task number to ask
+        // about, so the one it makes cannot be found afterwards.
+        //
+        // The page is not told the run failed. The run goes on by the other
+        // road: the Host does not time an Agent turn out, so the same
+        // request can run there as long as it needs.
+        degrade = true;
       } else {
         task.status = 'error';
         task.error = describeError(error?.code ?? 'UNKNOWN', error?.message);
@@ -883,6 +932,27 @@ export function createAgentRunner(context) {
       }
     } finally {
       releaseController(task);
+    }
+    if (degrade) {
+      task.degraded = true;
+      task.runner = 'agent';
+      task.log.push('直连超过 30 秒，改走 Agent 通道重新生成');
+      await execute(task, { text: agentImageInstruction({ prompt, params, assets, count }) });
+      // The Agent's links are the provider's own and they expire, so the
+      // canvas keeps a local copy: the node still has its picture later.
+      if (task.status === 'done' && task.media?.length) {
+        task.media = await Promise.all(task.media.map(async (item) => {
+          const local = await store.publishRemote(item.url, item.kind).catch(() => null);
+          return local ? { ...item, url: local } : item;
+        }));
+      }
+      // A turn that ended without a picture is not a picture: the run says
+      // so, instead of finishing with nothing to show.
+      if (task.status === 'done' && !(task.media ?? []).length) {
+        task.status = 'error';
+        task.error = 'Agent 通道没有返回图片，请再试一次';
+        task.log.push(`失败：${task.error}`);
+      }
     }
     return task;
   }
