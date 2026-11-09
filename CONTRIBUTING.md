@@ -14,6 +14,6 @@ The plugin directory name must match `name` in `.minimax-plugin/plugin.json`. **
 
 Submit ready-to-run files. If the app requires a build step, include its source and build instructions. Do not commit `node_modules/`, credentials, real session records, personal data, or runtime caches. Use synthetic or thoroughly anonymized data in screenshots and examples.
 
-Before submitting, install the app in MiniMax Code, open it, and check its main features. Include your test environment and results in the pull request, and state any unverified behavior. When updating an existing app, keep its plugin ID and update the version and usage instructions as appropriate.
+Before submitting, install the app in MiniMax Code, open it, and check its main features. Include your test environment and results in the pull request, and state any unverified behavior. If an AI agent wrote the description, write its first two or three sentences yourself, keep the test results and unverified behavior visible, and fold the rest into `<details><summary>…</summary> … </details>`. When updating an existing app, keep its plugin ID and update the version and usage instructions as appropriate.
 
 Working with an AI coding agent? It reads `AGENTS.md` automatically; `docs/` holds the same rules for people.

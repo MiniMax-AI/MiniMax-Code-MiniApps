@@ -26,6 +26,12 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
 4. Add one row to the table in both root READMEs.
 5. Run `npm run check`. Done when it reports no errors and every warning is either fixed or
    explained in the PR description.
+6. Open the PR with a short opener: one to three sentences on what changed and why, plus a
+   screenshot when the page looks different. Keep these visible below it: the tested environment
+   and results, what you did not verify, each remaining `npm run check` warning with its reason,
+   and any new access or higher minimum client version. Put the rest of a long description inside
+   `<details><summary>Written by <model></summary> … </details>`. Ask the person you work for to
+   read and edit the opener before you submit.
 
 ## Hard rules
 
@@ -90,6 +96,8 @@ suggestion.
 - CI validates every package under `plugins/`. A new error must leave existing packages at zero
   errors; otherwise ship it as a warning first.
 - Keep contract changes in their own PR, apart from package updates.
+- Describe the PR as in step 6 of "Add or update a Mini App": a short opener, what was and was
+  not verified in view, the rest folded.
 
 ## Navigation
 
