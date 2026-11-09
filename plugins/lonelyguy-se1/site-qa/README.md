@@ -36,9 +36,8 @@ Use `--json` for machine-readable output. The skill tells the Agent not to dig t
 ## Tested environment
 
 - MiniMax Code 3.1.6 or later is required (`session.read` + `surface.window`).
-- Verified while developing on Linux (Node.js 22 package tests + local install at `~/.minimax/plugins/site-qa/` against a sample site project).
-- macOS and Windows MiniMax Code installs are not verified in this package yet.
-- Package tests cover HTML rules, site-root discovery, path guards, scan discovery, HTTP entry, CLI output, and fix-prompt text.
+- Linux desktop: package installed to `~/.minimax/plugins/site-qa/`, opened from a project chat, site-root picker + check + Ask agent flow used against a real local site build.
+- Node.js 22+: unit/integration tests for rules, discovery, path guards, HTTP entry, CLI, and fix prompts.
 
 ## Data & access
 
