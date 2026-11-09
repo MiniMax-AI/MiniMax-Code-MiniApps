@@ -74,6 +74,7 @@ import {
   parseStoryBody,
 } from './storyscope.mjs';
 import { pickPetAgent, needRebuild } from './agentpick.mjs';
+import { buildAgentCard, AGENT_CARD_NAME } from './agentcard.mjs';
 // 身份层三段的**唯一读取口**（随消息带的那份 + 写进 agent 文件的那份，共用同一份投影）。
 import { readIdentitySections } from './identity.mjs';
 import { checkFrame, protocolPayload } from './chat-protocol.mjs';
@@ -1155,6 +1156,30 @@ export async function start(context, options = {}) {
           const enabled = body.enabled === true || body.enabled === 'true';
           const petAware = await state.setPetAware(enabled);
           sendJson(response, 200, { ok: true, petAware, snapshot: state.snapshot() });
+          return;
+        }
+
+        // ===== 「复制她的设定」（官方插件市场 1.8.0 拒收 → 官方给的改法 B）=====
+        //
+        // ⚠️ **插件不写宿主任何文件**：这一条只把设定正文交给**用户**，
+        //   由用户自己在 Agent 设置里建一个名为 mmx 的 agent 并粘贴；
+        //   插件之后通过 agents() **认出来**并用它（认不出就退回「随消息带」）。
+        if (path === '/api/agent-card') {
+          const card = await buildAgentCard(context.pluginRoot);
+          let found = false;
+          try {
+            if (context.agent && typeof context.agent.agents === 'function') {
+              const listed = await context.agent.agents();
+              found = (listed?.agents || []).some(
+                (item) => String(item?.name ?? '') === AGENT_CARD_NAME
+              );
+            }
+          } catch (error) {
+            context.logger.warn('miniapp.agent.card.probe_failed', {
+              reason: error instanceof Error ? error.message : 'unknown',
+            });
+          }
+          sendJson(response, 200, { ok: true, name: AGENT_CARD_NAME, found, body: card });
           return;
         }
 

@@ -1910,6 +1910,25 @@
             <p class="set-note" id="naming-note">名字和称呼都是你的设定，改了她下一轮就知道。</p>
           </section>
 
+          <!-- ★ **「复制她的设定」**（官方插件市场 1.8.0 拒收 → 官方给的改法 B）：
+               插件**不写宿主任何文件** ⇒ 想让她的性格更鲜明，得由**你自己**建一个
+               名为 mmx 的 agent 并把设定贴进去；插件只负责**认出来**并用它。 -->
+          <section class="set-group">
+            <span class="set-title">想要更鲜明的性格？</span>
+            <p class="set-note">
+              插件不会往你的宿主目录写任何文件。你可以自己建一个叫 <b>mmx</b> 的 agent，
+              把她的设定贴进去 —— 她就会用那个 agent 回答，性格更鲜明
+              （代价是从零开始，没有你现有 agent 攒下的经验）。
+              <br />
+              做法：复制她的设定 → 打开 MiniMax Code 的 Agent 设置 → 新建一个名为 <b>mmx</b>
+              的 agent → 粘贴保存。建不建都行：不建她就按「每轮随消息带」的方式跟你说话。
+            </p>
+            <div class="set-actions">
+              <button type="button" id="agent-card-copy">复制她的设定</button>
+            </div>
+            <p class="set-note" id="agent-card-status" style="display:none"></p>
+          </section>
+
           <section class="set-group">
             <span class="set-title">她看着谁</span>
             <div class="seg" role="group" aria-label="观察范围" id="scope-group">
@@ -3153,6 +3172,77 @@
         function closeNamingAsk() {
           if (!el.namingAsk) return;
           el.namingAsk.hidden = true;
+        }
+
+        /**
+         * 把一段文本放进剪贴板（优先用 Clipboard API，不行就走老路）。
+         *
+         * @param {string} text
+         * @returns {Promise<boolean>}
+         */
+        function copyTextToClipboard(text) {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text)
+              .then(function () { return true; })
+              .catch(function () { return legacyCopyText(text); });
+          }
+          return Promise.resolve(legacyCopyText(text));
+        }
+
+        /**
+         * 老办法复制（Clipboard API 不可用时的兜底）。
+         * @param {string} text
+         * @returns {boolean}
+         */
+        function legacyCopyText(text) {
+          var area = document.createElement('textarea');
+          area.value = text;
+          area.setAttribute('readonly', '');
+          area.style.position = 'fixed';
+          area.style.left = '-9999px';
+          document.body.appendChild(area);
+          area.select();
+          var ok = false;
+          try {
+            ok = document.execCommand('copy');
+          } catch (error) {
+            ok = false;
+          }
+          document.body.removeChild(area);
+          return ok;
+        }
+
+        /**
+         * 「复制她的设定」—— 官方改法 B：引导用户自己建 mmx agent，插件只负责识别。
+         *
+         * ⚠️ **插件不写宿主任何文件** —— 这一步只是把设定正文交给用户，
+         *   由用户自己在 Agent 设置里建 agent 并粘贴。
+         */
+        function copyAgentCard() {
+          post('/api/agent-card', {})
+            .then(function (data) {
+              var text = String(data.body || '');
+              if (!text) throw new Error('没拿到设定正文');
+              return copyTextToClipboard(text).then(function (ok) {
+                var status = document.getElementById('agent-card-status');
+                if (status) {
+                  var hint = data.found
+                    ? '已经找到你自己建的 mmx agent —— 她现在用它回答。'
+                    : '还没找到叫 mmx 的 agent；建好之后她会自动用它。';
+                  status.textContent = (ok ? '设定已复制。' : '复制失败，请手动复制。') + hint;
+                  status.style.display = '';
+                }
+                toast(
+                  ok
+                    ? '设定已复制 —— 去 Agent 设置里建一个叫 mmx 的 agent，粘贴进去'
+                    : '复制失败，请手动复制',
+                  ok ? '' : 'error'
+                );
+              });
+            })
+            .catch(function (error) {
+              toast('拿不到她的设定：' + error.message, 'error');
+            });
         }
 
         /**
@@ -4735,6 +4825,15 @@
               toast('切换失败：' + error.message, 'error');
             });
         });
+
+        // ★ **「复制她的设定」**（官方改法 B）：只把设定正文交给用户，
+        //   由用户自己在 Agent 设置里建 agent 并粘贴；插件全程不写宿主文件。
+        var agentCardCopyBtn = document.getElementById('agent-card-copy');
+        if (agentCardCopyBtn) {
+          agentCardCopyBtn.addEventListener('click', function () {
+            copyAgentCard();
+          });
+        }
 
         document.getElementById('scope-group').addEventListener('click', function (event) {
           var button = event.target.closest('button[data-scope]');

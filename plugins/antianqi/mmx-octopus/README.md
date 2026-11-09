@@ -27,6 +27,14 @@ Plugin ID: `mmx-octopus` · Category: `Productivity`
 - **The Agent can drive her.** This package hosts an MCP server with four
   tools (below), so the Agent can make her speak, change her expression, move
   her, or read her state.
+- **She can answer with an agent of her own — if you make one.** The plugin
+  never creates an agent for you and never writes one. If you want her to have
+  her own, open the panel (Settings → 「想要更鲜明的性格？」) and press
+  **「复制她的设定」** ("copy her settings"): it puts her character sheet on
+  your clipboard. Paste it into a new agent named `mmx` in the Host's Agent
+  settings, and the plugin finds that agent on its own (read-only) and answers
+  with it. Skip the step and she answers with the default agent, her character
+  sheet travelling with every message.
 - **She stays out of the way.** The floating window is frameless, transparent,
   always on top and click-through, so it never blocks the desktop. It is
   220 × 460 and can be dragged anywhere on the screen; the Agent can park it in
@@ -65,6 +73,8 @@ Nothing else is needed: no API key, no account, no dependency to install.
 2. Drag it to a corner, or let the Agent move it with `mmx_move`.
 3. Talk to the Agent as usual and watch her expression follow along.
 4. Open the panel and write to her — she answers in her own session.
+5. Optional: give her an agent of her own — copy her settings from the panel
+   and paste them into a new agent named `mmx` (see "What it does").
 
 ### The Agent's four tools
 
@@ -127,6 +137,12 @@ it like the rest of the port.
     ("Which agent should she use" — "create a dedicated agent" vs "use an
     existing agent") is gone, and so is the manual `agentprov-cli.mjs` command
     that came with it. There is nothing left to switch.
+  - **Your own `mmx` agent, if you make one.** The panel's **「复制她的设定」**
+    button only hands you her character sheet as text — it writes nothing. You
+    paste it into a new agent named `mmx` in the Host's Agent settings; the
+    plugin then finds that agent through the Host's agent list and answers
+    with it, reading it only. Creating, editing and deleting that agent stay
+    yours; the plugin only ever reads the agent list.
   - **It still reads the Host's agent list — read-only.** The plugin reads the
     agents the Host exposes and, if you have an agent named `mmx`, that is the
     one she answers with. Your agent is never modified and never written to.
@@ -209,6 +225,10 @@ manual `agentprov-cli.mjs` command are gone as well.
   it writes are the four JSON files under `context.dataDir`.
 - **Your own `mmx` agent still wins.** If you have an agent named `mmx`, she
   answers with it — read-only; the plugin never modifies it.
+- **1.9.0 also hands you her settings.** The panel's **「复制她的设定」** button
+  gives you her character sheet as text, so you can put it into an agent named
+  `mmx` that you create yourself. The plugin no longer creates that agent for
+  you — it only recognises it.
 
 ## Known limits
 
@@ -217,6 +237,9 @@ manual `agentprov-cli.mjs` command are gone as well.
 - Her body animation only covers the moments the clips cover; between clips the
   `pose` fallback runs.
 - She answers in whatever agent the Host resolves for her.
+- Without an agent named `mmx` of your own, her character sheet travels in the
+  message instead, and the Host's context compaction may drop it — which is
+  why it is sent again every turn.
 
 ## License
 
