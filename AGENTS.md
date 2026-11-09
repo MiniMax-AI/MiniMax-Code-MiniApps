@@ -30,8 +30,9 @@ package at `plugins/<github-username>/<plugin-id>/`; the rest change the checks 
    screenshot when the page looks different. Keep these visible below it: the tested environment
    and results, what you did not verify, each remaining `npm run check` warning with its reason,
    and any new access or higher minimum client version. Put the rest of a long description inside
-   `<details><summary>Written by <model></summary> … </details>`. Ask the person you work for to
-   read and edit the opener before you submit.
+   `<details><summary>Written by <model></summary> … </details>`, with a blank line after
+   `</summary>`; without it GitHub shows the Markdown inside as plain text. Ask the person you work
+   for to read and edit the opener before you submit.
 
 ## Hard rules
 
