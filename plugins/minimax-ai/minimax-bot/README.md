@@ -85,6 +85,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - A `state.json` or a chat file that cannot be parsed no longer keeps the Mini App from starting. The unreadable file is kept as `*.corrupt-<time>` instead of being thrown away, and the store starts from the defaults: an unreadable chat starts empty, the other chats still load. The file was written with a rename, but nothing was flushed before it, so a power loss could leave an empty file behind; the bytes are flushed before the rename now, and the directory after it where the platform allows it.
 - A failed ledger write no longer fails the turn that already ran. The reply keeps its outcome, a group round goes on to the next member, and a finished background job still saves its status and delivers its report. The miss goes to the log.
 
+## 0.7.25 A failed turn that says what happened
+
+- A turn whose Agent never started says so, says that the turn did not run, and names the next step: try again, or restart MiniMax Code. It used to say only that the Agent was temporarily unavailable, which read the same as a busy model. The server and the page carry the same sentence for it, so a chat and a stored message say the same thing in both languages.
+- A failure whose cause the plugin cannot read — a Host error it has no sentence for — now has a sentence of its own: the turn did not finish and the reason was not identified. Where the Host throws that error, the text it came with stays out of the chat, so a session id or a service name is not shown to the user. A Host that reports the failure as a result keeps showing the text it sent.
+- The errors the plugin raises itself keep the message they were built with, and every code it knows keeps its own sentence. No code was added or renamed, and nothing is retried differently: only the words a failed turn shows changed.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
