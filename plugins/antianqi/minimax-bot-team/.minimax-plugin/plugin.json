@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "minimax-bot-team",
+  "displayName": "MiniMax Bot Team / MiniMax Bot 团队",
+  "version": "1.0.0",
+  "description": "现在的 bot 像一个人轮流带着几个面具跟你聊天。MiniMax Bot Team 给你的是一支真正各有能力、各有性格的团队，各自守着一个领域，也能围坐一起，从不同角度讨论同一个问题。 / Today's bot is one person wearing several masks, taking turns with you. MiniMax Bot Team gives you a team instead: members with different skills and different temperaments, each guarding one field, and they can sit down together and argue about the same question from different angles.",
+  "author": "antianqi",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "帮我搭一支 Bot 团队：先问清我要做什么，再定角色，每个 Bot 的身份文件由你写好 / Set up a Bot team with me: find out what I need, pick the roles and write the identity files of every Bot",
+    "建一个群，让几个 Bot 一起干活，任务从主 Bot 派到成员 / Create a group where several Bots work together and the chief hands the work over",
+    "每天早上让一个 Bot 汇总行业动态发给我 / Have a Bot send me an industry digest every morning"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": [
+    "skills/bot-team-setup/SKILL.md"
+  ]
+}

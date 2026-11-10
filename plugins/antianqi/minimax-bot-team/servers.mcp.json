@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "minimax-bot-team": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/minimax-bot-team",
+      "headers": {},
+      "description": "MiniMax Bot team tools: view and manage Bots and groups, message other Bots, and read and write Bot memory.",
+      "timeout": 900000
+    }
+  }
+}
