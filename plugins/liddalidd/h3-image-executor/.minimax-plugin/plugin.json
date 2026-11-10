@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "h3-image-executor",
+  "displayName": "H3-Image-Executor",
+  "version": "1.8.1",
+  "description": "把一句话需求跑成经过校验的 4K 图片：自动检索参考图、规划分镜、生成、看图评审、色偏校正与修正循环，最后交付验证过的图和验收报告。多图任务会先生成角色设定图来锁定主体外观，全部出完后再做一次跨图一致性对比。在聊天里直接说「画一张…」就会把需求送进面板自动开跑，不需要自己调生图工具。",
+  "author": "liddalidd",
+  "icon": "icon.png",
+  "category": "Studio",
+  "exampleQueries": [
+    "画一张橘猫趴在窗台上晒太阳的图，午后暖光，胶片质感。",
+    "用 H3-Image-Executor 画一组四格漫画，注意角色前后要长得一样。",
+    "接着刚才那张图，把背景换成夜景。"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": [
+    "skills/h3-image-executor/SKILL.md",
+    "skills/h3-image-review/SKILL.md"
+  ]
+}
