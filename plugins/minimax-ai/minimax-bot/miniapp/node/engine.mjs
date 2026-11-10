@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { t } from './i18n.mjs';
-import { storageBudget } from './memory.mjs';
+import { MemoryError, storageBudget } from './memory.mjs';
 import { selectMemoryContext } from './memory-context.mjs';
 import { UserInbox } from './user-inbox.mjs';
 import { TaskDispatcher } from './task-dispatcher.mjs';
@@ -2041,5 +2041,9 @@ export function describeAgentError(error) {
   const key = `agentError.${code}`;
   const text = code ? t(key) : key;
   if (text !== key) return text;
-  return errorText(error) || t('agentError.unknown');
+  // The plugin's own errors carry a message that was written to be read by the user; the Host's
+  // carry an internal identifier nobody can act on. Showing the first and hiding the second
+  // keeps a session id or a service name out of the chat.
+  if (error instanceof EngineError || error instanceof MemoryError) return errorText(error);
+  return t('agentError.hostError');
 }
