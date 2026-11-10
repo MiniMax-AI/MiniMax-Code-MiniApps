@@ -1,0 +1,10 @@
+{
+  "name": "site-qa",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Local SEO and accessibility checklist with site-root picker and click-to-fix prompts for MiniMax Code.",
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  }
+}

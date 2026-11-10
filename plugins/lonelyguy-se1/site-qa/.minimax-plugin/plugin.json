@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "site-qa",
+  "displayName": "Site QA",
+  "version": "1.2.0",
+  "description": "Check the site you are building for SEO and accessibility gaps. Pick a site root, review findings, ask the agent to fix them.",
+  "author": "LonelyGuySE1",
+  "icon": "icon.png",
+  "category": "Design & Sites",
+  "exampleQueries": [
+    "Open Site QA",
+    "Check this site for SEO problems",
+    "Scan my site for accessibility gaps"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": ["skills/site-qa/SKILL.md"]
+}
