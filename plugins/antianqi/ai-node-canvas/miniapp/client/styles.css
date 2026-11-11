@@ -588,7 +588,9 @@ input {
      the ports and the line, so a chain reads by colour. */
   --kind: var(--nxc-kind-text);
   background: var(--mcode-surface);
-  border: 1px solid var(--line);
+  /* The card is a hairline on the board, not a panel around it: what the
+     card holds is what the eye should land on. */
+  border: 1px solid color-mix(in srgb, var(--mcode-text) 9%, transparent);
   border-radius: var(--node-radius);
   box-shadow: var(--mcode-shadow);
   display: flex;
@@ -611,17 +613,36 @@ input {
 .nxc-node[data-kind='input'],
 .nxc-node[data-kind='group'] { --kind: var(--mcode-text-subtle); }
 
-/* The state is a colour next to the words that say it, never instead of
-   them: the badge still carries the state for a reader without colour. */
-.nxc-node[data-state='done'] { border-color: color-mix(in srgb, var(--mcode-success) 42%, var(--line)); }
-.nxc-node[data-state='error'] { border-color: color-mix(in srgb, var(--mcode-danger) 55%, var(--line)); }
-.nxc-node[data-state='running'] { border-color: color-mix(in srgb, var(--mcode-warning) 45%, var(--line)); }
+/* The state is said in words in the header — 已完成 / 失败 / 生成中 — and
+   the frame keeps one colour. A board of cards stays a board of cards
+   instead of turning into a row of alarms. */
+.nxc-node:hover { border-color: color-mix(in srgb, var(--mcode-text) 16%, transparent); }
 
-.nxc-node:hover { border-color: var(--mcode-border-strong); }
+/* The selection is a ring drawn inside the card, not a border around it: the
+   width is divided by the zoom, so the ring keeps the same weight on screen
+   at every zoom level. A border drawn outside would grow with the card. */
+.nxc-node::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  /* Above the card's own content, below the ports that sit on its edge. */
+  z-index: 1;
+  box-shadow: inset 0 0 0 calc(1px / var(--nxc-zoom, 1)) transparent;
+}
+
+.nxc-node--selected::after {
+  box-shadow: inset 0 0 0 calc(1.5px / var(--nxc-zoom, 1)) var(--brand);
+}
 
 .nxc-node--selected {
-  border-color: var(--brand);
-  box-shadow: 0 0 0 1px var(--mcode-accent), var(--mcode-shadow-strong);
+  /* The selection is the ring drawn inside the card; the frame around it
+     does not change colour. */
+  box-shadow: var(--mcode-shadow-strong);
+  /* The selected card floats above its neighbours, so the surface below it
+     is not covered by the next card on the board. */
+  z-index: 40;
 }
 
 /* While a node is selected, the rest of the board steps back, so the
@@ -644,12 +665,10 @@ input {
   box-shadow: 0 0 0 2px var(--mcode-accent);
 }
 
-.nxc-node--loading {
-  border-color: var(--mcode-accent);
-}
-
+/* A card that is working says so with the spinner in its header; a card
+   that failed is the one thing worth a colour of its own. */
 .nxc-node--error {
-  border-color: var(--mcode-danger);
+  border-color: color-mix(in srgb, var(--mcode-danger) 60%, transparent);
 }
 
 .nxc-node--group {
@@ -663,71 +682,18 @@ input {
   border-radius: calc(var(--node-radius) - 1px) calc(var(--node-radius) - 1px) 0 0;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 9px;
-  /* The header carries the hue of the node, very quietly: the card stays
-     neutral, the type tells itself. */
-  border-bottom: 1px solid color-mix(in srgb, var(--kind) 22%, transparent);
-  background: color-mix(in srgb, var(--kind) 7%, var(--mcode-surface));
+  gap: 6px;
+  padding: 5px 8px;
+  /* The header is part of the card: one surface, one hairline under it. */
+  border-bottom: 1px solid color-mix(in srgb, var(--mcode-text) 8%, transparent);
+  background: var(--mcode-surface);
   flex: none;
 }
 
-/* A dot that says how the node is doing, beside the words that say it. */
-.nxc-node__state {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: transparent;
-  flex: none;
-}
-
-.nxc-node[data-state='done'] .nxc-node__state { background: var(--mcode-success); }
-.nxc-node[data-state='error'] .nxc-node__state { background: var(--mcode-danger); }
-.nxc-node[data-state='running'] .nxc-node__state { background: var(--mcode-warning); }
-.nxc-node[data-state='interrupted'] .nxc-node__state { background: var(--mcode-text-subtle); }
-
-.nxc-node__kind {
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--kind) 18%, transparent);
-  color: var(--kind);
-  flex: none;
-}
-
-.nxc-node__kind[data-kind="image"] {
-  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
-  color: var(--mcode-accent);
-}
-
-.nxc-node__kind[data-kind="video"] {
-  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
-  color: var(--mcode-text-muted);
-}
-
-.nxc-node__kind[data-kind="audio"] {
-  background: color-mix(in srgb, var(--mcode-success) 16%, transparent);
-  color: var(--mcode-success);
-}
-
-.nxc-node__kind[data-kind="text"] {
-  background: color-mix(in srgb, var(--mcode-warning) 16%, transparent);
-  color: var(--mcode-warning);
-}
-
-.nxc-node__kind[data-kind="group"] {
-  background: color-mix(in srgb, var(--mcode-text) 16%, transparent);
-  color: var(--mcode-text-muted);
-}
-
-.nxc-node__title {
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
+/* The card has no head of its own. It is there only while the user is
+   renaming the card, so an empty one takes no room at all. */
+.nxc-node__head:empty {
+  display: none;
 }
 
 .nxc-node__title-input {
@@ -741,39 +707,6 @@ input {
   font-weight: 600;
 }
 
-.nxc-node__status {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.nxc-node__status[data-tone="success"] {
-  color: var(--ok);
-}
-
-.nxc-node__status[data-tone="error"] {
-  color: var(--danger);
-}
-
-/* The word that says the node is selected. The border colour says it too,
-   but a state must never be carried by colour alone. */
-.nxc-node__sel {
-  font-size: 10.5px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--mcode-primary-action-bg);
-  color: var(--mcode-primary-action-text);
-  flex: none;
-  white-space: nowrap;
-}
-
-.nxc-node__sel[hidden] {
-  display: none;
-}
-
 .nxc-node__body {
   flex: 1;
   min-height: 0;
@@ -782,6 +715,111 @@ input {
   display: flex;
   flex-direction: column;
   gap: 7px;
+}
+
+/* ---------------- the operation surface ----------------
+   The card keeps the material; everything the user can do with it hangs
+   below the card in a surface that shows up only while the card is
+   selected. A board full of cards therefore stays a board full of cards,
+   and the card being worked on opens up under the cursor. */
+.nxc-node__ops {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px * var(--nxc-inv-zoom, 1));
+  /* The zoom is undone, so the surface keeps the same size on the screen at
+     every zoom level: a place to type text cannot shrink to a thumbnail. */
+  transform: scale(var(--nxc-inv-zoom, 1)) translateX(calc(-50% + var(--nxc-ops-dx, 0px)));
+  transform-origin: top left;
+  width: max(100%, 300px);
+  max-width: 380px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--node-radius);
+  background: var(--mcode-surface);
+  box-shadow: var(--mcode-shadow-strong);
+  z-index: 30;
+  cursor: default;
+}
+
+.nxc-node--selected .nxc-node__ops {
+  display: flex;
+}
+
+/* No board below the card: the surface goes above it instead — and it
+   goes above the rail, because the rail floats above the card as well. */
+/* The surface that holds the prompt is a page, not a column.
+   A prompt is read across, so the box is as wide as the window allows; a
+   long prompt scrolls inside the box instead of making the card taller. */
+.nxc-node__ops:has(.nxc-composer) {
+  width: min(max(100%, 620px), calc(100vw - 40px));
+  max-width: none;
+}
+
+.nxc-node__ops.is-above {
+  top: auto;
+  bottom: calc(100% + (10px + var(--nxc-rail-h, 0px)) * var(--nxc-inv-zoom, 1));
+  transform-origin: bottom left;
+}
+
+/* Inside the surface the pieces are plain rows: the surface has the border
+   and the background, so the rows do not need one each. */
+.nxc-node__ops .nxc-node__params,
+.nxc-node__ops .nxc-tools {
+  border-top: 0;
+  padding: 0;
+  background: none;
+}
+
+/* The card's own text, read-only.
+   The editor that writes it floats below the card while the card is
+   selected, so the card shows the text the node holds and the panel shows
+   the editor. The two are never on the screen at the same time. */
+.nxc-node__text-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.nxc-node--selected .nxc-node__text-preview {
+  /* The box keeps its place, so a text line still lands where it landed;
+     only the words step aside for the editor below the card. */
+  visibility: hidden;
+}
+
+/* The empty frame of a card that has not made anything yet.
+   The card is where the product lands, so before the first run the card is
+   the frame and a word that says so. */
+.nxc-node__frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--mcode-text) 8%, transparent);
+  border-radius: 10px;
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--mcode-text) 2%, transparent);
+}
+
+.nxc-node__frame-icon {
+  opacity: 0.5;
+}
+
+.nxc-node__frame-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-align: center;
 }
 
 /* The output area is the only part of the card that may stretch: the
@@ -808,8 +846,10 @@ input {
   position: relative;
   overflow: hidden;
   background: var(--mcode-bg-secondary);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  /* No frame around the work: the media is the picture, not a picture in a
+     box. */
+  border: 0;
+  border-radius: 6px;
   display: flex;
   /* Top aligned on purpose: the crop overlay is positioned in percentages of
      this box, so the media has to start at the same corner. */
@@ -852,6 +892,106 @@ input {
   padding: 1px 5px;
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+}
+
+/* The sound is the picture of an audio card: the wave is a band of its
+   own, the way the reference product draws it, and the row under it is what
+   may be done with the sound. */
+.nxc-node__media-wrap--audio {
+  flex: none;
+  height: 64px;
+  /* The box every media sits in has a floor of its own; the band does not
+     take it, or the band is the card again. */
+  min-height: 0;
+  max-height: none;
+}
+
+.nxc-node__audio-wave {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The wave is the sound, not a colour of the product: what stands out is
+     the mark, and the blue is kept for it. */
+  --nxc-wave-color: var(--mcode-text);
+  --nxc-wave-alpha: 0.92;
+}
+
+/* What has not been heard yet is dimmed: the bright part of the wave is the
+   part that has been played. The dimming is the colour of the page, not
+   black: a black veil would paint the wave out in the light theme, where
+   the wave is dark itself. */
+.nxc-node__audio-ahead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  background: color-mix(in srgb, var(--mcode-bg) 55%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The mark that says where the sound is. */
+.nxc-node__audio-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  margin-left: -0.75px;
+  background: var(--brand);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* The element itself is the engine; the picture of the sound is the wave. */
+.nxc-node__media--audio {
+  display: none;
+}
+
+/* The row under the wave: where the sound is, how to play it, and how it
+   leaves the app. */
+.nxc-node__audio-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px 0;
+}
+
+.nxc-node__audio-time {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The sound is played by the card itself, so the button says which way it
+   goes now. */
+.nxc-node__audio-play {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mcode-text);
+  color: var(--mcode-bg-secondary);
+  font-size: 13px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.nxc-node__audio-download {
+  justify-self: end;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--mcode-text-subtle);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
 }
 
 .nxc-node__video-play {
@@ -935,10 +1075,11 @@ input {
   line-height: 1.6;
   outline: none;
   word-break: break-word;
-  min-height: 38px;
-  /* Same rule as the text body: the editor grows, the card scrolls. */
-  max-height: none;
-  overflow: hidden;
+  /* The box has one size: a long prompt scrolls inside it, so the surface
+     keeps the height it has and the card never grows taller. */
+  height: 150px;
+  overflow-x: hidden;
+  overflow-y: auto;
   white-space: pre-wrap;
 }
 
@@ -1055,11 +1196,74 @@ input {
 
 /* ---------------- node params ---------------- */
 
+/* The chips that sum the parameters up. The card carries these instead of
+   a row of controls, and the panel behind each one holds its controls. */
+.nxc-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 190px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--mcode-surface);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-chip:hover {
+  border-color: var(--mcode-border-strong);
+  color: var(--text);
+}
+
+/* The chip whose panel is open says so by its own border, the way the
+   reference canvas marks the control that is open. */
+.nxc-chip.is-active {
+  border-color: var(--mcode-border-strong);
+  color: var(--text);
+}
+
+/* The mode control in the bar: a chip that opens the menu of modes. It says
+   what the node is going to do, so it is the first thing in the row. */
+.nxc-chip--mode {
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 15px center, right 11px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 26px;
+}
+
+/* A field inside a panel: the label sits above the control, so a panel of
+   parameters reads as a list and not as a row of narrow columns. */
+.nxc-panel__body .nxc-field {
+  width: 100%;
+}
+
+.nxc-panel__body .nxc-field .nxc-select {
+  max-width: none;
+  width: 100%;
+}
+
+/* The parameter strip sits under the body instead of inside it. The body
+   scrolls when the prompt is long, and the summary has to stay in sight:
+   the mode, the chip and the run button live here. */
 .nxc-node__params {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   flex: 0 0 auto;
   gap: 5px;
+  padding: 6px 9px;
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--mcode-text) 2%, transparent);
 }
 
 .nxc-node__param {
@@ -1130,6 +1334,18 @@ input {
   word-break: break-word;
 }
 
+.nxc-node__error-text {
+  word-break: break-word;
+}
+
+/* The four things one can do about a failure. */
+.nxc-node__error-acts {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
 /* A notice is not a failure: the node is busy, or something is worth saying
    that is not an error. It looks like an error less, so it is not read as
    one. */
@@ -1148,17 +1364,25 @@ input {
 .nxc-node__port {
   position: absolute;
   top: 50%;
-  width: 12px;
-  height: 12px;
-  margin-top: -6px;
+  /* The size of the port is said once, here. The button the browser draws
+     by default carries its own padding and its own floor, and both make the
+     ring a wide oval: they are taken away, so the port is a small ring. */
+  --port-size: 8px;
+  width: var(--port-size);
+  height: var(--port-size);
+  min-width: 0;
+  max-width: var(--port-size);
+  padding: 0;
+  margin-top: calc(var(--port-size) / -2);
   border-radius: 50%;
   /* The port is coloured by the kind that flows through it, not by the kind
      of the card it sits on: a text slot on a picture node is amber. */
   --port-kind: var(--nxc-kind-text);
   background: var(--mcode-surface);
   border: 2px solid var(--port-kind);
-  /* A ring of the surface around the port lifts it off the card edge. */
-  box-shadow: 0 0 0 3px var(--mcode-surface);
+  /* A ring of the surface around the port lifts it off the card edge. It is
+     thin: the port is a hole to grab, not a bead on the card. */
+  box-shadow: 0 0 0 2px var(--mcode-surface);
   cursor: crosshair;
   transition: background var(--mcode-duration-fast) var(--mcode-ease), border-color var(--mcode-duration-fast) var(--mcode-ease), box-shadow var(--mcode-duration-fast) var(--mcode-ease);
   z-index: 2;
@@ -1171,114 +1395,22 @@ input {
 .nxc-node__port[data-kind='music'] { --port-kind: var(--nxc-kind-audio); }
 .nxc-node__port[data-kind='style'] { --port-kind: var(--nxc-kind-style); }
 
-/* The slot strip: what may come in, and what goes out.
-   A slot nothing is plugged into yet stays hollow, so what is still open can
-   be read off the card. */
-.nxc-slots {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  row-gap: 4px;
-  flex-wrap: wrap;
-  flex: none;
-  padding: 4px 9px;
-  border-bottom: 1px solid var(--line-soft);
-  background: color-mix(in srgb, var(--mcode-text) 2%, transparent);
-}
-
-.nxc-slots__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.nxc-slots__row--out {
-  /* The output stays against the right edge, also when there is no input. */
-  margin-left: auto;
-  justify-content: flex-end;
-}
-
-/* The side a slot sits on: what goes in, and what goes out. */
-.nxc-slots__label {
-  font-size: 9.5px;
-  line-height: 1;
-  letter-spacing: 0.5px;
-  color: var(--text-faint);
-  flex: none;
-}
-
-.nxc-slot {
-  /* The colour of the data this slot carries. The same colour the node, its
-     port and the line use, so a chain reads by colour alone. */
-  --slot-kind: var(--mcode-text-subtle);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
-  line-height: 1.5;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.nxc-slot[data-kind='text'] { --slot-kind: var(--nxc-kind-text); }
-.nxc-slot[data-kind='image'] { --slot-kind: var(--nxc-kind-image); }
-.nxc-slot[data-kind='video'] { --slot-kind: var(--nxc-kind-video); }
-.nxc-slot[data-kind='audio'] { --slot-kind: var(--nxc-kind-audio); }
-.nxc-slot[data-kind='music'] { --slot-kind: var(--nxc-kind-audio); }
-.nxc-slot[data-kind='style'] { --slot-kind: var(--nxc-kind-style); }
-
-.nxc-slot__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--slot-kind);
-}
-
-/* An open slot: the dot is a ring in the colour of the data it waits for. */
-.nxc-slot.is-open .nxc-slot__dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--slot-kind);
-}
-
-.nxc-slot.is-open .nxc-slot__name {
-  color: var(--text-faint);
-}
-
-/* The word that says the slot is still waiting. */
-.nxc-slot__wait {
-  font-size: 9.5px;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 3px;
-  color: var(--text-faint);
-  background: color-mix(in srgb, var(--mcode-text) 6%, transparent);
-}
-
-/* What the node hands on is filled, the way a source socket is. */
-.nxc-slot.is-out .nxc-slot__name {
-  color: var(--text-dim);
-}
-
 /* The port is a hole to grab, so the hit area is bigger than the dot. */
 .nxc-node__port::after {
   content: '';
   position: absolute;
-  inset: -6px;
+  inset: -7px;
   border-radius: 50%;
 }
 
 .nxc-node__port--in {
-  left: -7px;
+  left: -5.5px;
 }
 
-/* An output is always filled: the flow leaves the node. */
+/* An output leaves the node, but it stays a ring until the pointer comes
+   near: the flow is already said by the slot strip. */
 .nxc-node__port--out {
-  right: -7px;
-  background: var(--port-kind);
+  right: -4.5px;
 }
 
 /* An input is hollow until something is plugged into it. */
@@ -1288,7 +1420,8 @@ input {
 
 .nxc-node__port:hover {
   border-color: var(--mcode-accent);
-  box-shadow: 0 0 0 3px var(--mcode-surface), 0 0 10px var(--port-kind);
+  background: var(--port-kind);
+  box-shadow: 0 0 0 2px var(--mcode-surface), 0 0 10px var(--port-kind);
   /* Hover changes colour only: the baseline forbids scaling on hover. */
 }
 
@@ -1470,14 +1603,6 @@ input {
   margin-top: 0;
 }
 
-/* The way out of the app: the file is on this machine, and the user may
-   want it on theirs. */
-.nxc-node__media-actions {
-  display: flex;
-  gap: 6px;
-  padding-top: 6px;
-}
-
 /* The library: every local asset, with what can be done to it. */
 .nxc-library__head {
   display: flex;
@@ -1638,69 +1763,52 @@ input {
 
 /* ---------------- upload ---------------- */
 
+/* The upload control lives in the rail above the card, as one row: the
+   button that opens the picker, and the pieces of material the card
+   already holds. */
 .nxc-upload {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 5px;
-}
-
-/* The file input is the control itself: its own button is styled to match
-   the rest of the page, and it stays reachable for assistive technology. */
-.nxc-upload__file {
-  font-size: 11px;
-  color: var(--text-faint);
   max-width: 100%;
 }
 
-.nxc-upload__file::file-selector-button {
-  appearance: none;
-  border: 1px solid var(--line);
-  background: var(--mcode-bg-secondary);
-  color: var(--mcode-text);
-  border-radius: 6px;
-  padding: 3px 9px;
-  margin-right: 8px;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.nxc-upload__list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.nxc-upload__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 6px;
-  border-radius: 6px;
-  background: var(--mcode-bg-secondary);
-  font-size: 11px;
-}
-
-.nxc-upload__name {
+/* The file input is behind the button: the button is what the reader sees
+   and presses, and the input stays reachable for assistive technology. */
+.nxc-upload__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip: rect(0 0 0 0);
   white-space: nowrap;
-  color: var(--mcode-text);
-}
-
-.nxc-upload__remove {
-  appearance: none;
-  background: none;
   border: 0;
-  cursor: pointer;
-  color: var(--text-faint);
-  font-size: 13px;
-  line-height: 1;
-  padding: 0 2px;
 }
 
-.nxc-upload__remove:hover {
-  color: var(--danger);
+.nxc-upload__btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--mcode-surface);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--mcode-shadow);
+  transition: background var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-upload__btn:hover {
+  background: color-mix(in srgb, var(--mcode-accent) 16%, transparent);
+  color: var(--text);
 }
 
 /* ---------------- prompt template ---------------- */
@@ -1909,6 +2017,12 @@ input {
   align-items: flex-end;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* The run button is the one thing the bar is for, so it sits at the right
+   end of the line and not in the middle of the values. */
+.nxc-row__run {
+  margin-left: auto;
 }
 
 .nxc-field {
@@ -2187,12 +2301,211 @@ input {
   margin-top: 3px;
 }
 
+.nxc-toolpanel__hint {
+  align-self: center;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* ---------------- the clip strip ---------------- */
+
+/* A clip is cut on a strip of the material, so its panel is a page wide
+   instead of a narrow column of values. */
+.nxc-panel[data-kind='clip'] {
+  width: 560px;
+  max-width: calc(100vw - 24px);
+}
+
+.nxc-clip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The strip: the material itself, with the part to keep picked out of it. */
+.nxc-clip__track {
+  position: relative;
+  height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mcode-bg-secondary);
+  overflow: hidden;
+}
+
+/* The material drawn into the strip: the frames of a video, the waveform of
+   an audio. The colour and the weight of the wave are the stylesheet's
+   business, so the theme decides how bright the material is. */
+.nxc-clip__strip {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  --nxc-wave-color: var(--text);
+  --nxc-wave-alpha: 0.62;
+}
+
+/* What is not kept is dimmed, so the eye finds the cut at once: the bright
+   part of the strip is the part that is kept. The dimming is the colour of
+   the page, not black: a black veil would paint the strip out in the light
+   theme, where the strip is dark itself. */
+.nxc-clip__shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--mcode-bg) 62%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The part that is kept. The dimming around it is what says "kept", so this
+   is only a whisper of colour. */
+.nxc-clip__region {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* The two ends of the range. The line is thin, so the material is not hidden
+   by it, and the three dots say there is something to hold. They sit half
+   their width inside the ends of the strip, so the strip and the handle
+   agree on where a point of it is. */
+.nxc-clip__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 4;
+}
+
+/* The line that says where the cut is. */
+.nxc-clip__handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--brand);
+  transition: width 120ms var(--mcode-ease), margin-left 120ms var(--mcode-ease);
+}
+
+/* Three dots in the line: the hand knows there is something to hold. They
+   are light, because the line they sit on is brand-coloured: a dot in the
+   colour of the strip would vanish into the track. */
+.nxc-clip__handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 9999px;
+  background: var(--mcode-text);
+  box-shadow: 0 -6px 0 var(--mcode-text), 0 6px 0 var(--mcode-text);
+}
+
+/* The hand comes closer: the line says it. */
+.nxc-clip__handle:hover::before {
+  width: 3px;
+  margin-left: -1.5px;
+}
+
+/* The playhead: where the material is being played. It stands on the
+   strip the way the sound does, so the eye can find the moment it hears.
+   The hand can take it: the line is thin, so the place to hold it is
+   wide, and the mark follows the hand from where it was. */
+.nxc-clip__playhead {
+  position: absolute;
+  top: -4px;
+  bottom: -2px;
+  width: 1.5px;
+  margin-left: -0.75px;
+  border-radius: 9999px;
+  background: var(--brand);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 45%);
+  cursor: grab;
+  touch-action: none;
+  z-index: 3;
+}
+
+/* The line is thin, so the hand needs a wider place to take hold of it. */
+.nxc-clip__playhead::before {
+  content: '';
+  position: absolute;
+  inset: 0 -22px;
+}
+
+/* The head on top of the line: this is the mark itself. */
+.nxc-clip__playhead__head {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 9999px;
+  background: var(--brand);
+}
+
+.nxc-clip__playhead:active {
+  cursor: grabbing;
+}
+
+/* The transport: play the range, and show where the playhead is. */
+.nxc-clip__transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nxc-clip__toggle {
+  appearance: none;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--mcode-surface-muted);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nxc-clip__toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nxc-clip__clock {
+  color: var(--text);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The buttons of the panel sit at the end of the transport row. */
+.nxc-clip__acts {
+  margin-left: auto;
+  margin-top: 0;
+}
+
 .nxc-multiselect {
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
-
 /* ---------------- crop overlay ---------------- */
 
 .nxc-crop {
@@ -2232,20 +2545,6 @@ input {
 
 .nxc-crop .nxc-btn:nth-of-type(2) {
   right: 6px;
-}
-
-/* ---------------- node footer (tools stay reachable) ---------------- */
-
-.nxc-node__footer {
-  flex: none;
-  border-top: 1px solid var(--line-soft);
-  padding: 6px 9px;
-  background: color-mix(in srgb, var(--mcode-text) 2%, transparent);
-}
-
-.nxc-node__footer .nxc-tools {
-  border-top: 0;
-  padding-top: 0;
 }
 
 /* ---------------- a control that reads a file ----------------
@@ -2357,4 +2656,340 @@ input {
   .nxc-spin {
     animation: none !important;
   }
+}
+/* ---------------- the rail ----------------
+   The rail floats above the card and holds what may be done to it: the
+   button that brings a picture in, and the dock of tools. It is the way the
+   reference canvas holds them, and it keeps the card itself a picture. */
+
+.nxc-node__rail {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px * var(--nxc-inv-zoom, 1));
+  /* The zoom is undone, so the rail keeps the same size on the screen at
+     every zoom level. */
+  transform: scale(var(--nxc-inv-zoom, 1)) translateX(-50%);
+  transform-origin: bottom left;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  /* The rail is wider than the card it floats over: the containing block of
+     an absolute element is the card, so the width is taken from the content
+     and not from the card. */
+  width: max-content;
+  max-width: min(820px, calc(100vw - 32px));
+  z-index: 30;
+  cursor: default;
+}
+
+.nxc-node--selected .nxc-node__rail {
+  display: flex;
+}
+
+/* The dock of tools is one bar, the way the reference canvas draws it: the
+   buttons inside it are flat, and the bar carries the border. */
+.nxc-node__rail .nxc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--mcode-surface);
+  box-shadow: var(--mcode-shadow-strong);
+}
+
+.nxc-node__rail .nxc-tools__btn {
+  border-color: transparent;
+  background: none;
+  padding: 2px 7px;
+  font-size: 11.5px;
+}
+
+.nxc-node__rail .nxc-tools__btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--mcode-accent) 18%, transparent);
+}
+
+/* The small buttons at the end of the rail: the way out of the app, and the
+   menu of what may be done with the material. They are one little bar of
+   their own, the way the reference canvas holds its icons. */
+.nxc-rail__acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--mcode-surface);
+  box-shadow: var(--mcode-shadow-strong);
+}
+
+.nxc-rail__btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-rail__btn:hover {
+  background: color-mix(in srgb, var(--mcode-accent) 18%, transparent);
+  color: var(--text);
+}
+
+/* ---------------- the drawn icons ---------------- */
+
+.nxc-icon {
+  display: block;
+  flex: none;
+}
+
+/* ---------------- the bar under the card ---------------- */
+
+/* The little square in front of the chip: the shape of the thing. */
+.nxc-chip__glyph {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+.nxc-chip__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The model that will do the work, as a button in the bar. */
+.nxc-model-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 190px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--mcode-surface);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-model-btn:hover {
+  border-color: var(--mcode-border-strong);
+  color: var(--text);
+}
+
+.nxc-model-btn__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- the panels of the bar ---------------- */
+
+/* The parameter panel holds a grid of shapes, so it needs more room than a
+   list of values does. */
+.nxc-panel[data-kind='params'] {
+  max-width: 420px;
+}
+
+.nxc-panel[data-kind='model'] {
+  max-width: 340px;
+}
+
+/* The count panel holds one list of numbers, so it is narrow. The base
+   panel rule asks for 200px, so this one has to say how narrow it is on
+   its own — a minimum width wins over a maximum width, and a panel that
+   only sets a maximum stays as wide as a parameter panel. */
+.nxc-panel[data-kind='count'] {
+  width: max-content;
+  min-width: 84px;
+  max-width: 140px;
+}
+
+/* A titled group of controls inside a panel. */
+.nxc-panel__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.nxc-panel__group-label {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+/* The ratios, as a grid of shapes: every ratio is drawn as the shape it
+   stands for, so the reader picks a picture instead of a fraction. */
+.nxc-ratio-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.nxc-ratio {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mcode-surface);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: border-color var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-ratio:hover {
+  border-color: var(--mcode-border-strong);
+  color: var(--text);
+}
+
+.nxc-ratio.is-active {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--text);
+}
+
+.nxc-ratio__glyph {
+  display: block;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+/* A shape the provider decides has no proportion to draw. */
+.nxc-ratio__glyph.is-adaptive {
+  border-style: dashed;
+}
+
+.nxc-ratio__label {
+  white-space: nowrap;
+}
+
+/* A value with a few choices, as a row of segments. */
+.nxc-seg {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.nxc-seg__btn {
+  appearance: none;
+  flex: 1 1 0;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mcode-surface);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color var(--mcode-duration-fast) var(--mcode-ease), color var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-seg__btn:hover {
+  border-color: var(--mcode-border-strong);
+  color: var(--text);
+}
+
+.nxc-seg__btn.is-active {
+  border-color: var(--mcode-border-strong);
+  background: color-mix(in srgb, var(--mcode-text) 8%, transparent);
+  color: var(--text);
+}
+
+/* The list of models: a row per model, with a tick on the chosen one. */
+.nxc-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nxc-model-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nxc-model-row:hover {
+  background: color-mix(in srgb, var(--mcode-accent) 14%, transparent);
+}
+
+.nxc-model-row .nxc-icon {
+  color: var(--text-faint);
+}
+
+.nxc-model-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nxc-model-row__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nxc-model-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nxc-model-row__sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.nxc-model-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--mcode-primary-action-bg);
+  color: var(--mcode-primary-action-text);
+  white-space: nowrap;
+}
+
+.nxc-model-row__check {
+  margin-left: auto;
+  color: var(--brand);
+  font-size: 13px;
 }

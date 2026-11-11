@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `0.87.0`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.1`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -13,15 +13,16 @@ Author: [antianqi](https://github.com/antianqi) · Version: `0.87.0`
 
 *The preview uses synthetic data. The app interface is currently in Chinese.*
 
-**A run lands on a result node.** An image node makes an image, an audio node
-makes audio, and pressing 生成 does not fill the card it was pressed on: the
-run drops a **结果** node beside it and draws the line — and that result node is
-what the next step reads.
+**A run lands on the card it was pressed on.** An image node makes an image, an
+audio node makes audio, and pressing 生成 fills that very card with what it
+made: the product is shown on the card, and the next step reads it from there.
+No second card grows beside it.
 
 **Two families of node, four kinds of data.** An **input** node holds what goes
 in — text, an image, a video or an audio, and the kind is chosen on the card.
-A **generating** node produces one of them. A **result** node shows what a
-generation produced, and a **group** is a frame around other cards. The kinds
+A **generating** node produces one of them, and shows what it made on its own
+card. A **result** node is what a tool or a batch leaves behind, and a **group**
+is a frame around other cards. The kinds
 that travel on a line are exactly `text`, `image`, `video` and `audio`: a style
 preset and an expanded prompt are text like any other, so neither is a kind of
 its own — the style is a text input that was filled from a category template.
@@ -78,15 +79,24 @@ this package.
   thumbnails. IME composition is handled explicitly, and editor keystrokes never
   reach the canvas shortcuts.
 - **Provider-specific reference syntax** — mentions are encoded as
-  `[[cw:kind:nodeId]]` and compiled per provider family (kling / minimax /
-  wanxiang / bytedance) into that provider's own syntax, with the asset URLs
-  collected into separate arrays.
-- **Model-aware parameters** — the parameter surface follows the generation mode
+  `[[cw:kind:nodeId]]` and compiled per provider family (kling / matrix /
+  minimax / wanxiang / bytedance) into that provider's own syntax, with the
+  asset URLs collected into separate arrays. The image model
+  (MiniMax-H3-Image) names its references `图1`, `图2` — the word its own
+  interface uses — while the video models use `@图片1`.
+- **Model-aware parameters** — the parameter row carries a **model button**,
+  a **summary chip** (`16:9 · 2K`) and a **count chip** (`× 1`); the controls
+  are behind the chips — each chip opens the panel of its own — drawn as
+  buttons: a grid of ratio shapes and a row of resolution segments. The
+  chip and the panel read the same data, so they cannot disagree. The surface
+  follows the generation mode
   *and* the selected model: ratio and resolution for images, plus duration and
   "continue from previous shot" for video, plus voice and emotion for audio.
   Values a model does not offer are snapped onto ones it does. The ratio menu
   says which way the frame lies (16:9 横屏, 9:16 竖屏, 1:1 方形), while the
-  value the provider takes stays the ratio itself.
+  value the provider takes stays the ratio itself. The image model also offers
+  `auto` — the picture follows the prompt — and draws 4K when it is not told
+  otherwise, so those are what an image node means when it says nothing.
 - **A global task table** — several nodes may generate at the same time while a
   single node refuses to run twice. Every run carries a progress log, and
   provider failures are translated into something actionable (402 额度用完 /
@@ -112,15 +122,24 @@ this package.
   app runs through it — the provider offers more than the app uses, and the
   panel does not pretend otherwise.
 - **Local media tools** — 14 transformations that run on the machine: 抽帧 / 宫格抽帧 /
-  片段剪辑 / 视频剪裁 / 自动分段 / 音画分离 / 合并视频, plus 字幕擦除 / 视频去水印 /
-  背景移除, and 智能抠图 / 变清晰 / 无损改尺寸 / 证件照.
+  剪辑 / 视频剪裁 / 自动分段 / 音画分离 / 分离音频 / 合并视频, plus 字幕擦除 / 视频去水印 /
+  背景移除 / 音频剪辑, and 智能抠图 / 变清晰.
   They are local transforms, not provider features, so they need `ffmpeg` on
   the machine; the panel says so when it is missing.
-  Four of the reference product's image tools are deliberately left out — 拼图
+  Six of the reference product's image tools are deliberately left out — 拼图
   (it needs several pictures, not one), 海报 (the layout comes out too rough),
-  去水印 (the user has to place a rectangle first) and 服装换色 (it shifts the
-  hue of the whole picture, background included). A tool on a result node is a
+  去水印 (the user has to place a rectangle first), 服装换色 (it shifts the
+  hue of the whole picture, background included), 无损改尺寸 (it asks for
+  numbers instead of a drag, and 剪裁 does the same job by hand) and 证件照
+  (it only fits ID photos). A tool on a result node is a
   shortcut for that one picture, so it has to work on that picture alone.
+- **Two picture tools the provider does itself** — **AI 抠图** takes a subject
+  away from a background that is not a flat colour and writes a transparent
+  PNG; **AI 放大** sharpens a blurry picture with a 2× model. They run through
+  the `matrix` connector, so they need the provider rather than `ffmpeg`.
+  Each of them says what the provider will take — AI 放大 needs a picture
+  whose long side is ≤2048 — and a picture that breaks the limit is refused
+  before the request is sent.
 - **Video understanding** — 视频拆解 / 爆款分析 read the video through the
   provider's own understanding tool and leave a text node behind.
 - **Three roles, three kinds of node** — an **input** node holds what goes in
@@ -163,12 +182,12 @@ this package.
   the dialogue keeps its own language.
 - **The pictures are named the way the request names them** — an `@` in the
   prompt points at a result on the board, and the runtime compiles it to the
-  provider's own reference syntax (`@图片1`, `@视频1`, `@音频1`). **The number
-  is the place the material has in the request**, so the picture the prompt
-  calls `@图片1` is the first picture the request sends — the prompt and the
-  request can never mean two different pictures. The Agent that writes the
-  prompt is told the same numbers, so what it writes binds to the same
-  material.
+  provider's own reference syntax (`@图片1`, `@视频1`, `@音频1`, and `图1` on
+  the image model). **The number is the place the material has in the
+  request**, so the picture the prompt calls `@图片1` is the first picture the
+  request sends — the prompt and the request can never mean two different
+  pictures. The Agent that writes the prompt is told the same numbers, so what
+  it writes binds to the same material.
 - **The `@` menu offers the whole board** — not only the chain above the node.
   A prompt may be about a picture that sits somewhere else, and naming it is
   what brings it in. The ones above the node come first.
@@ -239,7 +258,7 @@ this package.
   the ones behind it. The run log says how long a call waited, and a failed
   call says it too, so "the provider was slow" and "it waited its turn" are
   never confused.
-- **Cards are spaced by their own size** — the results of one run, the tiles
+- **Cards are spaced by their own size** — the results of one batch, the tiles
   of a 宫格切分 and the children a tool produces are all placed by one rule: the
   distance between two cards is the size of a card plus a gap. The size of a
   card is the one the page measures — the preview follows the media's own
@@ -363,14 +382,18 @@ this package.
     and the rest of the board steps back**, so the eye lands on the chain.
   - The capability list carries a legend of the data colours.
 - **State is never carried by colour alone** — a selected node shows a `Selected`
-  chip and its accessible name carries `(selected)`; every node is a named
-  group, the prompt editor has a name of its own, the progress panel is a
+  chip and its accessible name carries `(selected)`; a finished node wears a
+  tick, a failed one a bang and a stopped one a dash, and the icon on the card
+  names the card for anyone who cannot see it; every node is a named group,
+  the prompt editor has a name of its own, the progress panel is a
   `role="status"` area, and a failure banner is a `role="alert"`.
 - **The card follows the media** — a generated image or video is previewed at
   its own ratio, and the card is sized around that preview instead of
   squeezing it into a fixed frame. A tall 9:16 asset gives a narrow, tall
-  card; a wide 16:9 asset gives a short one. A card the user resized by hand
-  keeps the width they chose.
+  card; a wide 16:9 asset gives a short one. **A card the user resized by hand
+  is a frame**: the picture takes the whole width of it, keeps its own ratio,
+  and the card's height follows the picture — so a bigger card shows a bigger
+  picture, with no grey border left around the work.
 - **Undo / redo, multi-select, minimap, draft recovery** — snapshot history over
   nodes, connections and viewport; `Shift`-drag marquee; a live overview of the
   graph; and a local draft that can be restored after a crash.
@@ -514,6 +537,116 @@ three audios at most — and they are checked on the server before a run
 starts, so a connection that would exceed them is refused with a clear
 message rather than failing at the provider.
 
+## The rules a card follows
+
+A card is not a form. It is a picture of the work, and the commands live
+somewhere else.
+
+- **The card keeps the material; the operation floats around it** — what
+  the card shows is the picture a run made, the file the user brought in, or
+  an empty frame while the card has made nothing yet. What the user can
+  *do* with the card is split in two: the **rail above** the card carries the
+  tool dock, the **save** button (the file goes to their machine) and the
+  way into an input card; the **prompt editor** and the **parameter row**
+  float **below** it. Both show up **only while the card is selected**. One
+  rule decides what belongs where, so the card and the surfaces cannot
+  disagree about it.
+- **An input card changes its way in** — while it holds nothing, the rail
+  above it carries one **upload button** and nothing else: there is no
+  material, so there is no dock of tools to offer. Once it holds a picture,
+  the card shows it and the rail carries the dock, **save**, and a **⋯
+  menu**: put another one in, copy it, take it away.
+- **The frame is a hairline, the dots are gone, and the card says no words**
+  — every card is drawn with the same thin outline, and nothing is printed on
+  its face: no kind, no title, no state, and no strip of sockets. The card has
+  no header of its own either: no icon, no `Selected` chip, no ＋ handle, no
+  pencil, no tick. What a card is and how it is doing is said by what the card
+  holds — the picture it made, the error it hit, or the empty frame that says
+  it has not run yet. The picture sits in the card without a frame of its own.
+  Slots and ports are rings that fill in only once they carry something, so a
+  board of cards stays quiet until there is work on it.
+- **The dock is the only thing that floats above a card** — the tools of that
+  card, and the small buttons (save, the material menu) at the end of the row.
+  There is no hint and no row of pills: the ports on the card's edge already
+  say what may come in and what goes out, and the card's own menu is where it
+  is renamed.
+- **A surface is the same size at any zoom** — it undoes the zoom, so a
+  place to type text never shrinks to a thumbnail, and it flips above the
+  card when there is no board left below it — above the tool dock, not over
+  it.
+- **A prompt is written across the page** — the surface that holds the prompt
+  is as wide as a page (620px, narrower when the window is), so a line of text
+  lies down instead of running down a narrow column. **The box has one
+  height**: a long prompt scrolls inside it with the mouse wheel, so the
+  surface never grows taller. A surface that would hang off the window is
+  moved back inside it, so a prompt is never cut off by the edge of the
+  screen.
+- **A text line lands where the text belongs** — a text input card keeps the
+  text in a box on the card, so the line ends on that box; a generating card
+  keeps its prompt in the surface, so the line ends on the card's text port.
+  Either way the line does not move when the surface opens.
+- **The bar under the card has two lines** — the **top line** holds the
+  **mode control** (it says what the node is going to do — 文本生成 / 提示词增强 /
+  图生文 / 文生视频) and nothing else. The **bottom line** holds the **model
+  button** (it says which model will do the work), a summary **chip**
+  (`16:9 · 2K`, the shape and the size only), a **count chip** (`× 1`) and the
+  **run button at the right end** of the line. The model does not live
+  inside the chip: it has a button and a panel of its own. **Each chip opens a
+  panel of its own**: the summary chip opens the shape and the size, the count
+  chip opens the count alone, under a `生成数量` heading, in a panel as narrow
+  as the chip itself. No option is offered
+  in two places at once. **The chip whose panel is open says so by its own
+  border**, and stops saying so when the panel closes.
+- **The mode is said in the bar and nowhere else** — the mode says what the
+  node takes, so the ports on the card follow it, and a mode the model cannot
+  run is not offered at all: only MiniMax-H3 can continue a video. The
+  parameter panel behind the chip holds the values only, so the mode is never
+  said twice. **A text node has no chip of its own, so the mode control in the
+  bar is the only way to tell it what to do** — switch it to 提示词增强 and the
+  prompt template picker comes with it.
+- **The parameter panel is drawn as buttons** — behind the summary chip: a
+  grid of **ratio shapes** (one button per ratio, each drawn as the shape it
+  stands for), a row of **resolution segments** (1k / 2k / 4K), the duration,
+  the voice and the emotion. **The chip and the panel read the
+  same metadata**, so they cannot disagree.
+- **The panels open upward** — the model list and the parameter panel rise
+  out of the row under the card: the row sits at the bottom of the card, so
+  a panel over it covers the card, while a panel under it would cover empty
+  board — and the next card is on that board. They come down only when there
+  is no room above.
+- **A failure is a card with buttons** — a failed node does not carry a line of
+  red text; it grows four buttons: **retry / cancel / delete / report**. Report
+  copies the node's title, its id and the reason to the clipboard. Only a
+  generating node is offered a retry — it is the only kind that can run.
+- **The selection is an even ring inside the card** — 1px unselected, 1.5px
+  selected, the width divided by the zoom, so the ring keeps the same weight
+  on screen at any zoom. There is no `Selected` chip on the card any more:
+  the name of the card carries `（已选）` for a reader that cannot see it.
+- **The next card is made and wired by hand** — the card carries no handle, so
+  a chain is built the plain way: add a card from the add menu, then drag a
+  line from the port of one card to the port of the other. The line lands on a
+  port the node really has, because the ports and the table of what each kind
+  of node takes are one rule.
+- **The menu on a card is in five sections** — material / edit / organize / view
+  / danger, and the dangerous one is on its own. Grouping puts a frame around
+  the selected cards; **the members are the cards inside the frame**, so there
+  is no list to keep in step. A right click on a card that is already part of
+  the selection leaves the selection alone.
+- **An audio card is two parts** — it does not hand over the browser's grey
+  player: the shape of the sound is on the card, but it does **not fill the
+  card**. It is a **wave band of its own** at the top, with the part that has
+  been heard in white, the part that has not been dimmed, and a thin **blue
+  mark** standing where the sound is; the wave itself is a neutral colour, and
+  the blue is kept for the mark. Under it sits a **transport row**: the clock
+  on the left (`0:03 / 0:07`), the **play key** in the middle as a plain white
+  disc, and the **download key** on the right — the file leaves the app from
+  the card itself, so the rail above the card does not offer a second way out.
+  The card carries **no name above it**: the file is the card, and the rail
+  above it stays where it always was. The key says what is true: a sound that
+  has run out shows **play**, not pause — the browser leaves `paused` false
+  after the last moment, so a button that only listens for play and pause stays
+  stuck on pause.
+
 ## Install
 
 Copy the whole `ai-node-canvas` directory, including the hidden `.minimax-plugin`
@@ -537,8 +670,10 @@ Agent to open "节点画布" — or open it from the plugin list.
    image node.
 2. Add an `输入` node, pick `文本`, fill it from a category template and apply
    it — the text now applies to everything downstream.
-3. Select a node, write a prompt, choose a model and parameters, and press
-   **生成**. The result replaces the node's own output.
+3. Select a node — the prompt and the parameter row open under it and the
+   tool dock opens above it — write a prompt, choose a model and parameters
+   from the row, and press **生成**. The result replaces the node's own
+   output.
 4. Type `@` in a prompt to reference an upstream node's output.
 5. Drag the circle on the right edge of a node onto another node to connect
    them.
@@ -572,11 +707,48 @@ When ffmpeg is missing, the tool buttons stay disabled and say what is
 missing, and the media status route reports the same. Everything else — the
 generating modes, the canvas, the text tools — works without it.
 
-A card holding a **video** shows no tool bar at all: the finished clip is a
-deliverable, not a working material, and a dozen buttons under it are noise.
-No empty strip is left under the clip either — no tools, no footer.
-The video tools stay in the runtime, so the Agent can still call them through
-the MCP server.
+A card holding a **video** carries two tools: **分离音频** takes the sound out
+on its own, and **剪辑** cuts a piece of the clip. A card holding an **audio**
+carries one: **剪辑**. An audio card does not hand over the browser's grey
+player — it draws the sound itself, as a wave band with a transport row under
+it (see *The rules a card follows*).
+
+The **剪辑** panel draws the material itself: a row of frames taken out of the
+video, the real waveform of the audio, with the two ends dragged — so the
+range is chosen the way the reference product shows it, and never leaves the
+clip. Under the strip sits a transport, with a play
+button and a clock (`00:00 / 00:15`), and the material plays on the card
+above the panel: a video is watched, an audio is heard, the chosen range
+loops, and the picture follows the hand that drags it; the preview stops
+when the panel closes.
+
+The strip carries a **playhead** — the mark that says where the material is
+being played, with a small head on top of it. It follows the sound on its
+own, and the strip is what switches it: pressing the strip moves the
+material to that point and dragging keeps it there, so the moment to cut
+can be found by ear and by eye. The mark can also be **taken by the hand**:
+the line is thin, but 22 pixels on each side of it are there to hold it,
+and a hand that holds it carries the mark from where it was instead of
+jumping it — the material pauses while the mark is held and goes on when it
+is let go. It is a slider as well: the arrow keys move it a tenth of a
+second at a time, a held shift a second, and Home and End take it to the
+two ends of the range. The clip panel hangs **under the card, centred on it**,
+never on it — it is the trimming strip of that material, and a strip that
+covered the picture would hide the very thing being chosen; it flips above
+the card when there is no room below. The rest of the video tools stay in the runtime, so
+the Agent can still call them through the MCP server.
+
+The range is read the way the reference product reads it: **what is kept is
+bright, what is cut away is dimmed**. The strip is not washed blue — the
+selection is the lit part — and the two ends of the range are thin lines
+wearing three small dots instead of solid blocks that hide the material. The
+panel carries **its own buttons**: **取消** and **确认** stand on the transport
+row, and **Esc** closes the panel as well.
+
+A card holding a **picture** carries the tool dock above it: the card a
+run filled, a result node, and also the picture the user brought into an input
+node. All of them are working material, so they can be cut up or cleaned up
+before they go anywhere.
 
 ### The tools that draw in the browser
 
@@ -601,10 +773,10 @@ before the button is pressed.
 
 ### One chain, all the way down
 
-Every tool leaves a **result node** behind, whichever way it was made. Only a
-result node carries the tool bar, so the picture a tool produced can be
-worked on again: 智能抠图 → 变清晰 → 宫格切分 is one chain, not three
-separate pictures.
+Every tool leaves a **result node** behind, whichever way it was made. A card
+that holds a picture carries the tool bar — the card a run filled, or a picture
+the user brought in — so the picture a tool produced can be worked on again:
+智能抠图 → 变清晰 → 宫格切分 is one chain, not three separate pictures.
 
 ## Data & access
 
@@ -685,7 +857,8 @@ separate pictures.
     tool: a frame extract (`-ss`, `-frames:v 1`), a grid tile
     (`fps=…,tile=CxR`), a trim (`-ss`, `-to`, libx264/aac), an aspect crop
     (`crop=W:H:X:Y`), a scene-detect pass (`select='gt(scene,…)',showinfo`),
-    an audio split (`-an` / `-vn`), a concat (`-f concat -safe 0 -i <list>`),
+    an audio split (`-an` / `-vn`), an audio take (`-vn`, aac), an audio trim
+    (`-ss`, `-to`, aac), a concat (`-f concat -safe 0 -i <list>`),
     a chroma key (`chromakey=0xRRGGBB`), a logo removal (`delogo=x:y:w:h`),
     and the image passes (`colorkey`, `scale`, `pad`, `crop`, `unsharp`,
     `hqdn3d`).

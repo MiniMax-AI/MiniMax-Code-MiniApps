@@ -14,12 +14,13 @@ import { homedir } from 'node:os';
 import { readTemplateFile, templateFromCanvas, templateStepsError } from '../client/actions.mjs';
 import { createActionQueue } from './action-queue.mjs';
 import { createAgentRunner } from './agent-runner.mjs';
-import { palette } from './capabilities.mjs';
+import { findTool, palette } from './capabilities.mjs';
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
 import { handleMcp, MCP_PATH } from './mcp.mjs';
 import { createMediaRunner } from './media-runner.mjs';
 import { createCanvasStore } from './store.mjs';
 import { readTemplates, removeTemplate, saveTemplate, templateIdOf } from './templates.mjs';
+import { parseByteRange } from './http-range.mjs';
 
 // Keep in sync with `surface.path` in miniapp/miniapp.json.
 const SURFACE_PATH = '/canvas';
@@ -38,6 +39,11 @@ export const CLIENT_FILES = new Map([
   ['/actions.mjs', { file: 'actions.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/run-watch.mjs', { file: 'run-watch.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/task-panel.mjs', { file: 'task-panel.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/node-ui.mjs', { file: 'node-ui.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/preview-loop.mjs', { file: 'preview-loop.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/strip.mjs', { file: 'strip.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/clip-place.mjs', { file: 'clip-place.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/clip-playhead.mjs', { file: 'clip-playhead.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/styles.css', { file: 'styles.css', type: 'text/css; charset=utf-8' }],
 ]);
 
@@ -109,17 +115,35 @@ function templateDocumentText(document) {
  * when it is opened on its own, and the name the user gets is the one the
  * page asked for.
  */
-function sendFile(res, file, downloadName = '') {
+function sendFile(res, file, downloadName = '', rangeHeader = '') {
+  const total = file.data.length;
   const headers = {
     'content-type': file.mimeType,
-    'content-length': file.data.length,
+    'content-length': total,
     'cache-control': 'no-store',
+    // The browser moves inside a media file with a range request. A server
+    // that never says it can serve parts tells the browser the file cannot
+    // be moved inside, and then the playhead of a trim bar is stuck at the
+    // start.
+    'accept-ranges': 'bytes',
   };
   if (downloadName) {
     const safe = String(downloadName).replace(/[\r\n"\\]/g, '').trim();
     if (safe) {
       headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(safe)}`;
     }
+  }
+  // The part of the file the caller asked for, when it asked for one.
+  const range = parseByteRange(rangeHeader, total);
+  if (range === 'unsatisfiable') {
+    res.writeHead(416, { 'content-range': 'bytes */' + total, 'accept-ranges': 'bytes' });
+    return res.end();
+  }
+  if (range) {
+    headers['content-length'] = range.end - range.start + 1;
+    headers['content-range'] = 'bytes ' + range.start + '-' + range.end + '/' + total;
+    res.writeHead(206, headers);
+    return res.end(file.data.subarray(range.start, range.end + 1));
   }
   res.writeHead(200, headers);
   res.end(file.data);
@@ -675,6 +699,10 @@ export async function start(context) {
         kind: saved.kind,
         bytes: saved.bytes,
         mimeType: saved.mimeType,
+        // The size of a picture, so the page can say whether the provider's
+        // image tools will take it.
+        width: saved.width ?? 0,
+        height: saved.height ?? 0,
       });
     }
 
@@ -693,6 +721,27 @@ export async function start(context) {
         url: providerUrl,
         prompt: body.prompt ?? '',
       });
+      return sendJson(res, 200, result);
+    }
+
+    // Let the provider change one picture: it sharpens a blurry picture, or it
+    // takes a subject away from its background. The provider reads assets it
+    // holds itself, so the picture is downloaded and uploaded first.
+    if (path === '/api/tools/transform' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const url = String(body.url ?? '').trim();
+      const tool = String(body.tool ?? '').trim();
+      if (!url) {
+        return sendJson(res, 400, { error: 'INVALID_ARGUMENTS', message: '缺少素材地址' });
+      }
+      // The tool table says which tools are the provider's own, so this route
+      // cannot be talked into running something else.
+      const definition = findTool(tool);
+      if (!definition || definition.run !== 'connector') {
+        return sendJson(res, 400, { error: 'INVALID_ARGUMENTS', message: '未知工具' });
+      }
+      const providerUrl = await media.prepareForProvider({ url });
+      const result = await runner.transformImage({ tool, url: providerUrl });
       return sendJson(res, 200, result);
     }
 
@@ -794,7 +843,7 @@ export async function start(context) {
         const name = path.slice('/assets/'.length);
         const file = await media.store.readAsset(name);
         if (!file) return sendJson(res, 404, { error: 'not_found' });
-        return sendFile(res, file, downloadNameOf(req));
+        return sendFile(res, file, downloadNameOf(req), req.headers.range ?? '');
       }
 
       // A file the user uploaded from their machine.
@@ -802,7 +851,7 @@ export async function start(context) {
         const name = path.slice('/uploads/'.length);
         const file = await media.store.readUpload(name);
         if (!file) return sendJson(res, 404, { error: 'not_found' });
-        return sendFile(res, file, downloadNameOf(req));
+        return sendFile(res, file, downloadNameOf(req), req.headers.range ?? '');
       }
 
       if (req.method === 'GET' && path === '/') {

@@ -333,33 +333,46 @@ export function kindOf(node) {
 }
 
 /**
+ * The tools each kind of card offers.
+ *
+ * The keys are the tools that answer to that card, and this table is the
+ * one place that says which tool belongs to which card. A video card offers
+ * the two the reference product puts on a video — take the sound out, cut a
+ * clip — and an audio card offers the clip. Everything else stays in the
+ * runtime, so the Agent can still call it.
+ */
+const CARD_TOOLS = {
+  video: ['extractAudio', 'trim'],
+  audio: ['trimAudio'],
+};
+
+/**
  * The tools a card shows under itself.
  *
  * A result card shows the tools of what it holds, and a generating card shows
  * none, because it has nothing to transform yet.
  *
- * A card holding a video shows none either: the finished clip is a
- * deliverable, not a working material, and a dozen buttons under it are
- * noise. The video tools stay in the runtime, so the Agent can still call
- * them.
+ * A card holding a video shows the two things that make it work material
+ * again: the sound on its own, and a cut of it. A dozen buttons under it
+ * would be noise, so the rest of the video tools stay in the runtime.
  */
 export function cardTools(node, tools = []) {
-  if (roleOf(node) !== 'result') return [];
+  const role = roleOf(node);
+  // A card offers the tools of what it holds, when what it holds is a
+  // picture: the result of a run, or a picture the user brought in. Both are
+  // working material, and a picture that was brought in can be cut up or
+  // cleaned up before it goes anywhere.
+  //
+  // A generating card that has made something is a media card now: the
+  // picture it made can be worked on like any other.
+  const made = role === 'generate' && Boolean(node?.metadata?.output?.media?.length);
+  if (role !== 'result' && role !== 'input' && !made) return [];
   const kind = kindOf(node);
-  if (kind === 'video') return [];
+  const keys = CARD_TOOLS[kind];
+  // The table says which tools and in which order, so the dock reads the
+  // same way every time.
+  if (keys) return keys.map((key) => tools.find((tool) => tool?.key === key)).filter(Boolean);
   return tools.filter((tool) => tool?.kind === kind);
-}
-
-/**
- * The chrome a card carries under its material.
- *
- * The footer is the toolbar, so a card with no tools has no footer either:
- * an empty strip with a border would still read like a toolbar that lost
- * its buttons.
- */
-export function cardChrome(node, tools = []) {
-  const list = cardTools(node, tools);
-  return { tools: list, hasFooter: list.length > 0 };
 }
 
 /**
@@ -388,11 +401,18 @@ export function slotsOf(node) {
  * frame, so the menu says which way it points. The value stays the ratio the
  * provider takes — only the label grows.
  */
-export function ratioLabel(ratio) {  const text = String(ratio ?? '').trim();
+export function ratioLabel(ratio, options = {}) {
+  const text = String(ratio ?? '').trim();
   if (!text) return '';
   if (text === 'adaptive') return '自适应';
+  // The image model takes `auto` for its shape: the picture follows the
+  // prompt, so the label says that instead of a ratio.
+  if (text === 'auto') return options.short ? '自适应' : '自适应（按提示词）';
   const [wide, tall] = text.split(':').map((part) => Number(part));
   if (!Number.isFinite(wide) || !Number.isFinite(tall)) return text;
+  // The short label is the one the summary chip shows: the chip has a single
+  // line, and the direction is spelled out in the menu behind it.
+  if (options.short) return text;
   if (wide > tall) return `${text} 横屏`;
   if (wide < tall) return `${text} 竖屏`;
   return `${text} 方形`;
@@ -426,7 +446,10 @@ export function ratioOptionsFor(node, caps) {
  */
 export function hasTextBox(node) {
   const role = roleOf(node);
-  if (role === 'generate') return true;
+  // A generating card shows what it produced, not what it was told: its
+  // prompt lives in the surface under the card, so a text line lands on the
+  // card's edge like any other input.
+  if (role === 'generate') return false;
   if (role === 'input') return kindOf(node) === 'text';
   return false;
 }
@@ -529,11 +552,16 @@ export function modesFor(node, caps) {
  * The mode says what the node takes and the model says what it can take: the
  * port is what both of them allow. A mode that takes the same kind twice has
  * two ports, and the role is what tells them apart.
+ *
+ * The text is the one kind the model never narrows: it is the prompt, and
+ * every model takes one.
  */
 export function portList(node, caps = null) {
   const kinds = caps ? referenceKinds(caps) : null;
   return inputsOf(node).filter((port) => {
-    if (port.kind === 'text' && hasTextBox(node)) return false;
+    // A node with a text box takes its text in the box, so it has no text
+    // port of its own.
+    if (port.kind === 'text') return !hasTextBox(node);
     if (!kinds) return true;
     return kinds.includes(port.kind);
   });
@@ -560,7 +588,9 @@ export function portKindsFor(node, caps) {
 export function stripInputs(node, caps = null) {
   const kinds = caps ? referenceKinds(caps) : null;
   return slotsOf(node).inputs.filter((slot) => {
-    if (slot.kind === 'text' && hasTextBox(node)) return false;
+    // The text is the prompt, not a reference: every model takes one, so the
+    // model's limits never narrow it away.
+    if (slot.kind === 'text') return !hasTextBox(node);
     // A node that is not generated — an input or a result — has no model to
     // narrow it, so its slots stay.
     if (!modesOf(node).length) return true;

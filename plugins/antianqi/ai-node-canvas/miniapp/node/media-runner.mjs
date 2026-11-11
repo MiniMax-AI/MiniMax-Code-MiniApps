@@ -14,6 +14,17 @@ const FALLBACK_EXT = {
   audio: '.m4a',
 };
 
+// The files each kind of material comes in. The check is a soft one — a
+// container can carry another extension — but a picture handed to a video
+// tool is caught before ffmpeg is asked to do something impossible.
+const SOURCE_EXTS = {
+  video: ['.mp4', '.mov', '.webm', '.mkv', '.avi'],
+  image: ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'],
+  audio: ['.m4a', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.opus'],
+};
+
+const SOURCE_LABELS = { video: '视频', image: '图片', audio: '音频' };
+
 function extensionOf(path) {
   const match = /\.[a-z0-9]{2,5}$/i.exec(String(path ?? ''));
   return match ? match[0].toLowerCase() : '.bin';
@@ -87,12 +98,10 @@ export function createMediaRunner(context) {
       if (accepts) {
         // A container can carry another extension, so the check is a soft one
         // and ffmpeg gets the final word.
-        const videoExts = ['.mp4', '.mov', '.webm', '.mkv', '.avi'];
-        const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
-        const allowed = accepts === 'video' ? videoExts : imageExts;
-        if (!allowed.includes(primary.ext)) {
+        const allowed = SOURCE_EXTS[accepts] ?? [];
+        if (allowed.length && !allowed.includes(primary.ext)) {
           throw Object.assign(
-            new Error(`这个工具需要${accepts === 'video' ? '视频' : '图片'}素材，当前素材是 ${primary.ext}`),
+            new Error(`这个工具需要${SOURCE_LABELS[accepts] ?? accepts}素材，当前素材是 ${primary.ext}`),
             { code: 'INVALID_ARGUMENTS' },
           );
         }

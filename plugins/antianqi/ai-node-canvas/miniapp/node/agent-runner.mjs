@@ -346,6 +346,17 @@ function buildPrompt({ mode, segments, prompt, references, params, model, path =
     .filter((part) => String(part ?? '').trim())
     .join('\n\n');
 
+  // A provider that needs words says so in one sentence, but ours answers
+  // "the request parameters are invalid", which tells the user nothing they
+  // can act on. So the empty prompt is refused here, and the node says what
+  // is missing.
+  if (DIRECT_MODES.has(mode) && !String(body ?? '').trim()) {
+    throw Object.assign(
+      new Error('提示词是空的：先写一句要生成什么，再点生成。'),
+      { code: 'INVALID_ARGUMENTS' },
+    );
+  }
+
   // The alignment line belongs to a frame request and to nothing else: it
   // tells the model which picture is the first frame and which is the last
   // one. MiniMax's H3 guide puts it on the first line of the final prompt,
@@ -399,11 +410,14 @@ function buildPrompt({ mode, segments, prompt, references, params, model, path =
 function agentImageInstruction({ prompt, params, assets, count = 1 }) {
   const request = { prompt: String(prompt ?? '') };
   if (params?.ratio) request.aspect_ratio = params.ratio;
-  if (params?.resolution) request.resolution = params.resolution;
+  // The same request the direct path would have sent: the size tier is
+  // `area`, and the pictures it works from are `reference_images`, one
+  // object per picture.
+  if (params?.resolution) request.area = params.resolution;
   const urls = (assets?.images ?? [])
     .map((item) => String(item?.url ?? item ?? ''))
     .filter(Boolean);
-  if (urls.length) request.input_urls = urls;
+  if (urls.length) request.reference_images = urls.map((url) => ({ url }));
   // A batch is one call with one request per asset: the direct path gives
   // every asset a window of its own, but a turn has no such window.
   const total = Math.max(1, Number(count) || 1);
@@ -1241,6 +1255,13 @@ export function createAgentRunner(context) {
     // itself, so this is a direct connector call rather than an Agent turn.
     async understand(input) {
       return connector.understand(input);
+    },
+
+    // Let the provider change one picture: it sharpens a blurry picture, or
+    // it takes a subject away from its background. The tool is named by the
+    // capability table, so the provider's own name is written down once.
+    async transformImage(input) {
+      return connector.transformImage(input);
     },
 
     /** The capability surface of one mode, with the model's limits folded in. */

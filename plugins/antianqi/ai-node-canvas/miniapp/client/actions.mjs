@@ -1237,14 +1237,32 @@ function downstreamGeneratingNode(canvas, node) {
 }
 
 /**
- * The result of a run becomes its own node.
+ * The nodes of an old canvas that held their own product.
  *
- * The node is placed to the right of the generating one, or in the middle when
- * the generating one feeds another generating node — then the chain reads
- * 生成 → 结果 → 生成, and the result is what the next node reads.
+ * A canvas from before the three roles keeps the product of a run on the
+ * card that made it, and the migration splits that product off into a result
+ * node. A product that names the run that made it is left alone: a run puts
+ * the product on the card, and that is the shape the canvas has now.
+ */
+export function legacyProductNodes(canvas) {
+  return (canvas?.nodes ?? []).filter((node) => {
+    if (node.type === 'group') return false;
+    if (node.metadata?.sourceTaskId) return false;
+    const output = node.metadata?.output ?? {};
+    return Boolean(output.media?.length || String(output.text ?? '').trim());
+  });
+}
+
+/**
+ * The product of a run lands on the card that made it.
  *
- * A batch of results is one node per asset, in one row, so the versions can be
- * compared next to each other.
+ * The generating card and the result card are one card now: the card shows
+ * what it made, and the links that used to run through a result card run from
+ * the card itself.
+ *
+ * A batch is more than one product: they are picked, so the versions can be
+ * compared next to each other. A card holds one product, so a batch still
+ * gets a card each.
  */
 export function materializeResults(canvas, node, task, context = {}) {
   if (!node) return { canvas, error: '没有可放结果的节点' };
@@ -1258,6 +1276,7 @@ export function materializeResults(canvas, node, task, context = {}) {
   const nodes = [...(doc.nodes ?? [])];
   const connections = [...(doc.connections ?? [])];
   const media = task?.media ?? [];
+  const text = task?.text || '';
 
   // The result is applied once: a second run of the same task does not add a
   // second copy.
@@ -1321,6 +1340,19 @@ export function materializeResults(canvas, node, task, context = {}) {
   });
 
   if (media.length > 1) {
+    // A batch gets a card per product, so the versions sit next to each
+    // other. The card that made them says how many there are instead of
+    // showing one of them twice.
+    const card = nodes.find((item) => item.id === node.id) ?? node;
+    card.metadata.sourceTaskId = task?.id ?? '';
+    card.metadata.output = {
+      ...card.metadata.output,
+      status: 'success',
+      text: '',
+      media: [],
+      resultCount: media.length,
+      updatedAt: ctx.now(),
+    };
     // The results sit in a row next to the node, and the distance between them
     // is the card's own size: two result cards that are a few pixels apart
     // cover each other.
@@ -1392,67 +1424,34 @@ export function materializeResults(canvas, node, task, context = {}) {
     };
   }
 
-  let x = node.position.x + node.width + 80;
-  if (downstream) {
-    const wanted = downstream.position.x - (size.width + 60);
-    if (wanted >= node.position.x + node.width + 24) {
-      x = wanted;
-    } else {
-      // No room between the two: the downstream node moves right so the chain
-      // reads left to right instead of the result sitting on top.
-      const shift = node.position.x + node.width + 24 + size.width + 60 - downstream.position.x;
-      if (shift > 0) downstream.position.x += shift;
-      x = downstream.position.x - size.width - 60;
-    }
-  }
-
-  const result = makeResult({
-    id: ctx.idFor('n'),
-    title: `${node.title} · 结果`,
-    x,
-    y: node.position.y + 40,
-    kind,
-    text: task?.text || '',
+  // The product lands on the card that made it: the generating card and
+  // the result card are one card now. The card is where the work is shown.
+  const card = nodes.find((item) => item.id === node.id) ?? node;
+  // The card names the run that made its product: that is what tells the
+  // product on the card from the product an old canvas left behind.
+  card.metadata.sourceTaskId = task?.id ?? '';
+  card.metadata.output = {
+    ...card.metadata.output,
+    status: 'success',
+    text,
     media,
-  });
-  nodes.push(result);
-  connections.push({
-    id: ctx.idFor('c'),
-    fromNodeId: node.id,
-    toNodeId: result.id,
-    kind: result.metadata.kind,
-  });
-  // What the node fed now reads from the result, so the chain carries the data
-  // through the result node.
-  if (downstream) {
-    for (let i = connections.length - 1; i >= 0; i -= 1) {
-      const conn = connections[i];
-      if (conn.fromNodeId === node.id && conn.toNodeId === downstream.id) connections.splice(i, 1);
+    updatedAt: ctx.now(),
+  };
+  // The links the replaced result carried move to the card that made it.
+  for (const conn of carried) {
+    if (connections.some((item) => item.fromNodeId === card.id && item.toNodeId === conn.toNodeId)) {
+      continue;
     }
     connections.push({
       id: ctx.idFor('c'),
-      fromNodeId: result.id,
-      toNodeId: downstream.id,
-      kind: result.metadata.kind,
-    });
-  }
-  // The links the replaced result carried move to the new one.
-  for (const conn of carried) {
-    if (conn.toNodeId === downstream?.id) continue;
-    connections.push({
-      id: ctx.idFor('c'),
-      fromNodeId: result.id,
+      fromNodeId: card.id,
       toNodeId: conn.toNodeId,
-      kind: conn.kind ?? result.metadata.kind,
+      kind: conn.kind ?? kind,
     });
   }
-  // The cards never cover each other: a result that lands on another card
-  // pushes it aside. Two branches of one node are side by side, and the
-  // result of the first one would sit on top of the second one.
-  const apart = pushAside({ nodes, connections }, [result.id]);
   return {
-    canvas: { ...doc, nodes: apart.nodes, connections: apart.connections },
-    results: [result],
+    canvas: { ...doc, nodes, connections },
+    results: [card],
     info: { added: true, count: 1 },
   };
 }

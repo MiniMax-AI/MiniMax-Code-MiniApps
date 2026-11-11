@@ -38,7 +38,7 @@
         "kind": "image",
         "model": "matrix-image",
         "ratio": "1:1",
-        "resolution": "1K",
+        "resolution": "4K",
         "count": 1,
         "templateId": "custom"
       }

@@ -13,6 +13,9 @@
 // Every parameter below is taken from the connector's own input schema; the
 // field names are never guessed.
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
+// The capability table's own lookup. It is not the same thing as the
+// Host inventory lookup below, so it carries its own name.
+import { findTool as findCapabilityTool } from './capabilities.mjs';
 import { COLLECTION_PATHS, frameRequestShape } from './video-request.mjs';
 import { batchCount } from '../client/tools.mjs';
 
@@ -189,7 +192,18 @@ export function createConnectorRunner(context, options = {}) {
    * are not queued: they are quick, and a video waiting for its result must
    * not stand behind a slow picture.
    */
-  const SLOW_CALLS = new Set([TOOL.image, TOOL.audio, TOOL.music, TOOL.videoSubmit]);
+  // The picture tools are slow calls too: they work on a picture and the
+  // Host gives one call its own window, so they stand behind each other
+  // rather than side by side. The names come from the tool table, so the
+  // provider's own picture tools are named in one place.
+  const SLOW_CALLS = new Set([
+    TOOL.image,
+    TOOL.audio,
+    TOOL.music,
+    TOOL.videoSubmit,
+    findCapabilityTool('aiUpscale')?.providerTool,
+    findCapabilityTool('aiCutout')?.providerTool,
+  ].filter(Boolean));
   let callChain = Promise.resolve();
 
   function inCallQueue(suffix, task) {
@@ -278,8 +292,8 @@ export function createConnectorRunner(context, options = {}) {
   }
 
   // The upstream assets a node references. The order comes from the compiled
-  // prompt, so the `@图片1` numbering in the prompt and the URLs sent to the
-  // provider always line up.
+  // prompt, so the numbering in the prompt and the URLs sent to the provider
+  // always line up.
   function referenceAssets(assets) {
     const list = (urls) => (urls ?? []).map((url) => ({ url })).filter((item) => item.url);
     // A reference video carries its length: the provider wants to know how
@@ -372,8 +386,13 @@ export function createConnectorRunner(context, options = {}) {
     if (mode === 'image') {
       const request = { prompt: text };
       if (params?.ratio) request.aspect_ratio = params.ratio;
-      if (params?.resolution) request.resolution = params.resolution;
-      if (reference.images.length) request.input_urls = reference.images.map((item) => item.url);
+      // The size tier is called `area` on the image interface, and the
+      // pictures it works from are `reference_images`: one object per
+      // picture, in the order the prompt names them (图1, 图2 …).
+      if (params?.resolution) request.area = params.resolution;
+      if (reference.images.length) {
+        request.reference_images = reference.images.map((item) => ({ url: item.url }));
+      }
       const { media, warnings, waitedMs, callMs } = await callPerAsset(
         TOOL.image,
         () => ({ requests: [{ ...request }] }),
@@ -545,6 +564,47 @@ export function createConnectorRunner(context, options = {}) {
     return { text: description };
   }
 
+  /**
+   * Let the provider change one picture.
+   *
+   * Two of the provider's tools do this: it sharpens a blurry picture, and it
+   * takes a subject away from its background. Both read a picture the provider
+   * can fetch and answer with a picture of their own, which is kept in this
+   * runtime's own asset folder so the canvas does not depend on a link that
+   * expires.
+   *
+   * @param {string} tool which of the two to run
+   * @param {string} url the picture, already uploaded so the provider can read it
+   */
+  async function transformImage({ tool, url }) {
+    const definition = findCapabilityTool(tool);
+    const target = definition?.providerTool;
+    if (!target) {
+      throw Object.assign(new Error('这个工具不是连接器工具'), { code: 'INVALID_ARGUMENTS' });
+    }
+    const value = await callTool(target, { image_url: url });
+    if (value?.code && value.code !== 0) {
+      throw Object.assign(new Error(value.message || '图片处理失败'), { code: 'CONNECTOR_PROVIDER_ERROR' });
+    }
+    const media = await collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), 'image');
+    if (!media.length) {
+      throw Object.assign(
+        new Error('处理完成了，但这次没有取回文件（provider 没有给出下载地址），请重试一次'),
+        { code: 'MEDIA_MISSING' },
+      );
+    }
+    // The provider says how big the result is, so the card can show it.
+    return {
+      media: media.map((item) => ({
+        ...item,
+        name: value?.file_name ?? item.name ?? '',
+        width: Number(value?.width ?? 0) || 0,
+        height: Number(value?.height ?? 0) || 0,
+      })),
+      text: value?.message ?? '',
+    };
+  }
+
   return {
     available() {
       return Boolean(connector());
@@ -567,6 +627,7 @@ export function createConnectorRunner(context, options = {}) {
     submit,
     pollVideo,
     understand,
+    transformImage,
     videoPollIntervalMs: VIDEO_POLL_INTERVAL_MS,
   };
 }

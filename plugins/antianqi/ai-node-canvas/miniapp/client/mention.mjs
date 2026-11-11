@@ -50,21 +50,31 @@ export function textIndexBefore(root, startContainer, startOffset) {
 // segment. Adjacent text segments are merged.
 export function parseSegments(editor) {
   const segments = [];
-  for (const child of editor.childNodes ?? []) {
-    if (child.nodeType === TEXT) {
-      const text = child.textContent ?? '';
-      if (!text) continue;
-      const last = segments[segments.length - 1];
-      if (last && last.type === 'text') last.text += text;
-      else segments.push({ type: 'text', text });
-    } else if (isMentionChip(child)) {
-      segments.push({
-        type: 'mention',
-        nodeId: child.dataset.mentionNodeId,
-        kind: child.dataset.mentionKind || 'image',
-      });
+  // The text is not always a direct child. A paste from a word processor
+  // leaves its paragraph and its font behind, and the words inside them are
+  // still the words the user wrote: the editor showed them, so the node must
+  // keep them. So the tree is walked, not only its first level.
+  const walk = (node) => {
+    for (const child of node.childNodes ?? []) {
+      if (child.nodeType === TEXT) {
+        const text = child.textContent ?? '';
+        if (!text) continue;
+        const last = segments[segments.length - 1];
+        if (last && last.type === 'text') last.text += text;
+        else segments.push({ type: 'text', text });
+      } else if (isMentionChip(child)) {
+        segments.push({
+          type: 'mention',
+          nodeId: child.dataset.mentionNodeId,
+          kind: child.dataset.mentionKind || 'image',
+        });
+      } else if (child.nodeType === ELEMENT) {
+        // A chip is a chip wherever it sits; the text around it is text.
+        walk(child);
+      }
     }
-  }
+  };
+  walk(editor);
   return segments;
 }
 
