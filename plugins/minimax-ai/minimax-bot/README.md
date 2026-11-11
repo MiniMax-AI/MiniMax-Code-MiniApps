@@ -91,6 +91,10 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - A failure whose cause the plugin cannot read — a Host error it has no sentence for — now has a sentence of its own: the turn did not finish and the reason was not identified. Where the Host throws that error, the text it came with stays out of the chat, so a session id or a service name is not shown to the user. A Host that reports the failure as a result keeps showing the text it sent.
 - The errors the plugin raises itself keep the message they were built with, and every code it knows keeps its own sentence. No code was added or renamed, and nothing is retried differently: only the words a failed turn shows changed.
 
+## 0.7.26 The approval claim names the Host condition it depends on
+
+- The approval claim in **Agent turns** mixed the plugin's own behaviour with the Host's. The plugin never approves a call by itself — that part was true and stays true — but whether approval is asked for at all is decided by the Host's permission mode, and a Host that never asks for approval never shows the card. The old sentence stated the first half as if it also settled the second, so it read as a promise about an outcome the plugin does not control. It now names the Host condition, and keeps the plugin's own side: when approval is needed, the plugin never approves it by itself.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
@@ -195,7 +199,7 @@ Avatars are stored in the Mini App's `dataDir/avatars/`. `GET /api/avatars` list
 
 ## Data & access
 
-- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Nothing is approved automatically. A group with a relay limit spends one more Agent turn on the round that reaches the limit: the wrap-up, which replaces the blocked hand-off. A group note spends no turn at all: it is written from the replies the round already produced. Every turn is counted once in the usage panel, background jobs included.
+- **Agent turns**: every Bot reply, scheduled task and background job is an Agent turn run through `context.agent`, with the Agent's full capabilities (files, shell, Skills and MCP, including this plugin's own MCP tools). A tool call that needs approval is shown in the page or in the session's sidebar tab; it runs only after you choose **Allow once**. Whether a call needs approval at all is decided by the Host's permission mode; when it is needed, the plugin never approves it by itself. A group with a relay limit spends one more Agent turn on the round that reaches the limit: the wrap-up, which replaces the blocked hand-off. A group note spends no turn at all: it is written from the replies the round already produced. Every turn is counted once in the usage panel, background jobs included.
 - **Files written**: only inside the Mini App's `dataDir`: `state.json`, `messages/`, `usage.jsonl` (one row per Agent turn), `memory/` (including its journal, archive and backups), `uploads/` (your attachments) and `avatars/`. A group's note is part of that group's record in `state.json`, so it is removed with the group.
 - **Files read outside `dataDir`**:
   - `/api/media` serves a local file (up to 1 GiB) only when its absolute path appears in a Bot message of that same chat.
