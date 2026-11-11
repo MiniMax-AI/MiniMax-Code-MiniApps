@@ -1,6 +1,6 @@
 # Source and distribution
 
-Author: MiniMax ([MiniMax-AI](https://github.com/MiniMax-AI)). This is the 0.5.10 open-source edition of the MiniMax Pet MiniApp. It uses public MiniApp page APIs and contains no Host implementation. Public documentation, dependency URLs, and license notices have been prepared for this repository; private development references and acceptance records are not part of the package.
+Author: MiniMax ([MiniMax-AI](https://github.com/MiniMax-AI)). This is the 0.6.0 open-source edition of the MiniMax Pet MiniApp. It uses public MiniApp page APIs and contains no Host implementation. Public documentation, dependency URLs, and license notices have been prepared for this repository; private development references and acceptance records are not part of the package.
 
 ## Layout
 
@@ -35,8 +35,8 @@ Maiyatang (麦芽糖), contributed by [Fectivnfy112357](https://github.com/Fecti
 
 ## Verification boundaries
 
-The supported client baseline is MiniMax Code **3.1.6**. On 2026-10-26, the official [mainland China macOS](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest-mac.yml), [Global macOS](https://file.cdn.minimax.io/public/minimax-agent-prod/release/latest-mac.yml), and [mainland China Windows](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest.yml) production feeds listed 3.1.6, released on 2026-10-23. The corresponding release implementation was separately checked for session reads and observation, cancellation, capability checks, speech transcription, microphone declaration, and the click-through window handle. This is a confirmed released baseline, not a claim that 3.1.6 was the earliest version with each API.
+The supported client baseline is MiniMax Code **3.1.6**. On 2026-10-26, the official [mainland China macOS](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest-mac.yml), [Global macOS](https://file.cdn.minimax.io/public/minimax-agent-prod/release/latest-mac.yml), and [mainland China Windows](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest.yml) production feeds listed 3.1.6, released on 2026-10-23. The corresponding release implementation was separately checked for session reads and observation, cancellation, capability checks, and the click-through window handle. Version 0.6.0 also uses `host.navigation.open` and `host.ui.subscribe` from MiniMax Code 3.1.11 when present; they are feature-detected and do not raise the baseline. This is a confirmed released baseline, not a claim that 3.1.6 was the earliest version with each API.
 
-The production feeds identify the distributed version; they do not establish that the plugin was installed or exercised on that client. This revision has not undergone 3.1.6 released-client GUI acceptance or real microphone recording/transcription. Runtime capability checks and permission checks remain necessary, and transcription also depends on the Host service and account access.
+The production feeds identify the distributed version; they do not establish that the plugin was installed or exercised on that client. This revision has not undergone 3.1.6 released-client GUI acceptance, nor GUI acceptance of Host navigation and theme on 3.1.11. Runtime capability checks and permission checks remain necessary.
 
-See `README.md` for tested and unverified environments. Static validation and a loopback smoke test do not prove GUI behavior on every platform, microphone recording, transcription, or official-market installation.
+See `README.md` for tested and unverified environments. Static validation and a loopback smoke test do not prove GUI behavior on every platform or official-market installation.

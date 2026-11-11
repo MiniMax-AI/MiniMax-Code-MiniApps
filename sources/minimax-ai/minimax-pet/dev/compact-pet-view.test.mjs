@@ -144,7 +144,7 @@ domTest('detail loads complete inert text and retains the pet without additional
   h.update({ taskSelection: selection(1, text) });
   assert.equal(h.container.querySelector('.compact-detail-reply').textContent, text); assert.equal(h.container.querySelector('img'), null);
   assert.equal(h.container.querySelector('.compact-detail').getAttribute('aria-busy'), 'false');
-  assert.deepEqual([...h.container.querySelector('.compact-detail .compact-footer').children].map((node) => node.textContent), ['返回任务']);
+  assert.deepEqual([...h.container.querySelector('.compact-detail .compact-footer').children].filter((node) => !node.hidden).map((node) => node.textContent), ['返回任务']);
   assert.deepEqual(h.calls, []); assert.equal(h.view.opened, true);
 });
 
@@ -259,4 +259,40 @@ domTest('reminders and all tasks have no mark-as-seen action or callback', (t) =
     assert.equal(h.container.querySelectorAll('.compact-task').length, view === 'tasks' ? 2 : 3);
   }
   assert.deepEqual(h.calls, []);
+});
+
+domTest('the detail can open its conversation in the Host only when a handler is supplied', async (t) => {
+  const opened = [];
+  const h = harness(t, { onOpenSession: (id) => { opened.push(id); return { kind: 'ok', text: '已打开' }; } });
+  h.update({ taskSelection: selection(1) }); h.view.open('detail');
+  const open = h.container.querySelector('.compact-open'), hint = h.container.querySelector('.compact-detail .compact-hint');
+  assert.equal(open.hidden, false); assert.equal(open.textContent, '打开对话'); assert.equal(hint.hidden, true);
+  open.click();
+  assert.deepEqual(opened, ['task-1'], 'the Host call starts inside the click');
+  assert.equal(open.disabled, true); assert.equal(hint.textContent, '正在打开对话…');
+  await tick();
+  assert.equal(open.disabled, false); assert.equal(hint.textContent, '已打开'); assert.equal(hint.dataset.kind, 'ok');
+  assert.equal(h.view.opened, true); assert.equal(h.view.view, 'detail'); assert.deepEqual(h.calls, []);
+  h.update({ taskSelection: { ...selection(1), session: { ...task(1), needsAnswer: true } } });
+  assert.equal(open.textContent, '去回答'); assert.match(open.getAttribute('aria-label'), /去回答：任务 1/);
+  h.update({ taskSelection: { ...selection(1), availability: 'disconnected' } }); assert.equal(open.hidden, true);
+  h.update({ taskSelection: { availability: 'ready', selectedSessionId: null } }); assert.equal(open.hidden, true);
+  const plain = harness(t); plain.update({ taskSelection: selection(1) }); plain.view.open('detail');
+  assert.equal(plain.container.querySelector('.compact-open').hidden, true);
+});
+
+domTest('switching tasks clears a pending open result and a throwing handler reports its code', async (t) => {
+  const request = deferred();
+  const h = harness(t, { onOpenSession: () => request.promise });
+  h.update({ taskSelection: selection(1) }); h.view.open('detail');
+  const open = h.container.querySelector('.compact-open'), hint = h.container.querySelector('.compact-detail .compact-hint');
+  open.click(); h.update({ taskSelection: selection(2) });
+  assert.equal(open.disabled, false); assert.equal(hint.hidden, true);
+  request.resolve({ kind: 'ok', text: '迟到的结果' }); await tick();
+  assert.equal(hint.hidden, true);
+  const failing = harness(t, { onOpenSession: () => { throw { code: 'host_unavailable' }; } });
+  failing.update({ taskSelection: selection(1) }); failing.view.open('detail');
+  failing.container.querySelector('.compact-open').click(); await tick();
+  const failedHint = failing.container.querySelector('.compact-detail .compact-hint');
+  assert.match(failedHint.textContent, /host_unavailable/); assert.equal(failedHint.dataset.kind, 'error');
 });

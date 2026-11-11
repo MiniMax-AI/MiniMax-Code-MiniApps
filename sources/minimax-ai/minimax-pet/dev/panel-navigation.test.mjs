@@ -25,8 +25,7 @@ const fixture = `<!doctype html><div id="panel">
     <section id="detail-card"><button id="task-detail-back">返回任务</button><pre id="detail-reply">完整回复</pre></section>
   </section>
   <section data-panel-page="settings" hidden>
-    <div id="settings-main"><button id="open-draft">写入聊天草稿</button></div>
-    <section id="draft-card" hidden><button id="draft-back">返回设置</button><textarea id="talk-text"></textarea></section>
+    <div id="settings-main"><button id="activity-retry">重新连接</button></div>
   </section>
 </div>`;
 function harness(t, options = {}) {
@@ -43,7 +42,7 @@ function harness(t, options = {}) {
   };
   return { dom, panel, nav, find, tab, page, key };
 }
-const defaultState = { tab: 'appearance', appearanceView: 'pets', settingsView: 'main', taskFilter: 'recent', taskDetail: false };
+const defaultState = { tab: 'appearance', appearanceView: 'pets', taskFilter: 'recent', taskDetail: false };
 
 function assertTab(h, active) {
   for (const name of ['appearance', 'tasks', 'settings']) {
@@ -60,7 +59,6 @@ domTest('the panel starts on appearance with one keyboard-reachable tab', (t) =>
   assert.equal(h.find('#appearance-main').hidden, false);
   assert.equal(h.find('#import-panel').hidden, true);
   assert.equal(h.find('#settings-main').hidden, false);
-  assert.equal(h.find('#draft-card').hidden, true);
   assert.equal(h.find('#recent-tasks').hidden, false);
   assert.equal(h.find('#all-sessions').hidden, true);
 });
@@ -135,25 +133,6 @@ domTest('a completed import returns to pets without changing the current page or
   assert.equal(h.find('#appearance-main').hidden, false); assert.equal(h.find('#import-panel').hidden, true);
 });
 
-domTest('draft entry focuses its text and leaving cancels recording once while retaining typed text', (t) => {
-  let leaves = 0;
-  const h = harness(t, { onLeaveDraft: () => { leaves++; } });
-  h.find('#open-draft').click();
-  assertTab(h, 'settings'); assert.equal(h.nav.getState().settingsView, 'draft');
-  assert.equal(h.find('#settings-main').hidden, true); assert.equal(h.find('#draft-card').hidden, false);
-  assert.equal(h.dom.window.document.activeElement, h.find('#talk-text'));
-  h.find('#talk-text').value = '需要保留的原属聊天草稿';
-  h.nav.showTab('tasks');
-  assert.equal(leaves, 1); assert.equal(h.nav.getState().settingsView, 'main');
-  h.nav.showTab('appearance'); assert.equal(leaves, 1);
-  h.nav.showTab('settings');
-  assert.equal(h.find('#settings-main').hidden, false); assert.equal(h.find('#draft-card').hidden, true);
-  h.nav.showDraft();
-  assert.equal(h.find('#talk-text').value, '需要保留的原属聊天草稿');
-  h.find('#draft-back').click();
-  assert.equal(leaves, 2); assertTab(h, 'settings'); assert.equal(h.nav.getState().settingsView, 'main');
-});
-
 domTest('entering a detail from another page switches to tasks and preserves the chosen list', (t) => {
   const h = harness(t);
   h.nav.setTaskFilter('all'); h.nav.showTab('appearance'); h.nav.showTaskDetail();
@@ -181,19 +160,19 @@ domTest('returning from a task keeps its list nodes, filter and reading position
 
 domTest('background connection and reminder updates do not switch pages or take keyboard focus', (t) => {
   const h = harness(t);
-  h.nav.showDraft(); h.find('#talk-text').value = '尚未提交';
+  h.nav.showTab('tasks'); h.nav.setTaskFilter('all'); h.find('#task-filter-all').focus();
   const before = h.nav.getState();
   h.nav.update({ reminderCount: 3, availability: 'ready' });
   assert.deepEqual(h.nav.getState(), before);
   assert.equal(h.find('#panel-task-count').textContent, '3'); assert.equal(h.find('#panel-task-count').hidden, false);
   assert.equal(h.find('#connection-status').dataset.status, 'ready');
   assert.equal(h.find('#connection-status').textContent, '已连接');
-  assert.equal(h.dom.window.document.activeElement, h.find('#talk-text')); assert.equal(h.find('#talk-text').value, '尚未提交');
+  assert.equal(h.dom.window.document.activeElement, h.find('#task-filter-all'));
   h.nav.update({ reminderCount: 0, availability: 'unavailable' });
   assert.equal(h.find('#panel-task-count').hidden, true);
   assert.equal(h.find('#connection-status').dataset.status, 'unavailable');
   assert.equal(h.find('#connection-status').textContent, '连接中断');
-  assert.deepEqual(h.nav.getState(), before); assert.equal(h.dom.window.document.activeElement, h.find('#talk-text'));
+  assert.deepEqual(h.nav.getState(), before); assert.equal(h.dom.window.document.activeElement, h.find('#task-filter-all'));
 });
 
 domTest('connection labels describe each availability and large reminder counts stay compact', (t) => {
@@ -214,18 +193,18 @@ domTest('state snapshots cannot mutate the navigation state', (t) => {
 });
 
 domTest('disposing disconnects controls and ignores late updates without invoking cleanup twice', (t) => {
-  let leaves = 0, closes = 0;
-  const h = harness(t, { onLeaveDraft: () => { leaves++; }, beforeCloseImport: () => { closes++; return true; } });
-  h.nav.showDraft(); h.nav.dispose();
-  const state = h.nav.getState(), calls = leaves, connection = h.find('#connection-status').textContent;
-  h.tab('tasks').click(); h.find('#open-import').click(); h.find('#draft-back').click();
+  let closes = 0;
+  const h = harness(t, { beforeCloseImport: () => { closes++; return true; } });
+  h.nav.showTab('settings'); h.nav.dispose();
+  const state = h.nav.getState(), connection = h.find('#connection-status').textContent;
+  h.tab('tasks').click(); h.find('#open-import').click(); h.find('#import-back').click();
   h.key('settings', 'Home'); h.nav.update({ reminderCount: 4, availability: 'ready' });
-  h.nav.showTab('appearance'); h.nav.showImport(); h.nav.closeImport(); h.nav.completeImport(); h.nav.showDraft(); h.nav.showTaskDetail(); h.nav.showTaskList(); h.nav.setTaskFilter('all'); h.nav.dispose();
-  assert.deepEqual(h.nav.getState(), state); assert.equal(leaves, calls); assert.equal(closes, 0);
+  h.nav.showTab('appearance'); h.nav.showImport(); h.nav.closeImport(); h.nav.completeImport(); h.nav.showTaskDetail(); h.nav.showTaskList(); h.nav.setTaskFilter('all'); h.nav.dispose();
+  assert.deepEqual(h.nav.getState(), state); assert.equal(closes, 0);
   assert.equal(h.find('#connection-status').textContent, connection);
 });
 
-domTest('the shipped page exposes all navigation targets and keeps the existing feature controls', async () => {
+domTest('the shipped page exposes all navigation targets and keeps only the current feature controls', async () => {
   const html = await readFile(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html);
   try {
@@ -238,19 +217,21 @@ domTest('the shipped page exposes all navigation targets and keeps the existing 
       assert.equal(panel.querySelectorAll(`[data-panel-tab="${name}"]`).length, 1);
       assert.equal(panel.querySelectorAll(`[data-panel-page="${name}"]`).length, 1);
     }
-    const required = ['appearance-main', 'import-panel', 'settings-main', 'draft-card', 'open-import', 'import-back',
-      'open-draft', 'draft-back', 'recent-tasks', 'all-sessions', 'task-filter-recent', 'task-filter-all',
-      'task-detail-back', 'panel-task-count', 'connection-status', 'panel-stage', 'pet-sprite', 'wave-btn', 'jump-btn',
+    const required = ['appearance-main', 'import-panel', 'settings-main', 'open-import', 'import-back',
+      'recent-tasks', 'all-sessions', 'task-filter-recent', 'task-filter-all',
+      'task-detail-back', 'panel-task-count', 'connection-status', 'panel-stage', 'pet-sprite',
       'gallery', 'gallery-msg', 'dropzone', 'import-pick', 'import-input', 'import-preview', 'import-cancel', 'import-confirm',
       'aggregate-counts', 'reminder-list', 'muted-reminders', 'muted-list', 'session-list', 'activity-retry',
-      'detail-card', 'detail-title', 'detail-status', 'detail-time', 'detail-reply', 'talk-form', 'talk-text', 'talk-btn',
-      'draft-speech', 'speech-start', 'speech-stop', 'speech-cancel', 'scale-group'];
+      'detail-card', 'detail-title', 'detail-status', 'detail-time', 'detail-actions', 'detail-open', 'detail-open-msg',
+      'detail-reply', 'scale-group'];
     for (const id of required) assert.ok(panel.querySelector(`#${id}`), `Missing existing or navigation control #${id}`);
+    for (const id of ['wave-btn', 'jump-btn', 'open-draft', 'draft-card', 'talk-form', 'talk-text', 'draft-speech',
+      'speech-start', 'composer', 'composer-input']) assert.equal(doc.getElementById(id), null, `Removed control #${id} is back`);
+    assert.equal(doc.querySelector('textarea'), null);
     const nav = createPanelNavigation({ panel });
     try {
       assert.equal(nav.getState().tab, 'appearance');
       nav.showImport(); assert.equal(panel.querySelector('#import-panel').hidden, false);
-      nav.showDraft(); assert.equal(panel.querySelector('#draft-card').hidden, false);
       nav.showTaskDetail(); assert.equal(panel.dataset.taskDetail, 'open');
       nav.showTaskList(); assert.equal(nav.getState().taskDetail, false);
     } finally { nav.dispose(); }

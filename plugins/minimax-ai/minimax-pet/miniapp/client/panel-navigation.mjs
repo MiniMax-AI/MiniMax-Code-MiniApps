@@ -3,13 +3,13 @@ const FILTERS = ['recent', 'all'];
 const CONNECTION = { ready: '已连接', connecting: '连接中', not_permitted: '未授权', unavailable: '连接中断' };
 
 /** Owns the inline panel only; task updates never navigate or replace its content. */
-export function createPanelNavigation({ panel, beforeCloseImport = () => true, onLeaveDraft = () => {} }) {
+export function createPanelNavigation({ panel, beforeCloseImport = () => true }) {
   if (!panel?.ownerDocument) throw new TypeError('A panel element is required.');
   const find = (selector) => panel.querySelector(selector);
   const tabs = new Map(TABS.map((name) => [name, find(`[data-panel-tab="${name}"]`)]));
   const pages = new Map(TABS.map((name) => [name, find(`[data-panel-page="${name}"]`)]));
   if ([...tabs.values(), ...pages.values()].some((node) => !node)) throw new TypeError('Three panel tabs and pages are required.');
-  let state = { tab: 'appearance', appearanceView: 'pets', settingsView: 'main', taskFilter: 'recent', taskDetail: false };
+  let state = { tab: 'appearance', appearanceView: 'pets', taskFilter: 'recent', taskDetail: false };
   let disposed = false;
   let taskReturnFocus = null, taskReturnId = null;
   const listeners = [];
@@ -28,21 +28,13 @@ export function createPanelNavigation({ panel, beforeCloseImport = () => true, o
     }
     hidden('#appearance-main', state.appearanceView !== 'pets');
     hidden('#import-panel', state.appearanceView !== 'import');
-    hidden('#settings-main', state.settingsView !== 'main');
-    hidden('#draft-card', state.settingsView !== 'draft');
     hidden('#recent-tasks', state.taskFilter !== 'recent');
     hidden('#all-sessions', state.taskFilter !== 'all');
     for (const filter of FILTERS) find(`#task-filter-${filter}`)?.setAttribute('aria-pressed', String(state.taskFilter === filter));
     panel.dataset.taskDetail = state.taskDetail ? 'open' : 'closed';
   }
-  function leaveDraft() {
-    if (state.settingsView !== 'draft') return;
-    state.settingsView = 'main';
-    onLeaveDraft();
-  }
   function showTab(tab, { focus: moveFocus = false } = {}) {
     if (disposed || !TABS.includes(tab)) return false;
-    if (tab !== 'settings') leaveDraft();
     state.tab = tab;
     paint();
     if (moveFocus) tabs.get(tab).focus({ preventScroll: true });
@@ -61,10 +53,6 @@ export function createPanelNavigation({ panel, beforeCloseImport = () => true, o
     completeImport() {
       if (disposed) return false;
       state.appearanceView = 'pets'; paint(); return true;
-    },
-    showDraft() {
-      if (disposed) return false;
-      showTab('settings'); state.settingsView = 'draft'; paint(); focus('#talk-text'); return true;
     },
     showTaskDetail() {
       if (disposed) return false;
@@ -118,8 +106,6 @@ export function createPanelNavigation({ panel, beforeCloseImport = () => true, o
   }
   listen(find('#open-import'), 'click', api.showImport);
   listen(find('#import-back'), 'click', api.closeImport);
-  listen(find('#open-draft'), 'click', api.showDraft);
-  listen(find('#draft-back'), 'click', () => { if (!disposed) { leaveDraft(); paint(); focus('#open-draft'); } });
   listen(find('#task-detail-back'), 'click', api.showTaskList);
   for (const filter of FILTERS) listen(find(`#task-filter-${filter}`), 'click', () => api.setTaskFilter(filter));
   paint();

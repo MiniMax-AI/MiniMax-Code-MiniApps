@@ -31,8 +31,5 @@
       "clickThrough": true
     }
   },
-  "mcpEndpoints": [],
-  "deviceAccess": [
-    "microphone"
-  ]
+  "mcpEndpoints": []
 }
