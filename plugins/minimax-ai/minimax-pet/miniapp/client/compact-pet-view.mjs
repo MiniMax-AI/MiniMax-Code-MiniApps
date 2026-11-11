@@ -9,7 +9,7 @@ export const taskStatus = (row) => row?.needsAnswer === true ? 'needs_answer'
 
 /** Task notifications and their complete replies stay beside the pet. */
 export function createCompactPetView({
-  container, onClose, onSelectTask,
+  container, onClose, onSelectTask, onOpenSession,
 }) {
   if (!container?.ownerDocument) throw new TypeError('A compact pet container is required.');
   const doc = container.ownerDocument;
@@ -17,7 +17,7 @@ export function createCompactPetView({
   container.classList.add('compact-pet-card');
   let disposed = false, opened = false, view = 'tasks', reminders = { items: [] };
   let allSessions = null, taskSelection = {}, detailBackView = 'tasks';
-  let paintedDetailId = null;
+  let paintedDetailId = null, openToken = 0;
   const rows = new Map();
   const setText = (node, value) => { const next = String(value ?? ''); if (node.textContent !== next) node.textContent = next; };
   const element = (tag, className, text) => {
@@ -70,7 +70,22 @@ export function createCompactPetView({
   detailReply.setAttribute('aria-label', '任务最近回复'); detailReply.tabIndex = 0;
   const detailFooter = element('div', 'compact-footer');
   const back = button('返回任务', 'compact-detail-back compact-link', () => api.open(detailBackView));
-  detailFooter.append(back); detailPane.append(detailTitle, detailStatus, detailReply, detailFooter);
+  const openHint = element('p', 'compact-hint'); openHint.setAttribute('role', 'status'); openHint.hidden = true;
+  const setHint = (text, kind = 'info') => { setText(openHint, text); openHint.dataset.kind = kind; openHint.hidden = !openHint.textContent; };
+  // The Host checks user activation, so the callback must run synchronously inside this click.
+  const openSession = button('打开对话', 'compact-open', () => {
+    const { id } = selection();
+    if (disposed || !id || typeof onOpenSession !== 'function') return;
+    const token = ++openToken;
+    openSession.disabled = true; setHint('正在打开对话…');
+    void call(onOpenSession, id).then((result) => {
+      if (disposed || token !== openToken) return;
+      openSession.disabled = false;
+      const failed = result?.ok === false;
+      setHint(textOf(result?.text) || (failed ? `没能打开对话（${failureCode(result)}）。` : ''), textOf(result?.kind) || (failed ? 'error' : 'info'));
+    });
+  });
+  detailFooter.append(back, openSession); detailPane.append(detailTitle, detailStatus, detailReply, detailFooter, openHint);
   container.append(header, tasksPane, detailPane);
 
   function paintTasks() {
@@ -127,7 +142,13 @@ export function createCompactPetView({
     else text = (detail.status === 'error' && textOf(detail.error)) || textOf(detail.lastAssistantText) || '该任务暂时没有可读取的最后回复。';
     setText(detailReply, text);
     detailPane.setAttribute('aria-busy', String(available && !needsAnswer && taskSelection.detailLoading === true));
-    if (paintedDetailId !== id) { detailReply.scrollTop = 0; detailPane.scrollTop = 0; paintedDetailId = id; }
+    if (paintedDetailId !== id) {
+      detailReply.scrollTop = 0; detailPane.scrollTop = 0; paintedDetailId = id;
+      openToken++; openSession.disabled = false; setHint('');
+    }
+    openSession.hidden = typeof onOpenSession !== 'function' || !available || !id;
+    setText(openSession, needsAnswer ? '去回答' : '打开对话');
+    openSession.setAttribute('aria-label', `${needsAnswer ? '去回答' : '打开对话'}：${textOf(session?.title) || textOf(detail?.title) || '该任务'}`);
   }
 
   function paint() {

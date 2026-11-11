@@ -41,13 +41,6 @@
               <h2 id="pet-name">正在加载宠物…</h2>
               <p id="pet-desc" class="muted"></p>
               <p id="panel-status" class="stage-status" role="status"></p>
-              <div class="row appearance-actions">
-                <button id="wave-btn" class="btn" type="button">打招呼</button>
-                <details class="pet-more">
-                  <summary aria-label="更多宠物互动">更多</summary>
-                  <div class="pet-more-content"><button id="jump-btn" class="btn small" type="button">跳一下</button></div>
-                </details>
-              </div>
             </section>
             <section class="appearance-gallery" aria-labelledby="gallery-title">
               <div class="section-heading">
@@ -117,6 +110,10 @@
                   <span id="detail-status">—</span>
                   <span>更新于 <span id="detail-time">—</span></span>
                 </div>
+                <div id="detail-actions" class="row detail-actions" hidden>
+                  <button id="detail-open" class="btn small" type="button">打开对话</button>
+                  <p id="detail-open-msg" class="msg" role="status"></p>
+                </div>
                 <p id="detail-error" class="msg" data-kind="error" role="status" hidden></p>
                 <p id="detail-note" class="muted"></p>
                 <pre id="detail-reply" class="last-reply"></pre>
@@ -157,17 +154,10 @@
               </div>
               <button id="activity-retry" class="btn small" type="button" hidden>重新连接</button>
             </section>
-            <section class="setting-row" aria-labelledby="draft-entry-title">
-              <div class="setting-copy">
-                <h2 id="draft-entry-title">原聊天草稿</h2>
-                <p class="muted">把文字或语音放入打开桌宠的聊天，由你确认后发送。</p>
-              </div>
-              <button id="open-draft" class="btn small" type="button" hidden>写入原聊天草稿…</button>
-            </section>
             <details class="panel-help">
               <summary>版本与帮助</summary>
               <div class="help-content">
-                <p class="muted">MiniMax Pet 0.5.11</p>
+                <p class="muted">MiniMax Pet 0.6.0</p>
                 <div class="row">
                   <span id="version-badge" class="badge" hidden></span>
                   <span id="source-badge" class="badge"></span>
@@ -182,32 +172,6 @@
               </div>
             </details>
           </div>
-
-          <section id="draft-card" class="inline-subview" aria-labelledby="talk-title" hidden>
-            <div class="subview-heading">
-              <button id="draft-back" class="btn small back-button" type="button">返回设置</button>
-              <h2 id="talk-title">写入原聊天草稿</h2>
-            </div>
-            <form id="talk-form" class="talk-form">
-              <p id="draft-origin" class="muted"></p>
-              <label for="talk-text" class="muted">只写入打开桌宠的原属聊天。查看其他任务不会改变目标，文字不会自动发送。</label>
-              <textarea id="talk-text" rows="5" placeholder="写下要加入原聊天草稿的内容…"></textarea>
-              <div class="row end">
-                <button id="draft-speech" class="btn" type="button">语音输入到草稿</button>
-                <button id="talk-btn" class="btn primary" type="submit">加到对话输入框</button>
-              </div>
-            </form>
-            <p id="talk-msg" class="msg" role="status"></p>
-            <div id="speech-section">
-              <div id="speech-controls" class="row" hidden>
-                <button id="speech-start" class="btn" type="button">开始录音</button>
-                <button id="speech-stop" class="btn" type="button" disabled>停止并转写</button>
-                <button id="speech-cancel" class="btn" type="button" disabled>取消录音</button>
-              </div>
-              <p id="speech-msg" class="msg" role="status"></p>
-              <p id="speech-partial" class="muted" aria-live="polite"></p>
-            </div>
-          </section>
         </section>
       </main>
     </div>
@@ -224,14 +188,6 @@
           <button id="quick-tasks" class="chip" type="button">任务</button>
           <button id="quick-menu" class="chip" type="button" aria-haspopup="menu">菜单</button>
         </div>
-        <form id="composer" class="composer desk-hit" hidden>
-          <p id="composer-origin" class="muted"></p>
-          <label for="composer-input" class="sr-only">要放进对话输入框的话</label>
-          <input id="composer-input" type="text" autocomplete="off" placeholder="放进对话输入框…" />
-          <button id="composer-send" class="chip primary" type="submit">加到对话输入框</button>
-          <button id="composer-close" class="chip" type="button" aria-label="关闭输入框">×</button>
-          <p id="composer-msg" class="msg" role="status"></p>
-        </form>
       </div>
       <div id="desk-pet-slot" class="desk-pet-slot"></div>
       <div id="menu" class="menu desk-hit" role="menu" hidden></div>

@@ -6,13 +6,16 @@ A lightweight desktop companion for MiniMax Code, by **MiniMax**. It shows visib
 
 ## Features
 
-- **Appearance:** preview and select pets, play short interactions, import compatible pet JSON and spritesheets, and remove imported pets.
+- **Appearance:** preview and select pets, import compatible pet JSON and spritesheets, and remove imported pets.
 - **Tasks:** recent reminders, visible user conversations, and a scrollable latest reply. Desktop cards preview up to five lines. Clicking a card keeps the pet visible; observed `ask_user` calls show “需要你回答” (needs your answer).
+- **Open the conversation:** on MiniMax Code 3.1.11 or later, a task's detail, in the panel and on the desktop, has a **打开对话** (open conversation) button, labelled **去回答** (go answer) while the task needs an answer. It brings the MiniMax Code main window forward on that conversation. Older clients do not show the button.
 - **Settings:** pet size, page-local reminder dismissal and mute, connection status, and reconnect.
 - **Desktop window:** a draggable transparent pet with compact notification cards. Return it to the main panel to use the three tabs.
-- **Original-chat draft:** explicitly open the draft tool, then ask the Host to confirm appending text to the chat that opened the pet. The user still sends it. Voice-to-text is available only when the Host provides it and microphone permission is granted.
+- **Theme:** on MiniMax Code 3.1.11 or later the panel and desktop cards follow the client's light or dark theme; older clients follow the system setting.
 
-The pet does not run Agent turns, create independent chats, comment on every session, stop tasks, or answer questionnaires. Selecting a task only reads its details; it does not navigate the Host to an arbitrary conversation.
+The pet does not run Agent turns, create independent chats, write to chat inputs, comment on every session, stop tasks, or answer questionnaires. Selecting a task only reads its details; the main window switches only when you click **打开对话** or **去回答**.
+
+Version **0.6.0** removes the **打招呼** (wave) and **跳一下** (jump) actions from the menu and the appearance page, and removes the original-chat draft with its voice input; the package no longer requests the microphone. It adds **打开对话** / **去回答** and the client theme. The supported baseline stays MiniMax Code 3.1.6: both additions are feature-detected and need no new access.
 
 ## Install and open
 
@@ -29,10 +32,10 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 
 - MiniMax Code **3.1.6 or later** is the supported baseline. On 2026-10-26, the official [mainland China](https://filecdn.minimax.chat/public/minimax-agent-prod/release/latest-mac.yml) and [Global](https://file.cdn.minimax.io/public/minimax-agent-prod/release/latest-mac.yml) production update feeds both listed 3.1.6. The corresponding release implementation was checked for the required APIs. This establishes a released API baseline, not GUI acceptance of this plugin on that release.
 - Task monitoring uses `agent.sessions`, `agent.session`, `agent.observe`, and `agent.cancel` with the `session.read` grant. Runtime capability and permission checks remain in place; missing APIs or disabled access are reported as unavailable.
-- Voice input additionally requires `deviceAccess: ["microphone"]`, `speech.transcribe`, the plugin's microphone switch, system microphone permission, and access to the Host transcription service; otherwise it remains unavailable. A supported API does not guarantee service availability for every account.
-- The preceding UI version was exercised on macOS in a MiniMax Code development build: three tabs, wide/narrow layouts, task reading, real session/ask activity, import/delete, draft confirmation, and desktop round trips. This open-source revision has Node/DOM tests and an isolated HTTP smoke test.
+- **打开对话** / **去回答** uses `host.navigation.open` and the theme uses `host.ui.subscribe`, both added in MiniMax Code **3.1.11**; on 2026-11-10 the macOS and Windows installers of 3.1.11 answered on both production CDNs. Both calls were checked against the MiniMax Code source: opening a conversation the Mini App already holds needs no `hostAccess` and no extra grant, must start inside a click, and brings the main window forward.
+- An earlier UI version was exercised on macOS in a MiniMax Code development build: three tabs, wide/narrow layouts, task reading, real session/ask activity, import/delete, and desktop round trips. Version 0.6.0 has Node/DOM tests (including the open and theme paths against a simulated Host), an isolated HTTP smoke test, and a browser check of the panel layout outside the Host.
 - The default atlas is checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The separate octopus icon is checked by PNG decoding and visual review. On 2026-10-26, the packaged Skill was exercised with a real Agent in the macOS development build to create, validate, preview and import a custom v2 pet; all nine animation previews and the four cardinal mouse-look directions were checked. This does not replace released-client acceptance.
-- No Windows GUI, released-client installation or GUI acceptance on 3.1.6, or real microphone recording/transcription has been verified for this revision. Automated tests use synthetic data and do not prove those paths.
+- Not verified for 0.6.0: opening a conversation or following the theme inside a real MiniMax Code 3.1.11+ window (panel or desktop pet), any Windows GUI, and released-client installation or GUI acceptance on 3.1.6. Automated tests use synthetic data and do not prove those paths.
 
 ## Data & access
 
@@ -40,8 +43,10 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - **Observations:** one global observer aggregates visible task lifecycle events. Up to three detailed observers follow active tasks and detect new ask tool events. A completed/removed task releases its detailed slot; another task enters only after the previous subscription settles. The initial snapshot contains up to 50 recent visible conversations; observed tasks remain while the Host confirms visibility.
 - **Coverage limits:** observers are tail-only. They cannot reconstruct questionnaires opened before subscribing or during a disconnect. More than three active tasks means only three receive detailed ask coverage. No observed ask does not prove no pending question. Historical idle tasks are not presented as newly completed.
 - **Local files:** the Node service serves packaged assets and stores preferences and user-imported JSON/WebP/PNG spritesheets under opaque `context.dataDir`. Imports, replacement recovery and deletion are limited to that plugin data. Browser storage is used only to migrate old view preferences.
-- **Drafts:** `message.append(text)` goes through Host confirmation and targets the original chat. Monitoring or selecting another task does not change that target or send a message.
-- **Microphone and network:** recording is user-initiated in the draft tool. Audio stays in memory and is passed to Host `speech.transcribe`; leaving the tool cancels capture/transcription. The Host transcription service may use its configured network services. The plugin has no hard-coded external runtime endpoint; its own HTTP requests use its assigned loopback origin.
+- **Host navigation:** only when you click **打开对话** or **去回答**, the page calls `host.navigation.open({ id: 'session', sessionId, source: 'local' })` for a conversation it already lists through `session.read`. It does not declare `hostAccess` and never reads which page of MiniMax Code you are on. It writes nothing to chat inputs and sends no message.
+- **Display preferences:** `host.ui.subscribe` reports the client theme, which the page applies; the reported language is ignored. No grant is involved.
+- **Network:** the plugin has no hard-coded external runtime endpoint; its own HTTP requests use its assigned loopback origin.
+- **Microphone, camera and notifications:** not used and not declared.
 - **Processes and Agent turns:** the Host starts one Node process. The plugin spawns no additional runtime process, launches no shell command, offers no MCP server, and never calls `agent.run`.
 
 ## Agent Skill

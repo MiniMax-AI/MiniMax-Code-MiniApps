@@ -275,8 +275,8 @@ try {
     assert.equal(r.json.id, BUNDLED_PET);
   });
 
-  await test('production activity, preferences and draft modules are served as JavaScript', async () => {
-    for (const name of ['activity.mjs', 'preferences.mjs', 'chat-draft.mjs', 'window-position.mjs', 'speech-input.mjs', 'pet-presentation.mjs', 'activity-reminders.mjs', 'compact-pet-view.mjs', 'notification-previews.mjs', 'ask-observer.mjs', 'workbench-window.mjs']) {
+  await test('production activity, preferences and view modules are served as JavaScript', async () => {
+    for (const name of ['activity.mjs', 'preferences.mjs', 'window-position.mjs', 'pet-presentation.mjs', 'activity-reminders.mjs', 'compact-pet-view.mjs', 'notification-previews.mjs', 'ask-observer.mjs', 'workbench-window.mjs']) {
       const r = await call(port, 'GET', `/assets/${name}`);
       assert.equal(r.status, 200);
       assert.match(r.headers['content-type'], /^text\/javascript/);

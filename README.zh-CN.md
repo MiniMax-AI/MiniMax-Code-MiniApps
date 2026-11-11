@@ -84,7 +84,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [AI 节点画布](plugins/antianqi/ai-node-canvas/README.zh-CN.md) | MiniMax Code 里的无限画布节点图：把文本、图片、视频、音频的生成接成一张图，结果顺着连线往下传，任何一张结果都能直接做二次处理 | [antianqi](https://github.com/antianqi) |
 | [Agent 协作透视](plugins/huixin615/agent-flow/README.zh-CN.md) | 手动导入插件 Hook 记录，查看原生 task 调用与子 Agent 运行区间；有明确 ID 时关联父子任务。可选择记录会话或一键查看最近导入的记录，不读取宿主会话文件。需要 MiniMax Code 3.1.4 或更高版本 | [Huixin615](https://github.com/Huixin615) |
 | [蹬王之王](plugins/hylouis233/expiry-guardian/README.md) | 看你自己维护的本地账本，算出「该用卡还是该留积分」，并把理由说清楚 | [Hylouis](https://github.com/Hylouis233) |
-| [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |
+| [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒、一键打开任务对话（3.1.11 起）和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |
 | [MCP OAuth 令牌台](plugins/microbiosis/mcp-oauth-console/README.zh-CN.md) | 给需要 OAuth 的 MCP 服务器完成登录：设备码或授权码 + PKCE 流程，把 `Authorization` 头写入 MCP 配置，并可选择在到期前自动续期 | [Microbiosis](https://github.com/Microbiosis) |
 | [本机大盘](plugins/jzlikewei/kurumi-monitor/README.zh-CN.md) | 把本机当成行情终端来看：CPU、GPU、温度、内存、磁盘、网络与每个运行中的进程都是一只个股，实时 K 线、均线、自选行情、主力动向与逐笔成交，支持 macOS 与 Windows。需要 minimax Code 3.1.2 或更高版本 | [jzlikewei](https://github.com/jzlikewei) |
 

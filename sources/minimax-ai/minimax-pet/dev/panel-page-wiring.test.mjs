@@ -11,25 +11,33 @@ const source = await readFile(new URL('../miniapp/client/pet-app.js', import.met
 const html = await readFile(new URL('../miniapp/client/index.html', import.meta.url), 'utf8');
 const select = source.slice(source.indexOf('function selectSession('), source.indexOf('// Window', source.indexOf('function selectSession(')));
 const detail = source.slice(source.indexOf('function renderDetail()'), source.indexOf('function initWorkbench()'));
-const navigate = source.slice(source.indexOf('function focusFullPanel('), source.indexOf('function openFullPanel('));
+const navigate = source.slice(source.indexOf('function focusFullPanel('), source.indexOf('async function openWorkbench('));
+const hostOpen = source.slice(source.indexOf('function describeOpenError('), source.indexOf('function initHostTheme('));
+const hostTheme = source.slice(source.indexOf('function initHostTheme('), source.indexOf('// Window mode switching'));
+const errCode = source.slice(source.indexOf('function errCode('), source.indexOf('function logError('));
 const deferred = () => { let resolve; const promise = new Promise((yes) => { resolve = yes; }); return { promise, resolve }; };
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 function harness(t, patch = {}) {
   const dom = new JSDOM(html), doc = dom.window.document;
   const nav = createPanelNavigation({ panel: doc.getElementById('panel') });
-  const els = Object.fromEntries(['detailTitle', 'detailStatus', 'detailTime', 'detailError', 'detailReply', 'detailNote'].map((name) => [name, doc.getElementById(name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`))]));
+  const els = Object.fromEntries(['detailTitle', 'detailStatus', 'detailTime', 'detailError', 'detailReply', 'detailNote',
+    'detailActions', 'detailOpen', 'detailOpenMsg'].map((name) => [name, doc.getElementById(name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`))]));
   const app = { mode: 'inline', source: 'real', availability: 'ready', sessions: [], selectedSessionId: null, detail: null, ...patch };
-  const selected = [], reports = [], compact = [], pending = deferred();
+  const selected = [], reports = [], compact = [], opens = [], warnings = [], pending = deferred();
+  const hostNavigation = { open: (target) => { opens.push(target); return patch.openResult ? patch.openResult(target) : Promise.resolve({ status: 'opened' }); } };
   const context = vm.createContext({
-    app, els, document: doc, panelNavigation: nav, panelDetailId: null, disposed: false, canAppend: true, taskStatus,
+    app, els, document: doc, panelNavigation: nav, panelDetailId: null, disposed: false, taskStatus,
+    canOpenSession: patch.canOpenSession ?? true, hostNavigation, detailOpenToken: 0, detailOpenSessionId: null,
     activitySource: { selectSession: (id) => { selected.push(id); return pending.promise; } },
-    openTaskPreview: (id) => compact.push(id), callBridge: (callback) => Promise.resolve(callback()),
-    setMsg: (_element, text) => reports.push(text), availabilityText: () => '连接不可用',
+    openTaskPreview: (id) => compact.push(id),
+    callBridge: (callback) => { try { return Promise.resolve(callback()); } catch (error) { return Promise.reject(error); } },
+    setMsg: (element, text, kind = 'info') => { reports.push(text); if (element) { element.textContent = text || ''; element.dataset.kind = kind; } },
+    availabilityText: () => '连接不可用', console: { warn: (...args) => warnings.push(args) },
     STATUS_LABEL: { idle: '空闲', completed: '本次完成', running: '工作中', error: '异常' },
   });
-  vm.runInContext(`${select}\n${detail}\n${navigate}\nglobalThis.handlers = { selectSession, renderDetail, focusFullPanel };`, context);
+  vm.runInContext(`${errCode}\n${select}\n${detail}\n${navigate}\n${hostOpen}\nglobalThis.handlers = { selectSession, renderDetail, focusFullPanel, openSelectedSession, openSessionInHost };`, context);
   t.after(() => { nav.dispose(); dom.window.close(); });
-  return { app, nav, els, doc, context, selected, reports, compact, pending, ...context.handlers };
+  return { app, nav, els, doc, context, selected, reports, compact, opens, warnings, pending, ...context.handlers };
 }
 
 test('selecting an inline task reveals its detail immediately; its delayed result never changes the new tab', async (t) => {
@@ -47,17 +55,10 @@ test('desktop task selection stays in the compact window and does not navigate t
   assert.equal(h.nav.getState().tab, 'settings');
 });
 
-test('explicit panel entries map tasks and original-chat draft to their real pages', (t) => {
-  const h = harness(t); h.focusFullPanel('draft');
-  assert.equal(h.nav.getState().tab, 'settings'); assert.equal(h.nav.getState().settingsView, 'draft');
-  assert.equal(h.doc.activeElement.id, 'talk-text');
+test('explicit panel entries map tasks and task detail to their real pages', (t) => {
+  const h = harness(t); h.nav.showTab('settings');
   h.focusFullPanel('detail'); assert.equal(h.nav.getState().tab, 'tasks'); assert.equal(h.nav.getState().taskDetail, true);
   h.focusFullPanel('tasks'); assert.equal(h.nav.getState().taskDetail, false);
-});
-
-test('an environment without append capability cannot enter the draft from a panel action', (t) => {
-  const h = harness(t); h.context.canAppend = false; h.focusFullPanel('draft');
-  assert.equal(h.nav.getState().tab, 'appearance'); assert.equal(h.nav.getState().settingsView, 'main');
 });
 
 test('explicit task navigation focuses the detail heading and returns to the selected row', (t) => {
@@ -85,4 +86,98 @@ test('live ask replaces the old reply in the formal task detail without navigati
   h.nav.showTab('appearance'); h.renderDetail();
   assert.equal(h.els.detailStatus.textContent, '需要你回答'); assert.equal(h.els.detailReply.textContent, '需要你回答');
   assert.equal(h.nav.getState().tab, 'appearance');
+});
+
+const readySelection = (needsAnswer = false) => ({ selectedSessionId: 'a',
+  sessions: [{ sessionId: 'a', title: '任务A', status: 'running', needsAnswer }],
+  detail: { sessionId: 'a', title: '任务A', status: 'running', updatedAtMs: 1, lastAssistantText: '回复' } });
+
+test('the detail offers to open the selected conversation, or to answer it, only when the Host can navigate', (t) => {
+  const h = harness(t, readySelection());
+  h.renderDetail();
+  assert.equal(h.els.detailActions.hidden, false); assert.equal(h.els.detailOpen.textContent, '打开对话');
+  h.app.sessions = [{ ...h.app.sessions[0], needsAnswer: true }]; h.renderDetail();
+  assert.equal(h.els.detailOpen.textContent, '去回答');
+  for (const patch of [{ availability: 'unavailable' }, { availability: 'ready', selectedSessionId: null }, { source: 'demo', selectedSessionId: 'a' }]) {
+    Object.assign(h.app, patch); h.renderDetail(); assert.equal(h.els.detailActions.hidden, true, JSON.stringify(patch));
+  }
+  const old = harness(t, { ...readySelection(), canOpenSession: false });
+  old.renderDetail(); assert.equal(old.els.detailActions.hidden, true);
+  assert.deepEqual(h.opens, []);
+});
+
+test('opening calls the Host synchronously with the local session and reports the outcome', async (t) => {
+  const open = deferred();
+  const h = harness(t, { ...readySelection(), openResult: () => open.promise });
+  h.renderDetail(); h.openSelectedSession();
+  assert.equal(JSON.stringify(h.opens), JSON.stringify([{ id: 'session', sessionId: 'a', source: 'local' }]));
+  assert.equal(h.els.detailOpen.disabled, true); assert.equal(h.els.detailOpenMsg.textContent, '正在打开对话…');
+  open.resolve({ status: 'opened' }); await settle();
+  assert.equal(h.els.detailOpen.disabled, false); assert.equal(h.els.detailOpenMsg.dataset.kind, 'ok');
+  assert.match(h.els.detailOpenMsg.textContent, /已在 MiniMax Code 主窗口打开/);
+  assert.equal(h.nav.getState().tab, 'appearance');
+});
+
+test('a brief disconnect hides the button without dropping a pending open', async (t) => {
+  const open = deferred();
+  const h = harness(t, { ...readySelection(), openResult: () => open.promise });
+  h.renderDetail(); h.openSelectedSession();
+  h.app.availability = 'unavailable'; h.renderDetail(); assert.equal(h.els.detailActions.hidden, true);
+  h.app.availability = 'ready'; h.renderDetail();
+  assert.equal(h.els.detailActions.hidden, false); assert.equal(h.els.detailOpen.disabled, true);
+  open.resolve({ status: 'opened' }); await settle();
+  assert.equal(h.els.detailOpen.disabled, false); assert.equal(h.els.detailOpenMsg.dataset.kind, 'ok');
+});
+
+test('a late open result for a previous task never lands on the newly selected one', async (t) => {
+  const open = deferred();
+  const h = harness(t, { ...readySelection(), openResult: () => open.promise });
+  h.renderDetail(); h.openSelectedSession();
+  h.app.selectedSessionId = 'b'; h.app.detail = null; h.renderDetail();
+  assert.equal(h.els.detailOpen.disabled, false); assert.equal(h.els.detailOpenMsg.textContent, '');
+  open.resolve({ status: 'opened' }); await settle();
+  assert.equal(h.els.detailOpenMsg.textContent, '');
+});
+
+test('cancellations and Host errors are explained once and never retried', async (t) => {
+  const outcomes = [
+    [() => Promise.resolve({ status: 'cancelled', reason: 'user_cancelled' }), 'info', /已取消/],
+    [() => Promise.resolve({ status: 'cancelled', reason: 'superseded' }), 'info', /取代/],
+    [() => Promise.reject({ code: 'target_unavailable', message: 'gone' }), 'error', /target_unavailable/],
+    [() => Promise.reject({ code: 'unsupported_source', message: 'remote' }), 'error', /不在本机/],
+    [() => Promise.reject({ code: 'result_unknown', message: 'timeout' }), 'error', /result_unknown/],
+    [() => { throw { code: 'not_permitted', message: 'gesture' }; }, 'error', /直接点击/],
+    [() => Promise.reject({ code: 'brand_new', message: '' }), 'error', /brand_new/],
+  ];
+  for (const [openResult, kind, text] of outcomes) {
+    const h = harness(t, { ...readySelection(), openResult });
+    h.renderDetail(); h.openSelectedSession(); await settle();
+    assert.equal(h.opens.length, 1); assert.equal(h.els.detailOpenMsg.dataset.kind, kind);
+    assert.match(h.els.detailOpenMsg.textContent, text); assert.equal(h.els.detailOpen.disabled, false);
+  }
+});
+
+test('an older Host without navigation answers without calling anything', async (t) => {
+  const h = harness(t, { canOpenSession: false });
+  assert.equal(JSON.stringify(await h.openSessionInHost('a')), JSON.stringify({ kind: 'error', text: '当前 MiniMax Code 版本不能从桌宠打开对话。' }));
+  assert.deepEqual(h.opens, []);
+});
+
+test('the page follows the Host theme and disposes its subscription', () => {
+  const root = { dataset: {} }, disposers = [], listeners = [];
+  let disposed = 0;
+  const ui = { subscribe: (listener, options) => { listeners.push([listener, options]); return { dispose: () => { disposed++; } }; } };
+  const context = vm.createContext({ host: { host: { ui } }, root, disposers, console: { warn() {} } });
+  vm.runInContext(`${errCode}\n${hostTheme}\ninitHostTheme();`, context);
+  assert.equal(listeners.length, 1);
+  const [listener, { onError }] = listeners[0];
+  listener({ theme: 'dark', language: 'zh-Hans' }); assert.equal(root.dataset.theme, 'dark');
+  listener({ theme: 'sepia', language: 'en' }); assert.equal(root.dataset.theme, 'dark');
+  listener({ theme: 'light', language: 'en' }); assert.equal(root.dataset.theme, 'light');
+  onError({ code: 'host_unavailable', message: '' }); assert.equal(root.dataset.theme, 'light');
+  for (const dispose of disposers) dispose();
+  assert.equal(disposed, 1);
+  const absent = vm.createContext({ host: {}, root: { dataset: {} }, disposers: [], console: { warn() {} } });
+  vm.runInContext(`${errCode}\n${hostTheme}\ninitHostTheme();`, absent);
+  assert.deepEqual(absent.disposers, []); assert.equal(absent.root.dataset.theme, undefined);
 });

@@ -1,8 +1,6 @@
 // Desktop pet page: a three-tab inline panel and a compact desktop companion.
 import { STATUS_ANIM, createActivitySource } from './activity.mjs';
 import { DEFAULT_PREFERENCES, loadPreferences, preferenceRequest } from './preferences.mjs';
-import { bindDraftEntry, createDraftController } from './chat-draft.mjs';
-import { createSpeechInput } from './speech-input.mjs';
 import { restoreWindowPosition, fitWindowToScreen } from './window-position.mjs';
 import { aggregateText, notificationItems, notificationText, createAnimationGate } from './pet-presentation.mjs';
 import { createReminderStore } from './activity-reminders.mjs';
@@ -73,7 +71,8 @@ const params = new URLSearchParams(location.search);
 const host = window.mcode?.miniapp ?? null;
 const win = host?.window ?? null;
 const agent = host?.agent ?? null;
-const canAppend = typeof host?.message?.append === 'function';
+const hostNavigation = host?.host?.navigation ?? null;
+const canOpenSession = typeof hostNavigation?.open === 'function';
 const explicitDemo = params.get('demo') === '1';
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -141,8 +140,6 @@ const app = {
   menuView: 'root',
   menuAnchor: { x: 0, y: 0 },
   menuCloseTimer: null,
-  composerOpen: false,
-  composerFocused: false,
   quickbarTimer: null,
   transient: null,
   transientTimer: null,
@@ -187,14 +184,10 @@ const els = {
   panelStage: $('panel-stage'),
   sprite: $('pet-sprite'),
   panelStatus: $('panel-status'),
-  waveBtn: $('wave-btn'),
-  jumpBtn: $('jump-btn'),
   activityNote: $('activity-note'),
   taskConnection: $('task-connection'),
   aggregateCounts: $('aggregate-counts'),
   clearCompleted: $('clear-completed'),
-  speechSection: $('speech-section'),
-  draftSpeech: $('draft-speech'),
   reminderList: $('reminder-list'),
   reminderNote: $('reminder-note'),
   mutedReminders: $('muted-reminders'),
@@ -202,7 +195,6 @@ const els = {
   workbench: $('workbench'),
   activityCard: $('activity-card'),
   detailCard: $('detail-card'),
-  draftCard: $('draft-card'),
   demoControls: $('demo-controls'),
   demoStatus: $('demo-status'),
   sessionList: $('session-list'),
@@ -210,21 +202,14 @@ const els = {
   detailTitle: $('detail-title'),
   detailStatus: $('detail-status'),
   detailTime: $('detail-time'),
+  detailActions: $('detail-actions'),
+  detailOpen: $('detail-open'),
+  detailOpenMsg: $('detail-open-msg'),
   detailError: $('detail-error'),
   detailReply: $('detail-reply'),
   detailNote: $('detail-note'),
-  speechControls: $('speech-controls'),
-  speechStart: $('speech-start'),
-  speechStop: $('speech-stop'),
-  speechCancel: $('speech-cancel'),
-  speechMsg: $('speech-msg'),
-  speechPartial: $('speech-partial'),
   activityRetry: $('activity-retry'),
   preferenceMsg: $('preference-msg'),
-  talkForm: $('talk-form'),
-  talkText: $('talk-text'),
-  talkBtn: $('talk-btn'),
-  talkMsg: $('talk-msg'),
   scaleGroup: $('scale-group'),
   gallery: $('gallery'),
   galleryMsg: $('gallery-msg'),
@@ -250,18 +235,8 @@ const els = {
   quickbar: $('quickbar'),
   quickTasks: $('quick-tasks'),
   quickMenu: $('quick-menu'),
-  composer: $('composer'),
-  composerInput: $('composer-input'),
-  composerSend: $('composer-send'),
-  composerClose: $('composer-close'),
-  composerMsg: $('composer-msg'),
-  draftOrigin: $('draft-origin'),
-  composerOrigin: $('composer-origin'),
   menu: $('menu'),
 };
-const draftController = createDraftController({ message: host?.message, onChange: renderDraftControls });
-let speechInput = null;
-let speechState = 'idle';
 let animationGate = null;
 let workbenchView = null;
 let workbenchWindow = null;
@@ -269,6 +244,8 @@ const reminders = createReminderStore();
 const compactBubbleSize = { width: 300, height: 340 };
 let notificationPreviews = null;
 let askObserver = null;
+let detailOpenToken = 0;
+let detailOpenSessionId = null;
 
 // Player module is loaded dynamically so a missing/broken module surfaces in the UI instead of a blank page.
 let STATES = [];
@@ -297,7 +274,7 @@ function activityAnim() {
 function desiredAnimation() {
   if (activity().session?.needsAnswer) return { state: 'waiting', key: activity().key };
   const base = { state: activityAnim(), key: activity().key };
-  if (app.hovered && app.mode === 'window' && !app.menuOpen && !app.composerOpen && !app.workbenchOpen) return { state: 'jumping', key: 'hover' };
+  if (app.hovered && app.mode === 'window' && !app.menuOpen && !app.workbenchOpen) return { state: 'jumping', key: 'hover' };
   return base;
 }
 
@@ -349,7 +326,6 @@ async function initActivitySource() {
       });
       askObserver.update({ availability: snapshot.availability, sessions: snapshot.sessions, selectedSessionId: snapshot.selectedSessionId });
       syncObservedAsks();
-      draftController.setOrigin(snapshot.originSession);
       renderHeader();
       applyActivity();
     },
@@ -409,61 +385,66 @@ function selectSession(sessionId, report = (text, kind) => setMsg(els.sessionMsg
   }, (error) => report(`无法关注此任务（${errCode(error)}）`, 'error'));
 }
 
-// Host message.append
+// Host navigation and display preferences
 // ---------------------------------------------------------------------------
 
-function describeAppendError(code) {
+function describeOpenError(code) {
   switch (code) {
-    case 'user_cancelled':
-      return '已取消';
     case 'target_unavailable':
-      return '打开桌宠的原属对话不可用，文字已保留。请从可用的聊天重新打开桌宠。';
+      return '这个对话已不存在或暂时打不开（target_unavailable）。';
+    case 'unsupported_source':
+      return '这个对话不在本机，桌宠打不开（unsupported_source）。';
     case 'not_permitted':
-      return '无法追加到原属对话。请直接点击重试；文字已保留。';
-    case 'unsupported':
-      return '当前环境不能加到对话输入框。';
-    case 'empty':
-      return '先写点什么吧';
-    case 'busy':
-      return '正在等待上一次确认，文字已保留。';
+      return '需要直接点击按钮才能打开（not_permitted）。';
+    case 'host_unavailable':
+      return 'MiniMax Code 主窗口暂不可用，请稍后再试（host_unavailable）。';
     case 'result_unknown':
-      return '请先检查输入框，文本可能已经加进去了';
+      return '没收到打开结果，请看看主窗口是否已经切过去（result_unknown）。';
     default:
-      return `没能加到输入框（${code}），请检查对话后再试`;
+      return `没能打开对话（${code}）。`;
   }
 }
 
-function draftResultText(result) {
-  if (!result.ok) return describeAppendError(result.code);
-  return `已加到「${result.submission.title}」的输入框，仍需你在对话里按发送。${result.clear ? '' : '新编辑的草稿已保留。'}`;
+/** Must be called synchronously from a click or key handler: the Host checks user activation. */
+function openSessionInHost(sessionId) {
+  if (!canOpenSession) return Promise.resolve({ kind: 'error', text: '当前 MiniMax Code 版本不能从桌宠打开对话。' });
+  return callBridge(() => hostNavigation.open({ id: 'session', sessionId, source: 'local' })).then(
+    (result) => {
+      if (result?.status === 'opened') return { kind: 'ok', text: '已在 MiniMax Code 主窗口打开这个对话。' };
+      if (result?.reason === 'user_cancelled') return { kind: 'info', text: '已取消，主窗口留在原来的页面。' };
+      return { kind: 'info', text: '这次打开被另一次跳转取代了。' };
+    },
+    (error) => {
+      const code = errCode(error);
+      console.warn('[pet] open_session_failed:', code, error);
+      return { kind: 'error', text: describeOpenError(code) };
+    },
+  );
 }
 
-function renderDraftControls() {
-  const state = draftController.getState();
-  els.talkBtn.disabled = !canAppend || state.pending;
-  els.composerSend.disabled = !canAppend || state.pending;
-  const target = state.origin ? `原属对话：${state.origin.title}` : '投递到打开桌宠的原属对话，由 Host 确认。';
-  els.draftOrigin.textContent = target;
-  els.composerOrigin.textContent = target;
-  els.composerOrigin.title = target;
+function openSelectedSession() {
+  const sessionId = app.selectedSessionId;
+  if (!sessionId) return;
+  const token = ++detailOpenToken;
+  els.detailOpen.disabled = true;
+  setMsg(els.detailOpenMsg, '正在打开对话…');
+  void openSessionInHost(sessionId).then((result) => {
+    if (disposed || token !== detailOpenToken) return;
+    els.detailOpen.disabled = false;
+    setMsg(els.detailOpenMsg, result.text, result.kind);
+  });
 }
 
-function bindDraftForms() {
-  disposers.push(() => draftController.dispose());
-  for (const [entry, form, input, message] of [
-    ['panel', els.talkForm, els.talkText, els.talkMsg],
-    ['desktop', els.composer, els.composerInput, els.composerMsg],
-  ]) {
-    disposers.push(bindDraftEntry({
-      controller: draftController, entry, form, input,
-      onPending(submission) { setMsg(message, `请在 Host 确认框核对「${submission.title}」及文字…`); },
-      onResult(result) {
-        const text = draftResultText(result);
-        setMsg(message, text, result.ok ? 'ok' : result.code === 'user_cancelled' || result.code === 'empty' ? 'info' : 'error');
-        if (result.ok) playOneShot('waving');
-        if (entry === 'desktop' && result.ok && result.clear) { closeComposer(); showTransient(text, 'ok'); }
-      },
-    }));
+function initHostTheme() {
+  const ui = host?.host?.ui;
+  if (typeof ui?.subscribe !== 'function') return;
+  try {
+    const subscription = ui.subscribe(({ theme }) => {
+      if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
+    }, { onError: (error) => console.warn('[pet] host_theme_unavailable:', errCode(error), error) });
+    disposers.push(() => subscription?.dispose?.());
+  } catch (error) {
+    console.warn('[pet] host_theme_unavailable:', errCode(error), error);
   }
 }
 
@@ -569,10 +550,6 @@ function applyMode(mode) {
   workbenchView?.close();
   root.classList.remove('workbench-open');
   if (mode !== 'window') { app.positionRestoreToken++; app.restoringPosition = false; app.awaitingPointer = false; }
-  if (mode === 'window' && !['idle', 'error'].includes(speechState)) {
-    speechInput?.cancel();
-    showTransient('已取消面板录音。请回到面板重新录制。');
-  }
   root.classList.toggle('mode-window', mode === 'window');
   root.classList.toggle('mode-inline', mode !== 'window');
   root.dataset.mode = mode;
@@ -580,7 +557,6 @@ function applyMode(mode) {
   els.desk.hidden = mode !== 'window';
 
   closeMenu();
-  closeComposer();
   hideQuickbar();
   cancelDrag();
   stopLook();
@@ -608,7 +584,6 @@ function applyMode(mode) {
 
 function popOut() {
   if (!win) return;
-  if (!['idle', 'error'].includes(speechState)) { setMsg(els.popoutMsg, '请先停止录音并等待转写完成。'); return; }
   els.popoutBtn.disabled = true;
   setMsg(els.popoutMsg, '正在弹出…');
   app.modeSwitching = true;
@@ -666,7 +641,7 @@ function isOverPet(x, y) {
 }
 
 function isOverOverlay(x, y) {
-  return [els.bubble, els.notificationStack, els.quickbar, els.composer, els.menu, els.workbench].some(
+  return [els.bubble, els.notificationStack, els.quickbar, els.menu, els.workbench].some(
     (el) => !el.hidden && pointInRect(el.getBoundingClientRect(), x, y),
   );
 }
@@ -678,7 +653,6 @@ function refreshInteractivity() {
     app.workbenchOpen ||
     app.dragging ||
     app.menuOpen ||
-    app.composerFocused ||
     (p ? isOverPet(p.x, p.y) || isOverOverlay(p.x, p.y) : false);
   setClickThrough(!interactive);
 }
@@ -776,7 +750,7 @@ function onPointerLeave() {
   if (app.mode !== 'window') return;
   app.pointer = null;
   stopLook();
-  refreshInteractivity(); // stays interactive while menu/composer/drag force it
+  refreshInteractivity(); // stays interactive while menu/drag force it
   if (app.menuOpen) armMenuClose();
 }
 
@@ -791,7 +765,6 @@ function updateLook(x, y) {
     app.hovered ||
     app.dragging ||
     app.menuOpen ||
-    app.composerOpen ||
     app.oneShot ||
     app.workbenchOpen ||
     reducedMotion.matches ||
@@ -928,7 +901,7 @@ function cancelDrag() {
 }
 
 // ---------------------------------------------------------------------------
-// Bubble / quick bar / composer (window mode)
+// Bubble / quick bar (window mode)
 // ---------------------------------------------------------------------------
 
 function showTransient(text, kind = 'info', sticky = false) {
@@ -945,7 +918,7 @@ function showTransient(text, kind = 'info', sticky = false) {
 
 function renderBubble() {
   renderNotificationStack();
-  if (app.composerOpen || app.workbenchOpen) {
+  if (app.workbenchOpen) {
     els.bubble.hidden = true;
     app.bubbleSessionId = null;
     refreshInteractivity();
@@ -993,7 +966,7 @@ function renderNotificationStack() {
   const container = els.notificationStack;
   const items = notificationItems(reminders.getState().items);
   const visible = app.mode === 'window' && app.availability === 'ready' && items.length
-    && !app.workbenchOpen && !app.composerOpen && !app.transient;
+    && !app.workbenchOpen && !app.transient;
   container.hidden = !visible;
   if (!visible) return;
   const previews = notificationPreviews?.getState().previews ?? {};
@@ -1043,35 +1016,6 @@ function armQuickbarHide() {
     if (p && pointInRect(els.quickbar.getBoundingClientRect(), p.x, p.y)) armQuickbarHide();
     else hideQuickbar();
   }, 6000);
-}
-
-function openComposer() {
-  if (!canAppend) {
-    showTransient('当前环境不能加到对话输入框', 'error');
-    return;
-  }
-  hideQuickbar();
-  closeMenu();
-  stopLook();
-  app.composerOpen = true;
-  els.composer.hidden = false;
-  // Called from a click/keyboard handler: focus() needs a user gesture. Lets the pet window take keyboard input.
-  if (typeof win?.focus === 'function') {
-    callBridge(() => win.focus()).catch((error) => console.warn('[pet] window_focus_failed:', errCode(error), error));
-  }
-  els.composerInput.focus();
-  renderBubble();
-  refreshInteractivity();
-}
-
-function closeComposer({ restoreFocus = false } = {}) {
-  if (!app.composerOpen) return;
-  app.composerOpen = false;
-  app.composerFocused = false;
-  els.composer.hidden = true;
-  if (restoreFocus) els.sprite.focus({ preventScroll: true });
-  renderBubble();
-  refreshInteractivity();
 }
 
 // ---------------------------------------------------------------------------
@@ -1128,9 +1072,6 @@ function menuModel(view) {
     app.source === 'demo' && { label: '动作预览', submenu: 'demo' },
     app.source === 'real' && app.availability === 'ready' && { label: '全部任务', run: () => { void openWorkbench('tasks'); } },
     app.source === 'real' && app.availability !== 'ready' && { label: '重新连接会话', run: () => { void activitySource?.refresh(); } },
-    { label: '打招呼', run: () => playOneShot('waving') },
-    { label: '跳一下', run: () => playOneShot('jumping') },
-    canAppend && { label: '追加到原属聊天草稿…', run: () => { void openWorkbench('draft'); } },
     { label: '换宠物', submenu: 'pets' },
     { label: '大小', submenu: 'scale' },
     win && { label: '收回到面板', run: returnToPanel },
@@ -1238,7 +1179,6 @@ function openMenu(x, y) {
   if (app.mode !== 'window') return;
   noteInteraction();
   hideQuickbar();
-  closeComposer();
   stopLook();
   disarmMenuClose();
   app.menuOpen = true;
@@ -1705,7 +1645,6 @@ async function confirmImport() {
 function renderAll() {
   renderHeader();
   renderActivityUI();
-  renderTalk();
   renderScale();
   renderGallery();
   renderBubble();
@@ -1812,14 +1751,6 @@ function renderSessionList(current) {
   if (focusedId) els.sessionList.querySelector(`[data-session-id="${CSS.escape(focusedId)}"]`)?.focus();
 }
 
-function renderTalk() {
-  renderDraftControls();
-  const entry = $('open-draft');
-  if (entry) { entry.hidden = !canAppend; if (entry.closest('section')) entry.closest('section').hidden = !canAppend; }
-  els.talkText.disabled = !canAppend;
-  if (!canAppend && !els.talkMsg.textContent) setMsg(els.talkMsg, '当前环境不能加到对话输入框。');
-}
-
 function renderDetail() {
   const detail = app.detail;
   const session = app.sessions.find((row) => row.sessionId === app.selectedSessionId);
@@ -1833,17 +1764,31 @@ function renderDetail() {
   const reply = needsAnswer ? '需要你回答' : detail?.lastAssistantText || '';
   if (els.detailReply.textContent !== reply) els.detailReply.textContent = reply;
   if (panelDetailId !== app.selectedSessionId) { els.detailReply.scrollTop = 0; panelDetailId = app.selectedSessionId; }
+  renderDetailOpen(needsAnswer);
   els.detailNote.textContent = app.source === 'demo' ? '资源动作预览，不提供真实任务概览。'
     : app.availability !== 'ready' ? availabilityText()
       : app.detailLoading ? (detail ? '正在更新…' : '正在读取任务…') : !detail ? '选择任务后查看最近回复。'
-        : needsAnswer ? '请回到 MiniMax Code 的对应聊天回答。'
-          : detail.lastAssistantText ? '显示任务的最近回复。后续处理请回到对应聊天。' : '这项任务暂时没有可查看的回复。';
+        : needsAnswer ? (canOpenSession ? '点「去回答」在主窗口打开这个对话后回答。' : '请回到 MiniMax Code 的对应聊天回答。')
+          : detail.lastAssistantText ? `显示任务的最近回复。${canOpenSession ? '点「打开对话」继续处理。' : '后续处理请回到对应聊天。'}` : '这项任务暂时没有可查看的回复。';
+}
+
+function renderDetailOpen(needsAnswer) {
+  // Only a different task resets a pending open; a brief disconnect just hides the button.
+  if (detailOpenSessionId !== app.selectedSessionId) {
+    detailOpenSessionId = app.selectedSessionId;
+    detailOpenToken++;
+    els.detailOpen.disabled = false;
+    setMsg(els.detailOpenMsg, '');
+  }
+  els.detailActions.hidden = !canOpenSession || !app.selectedSessionId || app.source !== 'real' || app.availability !== 'ready';
+  els.detailOpen.textContent = needsAnswer ? '去回答' : '打开对话';
 }
 
 function initWorkbench() {
   workbenchView = createCompactPetView({ container: els.workbench,
     onClose: () => { void closeWorkbench(); },
     onSelectTask: openTaskPreview,
+    onOpenSession: canOpenSession ? openSessionInHost : null,
   });
   notificationPreviews = createNotificationPreviews({ agent, onChange: () => { renderBubble(); renderCompactView(); } });
   if (win) workbenchWindow = createWorkbenchWindow({ windowAPI: win,
@@ -1869,14 +1814,8 @@ function openTaskPreview(sessionId) {
 }
 
 function focusFullPanel(view) {
-  if (view === 'draft') { if (canAppend) panelNavigation?.showDraft(); }
-  else if (view === 'detail') panelNavigation?.showTaskDetail();
+  if (view === 'detail') panelNavigation?.showTaskDetail();
   else { panelNavigation?.showTab('tasks'); panelNavigation?.showTaskList(); }
-}
-
-function openFullPanel(view = 'tasks') {
-  const result = app.mode === 'window' ? returnToPanel() : Promise.resolve(true);
-  return result.then((ok) => { if (ok && !disposed && app.mode !== 'window') focusFullPanel(view); });
 }
 
 async function openWorkbench(view = 'tasks') {
@@ -1886,12 +1825,11 @@ async function openWorkbench(view = 'tasks') {
     focusFullPanel(view);
     return;
   }
-  if (view === 'draft') return openFullPanel('draft');
   const token = ++app.workbenchRevision;
   app.compacting = false;
   const alreadyOpen = workbenchView.opened;
   app.workbenchOpen = true;
-  closeComposer(); closeMenu(); hideQuickbar(); stopLook();
+  closeMenu(); hideQuickbar(); stopLook();
   setClickThrough(false);
   const waitingAt = Date.now();
   while (app.restoringPosition && token === app.workbenchRevision && !disposed && Date.now() - waitingAt < 3000) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1966,45 +1904,6 @@ function renderReminders() {
   });
   if (mutedNodes.length !== els.mutedList.children.length || mutedNodes.some((node, i) => node !== els.mutedList.children[i])) els.mutedList.replaceChildren(...mutedNodes);
   if (mutedFocus?.isConnected && els.mutedList.contains(mutedFocus)) mutedFocus.focus({ preventScroll: true });
-}
-
-function initSpeech() {
-  const labels = { requesting: '正在请求麦克风…', recording: '正在录音，请点击停止。', transcribing: '正在转写…' };
-  speechInput = createSpeechInput({
-    getMiniApp: () => window.mcode?.miniapp,
-    onState(value) {
-      speechState = value.state;
-      const busy = !['idle', 'error'].includes(value.state);
-      els.speechStart.disabled = busy;
-      els.speechStop.disabled = value.state !== 'recording';
-      els.speechCancel.disabled = !busy;
-      els.draftSpeech.disabled = busy || !speechInput?.isAvailable();
-      els.popoutBtn.disabled = busy || app.modeSwitching;
-      setMsg(els.speechMsg, value.state === 'error' ? `语音未完成（${value.errorCode || 'unknown'}），已有文字保持不变。` : labels[value.state] || '转写只填入原属草稿区，不会自动追加或发送。', value.state === 'error' ? 'error' : 'info');
-      if (value.state !== 'transcribing') els.speechPartial.textContent = '';
-    },
-    onPartial(text) { els.speechPartial.textContent = `转写处理中：${text}`; },
-    onText(text) {
-      if (disposed || !text) return;
-      draftController.syncText('panel', els.talkText.value);
-      els.talkText.value = draftController.appendText('panel', `${els.talkText.value ? '\n' : ''}${text}`);
-      setMsg(els.talkMsg, '转写已填入原聊天草稿区。确认后可添加到原聊天输入框。', 'ok');
-    },
-  });
-  const available = speechInput.isAvailable();
-  els.speechControls.hidden = !available;
-  els.draftSpeech.hidden = !available;
-  setMsg(els.speechMsg, available ? '转写只填入原属草稿区，不会自动追加或发送。' : '当前环境不支持语音转写，可直接输入文字。');
-  listen(els.speechStart, 'click', () => { startSpeech(); });
-  listen(els.draftSpeech, 'click', () => startSpeech());
-  listen(els.speechStop, 'click', () => { void speechInput.stop(); });
-  listen(els.speechCancel, 'click', () => { speechInput.cancel(); });
-  disposers.push(() => speechInput.dispose());
-}
-
-function startSpeech() {
-  if (!['idle', 'error'].includes(speechState)) return;
-  void speechInput.start();
 }
 
 function renderScale() {
@@ -2119,8 +2018,7 @@ function bindPanel() {
   listen(els.activityRetry, 'click', () => { void activitySource?.refresh(); });
   listen(els.clearCompleted, 'click', () => { activitySource?.clearCompleted(); });
   listen(els.popoutBtn, 'click', popOut);
-  listen(els.waveBtn, 'click', () => playOneShot('waving'));
-  listen(els.jumpBtn, 'click', () => playOneShot('jumping'));
+  listen(els.detailOpen, 'click', openSelectedSession);
 
   listen(els.importPick, 'click', () => els.importInput.click());
   listen(els.importInput, 'change', () => {
@@ -2203,7 +2101,6 @@ function bindDesk() {
   listen(document, 'keydown', (e) => {
     if (app.mode !== 'window' || e.key !== 'Escape') return;
     if (app.workbenchOpen) { void closeWorkbench(); }
-    else if (app.composerOpen) closeComposer({ restoreFocus: true });
     else hideQuickbar();
   });
 
@@ -2219,17 +2116,6 @@ function bindDesk() {
     openMenu(r.left + r.width / 2, r.bottom);
   });
   listen(els.quickbar, 'pointerenter', armQuickbarHide);
-
-  listen(els.composerClose, 'click', () => closeComposer({ restoreFocus: true }));
-  listen(els.composer, 'focusin', () => {
-    app.composerFocused = true;
-    refreshInteractivity();
-  });
-  listen(els.composer, 'focusout', (e) => {
-    if (els.composer.contains(e.relatedTarget)) return;
-    app.composerFocused = false;
-    refreshInteractivity();
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2252,9 +2138,6 @@ async function boot() {
       if (importState.busy) return false;
       resetImport(); setMsg(els.importMsg, '已取消导入'); return true;
     },
-    onLeaveDraft() {
-      if (!['idle', 'error'].includes(speechState)) speechInput?.cancel();
-    },
   });
   disposers.push(() => panelNavigation.dispose());
   listen(reducedMotion, 'change', (e) => {
@@ -2263,11 +2146,10 @@ async function boot() {
     if (e.matches) stopLook();
   });
 
+  initHostTheme();
   bindPanel();
   initWorkbench();
   bindDesk();
-  bindDraftForms();
-  initSpeech();
   listen(window, 'pagehide', disposeApp);
   await initPreferences();
   if (disposed) return;
