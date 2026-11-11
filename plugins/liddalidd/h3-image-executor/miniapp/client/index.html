@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>H3-Image-Executor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="app">
+    <!-- 左侧历史栏：可整体收起，收起状态记在本地，下次打开保持。 -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">H3</div>
+          <span class="brand-name">Image Executor</span>
+        </div>
+        <button type="button" class="icon-btn" id="sidebar-toggle" aria-label="收起侧边栏" title="收起侧边栏">
+          <span class="icon-collapse" aria-hidden="true"></span>
+        </button>
+      </div>
+      <button type="button" class="new-chat" id="new-session">
+        <span class="icon-plus" aria-hidden="true"></span>
+        <span>新建绘画</span>
+      </button>
+      <div class="sidebar-section">
+        <span id="sessions-title">历史</span>
+        <span class="sessions-count" id="sessions-count"></span>
+        <button type="button" class="link-btn" id="sessions-refresh">刷新</button>
+      </div>
+      <div id="sessions" class="session-list"></div>
+      <div class="sidebar-foot">
+        <button type="button" class="engine" id="engine" role="status" aria-live="polite">正在检查生图引擎…</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button type="button" class="icon-btn" id="sidebar-open" aria-label="展开侧边栏" title="展开侧边栏" hidden>
+          <span class="icon-expand" aria-hidden="true"></span>
+        </button>
+        <h1 class="topbar-title" id="topbar-title">H3-Image-Executor</h1>
+        <div class="topbar-actions">
+          <span class="hint" id="brief-hint">默认输出 4K</span>
+          <button type="button" class="btn tiny" id="cancel" disabled>停止</button>
+        </div>
+      </header>
+
+      <main class="chat">
+      <div class="thread" id="thread">
+        <div class="empty-state" id="empty-state">
+          <p class="empty-title">开始一次新的绘画</p>
+          <p class="empty-desc">写下你要的图。检索参考图、规划、生成、校验、修正都会自动做完。</p>
+        </div>
+      </div>
+
+      <form class="composer" id="brief-form">
+        <div class="composer-refs" id="ref-thumbs" hidden></div>
+        <div class="composer-box">
+          <textarea id="instruction" rows="1" placeholder="描述你要的图，回车发送"></textarea>
+          <div class="composer-bar">
+            <label class="chip-btn" for="refs" title="添加参考图">参考图</label>
+            <input type="file" id="refs" accept="image/png,image/jpeg,image/webp" multiple hidden />
+            <span class="composer-spacer"></span>
+            <button type="submit" class="send-btn" id="start">发送</button>
+          </div>
+        </div>
+        <div class="examples" id="examples">
+          <button type="button" class="example" data-text="一只柴犬坐在东京塔下的长椅上看夕阳，电影感，16:9 横构图">柴犬 × 东京塔</button>
+          <button type="button" class="example" data-text="一只橘猫趴在窗台上晒太阳，午后暖光，胶片质感，16:9 横构图">橘猫 · 胶片质感</button>
+          <button type="button" class="example" data-text="帮我画一组漫画，一共四张图，整体组成一个可爱的小故事，日漫风格治愈系">四格漫画 · 角色一致</button>
+        </div>
+      </form>
+      </main>
+    </div>
+
+    <!-- 接口凭据设置。Key 只往服务端写，页面永远拿不到回显。 -->
+    <div class="settings" id="settings" hidden>
+      <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="settings-head">
+          <h2 id="settings-title">生图接口设置</h2>
+          <button type="button" class="icon-btn" id="settings-close" aria-label="关闭设置">关闭</button>
+        </div>
+        <p class="settings-note" id="settings-note"></p>
+        <div class="settings-field">
+          <span>API Key</span>
+          <div class="settings-row">
+            <input type="password" id="settings-key" autocomplete="off" spellcheck="false" placeholder="粘贴你的接口 Key" />
+            <button type="button" class="btn tiny" id="settings-paste" title="从剪贴板读取 Key">剪贴板</button>
+          </div>
+        </div>
+        <label class="settings-field">
+          <span>接口地址</span>
+          <input type="text" id="settings-url" autocomplete="off" spellcheck="false" placeholder="https://…" />
+        </label>
+        <p class="settings-hint">
+          Key 只保存在本机插件数据目录，不会随包分发，也不会回显到页面。留空保存即清除本页配置，回落到环境变量。
+        </p>
+        <p class="settings-error" id="settings-error" hidden></p>
+        <div class="settings-actions">
+          <button type="button" class="btn danger" id="settings-clear">清除本页配置</button>
+          <span class="composer-spacer"></span>
+          <button type="button" class="btn" id="settings-cancel">取消</button>
+          <button type="button" class="btn primary" id="settings-save">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="lightbox" id="lightbox" hidden>
+      <button type="button" class="lightbox-close" id="lightbox-close" aria-label="关闭大图">关闭</button>
+      <img id="lightbox-img" alt="放大预览" />
+    </div>
+
+    <script src="/blocks.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
