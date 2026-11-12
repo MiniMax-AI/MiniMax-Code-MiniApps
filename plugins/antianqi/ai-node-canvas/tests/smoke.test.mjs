@@ -11772,6 +11772,65 @@ test('the provider takes wav and mp3, and the app writes mp3', async () => {
   assert.deepEqual(cut[0].slice(0, 4), ['-ss', '1.500', '-to', '4.000']);
   assert.equal(cut[0].indexOf('-i'), 4, 'the cut is said before the input');
 });
+test('the tools that make an audio leave an mp3 behind', async () => {
+  // The sound a video leaves behind has to be one the provider reads, so
+  // the tools write an mp3 and say so. A tool that leaves an m4a behind is
+  // a tool whose result the provider refuses.
+  const { MEDIA_TOOLS } = await import('../miniapp/node/media-tools.mjs');
+  const { AUDIO_TARGET_EXT, AUDIO_TARGET_MIME } = await import('../miniapp/node/provider-audio.mjs');
+
+  for (const key of ['splitAv', 'extractAudio', 'trimAudio']) {
+    const spec = MEDIA_TOOLS[key];
+    assert.ok(spec, `${key} 不在工具表里`);
+    assert.equal(spec.ext, AUDIO_TARGET_EXT, `${key} 产出的不是 mp3`);
+    assert.equal(spec.mimeType, AUDIO_TARGET_MIME, `${key} 产出的类型不是 audio/mpeg`);
+  }
+
+  // And the tools really ask ffmpeg for an mp3. A tool that says mp3 and
+  // writes an m4a is the failure this catches.
+  const commands = [];
+  const ffmpeg = {
+    async probe() { return { hasAudio: true, duration: 10, width: 0, height: 0, fps: 0 }; },
+    async run(args) { commands.push(args); },
+  };
+  const out = (ext) => `/tmp/work/file${ext}`;
+
+  // 分离音频: the sound of a clip, on its own.
+  const taken = await MEDIA_TOOLS.extractAudio.run({ ffmpeg, source: '/tmp/clip.mp4', out });
+  assert.equal(taken.length, 1);
+  assert.equal(taken[0].kind, 'audio');
+  assert.equal(taken[0].mimeType, AUDIO_TARGET_MIME);
+  assert.match(taken[0].path, /\.mp3$/, '分离音频产出的不是 mp3');
+  const command = commands[commands.length - 1];
+  assert.ok(command.includes('libmp3lame'), '分离音频没有用 mp3 编码');
+  assert.ok(!command.includes('aac'), '分离音频还在用 aac');
+  assert.match(command[command.length - 1], /\.mp3$/, '分离音频写的不是 mp3');
+
+  // 音画分离: the picture and the sound, each on its own.
+  commands.length = 0;
+  const split = await MEDIA_TOOLS.splitAv.run({ ffmpeg, source: '/tmp/clip.mp4', out });
+  const sound = split.find((item) => item.kind === 'audio');
+  assert.ok(sound, '音画分离没有留下音轨');
+  assert.equal(sound.mimeType, AUDIO_TARGET_MIME, '音画分离的音轨类型不对');
+  assert.match(sound.path, /\.mp3$/, '音画分离的音轨不是 mp3');
+  const splitCommand = commands[commands.length - 1];
+  assert.ok(splitCommand.includes('libmp3lame'), '音画分离没有用 mp3 编码');
+  assert.match(splitCommand[splitCommand.length - 1], /\.mp3$/, '音画分离写的不是 mp3');
+
+  // 剪辑: a piece of a track, and it says where the cut is.
+  commands.length = 0;
+  const cut = await MEDIA_TOOLS.trimAudio.run({
+    ffmpeg,
+    source: '/tmp/track.mp3',
+    out,
+    params: { start: 1, end: 4 },
+  });
+  assert.equal(cut[0].mimeType, AUDIO_TARGET_MIME);
+  assert.match(cut[0].path, /\.mp3$/, '音频剪辑产出的不是 mp3');
+  const cutCommand = commands[commands.length - 1];
+  assert.ok(cutCommand.includes('libmp3lame'), '音频剪辑没有用 mp3 编码');
+  assert.equal(cutCommand.indexOf('-ss'), 0, '剪辑的位置没有写在输入前面');
+});
 test('an audio the provider would refuse is converted before it goes up', async (t) => {
   // The rule is about the file that reaches the provider, not only about the
   // files this app makes. A track made before the rule existed is an m4a,
