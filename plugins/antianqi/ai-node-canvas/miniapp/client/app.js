@@ -12,7 +12,7 @@
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
 import { bandSelection, BAR_PANEL_SIDE, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mediaBoxFor, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, placePanel, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, TILE_CARD, toolPrompt, toolSizeReason, upstreamNodes } from './tools.mjs';
 import { cardTools, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, NODE_FORMS, NODE_KINDS, modeOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf } from './forms.mjs';
-import { cardLayers, CLIP_HANDLE_INSET, clipClock, clipRange, clipSecond, clipSeconds, durationLabel, isPlaying, playheadMs, stripAt, stripPercent, stripWidth, errorActions, groupMembers, modeChoice, modelRange, nodeKindLabel, nodeMenuEntries, nodeModeLabel, openChip, opsOffset, opsSide, panelFields, paramFields, paramSummary, railParts, ratioGlyph, textAnchor, timecode } from './node-ui.mjs';
+import { cardLayers, CLIP_HANDLE_INSET, clipClock, clipRange, clipSecond, clipSeconds, durationLabel, isPlaying, playheadMs, stripAt, stripPercent, stripWidth, errorActions, groupMembers, modeChoice, modelRange, nodeKindLabel, nodeMenuEntries, nodeModeLabel, openChip, opsOffset, opsSide, opsSurfaceClass, panelFields, paramFields, paramSummary, railParts, ratioGlyph, textAnchor, timecode } from './node-ui.mjs';
 import { wirePreviewLoop } from './preview-loop.mjs';
 import { clipPlacement, panelAnchor } from './clip-place.mjs';
 import { wirePlayhead } from './clip-playhead.mjs';
@@ -1574,6 +1574,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
 
     const body = el('div', 'nxc-node__body');
     const surface = el('div', 'nxc-node__ops');
+    // The surface that holds a prompt is a page, not a column.
+    const promptSurface = opsSurfaceClass(layers);
+    if (promptSurface) surface.classList.add(promptSurface);
     surface.dataset.canvasNoZoom = 'true';
     const rail = el('div', 'nxc-node__rail');
     rail.dataset.canvasNoZoom = 'true';

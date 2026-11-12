@@ -3219,6 +3219,23 @@ test('a card holding a video shows the sound and the clip, a picture result show
   assert.deepEqual(cardLayers(generating, { tools }).ops, ['composer', 'params']);
 });
 
+test('the operation surface that holds a prompt is a page, not a column', async () => {
+  // A prompt is read across, so the surface under the card is a wide page
+  // and a long prompt scrolls inside it. The prompt can reach that surface
+  // two ways — the editor the user types in, and the text an upstream line
+  // handed over — and both are the same part, so both get the same page.
+  const { cardLayers, opsSurfaceClass } = await import('../miniapp/client/node-ui.mjs');
+
+  const generating = { type: 'image', metadata: { output: { media: [] } } };
+  const text = { type: 'text', metadata: { kind: 'text', output: { media: [], text: '' } } };
+  const result = { type: 'result', metadata: { kind: 'image', output: { media: [{ url: 'x' }] } } };
+
+  assert.equal(opsSurfaceClass(cardLayers(generating)), 'nxc-node__ops--prompt');
+  assert.equal(opsSurfaceClass(cardLayers(text)), 'nxc-node__ops--prompt');
+  // A card with nothing to type in gets no page under it.
+  assert.equal(opsSurfaceClass(cardLayers(result)), '');
+});
+
 test('a call that waited for the machine says how long it waited when it fails', async (t) => {
   // The Host stops a call that runs over its window, and the message it
   // raises says nothing about the step. The runtime adds the step: which
@@ -10185,7 +10202,12 @@ test('the prompt is written sideways in a box that does not grow', async () => {
   );
   // The surface that holds the prompt has a rule of its own: the other
   // surfaces on the board are bars, and a bar does not need a page.
-  const wide = /\.nxc-node__ops:has\(\.nxc-composer\) \{([^}]*)\}/.exec(css);
+  // The rule is named by the class the app puts on the surface, so the
+  // two can never drift apart.
+  const { opsSurfaceClass } = await import('../miniapp/client/node-ui.mjs');
+  const promptClass = opsSurfaceClass({ ops: ['composer'] });
+  assert.equal(promptClass, 'nxc-node__ops--prompt', 'the prompt surface has a class of its own');
+  const wide = new RegExp(`\\.${promptClass} \\{([^}]*)\\}`).exec(css);
   assert.ok(wide, 'the surface that holds the prompt has a rule of its own');
   const width = /width:\s*min\(max\(100%,\s*(\d+)px\),\s*calc\(100vw\s*-\s*(\d+)px\)\)/.exec(wide[1]);
   assert.ok(width, 'the prompt surface says how wide it is');
@@ -10213,6 +10235,13 @@ test('the prompt is written sideways in a box that does not grow', async () => {
   assert.ok(!/max-height/.test(editor[1]), 'the editor has one height, not a height that grows');
   assert.match(editor[1], /overflow-y:\s*auto/, 'a long prompt scrolls inside the box');
 
+  // The prompt that an upstream line handed over is read in the same
+  // box: it has one height too, so it cannot grow into a tower.
+  const inherited = /\.nxc-inherited__text \{([^}]*)\}/.exec(css);
+  assert.ok(inherited, 'the inherited prompt has a rule of its own');
+  assert.match(inherited[1], /max-height:\s*\d+px/, 'the inherited prompt keeps one height');
+  assert.match(inherited[1], /overflow-y:\s*auto/, 'a long inherited prompt scrolls inside the box');
+
   // The surface can be moved back inside the window.
   const ops = /\.nxc-node__ops \{([^}]*)\}/.exec(css);
   assert.ok(ops, 'the operation surface has a rule of its own');
@@ -10228,6 +10257,9 @@ test('the prompt is written sideways in a box that does not grow', async () => {
   // The wheel over the prompt scrolls the prompt: the editor keeps out of
   // the way of the zoom, or the board would zoom while the text is read.
   assert.match(functionBody(source, 'createComposer'), /editor\.dataset\.canvasNoZoom = 'true';/);
+  // The surface is told it is a page: the class the stylesheet gives the
+  // page is put on the surface, or the prompt is back in a column.
+  assert.match(functionBody(source, 'renderNode'), /if \(promptSurface\) surface\.classList\.add\(promptSurface\)/);
 });
 
 test('an audio card offers the clip, and the clip is cut on a strip', async () => {

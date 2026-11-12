@@ -302,6 +302,21 @@ export function cardLayers(node, ctx = {}) {
 }
 
 /**
+ * The class the operation surface carries.
+ *
+ * A surface that holds a prompt is a page, not a column: the prompt is
+ * read across, so the box is as wide as the window allows and a long
+ * prompt scrolls inside it instead of making the panel a tower.
+ *
+ * Both ways of holding a prompt come from the same part — the editor the
+ * user types in and the text an upstream line handed over — so the two
+ * get the same answer.
+ */
+export function opsSurfaceClass(layers) {
+  return (layers?.ops ?? []).includes('composer') ? 'nxc-node__ops--prompt' : '';
+}
+
+/**
  * How far the operation surface stays away from the card, in screen pixels.
  * The stylesheet mirrors this number.
  */

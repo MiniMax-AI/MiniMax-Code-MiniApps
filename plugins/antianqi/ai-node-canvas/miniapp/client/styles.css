@@ -753,7 +753,7 @@ input {
 /* The surface that holds the prompt is a page, not a column.
    A prompt is read across, so the box is as wide as the window allows; a
    long prompt scrolls inside the box instead of making the card taller. */
-.nxc-node__ops:has(.nxc-composer) {
+.nxc-node__ops--prompt {
   width: min(max(100%, 620px), calc(100vw - 40px));
   max-width: none;
 }
@@ -1862,6 +1862,10 @@ input {
   color: var(--mcode-text);
   white-space: pre-wrap;
   word-break: break-word;
+  /* The box has one size, like the editor's: a long prompt scrolls inside
+     it, so the surface keeps its height and the panel stays a page. */
+  max-height: 150px;
+  overflow-y: auto;
 }
 
 /* The node's own prompt is kept, not thrown away: the note says so. */
