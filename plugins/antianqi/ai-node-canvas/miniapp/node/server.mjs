@@ -488,7 +488,7 @@ export async function start(context) {
     }
 
     if (path === '/api/tasks' && req.method === 'GET') {
-      return sendJson(res, 200, { tasks: runner.listActive() });
+      return sendJson(res, 200, { tasks: runner.listForPage() });
     }
 
     // The actions the Agent asked for, for the canvas the page has open.

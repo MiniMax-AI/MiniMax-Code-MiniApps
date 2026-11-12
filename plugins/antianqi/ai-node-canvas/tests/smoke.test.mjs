@@ -10942,6 +10942,7 @@ test('the page gives the mark a head, a slider role and the strip it belongs to'
   assert.ok(wiring.includes('onPress:'), 'the material does not stop while the mark is held');
   assert.ok(wiring.includes('onRelease:'), 'the material does not go on after the mark is let go');
 
+
   // The mark catches the hand: the line is thin, but the place to hold it
   // is wide, and the mark is not out of the way.
   const mark = /\.nxc-clip__playhead\s*\{([^}]*)\}/.exec(css);
@@ -10950,6 +10951,160 @@ test('the page gives the mark a head, a slider role and the strip it belongs to'
   assert.doesNotMatch(mark[1], /pointer-events:\s*none/);
   assert.match(css, /\.nxc-clip__playhead::before\s*\{[^}]*inset:\s*0\s+-22px;/);
   assert.match(css, /\.nxc-clip__playhead__head\s*\{[^}]*width:\s*6px;/);
+});
+
+// ---------------------------------------------------------------- overlays
+//
+// A menu and a panel float over the canvas, and a press somewhere else is
+// a request for them to go. The rules live in pure functions, so the page
+// and the tests read the same one.
+
+test('a press away from an overlay takes the menu and the panel away', async () => {
+  const { overlaysDismissedBy } = await import('../miniapp/client/tools.mjs');
+
+  // A press on the board asks for both of them to go.
+  assert.deepEqual(overlaysDismissedBy(null), ['menu', 'panel']);
+  assert.deepEqual(overlaysDismissedBy({ closest: () => null }), ['menu', 'panel']);
+  // A press inside a menu or a panel is that overlay's own business.
+  assert.deepEqual(overlaysDismissedBy({ closest: () => ({}) }), []);
+});
+
+test('the chip that opened the panel closes it again', async () => {
+  const { chipPress } = await import('../miniapp/client/node-ui.mjs');
+
+  // Nothing is open, so the chip opens its own panel.
+  assert.equal(chipPress(null, 'n1', 'params'), 'open');
+  // The panel that this chip opened is closed by this chip.
+  assert.equal(chipPress({ type: 'params', nodeId: 'n1' }, 'n1', 'params'), 'close');
+  // Another chip of the same card opens its own panel.
+  assert.equal(chipPress({ type: 'params', nodeId: 'n1' }, 'n1', 'count'), 'open');
+  // Another card's panel is not this chip's panel.
+  assert.equal(chipPress({ type: 'params', nodeId: 'n2' }, 'n1', 'params'), 'open');
+});
+
+test('the page takes the overlays away and reads a chip press once', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+
+  // The node stops the press, so the document never sees it: the node has
+  // to take the overlays away itself.
+  assert.ok(
+    functionBody(source, 'bindNodeGestures').includes('dismissOverlays(target)'),
+    'a press on a card leaves the panel and the menu where they are',
+  );
+  // And the one place that says so takes both away.
+  const closer = functionBody(source, 'dismissOverlays');
+  assert.ok(closer.includes('closePanel()'), 'the panel is not taken away');
+  assert.ok(closer.includes('closeMenus()'), 'the menu is not taken away');
+
+  // A control is read once: a pointer press and the click that follows it
+  // are one gesture, so listening to both opens the panel twice — and a
+  // panel that opens twice cannot be taken away by the control that opened
+  // it.
+  const control = functionBody(source, 'bindPanelControl');
+  assert.ok(control.includes("'pointerdown'"), 'the control does not answer the press');
+  assert.ok(control.includes("'keydown'"), 'the control does not answer the key');
+  assert.ok(!control.includes("'click'"), 'the control answers the press and the click as well');
+
+  // The chip that opened the panel closes it again.
+  assert.ok(
+    functionBody(source, 'paramChip').includes("chipPress(state.panel, node.id, 'params') === 'close'"),
+    'the parameter chip cannot close its own panel',
+  );
+  assert.ok(
+    functionBody(source, 'countChip').includes("chipPress(state.panel, node.id, 'count') === 'close'"),
+    'the count chip cannot close its own panel',
+  );
+});
+
+// ---------------------------------------------------------------- a run
+// that nobody watches
+//
+// A run the page started is polled by the page. When the page goes away —
+// the canvas was taken back from somewhere else and the run was forgotten
+// with it — the runtime has to ask the provider on its own, because the
+// money was already spent.
+
+async function waitForTask(base, predicate, tries = 200) {
+  let found = null;
+  for (let i = 0; i < tries; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const tasks = (await getJson(base, '/api/tasks')).body.tasks ?? [];
+    found = tasks.find(predicate) ?? null;
+    if (found) return found;
+  }
+  return found;
+}
+
+async function startVideoRun(base, nodeId) {
+  return getJson(base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId,
+      mode: 'video',
+      prompt: '一只猫在跑',
+      modelKey: 'MiniMax-H3',
+      params: { ratio: '16:9', resolution: '768P', duration: 6 },
+    }),
+  });
+}
+
+test('the runtime asks the provider even when the page stopped looking', async (t) => {
+  const options = { videoState: 'running' };
+  const connector = createMockHostConnector(undefined, options);
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await startVideoRun(h.base, 'n_orphan');
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  // The provider finishes the video while the page is not there.
+  options.videoState = 'succeeded';
+
+  // The page never asks about the run. The runtime does, on its own clock.
+  const asked = await waitForCall(
+    connector.calls,
+    (call) => call.toolRef.endsWith('query-video-generation'),
+    200,
+  );
+  assert.ok(asked, 'nobody asked the provider about the run');
+
+  // And the result is there for the page that comes back.
+  const polled = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(polled.status, 'done');
+  assert.equal(polled.media[0].url, 'https://cdn.example.com/video-1.mp4');
+});
+
+test('a run that is over and that no page has read is still offered to the page', async (t) => {
+  const options = { videoState: 'succeeded' };
+  const connector = createMockHostConnector(undefined, options);
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await startVideoRun(h.base, 'n_unread');
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  // The runtime finishes it. The page has not read it: the page lost the
+  // run when the canvas was taken back from somewhere else.
+  const offered = await waitForTask(h.base, (task) => task.id === runId && task.status === 'done');
+  assert.ok(offered, 'the finished run is not on the list the page looks at');
+
+  // The page reads it, and the result is there.
+  const record = await getJson(h.base, '/api/runs/' + runId);
+  assert.equal(record.body.run.status, 'done');
+  assert.equal(record.body.run.media[0].url, 'https://cdn.example.com/video-1.mp4');
+
+  // A run that a page has read does not have to be offered again.
+  const after = (await getJson(h.base, '/api/tasks')).body.tasks ?? [];
+  assert.equal(
+    after.some((task) => task.id === runId),
+    false,
+    'a run that was read is still offered',
+  );
 });
 
 test('the strip says where its parts are', async () => {

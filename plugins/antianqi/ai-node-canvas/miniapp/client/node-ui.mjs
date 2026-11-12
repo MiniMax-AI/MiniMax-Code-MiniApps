@@ -73,6 +73,17 @@ export function openChip(panel, nodeId) {
 }
 
 /**
+ * What a press on a chip does to the panel.
+ *
+ * The chip that opened the panel closes it again: the same press that
+ * opened it is the one that takes it away. A press on any other chip opens
+ * that chip's own panel.
+ */
+export function chipPress(panel, nodeId, kind) {
+  return panel?.nodeId === nodeId && panel?.type === kind ? 'close' : 'open';
+}
+
+/**
  * The fields a panel holds.
  *
  * The shape panel holds what shapes the thing — the frame, the size, the

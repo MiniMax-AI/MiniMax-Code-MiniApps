@@ -695,6 +695,26 @@ export function isControlTarget(target) {
   return Boolean(target.closest(CONTROL_SELECTOR));
 }
 
+// What floats over the canvas.
+//
+// A menu and a panel are the two things the page puts on top of the board,
+// and they are the two things a press elsewhere has to take away.
+const OVERLAY_SELECTOR = '.nxc-menu,.nxc-panel';
+
+/**
+ * What a press takes away.
+ *
+ * A press that lands on a menu or on a panel is that overlay's own business,
+ * so nothing goes. A press anywhere else asks for all of them to go: a menu
+ * that can only be closed by the key that opened it is a menu the user has
+ * to escape, and a panel that cannot be taken away is a panel that stays in
+ * the way of the card it was opened for.
+ */
+export function overlaysDismissedBy(target) {
+  const inside = typeof target?.closest === 'function' ? target.closest(OVERLAY_SELECTOR) : null;
+  return inside ? [] : ['menu', 'panel'];
+}
+
 /**
  * The one-line summary of what a model offers.
  *

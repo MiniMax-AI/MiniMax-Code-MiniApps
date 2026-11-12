@@ -43,6 +43,12 @@ const MODES = new Set(['image', 'video', 'audio', 'music', 'text']);
 // The modes the connector can produce on its own. Text has no connector tool,
 // so it keeps the Agent turn.
 const DIRECT_MODES = new Set(['image', 'video', 'audio', 'music']);
+// How often the runtime looks at the runs that are still waiting.
+//
+// The clock is not the pace of the provider: the throttle inside
+// `pollConnectorTask` keeps the request rate right. This is only how often
+// the runtime looks, so a run that nobody is watching is still asked about.
+const RUNTIME_POLL_MS = 1_000;
 
 // How long one Agent turn may take before the run gives up on it.
 //
@@ -823,6 +829,10 @@ export function createAgentRunner(context) {
       providerModel: null,
       providerStatus: null,
       providerPolledAt: 0,
+      // Whether a page has read this run. A run that is over and that no
+      // page has read is still offered to the page, so a page that lost the
+      // run can find the result it paid for.
+      reported: false,
       startedAt: Date.now(),
       startedAtIso: new Date().toISOString(),
     };
@@ -1146,11 +1156,52 @@ export function createAgentRunner(context) {
         providerModel: entry.providerModel ?? null,
         providerStatus: 'submitted',
         providerPolledAt: 0,
+        reported: false,
         startedAt: entry.startedAt ?? Date.now(),
         startedAtIso: new Date().toISOString(),
       };
       tasks.set(task.id, task);
       if (task.nodeId) nodeTasks.set(task.nodeId, task.id);
+    }
+    // The runs that came back are asked about at once: they have been
+    // waiting longer than one tick.
+    void pollRunningTasks();
+  }
+
+  // The provider is asked on the runtime's own clock, not on the page's.
+  //
+  // A run that the page started is polled by the page — and by the page
+  // only. If the page goes away, or takes the canvas back from somewhere
+  // else and forgets the run, nobody asks the provider any more: the money
+  // is spent and the film is never made. So the runtime asks, and the page
+  // only ever reads the answer.
+  let pollTimer = null;
+
+  function ensurePollTimer() {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => {
+      void pollRunningTasks();
+    }, RUNTIME_POLL_MS);
+    // The timer is not a reason to keep the process alive: the runtime may
+    // stop while a run is still settling.
+    pollTimer.unref?.();
+    const stop = () => {
+      if (!pollTimer) return;
+      clearInterval(pollTimer);
+      pollTimer = null;
+    };
+    if (context.signal) {
+      if (context.signal.aborted) stop();
+      else context.signal.addEventListener('abort', stop, { once: true });
+    }
+  }
+
+  /** Ask the provider about every run that is still waiting for an answer. */
+  async function pollRunningTasks() {
+    for (const task of tasks.values()) {
+      // The throttle inside the poll keeps the provider's own pace, so a
+      // task that was asked a moment ago is left alone.
+      await pollConnectorTask(task).catch(() => {});
     }
   }
 
@@ -1338,6 +1389,10 @@ export function createAgentRunner(context) {
     }
   }
 
+  // The runtime looks at the runs that are waiting from the moment it
+  // exists, not from the moment a page happens to look.
+  ensurePollTimer();
+
   return {
     modelCatalog,
     restore: restorePending,
@@ -1523,21 +1578,32 @@ export function createAgentRunner(context) {
       const task = tasks.get(runId);
       if (!task) return null;
       void pollConnectorTask(task);
+      // A page has read this run. A run that is over does not have to be
+      // offered again, so it leaves the list the page looks for.
+      if (!['running', 'waiting-question'].includes(task.status)) task.reported = true;
       return { ...task, elapsedMs: Date.now() - task.startedAt };
     },
 
-    listActive() {
+    /**
+     * The runs the page may still have to see.
+     *
+     * A run that is still going is always on the list. A run that is over
+     * is on it until a page has read it: a page that lost the run — the
+     * canvas was taken back from somewhere else — has to be able to find
+     * the result it paid for.
+     */
+    listForPage() {
       const result = [];
       for (const task of tasks.values()) {
-        if (task.status === 'running' || task.status === 'waiting-question') {
-          result.push({
-            id: task.id,
-            nodeId: task.nodeId,
-            mode: task.mode,
-            status: task.status,
-            elapsedMs: Date.now() - task.startedAt,
-          });
-        }
+        const live = task.status === 'running' || task.status === 'waiting-question';
+        if (!live && task.reported) continue;
+        result.push({
+          id: task.id,
+          nodeId: task.nodeId,
+          mode: task.mode,
+          status: task.status,
+          elapsedMs: Date.now() - task.startedAt,
+        });
       }
       return result;
     },

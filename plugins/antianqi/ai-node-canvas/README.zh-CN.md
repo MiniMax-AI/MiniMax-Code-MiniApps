@@ -5,7 +5,7 @@
 MiniMax Code 里的无限画布节点图。每个节点是一次模型运行，每条连线是一条数据通路——
 把文本节点连到图片节点，上游文本会自动注入下游提示词。
 
-作者：[antianqi](https://github.com/antianqi) · 版本：`1.22.7`
+作者：[antianqi](https://github.com/antianqi) · 版本：`1.22.8`
 
 ![画布：铺了「图片复刻」模板——参考图进去，提示词从这张图里反推出来，再照着它重新生成一张](docs/preview.png)
 

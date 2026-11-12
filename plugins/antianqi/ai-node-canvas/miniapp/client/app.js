@@ -10,9 +10,9 @@
 // editor is an inline contentEditable so `@` references can be embedded as
 // chips in the text.
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
-import { bandSelection, BAR_PANEL_SIDE, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mediaBoxFor, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, placePanel, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, TILE_CARD, toolPrompt, toolSizeReason, upstreamNodes } from './tools.mjs';
+import { bandSelection, BAR_PANEL_SIDE, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mediaBoxFor, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, overlaysDismissedBy, placeOverlay, placePanel, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, TILE_CARD, toolPrompt, toolSizeReason, upstreamNodes } from './tools.mjs';
 import { cardTools, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, NODE_FORMS, NODE_KINDS, modeOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf } from './forms.mjs';
-import { cardLayers, CLIP_HANDLE_INSET, clipClock, clipRange, clipSecond, clipSeconds, durationLabel, isPlaying, playheadMs, stripAt, stripPercent, stripWidth, errorActions, groupMembers, modeChoice, modelRange, nodeKindLabel, nodeMenuEntries, nodeModeLabel, openChip, opsOffset, opsSide, opsSurfaceClass, panelFields, paramFields, paramSummary, railParts, ratioGlyph, textAnchor, timecode } from './node-ui.mjs';
+import { cardLayers, chipPress, CLIP_HANDLE_INSET, clipClock, clipRange, clipSecond, clipSeconds, durationLabel, isPlaying, playheadMs, stripAt, stripPercent, stripWidth, errorActions, groupMembers, modeChoice, modelRange, nodeKindLabel, nodeMenuEntries, nodeModeLabel, openChip, opsOffset, opsSide, opsSurfaceClass, panelFields, paramFields, paramSummary, railParts, ratioGlyph, textAnchor, timecode } from './node-ui.mjs';
 import { wirePreviewLoop } from './preview-loop.mjs';
 import { clipPlacement, panelAnchor } from './clip-place.mjs';
 import { wirePlayhead } from './clip-playhead.mjs';
@@ -2235,12 +2235,15 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     chip.title = '点开改参数';
     // The chip that opened the panel says so by its own border.
     chip.classList.toggle('is-active', openChip(state.panel, node.id) === 'params');
-    const open = (event) => {
-      event.stopPropagation();
+    bindPanelControl(chip, () => {
+      // The chip that opened the panel closes it again: the same press that
+      // opened it is the one that takes it away.
+      if (chipPress(state.panel, node.id, 'params') === 'close') {
+        closePanel();
+        return;
+      }
       openParamPanel(node, chip.getBoundingClientRect());
-    };
-    chip.addEventListener('pointerdown', open);
-    chip.addEventListener('click', open);
+    });
     return chip;
   }
 
@@ -2441,12 +2444,15 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     chip.title = '改这一次出几张';
     // The chip that opened the panel says so by its own border.
     chip.classList.toggle('is-active', openChip(state.panel, node.id) === 'count');
-    const open = (event) => {
-      event.stopPropagation();
+    bindPanelControl(chip, () => {
+      // The chip that opened the panel closes it again: the same press that
+      // opened it is the one that takes it away.
+      if (chipPress(state.panel, node.id, 'count') === 'close') {
+        closePanel();
+        return;
+      }
       openCountPanel(node, chip.getBoundingClientRect(), field);
-    };
-    chip.addEventListener('pointerdown', open);
-    chip.addEventListener('click', open);
+    });
     return chip;
   }
 
@@ -2885,12 +2891,15 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     button.appendChild(modelIcon());
     button.appendChild(el('span', 'nxc-model-btn__name', current?.label ?? '选模型'));
     button.title = '换模型';
-    const open = (event) => {
-      event.stopPropagation();
+    bindPanelControl(button, () => {
+      // The button that opened the panel closes it again: the same press
+      // that opened it is the one that takes it away.
+      if (chipPress(state.panel, node.id, 'model') === 'close') {
+        closePanel();
+        return;
+      }
       openModelPanel(node, button.getBoundingClientRect());
-    };
-    button.addEventListener('pointerdown', open);
-    button.addEventListener('click', open);
+    });
     return button;
   }
 
@@ -3366,13 +3375,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
       // material yet".
       button.title = blocked ?? (needsSource ? '这个节点还没有素材，先生成一张再用工具' : tool.desc);
       button.disabled = pending || needsSource || Boolean(blocked);
-      const open = (event) => {
-        event.stopPropagation();
+      bindPanelControl(button, () => {
         if (pending || needsSource || blocked) return;
         openToolPanel(node, tool, button.getBoundingClientRect());
-      };
-      button.addEventListener('pointerdown', open);
-      button.addEventListener('click', open);
+      });
       bar.appendChild(button);
     }
     return bar;
@@ -4762,6 +4768,32 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
 
   // ---------------------------------------------------------------- panels
 
+  /**
+   * A control that opens something over the canvas.
+   *
+   * The press is read once. A pointer press and the click that follows it
+   * are one gesture, so listening to both opens the panel twice — and a
+   * panel that opens twice cannot be taken away by pressing the control
+   * that opened it. The key is read on its own, because a key opens the
+   * panel too.
+   */
+  function bindPanelControl(element, open) {
+    element.addEventListener('pointerdown', (event) => {
+      // The press belongs to this control: the canvas must not read it as
+      // a drag, and the document must not read it as a press somewhere else.
+      event.stopPropagation();
+      open(event);
+    });
+    element.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      // The key does the opening itself, so the button must not raise a
+      // click on top of it.
+      event.preventDefault();
+      event.stopPropagation();
+      open(event);
+    });
+  }
+
   function closePanel() {
     // The tool panel's preview stops when the panel goes. The state is
     // cleared after this, never before: cleared first, the panel would let
@@ -5185,6 +5217,21 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     closeMentionMenu();
   }
 
+  /**
+   * Take the overlays away.
+   *
+   * The canvas floats menus and panels over it, and a press somewhere else
+   * is a request for all of them to go. This is the one place that says
+   * so: the document, the nodes and the keys all come through here, so the
+   * menu a right click opened and the panel a chip opened go away in the
+   * same way.
+   */
+  function dismissOverlays(target) {
+    const what = overlaysDismissedBy(target);
+    if (what.includes('panel')) closePanel();
+    if (what.includes('menu')) closeMenus();
+  }
+
   function showMenu(menu, x, y, items) {
     menu.textContent = '';
     for (const item of items) {
@@ -5394,6 +5441,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
       const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
       for (const task of tasks) {
         if (!task?.id || !task?.nodeId) continue;
+        // A run belongs to the canvas that holds its node. A run of another
+        // canvas has nowhere to land on this page.
+        if (!getNode(task.nodeId)) continue;
         state.nodeTasks.set(task.nodeId, task.id);
         state.tasks.set(task.id, task);
       }
@@ -5712,6 +5762,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
       state.nodeTasks.clear();
       state.tasks.clear();
       render();
+      // The canvas came back from somewhere else, so the runs that were in
+      // flight are not on this page any more. The runtime kept them going;
+      // the page takes them back.
+      await reattachRuns();
       setSaveState('saved');
       if (reason === 'conflict') {
         showBanner('画布在别处被改过了，这次没保存上，已重新载入。', 'error');
@@ -5942,6 +5996,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
         showBanner('旧画布已迁移为「输入 / 生成 / 结果」三段式。');
       }
       render();
+      // The page started with an empty table of runs, so the runs that were
+      // in flight are not on it any more. The runtime kept them going; the
+      // page takes them back.
+      void reattachRuns();
       resetHistory();
       setSaveState('saved');
       maybeRestoreDraft();
@@ -6419,6 +6477,11 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     wrap.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       const target = resolveEventTarget(event);
+      // A press on a card takes the overlays away: the panel that was open
+      // over it and the menu that was open over the board. The press that
+      // opened one of them is that overlay's own business — a chip that
+      // opens a panel stops the press before it gets here.
+      dismissOverlays(target);
       const portEl = target?.closest?.('[data-port]');
       const resizeEl = target?.closest?.('[data-resize]');
       if (portEl) {
@@ -6627,10 +6690,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
       true,
     );
     document.addEventListener('pointerdown', (event) => {
-      if (event.target.closest?.('.nxc-menu') || event.target.closest?.('.nxc-panel')) return;
-      closeDropdown();
-      closeMentionMenu();
-      closePanel();
+      dismissOverlays(event.target);
     });
     // A pointer that goes down: the canvas is not redrawn while the click is
     // in flight, because the button under the pointer would be replaced
