@@ -65,11 +65,17 @@ export function createCompactPetView({
   const allTasks = button('全部任务', 'compact-link', () => api.open('allTasks'));
   tasksFooter.append(allTasks); tasksPane.append(taskList, tasksFooter);
 
-  const detailPane = element('div', 'compact-detail compact-body');
+  const detailPane = element('div', 'compact-detail');
+  const detailHead = element('div', 'compact-detail-head');
   const detailTitle = element('strong', 'compact-detail-title');
   const detailStatus = element('span', 'compact-detail-status'); detailStatus.setAttribute('role', 'status');
+  detailHead.append(detailTitle, detailStatus);
+  // Only the reply scrolls; the title and the actions stay pinned so a long title or a
+  // long reply can never push the buttons out of the 280px card.
+  const detailBody = element('div', 'compact-detail-body');
   const detailReply = element('div', 'compact-detail-reply md');
   detailReply.setAttribute('aria-label', '任务最近回复'); detailReply.tabIndex = 0;
+  detailBody.append(detailReply);
   const detailFooter = element('div', 'compact-footer');
   const back = button('返回任务', 'compact-detail-back compact-link', () => api.open(detailBackView));
   const openHint = element('p', 'compact-hint'); openHint.setAttribute('role', 'status'); openHint.hidden = true;
@@ -87,7 +93,8 @@ export function createCompactPetView({
       setHint(textOf(result?.text) || (failed ? `没能打开对话（${failureCode(result)}）。` : ''), textOf(result?.kind) || (failed ? 'error' : 'info'));
     });
   });
-  detailFooter.append(back, openSession); detailPane.append(detailTitle, detailStatus, detailReply, detailFooter, openHint);
+  detailFooter.append(back, openSession);
+  detailPane.append(detailHead, detailBody, detailFooter, openHint);
   container.append(header, tasksPane, detailPane);
 
   function paintTasks() {
@@ -152,7 +159,7 @@ export function createCompactPetView({
     }
     detailPane.setAttribute('aria-busy', String(available && !needsAnswer && taskSelection.detailLoading === true));
     if (paintedDetailId !== id) {
-      detailReply.scrollTop = 0; detailPane.scrollTop = 0; paintedDetailId = id;
+      detailReply.scrollTop = 0; detailBody.scrollTop = 0; paintedDetailId = id;
       openToken++; openSession.disabled = false; setHint('');
     }
     openSession.hidden = typeof onOpenSession !== 'function' || !available || !id;

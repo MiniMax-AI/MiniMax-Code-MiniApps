@@ -242,7 +242,9 @@ let animationGate = null;
 let workbenchView = null;
 let workbenchWindow = null;
 const reminders = createReminderStore();
-const compactBubbleSize = { width: 300, height: 340 };
+// Expanded card: the pet keeps its slot at the bottom and the card gets a readable
+// reply body, instead of the ~110px left in the compact window.
+const compactBubbleSize = { width: 300, height: 520 };
 let notificationPreviews = null;
 let askObserver = null;
 let detailOpenToken = 0;
@@ -1912,7 +1914,7 @@ function renderReminders() {
 
 function renderScale() {
   root.style.setProperty('--minimax-pet-height', `${208 * prefs.scale}px`);
-  compactBubbleSize.height = Math.max(340, Math.ceil(208 * prefs.scale) + 232);
+  compactBubbleSize.height = Math.max(380, Math.ceil(208 * prefs.scale) + 332);
   syncSegmented(els.scaleGroup, prefs.scale);
 }
 
