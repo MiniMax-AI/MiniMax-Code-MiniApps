@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.8`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.9`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -813,8 +813,20 @@ the user brought in — so the picture a tool produced can be worked on again:
 
 - **What the connector is for** — the `matrix` connector is used for media
   generation only: images, video, speech and music, plus reading a video
-  back for understanding. The Host holds the credentials and the egress;
+  back for understanding, plus the two picture tools the provider does itself
+  (**AI 抠图** / `remove_image_background`, **AI 放大** / `enhance_image`).
+  The Host holds the credentials and the egress;
   this package never touches an account of its own.
+- **The pictures the two provider picture tools send** — **AI 抠图** and **AI 放大**
+  are the provider’s own tools, so the picture is **uploaded to the provider** and
+  processed there. The picture that leaves the machine is the one on the card the
+  tool was opened for — a picture this MiniApp generated, or a file the user
+  brought in. The call is made **only when the user presses 应用 in the tool
+  panel**: nothing is sent in the background, and no picture is sent for any other
+  reason. Both tools may cost the user’s credit, and the panel says what the
+  provider takes (AI 放大 needs a picture whose long side is ≤2048, whose short
+  side is ≥256 and which is ≤10MB; a picture that breaks the limit is refused
+  before the request is sent).
 - **Files read** — only this package's own page assets, read from `context.pluginRoot`
   (`miniapp/client/index.html`, `app.js`, `mention.mjs`, `tools.mjs`,
   `forms.mjs`, `actions.mjs`, `styles.css`).
@@ -858,7 +870,8 @@ the user brought in — so the picture a tool produced can be worked on again:
   does not expire, and uploads a local file when it is used as a generation
   reference, because the provider cannot reach the loopback address. Every
   other request — image, video, audio, music, voice catalogue, video
-  understanding — goes through the Host connector (`context.hostConnector`),
+  understanding, picture cut-out, picture upscaling — goes through the Host
+  connector (`context.hostConnector`),
   and the Host owns the credentials and the egress.
 - **The addresses a download may go to** — a link that points at this machine
   or at the network it sits in is refused: the loopback, the private ranges,
@@ -951,6 +964,10 @@ the user brought in — so the picture a tool produced can be worked on again:
     is stored so an expired link can be refreshed.
   - The voice drop-down is live data too: `/api/voices` reads the real TTS
     catalogue while handling a request.
+  - Two picture tools are the provider’s own: **AI 抠图** and **AI 放大**
+    (`remove_image_background` / `enhance_image`). The picture is uploaded
+    first — the provider cannot reach this machine — and the tool is called
+    with that link; the picture that comes back is the provider’s own.
   - 视频拆解 / 爆款分析 read the video with `videos_understand`. The provider
     fetches the asset itself, so those two tools work on a generated video; a
     file this MiniApp produced locally is served from the loopback address and
