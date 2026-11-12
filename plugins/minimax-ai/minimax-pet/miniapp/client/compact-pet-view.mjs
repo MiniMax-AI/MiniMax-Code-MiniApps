@@ -143,8 +143,8 @@ export function createCompactPetView({
     else if (!detail) text = '正在读取任务…';
     else text = (detail.status === 'error' && textOf(detail.error)) || textOf(detail.lastAssistantText) || '该任务暂时没有可读取的最后回复。';
     // Status copy stays plain text; an actual reply is markdown. renderMarkdown keeps
-    // the DOM when the text is unchanged, so a background refresh cannot reset the
-    // reader's scroll position.
+    // the DOM when the text is unchanged and restores the scroll offset when a
+    // streaming reply replaces it.
     if (needsAnswer || !available || taskSelection.detailLoading && !detail) {
       if (detailReply.dataset.mdSource !== text) { resetMarkdown(detailReply); setText(detailReply, text); }
     } else {

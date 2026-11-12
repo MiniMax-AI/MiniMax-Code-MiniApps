@@ -150,3 +150,18 @@ domTest('a task list keeps its checked state without form controls', (t) => {
   assert.equal(target.querySelector('input, checkbox'), null);
   assert.deepEqual([...target.querySelectorAll('.md-task')].map((node) => node.dataset.checked), ['false', 'true']);
 });
+
+domTest('table alignment comes from the column spec and a streaming re-render keeps the scroll', (t) => {
+  const dom = new JSDOM('<!doctype html><div id="reply"></div>');
+  t.after(() => dom.window.close());
+  const target = dom.window.document.getElementById('reply');
+  renderMarkdown(target, '| 名称 | 数量 | 备注 |\n| :--- | ---: | :---: |\n| 新增 | 1204 | 含游客 |');
+  const cells = [...target.querySelectorAll('.md-table tbody td')];
+  assert.deepEqual(cells.map((cell) => cell.dataset.align), ['left', 'right', 'center']);
+  assert.deepEqual([...target.querySelectorAll('.md-table th')].map((cell) => cell.dataset.align), ['left', 'right', 'center']);
+  // A longer reply replaces the nodes; the reader's scroll offset survives.
+  target.scrollTop = 90;
+  assert.equal(renderMarkdown(target, '| 名称 | 数量 | 备注 |\n| :--- | ---: | :---: |\n| 新增 | 1204 | 含游客 |\n| 留存 | 41% | 次周 |'), true);
+  assert.equal(target.scrollTop, 90);
+  assert.equal(target.dataset.mdSource.length < 30, true, 'the marker is a short key, not the reply');
+});

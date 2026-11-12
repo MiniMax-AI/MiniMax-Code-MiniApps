@@ -14,6 +14,17 @@ const HEADING_LEVEL_BASE = 2;
 const parses = new Map();
 const flats = new Map();
 
+// A reply can be 200k characters; keep a short identity for the DOM marker instead
+// of copying the whole text into an attribute.
+function sourceKey(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${text.length}:${(hash >>> 0).toString(36)}`;
+}
+
 function remember(map, key, value) {
   if (map.size >= MAX_CACHE) map.delete(map.keys().next().value);
   map.set(key, value);
@@ -172,16 +183,17 @@ function blockNode(doc, node) {
       wrap.setAttribute('aria-label', '任务回复中的表格');
       const table = doc.createElement('table');
       const rows = Array.isArray(node.children) ? node.children : [];
+      const align = Array.isArray(node.align) ? node.align : [];
       const header = rows.find((row) => row.type === 'tableRow');
       if (header) {
         const thead = doc.createElement('thead');
-        thead.append(tableRow(doc, header, 'th'));
+        thead.append(tableRow(doc, header, 'th', align));
         table.append(thead);
       }
       const body = rows.filter((row) => row.type === 'tableRow' && row !== header);
       if (body.length) {
         const tbody = doc.createElement('tbody');
-        for (const row of body) tbody.append(tableRow(doc, row, 'td'));
+        for (const row of body) tbody.append(tableRow(doc, row, 'td', align));
         table.append(tbody);
       }
       wrap.append(table);
@@ -218,13 +230,15 @@ function textParagraph(doc, text) {
   return p;
 }
 
-function tableRow(doc, row, cellTag) {
+function tableRow(doc, row, cellTag, align = []) {
   const tr = doc.createElement('tr');
-  for (const cell of Array.isArray(row.children) ? row.children : []) {
-    if (cell.type !== 'tableCell') continue;
+  const cells = Array.isArray(row.children) ? row.children.filter((cell) => cell.type === 'tableCell') : [];
+  for (const [index, cell] of cells.entries()) {
     const td = doc.createElement(cellTag);
     if (cellTag === 'th') td.scope = 'col';
-    if (typeof cell.align === 'string') td.dataset.align = cell.align;
+    // remark-gfm records alignment once per column on the table, not on each cell.
+    const column = align[index];
+    if (column === 'left' || column === 'center' || column === 'right') td.dataset.align = column;
     appendInline(doc, td, cell.children);
     tr.append(td);
   }
@@ -251,10 +265,15 @@ function appendBlocks(doc, parent, children, { tight = false } = {}) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Renders markdown into `target`, replacing its content only when the text changed. */
+/**
+ * Renders markdown into `target`, replacing its content only when the text changed.
+ * A reply that is still streaming changes on every poll, so the reader's scroll
+ * position is captured and restored around the replace.
+ */
 export function renderMarkdown(target, text) {
   const source = typeof text === 'string' ? text : '';
-  if (target.dataset.mdSource === source) return false;
+  const key = sourceKey(source);
+  if (target.dataset.mdSource === key) return false;
   const doc = target.ownerDocument;
   const fragment = doc.createDocumentFragment();
   for (const child of tree(source).children) {
@@ -262,8 +281,10 @@ export function renderMarkdown(target, text) {
     const node = blockNode(doc, child);
     if (node) fragment.append(node);
   }
+  const keepTop = target.scrollTop;
   target.replaceChildren(fragment);
-  target.dataset.mdSource = source;
+  if (keepTop > 0) target.scrollTop = keepTop;
+  target.dataset.mdSource = key;
   target.classList.add('md');
   return true;
 }
