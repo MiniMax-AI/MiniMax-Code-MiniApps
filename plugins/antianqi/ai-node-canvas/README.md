@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.1`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.3`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -250,6 +250,13 @@ this package.
   of them fails the others still show up and the run log says which one is
   missing. A video is one task per clip and a text is one Agent turn, so
   neither of them is batched and those two modes have no count to choose.
+- **A run that produced no file is a failure, not a done** — the provider can
+  answer "ok" and still leave nothing behind, and a card that says it is done
+  with nothing on it is a lie the user would believe. The run fails with the
+  reason instead, and a file the provider did make is named by its id, so it
+  can still be found there. The link of such a file is asked for twice: the
+  Host's window is 30 seconds, and a link asked for too early can come back
+  empty while the file is already there.
 - **One slow call at a time** — the window belongs to a single call, so a call
   that shares the machine with another one is the call that runs over it. The
   slow calls (pictures, speech, music, video submits) therefore wait for each
@@ -836,7 +843,9 @@ the user brought in — so the picture a tool produced can be worked on again:
   part named by `file_field_name`). The `temp_url` in the answer is the address
   the provider can fetch. The form host has to be https (a loopback address
   excepted), and that one request is made by the runtime itself rather than
-  through the Host connector.
+  through the Host connector. **That post is bounded** (two minutes, the same
+  bound the asset download uses): a host that never answers ends the run with
+  the reason, instead of leaving it waiting for good.
 - **How long a connector call may take** — the Host puts a timeout on one
   connector call (30 seconds by default). A call that runs over it is aborted
   and reported as an unknown outcome: it may have been dispatched, and it may

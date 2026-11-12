@@ -109,7 +109,11 @@ function createMockAgent(options = {}) {
       const requestId = `req_${calls.filter((call) => call.kind === 'run').length}`;
       onEvent?.({ type: 'turn.started', sessionId, model: { providerId: 'minimax', modelId: 'minimax-M3' } });
       onEvent?.({ type: 'text.delta', sessionId, text: '生成结果：' });
-      onEvent?.({ type: 'text.delta', sessionId, text: 'https://cdn.example.com/out.png' });
+      // A turn that ends without a picture: the words are there, the file is
+      // not.
+      if (!options.textOnly) {
+        onEvent?.({ type: 'text.delta', sessionId, text: 'https://cdn.example.com/out.png' });
+      }
       onEvent?.({ type: 'tool.started', sessionId, name: 'image_gen' });
       onEvent?.({ type: 'tool.finished', sessionId, name: 'image_gen', ok: true });
       onEvent?.({
@@ -135,7 +139,7 @@ function createMockAgent(options = {}) {
       return {
         sessionId,
         status: 'finished',
-        text: '生成结果：\n![out](https://cdn.example.com/out.png)',
+        text: options.textOnly ? '生成结果：这次没有出图。' : '生成结果：\n![out](https://cdn.example.com/out.png)',
       };
     },
     async reply(payload) {
@@ -288,6 +292,12 @@ function createMockHostConnector(voices = [
           value: [{ type: 'text', text: JSON.stringify({ code: 500, message: 'video has no drive asset' }) }],
         };
       }
+      // The Host stops a call that runs over its window. The file it was
+      // asked about is still on the provider: the link is missing, the file
+      // is not. This is what that call looks like from here.
+      if (options.assetUrlFails) {
+        throw Object.assign(new Error('Connector call failed'), { code: 'CONNECTOR_CALL_FAILED' });
+      }
       return {
         invocationId: 'invocation-test',
         // The provider's asset host cannot be reached from a test, and a
@@ -310,6 +320,14 @@ function createMockHostConnector(voices = [
       // One call of a batch can fail on its own.
       if (options.failImageCall && position === options.failImageCall) {
         return { invocationId: 'invocation-test', value: [{ type: 'text', text: JSON.stringify({ code: 500, message: '这一张没出来' }) }] };
+      }
+      // A provider that says "ok" and hands nothing back: the run cannot
+      // call that a picture.
+      if (options.imageReturnsNothing) {
+        return {
+          invocationId: 'invocation-test',
+          value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', success_items: [] }) }],
+        };
       }
       const items = (Array.isArray(args?.requests) ? args.requests : []).map(() => ({ node_id: `node-${seq}`, file_name: 'a.png' }));
       return {
@@ -11304,4 +11322,161 @@ test('the README counts the tools the machine really has', async () => {
     assert.ok(readme.includes(tool.label), tool.label + ' is not named in the English README');
     assert.ok(zh.includes(tool.label), tool.label + ' is not named in the Chinese README');
   }
+});
+
+test('an upload the provider never answers ends the run instead of waiting for good', async (t) => {
+  // The bytes are posted to the provider's own signed form. A host that
+  // never answers must not leave the run waiting for good: the run says
+  // what went wrong instead.
+  const { createProviderUploader } = await import('../miniapp/node/provider-upload.mjs');
+  const uploadServer = createHttpServer(() => {
+    // The request arrives and the answer never does.
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => {
+    uploadServer.closeAllConnections?.();
+    uploadServer.close(resolve);
+  }));
+
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-upload-'));
+  t.after(() => removeDir(dir));
+  const file = join(dir, 'sample.png');
+  await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]));
+
+  const connector = {
+    async list() {
+      return { tools: [{ name: 'upload_temp_url', toolRef: 'ref-upload' }], partial: false };
+    },
+    async call() {
+      return {
+        invocationId: 'invocation-test',
+        value: [{ type: 'text', text: JSON.stringify({
+          code: 0,
+          message: 'ok',
+          upload_host: `http://127.0.0.1:${uploadServer.address().port}/upload`,
+          fields: { key: 'value', policy: 'strict' },
+          file_field_name: 'file',
+          temp_url: 'https://cdn.example.com/temp/sample.png',
+          max_bytes: 10 * 1024 * 1024,
+          expires_in_seconds: 600,
+        }) }],
+      };
+    },
+  };
+
+  const uploader = createProviderUploader(
+    { hostConnector: connector, signal: new AbortController().signal },
+    { timeoutMs: 400 },
+  );
+  await assert.rejects(() => uploader.upload(file), /没有回应/);
+});
+
+// -------------------------------------------------- a run that produced
+// nothing. The file is not there, so the run is not a success: the node
+// would show an empty card and say it is done.
+
+test('a media run that left no file behind is not a success', async () => {
+  const { mediaOutcome } = await import('../miniapp/node/media-outcome.mjs');
+
+  // A run that left a file behind is a success.
+  assert.equal(mediaOutcome({ mode: 'image', media: [{ url: 'https://cdn.example.com/a.png' }] }).ok, true);
+  // A text run leaves no file, and that is what a text run does.
+  assert.equal(mediaOutcome({ mode: 'text', media: [] }).ok, true);
+
+  // A picture run that left nothing is a failure, and it says what it was
+  // looking at.
+  const empty = mediaOutcome({ mode: 'image', media: [], subject: '直连通道' });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.code, 'MEDIA_MISSING');
+  assert.match(empty.message, /图片/);
+  assert.match(empty.message, /直连通道/);
+
+  // What the run lost is the reason, so the reason is in the message.
+  const lost = mediaOutcome({ mode: 'video', media: [], warnings: ['第 1 个没有生成出来：额度用完了'] });
+  assert.equal(lost.ok, false);
+  assert.match(lost.message, /额度用完了/);
+});
+
+test('a picture the provider made but whose link cannot be fetched is not a success', async (t) => {
+  // The provider made the file and the Host stopped the call that was
+  // asking for its link. The file is still on the provider, so the run must
+  // not say it is done and leave an empty card behind.
+  const connector = createMockHostConnector(undefined, { assetUrlFails: true });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  const run = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error', 400);
+  assert.equal(run.status, 'error');
+  assert.equal((run.media ?? []).length, 0);
+  // The file is named, so it can still be found on the provider.
+  assert.match(run.error, /node-/);
+  assert.match(run.error, /没能取回下载链接/);
+  // And the run never said it was done.
+  assert.ok(!(run.log ?? []).some((line) => line.startsWith('完成')), 'the run must not say it is done');
+
+  // The link was asked again before the file was given up on: the provider's
+  // own rule is to ask twice for the same node.
+  const assetCalls = connector.calls.filter((call) => call.toolRef.endsWith('get-asset-url'));
+  assert.equal(assetCalls.length, 2);
+});
+
+test('a provider that says ok and hands nothing back is not a success', async (t) => {
+  const connector = createMockHostConnector(undefined, { imageReturnsNothing: true });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  const run = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(run.status, 'error');
+  assert.equal((run.media ?? []).length, 0);
+  assert.match(run.error, /图片/);
+});
+
+test('an Agent turn that ends without a picture is not a success', async (t) => {
+  // Without the connector there is only the Agent road. The turn ends with
+  // words and no picture, and words are not a picture.
+  const agent = createMockAgent({ textOnly: true });
+  const h = await createHarness({ hostConnector: null, agent });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  let run = null;
+  for (let i = 0; i < 40 && !run?.pendingPermission; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    run = (await getJson(h.base, `/api/runs/${runId}`)).body.run;
+  }
+  assert.ok(run.pendingPermission, 'the run should wait for the tool call to be approved');
+  await getJson(h.base, `/api/runs/${runId}/permission`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'allowOnce' }),
+  });
+
+  run = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(run.status, 'error');
+  assert.equal((run.media ?? []).length, 0);
+  assert.match(run.error, /图片/);
+  assert.ok(!(run.log ?? []).some((line) => line.startsWith('完成')), 'the run must not say it is done');
 });

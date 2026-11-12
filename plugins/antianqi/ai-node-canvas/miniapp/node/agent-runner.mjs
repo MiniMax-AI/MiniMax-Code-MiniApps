@@ -33,6 +33,7 @@ import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex, refe
 import { compressionArgs, isUnderstandTimeout, understandingPlan } from './understand-media.mjs';
 import { materialToRead } from '../client/forms.mjs';
 import { createConnectorRunner, queueWaitText } from './connector-runner.mjs';
+import { mediaOutcome } from './media-outcome.mjs';
 import { batchCount } from '../client/tools.mjs';
 
 const MAX_RUNS = 64;
@@ -71,7 +72,7 @@ function describeError(code, message) {
   // message that comes with it says which call it was, how long the call ran
   // and how long it waited for the machine — that detail is the answer, so
   // it is not replaced by a generic sentence.
-  if (code === 'CONNECTOR_OUTCOME_UNKNOWN' || code === 'CONNECTOR_ERROR' || code === 'CONNECTOR_PROVIDER_ERROR' || code === 'CONNECTOR_TIMEOUT') {
+  if (code === 'CONNECTOR_OUTCOME_UNKNOWN' || code === 'CONNECTOR_ERROR' || code === 'CONNECTOR_PROVIDER_ERROR' || code === 'CONNECTOR_TIMEOUT' || code === 'MEDIA_MISSING') {
     return text.slice(0, 300) || '生成失败：连接器调用没有成功。';
   }
   if (/timeout|超时/i.test(text)) {
@@ -876,6 +877,15 @@ export function createAgentRunner(context) {
     } finally {
       releaseController(task);
     }
+    // A turn that ends without a file is not a file: the run says so,
+    // instead of finishing with nothing to show.
+    if (task.status === 'done') {
+      const outcome = mediaOutcome({ mode: task.mode, media: task.media, subject: 'Agent 通道' });
+      if (!outcome.ok) {
+        task.status = 'error';
+        task.error = outcome.message;
+      }
+    }
     if (task.status === 'done') task.log.push(`完成，用时 ${((Date.now() - task.startedAt) / 1000).toFixed(1)}s`);
     else if (task.status === 'error') task.log.push(`失败：${task.error}`);
     else if (task.status === 'aborted') task.log.push('已取消');
@@ -912,8 +922,23 @@ export function createAgentRunner(context) {
         if ((result.waitedMs ?? 0) >= 20) {
           task.log.push(`前面有别的生成在跑，这次排队等了 ${queueWaitText(result.waitedMs)} 才轮到`);
         }
-        task.status = 'done';
-        task.log.push(`完成，用时 ${((Date.now() - task.startedAt) / 1000).toFixed(1)}s`);
+        // The provider can say "ok" and still leave nothing behind. A run
+        // that ends without a file is not a success: the node would show an
+        // empty card and say "完成".
+        const outcome = mediaOutcome({
+          mode,
+          media: task.media,
+          warnings: result.warnings,
+          subject: '直连通道',
+        });
+        if (outcome.ok) {
+          task.status = 'done';
+          task.log.push(`完成，用时 ${((Date.now() - task.startedAt) / 1000).toFixed(1)}s`);
+        } else {
+          task.status = 'error';
+          task.error = outcome.message;
+          task.log.push(`失败：${task.error}`);
+        }
       } else {
         task.providerTaskId = result.providerTaskId;
         task.providerModel = result.providerModel;
@@ -959,13 +984,6 @@ export function createAgentRunner(context) {
           const local = await store.publishRemote(item.url, item.kind).catch(() => null);
           return local ? { ...item, url: local } : item;
         }));
-      }
-      // A turn that ended without a picture is not a picture: the run says
-      // so, instead of finishing with nothing to show.
-      if (task.status === 'done' && !(task.media ?? []).length) {
-        task.status = 'error';
-        task.error = 'Agent 通道没有返回图片，请再试一次';
-        task.log.push(`失败：${task.error}`);
       }
     }
     return task;

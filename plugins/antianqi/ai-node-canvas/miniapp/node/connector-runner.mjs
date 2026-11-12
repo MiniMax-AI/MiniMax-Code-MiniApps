@@ -17,6 +17,7 @@ import { decodeHostConnectorValue } from './host-connector-value.mjs';
 // Host inventory lookup below, so it carries its own name.
 import { findTool as findCapabilityTool } from './capabilities.mjs';
 import { COLLECTION_PATHS, frameRequestShape } from './video-request.mjs';
+import { mediaOutcome } from './media-outcome.mjs';
 import { batchCount } from '../client/tools.mjs';
 
 const INVENTORY_TTL_MS = 60_000;
@@ -34,6 +35,19 @@ const TOOL = {
   music: 'batch_text_to_music',
   assetUrl: 'get_asset_url',
 };
+
+// How often a produced file's link is asked for.
+//
+// The provider keeps the file and hands out the link when it is asked. The
+// Host gives every connector call a window of its own — about thirty
+// seconds — and a call that runs over it is stopped. A link that is asked
+// for too early can therefore come back as nothing at all: the file is
+// there, the answer is not. The provider's own rule is to ask again for the
+// same node, so the question is asked twice before the file is given up on.
+const ASSET_URL_ATTEMPTS = 2;
+// The gap between the two asks: the file may still be settling right after
+// the provider made it.
+const ASSET_URL_RETRY_MS = 2_000;
 
 /**
  * What a connector call that the Host stopped says.
@@ -126,6 +140,14 @@ function videoReferences(videos) {
       });
     }
     return { url: item.url, duration_seconds: seconds };
+  });
+}
+
+// A short wait, so the second try does not land in the same breath as the
+// first one.
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 
@@ -281,14 +303,28 @@ export function createConnectorRunner(context, options = {}) {
   }
 
   // A short-lived display URL for a produced asset.
+  //
+  // The provider hands out the link when it is asked, and the Host stops a
+  // connector call that runs past its window. A link that is asked for too
+  // early can therefore come back as nothing at all: the file is still on
+  // the provider, the answer is not. The provider's own rule is to ask again
+  // for the same node, so the question is asked twice before the file is
+  // given up on.
   async function assetUrl(nodeId) {
     if (!nodeId) return null;
-    try {
-      const value = await callTool(TOOL.assetUrl, { node_id: nodeId });
-      return mediaUrl(value) ?? null;
-    } catch {
-      return null;
+    let failure = null;
+    for (let attempt = 0; attempt < ASSET_URL_ATTEMPTS; attempt += 1) {
+      try {
+        const value = await callTool(TOOL.assetUrl, { node_id: nodeId });
+        const url = mediaUrl(value);
+        if (url) return url;
+        failure = Object.assign(new Error('连接器没有给出下载链接'), { code: 'CONNECTOR_NO_ASSET_URL' });
+      } catch (error) {
+        failure = error;
+      }
+      if (attempt < ASSET_URL_ATTEMPTS - 1) await wait(ASSET_URL_RETRY_MS);
     }
+    throw failure ?? Object.assign(new Error('没有拿到下载链接'), { code: 'CONNECTOR_NO_ASSET_URL' });
   }
 
   // The upstream assets a node references. The order comes from the compiled
@@ -308,16 +344,34 @@ export function createConnectorRunner(context, options = {}) {
     };
   }
 
+  // The files one provider call made.
+  //
+  // The provider answers with the id of the file it made, and the link comes
+  // from a second call. A file whose link cannot be fetched is not thrown
+  // away: its id travels with the failure, so the run can say that the file
+  // exists and where to find it.
   async function collectMedia(items, kind) {
     const media = [];
+    const missing = [];
     for (const item of items ?? []) {
       const nodeId = item?.node_id ?? item?.file_id ?? null;
-      const url = (await assetUrl(nodeId)) ?? mediaUrl(item);
-      if (!url) continue;
+      let url = mediaUrl(item);
+      if (!url && nodeId) {
+        try {
+          url = await assetUrl(nodeId);
+        } catch (error) {
+          missing.push({ nodeId, reason: error?.message ?? String(error) });
+          continue;
+        }
+      }
+      if (!url) {
+        missing.push({ nodeId, reason: '连接器没有给出下载链接' });
+        continue;
+      }
       const local = await publishSafely(url, kind);
       media.push({ url: local, kind, nodeId, providerUrl: url });
     }
-    return media;
+    return { media, missing };
   }
 
   /**
@@ -352,7 +406,15 @@ export function createConnectorRunner(context, options = {}) {
     let firstError = null;
     for (let index = 0; index < wanted; index += 1) {
       try {
-        media.push(...(await callOneAsset(tool, argsFor(index), kind, signal, timing)));
+        const result = await callOneAsset(tool, argsFor(index), kind, signal, timing);
+        media.push(...result.media);
+        for (const item of result.missing) {
+          // The provider made the file; only its link is missing. Saying
+          // "没有生成出来" about this would be a lie about what happened.
+          const note = `provider 已经生成出来了（${item.nodeId}），但没能取回下载链接：${item.reason}`;
+          if (!firstError) firstError = Object.assign(new Error(note), { code: 'MEDIA_MISSING' });
+          warnings.push(`第 ${index + 1} 个${note}`);
+        }
       } catch (error) {
         if (!firstError) firstError = error;
         warnings.push(`第 ${index + 1} 个没有生成出来：${error?.message ?? error}`);
@@ -360,7 +422,7 @@ export function createConnectorRunner(context, options = {}) {
     }
     if (!media.length && warnings.length) {
       throw Object.assign(
-        new Error(warnings[0].replace(/^第 \d+ 个没有生成出来：/, '')),
+        new Error(firstError?.message ?? warnings[0]),
         { code: firstError?.code ?? 'CONNECTOR_ERROR' },
       );
     }
@@ -509,12 +571,20 @@ export function createConnectorRunner(context, options = {}) {
       // A video has no drive asset: the provider keeps the file on its task and
       // gives the link with the task's own answer. So the task's link comes
       // first, and the drive asset is only the second try.
-      const url = mediaUrl(value) ?? (await assetUrl(nodeId));
+      // The task is done, but the file could not be fetched. Saying "完成"
+      // with nothing behind it is a lie the user would believe.
+      let url = mediaUrl(value);
+      let reason = '';
       if (!url) {
-        // The task is done but the file could not be fetched. Saying "完成"
-        // with nothing behind it is a lie the user would believe.
+        try {
+          url = await assetUrl(nodeId);
+        } catch (error) {
+          reason = error?.message ?? String(error);
+        }
+      }
+      if (!url) {
         throw Object.assign(
-          new Error('视频已经生成完，但这次没有取回文件（provider 没有给出下载地址），请重试这次运行'),
+          new Error(`视频已经生成完，但这次没有取回文件${reason ? `：${reason}` : '（provider 没有给出下载地址）'}，请重试这次运行`),
           { code: 'MEDIA_MISSING' },
         );
       }
@@ -586,12 +656,15 @@ export function createConnectorRunner(context, options = {}) {
     if (value?.code && value.code !== 0) {
       throw Object.assign(new Error(value.message || '图片处理失败'), { code: 'CONNECTOR_PROVIDER_ERROR' });
     }
-    const media = await collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), 'image');
-    if (!media.length) {
-      throw Object.assign(
-        new Error('处理完成了，但这次没有取回文件（provider 没有给出下载地址），请重试一次'),
-        { code: 'MEDIA_MISSING' },
-      );
+    const { media, missing } = await collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), 'image');
+    const outcome = mediaOutcome({
+      mode: 'image',
+      media,
+      warnings: missing.map((item) => `provider 已经生成出来了（${item.nodeId}），但没能取回下载链接：${item.reason}`),
+      subject: '这次处理',
+    });
+    if (!outcome.ok) {
+      throw Object.assign(new Error(outcome.message), { code: outcome.code });
     }
     // The provider says how big the result is, so the card can show it.
     return {

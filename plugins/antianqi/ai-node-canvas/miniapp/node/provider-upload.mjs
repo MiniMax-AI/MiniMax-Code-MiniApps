@@ -20,6 +20,15 @@ import { decodeHostConnectorValue } from './host-connector-value.mjs';
 
 const INVENTORY_TTL_MS = 60_000;
 
+// How long the bytes may take to reach the provider.
+//
+// The command hands out a signed form and the bytes are posted to it: a
+// network call of this runtime's own, so it needs a bound of its own. A host
+// that never answers would otherwise leave the run waiting for good, and a
+// run that waits for good says nothing about what went wrong. The plugin's
+// own asset download is given the same bound.
+const UPLOAD_TIMEOUT_MS = 120_000;
+
 const MIME_BY_EXT = {
   '.aac': 'audio/aac',
   '.flac': 'audio/flac',
@@ -96,8 +105,11 @@ function parseSignedUpload(value) {
   };
 }
 
-export function createProviderUploader(context) {
+export function createProviderUploader(context, options = {}) {
   const connector = context.hostConnector ?? null;
+  // The bytes travel to the provider's own host, so the post is bounded.
+  // A test may ask for a shorter bound than the runtime uses.
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : UPLOAD_TIMEOUT_MS;
   let inventory = null;
   let inventoryAt = 0;
 
@@ -187,11 +199,18 @@ export function createProviderUploader(context) {
       response = await fetch(signed.uploadHost, {
         method: 'POST',
         body: form,
-        signal: context.signal,
+        // The runtime's own stop still applies, and the post is bounded: a
+        // host that never answers must not leave the run waiting for good.
+        signal: AbortSignal.any([context.signal, AbortSignal.timeout(timeoutMs)]),
       });
     } catch (error) {
+      const stalled = error?.name === 'TimeoutError';
       throw Object.assign(
-        new Error(`上传素材到 provider 失败：${error?.message ?? error}`),
+        new Error(
+          `上传素材到 provider 失败：${stalled
+            ? `等了 ${Math.max(1, Math.round(timeoutMs / 1000))} 秒对方没有回应`
+            : (error?.message ?? error)}`,
+        ),
         { code: 'PROVIDER_UPLOAD_FAILED' },
       );
     }
